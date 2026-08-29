@@ -1,0 +1,20 @@
+CREATE TABLE ai_invoke_document_review_loops (
+ run_id VARCHAR(191) PRIMARY KEY, group_id VARCHAR(191) NOT NULL, doc_ref VARCHAR(191) NOT NULL,
+ review_count INTEGER NOT NULL CHECK (review_count IN (-1,1,2,3)), reviewer_provider_id VARCHAR(191) NOT NULL,
+ review_criteria TEXT NOT NULL CHECK (review_criteria IN ('document_type_default','last_rejection_only')), rework_provider_id VARCHAR(191) NOT NULL,
+ rework_timeout_sec INTEGER NOT NULL CHECK (rework_timeout_sec IN (1800,3600,7200)), rework_message TEXT NOT NULL,
+ failure_restart_max_attempts INTEGER NOT NULL CHECK (failure_restart_max_attempts IN (-1,0,1,2)), total_timeout_sec INTEGER NOT NULL CHECK (total_timeout_sec IN (3600,7200,14400)),
+ review_baseline_id BIGINT NOT NULL DEFAULT 0 CHECK (review_baseline_id >= 0), baseline_revision_no INTEGER NOT NULL CHECK (baseline_revision_no >= 0), starts_with_rework TINYINT(1) NOT NULL DEFAULT 0 CHECK (starts_with_rework IN (0,1)),
+ started_at TEXT NOT NULL, deadline_at TEXT NOT NULL, round_no INTEGER NOT NULL DEFAULT 1 CHECK (round_no >= 1), current_stage VARCHAR(16) NOT NULL CHECK (current_stage IN ('rework','review','stopped')),
+ stop_reason VARCHAR(32) NULL CHECK (stop_reason IS NULL OR stop_reason IN ('review_passed','review_count_exhausted','retry_exhausted','total_timeout')), stop_detail TEXT NULL,
+ last_hop_kind VARCHAR(16) NULL CHECK (last_hop_kind IS NULL OR last_hop_kind IN ('rework','review')), last_hop_outcome VARCHAR(16) NULL CHECK (last_hop_outcome IS NULL OR last_hop_outcome IN ('succeeded','failed')),
+ attempts_used INTEGER NOT NULL DEFAULT 0 CHECK (attempts_used >= 0), created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ CONSTRAINT fk_aidrl_run FOREIGN KEY(run_id) REFERENCES ai_invoke_runs(run_id) ON DELETE CASCADE,
+ CONSTRAINT fk_aidrl_group FOREIGN KEY(group_id) REFERENCES groups(group_id) ON DELETE CASCADE,
+ CONSTRAINT fk_aidrl_doc FOREIGN KEY(doc_ref) REFERENCES documents(doc_id) ON DELETE CASCADE,
+ CONSTRAINT fk_aidrl_reviewer FOREIGN KEY(reviewer_provider_id) REFERENCES ai_providers(provider_id) ON DELETE RESTRICT,
+ CONSTRAINT fk_aidrl_rework FOREIGN KEY(rework_provider_id) REFERENCES ai_providers(provider_id) ON DELETE RESTRICT,
+ CHECK ((current_stage <> 'stopped' AND stop_reason IS NULL AND stop_detail IS NULL) OR (current_stage = 'stopped' AND stop_reason IS NOT NULL)),
+ CHECK ((stop_reason IS NULL) OR (stop_reason='review_passed' AND stop_detail IS NULL) OR (stop_reason<>'review_passed' AND stop_detail IS NOT NULL)), CHECK ((last_hop_kind IS NULL) = (last_hop_outcome IS NULL)),
+ INDEX idx_aidrl_group_updated(group_id, updated_at(32)), INDEX idx_aidrl_doc_updated(doc_ref, updated_at(32))
+);

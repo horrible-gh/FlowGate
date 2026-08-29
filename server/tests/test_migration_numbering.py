@@ -377,7 +377,7 @@ class TestFilenameCarryOver:
 # SQLite 는 문법이 아예 없다). 그래서 아래 두 케이스는 진짜 `DatabaseMigrator` 를 다시
 # 세워 부팅 경로까지 통과시키고, 마지막 대조군이 "이관을 빼면 정말로 선다"를 보인다.
 
-LEDGER_FINAL_NAME = "086a_tr_commit_ledger.sql"
+LEDGER_FINAL_NAME = "086d_tr_commit_ledger.sql"
 LEDGER_APPLIED_HISTORIES = ("085_tr_commit_ledger.sql", "086_tr_commit_ledger.sql")
 
 

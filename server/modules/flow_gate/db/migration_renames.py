@@ -80,8 +80,12 @@ RENAMES: tuple[tuple[str, str], ...] = (
     ),
     ("063_tokens_conflict_merge_id.sql", "063a_tokens_conflict_merge_id.sql"),
     ("067_auth_sessions.sql", "067a_auth_sessions.sql"),
-    ("074_ai_invoke_chain_progress.sql", "074a_ai_invoke_chain_progress.sql"),
-    ("074_document_type_descriptions.sql", "074b_document_type_descriptions.sql"),
+    ("074_test_run_cancel_status.sql", "074a_test_run_cancel_status.sql"),
+    ("074_ai_invoke_chain_progress.sql", "074b_ai_invoke_chain_progress.sql"),
+    ("074a_ai_invoke_chain_progress.sql", "074b_ai_invoke_chain_progress.sql"),
+    ("074_document_type_descriptions.sql", "074c_document_type_descriptions.sql"),
+    ("074b_document_type_descriptions.sql", "074c_document_type_descriptions.sql"),
+    ("075_tokens_chat_scope.sql", "075a_tokens_chat_scope.sql"),
     ("076_ai_invoke_paused_provider.sql", "076a_ai_invoke_paused_provider.sql"),
     ("076_ai_invoke_runs.sql", "076b_ai_invoke_runs.sql"),
     # 078/079: two independent already-applied histories converge on each final
@@ -145,8 +149,12 @@ RENAMES: tuple[tuple[str, str], ...] = (
     # intermediate 086, which would leave whichever side is not visited first pointing at a name
     # no longer on disk. The reapply file keeps its existing 086 -> 087 history untouched: that is
     # a different file, and 086_tr_commit_reapply.sql never collided with anything.
-    ("085_tr_commit_ledger.sql", "086a_tr_commit_ledger.sql"),
-    ("086_tr_commit_ledger.sql", "086a_tr_commit_ledger.sql"),
+    ("086_ai_invoke_paused_provider_fk.sql", "086a_ai_invoke_paused_provider_fk.sql"),
+    ("086_ai_invoke_restart_max_attempts.sql", "086b_ai_invoke_restart_max_attempts.sql"),
+    ("086_ai_invoke_run_diagnostics.sql", "086c_ai_invoke_run_diagnostics.sql"),
+    ("085_tr_commit_ledger.sql", "086d_tr_commit_ledger.sql"),
+    ("086_tr_commit_ledger.sql", "086d_tr_commit_ledger.sql"),
+    ("086a_tr_commit_ledger.sql", "086d_tr_commit_ledger.sql"),
     ("086_tr_commit_reapply.sql", "087_tr_commit_reapply.sql"),
 )
 

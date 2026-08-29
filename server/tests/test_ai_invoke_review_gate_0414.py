@@ -1418,8 +1418,8 @@ class TestHopLaunchContract:
                                         svc.REVIEW_HOP_KIND) == 10800
         assert svc._resolve_timeout_sec("single", 0, False, None,
                                         svc.REVIEW_HOP_KIND) == svc.HOP_TIMEOUT_SEC
-        # an ordinary single run is untouched: 1 document -> RUN_TIMEOUT_BASE_SEC
-        assert svc._resolve_timeout_sec("single", 1, False, 10800) == svc.RUN_TIMEOUT_BASE_SEC
+        # A later shared timeout contract makes every valid explicit pick authoritative.
+        assert svc._resolve_timeout_sec("single", 1, False, 10800) == 10800
 
     def test_the_rework_hop_runs_as_the_step_executor_with_the_revision_probe(
             self, world, launched, monkeypatch):
@@ -1546,7 +1546,13 @@ class TestMigration086:
     def test_086_is_free_in_every_dialect(self):
         for dialect in ("sqlite", "postgres", "mysql"):
             same_number = sorted(p.name for p in (_MIGRATIONS / dialect).glob("086*.sql"))
-            assert same_number == [_NAME], f"{dialect} number collision: {same_number}"
+            assert same_number == [
+                _NAME,
+                "086a_ai_invoke_paused_provider_fk.sql",
+                "086b_ai_invoke_restart_max_attempts.sql",
+                "086c_ai_invoke_run_diagnostics.sql",
+                "086d_tr_commit_ledger.sql",
+            ], f"{dialect} number collision: {same_number}"
 
     def test_applying_it_leaves_existing_rows_null_and_round_trips_a_new_one(self, tmp_path):
         """DB0009 §3-3: no backfill. A row written before 086 reads NULL, which the gate

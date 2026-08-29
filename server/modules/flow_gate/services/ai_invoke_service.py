@@ -46,7 +46,7 @@ from modules.flow_gate.db import question_items as db_question_items
 from modules.flow_gate.db import test_runs as db_test_runs
 from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.db import workflow_sequences as db_wfseq
-from modules.flow_gate.db.connection import now_iso
+from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate import template_provision
 from modules.flow_gate.services import git_service, invoke_mention_service, process_runner, q_service, token_service
 from modules.flow_gate.services.git_service import GitServiceError
@@ -675,6 +675,9 @@ def _run_detail_from_row(row: dict) -> dict:
         "finished_at": row.get("finished_at"),
         "timeout_sec": row.get("timeout_sec"),
         "deadline_at": row.get("deadline_at"),
+        "document_review_loop": document_review_loop_payload({
+            "document_review_loop": _restore_document_review_loop(row["run_id"])
+        }),
         # 0406 T0022 items 3 and 5: the same questions must stay answerable after the run
         # ends: who ran this hop, what the server handled, whether a handoff note went in.
         "worker_document_type": row.get("worker_document_type"),
@@ -1219,6 +1222,7 @@ def start_run(
     # hop handoff keeps reviewing with the same selection (DB0009).
     continuation_review_count_overrides: Optional[dict] = None,
     continuation_reviewer_overrides: Optional[dict] = None,
+    document_review_loop: Optional[dict] = None,
     # 0414 L0008 §5: work / review / rework. A review or rework hop makes no document, so
     # the chain counters do not move for it — this is what lets a card say WHAT is running
     # instead of reporting a frozen progress number.
@@ -1245,6 +1249,16 @@ def start_run(
     )
 
     requested_continuation_instruction_mode = continuation_instruction_mode
+    # 0417 D0007/P0008: stage selection precedes provider-chain selection. In particular,
+    # an unaddressed rejection starts with the fixed rework provider, never the reviewer.
+    if document_review_loop is not None:
+        document_review_loop = dict(document_review_loop)
+        document_review_loop.update(compute_review_baseline(doc_ref))
+        initial_stage = (
+            REWORK_HOP_KIND if document_review_loop["starts_with_rework"] else REVIEW_HOP_KIND
+        )
+        provider_id = resolve_loop_provider(document_review_loop, initial_stage)
+        provider_pinned = True
     continuation_instruction_mode = normalize_continuation_instruction_mode(
         requested_continuation_instruction_mode
     )
@@ -1593,6 +1607,16 @@ def start_run(
         resolve_reviewer(reviewer_overrides, hop_item_seq, project_id)
         if hop_review_count else None
     )
+    if document_review_loop is not None:
+        document_review_loop.update({
+            "round_no": 1,
+            "current_stage": (REWORK_HOP_KIND if document_review_loop["starts_with_rework"] else REVIEW_HOP_KIND),
+            "stop_reason": None,
+            "stop_detail": None,
+            "attempts_used": 0,
+            "started_at": started_at,
+            "deadline_at": _deadline_iso(started_at, int(document_review_loop["total_timeout_sec"])),
+        })
     run = {
         "run_id": run_id,
         "status": "running",
@@ -1803,6 +1827,7 @@ def start_run(
         # step and then silently stops reviewing — the failure shape L0008 §2.9 names.
         "continuation_review_count_overrides": review_count_overrides,
         "continuation_reviewer_overrides": reviewer_overrides,
+        "document_review_loop": document_review_loop,
         "hop_kind": hop_kind,
         "hop_review_count": hop_review_count,
         "hop_reviewer_provider_id": hop_reviewer_provider_id,
@@ -1834,6 +1859,18 @@ def start_run(
         "failure_signal_sent": False,
     }
     with _runs_lock:
+        # The durable loop row is created before the worker can finish; a successful start never
+        # exposes memory-only loop state. Roll admission back if persistence fails.
+        if document_review_loop is not None:
+            try:
+                _insert_document_review_loop(run)
+            except Exception:
+                db_group_ai_leases.release(group_id, run_id)
+                try:
+                    token_service.revoke(issue["token_id"], reason="document_review_loop_persist_failed")
+                except Exception:
+                    logger.warning("review-loop token rollback failed for %s", run_id, exc_info=True)
+                raise _http_error(500, "document_review_loop_persist_failed", "Could not persist document review loop state.")
         _runs[run_id] = run
 
     thread = threading.Thread(
@@ -1893,6 +1930,7 @@ def start_run(
         # start / status / finish payload, so nobody has to reconstruct them from logs again.
         "timeout_sec": run["timeout_sec"],
         "deadline_at": run["deadline_at"],
+        "document_review_loop": document_review_loop_payload(run),
     }
 
 
@@ -2485,6 +2523,37 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
             _classify_end_reason(run, started_ok)
             _judge_hop(run)
             run["attempts_used"] = int(run.get("attempts_used") or 0) + 1
+
+            # A document review loop owns the hop boundary. Checkpoint the durable effect,
+            # then either stop or mint the next stage token and continue under its fixed provider.
+            if run.get("document_review_loop"):
+                loop = _checkpoint_document_review_loop(run)
+                run["document_review_loop_checkpointed"] = True
+                if not loop or loop.get("current_stage") == "stopped":
+                    break
+                prepared = _prepare_retry_token(run)
+                selected_id = resolve_loop_provider(loop, loop["current_stage"])
+                enabled = ai_settings_service.resolve_effective(run["project_id"]).get("providers") or []
+                selected = next((item for item in enabled if item.get("id") == selected_id), None)
+                if prepared is None or selected is None:
+                    run["outcome"] = "none"
+                    run["end_reason"] = "document_review_loop_transition_failed"
+                    run["last_message"] = "next review-loop stage could not be scheduled"
+                    run["document_review_loop_checkpointed"] = False
+                    break
+                _reset_attempt_state(run)
+                run["hop_kind"] = loop["current_stage"]
+                run["provider"] = _provider_brief(selected)
+                run["provider_id"] = selected_id
+                run["attempt_no"] = int(run.get("attempt_no") or 0) + 1
+                run["document_review_loop_checkpointed"] = False
+                current_chain = [selected]
+                stage_message = (
+                    loop.get("rework_message") if loop["current_stage"] == REWORK_HOP_KIND
+                    else f"Review {run['doc_ref']} using {loop.get('review_criteria')}."
+                )
+                current_prompt = f"{stage_message}\n\n{prepared['mention']}" if stage_message else prepared["mention"]
+                continue
 
             if not _retry_eligible(run):
                 break
@@ -4213,6 +4282,11 @@ def _finalize_run(run: dict) -> None:
     run["status"] = "finished"
 
     _apply_stop_row(run, respawn_pending)
+    if run.get("document_review_loop") and not run.get("document_review_loop_checkpointed"):
+        try:
+            _checkpoint_document_review_loop(run)
+        except Exception:
+            logger.exception("document review-loop checkpoint failed for %s", run["run_id"])
     _persist_run_record(run)
     _notify_chain_failure_if_needed(run)
 
@@ -4903,6 +4977,7 @@ def finished_payload(run: dict) -> dict:
         "attempts_max": run.get("attempts_max"),
         "timeout_sec": run.get("timeout_sec"),
         "deadline_at": run.get("deadline_at"),
+        "document_review_loop": document_review_loop_payload(run),
         # 0406 T0022 items 3 and 5: values that let a finished hop's card tell "the N/T
         # vanished" apart from "the TR worker ran fine". Same names on a live run.
         "worker_document_type": run.get("worker_document_type"),
@@ -4990,6 +5065,7 @@ def get_status(run_id: str) -> dict:
         "attempts_max": run.get("attempts_max"),
         # Server truth: an explicit empty array clears stale client state on the next poll.
         "pending_q_doc_ids": _open_q_doc_ids(run["group_id"]),
+        "document_review_loop": document_review_loop_payload(run),
     }
 
 
@@ -7134,3 +7210,215 @@ def _broadcast(run: dict, event_type: str, payload: dict) -> None:
         )
     except Exception:
         logger.warning("ai-invoke SSE broadcast failed", exc_info=True)
+
+
+# Document-scoped review loop (0417 L0009). Kept parallel to resolve_review_gate:
+# the continuous workflow gate has deliberately not been changed.
+def compute_review_baseline(doc_id: str) -> dict:
+    from modules.flow_gate.db import document_reviews as db_reviews
+    doc = db_docs.get_by_id(doc_id)
+    if doc is None:
+        raise _http_error(404, "document_not_found", "Document disappeared before review-loop start.")
+    reviews = db_reviews.list_by_doc(doc_id) or []
+    latest_id = max((int(item.get("id") or 0) for item in reviews), default=0)
+    latest = max(reviews, key=lambda item: int(item.get("id") or 0), default={})
+    return {"review_baseline_id": latest_id, "starts_with_rework": latest.get("verdict") == "issues" and not latest.get("responded_at"), "baseline_revision_no": int(doc.get("revision_no") or 0)}
+
+
+def resolve_loop_provider(bundle: dict, stage: str) -> str:
+    if stage == REVIEW_HOP_KIND:
+        return bundle["reviewer_provider_id"]
+    if stage == REWORK_HOP_KIND:
+        return bundle["rework_provider_id"]
+    raise ValueError(f"unknown document review-loop stage: {stage}")
+
+
+def check_expected_progress(bundle: dict, doc: dict, reviews: list[dict]) -> bool:
+    """Verify the just-finished hop, never progress left by an earlier round."""
+    kind = bundle.get("last_hop_kind")
+    baseline = int(bundle.get("review_baseline_id") or 0)
+    current = [
+        review for review in reviews
+        if int(review.get("id") or 0) > baseline
+    ]
+    if kind == REVIEW_HOP_KIND:
+        # round_no is the 1-based review ordinal for this run.  Requiring that
+        # many post-baseline rows prevents round N from reusing round N-1's verdict.
+        return len(current) >= max(1, int(bundle.get("round_no") or 1))
+    if kind == REWORK_HOP_KIND:
+        latest = max(current, key=lambda review: int(review.get("id") or 0), default={})
+        expected_revision = int(
+            latest.get("revision_no") or bundle.get("baseline_revision_no") or 0
+        )
+        return int(doc.get("revision_no") or 0) > expected_revision
+    return True
+
+
+def resolve_document_review_loop_gate(bundle: dict) -> dict:
+    """Return the next persisted stage, or a terminal stopped state (L0009 §2/§4)."""
+    now = bundle.get("now")
+    reviews = list(bundle.get("reviews") or [])
+    baseline = int(bundle.get("review_baseline_id") or 0)
+    current = [r for r in reviews if int(r.get("id") or 0) > baseline]
+    latest = max(current, key=lambda r: int(r.get("id") or 0), default={})
+    common = {"round_no": max(1, int(bundle.get("round_no") or 1)), "stop_reason": None, "stop_detail": None}
+    if latest.get("verdict") == "pass":
+        return {**common, "current_stage": "stopped", "stop_reason": "review_passed"}
+    if bundle.get("document_missing"):
+        return {**common, "current_stage": "stopped", "stop_reason": "retry_exhausted", "stop_detail": "target document no longer exists"}
+    if bundle.get("last_hop_outcome") == "failed" or bundle.get("history_lookup_failed") or bundle.get("transition_failed"):
+        used = int(bundle.get("attempts_used") or 0)
+        maximum = int(bundle.get("failure_restart_max_attempts") or 0)
+        if maximum == -1 or used <= maximum:
+            return {**common, "current_stage": bundle.get("current_stage") or bundle.get("last_hop_kind") or REVIEW_HOP_KIND, "attempts_used": used}
+        return {**common, "current_stage": "stopped", "stop_reason": "retry_exhausted", "stop_detail": bundle.get("failure_detail") or "stage retry budget exhausted", "attempts_used": used}
+    if now is not None and bundle.get("deadline_at") is not None and now >= bundle["deadline_at"]:
+        return {**common, "current_stage": "stopped", "stop_reason": "total_timeout", "stop_detail": "document review loop deadline reached"}
+    rounds_used = len(current)
+    if rounds_used == 0:
+        stage = REWORK_HOP_KIND if bundle.get("starts_with_rework") else REVIEW_HOP_KIND
+        return {**common, "current_stage": stage, "attempts_used": 0}
+    limit = resolve_round_limit(int(bundle["review_count"]))
+    doc = bundle.get("doc") or {}
+    # Every non-pass review is first recorded as a real rejection and receives its rework
+    # hop, including the final finite round. Only after that rework lands may the review
+    # budget stop the loop; otherwise the last findings would never be addressed.
+    if (
+        bundle.get("last_hop_kind") == REWORK_HOP_KIND
+        and bundle.get("last_hop_outcome") == "succeeded"
+        and int(doc.get("revision_no") or 0) > int(latest.get("revision_no") or bundle.get("baseline_revision_no") or 0)
+    ):
+        if limit != REVIEW_ROUNDS_NO_LIMIT and rounds_used >= limit:
+            return {**common, "current_stage": "stopped", "stop_reason": "review_count_exhausted", "stop_detail": f"review count {limit} exhausted"}
+        return {**common, "current_stage": REVIEW_HOP_KIND, "attempts_used": 0}
+    if latest.get("verdict") in (REVIEW_VERDICTS - {"pass"}):
+        return {**common, "current_stage": REWORK_HOP_KIND, "round_no": rounds_used + 1, "attempts_used": 0}
+    if int(doc.get("revision_no") or 0) > int(latest.get("revision_no") or bundle.get("baseline_revision_no") or 0):
+        return {**common, "current_stage": REVIEW_HOP_KIND, "round_no": rounds_used + 1, "attempts_used": 0}
+    return {**common, "current_stage": bundle.get("current_stage") or REVIEW_HOP_KIND, "attempts_used": int(bundle.get("attempts_used") or 0)}
+
+
+def _loop_deadline(value):
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return None
+
+
+def _insert_document_review_loop(run: dict) -> None:
+    loop = run.get("document_review_loop")
+    if not loop:
+        return
+    from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
+    db_loops.insert({
+        **loop,
+        "run_id": run["run_id"],
+        "group_id": run["group_id"],
+        "doc_ref": run["doc_ref"],
+    })
+
+
+def _restore_document_review_loop(run_id: str) -> dict | None:
+    from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
+    return db_loops.get(run_id)
+
+
+def _checkpoint_document_review_loop(run: dict) -> dict | None:
+    """Atomically reject a non-pass review and reserve the durable successor stage."""
+    with get_store().transaction():
+        return _checkpoint_document_review_loop_tx(run)
+
+
+def _checkpoint_document_review_loop_tx(run: dict) -> dict | None:
+    """Transaction body for one completed document-review-loop hop."""
+    loop = run.get("document_review_loop")
+    if not loop or loop.get("current_stage") == "stopped":
+        return loop
+    from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
+    from modules.flow_gate.db import document_reviews as db_reviews
+
+    persisted = db_loops.get(run["run_id"])
+    if persisted is None:
+        raise RuntimeError(f"missing document review loop row for {run['run_id']}")
+    doc = db_docs.get_by_id(persisted["doc_ref"])
+    reviews = db_reviews.list_by_doc(persisted["doc_ref"]) or []
+    stage = persisted["current_stage"]
+    succeeded = run.get("outcome") == "complete"
+    attempts = int(persisted.get("attempts_used") or 0) + 1
+    bundle = {
+        **persisted,
+        "doc": doc or {},
+        "reviews": reviews,
+        "document_missing": doc is None,
+        "last_hop_kind": stage,
+        "last_hop_outcome": "succeeded" if succeeded else "failed",
+        "attempts_used": attempts,
+        "failure_detail": run.get("last_message") or run.get("end_reason"),
+        "now": datetime.now(timezone.utc),
+        "deadline_at": _loop_deadline(persisted.get("deadline_at")),
+    }
+    if succeeded and not check_expected_progress(bundle, doc or {}, reviews):
+        bundle["last_hop_outcome"] = "failed"
+        bundle["failure_detail"] = f"{stage} hop produced no expected durable progress"
+
+    # A successful review with a new non-pass verdict must become a real document
+    # rejection before the rework stage is made visible. Both writes share the outer
+    # transaction, so a checkpoint failure rolls the rejection back as well.
+    current_reviews = [
+        item for item in reviews
+        if int(item.get("id") or 0) > int(persisted.get("review_baseline_id") or 0)
+    ]
+    latest_review = max(
+        current_reviews, key=lambda item: int(item.get("id") or 0), default=None
+    )
+    if (
+        stage == REVIEW_HOP_KIND
+        and bundle["last_hop_outcome"] == "succeeded"
+        and latest_review is not None
+        and (latest_review.get("verdict") or "").lower() in (REVIEW_VERDICTS - {"pass"})
+        and (doc or {}).get("doc_review_status") != "rejected"
+    ):
+        slot = {
+            "doc_id": persisted["doc_ref"],
+            "revision_no": int((doc or {}).get("revision_no") or 0),
+            "review_status": (doc or {}).get("doc_review_status") or "",
+        }
+        rejection = _auto_reject(slot, latest_review, {
+            "issued_to": run.get("issued_to"),
+            "api_base_url": run.get("api_base_url"),
+        })
+        if not rejection.get("ok"):
+            bundle["transition_failed"] = True
+            bundle["last_hop_outcome"] = "failed"
+            bundle["failure_detail"] = rejection.get("detail") or rejection.get("stop_code")
+        else:
+            doc = db_docs.get_by_id(persisted["doc_ref"])
+            bundle["doc"] = doc or {}
+
+    resolved = resolve_document_review_loop_gate(bundle)
+    updates = {
+        "round_no": resolved["round_no"],
+        "current_stage": resolved["current_stage"],
+        "stop_reason": resolved.get("stop_reason"),
+        "stop_detail": resolved.get("stop_detail"),
+        "last_hop_kind": stage,
+        "last_hop_outcome": bundle["last_hop_outcome"],
+        "attempts_used": int(resolved.get("attempts_used") or 0),
+    }
+    changed, latest = db_loops.checkpoint(
+        run["run_id"],
+        expected_round_no=int(persisted["round_no"]),
+        expected_stage=stage,
+        expected_updated_at=persisted["updated_at"],
+        **updates,
+    )
+    run["document_review_loop"] = latest
+    return latest
+
+
+def document_review_loop_payload(run: dict) -> dict | None:
+    loop = run.get("document_review_loop")
+    if not loop:
+        return None
+    return {key: loop.get(key) for key in ("round_no", "current_stage", "stop_reason", "stop_detail")}

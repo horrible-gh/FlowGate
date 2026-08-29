@@ -36,6 +36,17 @@ from modules.flow_gate.utils.id_validators import (
 router = APIRouter(prefix="/api/v1/ai-invoke", tags=["AiInvoke"])
 
 
+class DocumentReviewLoopRequest(BaseModel):
+    review_count: int
+    reviewer_provider_id: str
+    review_criteria: str
+    rework_provider_id: str
+    rework_timeout_sec: int
+    rework_message: str = ""
+    failure_restart_max_attempts: int
+    total_timeout_sec: int
+
+
 class AiInvokeStartRequest(BaseModel):
     project: str
     module: Optional[str] = None
@@ -91,6 +102,7 @@ class AiInvokeStartRequest(BaseModel):
     design_mode: Optional[str] = None              # design_handoff "batch" | "single"
     design_first_label: Optional[str] = None       # design_handoff single-mode type label
     work_plan_scope: Optional[dict] = None
+    document_review_loop: Optional[DocumentReviewLoopRequest] = None
 
 
 # Wire scope → token scope. The extra invoke scopes reuse the edit/new token
@@ -245,6 +257,30 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         return auth
 
     errors: list[dict] = []
+    loop = body.document_review_loop
+    if loop is not None:
+        if body.action_scope != "review":
+            errors.append({"loc": "document_review_loop", "msg": "requires action_scope=review"})
+        if body.mode != "single":
+            errors.append({"loc": "document_review_loop", "msg": "requires mode=single"})
+        if not body.doc_ref:
+            errors.append({"loc": "doc_ref", "msg": "required for document_review_loop"})
+        if body.continuation_review_count_overrides is not None or body.continuation_reviewer_overrides is not None:
+            errors.append({"loc": "document_review_loop", "msg": "cannot be combined with continuation review overrides"})
+        if body.provider_id is not None or body.provider_pinned not in (None, False):
+            errors.append({"loc": "provider_id", "msg": "top-level provider selection is not allowed with document_review_loop"})
+        allowed = {
+            "review_count": {-1, 1, 2, 3},
+            "review_criteria": {"document_type_default", "last_rejection_only"},
+            "rework_timeout_sec": {1800, 3600, 7200},
+            "failure_restart_max_attempts": {-1, 0, 1, 2},
+            "total_timeout_sec": {3600, 7200, 14400},
+        }
+        for field, choices in allowed.items():
+            if getattr(loop, field) not in choices:
+                errors.append({"loc": f"document_review_loop.{field}", "msg": f"must be one of {sorted(choices, key=str)}"})
+        if not loop.reviewer_provider_id.strip() or not loop.rework_provider_id.strip():
+            errors.append({"loc": "document_review_loop", "msg": "both stage providers are required"})
     if body.mode not in ("single", "continuous"):
         errors.append({"loc": "mode", "msg": "must be single or continuous"})
     if body.action_scope not in _ALLOWED_SCOPES:
@@ -689,6 +725,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             issued_to=user_id,
             api_base_url=_token_routes._build_api_base(request),
             mention_builder=_mention_builder,
+            # The service computes the durable baseline and selects review vs rework before resolving the chain.
             provider_id=body.provider_id,
             provider_pinned=body.provider_pinned,
             issue_builder=issue_builder,
@@ -704,6 +741,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             # mode="continuous", so the single / workflow_decide paths keep passing None.
             continuation_review_count_overrides=continuation_review_count_overrides,
             continuation_reviewer_overrides=continuation_reviewer_overrides,
+            document_review_loop=(body.document_review_loop.dict() if body.document_review_loop else None),
         )
     except HTTPException as exc:
         return _err(exc)
