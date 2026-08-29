@@ -2769,6 +2769,8 @@ export default {
       label: 'Git',
       title: 'Git反映待ち',
       empty: '仕上げ待ちの項目はありません。',
+      loading: 'Git の状態を読み込んでいます…',
+      unavailable: 'このプロジェクトには Git 連携が設定されていません。',
       open_status: 'Git 状況を開く',
     },
   },

@@ -253,7 +253,7 @@ function aiSummary(item: AiInvokeNotification): string {
     parts.push(t('main.notif_center.ai_docs', { reached: item.docs_reached, target: item.docs_target }))
   }
   const excerpt = item.last_message_excerpt?.trim()
-  if (excerpt) parts.push(excerpt)
+  if (excerpt) parts.push(excerpt.length > 240 ? excerpt.slice(0, 240) + '…' : excerpt)
   return parts.filter(Boolean).join(' · ')
 }
 
@@ -445,7 +445,7 @@ onBeforeUnmount(() => {
 .notif-panel {
   position: absolute;
   top: calc(100% + 8px);
-  right: 0;
+  left: 0;
   width: 380px;
   max-width: calc(100vw - 32px);
   background: var(--surface, #fff);
@@ -520,7 +520,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.notif-msg { font-size: .78rem; color: var(--text-secondary, #475569); }
+.notif-msg { min-width: 0; overflow: hidden; font-size: .78rem; color: var(--text-secondary, #475569); text-overflow: ellipsis; white-space: nowrap; }
 .notif-time { font-size: .7rem; color: var(--text-muted, #94a3b8); }
 
 /* ── Mockup 3 (live feed) ── */
@@ -644,7 +644,7 @@ onBeforeUnmount(() => {
   color: #dc2626;
 }
 
-.notif-ai-section { max-height: min(70vh, 480px); overflow-y: auto; }
+.notif-ai-section { max-height: min(70vh, 480px); overflow-x: hidden; overflow-y: auto; }
 .notif-ai-row { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-bottom: 1px solid var(--border-subtle, #f1f5f9); border-left: 3px solid; }
 .notif-ai-row--success { border-left-color: #22c55e; }
 .notif-ai-row--failure { border-left-color: #ef4444; background: rgba(239, 68, 68, .04); }

@@ -1,35 +1,49 @@
 <template>
   <!-- flowgate.default.0162 §3.3 — "안전망" action-bar Git button + badge.
-       Renders only for a git-integrated current project; a quiet icon when there
-       is no finalize backlog, a labelled attention button + pending-count badge
-       when there is (0165 T0004: discoverability). The badge is a work counter
-       that only clears by real processing (no read-to-dismiss). -->
-  <div v-if="status && status.enabled" class="git-menu-wrap">
+       Always rendered in its fixed header position AND always clickable. Two rejections
+       in a row landed on exactly this button: first it self-hid whenever git status was
+       unavailable ("깃버튼이 어딨어"), then it rendered but sat disabled ("깃버튼은 눌러도
+       반응도 없고"). A dead control reads the same as a missing one, so the click always
+       opens the dropdown and the dropdown itself says why there is nothing to finalize.
+       A quiet icon when there is no finalize backlog, a labelled attention button +
+       pending-count badge when there is (0165 T0004: discoverability). The badge is a
+       work counter that only clears by real processing (no read-to-dismiss). -->
+  <div class="git-menu-wrap">
     <button
       class="hdr-btn git-menu-btn"
-      :class="{ 'git-menu-attn': status.pending_count > 0 }"
+      :class="{ 'git-menu-attn': gitStatus.pending_count > 0, active: dropdownOpen }"
       type="button"
+      :aria-expanded="dropdownOpen"
       :title="t('main.git_menu.tooltip')"
       @click.stop="toggleDropdown"
     >
       <AppIcon name="git-branch" />
-      <span v-if="status.pending_count > 0" class="git-menu-label">
+      <span v-if="gitStatus.pending_count > 0" class="git-menu-label">
         {{ t('main.git_menu.label') }}
       </span>
       <span
-        v-if="status.pending_count > 0"
+        v-if="gitStatus.pending_count > 0"
         class="git-menu-badge"
-      >{{ status.pending_count }}</span>
+      >{{ gitStatus.pending_count }}</span>
     </button>
 
     <div v-if="dropdownOpen" class="git-menu-dd" @click.stop>
       <div class="git-menu-dd-hd">
-        {{ t('main.git_menu.title') }} ({{ status.pending_count }})
+        {{ t('main.git_menu.title') }} ({{ gitStatus.pending_count }})
       </div>
-      <p v-if="!status.pending.length" class="git-menu-empty">
+      <!-- Three states, never a blank popover: the first status request is still in
+           flight / git is off or unreachable for this project / a real (possibly empty)
+           pending list. -->
+      <p v-if="!statusLoaded" class="git-menu-empty">
+        {{ t('main.git_menu.loading') }}
+      </p>
+      <p v-else-if="!gitStatus.enabled" class="git-menu-empty">
+        {{ t('main.git_menu.unavailable') }}
+      </p>
+      <p v-else-if="!gitStatus.pending.length" class="git-menu-empty">
         {{ t('main.git_menu.empty') }}
       </p>
-      <div v-for="p in status.pending" :key="p.group_id" class="git-menu-row">
+      <div v-for="p in gitStatus.pending" :key="p.group_id" class="git-menu-row">
         <span class="git-menu-gid">{{ p.group_id }}</span>
         <span class="badge" :class="statusBadgeClass(p.status)">{{ statusLabel(p.status) }}</span>
         <span class="git-menu-spacer"></span>
@@ -54,7 +68,12 @@
           <AppIcon name="arrow-square-out" /> {{ t('main.git_status.open') }}
         </button>
       </div>
-      <button class="git-menu-status-link" type="button" @click="openPanel">
+      <button
+        v-if="gitStatus.enabled"
+        class="git-menu-status-link"
+        type="button"
+        @click="openPanel"
+      >
         <AppIcon name="tree-structure" /> {{ t('main.git_menu.open_status') }}
         <AppIcon name="arrow-right" />
       </button>
@@ -136,6 +155,15 @@ interface GitStatus {
 
 const projectId = computed(() => projectStore.currentProjectId)
 const status = ref<GitStatus | null>(null)
+const gitStatus = computed<GitStatus>(() => status.value ?? {
+  enabled: false,
+  base_branch: null,
+  pending: [],
+  pending_count: 0,
+})
+// Separates "not fetched yet" from "fetched, and git is off here" so the dropdown never
+// claims a project has no git integration while its first request is still in flight.
+const statusLoaded = ref(false)
 const busy = ref(false)
 const dropdownOpen = ref(false)
 const panelOpen = ref(false)
@@ -160,6 +188,7 @@ function statusBadgeClass(s: string): string {
 async function fetchStatus() {
   if (!projectId.value) {
     status.value = null
+    statusLoaded.value = false
     return
   }
   try {
@@ -169,7 +198,10 @@ async function fetchStatus() {
       projectId.value,
     )) as unknown as GitStatus | null
   } catch {
-    status.value = null // 403/404 — button stays hidden for non-git projects
+    // 403/404 — the header button stays live; the dropdown reports git as unavailable.
+    status.value = null
+  } finally {
+    statusLoaded.value = true
   }
 }
 
@@ -364,7 +396,7 @@ watch(projectId, fetchStatus)
 .git-menu-dd {
   position: absolute;
   top: calc(100% + 8px);
-  right: 0;
+  left: 0;
   min-width: 320px;
   max-width: 420px;
   background: var(--bg-card, #fff);
@@ -399,6 +431,18 @@ watch(projectId, fetchStatus)
 .git-menu-gid {
   font-size: 0.78rem;
   font-family: var(--mono, ui-monospace, monospace);
+  /* The row is only 320–420px wide, so without this both the group id and the status
+     badge get squeezed into two- and three-line stacks ("반영 대 / 기", "충 / 돌").
+     The id may ellipsize; the short status word never wraps. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.git-menu-row > .badge {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .git-menu-spacer {
   flex: 1 1 auto;

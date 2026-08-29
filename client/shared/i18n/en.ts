@@ -2778,6 +2778,8 @@ export default {
       label: 'Git',
       title: 'Git finalize pending',
       empty: 'Nothing is waiting to be finalized.',
+      loading: 'Reading Git status…',
+      unavailable: 'Git integration is not set up for this project.',
       open_status: 'Open Git status',
     },
   },

@@ -2774,6 +2774,8 @@ export default {
       label: 'Git',
       title: 'Git 마무리 대기',
       empty: '마무리 대기 중인 항목이 없습니다.',
+      loading: 'Git 상태를 읽는 중입니다…',
+      unavailable: '이 프로젝트에는 Git 연동이 설정되어 있지 않습니다.',
       open_status: 'Git 현황 열기',
     },
   },
