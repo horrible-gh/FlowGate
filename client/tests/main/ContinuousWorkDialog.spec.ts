@@ -1035,6 +1035,17 @@ describe('ContinuousWorkDialog', () => {
   // timeout picker above, it is NOT remembered in localStorage (session-scoped policy,
   // reset to the default on every open).
   describe('재시작 횟수 section (0443 T0002)', () => {
+    it('shows the applies-to-no-output-only description (0476 T0009)', async () => {
+      getRequest.mockResolvedValue(seqResponse())
+      const wrapper = mountDialog()
+      await flushPromises()
+
+      const desc = document.querySelector('.cwd-restart-desc')
+      expect(desc?.textContent).toBe(i18n.global.t('main.continuous_work.restart_count_desc'))
+
+      wrapper.unmount()
+    })
+
     it('defaults to 1 and reports 1 on confirm', async () => {
       getRequest.mockResolvedValue(seqResponse())
       const wrapper = mountDialog()

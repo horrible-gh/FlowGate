@@ -1686,6 +1686,7 @@ export default {
       step_timeout_title: '단계별 제한 시간',
       step_timeout_option_minutes: '{n}분',
       restart_count_title: '실패 시 최대 재시작 횟수',
+      restart_count_desc: '무응답(응답 없음)으로 실패했을 때만 적용됩니다. 검수 단계는 이 설정과 무관하게 항상 최초 1회 + 재실행 1회로 고정됩니다. 제한 시간 초과·질의 답변 대기·예산 소진으로 멈추는 경우에는 남은 횟수와 무관하게 즉시 중단됩니다.',
       restart_count_option_forever: '될 때까지 (-1)',
       restart_count_option_none: '재실행 안 함 (0)',
       restart_count_option_n: '{n}회',

@@ -3189,6 +3189,37 @@ class TestT0005ReviewIdAnchor:
                 f"review_id={bad_value!r} present-but-invalid must not suppress")
 
 
+class TestReviewFindingsToNextStepEndToEnd0476:
+    """0476 T0009: findings -> auto-reject -> rework -> pass -> settle, as one chain.
+
+    TestGateDerivation.test_count_one_issues_rejects_reworks_then_advances only watches
+    resolve_review_gate's derivation, and TestT0005ReviewIdAnchor.test_a3_a_pass_after_
+    rework_finds_the_document_still_revised only watches the pass-then-settle half. Neither
+    ties findings actually causing the auto-reject write to the rejection actually landing a
+    rework hop, nor the rework landing to the pass actually launching item_seq 6.
+    """
+
+    def test_findings_reject_rework_pass_settle_reach_next_step(self, world, real_gate_exec):
+        world.fill(5, "doc-5")
+        world.review("doc-5", "issues", revision_no=0,
+                     findings=[{"locus": "§1", "note": "fix x"}])
+
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+        assert real_gate_exec["rejected"] == ["doc-5"]
+        assert len(real_gate_exec["rework"]) == 1
+
+        world.rework("doc-5", 1)
+        assert world.docs["doc-5"]["revision_no"] == 1
+        assert world.docs["doc-5"]["doc_review_status"] == "revised"
+
+        world.review("doc-5", "pass", revision_no=1)
+
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+        assert real_gate_exec["settled"] == ["doc-5"]
+        assert len(real_gate_exec["work"]) == 1
+        assert real_gate_exec["parked"] == []
+
+
 # ══════════════════════════════════════════════════════════════════════════════════════
 # 0458 T0007 §3.1 — the failure detail survives all the way to the sentence a human reads
 # ══════════════════════════════════════════════════════════════════════════════════════

@@ -150,6 +150,7 @@
                      native-select combo pattern as the timeout picker above. -->
                 <div class="cwd-mode-group">
                   <div class="cwd-section-title">{{ t('main.continuous_work.restart_count_title') }}</div>
+                  <p class="cwd-toggle-desc cwd-restart-desc">{{ t('main.continuous_work.restart_count_desc') }}</p>
                   <label class="cwd-restart-combo">
                     <select
                       v-model.number="restartMaxAttempts"
