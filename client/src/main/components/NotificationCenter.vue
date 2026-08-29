@@ -23,7 +23,7 @@
         <!-- Mockup 3: live indicator — the feed refreshes in place as workflow inflow arrives over SSE. -->
         <span class="notif-live"><span class="notif-live-dot"></span> {{ t('main.notif_center.live') }}</span>
         <button
-          v-if="store.items.length > 0"
+          v-if="activeSection === 'general' && store.items.length > 0"
           class="notif-mark-read"
           type="button"
           @click="markAllRead"
@@ -32,8 +32,24 @@
         </button>
       </div>
 
+      <div class="notif-section-tabs" role="tablist" :aria-label="t('main.notif_center.sections_label')">
+        <button
+          v-for="section in sections"
+          :key="section.key"
+          class="notif-section-tab"
+          :class="{ active: activeSection === section.key }"
+          type="button"
+          role="tab"
+          :aria-selected="activeSection === section.key"
+          @click="activeSection = section.key"
+        >
+          {{ section.label }}
+        </button>
+      </div>
+
+      <div v-if="activeSection === 'general'" class="notif-section-body notif-section-body--general">
       <!-- Mockup 3: filter tabs (all / needs attention / unread) with live counts. -->
-      <div v-if="store.items.length > 0" class="notif-tabs" role="tablist">
+      <div v-if="store.items.length > 0" class="notif-tabs" role="tablist" :aria-label="t('main.notif_center.filters_label')">
         <button
           v-for="tab in tabs"
           :key="tab.key"
@@ -115,6 +131,11 @@
           </span>
         </button>
       </div>
+      </div>
+
+      <div v-else class="notif-section-body notif-section-placeholder">
+        <p>{{ t(`main.notif_center.${activeSection}_empty`) }}</p>
+      </div>
     </div>
   </div>
 </template>
@@ -138,6 +159,14 @@ const { activityColor, activityActionLabel, formatDashboardTime, reviewTone, rev
 
 const open = ref(false)
 const rootEl = ref<HTMLElement | null>(null)
+
+type NotifSection = 'general' | 'ai' | 'qa'
+const activeSection = ref<NotifSection>('general')
+const sections = computed(() => [
+  { key: 'general' as const, label: t('main.notif_center.section_general') },
+  { key: 'ai' as const, label: t('main.notif_center.section_ai') },
+  { key: 'qa' as const, label: t('main.notif_center.section_qa') },
+])
 
 // Mockup 3 filter tabs. All = everything; needs attention = rows whose AI verdict flags attention
 // (issues/hold — the "됐다는데 사실 반쪽" cases the mockup surfaces); unread = unread since last open.
@@ -186,6 +215,8 @@ function refresh() {
 function toggle() {
   open.value = !open.value
   if (open.value) {
+    activeSection.value = 'general'
+    activeFilter.value = 'all'
     refresh()
     void markAllRead()
   }
@@ -225,6 +256,8 @@ function onInflow() {
 
 watch(() => projectStore.currentProjectId, (pid) => {
   open.value = false
+  activeSection.value = 'general'
+  activeFilter.value = 'all'
   store.reset()
   if (pid) void store.fetchFeed(pid)
 })
@@ -373,6 +406,35 @@ onBeforeUnmount(() => {
 @keyframes notifPulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, .55); }
   50% { box-shadow: 0 0 0 5px rgba(239, 68, 68, 0); }
+}
+
+.notif-section-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+}
+.notif-section-tab {
+  padding: 10px 4px 8px;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted, #64748b);
+  font-size: .76rem;
+  font-weight: 700;
+}
+.notif-section-tab:hover { color: var(--primary, #2563eb); }
+.notif-section-tab.active {
+  border-bottom-color: var(--primary, #2563eb);
+  color: var(--primary, #2563eb);
+}
+.notif-section-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 150px;
+  padding: 32px 16px;
+  color: var(--text-muted, #64748b);
+  font-size: .8rem;
+  text-align: center;
 }
 
 .notif-tabs {

@@ -99,6 +99,58 @@ describe('NotificationCenter 시안 3 mockup (group 0135)', () => {
     expect(rows[0].classes()).toContain('notif-item--danger')
   })
 
+  it('shows General, AI, and Q&A section tabs in order with General selected', async () => {
+    const wrapper = await mountOpen([activity({ event_id: 1 })])
+
+    const sectionTabs = wrapper.findAll('.notif-section-tab')
+    expect(sectionTabs.map((tab) => tab.text())).toEqual(['일반', 'AI', '질의응답'])
+    expect(sectionTabs.map((tab) => tab.attributes('role'))).toEqual(['tab', 'tab', 'tab'])
+    expect(sectionTabs.map((tab) => tab.attributes('aria-selected'))).toEqual(['true', 'false', 'false'])
+    expect(wrapper.find('.notif-tabs').exists()).toBe(true)
+  })
+
+  it('keeps the existing filters and feed inside General while section switches only replace the body', async () => {
+    const items = [
+      activity({ event_id: 1, document: { doc_id: 'a', type_code: 'TR', title: 'A', review: { status: 'open', verdict: 'issues', finding_count: 2 } } }),
+      activity({ event_id: 2, document: { doc_id: 'b', type_code: 'NR', title: 'B', review: { status: 'open', verdict: 'pass', finding_count: 0 } } }),
+    ]
+    const wrapper = await mountOpen(items)
+    const store = useNotificationsStore()
+    const fetchFeed = vi.mocked(store.fetchFeed)
+    const callsBeforeSwitch = fetchFeed.mock.calls.length
+
+    const generalFilters = wrapper.findAll('.notif-tab')
+    expect(generalFilters.map((tab) => tab.text())).toEqual(['전체 2', '확인 필요 1', '미확인 2'])
+    await generalFilters[1].trigger('click')
+    expect(wrapper.findAll('.notif-item')).toHaveLength(1)
+
+    await wrapper.findAll('.notif-section-tab')[1].trigger('click')
+    expect(wrapper.find('.notif-tabs').exists()).toBe(false)
+    expect(wrapper.find('.notif-item').exists()).toBe(false)
+    expect(wrapper.find('.notif-mark-read').exists()).toBe(false)
+    expect(wrapper.find('.notif-section-placeholder').text()).toContain('AI 알림 목록')
+
+    await wrapper.findAll('.notif-section-tab')[2].trigger('click')
+    expect(wrapper.find('.notif-section-placeholder').text()).toContain('질의응답 알림 목록')
+
+    await wrapper.findAll('.notif-section-tab')[0].trigger('click')
+    expect(wrapper.find('.notif-tabs').exists()).toBe(true)
+    expect(wrapper.findAll('.notif-item')).toHaveLength(1)
+    expect(wrapper.find('.notif-mark-read').exists()).toBe(true)
+    expect(fetchFeed).toHaveBeenCalledTimes(callsBeforeSwitch)
+  })
+
+  it('resets the default section and filter when the panel is reopened', async () => {
+    const wrapper = await mountOpen([activity({ event_id: 1 })])
+    await wrapper.findAll('.notif-tab')[2].trigger('click')
+    await wrapper.findAll('.notif-section-tab')[1].trigger('click')
+    await wrapper.find('.notif-bell').trigger('click')
+    await wrapper.find('.notif-bell').trigger('click')
+
+    expect(wrapper.findAll('.notif-section-tab')[0].attributes('aria-selected')).toBe('true')
+    expect(wrapper.findAll('.notif-tab')[0].attributes('aria-selected')).toBe('true')
+  })
+
   it('gives the terminal continuous-completed row its distinct emerald signal', async () => {
     const items = [
       activity({ event_id: 1, activity_type: 'continuous_work_completed', document: { doc_id: 'a', type_code: 'TR', title: 'A', review: null } }),
