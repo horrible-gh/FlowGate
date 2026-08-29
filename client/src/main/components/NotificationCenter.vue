@@ -418,6 +418,10 @@ onBeforeUnmount(() => {
   window.removeEventListener('click', onClickOutside, true)
   window.removeEventListener('keydown', onKeyDown)
 })
+
+// Exposed so tests can observe panel-open state synchronously (ordering assertions);
+// no runtime behaviour depends on this.
+defineExpose({ open })
 </script>
 
 <style scoped>

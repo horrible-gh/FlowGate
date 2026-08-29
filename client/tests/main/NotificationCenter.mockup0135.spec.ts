@@ -1,5 +1,6 @@
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { watch } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import NotificationCenter from '@main/components/NotificationCenter.vue'
@@ -164,8 +165,26 @@ describe('NotificationCenter 시안 3 mockup (group 0135)', () => {
     expect(wrapper.findAll('.notif-section-tab')[2].text()).toBe('질의응답 3')
     expect(wrapper.find('.notif-qa-row').text()).toContain('flowgate.default.0135.0017-T — Task title')
     currentRoute.value.path = '/requirements/create'
-    await wrapper.find('.notif-qa-open').trigger('click')
 
+    // Record the exact order of "intent recorded" vs "panel closed" with sync watchers on
+    // the underlying refs — both mutations happen synchronously back-to-back in
+    // openQaDocument(), so any assertion that waits for a DOM/microtask flush would pass
+    // even if the two statements were swapped. flush: 'sync' fires the moment each ref
+    // is written, before either can be reordered by scheduling.
+    const order: string[] = []
+    const { intent } = useQaOpenIntent()
+    const stopIntentWatch = watch(() => intent.value?.docId, (docId) => {
+      if (docId) order.push('intent-recorded')
+    }, { flush: 'sync' })
+    const stopOpenWatch = watch(() => wrapper.vm.open, (isOpen) => {
+      if (!isOpen) order.push('panel-closed')
+    }, { flush: 'sync' })
+
+    await wrapper.find('.notif-qa-open').trigger('click')
+    stopIntentWatch()
+    stopOpenWatch()
+
+    expect(order).toEqual(['intent-recorded', 'panel-closed'])
     expect(routerPush).toHaveBeenCalledWith('/')
     expect(routerPush.mock.invocationCallOrder[0]).toBeLessThan(openDashboardTarget.mock.invocationCallOrder[0])
     expect(openDashboardTarget).toHaveBeenCalledWith({

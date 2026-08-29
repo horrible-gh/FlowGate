@@ -65,12 +65,17 @@ describe('AppHeader relocated Git/alarm group (0471 D0008 §3.1)', () => {
     const header = wrapper.get('.app-header').element
     const children = Array.from(header.children)
     const groupIdx = children.findIndex(el => el.classList.contains('hdr-actions'))
+    const selectorIdx = children.findIndex(
+      el => el.tagName.toLowerCase() === 'project-selector-stub',
+    )
     const monitorIdx = children.findIndex(
       el => el.getAttribute('data-test') === 'ai-miniplayer',
     )
 
+    expect(selectorIdx).toBeGreaterThanOrEqual(0)
     expect(groupIdx).toBeGreaterThanOrEqual(0)
-    // group → divider → run monitor
+    // project selector → ... → group → divider → run monitor
+    expect(groupIdx).toBeGreaterThan(selectorIdx)
     expect(children[groupIdx + 1].classList.contains('hdr-div')).toBe(true)
     expect(monitorIdx).toBe(groupIdx + 2)
 
