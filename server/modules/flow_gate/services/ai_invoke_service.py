@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
 import threading
@@ -686,13 +687,13 @@ def get_run_detail(run_id: str) -> dict:
         payload = get_status(run_id)
         payload["persisted"] = False
     else:
-    from modules.flow_gate.db import ai_invoke_runs as db_runs
+        from modules.flow_gate.db import ai_invoke_runs as db_runs
 
-    row = db_runs.get(run_id)
-    if row is None:
-        raise _http_error(404, "run_not_found", "Unknown or expired run id.")
-    payload = _run_detail_from_row(row)
-    payload["persisted"] = True
+        row = db_runs.get(run_id)
+        if row is None:
+            raise _http_error(404, "run_not_found", "Unknown or expired run id.")
+        payload = _run_detail_from_row(row)
+        payload["persisted"] = True
 
     project_id = str(payload.get("project_id") or payload.get("group_id") or "").split(".", 1)[0]
     payload["project_id"] = project_id
@@ -992,27 +993,173 @@ def _project_scratch_root(project_id: str) -> Path:
     return storage_paths.get_storage_root(project_id, create=True) / "scratch" / _sanitize_project_name(project_name)
 
 
+SCRATCH_MANIFEST_NAME = ".flowgate-ai-scratch.json"
+SCRATCH_MANIFEST_SCHEMA = 1
+_RUN_ID_RE = re.compile(r"\Aaiv_[0-9]{8}_[0-9]{6}\Z")
+
+
+def _safe_scratch_log(project_id: str, run_id: str, scratch: Path, action: str, reason: str) -> None:
+    """Emit one escaped event without prompts, commands, credentials, or raw paths."""
+    try:
+        root = _project_scratch_root(project_id).resolve(strict=False)
+        relative = scratch.resolve(strict=False).relative_to(root).as_posix()
+    except Exception:
+        relative = "<outside-managed-root>"
+    logger.info("ai-invoke scratch %s", json.dumps({
+        "run_id": str(run_id) if _RUN_ID_RE.fullmatch(str(run_id)) else "<invalid>",
+        "scratch": relative,
+        "action": action,
+        "reason": reason,
+    }, ensure_ascii=True))
+
+
+def _is_reparse_or_symlink(path: Path) -> bool:
+    try:
+        if path.is_symlink():
+            return True
+        attrs = getattr(path.lstat(), "st_file_attributes", 0)
+        reparse_flag = getattr(__import__("stat"), "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        return bool(attrs & reparse_flag)
+    except OSError:
+        return True
+
+
+def _atomic_write_manifest(scratch: Path, manifest: dict) -> None:
+    target = scratch / SCRATCH_MANIFEST_NAME
+    temporary = scratch / (SCRATCH_MANIFEST_NAME + ".tmp")
+    data = json.dumps(manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    with temporary.open("x", encoding="utf-8", newline="\n") as handle:
+        handle.write(data)
+        handle.flush()
+    temporary.replace(target)
+
+
+def _manifest_for(project_id: str, run_id: str, scratch: Path) -> dict:
+    return {
+        "schema": SCRATCH_MANIFEST_SCHEMA,
+        "owner": "flowgate.ai-invoke",
+        "project_id": project_id,
+        "run_id": run_id,
+        "scratch_path": str(scratch.resolve(strict=True)),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "completed_at": None,
+        "policy": {"retention_days": SCRATCH_RETENTION_DAYS, "delete_on_complete": True},
+    }
+
+
 def _create_scratch(project_id: str, run_id: str) -> Path:
-    scratch = _project_scratch_root(project_id) / run_id
-    scratch.mkdir(parents=True, exist_ok=True)
+    if not _RUN_ID_RE.fullmatch(str(run_id)):
+        raise ValueError("invalid ai-invoke run id")
+    root = _project_scratch_root(project_id)
+    root.mkdir(parents=True, exist_ok=True)
+    root_resolved = root.resolve(strict=True)
+    scratch = root / run_id
+    scratch.mkdir(exist_ok=False)
+    try:
+        if _is_reparse_or_symlink(scratch) or scratch.resolve(strict=True).parent != root_resolved:
+            raise ValueError("scratch is not a direct managed child")
+        (scratch / "tmp").mkdir()
+        (scratch / "cache").mkdir()
+        _atomic_write_manifest(scratch, _manifest_for(project_id, run_id, scratch))
+    except Exception:
+        if scratch.exists() and not _is_reparse_or_symlink(scratch):
+            shutil.rmtree(scratch)
+        raise
+    _safe_scratch_log(project_id, run_id, scratch, "created", "manifest_written")
     return scratch
 
 
+def _validate_scratch_manifest(project_id: str, run_id: str, scratch: Path) -> tuple[Optional[dict], str]:
+    if not _RUN_ID_RE.fullmatch(str(run_id)):
+        return None, "invalid_run_id"
+    try:
+        root = _project_scratch_root(project_id).resolve(strict=True)
+        if _is_reparse_or_symlink(scratch):
+            return None, "reparse_or_symlink"
+        resolved = scratch.resolve(strict=True)
+        if resolved == root or resolved.parent != root or scratch.parent.resolve(strict=True) != root:
+            return None, "outside_or_nested"
+        if not resolved.is_dir() or resolved.name != run_id:
+            return None, "path_identity_mismatch"
+        manifest_path = resolved / SCRATCH_MANIFEST_NAME
+        if _is_reparse_or_symlink(manifest_path) or not manifest_path.is_file():
+            return None, "manifest_missing"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        expected_policy = {"retention_days": SCRATCH_RETENTION_DAYS, "delete_on_complete": True}
+        if manifest.get("schema") != SCRATCH_MANIFEST_SCHEMA or manifest.get("owner") != "flowgate.ai-invoke":
+            return None, "manifest_identity_invalid"
+        if manifest.get("project_id") != project_id or manifest.get("run_id") != run_id:
+            return None, "manifest_owner_mismatch"
+        if manifest.get("scratch_path") != str(resolved) or manifest.get("policy") != expected_policy:
+            return None, "manifest_path_or_policy_mismatch"
+        return manifest, "valid"
+    except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
+        return None, "manifest_unreadable"
+
+
+def _mark_scratch_completed(project_id: str, run_id: str, scratch: Path, completed_at: str) -> bool:
+    manifest, reason = _validate_scratch_manifest(project_id, run_id, scratch)
+    if manifest is None:
+        _safe_scratch_log(project_id, run_id, scratch, "retained", reason)
+        return False
+    manifest["completed_at"] = completed_at
+    try:
+        target = scratch / SCRATCH_MANIFEST_NAME
+        temporary = scratch / (SCRATCH_MANIFEST_NAME + ".update")
+        temporary.write_text(json.dumps(manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+        temporary.replace(target)
+        return True
+    except OSError:
+        _safe_scratch_log(project_id, run_id, scratch, "retained", "manifest_update_failed")
+        return False
+
+
+def _delete_owned_scratch(project_id: str, run_id: str, scratch: Path) -> tuple[bool, str]:
+    manifest, reason = _validate_scratch_manifest(project_id, run_id, scratch)
+    if manifest is None:
+        return False, reason
+    try:
+        shutil.rmtree(scratch)
+    except Exception:
+        return False, "delete_failed"
+    if scratch.exists() or scratch.is_symlink():
+        return False, "delete_incomplete"
+    _safe_scratch_log(project_id, run_id, scratch, "deleted", "verified_absent")
+    return True, "deleted"
+
+
 def _cleanup_retained_scratches(project_id: str) -> None:
-    """Best-effort: drop retained scratches older than SCRATCH_RETENTION_DAYS."""
+    """Delete only manifest-proven direct children retained for at least seven days."""
     try:
         root = _project_scratch_root(project_id)
-        if not root.is_dir():
+        if not root.is_dir() or _is_reparse_or_symlink(root):
             return
-        cutoff = time.time() - SCRATCH_RETENTION_DAYS * 86400
+        now = datetime.now(timezone.utc)
         for child in root.iterdir():
+            run_id = child.name
+            if not child.is_dir() or _is_reparse_or_symlink(child):
+                _safe_scratch_log(project_id, run_id, child, "skipped", "not_owned_directory")
+                continue
+            manifest, reason = _validate_scratch_manifest(project_id, run_id, child)
+            if manifest is None:
+                _safe_scratch_log(project_id, run_id, child, "skipped", reason)
+                continue
             try:
-                if child.is_dir() and child.stat().st_mtime < cutoff:
-                    shutil.rmtree(child, ignore_errors=True)
-            except Exception:
-                logger.warning("scratch retention sweep failed for %s", child, exc_info=True)
+                completed = datetime.fromisoformat(str(manifest.get("completed_at")))
+                if completed.tzinfo is None:
+                    raise ValueError
+                age = now - completed.astimezone(timezone.utc)
+            except (TypeError, ValueError):
+                _safe_scratch_log(project_id, run_id, child, "skipped", "completion_time_invalid")
+                continue
+            if age < timedelta(days=SCRATCH_RETENTION_DAYS):
+                _safe_scratch_log(project_id, run_id, child, "retained", "retention_active")
+                continue
+            deleted, delete_reason = _delete_owned_scratch(project_id, run_id, child)
+            if not deleted:
+                _safe_scratch_log(project_id, run_id, child, "retained", delete_reason)
     except Exception:
-        logger.warning("scratch retention sweep failed for project %s", project_id, exc_info=True)
+        logger.warning("ai-invoke scratch sweep failed")
 
 
 # ── Source-spill check (L0006 §2.8) ──────────────────────────────────────────
@@ -3658,6 +3805,107 @@ def _stop_progress_watchdog(stop_event: Optional[threading.Event], thread,
 
 # ── CLI adapter (L0006 §2.3) ─────────────────────────────────────────────────
 
+_CLI_LAUNCH_AUDIT_SCHEMA = "flowgate.external-cli-launch.v1"
+
+
+def _shell_kind() -> str:
+    return "windows_cmd" if os.name == "nt" else "posix_sh"
+
+
+def _stable_provider_kind(provider: dict) -> str:
+    kind = str(provider.get("kind") or "").lower()
+    return kind if kind in {"codex", "claude"} else "other"
+
+
+def _audit_cli_launch(decision: dict) -> None:
+    """Emit exactly one secret-free, line-safe launch decision event."""
+    allowed = {
+        "schema", "event", "decision", "reason", "run_id", "provider_kind",
+        "cwd_source", "spawn_cwd", "agent_cwd", "cwd_transition",
+        "shell_kind", "is_unc",
+    }
+    event = {key: decision.get(key) for key in allowed}
+    event["schema"] = _CLI_LAUNCH_AUDIT_SCHEMA
+    event["event"] = "external_cli_launch_decision"
+    try:
+        logger.info("ai-invoke cli spawn decision %s", json.dumps(event, ensure_ascii=True))
+    except Exception:
+        pass  # logging must never affect the launch outcome
+
+
+def _blocked_cli_launch(run: dict, provider: dict, reason: str) -> dict:
+    return {
+        "decision": "blocked", "reason": reason,
+        "run_id": run.get("run_id") if _RUN_ID_RE.fullmatch(str(run.get("run_id") or "")) else "<invalid>",
+        "provider_kind": _stable_provider_kind(provider),
+        "cwd_source": None, "spawn_cwd": None, "agent_cwd": None,
+        "cwd_transition": None, "shell_kind": _shell_kind(),
+        "is_unc": None,
+    }
+
+
+def _resolve_cli_launch(provider: dict, run: dict, command: str) -> tuple[Optional[dict], str]:
+    """Resolve the sole product CLI spawn contract, or fail closed with a fixed code.
+
+    Product runs always carry project_id and therefore must prove the current run scratch
+    manifest even when a group worktree is the agent cwd (the scratch is still the UNC
+    bootstrap and temp/cache boundary). The project-less compatibility branch exists only
+    for older isolated unit harnesses; start_run never creates such a run.
+    """
+    scratch = Path(run.get("scratch_dir") or "")
+    project_id = run.get("project_id")
+    run_id = str(run.get("run_id") or "")
+    if project_id:
+        manifest, reason = _validate_scratch_manifest(project_id, run_id, scratch)
+        if manifest is None:
+            return None, f"scratch_{reason}"
+    try:
+        scratch_abs = scratch.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None, "scratch_unavailable"
+    if not scratch_abs.is_absolute() or not scratch_abs.is_dir() or _is_reparse_or_symlink(scratch):
+        return None, "scratch_unavailable"
+
+    source = Path(run["source_root"]) if run.get("source_root") else None
+    agent_cwd = scratch_abs
+    cwd_source = "run_scratch"
+    if source is not None and source.is_dir() and run.get("group_id") and project_id:
+        try:
+            integrated = bool((db_git.get_config(project_id) or {}).get("enabled"))
+        except Exception:
+            integrated = False
+        if integrated:
+            if not _is_group_worktree(project_id, run["group_id"], source):
+                return None, "group_worktree_identity_invalid"
+            agent_cwd = source.absolute() if str(source).startswith("\\\\") else source.resolve(strict=True)
+            cwd_source = "group_worktree"
+    elif source is not None and source.is_dir() and not project_id:
+        # Test-only legacy run shape; real runs are covered by the manifest branch above.
+        agent_cwd = source.absolute() if str(source).startswith("\\\\") else source.resolve(strict=True)
+        cwd_source = "group_worktree"
+
+    effective_command, effective_cwd = process_runner.unc_safe_shell(command, agent_cwd)
+    is_unc = str(agent_cwd).startswith("\\\\")
+    if effective_cwd is None:
+        if not scratch_abs.is_absolute() or str(scratch_abs).startswith("\\\\"):
+            return None, "unc_bootstrap_unavailable"
+        spawn_cwd = scratch_abs
+        transition = "pushd"
+    else:
+        spawn_cwd = Path(effective_cwd).resolve(strict=True)
+        transition = "none"
+    if not spawn_cwd.is_absolute() or not spawn_cwd.is_dir():
+        return None, "spawn_cwd_unavailable"
+    return {
+        "decision": "launch", "reason": None, "run_id": run_id,
+        "provider_kind": _stable_provider_kind(provider), "cwd_source": cwd_source,
+        "spawn_cwd": str(spawn_cwd), "agent_cwd": str(agent_cwd),
+        "cwd_transition": transition,
+        "shell_kind": _shell_kind(),
+        "is_unc": is_unc, "effective_command": effective_command,
+    }, "valid"
+
+
 def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]:
     """stdin-injected CLI run (claude/copilot/codex; args are forbidden — cp932
     truncation). Returns (classification, failure_detail)."""
@@ -3677,24 +3925,8 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     if kind == "codex":
         cmd = f'{cmd} --output-last-message "{last_message_file}"'
 
-    # 0278 NR0003: resolve_project_src_root() returns the project's source-mirror path
-    # WITHOUT checking that it exists, and only git provisioning ever creates that
-    # directory. A non-git project therefore yields a real-looking path to a folder
-    # that is not there, and Popen(cwd=...) raises for every provider in the chain --
-    # the run dies as all_providers_failed with no last message. The mirror is not
-    # required for a CLI worker (it registers through the inbox API, not the tree),
-    # so fall back to the run scratch dir. The bare `else scratch` never covered this
-    # case because the resolver hands back a path, not None.
-    resolved_root = Path(run["source_root"]) if run.get("source_root") else None
-    if resolved_root is not None and resolved_root.is_dir():
-        source_root = resolved_root
-    else:
-        if resolved_root is not None:
-            logger.warning(
-                "ai-invoke %s: source mirror missing at %s - running in scratch %s",
-                run["run_id"], resolved_root, scratch,
-            )
-        source_root = scratch
+    # T0011: cwd is selected once below by _resolve_cli_launch. No caller cwd, HOME,
+    # installation directory, base checkout, or OS temp fallback is permitted.
     # Group 0235 (D0005 §3-4 / L0008 §2-5): the external agent runs on THIS host and
     # must post results to an address it can actually reach. The mention was built
     # with the operator-facing base; rewrite it (and export it) to an agent-reachable
@@ -3706,18 +3938,31 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     env = {
         "FLOWGATE_TOKEN": run["raw_token"],
         "FLOWGATE_SCRATCH": run["scratch_dir"],
+        "TMP": str(scratch / "tmp"),
+        "TEMP": str(scratch / "tmp"),
+        "TMPDIR": str(scratch / "tmp"),
+        "XDG_CACHE_HOME": str(scratch / "cache"),
+        "PIP_CACHE_DIR": str(scratch / "cache" / "pip"),
+        "NPM_CONFIG_CACHE": str(scratch / "cache" / "npm"),
         "FLOWGATE_API_BASE": agent_api_base or operator_api_base,
     }
-    eff_cmd, eff_cwd = process_runner.unc_safe_shell(cmd, source_root)
-    kwargs = process_runner.popen_kwargs(source_root, env)
-    kwargs["cwd"] = eff_cwd
+    decision, reason = _resolve_cli_launch(provider, run, cmd)
+    if decision is None:
+        blocked = _blocked_cli_launch(run, provider, reason)
+        _audit_cli_launch(blocked)
+        return "spawn_failed", f"CLI launch blocked: {reason}"
+    eff_cmd = decision.pop("effective_command")
+    agent_cwd = Path(decision["agent_cwd"])
+    kwargs = process_runner.popen_kwargs(agent_cwd, env)
+    kwargs["cwd"] = decision["spawn_cwd"]
     kwargs["stdin"] = subprocess.PIPE
+    _audit_cli_launch(decision)
 
     launched = time.monotonic()
     try:
         proc = subprocess.Popen(eff_cmd, **kwargs)
-    except Exception as exc:
-        return "spawn_failed", str(exc)[:500]
+    except Exception:
+        return "spawn_failed", "unable to start CLI process"
 
     run["proc"] = proc
     # Close the cancel-vs-spawn race: a cancel that landed between admission and
@@ -4514,18 +4759,26 @@ def _finalize_run(run: dict) -> None:
     run["resumable"] = is_resumable(run["stop_code"])
     run["stop_reason"] = _stop_reason_text(run["stop_code"], run)
 
-    # Scratch lifecycle (§2.7): success cleans up, everything else retains.
+    # Scratch lifecycle: every deletion passes the manifest/identity boundary again.
     scratch = Path(run["scratch_dir"])
-    if run["outcome"] == "complete":
-        try:
-            shutil.rmtree(scratch, ignore_errors=True)
-        except Exception:
-            logger.warning("ai-invoke scratch cleanup failed: %s", scratch, exc_info=True)
-    else:
+    completed_at = datetime.now(timezone.utc).isoformat()
+    manifest_updated = _mark_scratch_completed(
+        run["project_id"], run["run_id"], scratch, completed_at
+    )
+    deleted = False
+    cleanup_reason = "non_complete_outcome"
+    if run["outcome"] == "complete" and manifest_updated:
+        deleted, cleanup_reason = _delete_owned_scratch(
+            run["project_id"], run["run_id"], scratch
+        )
+    if not deleted:
         try:
             run["scratch_retained"] = storage_paths.to_storage_relative(scratch, run["project_id"])
         except Exception:
             run["scratch_retained"] = run["scratch_dir"]
+        _safe_scratch_log(
+            run["project_id"], run["run_id"], scratch, "retained", cleanup_reason
+        )
 
     # Source-spill check (§2.8): only the delta vs the start-time snapshot.
     baseline = run.get("dirty_baseline")
