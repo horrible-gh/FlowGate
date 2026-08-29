@@ -64,6 +64,12 @@ ul, ol { list-style: none; }
 .brand-ver  { font-size: .6rem; color: rgba(255,255,255,.3); font-weight: 400; align-self: flex-end; padding-bottom: 2px; }
 .header-spacer { flex: 1; }
 .header-nav { display: flex; align-items: center; gap: 6px; padding: 0 12px; }
+/* Relocated header action group (0471 D0008 §3.1): Git + 알람 came out of .header-nav,
+   which had been supplying their spacing. .app-header itself is a gapless flex row, so the
+   group owns its own gap/padding — without it the button, the divider and the neighbouring
+   button touch (0020-TR rev3 rejection). Kept a touch wider than the nav's 6px because the
+   dividers here separate two different controls rather than items of one nav. */
+.hdr-actions { display: flex; align-items: center; gap: 10px; padding: 0 10px; }
 /* No icon inside: the run monitor chip immediately to its left is the group's single
    robot glyph (0269 TR0013 rev1). Left padding is 0 so the chip and the select read as
    one control group with no divider between them. */

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 import pytest
@@ -119,6 +120,9 @@ def fake_runs(monkeypatch):
         monkeypatch.setattr(db_runs, name, getattr(store, name))
     monkeypatch.setattr(svc, "_runs", {})
     monkeypatch.setattr(svc.db_projects, "get_by_id", lambda pid: {"project_id": pid})
+    monkeypatch.setattr(svc.db_docs, "get_by_id", lambda doc_id: {
+        "doc_id": doc_id, "project_id": PROJECT, "title": "Bound document",
+    })
     return store
 
 
@@ -274,6 +278,51 @@ def test_get_run_detail_unknown_id_is_404(fake_runs):
     assert exc_info.value.detail["code"] == "run_not_found"
 
 
+def test_get_run_detail_finished_memory_has_dialog_fields(fake_runs, monkeypatch):
+    run = defaultdict(lambda: None)
+    run.update({
+        "run_id": "aiv_memory_done", "status": "finished", "mode": "single",
+        "group_id": GROUP, "project_id": PROJECT, "doc_ref": DOC_REF,
+        "outcome": "complete", "end_reason": "completed", "stop_code": None,
+        "docs_reached": 1, "docs_target": 1, "reached_doc_ids": [],
+        "last_message_received": True, "last_message": "full result",
+        "provider_id": "aip_1", "provider": {"name": "cli-1"},
+        "started_at": "2026-07-31T09:00:00+09:00",
+        "finished_at": "2026-07-31T09:30:00+09:00", "attempt_no": 1,
+        "fallback_history": [], "source_dirty": False, "scratch_retained": None,
+        "duration_ms": 1800000,
+    })
+    monkeypatch.setattr(svc, "_runs", {run["run_id"]: run})
+
+    payload = svc.get_run_detail(run["run_id"])
+
+    assert payload["persisted"] is False
+    assert {key: payload[key] for key in (
+        "run_id", "doc_ref", "doc_title", "finished_at", "project_id", "succeeded",
+    )} == {
+        "run_id": "aiv_memory_done", "doc_ref": DOC_REF,
+        "doc_title": "Bound document", "finished_at": "2026-07-31T09:30:00+09:00",
+        "project_id": PROJECT, "succeeded": True,
+    }
+
+
+def test_get_run_detail_persisted_has_dialog_fields(fake_runs):
+    fake_runs.rows["aiv_persisted_done"] = _stored_row(
+        "aiv_persisted_done", stop_code=None,
+    )
+
+    payload = svc.get_run_detail("aiv_persisted_done")
+
+    assert payload["persisted"] is True
+    assert {key: payload[key] for key in (
+        "run_id", "doc_ref", "doc_title", "finished_at", "project_id", "succeeded",
+    )} == {
+        "run_id": "aiv_persisted_done", "doc_ref": DOC_REF,
+        "doc_title": "Bound document", "finished_at": "2026-07-31T09:30:00+09:00",
+        "project_id": PROJECT, "succeeded": True,
+    }
+
+
 # ── HTTP route contract ────────────────────────────────────────────────────────
 
 @pytest.fixture
@@ -342,6 +391,24 @@ def test_run_detail_route_404_wins_over_permission(client, monkeypatch):
     monkeypatch.setattr(ai_invoke_routes, "has_permission", lambda *a, **kw: False)
     resp = _get(client, "/api/v1/ai-invoke/aiv_missing")
     assert resp.status_code == 404
+
+
+def test_run_detail_route_uses_payload_project_for_permission(client, monkeypatch):
+    checked = []
+    monkeypatch.setattr(
+        ai_invoke_routes.ai_invoke_service, "get_run_detail",
+        lambda run_id: {"ok": True, "run_id": run_id, "group_id": GROUP,
+                        "project_id": "other", "status": "finished", "persisted": True},
+    )
+    monkeypatch.setattr(
+        ai_invoke_routes, "has_permission",
+        lambda user_id, project_id, permission: checked.append(project_id) or False,
+    )
+
+    resp = _get(client, "/api/v1/ai-invoke/aiv_other")
+
+    assert resp.status_code == 403
+    assert checked == ["other"]
 
 
 def test_run_detail_route_returns_persisted_payload(client, monkeypatch):

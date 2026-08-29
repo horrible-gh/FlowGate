@@ -520,7 +520,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, toRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
@@ -528,6 +528,7 @@ import QaHistoryDialog from './QaHistoryDialog.vue'
 import QaReviewHistoryDialog from './QaReviewHistoryDialog.vue'
 import GroupChangesDialog from './GroupChangesDialog.vue'
 import { useQaAnswers, type QaItem } from '../composables/useQaAnswers'
+import { useQaOpenIntent } from '../composables/useQaOpenIntent'
 import { useAiProviderStore } from '../stores/aiProvider'
 import { useExplorerStore, type GroupChangeData } from '../stores/explorer'
 import { useToast } from './common/useToast'
@@ -1229,6 +1230,21 @@ function openQaFull(focusId: number | null = null, startAnswer = false) {
   qaStartAnswer.value = startAnswer
   qaHistoryVisible.value = true
 }
+
+const { intent: qaOpenIntent, consumeQaOpen } = useQaOpenIntent()
+watch(
+  () => qaOpenIntent.value?.sequence,
+  async (sequence) => {
+    const requested = qaOpenIntent.value
+    if (!requested || sequence == null || requested.docId !== props.docId) return
+    if (!consumeQaOpen(props.docId, sequence)) return
+    if (props.collapsed) emit('toggle')
+    sectionCollapsed.qa = false
+    await nextTick()
+    openQaFull(null, false)
+  },
+  { immediate: true },
+)
 
 // The [전체보기] of the AI review·rejection section — opens the review/rejection-only QaReviewHistoryDialog.
 const reviewRejectHistoryVisible = ref(false)

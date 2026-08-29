@@ -24,6 +24,7 @@ vi.mock('@main/components/common/useToast', () => ({
 
 import DocInfoPanel from '@main/components/DocInfoPanel.vue'
 import QaHistoryDialog from '@main/components/QaHistoryDialog.vue'
+import { useQaOpenIntent } from '@main/composables/useQaOpenIntent'
 import AppIcon from '@shared/AppIcon.vue'
 
 beforeEach(() => {
@@ -322,6 +323,50 @@ describe('DocInfoPanel orphan recovery — 한국어 안내 (0457 T0009 §3 완�
 // actions in `.dip-qa-act` (`.dip-qa-fullview` / `.dip-qa-add`), the unanswered pill
 // in `.dip-qa-count`, and the full-view dialog is QaHistoryDialog. TR0005 rev6 반려
 // §3 ("질의는 빼라") split it back out of the merged dialog into its own again.
+describe('DocInfoPanel notification Q&A open intent (0471 T0017)', () => {
+  const props = {
+    docId: 'flowgate.default.0471.0017-T',
+    typeCode: 'T',
+    reviewStatus: 'pending_review',
+    rejectReason: null,
+    stepStates: [] as StepState[],
+    nextStepIndex: null,
+    collapsed: true,
+  }
+
+  it('consumes the matching intent, expands the panel and Q&A section, and opens full view', async () => {
+    const wrapper = mount(DocInfoPanel, { props, global: { plugins: [i18n] } })
+    useQaOpenIntent().requestQaOpen(props.docId)
+    await flushPromises()
+    expect(wrapper.emitted('toggle')).toHaveLength(1)
+    expect(wrapper.findComponent(QaHistoryDialog).props('visible')).toBe(true)
+    expect(useQaOpenIntent().intent.value).toBeNull()
+    // Both tests in this block target the same docId; an unmounted-but-still-reactive
+    // watcher from this instance would otherwise race the next test's watcher for the
+    // shared (module-singleton) intent and silently win the consumeQaOpen() call.
+    wrapper.unmount()
+  })
+
+  it('does not consume another document intent and reopens on each fresh matching sequence', async () => {
+    const wrapper = mount(DocInfoPanel, { props: { ...props, collapsed: false }, global: { plugins: [i18n] } })
+    useQaOpenIntent().requestQaOpen('flowgate.default.0471.9999-T')
+    await flushPromises()
+    expect(wrapper.findComponent(QaHistoryDialog).props('visible')).toBe(false)
+    expect(useQaOpenIntent().intent.value?.docId).toBe('flowgate.default.0471.9999-T')
+
+    useQaOpenIntent().requestQaOpen(props.docId)
+    await flushPromises()
+    expect(wrapper.findComponent(QaHistoryDialog).props('visible')).toBe(true)
+    await wrapper.findComponent(QaHistoryDialog).vm.$emit('update:visible', false)
+    await flushPromises()
+    useQaOpenIntent().requestQaOpen(props.docId)
+    await flushPromises()
+    expect(wrapper.findComponent(QaHistoryDialog).props('visible')).toBe(true)
+    expect(useQaOpenIntent().intent.value).toBeNull()
+    wrapper.unmount()
+  })
+})
+
 describe('DocInfoPanel 질의 panel (group 0022 §3.1, 0311 T0004 rev1)', () => {
   const baseProps = {
     docId: 'p.none.0001.0001-D',

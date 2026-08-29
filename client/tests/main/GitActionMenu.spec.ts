@@ -52,6 +52,55 @@ beforeEach(() => {
 })
 
 describe('GitActionMenu approval-result events', () => {
+  // 0471 0020-TR rev3 rejection — "깃버튼은 눌러도 반응도 없고". The button used to
+  // self-hide, then it rendered but was disabled whenever git status was unavailable.
+  // Both read as a broken button, so it must be present AND answer a click.
+  it('keeps the Git button visible and clickable before a Git status is available', async () => {
+    const wrapper = shallowMount(GitActionMenu, {
+      global: { plugins: [i18n], stubs: { GitStatusPanel: true, teleport: true } },
+    })
+
+    const button = wrapper.get('.git-menu-btn')
+    expect(button.attributes('disabled')).toBeUndefined()
+
+    await button.trigger('click')
+    expect(wrapper.find('.git-menu-dd').exists()).toBe(true)
+    expect(wrapper.get('.git-menu-dd').text()).toContain('Reading Git status')
+    wrapper.unmount()
+  })
+
+  it('opens a dropdown explaining that git is unavailable for a non-git project', async () => {
+    useProjectStore().setCurrentProject('hivework')
+    getRequest.mockRejectedValue(new Error('403'))
+    const wrapper = shallowMount(GitActionMenu, {
+      global: { plugins: [i18n], stubs: { GitStatusPanel: true, teleport: true } },
+    })
+    await flushPromises()
+
+    const button = wrapper.get('.git-menu-btn')
+    expect(button.attributes('disabled')).toBeUndefined()
+
+    await button.trigger('click')
+    const dropdown = wrapper.get('.git-menu-dd')
+    expect(dropdown.text()).toContain('Git integration is not set up for this project.')
+    // The status panel link would open an empty control room here — hide it, but never
+    // the dropdown itself.
+    expect(wrapper.find('.git-menu-status-link').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('still lists finalize-pending groups once git status arrives', async () => {
+    const wrapper = mountMenu()
+    await flushPromises()
+
+    await wrapper.get('.git-menu-btn').trigger('click')
+    const dropdown = wrapper.get('.git-menu-dd')
+    expect(dropdown.text()).toContain('flowgate.default.0170')
+    expect(dropdown.text()).not.toContain('Git integration is not set up')
+    expect(wrapper.find('.git-menu-status-link').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
   it('refreshes status when the approval flow dispatches fg:git_status_refresh', async () => {
     const wrapper = mountMenu()
     await flushPromises()

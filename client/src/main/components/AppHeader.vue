@@ -21,6 +21,20 @@
     <!-- Project Selector -->
     <ProjectSelector @projectChanged="onProjectChanged" />
 
+    <!-- Header actions (D0008 §3.1): Git and notifications sit immediately before the AI
+         controls. They used to live inside .header-nav, which supplied the gap between
+         every button and divider. The header root is a bare flex row with no gap of its
+         own, so once moved out they rendered edge-to-edge against the project selector's
+         border, the divider and each other (0020-TR rev3 rejection: "버튼은 선이랑
+         옆버튼이랑 다닥다닥 붙어있고"). .hdr-actions carries that spacing for the
+         relocated group. -->
+    <div class="hdr-actions">
+      <GitActionMenu />
+      <div class="hdr-div"></div>
+      <NotificationCenter />
+    </div>
+    <div class="hdr-div"></div>
+
     <!-- Run mini-player (0269 NR0011): the run monitor lives here, immediately left of
          the provider selector — "지금 뭐가 돌고 있나" next to "어느 프로바이더로 돌릴까".
          It is the only robot glyph in this group: the selector used to carry an identical
@@ -61,17 +75,6 @@
           @click="setLocale(lang)"
         >{{ lang.toUpperCase() }}</button>
       </div>
-
-      <div class="hdr-div"></div>
-
-      <!-- ⑂ Git action menu (flowgate.default.0162 §3.3 "안전망") — self-hides unless
-           the current project is git-integrated; carries the finalize-backlog badge. -->
-      <GitActionMenu />
-
-      <div class="hdr-div"></div>
-
-      <!-- 🔔 Notification center (R0001 group 0045 / NR0003 option A) -->
-      <NotificationCenter />
 
       <div class="hdr-div"></div>
 

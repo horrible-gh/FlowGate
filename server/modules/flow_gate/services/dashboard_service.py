@@ -7,6 +7,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from modules.flow_gate.db.connection import get_store
+from modules.flow_gate.db import ai_invoke_runs as db_ai_invoke_runs
+from modules.flow_gate.db import questions as db_questions
+from modules.flow_gate.db import documents as db_documents
 
 _log = logging.getLogger(__name__)
 
@@ -552,6 +555,55 @@ def _count_unread(items: list[dict], last_seen_at: Any) -> int:
     return unread
 
 
+def _ai_run_succeeded(row: dict) -> bool:
+    """Delegate to the one success oracle shared with AI run detail."""
+    from modules.flow_gate.services.ai_invoke_service import ai_run_succeeded
+
+    return ai_run_succeeded(row)
+
+
+def _ai_run_item(row: dict) -> dict:
+    return {
+        "run_id": row["run_id"],
+        "doc_ref": row.get("doc_ref"),
+        "doc_title": row.get("doc_title"),
+        "doc_type_code": row.get("doc_type_code"),
+        "succeeded": _ai_run_succeeded(row),
+        "outcome": row.get("outcome"),
+        "docs_reached": row.get("docs_reached"),
+        "docs_target": row.get("docs_target"),
+        "end_reason": row.get("end_reason"),
+        "stop_code": row.get("stop_code"),
+        "provider_name": row.get("provider_name"),
+        "finished_at": _utc_iso(row["finished_at"]),
+        "last_message_excerpt": row.get("last_message_excerpt"),
+    }
+
+
+def _open_question_page(project_id: str, limit: int) -> dict:
+    """Collapse unanswered question items to one stable row per document."""
+    rows_by_doc: dict[str, dict] = {}
+    for row in db_questions.list_open_items(project_id):
+        doc_id = str(row.get("doc_id") or "").strip()
+        if not doc_id or doc_id in rows_by_doc:
+            continue
+        title = None
+        try:
+            document = db_documents.get_by_id(doc_id)
+            title = document.get("title") if document else None
+        except Exception:  # title enrichment is deliberately best-effort
+            _log.warning("notification Q&A title degraded doc=%s", doc_id, exc_info=True)
+        rows_by_doc[doc_id] = {
+            "doc_id": doc_id,
+            "title": title,
+            "type_code": row.get("type_code"),
+        }
+    rows = [rows_by_doc[key] for key in sorted(rows_by_doc)]
+    total = len(rows)
+    items = rows[:limit]
+    return {"limit": limit, "total": total, "has_more": total > len(items), "items": items}
+
+
 def get_notification_feed(project_id: str, last_seen_at: Any, limit: int) -> dict:
     """Assemble the 🔔 notification center payload for a project (R0001 group 0045, NR0003 option A).
 
@@ -564,6 +616,27 @@ def get_notification_feed(project_id: str, last_seen_at: Any, limit: int) -> dic
         items = _normalized_activities(project_id, _NOTIFICATION_EVENT_TYPES)
         items = _without_terminal_group_items(project_id, items)
     feed = _page(items, limit)
+    degraded_sections: list[str] = []
+    try:
+        ai_rows, ai_total = db_ai_invoke_runs.list_finished_for_notifications(project_id, limit)
+        ai_items = [_ai_run_item(row) for row in ai_rows]
+        ai_runs = {
+            "limit": limit,
+            "total": ai_total,
+            "has_more": ai_total > len(ai_items),
+            "items": ai_items,
+        }
+    except Exception:  # noqa: BLE001 -- additive section must not break the general feed
+        _log.exception("notification AI runs degraded project=%s", project_id)
+        degraded_sections.append("ai_runs")
+        ai_runs = {"limit": limit, "total": 0, "has_more": False, "items": []}
+    try:
+        open_questions = _open_question_page(project_id, limit)
+    except Exception:  # noqa: BLE001 -- additive section must not break the other feeds
+        _log.exception("notification open questions degraded project=%s", project_id)
+        degraded_sections.append("open_questions")
+        open_questions = {"limit": limit, "total": 0, "has_more": False, "items": []}
+    unread_count = _count_unread(items, last_seen_at)
     return {
         "ok": True,
         "project_id": project_id,
@@ -571,8 +644,12 @@ def get_notification_feed(project_id: str, last_seen_at: Any, limit: int) -> dic
         .isoformat(timespec="milliseconds")
         .replace("+00:00", "Z"),
         "last_seen_at": _utc_iso(last_seen_at) if last_seen_at else None,
-        "unread_count": _count_unread(items, last_seen_at),
+        "unread_count": unread_count,
+        "badge_count": unread_count + open_questions["total"],
         "recent_activities": feed,
+        "ai_invoke_runs": ai_runs,
+        "open_questions": open_questions,
+        "degraded_sections": degraded_sections,
     }
 
 
