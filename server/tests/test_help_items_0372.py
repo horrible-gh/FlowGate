@@ -111,6 +111,7 @@ def test_index_for_a_design_token_lists_the_template_and_hides_the_task_items(mo
         "authoring_guide": "no_guide_for_type",
         "test_commands": "not_ts_type",
         "changed_files_format": "not_mutating_type",
+        "step_verification_format": "not_tr_type",
     }
     assert body["context"] == {
         "doc_id": "flowgate.default.0372.0004-P",
@@ -147,6 +148,7 @@ def test_index_for_a_mutating_token_opens_write_tools_and_the_report_format(monk
     body = client.get("/api/v1/help").json()
 
     assert "changed_files_format" in _names(body)
+    assert "step_verification_format" in _names(body)
     assert "authoring_guide" in _names(body)
     assert _hidden(body) == {"design_template": "not_design_type", "test_commands": "not_ts_type"}
     assert body["context"]["tool_kind"] == "read_write"
@@ -404,7 +406,7 @@ def test_bulk_of_pure_typos_is_404(monkeypatch):
 
 def test_bulk_over_the_cap_is_422_and_points_at_detail(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="TR")
-    names = ",".join(help_catalog.CATALOG_ORDER)  # 11 > 10
+    names = ",".join(help_catalog.CATALOG_ORDER)  # 12 > 10
     response = client.get(f"/api/v1/help?items={names}")
     assert response.status_code == 422
     assert "detail=true" in response.json()["error_message"]

@@ -377,7 +377,10 @@ def _issue_edit_token(tmp_path: Path, gid: str, doc_id: str) -> str:
     return result["raw_token"]
 
 
-def _post_resubmit(raw: str, doc_id: str, group_code: str, body: str = "# Reworked\n"):
+def _post_resubmit(
+    raw: str, doc_id: str, group_code: str,
+    body: str = "# Reworked\n\n## 단계별 확인\n\n없음\n",
+):
     from fastapi import FastAPI
     from starlette.testclient import TestClient
     from modules.flow_gate.api import inbox_routes

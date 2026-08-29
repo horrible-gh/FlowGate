@@ -686,13 +686,13 @@ def get_run_detail(run_id: str) -> dict:
         payload = get_status(run_id)
         payload["persisted"] = False
     else:
-        from modules.flow_gate.db import ai_invoke_runs as db_runs
+    from modules.flow_gate.db import ai_invoke_runs as db_runs
 
-        row = db_runs.get(run_id)
-        if row is None:
-            raise _http_error(404, "run_not_found", "Unknown or expired run id.")
-        payload = _run_detail_from_row(row)
-        payload["persisted"] = True
+    row = db_runs.get(run_id)
+    if row is None:
+        raise _http_error(404, "run_not_found", "Unknown or expired run id.")
+    payload = _run_detail_from_row(row)
+    payload["persisted"] = True
 
     project_id = str(payload.get("project_id") or payload.get("group_id") or "").split(".", 1)[0]
     payload["project_id"] = project_id
