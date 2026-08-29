@@ -445,7 +445,7 @@ onBeforeUnmount(() => {
 .notif-panel {
   position: absolute;
   top: calc(100% + 8px);
-  right: 0;
+  left: 0;
   width: 380px;
   max-width: calc(100vw - 32px);
   background: var(--surface, #fff);

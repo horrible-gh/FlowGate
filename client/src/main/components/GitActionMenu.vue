@@ -21,6 +21,7 @@
         class="git-menu-badge"
       >{{ status.pending_count }}</span>
     </button>
+    <div class="hdr-div"></div>
 
     <div v-if="dropdownOpen" class="git-menu-dd" @click.stop>
       <div class="git-menu-dd-hd">
@@ -364,7 +365,7 @@ watch(projectId, fetchStatus)
 .git-menu-dd {
   position: absolute;
   top: calc(100% + 8px);
-  right: 0;
+  left: 0;
   min-width: 320px;
   max-width: 420px;
   background: var(--bg-card, #fff);
