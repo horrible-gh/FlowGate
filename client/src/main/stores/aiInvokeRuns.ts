@@ -185,6 +185,24 @@ function normalizeProvider(payload: Record<string, any>, previous: AiInvokeProvi
   return previous
 }
 
+// 0417 T0013 items 7-8: the round table is server truth. document_review_loop.history is
+// rebuilt server-side from the canonical review and rejection rows on every start / status /
+// finish payload, so a card restored after F5, in a second tab or after a server restart
+// carries the same rows. Nothing is derived from transitions this browser watched — that
+// only ever produced the rounds one session happened to be connected for. Two guards remain:
+// a payload that omits the array keeps what is on screen (partial events must not clear it),
+// and a shorter array — an older response arriving late — never shrinks a longer one.
+function normalizeLoopHistory(
+  value: unknown,
+  previous: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return previous
+  const rows = value.filter(
+    (row): row is Record<string, unknown> => !!row && typeof row === 'object',
+  )
+  return rows.length >= previous.length ? rows : previous
+}
+
 function normalizeDocumentReviewLoop(payload: unknown, previous: DocumentReviewLoopState | null = null): DocumentReviewLoopState | null {
   if (!payload || typeof payload !== 'object') return previous
   const value = payload as Record<string, any>
@@ -195,8 +213,7 @@ function normalizeDocumentReviewLoop(payload: unknown, previous: DocumentReviewL
     incomingRoundNo < previous.roundNo || previous.currentStage === 'stopped'
   )
   const currentStage = stageRegressed ? previous.currentStage : incomingStage ?? previous?.currentStage ?? 'review'
-  const incoming = Array.isArray(value.history) ? value.history : []
-  const history = [...(previous?.history ?? []), ...incoming].filter((item, index, all) => index === all.findIndex(other => other.round_no === item.round_no && other.stage === item.stage && other.result === item.result))
+  const history = normalizeLoopHistory(value.history, previous?.history ?? [])
   const stopReason = value.stop_reason == null
     ? previous?.stopReason ?? null
     : nullableString(value.stop_reason) as DocumentReviewLoopState['stopReason']

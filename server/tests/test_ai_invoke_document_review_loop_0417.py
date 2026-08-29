@@ -206,23 +206,98 @@ def test_completed_hop_checkpoints_durable_loop_and_updates_live_payload(monkeyp
     latest = service._checkpoint_document_review_loop(run)
     assert captured["current_stage"] == "stopped"
     assert captured["stop_reason"] == "review_passed"
-    assert service.document_review_loop_payload(run) == {
+    payload = service.document_review_loop_payload(run)
+    assert {key: payload[key] for key in ("round_no", "current_stage", "stop_reason", "stop_detail")} == {
         "round_no": 1, "current_stage": "stopped",
         "stop_reason": "review_passed", "stop_detail": None,
     }
+    # 0417 T0013 item 8: the round table rides along, rebuilt from the canonical review row
+    # (id 11 > baseline 10), so a card that connects only now still gets round 1.
+    assert payload["history"] == [{
+        "round_no": 1, "stage": "review", "result": "passed", "verdict": "pass",
+        "finding_count": 0, "revision_no": 3, "at": None,
+    }]
     assert latest == run["document_review_loop"]
 
 
+def test_history_orders_a_rework_first_run_and_falls_back_to_revisions(monkeypatch):
+    """A run that opened on an unanswered rejection lists its rework first (deck screen 6)."""
+    from modules.flow_gate.db import document_revisions as db_revisions
+    monkeypatch.setattr(service.db_reviews, "list_by_doc", lambda doc_id: [
+        {"id": 21, "verdict": "issues", "revision_no": 4,
+         "findings": '[{"note": "x"}]', "reviewed_at": "t2"},
+        {"id": 22, "verdict": "pass", "revision_no": 5, "findings": "[]", "reviewed_at": "t4"},
+    ])
+    monkeypatch.setattr(service.db_docs, "get_by_id", lambda doc_id: {
+        "rejection_history": json.dumps([
+            {"rejection_id": "rej_pre", "responded_at": "t1", "response_revision_no": 4},
+        ])
+    })
+    monkeypatch.setattr(db_revisions, "list_by_doc", lambda doc_id: [
+        {"revision_no": 3, "created_at": "t1"}, {"revision_no": 4, "created_at": "t3"},
+    ])
+    rows = service.build_document_review_loop_history({
+        **BASE, "doc_ref": "d", "review_baseline_id": 20,
+        "baseline_revision_no": 3, "starts_with_rework": 1,
+    })
+    assert [(row["round_no"], row["stage"], row["result"]) for row in rows] == [
+        (1, "rework", "complete"), (1, "review", "issues"),
+        (2, "rework", "complete"), (2, "review", "passed"),
+    ]
+    assert rows[1]["finding_count"] == 1
+    # Round 2's rework recorded no response text, so document_revisions is the backstop
+    # that keeps the row on the table instead of dropping the round silently.
+    assert rows[2]["rejection_id"] is None
+    assert rows[2]["revision_no"] == 5
+
+
+def test_history_survives_a_broken_revision_backstop(monkeypatch):
+    from modules.flow_gate.db import document_revisions as db_revisions
+
+    def boom(doc_id):
+        raise RuntimeError("document_revisions unavailable")
+
+    monkeypatch.setattr(service.db_reviews, "list_by_doc", lambda doc_id: [
+        {"id": 5, "verdict": "issues", "revision_no": 3, "findings": "[]", "reviewed_at": "t1"},
+    ])
+    monkeypatch.setattr(service.db_docs, "get_by_id", lambda doc_id: {})
+    monkeypatch.setattr(db_revisions, "list_by_doc", boom)
+    rows = service.build_document_review_loop_history({
+        **BASE, "doc_ref": "d", "review_baseline_id": 0, "baseline_revision_no": 3,
+    })
+    assert [(row["round_no"], row["stage"], row["result"]) for row in rows] == [
+        (1, "review", "issues"),
+    ]
+
+
 def test_persisted_run_detail_restores_document_review_loop(monkeypatch):
-    restored = {**BASE, "current_stage": "rework", "round_no": 2,
+    restored = {**BASE, "current_stage": "rework", "round_no": 2, "doc_ref": "restored-doc",
                 "stop_reason": None, "stop_detail": None}
     monkeypatch.setattr(service, "_restore_document_review_loop", lambda run_id: restored)
+    monkeypatch.setattr(service.db_reviews, "list_by_doc", lambda doc_id: [
+        {"id": 9, "verdict": "issues", "revision_no": 2, "findings": "[]", "reviewed_at": "before"},
+        {"id": 11, "verdict": "issues", "revision_no": 3,
+         "findings": '[{"note": "a"}, {"note": "b"}]', "reviewed_at": "2026-08-29T12:04:00+09:00"},
+    ])
+    monkeypatch.setattr(service.db_docs, "get_by_id", lambda doc_id: {"rejection_history": json.dumps([
+        {"rejection_id": "rej_old", "responded_at": "2026-08-01T00:00:00+09:00", "response_revision_no": 3},
+        {"rejection_id": "rej_1", "responded_at": "2026-08-29T12:19:00+09:00", "response_revision_no": 4},
+    ])})
     payload = service._run_detail_from_row({
         "run_id": "aiv_restart", "mode": "single", "group_id": "flowgate.default.0417"
     })
-    assert payload["document_review_loop"] == {
+    loop = payload["document_review_loop"]
+    assert {key: loop[key] for key in ("round_no", "current_stage", "stop_reason", "stop_detail")} == {
         "round_no": 2, "current_stage": "rework", "stop_reason": None, "stop_detail": None,
     }
+    # A fresh process holds no observed transitions at all, yet the completed review and
+    # rework rounds come back — and rows that predate the run's baseline stay out.
+    assert loop["history"] == [
+        {"round_no": 1, "stage": "review", "result": "issues", "verdict": "issues",
+         "finding_count": 2, "revision_no": 3, "at": "2026-08-29T12:04:00+09:00"},
+        {"round_no": 1, "stage": "rework", "result": "complete", "revision_no": 4,
+         "rejection_id": "rej_1", "at": "2026-08-29T12:19:00+09:00"},
+    ]
 
 
 def test_running_status_contains_same_document_review_loop_shape(monkeypatch):
@@ -240,9 +315,12 @@ def test_running_status_contains_same_document_review_loop_shape(monkeypatch):
     monkeypatch.setattr(service, "get_run_record", lambda run_id: run)
     monkeypatch.setattr(service, "_open_q_doc_ids", lambda group_id: [])
     monkeypatch.setattr(service, "_oracle_new_docs", lambda current: [])
+    monkeypatch.setattr(service.db_reviews, "list_by_doc", lambda doc_id: [])
+    monkeypatch.setattr(service.db_docs, "get_by_id", lambda doc_id: {})
     payload = service.get_status("aiv_live")
     assert payload["document_review_loop"] == {
         "round_no": 2, "current_stage": "review", "stop_reason": None, "stop_detail": None,
+        "history": [],
     }
 
 def test_start_path_inserts_complete_document_review_loop_row(monkeypatch):
@@ -312,10 +390,30 @@ def test_real_sqlite_accepts_loop_before_finished_run(monkeypatch, tmp_path):
     conn.close()
 
 
+def test_persisted_review_loop_discovery_is_scoped_to_issuer(monkeypatch):
+    from modules.flow_gate.db import ai_invoke_runs as db_runs
+
+    seen = {}
+    class Store:
+        def _fetch_all(self, sql, values):
+            seen["sql"] = sql
+            seen["values"] = values
+            return [{"run_id": "aiv_saved", "group_id": "flowgate.default.0417",
+                     "project_id": "flowgate", "doc_ref": "standalone", "mode": "single"}]
+
+    monkeypatch.setattr(db_runs, "get_store", Store)
+    rows = db_runs.list_review_loops_by_user("review-owner", limit=7)
+    assert [row["run_id"] for row in rows] == ["aiv_saved"]
+    assert "INNER JOIN ai_invoke_document_review_loops" in seen["sql"]
+    assert "r.issued_to = ?" in seen["sql"]
+    assert seen["values"] == ["review-owner", 7]
+
+
 def test_real_worker_standalone_loop_restart_restore_and_never_approves(monkeypatch, tmp_path):
     """Drive real review rejection, rework, worker checkpoint, and restart paths."""
     from contextlib import contextmanager
     from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
+    from modules.flow_gate.db import ai_invoke_runs as db_runs
     from modules.flow_gate.db import document_reviews as db_reviews
     from modules.flow_gate.db import users as db_users
     from modules.flow_gate.workflow import pipeline_service
@@ -402,12 +500,17 @@ def test_real_worker_standalone_loop_restart_restore_and_never_approves(monkeypa
     )
     monkeypatch.setattr(pipeline_service, "log_state_changed", lambda **kwargs: None)
 
+    # The total-timeout gate compares the stored deadline against the REAL clock, so a
+    # hard-coded 2026-08-29T01:00Z deadline turned this into a time bomb: run it after that
+    # instant and the first hop stopped with total_timeout instead of driving the loop.
+    # Anchor the window on now so the run under test is always inside its budget.
+    started = datetime.now(timezone.utc)
     loop = {
         **BASE, "review_baseline_id": 0, "run_id": "aiv_e2e",
         "group_id": "flowgate.default.0417",
         "doc_ref": "standalone", "rework_message": "fix it",
-        "started_at": "2026-08-29T00:00:00+00:00",
-        "deadline_at": "2026-08-29T01:00:00+00:00",
+        "started_at": started.isoformat(),
+        "deadline_at": (started + timedelta(hours=1)).isoformat(),
         "stop_reason": None, "stop_detail": None,
     }
     persisted = db_loops.insert(loop)
@@ -466,15 +569,40 @@ def test_real_worker_standalone_loop_restart_restore_and_never_approves(monkeypa
     assert hops == ["review", "rework", "review"]
     assert db_loops.get("aiv_e2e")["stop_reason"] == "review_passed"
 
-    # Simulate a fresh server process: no live registry survives; GET rebuilds from DB.
+    # Simulate a fresh server process: no live registry survives. The bootstrap endpoint
+    # must discover the durable run itself; a caller does not already know its run_id.
     monkeypatch.setattr(service, "_runs", {})
-    restored = service._run_detail_from_row({
-        "run_id": "aiv_e2e", "mode": "single", "group_id": "flowgate.default.0417"
-    })
-    assert restored["document_review_loop"] == {
+    stored_run = {
+        "run_id": "aiv_e2e", "mode": "single", "group_id": "flowgate.default.0417",
+        "project_id": "flowgate", "doc_ref": "standalone", "issued_to": "review-owner",
+        "started_at": loop["started_at"], "finished_at": datetime.now(timezone.utc).isoformat(),
+    }
+    monkeypatch.setattr(db_runs, "list_review_loops_by_user", lambda user_id: (
+        [stored_run] if user_id == "review-owner" else []
+    ))
+    bootstrap = service.active_all("review-owner")
+    assert [item["run_id"] for item in bootstrap["runs"]] == ["aiv_e2e"]
+    restored = bootstrap["runs"][0]
+    assert restored["persisted"] is True
+    assert {key: restored["document_review_loop"][key] for key in
+            ("round_no", "current_stage", "stop_reason", "stop_detail")} == {
         "round_no": 2, "current_stage": "stopped",
         "stop_reason": "review_passed", "stop_detail": None,
     }
+    # 0417 T0013 items 7-8 / TR0018 rejection: the fresh process observed no transition at
+    # all, yet deck screen 6's whole table comes back — the two completed reviews with the
+    # server's own finding counts and the rework round in between — because it is rebuilt
+    # from document_reviews and the answered rejection_history entry, not from a browser.
+    history = restored["document_review_loop"]["history"]
+    assert [(row["round_no"], row["stage"], row["result"]) for row in history] == [
+        (1, "review", "issues"), (1, "rework", "complete"), (2, "review", "passed"),
+    ]
+    assert [row.get("finding_count") for row in history] == [1, None, 0]
+    assert history[0]["at"] == "2026-08-29T00:00:01+00:00"
+    assert history[1]["revision_no"] == 4
+    # Rebuilding is stable through the same discovery endpoint, not a direct detail helper.
+    second_bootstrap = service.active_all("review-owner")
+    assert second_bootstrap["runs"][0]["document_review_loop"]["history"] == history
     doc = conn.execute(
         "SELECT revision_no, doc_review_status, rejection_reason, rejection_history "
         "FROM documents WHERE doc_id = 'standalone'"

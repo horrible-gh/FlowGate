@@ -320,6 +320,17 @@ def list_by_group(group_id: str, limit: int) -> list[dict]:
     return [_row_to_payload(row) for row in rows]
 
 
+def list_review_loops_by_user(user_id: str, limit: int = 100) -> list[dict]:
+    """Finished runs that own durable document-review-loop cards, newest first."""
+    rows = get_store()._fetch_all(
+        "SELECT r.* FROM ai_invoke_runs r "
+        "INNER JOIN ai_invoke_document_review_loops l ON l.run_id = r.run_id "
+        "WHERE r.issued_to = ? ORDER BY r.started_at DESC, r.run_id DESC LIMIT ?",
+        [user_id, limit],
+    )
+    return [_row_to_payload(row) for row in rows]
+
+
 def list_by_project(project_id: str, limit: int) -> list[dict]:
     """Newest-first page for a project (DB0008 4 Q3)."""
     rows = get_store()._fetch_all(

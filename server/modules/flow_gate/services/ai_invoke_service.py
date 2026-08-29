@@ -7143,6 +7143,29 @@ def active_all(user_id: str) -> dict:
         status["doc_ref"] = run["doc_ref"]
         runs.append(status)
 
+    # A restart empties `_runs`, but a finished document-review loop is still a card: the
+    # durable run identifies its owner and the durable loop rebuilds its complete history.
+    # Discover those rows here (the bootstrap path), not only when a caller already knows a
+    # run_id. Memory wins during the small finalize overlap and one bad stored row cannot
+    # blank every other card.
+    from modules.flow_gate.db import ai_invoke_runs as db_runs
+    live_ids = {run["run_id"] for run in candidates}
+    try:
+        stored_loop_rows = db_runs.list_review_loops_by_user(user_id)
+    except Exception:
+        logger.warning("stored review-loop list failed for %s", user_id, exc_info=True)
+        stored_loop_rows = []
+    for row in stored_loop_rows:
+        if row["run_id"] in live_ids:
+            continue
+        try:
+            restored = _run_detail_from_row(row)
+        except Exception:
+            logger.warning("stored review-loop restore failed for %s", row.get("run_id"), exc_info=True)
+            continue
+        restored["persisted"] = True
+        runs.append(restored)
+
     paused = []
     try:
         rows = db_paused.list_by_user(user_id)
@@ -7442,8 +7465,149 @@ def _checkpoint_document_review_loop_tx(run: dict) -> dict | None:
     return latest
 
 
+def _loop_finding_count(review: dict) -> int | None:
+    """How many findings that review row carried, or None when it cannot be read."""
+    raw = review.get("findings")
+    if isinstance(raw, list):
+        return len(raw)
+    if not raw:
+        return 0
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return len(parsed) if isinstance(parsed, list) else None
+
+
+def _loop_rework_ledger(doc: dict, baseline_revision_no: int, started_at) -> list[dict]:
+    """Rejections THIS run answered, oldest first.
+
+    documents.rejection_history is the durable ledger the rework hop writes into
+    (pipeline_service.record_rejection_response), so an answered entry whose response
+    landed past the run's baseline revision is proof that one rework round finished —
+    and it stays proof after a restart.
+    """
+    raw = doc.get("rejection_history")
+    try:
+        history = json.loads(raw) if isinstance(raw, str) else (raw or [])
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(history, list):
+        return []
+    answered = []
+    for entry in history:
+        if not isinstance(entry, dict) or not entry.get("responded_at"):
+            continue
+        revision = entry.get("response_revision_no")
+        if revision is not None:
+            if int(revision) > baseline_revision_no:
+                answered.append(entry)
+        elif started_at and str(entry["responded_at"]) >= str(started_at):
+            answered.append(entry)
+    return answered
+
+
+def build_document_review_loop_history(loop: dict, doc_ref: str | None = None) -> list[dict]:
+    """Rebuild this run's round table from canonical rows (deck u3digra2 v6 screen 6).
+
+    0417 T0013 item 8 wants screen 6's accumulated round table, and item 7 wants the
+    same card back after bootstrap/reconnect. Rows may therefore never come from state
+    transitions one browser happened to watch: a refresh, a second tab or a dropped
+    poll/SSE event would each produce a different table. Every row here is rebuilt from
+    the same durable rows resolve_document_review_loop_gate judges the loop with, so the
+    table and the judgment cannot disagree:
+
+      * document_reviews rows newer than review_baseline_id -- this run's review rounds,
+        carrying the server-counted finding count screen 6 prints beside the stage name
+        (T0010 item 4: no new Korean literals in server modules, so the words themselves
+        live in the client i18n bundles);
+      * answered documents.rejection_history entries past baseline_revision_no -- its
+        rework rounds, with document_revisions as the backstop for an edit that recorded
+        no response text.
+
+    Both are re-read on every start/status/finish payload, so a client that missed an
+    event still gets the whole table on the next one.
+    """
+    doc_id = str(loop.get("doc_ref") or doc_ref or "")
+    if not doc_id:
+        return []
+    baseline_review_id = int(loop.get("review_baseline_id") or 0)
+    baseline_revision_no = int(loop.get("baseline_revision_no") or 0)
+    try:
+        reviews = sorted(
+            (row for row in (db_reviews.list_by_doc(doc_id) or [])
+             if int(row.get("id") or 0) > baseline_review_id),
+            key=lambda row: int(row.get("id") or 0),
+        )
+        reworks = _loop_rework_ledger(
+            db_docs.get_by_id(doc_id) or {}, baseline_revision_no, loop.get("started_at")
+        )
+    except Exception as exc:  # noqa: BLE001 - a card must never break a status response
+        import LogAssist.log as logger
+        logger.warning(f"[ai-invoke] review-loop history rebuild failed (ignored): {exc}")
+        return []
+    try:
+        # One row per revision the document LEFT since the run started (the backup row
+        # carries the revision it backed up), so a rework that landed without response
+        # text still gets its line instead of silently vanishing from the table. Read
+        # separately: this backstop must never cost us the ledger above.
+        from modules.flow_gate.db import document_revisions as db_revisions
+        edits = sorted(
+            (row for row in (db_revisions.list_by_doc(doc_id) or [])
+             if int(row.get("revision_no") or 0) >= baseline_revision_no),
+            key=lambda row: int(row.get("revision_no") or 0),
+        )
+    except Exception:  # noqa: BLE001 - backstop only; the ledger above already stands
+        edits = []
+    review_rows = [{
+        "round_no": index,
+        "stage": REVIEW_HOP_KIND,
+        "result": "passed" if row.get("verdict") == "pass" else "issues",
+        "verdict": row.get("verdict"),
+        "finding_count": _loop_finding_count(row),
+        "revision_no": int(row.get("revision_no") or 0),
+        "at": row.get("reviewed_at") or row.get("created_at"),
+    } for index, row in enumerate(reviews, start=1)]
+    rework_rows = [{
+        "round_no": index,
+        "stage": REWORK_HOP_KIND,
+        "result": "complete",
+        "revision_no": entry.get("response_revision_no"),
+        "rejection_id": entry.get("rejection_id"),
+        "at": entry.get("responded_at"),
+    } for index, entry in enumerate(reworks, start=1)]
+    for index in range(len(rework_rows), len(edits)):
+        edit = edits[index]
+        rework_rows.append({
+            "round_no": index + 1,
+            "stage": REWORK_HOP_KIND,
+            "result": "complete",
+            "revision_no": int(edit.get("revision_no") or 0) + 1,
+            "rejection_id": None,
+            "at": edit.get("created_at"),
+        })
+    # Screen 6 reads the stages in the order the loop runs them: a run that started on an
+    # unanswered rejection opens with its rework, every other run opens with the review
+    # whose findings the first rework answers.
+    first, second = (
+        (rework_rows, review_rows) if loop.get("starts_with_rework") else (review_rows, rework_rows)
+    )
+    ordered: list[dict] = []
+    for index in range(max(len(first), len(second))):
+        if index < len(first):
+            ordered.append(first[index])
+        if index < len(second):
+            ordered.append(second[index])
+    return ordered
+
+
 def document_review_loop_payload(run: dict) -> dict | None:
     loop = run.get("document_review_loop")
     if not loop:
         return None
-    return {key: loop.get(key) for key in ("round_no", "current_stage", "stop_reason", "stop_detail")}
+    payload = {key: loop.get(key) for key in ("round_no", "current_stage", "stop_reason", "stop_detail")}
+    # 0417 T0013 items 7-8: the round table travels with EVERY start / status / finish
+    # payload, rebuilt from canonical rows, so a card restored after F5, a reconnect or a
+    # server restart shows the same rounds instead of only what this browser observed.
+    payload["history"] = build_document_review_loop_history(loop, run.get("doc_ref"))
+    return payload

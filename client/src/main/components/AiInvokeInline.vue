@@ -22,11 +22,6 @@
     >
       {{ titleText }}
     </span>
-    <div v-if="run.documentReviewLoop" class="ai-review-loop-card" data-test="review-loop-card">
-      <strong>{{ t('main.ai_invoke_dialog.review_loop_round', { n: run.documentReviewLoop.roundNo }) }} · {{ reviewLoopStageLabel(run.documentReviewLoop.currentStage) }}</strong>
-      <ol><li v-for="(item,index) in run.documentReviewLoop.history" :key="index">{{ t('main.ai_invoke_dialog.review_loop_round', { n: item.round_no }) }} · {{ reviewLoopHistoryStageLabel(item.stage) }} · {{ reviewLoopHistoryResultLabel(item.result) }}</li></ol>
-      <p v-if="run.documentReviewLoop.currentStage === 'stopped'">{{ reviewLoopStopLabel(run.documentReviewLoop.stopReason) }}<span v-if="run.documentReviewLoop.stopDetail"> — {{ run.documentReviewLoop.stopDetail }}</span></p>
-    </div>
     <div class="ai-invoke-status-actions">
       <button
         v-if="run.phase === 'running'"
@@ -103,6 +98,51 @@
         <div v-if="run.sourceDirtyFiles.length > 0" class="ai-invoke-status-files">
           {{ run.sourceDirtyFiles.join(', ') }}
         </div>
+      </div>
+    </div>
+    <!-- 0417 T0017: deck u3digra2 v6 screen 6 — one row per round, each carrying the stage,
+         its finding count, a result badge and the server's stamp for that round, with the
+         automatic-stop row last. The rows come from document_review_loop.history, which the
+         server rebuilds from the canonical review/rejection rows on every payload. -->
+    <div v-if="run.documentReviewLoop" class="rlr" data-test="review-loop-card">
+      <div class="rlr-head">
+        {{ t('main.ai_invoke_dialog.review_loop_round', { n: run.documentReviewLoop.roundNo }) }}
+        · {{ reviewLoopStageLabel(run.documentReviewLoop.currentStage) }}
+      </div>
+      <div
+        v-for="(item, index) in run.documentReviewLoop.history"
+        :key="index"
+        class="rlr-row"
+        data-test="review-loop-history-row"
+      >
+        <span class="rlr-no">{{ t('main.ai_invoke_dialog.review_loop_round', { n: item.round_no }) }}</span>
+        <span class="rlr-name">
+          {{ reviewLoopHistoryStageLabel(item.stage) }}
+          <template v-if="reviewLoopHistoryDetail(item)"> &mdash; {{ reviewLoopHistoryDetail(item) }}</template>
+        </span>
+        <span class="rlr-badge" :class="historyBadgeClass(item.result)">
+          {{ reviewLoopHistoryResultLabel(item.result) }}
+        </span>
+        <span v-if="historyTime(item.at)" class="rlr-time">{{ historyTime(item.at) }}</span>
+      </div>
+      <div
+        v-if="run.documentReviewLoop.currentStage === 'stopped'"
+        class="rlr-row"
+        :class="run.documentReviewLoop.stopReason === 'review_passed' ? 'rlr-row--stop' : 'rlr-row--halt'"
+        data-test="review-loop-stop-row"
+      >
+        <span class="rlr-no">{{ t('main.ai_invoke_dialog.review_loop_stop_row_label') }}</span>
+        <span class="rlr-name">
+          {{ t('main.ai_invoke_dialog.review_loop_stop_note') }}
+          <template v-if="run.documentReviewLoop.stopDetail"> — {{ run.documentReviewLoop.stopDetail }}</template>
+        </span>
+        <span
+          class="rlr-badge"
+          :class="run.documentReviewLoop.stopReason === 'review_passed' ? 'rlr-badge--pass' : 'rlr-badge--rej'"
+        >
+          <AppIcon :name="run.documentReviewLoop.stopReason === 'review_passed' ? 'check-circle' : 'warning'" />
+          {{ reviewLoopStopLabel(run.documentReviewLoop.stopReason) }}
+        </span>
       </div>
     </div>
   </section>
@@ -226,6 +266,35 @@ function reviewLoopHistoryResultLabel(result: unknown): string {
   if (result === 'passed') return t('main.ai_invoke_dialog.review_loop_history_result_passed')
   if (result === 'complete') return t('main.ai_invoke_dialog.review_loop_history_result_complete')
   return t('main.ai_invoke_dialog.review_loop_history_result_unknown')
+}
+
+// Deck screen 6 spells each row out as "검수 — 지적 3건" / "반려대응 — 문서 재작성". The count is the
+// server's own len(findings) for that review row (T0013 item 8: never estimated here) and
+// is simply left off when the server could not read it.
+function reviewLoopHistoryDetail(item: Record<string, unknown>): string {
+  if (item.stage === 'rework') return t('main.ai_invoke_dialog.review_loop_history_detail_rework')
+  if (item.stage !== 'review') return ''
+  const count = item.finding_count
+  if (typeof count !== 'number' || !Number.isFinite(count)) return ''
+  if (count <= 0) return t('main.ai_invoke_dialog.review_loop_history_detail_no_findings')
+  return t('main.ai_invoke_dialog.review_loop_history_detail_findings', { n: count })
+}
+
+function historyBadgeClass(result: unknown): string {
+  if (result === 'issues') return 'rlr-badge--rej'
+  if (result === 'passed') return 'rlr-badge--pass'
+  if (result === 'complete') return 'rlr-badge--fix'
+  return 'rlr-badge--unknown'
+}
+
+// HH:MM of the stamp the SERVER recorded for that round (the review's reviewed_at, the
+// rejection response's responded_at). A row that arrives without one renders no time cell
+// rather than an invented one — this browser's clock is not evidence of when a round ran.
+function historyTime(at: unknown): string {
+  if (typeof at !== 'string' || !at) return ''
+  const stamp = new Date(at)
+  if (Number.isNaN(stamp.getTime())) return ''
+  return `${String(stamp.getHours()).padStart(2, '0')}:${String(stamp.getMinutes()).padStart(2, '0')}`
 }
 
 function reviewLoopStopLabel(reason: string | null): string {
@@ -424,5 +493,39 @@ watch(
   .ai-invoke-status-card { padding: 10px; }
   .ai-invoke-status-actions .btn { padding-inline: 7px; }
 }
-.ai-review-loop-card{flex:0 0 100%;padding:10px;border:1px solid #bfdbfe;border-radius:var(--r);background:var(--surface)}.ai-review-loop-card ol{margin:6px 0;padding-left:20px}.ai-review-loop-card p{margin:6px 0 0}
+/* 0417 T0017 — deck u3digra2 v6 screen 6's round log (.rlr*), values copied from the
+   published deck's css/extra.css. `--halt` is the one addition: the deck only draws the
+   passing stop, and a retry/timeout stop must not wear the green "passed" row. */
+.rlr { display: grid; gap: 6px; flex: 0 0 100%; padding-left: 26px; }
+.rlr-head { font-size: .76rem; font-weight: 700; color: var(--text, #0f172a); }
+.rlr-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: var(--r-sm, 4px);
+  background: #fff;
+  font-size: .76rem;
+}
+.rlr-row--stop { border-color: #86efac; background: #f0fdf4; }
+.rlr-row--halt { border-color: #fca5a5; background: #fef2f2; }
+.rlr-no { flex: 0 0 auto; min-width: 46px; font-size: .66rem; font-weight: 700; color: var(--text-m, #64748b); }
+.rlr-name { flex: 1; min-width: 0; color: var(--text, #0f172a); }
+.rlr-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: .66rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.rlr-badge--rej { background: #fee2e2; color: #b91c1c; }
+.rlr-badge--fix { background: #e0e7ff; color: #3730a3; }
+.rlr-badge--pass { background: #dcfce7; color: #166534; }
+.rlr-badge--unknown { background: #f1f5f9; color: #475569; }
+.rlr-time { flex: 0 0 auto; font-size: .7rem; color: var(--text-m, #64748b); font-family: 'JetBrains Mono', monospace; }
 </style>
