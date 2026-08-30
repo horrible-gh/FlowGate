@@ -139,7 +139,7 @@
                     </div>
                     <div v-if="seg.baseLine" class="git-conflict-side base">
                       <div class="git-conflict-side-label">{{ t('main.git_finalize.common_base') }}</div>
-                      <pre><span v-for="line in chunkDiff({ ours: seg.base, theirs: seg.base }).ours" :key="line.sourceIndex" class="git-code-line" :class="'diff-' + line.status"><span class="git-line-number">{{ sideLineNumber(selectedConflictFile, idx, 'base', line.sourceIndex) }}</span><span class="git-code-line-text"><span v-for="(token, tokenIdx) in line.tokens" :key="tokenIdx" class="git-code-token" :class="'diff-token-' + token.status">{{ token.text }}</span></span></span><span v-if="!seg.base.length" class="git-empty-side">{{ t('main.git_finalize.empty_side') }}</span></pre>
+                      <pre><span v-for="line in baseDiff(seg)" :key="line.sourceIndex" class="git-code-line" :class="'diff-' + line.status"><span class="git-line-number">{{ sideLineNumber(selectedConflictFile, idx, 'base', line.sourceIndex) }}</span><span class="git-code-line-text"><span v-for="(token, tokenIdx) in line.tokens" :key="tokenIdx" class="git-code-token" :class="'diff-token-' + token.status">{{ token.text }}</span></span></span><span v-if="!seg.base.length" class="git-empty-side">{{ t('main.git_finalize.empty_side') }}</span></pre>
                     </div>
                     <div class="git-conflict-side theirs">
                       <div class="git-conflict-side-label">{{ chunkLabel(seg.theirsLabel, t('main.git_finalize.incoming')) }} <span v-if="recommendedChoice(seg) === 'theirs'" class="git-ai-recommended">{{ t('main.git_finalize.quick_recommended') }}</span></div>
@@ -231,6 +231,7 @@ import {
   type ChunkSideDiff,
   type ConflictFileState,
   type ConflictSegment,
+  type DiffLine,
 } from '../composables/useConflictChunks'
 
 const props = defineProps<{
@@ -328,6 +329,13 @@ function recommendedChoice(seg: ChunkSegment): ChunkChoice {
 }
 function chunkDiff(seg: ChunkSegment): ChunkSideDiff {
   return buildChunkSideDiff(seg.ours, seg.theirs)
+}
+// The merged-base column renders as plain context: diffing base against itself
+// marks every line and token 'common', so it shows line numbers with no diff
+// highlight. It needs its own helper because chunkDiff() takes a whole
+// ChunkSegment, not a pair of sides.
+function baseDiff(seg: ChunkSegment): DiffLine[] {
+  return buildChunkSideDiff(seg.base, seg.base).ours
 }
 function choiceLabel(choice: ChunkChoice): string {
   if (!choice) return ''
