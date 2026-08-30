@@ -1416,6 +1416,50 @@ class TestResumeReviewGateDispatch0466:
         assert spawned["bundle"]["last_stage"] == svc.REWORK_HOP_KIND
         assert spawned["bundle"]["revision_before"] == 0
 
+    def test_a_resumed_rework_hop_carries_the_restart_max_attempts_pick_to_start_run(
+            self, world, paused, monkeypatch):
+        """0476 NR0003 defect1 / T0005 end-to-end: a rework hop parked mid-chain must not
+        lose the "재실행 횟수" pick across a cold resume_chain() dispatch. Mirrors
+        test_spawn_auto_resume_does_not_crash_on_the_resumed_bundle's two-step shape
+        (dispatch, then feed the dispatched bundle to the real hop spawner), applied to
+        the REWORK hop instead of the WORK hop."""
+        world.fill(5, "doc-5", status="rejected", revision_no=0)
+        world.review("doc-5", "issues", revision_no=0)
+        monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda *a, **kw: None)
+        run = _run(mode="single", action_scope="review", hop_kind=svc.REVIEW_HOP_KIND,
+                   doc_ref="doc-5", last_message=None, docs_target=0, docs_reached=0,
+                   outcome="none", stop_code=None, continuation_restart_max_attempts=3)
+        svc._park_handoff(
+            run,
+            bundle(last_stage=svc.REWORK_HOP_KIND, revision_before=0),
+            svc.REVIEW_CAP_REACHED_STOP_CODE,
+        )
+        assert paused.rows[GROUP]["stop_code"] == svc.REVIEW_CAP_REACHED_STOP_CODE
+
+        real_spawn_rework_hop = svc._spawn_rework_hop
+        dispatched = {}
+        monkeypatch.setattr(
+            svc, "_spawn_rework_hop",
+            lambda g, b, gate: dispatched.update(bundle=dict(b), gate=dict(gate)) or {"ok": True})
+        monkeypatch.setattr(svc, "_next_incomplete_item_seq", lambda doc_ref: 5)
+
+        result = svc.resume_chain(group_id=GROUP, user_id=USER, api_base_url=API_BASE)
+        assert result == {"ok": True}
+        queued_bundle = dispatched["bundle"]
+        gate = dispatched["gate"]
+        assert queued_bundle["restart_max_attempts"] == 3
+
+        monkeypatch.setattr(invoke_mention_service, "issue_rework_request", lambda **kw: {
+            "raw_token": "raw", "token_id": "tok_1", "scratch_dir": "/tmp/s", "mention": "M"})
+        captured: dict = {}
+        monkeypatch.setattr(svc, "start_run", lambda **kw: captured.update(kw) or {"ok": True})
+
+        # the real spawner, saved BEFORE it was stubbed above to intercept resume_chain's
+        # own internal dispatch — svc._spawn_rework_hop is still that stub at this point.
+        real_spawn_rework_hop(GROUP, queued_bundle, gate)
+        assert captured["continuation_restart_max_attempts"] == 3
+        assert svc._resolve_restart_max_attempts(3) == 4
+
     def test_the_review_and_reviewer_maps_reach_the_dispatched_gate_bundle(
             self, world, paused, monkeypatch):
         """A11-4: the paused row's [검수] policy must survive into the re-dispatched gate
@@ -1913,6 +1957,37 @@ class TestReviewNoVerdictExcerpt0466:
         assert confidential_suffix not in excerpt
         assert short_prompt not in excerpt
         assert "[redacted prompt]" in excerpt
+
+
+class TestReviewNoVerdictStopReasonAttempts0476:
+    """flowgate.default.0476 T0007 §3: `stop_reason` on REVIEW_NO_VERDICT_STOP_CODE must let
+    a human reading the record after the fact tell "both attempts ran and still left no
+    verdict" apart from "the second attempt never opened because of budget/provider/token
+    exhaustion" — same `blocked_text` composition `no_output_exhausted` already uses."""
+
+    def test_both_attempts_used_with_no_block_reason_has_no_tail(self):
+        run = _run(attempts_used=2, attempts_max=2, retry_block_reason=None)
+        text = svc._stop_reason_text(svc.REVIEW_NO_VERDICT_STOP_CODE, run)
+        assert "2 of 2 attempts used" in text
+        assert "No further attempt was opened" not in text
+
+    def test_a_budget_exhausted_block_reason_names_itself(self):
+        run = _run(attempts_used=1, attempts_max=2, retry_block_reason="budget_exhausted")
+        text = svc._stop_reason_text(svc.REVIEW_NO_VERDICT_STOP_CODE, run)
+        assert "1 of 2 attempts used" in text
+        assert "No further attempt was opened: budget_exhausted." in text
+
+    def test_a_providers_exhausted_block_reason_names_itself(self):
+        run = _run(attempts_used=1, attempts_max=2,
+                   retry_block_reason="providers_exhausted_for_retry")
+        text = svc._stop_reason_text(svc.REVIEW_NO_VERDICT_STOP_CODE, run)
+        assert "1 of 2 attempts used" in text
+        assert "No further attempt was opened: providers_exhausted_for_retry." in text
+
+    def test_a_run_with_no_attempts_max_falls_back_to_the_fixed_constant(self):
+        text = svc._stop_reason_text(svc.REVIEW_NO_VERDICT_STOP_CODE, {})
+        assert svc.NO_OUTPUT_MAX_ATTEMPTS == 2
+        assert "0 of 2 attempts used" in text
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
@@ -2578,6 +2653,34 @@ class TestHopLaunchContract:
         assert kw["hop_kind"] == svc.REWORK_HOP_KIND
         assert kw["doc_ref"] == "doc-5"
 
+    def test_the_rework_hop_carries_the_restart_max_attempts_pick_to_start_run(
+            self, world, launched, monkeypatch):
+        """0476 NR0003 defect1 / T0005: `_spawn_rework_hop` must forward the bundle's
+        `restart_max_attempts` to `start_run` exactly like `_spawn_auto_resume` already
+        does, and `_resolve_restart_max_attempts` must turn a pick of 3 restarts into a
+        total attempts ceiling of 4 (1 initial + 3 restarts)."""
+        monkeypatch.setattr(invoke_mention_service, "issue_rework_request", lambda **kw: {
+            "raw_token": "raw", "token_id": "tok_1", "scratch_dir": "/tmp/s", "mention": "M"})
+        world.fill(5, "doc-5", status="rejected", revision_no=1)
+        world.review("doc-5", "issues", revision_no=1)
+        gate = svc.resolve_review_gate(bundle())
+        svc._spawn_rework_hop(GROUP, bundle(restart_max_attempts=3), gate)
+        kw = launched[0]
+        assert kw["continuation_restart_max_attempts"] == 3
+        assert svc._resolve_restart_max_attempts(3) == 4
+
+    def test_the_review_hop_carries_the_restart_max_attempts_pick_to_start_run(
+            self, world, launched, monkeypatch):
+        monkeypatch.setattr(wds, "request_review", lambda **kw: {
+            "token": "raw", "token_id": "tok_1", "scratch_dir": "/tmp/s", "mention": "M"})
+        gate = self._gate(world)
+        svc._spawn_review_hop(GROUP, bundle(restart_max_attempts=3), gate)
+        assert launched[-1]["continuation_restart_max_attempts"] == 3
+        assert svc._resolve_restart_max_attempts(3) == 4
+
+        svc._spawn_review_hop(GROUP, bundle(), gate)
+        assert launched[-1]["continuation_restart_max_attempts"] is None
+
     def test_the_review_hop_appends_its_clause_to_the_shared_mention(
             self, world, launched, monkeypatch):
         monkeypatch.setattr(wds, "request_review", lambda **kw: {
@@ -3096,6 +3199,37 @@ class TestT0005ReviewIdAnchor:
             gate_b = svc.resolve_review_gate(bundle(review_count_overrides={"7": 2}))
             assert gate_b["reject_first"] is True, (
                 f"review_id={bad_value!r} present-but-invalid must not suppress")
+
+
+class TestReviewFindingsToNextStepEndToEnd0476:
+    """0476 T0009: findings -> auto-reject -> rework -> pass -> settle, as one chain.
+
+    TestGateDerivation.test_count_one_issues_rejects_reworks_then_advances only watches
+    resolve_review_gate's derivation, and TestT0005ReviewIdAnchor.test_a3_a_pass_after_
+    rework_finds_the_document_still_revised only watches the pass-then-settle half. Neither
+    ties findings actually causing the auto-reject write to the rejection actually landing a
+    rework hop, nor the rework landing to the pass actually launching item_seq 6.
+    """
+
+    def test_findings_reject_rework_pass_settle_reach_next_step(self, world, real_gate_exec):
+        world.fill(5, "doc-5")
+        world.review("doc-5", "issues", revision_no=0,
+                     findings=[{"locus": "§1", "note": "fix x"}])
+
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+        assert real_gate_exec["rejected"] == ["doc-5"]
+        assert len(real_gate_exec["rework"]) == 1
+
+        world.rework("doc-5", 1)
+        assert world.docs["doc-5"]["revision_no"] == 1
+        assert world.docs["doc-5"]["doc_review_status"] == "revised"
+
+        world.review("doc-5", "pass", revision_no=1)
+
+        assert svc.run_review_gate(GROUP, bundle(), _run()) is True
+        assert real_gate_exec["settled"] == ["doc-5"]
+        assert len(real_gate_exec["work"]) == 1
+        assert real_gate_exec["parked"] == []
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════

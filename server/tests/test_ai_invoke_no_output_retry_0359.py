@@ -35,6 +35,7 @@ sys.path.insert(0, str(_SERVER_DIR))
 from modules.flow_gate.db import ai_invoke_paused_chains as db_paused  # noqa: E402
 from modules.flow_gate.db import ai_invoke_runs as db_runs  # noqa: E402
 from modules.flow_gate.services import ai_invoke_service as svc  # noqa: E402
+from modules.flow_gate.services import workflow_decision_service as wds  # noqa: E402
 from modules.flow_gate.workflow import event_logger  # noqa: E402
 
 GROUP = "flowgate.default.0359"
@@ -1350,9 +1351,9 @@ class TestSingleReworkNoOutputRecovery0446:
 # ── flowgate.default.0466 T0007: review-hop no-verdict recovery (A10) ────────────────────
 class TestReviewHopNoVerdictRecovery0466:
     """A10: an ENGINE-spawned review hop (`hop_kind=REVIEW_HOP_KIND`, inside a chain) may
-    reopen exactly ONE more attempt on the SAME reviewer when its first attempt leaves no
-    `document_reviews` row — capped at 2 total attempts regardless of the general
-    continuous-chain restart pick, and never re-walking the provider priority tiers."""
+    reopen on the SAME reviewer when an attempt leaves no `document_reviews` row. The
+    configured restart pick sets the cap; an omitted pick preserves the 2-attempt default,
+    and retries never re-walk the provider priority tiers."""
 
     def test_a_usage_limit_first_attempt_recovers_on_the_second_and_records_one_verdict(
             self, env, monkeypatch):
@@ -1368,8 +1369,8 @@ class TestReviewHopNoVerdictRecovery0466:
 
         assert launches == ["aip_2", "aip_2"]              # same reviewer both attempts
         assert run["attempts_used"] == 2
-        # A10 §2.4: a FIXED cap, independent of NO_OUTPUT_MAX_ATTEMPTS/attempts_max=1 a plain
-        # single run would otherwise get for action_scope="review".
+        # With no restart pick, review hops preserve the 2-attempt default; a plain
+        # single review run still gets attempts_max=1.
         assert run["attempts_max"] == 2
         assert run["outcome"] == "complete"
         assert run["docs_reached"] == 0          # a review token registers no document, ever
@@ -1383,8 +1384,8 @@ class TestReviewHopNoVerdictRecovery0466:
 
     def test_two_no_verdict_attempts_exhaust_the_fixed_cap_without_a_third(
             self, env, monkeypatch):
-        """A10-3 (worker half): both attempts leave no review row — exactly 2 attempts, never
-        a third, and the run's own attempts_max stays the review-only fixed cap."""
+        """A10-3 (worker half): with no pick, both attempts leave no review row — exactly
+        2 attempts, never a third, preserving the review hop's compatible default."""
         launches = _scripted_review_worker(env, monkeypatch, [
             (None, 1, None),
             (None, 1, None),
@@ -1398,6 +1399,26 @@ class TestReviewHopNoVerdictRecovery0466:
         assert run["outcome"] == "none"
         assert run["docs_reached"] == 0
         assert DOC_REF not in env["reviews"].rows or env["reviews"].rows[DOC_REF] == []
+
+    def test_a_users_restart_pick_widens_the_review_cap(self, env, monkeypatch):
+        launches = _scripted_review_worker(env, monkeypatch, [(None, 1, None)] * 4)
+        res = _start_review(env, provider_id="aip_2", continuation_restart_max_attempts=3)
+        run = _wait_finished(res["run_id"])
+
+        assert launches == ["aip_2"] * 4
+        assert run["attempts_used"] == 4
+        assert run["attempts_max"] == 4
+        assert run["outcome"] == "none"
+
+    def test_a_zero_restart_pick_leaves_a_review_hop_one_shot(self, env, monkeypatch):
+        launches = _scripted_review_worker(env, monkeypatch, [(None, 1, None)])
+        res = _start_review(env, provider_id="aip_2", continuation_restart_max_attempts=0)
+        run = _wait_finished(res["run_id"])
+
+        assert launches == ["aip_2"]
+        assert run["attempts_used"] == 1
+        assert run["attempts_max"] == 1
+        assert run["outcome"] == "none"
 
     def test_a_late_verdict_between_judge_and_retry_cancels_the_second_attempt(
             self, env, monkeypatch):
@@ -1575,6 +1596,38 @@ class TestReviewHopNoVerdictRecoveryIntegratedGate0466:
         signal = env["signals"][0]
         assert signal["extra"]["stop_code"] == svc.REVIEW_NO_VERDICT_STOP_CODE
         assert signal["extra"]["attempts_used"] == 2
+
+    def test_a_restart_pick_of_three_really_launches_four_review_attempts(
+            self, env, monkeypatch):
+        self._wire_pending_slot(env, monkeypatch)
+        monkeypatch.setattr(wds, "request_review", lambda **kw: {
+            "token": "raw", "token_id": "tok_1",
+            "scratch_dir": str(env["tmp"] / "review"), "mention": "REVIEW"})
+        launches = _scripted_review_worker(env, monkeypatch, [(None, 1, None)] * 4)
+        self._queue_first_dispatch(env)
+        queued = svc._auto_resume[GROUP]
+        queued["restart_max_attempts"] = 3
+        queued["reviewer_overrides"] = {str(self.ITEM_SEQ): "aip_2"}
+        gate = svc.resolve_review_gate(queued)
+
+        res = svc._spawn_review_hop(GROUP, queued, gate)
+        run = _wait_finished(res["run_id"])
+
+        assert launches == ["aip_2"] * 4
+        assert run["attempts_used"] == 4
+        assert run["attempts_max"] == 4
+        assert run["outcome"] == "none"
+        _wait_until(
+            lambda: env["paused"].rows.get(GROUP, {}).get("stop_code")
+            not in (None, svc.HOP_HANDOFF_STOP_CODE),
+            message="the four-attempt review parking for real",
+        )
+        parked = env["paused"].rows[GROUP]
+        assert parked["stop_code"] == svc.REVIEW_NO_VERDICT_STOP_CODE
+        assert "attempt 4" in parked["stop_last_message_excerpt"]
+        recorded = env["records"][-1]
+        assert recorded["attempts_used"] == 4
+        assert recorded["attempts_max"] == 4
 
     def test_a_verdict_on_the_second_attempt_really_reaches_the_real_gate_as_a_pass(
             self, env, monkeypatch):
