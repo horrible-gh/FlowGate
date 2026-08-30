@@ -1022,8 +1022,21 @@ class TestGitEndToEnd:
 
         conflicts = svc.list_conflicts(group, merge_id)
         assert conflicts["files"][0]["path"] == "shared.txt"
-        assert "<<<<<<<" in conflicts["files"][0]["content"]
+        content = conflicts["files"][0]["content"]
+        assert "<<<<<<<" in content
+        assert "|||||||" in content, "zdiff3 base marker must be present"
         assert conflicts["files"][0]["conflict_count"] == 1
+
+        # Verify base content matches the common ancestor
+        # Extract base section from zdiff3 conflict markers
+        import re
+        marker_pattern = r'^<{7}[^\n]*\n(.*?)^\|{7}[^\n]*\n(.*?)^={7}\n(.*?)^>{7}'
+        match = re.search(marker_pattern, content, re.MULTILINE | re.DOTALL)
+        assert match, "Should parse zdiff3 conflict with base marker"
+        ours_content, base_content, theirs_content = match.groups()
+        assert base_content.strip() == "line1", "Base marker should separate common ancestor content"
+        assert ours_content.strip() == "mainline version", "Merge target (main) should be ours"
+        assert theirs_content.strip() == "group version", "Merge source (group branch) should be theirs"
 
         # markers left in the submitted content → 422, nothing written
         with pytest.raises(svc.GitServiceError) as exc:

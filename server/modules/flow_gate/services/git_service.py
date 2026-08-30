@@ -4359,7 +4359,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         # work subject — the absorb commit above already holds finalize_subject().
         # Reusing it here stamped two commits of identical title+diff onto origin.
         proc = _run_git(
-            [*_GIT_IDENT, "merge", "--no-ff", "-m",
+            [*_GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "merge", "--no-ff", "-m",
              _merge_commit_subject(branch, base_branch), branch],
             cwd=base_root, author_env=author_env,
         )

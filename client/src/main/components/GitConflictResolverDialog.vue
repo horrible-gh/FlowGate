@@ -137,6 +137,10 @@
                       <div class="git-conflict-side-label">{{ chunkLabel(seg.oursLabel, t('main.git_finalize.current')) }} <span v-if="recommendedChoice(seg) === 'ours'" class="git-ai-recommended">{{ t('main.git_finalize.quick_recommended') }}</span></div>
                       <pre><span v-for="line in chunkDiff(seg).ours" :key="line.sourceIndex" class="git-code-line" :class="'diff-' + line.status"><span class="git-line-number">{{ sideLineNumber(selectedConflictFile, idx, 'ours', line.sourceIndex) }}</span><span class="git-code-line-text"><span v-for="(token, tokenIdx) in line.tokens" :key="tokenIdx" class="git-code-token" :class="'diff-token-' + token.status">{{ token.text }}</span></span></span><span v-if="!seg.ours.length" class="git-empty-side">{{ t('main.git_finalize.empty_side') }}</span></pre>
                     </div>
+                    <div v-if="seg.baseLine" class="git-conflict-side base">
+                      <div class="git-conflict-side-label">{{ t('main.git_finalize.common_base') }}</div>
+                      <pre><span v-for="line in chunkDiff({ ours: seg.base, theirs: seg.base }).ours" :key="line.sourceIndex" class="git-code-line" :class="'diff-' + line.status"><span class="git-line-number">{{ sideLineNumber(selectedConflictFile, idx, 'base', line.sourceIndex) }}</span><span class="git-code-line-text"><span v-for="(token, tokenIdx) in line.tokens" :key="tokenIdx" class="git-code-token" :class="'diff-token-' + token.status">{{ token.text }}</span></span></span><span v-if="!seg.base.length" class="git-empty-side">{{ t('main.git_finalize.empty_side') }}</span></pre>
+                    </div>
                     <div class="git-conflict-side theirs">
                       <div class="git-conflict-side-label">{{ chunkLabel(seg.theirsLabel, t('main.git_finalize.incoming')) }} <span v-if="recommendedChoice(seg) === 'theirs'" class="git-ai-recommended">{{ t('main.git_finalize.quick_recommended') }}</span></div>
                       <pre><span v-for="line in chunkDiff(seg).theirs" :key="line.sourceIndex" class="git-code-line" :class="'diff-' + line.status"><span class="git-line-number">{{ sideLineNumber(selectedConflictFile, idx, 'theirs', line.sourceIndex) }}</span><span class="git-code-line-text"><span v-for="(token, tokenIdx) in line.tokens" :key="tokenIdx" class="git-code-token" :class="'diff-token-' + token.status">{{ token.text }}</span></span></span><span v-if="!seg.theirs.length" class="git-empty-side">{{ t('main.git_finalize.empty_side') }}</span></pre>
@@ -429,14 +433,19 @@ function commonLineNumber(file: ConflictFileState, segmentIndex: number, lineInd
 function sideLineNumber(
   file: ConflictFileState,
   segmentIndex: number,
-  side: 'ours' | 'theirs',
+  side: 'ours' | 'base' | 'theirs',
   lineIndex: number,
 ): number {
   const seg = file.segments[segmentIndex]
   if (!seg || seg.kind !== 'chunk') return lineIndex + 1
-  const offset = side === 'ours'
-    ? 1
-    : 1 + seg.ours.length + (seg.baseLine ? 1 + seg.base.length : 0) + 1
+  let offset: number
+  if (side === 'ours') {
+    offset = 1
+  } else if (side === 'base') {
+    offset = 1 + seg.ours.length + 1
+  } else {
+    offset = 1 + seg.ours.length + (seg.baseLine ? 1 + seg.base.length : 0) + 1
+  }
   return segmentStartLine(file, segmentIndex) + offset + lineIndex
 }
 function stripLineEnding(line: string): string {

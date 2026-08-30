@@ -79,6 +79,23 @@ describe('conflict chunk recommendations', () => {
     expect(parsedChunk).toBeTruthy()
     expect(recommendChunkChoice(parsedChunk!)).toBe('theirs')
   })
+
+  it('correctly parses zdiff3 base section and populates baseLine and base array', () => {
+    // Test with actual zdiff3 marker format including base content
+    const zdiff3Content = 'before\n<<<<<<< HEAD\nmainline version\n||||||| line1\nline1\n=======\ngroup version\n>>>>>>> group/branch\nafter\n'
+    const parsed = parseConflictFile(zdiff3Content)
+    const parsedChunk = parsed?.find((segment): segment is ChunkSegment => segment.kind === 'chunk')
+
+    expect(parsedChunk).toBeTruthy()
+    // Verify baseLine is non-null when base marker is present
+    expect(parsedChunk!.baseLine).not.toBeNull()
+    expect(parsedChunk!.baseLine).toBe('||||||| line1\n')
+    // Verify base array contains the common ancestor content (with newlines preserved)
+    expect(parsedChunk!.base).toEqual(['line1\n'])
+    // Verify ours/theirs content is correct
+    expect(parsedChunk!.ours).toEqual(['mainline version\n'])
+    expect(parsedChunk!.theirs).toEqual(['group version\n'])
+  })
   it('builds display-only line and token diffs without changing chunk source lines', () => {
     const seg = chunk(['same\n', 'value = 1\n', 'ours only\n'], ['same\n', 'value = 2\n', 'theirs only\n'])
     const diff = buildChunkSideDiff(seg.ours, seg.theirs)

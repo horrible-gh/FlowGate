@@ -242,4 +242,54 @@ describe('GitConflictResolverDialog (shared 0207 시안 A resolver)', () => {
 
     wrapper.unmount()
   })
+
+  it('renders the base panel when zdiff3 base marker is present', () => {
+    // Real zdiff3 conflict fixture from test_git_integration_0115.py::test_conflict_resolve_flow
+    const baseMarkerContent = [
+      'common line',
+      '<<<<<<< HEAD',
+      'mainline version',
+      '||||||| line1',
+      'line1',
+      '=======',
+      'group version',
+      '>>>>>>> group/branch',
+      'after',
+    ].join('\n')
+
+    const { wrapper } = mountDialog({
+      files: [makeFile('conflict.txt', baseMarkerContent, 1)],
+    })
+
+    const chunk = wrapper.find('.git-conflict-chunk')
+    expect(chunk.exists()).toBe(true)
+
+    // Verify base panel is rendered
+    const sides = wrapper.findAll('.git-conflict-side')
+    expect(sides).toHaveLength(3) // ours, base, theirs
+    expect(sides[1].classes()).toContain('base')
+
+    // Verify base panel has correct label and content (translated label)
+    const baseLabel = sides[1].find('.git-conflict-side-label').text().toLowerCase()
+    expect(baseLabel).toContain('common')
+    expect(sides[1].text()).toContain('line1')
+
+    wrapper.unmount()
+  })
+
+  it('does not render base panel when base marker is absent', () => {
+    const { wrapper } = mountDialog({
+      files: [makeFile('conflict.txt', FILE_B_CONTENT, 1)],
+    })
+
+    const chunk = wrapper.find('.git-conflict-chunk')
+    expect(chunk.exists()).toBe(true)
+
+    // Verify only ours and theirs panels are rendered (no base)
+    const sides = wrapper.findAll('.git-conflict-side')
+    expect(sides).toHaveLength(2) // ours, theirs
+    expect(sides.filter((s) => s.classes().includes('base'))).toHaveLength(0)
+
+    wrapper.unmount()
+  })
 })

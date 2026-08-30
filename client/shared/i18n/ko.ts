@@ -2633,6 +2633,7 @@ export default {
       direct_only: '직접 편집 전용',
       current: '현재 것',
       incoming: '들어온 것',
+      common_base: '공통 기초',
       both: '둘 다',
       conflict_chunk: '충돌 청크 {n}',
       too_large_direct: '파일이 커서 청크 렌더링을 생략하고 직접 편집 모드로 열었습니다.',

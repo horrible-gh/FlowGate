@@ -2630,6 +2630,7 @@ export default {
       direct_only: '直接編集のみ',
       current: '現在',
       incoming: '取り込み',
+      common_base: 'コモンベース',
       both: '両方',
       conflict_chunk: '競合チャンク {n}',
       too_large_direct: 'ファイルが大きいためチャンク表示を省略し、直接編集モードで開きました。',
