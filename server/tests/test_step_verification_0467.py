@@ -358,7 +358,7 @@ def test_enforce_on_save_tr_passes_a_declared_none():
     assert result["codes"] == []
 
 
-# ── PATCH /documents/{doc_id}/content — TR gate runs before the write (T0010) ─
+# ── PATCH /documents/{doc_id}/content — editing is not an inbox submission boundary ──
 # Same harness shape as test_document_content_editability.py (get_document/update_document/
 # _document_file_path stubbed; is_final_approved/is_document_editable stubbed too so a
 # type_code that is not a workflow-root type does not fall through to a real DB query).
@@ -393,43 +393,40 @@ def _stub_update_content_route(monkeypatch, documents_router, doc: dict, *, exis
     return doc_file, update_mock
 
 
-def test_patch_content_rejects_a_tr_missing_the_section(monkeypatch, tmp_path):
+def test_patch_content_saves_a_tr_missing_the_section(monkeypatch, tmp_path):
     from modules.flow_gate.documents.routers import documents as documents_router
 
     doc = _tr_doc(tmp_path)
     doc_file, update_mock = _stub_update_content_route(monkeypatch, documents_router, doc)
+    body_text = "no section at all"
 
-    with pytest.raises(HTTPException) as exc_info:
-        documents_router.update_document_content(
-            doc["doc_id"],
-            documents_router.DocumentContentUpdate(content="no section at all"),
-            {"user_id": "u"},
-        )
+    result = documents_router.update_document_content(
+        doc["doc_id"],
+        documents_router.DocumentContentUpdate(content=body_text),
+        {"user_id": "u"},
+    )
 
-    assert exc_info.value.status_code == 422
-    assert "단계별 확인" in exc_info.value.detail
-    # the gate ran before the write: original file untouched, DB never called
-    assert doc_file.read_text(encoding="utf-8") == "# original\n"
-    update_mock.assert_not_called()
+    assert result["content"] == body_text
+    assert doc_file.read_text(encoding="utf-8") == body_text
+    update_mock.assert_called_once()
 
 
-def test_patch_content_rejects_a_tr_with_a_malformed_section(monkeypatch, tmp_path):
+def test_patch_content_saves_a_tr_with_a_malformed_section(monkeypatch, tmp_path):
     from modules.flow_gate.documents.routers import documents as documents_router
 
     doc = _tr_doc(tmp_path)
     doc_file, update_mock = _stub_update_content_route(monkeypatch, documents_router, doc)
     malformed = "## 단계별 확인\n\n### 섹션\n- 스텝: 해봐라\n  - 기대치: 된다\n"  # no summary line
 
-    with pytest.raises(HTTPException) as exc_info:
-        documents_router.update_document_content(
-            doc["doc_id"],
-            documents_router.DocumentContentUpdate(content=malformed),
-            {"user_id": "u"},
-        )
+    result = documents_router.update_document_content(
+        doc["doc_id"],
+        documents_router.DocumentContentUpdate(content=malformed),
+        {"user_id": "u"},
+    )
 
-    assert exc_info.value.status_code == 422
-    assert doc_file.read_text(encoding="utf-8") == "# original\n"
-    update_mock.assert_not_called()
+    assert result["content"] == malformed
+    assert doc_file.read_text(encoding="utf-8") == malformed
+    update_mock.assert_called_once()
 
 
 def test_patch_content_accepts_a_well_formed_tr_section(monkeypatch, tmp_path):
@@ -487,52 +484,34 @@ def test_patch_content_ignores_the_gate_for_non_tr_types(monkeypatch, tmp_path):
     update_mock.assert_called_once()
 
 
-def test_patch_content_honors_x_locale_header_for_the_notice(monkeypatch, tmp_path):
-    from modules.flow_gate.documents.routers import documents as documents_router
+# ── PATCH /documents/content (RPC alias) — same editable contract as REST ──
 
-    doc = _tr_doc(tmp_path, doc_id="flowgate.default.0467.9003-TR")
-    _stub_update_content_route(monkeypatch, documents_router, doc)
-
-    class _Req:
-        headers = {"x-locale": "en"}
-
-    with pytest.raises(HTTPException) as exc_info:
-        documents_router.update_document_content(
-            doc["doc_id"],
-            documents_router.DocumentContentUpdate(content="no section at all"),
-            {"user_id": "u"},
-            _Req(),
-        )
-
-    assert "Step Verification" in exc_info.value.detail
-    assert not _HANGUL.search(exc_info.value.detail)
-
-
-# ── PATCH /documents/content (RPC alias) — same result as the REST route (T0010) ──
-
-def test_patch_content_rpc_rejects_identically_to_the_rest_route(monkeypatch, tmp_path):
+def test_patch_content_rest_and_rpc_save_a_legacy_tr_header_edit(monkeypatch, tmp_path):
     from modules.flow_gate.documents.routers import documents as documents_router
 
     doc = _tr_doc(tmp_path, doc_id="flowgate.default.0467.9004-TR")
-    doc_file, update_mock = _stub_update_content_route(monkeypatch, documents_router, doc)
-    body_text = "no section at all"
+    original = "---\ntitle: old title\ntype: TR\n---\n\nLegacy report without the section.\n"
+    changed = original.replace("title: old title", "title: corrected title")
+    doc_file, update_mock = _stub_update_content_route(
+        monkeypatch, documents_router, doc, existing_body=original,
+    )
 
-    with pytest.raises(HTTPException) as rest_exc:
-        documents_router.update_document_content(
-            doc["doc_id"],
-            documents_router.DocumentContentUpdate(content=body_text),
-            {"user_id": "u"},
-        )
-    with pytest.raises(HTTPException) as rpc_exc:
-        documents_router.update_document_content_rpc(
-            documents_router.DocumentContentUpdateRpc(doc_id=doc["doc_id"], content=body_text),
-            {"user_id": "u"},
-        )
+    rest_result = documents_router.update_document_content(
+        doc["doc_id"],
+        documents_router.DocumentContentUpdate(content=changed),
+        {"user_id": "u"},
+    )
+    assert rest_result["content"] == changed
+    assert doc_file.read_text(encoding="utf-8") == changed
 
-    assert rest_exc.value.status_code == rpc_exc.value.status_code == 422
-    assert rest_exc.value.detail == rpc_exc.value.detail
-    assert doc_file.read_text(encoding="utf-8") == "# original\n"
-    update_mock.assert_not_called()
+    doc_file.write_text(original, encoding="utf-8")
+    rpc_result = documents_router.update_document_content_rpc(
+        documents_router.DocumentContentUpdateRpc(doc_id=doc["doc_id"], content=changed),
+        {"user_id": "u"},
+    )
+    assert rpc_result["content"] == changed
+    assert doc_file.read_text(encoding="utf-8") == changed
+    assert update_mock.call_count == 2
 
 
 # ── inbox action=new / action=edit — real HTTP-level regression through the shared

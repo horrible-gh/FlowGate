@@ -1909,6 +1909,7 @@ export default {
       saving: '저장 중',
       load_failed: '문서 내용을 불러오지 못했습니다.',
       save_failed: '문서 저장에 실패했습니다.',
+      save_error_details: '{summary} 상세 내용은 편집 창에서 확인하세요.',
       save_success: '문서가 저장되었습니다.',
     },
     workflow_decision_modal: {
