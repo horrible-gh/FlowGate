@@ -11,8 +11,8 @@ from modules.flow_gate.settings import source_mode_service
 _logger = logging.getLogger(__name__)
 
 VERSION = "v1"
-DISPLAY_ORDER = ("read", "grep", "glob", "stat", "write", "patch", "remove")
-READ_TOOLS = frozenset({"read", "grep", "glob", "stat"})
+DISPLAY_ORDER = ("read", "grep", "glob", "stat", "diff", "log", "write", "patch", "remove")
+READ_TOOLS = frozenset({"read", "grep", "glob", "stat", "diff", "log"})
 WRITE_TOOLS = frozenset({"write", "patch", "remove"})
 MUTATING_STEP_TYPES = frozenset({"TR", "TSR", "TS"})
 
@@ -33,6 +33,8 @@ SUMMARY = {
         "grep": "소스 트리에서 정규식으로 텍스트를 검색한다.",
         "glob": "글롭 패턴에 맞는 파일 경로 목록을 얻는다.",
         "stat": "경로의 존재 여부와 종류·크기 등 메타데이터를 조회한다.",
+        "diff": "merge-base 이후 상대 ref 쪽 변경 patch를 조회한다.",
+        "log": "merge-base 이후 상대 ref 쪽 커밋을 최신순으로 조회한다.",
         "write": "파일을 새로 만들거나 내용을 통째로 바꾼다.",
         "patch": "파일에서 글자 그대로 일치하는 텍스트를 찾아 일부를 바꾼다.",
         "remove": "파일 하나를 삭제한다.",
@@ -42,6 +44,8 @@ SUMMARY = {
         "grep": "ソースツリーを正規表現で検索する。",
         "glob": "globパターンに一致するファイルパス一覧を取得する。",
         "stat": "パスの存在有無と種類・サイズなどのメタデータを取得する。",
+        "diff": "merge-base以降の相手ref側の変更patchを取得する。",
+        "log": "merge-base以降の相手ref側のcommitを新しい順に取得する。",
         "write": "ファイルを新規作成、または内容を丸ごと置き換える。",
         "patch": "ファイル内で完全一致する文字列を検索し、該当部分を置き換える。",
         "remove": "ファイルを1つ削除する。",
@@ -51,6 +55,8 @@ SUMMARY = {
         "grep": "Search the source tree with a regular expression.",
         "glob": "List file paths matching a glob pattern.",
         "stat": "Inspect whether a path exists and return its type, size, and metadata.",
+        "diff": "Return the target ref patch since its merge base with HEAD.",
+        "log": "List target-ref commits since its merge base with HEAD, newest first.",
         "write": "Create a file or replace its entire content.",
         "patch": "Replace exact matching text within a file.",
         "remove": "Delete a single file.",
@@ -105,6 +111,16 @@ FIELDS = {
         "ja": [("path", "string", True, None, "ソースルートからの相対パス。絶対パスと '..' は禁止。"), ("max_bytes", "integer", False, None, "読み取る最大バイト数。省略時はファイル全体を読み取るが、サーバー上限を超えると413。"), ("offset", "integer", False, 0, "読み取りを開始する0基準のバイト位置。"), ("length", "integer", False, None, "読み取るバイト範囲の最大長。max_bytesと併用した場合は小さい方が適用される。"), ("encoding", "string", False, "utf-8", "デコード用エンコーディング。デコードできない文字は置換文字に変わる。")],
         "en": [("path", "string", True, None, "Path relative to the source root. Absolute paths and '..' are forbidden."), ("max_bytes", "integer", False, None, "Maximum bytes to read. If omitted, the whole file is read unless it exceeds the server limit, which returns 413."), ("offset", "integer", False, 0, "Zero-based byte position where reading starts."), ("length", "integer", False, None, "Maximum byte-window length. When used with max_bytes, the smaller value applies."), ("encoding", "string", False, "utf-8", "Decoding charset. Undecodable characters are replaced.")],
     },
+    "diff": {
+        "ko": [("path", "string", False, None, "선택적 소스 루트 상대 경로."), ("target_ref", "string", False, "origin/main", "비교할 상대 ref. 옵션형과 revspec은 금지.")],
+        "ja": [("path", "string", False, None, "任意のソースルート相対パス。"), ("target_ref", "string", False, "origin/main", "比較対象ref。option形式とrevspecは禁止。")],
+        "en": [("path", "string", False, None, "Optional source-root-relative path."), ("target_ref", "string", False, "origin/main", "Target ref; option-shaped values and revspecs are forbidden.")],
+    },
+    "log": {
+        "ko": [("path", "string", False, None, "선택적 소스 루트 상대 경로."), ("target_ref", "string", False, "origin/main", "비교할 상대 ref. 옵션형과 revspec은 금지."), ("max_count", "integer", False, None, "반환할 최대 커밋 수. 양의 정수.")],
+        "ja": [("path", "string", False, None, "任意のソースルート相対パス。"), ("target_ref", "string", False, "origin/main", "比較対象ref。option形式とrevspecは禁止。"), ("max_count", "integer", False, None, "返す最大commit数。正の整数。")],
+        "en": [("path", "string", False, None, "Optional source-root-relative path."), ("target_ref", "string", False, "origin/main", "Target ref; option-shaped values and revspecs are forbidden."), ("max_count", "integer", False, None, "Maximum commits to return; a positive integer.")],
+    },
     "grep": {
         "ko": [("pattern", "string", True, None, "찾을 정규식(파이썬 re 문법)."), ("path", "string", False, "", "검색을 시작할 디렉터리. 비우면 소스 루트 전체."), ("glob", "string", False, None, "파일 필터. 예: **/*.py"), ("ignore_case", "boolean", False, False, "대소문자 무시."), ("max_results", "integer", False, None, "돌려줄 최대 매치 수. 채워지면 그 파일까지만 훑고 멈춘다.")],
         "ja": [("pattern", "string", True, None, "検索する正規表現(Python re構文)。"), ("path", "string", False, "", "検索を開始するディレクトリ。空の場合はソースルート全体。"), ("glob", "string", False, None, "ファイルフィルター。例: **/*.py"), ("ignore_case", "boolean", False, False, "大文字と小文字を区別しない。"), ("max_results", "integer", False, None, "返す最大マッチ数。到達するとそのファイルまで走査して停止する。")],
@@ -138,6 +154,16 @@ FIELDS = {
 }
 
 ERRORS = {
+    "diff": {
+        "ko": [(503, "unavailable", "ref가 없거나 merge-base/diff git 명령이 실패했다."), (422, "invalid_request", "ref 또는 path 형식이 잘못됐다."), (403, "forbidden", "이 토큰에 read 스코프가 없다.")],
+        "ja": [(503, "unavailable", "refがないかmerge-base/diffのgit commandが失敗した。"), (422, "invalid_request", "refまたはpathの形式が正しくない。"), (403, "forbidden", "このtokenにread scopeがない。")],
+        "en": [(503, "unavailable", "The ref is missing or the merge-base/diff git command failed."), (422, "invalid_request", "The ref or path has an invalid form."), (403, "forbidden", "This token does not have the read scope.")],
+    },
+    "log": {
+        "ko": [(503, "unavailable", "ref가 없거나 merge-base/log git 명령이 실패했다."), (422, "invalid_request", "ref, path 또는 max_count 형식이 잘못됐다."), (403, "forbidden", "이 토큰에 read 스코프가 없다.")],
+        "ja": [(503, "unavailable", "refがないかmerge-base/logのgit commandが失敗した。"), (422, "invalid_request", "ref、pathまたはmax_countの形式が正しくない。"), (403, "forbidden", "このtokenにread scopeがない。")],
+        "en": [(503, "unavailable", "The ref is missing or the merge-base/log git command failed."), (422, "invalid_request", "The ref, path, or max_count has an invalid form."), (403, "forbidden", "This token does not have the read scope.")],
+    },
     "read": {
         "ko": [(404, "not_found", "경로가 없거나 일반 파일이 아니다."), (413, "too_large", "max_bytes 를 생략했는데 파일이 서버 상한을 넘는다."), (422, "invalid_request", "경로가 소스 루트를 벗어나거나 형식이 잘못됐다."), (403, "forbidden", "이 토큰에 read 스코프가 없다.")],
         "ja": [(404, "not_found", "パスが存在しないか通常ファイルではない。"), (413, "too_large", "max_bytes を省略し、ファイルがサーバー上限を超えている。"), (422, "invalid_request", "パスがソースルート外か形式が正しくない。"), (403, "forbidden", "このトークンにreadスコープがない。")],
@@ -176,6 +202,16 @@ ERRORS = {
 }
 
 CAUTIONS = {
+    "diff": {
+        "ko": ["HEAD와 target_ref의 merge-base부터 target_ref까지만 비교한다. HEAD 쪽 고유 변경은 포함하지 않는다.", "patch는 1 MiB에서 잘리며 truncated로 알린다."],
+        "ja": ["HEADとtarget_refのmerge-baseからtarget_refまでだけを比較し、HEAD側固有の変更は含めない。", "patchは1 MiBで切り詰め、truncatedで示す。"],
+        "en": ["Only merge-base-to-target_ref changes are compared; HEAD-only changes are excluded.", "The patch is capped at 1 MiB and truncation is reported."],
+    },
+    "log": {
+        "ko": ["merge-base 이후 target_ref 쪽 커밋만 최신순으로 반환한다.", "서버 상한은 1000개이며 제한되면 truncated=true다."],
+        "ja": ["merge-base以降のtarget_ref側commitだけを新しい順で返す。", "server上限は1000件で、制限時はtruncated=true。"],
+        "en": ["Only target-ref commits after the merge base are returned, newest first.", "The server cap is 1,000 commits; truncation is reported."],
+    },
     "read": {
         "ko": ["offset과 length로 바이트 단위 읽기 구간을 지정할 수 있다. offset은 0부터 시작하며 파일 끝을 넘으면 빈 내용과 eof=true를 돌려준다.", "size는 구간을 잘라 읽었을 때도 파일 전체 크기다."],
         "ja": ["offsetとlengthでバイト単位の読み取り範囲を指定できる。offsetは0基準で、ファイル末尾を超えると空の内容とeof=trueを返す。", "sizeは範囲を切って読んだ場合もファイル全体のサイズである。"],
@@ -215,6 +251,8 @@ CAUTIONS = {
 
 EXAMPLE_BODIES = {
     "read": {"path": "app/main.py", "max_bytes": 20000, "encoding": "utf-8"},
+    "diff": {"target_ref": "origin/main", "path": "server/app.py"},
+    "log": {"target_ref": "origin/main", "path": "server/app.py", "max_count": 20},
     "grep": {"pattern": "TODO", "glob": "**/*.py", "ignore_case": True, "max_results": 20},
     "glob": {"pattern": "**/*.py"},
     "stat": {"path": "app/main.py"},
@@ -251,6 +289,8 @@ MENTION_LINES = {
 
 EXAMPLE_RESPONSES = {
     "read": {"ok": True, "op": "read", "server_ts": "2026-07-29T13:34:25+09:00", "path": "app/main.py", "content": "<file text>", "encoding": "utf-8", "size": 18342, "offset": 0, "returned_bytes": 18342, "eof": True, "truncated": False},
+    "diff": {"ok": True, "op": "diff", "server_ts": "2026-07-29T13:34:25+09:00", "merge_base": "0123456789abcdef0123456789abcdef01234567", "target_ref": "origin/main", "patch": "diff --git a/server/app.py b/server/app.py\n...", "returned_bytes": 58, "truncated": False},
+    "log": {"ok": True, "op": "log", "server_ts": "2026-07-29T13:34:25+09:00", "merge_base": "0123456789abcdef0123456789abcdef01234567", "target_ref": "origin/main", "commits": [{"sha": "fedcba9876543210fedcba9876543210fedcba98", "subject": "fix: update app"}], "total": 1, "truncated": False},
     "grep": {"ok": True, "op": "grep", "server_ts": "2026-07-29T13:34:25+09:00", "matches": [{"file": "server/modules/flow_gate/template_provision.py", "line": 194, "text": "def normalize_locale(x_locale: Optional[str]) -> str:"}], "total": 1, "truncated": False},
     "glob": {"ok": True, "op": "glob", "server_ts": "2026-07-29T13:34:31+09:00", "paths": ["server/modules/flow_gate/db/events.py", "server/modules/flow_gate/db/documents.py"], "total": 2},
     "stat": {"ok": True, "op": "stat", "server_ts": "2026-07-29T13:34:25+09:00", "path": "app/main.py", "exists": True, "type": "file", "size": 18342, "mtime": "2026-07-29T13:30:00+09:00", "eol": "lf", "binary": False},
@@ -287,7 +327,7 @@ def kind_for_step(
     A failed step lookup is always demoted to ``read`` — advertising narrower than reality
     costs an unused tool, advertising wider hands the worker a 403 (D0004 D-6).
     """
-    if action_scope in {"review", "workflow_decide", "chat"}:
+    if action_scope in {"review", "workflow_decide", "chat", "resolve_conflict"}:
         return "read", None
     if action_scope not in {"new", "edit"}:
         return "none", "token_scope_none"
@@ -368,10 +408,18 @@ def items_view_notes(registry: dict, locale: str) -> list[str]:
 
 
 def _request_fields(name: str, locale: str) -> list[dict]:
-    return [
+    fields = [
         {"name": n, "type": t, "required": required, "default": default, "description": description}
         for n, t, required, default, description in FIELDS[name][locale]
     ]
+    if name in {"read", "grep", "glob", "stat"}:
+        descriptions = {
+            "ko": "선택적 커밋 ref. 생략 또는 null이면 working tree(미커밋 변경 포함), 지정하면 committed tree를 읽는다.",
+            "ja": "任意のcommit ref。省略またはnullはworking tree(未commit変更を含む)、指定時はcommitted treeを読む。",
+            "en": "Optional committed-tree ref. Omit or send null for the working tree (including uncommitted changes); specify it to read a committed tree.",
+        }
+        fields.append({"name": "ref", "type": "string", "required": False, "default": None, "description": descriptions[locale]})
+    return fields
 
 
 def _errors(name: str, locale: str) -> list[dict]:

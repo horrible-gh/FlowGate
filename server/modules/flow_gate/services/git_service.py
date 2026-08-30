@@ -4359,7 +4359,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         # work subject — the absorb commit above already holds finalize_subject().
         # Reusing it here stamped two commits of identical title+diff onto origin.
         proc = _run_git(
-            [*_GIT_IDENT, "merge", "--no-ff", "-m",
+            [*_GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "merge", "--no-ff", "-m",
              _merge_commit_subject(branch, base_branch), branch],
             cwd=base_root, author_env=author_env,
         )
@@ -4520,6 +4520,99 @@ def has_conflict_markers(content: str) -> bool:
     return False
 
 
+# ── One-side-dropped detection (0478 T0012) ───────────────────────────────
+# Same marker grammar and state machine as client/src/main/composables/useConflictChunks.ts
+# (MARKER_OPEN_RE/MARKER_CLOSE_RE/MARKER_SEP_RE/MARKER_BASE_RE, parseConflictFile), reimplemented
+# server-side so `resolve_conflicts` can catch a resolver that dropped an entire side even though
+# no markers remain.
+_CONFLICT_SEP_RE = re.compile(r"^={7}$")
+_CONFLICT_BASE_RE = re.compile(r"^\|{7}( |$)")
+
+
+def _split_conflict_chunks_with_base(content: str) -> Optional[list[dict]]:
+    """Parse marker-delimited chunks out of ``content``, or ``None`` if malformed.
+
+    Each chunk is ``{"ours": [...], "base": [...] | None, "theirs": [...]}`` — ``base`` is
+    ``None`` when the chunk has no ``|||||||`` section (pre-zdiff3 sessions, or a merge that
+    could not produce a common ancestor).
+    """
+    chunks: list[dict] = []
+    state = "COMMON"
+    chunk: Optional[dict] = None
+    for line in (content or "").splitlines():
+        if state == "COMMON":
+            if _CONFLICT_OPEN_RE.match(line):
+                chunk = {"ours": [], "base": None, "theirs": []}
+                state = "OURS"
+        elif state == "OURS":
+            if _CONFLICT_BASE_RE.match(line):
+                chunk["base"] = []
+                state = "BASE"
+            elif _CONFLICT_SEP_RE.match(line):
+                state = "THEIRS"
+            elif _CONFLICT_OPEN_RE.match(line) or _CONFLICT_CLOSE_RE.match(line):
+                return None
+            else:
+                chunk["ours"].append(line)
+        elif state == "BASE":
+            if _CONFLICT_SEP_RE.match(line):
+                state = "THEIRS"
+            elif _CONFLICT_OPEN_RE.match(line) or _CONFLICT_CLOSE_RE.match(line):
+                return None
+            else:
+                chunk["base"].append(line)
+        elif state == "THEIRS":
+            if _CONFLICT_CLOSE_RE.match(line):
+                chunks.append(chunk)
+                chunk = None
+                state = "COMMON"
+            elif (
+                _CONFLICT_OPEN_RE.match(line)
+                or _CONFLICT_SEP_RE.match(line)
+                or _CONFLICT_BASE_RE.match(line)
+            ):
+                return None
+            else:
+                chunk["theirs"].append(line)
+    if state != "COMMON":
+        return None
+    return chunks
+
+
+def _chunk_added_lines(side: list[str], base: list[str]) -> list[str]:
+    """Lines in ``side`` that are not in ``base`` (trimmed comparison — E12 note in T0012)."""
+    base_set = {line.strip() for line in base}
+    return [line for line in side if line.strip() not in base_set]
+
+
+def _conflict_side_dropped(original: str, submitted: str) -> bool:
+    """True if ``submitted`` lost every line one side added over the common ancestor.
+
+    ``original`` is the pre-resolution working-tree content (still carrying markers);
+    ``submitted`` is the resolver's proposed replacement (already marker-free). Chunks
+    without a base (no common ancestor available) are skipped — there is nothing to diff
+    against. A chunk where only one side actually changed anything is also skipped: keeping
+    the changed side and dropping the unchanged one is a normal, correct resolution.
+    """
+    chunks = _split_conflict_chunks_with_base(original)
+    if not chunks:
+        return False
+    submitted_lines = {line.strip() for line in (submitted or "").splitlines()}
+    for ch in chunks:
+        base = ch.get("base")
+        if base is None:
+            continue
+        ours_added = _chunk_added_lines(ch["ours"], base)
+        theirs_added = _chunk_added_lines(ch["theirs"], base)
+        if not ours_added or not theirs_added:
+            continue
+        ours_present = any(line.strip() in submitted_lines for line in ours_added)
+        theirs_present = any(line.strip() in submitted_lines for line in theirs_added)
+        if not ours_present or not theirs_present:
+            return True
+    return False
+
+
 def _session_context(group_id: str, merge_id: int) -> tuple[dict, dict, str, Path]:
     """``(session, cfg, project_id, root)`` — ``root`` is the repo the conflict lives in.
 
@@ -4534,6 +4627,13 @@ def _session_context(group_id: str, merge_id: int) -> tuple[dict, dict, str, Pat
     cfg, _state, project_id, base_root, wt_path = _finalize_context(group_id)
     is_tr = db_git.session_kind(session) in db_git.TR_SESSION_KINDS
     return session, cfg, project_id, (wt_path if is_tr else base_root)
+
+
+
+def resolve_conflict_src_root(group_id: str, merge_id: int) -> Path:
+    """Return the checked-out root that owns the validated open conflict session."""
+    _session, _cfg, _project_id, root = _session_context(group_id, merge_id)
+    return root
 
 
 def list_conflicts(group_id: str, merge_id: int) -> dict:
@@ -4607,6 +4707,21 @@ def resolve_conflicts(group_id: str, merge_id: int, files: list[dict], complete:
                 422, "conflict_markers_remain",
                 f"Conflict markers remain in '{path}' (line {line_no})",
             )
+        else:
+            # Markers are gone — but "gone" also happens when an entire side of a real
+            # base-having chunk got dropped instead of merged. Compare against the
+            # pre-write working-tree original; if THAT never had markers either (e.g. a
+            # retry after an earlier file in this same request already failed), this file
+            # is out of scope for the check and passes silently.
+            try:
+                original = (root / path).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                original = ""
+            if has_conflict_markers(original) and _conflict_side_dropped(original, content):
+                raise GitServiceError(
+                    422, "conflict_side_dropped",
+                    f"'{path}' dropped one whole side of a resolved conflict chunk",
+                )
         target = resolve_in_root(root, path)
         if target is None:
             raise GitServiceError(422, "invalid_request", f"unsafe path: '{path}'")
@@ -6233,4 +6348,3 @@ def base_src_root(
     """
     branch = base_branch_for(project_id) or (fallback_branch or "main").strip() or "main"
     return src_root(project_name, branch)
-

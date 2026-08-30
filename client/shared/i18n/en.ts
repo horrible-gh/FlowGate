@@ -2637,6 +2637,7 @@ export default {
       direct_only: 'Direct edit only',
       current: 'Current',
       incoming: 'Incoming',
+      common_base: 'Common base',
       both: 'Both',
       conflict_chunk: 'Conflict chunk {n}',
       too_large_direct: 'This file is large, so chunk rendering was skipped and direct edit mode was opened.',

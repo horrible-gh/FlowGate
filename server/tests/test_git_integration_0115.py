@@ -1022,8 +1022,21 @@ class TestGitEndToEnd:
 
         conflicts = svc.list_conflicts(group, merge_id)
         assert conflicts["files"][0]["path"] == "shared.txt"
-        assert "<<<<<<<" in conflicts["files"][0]["content"]
+        content = conflicts["files"][0]["content"]
+        assert "<<<<<<<" in content
+        assert "|||||||" in content, "zdiff3 base marker must be present"
         assert conflicts["files"][0]["conflict_count"] == 1
+
+        # Verify base content matches the common ancestor
+        # Extract base section from zdiff3 conflict markers
+        import re
+        marker_pattern = r'^<{7}[^\n]*\n(.*?)^\|{7}[^\n]*\n(.*?)^={7}\n(.*?)^>{7}'
+        match = re.search(marker_pattern, content, re.MULTILINE | re.DOTALL)
+        assert match, "Should parse zdiff3 conflict with base marker"
+        ours_content, base_content, theirs_content = match.groups()
+        assert base_content.strip() == "line1", "Base marker should separate common ancestor content"
+        assert ours_content.strip() == "mainline version", "Merge target (main) should be ours"
+        assert theirs_content.strip() == "group version", "Merge source (group branch) should be theirs"
 
         # markers left in the submitted content → 422, nothing written
         with pytest.raises(svc.GitServiceError) as exc:
@@ -1061,6 +1074,396 @@ class TestGitEndToEnd:
         assert db_git.get_lock("gitprj") is None
         session = db_git.get_session(merge_id)
         assert session["status"] == "done"
+
+    def test_resolve_conflicts_rejects_one_sided_drop(self, origin_repo):
+        # 0478 T0012 completion (i): a base-having chunk where BOTH sides changed
+        # something over the common ancestor, but the submitted content keeps only
+        # one of them (markers all gone) → 422 conflict_side_dropped, nothing written.
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0110"
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "sidecheck.txt").write_text("base line\n", encoding="utf-8")
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "add sidecheck base"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0110")
+        (wt / "sidecheck.txt").write_text("group change\n", encoding="utf-8")
+
+        (seedwt / "sidecheck.txt").write_text("mainline change\n", encoding="utf-8")
+        _git(["commit", "-am", "mainline change to sidecheck"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        assert out["result"]["status"] == "conflict"
+        merge_id = out["result"]["merge_id"]
+
+        conflicts = svc.list_conflicts(group, merge_id)
+        entry = next(f for f in conflicts["files"] if f["path"] == "sidecheck.txt")
+        assert "|||||||" in entry["content"], "zdiff3 base marker required for this check"
+        # a finalize/merge conflict lives in the shared BASE checkout, not the group's own
+        # worktree — resolve_conflict_src_root() is the production accessor for that root.
+        conflict_root = svc.resolve_conflict_src_root(group, merge_id)
+        before_bytes = (conflict_root / "sidecheck.txt").read_bytes()
+
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.resolve_conflicts(group, merge_id, [{
+                "path": "sidecheck.txt",
+                "content": "group change\n",  # drops the mainline ("ours") side entirely
+            }], True)
+        assert exc.value.code == "conflict_side_dropped"
+        assert exc.value.status == 422
+
+        # nothing was written: same bytes on disk, markers still there, session still open
+        assert (conflict_root / "sidecheck.txt").read_bytes() == before_bytes
+        assert "<<<<<<<" in (conflict_root / "sidecheck.txt").read_text(encoding="utf-8")
+        still_open = svc.list_conflicts(group, merge_id)
+        still_entry = next(f for f in still_open["files"] if f["path"] == "sidecheck.txt")
+        assert still_entry["conflict_count"] == 1
+
+        # abort so this session doesn't block later tests' project-level lock
+        svc.abort_merge(group, merge_id)
+
+    def test_resolve_conflicts_allows_both_sides_kept(self, origin_repo):
+        # 0478 T0012 completion (ii): the ordinary "markers just gone" GREEN path is
+        # untouched when both sides' added lines survive — exact line reproduction of
+        # the original chunk is not required, only that each side's contribution is
+        # present somewhere in the submitted content.
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0111"
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "sidecheck2.txt").write_text("base line\n", encoding="utf-8")
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "add sidecheck2 base"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0111")
+        (wt / "sidecheck2.txt").write_text("group change\n", encoding="utf-8")
+
+        (seedwt / "sidecheck2.txt").write_text("mainline change\n", encoding="utf-8")
+        _git(["commit", "-am", "mainline change to sidecheck2"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        assert out["result"]["status"] == "conflict"
+        merge_id = out["result"]["merge_id"]
+        conflicts = svc.list_conflicts(group, merge_id)
+        entry = next(f for f in conflicts["files"] if f["path"] == "sidecheck2.txt")
+        assert "|||||||" in entry["content"]
+
+        # both sides' lines present, reordered and paraphrased around — not a byte-for-byte
+        # reproduction of the original chunk — must still pass.
+        out = svc.resolve_conflicts(group, merge_id, [{
+            "path": "sidecheck2.txt",
+            "content": "combined:\nmainline change\ngroup change\n",
+        }], True)
+        assert out["result"]["status"] == "merged"
+        assert db_git.get_session(merge_id)["status"] == "done"
+
+    def test_resolve_conflicts_skips_baseless_add_add_chunk(self, origin_repo):
+        # 0478 T0012 completion (iii): a chunk with NO "|||||||" section at all (T0012's
+        # "zdiff3 이전에 만들어진 구세션") must not be checked — base=None means there is no
+        # ancestor to diff against, so a one-sided resolution of such a chunk still passes.
+        #
+        # git_service always forces `-c merge.conflictStyle=zdiff3`, so even an add/add
+        # conflict (no real common-ancestor blob for the path) still emits a "|||||||"
+        # header line with an EMPTY body — real, but not the case this criterion is about.
+        # To reproduce the genuinely marker-less shape a pre-zdiff3 session would have left
+        # on disk, this test drives a real conflict session end-to-end through finalize()
+        # and then overwrites the on-disk file with hand-written 2-way markers (no base
+        # line) before calling the real, unmocked resolve_conflicts().
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0112"
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0112")
+        # added independently on the group side — no common ancestor for this path
+        (wt / "onlynew.txt").write_text("group-only addition\n", encoding="utf-8")
+
+        (seedwt / "onlynew.txt").write_text("mainline-only addition\n", encoding="utf-8")
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "mainline adds onlynew.txt independently"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        assert out["result"]["status"] == "conflict"
+        merge_id = out["result"]["merge_id"]
+        conflicts = svc.list_conflicts(group, merge_id)
+        entry = next(f for f in conflicts["files"] if f["path"] == "onlynew.txt")
+        assert "<<<<<<<" in entry["content"]
+
+        conflict_root = svc.resolve_conflict_src_root(group, merge_id)
+        (conflict_root / "onlynew.txt").write_text(
+            "<<<<<<< HEAD\n"
+            "mainline-only addition\n"
+            "=======\n"
+            "group-only addition\n"
+            ">>>>>>> gitprj_default_0112\n",
+            encoding="utf-8",
+        )
+        no_base = svc.list_conflicts(group, merge_id)
+        no_base_entry = next(f for f in no_base["files"] if f["path"] == "onlynew.txt")
+        assert "|||||||" not in no_base_entry["content"]
+
+        # keeps only ONE side — no base means nothing to compare against, so this
+        # must pass exactly like it did before T0012 (markers gone → done).
+        out = svc.resolve_conflicts(group, merge_id, [{
+            "path": "onlynew.txt",
+            "content": "group-only addition\n",
+        }], True)
+        assert out["result"]["status"] == "merged"
+        assert db_git.get_session(merge_id)["status"] == "done"
+
+    def test_judge_hop_settles_none_when_conflict_side_dropped(self, origin_repo):
+        # 0478 T0012 completion (iv): an action_scope=="resolve_conflict" run whose only
+        # resolve attempt was rejected by conflict_side_dropped must settle
+        # outcome != "complete". ai_invoke_service._judge_hop is called DIRECTLY on a real
+        # run dict against a real, still-open conflict session — no mock of _judge_hop,
+        # _conflict_resolved, or git_service.list_conflicts anywhere in this test.
+        import time
+
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import ai_invoke_service as ai_svc
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0113"
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "sidecheck3.txt").write_text("base line\n", encoding="utf-8")
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "add sidecheck3 base"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0113")
+        (wt / "sidecheck3.txt").write_text("group change\n", encoding="utf-8")
+        (seedwt / "sidecheck3.txt").write_text("mainline change\n", encoding="utf-8")
+        _git(["commit", "-am", "mainline change to sidecheck3"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        assert out["result"]["status"] == "conflict"
+        merge_id = out["result"]["merge_id"]
+
+        # the worker's only resolve attempt drops one whole side → rejected, session stays open
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.resolve_conflicts(group, merge_id, [{
+                "path": "sidecheck3.txt",
+                "content": "group change\n",
+            }], True)
+        assert exc.value.code == "conflict_side_dropped"
+
+        # the minimal real run dict _judge_hop's resolve_conflict branch actually reads
+        # (run_id/group_id for the exception-log path, merge_id + action_scope to dispatch).
+        run = {
+            "run_id": "test-run-0478-t0012-iv",
+            "group_id": group,
+            "merge_id": merge_id,
+            "action_scope": "resolve_conflict",
+        }
+        started = time.monotonic()
+        ai_svc._judge_hop(run)
+        elapsed = time.monotonic() - started
+        assert elapsed >= ai_svc.ORACLE_SETTLE_SEC, "must really sleep(ORACLE_SETTLE_SEC), not a mock"
+
+        assert run["outcome"] != "complete"
+        assert run["outcome"] == "none"
+        assert run["docs_reached"] == 0
+        assert run["reached_doc_ids"] == []
+
+        # abort so this session doesn't block later tests' project-level lock
+        svc.abort_merge(group, merge_id)
+
+    def test_conflict_side_dropped_422_flows_through_resolve_token_and_retries(
+        self, origin_repo, monkeypatch,
+    ):
+        # 0478 T0012 작업 항목 3 (TR0013 rev0 반려 대응): the review demanded proof that
+        # `conflict_side_dropped` isn't just raised in-process — it must survive the real
+        # POST /groups/{g}/git/merge/{m}/resolve-token route (git_routes.py:490) and be
+        # handled by ai_invoke_service._api_execute's conflict_pending branch exactly like
+        # every other non-2xx status (tool_result failure + continue), then let a corrected
+        # resubmission succeed on retry. Only `verify_bearer` is stubbed (the worker-token
+        # auth boundary itself is covered by test_tokens_resolve_conflict_scope_0233.py /
+        # test_resolve_conflict_issue_lease_block_0447.py) and `urllib.request.urlopen` is
+        # redirected into a real FastAPI TestClient carrying the real router — everything
+        # downstream (git_routes.post_merge_resolve_token, git_service.resolve_conflicts,
+        # ai_invoke_service._resolve_conflict, ai_invoke_service._api_execute) runs
+        # unmocked, against the real conflict session created by finalize() below.
+        import io
+        import threading
+        import time
+        import urllib.error
+        import urllib.parse
+        import urllib.request
+
+        from fastapi import FastAPI, Request
+        from fastapi.responses import JSONResponse
+        from fastapi.testclient import TestClient
+
+        from modules.flow_gate.api.v1 import git_routes
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import ai_invoke_service as ai_svc
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services.git_service import GitServiceError
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0114"
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "sidecheck4.txt").write_text("base line\n", encoding="utf-8")
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "add sidecheck4 base"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0114")
+        (wt / "sidecheck4.txt").write_text("group change\n", encoding="utf-8")
+        (seedwt / "sidecheck4.txt").write_text("mainline change\n", encoding="utf-8")
+        _git(["commit", "-am", "mainline change to sidecheck4"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        assert out["result"]["status"] == "conflict"
+        merge_id = out["result"]["merge_id"]
+
+        # real FastAPI app carrying the real resolve-token route, plus the same global
+        # GitServiceError envelope handler routers.main installs in production (belt and
+        # braces — post_merge_resolve_token already catches GitServiceError itself).
+        app = FastAPI()
+        app.include_router(git_routes.router)
+
+        @app.exception_handler(GitServiceError)
+        async def _handler(request: Request, exc: GitServiceError):  # noqa: ANN202
+            error: dict = {"code": exc.code, "message": exc.message}
+            if exc.details:
+                error["details"] = exc.details
+            return JSONResponse(status_code=exc.status, content={"ok": False, "error": error})
+
+        client = TestClient(app, raise_server_exceptions=False)
+        monkeypatch.setattr(
+            git_routes, "verify_bearer",
+            lambda request: {
+                "action_scope": "resolve_conflict", "group_id": group,
+                "merge_id": merge_id, "token_id": "tok_rc_test_0478", "project": "gitprj",
+            },
+        )
+
+        raw_calls: list[tuple[int, dict]] = []
+
+        class _FakeHTTPResponse:
+            def __init__(self, status, body):
+                self.status = status
+                self._body = body
+
+            def read(self):
+                return self._body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_a):
+                return False
+
+        def _fake_urlopen(req, timeout=120):
+            parsed = urllib.parse.urlsplit(req.full_url)
+            resp = client.post(parsed.path, content=req.data, headers=dict(req.header_items()))
+            raw_calls.append((resp.status_code, resp.json()))
+            if 200 <= resp.status_code < 300:
+                return _FakeHTTPResponse(resp.status_code, resp.content)
+            raise urllib.error.HTTPError(
+                req.full_url, resp.status_code, "", resp.headers, io.BytesIO(resp.content),
+            )
+
+        monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+
+        # turn 1: the worker drops the mainline side entirely (same payload as (i) above,
+        # this time submitted through the real HTTP tool the worker actually calls).
+        # turn 2: the worker retries with both sides kept, exactly the (ii) shape.
+        attempts: list[str] = []
+
+        def fake_model(*args):
+            tool_name = args[5]
+            attempts.append(tool_name)
+            if len(attempts) == 1:
+                payload = {
+                    "files": [{"path": "sidecheck4.txt", "content": "group change\n"}],
+                    "complete": True,
+                }
+            else:
+                payload = {
+                    "files": [{
+                        "path": "sidecheck4.txt",
+                        "content": "combined:\nmainline change\ngroup change\n",
+                    }],
+                    "complete": True,
+                }
+            return "resolving", {"id": f"tc{len(attempts)}", "name": tool_name, "input": payload}, {
+                "role": "assistant", "content": "resolving", "tool_calls": [],
+            }
+
+        monkeypatch.setattr(ai_svc, "_call_openai", fake_model)
+        monkeypatch.setattr(ai_svc.ai_settings_service, "get_provider_secret", lambda scope, pid: "key")
+        tool_results: list[str] = []
+        _orig_tool_result_msg = ai_svc._tool_result_msg
+
+        def _spy_tool_result_msg(kind, tool_call, text):
+            tool_results.append(text)
+            return _orig_tool_result_msg(kind, tool_call, text)
+
+        monkeypatch.setattr(ai_svc, "_tool_result_msg", _spy_tool_result_msg)
+
+        run = {
+            "project_id": "gitprj", "chain_source": "system", "run_id": "aiv_conflict_retry_0478",
+            "docs_target": 0, "raw_token": "tok_rc_test_0478", "action_scope": "resolve_conflict",
+            "mode": "single", "group_id": group, "merge_id": merge_id,
+            "api_base_url": "http://fake-host/api/v1",
+            "cancel_event": threading.Event(), "started_mono": time.monotonic(), "timeout_sec": 30,
+        }
+        provider = {
+            "id": "aip_api_0478", "exec_type": "api", "kind": "openai",
+            "api_base_url": "http://fake-host", "api_model": "test-model",
+        }
+
+        result = ai_svc._api_execute(provider, "prompt", run)
+
+        # (a) the real resolve-token HTTP round trip actually produced the new 422.
+        assert [status for status, _ in raw_calls] == [422, 200]
+        assert raw_calls[0][1]["error"]["code"] == "conflict_side_dropped"
+        assert raw_calls[1][1]["result"]["status"] == "merged"
+
+        # (b) _api_execute's conflict_pending branch treated the 422 exactly like any other
+        # non-2xx resolve failure — tool_result + continue, no special-cased short-circuit —
+        # and the worker's second, corrected attempt was retried and accepted.
+        assert attempts == [ai_svc._RESOLVE_TOOL_NAME, ai_svc._RESOLVE_TOOL_NAME]
+        assert len(tool_results) == 2
+        assert "Conflict resolve failed (HTTP 422)" in tool_results[0]
+        assert "conflict_side_dropped" in tool_results[0]
+        assert "merged" in tool_results[1]
+        assert result == ("started_ok", None)
+
+        # the retry actually merged for real — same production side effect as (ii) above.
+        assert db_git.get_session(merge_id)["status"] == "done"
 
     def test_abort_flow(self, origin_repo):
         from modules.flow_gate.db import git_integration as db_git

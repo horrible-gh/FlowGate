@@ -138,7 +138,7 @@ def test_index_never_carries_an_item_body(monkeypatch):
 def test_index_children_count_counts_only_the_tools_this_token_may_call(monkeypatch):
     read_only = _client(monkeypatch, _token(), step_type="P").get("/api/v1/help").json()
     counts = {item["name"]: item["children_count"] for item in read_only["items"]}
-    assert counts["source_tools"] == 4
+    assert counts["source_tools"] == 6
     assert counts["design_template"] == 4
     assert counts["notices"] is None
 
@@ -153,7 +153,7 @@ def test_index_for_a_mutating_token_opens_write_tools_and_the_report_format(monk
     assert _hidden(body) == {"design_template": "not_design_type", "test_commands": "not_ts_type"}
     assert body["context"]["tool_kind"] == "read_write"
     counts = {item["name"]: item["children_count"] for item in body["items"]}
-    assert counts["source_tools"] == 7
+    assert counts["source_tools"] == 9
     assert counts["authoring_guide"] == 1
 
 
@@ -251,6 +251,15 @@ def test_tool_child_returns_the_same_detail_the_legacy_route_serves(monkeypatch)
     assert body["form"] == "content"
     assert body["content"]["path"] == "/remote/grep"
     assert body["content"]["example_request"]["url"].endswith("/remote/grep")
+
+
+@pytest.mark.parametrize("locale", ["ko", "ja", "en"])
+@pytest.mark.parametrize("name", ["diff", "log"])
+def test_diff_log_item_child_matches_tools_surface(monkeypatch, locale, name):
+    client = _client(monkeypatch, _token(), step_type="P")
+    item = client.get(f"/api/v1/help/items/source_tools/{name}?locale={locale}").json()["content"]
+    legacy = client.get(f"/api/v1/help/tools/{name}?locale={locale}").json()["tool"]
+    assert item == legacy
 
 
 def test_a_tool_this_token_cannot_call_is_not_a_known_child(monkeypatch):

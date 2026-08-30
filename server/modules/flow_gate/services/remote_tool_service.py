@@ -59,7 +59,7 @@ _logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-OPS = ("read", "write", "grep", "glob", "remove", "patch", "stat")
+OPS = ("read", "diff", "log", "write", "grep", "glob", "remove", "patch", "stat")
 _WORKER_GRANT_PREFIX = "worker_"
 # The mutating step types live in tool_registry.MUTATING_STEP_TYPES — the single judgement
 # point (0349 D0004 D-2). This module reaches them through tool_registry.kind_for_token.
@@ -80,6 +80,8 @@ _SCAN_EXCLUDE_DIRS = frozenset({".venv", "venv", "node_modules", ".git", "__pyca
 # only holds read/grep is barred from patch automatically.
 OP_SCOPE = {
     "read": "read",
+    "diff": "read",
+    "log": "read",
     "write": "write",
     "grep": "grep",
     "glob": "grep",
@@ -96,7 +98,7 @@ _MUTATING_OPS = frozenset({"write", "remove", "patch"})
 
 # ③ path validation: ops whose only path-bearing field is `path`. grep/glob carry a second
 # pattern field and keep their own branches. Leaving patch/stat out would skip ③ entirely.
-_PATH_VALIDATE_SINGLE_FIELD_OPS = frozenset({"read", "write", "remove", "patch", "stat"})
+_PATH_VALIDATE_SINGLE_FIELD_OPS = frozenset({"read", "diff", "log", "write", "remove", "patch", "stat"})
 
 # HTTP status → P0005 §6 error code.
 ERROR_CODE_BY_STATUS = {
@@ -123,6 +125,8 @@ _MAX_WRITE_BYTES = 100 * 1024 * 1024   # 100 MB — write/patch result guard (41
 _MAX_READ_BYTES = 100 * 1024 * 1024    # 100 MB — read *window* guard (413, 0347 P0004 §7.3)
 _GREP_FILE_SKIP_BYTES = 1024 * 1024    # 1 MB — skip large files when scanning (NR0011 §2)
 _STAT_SAMPLE_BYTES = 64 * 1024         # 64 KB — stat EOL/binary sample (0347 L0005 §1)
+_MAX_DIFF_BYTES = 1024 * 1024          # 1 MiB response cap for merge-base target patches
+_MAX_LOG_COUNT = 1000                  # hard cap even when max_count is omitted
 
 _JST = timezone(timedelta(hours=9))
 
@@ -412,12 +416,15 @@ def _require_str(body: dict, key: str, *, allow_empty: bool = False) -> str:
 
 def _validate_required(op: str, body: dict) -> None:
     """④ — required fields present & well-typed (P0005 per-operation field table)."""
+    if op in {"read", "grep", "glob", "stat"}:
+        _validate_ref(body)
     if op == "read":
         _require_str(body, "path")
         _validate_max_int(body, "max_bytes")
         # 0347 P0004 §7.1 — same rule as max_bytes: int, not bool, not negative.
         _validate_max_int(body, "offset")
         _validate_max_int(body, "length")
+        _validate_encoding(body)
     elif op == "write":
         _require_str(body, "path")
         # content is required but an empty body (empty file) is legal.
@@ -460,6 +467,19 @@ def _validate_required(op: str, body: dict) -> None:
         _validate_encoding(body)
     elif op == "stat":
         _require_str(body, "path")
+    elif op in {"diff", "log"}:
+        path = body.get("path")
+        if path is not None:
+            _require_str(body, "path")
+        target_ref = body.get("target_ref", "origin/main")
+        if not isinstance(target_ref, str) or not _safe_target_ref(target_ref):
+            raise _OpError(422)
+        if op == "log":
+            max_count = body.get("max_count")
+            if max_count is not None and (
+                not isinstance(max_count, int) or isinstance(max_count, bool) or max_count <= 0
+            ):
+                raise _OpError(422)
 
 
 def _validate_max_int(body: dict, key: str) -> None:
@@ -479,6 +499,24 @@ def _validate_encoding(body: dict) -> None:
     try:
         "".encode(enc)
     except LookupError:
+        raise _OpError(422)
+
+
+def _safe_target_ref(value: str) -> bool:
+    """Accept a plain ref name, never an option or a rev-expression."""
+    return bool(
+        value
+        and not value.startswith("-")
+        and ".." not in value
+        and "@{" not in value
+        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", value)
+    )
+
+
+def _validate_ref(body: dict) -> None:
+    """Validate the optional committed-tree selector for read-only tools."""
+    ref = body.get("ref")
+    if ref is not None and (not isinstance(ref, str) or not _safe_target_ref(ref)):
         raise _OpError(422)
 
 
@@ -522,6 +560,11 @@ def _read_worktree_expected_reasons(git_service) -> frozenset:
 def _resolve_src_root(grant: dict, op: str = "read") -> Optional[Path]:
     """Resolve the project source root for the grant, or None (→ 503).
 
+    A resolve-conflict worker is bound to the root of its original merge
+    session.  The grant does not duplicate that context: it is recovered from
+    the backing worker token so legacy and ordinary grants retain the existing
+    group-worktree/fallback behaviour.
+
     0115: a grant that carries a group_id is routed to that group's git worktree
     when the project is git-integrated and the worktree is registered (L0006
     §2.2). Everything else — no group on the grant (legacy rows), no config,
@@ -542,6 +585,14 @@ def _resolve_src_root(grant: dict, op: str = "read") -> Optional[Path]:
     """
     project_id = grant.get("project")
     group_id = grant.get("group_id")
+    token_rec = _worker_token_for_grant(grant)
+    merge_id = token_rec.get("merge_id") if token_rec else None
+    if token_rec and token_rec.get("action_scope") == "resolve_conflict" and merge_id:
+        try:
+            from modules.flow_gate.services import git_service
+            return git_service.resolve_conflict_src_root(str(token_rec.get("group_id") or group_id), int(merge_id))
+        except Exception as exc:
+            raise _OpError(404, details={"reason": "conflict_session_not_found"}) from exc
     if not group_id:
         return _fallback_project_root(grant)   # legacy grant — silent fallback
     try:
@@ -655,8 +706,16 @@ def _resolve_root_for_mutation(grant: dict, op: str) -> Optional[Path]:
 
 def _execute(op: str, body: dict, root: Path) -> tuple[dict, Optional[int]]:
     """Run the operation. Returns (response_extra_fields, bytes_processed)."""
+    if body.get("ref") is not None:
+        committed = {"read": _exec_ref_read, "grep": _exec_ref_grep, "glob": _exec_ref_glob, "stat": _exec_ref_stat}
+        if op in committed:
+            return committed[op](body, root)
     if op == "read":
         return _exec_read(body, root)
+    if op == "diff":
+        return _exec_diff(body, root)
+    if op == "log":
+        return _exec_log(body, root)
     if op == "write":
         return _exec_write(body, root)
     if op == "remove":
@@ -670,6 +729,63 @@ def _execute(op: str, body: dict, root: Path) -> tuple[dict, Optional[int]]:
     if op == "stat":
         return _exec_stat(body, root)
     raise _OpError(422)  # unreachable (op validated earlier)
+
+
+def _merge_base(root: Path, target_ref: str) -> str:
+    from modules.flow_gate.services import git_service
+
+    proc = git_service._run_git(["merge-base", "HEAD", target_ref], cwd=root)
+    merge_base = (proc.stdout or "").strip()
+    if proc.returncode != 0 or not re.fullmatch(r"[0-9a-fA-F]{40,64}", merge_base):
+        raise _OpError(503, details={"reason": "git_error"}, message="git merge-base failed")
+    return merge_base
+
+
+def _exec_diff(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+    from modules.flow_gate.services import git_service
+
+    target_ref = body.get("target_ref", "origin/main")
+    merge_base = _merge_base(root, target_ref)
+    args = ["diff", merge_base, target_ref, "--"]
+    if body.get("path") is not None:
+        args.append(body["path"])
+    proc = git_service._run_git(args, cwd=root)
+    if proc.returncode != 0:
+        raise _OpError(503, details={"reason": "git_error"}, message="git diff failed")
+    raw = (proc.stdout or "").encode("utf-8")
+    truncated = len(raw) > _MAX_DIFF_BYTES
+    patch = raw[:_MAX_DIFF_BYTES].decode("utf-8", errors="replace")
+    return {
+        "merge_base": merge_base, "target_ref": target_ref, "patch": patch,
+        "returned_bytes": len(patch.encode("utf-8")), "truncated": truncated,
+    }, len(patch.encode("utf-8"))
+
+
+def _exec_log(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+    from modules.flow_gate.services import git_service
+
+    target_ref = body.get("target_ref", "origin/main")
+    merge_base = _merge_base(root, target_ref)
+    requested = body.get("max_count")
+    limit = min(requested or _MAX_LOG_COUNT, _MAX_LOG_COUNT)
+    args = ["log", "--format=%H%x00%s", f"--max-count={limit + 1}", f"{merge_base}..{target_ref}", "--"]
+    if body.get("path") is not None:
+        args.append(body["path"])
+    proc = git_service._run_git(args, cwd=root)
+    if proc.returncode != 0:
+        raise _OpError(503, details={"reason": "git_error"}, message="git log failed")
+    rows = [line for line in (proc.stdout or "").splitlines() if line]
+    truncated = len(rows) > limit
+    commits = []
+    for row in rows[:limit]:
+        sha, sep, subject = row.partition("\x00")
+        if not sep:
+            raise _OpError(503, details={"reason": "git_error"}, message="git log output invalid")
+        commits.append({"sha": sha, "subject": subject})
+    return {
+        "merge_base": merge_base, "target_ref": target_ref,
+        "commits": commits, "total": len(commits), "truncated": truncated,
+    }, len((proc.stdout or "").encode("utf-8"))
 
 
 # ── Byte/EOL helpers shared by read · patch · stat (0347 L0005 §2.7) ───────────
@@ -1210,6 +1326,69 @@ def _exec_glob(body: dict, root: Path) -> tuple[dict, Optional[int]]:
         rel = os.path.relpath(real, root_real).replace("\\", "/")
         paths.append(rel)
     return ({"paths": paths, "total": len(paths)}, None)
+
+
+def _git_ref_output(root: Path, args: list[str]):
+    from modules.flow_gate.services import git_service
+    return git_service._run_git(args, cwd=root)
+
+
+def _exec_ref_read(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+    proc = _git_ref_output(root, ["show", f"{body['ref']}:{body['path']}"])
+    if proc.returncode != 0:
+        raise _OpError(404)
+    raw = (proc.stdout or "").encode(body.get("encoding") or "utf-8", errors="replace")
+    offset = body.get("offset") or 0
+    limit = min(v for v in (body.get("length"), body.get("max_bytes"), len(raw) - offset) if v is not None)
+    if limit > _MAX_READ_BYTES:
+        raise _OpError(413)
+    chunk = raw[offset:offset + max(limit, 0)]
+    return {"path": body["path"], "content": chunk.decode(body.get("encoding") or "utf-8", errors="replace"), "encoding": body.get("encoding") or "utf-8", "size": len(raw), "offset": offset, "returned_bytes": len(chunk), "eof": offset + len(chunk) >= len(raw), "truncated": offset + len(chunk) < len(raw), "ref": body["ref"], "mode": "committed_tree"}, len(chunk)
+
+
+def _exec_ref_grep(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+    args = ["grep", "-n", "-E"] + (["-i"] if body.get("ignore_case") else []) + ["-e", body["pattern"], body["ref"], "--"]
+    if body.get("path"):
+        args.append(body["path"])
+    proc = _git_ref_output(root, args)
+    if proc.returncode not in (0, 1):
+        raise _OpError(503)
+    matches = []
+    for row in (proc.stdout or "").splitlines():
+        # With an explicit tree-ish git prefixes matches as ``<ref>:<path>``.
+        # Remove only that known prefix before parsing the normal path:line:text form.
+        prefix = f"{body['ref']}:"
+        if row.startswith(prefix):
+            row = row[len(prefix):]
+        file, line, text = row.split(":", 2)
+        matches.append({"file": file, "line": int(line), "text": text})
+    if body.get("glob"):
+        import fnmatch
+        matches = [m for m in matches if fnmatch.fnmatch(m["file"], body["glob"])]
+    limit = body.get("max_results")
+    return {"matches": matches if limit is None else matches[:limit], "total": len(matches), "truncated": limit is not None and len(matches) > limit, "ref": body["ref"], "mode": "committed_tree"}, None
+
+
+def _exec_ref_glob(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+    proc = _git_ref_output(root, ["ls-tree", "-r", "--name-only", body["ref"], "--"] + ([body["path"]] if body.get("path") else []))
+    if proc.returncode != 0:
+        raise _OpError(503)
+    import fnmatch
+    paths = [p for p in (proc.stdout or "").splitlines() if fnmatch.fnmatch(p, body["pattern"])]
+    return {"paths": paths, "total": len(paths), "ref": body["ref"], "mode": "committed_tree"}, None
+
+
+def _exec_ref_stat(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+    proc = _git_ref_output(root, ["ls-tree", "-l", body["ref"], "--", body["path"]])
+    if proc.returncode != 0:
+        raise _OpError(503)
+    row = (proc.stdout or "").strip()
+    if not row:
+        return {"path": body["path"], "exists": False, "type": None, "size": None, "mtime": None, "eol": None, "binary": None, "ref": body["ref"], "mode": "committed_tree"}, None
+    meta, path = row.split("\t", 1)
+    bits = meta.split()
+    kind = "file" if bits[1] == "blob" else "dir" if bits[1] == "tree" else "other"
+    return {"path": path, "exists": True, "type": kind, "size": int(bits[3]) if kind == "file" and bits[3] != "-" else None, "mtime": None, "eol": None, "binary": None, "ref": body["ref"], "mode": "committed_tree"}, None
 
 
 # ── Envelope / logging / continuation ─────────────────────────────────────────
