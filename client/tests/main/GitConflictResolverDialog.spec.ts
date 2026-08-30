@@ -274,6 +274,17 @@ describe('GitConflictResolverDialog (shared 0207 시안 A resolver)', () => {
     expect(baseLabel).toContain('common')
     expect(sides[1].text()).toContain('line1')
 
+    // 0484 T0009: the base column goes through baseDiff(), which diffs base
+    // against itself — every line and token is 'common' (plain context, no
+    // add/remove highlight) and still carries its own line number.
+    const baseLines = sides[1].findAll('.git-code-line')
+    expect(baseLines).toHaveLength(1)
+    expect(baseLines[0].classes()).toContain('diff-common')
+    expect(baseLines[0].find('.git-line-number').text()).toBe('5')
+    const baseTokens = baseLines[0].findAll('.git-code-token')
+    expect(baseTokens.length).toBeGreaterThan(0)
+    expect(baseTokens.every((token) => token.classes().includes('diff-token-common'))).toBe(true)
+
     wrapper.unmount()
   })
 
