@@ -47,8 +47,8 @@ def test_list_requires_bearer_and_reuses_error_envelope(monkeypatch):
 @pytest.mark.parametrize(
     "token_rec, expected_kind, expected_names",
     [
-        ({"project": "flowgate", "action_scope": "edit"}, "read_write", ["read", "grep", "glob", "stat", "write", "patch", "remove"]),
-        ({"project": "flowgate", "action_scope": "review"}, "read", ["read", "grep", "glob", "stat"]),
+        ({"project": "flowgate", "action_scope": "edit"}, "read_write", ["read", "grep", "glob", "stat", "diff", "log", "write", "patch", "remove"]),
+        ({"project": "flowgate", "action_scope": "review"}, "read", ["read", "grep", "glob", "stat", "diff", "log"]),
         ({"project": "flowgate", "action_scope": "test_run"}, "none", []),
     ],
 )
@@ -95,6 +95,17 @@ def test_detail_read_and_write_contracts(monkeypatch, name):
     assert len(body["notes"]) == (5 if name == "write" else 3)
     if name == "write":
         assert any("scratch directory" in note and "0382" in note for note in body["notes"])
+
+
+@pytest.mark.parametrize("locale", ["ko", "ja", "en"])
+@pytest.mark.parametrize("name", ["diff", "log"])
+def test_diff_log_details_render_in_every_catalog_locale(monkeypatch, locale, name):
+    client = _client(monkeypatch, {"project": "flowgate", "action_scope": "review"})
+    tool = client.get(f"/api/v1/help/tools/{name}?locale={locale}").json()["tool"]
+    assert tool["name"] == name and tool["scope"] == "read"
+    assert tool["example_request"]["body"]["target_ref"] == "origin/main"
+    assert tool["example_response"]["merge_base"]
+    assert tool["summary"] and tool["request_fields"] and tool["errors"] and tool["cautions"]
 
 
 def test_detail_unknown_is_404_before_availability_check(monkeypatch):

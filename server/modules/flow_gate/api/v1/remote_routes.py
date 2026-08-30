@@ -1,6 +1,6 @@
 """Project-control remote tool API — thin router (P0005 §3.1).
 
-  POST /flowgate/api/v1/remote/{operation}   operation ∈ read|write|grep|glob|remove|patch|stat
+  POST /flowgate/api/v1/remote/{operation}   operation ∈ read|diff|log|write|grep|glob|remove|patch|stat
 
 Authentication, permission scope, path validation, execution, op-logging and the
 completion ment all live in remote_tool_service (L0006). This router only

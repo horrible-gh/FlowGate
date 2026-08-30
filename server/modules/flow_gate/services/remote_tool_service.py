@@ -59,7 +59,7 @@ _logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-OPS = ("read", "write", "grep", "glob", "remove", "patch", "stat")
+OPS = ("read", "diff", "log", "write", "grep", "glob", "remove", "patch", "stat")
 _WORKER_GRANT_PREFIX = "worker_"
 # The mutating step types live in tool_registry.MUTATING_STEP_TYPES — the single judgement
 # point (0349 D0004 D-2). This module reaches them through tool_registry.kind_for_token.
@@ -80,6 +80,8 @@ _SCAN_EXCLUDE_DIRS = frozenset({".venv", "venv", "node_modules", ".git", "__pyca
 # only holds read/grep is barred from patch automatically.
 OP_SCOPE = {
     "read": "read",
+    "diff": "read",
+    "log": "read",
     "write": "write",
     "grep": "grep",
     "glob": "grep",
@@ -96,7 +98,7 @@ _MUTATING_OPS = frozenset({"write", "remove", "patch"})
 
 # ③ path validation: ops whose only path-bearing field is `path`. grep/glob carry a second
 # pattern field and keep their own branches. Leaving patch/stat out would skip ③ entirely.
-_PATH_VALIDATE_SINGLE_FIELD_OPS = frozenset({"read", "write", "remove", "patch", "stat"})
+_PATH_VALIDATE_SINGLE_FIELD_OPS = frozenset({"read", "diff", "log", "write", "remove", "patch", "stat"})
 
 # HTTP status → P0005 §6 error code.
 ERROR_CODE_BY_STATUS = {
@@ -123,6 +125,8 @@ _MAX_WRITE_BYTES = 100 * 1024 * 1024   # 100 MB — write/patch result guard (41
 _MAX_READ_BYTES = 100 * 1024 * 1024    # 100 MB — read *window* guard (413, 0347 P0004 §7.3)
 _GREP_FILE_SKIP_BYTES = 1024 * 1024    # 1 MB — skip large files when scanning (NR0011 §2)
 _STAT_SAMPLE_BYTES = 64 * 1024         # 64 KB — stat EOL/binary sample (0347 L0005 §1)
+_MAX_DIFF_BYTES = 1024 * 1024          # 1 MiB response cap for merge-base target patches
+_MAX_LOG_COUNT = 1000                  # hard cap even when max_count is omitted
 
 _JST = timezone(timedelta(hours=9))
 
@@ -418,6 +422,7 @@ def _validate_required(op: str, body: dict) -> None:
         # 0347 P0004 §7.1 — same rule as max_bytes: int, not bool, not negative.
         _validate_max_int(body, "offset")
         _validate_max_int(body, "length")
+        _validate_encoding(body)
     elif op == "write":
         _require_str(body, "path")
         # content is required but an empty body (empty file) is legal.
@@ -460,6 +465,19 @@ def _validate_required(op: str, body: dict) -> None:
         _validate_encoding(body)
     elif op == "stat":
         _require_str(body, "path")
+    elif op in {"diff", "log"}:
+        path = body.get("path")
+        if path is not None:
+            _require_str(body, "path")
+        target_ref = body.get("target_ref", "origin/main")
+        if not isinstance(target_ref, str) or not _safe_target_ref(target_ref):
+            raise _OpError(422)
+        if op == "log":
+            max_count = body.get("max_count")
+            if max_count is not None and (
+                not isinstance(max_count, int) or isinstance(max_count, bool) or max_count <= 0
+            ):
+                raise _OpError(422)
 
 
 def _validate_max_int(body: dict, key: str) -> None:
@@ -480,6 +498,17 @@ def _validate_encoding(body: dict) -> None:
         "".encode(enc)
     except LookupError:
         raise _OpError(422)
+
+
+def _safe_target_ref(value: str) -> bool:
+    """Accept a plain ref name, never an option or a rev-expression."""
+    return bool(
+        value
+        and not value.startswith("-")
+        and ".." not in value
+        and "@{" not in value
+        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", value)
+    )
 
 
 # ── Source-root resolution ────────────────────────────────────────────────────
@@ -657,6 +686,10 @@ def _execute(op: str, body: dict, root: Path) -> tuple[dict, Optional[int]]:
     """Run the operation. Returns (response_extra_fields, bytes_processed)."""
     if op == "read":
         return _exec_read(body, root)
+    if op == "diff":
+        return _exec_diff(body, root)
+    if op == "log":
+        return _exec_log(body, root)
     if op == "write":
         return _exec_write(body, root)
     if op == "remove":
@@ -670,6 +703,63 @@ def _execute(op: str, body: dict, root: Path) -> tuple[dict, Optional[int]]:
     if op == "stat":
         return _exec_stat(body, root)
     raise _OpError(422)  # unreachable (op validated earlier)
+
+
+def _merge_base(root: Path, target_ref: str) -> str:
+    from modules.flow_gate.services import git_service
+
+    proc = git_service._run_git(["merge-base", "HEAD", target_ref], cwd=root)
+    merge_base = (proc.stdout or "").strip()
+    if proc.returncode != 0 or not re.fullmatch(r"[0-9a-fA-F]{40,64}", merge_base):
+        raise _OpError(503, details={"reason": "git_error"}, message="git merge-base failed")
+    return merge_base
+
+
+def _exec_diff(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+    from modules.flow_gate.services import git_service
+
+    target_ref = body.get("target_ref", "origin/main")
+    merge_base = _merge_base(root, target_ref)
+    args = ["diff", merge_base, target_ref, "--"]
+    if body.get("path") is not None:
+        args.append(body["path"])
+    proc = git_service._run_git(args, cwd=root)
+    if proc.returncode != 0:
+        raise _OpError(503, details={"reason": "git_error"}, message="git diff failed")
+    raw = (proc.stdout or "").encode("utf-8")
+    truncated = len(raw) > _MAX_DIFF_BYTES
+    patch = raw[:_MAX_DIFF_BYTES].decode("utf-8", errors="replace")
+    return {
+        "merge_base": merge_base, "target_ref": target_ref, "patch": patch,
+        "returned_bytes": len(patch.encode("utf-8")), "truncated": truncated,
+    }, len(patch.encode("utf-8"))
+
+
+def _exec_log(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+    from modules.flow_gate.services import git_service
+
+    target_ref = body.get("target_ref", "origin/main")
+    merge_base = _merge_base(root, target_ref)
+    requested = body.get("max_count")
+    limit = min(requested or _MAX_LOG_COUNT, _MAX_LOG_COUNT)
+    args = ["log", "--format=%H%x00%s", f"--max-count={limit + 1}", f"{merge_base}..{target_ref}", "--"]
+    if body.get("path") is not None:
+        args.append(body["path"])
+    proc = git_service._run_git(args, cwd=root)
+    if proc.returncode != 0:
+        raise _OpError(503, details={"reason": "git_error"}, message="git log failed")
+    rows = [line for line in (proc.stdout or "").splitlines() if line]
+    truncated = len(rows) > limit
+    commits = []
+    for row in rows[:limit]:
+        sha, sep, subject = row.partition("\x00")
+        if not sep:
+            raise _OpError(503, details={"reason": "git_error"}, message="git log output invalid")
+        commits.append({"sha": sha, "subject": subject})
+    return {
+        "merge_base": merge_base, "target_ref": target_ref,
+        "commits": commits, "total": len(commits), "truncated": truncated,
+    }, len((proc.stdout or "").encode("utf-8"))
 
 
 # ── Byte/EOL helpers shared by read · patch · stat (0347 L0005 §2.7) ───────────
