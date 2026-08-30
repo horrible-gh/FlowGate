@@ -1910,6 +1910,7 @@ export default {
       saving: 'Saving',
       load_failed: 'Failed to load document content.',
       save_failed: 'Failed to save document.',
+      save_error_details: '{summary} See the edit window for details.',
       save_success: 'Document saved.',
     },
     workflow_decision_modal: {

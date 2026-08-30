@@ -1906,6 +1906,7 @@ export default {
       saving: '保存中',
       load_failed: 'ドキュメント内容を読み込めませんでした。',
       save_failed: 'ドキュメントの保存に失敗しました。',
+      save_error_details: '{summary} 詳細は編集画面で確認してください。',
       save_success: 'ドキュメントを保存しました。',
     },
     workflow_decision_modal: {

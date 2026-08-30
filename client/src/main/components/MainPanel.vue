@@ -1019,18 +1019,29 @@
             <div v-else-if="editError" class="document-editor__state document-editor__state--error">
               {{ editError }}
             </div>
-            <textarea
-              v-else-if="headerEditModeVisible"
-              v-model="editFullContent"
-              class="document-editor__textarea"
-              spellcheck="false"
-            />
-            <textarea
-              v-else
-              v-model="editBody"
-              class="document-editor__textarea"
-              spellcheck="false"
-            />
+            <template v-else>
+              <div
+                v-if="editSaveError"
+                class="document-editor__save-error"
+                role="alert"
+              >
+                {{ editSaveError }}
+              </div>
+              <textarea
+                v-if="headerEditModeVisible"
+                v-model="editFullContent"
+                class="document-editor__textarea"
+                spellcheck="false"
+                @input="editSaveError = ''"
+              />
+              <textarea
+                v-else
+                v-model="editBody"
+                class="document-editor__textarea"
+                spellcheck="false"
+                @input="editSaveError = ''"
+              />
+            </template>
           </div>
           <div class="modal-ft">
             <button type="button" class="btn btn-secondary" :disabled="editSaving" @click="closeEditModal">
@@ -1355,6 +1366,7 @@ import { useShortcuts } from '../composables/useShortcuts'
 import { useDashboardNavigation } from '../composables/useDashboardNavigation'
 import { useActivityFormat } from '../composables/useActivityFormat'
 import { useToast, type ToastType } from './common/useToast'
+import { summarizeEditSaveError } from '../utils/editSaveError'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import { resolveWorkflowViewState, type WorkflowViewInput, type WorkflowViewState } from '../workflow/workflowViewState'
 import {
@@ -1740,6 +1752,7 @@ const editBody = ref('')
 const editLoading = ref(false)
 const editSaving = ref(false)
 const editError = ref('')
+const editSaveError = ref('')
 const editSourceEtag = ref('')
 const headerEditModeVisible = ref(false)
 const editFullContent = ref('')
@@ -2111,6 +2124,7 @@ function closeEditDropdown() {
 }
 
 function toggleHeaderEditMode() {
+  editSaveError.value = ''
   if (!headerEditModeVisible.value) {
     editFullContent.value = editFrontmatter.value ? editFrontmatter.value + '\n' + editBody.value : editBody.value
   } else {
@@ -4653,6 +4667,7 @@ async function openEditModal(tab: Tab) {
   editVisible.value = true
   editContent.value = ''
   editError.value = ''
+  editSaveError.value = ''
   editSourceEtag.value = ''
   editLoading.value = true
   headerEditModeVisible.value = false
@@ -4685,13 +4700,14 @@ function closeEditModal() {
   editFrontmatter.value = ''
   editBody.value = ''
   editError.value = ''
+  editSaveError.value = ''
   editSourceEtag.value = ''
   headerEditModeVisible.value = false
 }
 async function saveEditContent() {
   if (!editTab.value || editSaving.value) return
   editSaving.value = true
-  editError.value = ''
+  editSaveError.value = ''
   const content = headerEditModeVisible.value
     ? editFullContent.value
     : (editFrontmatter.value ? editFrontmatter.value + '\n' + editBody.value : editBody.value)
@@ -4749,8 +4765,13 @@ async function saveEditContent() {
     editSaving.value = false
     closeEditModal()
   } catch (e: any) {
-    editError.value = e?.response?.data?.detail ?? e?.message ?? t('main.document_preview.save_failed')
-    showToast(editError.value, 'danger')
+    editSaveError.value = e?.response?.data?.detail ?? e?.message ?? t('main.document_preview.save_failed')
+    const summary = summarizeEditSaveError(editSaveError.value)
+    showToast(
+      t('main.document_preview.save_error_details', { summary }),
+      'danger',
+      7000,
+    )
   } finally {
     editSaving.value = false
   }
@@ -5554,6 +5575,7 @@ watch(textWrapEnabled, (enabled) => {
      out of `.modal-box { overflow: hidden }` and the save button is unreachable. */
   min-height: 0;
   display: flex;
+  flex-direction: column;
   /* Override the shared `.modal-bd { overflow-y: auto }` for the edit modal so
      the inner textarea is the *sole* scroll container. With a height pinned on
      the textarea AND this body scrollable, both scrolled at once →
@@ -5593,6 +5615,17 @@ watch(textWrapEnabled, (enabled) => {
 
 .document-editor__state--error {
   color: var(--danger);
+}
+
+.document-editor__save-error {
+  flex: 0 1 auto;
+  max-height: 32%;
+  overflow-y: auto;
+  padding: 12px 20px;
+  border-bottom: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, #0f172a);
+  color: var(--danger);
+  white-space: pre-wrap;
 }
 
 .edit-dropdown-wrap {

@@ -226,14 +226,12 @@ def evaluate(body: str, locale: str = "ko") -> dict:
 
 
 def enforce_on_save(doc_type: Optional[str], body: str, locale: str = "ko") -> Optional[dict]:
-    """Judge a body against the TR step-verification rule before it is written to disk.
+    """Judge a submitted body against the TR step-verification rule.
 
-    Single call-site contract for every save path (inbox new/edit, PATCH content and its
-    RPC alias -- T0010): the type comparison is case/blank-safe and every type other than
-    TR passes straight through (returns None, nothing to reject). When ``doc_type`` is TR,
-    this is exactly ``evaluate(body, locale)`` -- the verdict, SVV-001/SVV-002 codes and
-    notice text are neither reshaped nor substituted, so callers keep treating the result
-    the same way they already do for ``evaluate()``.
+    This is the shared decision point for inbox new/edit submission boundaries. The PATCH
+    content routes edit existing documents and deliberately do not call it. The type
+    comparison is case/blank-safe and every type other than TR passes straight through
+    (returns None). For TR, the result is exactly ``evaluate(body, locale)``.
     """
     normalized_type = (doc_type or "").strip().upper()
     if normalized_type != "TR":
