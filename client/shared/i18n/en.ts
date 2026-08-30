@@ -1689,7 +1689,7 @@ export default {
       step_timeout_title: 'Per-Step Time Limit',
       step_timeout_option_minutes: '{n} min',
       restart_count_title: 'Max Restart Count on Failure',
-      restart_count_desc: 'Applies only to no-output failures. The review step always uses a fixed cap of 1 attempt + 1 restart, regardless of this setting. A timeout, a pending question, or an exhausted budget stops the chain immediately, no matter how many restarts remain.',
+      restart_count_desc: 'Applies only to no-output failures. The same count applies to work, review and rework steps alike. A timeout, a pending question, or an exhausted budget stops the chain immediately, no matter how many restarts remain.',
       restart_count_option_forever: 'Until it succeeds (-1)',
       restart_count_option_none: 'No restart (0)',
       restart_count_option_n: '{n} time(s)',

@@ -1685,7 +1685,7 @@ export default {
       step_timeout_title: 'ステップごとの制限時間',
       step_timeout_option_minutes: '{n}分',
       restart_count_title: '失敗時の最大再実行回数',
-      restart_count_desc: '無応答での失敗にのみ適用されます。検収ステップはこの設定に関係なく常に初回1回+再実行1回に固定されます。制限時間超過・質問待ち・予算超過で停止する場合は、残り回数に関係なく即座に中断します。',
+      restart_count_desc: '無応答での失敗にのみ適用されます。作業・検収・修正のすべてのステップに同じ回数が適用されます。制限時間超過・質問待ち・予算超過で停止する場合は、残り回数に関係なく即座に中断します。',
       restart_count_option_forever: '成功するまで (-1)',
       restart_count_option_none: '再実行しない (0)',
       restart_count_option_n: '{n}回',

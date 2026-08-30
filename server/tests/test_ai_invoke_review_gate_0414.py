@@ -2669,6 +2669,18 @@ class TestHopLaunchContract:
         assert kw["continuation_restart_max_attempts"] == 3
         assert svc._resolve_restart_max_attempts(3) == 4
 
+    def test_the_review_hop_carries_the_restart_max_attempts_pick_to_start_run(
+            self, world, launched, monkeypatch):
+        monkeypatch.setattr(wds, "request_review", lambda **kw: {
+            "token": "raw", "token_id": "tok_1", "scratch_dir": "/tmp/s", "mention": "M"})
+        gate = self._gate(world)
+        svc._spawn_review_hop(GROUP, bundle(restart_max_attempts=3), gate)
+        assert launched[-1]["continuation_restart_max_attempts"] == 3
+        assert svc._resolve_restart_max_attempts(3) == 4
+
+        svc._spawn_review_hop(GROUP, bundle(), gate)
+        assert launched[-1]["continuation_restart_max_attempts"] is None
+
     def test_the_review_hop_appends_its_clause_to_the_shared_mention(
             self, world, launched, monkeypatch):
         monkeypatch.setattr(wds, "request_review", lambda **kw: {

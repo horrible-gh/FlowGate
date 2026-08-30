@@ -2065,28 +2065,15 @@ def start_run(
         # say one thing while the engine does another. continuation_restart_max_attempts is
         # None outside continuous mode, so _resolve_restart_max_attempts falls back to
         # reproducing the previous fixed NO_OUTPUT_MAX_ATTEMPTS(2) behavior for it.
-        # flowgate.default.0466 T0007 §2.4: review no-verdict recovery is a SEPARATE, fixed
-        # cap — first attempt plus exactly one retry — deliberately independent of the
-        # general continuous-chain "재시작 횟수" pick (which may be 0 or -1). It is checked
-        # BEFORE the continuous/edit branch below so a review hop never inherits either the
-        # user's restart pick or the plain single-run cap of 1.
-        # flowgate.default.0476 T0007: kept as-is, not made to follow the user's restart pick.
-        # Checked before writing this T whether B0001 had registered a query/answer asking to
-        # change that — GET .../0001-B/meta and GET .../0001-B/relations both read
-        # `"answers_count": 0` at the time — so there is no answer to follow; the fixed cap
-        # stands on NR0003's original finding alone. The "2" here is also not the only guard:
-        # `_spawn_review_hop` always calls `start_run` with `mode="single"` and never passes
-        # `continuation_restart_max_attempts` at all, so even if this ternary's branch order
-        # were reversed, a review hop's `continuation_restart_max_attempts` argument would
-        # still be `None` (the parameter's own default) by the time it reached here — the
-        # branch order and the missing argument are two independent reasons the user's pick
-        # never reaches a review hop, not one reason stated twice.
+        # flowgate.default.0476 T0012 / CH0011: an engine-spawned review hop follows the
+        # same restart pick as work and rework. With no pick, the resolver still returns 2,
+        # preserving 0466 T0007's first-attempt-plus-one-retry default. A pick of -1 remains
+        # bounded by the retry budget/recheck guards; a pick of 0 makes the hop one-shot.
         "attempts_max": (
-            2
-            if _review_hop_recovery_open(mode, action_scope, scope_oracle_run, hop_kind)
-            else _resolve_restart_max_attempts(continuation_restart_max_attempts)
+            _resolve_restart_max_attempts(continuation_restart_max_attempts)
             if mode == "continuous"
             or _scope_oracle_retry_open(mode, action_scope, scope_oracle_run)
+            or _review_hop_recovery_open(mode, action_scope, scope_oracle_run, hop_kind)
             else 1
         ),
         "retry_block_reason": None,
@@ -7063,6 +7050,7 @@ def _spawn_review_hop(group_id: str, bundle: dict, gate: dict) -> dict:
         chain_docs_target=bundle.get("chain_docs_target"),
         chain_docs_reached=bundle.get("chain_docs_reached"),
         continuation_step_timeout_sec=bundle.get("step_timeout_sec"),
+        continuation_restart_max_attempts=bundle.get("restart_max_attempts"),
         continuation_review_count_overrides=bundle.get("review_count_overrides"),
         continuation_reviewer_overrides=bundle.get("reviewer_overrides"),
         hop_kind=REVIEW_HOP_KIND,
