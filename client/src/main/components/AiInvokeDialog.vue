@@ -1,7 +1,7 @@
 <template>
   <teleport to="body">
     <div v-if="visible" class="modal-bg">
-      <div class="modal-box modal-aiv">
+      <div class="modal-box modal-aiv" :class="{ 'modal-aiv--loop': reviewLoopActive }">
         <!-- ── Header ── -->
         <div class="modal-hd">
           <span class="modal-title">
@@ -34,30 +34,237 @@
               </div>
             </div>
             <!-- 0234 B0001 RC2: confirm/change which provider this run uses, at the
-                 invocation point itself (not only the global header dropdown). -->
+                 invocation point itself (not only the global header dropdown).
+                 0417 T0017: 시안 u3digra2 v6 화면 3~5 는 [자동 검수 루프] 를 고른 상태에서도
+                 이 줄을 그대로 그린다. 그래서 숨기지 않고 잠근다 — T0013 작업 항목 1 이
+                 "숨기거나 비활성화" 를 모두 허용하므로 서버 계약(provider_id=null,
+                 provider_pinned=false)은 그대로 유지된다. -->
             <div class="aiv-provider-row">
               <AiProviderSelect
                 :providers="aiProviderStore.providers"
                 :model-value="aiProviderStore.selectedProviderId"
                 :loading="aiProviderStore.loading"
+                :disabled="reviewLoopActive"
                 :errored="!!aiProviderStore.error"
                 @update:model-value="aiProviderStore.selectProvider"
               />
             </div>
-            <label class="aiv-mode" :class="{ active: mode === 'single' }">
-              <input v-model="mode" type="radio" value="single" />
+            <!-- 0417 T0017: 시안 화면 3 은 [단일 호출] 과 [자동 검수 루프] 를 한 라디오 그룹의
+                 형제로 그린다. 직전 구현은 프로바이더 줄 위에 같은 뜻의 라디오를 한 벌 더 두어
+                 화면에 [단일 호출] 이 두 번 나왔고, 루프를 고르면 프로바이더 줄이 사라졌다.
+                 `invocation` 하나가 mode(single/continuous)와 reviewInvocation(single/loop)을
+                 함께 몰아 시안과 같은 한 벌짜리 목록이 되게 한다. -->
+            <label class="aiv-mode" :class="{ active: invocation === 'single' }">
+              <input v-model="invocation" type="radio" value="single" />
               <span class="aiv-mode-text">
                 <span class="aiv-mode-title">{{ t('main.ai_invoke_dialog.mode_single') }}</span>
-                <span class="aiv-mode-desc">{{ t('main.ai_invoke_dialog.mode_single_desc') }}</span>
+                <span class="aiv-mode-desc">{{ singleModeDescription }}</span>
               </span>
             </label>
-            <label v-if="canContinuous" class="aiv-mode" :class="{ active: mode === 'continuous' }">
-              <input v-model="mode" type="radio" value="continuous" />
+            <label v-if="canContinuous" class="aiv-mode" :class="{ active: invocation === 'continuous' }">
+              <input v-model="invocation" type="radio" value="continuous" />
               <span class="aiv-mode-text">
                 <span class="aiv-mode-title">{{ t('main.ai_invoke_dialog.mode_continuous') }}</span>
                 <span class="aiv-mode-desc">{{ t('main.ai_invoke_dialog.mode_continuous_desc') }}</span>
               </span>
             </label>
+            <label
+              v-if="reviewLoopAvailable"
+              class="aiv-mode"
+              :class="{ active: invocation === 'loop' }"
+              data-test="review-loop-settings"
+            >
+              <input v-model="invocation" type="radio" value="loop" />
+              <span class="aiv-mode-text">
+                <span class="aiv-mode-title">
+                  {{ t('main.ai_invoke_dialog.review_loop_mode') }}
+                </span>
+                <span class="aiv-mode-desc">{{ t('main.ai_invoke_dialog.review_loop_mode_desc') }}</span>
+              </span>
+            </label>
+            <template v-if="reviewLoopActive">
+              <!-- 시안 화면 3~5 의 공통 머리: 지시 문장을 그대로 옮긴 루프 그림. -->
+              <div class="rlp" data-test="review-loop-flow">
+                <span class="rlp-step">{{ t('main.ai_invoke_dialog.review_loop_flow_rework') }}</span>
+                <AppIcon name="arrow-right" class="rlp-arrow" />
+                <span class="rlp-step">{{ t('main.ai_invoke_dialog.review_loop_flow_review') }}</span>
+                <AppIcon name="arrow-right" class="rlp-arrow" />
+                <span class="rlp-step">{{ t('main.ai_invoke_dialog.review_loop_flow_auto_reject') }}</span>
+                <AppIcon name="arrow-right" class="rlp-arrow" />
+                <span class="rlp-step">{{ t('main.ai_invoke_dialog.review_loop_flow_review') }}</span>
+                <span class="rlp-loop">
+                  <AppIcon name="arrows-clockwise" />{{ t('main.ai_invoke_dialog.review_loop_flow_repeat') }}
+                </span>
+                <AppIcon name="arrow-right" class="rlp-arrow" />
+                <span class="rlp-step rlp-step--stop">
+                  <AppIcon name="check-circle" />{{ t('main.ai_invoke_dialog.review_loop_flow_stop') }}
+                </span>
+              </div>
+              <div class="aiv-loop-tabbar" role="tablist">
+                <button
+                  v-for="tab in reviewLoopTabs"
+                  :key="tab"
+                  type="button"
+                  role="tab"
+                  class="aiv-loop-tab"
+                  :class="{ 'aiv-loop-tab--active': reviewLoopTab === tab }"
+                  :aria-selected="reviewLoopTab === tab"
+                  :data-test="'review-loop-tab-' + tab"
+                  @click="reviewLoopTab = tab"
+                >{{ reviewLoopTabLabel(tab) }}</button>
+              </div>
+              <div
+                v-if="reviewLoopTab === 'review'"
+                class="aiv-loop-panel"
+                data-test="review-loop-review-panel"
+              >
+                <p class="aiv-loop-intro">
+                  {{ t('main.ai_invoke_dialog.review_loop_review_intro') }}
+                  <span class="aiv-loop-legend">{{ t('main.ai_invoke_dialog.review_loop_review_legend') }}</span>
+                </p>
+                <div class="aiv-loop-row">
+                  <span class="aiv-loop-label">{{ t('main.ai_invoke_dialog.review_loop_count_label') }}</span>
+                  <select
+                    v-model.number="reviewCount"
+                    class="aiv-loop-select"
+                    data-test="review-loop-review-count"
+                    :aria-label="t('main.ai_invoke_dialog.review_loop_count_label')"
+                  >
+                    <option v-for="n in REVIEW_LOOP_COUNT_OPTIONS" :key="n" :value="n">
+                      {{ reviewCountOptionLabel(n) }}
+                    </option>
+                  </select>
+                </div>
+                <div class="aiv-loop-row">
+                  <span class="aiv-loop-label">{{ t('main.ai_invoke_dialog.review_loop_reviewer_label') }}</span>
+                  <select
+                    v-model="reviewerProviderId"
+                    class="aiv-loop-select"
+                    data-test="review-loop-reviewer"
+                    :aria-label="t('main.ai_invoke_dialog.review_loop_reviewer_label')"
+                  >
+                    <option v-for="p in enabledProviders" :key="p.id" :value="p.id">{{ p.name }}</option>
+                  </select>
+                </div>
+                <div class="aiv-loop-row">
+                  <span class="aiv-loop-label">{{ t('main.ai_invoke_dialog.review_loop_criteria_label') }}</span>
+                  <select
+                    v-model="reviewCriteria"
+                    class="aiv-loop-select"
+                    data-test="review-loop-criteria"
+                    :aria-label="t('main.ai_invoke_dialog.review_loop_criteria_label')"
+                  >
+                    <option value="document_type_default">
+                      {{ t('main.ai_invoke_dialog.review_loop_criteria_default') }}
+                    </option>
+                    <option value="last_rejection_only">
+                      {{ t('main.ai_invoke_dialog.review_loop_criteria_last_rejection') }}
+                    </option>
+                  </select>
+                </div>
+                <div class="aiv-loop-summary" data-test="review-loop-review-summary">
+                  {{ reviewLoopReviewSummary }}
+                </div>
+              </div>
+              <div
+                v-else-if="reviewLoopTab === 'rework'"
+                class="aiv-loop-panel"
+                data-test="review-loop-rework-panel"
+              >
+                <p class="aiv-loop-intro">
+                  {{ t('main.ai_invoke_dialog.review_loop_rework_intro') }}
+                  <span class="aiv-loop-legend">{{ t('main.ai_invoke_dialog.review_loop_rework_legend') }}</span>
+                </p>
+                <div class="aiv-loop-row">
+                  <span class="aiv-loop-label">{{ t('main.ai_invoke_dialog.review_loop_rework_provider_label') }}</span>
+                  <select
+                    v-model="reworkProviderId"
+                    class="aiv-loop-select"
+                    data-test="review-loop-reworker"
+                    :aria-label="t('main.ai_invoke_dialog.review_loop_rework_provider_label')"
+                  >
+                    <option v-for="p in enabledProviders" :key="p.id" :value="p.id">{{ p.name }}</option>
+                  </select>
+                </div>
+                <div class="aiv-loop-row">
+                  <span class="aiv-loop-label">{{ t('main.ai_invoke_dialog.review_loop_rework_timeout_label') }}</span>
+                  <select
+                    v-model.number="reworkTimeoutSec"
+                    class="aiv-loop-select"
+                    data-test="review-loop-rework-timeout"
+                    :aria-label="t('main.ai_invoke_dialog.review_loop_rework_timeout_label')"
+                  >
+                    <option v-for="n in REVIEW_LOOP_REWORK_TIMEOUT_OPTIONS" :key="n" :value="n">
+                      {{ minutesOptionLabel(n) }}
+                    </option>
+                  </select>
+                </div>
+                <div class="aiv-loop-section-title">
+                  {{ t('main.ai_invoke_dialog.review_loop_rework_message_title') }}
+                </div>
+                <input
+                  v-model="reworkMessage"
+                  type="text"
+                  class="aiv-loop-message-input"
+                  data-test="review-loop-rework-message"
+                  :placeholder="t('main.ai_invoke_dialog.review_loop_rework_message_placeholder')"
+                  :aria-label="t('main.ai_invoke_dialog.review_loop_rework_message_title')"
+                />
+                <div class="aiv-loop-summary" data-test="review-loop-rework-summary">
+                  {{ t('main.ai_invoke_dialog.review_loop_rework_summary') }}
+                </div>
+              </div>
+              <div v-else class="aiv-loop-panel" data-test="review-loop-stop-panel">
+
+
+                <!-- 시안 화면 5 의 두 번째 토글. T0013 작업 항목 5 가 금지한 "서버 계약에 없는
+                     별도 boolean" 을 만들지 않으려고, 이 토글은 [검수] 탭 횟수 자체를 민다 —
+                     끄면 review_count = -1(통과할 때까지), 켜면 직전 유한 횟수로 돌아간다. -->
+                <label class="aiv-loop-toggle">
+                  <input
+                    type="checkbox"
+                    :checked="stopOnCountExhausted"
+                    data-test="review-loop-stop-on-exhaust"
+                    @change="onStopOnCountExhaustedChange(($event.target as HTMLInputElement).checked)"
+                  />
+                  <span class="aiv-loop-toggle-text">
+                    <span class="aiv-loop-toggle-title">
+                      {{ t('main.ai_invoke_dialog.review_loop_stop_on_exhaust_title') }}
+                    </span>
+                    <span class="aiv-loop-toggle-desc">{{ stopOnCountExhaustedDescription }}</span>
+                  </span>
+                </label>
+                <div class="aiv-loop-row">
+                  <span class="aiv-loop-label">{{ t('main.ai_invoke_dialog.review_loop_failure_restart_label') }}</span>
+                  <select
+                    v-model.number="failureRestartMaxAttempts"
+                    class="aiv-loop-select"
+                    data-test="review-loop-failure-restart"
+                    :aria-label="t('main.ai_invoke_dialog.review_loop_failure_restart_label')"
+                  >
+                    <option v-for="n in REVIEW_LOOP_RESTART_OPTIONS" :key="n" :value="n">
+                      {{ restartOptionLabel(n) }}
+                    </option>
+                  </select>
+                </div>
+                <div class="aiv-loop-row">
+                  <span class="aiv-loop-label">{{ t('main.ai_invoke_dialog.review_loop_total_timeout_label') }}</span>
+                  <select
+                    v-model.number="totalTimeoutSec"
+                    class="aiv-loop-select"
+                    data-test="review-loop-total-timeout"
+                    :aria-label="t('main.ai_invoke_dialog.review_loop_total_timeout_label')"
+                  >
+                    <option v-for="n in REVIEW_LOOP_TOTAL_TIMEOUT_OPTIONS" :key="n" :value="n">
+                      {{ minutesOptionLabel(n) }}
+                    </option>
+                  </select>
+                </div>
+                <div class="aiv-loop-summary" data-test="review-loop-stop-summary">
+                  {{ t('main.ai_invoke_dialog.review_loop_no_auto_approve') }}
+                </div>
+              </div>
+            </template>
             <!-- 0446 NR0003 R5 / T0010 §3-6: how long this run may take. A rejection rework
                  was pinned to exactly 60 minutes by the server's own formula
                  (min(3600 × max(1, docs_target), 14400) with docs_target=1), so the person
@@ -216,6 +423,106 @@ const aiProviderStore = useAiProviderStore()
 const aiInvokeStore = useAiInvokeRunsStore()
 
 const mode = ref<'single' | 'continuous'>('single')
+type ReviewLoopTab = 'review' | 'rework' | 'stop'
+const reviewLoopTabs: ReviewLoopTab[] = ['review', 'rework', 'stop']
+const reviewInvocation = ref<'single' | 'loop'>('single')
+const reviewLoopTab = ref<ReviewLoopTab>('review')
+// Deck u3digra2 v6 screens 3~5 spell every option out; the raw numbers they carry are the
+// server contract values, so the value list and the label list are kept side by side here.
+const REVIEW_LOOP_COUNT_OPTIONS = [-1, 1, 2, 3]
+const REVIEW_LOOP_REWORK_TIMEOUT_OPTIONS = [1800, 3600, 7200]
+const REVIEW_LOOP_RESTART_OPTIONS = [-1, 0, 1, 2]
+const REVIEW_LOOP_TOTAL_TIMEOUT_OPTIONS = [3600, 7200, 14400]
+const reviewCount = ref(3)
+// The [정지 조건] tab's "검수 횟수를 다 쓰면 정지" toggle turns review_count between -1 and a
+// finite count. This remembers which finite count to come back to, so toggling twice is a
+// no-op instead of silently resetting the user's 1/2 pick to 3.
+const lastFiniteReviewCount = ref(3)
+const reviewerProviderId = ref('')
+const reviewCriteria = ref<'document_type_default' | 'last_rejection_only'>('document_type_default')
+const reworkProviderId = ref('')
+const reworkTimeoutSec = ref(3600)
+const reworkMessage = ref('')
+const failureRestartMaxAttempts = ref(1)
+const totalTimeoutSec = ref(7200)
+function reviewLoopTabLabel(tab: ReviewLoopTab): string {
+  if (tab === 'review') return t('main.ai_invoke_dialog.review_loop_tab_review')
+  if (tab === 'rework') return t('main.ai_invoke_dialog.review_loop_tab_rework')
+  return t('main.ai_invoke_dialog.review_loop_tab_stop')
+}
+function reviewCountOptionLabel(n: number): string {
+  return n === -1
+    ? t('main.ai_invoke_dialog.review_loop_count_until_pass')
+    : t('main.ai_invoke_dialog.review_loop_count_times', { n })
+}
+function minutesOptionLabel(seconds: number): string {
+  return t('main.ai_invoke_dialog.review_loop_minutes', { n: Math.round(seconds / 60) })
+}
+function restartOptionLabel(n: number): string {
+  if (n === 0) return t('main.ai_invoke_dialog.review_loop_restart_never')
+  if (n === -1) return t('main.ai_invoke_dialog.review_loop_restart_forever')
+  return t('main.ai_invoke_dialog.review_loop_count_times', { n })
+}
+const reviewLoopAvailable = computed(() => props.actionScope === 'review' && mode.value === 'single')
+const reviewLoopActive = computed(() => reviewLoopAvailable.value && reviewInvocation.value === 'loop')
+const enabledProviders = computed(() => aiProviderStore.providers.filter((provider: any) => provider.enabled !== false))
+const reviewerProviderName = computed(() => enabledProviders.value.find((provider: any) => provider.id === reviewerProviderId.value)?.name ?? '')
+
+// 0417 T0017: one radio group for the whole list, exactly as the deck draws it. `mode` still
+// owns single/continuous for every other scope and `reviewInvocation` still owns the loop
+// branch — this only stops the two from being rendered as two separate radio sets.
+const invocation = computed<'single' | 'continuous' | 'loop'>({
+  get: () => (reviewLoopAvailable.value && reviewInvocation.value === 'loop' ? 'loop' : mode.value),
+  set: (value) => {
+    if (value === 'loop') {
+      mode.value = 'single'
+      reviewInvocation.value = 'loop'
+      return
+    }
+    mode.value = value
+    reviewInvocation.value = 'single'
+  },
+})
+// Deck screen 2/3: on a review run [단일 호출] means "review this one document once", which the
+// generic "writes the next document" copy does not say.
+const singleModeDescription = computed(() =>
+  props.actionScope === 'review'
+    ? t('main.ai_invoke_dialog.mode_single_review_desc')
+    : t('main.ai_invoke_dialog.mode_single_desc'),
+)
+const reviewLoopReviewSummary = computed(() =>
+  reviewCount.value === -1
+    ? t('main.ai_invoke_dialog.review_loop_review_summary_until_pass', { provider: reviewerProviderName.value })
+    : t('main.ai_invoke_dialog.review_loop_review_summary', {
+        provider: reviewerProviderName.value,
+        count: reviewCount.value,
+      }),
+)
+// Derived from review_count, never a request field of its own (T0013 task 5).
+const stopOnCountExhausted = computed(() => reviewCount.value !== -1)
+const stopOnCountExhaustedDescription = computed(() =>
+  stopOnCountExhausted.value
+    ? t('main.ai_invoke_dialog.review_loop_stop_on_exhaust_desc', { n: reviewCount.value })
+    : t('main.ai_invoke_dialog.review_loop_stop_on_exhaust_desc_off'),
+)
+function onStopOnCountExhaustedChange(checked: boolean): void {
+  reviewCount.value = checked ? lastFiniteReviewCount.value : -1
+}
+watch(reviewCount, (value) => {
+  if (value !== -1) lastFiniteReviewCount.value = value
+})
+// resetState() runs on open, but the provider list is fetched right after it — so on a cold
+// open both stage pickers were seeded from an empty list. Measured in the browser harness: the
+// [검수] 탭 요약 rendered as " 이 최대 3회까지 검수하고…" with a blank reviewer name, and
+// [AI 실행 시작] stayed disabled until the user touched both selects. Backfill the moment the
+// list lands, and only for a stage whose current id is not in it — a pick already made wins.
+watch(enabledProviders, (providers) => {
+  if (providers.length === 0) return
+  const fallback = String(aiProviderStore.selectedProviderId || providers[0].id || '')
+  const known = (id: string) => providers.some((provider: any) => provider.id === id)
+  if (!known(reviewerProviderId.value)) reviewerProviderId.value = fallback
+  if (!known(reworkProviderId.value)) reworkProviderId.value = fallback
+})
 const starting = ref(false)
 const startError = ref('')
 const singleStepNote = ref('')
@@ -379,7 +686,7 @@ const resolvedTarget = computed<{ seq: number; fromDecision: boolean } | null>((
     : null
 })
 
-const canStart = computed(() => mode.value === 'single' || resolvedTarget.value != null)
+const canStart = computed(() => reviewLoopActive.value ? !!reviewerProviderId.value && !!reworkProviderId.value : mode.value === 'single' || resolvedTarget.value != null)
 
 const pickerSummary = computed(() => {
   if (picker.value.loading || picker.value.errorKey) return ''
@@ -396,6 +703,17 @@ function onPickerChange(state: WorkflowStepPickerState) {
 
 function resetState() {
   mode.value = canContinuous.value ? (props.initialMode ?? 'single') : 'single'
+  reviewInvocation.value = 'single'
+  reviewLoopTab.value = 'review'
+  reviewCount.value = 3
+  lastFiniteReviewCount.value = 3
+  reviewCriteria.value = 'document_type_default'
+  reworkTimeoutSec.value = 3600
+  reworkMessage.value = ''
+  failureRestartMaxAttempts.value = 1
+  totalTimeoutSec.value = 7200
+  reviewerProviderId.value = String(aiProviderStore.selectedProviderId ?? enabledProviders.value[0]?.id ?? '')
+  reworkProviderId.value = reviewerProviderId.value
   starting.value = false
   startError.value = ''
   lockedGroupId.value = null
@@ -458,8 +776,19 @@ async function start() {
     //                            longer be set by a selector's change event, so an ordinary
     //                            pick sends provider_id alone and the server keeps running each
     //                            step's stored provider (start_run tier 3 beats tier 4).
-    if (aiProviderStore.selectedProviderId) body.provider_id = aiProviderStore.selectedProviderId
-    if (aiProviderStore.pinned) body.provider_pinned = true
+    if (reviewLoopActive.value) {
+      body.provider_id = null
+      body.provider_pinned = false
+      body.document_review_loop = {
+        review_count: reviewCount.value, reviewer_provider_id: reviewerProviderId.value,
+        review_criteria: reviewCriteria.value, rework_provider_id: reworkProviderId.value,
+        rework_timeout_sec: reworkTimeoutSec.value, rework_message: reworkMessage.value,
+        failure_restart_max_attempts: failureRestartMaxAttempts.value, total_timeout_sec: totalTimeoutSec.value,
+      }
+    } else {
+      if (aiProviderStore.selectedProviderId) body.provider_id = aiProviderStore.selectedProviderId
+      if (aiProviderStore.pinned) body.provider_pinned = true
+    }
     if (props.module != null) body.module = props.module
     if (props.selectedDocs?.length) body.selected_docs = props.selectedDocs
     if (props.messages?.length) body.messages = props.messages
@@ -669,8 +998,140 @@ watch(
 .aiv-mode.active { border-color: var(--primary); background: var(--primary-l); }
 .aiv-mode input { margin-top: 3px; flex-shrink: 0; }
 .aiv-mode-text { display: flex; flex-direction: column; gap: 2px; }
-.aiv-mode-title { font-size: .85rem; font-weight: 600; color: var(--text); }
+.aiv-mode-title { font-size: .85rem; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 8px; }
 .aiv-mode-desc { font-size: .76rem; color: var(--text-m); line-height: 1.4; }
+
+/* ── 0417 T0017 — 자동 검수 루프 (MirageGlass deck u3digra2 v6, screens 3~5).
+   Every value below is copied from the published deck's css/extra.css. The deck reuses some
+   of ContinuousWorkDialog's `.cwd-*` names for the tab bar / rows / summary, but those rules
+   live behind that component's own scope id and would never reach this markup (same reason
+   the 0446 timeout block above owns `.aiv-timeout-*`), so the equivalents are re-declared
+   here under `.aiv-loop-*`. `.rlp*` keeps the deck's own names — the deck introduced them. ── */
+.modal-aiv--loop { width: 620px; }
+.aiv-mode-new-tag {
+  margin-left: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--primary, #2563eb);
+  color: #fff;
+  font-size: .58rem;
+  font-weight: 700;
+  letter-spacing: .02em;
+  white-space: nowrap;
+}
+.rlp {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 9px 11px;
+  border: 1px dashed var(--primary, #2563eb);
+  border-radius: var(--r, 6px);
+  background: var(--primary-l, #eff6ff);
+}
+.rlp-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid #bfdbfe;
+  font-size: .72rem;
+  font-weight: 700;
+  color: #1e40af;
+  white-space: nowrap;
+}
+.rlp-step--stop { background: #dcfce7; border-color: #86efac; color: #166534; }
+.rlp-arrow { color: #60a5fa; font-size: .68rem; display: inline-flex; }
+.rlp-loop {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: .68rem;
+  font-weight: 700;
+  color: #1e40af;
+}
+.aiv-loop-tabbar {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+  flex-shrink: 0;
+}
+.aiv-loop-tab {
+  padding: 7px 14px;
+  font-size: .82rem;
+  font-weight: 600;
+  color: var(--text-m);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+}
+.aiv-loop-tab--active { color: var(--primary); border-bottom-color: var(--primary); }
+.aiv-loop-panel { display: flex; flex-direction: column; gap: 14px; }
+.aiv-loop-intro { margin: 0; display: flex; flex-direction: column; gap: 3px; font-size: .76rem; color: var(--text-m); }
+.aiv-loop-legend { font-size: .72rem; color: var(--text-s); }
+.aiv-loop-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+.aiv-loop-label { font-size: .78rem; color: var(--text-m); min-width: 96px; flex-shrink: 0; }
+.aiv-loop-select {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: .82rem;
+}
+.aiv-loop-section-title {
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--text-m);
+  margin: 4px 0 -8px;
+}
+.aiv-loop-message-input {
+  font-size: .82rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 5px 8px;
+}
+.aiv-loop-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--primary, #2563eb);
+  border-radius: var(--r, 6px);
+  background: var(--primary-l, #eff6ff);
+  cursor: pointer;
+}
+.aiv-loop-toggle input { accent-color: var(--primary, #2563eb); width: 16px; height: 16px; flex-shrink: 0; }
+.aiv-loop-toggle-text { display: flex; flex-direction: column; gap: 2px; }
+.aiv-loop-toggle-title { font-size: .85rem; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; }
+.aiv-loop-toggle-desc { font-size: .76rem; color: var(--text-m); line-height: 1.4; }
+.aiv-loop-summary {
+  font-size: .82rem;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 8px 10px;
+}
 .aiv-seq-row {
   display: flex;
   align-items: center;

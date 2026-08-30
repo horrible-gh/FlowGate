@@ -267,18 +267,38 @@ def begin_handoff(group_id: str, run_id: str) -> bool:
     return bool(row and row.get("run_id") == run_id and row.get("state") == "releasing")
 
 
-def update_token(group_id: str, run_id: str, token_id: Optional[str]) -> None:
+def update_token(group_id: str, run_id: str, token_id: Optional[str],
+                  action_scope: Optional[str] = None) -> None:
+    """Re-point the lease at a reissued token (0359 L0007 §2.9).
+
+    0417 T0013: a document_review_loop hop reissues a token with a DIFFERENT action_scope
+    than the one activate() first recorded (review <-> edit as the loop alternates stages) —
+    without also refreshing action_scope here, mutation_policy's owner-match check compares
+    the new token's real scope against this lease's stale one and 403s every rework hop.
+    action_scope is optional so a plain (single-scope) run's retry, which passes None, keeps
+    leaving it untouched exactly as before.
+    """
     stamp = now_iso()
     if _using_memory():
         with _memory_lock:
             row = _memory.get(group_id)
             if row and row.get("run_id") == run_id:
-                row.update(token_id=token_id, heartbeat_at=stamp, updated_at=stamp)
+                updates = {"token_id": token_id, "heartbeat_at": stamp, "updated_at": stamp}
+                if action_scope is not None:
+                    updates["action_scope"] = action_scope
+                row.update(**updates)
         return
-    get_store()._execute(
-        "UPDATE group_ai_leases SET token_id = ?, heartbeat_at = ?, updated_at = ? WHERE group_id = ? AND run_id = ?",
-        [token_id, stamp, stamp, group_id, run_id],
-    )
+    if action_scope is not None:
+        get_store()._execute(
+            "UPDATE group_ai_leases SET token_id = ?, action_scope = ?, heartbeat_at = ?, "
+            "updated_at = ? WHERE group_id = ? AND run_id = ?",
+            [token_id, action_scope, stamp, stamp, group_id, run_id],
+        )
+    else:
+        get_store()._execute(
+            "UPDATE group_ai_leases SET token_id = ?, heartbeat_at = ?, updated_at = ? WHERE group_id = ? AND run_id = ?",
+            [token_id, stamp, stamp, group_id, run_id],
+        )
 
 
 def release(group_id: str, run_id: str) -> bool:

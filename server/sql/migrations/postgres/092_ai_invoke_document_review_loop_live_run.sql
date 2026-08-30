@@ -1,0 +1,1 @@
+ALTER TABLE ai_invoke_document_review_loops DROP CONSTRAINT ai_invoke_document_review_loops_run_id_fkey;

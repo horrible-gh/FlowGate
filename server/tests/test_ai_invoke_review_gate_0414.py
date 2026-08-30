@@ -2790,7 +2790,13 @@ class TestMigration086:
     def test_086_is_free_in_every_dialect(self):
         for dialect in ("sqlite", "postgres", "mysql"):
             same_number = sorted(p.name for p in (_MIGRATIONS / dialect).glob("086*.sql"))
-            assert same_number == [_NAME], f"{dialect} number collision: {same_number}"
+            assert same_number == [
+                _NAME,
+                "086a_ai_invoke_paused_provider_fk.sql",
+                "086b_ai_invoke_restart_max_attempts.sql",
+                "086c_ai_invoke_run_diagnostics.sql",
+                "086d_tr_commit_ledger.sql",
+            ], f"{dialect} number collision: {same_number}"
 
     def test_applying_it_leaves_existing_rows_null_and_round_trips_a_new_one(self, tmp_path):
         """DB0009 §3-3: no backfill. A row written before 086 reads NULL, which the gate

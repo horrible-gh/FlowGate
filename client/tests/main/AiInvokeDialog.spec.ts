@@ -916,3 +916,314 @@ describe('AiInvokeDialog 검수 전달 (0414 T0012)', () => {
     wrapper.unmount()
   })
 })
+
+
+describe('AiInvokeDialog document review loop behavior (0417 T0013)', () => {
+  it('mounts the review-only three-tab flow, resets it, and posts independent stage providers', async () => {
+    getRequest.mockResolvedValue({
+      data: {
+        ok: true,
+        project: 'flowgate',
+        default_provider_id: 'reviewer',
+        providers: [
+          { id: 'reviewer', name: 'Reviewer AI', exec_type: 'cli', kind: 'codex', enabled: true },
+          { id: 'reworker', name: 'Reworker AI', exec_type: 'cli', kind: 'codex', enabled: true },
+        ],
+      },
+    })
+    const providerStore = useAiProviderStore()
+    await providerStore.loadForProject('flowgate')
+
+    const wrapper = mountDialog({ actionScope: 'review' })
+    await flushPromises()
+    expect(document.querySelector('[data-test="review-loop-settings"]')).not.toBeNull()
+
+    const loopRadio = document.querySelector('input[value="loop"]') as HTMLInputElement
+    loopRadio.checked = true
+    loopRadio.dispatchEvent(new Event('change'))
+    await flushPromises()
+    const tabs = Array.from(document.querySelectorAll('[role="tab"]')) as HTMLButtonElement[]
+    expect(tabs).toHaveLength(3)
+    const select = (query: string) => document.querySelector(query) as HTMLSelectElement
+    const text = (query: string) => document.querySelector(query)?.textContent ?? ''
+    expect(select('[data-test="review-loop-review-count"]').value).toBe('3')
+    expect(select('[data-test="review-loop-criteria"]').value).toBe('document_type_default')
+    expect(text('[data-test="review-loop-review-summary"]')).toContain('Reviewer AI')
+
+    tabs[1].click()
+    await flushPromises()
+    expect(text('[data-test="review-loop-rework-summary"]')).toContain(
+      i18n.global.t('main.ai_invoke_dialog.review_loop_rework_summary'),
+    )
+    select('[data-test="review-loop-reworker"]').value = 'reworker'
+    select('[data-test="review-loop-reworker"]').dispatchEvent(new Event('change'))
+    await flushPromises()
+    tabs[0].click()
+    await flushPromises()
+    select('[data-test="review-loop-review-count"]').value = '-1'
+    select('[data-test="review-loop-review-count"]').dispatchEvent(new Event('change'))
+    select('[data-test="review-loop-criteria"]').value = 'last_rejection_only'
+    select('[data-test="review-loop-criteria"]').dispatchEvent(new Event('change'))
+    await flushPromises()
+    expect(text('[data-test="review-loop-review-summary"]')).toContain(
+      i18n.global.t('main.ai_invoke_dialog.review_loop_review_summary_until_pass', { provider: 'Reviewer AI' }),
+    )
+
+    ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
+    await flushPromises()
+    expect(startBody()).toMatchObject({
+      provider_id: null,
+      provider_pinned: false,
+      document_review_loop: {
+        review_count: -1,
+        reviewer_provider_id: 'reviewer',
+        review_criteria: 'last_rejection_only',
+        rework_provider_id: 'reworker',
+        rework_timeout_sec: 3600,
+        rework_message: '',
+        failure_restart_max_attempts: 1,
+        total_timeout_sec: 7200,
+      },
+    })
+
+    await wrapper.setProps({ visible: false })
+    await wrapper.setProps({ visible: true })
+    await flushPromises()
+    expect((document.querySelector('input[value="single"]') as HTMLInputElement).checked).toBe(true)
+    expect(document.querySelector('[data-test="review-loop-review-panel"]')).toBeNull()
+    wrapper.unmount()
+
+    const other = mountDialog({ actionScope: 'edit' })
+    await flushPromises()
+    expect(document.querySelector('[data-test="review-loop-settings"]')).toBeNull()
+    other.unmount()
+  })
+})
+
+// 0417 T0017 (반려: "시안과 실제 개발해놓은 AI 호출 다이얼로그가 완전 다르잖아") — the approved
+// deck MirageGlass u3digra2 v6 화면 2~5 의 요소를 하나씩 대조한다. 빠진 것뿐 아니라
+// 시안에 없는 중복 컨트롤도 여기서 잡는다.
+describe('AiInvokeDialog deck parity — MirageGlass u3digra2 v6 (0417 T0017)', () => {
+  async function mountLoop() {
+    getRequest.mockResolvedValue({
+      data: {
+        ok: true,
+        project: 'flowgate',
+        default_provider_id: 'reviewer',
+        providers: [
+          { id: 'reviewer', name: 'Reviewer AI', exec_type: 'cli', kind: 'codex', enabled: true },
+          { id: 'reworker', name: 'Reworker AI', exec_type: 'cli', kind: 'codex', enabled: true },
+        ],
+      },
+    })
+    await useAiProviderStore().loadForProject('flowgate')
+    const wrapper = mountDialog({ actionScope: 'review' })
+    await flushPromises()
+    return wrapper
+  }
+
+  async function pickLoop() {
+    const radio = document.querySelector('input[type="radio"][value="loop"]') as HTMLInputElement
+    radio.checked = true
+    radio.dispatchEvent(new Event('change'))
+    await flushPromises()
+  }
+
+  async function openTab(tab: 'review' | 'rework' | 'stop') {
+    ;(document.querySelector(`[data-test="review-loop-tab-${tab}"]`) as HTMLButtonElement).click()
+    await flushPromises()
+  }
+
+  const label = (key: string) => i18n.global.t(`main.ai_invoke_dialog.${key}`)
+  const texts = (query: string) =>
+    Array.from(document.querySelectorAll(query)).map((node) => (node.textContent ?? '').trim())
+
+  it('draws one radio list — 단일 호출 appears exactly once, never as a second stray set', async () => {
+    const wrapper = await mountLoop()
+    // Deck screen 2: 대상 문서 / 이번 실행 프로바이더 / [단일 호출]. Screen 3 adds ONE more
+    // sibling radio. The rejected build rendered a second [단일 호출] radio above the provider
+    // row, so the same word appeared twice in the same dialog.
+    expect(document.querySelectorAll('input[type="radio"][value="single"]')).toHaveLength(1)
+    expect(document.querySelectorAll('input[type="radio"][value="loop"]')).toHaveLength(1)
+    expect(texts('.aiv-mode-title').filter((text) => text.startsWith(label('mode_single')))).toHaveLength(1)
+    expect(texts('.aiv-mode-desc')).toContain(label('mode_single_review_desc'))
+    const loopTitle = document.querySelector('[data-test="review-loop-settings"] .aiv-mode-title')
+    expect(loopTitle?.textContent?.trim()).toBe(label('review_loop_mode'))
+    expect(loopTitle?.querySelector('.aiv-mode-new-tag')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('keeps the provider row on screen while the loop is selected, locked instead of removed', async () => {
+    const wrapper = await mountLoop()
+    const providerSelect = () => document.querySelector('.aiv-provider-row select') as HTMLSelectElement
+    expect(providerSelect().disabled).toBe(false)
+    await pickLoop()
+    // Screens 3~5 all still draw 이번 실행 프로바이더. It must stay visible; it is locked so the
+    // request keeps sending provider_id: null.
+    expect(document.querySelector('.aiv-provider-row')).not.toBeNull()
+    expect(providerSelect().disabled).toBe(true)
+    expect((document.querySelector('.modal-aiv') as HTMLElement).classList).toContain('modal-aiv--loop')
+    wrapper.unmount()
+  })
+
+  it('draws the loop map and the three named tabs from the deck', async () => {
+    const wrapper = await mountLoop()
+    await pickLoop()
+    expect(texts('[data-test="review-loop-flow"] .rlp-step')).toEqual([
+      label('review_loop_flow_rework'),
+      label('review_loop_flow_review'),
+      label('review_loop_flow_auto_reject'),
+      label('review_loop_flow_review'),
+      label('review_loop_flow_stop'),
+    ])
+    expect(document.querySelector('[data-test="review-loop-flow"] .rlp-loop')?.textContent).toContain(
+      label('review_loop_flow_repeat'),
+    )
+    expect(texts('.aiv-loop-tab')).toEqual([
+      label('review_loop_tab_review'),
+      label('review_loop_tab_rework'),
+      label('review_loop_tab_stop'),
+    ])
+    wrapper.unmount()
+  })
+
+  it('labels every 검수 tab field and spells the option values out as the deck does', async () => {
+    const wrapper = await mountLoop()
+    await pickLoop()
+    expect(texts('[data-test="review-loop-review-panel"] .aiv-loop-label')).toEqual([
+      label('review_loop_count_label'),
+      label('review_loop_reviewer_label'),
+      label('review_loop_criteria_label'),
+    ])
+    expect(document.querySelector('.aiv-loop-intro')?.textContent).toContain(label('review_loop_review_intro'))
+    expect(document.querySelector('.aiv-loop-legend')?.textContent).toBe(label('review_loop_review_legend'))
+    // Raw -1 / 1 / 2 / 3 was what the rejected build showed.
+    expect(texts('[data-test="review-loop-review-count"] option')).toEqual([
+      label('review_loop_count_until_pass'),
+      i18n.global.t('main.ai_invoke_dialog.review_loop_count_times', { n: 1 }),
+      i18n.global.t('main.ai_invoke_dialog.review_loop_count_times', { n: 2 }),
+      i18n.global.t('main.ai_invoke_dialog.review_loop_count_times', { n: 3 }),
+    ])
+    expect(texts('[data-test="review-loop-criteria"] option')).toEqual([
+      label('review_loop_criteria_default'),
+      label('review_loop_criteria_last_rejection'),
+    ])
+    expect(document.querySelector('[data-test="review-loop-review-summary"]')?.textContent?.trim()).toBe(
+      i18n.global.t('main.ai_invoke_dialog.review_loop_review_summary', { provider: 'Reviewer AI', count: 3 }),
+    )
+    wrapper.unmount()
+  })
+
+  it('labels the 반려대응 tab, shows minutes, and uses a single-line message input', async () => {
+    const wrapper = await mountLoop()
+    await pickLoop()
+    await openTab('rework')
+    expect(texts('[data-test="review-loop-rework-panel"] .aiv-loop-label')).toEqual([
+      label('review_loop_rework_provider_label'),
+      label('review_loop_rework_timeout_label'),
+    ])
+    expect(texts('[data-test="review-loop-rework-timeout"] option')).toEqual([30, 60, 120].map(
+      (n) => i18n.global.t('main.ai_invoke_dialog.review_loop_minutes', { n }),
+    ))
+    expect(document.querySelector('.aiv-loop-section-title')?.textContent?.trim()).toBe(
+      label('review_loop_rework_message_title'),
+    )
+    const message = document.querySelector('[data-test="review-loop-rework-message"]') as HTMLInputElement
+    expect(message.tagName).toBe('INPUT')
+    expect(message.placeholder).toBe(label('review_loop_rework_message_placeholder'))
+    wrapper.unmount()
+  })
+
+  it('fills both stage providers when the list arrives after the dialog opened', async () => {
+    // The cold-open order is: open -> resetState() -> provider fetch resolves. Seeding the two
+    // stage pickers only in resetState() left them empty, which blanked the [검수] summary name
+    // and disabled [AI 실행 시작].
+    let resolveProviders: (value: unknown) => void = () => {}
+    getRequest.mockImplementation(() => new Promise((resolve) => { resolveProviders = resolve }))
+    const wrapper = mountDialog({ actionScope: 'review' })
+    await flushPromises()
+    await pickLoop()
+    expect((document.querySelector('[data-test="review-loop-reviewer"]') as HTMLSelectElement).value).toBe('')
+
+    resolveProviders({
+      data: {
+        ok: true,
+        project: 'flowgate',
+        default_provider_id: 'reviewer',
+        providers: [
+          { id: 'reviewer', name: 'Reviewer AI', exec_type: 'cli', kind: 'codex', enabled: true },
+          { id: 'reworker', name: 'Reworker AI', exec_type: 'cli', kind: 'codex', enabled: true },
+        ],
+      },
+    })
+    await flushPromises()
+    expect((document.querySelector('[data-test="review-loop-reviewer"]') as HTMLSelectElement).value).toBe('reviewer')
+    expect(document.querySelector('[data-test="review-loop-review-summary"]')?.textContent).toContain('Reviewer AI')
+    expect((document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).disabled).toBe(false)
+    await openTab('rework')
+    expect((document.querySelector('[data-test="review-loop-reworker"]') as HTMLSelectElement).value).toBe('reviewer')
+    wrapper.unmount()
+  })
+
+  it('omits the fixed pass condition, and the count toggle drives review_count instead of a new field', async () => {
+    const wrapper = await mountLoop()
+    await pickLoop()
+    await openTab('review')
+    const count = document.querySelector('[data-test="review-loop-review-count"]') as HTMLSelectElement
+    count.value = '2'
+    count.dispatchEvent(new Event('change'))
+    await flushPromises()
+
+    await openTab('stop')
+    expect(document.querySelector('[data-test="review-loop-stop-on-pass"]')).toBeNull()
+    expect(texts('[data-test="review-loop-stop-panel"] .aiv-loop-label')).toEqual([
+      label('review_loop_failure_restart_label'),
+      label('review_loop_total_timeout_label'),
+    ])
+    expect(texts('[data-test="review-loop-failure-restart"] option')).toEqual([
+      label('review_loop_restart_forever'),
+      label('review_loop_restart_never'),
+      i18n.global.t('main.ai_invoke_dialog.review_loop_count_times', { n: 1 }),
+      i18n.global.t('main.ai_invoke_dialog.review_loop_count_times', { n: 2 }),
+    ])
+    expect(texts('[data-test="review-loop-total-timeout"] option')).toEqual([60, 120, 240].map(
+      (n) => i18n.global.t('main.ai_invoke_dialog.review_loop_minutes', { n }),
+    ))
+    expect(document.querySelector('[data-test="review-loop-stop-summary"]')?.textContent?.trim()).toBe(
+      label('review_loop_no_auto_approve'),
+    )
+
+    const exhaust = document.querySelector('[data-test="review-loop-stop-on-exhaust"]') as HTMLInputElement
+    expect(exhaust.checked).toBe(true)
+    exhaust.checked = false
+    exhaust.dispatchEvent(new Event('change'))
+    await flushPromises()
+    ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
+    await flushPromises()
+    expect(startBody()).toMatchObject({
+      provider_id: null,
+      provider_pinned: false,
+      document_review_loop: { review_count: -1 },
+    })
+    // No extra boolean is invented for the toggle (T0013 작업 항목 5).
+    expect(Object.keys((startBody() as any).document_review_loop).sort()).toEqual([
+      'failure_restart_max_attempts',
+      'review_count',
+      'review_criteria',
+      'reviewer_provider_id',
+      'rework_message',
+      'rework_provider_id',
+      'rework_timeout_sec',
+      'total_timeout_sec',
+    ])
+
+    // Turning it back on restores the finite count the user actually picked, not the default.
+    exhaust.checked = true
+    exhaust.dispatchEvent(new Event('change'))
+    await flushPromises()
+    await openTab('review')
+    expect((document.querySelector('[data-test="review-loop-review-count"]') as HTMLSelectElement).value).toBe('2')
+    wrapper.unmount()
+  })
+})
+

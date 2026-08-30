@@ -247,3 +247,152 @@ describe('AiInvokeInline', () => {
     }
   })
 })
+
+describe('AiInvokeInline document review loop cards (0417 T0013)', () => {
+  it.each([
+    ['ko', '검수', '반려', '반려대응', '통과', '지적 3건'],
+    ['en', 'Review', 'Rejected', 'Rework', 'Passed', '3 findings'],
+    ['ja', 'レビュー', '差し戻し', '差し戻し対応', '合格', '指摘 3件'],
+  ] as const)('localizes prior review/rework/result rows in %s without raw backend identifiers', async (locale, review, issues, rework, passed, findings) => {
+    const previousLocale = i18n.global.locale.value
+    i18n.global.locale.value = locale
+    const groupId = 'flowgate.default.0417.history-' + locale
+    setActivePinia(createPinia())
+    const wrapper = mount(AiInvokeInline, {
+      props: { groupId },
+      global: { plugins: [i18n] },
+    })
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'loop-history-' + locale, group_id: groupId, status: 'running',
+      document_review_loop: {
+        round_no: 2, current_stage: 'review',
+        history: [
+          { round_no: 1, stage: 'review', result: 'issues', finding_count: 3 },
+          { round_no: 2, stage: 'rework', result: 'passed' },
+        ],
+      },
+    })
+    await nextTick()
+
+    const rows = wrapper.findAll('[data-test="review-loop-history-row"]').map(row => row.text())
+    expect(rows[0]).toContain(review)
+    expect(rows[0]).toContain(issues)
+    // Deck screen 6 prints the server's own finding count next to the stage name.
+    expect(rows[0]).toContain(findings)
+    expect(rows[1]).toContain(rework)
+    expect(rows[1]).toContain(passed)
+    expect(rows.join(' ')).not.toMatch(/\b(review|rework|issues|passed)\b/)
+    wrapper.unmount()
+    i18n.global.locale.value = previousLocale
+  })
+
+  it.each([
+    'review_passed',
+    'review_count_exhausted',
+    'retry_exhausted',
+    'total_timeout',
+  ] as const)('renders accumulated rounds, %s, and stop detail without duplicate history', async (reason) => {
+    const groupId = 'flowgate.default.0417.' + reason
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    setActivePinia(createPinia())
+    const wrapper = mount(AiInvokeInline, {
+      props: { groupId },
+      global: { plugins: [i18n] },
+    })
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'loop-' + reason, group_id: groupId, status: 'running',
+      document_review_loop: {
+        round_no: 2, current_stage: 'rework',
+        history: [
+          { round_no: 1, stage: 'review', result: 'issues' },
+          { round_no: 2, stage: 'rework', result: 'complete' },
+        ],
+      },
+    })
+    store.trackFinished({
+      run_id: 'loop-' + reason, group_id: groupId, status: 'finished', outcome: 'complete',
+      document_review_loop: {
+        round_no: 2, current_stage: 'stopped', stop_reason: reason,
+        stop_detail: 'server detail',
+        history: [{ round_no: 2, stage: 'rework', result: 'complete' }],
+      },
+    })
+    await nextTick()
+
+    const card = wrapper.find('[data-test="review-loop-card"]')
+    expect(card.exists()).toBe(true)
+    expect(card.findAll('[data-test="review-loop-history-row"]')).toHaveLength(2)
+    expect(card.text()).toContain(i18n.global.t('main.ai_invoke_dialog.review_loop_stop_' + reason))
+    expect(card.text()).toContain('server detail')
+    // 0417 T0017 / deck screen 6: only a pass wears the green stop row.
+    const stopRow = card.find('[data-test="review-loop-stop-row"]')
+    expect(stopRow.exists()).toBe(true)
+    expect(stopRow.classes()).toContain(reason === 'review_passed' ? 'rlr-row--stop' : 'rlr-row--halt')
+    expect(stopRow.find('.rlr-badge').classes()).toContain(
+      reason === 'review_passed' ? 'rlr-badge--pass' : 'rlr-badge--rej',
+    )
+    wrapper.unmount()
+  })
+
+  // 0417 T0013 items 7-8 and the TR0018 rejection: the round table is server truth
+  // (document_review_loop.history, rebuilt from the canonical review/rejection rows), so a
+  // card mounted fresh after F5 — having observed no transition at all — draws deck screen
+  // 6's whole table from the first payload it receives.
+  it('draws the whole deck-screen-6 table from the server payload alone', async () => {
+    const groupId = 'flowgate.default.0417.restored'
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    setActivePinia(createPinia())
+    const wrapper = mount(AiInvokeInline, {
+      props: { groupId },
+      global: { plugins: [i18n] },
+    })
+    const store = useAiInvokeRunsStore()
+    store.trackFinished({
+      run_id: 'loop-restored', group_id: groupId, status: 'finished', outcome: 'complete',
+      document_review_loop: {
+        round_no: 3, current_stage: 'stopped', stop_reason: 'review_passed',
+        history: [
+          { round_no: 1, stage: 'review', result: 'issues', finding_count: 3, at: '2026-08-29T12:04:00+09:00' },
+          { round_no: 1, stage: 'rework', result: 'complete', at: '2026-08-29T12:19:00+09:00' },
+          { round_no: 2, stage: 'review', result: 'issues', finding_count: 1, at: '2026-08-29T12:26:00+09:00' },
+          { round_no: 2, stage: 'rework', result: 'complete', at: '2026-08-29T12:38:00+09:00' },
+          { round_no: 3, stage: 'review', result: 'passed', finding_count: 0, at: '2026-08-29T12:44:00+09:00' },
+        ],
+      },
+    })
+    await nextTick()
+    const rows = wrapper.findAll('[data-test="review-loop-history-row"]')
+    expect(rows).toHaveLength(5)
+    expect(rows[0].text()).toContain(i18n.global.t('main.ai_invoke_dialog.review_loop_history_result_issues'))
+    expect(rows[0].text()).toContain(i18n.global.t('main.ai_invoke_dialog.review_loop_history_detail_findings', { n: 3 }))
+    expect(rows[1].text()).toContain(i18n.global.t('main.ai_invoke_dialog.review_loop_history_result_complete'))
+    expect(rows[4].text()).toContain(i18n.global.t('main.ai_invoke_dialog.review_loop_history_result_passed'))
+    expect(rows[4].text()).toContain(i18n.global.t('main.ai_invoke_dialog.review_loop_history_detail_no_findings'))
+    // The time cell is the server's stamp for that round, not the moment this tab saw it.
+    expect(rows[0].find('.rlr-time').text()).toMatch(/^\d{2}:\d{2}$/)
+    expect(wrapper.find('[data-test="review-loop-stop-row"]').classes()).toContain('rlr-row--stop')
+    wrapper.unmount()
+  })
+
+  // The complement: with no server table, nothing is invented from what this tab watched.
+  it('shows no round rows when the payload carries no history array', async () => {
+    const groupId = 'flowgate.default.0417.no-history'
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    setActivePinia(createPinia())
+    const wrapper = mount(AiInvokeInline, {
+      props: { groupId },
+      global: { plugins: [i18n] },
+    })
+    const store = useAiInvokeRunsStore()
+    const base = { run_id: 'loop-bare', group_id: groupId, status: 'running' }
+    store.trackStarted({ ...base, document_review_loop: { round_no: 1, current_stage: 'review' } })
+    store.trackStarted({ ...base, document_review_loop: { round_no: 2, current_stage: 'rework' } })
+    await nextTick()
+    expect(wrapper.findAll('[data-test="review-loop-history-row"]')).toHaveLength(0)
+    expect(wrapper.find('[data-test="review-loop-card"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+})
+

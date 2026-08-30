@@ -1,0 +1,1 @@
+ALTER TABLE ai_invoke_document_review_loops DROP FOREIGN KEY fk_aidrl_run;

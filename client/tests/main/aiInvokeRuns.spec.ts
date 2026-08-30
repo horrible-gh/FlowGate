@@ -368,6 +368,7 @@ describe('aiInvokeRuns store', () => {
     store.trackFinished({
       run_id: 'run-old', group_id: groupId, doc_ref: 'r', end_reason: 'user_paused',
     })
+    vi.mocked(getRequest).mockClear()
     const rejection = {
       response: {
         status: 409,
@@ -440,6 +441,7 @@ describe('aiInvokeRuns store', () => {
     it('preserves the card and rethrows on 403 ownership rejection', async () => {
       const groupId = 'flowgate.default.0459.release-403'
       store.trackFinished({ run_id: 'run-old', group_id: groupId, end_reason: 'user_paused' })
+      vi.mocked(getRequest).mockClear()
       const rejection = {
         response: { status: 403, data: { code: 'paused_chain_forbidden' } },
       }
@@ -502,6 +504,7 @@ describe('aiInvokeRuns store', () => {
     it('preserves the card and rethrows on a network failure without bootstrapping', async () => {
       const groupId = 'flowgate.default.0459.release-network'
       store.trackFinished({ run_id: 'run-old', group_id: groupId, end_reason: 'user_paused' })
+      vi.mocked(getRequest).mockClear()
       const failure = new Error('network down')
       vi.mocked(deleteRequest).mockRejectedValueOnce(failure)
 
@@ -516,6 +519,7 @@ describe('aiInvokeRuns store', () => {
       // response (status 500), not a rejected promise with no response object at all.
       const groupId = 'flowgate.default.0459.release-5xx'
       store.trackFinished({ run_id: 'run-old', group_id: groupId, end_reason: 'user_paused' })
+      vi.mocked(getRequest).mockClear()
       const rejection = {
         response: { status: 500, data: { code: 'internal_error', message: 'db unavailable' } },
       }
@@ -611,6 +615,7 @@ describe('aiInvokeRuns store', () => {
     store.trackFinished({
       run_id: 'run-stale', group_id: groupId, doc_ref: 'r', end_reason: 'user_paused',
     })
+    vi.mocked(getRequest).mockClear()
     const rejection = {
       response: {
         status: 422,
@@ -1423,3 +1428,134 @@ describe('aiInvokeRuns store — per-user retention', () => {
     immediate.$dispose()
   })
 })
+
+
+describe('document review loop state normalization (0417 T0013)', () => {
+  it('preserves monotonic rounds across start, poll/SSE-shaped updates, finish, and duplicate history', () => {
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    setActivePinia(createPinia())
+    const store = useAiInvokeRunsStore()
+    const groupId = 'flowgate.default.0417'
+    store.trackStarted({
+      run_id: 'loop-1', group_id: groupId, status: 'running',
+      document_review_loop: {
+        round_no: 1, current_stage: 'review',
+        history: [{ round_no: 1, stage: 'review', result: 'issues' }],
+      },
+    })
+    store.trackStarted({
+      run_id: 'loop-1', group_id: groupId, status: 'running',
+      document_review_loop: {
+        round_no: 2, current_stage: 'rework',
+        history: [
+          { round_no: 1, stage: 'review', result: 'issues' },
+          { round_no: 2, stage: 'rework', result: 'complete' },
+        ],
+      },
+    })
+    store.trackStarted({
+      run_id: 'loop-1', group_id: groupId, status: 'running',
+      document_review_loop: { round_no: 1, current_stage: 'review' },
+    })
+    expect(store.runsByGroup[groupId].documentReviewLoop).toMatchObject({
+      roundNo: 2, currentStage: 'rework',
+    })
+    expect(store.runsByGroup[groupId].documentReviewLoop?.history).toHaveLength(2)
+
+    store.trackFinished({
+      run_id: 'loop-1', group_id: groupId, status: 'finished', outcome: 'complete',
+      document_review_loop: {
+        round_no: 2, current_stage: 'stopped', stop_reason: 'review_passed',
+        stop_detail: 'passed on round 2',
+        history: [{ round_no: 2, stage: 'rework', result: 'complete' }],
+      },
+    })
+    expect(store.runsByGroup[groupId].documentReviewLoop).toMatchObject({
+      roundNo: 2, currentStage: 'stopped', stopReason: 'review_passed',
+      stopDetail: 'passed on round 2',
+    })
+    // A LATE, shorter copy of the table (an older response arriving after a newer one)
+    // never shrinks what is already on screen.
+    expect(store.runsByGroup[groupId].documentReviewLoop?.history).toHaveLength(2)
+
+    // The server's table is the authority: a fuller one replaces the card's rows outright.
+    store.trackFinished({
+      run_id: 'loop-1', group_id: groupId, status: 'finished', outcome: 'complete',
+      document_review_loop: {
+        round_no: 2, current_stage: 'stopped', stop_reason: 'review_passed',
+        history: [
+          { round_no: 1, stage: 'review', result: 'issues', finding_count: 3, at: '2026-08-29T12:04:00+09:00' },
+          { round_no: 1, stage: 'rework', result: 'complete', at: '2026-08-29T12:19:00+09:00' },
+          { round_no: 2, stage: 'review', result: 'passed', finding_count: 0, at: '2026-08-29T12:26:00+09:00' },
+        ],
+      },
+    })
+    expect(store.runsByGroup[groupId].documentReviewLoop?.history).toHaveLength(3)
+    expect(store.runsByGroup[groupId].documentReviewLoop?.history[0]).toMatchObject({
+      round_no: 1, stage: 'review', result: 'issues', finding_count: 3,
+    })
+    store.$dispose()
+  })
+
+  // 0417 T0013 item 7 (bootstrap/reconnect restores the same card) and the TR0018 rejection:
+  // the round table must survive a refresh, so it may not be derived from transitions this
+  // browser watched. A brand-new store that observed NOTHING still shows every round.
+  it('restores the whole round table on bootstrap without having observed any transition', async () => {
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    setActivePinia(createPinia())
+    const store = useAiInvokeRunsStore()
+    const groupId = 'flowgate.default.0417.reconnect'
+    vi.mocked(getRequest).mockResolvedValueOnce({
+      data: {
+        ok: true,
+        runs: [{
+          run_id: 'loop-reconnect', group_id: groupId, status: 'running', mode: 'single',
+          doc_ref: 'flowgate.default.0417.0011-T',
+          document_review_loop: {
+            round_no: 3, current_stage: 'review', stop_reason: null, stop_detail: null,
+            history: [
+              { round_no: 1, stage: 'review', result: 'issues', finding_count: 3, at: '2026-08-29T12:04:00+09:00' },
+              { round_no: 1, stage: 'rework', result: 'complete', at: '2026-08-29T12:19:00+09:00' },
+              { round_no: 2, stage: 'review', result: 'issues', finding_count: 1, at: '2026-08-29T12:26:00+09:00' },
+              { round_no: 2, stage: 'rework', result: 'complete', at: '2026-08-29T12:38:00+09:00' },
+            ],
+          },
+        }],
+        paused: [],
+      },
+    } as any)
+
+    await store.bootstrap()
+
+    const loop = store.runsByGroup[groupId].documentReviewLoop
+    expect(loop).toMatchObject({ roundNo: 3, currentStage: 'review' })
+    expect(loop?.history).toHaveLength(4)
+    expect(loop?.history.map(row => `${row.round_no}:${row.stage}:${row.result}`)).toEqual([
+      '1:review:issues', '1:rework:complete', '2:review:issues', '2:rework:complete',
+    ])
+    store.$dispose()
+  })
+
+  // The other half of the same rule: nothing is invented locally. A run whose payloads carry
+  // no history array leaves the table empty however many stage transitions go by, instead of
+  // manufacturing rows that a reconnecting browser could never reproduce.
+  it('never derives rows from observed stage transitions', () => {
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    setActivePinia(createPinia())
+    const store = useAiInvokeRunsStore()
+    const groupId = 'flowgate.default.0417.no-derivation'
+    const base = { run_id: 'loop-observed', group_id: groupId, status: 'running' }
+    store.trackStarted({ ...base, document_review_loop: { round_no: 1, current_stage: 'review' } })
+    store.trackStarted({ ...base, document_review_loop: { round_no: 2, current_stage: 'rework' } })
+    store.trackFinished({
+      ...base, status: 'finished', outcome: 'complete',
+      document_review_loop: { round_no: 2, current_stage: 'stopped', stop_reason: 'review_passed' },
+    })
+    expect(store.runsByGroup[groupId].documentReviewLoop).toMatchObject({
+      roundNo: 2, currentStage: 'stopped', stopReason: 'review_passed',
+    })
+    expect(store.runsByGroup[groupId].documentReviewLoop?.history).toEqual([])
+    store.$dispose()
+  })
+})
+

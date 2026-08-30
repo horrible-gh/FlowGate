@@ -40,12 +40,20 @@ export interface AiInvokeRegisterError {
   turn: number | null
 }
 
+export interface DocumentReviewLoopState {
+  roundNo: number
+  currentStage: 'review' | 'rework' | 'stopped'
+  stopReason: 'review_passed' | 'review_count_exhausted' | 'retry_exhausted' | 'total_timeout' | null
+  stopDetail: string | null
+  history: Array<Record<string, unknown>>
+}
 export interface AiInvokeRunEntry {
   runId: string
   groupId: string
   docRef: string
   phase: AiInvokePhase
   mode: 'single' | 'continuous'
+  documentReviewLoop: DocumentReviewLoopState | null
   cancelling: boolean
   provider: AiInvokeProvider | null
   attemptNo: number
@@ -177,6 +185,41 @@ function normalizeProvider(payload: Record<string, any>, previous: AiInvokeProvi
   return previous
 }
 
+// 0417 T0013 items 7-8: the round table is server truth. document_review_loop.history is
+// rebuilt server-side from the canonical review and rejection rows on every start / status /
+// finish payload, so a card restored after F5, in a second tab or after a server restart
+// carries the same rows. Nothing is derived from transitions this browser watched — that
+// only ever produced the rounds one session happened to be connected for. Two guards remain:
+// a payload that omits the array keeps what is on screen (partial events must not clear it),
+// and a shorter array — an older response arriving late — never shrinks a longer one.
+function normalizeLoopHistory(
+  value: unknown,
+  previous: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return previous
+  const rows = value.filter(
+    (row): row is Record<string, unknown> => !!row && typeof row === 'object',
+  )
+  return rows.length >= previous.length ? rows : previous
+}
+
+function normalizeDocumentReviewLoop(payload: unknown, previous: DocumentReviewLoopState | null = null): DocumentReviewLoopState | null {
+  if (!payload || typeof payload !== 'object') return previous
+  const value = payload as Record<string, any>
+  const incomingRoundNo = Number(value.round_no ?? previous?.roundNo ?? 1)
+  const roundNo = Math.max(incomingRoundNo, previous?.roundNo ?? 1)
+  const incomingStage = ['review', 'rework', 'stopped'].includes(value.current_stage) ? value.current_stage : null
+  const stageRegressed = previous != null && (
+    incomingRoundNo < previous.roundNo || previous.currentStage === 'stopped'
+  )
+  const currentStage = stageRegressed ? previous.currentStage : incomingStage ?? previous?.currentStage ?? 'review'
+  const history = normalizeLoopHistory(value.history, previous?.history ?? [])
+  const stopReason = value.stop_reason == null
+    ? previous?.stopReason ?? null
+    : nullableString(value.stop_reason) as DocumentReviewLoopState['stopReason']
+  const stopDetail = value.stop_detail == null ? previous?.stopDetail ?? null : nullableString(value.stop_detail)
+  return { roundNo, currentStage, stopReason, stopDetail, history }
+}
 function normalizeSwitch(payload: Record<string, any>): AiInvokeProviderSwitch {
   return {
     providerId: nullableString(payload.provider_id),
@@ -226,6 +269,7 @@ function startedEntry(
     docRef: String(payload.doc_ref ?? (sameRun ? previous?.docRef : '') ?? ''),
     phase: payload.status === 'pause_requested' ? 'pause_requested' : 'running',
     mode: payload.mode === 'continuous' ? 'continuous' : (sameRun ? previous?.mode ?? 'single' : 'single'),
+    documentReviewLoop: normalizeDocumentReviewLoop(payload.document_review_loop, sameRun ? previous?.documentReviewLoop ?? null : null),
     cancelling: payload.status === 'cancelling',
     provider: normalizeProvider(payload, sameRun ? previous?.provider ?? null : null),
     attemptNo: Number(payload.attempt_no ?? (sameRun ? previous?.attemptNo : 1) ?? 1),
@@ -289,6 +333,7 @@ function pausedEntry(payload: Record<string, any>, previous?: AiInvokeRunEntry):
     docRef: String(payload.doc_ref ?? previous?.docRef ?? ''),
     phase: 'paused',
     mode: 'continuous',
+    documentReviewLoop: normalizeDocumentReviewLoop(payload.document_review_loop, previous?.documentReviewLoop ?? null),
     cancelling: false,
     provider: previous?.provider ?? null,
     attemptNo: previous?.attemptNo ?? 1,
@@ -677,6 +722,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       groupId,
       docRef: String(payload.doc_ref ?? base.docRef),
       phase: userPaused ? 'paused' : (handoffPending ? 'running' : 'finished'),
+      documentReviewLoop: normalizeDocumentReviewLoop(payload.document_review_loop, base.documentReviewLoop),
       cancelling: false,
       provider: normalizeProvider(payload, base.provider),
       attemptNo: Number(payload.attempt_no ?? base.attemptNo),
