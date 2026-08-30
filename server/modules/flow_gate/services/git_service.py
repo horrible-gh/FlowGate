@@ -4536,6 +4536,13 @@ def _session_context(group_id: str, merge_id: int) -> tuple[dict, dict, str, Pat
     return session, cfg, project_id, (wt_path if is_tr else base_root)
 
 
+
+def resolve_conflict_src_root(group_id: str, merge_id: int) -> Path:
+    """Return the checked-out root that owns the validated open conflict session."""
+    _session, _cfg, _project_id, root = _session_context(group_id, merge_id)
+    return root
+
+
 def list_conflicts(group_id: str, merge_id: int) -> dict:
     session, cfg, _project_id, root = _session_context(group_id, merge_id)
     db_git.touch_session(merge_id)   # activity → resets the sweep TTL (0205 L §1)
@@ -6233,4 +6240,3 @@ def base_src_root(
     """
     branch = base_branch_for(project_id) or (fallback_branch or "main").strip() or "main"
     return src_root(project_name, branch)
-

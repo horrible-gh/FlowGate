@@ -416,6 +416,8 @@ def _require_str(body: dict, key: str, *, allow_empty: bool = False) -> str:
 
 def _validate_required(op: str, body: dict) -> None:
     """④ — required fields present & well-typed (P0005 per-operation field table)."""
+    if op in {"read", "grep", "glob", "stat"}:
+        _validate_ref(body)
     if op == "read":
         _require_str(body, "path")
         _validate_max_int(body, "max_bytes")
@@ -511,6 +513,13 @@ def _safe_target_ref(value: str) -> bool:
     )
 
 
+def _validate_ref(body: dict) -> None:
+    """Validate the optional committed-tree selector for read-only tools."""
+    ref = body.get("ref")
+    if ref is not None and (not isinstance(ref, str) or not _safe_target_ref(ref)):
+        raise _OpError(422)
+
+
 # ── Source-root resolution ────────────────────────────────────────────────────
 
 def _fallback_project_root(grant: dict) -> Optional[Path]:
@@ -551,6 +560,11 @@ def _read_worktree_expected_reasons(git_service) -> frozenset:
 def _resolve_src_root(grant: dict, op: str = "read") -> Optional[Path]:
     """Resolve the project source root for the grant, or None (→ 503).
 
+    A resolve-conflict worker is bound to the root of its original merge
+    session.  The grant does not duplicate that context: it is recovered from
+    the backing worker token so legacy and ordinary grants retain the existing
+    group-worktree/fallback behaviour.
+
     0115: a grant that carries a group_id is routed to that group's git worktree
     when the project is git-integrated and the worktree is registered (L0006
     §2.2). Everything else — no group on the grant (legacy rows), no config,
@@ -571,6 +585,14 @@ def _resolve_src_root(grant: dict, op: str = "read") -> Optional[Path]:
     """
     project_id = grant.get("project")
     group_id = grant.get("group_id")
+    token_rec = _worker_token_for_grant(grant)
+    merge_id = token_rec.get("merge_id") if token_rec else None
+    if token_rec and token_rec.get("action_scope") == "resolve_conflict" and merge_id:
+        try:
+            from modules.flow_gate.services import git_service
+            return git_service.resolve_conflict_src_root(str(token_rec.get("group_id") or group_id), int(merge_id))
+        except Exception as exc:
+            raise _OpError(404, details={"reason": "conflict_session_not_found"}) from exc
     if not group_id:
         return _fallback_project_root(grant)   # legacy grant — silent fallback
     try:
@@ -684,6 +706,10 @@ def _resolve_root_for_mutation(grant: dict, op: str) -> Optional[Path]:
 
 def _execute(op: str, body: dict, root: Path) -> tuple[dict, Optional[int]]:
     """Run the operation. Returns (response_extra_fields, bytes_processed)."""
+    if body.get("ref") is not None:
+        committed = {"read": _exec_ref_read, "grep": _exec_ref_grep, "glob": _exec_ref_glob, "stat": _exec_ref_stat}
+        if op in committed:
+            return committed[op](body, root)
     if op == "read":
         return _exec_read(body, root)
     if op == "diff":
@@ -1300,6 +1326,69 @@ def _exec_glob(body: dict, root: Path) -> tuple[dict, Optional[int]]:
         rel = os.path.relpath(real, root_real).replace("\\", "/")
         paths.append(rel)
     return ({"paths": paths, "total": len(paths)}, None)
+
+
+def _git_ref_output(root: Path, args: list[str]):
+    from modules.flow_gate.services import git_service
+    return git_service._run_git(args, cwd=root)
+
+
+def _exec_ref_read(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+    proc = _git_ref_output(root, ["show", f"{body['ref']}:{body['path']}"])
+    if proc.returncode != 0:
+        raise _OpError(404)
+    raw = (proc.stdout or "").encode(body.get("encoding") or "utf-8", errors="replace")
+    offset = body.get("offset") or 0
+    limit = min(v for v in (body.get("length"), body.get("max_bytes"), len(raw) - offset) if v is not None)
+    if limit > _MAX_READ_BYTES:
+        raise _OpError(413)
+    chunk = raw[offset:offset + max(limit, 0)]
+    return {"path": body["path"], "content": chunk.decode(body.get("encoding") or "utf-8", errors="replace"), "encoding": body.get("encoding") or "utf-8", "size": len(raw), "offset": offset, "returned_bytes": len(chunk), "eof": offset + len(chunk) >= len(raw), "truncated": offset + len(chunk) < len(raw), "ref": body["ref"], "mode": "committed_tree"}, len(chunk)
+
+
+def _exec_ref_grep(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+    args = ["grep", "-n", "-E"] + (["-i"] if body.get("ignore_case") else []) + ["-e", body["pattern"], body["ref"], "--"]
+    if body.get("path"):
+        args.append(body["path"])
+    proc = _git_ref_output(root, args)
+    if proc.returncode not in (0, 1):
+        raise _OpError(503)
+    matches = []
+    for row in (proc.stdout or "").splitlines():
+        # With an explicit tree-ish git prefixes matches as ``<ref>:<path>``.
+        # Remove only that known prefix before parsing the normal path:line:text form.
+        prefix = f"{body['ref']}:"
+        if row.startswith(prefix):
+            row = row[len(prefix):]
+        file, line, text = row.split(":", 2)
+        matches.append({"file": file, "line": int(line), "text": text})
+    if body.get("glob"):
+        import fnmatch
+        matches = [m for m in matches if fnmatch.fnmatch(m["file"], body["glob"])]
+    limit = body.get("max_results")
+    return {"matches": matches if limit is None else matches[:limit], "total": len(matches), "truncated": limit is not None and len(matches) > limit, "ref": body["ref"], "mode": "committed_tree"}, None
+
+
+def _exec_ref_glob(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+    proc = _git_ref_output(root, ["ls-tree", "-r", "--name-only", body["ref"], "--"] + ([body["path"]] if body.get("path") else []))
+    if proc.returncode != 0:
+        raise _OpError(503)
+    import fnmatch
+    paths = [p for p in (proc.stdout or "").splitlines() if fnmatch.fnmatch(p, body["pattern"])]
+    return {"paths": paths, "total": len(paths), "ref": body["ref"], "mode": "committed_tree"}, None
+
+
+def _exec_ref_stat(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+    proc = _git_ref_output(root, ["ls-tree", "-l", body["ref"], "--", body["path"]])
+    if proc.returncode != 0:
+        raise _OpError(503)
+    row = (proc.stdout or "").strip()
+    if not row:
+        return {"path": body["path"], "exists": False, "type": None, "size": None, "mtime": None, "eol": None, "binary": None, "ref": body["ref"], "mode": "committed_tree"}, None
+    meta, path = row.split("\t", 1)
+    bits = meta.split()
+    kind = "file" if bits[1] == "blob" else "dir" if bits[1] == "tree" else "other"
+    return {"path": path, "exists": True, "type": kind, "size": int(bits[3]) if kind == "file" and bits[3] != "-" else None, "mtime": None, "eol": None, "binary": None, "ref": body["ref"], "mode": "committed_tree"}, None
 
 
 # ── Envelope / logging / continuation ─────────────────────────────────────────

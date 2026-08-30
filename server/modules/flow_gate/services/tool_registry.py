@@ -408,10 +408,18 @@ def items_view_notes(registry: dict, locale: str) -> list[str]:
 
 
 def _request_fields(name: str, locale: str) -> list[dict]:
-    return [
+    fields = [
         {"name": n, "type": t, "required": required, "default": default, "description": description}
         for n, t, required, default, description in FIELDS[name][locale]
     ]
+    if name in {"read", "grep", "glob", "stat"}:
+        descriptions = {
+            "ko": "선택적 커밋 ref. 생략 또는 null이면 working tree(미커밋 변경 포함), 지정하면 committed tree를 읽는다.",
+            "ja": "任意のcommit ref。省略またはnullはworking tree(未commit変更を含む)、指定時はcommitted treeを読む。",
+            "en": "Optional committed-tree ref. Omit or send null for the working tree (including uncommitted changes); specify it to read a committed tree.",
+        }
+        fields.append({"name": "ref", "type": "string", "required": False, "default": None, "description": descriptions[locale]})
+    return fields
 
 
 def _errors(name: str, locale: str) -> list[dict]:
