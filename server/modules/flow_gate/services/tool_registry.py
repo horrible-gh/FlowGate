@@ -287,7 +287,7 @@ def kind_for_step(
     A failed step lookup is always demoted to ``read`` — advertising narrower than reality
     costs an unused tool, advertising wider hands the worker a 403 (D0004 D-6).
     """
-    if action_scope in {"review", "workflow_decide", "chat"}:
+    if action_scope in {"review", "workflow_decide", "chat", "resolve_conflict"}:
         return "read", None
     if action_scope not in {"new", "edit"}:
         return "none", "token_scope_none"

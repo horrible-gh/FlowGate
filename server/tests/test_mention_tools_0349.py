@@ -224,6 +224,11 @@ def test_section_precedes_the_scope_guard_it_used_to_follow():
     # flips the settled chat=none policy to chat=read: the chat worker token now gets
     # real read/grep/glob/stat access, matching kind_for_step's read-only early return.
     ("chat", "CH", ["read", "grep"]),
+    # 0478 T0004: resolve_conflict was falling through to the "none" branch of
+    # kind_for_step (action_scope not in {new, edit}), leaving the conflict-resolution
+    # worker with zero remote tools. It now shares the read-only early return with
+    # review/workflow_decide/chat.
+    ("resolve_conflict", None, ["read", "grep"]),
 ])
 def test_advertised_tools_equal_granted_scopes(monkeypatch, action_scope, step_type, expected_scopes):
     """The point of the change: no step may be told about a tool the server refuses."""
