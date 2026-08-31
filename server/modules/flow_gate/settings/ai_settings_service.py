@@ -55,7 +55,7 @@ _ID_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 _DEFAULT_BASE_URLS = {
     "claude": "https://api.anthropic.com",
-    "openai": "https://api.openai.com",
+    "openai": "https://api.openai.com/v1",
 }
 
 # Per-kind × host-OS example CLI commands (flowgate.default.0281 T0005, NR0003 §4 F2 / R2).

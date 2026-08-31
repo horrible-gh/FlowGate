@@ -251,6 +251,16 @@ ANTHROPIC_VERSION = "2023-06-01"
 API_CALL_MAX_TIMEOUT_SEC = 600   # single model-call ceiling inside the run deadline
 API_MAX_TOKENS = 8192
 
+_CHAT_TOOL_NAME = "send_chat_reply"
+_CHAT_TOOL_DESC = "Send the assistant reply for this chat conversation."
+_CHAT_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "body": {"type": "string", "description": "Complete assistant reply text"},
+    },
+    "required": ["body"],
+}
+
 _REGISTER_TOOL_NAME = "register_document"
 _REGISTER_TOOL_DESC = (
     "Register a completed document to FlowGate. Call this once per finished "
@@ -4221,8 +4231,22 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     registered = 0
     workflow_pending = run.get("action_scope") == "workflow_decide"
     conflict_pending = run.get("action_scope") == "resolve_conflict"
+    is_chat = run.get("action_scope") == "chat"
     last_text: Optional[str] = None
     conversation: list[dict] = [{"role": "user", "content": prompt}]
+    if is_chat:
+        chat_context = _conversation_context(run, current_token)
+        if chat_context is None:
+            return "api_error", "conversation_context_unavailable"
+        run["_chat_based_on_seq"] = int(chat_context.get("head_seq") or 0)
+        conversation.append({
+            "role": "user",
+            "content": (
+                "The server fetched the conversation for you. Use this as the conversation "
+                "you are replying to; do not claim that you still need to fetch it:\n"
+                + json.dumps(chat_context, ensure_ascii=False)
+            ),
+        })
     turn = 0
 
     while turn < max_turns:
@@ -4242,18 +4266,20 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             tool_name, tool_desc, tool_schema = _DECIDE_TOOL_NAME, _DECIDE_TOOL_DESC, _DECIDE_TOOL_SCHEMA
         elif conflict_pending:
             tool_name, tool_desc, tool_schema = _RESOLVE_TOOL_NAME, _RESOLVE_TOOL_DESC, _RESOLVE_TOOL_SCHEMA
+        elif is_chat:
+            tool_name, tool_desc, tool_schema = _CHAT_TOOL_NAME, _CHAT_TOOL_DESC, _CHAT_TOOL_SCHEMA
         else:
             tool_name, tool_desc, tool_schema = _REGISTER_TOOL_NAME, _REGISTER_TOOL_DESC, _REGISTER_TOOL_SCHEMA
         try:
             if kind == "claude":
                 reply_text, tool_call, assistant_msg = _call_anthropic(
                     base_url, model, key, conversation, call_timeout,
-                    tool_name, tool_desc, tool_schema,
+                    tool_name, tool_desc, tool_schema, is_chat,
                 )
             else:
                 reply_text, tool_call, assistant_msg = _call_openai(
                     base_url, model, key, conversation, call_timeout,
-                    tool_name, tool_desc, tool_schema,
+                    tool_name, tool_desc, tool_schema, is_chat,
                 )
         except urllib.error.HTTPError as exc:
             if turn == 1:
@@ -4327,6 +4353,19 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             conversation.append(_tool_result_msg(
                 kind, tool_call,
                 f"Conflict resolve failed (HTTP {status}): {json.dumps(resp, ensure_ascii=False)[:2000]}",
+            ))
+            continue
+
+        if is_chat:
+            status, resp = _conversation_turn_register(run, current_token, tool_call["input"])
+            if 200 <= status < 300:
+                registered += 1
+                break
+            reason = _registration_error_summary(resp)
+            run["register_errors"].append({"status": status, "reason": reason, "turn": turn})
+            conversation.append(_tool_result_msg(
+                kind, tool_call,
+                f"Chat reply registration failed (HTTP {status}): {json.dumps(resp, ensure_ascii=False)[:2000]}",
             ))
             continue
 
@@ -4439,7 +4478,7 @@ def _http_post_json(url: str, headers: dict, body: dict, timeout: float) -> dict
 
 def _call_anthropic(
     base_url: str, model: str, key: str, conversation: list[dict], timeout: float,
-    tool_name: str, tool_desc: str, tool_schema: dict,
+    tool_name: str, tool_desc: str, tool_schema: dict, force_tool: bool = False,
 ) -> tuple[Optional[str], Optional[dict], dict]:
     data = _http_post_json(
         f"{base_url}/v1/messages",
@@ -4453,6 +4492,7 @@ def _call_anthropic(
                 "description": tool_desc,
                 "input_schema": tool_schema,
             }],
+            **({"tool_choice": {"type": "tool", "name": tool_name}} if force_tool else {}),
         },
         timeout,
     )
@@ -4469,10 +4509,10 @@ def _call_anthropic(
 
 def _call_openai(
     base_url: str, model: str, key: str, conversation: list[dict], timeout: float,
-    tool_name: str, tool_desc: str, tool_schema: dict,
+    tool_name: str, tool_desc: str, tool_schema: dict, force_tool: bool = False,
 ) -> tuple[Optional[str], Optional[dict], dict]:
     data = _http_post_json(
-        f"{base_url}/v1/chat/completions",
+        f"{base_url.rstrip('/')}/chat/completions",
         {"Authorization": f"Bearer {key}"},
         {
             "model": model,
@@ -4485,6 +4525,7 @@ def _call_openai(
                     "parameters": tool_schema,
                 },
             }],
+            **({"tool_choice": {"type": "function", "function": {"name": tool_name}}} if force_tool else {}),
         },
         timeout,
     )
@@ -4527,6 +4568,53 @@ def _workflow_decide(run: dict, raw_token: str, tool_input: dict) -> tuple[int, 
             return exc.code, {"error": str(exc)}
     except Exception as exc:
         return 0, {"error": str(exc)}
+
+def _conversation_context(run: dict, raw_token: str) -> Optional[dict]:
+    """Fetch the unread conversation that an API model cannot retrieve itself."""
+    api_base = (run.get("api_base_url") or "").rstrip("/")
+    req = urllib.request.Request(
+        f"{api_base}/conversation/{run['doc_ref']}/turns?after_seq=0&include_head=1",
+        headers={"Authorization": f"Bearer {raw_token}"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+            return payload if isinstance(payload, dict) else None
+    except Exception:
+        logger.warning("ai-invoke %s: conversation context fetch failed", run["run_id"], exc_info=True)
+        return None
+
+
+def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
+    """Append an API-provider reply through the token-bound conversation endpoint."""
+    api_base = (run.get("api_base_url") or "").rstrip("/")
+    body = {
+        "body": tool_input.get("body") or "",
+        "idempotency_key": run["token_id"],
+        "based_on_seq": int(run.get("_chat_based_on_seq") or 0),
+        "display_name": (run.get("provider") or {}).get("name") or "AI",
+    }
+    req = urllib.request.Request(
+        f"{api_base}/conversation/{run["doc_ref"]}/turn",
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {raw_token}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        try:
+            return exc.code, json.loads(exc.read().decode("utf-8"))
+        except Exception:
+            return exc.code, {"error": str(exc)}
+    except Exception as exc:
+        return 0, {"error": str(exc)}
+
 
 def _inbox_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     """Server-side proxy registration for API providers: POST the model-authored
