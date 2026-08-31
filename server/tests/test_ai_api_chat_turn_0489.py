@@ -56,6 +56,17 @@ def test_api_chat_uses_reply_tool_and_conversation_registration(monkeypatch, kin
     assert seen["turn"][1:] == ("raw-token", {"body": "Korean reply"})
 
 
+def test_chat_returns_context_unavailable_when_context_cannot_be_loaded(monkeypatch):
+    monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda *_: "key")
+    monkeypatch.setattr(svc, "_conversation_context", lambda *_: None)
+
+    assert svc._api_execute(
+        {"id": "provider", "kind": "openai", "api_base_url": "https://api.example", "api_model": "test"},
+        "prompt",
+        _run(),
+    ) == ("api_error", "conversation_context_unavailable")
+
+
 def test_conversation_turn_request_binds_token_and_provider(monkeypatch):
     captured = {}
 
