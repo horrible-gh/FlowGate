@@ -4472,7 +4472,7 @@ def _call_openai(
     tool_name: str, tool_desc: str, tool_schema: dict,
 ) -> tuple[Optional[str], Optional[dict], dict]:
     data = _http_post_json(
-        f"{base_url}/v1/chat/completions",
+        f"{base_url.rstrip('/')}/chat/completions",
         {"Authorization": f"Bearer {key}"},
         {
             "model": model,
