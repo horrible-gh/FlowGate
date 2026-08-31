@@ -18,9 +18,13 @@ def provider_capabilities(provider: object) -> dict[str, bool]:
     if exec_type == "cli":
         return {key: True for key in CAPABILITY_KEYS}
     if exec_type == "api":
-        # The current server-mediated API toolset only mutates FlowGate records.
-        return {"source_read": False, "source_write": False, "shell": False,
-                "test": False, "flowgate_mutation": True}
+        try:
+            from modules.flow_gate.services import api_server_tools
+            mediated_ready = api_server_tools.ready()
+        except Exception:
+            mediated_ready = False
+        return {"source_read": mediated_ready, "source_write": mediated_ready, "shell": False,
+                "test": mediated_ready, "flowgate_mutation": True}
     return fail_closed_capabilities()
 
 

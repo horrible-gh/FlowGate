@@ -49,7 +49,7 @@ from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate import template_provision
-from modules.flow_gate.services import git_service, invoke_mention_service, process_runner, q_service, token_service
+from modules.flow_gate.services import api_server_tools, git_service, invoke_mention_service, process_runner, q_service, token_service
 from modules.flow_gate.services.git_service import GitServiceError
 from modules.flow_gate.settings import ai_settings_service
 from modules.flow_gate.storage import paths as storage_paths
@@ -4291,14 +4291,23 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             run["timed_out"] = True
             break
         call_timeout = min(remaining, API_CALL_MAX_TIMEOUT_SEC)
+        tool_specs = None
         if workflow_pending:
             tool_name, tool_desc, tool_schema = _DECIDE_TOOL_NAME, _DECIDE_TOOL_DESC, _DECIDE_TOOL_SCHEMA
         elif conflict_pending:
             tool_name, tool_desc, tool_schema = _RESOLVE_TOOL_NAME, _RESOLVE_TOOL_DESC, _RESOLVE_TOOL_SCHEMA
         elif is_chat:
             tool_name, tool_desc, tool_schema = _CHAT_TOOL_NAME, _CHAT_TOOL_DESC, _CHAT_TOOL_SCHEMA
-        else:
+        elif run.get("action_scope") == "workflow_decide" or not run.get("doc_ref"):
+            # Compatibility for the post-decision continuation and old isolated harnesses.
+            # Production document runs always carry doc_ref and take the mediated registry.
             tool_name, tool_desc, tool_schema = _REGISTER_TOOL_NAME, _REGISTER_TOOL_DESC, _REGISTER_TOOL_SCHEMA
+        else:
+            try:
+                tool_specs = api_server_tools.definitions_for_run(run)
+            except api_server_tools.ToolError as exc:
+                return "api_error", exc.reason
+            tool_name, tool_desc, tool_schema = tool_specs, "", {}
         try:
             if kind == "claude":
                 reply_text, tool_call, assistant_msg = _call_anthropic(
@@ -4324,18 +4333,74 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         conversation.append(assistant_msg)
         if reply_text:
             last_text = reply_text
-        if tool_call is None:
+        tool_calls = tool_call if isinstance(tool_call, list) else ([tool_call] if tool_call else [])
+        if not tool_calls:
             run["tool_call_misses"] += 1
             if run["tool_call_misses"] <= API_MAX_TOOL_NUDGES:
                 conversation.append({
                     "role": "user",
                     "content": (
-                        f"The required action is not complete. Call the `{tool_name}` tool now with "
-                        "the actual full payload. Do not merely say that you registered or attached it."
+                        (f"The required action is not complete. Call the `{tool_name}` tool now with the actual full payload. "
+                         if tool_specs is None else
+                         "Use the available tools to inspect or change the bound work, then call `register_document` when complete. ")
+                        + "Do not merely say that you registered or attached it."
                     ),
                 })
                 continue
             break
+
+        if tool_specs is not None:
+            exposed = {item["name"]: item for item in tool_specs}
+            validation_errors = []
+            for call in tool_calls:
+                try:
+                    spec = exposed.get(call.get("name"))
+                    if spec is None:
+                        raise api_server_tools.ToolError(422, "invalid_tool_call")
+                    api_server_tools.validate(spec["schema"], call.get("input"))
+                    validation_errors.append(None)
+                except api_server_tools.ToolError as exc:
+                    validation_errors.append(exc)
+
+            completion_call = None
+            for call, validation_error in zip(tool_calls, validation_errors):
+                if validation_error is not None:
+                    _status, resp = api_server_tools.error_payload(
+                        call.get("name") or "tool_call", validation_error
+                    )
+                    conversation.append(_tool_result_msg(
+                        kind, call, json.dumps(resp, ensure_ascii=False)[:16000]
+                    ))
+                    continue
+                if call["name"] == _REGISTER_TOOL_NAME:
+                    if completion_call is None:
+                        completion_call = call
+                    else:
+                        duplicate = api_server_tools.ToolError(422, "invalid_tool_call")
+                        _status, resp = api_server_tools.error_payload(call["name"], duplicate)
+                        conversation.append(_tool_result_msg(
+                            kind, call, json.dumps(resp, ensure_ascii=False)[:16000]
+                        ))
+                    continue
+                try:
+                    if call["name"] in api_server_tools.SOURCE_OPS:
+                        _status, resp = api_server_tools.source_call(run, current_token, call["name"], call["input"])
+                    elif call["name"] == "run_test":
+                        _status, resp = api_server_tools.run_test(run, call["input"], _remaining_sec(run))
+                    elif call["name"] == "read_document":
+                        _status, resp = _api_read_document(run, current_token, call["input"])
+                    else:
+                        _status, resp = _api_create_question(run, current_token, call["input"])
+                except api_server_tools.ToolError as exc:
+                    _status, resp = api_server_tools.error_payload(call["name"], exc)
+                conversation.append(_tool_result_msg(
+                    kind, call, json.dumps(resp, ensure_ascii=False)[:16000]
+                ))
+            if completion_call is None:
+                continue
+            tool_call = completion_call
+        else:
+            tool_call = tool_calls[0]
 
         if workflow_pending:
             status, resp = _workflow_decide(run, current_token, tool_call["input"])
@@ -4509,6 +4574,8 @@ def _call_anthropic(
     base_url: str, model: str, key: str, conversation: list[dict], timeout: float,
     tool_name: str, tool_desc: str, tool_schema: dict, force_tool: bool = False,
 ) -> tuple[Optional[str], Optional[dict], dict]:
+    multi = isinstance(tool_name, list)
+    specs = tool_name if multi else [{"name": tool_name, "description": tool_desc, "schema": tool_schema}]
     data = _http_post_json(
         f"{base_url}/v1/messages",
         {"x-api-key": key, "anthropic-version": ANTHROPIC_VERSION},
@@ -4516,61 +4583,53 @@ def _call_anthropic(
             "model": model,
             "max_tokens": API_MAX_TOKENS,
             "messages": conversation,
-            "tools": [{
-                "name": tool_name,
-                "description": tool_desc,
-                "input_schema": tool_schema,
-            }],
-            **({"tool_choice": {"type": "tool", "name": tool_name}} if force_tool else {}),
+            "tools": [{"name": spec["name"], "description": spec["description"], "input_schema": spec["schema"]} for spec in specs],
+            **({"tool_choice": {"type": "tool", "name": specs[0]["name"]}} if force_tool else {}),
         },
         timeout,
     )
     content = data.get("content") or []
     text_parts = [b.get("text", "") for b in content if b.get("type") == "text"]
-    tool_call = None
+    tool_calls = []
+    exposed = {spec["name"] for spec in specs}
     for block in content:
-        if block.get("type") == "tool_use" and block.get("name") == tool_name:
-            tool_call = {"id": block.get("id"), "name": tool_name, "input": block.get("input") or {}}
-            break
+        if block.get("type") == "tool_use":
+            name = block.get("name")
+            tool_calls.append({"id": block.get("id"), "name": name, "input": block.get("input")})
     assistant_msg = {"role": "assistant", "content": content}
-    return ("\n".join(p for p in text_parts if p) or None), tool_call, assistant_msg
+    return ("\n".join(p for p in text_parts if p) or None), (tool_calls if multi else (tool_calls[0] if tool_calls and tool_calls[0]["name"] in exposed else None)), assistant_msg
 
 
 def _call_openai(
     base_url: str, model: str, key: str, conversation: list[dict], timeout: float,
     tool_name: str, tool_desc: str, tool_schema: dict, force_tool: bool = False,
 ) -> tuple[Optional[str], Optional[dict], dict]:
+    multi = isinstance(tool_name, list)
+    specs = tool_name if multi else [{"name": tool_name, "description": tool_desc, "schema": tool_schema}]
     data = _http_post_json(
         f"{base_url.rstrip('/')}/chat/completions",
         {"Authorization": f"Bearer {key}"},
         {
             "model": model,
             "messages": conversation,
-            "tools": [{
-                "type": "function",
-                "function": {
-                    "name": tool_name,
-                    "description": tool_desc,
-                    "parameters": tool_schema,
-                },
-            }],
-            **({"tool_choice": {"type": "function", "function": {"name": tool_name}}} if force_tool else {}),
+            "tools": [{"type": "function", "function": {"name": spec["name"], "description": spec["description"], "parameters": spec["schema"]}} for spec in specs],
+            **({"tool_choice": {"type": "function", "function": {"name": specs[0]["name"]}}} if force_tool else {}),
         },
         timeout,
     )
     choices = data.get("choices") or []
     message = (choices[0].get("message") if choices else None) or {}
-    tool_call = None
+    tool_calls = []
+    exposed = {spec["name"] for spec in specs}
     for tc in message.get("tool_calls") or []:
         fn = tc.get("function") or {}
-        if fn.get("name") == tool_name:
-            try:
-                args = json.loads(fn.get("arguments") or "{}")
-            except ValueError:
-                args = {}
-            tool_call = {"id": tc.get("id"), "name": tool_name, "input": args}
-            break
-    return message.get("content"), tool_call, message
+        try:
+            args = json.loads(fn.get("arguments") or "{}")
+        except ValueError:
+            args = None
+        tool_calls.append({"id": tc.get("id"), "name": fn.get("name"), "input": args})
+    call_value = tool_calls if multi else (tool_calls[0] if tool_calls and tool_calls[0]["name"] in exposed else None)
+    return message.get("content"), call_value, message
 
 
 def _workflow_decide(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
@@ -4645,20 +4704,63 @@ def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> 
         return 0, {"error": str(exc)}
 
 
+def _api_bound_request(run: dict, raw_token: str, path: str, method: str = "GET", body: Optional[dict] = None) -> tuple[int, dict]:
+    """Call a document service through its normal token gate with only server-owned routing."""
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(
+        f"{run['api_base_url']}{path}", data=data,
+        headers={"Authorization": f"Bearer {raw_token}", **({"Content-Type": "application/json"} if data is not None else {})},
+        method=method,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        try:
+            return exc.code, json.loads(exc.read().decode("utf-8"))
+        except Exception:
+            return exc.code, {"error": str(exc)}
+    except Exception as exc:
+        return 0, {"error": str(exc)}
+
+
+def _api_read_document(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
+    from urllib.parse import urlencode
+    if not tool_input:
+        return _api_bound_request(run, raw_token, f"/document/{run['doc_ref']}")
+    query = {}
+    for key in ("section", "section_id"):
+        if key in tool_input:
+            query[key] = tool_input[key]
+    for key in ("lines", "chars"):
+        if key in tool_input:
+            query[key] = json.dumps(tool_input[key], separators=(",", ":"))
+    return _api_bound_request(run, raw_token, f"/document/{run['doc_ref']}/section?{urlencode(query)}")
+
+
+def _api_create_question(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
+    return _api_bound_request(run, raw_token, f"/q/{run['doc_ref']}/questions", "POST", tool_input)
+
+
 def _inbox_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     """Server-side proxy registration for API providers: POST the model-authored
     body to our own /inbox with the run token, exactly as an external worker
     would — every inbox validation and the chain self-advance stay in force."""
+    action = run.get("action_scope") or "new"
     body = {
-        "action": "new",
+        "action": action,
         "project": run["project_id"],
         "module": run.get("module") or "none",
         "group_name": run["group_id"],
-        "doc_type": (tool_input.get("doc_type") or "").strip(),
-        "prev_doc_id": run["doc_ref"],
-        "title": tool_input.get("title") or "",
-        "content": tool_input.get("content") or "",
     }
+    if action == "new":
+        body.update({"doc_type": (tool_input.get("doc_type") or "").strip(), "prev_doc_id": run["doc_ref"], "title": tool_input.get("title") or "", "content": tool_input.get("content") or ""})
+    elif action == "edit":
+        body.update({"doc_id": run["doc_ref"], **tool_input})
+    elif action == "review":
+        body.update({"doc_id": run["doc_ref"], **tool_input})
+    elif action == "test_run":
+        body.update({"doc_id": run["doc_ref"]})
     req = urllib.request.Request(
         f"{run['api_base_url']}/inbox",
         data=json.dumps(body).encode("utf-8"),
