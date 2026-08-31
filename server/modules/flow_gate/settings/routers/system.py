@@ -21,7 +21,8 @@ class SettingsPatch(BaseModel):
         description=(
             "Setting key-value pairs. Allowed keys: "
             "storage_root, log_retention_days, log_level, jwt_expiry_minutes, "
-            "refresh_token_expiry_days, mail_smtp_host, mail_smtp_port, mail_from"
+            "refresh_token_expiry_days, mail_smtp_host, mail_smtp_port, mail_from, "
+            "ai_repeat_count_max"
         )
     )
 

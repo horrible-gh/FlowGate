@@ -55,8 +55,10 @@ def test_mention_keeps_remote_crud_by_default(monkeypatch):
 
     assert "## Remote project source CRUD" in out
     # 0349 TR-2: the section shrank to a help pointer, so the marker for "this step may
-    # write" is the tool list, not a /remote/write example.
-    assert "도구: read, grep, glob, stat, write, patch, remove" in out
+    # write" is the tool list, not a /remote/write example. tool_registry.DISPLAY_ORDER
+    # since gained "diff"/"log" (merge-base patch/commit lookups), so the full read_write
+    # kind now lists nine tools, not seven.
+    assert "도구: read, grep, glob, stat, diff, log, write, patch, remove" in out
 
 
 def test_mention_omits_remote_crud_in_local_mode(monkeypatch):
