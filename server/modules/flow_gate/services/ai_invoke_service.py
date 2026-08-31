@@ -1501,6 +1501,8 @@ def start_run(
     continuation_review_count_overrides: Optional[dict] = None,
     continuation_reviewer_overrides: Optional[dict] = None,
     document_review_loop: Optional[dict] = None,
+    # A single-request acknowledgement. It is intentionally never persisted or forwarded.
+    capability_warning_ack: Optional[bool] = None,
     # 0414 L0008 §5: work / review / rework. A review or rework hop makes no document, so
     # the chain counters do not move for it — this is what lets a card say WHAT is running
     # instead of reporting a frozen progress number.
@@ -1641,6 +1643,32 @@ def start_run(
             409, "no_enabled_provider",
             "No enabled AI provider for this project. Configure providers in AI settings.",
         )
+
+    # Capability is checked only after the final provider resolution tier is known and before
+    # any lease, token, run record, or worker side effect. This is the server authority: UI
+    # badges are advisory and a caller cannot supply its own capability map.
+    from modules.flow_gate.services.provider_capability_service import capability_finding
+    doc_type = (db_docs.get_by_id(doc_ref) or {}).get("type")
+    capability_warning = capability_finding(doc_ref, doc_type, chain[0])
+    if capability_warning is not None:
+        detail = {
+            "code": (
+                "provider_capability_restricted"
+                if mode == "continuous" else "provider_capability_confirmation_required"
+            ),
+            "message": "The selected provider cannot modify source or run tests.",
+            **capability_warning,
+            "provider_resolution": (
+                "override" if step_override_provider else
+                "stored_step" if stored_provider_active else
+                "pinned" if provider_pinned and provider_id else
+                "selected" if provider_id else "effective_default"
+            ),
+        }
+        # Continuous execution is never forceable. A single run accepts only literal True
+        # on this request; no acknowledgement survives to a later run or hop.
+        if mode == "continuous" or capability_warning_ack is not True:
+            raise HTTPException(status_code=422, detail=detail)
 
     # Durable lease admission is authoritative. Memory remains only a UI/live-process signal.
     active = db_group_ai_leases.get_active(group_id)
@@ -2216,6 +2244,7 @@ def start_run(
         "worker_document_type": run["worker_document_type"],
         "auto_handled_item_seqs": run["auto_handled_item_seqs"],
         "provider": _provider_brief(chain[0]),
+        "warnings": [capability_warning] if capability_warning is not None else [],
         "attempt_no": 1,
         "started_at": run["started_at"],
         # 0359 P0006 [hop budget]: the budget and its wall-clock deadline travel with every
@@ -8781,3 +8810,14 @@ def document_review_loop_payload(run: dict) -> dict | None:
     # server restart shows the same rounds instead of only what this browser observed.
     payload["history"] = build_document_review_loop_history(loop, run.get("doc_ref"))
     return payload
+
+# 0492 T0014: runtime list serialization shares the settings capability SSOT.
+def _provider_brief(provider: Optional[dict]) -> Optional[dict]:
+    if not provider:
+        return None
+    from modules.flow_gate.services.provider_capability_service import provider_capabilities
+    return {
+        "id": provider.get("id"), "name": provider.get("name"),
+        "exec_type": provider.get("exec_type"), "kind": provider.get("kind"),
+        "capabilities": provider_capabilities(provider),
+    }

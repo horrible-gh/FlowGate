@@ -1662,3 +1662,36 @@ def request_work_plan_fill(
         "scratch_dir": issued["scratch_dir"],
         "mention": mention,
     }
+
+
+# 0492 T0014: server-authoritative T/TR assignment gate.  The caller supplies only
+# acknowledgement keys; provider capabilities always come from effective settings.
+def capability_warning_findings(body: dict, project_id: str) -> list[dict]:
+    from modules.flow_gate.settings import ai_settings_service
+    from modules.flow_gate.services.provider_capability_service import capability_finding
+    try:
+        providers = {p.get("id"): p for p in (ai_settings_service.resolve_effective(project_id).get("providers") or [])}
+    except Exception:
+        providers = {}
+    raw: list[dict] = []
+    for step in body.get("steps") or []:
+        finding = capability_finding(step.get("key"), step.get("type"), providers.get(step.get("provider_id")))
+        if finding:
+            finding["pair_key"] = step.get("pair_key")
+            raw.append(finding)
+    # A matching T/TR pair asks once through the T representative. Differing assignments
+    # remain independent, so acknowledging one never silently covers another.
+    result: list[dict] = []
+    seen: set[tuple] = set()
+    for finding in raw:
+        pair = finding.get("pair_key")
+        signature = (pair, finding["provider_id"], tuple(finding["missing_capabilities"]))
+        if pair and signature in seen:
+            continue
+        seen.add(signature)
+        if pair:
+            representative = next((f for f in raw if f.get("pair_key") == pair and f["step_type"] == "T" and (f["provider_id"], tuple(f["missing_capabilities"])) == signature[1:]), finding)
+            finding = dict(representative)
+        finding.pop("pair_key", None)
+        result.append(finding)
+    return result
