@@ -43,7 +43,15 @@
     <div v-if="showBaseDirtySection" class="git-base-dirty-alert" role="alert">
       <AppIcon name="warning" />
       <div class="git-base-dirty-alert__body">
+        <div class="git-v9-summary">
+          <span class="git-v9-chip">{{ t('main.git_status.base_dirty_summary', { n: baseDirtyFiles.length }) }}</span>
+          <span>{{ t('main.git_status.base_dirty_guide') }}</span>
+          <button class="btn btn-sm btn-secondary" type="button" disabled aria-describedby="git-base-ai-disabled-reason">{{ t('main.git_status.ai_delegate') }}</button>
+          <span id="git-base-ai-disabled-reason" class="git-v9-disabled-reason">{{ t('main.git_status.base_ai_disabled_reason') }}</span>
+          <button class="btn btn-sm btn-secondary" type="button" :aria-expanded="baseDirtyOpen" aria-controls="git-base-dirty-files" @click="baseDirtyOpen = !baseDirtyOpen">{{ baseDirtyOpen ? t('main.git_status.collapse') : t('main.git_status.view_files') }}</button>
+        </div>
         <div class="git-base-dirty-alert__msg">{{ t('main.git_finalize.base_dirty_alert') }}</div>
+        <div v-if="baseDirtyOpen" id="git-base-dirty-files" class="git-v9-scroll git-v9-scroll--220">
         <div v-for="f in baseDirtyFiles" :key="f" class="git-base-dirty-filerow">
           <span class="git-base-dirty-filerow__path">{{ f }}</span>
           <button
@@ -74,6 +82,7 @@
           <button class="btn btn-sm btn-primary" type="button" :disabled="busy" @click="resumePendingFinalize">
             <AppIcon name="play" /> {{ t('main.git_status.base_merge_now_btn') }}
           </button>
+        </div>
         </div>
       </div>
       <button
@@ -114,6 +123,7 @@
             <AppIcon name="x" />
           </button>
         </div>
+        <div class="git-v9-scroll git-v9-scroll--220 git-base-untracked__files">
         <label v-for="f in baseUntrackedFiles" :key="f" class="git-base-untracked-row">
           <input
             type="checkbox"
@@ -123,6 +133,7 @@
           />
           <span class="git-base-untracked-row__path">{{ f }}</span>
         </label>
+        </div>
         <div v-if="baseUntrackedTruncated" class="git-base-untracked__more">
           {{ t('main.git_status.base_untracked_truncated', { n: baseUntrackedFiles.length }) }}
         </div>
@@ -229,6 +240,15 @@
               <AppIcon name="arrow-square-out" /> {{ t('main.git_status.open') }}
             </button>
           </div>
+          <div v-if="p.status === 'conflict'" class="git-v9-conflict-summary">
+            <span class="git-v9-chip">{{ t('main.git_status.conflict_files_summary', { n: pendingConflictFiles(p).length }) }}</span>
+            <span>{{ t('main.git_status.conflict_files_guide') }}</span>
+            <button class="btn btn-sm btn-secondary" type="button" :disabled="busy" @click="invokeConflictAi(p)">{{ t('main.git_status.ai_delegate') }}</button>
+            <button class="btn btn-sm btn-secondary" type="button" :aria-expanded="pendingFilesOpen === p.group_id" :aria-controls="`git-pending-files-${p.group_id}`" @click="pendingFilesOpen = pendingFilesOpen === p.group_id ? null : p.group_id">{{ pendingFilesOpen === p.group_id ? t('main.git_status.collapse') : t('main.git_status.expand') }}</button>
+            <div v-if="pendingFilesOpen === p.group_id" :id="`git-pending-files-${p.group_id}`" class="git-v9-scroll git-v9-scroll--190">
+              <div v-for="f in pendingConflictFiles(p)" :key="f" class="git-v9-file">{{ f }}</div>
+            </div>
+          </div>
 
           <!-- Commit-subject confirmation for merge/push (0173 parity, B0001 F1): the
                header control panel now lets the user review/edit the absorb-commit
@@ -299,6 +319,7 @@
           {{ t('main.git_status.empty_slots') }}
         </p>
         <template v-for="s in status.slots" :key="s.group_id">
+          <div class="git-status-slot-card">
           <div class="git-status-slot">
             <AppIcon name="git-branch" />
             <span class="git-status-branch">{{ s.branch }}</span>
@@ -323,6 +344,14 @@
               <AppIcon :name="trCommitsOpen === s.group_id ? 'caret-up' : 'caret-down'" />
             </button>
             <span class="badge" :class="statusBadgeClass(s.status)">{{ statusLabel(s.status) }}</span>
+          </div>
+          <div v-if="commitRowCount(s) > 0" class="git-trc-preview">
+            <div v-for="c in (s.tr_commits?.commits ?? []).slice(0, 3)" :key="`preview-${c.doc_id}-${c.commit}`" class="git-trc-preview-row" :class="trRowClass(c)">
+              <span class="git-trc-code">{{ c.doc_code || c.doc_id }}</span>
+              <span class="git-trc-sha">{{ c.commit || skipReasonLabel(c.skipped_reason) }}</span>
+              <span class="git-trc-subject">{{ c.subject }}</span>
+            </div>
+            <button v-if="commitPreviewMore(s) > 0" class="git-trc-preview-more git-trc-more-btn" type="button" @click="toggleTrCommits(s.group_id)">{{ t('main.git_status.tr_commits.preview_more', { n: commitPreviewMore(s) }) }}<span v-if="(s.tr_commits?.canceled ?? 0) > 0"> · {{ t('main.git_status.tr_commits.canceled_included', { m: s.tr_commits?.canceled ?? 0 }) }}</span></button>
           </div>
           <!-- 0332 TR0019 — 되돌리기/되살리기가 충돌한 채 세션으로 남아 있다. 접기 안에
                넣지 않는다: 이건 커밋 목록의 한 줄이 아니라 이 그룹이 지금 멈춰 있는
@@ -441,25 +470,26 @@
               </button>
             </div>
           </div>
+          </div>
         </template>
       </div>
 
       <!-- Recovery (manual cleanup only; base push is a first-class header action). -->
       <div class="git-status-sect git-status-recovery">
         <p class="git-status-sub">{{ t('main.git_status.recovery_header') }}</p>
+        <p class="git-cleanup-never">{{ t('main.git_status.cleanup_never_run') }}</p>
         <!-- 0182 NR0003 §5: backlog sweep of finalized slots' leftovers (worktree
              dir + local work branch + ledger). New finalizes clean up after
-             themselves; this clears what accumulated before that (or failed). -->
-        <button
-          v-if="(status.cleanable_count ?? 0) > 0"
-          class="btn btn-sm btn-secondary"
-          :disabled="busy"
-          @click="doCleanup"
-        >
-          <AppIcon name="broom" />
-          {{ t('main.git_status.cleanup_btn', { n: status.cleanable_count }) }}
-        </button>
+             themselves; this clears what accumulated before that (or failed).
+             T#2 boundary: when terminal_cleanup supplies pending[].reason, replace
+             this aggregate compatibility row with those real pending rows and a
+             per-row retry; T#1 must not synthesize that future response contract. -->
+        <div v-if="(status.cleanable_count ?? 0) > 0" class="git-cleanup-pending">
+          <span>{{ t('main.git_status.cleanup_compat_pending', { n: status.cleanable_count }) }}</span>
+          <button class="btn btn-sm btn-secondary" :disabled="busy" @click="doCleanup"><AppIcon name="broom" />{{ t('main.git_status.cleanup_retry') }}</button>
+        </div>
       </div>
+      <div class="git-status-sect git-ra-placeholder">{{ t('main.git_status.ra_placeholder') }}</div>
     </div>
   </div>
 </template>
@@ -605,9 +635,35 @@ const status = ref<GitStatus | null>(null)
 const busy = ref(false)
 // 0332 D0005 §6.2 — 펼쳐 둔 슬롯 하나. 목록은 기본 접힘이고 개수 배지만 늘 보인다.
 const trCommitsOpen = ref<string | null>(null)
+const baseDirtyOpen = ref(false)
+const pendingFilesOpen = ref<string | null>(null)
+const pendingConflictPaths = ref<Record<string, string[]>>({})
+
+function pendingConflictFiles(item: Pending): string[] {
+  return pendingConflictPaths.value[item.group_id] ?? []
+}
+
+async function loadPendingConflictSummaries(items: Pending[]) {
+  const conflicts = items.filter((item) => item.status === 'conflict' && item.merge_id != null)
+  const rows = await Promise.all(conflicts.map(async (item) => {
+    try {
+      const { data } = await getRequest<{ files: Array<{ path: string }> }>(
+        `/api/v1/groups/${item.group_id}/git/merge/${item.merge_id}/conflicts`,
+      )
+      return [item.group_id, (data.files ?? []).map((file) => file.path)] as const
+    } catch {
+      return [item.group_id, []] as const
+    }
+  }))
+  pendingConflictPaths.value = Object.fromEntries(rows)
+}
 
 function toggleTrCommits(groupId: string) {
   trCommitsOpen.value = trCommitsOpen.value === groupId ? null : groupId
+}
+
+function commitPreviewMore(slot: Slot): number {
+  return Math.max(0, commitRowCount(slot) - Math.min(3, slot.tr_commits?.commits?.length ?? 0))
 }
 
 // 배지는 커밋이든 "소스 변경 없음" 줄이든 한 줄이라도 있을 때만 나온다.
@@ -995,6 +1051,8 @@ async function fetchStatus() {
     const next = (await explorerStore.fetchGitStatus(
       props.projectId,
     )) as unknown as GitStatus | null
+    if (next) await loadPendingConflictSummaries(next.pending)
+    else pendingConflictPaths.value = {}
     status.value = next
     // Drop an expanded conflict editor whose row no longer reports a conflict.
     if (next && expanded.value) {
@@ -1862,6 +1920,36 @@ defineExpose({ fetchStatus })
   border-top: 1px dashed var(--border, #e2e8f0);
   padding-top: 10px;
 }
+.git-v9-summary,
+.git-v9-conflict-summary,
+.git-cleanup-pending {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.git-v9-chip {
+  display: inline-flex;
+  padding: 3px 8px;
+  border: 1px solid var(--border, #cbd5e1);
+  border-radius: 999px;
+  background: var(--bg-subtle, #f8fafc);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.git-v9-scroll { overflow-y: auto; overscroll-behavior: contain; }
+.git-v9-scroll--220 { max-height: 220px; }
+.git-v9-scroll--190 { max-height: 190px; width: 100%; }
+.git-v9-file { padding: 4px 2px; font-family: var(--font-mono, monospace); font-size: .74rem; }
+.git-base-untracked__files { margin-top: 6px; }
+.git-status-slot-card { border: 1px solid var(--border, #e2e8f0); border-radius: 8px; padding: 0 9px 6px; margin-bottom: 8px; }
+.git-status-slot { padding: 9px 0 4px; }
+.git-trc-preview { padding: 6px 0; }
+.git-trc-more-btn { border: 0; background: transparent; cursor: pointer; color: var(--accent, #2563eb); padding: 4px 0; }
+.git-cleanup-never, .git-cleanup-pending, .git-ra-placeholder { color: var(--text-m); font-size: .76rem; }
+.git-ra-placeholder { border: 1px dashed var(--border, #cbd5e1); border-radius: 8px; padding: 12px; }
+.git-v9-disabled-reason { font-size: .72rem; color: var(--text-m); }
 .btn-sm {
   padding: 3px 9px;
   font-size: 0.75rem;
@@ -2057,3 +2145,4 @@ defineExpose({ fetchStatus })
   background: #fef2f2;
 }
 </style>
+
