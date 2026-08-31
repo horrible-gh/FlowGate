@@ -267,6 +267,16 @@ _REGISTER_TOOL_SCHEMA = {
     "required": ["title", "content", "doc_type"],
 }
 
+_SEND_CHAT_REPLY_TOOL_NAME = "send_chat_reply"
+_SEND_CHAT_REPLY_TOOL_DESC = "Send one completed reply to the bound FlowGate conversation."
+_SEND_CHAT_REPLY_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "body": {"type": "string", "description": "Full text of the chat reply"},
+    },
+    "required": ["body"],
+}
+
 _DECIDE_TOOL_NAME = "decide_workflow"
 _DECIDE_TOOL_DESC = (
     "Save the workflow decision for the target requirement. Choose the document class "
@@ -4221,6 +4231,8 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     registered = 0
     workflow_pending = run.get("action_scope") == "workflow_decide"
     conflict_pending = run.get("action_scope") == "resolve_conflict"
+    is_chat = run.get("action_scope") == "chat"
+    chat_sent = False
     last_text: Optional[str] = None
     conversation: list[dict] = [{"role": "user", "content": prompt}]
     turn = 0
@@ -4242,6 +4254,10 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             tool_name, tool_desc, tool_schema = _DECIDE_TOOL_NAME, _DECIDE_TOOL_DESC, _DECIDE_TOOL_SCHEMA
         elif conflict_pending:
             tool_name, tool_desc, tool_schema = _RESOLVE_TOOL_NAME, _RESOLVE_TOOL_DESC, _RESOLVE_TOOL_SCHEMA
+        elif is_chat:
+            tool_name, tool_desc, tool_schema = (
+                _SEND_CHAT_REPLY_TOOL_NAME, _SEND_CHAT_REPLY_TOOL_DESC, _SEND_CHAT_REPLY_TOOL_SCHEMA
+            )
         else:
             tool_name, tool_desc, tool_schema = _REGISTER_TOOL_NAME, _REGISTER_TOOL_DESC, _REGISTER_TOOL_SCHEMA
         try:
@@ -4330,6 +4346,20 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             ))
             continue
 
+        if is_chat:
+            status, resp = _conversation_turn_register(provider, run, current_token, tool_call["input"])
+            if 200 <= status < 300:
+                chat_sent = True
+                conversation.append(_tool_result_msg(kind, tool_call, json.dumps(resp, ensure_ascii=False)[:4000]))
+                break
+            reason = _registration_error_summary(resp)
+            run["register_errors"].append({"status": status, "reason": reason, "turn": turn})
+            conversation.append(_tool_result_msg(
+                kind, tool_call,
+                f"Chat reply failed (HTTP {status}): {json.dumps(resp, ensure_ascii=False)[:2000]}",
+            ))
+            continue
+
         status, resp = _inbox_register(run, current_token, tool_call["input"])
         if 200 <= status < 300:
             registered += 1
@@ -4360,6 +4390,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         not workflow_pending
         and (
             (run.get("action_scope") == "workflow_decide" and run["mode"] == "single")
+            or (is_chat and chat_sent)
             or registered >= run["docs_target"]
         )
     )
@@ -4527,6 +4558,37 @@ def _workflow_decide(run: dict, raw_token: str, tool_input: dict) -> tuple[int, 
             return exc.code, {"error": str(exc)}
     except Exception as exc:
         return 0, {"error": str(exc)}
+
+def _conversation_turn_register(
+    provider: dict, run: dict, raw_token: str, tool_input: dict,
+) -> tuple[int, dict]:
+    """Append an API-provider reply with the token-bound conversation identity."""
+    api_base = run["api_base_url"].rstrip("/")
+    body = {
+        "body": tool_input.get("body") or "",
+        "idempotency_key": run["token_id"],
+        "display_name": provider.get("display_name") or provider.get("name") or "",
+    }
+    req = urllib.request.Request(
+        f"{api_base}/conversation/{run['doc_ref']}/turn",
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {raw_token}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        try:
+            return exc.code, json.loads(exc.read().decode("utf-8"))
+        except Exception:
+            return exc.code, {"error": str(exc)}
+    except Exception as exc:
+        return 0, {"error": str(exc)}
+
 
 def _inbox_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     """Server-side proxy registration for API providers: POST the model-authored
