@@ -78,6 +78,9 @@ def _patch_new_validation(monkeypatch):
         "token_id": "tok-0391-new",
         "project": "flowgate",
         "issued_to": "worker-0391",
+        # 0492 T0018: `group_id` is a real tokens column (migration 075a) and inbox
+        # Step 3 now compares it as the `group` axis.
+        "group_id": "flowgate.default.0391",
         "action_scope": "new",
         "doc_ref": "flowgate.default.0391.0001-B",
         "dry_run_count": 0,
@@ -255,6 +258,9 @@ def _patch_edit_validation(monkeypatch):
         "token_id": "tok-0391-edit",
         "project": "flowgate",
         "issued_to": "worker-0391",
+        # 0492 T0018: `group_id` is a real tokens column (migration 075a) and inbox
+        # Step 3 now compares it as the `group` axis.
+        "group_id": "flowgate.default.0391",
         "action_scope": "edit",
         "doc_ref": "flowgate.default.0391.0002-NR",
         "dry_run_count": 0,
@@ -669,6 +675,9 @@ def test_new_continuation_locale_takes_priority_over_x_locale_header(monkeypatch
         "token_id": "tok-0391-new-locale",
         "project": "flowgate",
         "issued_to": "worker-0391",
+        # 0492 T0018: `group_id` is a real tokens column (migration 075a) and inbox
+        # Step 3 now compares it as the `group` axis.
+        "group_id": "flowgate.default.0391",
         "action_scope": "new",
         "doc_ref": "flowgate.default.0391.0001-B",
         "dry_run_count": 0,

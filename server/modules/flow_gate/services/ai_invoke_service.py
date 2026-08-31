@@ -49,7 +49,7 @@ from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate import template_provision
-from modules.flow_gate.services import api_server_tools, git_service, invoke_mention_service, process_runner, q_service, token_service
+from modules.flow_gate.services import api_server_tools, git_service, invoke_mention_service, process_runner, q_service, register_binding, token_service
 from modules.flow_gate.services.git_service import GitServiceError
 from modules.flow_gate.settings import ai_settings_service
 from modules.flow_gate.storage import paths as storage_paths
@@ -719,6 +719,17 @@ def get_run_detail(run_id: str) -> dict:
     return payload
 
 
+def _persisted_register_failures(run_id: str) -> list:
+    """Structured binding failures for a finished run, or [] when it predates them."""
+    try:
+        from modules.flow_gate.db import register_context_failures as db_register_failures
+
+        return db_register_failures.list_by_run(run_id)
+    except Exception:
+        logger.debug("register context failure lookup skipped", exc_info=True)
+        return []
+
+
 def _run_detail_from_row(row: dict) -> dict:
     """Shape a persisted `ai_invoke_runs` row like the live `finished_payload` (same
     field names) so a client renders both through one path."""
@@ -744,6 +755,12 @@ def _run_detail_from_row(row: dict) -> dict:
         "attempt_no": row.get("attempt_no"),
         "fallback_history": row.get("fallback_history"),
         "register_errors": row.get("register_errors"),
+        # 0492 T0018 item 3: the axis-classified form of the same failures, when this run
+        # has one. `register_errors` above is deliberately left as it was — every existing
+        # reader still uses it, and it is both the backfill source and the rollback safety
+        # net. A run from before migration 094 has no rows here and keeps answering out of
+        # the legacy array alone.
+        "register_context_failures": _persisted_register_failures(row["run_id"]),
         "tool_call_misses": row.get("tool_call_misses"),
         "turn_limit_exhausted": bool(row.get("turn_limit_exhausted")),
         "oracle_mismatch": bool(row.get("oracle_mismatch")),
@@ -4257,6 +4274,9 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     max_turns = max(API_MAX_TURNS_PER_DOC, max(1, run["docs_target"]) * API_MAX_TURNS_PER_DOC)
 
     current_token = run["raw_token"]
+    # 0492 T0018 item 1: the run's four register axes and the token they are bound to
+    # are seeded together here and only ever move together (_adopt_continuation_token).
+    _run_register_context(run)
     registered = 0
     workflow_pending = run.get("action_scope") == "workflow_decide"
     conflict_pending = run.get("action_scope") == "resolve_conflict"
@@ -4280,6 +4300,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
 
     while turn < max_turns:
         turn += 1
+        run["_api_turn"] = turn
         if run["cancel_event"].is_set():
             break
         # 0446 T0014 §4-5: the model-call loop keeps the ORIGINAL reading. It has no
@@ -4428,6 +4449,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     max_turns = max(max_turns, turn + max(1, run["docs_target"]) * API_MAX_TURNS_PER_DOC)
                 if next_token:
                     current_token = next_token
+                    _adopt_continuation_token(run, next_token)
                 result_text = next_mention or json.dumps(resp, ensure_ascii=False)[:4000]
                 conversation.append(_tool_result_msg(kind, tool_call, result_text))
                 if run["mode"] == "single" or not next_token:
@@ -4470,6 +4492,9 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             next_mention = resp.get("next_mention")
             if next_token:
                 current_token = next_token
+                # The hop moved: adopt the new token AND its axes atomically, so a
+                # delayed call holding the previous one is refused at the next bind.
+                _adopt_continuation_token(run, next_token)
             result_text = next_mention or json.dumps(
                 {k: resp.get(k) for k in ("ok", "doc_id", "message") if k in resp},
                 ensure_ascii=False,
@@ -4479,11 +4504,12 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 break
         else:
             reason = _registration_error_summary(resp)
-            run["register_errors"].append({
-                "status": status,
-                "reason": reason,
-                "turn": turn,
-            })
+            if not _absorb_binding_failure(run, resp, turn):
+                run["register_errors"].append({
+                    "status": status,
+                    "reason": reason,
+                    "turn": turn,
+                })
             conversation.append(_tool_result_msg(
                 kind, tool_call,
                 f"Registration failed (HTTP {status}): {json.dumps(resp, ensure_ascii=False)[:2000]}",
@@ -4508,6 +4534,36 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     run["last_message"] = _truncate_front(last_text)
     run["last_message_received"] = bool(last_text)
     return "started_ok", None
+
+def _absorb_binding_failure(run: dict, response: dict, turn: int) -> bool:
+    """Was this 403 already recorded in full, axes and all?
+
+    A context-binding rejection is written exactly once — by the dispatch binder before it
+    posts anything, or by the /inbox boundary reaching this same live run through the
+    token's ai_run_id. Both hand the correlation id back in the response, which is how the
+    turn loop tells "already recorded, with its axis" from "an ordinary 409/422 that has no
+    axis to record" — and does not stack a second, axis-less row on top of the first.
+
+    The turn number belongs to the loop, not to either boundary, so it is stamped here.
+    """
+    # `error` is a free-form field elsewhere in this loop (a plain string from a transport
+    # failure, for one), so read it only when it is the normalized object.
+    error = (response or {}).get("error")
+    details = error.get("details") if isinstance(error, dict) else None
+    correlation_id = details.get("correlation_id") if isinstance(details, dict) else None
+    if not correlation_id:
+        return False
+    for item in (run.get("register_errors") or []):
+        if not isinstance(item, dict) or item.get("correlation_id") != correlation_id:
+            continue
+        if item.get("turn") is None:
+            item["turn"] = turn
+            telemetry = item.get("telemetry")
+            if isinstance(telemetry, dict):
+                telemetry["turn"] = turn
+        return True
+    return False
+
 
 def _registration_error_summary(response: dict) -> str:
     for key in ("code", "error", "message", "detail"):
@@ -4742,25 +4798,189 @@ def _api_create_question(run: dict, raw_token: str, tool_input: dict) -> tuple[i
     return _api_bound_request(run, raw_token, f"/q/{run['doc_ref']}/questions", "POST", tool_input)
 
 
+# ── Register mutation context (0492 T0018 item 1 / L0010 §2.1-§2.2) ──────────
+#
+# The four routing axes of a register call are server property. Before T0018 the proxy
+# built them from `run` alone and, before TR0017, from a hard-coded "new" — which is the
+# whole of B0001: an edit-scoped token was posted as action="new", so /inbox picked
+# _handle_new and its scope check rejected it three turns running (NR0013, conclusion).
+#
+# Now every call re-reads the run AND re-verifies the live token, compares the two on
+# action/project/group/doc in that fixed order, and only then assembles an envelope. The
+# model contributes document content and nothing else.
+
+# The scopes an API provider may register under. workflow_decide / resolve_conflict / chat
+# have their own dedicated proxies and never reach here.
+_REGISTER_SCOPES = ("new", "edit", "review", "test_run")
+
+# Per-scope allowlist of model-authored fields. Anything else the model sends is dropped
+# here even if a future schema change lets it through validation — this list, not the
+# model's input, decides what an /inbox body may contain besides the server's own axes.
+_REGISTER_MODEL_FIELDS = {
+    "new": ("doc_type", "title", "content"),
+    "edit": ("content", "edit_reason", "rejection_response", "rejection_id",
+             "rejection_review_id"),
+    "review": ("verdict", "findings", "comment"),
+    "test_run": (),
+}
+
+
+class _RegisterBindingRejected(Exception):
+    """A register call refused before any side effect. Carries the 403 body to return."""
+
+    def __init__(self, response: dict, record: Optional[dict] = None):
+        self.response = response
+        self.record = record
+        super().__init__(response.get("error_message") or "register binding rejected")
+
+
+def _run_register_context(run: dict) -> dict:
+    """The run's CURRENT hop axes — server-owned, seeded from the run itself.
+
+    Held apart from run["doc_ref"]/["action_scope"], which stay pinned to the hop the
+    oracle and the judge measure. Only _adopt_continuation_token moves it, and only to a
+    token this server just issued.
+    """
+    context = run.get("register_context")
+    if not context:
+        context = register_binding.canonical_context(
+            run.get("action_scope"), run.get("project_id"),
+            run.get("group_id"), run.get("doc_ref"),
+        )
+        run["register_context"] = context
+        run["current_token_id"] = run.get("current_token_id") or run.get("token_id")
+    return context
+
+
+def _adopt_continuation_token(run: dict, raw_token: str) -> bool:
+    """Move the run's current token and its four axes together, or not at all.
+
+    L0010 §2.1: after a hop change only the refreshed pair is honoured, so a delayed call
+    holding the previous token fails the ownership check below before it can do anything.
+    A continuation that would leave the run's project or group is refused outright — those
+    two axes are immutable for the life of a run.
+    """
+    try:
+        token_rec = token_service.verify(raw_token)
+    except Exception:
+        logger.warning("ai-invoke %s: continuation token could not be verified",
+                       run.get("run_id"), exc_info=True)
+        return False
+    context, _group_db, _group_resolved = register_binding.token_axes(token_rec)
+    pinned = register_binding.canonical_context(
+        context["action"], run.get("project_id"), run.get("group_id"), context["doc"],
+    )
+    if context["project"] != pinned["project"] or context["group"] != pinned["group"]:
+        logger.warning("ai-invoke %s: continuation token leaves the run's project/group",
+                       run.get("run_id"))
+        return False
+    run["register_context"] = context
+    run["current_token_id"] = token_rec.get("token_id")
+    return True
+
+
+def _bind_register_context(run: dict, raw_token: str) -> tuple[dict, dict]:
+    """L0010 §2.2 R5. Returns (context, token_rec) or raises _RegisterBindingRejected.
+
+    Nothing from the model or the request participates: `expected` is the run's server-owned
+    hop context, `actual` is the verified token. The group axis of a token minted before the
+    group column existed is completed from the DB group of its own doc_ref, and a failed
+    lookup stays unresolved — which is a mismatch, not a pass.
+    """
+    expected = _run_register_context(run)
+    try:
+        token_rec = token_service.verify(raw_token)
+    except HTTPException as exc:
+        # An invalid/expired/consumed token is an authentication fault, not a binding one.
+        raise _RegisterBindingRejected({
+            "ok": False, "http_status": exc.status_code, "error_message": str(exc.detail),
+        }) from exc
+
+    actual, group_db, group_resolved = register_binding.token_axes(token_rec)
+    axes = register_binding.compare_axes(expected, actual)
+    if axes:
+        record = register_binding.failure_record(
+            boundary=register_binding.BOUNDARY_DISPATCH,
+            axes=axes,
+            run_context=expected,
+            token_context=actual,
+            correlation_id=register_binding.new_correlation_id(),
+            run_id=run.get("run_id"),
+            ai_run_id=run.get("run_id"),
+            token_id=token_rec.get("token_id"),
+            group_token_db=group_db,
+            group_token_resolved=group_resolved,
+            turn=run.get("_api_turn"),
+        )
+        register_binding.log_failure(record)
+        raise _RegisterBindingRejected({
+            "ok": False,
+            "http_status": 403,
+            "error_message": register_binding.BINDING_MESSAGE,
+            "error": register_binding.forbidden_details(record),
+        }, record)
+
+    current_token_id = run.get("current_token_id")
+    if current_token_id and token_rec.get("token_id") != current_token_id:
+        # The axes happen to line up, but this is not the token the server is currently
+        # bound to — a call left over from before a continuation. Refuse it here rather
+        # than let it register against a hop that has moved on.
+        raise _RegisterBindingRejected({
+            "ok": False,
+            "http_status": 403,
+            "error_message": register_binding.BINDING_MESSAGE,
+            "error": {
+                "code": register_binding.CODE_FORBIDDEN,
+                "message": register_binding.BINDING_MESSAGE,
+                "details": {"reason": "token_not_current"},
+            },
+        })
+
+    if expected["action"] not in _REGISTER_SCOPES:
+        raise _RegisterBindingRejected({
+            "ok": False, "http_status": 422,
+            "error_message": f"action_scope {expected['action']!r} cannot register a document",
+        })
+    return expected, token_rec
+
+
+def _register_envelope(context: dict, run: dict, tool_input: Optional[dict]) -> dict:
+    """The /inbox body: server axes plus the scope's allowlisted model fields.
+
+    `doc` is the predecessor for new and the target for the other three. test_run takes
+    `doc_id` and never `prev_doc_id` — the key its handler does not read at all, which is
+    why fixing only the action string would have turned B0001's 403 into a 400 (NR0013 §4).
+    """
+    action, doc = context["action"], context["doc"]
+    payload = tool_input if isinstance(tool_input, dict) else {}
+    body: dict = {
+        "action": action,
+        "project": context["project"],
+        "module": run.get("module") or "none",
+        "group_name": context["group"],
+    }
+    body["prev_doc_id" if action == "new" else "doc_id"] = doc
+    for field in _REGISTER_MODEL_FIELDS[action]:
+        if field in payload:
+            body[field] = payload[field]
+    if action == "new":
+        body["doc_type"] = str(payload.get("doc_type") or "").strip()
+        body["title"] = payload.get("title") or ""
+        body["content"] = payload.get("content") or ""
+    return body
+
+
 def _inbox_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
-    """Server-side proxy registration for API providers: POST the model-authored
+    """Server-side proxy registration for API providers: POST the server-assembled
     body to our own /inbox with the run token, exactly as an external worker
     would — every inbox validation and the chain self-advance stay in force."""
-    action = run.get("action_scope") or "new"
-    body = {
-        "action": action,
-        "project": run["project_id"],
-        "module": run.get("module") or "none",
-        "group_name": run["group_id"],
-    }
-    if action == "new":
-        body.update({"doc_type": (tool_input.get("doc_type") or "").strip(), "prev_doc_id": run["doc_ref"], "title": tool_input.get("title") or "", "content": tool_input.get("content") or ""})
-    elif action == "edit":
-        body.update({"doc_id": run["doc_ref"], **tool_input})
-    elif action == "review":
-        body.update({"doc_id": run["doc_ref"], **tool_input})
-    elif action == "test_run":
-        body.update({"doc_id": run["doc_ref"]})
+    try:
+        context, _token_rec = _bind_register_context(run, raw_token)
+    except _RegisterBindingRejected as rejected:
+        if rejected.record is not None:
+            run.setdefault("register_errors", []).append(rejected.record)
+        return int(rejected.response.get("http_status") or 403), rejected.response
+    body = _register_envelope(context, run, tool_input)
     req = urllib.request.Request(
         f"{run['api_base_url']}/inbox",
         data=json.dumps(body).encode("utf-8"),
@@ -5681,9 +5901,40 @@ def _persist_run_record(run: dict) -> None:
             "updated_at": stamp,
         })
         db_runs.maybe_purge()
+        _persist_register_context_failures(run, stamp)
     except Exception:
         # L0007 §5: a storage failure must never turn a finished hop into a crashed one.
         logger.warning("ai-invoke run record persist failed for %s", run["run_id"], exc_info=True)
+
+
+def _persist_register_context_failures(run: dict, stamp: str) -> None:
+    """Flush this run's axis-classified binding failures to their own table (T0018 item 3).
+
+    Called from the finalize flow, after ai_invoke_runs.upsert() has put the row the FK
+    points at in place. A LIVE run has no such row — which is exactly why the in-memory
+    register_errors list is the SSOT until this moment, not a second store racing it.
+
+    Idempotent on (correlation_id, boundary): a re-settled run upserts twice and still
+    leaves one row per failure. Storage trouble is logged, never raised — telemetry must
+    not be able to turn a finished hop into a crashed one.
+    """
+    try:
+        from modules.flow_gate.db import register_context_failures as db_register_failures
+
+        rows = db_register_failures.rows_from_run_errors(
+            run["run_id"], run.get("register_errors") or [],
+            recorded_at=stamp,
+            fallback={
+                "project_id": run.get("project_id"),
+                "group_id": run.get("group_id"),
+                "doc_ref": run.get("doc_ref"),
+            },
+        )
+        if rows:
+            db_register_failures.insert_many(rows)
+    except Exception:
+        logger.warning("register context telemetry persist failed for %s",
+                       run.get("run_id"), exc_info=True)
 
 
 def _notify_chain_failure_if_needed(

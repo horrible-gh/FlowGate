@@ -434,6 +434,23 @@ class DatabaseSetting:
             logger.error(f"⚠️ rejection_id backfill skipped: {e}")
             logger.error(traceback.format_exc())
 
+        # 0492 T0018 item 4: legacy ai_invoke_runs.register_errors elements become
+        # register_context_failures rows. Python, not DML in migration 094, for the same
+        # reason as above — unrolling a JSON array needs jsonb_array_elements / JSON_TABLE /
+        # json_each, three spellings that do not survive each other's engine. The source
+        # column is left untouched, and the transform is idempotent on (correlation_id, boundary).
+        try:
+            from modules.flow_gate.db.backfills.register_context_failure_backfill import (
+                run_register_context_failure_backfill,
+            )
+            n = run_register_context_failure_backfill(self.db_instance)
+            if n:
+                logger.debug(f"✅ register context failure backfill: {n} row(s) offered")
+        except Exception as e:
+            import traceback
+            logger.error(f"⚠️ register context failure backfill skipped: {e}")
+            logger.error(traceback.format_exc())
+
         # Initialize 2FA (using SQLStorage + Auth2FAAdapter)
         try:
             adapter = Auth2FAAdapter(self.db_instance)
