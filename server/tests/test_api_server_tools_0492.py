@@ -407,3 +407,100 @@ def test_api_prompt_uses_read_help_while_http_mention_is_untouched():
     assert "read_help" in adapted
     assert "GET http://host/flowgate/api/v1/help" not in adapted
     assert original.endswith("\nlast")
+
+def test_glm_openai_contract_dispatches_and_counts_received_calls(monkeypatch, tmp_path):
+    captured = {}
+    received = {"doc_type": "TR", "title": "GLM report", "content": "complete"}
+    response = {"choices": [{"message": {"content": None, "tool_calls": [{
+        "id": "glm-register", "type": "function", "function": {
+            "name": "register_document", "arguments": received,
+        },
+    }]}}]}
+    monkeypatch.setattr(invoke.ai_settings_service, "get_provider_secret", lambda *_args: "key")
+    monkeypatch.setattr(invoke, "_http_post_json", lambda _u, _h, body, _t: captured.update(body=body) or response)
+    dispatched = []
+    monkeypatch.setattr(invoke, "_inbox_register", lambda _run, _token, payload: dispatched.append(payload) or (200, {"ok": True, "doc_id": "glm-doc"}))
+    monkeypatch.setattr(invoke, "_remaining_sec", lambda _run: 30)
+
+    run = _run(tmp_path)
+    run.update({"run_id": "glm", "doc_ref": None, "raw_token": "token", "docs_target": 1, "mode": "single",
+                "cancel_event": SimpleNamespace(is_set=lambda: False), "timed_out": False})
+    assert invoke._api_execute(
+        {"id": "glm", "kind": "custom", "api_base_url": "https://open.bigmodel.cn/api/paas/v4", "api_model": "glm-4"},
+        "complete the task", run,
+    ) == ("started_ok", None)
+    assert captured["body"]["tools"] == [{"type": "function", "function": {
+        "name": "register_document", "description": invoke._REGISTER_TOOL_DESC,
+        "parameters": invoke._REGISTER_TOOL_SCHEMA,
+    }}]
+    assert captured["body"]["tool_choice"] == {"type": "function", "function": {"name": "register_document"}}
+    assert captured["body"]["messages"][0]["role"] == "system"
+    assert "natural-language claim" in captured["body"]["messages"][0]["content"]
+    assert dispatched == [received]
+    assert run["tool_calls_received"] == 1
+    assert run["tool_calls_executed"] == 1
+    assert run["tool_call_misses"] == 0
+
+
+def test_openai_invalid_and_multiple_direct_calls_return_results_without_misses(monkeypatch, tmp_path):
+    responses = iter([
+        {"choices": [{"message": {"content": None, "tool_calls": [
+            {"id": "bad-name", "function": {"name": "not_exposed", "arguments": "{}"}},
+            {"id": "bad-json", "function": {"name": "register_document", "arguments": "{"}},
+        ]}}]},
+        {"choices": [{"message": {"content": None, "tool_calls": [
+            {"id": "valid", "function": {"name": "register_document", "arguments": '{"doc_type":"TR","title":"ok","content":"done"}'}},
+        ]}}]},
+    ])
+    conversations = []
+    monkeypatch.setattr(invoke.ai_settings_service, "get_provider_secret", lambda *_args: "key")
+    monkeypatch.setattr(invoke, "_http_post_json", lambda *_args: next(responses))
+    monkeypatch.setattr(invoke, "_remaining_sec", lambda _run: 30)
+    monkeypatch.setattr(invoke, "_inbox_register", lambda *_args: (200, {"ok": True, "doc_id": "ok"}))
+    original = invoke._call_openai
+    def capture(*args):
+        conversations.append(list(args[3]))
+        return original(*args)
+    monkeypatch.setattr(invoke, "_call_openai", capture)
+
+    run = _run(tmp_path)
+    run.update({"run_id": "invalid", "doc_ref": None, "raw_token": "token", "docs_target": 1, "mode": "single",
+                "cancel_event": SimpleNamespace(is_set=lambda: False), "timed_out": False})
+    assert invoke._api_execute({"id": "glm", "kind": "custom", "api_base_url": "https://example", "api_model": "glm-4"}, "prompt", run) == ("started_ok", None)
+    tool_results = [item for item in conversations[-1] if item.get("role") == "tool"]
+    assert {item["tool_call_id"] for item in tool_results} == {"bad-name", "bad-json"}
+    assert run["tool_calls_received"] == 3
+    assert run["tool_calls_executed"] == 1
+    assert run["tool_call_misses"] == 0
+
+
+def test_non_glm_wrong_direct_tool_name_is_missed_and_not_dispatched(monkeypatch, tmp_path):
+    valid = {"doc_type": "TR", "title": "ok", "content": "done"}
+    responses = iter([
+        {"choices": [{"message": {"content": None, "tool_calls": [
+            {"id": "wrong", "function": {"name": "some_other_tool", "arguments": "{}"}},
+        ]}}]},
+        {"choices": [{"message": {"content": None, "tool_calls": [
+            {"id": "register", "function": {"name": "register_document", "arguments": valid}},
+        ]}}]},
+    ])
+    monkeypatch.setattr(invoke.ai_settings_service, "get_provider_secret", lambda *_args: "key")
+    monkeypatch.setattr(invoke, "_http_post_json", lambda *_args: next(responses))
+    monkeypatch.setattr(invoke, "_remaining_sec", lambda _run: 30)
+    dispatched = []
+    monkeypatch.setattr(
+        invoke, "_inbox_register",
+        lambda _run, _token, payload: dispatched.append(payload) or (200, {"ok": True, "doc_id": "ok"}),
+    )
+
+    run = _run(tmp_path)
+    run.update({"run_id": "openai-wrong-name", "doc_ref": None, "raw_token": "token", "docs_target": 1,
+                "mode": "single", "cancel_event": SimpleNamespace(is_set=lambda: False), "timed_out": False})
+    assert invoke._api_execute(
+        {"id": "openai", "kind": "openai", "api_base_url": "https://example", "api_model": "gpt-test"},
+        "prompt", run,
+    ) == ("started_ok", None)
+    assert dispatched == [valid]
+    assert run["tool_calls_received"] == 1
+    assert run["tool_calls_executed"] == 1
+    assert run["tool_call_misses"] == 1

@@ -54,7 +54,8 @@ def test_api_chat_uses_reply_tool_and_conversation_registration(monkeypatch, kin
     assert seen["tool_name"] == "send_chat_reply"
     assert seen["force_tool"] is True
     assert seen["turn"][0]["_chat_based_on_seq"] == 1
-    assert "are you speak korean?" in seen["conversation"][1]["content"]
+    assert seen["conversation"][0]["role"] == "system"
+    assert "are you speak korean?" in seen["conversation"][2]["content"]
     assert seen["turn"][1:] == ("raw-token", {"body": "Korean reply"})
 
 

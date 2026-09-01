@@ -1432,6 +1432,16 @@ def _recover_cli_last_message(run: dict, kind: str, stdout_text: str, last_messa
 
 # ── API adapter: minimal agent loop (L0006 §2.4) ─────────────────────────────
 
+def _api_system_prompt() -> str:
+    """Non-negotiable API-agent contract shared by OpenAI-compatible providers."""
+    return (
+        "You are a FlowGate API agent. Use the supplied tools to perform the bound work. "
+        "A natural-language claim of completion never registers, replies, decides, or completes "
+        "the work: call the required tool with its complete payload. Only use exposed tools and "
+        "their declared JSON schemas."
+    )
+
+
 def _api_help_prompt(prompt: str) -> str:
     """Match API-provider guidance to mediated tools; CLI mentions remain unchanged."""
     lines = [line for line in prompt.splitlines()
@@ -1441,6 +1451,19 @@ def _api_help_prompt(prompt: str) -> str:
         "the index, item returns one item, and item plus child returns one child."
     )
     return guidance + "\n\n" + "\n".join(lines)
+
+def _is_glm_openai_provider(provider: dict) -> bool:
+    """Identify GLM even when its OpenAI-compatible endpoint is configured as custom."""
+    kind = str(provider.get("kind") or "").lower()
+    base_url = str(provider.get("api_base_url") or "").lower()
+    model = str(provider.get("api_model") or "").lower()
+    return (
+        kind in {"glm", "zhipu", "zai"}
+        or model.startswith("glm-")
+        or "bigmodel.cn" in base_url
+        or "z.ai" in base_url
+    )
+
 
 def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]:
     """Minimal tool loop for API providers, including workflow decision kickoff."""
@@ -1475,7 +1498,10 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     conflict_pending = run.get("action_scope") == "resolve_conflict"
     is_chat = run.get("action_scope") == "chat"
     last_text: Optional[str] = None
-    conversation: list[dict] = [{"role": "user", "content": _api_help_prompt(prompt)}]
+    conversation: list[dict] = [
+        {"role": "system", "content": _api_system_prompt()},
+        {"role": "user", "content": _api_help_prompt(prompt)},
+    ]
     if is_chat:
         # 0505 T0006 (DB0005 3.3): the FIRST self-HTTP this hop may open. Its status/
         # error land in the same three columns as the other five mediated calls, and a
@@ -1545,12 +1571,12 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             if kind == "claude":
                 reply_text, tool_call, assistant_msg = _call_anthropic(
                     base_url, model, key, conversation, call_timeout,
-                    tool_name, tool_desc, tool_schema, is_chat,
+                    tool_name, tool_desc, tool_schema, True,
                 )
             else:
                 reply_text, tool_call, assistant_msg = _call_openai(
                     base_url, model, key, conversation, call_timeout,
-                    tool_name, tool_desc, tool_schema, is_chat,
+                    tool_name, tool_desc, tool_schema, True,
                 )
             run["model_last_http_status"] = 200
         except urllib.error.HTTPError as exc:
@@ -1570,6 +1596,12 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         if reply_text:
             last_text = reply_text
         tool_calls = tool_call if isinstance(tool_call, list) else ([tool_call] if tool_call else [])
+        is_glm_openai = _is_glm_openai_provider(provider)
+        if tool_specs is None and not is_glm_openai:
+            # Restore the established direct-tool boundary before counting calls: a
+            # non-GLM provider that returns a name other than the sole exposed tool is
+            # indistinguishable from no tool call and must enter the miss/nudge path.
+            tool_calls = [call for call in tool_calls if (call.get("name") or tool_name) == tool_name]
         run["tool_calls_received"] = run.get("tool_calls_received", 0) + len(tool_calls)
         if not tool_calls:
             run["tool_call_misses"] += 1
@@ -1667,12 +1699,39 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 continue
             tool_call = completion_call
         else:
-            # 0505 T0006 (DB0005 2): the direct-dispatch scopes (register/workflow_decide/
-            # resolve_conflict/chat) have no separate validation pass -- the model's tool
-            # call is constrained by a forced single-tool schema, so reaching this branch
-            # at all means it is about to be sent to that scope's handler below.
-            run["tool_calls_executed"] = run.get("tool_calls_executed", 0) + 1
-            tool_call = tool_calls[0]
+            if not is_glm_openai:
+                # Preserve established OpenAI/Anthropic direct-scope behavior.
+                run["tool_calls_executed"] = run.get("tool_calls_executed", 0) + 1
+                tool_call = tool_calls[0]
+            else:
+                # A forced GLM provider choice is untrusted input: emit a result for every
+                # received call, and dispatch exactly one validated call.
+                completion_call = None
+                for call in tool_calls:
+                    call_name = call.get("name") or tool_name
+                    call["name"] = call_name
+                    try:
+                        if call_name != tool_name:
+                            raise api_server_tools.ToolError(422, "invalid_tool_call")
+                        api_server_tools.validate(tool_schema, call.get("input"))
+                    except api_server_tools.ToolError as exc:
+                        _status, resp = api_server_tools.error_payload(call_name or "tool_call", exc)
+                        conversation.append(_tool_result_msg(
+                            kind, call, json.dumps(resp, ensure_ascii=False)[:16000]
+                        ))
+                        continue
+                    if completion_call is not None:
+                        duplicate = api_server_tools.ToolError(422, "invalid_tool_call")
+                        _status, resp = api_server_tools.error_payload(call_name, duplicate)
+                        conversation.append(_tool_result_msg(
+                            kind, call, json.dumps(resp, ensure_ascii=False)[:16000]
+                        ))
+                        continue
+                    completion_call = call
+                    run["tool_calls_executed"] = run.get("tool_calls_executed", 0) + 1
+                if completion_call is None:
+                    continue
+                tool_call = completion_call
 
         if workflow_pending:
             status, resp = _workflow_decide(run, current_token, tool_call["input"])
@@ -1908,7 +1967,7 @@ def _call_anthropic(
             "max_tokens": API_MAX_TOKENS,
             "messages": conversation,
             "tools": [{"name": spec["name"], "description": spec["description"], "input_schema": spec["schema"]} for spec in specs],
-            **({"tool_choice": {"type": "tool", "name": specs[0]["name"]}} if force_tool else {}),
+            **({"tool_choice": ({"type": "any"} if multi else {"type": "tool", "name": specs[0]["name"]})} if force_tool else {}),
         },
         timeout,
     )
@@ -1921,7 +1980,7 @@ def _call_anthropic(
             name = block.get("name")
             tool_calls.append({"id": block.get("id"), "name": name, "input": block.get("input")})
     assistant_msg = {"role": "assistant", "content": content}
-    return ("\n".join(p for p in text_parts if p) or None), (tool_calls if multi else (tool_calls[0] if tool_calls and tool_calls[0]["name"] in exposed else None)), assistant_msg
+    return ("\n".join(p for p in text_parts if p) or None), tool_calls, assistant_msg
 
 def _call_openai(
     base_url: str, model: str, key: str, conversation: list[dict], timeout: float,
@@ -1936,23 +1995,29 @@ def _call_openai(
             "model": model,
             "messages": conversation,
             "tools": [{"type": "function", "function": {"name": spec["name"], "description": spec["description"], "parameters": spec["schema"]}} for spec in specs],
-            **({"tool_choice": {"type": "function", "function": {"name": specs[0]["name"]}}} if force_tool else {}),
+            **({"tool_choice": ("required" if multi else {"type": "function", "function": {"name": specs[0]["name"]}})} if force_tool else {}),
         },
         timeout,
     )
     choices = data.get("choices") or []
     message = (choices[0].get("message") if choices else None) or {}
     tool_calls = []
-    exposed = {spec["name"] for spec in specs}
     for tc in message.get("tool_calls") or []:
         fn = tc.get("function") or {}
-        try:
-            args = json.loads(fn.get("arguments") or "{}")
-        except ValueError:
+        raw_args = fn.get("arguments", {})
+        if isinstance(raw_args, dict):
+            args = raw_args
+        elif isinstance(raw_args, str):
+            try:
+                args = json.loads(raw_args or "{}")
+            except (TypeError, ValueError):
+                args = None
+        else:
             args = None
         tool_calls.append({"id": tc.get("id"), "name": fn.get("name"), "input": args})
-    call_value = tool_calls if multi else (tool_calls[0] if tool_calls and tool_calls[0]["name"] in exposed else None)
-    return message.get("content"), call_value, message
+    # Keep every received call, including unknown names and malformed inputs, so the
+    # dispatcher can emit a call-id-specific error instead of misclassifying it as a miss.
+    return message.get("content"), tool_calls, message
 
 def _workflow_decide(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
