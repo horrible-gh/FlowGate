@@ -331,6 +331,10 @@ class TestProviderError:
         res = _start(fake_env, [bad, good])
         run = _wait_finished(res["run_id"])
 
+        assert res["selected_provider_source"] == "project_default"
+        assert res["fallback_allowed"] is True
+        assert run["selected_provider_source"] == "project_default"
+        assert run["fallback_allowed"] is True
         assert run["end_reason"] == "exited"
         assert run["provider_id"] == "aip_good01"
         assert run["attempt_no"] == 2
@@ -357,6 +361,10 @@ class TestProviderError:
                          pid="aip_good02")
         res = _start(fake_env, [api, good])
         run = _wait_finished(res["run_id"])
+        assert res["selected_provider_source"] == "project_default"
+        assert res["fallback_allowed"] is True
+        assert run["selected_provider_source"] == "project_default"
+        assert run["fallback_allowed"] is True
         assert run["fallback_history"][0]["reason"] == "spawn_failed"
         assert run["fallback_history"][0]["detail"] == "api_key_not_set"
         assert run["provider_id"] == "aip_good02"

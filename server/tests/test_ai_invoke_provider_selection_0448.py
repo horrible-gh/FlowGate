@@ -328,6 +328,11 @@ def test_explicit_stored_selection_start_failure_never_invokes_trailing_provider
         env, monkeypatch, classification):
     result = start(env, continuation_provider_overrides=None)
     run = svc.get_run_record(result["run_id"])
+    # Both start-failure classifications must retain the stored-selection audit contract.
+    assert result["selected_provider_source"] == "stored_sequence"
+    assert result["fallback_allowed"] is False
+    assert run["selected_provider_source"] == "stored_sequence"
+    assert run["fallback_allowed"] is False
     invoked = []
 
     def _fail(provider_, prompt, run_):
