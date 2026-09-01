@@ -925,10 +925,10 @@ class TestUnpinnedHeaderKeepsTheStartupTail:
         assert done.wait(10)
         return captured["chain"]
 
-    def test_unpinned_header_default_leads_the_chain_and_keeps_the_rest(self, env, monkeypatch):
+    def test_unpinned_header_selection_is_a_single_startup_chain(self, env, monkeypatch):
         chain = self._capture_chain(env, monkeypatch, provider_id="aip_2")
-        # An unpinned header value keeps legacy startup ordering; retries still stay on aip_2.
-        assert [p["id"] for p in chain] == ["aip_2", "aip_1", "aip_3"]
+        # An active request selection is explicit; startup and retry both stay on aip_2.
+        assert [p["id"] for p in chain] == ["aip_2"]
 
     def test_single_pin_still_collapses(self, env, monkeypatch):
         captured: dict = {}

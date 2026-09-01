@@ -6718,7 +6718,7 @@ def resolve_step_executor(
 ) -> Optional[str]:
     """Who REWORKS this step (L0008 §2.2) — the step's executor, not its reviewer.
 
-    Re-plays start_run's own priority order (step override → explicit pin → stored sequence
+    Re-plays the rework priority (step override → current request selection → stored sequence
     assignment → project default) ahead of time, because the rework hop is mode="single" and
     start_run's continuous tiers would not run for it.
     """
@@ -6726,7 +6726,7 @@ def resolve_step_executor(
     if provider_id and _provider_enabled(project_id, provider_id):
         return provider_id
     base_provider_id = bundle.get("base_provider_id")
-    if bundle.get("provider_pinned") and _provider_enabled(project_id, base_provider_id):
+    if _provider_enabled(project_id, base_provider_id):
         return base_provider_id
     stored = _stored_provider_for_item_seq(doc_ref, item_seq)
     if stored and _provider_enabled(project_id, stored):
