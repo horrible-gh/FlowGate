@@ -222,6 +222,25 @@ class TestRunRowRoundTrip:
         assert stored["stderr_tail"] == stderr
         assert stored["source_dirty_files"] == files          # native list in, native list out
 
+    def test_api_turn_trace_at_its_declared_limit_keeps_only_trace_entries(self, live_db):
+        trace = [{
+            "turn": turn, "model_status": 200, "response_text": True,
+            "received": 12, "valid": 12, "dispatched": 12,
+            "completion_selected": False, "register_attempted": False,
+            "register_succeeded": False,
+            "tools": [
+                {"name": f"source_call_{tool}", "status": 200, "registration": False}
+                for tool in range(12)
+            ],
+            "disposition": "direct_tools_only",
+        } for turn in range(1, 21)]
+        db_runs.upsert(_row("aiv_20260821_000096", api_turn_trace=trace))
+
+        stored = db_runs.get("aiv_20260821_000096")
+        assert stored["api_turn_trace"] == trace
+        assert all(set(entry) >= {"turn", "model_status", "tools", "disposition"}
+                   for entry in stored["api_turn_trace"])
+
     def test_absent_values_read_back_as_null_and_empty_list(self, live_db):
         # The shape a spawn failure / an API-mode run / the orphaned-lease record leaves.
         db_runs.upsert(_row("aiv_20260821_000002", end_reason="spawn_failed"))

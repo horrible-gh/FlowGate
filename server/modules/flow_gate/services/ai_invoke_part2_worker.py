@@ -1465,6 +1465,25 @@ def _is_glm_openai_provider(provider: dict) -> bool:
     )
 
 
+_API_TRACE_MAX_TURNS = 20
+_API_TRACE_MAX_TOOLS = 12
+
+def _api_trace_turn(run: dict, turn: int, *, model_status: int, response_text: bool = False) -> dict:
+    """Append a bounded, input-free API turn record and return its mutable entry."""
+    trace = run.setdefault("api_turn_trace", [])
+    entry = {"turn": turn, "model_status": int(model_status), "response_text": bool(response_text),
+             "received": 0, "valid": 0, "dispatched": 0, "completion_selected": False,
+             "register_attempted": False, "register_succeeded": False, "tools": [], "disposition": "response"}
+    trace.append(entry)
+    if len(trace) > _API_TRACE_MAX_TURNS:
+        del trace[:-_API_TRACE_MAX_TURNS]
+    return entry
+
+def _api_trace_tool(entry: dict, name: object, status: object, *, registration: bool = False) -> None:
+    tools = entry["tools"]
+    if len(tools) < _API_TRACE_MAX_TOOLS:
+        tools.append({"name": str(name or "tool")[:80], "status": int(status or 0), "registration": registration})
+
 def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]:
     """Minimal tool loop for API providers, including workflow decision kickoff."""
     run.setdefault("register_errors", [])
@@ -1583,9 +1602,11 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     tool_name, tool_desc, tool_schema, True,
                 )
             run["model_last_http_status"] = 200
+            trace = _api_trace_turn(run, turn, model_status=200, response_text=bool(reply_text))
         except urllib.error.HTTPError as exc:
             model_call_failed = True
             run["model_last_http_status"] = exc.code
+            _api_trace_turn(run, turn, model_status=exc.code)["disposition"] = "model_http_error"
             # An attempted first request is still a consumed turn.  Record it before
             # returning because the shared post-loop finalizer is intentionally skipped
             # for the immediate API-error contract.
@@ -1597,6 +1618,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         except Exception as exc:
             model_call_failed = True
             run["model_last_http_status"] = 0
+            _api_trace_turn(run, turn, model_status=0)["disposition"] = "model_transport_error"
             # Keep the same attempted-turn accounting for a first transport/parse error.
             if turn == 1:
                 run["api_turns_used"] = turn
@@ -1615,7 +1637,9 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             # indistinguishable from no tool call and must enter the miss/nudge path.
             tool_calls = [call for call in tool_calls if (call.get("name") or tool_name) == tool_name]
         run["tool_calls_received"] = run.get("tool_calls_received", 0) + len(tool_calls)
+        trace["received"] = len(tool_calls)
         if not tool_calls:
+            trace["disposition"] = "nudge" if run["tool_call_misses"] < API_MAX_TOOL_NUDGES else "no_tool"
             run["tool_call_misses"] += 1
             if run["tool_call_misses"] <= API_MAX_TOOL_NUDGES:
                 conversation.append({
@@ -1646,6 +1670,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     else:
                         api_server_tools.validate(spec["schema"], tool_input)
                     call["input"] = tool_input
+                    trace["valid"] += 1
                     validation_errors.append(None)
                 except api_server_tools.ToolError as exc:
                     validation_errors.append(exc)
@@ -1663,6 +1688,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 if call["name"] == _REGISTER_TOOL_NAME:
                     if completion_call is None:
                         completion_call = call
+                        trace["completion_selected"] = True
                         # 0505 T0006 (DB0005 2): validated and about to be dispatched to the
                         # register handler below (_inbox_register) -- counted here, at the
                         # ONE call that survives the duplicate-register rejection just below.
@@ -1704,10 +1730,13 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     run["last_tool_error"] = (
                         None if 200 <= _status < 300 else _registration_error_summary(resp)[:500]
                     )
+                trace["dispatched"] += 1
+                _api_trace_tool(trace, call["name"], _status)
                 conversation.append(_tool_result_msg(
                     kind, call, json.dumps(resp, ensure_ascii=False)[:16000]
                 ))
             if completion_call is None:
+                trace["disposition"] = "direct_tools_only"
                 continue
             tool_call = completion_call
         else:
@@ -1817,10 +1846,15 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             ))
             continue
 
+        trace["register_attempted"] = True
         status, resp = _inbox_register(run, current_token, tool_call["input"])
+        trace["dispatched"] += 1
+        _api_trace_tool(trace, "register_document", status, registration=True)
         run["last_tool_name"] = "inbox_register"
         run["last_tool_status"] = status
         if 200 <= status < 300:
+            trace["register_succeeded"] = True
+            trace["disposition"] = "registered"
             run["last_tool_error"] = None
             registered += 1
             next_token = resp.get("next_token")
@@ -1838,6 +1872,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             if run["mode"] == "single" or registered >= run["docs_target"] or not next_token:
                 break
         else:
+            trace["disposition"] = "register_failed"
             reason = _registration_error_summary(resp)
             run["last_tool_error"] = reason[:500]
             if not _absorb_binding_failure(run, resp, turn):
@@ -3258,6 +3293,7 @@ def _persist_run_record(run: dict) -> None:
             "model_last_http_status": run.get("model_last_http_status"),
             "tool_calls_received": run.get("tool_calls_received"),
             "tool_calls_executed": run.get("tool_calls_executed"),
+            "api_turn_trace": list(run.get("api_turn_trace") or []),
             "created_at": stamp,
             "updated_at": stamp,
         })
@@ -3474,6 +3510,7 @@ def finished_payload(run: dict) -> dict:
         "model_last_http_status": run.get("model_last_http_status"),
         "tool_calls_received": run.get("tool_calls_received"),
         "tool_calls_executed": run.get("tool_calls_executed"),
+        "api_turn_trace": list(run.get("api_turn_trace") or []),
         "source_dirty": run["source_dirty"],
         # 0446 T0016 §3-4: the live half of the restart pair. `source_dirty_files` keeps its
         # existing conditional place at the bottom of this function.

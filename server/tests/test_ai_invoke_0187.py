@@ -450,6 +450,51 @@ class TestRegistrationDiagnostics:
         assert run["model_last_http_status"] == 200
         assert run["tool_calls_received"] == 1
         assert run["tool_calls_executed"] == 1
+        assert run["api_turn_trace"] == [{
+            "turn": 1, "model_status": 200, "response_text": True,
+            "received": 1, "valid": 0, "dispatched": 1,
+            "completion_selected": False, "register_attempted": True,
+            "register_succeeded": True,
+            "tools": [{"name": "register_document", "status": 201, "registration": True}],
+            "disposition": "registered",
+        }]
+
+    def test_direct_tools_only_turn_reproduces_oracle_mismatch_trace(self, monkeypatch, fake_env):
+        calls = 0
+        monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda *_: "key")
+        monkeypatch.setattr(svc.api_server_tools, "definitions_for_run", lambda _run: [{
+            "name": "run_test", "schema": {"type": "object"},
+        }])
+        monkeypatch.setattr(svc.api_server_tools, "run_test", lambda *_: (200, {"ok": True}))
+
+        def model(*_args):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise RuntimeError("model closed after direct tool")
+            tool = {"id": "tc-direct", "name": "run_test", "input": {}}
+            return "worked", tool, {"role": "assistant", "content": "worked", "tool_calls": []}
+
+        monkeypatch.setattr(svc, "_call_openai", model)
+        monkeypatch.setattr(svc, "_inbox_register", lambda *_: pytest.fail("direct tool must not register"))
+        run = _registration_api_run()
+        run.update({
+            "doc_ref": "flowgate.default.0187.0001-B", "group_id": "flowgate.default.0187",
+            "baseline_seq": 4, "end_reason": "exited",
+        })
+
+        assert svc._api_execute(_provider(exec_type="api", kind="openai"), "prompt", run) == ("started_ok", None)
+        svc._judge_hop(run)
+
+        first_turn = run["api_turn_trace"][0]
+        assert first_turn["disposition"] == "direct_tools_only"
+        assert first_turn["completion_selected"] is False
+        assert first_turn["register_attempted"] is False
+        assert first_turn["tools"] == [{"name": "run_test", "status": 200, "registration": False}]
+        assert run["register_errors"] == []
+        assert run["tool_call_misses"] == 0
+        assert run["turn_limit_exhausted"] is False
+        assert run["oracle_mismatch"] is True
 
     def test_missing_tool_is_nudged_twice_then_registration_succeeds(self, monkeypatch):
         calls = []

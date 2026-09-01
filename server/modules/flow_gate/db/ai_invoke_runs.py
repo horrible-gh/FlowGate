@@ -87,13 +87,13 @@ _BOUND_COLUMNS = (
     "operator_api_base", "transport_api_base",
     "last_tool_name", "last_tool_status", "last_tool_error",
     "api_turns_used", "model_http_calls", "model_last_http_status",
-    "tool_calls_received", "tool_calls_executed",
+    "tool_calls_received", "tool_calls_executed", "api_turn_trace",
     "created_at", "updated_at",
 )
 _STATUS_INSERT_AT = 5  # after (run_id, group_id, project_id, doc_ref, mode)
 
 _ARRAY_FIELDS = ("reached_doc_ids", "fallback_history", "register_errors",
-                 "auto_handled_item_seqs", "source_dirty_files")
+                 "auto_handled_item_seqs", "source_dirty_files", "api_turn_trace")
 _BOOL_FIELDS = ("resumable", "turn_limit_exhausted", "oracle_mismatch",
                 "continuation_instruction_mode_fallback_applied",
                 "prompt_common_default_applied", "fallback_allowed")
@@ -118,6 +118,12 @@ def _dump_array(field: str, value: Any) -> Optional[str]:
         # paths and keeps the first 20, so the 20 a reader gets back have to be that same
         # first 20. Taking the tail here would answer a different question than the run did.
         return json.dumps(items[:_SOURCE_DIRTY_FILES_MAX_ITEMS], ensure_ascii=False)
+
+    if field == "api_turn_trace":
+        # The worker has already bounded this to its newest 20 complete turn entries.  Do
+        # not apply the history byte cap below: its {reason: truncated} marker is not a
+        # trace entry and would break consumers that read every entry's trace fields.
+        return json.dumps(items[-20:], ensure_ascii=False)
 
     # fallback_history / register_errors: item cap, then byte cap, oldest dropped
     # first, with the drop count recorded at the head so a truncated history reads
@@ -267,6 +273,7 @@ def upsert(row: dict[str, Any]) -> None:
         "model_last_http_status": row.get("model_last_http_status"),
         "tool_calls_received": row.get("tool_calls_received"),
         "tool_calls_executed": row.get("tool_calls_executed"),
+        "api_turn_trace": _dump_array("api_turn_trace", row.get("api_turn_trace")),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }

@@ -786,6 +786,7 @@ def _run_detail_from_row(row: dict) -> dict:
         "model_last_http_status": row.get("model_last_http_status"),
         "tool_calls_received": row.get("tool_calls_received"),
         "tool_calls_executed": row.get("tool_calls_executed"),
+        "api_turn_trace": row.get("api_turn_trace") or [],
         "source_dirty": row.get("source_dirty"),
         "scratch_retained": row.get("scratch_retained"),
         "duration_ms": row.get("duration_ms"),
