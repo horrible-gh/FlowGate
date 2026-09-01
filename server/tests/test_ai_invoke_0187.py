@@ -16,6 +16,7 @@ import os
 import sys
 import threading
 import time
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -426,6 +427,30 @@ def _registration_api_run() -> dict:
 
 
 class TestRegistrationDiagnostics:
+    def test_first_valid_tool_call_ends_with_consistent_api_diagnostics(self, monkeypatch):
+        handler_calls = []
+        monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda *_: "key")
+        tool = {"id": "tc1", "name": "register_document", "input": {
+            "doc_type": "TR", "title": "done", "content": "body",
+        }}
+        monkeypatch.setattr(svc, "_call_openai", lambda *_: (
+            "registering", tool, {"role": "assistant", "content": "registering", "tool_calls": []},
+        ))
+        monkeypatch.setattr(svc, "_inbox_register", lambda *args: (
+            handler_calls.append(args) or (201, {"ok": True, "doc_id": "d"})
+        ))
+
+        run = _registration_api_run()
+        assert svc._api_execute(_provider(exec_type="api", kind="openai"), "prompt", run) == ("started_ok", None)
+
+        assert len(handler_calls) == 1
+        assert run["turn_limit_exhausted"] is False
+        assert run["api_turns_used"] == 1
+        assert run["model_http_calls"] == 1
+        assert run["model_last_http_status"] == 200
+        assert run["tool_calls_received"] == 1
+        assert run["tool_calls_executed"] == 1
+
     def test_missing_tool_is_nudged_twice_then_registration_succeeds(self, monkeypatch):
         calls = []
         monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda scope, pid: "key")
@@ -467,6 +492,41 @@ class TestRegistrationDiagnostics:
         assert len(run["register_errors"]) == svc.API_MAX_TURNS_PER_DOC
         assert run["register_errors"][0] == {"status": 409, "reason": "dup_body", "turn": 1}
         assert run["turn_limit_exhausted"] is True
+        assert run["api_turns_used"] == svc.API_MAX_TURNS_PER_DOC
+        assert run["model_http_calls"] == svc.API_MAX_TURNS_PER_DOC
+        assert run["model_last_http_status"] == 200
+
+    def test_model_failure_on_final_turn_is_not_turn_limit_exhaustion(self, monkeypatch):
+        monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda *_: "key")
+        monkeypatch.setattr(svc, "API_MAX_TURNS_PER_DOC", 2)
+        attempts = 0
+
+        def model(*_args):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                return "no tool", None, {"role": "assistant", "content": "no tool"}
+            raise urllib.error.HTTPError("https://api.example", 503, "unavailable", None, None)
+
+        monkeypatch.setattr(svc, "_call_openai", model)
+        run = _registration_api_run()
+        assert svc._api_execute(_provider(exec_type="api", kind="openai"), "prompt", run) == ("started_ok", None)
+
+        assert run["turn_limit_exhausted"] is False
+        assert run["api_turns_used"] == 2
+        assert run["model_http_calls"] == 2
+        assert run["model_last_http_status"] == 503
+
+    def test_first_model_transport_failure_records_attempted_turn(self, monkeypatch):
+        monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda *_: "key")
+        monkeypatch.setattr(svc, "_call_openai", lambda *_: (_ for _ in ()).throw(RuntimeError("offline")))
+        run = _registration_api_run()
+
+        assert svc._api_execute(_provider(exec_type="api", kind="openai"), "prompt", run) == ("spawn_failed", "offline")
+        assert run["turn_limit_exhausted"] is False
+        assert run["api_turns_used"] == 1
+        assert run["model_http_calls"] == 1
+        assert run["model_last_http_status"] == 0
 
 
 # ── Workflow-decision API loop (group 0223) ──────────────────────────────────

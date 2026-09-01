@@ -759,6 +759,8 @@ def _run_detail_from_row(row: dict) -> dict:
         "last_message_excerpt": row.get("last_message_excerpt"),
         "provider_id": row.get("provider_id"),
         "provider_name": row.get("provider_name"),
+        "selected_provider_source": row.get("selected_provider_source"),
+        "fallback_allowed": bool(row.get("fallback_allowed")),
         "attempt_no": row.get("attempt_no"),
         "fallback_history": row.get("fallback_history"),
         "register_errors": row.get("register_errors"),

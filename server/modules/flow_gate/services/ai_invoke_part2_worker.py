@@ -1526,6 +1526,10 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             ),
         })
     turn = 0
+    # Only a natural loop-boundary exit represents exhausted API turns. A model HTTP
+    # or transport failure can happen on the final numbered turn but has priority over
+    # the limit diagnosis.
+    model_call_failed = False
 
     while turn < max_turns:
         turn += 1
@@ -1580,14 +1584,22 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 )
             run["model_last_http_status"] = 200
         except urllib.error.HTTPError as exc:
+            model_call_failed = True
             run["model_last_http_status"] = exc.code
+            # An attempted first request is still a consumed turn.  Record it before
+            # returning because the shared post-loop finalizer is intentionally skipped
+            # for the immediate API-error contract.
             if turn == 1:
+                run["api_turns_used"] = turn
                 return "api_error", f"{exc.code} {exc.reason}"
             logger.warning("ai-invoke %s: api error after first turn: %s", run["run_id"], exc)
             break
         except Exception as exc:
+            model_call_failed = True
             run["model_last_http_status"] = 0
+            # Keep the same attempted-turn accounting for a first transport/parse error.
             if turn == 1:
+                run["api_turns_used"] = turn
                 return "spawn_failed", str(exc)[:500]
             logger.warning("ai-invoke %s: api transport error after first turn: %s", run["run_id"], exc)
             break
@@ -1851,6 +1863,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         and not goal_met
         and not run["cancel_event"].is_set()
         and not run.get("timed_out")
+        and not model_call_failed
     ):
         run["turn_limit_exhausted"] = True
 
@@ -3181,6 +3194,8 @@ def _persist_run_record(run: dict) -> None:
             "last_message_excerpt": excerpt(run.get("last_message")),
             "provider_id": run.get("provider_id"),
             "provider_name": (run.get("provider") or {}).get("name"),
+            "selected_provider_source": run.get("selected_provider_source"),
+            "fallback_allowed": bool(run.get("fallback_allowed")),
             "attempt_no": int(run.get("attempt_no") or 0),
             "attempts_used": int(run.get("attempts_used") or 0),
             "attempts_max": run.get("attempts_max"),
@@ -3436,6 +3451,8 @@ def finished_payload(run: dict) -> dict:
         "last_message": run["last_message"],
         "provider_id": run["provider_id"],
         "provider_name": (run.get("provider") or {}).get("name"),
+        "selected_provider_source": run.get("selected_provider_source"),
+        "fallback_allowed": bool(run.get("fallback_allowed")),
         "started_at": run.get("started_at"),
         "finished_at": run.get("finished_at"),
         "attempt_no": run["attempt_no"],
