@@ -137,8 +137,8 @@ class TestNoOutputDetailBranching:
         assert "turn limit" not in detail
         assert "tool not called" not in detail
 
-    def test_api_provider_fallback_to_generic(self):
-        """API provider falls back to generic form if no diagnostic matched."""
+    def test_api_provider_fallback_to_generic_failed(self):
+        """API provider shows 'failed' when exit_code is set but no diagnostic matched."""
         from modules.flow_gate.services.ai_invoke_part2_worker import _no_output_detail
 
         run = _make_run(
@@ -147,8 +147,26 @@ class TestNoOutputDetailBranching:
         )
         detail = _no_output_detail(run)
 
-        # Should fall back to generic form
+        # Should show 'failed' status
+        assert "failed:" in detail
         assert "worker exited 2" in detail
+        assert "without registering a document" in detail
+
+    def test_api_provider_fallback_to_completed_on_exit_none(self):
+        """API provider shows 'completed' when exit_code is None and no diagnostic matched."""
+        from modules.flow_gate.services.ai_invoke_part2_worker import _no_output_detail
+
+        run = _make_run(
+            exec_type="api",
+            exit_code=None
+        )
+        detail = _no_output_detail(run)
+
+        # Should show 'completed' status for exit None case
+        assert "completed:" in detail
+        assert "no output to register" in detail
+        # Should NOT include generic "worker exited" form
+        assert "worker exited" not in detail
 
     def test_api_provider_no_provider_field(self):
         """Gracefully handle missing provider field."""

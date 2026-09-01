@@ -618,6 +618,9 @@ def _no_output_detail(run: dict) -> Optional[str]:
     0505 T0009: API providers branch to diagnosis by category (exit_code / register_errors /
     tool_call_misses / turn_limit_exhausted) instead of generic "worker exited"; CLI providers
     keep the generic form for backward compat.
+
+    0505 T0010: API provider exit None now shows status by category (completed/failed) rather
+    than generic "worker exited None".
     """
     provider = run.get("provider") or {}
     is_api_provider = provider.get("exec_type") == "api"
@@ -643,15 +646,19 @@ def _no_output_detail(run: dict) -> Optional[str]:
         if run.get("oracle_mismatch"):
             return "worker stopped: oracle mismatch detected"
 
-        # Fallback to generic form if no diagnostic category matched
-        head = (
-            f"worker exited {run.get('exit_code')} after {_attempt_elapsed_sec(run)}s "
-            "without registering a document"
-        )
-        message = excerpt(run.get("last_message"))
-        return head if not message else f"{head}; last message: {message}"
+        # Fallback: check exit status to determine completed vs failed
+        exit_code = run.get("exit_code")
+        if exit_code is None:
+            return "completed: no output to register"
+        else:
+            head = (
+                f"failed: worker exited {exit_code} after {_attempt_elapsed_sec(run)}s "
+                "without registering a document"
+            )
+            message = excerpt(run.get("last_message"))
+            return head if not message else f"{head}; last message: {message}"
     else:
-        # CLI provider: keep generic form
+        # CLI provider: keep generic form for backward compat
         head = (
             f"worker exited {run.get('exit_code')} after {_attempt_elapsed_sec(run)}s "
             "without registering a document"
