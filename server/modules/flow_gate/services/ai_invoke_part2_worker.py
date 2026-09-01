@@ -654,6 +654,11 @@ def _reset_attempt_state(run: dict) -> None:
     run["register_errors"] = []
     run["tool_call_misses"] = 0
     run["turn_limit_exhausted"] = False
+    # 0505 T0006 (DB0005 3.3): "this attempt's last mediated self-HTTP call", not a
+    # cross-attempt history -- reset alongside the three siblings above.
+    run["last_tool_name"] = None
+    run["last_tool_status"] = None
+    run["last_tool_error"] = None
     run["attempt_started_mono"] = time.monotonic()
     # 0446 T0014 §4-1: the previous attempt's watchdog verdict is not this one's. The
     # no-progress window is re-anchored when the next watchdog starts; the absolute
@@ -829,6 +834,37 @@ def _resolve_agent_api_base(operator_api_base: str) -> str:
             raise ValueError("FLOWGATE_PORT must be between 1 and 65535")
     path = parts.path.rstrip("/")
     return urlunsplit((parts.scheme, f"127.0.0.1:{port}", path, parts.query, ""))
+
+def _sanitize_diagnostic_base(url: Optional[str]) -> Optional[str]:
+    """Strip a live `api_base_url` down to a safe diagnostic snapshot (DB0005 2, 3.3, 5-5).
+
+    `operator_api_base`/`transport_api_base` store what this returns, never the raw
+    value: run["api_base_url"] is browser/operator-supplied and unvalidated end to end
+    (ai_invoke_routes._operator_facing_api_base -> token_routes._build_api_base ->
+    str(request.base_url) -> ai_invoke_service.start_run(api_base_url=...)), and
+    _resolve_agent_api_base's userinfo check only fires on its FLOWGATE_AGENT_API_BASE
+    branch -- CLI providers, never this API path. Anything that fails to parse as an
+    absolute http(s) URL, has no hostname, or carries an unparsable port becomes None
+    outright rather than a partially-sanitized value: a NULL diagnostic column is
+    honest about "could not be read safely"; a best-effort fragment is not.
+    """
+    if not url:
+        return None
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return None
+    try:
+        port = parts.port
+    except ValueError:
+        return None
+    netloc = parts.hostname
+    if ":" in netloc:
+        netloc = f"[{netloc}]"
+    if port is not None:
+        netloc += f":{port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
 
 def _canonicalize_cli_prompt(prompt: str, operator_api_base: str) -> tuple[str, str]:
     """Rewrite only exact operator-base occurrences and return the exported base."""
@@ -1361,9 +1397,19 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     last_text: Optional[str] = None
     conversation: list[dict] = [{"role": "user", "content": _api_help_prompt(prompt)}]
     if is_chat:
-        chat_context = _conversation_context(run, current_token)
-        if chat_context is None:
+        # 0505 T0006 (DB0005 3.3): the FIRST self-HTTP this hop may open. Its status/
+        # error land in the same three columns as the other five mediated calls, and a
+        # failure here ends the hop before the turn loop -- but the same `run` object
+        # carries the three fields into persist_run_record/finished_payload regardless.
+        status, chat_context = _conversation_context(run, current_token)
+        run["last_tool_name"] = "conversation_context"
+        run["last_tool_status"] = status
+        if run.get("transport_api_base") is None:
+            run["transport_api_base"] = _sanitize_diagnostic_base(run.get("api_base_url"))
+        if not (200 <= status < 300 and isinstance(chat_context, dict)):
+            run["last_tool_error"] = _registration_error_summary(chat_context or {})[:500]
             return "api_error", "conversation_context_unavailable"
+        run["last_tool_error"] = None
         run["_chat_based_on_seq"] = int(chat_context.get("head_seq") or 0)
         conversation.append({
             "role": "user",
@@ -1406,6 +1452,15 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             except api_server_tools.ToolError as exc:
                 return "api_error", exc.reason
             tool_name, tool_desc, tool_schema = tool_specs, "", {}
+        # 0505 T0006 (DB0005 2/3.3): counted whether the call below succeeds, raises, or
+        # times out -- "how many model calls did this hop make" is the question, not
+        # "how many succeeded". model_last_http_status uses the same 0/exc.code sentinel
+        # convention as last_tool_status; the adapters below do not surface the real
+        # success-path status without widening _http_post_json's contract (shared with
+        # _call_openai/_call_anthropic and monkeypatched directly by existing tests as a
+        # dict-returning function) -- OpenAI/Anthropic-compatible chat completions are
+        # 200 on any non-raising return, so that is what a success is recorded as.
+        run["model_http_calls"] = run.get("model_http_calls", 0) + 1
         try:
             if kind == "claude":
                 reply_text, tool_call, assistant_msg = _call_anthropic(
@@ -1417,12 +1472,15 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     base_url, model, key, conversation, call_timeout,
                     tool_name, tool_desc, tool_schema, is_chat,
                 )
+            run["model_last_http_status"] = 200
         except urllib.error.HTTPError as exc:
+            run["model_last_http_status"] = exc.code
             if turn == 1:
                 return "api_error", f"{exc.code} {exc.reason}"
             logger.warning("ai-invoke %s: api error after first turn: %s", run["run_id"], exc)
             break
         except Exception as exc:
+            run["model_last_http_status"] = 0
             if turn == 1:
                 return "spawn_failed", str(exc)[:500]
             logger.warning("ai-invoke %s: api transport error after first turn: %s", run["run_id"], exc)
@@ -1432,6 +1490,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         if reply_text:
             last_text = reply_text
         tool_calls = tool_call if isinstance(tool_call, list) else ([tool_call] if tool_call else [])
+        run["tool_calls_received"] = run.get("tool_calls_received", 0) + len(tool_calls)
         if not tool_calls:
             run["tool_call_misses"] += 1
             if run["tool_call_misses"] <= API_MAX_TOOL_NUDGES:
@@ -1480,6 +1539,10 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 if call["name"] == _REGISTER_TOOL_NAME:
                     if completion_call is None:
                         completion_call = call
+                        # 0505 T0006 (DB0005 2): validated and about to be dispatched to the
+                        # register handler below (_inbox_register) -- counted here, at the
+                        # ONE call that survives the duplicate-register rejection just below.
+                        run["tool_calls_executed"] = run.get("tool_calls_executed", 0) + 1
                     else:
                         duplicate = api_server_tools.ToolError(422, "invalid_tool_call")
                         _status, resp = api_server_tools.error_payload(call["name"], duplicate)
@@ -1487,6 +1550,9 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                             kind, call, json.dumps(resp, ensure_ascii=False)[:16000]
                         ))
                     continue
+                # 0505 T0006 (DB0005 2): sent to a real handler regardless of what it
+                # returns -- "executed" counts dispatch, not success.
+                run["tool_calls_executed"] = run.get("tool_calls_executed", 0) + 1
                 try:
                     if call["name"] in api_server_tools.SOURCE_OPS:
                         _status, resp = api_server_tools.source_call(run, current_token, call["name"], call["input"])
@@ -1503,6 +1569,17 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                         _status, resp = _api_create_question(run, current_token, call["input"])
                 except api_server_tools.ToolError as exc:
                     _status, resp = api_server_tools.error_payload(call["name"], exc)
+                # 0505 T0006 (DB0005 3.3): read_document/create_question both dispatch
+                # through _api_bound_request -- one self-HTTP call point, one name. The
+                # other three branches above (SOURCE_OPS, run_test, read_help) are direct
+                # in-process handlers, never self-HTTP, and stay out of last_tool_name
+                # entirely (DB0005 2 scope note).
+                if call["name"] not in api_server_tools.SOURCE_OPS and call["name"] not in ("run_test", "read_help"):
+                    run["last_tool_name"] = "api_bound_request"
+                    run["last_tool_status"] = _status
+                    run["last_tool_error"] = (
+                        None if 200 <= _status < 300 else _registration_error_summary(resp)[:500]
+                    )
                 conversation.append(_tool_result_msg(
                     kind, call, json.dumps(resp, ensure_ascii=False)[:16000]
                 ))
@@ -1510,10 +1587,18 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 continue
             tool_call = completion_call
         else:
+            # 0505 T0006 (DB0005 2): the direct-dispatch scopes (register/workflow_decide/
+            # resolve_conflict/chat) have no separate validation pass -- the model's tool
+            # call is constrained by a forced single-tool schema, so reaching this branch
+            # at all means it is about to be sent to that scope's handler below.
+            run["tool_calls_executed"] = run.get("tool_calls_executed", 0) + 1
             tool_call = tool_calls[0]
 
         if workflow_pending:
             status, resp = _workflow_decide(run, current_token, tool_call["input"])
+            run["last_tool_name"] = "workflow_decide"
+            run["last_tool_status"] = status
+            run["last_tool_error"] = None if 200 <= status < 300 else _registration_error_summary(resp)[:500]
             if 200 <= status < 300:
                 workflow_pending = False
                 next_token = resp.get("next_token")
@@ -1552,6 +1637,9 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
 
         if conflict_pending:
             status, resp = _resolve_conflict(run, current_token, tool_call["input"])
+            run["last_tool_name"] = "resolve_conflict"
+            run["last_tool_status"] = status
+            run["last_tool_error"] = None if 200 <= status < 300 else _registration_error_summary(resp)[:500]
             if 200 <= status < 300:
                 conversation.append(_tool_result_msg(kind, tool_call, json.dumps(resp, ensure_ascii=False)[:4000]))
                 break
@@ -1563,10 +1651,14 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
 
         if is_chat:
             status, resp = _conversation_turn_register(run, current_token, tool_call["input"])
+            run["last_tool_name"] = "conversation_turn_register"
+            run["last_tool_status"] = status
             if 200 <= status < 300:
+                run["last_tool_error"] = None
                 registered += 1
                 break
             reason = _registration_error_summary(resp)
+            run["last_tool_error"] = reason[:500]
             run["register_errors"].append({"status": status, "reason": reason, "turn": turn})
             conversation.append(_tool_result_msg(
                 kind, tool_call,
@@ -1575,7 +1667,10 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             continue
 
         status, resp = _inbox_register(run, current_token, tool_call["input"])
+        run["last_tool_name"] = "inbox_register"
+        run["last_tool_status"] = status
         if 200 <= status < 300:
+            run["last_tool_error"] = None
             registered += 1
             next_token = resp.get("next_token")
             next_mention = resp.get("next_mention")
@@ -1593,6 +1688,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 break
         else:
             reason = _registration_error_summary(resp)
+            run["last_tool_error"] = reason[:500]
             if not _absorb_binding_failure(run, resp, turn):
                 run["register_errors"].append({
                     "status": status,
@@ -1619,6 +1715,9 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     ):
         run["turn_limit_exhausted"] = True
 
+    # 0505 T0006 (DB0005 2): the loop's own exit turn -- set once, here, regardless of
+    # which branch above broke out of it.
+    run["api_turns_used"] = turn
     run["exit_code"] = None
     run["last_message"] = _truncate_front(last_text)
     run["last_message_received"] = bool(last_text)
@@ -1676,6 +1775,11 @@ def _tool_result_msg(kind: str, tool_call: dict, text: str) -> dict:
     return {"role": "tool", "tool_call_id": tool_call["id"], "content": text}
 
 def _resolve_conflict(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
+    # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
+    # FIRST in this hop wins transport_api_base; already-set (e.g. by the chat
+    # prefetch) stays untouched.
+    if run.get("transport_api_base") is None:
+        run["transport_api_base"] = _sanitize_diagnostic_base(run.get("api_base_url"))
     body = {
         "files": tool_input.get("files") or [],
         "complete": bool(tool_input.get("complete")),
@@ -1771,6 +1875,10 @@ def _call_openai(
     return message.get("content"), call_value, message
 
 def _workflow_decide(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
+    # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
+    # FIRST in this hop wins transport_api_base; already-set stays untouched.
+    if run.get("transport_api_base") is None:
+        run["transport_api_base"] = _sanitize_diagnostic_base(run.get("api_base_url"))
     body = {
         "doc_class": tool_input.get("doc_class") or "standard",
         "sequence": tool_input.get("sequence") or [],
@@ -1795,8 +1903,15 @@ def _workflow_decide(run: dict, raw_token: str, tool_input: dict) -> tuple[int, 
     except Exception as exc:
         return 0, {"error": str(exc)}
 
-def _conversation_context(run: dict, raw_token: str) -> Optional[dict]:
-    """Fetch the unread conversation that an API model cannot retrieve itself."""
+def _conversation_context(run: dict, raw_token: str) -> tuple[int, dict]:
+    """Fetch the unread conversation that an API model cannot retrieve itself.
+
+    0505 T0006 (DB0005 3.3): returns (status, body) like its five self-HTTP siblings
+    below, not a bare Optional[dict]. The old contract folded every failure -- HTTP
+    error, transport error, a non-dict body -- into a single None, so a hop that died
+    here left no status and no reason behind it, only the caller. This is the FIRST
+    self-HTTP a chat hop opens, so that silence was the whole diagnostic gap.
+    """
     api_base = (run.get("api_base_url") or "").rstrip("/")
     req = urllib.request.Request(
         f"{api_base}/conversation/{run['doc_ref']}/turns?after_seq=0&include_head=1",
@@ -1805,14 +1920,21 @@ def _conversation_context(run: dict, raw_token: str) -> Optional[dict]:
     )
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-            return payload if isinstance(payload, dict) else None
-    except Exception:
-        logger.warning("ai-invoke %s: conversation context fetch failed", run["run_id"], exc_info=True)
-        return None
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        try:
+            return exc.code, json.loads(exc.read().decode("utf-8"))
+        except Exception:
+            return exc.code, {"error": str(exc)}
+    except Exception as exc:
+        return 0, {"error": str(exc)}
 
 def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     """Append an API-provider reply through the token-bound conversation endpoint."""
+    # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
+    # FIRST in this hop wins transport_api_base; already-set stays untouched.
+    if run.get("transport_api_base") is None:
+        run["transport_api_base"] = _sanitize_diagnostic_base(run.get("api_base_url"))
     api_base = (run.get("api_base_url") or "").rstrip("/")
     body = {
         "body": tool_input.get("body") or "",
@@ -1842,6 +1964,10 @@ def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> 
 
 def _api_bound_request(run: dict, raw_token: str, path: str, method: str = "GET", body: Optional[dict] = None) -> tuple[int, dict]:
     """Call a document service through its normal token gate with only server-owned routing."""
+    # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
+    # FIRST in this hop wins transport_api_base; already-set stays untouched.
+    if run.get("transport_api_base") is None:
+        run["transport_api_base"] = _sanitize_diagnostic_base(run.get("api_base_url"))
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(
         f"{run['api_base_url']}{path}", data=data,
@@ -2053,6 +2179,12 @@ def _inbox_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, d
         if rejected.record is not None:
             run.setdefault("register_errors", []).append(rejected.record)
         return int(rejected.response.get("http_status") or 403), rejected.response
+    # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
+    # FIRST in this hop wins transport_api_base; already-set stays untouched. Placed
+    # after the binding check above, not at function entry -- a binding rejection
+    # never opens a socket, so it must not claim the transport base either.
+    if run.get("transport_api_base") is None:
+        run["transport_api_base"] = _sanitize_diagnostic_base(run.get("api_base_url"))
     body = _register_envelope(context, run, tool_input)
     req = urllib.request.Request(
         f"{run['api_base_url']}/inbox",
@@ -2952,10 +3084,54 @@ def _persist_run_record(run: dict) -> None:
             "stdout_tail": run.get("stdout_tail"),
             "stderr_tail": run.get("stderr_tail"),
             "source_dirty_files": list(run.get("source_dirty_files") or []),
+            # -- 0505 T0006 (DB0005 3.3) -- API provider server-mediated self-HTTP
+            # diagnostics. Read with .get() like the exit diagnostics above: a CLI run,
+            # a spawn failure, or a row from before migration 095 has none of this and
+            # stores NULL, not zero.
+            "operator_api_base": run.get("operator_api_base"),
+            "transport_api_base": run.get("transport_api_base"),
+            "last_tool_name": run.get("last_tool_name"),
+            "last_tool_status": run.get("last_tool_status"),
+            "last_tool_error": run.get("last_tool_error"),
+            "api_turns_used": run.get("api_turns_used"),
+            "model_http_calls": run.get("model_http_calls"),
+            "model_last_http_status": run.get("model_last_http_status"),
+            "tool_calls_received": run.get("tool_calls_received"),
+            "tool_calls_executed": run.get("tool_calls_executed"),
             "created_at": stamp,
             "updated_at": stamp,
         })
         db_runs.maybe_purge()
+        # 0505 T0006 (DB0005 3.3 / NR0003 §18 P0-1): a structured snapshot of the same
+        # diagnostic values just persisted, so a hop that leaves an unread run detail
+        # behind still leaves this in the process log. `last_tool_error` goes through
+        # `_redact_secrets` here -- a log line is a "shown elsewhere" surface exactly
+        # like `_no_output_detail`'s (DB0005 §2 masking) -- while the DB row above keeps
+        # the raw text (same trust boundary as `register_errors.reason`).
+        logger.info(
+            "ai-invoke %s: diagnostics register_errors=%d tool_call_misses=%s "
+            "turn_limit_exhausted=%s oracle_mismatch=%s last_tool_name=%s "
+            "last_tool_status=%s api_turns_used=%s model_http_calls=%s "
+            "model_last_http_status=%s tool_calls_received=%s tool_calls_executed=%s "
+            "operator_api_base=%s transport_api_base=%s last_tool_error=%s",
+            run["run_id"],
+            len(run.get("register_errors") or []),
+            run.get("tool_call_misses"),
+            run.get("turn_limit_exhausted"),
+            run.get("oracle_mismatch"),
+            run.get("last_tool_name"),
+            run.get("last_tool_status"),
+            run.get("api_turns_used"),
+            run.get("model_http_calls"),
+            run.get("model_last_http_status"),
+            run.get("tool_calls_received"),
+            run.get("tool_calls_executed"),
+            run.get("operator_api_base"),
+            run.get("transport_api_base"),
+            _redact_secrets(
+                run.get("last_tool_error"), _known_run_raw_tokens(run), _known_run_prompts(run)
+            ),
+        )
         _persist_register_context_failures(run, stamp)
     except Exception:
         # L0007 §5: a storage failure must never turn a finished hop into a crashed one.
@@ -3123,6 +3299,19 @@ def finished_payload(run: dict) -> dict:
         "tool_call_misses": run.get("tool_call_misses", 0),
         "turn_limit_exhausted": bool(run.get("turn_limit_exhausted")),
         "oracle_mismatch": bool(run.get("oracle_mismatch")),
+        # 0505 T0006 (DB0005 3.3): same names as the durable row above, same names
+        # _run_detail_from_row uses to restore a finished run after a restart -- one
+        # path renders both a live finish and a persisted one.
+        "operator_api_base": run.get("operator_api_base"),
+        "transport_api_base": run.get("transport_api_base"),
+        "last_tool_name": run.get("last_tool_name"),
+        "last_tool_status": run.get("last_tool_status"),
+        "last_tool_error": run.get("last_tool_error"),
+        "api_turns_used": run.get("api_turns_used"),
+        "model_http_calls": run.get("model_http_calls"),
+        "model_last_http_status": run.get("model_last_http_status"),
+        "tool_calls_received": run.get("tool_calls_received"),
+        "tool_calls_executed": run.get("tool_calls_executed"),
         "source_dirty": run["source_dirty"],
         # 0446 T0016 §3-4: the live half of the restart pair. `source_dirty_files` keeps its
         # existing conditional place at the bottom of this function.

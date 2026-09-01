@@ -771,6 +771,19 @@ def _run_detail_from_row(row: dict) -> dict:
         "tool_call_misses": row.get("tool_call_misses"),
         "turn_limit_exhausted": bool(row.get("turn_limit_exhausted")),
         "oracle_mismatch": bool(row.get("oracle_mismatch")),
+        # 0505 T0006 (DB0005 3.3): same names, same restart-half contract as the four
+        # exit diagnostics below -- a run from before migration 095 has none of this
+        # and reads back as None on every one of these ten keys.
+        "operator_api_base": row.get("operator_api_base"),
+        "transport_api_base": row.get("transport_api_base"),
+        "last_tool_name": row.get("last_tool_name"),
+        "last_tool_status": row.get("last_tool_status"),
+        "last_tool_error": row.get("last_tool_error"),
+        "api_turns_used": row.get("api_turns_used"),
+        "model_http_calls": row.get("model_http_calls"),
+        "model_last_http_status": row.get("model_last_http_status"),
+        "tool_calls_received": row.get("tool_calls_received"),
+        "tool_calls_executed": row.get("tool_calls_executed"),
         "source_dirty": row.get("source_dirty"),
         "scratch_retained": row.get("scratch_retained"),
         "duration_ms": row.get("duration_ms"),
@@ -2007,6 +2020,20 @@ def start_run(
         "dirty_baseline": _git_status_paths(source_root),
         "source_root": str(source_root) if source_root else None,
         "api_base_url": api_base_url,
+        # 0505 T0006 (DB0005 2/3.3): operator_api_base is a one-time sanitized snapshot
+        # of this same value, taken here at run start. transport_api_base starts empty
+        # -- it is filled once, by whichever of the six mediated self-HTTP calls opens
+        # first inside THIS hop (ai_invoke_part2_worker._sanitize_diagnostic_base).
+        "operator_api_base": _sanitize_diagnostic_base(api_base_url),
+        "transport_api_base": None,
+        "last_tool_name": None,
+        "last_tool_status": None,
+        "last_tool_error": None,
+        "api_turns_used": None,
+        "model_http_calls": 0,
+        "model_last_http_status": None,
+        "tool_calls_received": 0,
+        "tool_calls_executed": 0,
         "chain_source": chain_source,
         "selected_provider_source": selected_provider_source,
         "fallback_allowed": selected_provider_source == "project_default",

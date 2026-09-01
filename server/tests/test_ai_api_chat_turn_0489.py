@@ -31,10 +31,12 @@ def test_api_chat_uses_reply_tool_and_conversation_registration(monkeypatch, kin
     seen = {}
     monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda *_: "key")
     monkeypatch.setattr(svc, "_remaining_sec", lambda _run: 60)
-    monkeypatch.setattr(svc, "_conversation_context", lambda *_: {
+    # 0505 T0006 (DB0005 3.3): _conversation_context now returns (status, body) like its
+    # five self-HTTP siblings, not a bare dict.
+    monkeypatch.setattr(svc, "_conversation_context", lambda *_: (200, {
         "head_seq": 1,
         "turns": [{"seq": 1, "role": "user", "body": "are you speak korean?"}],
-    })
+    }))
 
     def fake_call(*args):
         seen["conversation"] = args[3]
@@ -58,13 +60,21 @@ def test_api_chat_uses_reply_tool_and_conversation_registration(monkeypatch, kin
 
 def test_chat_returns_context_unavailable_when_context_cannot_be_loaded(monkeypatch):
     monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda *_: "key")
-    monkeypatch.setattr(svc, "_conversation_context", lambda *_: None)
+    # 0505 T0006 (DB0005 3.3): _conversation_context now returns (status, body); a
+    # transport failure surfaces as (0, {"error": ...}) like its five self-HTTP siblings.
+    monkeypatch.setattr(svc, "_conversation_context", lambda *_: (0, {"error": "boom"}))
 
+    run = _run()
     assert svc._api_execute(
         {"id": "provider", "kind": "openai", "api_base_url": "https://api.example", "api_model": "test"},
         "prompt",
-        _run(),
+        run,
     ) == ("api_error", "conversation_context_unavailable")
+    # DB0005 3.3: the hop's only self-HTTP attempt still lands in the three diagnostic
+    # columns even though the hop itself ends before the turn loop.
+    assert run["last_tool_name"] == "conversation_context"
+    assert run["last_tool_status"] == 0
+    assert run["last_tool_error"] == "boom"
 
 
 def test_conversation_turn_request_binds_token_and_provider(monkeypatch):
