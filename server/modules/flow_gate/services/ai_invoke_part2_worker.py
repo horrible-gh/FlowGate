@@ -659,6 +659,10 @@ def _reset_attempt_state(run: dict) -> None:
     run["last_tool_name"] = None
     run["last_tool_status"] = None
     run["last_tool_error"] = None
+    # 0505 T0008: re-derive next attempt's transport base rather than trust a value
+    # cached from a prior attempt -- the recompute is cheap and this keeps the cache
+    # from ever outliving the per-attempt state it was read alongside.
+    run["_transport_api_base_resolved"] = None
     run["attempt_started_mono"] = time.monotonic()
     # 0446 T0014 §4-1: the previous attempt's watchdog verdict is not this one's. The
     # no-progress window is re-anchored when the next watchdog starts; the absolute
@@ -771,12 +775,16 @@ def _truncate_front(text: Optional[str], max_bytes: int = LAST_MESSAGE_MAX_BYTES
     return encoded[-max_bytes:].decode("utf-8", errors="replace")
 
 def _resolve_agent_api_base(operator_api_base: str) -> str:
-    """Return the canonical API base used only by external CLI providers.
+    """Compute the address this server can reach itself at.
 
-    The browser/operator origin remains in the stored run and in server-direct API
-    execution. A configured agent origin wins; otherwise the operator scheme and
-    explicit port are retained while the host becomes loopback. When the operator
-    origin has no explicit port, the trusted local ``FLOWGATE_PORT`` is used.
+    Shared by external CLI process launch and, since 0505 T0008, the API provider's
+    server-mediated self-HTTP (`_resolve_transport_api_base`) -- both ask the same
+    question, "what address can this server use to reach itself?", and now get the
+    same answer. The browser/operator origin remains in the stored run and in the
+    help text/prompts a person reads. A configured agent origin wins; otherwise the
+    operator scheme and explicit port are retained while the host becomes loopback.
+    When the operator origin has no explicit port, the trusted local
+    ``FLOWGATE_PORT`` is used.
     """
     from urllib.parse import urlsplit, urlunsplit
 
@@ -865,6 +873,34 @@ def _sanitize_diagnostic_base(url: Optional[str]) -> Optional[str]:
     if port is not None:
         netloc += f":{port}"
     return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
+
+def _resolve_transport_api_base(run: dict) -> str:
+    """The address this hop's server-mediated self-HTTP should dial (0505 T0008).
+
+    All six mediated self-HTTP call sites (conversation_context, conversation_turn_
+    register, api_bound_request, inbox_register, resolve_conflict, workflow_decide)
+    used to send `run["api_base_url"]` -- the operator/browser origin -- straight
+    back to themselves. That is fine when operator and agent origins coincide, but
+    wrong in exactly the topology 0472 B0001 hit for the CLI path: a public/proxy
+    origin that this server cannot dial as itself. `_resolve_agent_api_base` already
+    solved this for CLI launch; this wraps it for the API provider's self-HTTP and
+    caches the result on `run` so all six sites agree within one hop.
+    """
+    cached = run.get("_transport_api_base_resolved")
+    if cached:
+        return cached
+    operator_base = run.get("api_base_url") or ""
+    try:
+        resolved = _resolve_agent_api_base(operator_base)
+    except ValueError:
+        logger.warning(
+            "ai-invoke %s: transport base resolution failed for operator base %r, "
+            "falling back to operator base for self-HTTP",
+            run.get("run_id"), operator_base,
+        )
+        resolved = operator_base
+    run["_transport_api_base_resolved"] = resolved
+    return resolved
 
 def _canonicalize_cli_prompt(prompt: str, operator_api_base: str) -> tuple[str, str]:
     """Rewrite only exact operator-base occurrences and return the exported base."""
@@ -1405,7 +1441,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         run["last_tool_name"] = "conversation_context"
         run["last_tool_status"] = status
         if run.get("transport_api_base") is None:
-            run["transport_api_base"] = _sanitize_diagnostic_base(run.get("api_base_url"))
+            run["transport_api_base"] = _sanitize_diagnostic_base(_resolve_transport_api_base(run))
         if not (200 <= status < 300 and isinstance(chat_context, dict)):
             run["last_tool_error"] = _registration_error_summary(chat_context or {})[:500]
             return "api_error", "conversation_context_unavailable"
@@ -1779,13 +1815,13 @@ def _resolve_conflict(run: dict, raw_token: str, tool_input: dict) -> tuple[int,
     # FIRST in this hop wins transport_api_base; already-set (e.g. by the chat
     # prefetch) stays untouched.
     if run.get("transport_api_base") is None:
-        run["transport_api_base"] = _sanitize_diagnostic_base(run.get("api_base_url"))
+        run["transport_api_base"] = _sanitize_diagnostic_base(_resolve_transport_api_base(run))
     body = {
         "files": tool_input.get("files") or [],
         "complete": bool(tool_input.get("complete")),
     }
     req = urllib.request.Request(
-        f"{run['api_base_url']}/groups/{run['group_id']}/git/merge/{run['merge_id']}/resolve-token",
+        f"{_resolve_transport_api_base(run)}/groups/{run['group_id']}/git/merge/{run['merge_id']}/resolve-token",
         data=json.dumps(body).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -1878,13 +1914,13 @@ def _workflow_decide(run: dict, raw_token: str, tool_input: dict) -> tuple[int, 
     # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
     # FIRST in this hop wins transport_api_base; already-set stays untouched.
     if run.get("transport_api_base") is None:
-        run["transport_api_base"] = _sanitize_diagnostic_base(run.get("api_base_url"))
+        run["transport_api_base"] = _sanitize_diagnostic_base(_resolve_transport_api_base(run))
     body = {
         "doc_class": tool_input.get("doc_class") or "standard",
         "sequence": tool_input.get("sequence") or [],
     }
     req = urllib.request.Request(
-        f"{run['api_base_url']}/workflow/{run['doc_ref']}/decide",
+        f"{_resolve_transport_api_base(run)}/workflow/{run['doc_ref']}/decide",
         data=json.dumps(body).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -1912,7 +1948,7 @@ def _conversation_context(run: dict, raw_token: str) -> tuple[int, dict]:
     here left no status and no reason behind it, only the caller. This is the FIRST
     self-HTTP a chat hop opens, so that silence was the whole diagnostic gap.
     """
-    api_base = (run.get("api_base_url") or "").rstrip("/")
+    api_base = _resolve_transport_api_base(run).rstrip("/")
     req = urllib.request.Request(
         f"{api_base}/conversation/{run['doc_ref']}/turns?after_seq=0&include_head=1",
         headers={"Authorization": f"Bearer {raw_token}"},
@@ -1934,8 +1970,8 @@ def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> 
     # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
     # FIRST in this hop wins transport_api_base; already-set stays untouched.
     if run.get("transport_api_base") is None:
-        run["transport_api_base"] = _sanitize_diagnostic_base(run.get("api_base_url"))
-    api_base = (run.get("api_base_url") or "").rstrip("/")
+        run["transport_api_base"] = _sanitize_diagnostic_base(_resolve_transport_api_base(run))
+    api_base = _resolve_transport_api_base(run).rstrip("/")
     body = {
         "body": tool_input.get("body") or "",
         "idempotency_key": run["token_id"],
@@ -1943,7 +1979,7 @@ def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> 
         "display_name": (run.get("provider") or {}).get("name") or "AI",
     }
     req = urllib.request.Request(
-        f"{api_base}/conversation/{run["doc_ref"]}/turn",
+        f"{api_base}/conversation/{run['doc_ref']}/turn",
         data=json.dumps(body).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -1967,10 +2003,10 @@ def _api_bound_request(run: dict, raw_token: str, path: str, method: str = "GET"
     # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
     # FIRST in this hop wins transport_api_base; already-set stays untouched.
     if run.get("transport_api_base") is None:
-        run["transport_api_base"] = _sanitize_diagnostic_base(run.get("api_base_url"))
+        run["transport_api_base"] = _sanitize_diagnostic_base(_resolve_transport_api_base(run))
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(
-        f"{run['api_base_url']}{path}", data=data,
+        f"{_resolve_transport_api_base(run)}{path}", data=data,
         headers={"Authorization": f"Bearer {raw_token}", **({"Content-Type": "application/json"} if data is not None else {})},
         method=method,
     )
@@ -2184,10 +2220,10 @@ def _inbox_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, d
     # after the binding check above, not at function entry -- a binding rejection
     # never opens a socket, so it must not claim the transport base either.
     if run.get("transport_api_base") is None:
-        run["transport_api_base"] = _sanitize_diagnostic_base(run.get("api_base_url"))
+        run["transport_api_base"] = _sanitize_diagnostic_base(_resolve_transport_api_base(run))
     body = _register_envelope(context, run, tool_input)
     req = urllib.request.Request(
-        f"{run['api_base_url']}/inbox",
+        f"{_resolve_transport_api_base(run)}/inbox",
         data=json.dumps(body).encode("utf-8"),
         headers={
             "Content-Type": "application/json",

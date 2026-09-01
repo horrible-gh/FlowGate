@@ -48,13 +48,15 @@ def _operator_facing_api_base(request: Request) -> str:
     and no chat ever arrived.
 
     Every ``api_base_url=`` in this module is this operator base and nothing else.
-    It is what a person would see in a copied mention. The AGENT-FACING base the
-    CLI process actually dials is derived from it downstream, in one place:
-    ``ai_invoke_service._resolve_agent_api_base`` (``FLOWGATE_AGENT_API_BASE``
-    when set, otherwise loopback keeping the explicit operator port or
-    ``settings.FLOWGATE_PORT``), applied at CLI launch by
-    ``_canonicalize_cli_prompt``. Do not rewrite the base here, and do not hand
-    this value to a subprocess as ``FLOWGATE_API_BASE``.
+    It is what a person would see in a copied mention. The AGENT-FACING base is
+    derived from it downstream, in one place: ``ai_invoke_service.
+    _resolve_agent_api_base`` (``FLOWGATE_AGENT_API_BASE`` when set, otherwise
+    loopback keeping the explicit operator port or ``settings.FLOWGATE_PORT``).
+    Since 0505 T0008 this applies both at CLI launch (``_canonicalize_cli_prompt``)
+    and to the API provider's server-mediated self-HTTP
+    (``_resolve_transport_api_base``) -- not "CLI launch" alone anymore. Do not
+    rewrite the base here, and do not hand this value to a subprocess as
+    ``FLOWGATE_API_BASE``.
     """
     from modules.flow_gate.api import token_routes as _token_routes
 
