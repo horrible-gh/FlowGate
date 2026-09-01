@@ -932,8 +932,14 @@ class TestOtherScopesAreUntouched:
         assert source.count("build_rework_mention(") == 2     # definition + the rework call
 
     def test_the_continuous_mention_path_never_calls_it(self):
-        source = (_SERVER_DIR / "modules" / "flow_gate" / "services"
-                  / "ai_invoke_service.py").read_text(encoding="utf-8")
+        # 0497 T0009: ai_invoke_service.py is now three files sharing one module namespace.
+        # "defined there, never invoked there" is a property of the module, so read all three.
+        _services = _SERVER_DIR / "modules" / "flow_gate" / "services"
+        source = "".join(
+            (_services / name).read_text(encoding="utf-8")
+            for name in ("ai_invoke_service.py", "ai_invoke_part2_worker.py",
+                         "ai_invoke_part3_chain.py")
+        )
         # Defined there, never invoked there: the continuous/self-chain mention builder in
         # this module must not acquire the block through a back door.
         assert source.count("previous_timeout_handoff") == 1     # the definition, nothing else
