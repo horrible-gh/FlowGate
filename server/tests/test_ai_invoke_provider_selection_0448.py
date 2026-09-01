@@ -62,6 +62,17 @@ ITEMS = [
 ALL_PROVIDER_IDS = ["aip_header", "aip_n", "aip_nr", "aip_t", "aip_tr", "aip_step", "aip_opus"]
 
 
+def test_ai_invoke_service_is_startup_parseable_and_has_no_merge_control_lines():
+    """0494 rejection: a leftover zdiff3 base block made the server fail during import."""
+    service_path = _SERVER_DIR / "modules/flow_gate/services/ai_invoke_service.py"
+    source = service_path.read_text(encoding="utf-8")
+    compile(source, str(service_path), "exec")
+    assert not any(
+        line.startswith(("<<<<<<<", "|||||||", "=======", ">>>>>>>"))
+        for line in source.splitlines()
+    )
+
+
 def provider(pid, enabled=True):
     return {
         "id": pid, "name": pid.replace("aip_", "").upper(), "exec_type": "cli", "kind": "claude",
