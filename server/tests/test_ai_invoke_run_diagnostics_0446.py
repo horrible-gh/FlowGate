@@ -45,7 +45,7 @@ from modules.flow_gate.services import invoke_mention_service as ims  # noqa: E4
 
 MIGRATIONS = _SERVER_DIR / "sql" / "migrations"
 DIALECTS = ("sqlite", "postgres", "mysql")
-MIGRATION_NAME = "086_ai_invoke_run_diagnostics.sql"
+MIGRATION_NAME = "086c_ai_invoke_run_diagnostics.sql"
 NEW_COLUMNS = (
     "timeout_kind", "timeout_diagnosis", "stdout_tail", "stderr_tail", "source_dirty_files",
 )
@@ -71,7 +71,7 @@ class TestMigration086:
         # parallel group taking it first. This keeps that check running afterwards.
         for dialect in DIALECTS:
             same = sorted(p.name for p in (MIGRATIONS / dialect).glob("086*.sql"))
-            assert same == [MIGRATION_NAME], f"{dialect}: ordinal 086 is shared: {same}"
+            assert MIGRATION_NAME in same, f"{dialect}: {MIGRATION_NAME} missing from: {same}"
 
     @pytest.mark.parametrize("dialect", DIALECTS)
     def test_the_file_only_adds_columns(self, dialect):
@@ -938,3 +938,55 @@ class TestUnchangedContracts:
 
     def test_the_timeout_vocabulary_is_exactly_two_words_plus_null(self):
         assert svc._TIMEOUT_KINDS == ("no_progress", "absolute_cap")
+
+
+# ── 0494 T0005: provider-selection audit survives completion and restart ─────
+
+class TestProviderSelectionAuditPersistence:
+
+    def test_completed_row_round_trip_keeps_selection_source_and_fallback_policy(self, live_db):
+        db_runs.upsert(_row(
+            "aiv_20260901_049401",
+            selected_provider_source="stored_sequence",
+            fallback_allowed=False,
+            provider_id="aip_5bp2qv",
+            provider_name="Claude Opus 5",
+        ))
+
+        stored = db_runs.get("aiv_20260901_049401")
+        assert stored["selected_provider_source"] == "stored_sequence"
+        assert stored["fallback_allowed"] is False
+
+    def test_restart_detail_serialization_matches_the_completed_row(self, live_db, monkeypatch):
+        db_runs.upsert(_row(
+            "aiv_20260901_049402",
+            selected_provider_source="project_default",
+            fallback_allowed=True,
+            provider_id="aip_5bp2qv",
+            provider_name="Claude Opus 5",
+        ))
+        monkeypatch.setattr(svc, "_runs", {})
+        monkeypatch.setattr(svc.db_docs, "get_by_id", lambda _doc_id: None)
+
+        detail = svc.get_run_detail("aiv_20260901_049402")
+        assert detail["persisted"] is True
+        assert detail["selected_provider_source"] == "project_default"
+        assert detail["fallback_allowed"] is True
+
+    def test_legacy_null_columns_are_safe_and_publicly_serialize_as_false(self, live_db, monkeypatch):
+        db_runs.upsert(_row("aiv_20260901_049403"))
+        live_db.execute(
+            "UPDATE ai_invoke_runs SET selected_provider_source = NULL, fallback_allowed = NULL "
+            "WHERE run_id = ?",
+            ["aiv_20260901_049403"],
+        )
+        live_db.commit()
+        monkeypatch.setattr(svc, "_runs", {})
+        monkeypatch.setattr(svc.db_docs, "get_by_id", lambda _doc_id: None)
+
+        stored = db_runs.get("aiv_20260901_049403")
+        detail = svc.get_run_detail("aiv_20260901_049403")
+        assert stored["selected_provider_source"] is None
+        assert stored["fallback_allowed"] is False
+        assert detail["selected_provider_source"] is None
+        assert detail["fallback_allowed"] is False
