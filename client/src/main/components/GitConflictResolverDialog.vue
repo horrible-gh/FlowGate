@@ -175,7 +175,7 @@
             <AppIcon :name="allConflictsResolved ? 'check-circle' : 'warning'" />
             <span>{{ errorMessage || markerGuardText }}</span>
           </div>
-          <div class="git-conflict-footer-actions">
+          <div v-if="providers?.length" class="git-conflict-footer-actions">
             <button class="btn btn-secondary" :disabled="busy" @click="emit('copy-mention')">
               <AppIcon name="copy" /> {{ t('main.git_finalize.copy_conflict_mention') }}
             </button>
@@ -326,7 +326,7 @@ const aiSuggestionRemaining = computed(() =>
 function recommendedChoice(seg: ChunkSegment): ChunkChoice {
   return recommendChunkChoice(seg)
 }
-function chunkDiff(seg: ChunkSegment): ChunkSideDiff {
+function chunkDiff(seg: Pick<ChunkSegment, 'ours' | 'theirs'>): ChunkSideDiff {
   return buildChunkSideDiff(seg.ours, seg.theirs)
 }
 function choiceLabel(choice: ChunkChoice): string {
