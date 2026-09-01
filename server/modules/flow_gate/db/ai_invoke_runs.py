@@ -48,7 +48,8 @@ _BOUND_COLUMNS = (
     "outcome", "docs_reached", "docs_target", "reached_doc_ids",
     "end_reason", "stop_code", "stop_reason", "resumable", "exit_code",
     "last_message", "last_message_excerpt",
-    "provider_id", "provider_name", "attempt_no", "attempts_used", "attempts_max",
+    "provider_id", "provider_name", "selected_provider_source", "fallback_allowed",
+    "attempt_no", "attempts_used", "attempts_max",
     "fallback_history", "register_errors", "tool_call_misses", "turn_limit_exhausted",
     "oracle_mismatch", "source_dirty", "scratch_retained", "hop_item_seq",
     "token_id", "issued_to", "started_at", "finished_at", "duration_ms",
@@ -82,7 +83,7 @@ _ARRAY_FIELDS = ("reached_doc_ids", "fallback_history", "register_errors",
                  "auto_handled_item_seqs", "source_dirty_files")
 _BOOL_FIELDS = ("resumable", "turn_limit_exhausted", "oracle_mismatch",
                 "continuation_instruction_mode_fallback_applied",
-                "prompt_common_default_applied")
+                "prompt_common_default_applied", "fallback_allowed")
 _NULLABLE_BOOL_FIELDS = ("source_dirty",)
 
 _last_purge_mono: Optional[float] = None
@@ -175,6 +176,8 @@ def upsert(row: dict[str, Any]) -> None:
         "last_message_excerpt": row.get("last_message_excerpt"),
         "provider_id": row.get("provider_id"),
         "provider_name": row.get("provider_name"),
+        "selected_provider_source": row.get("selected_provider_source"),
+        "fallback_allowed": 1 if row.get("fallback_allowed") else 0,
         "attempt_no": row.get("attempt_no", 0),
         "attempts_used": row.get("attempts_used", 0),
         "attempts_max": row.get("attempts_max"),
