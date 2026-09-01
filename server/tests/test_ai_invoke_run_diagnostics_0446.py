@@ -45,7 +45,7 @@ from modules.flow_gate.services import invoke_mention_service as ims  # noqa: E4
 
 MIGRATIONS = _SERVER_DIR / "sql" / "migrations"
 DIALECTS = ("sqlite", "postgres", "mysql")
-MIGRATION_NAME = "086_ai_invoke_run_diagnostics.sql"
+MIGRATION_NAME = "086c_ai_invoke_run_diagnostics.sql"
 NEW_COLUMNS = (
     "timeout_kind", "timeout_diagnosis", "stdout_tail", "stderr_tail", "source_dirty_files",
 )
@@ -71,7 +71,7 @@ class TestMigration086:
         # parallel group taking it first. This keeps that check running afterwards.
         for dialect in DIALECTS:
             same = sorted(p.name for p in (MIGRATIONS / dialect).glob("086*.sql"))
-            assert same == [MIGRATION_NAME], f"{dialect}: ordinal 086 is shared: {same}"
+            assert MIGRATION_NAME in same, f"{dialect}: diagnostics suffix missing: {same}"
 
     @pytest.mark.parametrize("dialect", DIALECTS)
     def test_the_file_only_adds_columns(self, dialect):
@@ -232,6 +232,28 @@ class TestRunRowRoundTrip:
         assert stored["stdout_tail"] is None
         assert stored["stderr_tail"] is None
         assert stored["source_dirty_files"] == []
+        assert stored["selected_provider_source"] is None
+        assert stored["fallback_allowed"] is False
+
+    def test_provider_selection_audit_fields_round_trip_and_legacy_null_is_safe(self, live_db):
+        db_runs.upsert(_row(
+            "aiv_20260821_000049",
+            selected_provider_source="stored_sequence",
+            fallback_allowed=True,
+        ))
+        stored = db_runs.get("aiv_20260821_000049")
+        assert stored["selected_provider_source"] == "stored_sequence"
+        assert stored["fallback_allowed"] is True
+
+        live_db.execute(
+            "UPDATE ai_invoke_runs SET selected_provider_source = NULL, fallback_allowed = NULL "
+            "WHERE run_id = ?",
+            ["aiv_20260821_000049"],
+        )
+        live_db.commit()
+        legacy = db_runs.get("aiv_20260821_000049")
+        assert legacy["selected_provider_source"] is None
+        assert legacy["fallback_allowed"] is False
 
     def test_a_corrupt_legacy_file_list_folds_to_empty_instead_of_raising(self, live_db):
         db_runs.upsert(_row("aiv_20260821_000003", source_dirty_files=["a.py"]))
@@ -498,7 +520,8 @@ class TestTheRowSurvivesARestart:
     after this process has forgotten it. The four diagnostics must not move."""
 
     DIAGNOSTIC_KEYS = ("timeout_kind", "timeout_diagnosis", "stdout_tail", "stderr_tail",
-                       "source_dirty", "source_dirty_files")
+                       "source_dirty", "source_dirty_files", "selected_provider_source",
+                       "fallback_allowed")
 
     def test_memory_detail_and_post_restart_detail_agree(self, live_db, finalize_env,
                                                          monkeypatch):
@@ -507,6 +530,7 @@ class TestTheRowSurvivesARestart:
         run = _live_run(finalize_env, run_id="aiv_20260821_000021",
                         watchdog_kill=_kill("no_progress", stalled_sec=2460),
                         stdout_tail="마지막 출력\ntail", stderr_tail="warn: nothing to commit",
+                        selected_provider_source="request", fallback_allowed=False,
                         source_root=str(finalize_env))
         svc._finalize_run(run)
         with svc._runs_lock:

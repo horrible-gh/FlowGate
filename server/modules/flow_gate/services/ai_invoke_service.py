@@ -741,6 +741,8 @@ def _run_detail_from_row(row: dict) -> dict:
         "last_message_excerpt": row.get("last_message_excerpt"),
         "provider_id": row.get("provider_id"),
         "provider_name": row.get("provider_name"),
+        "selected_provider_source": row.get("selected_provider_source"),
+        "fallback_allowed": bool(row.get("fallback_allowed")),
         "attempt_no": row.get("attempt_no"),
         "fallback_history": row.get("fallback_history"),
         "register_errors": row.get("register_errors"),
@@ -1546,6 +1548,7 @@ def start_run(
     effective = ai_settings_service.resolve_effective(project_id)
     chain = effective.get("providers") or []
     chain_source = effective.get("source")
+    selected_provider_source = None
     # A per-step override names this exact hop and remains the highest tier. 0435 T0004
     # deliberately removes every startup fallback tail from an explicit choice: a provider
     # that cannot start fails visibly instead of silently switching to a more expensive one.
@@ -1583,7 +1586,8 @@ def start_run(
             None,
         )
         chain = [selected] if selected else []
-    elif mode == "continuous" and provider_pinned and provider_id:
+        selected_provider_source = "step_override"
+    elif (mode == "continuous" or document_review_loop is not None) and provider_pinned and provider_id:
         selected = next((provider for provider in chain if provider.get("id") == provider_id), None)
         if selected is None:
             raise _http_error(
@@ -1591,9 +1595,13 @@ def start_run(
                 PROVIDER_UNAVAILABLE_MESSAGE,
             )
         chain = [selected]
+        selected_provider_source = "review_loop" if document_review_loop else "force_all"
     elif stored_provider_active:
-        # An unpinned run still follows the persisted sequence assignment (D0006 §6.2).
-        chain = _prioritize_chain(chain, stored_provider_id)
+        # A persisted sequence choice is an explicit choice for this hop. Resolution-tier
+        # misses happen before execution and never create an execution fallback tail.
+        selected = next(provider for provider in chain if provider.get("id") == stored_provider_id)
+        chain = [selected]
+        selected_provider_source = "stored_sequence"
     elif provider_id:
         selected = next((provider for provider in chain if provider.get("id") == provider_id), None)
         if selected is None:
@@ -1601,7 +1609,8 @@ def start_run(
                 422, PROVIDER_UNAVAILABLE_CODE,
                 PROVIDER_UNAVAILABLE_MESSAGE,
             )
-        chain = [selected] if mode == "single" else _prioritize_chain(chain, provider_id)
+        chain = [selected]
+        selected_provider_source = "request"
     elif mode == "continuous":
         hop_provider = _resolve_continuation_hop_provider(
             project_id,
@@ -1609,8 +1618,17 @@ def start_run(
             continuation_instruction_mode=continuation_instruction_mode,
             continuation_auto_approve_item_seqs=continuation_auto_approve_item_seqs,
         )
-        if hop_provider:
-            chain = _prioritize_chain(chain, hop_provider)
+        selected = next(
+            (provider for provider in chain if provider.get("id") == hop_provider),
+            None,
+        )
+        if selected:
+            chain = [selected]
+            selected_provider_source = "document_type"
+
+    if selected_provider_source is None:
+        selected_provider_source = "project_default"
+    fallback_allowed = selected_provider_source == "project_default" and len(chain) > 1
 
     if mode == "continuous" and stored_provider_id and not stored_provider_active and chain:
         logger.warning(
@@ -1944,6 +1962,8 @@ def start_run(
         "stderr_tail": None,
         "provider": None,
         "provider_id": None,
+        "selected_provider_source": selected_provider_source,
+        "fallback_allowed": fallback_allowed,
         "attempt_no": 0,
         "fallback_history": [],
         "register_errors": [],
@@ -2216,6 +2236,8 @@ def start_run(
         "worker_document_type": run["worker_document_type"],
         "auto_handled_item_seqs": run["auto_handled_item_seqs"],
         "provider": _provider_brief(chain[0]),
+        "selected_provider_source": run["selected_provider_source"],
+        "fallback_allowed": run["fallback_allowed"],
         "attempt_no": 1,
         "started_at": run["started_at"],
         # 0359 P0006 [hop budget]: the budget and its wall-clock deadline travel with every
@@ -3068,6 +3090,8 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
     for index, provider in enumerate(chain):
         if run["cancel_event"].is_set():
             break
+        # attempt_no is one-based even when the first and only provider fails to start.
+        run["attempt_no"] = len(run["fallback_history"]) + 1
         if index > 0:
             prev = chain[index - 1]
             run["provider"] = _provider_brief(provider)
@@ -5498,6 +5522,8 @@ def _persist_run_record(run: dict) -> None:
             "last_message_excerpt": excerpt(run.get("last_message")),
             "provider_id": run.get("provider_id"),
             "provider_name": (run.get("provider") or {}).get("name"),
+            "selected_provider_source": run.get("selected_provider_source"),
+            "fallback_allowed": bool(run.get("fallback_allowed")),
             "attempt_no": int(run.get("attempt_no") or 0),
             "attempts_used": int(run.get("attempts_used") or 0),
             "attempts_max": run.get("attempts_max"),
@@ -5683,6 +5709,8 @@ def finished_payload(run: dict) -> dict:
         "last_message": run["last_message"],
         "provider_id": run["provider_id"],
         "provider_name": (run.get("provider") or {}).get("name"),
+        "selected_provider_source": run.get("selected_provider_source"),
+        "fallback_allowed": bool(run.get("fallback_allowed")),
         "started_at": run.get("started_at"),
         "finished_at": run.get("finished_at"),
         "attempt_no": run["attempt_no"],
@@ -5790,6 +5818,8 @@ def get_status(run_id: str) -> dict:
             + (0 if run.get("chain_docs_accounted") else docs_so_far)
         ),
         "provider": run["provider"],
+        "selected_provider_source": run.get("selected_provider_source"),
+        "fallback_allowed": bool(run.get("fallback_allowed")),
         "attempt_no": run["attempt_no"],
         "started_at": run["started_at"],
         "elapsed_ms": int((time.monotonic() - run["started_mono"]) * 1000),
