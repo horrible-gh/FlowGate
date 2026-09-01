@@ -104,14 +104,14 @@ def test_section_follows_the_worker_locale(locale, tools_line):
 
 @pytest.mark.parametrize("head_type,expected", [
     # T (0427 T0004): write/patch/remove recalled -- investigation-only now.
-    ("T", "read, grep, glob, stat"),
+    ("T", "read, grep, glob, stat, diff, log"),
     ("TR", "read, grep, glob, stat, diff, log, write, patch, remove"),
     # TSR: the test-report step really does edit test code, and TR-1 already gave its
     # token write scope. TS (group 0390 R0001): the test-scenario step now writes too, so
     # the bug a scenario surfaces gets fixed instead of just the test being rewritten.
     ("TSR", "read, grep, glob, stat, diff, log, write, patch, remove"),
-    ("NR", "read, grep, glob, stat"),
-    ("D", "read, grep, glob, stat"),
+    ("NR", "read, grep, glob, stat, diff, log"),
+    ("D", "read, grep, glob, stat, diff, log"),
     ("TS", "read, grep, glob, stat, diff, log, write, patch, remove"),
 ])
 def test_tool_list_matches_the_step_type(head_type, expected):
@@ -120,7 +120,7 @@ def test_tool_list_matches_the_step_type(head_type, expected):
 
 def test_edit_mention_judges_by_the_document_being_revised():
     text = _build(action_scope="edit", parent_type="NR", head_type="TR")
-    assert "도구: read, grep, glob, stat" in _section(text)
+    assert "도구: read, grep, glob, stat, diff, log" in _section(text)
     assert "write" not in _section(text)
 
 
@@ -134,7 +134,7 @@ def test_review_mention_now_advertises_the_read_tools():
         token_rec=_TOKEN_REC, target_doc=_TARGET_DOC,
         api_base_url="http://h/flowgate/api/v1", raw_token="RAW",
     )
-    assert "도구: read, grep, glob, stat" in _section(text)
+    assert "도구: read, grep, glob, stat, diff, log" in _section(text)
     assert "write" not in _section(text)
 
 
@@ -144,7 +144,7 @@ def test_workflow_decision_mention_now_advertises_the_read_tools():
         target_doc={"doc_id": "p.default.0349.0001-R", "type_code": "R", "seq": 1, "title": "t"},
         api_base_url="http://h/flowgate/api/v1", raw_token="RAW",
     )
-    assert "도구: read, grep, glob, stat" in _section(text)
+    assert "도구: read, grep, glob, stat, diff, log" in _section(text)
 
 
 def test_sequence_edit_mention_still_advertises_nothing():

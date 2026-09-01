@@ -117,6 +117,8 @@ class AiInvokeStartRequest(BaseModel):
     # provider_id alone may be an auto-restored default. This explicit signal says the person
     # actively chose it, so start_run can let it outrank an automatically stamped sequence row.
     provider_pinned: Optional[bool] = None
+    # One-request acknowledgement; never persisted or accepted for continuous runs.
+    capability_warning_ack: Optional[bool] = None
     merge_id: Optional[int] = None
     # Parallel-invoke extras (group 0223): context the matching copy-mention flow
     # assembled in the browser, so the invoke prompt can stay byte-identical.
@@ -782,6 +784,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             continuation_review_count_overrides=continuation_review_count_overrides,
             continuation_reviewer_overrides=continuation_reviewer_overrides,
             document_review_loop=(body.document_review_loop.dict() if body.document_review_loop else None),
+            capability_warning_ack=body.capability_warning_ack,
         )
     except HTTPException as exc:
         return _err(exc)

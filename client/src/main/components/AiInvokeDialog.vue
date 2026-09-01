@@ -318,6 +318,12 @@
             </template>
             <div v-if="startError" class="aiv-error">
               <AppIcon name="warning" /> {{ startError }}
+              <div v-if="capabilityWarning" class="aiv-capability-warning" data-test="capability-warning">
+                <strong>{{ capabilityWarning.step_key }} · {{ capabilityWarning.step_type }}</strong> — {{ capabilityWarning.provider_name }}
+                <span>{{ (capabilityWarning.missing_capabilities || []).join(', ') }}</span>
+                <button type="button" class="btn btn-warning" @click="capabilityWarningAck = true; capabilityWarning = null; start()">Continue once</button>
+                <button type="button" class="btn btn-ghost" @click="capabilityWarning = null; capabilityWarningAck = false">Cancel</button>
+              </div>
               <button
                 v-if="lockedGroupId"
                 type="button"
@@ -687,6 +693,8 @@ const resolvedTarget = computed<{ seq: number; fromDecision: boolean } | null>((
 })
 
 const canStart = computed(() => reviewLoopActive.value ? !!reviewerProviderId.value && !!reworkProviderId.value : mode.value === 'single' || resolvedTarget.value != null)
+const capabilityWarningAck = ref(false)
+const capabilityWarning = ref<{ step_key?: string; step_type?: string; provider_name?: string; missing_capabilities?: string[] } | null>(null)
 
 const pickerSummary = computed(() => {
   if (picker.value.loading || picker.value.errorKey) return ''
@@ -789,6 +797,7 @@ async function start() {
       if (aiProviderStore.selectedProviderId) body.provider_id = aiProviderStore.selectedProviderId
       if (aiProviderStore.pinned) body.provider_pinned = true
     }
+    if (mode.value === 'single' && capabilityWarningAck.value) body.capability_warning_ack = true
     if (props.module != null) body.module = props.module
     if (props.selectedDocs?.length) body.selected_docs = props.selectedDocs
     if (props.messages?.length) body.messages = props.messages
@@ -890,6 +899,11 @@ async function start() {
       startError.value = t('main.ai_invoke_dialog.error_no_provider_registered')
     } else if (status === 409 && data.code === 'no_enabled_provider') {
       startError.value = t('main.ai_invoke_dialog.error_no_provider')
+    } else if (status === 422 && data.code === 'provider_capability_confirmation_required' && mode.value === 'single') {
+      // The first request only displays the server-authoritative warning. A second explicit
+      // click is the sole path that carries the ephemeral acknowledgement.
+      capabilityWarning.value = data
+      startError.value = data.message || 'This provider cannot modify source or run tests.'
     } else if (status === 422) {
       const msgs = (data.errors ?? []).map((er: any) => `${er.loc}: ${er.msg}`).join(' / ')
       startError.value = msgs || t('main.ai_invoke_dialog.error_start_failed')

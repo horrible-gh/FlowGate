@@ -221,6 +221,9 @@ def _patch_inbox(monkeypatch, head_type: str):
         "token_id": "tok-0441",
         "project": "flowgate",
         "issued_to": "worker-0441",
+        # 0492 T0018: `group_id` is a real tokens column (migration 075a) and inbox
+        # Step 3 now compares it as the `group` axis.
+        "group_id": GROUP,
         "action_scope": "new",
         "doc_ref": PREV_DOC,
         "dry_run_count": 0,
