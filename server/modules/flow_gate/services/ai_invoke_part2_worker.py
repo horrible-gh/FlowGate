@@ -614,13 +614,50 @@ def _no_output_detail(run: dict) -> Optional[str]:
 
     In the incident this text existed, was precise, and even named its own fix — and lived only
     in a scratch file the server deletes after seven days.
+
+    0505 T0009: API providers branch to diagnosis by category (exit_code / register_errors /
+    tool_call_misses / turn_limit_exhausted) instead of generic "worker exited"; CLI providers
+    keep the generic form for backward compat.
     """
-    head = (
-        f"worker exited {run.get('exit_code')} after {_attempt_elapsed_sec(run)}s "
-        "without registering a document"
-    )
-    message = excerpt(run.get("last_message"))
-    return head if not message else f"{head}; last message: {message}"
+    provider = run.get("provider") or {}
+    is_api_provider = provider.get("exec_type") == "api"
+
+    if is_api_provider:
+        # API provider: return diagnostic category first
+        register_errors = run.get("register_errors") or []
+        if register_errors:
+            reasons = []
+            for err in register_errors:
+                reason = err.get("reason", "registration error")
+                status = err.get("status")
+                reasons.append(f"{reason}{'/' + str(status) if status else ''}")
+            return f"register failed: {'; '.join(reasons)}"
+
+        if run.get("turn_limit_exhausted"):
+            return "worker stopped: turn limit exhausted"
+
+        tool_misses = run.get("tool_call_misses") or 0
+        if tool_misses > 0:
+            return f"worker stopped: tool not called {tool_misses} time(s)"
+
+        if run.get("oracle_mismatch"):
+            return "worker stopped: oracle mismatch detected"
+
+        # Fallback to generic form if no diagnostic category matched
+        head = (
+            f"worker exited {run.get('exit_code')} after {_attempt_elapsed_sec(run)}s "
+            "without registering a document"
+        )
+        message = excerpt(run.get("last_message"))
+        return head if not message else f"{head}; last message: {message}"
+    else:
+        # CLI provider: keep generic form
+        head = (
+            f"worker exited {run.get('exit_code')} after {_attempt_elapsed_sec(run)}s "
+            "without registering a document"
+        )
+        message = excerpt(run.get("last_message"))
+        return head if not message else f"{head}; last message: {message}"
 
 def _archive_attempt(run: dict, reason: str, token_id: Optional[str]) -> None:
     """Fold the attempt that just ended into the history (L0007 §2.6)."""
