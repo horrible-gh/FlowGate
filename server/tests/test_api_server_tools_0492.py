@@ -132,7 +132,7 @@ def test_api_capabilities_follow_toolset_readiness(monkeypatch):
 def test_dispatcher_returns_a_result_for_every_call_id(monkeypatch, tmp_path, case):
     specs = [
         {"name": name, "description": name, "schema": tools.SCHEMAS[name]}
-        for name in ("read_source_file", "read_document", "run_test")
+        for name in ("read_source_file", "read_document", "read_help", "run_test")
     ] + [{
         "name": "register_document",
         "description": "register",
@@ -141,7 +141,8 @@ def test_dispatcher_returns_a_result_for_every_call_id(monkeypatch, tmp_path, ca
     register_input = {"doc_type": "TR", "title": "report", "content": "complete"}
     if case == "validation_failure":
         first_calls = [
-            {"id": "valid", "name": "read_document", "input": {}},
+            {"id": "valid", "name": "read_document", "input": {"lines": {"start": 1, "end": 5}, "chars": None}},
+            {"id": "help", "name": "read_help", "input": {}},
             {"id": "invalid", "name": "run_test", "input": {}},
             {"id": "register", "name": "register_document", "input": register_input},
         ]
@@ -149,6 +150,7 @@ def test_dispatcher_returns_a_result_for_every_call_id(monkeypatch, tmp_path, ca
         first_calls = [
             {"id": "failed", "name": "read_source_file", "input": {"path": "a.py"}},
             {"id": "register", "name": "register_document", "input": register_input},
+            {"id": "help", "name": "read_help", "input": {}},
             {"id": "trailing", "name": "read_document", "input": {}},
         ]
 
@@ -169,7 +171,12 @@ def test_dispatcher_returns_a_result_for_every_call_id(monkeypatch, tmp_path, ca
     monkeypatch.setattr(invoke, "_call_openai", call_provider)
     monkeypatch.setattr(invoke, "_remaining_sec", lambda _run: 30)
     monkeypatch.setattr(invoke, "_inbox_register", lambda *_args: next(registrations))
-    monkeypatch.setattr(invoke, "_api_read_document", lambda *_args: (200, {"ok": True}))
+    seen_help = []
+    seen_document = []
+    monkeypatch.setattr(invoke, "_api_read_document",
+                        lambda _run, _token, body: seen_document.append(body) or (200, {"ok": True}))
+    monkeypatch.setattr(invoke.api_server_tools, "read_help",
+                        lambda _run, _token, body: seen_help.append(body) or (200, {"ok": True}))
     monkeypatch.setattr(invoke.api_server_tools, "source_call",
                         lambda *_args: (500, {"error": "source failed"}))
 
@@ -195,6 +202,9 @@ def test_dispatcher_returns_a_result_for_every_call_id(monkeypatch, tmp_path, ca
     ]
     returned_ids = {message["tool_call_id"] for message in returned}
     assert returned_ids == {call["id"] for call in first_calls}
+    assert seen_help == [{}]
+    if case == "validation_failure":
+        assert seen_document == [{"lines": {"start": 1, "end": 5}}]
     if case == "validation_failure":
         invalid = next(message for message in returned if message["tool_call_id"] == "invalid")
         assert "schema_validation_failed" in invalid["content"]
@@ -256,6 +266,35 @@ def test_read_document_rejects_invalid_selector_and_ranges(tool_input):
     assert caught.value.reason == "schema_validation_failed"
 
 
+def test_read_document_null_selector_is_removed_before_http_conversion(monkeypatch, tmp_path):
+    captured = {}
+    monkeypatch.setattr(invoke, "_api_bound_request", lambda _run, _token, path: captured.setdefault("path", path) or (200, {}))
+    canonical = tools.normalize_read_document_input({"lines": {"start": 1, "end": 5}, "chars": None})
+    assert canonical == {"lines": {"start": 1, "end": 5}}
+    invoke._api_read_document(_run(tmp_path), "live", canonical)
+    assert captured["path"].endswith("/section?lines=1-5")
+
+
+@pytest.mark.parametrize("tool_input", [{"section": ""}, {"lines": {"start": 1}}, {"unknown": "x"}])
+def test_read_document_flat_schema_keeps_invalid_nested_inputs_rejected(tool_input):
+    with pytest.raises(tools.ToolError) as caught:
+        tools.normalize_read_document_input(tool_input)
+    assert caught.value.reason == "schema_validation_failed"
+
+
+def test_read_help_uses_catalog_without_http(monkeypatch, tmp_path):
+    token = {"continuation_locale": "en", "doc_ref": "d"}
+    ctx = {"base_url": "/flowgate/api/v1", "locale": "en", "doc_id": "d", "doc_type": "T", "action_scope": "new", "tool_kind": "read", "source_mode": "remote", "reason": None}
+    monkeypatch.setattr(tools.token_service, "verify", lambda _raw: token)
+    monkeypatch.setattr(tools.help_catalog, "resolve_context", lambda *_args: ctx)
+    monkeypatch.setattr(tools.help_catalog, "build_index", lambda _ctx: {"items": [{"name": "submit"}], "hidden": []})
+    status, payload = tools.read_help(_run(tmp_path), "live", {})
+    assert status == 200 and payload["form"] == "index" and payload["items"] == [{"name": "submit"}]
+    with pytest.raises(tools.ToolError) as caught:
+        tools.normalize_read_help_input({"child": "read"})
+    assert caught.value.reason == "schema_validation_failed"
+
+
 @pytest.mark.parametrize("mode, config, root_exists, expected_reason", [
     ("integrated_healthy", {"enabled": True}, True, None),
     ("integrated_unresolved", {"enabled": True}, False, "group_worktree_unavailable"),
@@ -305,3 +344,66 @@ def test_non_git_mutating_types_complete_read_mutation_test_and_register(monkeyp
     run.update({"run_id": "run", "raw_token": "live", "docs_target": 1, "mode": "single", "cancel_event": SimpleNamespace(is_set=lambda: False), "timed_out": False})
     assert invoke._api_execute({"id": "provider", "kind": "openai", "api_base_url": "https://example", "api_model": "m"}, "prompt", run) == ("started_ok", None)
     assert seen == ["read", "write", "run_test"]
+
+
+def test_read_document_schema_is_flat_and_nulls_are_local_only():
+    schema = tools.SCHEMAS["read_document"]
+    assert "oneOf" not in schema
+    assert set(schema["properties"]) == {"section", "section_id", "lines", "chars"}
+    assert tools.normalize_read_document_input({"section": None, "chars": None}) == {}
+    # Null remains invalid for ordinary tools: normalization is deliberately tool-local.
+    with pytest.raises(tools.ToolError):
+        tools.validate(tools.SCHEMAS["read_source_file"], {"path": None})
+
+
+@pytest.mark.parametrize("kind", ["openai", "claude"])
+def test_provider_arguments_share_read_document_canonicalization(monkeypatch, kind):
+    specs = [{"name": "read_document", "description": "read", "schema": tools.READ_DOCUMENT_SCHEMA}]
+    if kind == "openai":
+        response = {"choices": [{"message": {"content": None, "tool_calls": [{
+            "id": "doc", "function": {"name": "read_document",
+            "arguments": '{"lines":{"start":1,"end":5},"chars":null}'}
+        }]}}]}
+        monkeypatch.setattr(invoke, "_http_post_json", lambda *_args: response)
+        _, calls, _ = invoke._call_openai("https://example", "m", "k", [], 1, specs, "", {}, False)
+    else:
+        response = {"content": [{"type": "tool_use", "id": "doc", "name": "read_document",
+                                 "input": {"lines": {"start": 1, "end": 5}, "chars": None}}]}
+        monkeypatch.setattr(invoke, "_http_post_json", lambda *_args: response)
+        _, calls, _ = invoke._call_anthropic("https://example", "m", "k", [], 1, specs, "", {}, False)
+    canonical = tools.normalize_read_document_input(calls[0]["input"])
+    assert canonical == {"lines": {"start": 1, "end": 5}}
+
+
+def test_read_help_item_child_visibility_supplier_and_no_url(monkeypatch, tmp_path):
+    assert set(tools.READ_HELP_SCHEMA["properties"]) == {"item", "child"}
+    token = {"continuation_locale": "en", "doc_ref": "d"}
+    ctx = {"base_url": "/flowgate/api/v1", "locale": "en"}
+    monkeypatch.setattr(tools.token_service, "verify", lambda _raw: token)
+    monkeypatch.setattr(tools.help_catalog, "resolve_context", lambda *_args: ctx)
+    monkeypatch.setattr(tools.help_catalog, "CATALOG_ORDER", ("visible", "hidden"))
+    monkeypatch.setattr(tools.help_catalog, "decide_visibility",
+                        lambda name, _ctx: SimpleNamespace(visible=name == "visible"))
+    monkeypatch.setattr(tools.help_catalog, "enumerate_children",
+                        lambda *_args: [{"name": "child"}])
+    monkeypatch.setattr(tools.help_catalog, "build_item",
+                        lambda name, _ctx: {"name": name, "form": "content"})
+    monkeypatch.setattr(tools.help_catalog, "build_child",
+                        lambda name, child, _ctx: {"name": name, "child": child})
+    assert tools.read_help(_run(tmp_path), "live", {"item": "visible"})[1]["name"] == "visible"
+    assert tools.read_help(_run(tmp_path), "live", {"item": "visible", "child": "child"})[1]["child"] == "child"
+    assert tools.read_help(_run(tmp_path), "live", {"item": "missing"})[0] == 404
+    assert tools.read_help(_run(tmp_path), "live", {"item": "hidden"})[0] == 403
+    assert tools.read_help(_run(tmp_path), "live", {"item": "visible", "child": "missing"})[0] == 404
+    monkeypatch.setattr(tools.help_catalog, "build_item",
+                        lambda *_args: (_ for _ in ()).throw(tools.help_catalog.HelpSupplierError("failed")))
+    status, payload = tools.read_help(_run(tmp_path), "live", {"item": "visible"})
+    assert status == 500 and "live" not in str(payload)
+
+
+def test_api_prompt_uses_read_help_while_http_mention_is_untouched():
+    original = "first\nGET http://host/flowgate/api/v1/help\nlast"
+    adapted = invoke._api_help_prompt(original)
+    assert "read_help" in adapted
+    assert "GET http://host/flowgate/api/v1/help" not in adapted
+    assert original.endswith("\nlast")

@@ -158,8 +158,10 @@ def test_every_start_run_custom_issuer_accepts_the_run_id():
         ("modules/flow_gate/api/v1/ai_invoke_routes.py", "start_ai_invoke"),
         ("modules/flow_gate/api/v1/qa_routes.py", "post_answer"),
         ("modules/flow_gate/services/q_answer_invoke_service.py", "dispatch_answer_run"),
-        ("modules/flow_gate/services/ai_invoke_service.py", "_spawn_auto_resume"),
-        ("modules/flow_gate/services/ai_invoke_service.py", "resume_chain"),
+        # 0497 T0009 split ai_invoke_service.py into three files; both self-chain callers
+        # moved verbatim into part 3. The inventory still walks all of modules/**.
+        ("modules/flow_gate/services/ai_invoke_part3_chain.py", "_spawn_auto_resume"),
+        ("modules/flow_gate/services/ai_invoke_part3_chain.py", "resume_chain"),
     }
     assert expected <= identities, (
         "start_run inventory missed known production callers: "

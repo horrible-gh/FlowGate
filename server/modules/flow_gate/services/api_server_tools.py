@@ -13,10 +13,11 @@ from pathlib import Path
 from typing import Any
 
 from modules.flow_gate.db import documents as db_documents
-from modules.flow_gate.services import git_service, process_runner, remote_tool_service, test_command_service, tool_registry
+from modules.flow_gate.services import git_service, help_catalog, process_runner, remote_tool_service, test_command_service, token_service, tool_registry
+from modules.flow_gate.utils.help_url import help_url
 
 DOCUMENT_SCOPES = frozenset({"new", "edit", "review", "test_run"})
-BASE_NAMES = ("read_document", "create_question", "register_document")
+BASE_NAMES = ("read_document", "read_help", "create_question", "register_document")
 SOURCE_NAMES = ("read_source_file", "search_source", "glob_source", "stat_source", "diff_source", "log_source", "patch_source_file", "write_source_file", "remove_source_file", "run_test")
 # Provider names are stable aliases; every source operation dispatches through the HTTP remote service.
 SOURCE_OPS = {
@@ -40,15 +41,39 @@ LINE_RANGE_SCHEMA = _obj({
     "end": {"type": "integer", "minimum": 1},
 }, ["start", "end"])
 LINE_RANGE_SCHEMA["x-flowgate-range"] = True
-READ_DOCUMENT_SCHEMA = {
-    "oneOf": [
-        _obj({}),
-        _obj({"section": {"type": "string"}}, ["section"]),
-        _obj({"section_id": {"type": "string"}}, ["section_id"]),
-        _obj({"lines": LINE_RANGE_SCHEMA}, ["lines"]),
-        _obj({"chars": RANGE_SCHEMA}, ["chars"]),
-    ],
-}
+# Keep selectors optional and flat: providers commonly cannot produce top-level oneOf.
+# `normalize_read_document_input` is the dedicated cardinality boundary.
+READ_DOCUMENT_SCHEMA = _obj({
+    "section": {"type": "string", "minLength": 1},
+    "section_id": {"type": "string", "minLength": 1},
+    "lines": LINE_RANGE_SCHEMA,
+    "chars": RANGE_SCHEMA,
+})
+READ_HELP_SCHEMA = _obj({
+    "item": {"type": "string", "minLength": 1},
+    "child": {"type": "string", "minLength": 1},
+})
+
+
+def normalize_read_document_input(value: Any) -> dict:
+    """Remove null selectors and validate exactly one remaining document selector."""
+    if not isinstance(value, dict):
+        raise ToolError(422, "schema_validation_failed", "input has invalid type")
+    allowed = set(READ_DOCUMENT_SCHEMA["properties"])
+    if any(key not in allowed for key in value):
+        raise ToolError(422, "schema_validation_failed", "input has additional properties")
+    normalized = {key: item for key, item in value.items() if item is not None}
+    if len(normalized) > 1:
+        raise ToolError(422, "schema_validation_failed", "input has conflicting selectors")
+    validate(dict(READ_DOCUMENT_SCHEMA), normalized)
+    return normalized
+
+
+def normalize_read_help_input(value: Any) -> dict:
+    validate(READ_HELP_SCHEMA, value)
+    if value.get("child") and not value.get("item"):
+        raise ToolError(422, "schema_validation_failed", "input.child requires input.item")
+    return dict(value)
 
 SCHEMAS = {
     "read_source_file": _obj({"path": {"type": "string", "minLength": 1}, "max_bytes": {"type": "integer", "minimum": 0}, "offset": {"type": "integer", "minimum": 0}, "length": {"type": "integer", "minimum": 0}, "encoding": {"type": "string"}, "ref": {"type": "string"}}, ["path"]),
@@ -62,6 +87,7 @@ SCHEMAS = {
     "remove_source_file": _obj({"path": {"type": "string", "minLength": 1}, "recursive": {"type": "boolean"}}, ["path"]),
     "run_test": _obj({"command": {"type": "string", "minLength": 1}}, ["command"]),
     "read_document": READ_DOCUMENT_SCHEMA,
+    "read_help": READ_HELP_SCHEMA,
     "create_question": _obj({"questions": {"type": "array", "minItems": 1, "items": _obj({"title": {"type": "string"}, "body": {"type": "string", "minLength": 1}, "options": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 200}, "maxItems": 10}}, ["body"])}}, ["questions"]),
 }
 
@@ -73,6 +99,10 @@ REGISTER_SCHEMAS = {
 }
 
 DESCRIPTIONS = {name: name.replace("_", " ") for name in (*BASE_NAMES, *SOURCE_NAMES)}
+DESCRIPTIONS["read_help"] = (
+    "Read personalized help without HTTP. Empty input returns the help index; "
+    "item returns one item; item plus child returns one child. child requires item."
+)
 
 
 def ready() -> bool:
@@ -117,6 +147,9 @@ def definitions_for_run(run: dict) -> list[dict]:
 
 
 def validate(schema: dict, value: Any, path: str = "input") -> None:
+    if schema is READ_DOCUMENT_SCHEMA:
+        normalize_read_document_input(value)
+        return
     alternatives = schema.get("oneOf")
     if alternatives is not None:
         valid_count = 0
@@ -171,6 +204,36 @@ def require_group_root(run: dict) -> Path:
     except (OSError, RuntimeError):
         raise ToolError(409, "group_worktree_unavailable")
     return root
+
+
+def read_help(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
+    """Build the same personalized help views as the HTTP routes, without networking."""
+    try:
+        token_rec = token_service.verify(raw_token)
+    except Exception as exc:  # a live run should always carry a valid token
+        raise ToolError(401, "help_token_invalid") from exc
+    locale = help_catalog.normalize_locale(str(token_rec.get("continuation_locale") or "ko"))
+    base_url = str(run.get("api_base_url") or "/flowgate/api/v1").rstrip("/")
+    ctx = help_catalog.resolve_context(token_rec, locale, base_url)
+    envelope = {"ok": True, "version": help_catalog.VERSION, "base_url": ctx["base_url"], "locale": ctx["locale"]}
+    item, child = tool_input.get("item"), tool_input.get("child")
+    if not item:
+        assembled = help_catalog.build_index(ctx)
+        return 200, {**envelope, "form": "index", "item_url": f"{base_url}/help/items/{{name}}", "child_url": f"{base_url}/help/items/{{name}}/{{child}}", "bulk_url": f"{base_url}/help?items={{name1}},{{name2}}", "detail_url": f"{base_url}/help?detail=true", "context": help_catalog.context_envelope(ctx), "items": assembled["items"], "hidden": assembled["hidden"]}
+    if item not in help_catalog.CATALOG_ORDER:
+        return 404, {"ok": False, "http_status": 404, "error_message": f"Unknown help item: {item}", "help_url": help_url()}
+    if not help_catalog.decide_visibility(item, ctx).visible:
+        return 403, {"ok": False, "http_status": 403, "error_message": f"Help item '{item}' is not available for this token", "help_url": help_url()}
+    try:
+        if child:
+            if child not in {entry["name"] for entry in help_catalog.enumerate_children(item, ctx)}:
+                return 404, {"ok": False, "http_status": 404, "error_message": f"Unknown child '{child}' of help item '{item}'", "help_url": help_url()}
+            body = help_catalog.build_child(item, child, ctx)
+        else:
+            body = help_catalog.build_item(item, ctx)
+    except help_catalog.HelpSupplierError:
+        return 500, {"ok": False, "http_status": 500, "error_message": f"Failed to build help item '{item}'", "help_url": help_url()}
+    return 200, {**envelope, **body}
 
 
 def source_call(run: dict, raw_token: str, name: str, tool_input: dict) -> tuple[int, dict]:
