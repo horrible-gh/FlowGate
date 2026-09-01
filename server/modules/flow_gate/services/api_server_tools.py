@@ -13,10 +13,10 @@ from pathlib import Path
 from typing import Any
 
 from modules.flow_gate.db import documents as db_documents
-from modules.flow_gate.services import git_service, process_runner, remote_tool_service, test_command_service, tool_registry
+from modules.flow_gate.services import git_service, process_runner, remote_tool_service, test_command_service
 
 DOCUMENT_SCOPES = frozenset({"new", "edit", "review", "test_run"})
-
+SOURCE_TYPES = frozenset({"T", "TR"})
 BASE_NAMES = ("read_document", "create_question", "register_document")
 SOURCE_NAMES = ("read_source_file", "search_source", "glob_source", "stat_source", "diff_source", "log_source", "patch_source_file", "write_source_file", "remove_source_file", "run_test")
 # Provider names are stable aliases; every source operation dispatches through the HTTP remote service.
@@ -100,11 +100,10 @@ def definitions_for_run(run: dict) -> list[dict]:
     if not step_type:
         raise ToolError(409, "toolset_unavailable")
     names = list(BASE_NAMES)
-    kind, _reason = tool_registry.kind_for_step(scope, step_type)
-    allowed_ops = set(tool_registry.tool_names(kind))
-    names += [name for name, op in SOURCE_OPS.items() if op in allowed_ops]
-    if kind == "read_write":
-        names.append("run_test")
+    if step_type in SOURCE_TYPES:
+        # The remote service authenticates each live token and selects the authorized root.
+        # Definition advertisement must not reject a valid non-Git project fallback.
+        names += list(SOURCE_NAMES)
     result = []
     for name in names:
         schema = REGISTER_SCHEMAS[scope] if name == "register_document" else SCHEMAS[name]

@@ -18,34 +18,20 @@ def _run(tmp_path):
     return {"project_id": "p", "group_id": "g", "doc_ref": "d", "action_scope": "new", "source_root": str(tmp_path)}
 
 
-READ_SOURCE_NAMES = tuple(name for name, op in tools.SOURCE_OPS.items() if op in tools.tool_registry.READ_TOOLS)
-
-
-@pytest.mark.parametrize("scope, expected", [
-    ("new", list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES)),
-    ("edit", list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES)),
-    ("review", list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES)),
-    ("test_run", list(tools.BASE_NAMES)),
-])
-def test_registry_selects_scope_schema_and_tier(monkeypatch, tmp_path, scope, expected):
+@pytest.mark.parametrize("scope", ["new", "edit", "review", "test_run"])
+def test_registry_selects_scope_schema_and_tier(monkeypatch, tmp_path, scope):
     monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": "T"})
+    monkeypatch.setattr(tools, "require_group_root", lambda _run: tmp_path)
     run = _run(tmp_path); run["action_scope"] = scope
     definitions = tools.definitions_for_run(run)
-    assert [d["name"] for d in definitions] == expected
+    assert [d["name"] for d in definitions] == list(tools.BASE_NAMES) + list(tools.SOURCE_NAMES)
     assert next(d for d in definitions if d["name"] == "register_document")["schema"] == tools.REGISTER_SCHEMAS[scope]
     assert all("oneOf" in d["schema"] or d["schema"]["additionalProperties"] is False for d in definitions)
 
 
-@pytest.mark.parametrize("step_type", ["N", "NR", "CH", "P", "T"])
-def test_non_mutating_types_get_read_tier(monkeypatch, tmp_path, step_type):
-    monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": step_type})
-    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES)
-
-
-@pytest.mark.parametrize("step_type", ["TR", "TSR", "TS"])
-def test_mutating_types_get_read_write_and_test_tier(monkeypatch, tmp_path, step_type):
-    monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": step_type})
-    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + list(tools.SOURCE_OPS) + ["run_test"]
+def test_non_source_type_gets_base_tier(monkeypatch, tmp_path):
+    monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": "P"})
+    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES)
 
 
 def test_schema_rejects_context_injection_before_handler():
@@ -273,8 +259,8 @@ def test_git_integration_lookup_failure_fails_closed(monkeypatch, tmp_path):
         tools.test_root(_run(tmp_path))
     assert caught.value.reason == "git_integration_lookup_failed"
 
-@pytest.mark.parametrize("step_type", ["TR", "TSR", "TS"])
-def test_non_git_mutating_types_complete_read_mutation_test_and_register(monkeypatch, tmp_path, step_type):
+@pytest.mark.parametrize("step_type", ["T", "TR"])
+def test_non_git_t_and_tr_complete_read_mutation_test_and_register(monkeypatch, tmp_path, step_type):
     monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": step_type})
     seen = []
     monkeypatch.setattr(tools.remote_tool_service, "handle", lambda op, _token, _body: seen.append(op) or (200, {"ok": True, "op": op}))
