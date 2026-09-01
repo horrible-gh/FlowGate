@@ -741,8 +741,6 @@ def _run_detail_from_row(row: dict) -> dict:
         "last_message_excerpt": row.get("last_message_excerpt"),
         "provider_id": row.get("provider_id"),
         "provider_name": row.get("provider_name"),
-        "selected_provider_source": row.get("selected_provider_source"),
-        "fallback_allowed": bool(row.get("fallback_allowed")),
         "attempt_no": row.get("attempt_no"),
         "fallback_history": row.get("fallback_history"),
         "register_errors": row.get("register_errors"),
@@ -1579,30 +1577,31 @@ def start_run(
         and any(provider.get("id") == stored_provider_id for provider in chain)
     )
 
-    selected_provider_source = "project_default"
     if step_override_provider:
         selected = next(
             (provider for provider in chain if provider.get("id") == step_override_provider),
             None,
         )
         chain = [selected] if selected else []
-        selected_provider_source = "step_override"
-    elif provider_pinned and provider_id:
+    elif mode == "continuous" and provider_pinned and provider_id:
         selected = next((provider for provider in chain if provider.get("id") == provider_id), None)
         if selected is None:
-            raise _http_error(422, PROVIDER_UNAVAILABLE_CODE, PROVIDER_UNAVAILABLE_MESSAGE)
+            raise _http_error(
+                422, PROVIDER_UNAVAILABLE_CODE,
+                PROVIDER_UNAVAILABLE_MESSAGE,
+            )
         chain = [selected]
-        selected_provider_source = "review_loop" if document_review_loop is not None else "force_all"
     elif stored_provider_active:
-        selected = next(provider for provider in chain if provider.get("id") == stored_provider_id)
-        chain = [selected]
-        selected_provider_source = "stored_sequence"
+        # An unpinned run still follows the persisted sequence assignment (D0006 §6.2).
+        chain = _prioritize_chain(chain, stored_provider_id)
     elif provider_id:
         selected = next((provider for provider in chain if provider.get("id") == provider_id), None)
         if selected is None:
-            raise _http_error(422, PROVIDER_UNAVAILABLE_CODE, PROVIDER_UNAVAILABLE_MESSAGE)
-        chain = [selected]
-        selected_provider_source = "request"
+            raise _http_error(
+                422, PROVIDER_UNAVAILABLE_CODE,
+                PROVIDER_UNAVAILABLE_MESSAGE,
+            )
+        chain = [selected] if mode == "single" else _prioritize_chain(chain, provider_id)
     elif mode == "continuous":
         hop_provider = _resolve_continuation_hop_provider(
             project_id,
@@ -1610,10 +1609,9 @@ def start_run(
             continuation_instruction_mode=continuation_instruction_mode,
             continuation_auto_approve_item_seqs=continuation_auto_approve_item_seqs,
         )
-        selected = next((provider for provider in chain if provider.get("id") == hop_provider), None)
-        if selected:
-            chain = [selected]
-            selected_provider_source = "document_type"
+        if hop_provider:
+            chain = _prioritize_chain(chain, hop_provider)
+
     if mode == "continuous" and stored_provider_id and not stored_provider_active and chain:
         logger.warning(
             "continuation hop provider fallback: %s not active for %s item_seq %s, "
@@ -1948,8 +1946,6 @@ def start_run(
         "provider_id": None,
         "attempt_no": 0,
         "fallback_history": [],
-        "selected_provider_source": selected_provider_source,
-        "fallback_allowed": selected_provider_source == "project_default" and len(chain) > 1,
         "register_errors": [],
         "tool_call_misses": 0,
         "turn_limit_exhausted": False,
@@ -2220,8 +2216,6 @@ def start_run(
         "worker_document_type": run["worker_document_type"],
         "auto_handled_item_seqs": run["auto_handled_item_seqs"],
         "provider": _provider_brief(chain[0]),
-        "selected_provider_source": run["selected_provider_source"],
-        "fallback_allowed": run["fallback_allowed"],
         "attempt_no": 1,
         "started_at": run["started_at"],
         # 0359 P0006 [hop budget]: the budget and its wall-clock deadline travel with every
@@ -5504,8 +5498,6 @@ def _persist_run_record(run: dict) -> None:
             "last_message_excerpt": excerpt(run.get("last_message")),
             "provider_id": run.get("provider_id"),
             "provider_name": (run.get("provider") or {}).get("name"),
-            "selected_provider_source": run.get("selected_provider_source"),
-            "fallback_allowed": bool(run.get("fallback_allowed")),
             "attempt_no": int(run.get("attempt_no") or 0),
             "attempts_used": int(run.get("attempts_used") or 0),
             "attempts_max": run.get("attempts_max"),
@@ -5691,8 +5683,6 @@ def finished_payload(run: dict) -> dict:
         "last_message": run["last_message"],
         "provider_id": run["provider_id"],
         "provider_name": (run.get("provider") or {}).get("name"),
-        "selected_provider_source": run.get("selected_provider_source"),
-        "fallback_allowed": bool(run.get("fallback_allowed")),
         "started_at": run.get("started_at"),
         "finished_at": run.get("finished_at"),
         "attempt_no": run["attempt_no"],

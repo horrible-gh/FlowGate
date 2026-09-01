@@ -118,14 +118,11 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(svc, "_create_scratch", lambda pid, run_id: src_root)
     monkeypatch.setattr(svc, "_git_status_paths", lambda root: set())
     monkeypatch.setattr(svc, "_cleanup_retained_scratches", lambda pid: None)
-    # Capture the exact executable chain handed to the worker. Most selection tests inspect
-    # metadata only; 0494's execution tests below feed this captured chain through the real
-    # provider-chain executor so a hidden fallback tail cannot escape detection.
-    executed_chains = []
-    monkeypatch.setattr(svc, "_worker", lambda run, chain_, prompt: executed_chains.append(list(chain_)))
+    # No worker process: this file is about which provider the hop RESOLVED, not about running it.
+    monkeypatch.setattr(svc, "_worker", lambda run, chain_, prompt: None)
     monkeypatch.setattr(svc, "_broadcast", lambda run, event_type, payload: None)
     monkeypatch.setattr(svc, "_runs", {})
-    return {"wfseq": wfseq, "chain": chain, "executed_chains": executed_chains}
+    return {"wfseq": wfseq, "chain": chain}
 
 
 def start(env, **over):
@@ -240,8 +237,6 @@ def test_inactive_stored_provider_falls_back_and_warns_once(env, caplog):
     # The request's own (unpinned) selection is what it degrades to, and the snapshot id is
     # named in the log so the screen's "지금 쓸 수 없음" badge and the server agree on WHY.
     assert result["provider"]["id"] == "aip_header"
-    assert result["selected_provider_source"] == "request"
-    assert svc.get_run_record(result["run_id"])["fallback_history"] == []
     assert caplog.messages.count(expected) == 1
 
 
@@ -384,131 +379,3 @@ def test_route_request_reaches_the_right_final_worker_provider(client, body, exp
     payload = response.json()
     assert payload["provider"]["id"] == expected_provider
     _release(payload["run_id"])
-
-# ── 0494 T0005: explicit selection collapses the executable chain and records why ──
-
-def test_stored_sequence_is_single_chain_with_audit_fields(env):
-    result = start(env, continuation_provider_overrides=None)
-    run = svc.get_run_record(result["run_id"])
-    assert result["selected_provider_source"] == "stored_sequence"
-    assert result["fallback_allowed"] is False
-    assert run["selected_provider_source"] == "stored_sequence"
-    assert run["fallback_allowed"] is False
-
-
-def test_step_override_and_force_all_record_distinct_sources(env):
-    overridden = start(env, continuation_provider_overrides={"2": "aip_step"})
-    forced = start(env, provider_id="aip_header", provider_pinned=True,
-                   continuation_provider_overrides=None)
-    assert (overridden["selected_provider_source"], overridden["fallback_allowed"]) == (
-        "step_override", False,
-    )
-    assert (forced["selected_provider_source"], forced["fallback_allowed"]) == (
-        "force_all", False,
-    )
-
-
-def test_unpinned_request_is_single_chain_and_inactive_stored_is_not_execution_fallback(env):
-    env["wfseq"].items = [dict(row, provider_id=None, provider_display_name=None) for row in ITEMS]
-    result = start(env, provider_id="aip_header")
-    assert result["selected_provider_source"] == "request"
-    assert result["fallback_allowed"] is False
-    assert svc.get_run_record(result["run_id"])["fallback_history"] == []
-
-
-def test_unspecified_project_default_preserves_startup_fallback(env):
-    env["wfseq"].items = [dict(row, provider_id=None, provider_display_name=None) for row in ITEMS]
-    result = start(env, provider_id=None)
-    assert result["selected_provider_source"] == "project_default"
-    assert result["fallback_allowed"] is True
-
-
-def test_document_type_assignment_records_its_own_single_chain_source(env, monkeypatch):
-    env["wfseq"].items = [dict(row, provider_id=None, provider_display_name=None) for row in ITEMS]
-    monkeypatch.setattr(svc, "_resolve_continuation_hop_provider", lambda *args, **kwargs: "aip_t")
-
-    result = start(env, provider_id=None)
-    assert result["provider"]["id"] == "aip_t"
-    assert result["selected_provider_source"] == "document_type"
-    assert result["fallback_allowed"] is False
-    assert [provider_["id"] for provider_ in env["executed_chains"][-1]] == ["aip_t"]
-
-
-def test_inactive_document_type_assignment_falls_to_project_default_without_execution_fallback(
-    env, monkeypatch,
-):
-    env["wfseq"].items = [dict(row, provider_id=None, provider_display_name=None) for row in ITEMS]
-    env["chain"]["providers"] = [provider("aip_header"), provider("aip_nr")]
-    # The assignment still names aip_t, but aip_t is absent from the effective active chain.
-    monkeypatch.setattr(svc, "_resolve_continuation_hop_provider", lambda *args, **kwargs: "aip_t")
-
-    result = start(env, provider_id=None)
-    run = svc.get_run_record(result["run_id"])
-    assert result["provider"]["id"] == "aip_header"
-    assert result["selected_provider_source"] == "project_default"
-    assert result["fallback_allowed"] is True
-    assert run["fallback_history"] == []
-    assert [provider_["id"] for provider_ in env["executed_chains"][-1]] == [
-        "aip_header", "aip_nr",
-    ]
-
-
-@pytest.mark.parametrize("failure", ["fast_fail", "spawn_failed"])
-def test_continuous_explicit_failure_never_invokes_trailing_opus(env, monkeypatch, failure):
-    # The effective project chain deliberately contains an expensive trailing provider.
-    # start_run must hand the worker only the stored selection, and the real executor must
-    # therefore finish the hop after one failed attempt without ever calling that tail.
-    env["chain"]["providers"] = [provider("aip_nr"), provider("aip_opus")]
-    result = start(env, provider_id=None, continuation_provider_overrides=None)
-    executable = env["executed_chains"][-1]
-    assert [provider_["id"] for provider_ in executable] == ["aip_nr"]
-
-    run = svc.get_run_record(result["run_id"])
-    run.update(provider=svc._provider_brief(executable[0]), provider_id="aip_nr",
-               attempt_no=1, fallback_history=[], end_reason=None)
-    invoked = []
-
-    def fail(provider_, prompt, run_):
-        invoked.append(provider_["id"])
-        return failure, f"simulated {failure}"
-
-    monkeypatch.setattr(svc, "_cli_execute", fail)
-    started = svc._execute_provider_chain(run, executable, "work")
-    svc._classify_end_reason(run, started)
-
-    assert invoked == ["aip_nr"]
-    assert "aip_opus" not in invoked
-    assert run["attempt_no"] == 1
-    assert run["fallback_history"] == [{
-        "provider_id": "aip_nr",
-        "provider_name": "NR",
-        "reason": failure,
-        "detail": f"simulated {failure}",
-        "attempt_no": 1,
-        "token_id": run["token_id"],
-    }]
-    assert run["end_reason"] == "all_providers_failed"
-
-
-def test_review_loop_selection_is_single_chain_and_audited(env, monkeypatch):
-    loop = {
-        "review_count": 1,
-        "reviewer_provider_id": "aip_nr",
-        "review_criteria": "document_type_default",
-        "rework_provider_id": "aip_t",
-        "rework_timeout_sec": 1800,
-        "rework_message": "fix findings",
-        "failure_restart_max_attempts": 0,
-        "total_timeout_sec": 3600,
-    }
-    monkeypatch.setattr(svc, "compute_review_baseline", lambda _doc: {
-        "review_baseline_id": 0, "baseline_revision_no": 0, "starts_with_rework": False,
-    })
-    monkeypatch.setattr(svc, "_insert_document_review_loop", lambda _run: None)
-
-    result = start(env, mode="single", action_scope="review", provider_id=None,
-                   document_review_loop=loop)
-    assert result["provider"]["id"] == "aip_nr"
-    assert result["selected_provider_source"] == "review_loop"
-    assert result["fallback_allowed"] is False
-    assert [provider_["id"] for provider_ in env["executed_chains"][-1]] == ["aip_nr"]
