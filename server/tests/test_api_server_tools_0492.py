@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 from pathlib import Path
@@ -9,6 +10,7 @@ os.environ.setdefault("TESTING", "1")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from modules.flow_gate.api.v1 import document_routes
 from modules.flow_gate.services import ai_invoke_service as invoke
 from modules.flow_gate.services import api_server_tools as tools
 from modules.flow_gate.services import provider_capability_service as caps
@@ -227,29 +229,55 @@ def test_source_call_delegates_root_selection_to_remote_service(monkeypatch, tmp
     assert tools.source_call(_run(tmp_path), "live", "remove_source_file", {"path": "gone.py"}) == (409, {"ok": False, "op": "remove"})
 
 
+def _stub_route_response(status=200, payload=None):
+    return SimpleNamespace(status_code=status, body=json.dumps(payload if payload is not None else {}).encode("utf-8"))
+
+
 def test_read_document_ranges_are_converted_to_http_contract(monkeypatch, tmp_path):
+    """0505 T0018: _api_read_document now calls document_routes.get_document_section
+    in-process instead of routing a path string through _api_bound_request -- the a-b
+    range contract this asserted moves from a URL suffix to an explicit kwarg."""
     captured = {}
-    monkeypatch.setattr(invoke, "_api_bound_request", lambda _run, _token, path: captured.setdefault("path", path) or (200, {}))
+
+    def fake_section(_request, _doc_ref, **kwargs):
+        captured.update(kwargs)
+        return _stub_route_response()
+
+    monkeypatch.setattr(document_routes, "get_document_section", fake_section)
     invoke._api_read_document(_run(tmp_path), "live", {"lines": {"start": 2, "end": 4}})
-    assert captured["path"].endswith("/section?lines=2-4")
+    assert captured["lines"] == "2-4"
     captured.clear()
     invoke._api_read_document(_run(tmp_path), "live", {"chars": {"start": 0, "end": 12}})
-    assert captured["path"].endswith("/section?chars=0-12")
+    assert captured["chars"] == "0-12"
 
 
-@pytest.mark.parametrize("tool_input, suffix", [
-    ({}, "/document/d"),
-    ({"section": "Overview"}, "/section?section=Overview"),
-    ({"section_id": "intro"}, "/section?section_id=intro"),
-    ({"lines": {"start": 1, "end": 1}}, "/section?lines=1-1"),
-    ({"chars": {"start": 0, "end": 0}}, "/section?chars=0-0"),
+@pytest.mark.parametrize("tool_input, selector", [
+    ({}, None),
+    ({"section": "Overview"}, {"section": "Overview"}),
+    ({"section_id": "intro"}, {"section_id": "intro"}),
+    ({"lines": {"start": 1, "end": 1}}, {"lines": "1-1"}),
+    ({"chars": {"start": 0, "end": 0}}, {"chars": "0-0"}),
 ])
-def test_read_document_full_selector_and_boundary_contract(monkeypatch, tmp_path, tool_input, suffix):
-    captured = {}
-    monkeypatch.setattr(invoke, "_api_bound_request", lambda _run, _token, path: captured.setdefault("path", path) or (200, {}))
+def test_read_document_full_selector_and_boundary_contract(monkeypatch, tmp_path, tool_input, selector):
+    calls = {}
+
+    def fake_document(_request, _doc_ref):
+        calls["doc"] = True
+        return _stub_route_response()
+
+    def fake_section(_request, _doc_ref, **kwargs):
+        calls["section"] = kwargs
+        return _stub_route_response()
+
+    monkeypatch.setattr(document_routes, "get_document", fake_document)
+    monkeypatch.setattr(document_routes, "get_document_section", fake_section)
     tools.validate(tools.SCHEMAS["read_document"], tool_input)
     invoke._api_read_document(_run(tmp_path), "live", tool_input)
-    assert captured["path"].endswith(suffix)
+    if selector is None:
+        assert calls == {"doc": True}
+    else:
+        for key in ("section", "section_id", "lines", "chars"):
+            assert calls["section"][key] == selector.get(key)
 
 
 @pytest.mark.parametrize("tool_input", [
@@ -268,11 +296,17 @@ def test_read_document_rejects_invalid_selector_and_ranges(tool_input):
 
 def test_read_document_null_selector_is_removed_before_http_conversion(monkeypatch, tmp_path):
     captured = {}
-    monkeypatch.setattr(invoke, "_api_bound_request", lambda _run, _token, path: captured.setdefault("path", path) or (200, {}))
+
+    def fake_section(_request, _doc_ref, **kwargs):
+        captured.update(kwargs)
+        return _stub_route_response()
+
+    monkeypatch.setattr(document_routes, "get_document_section", fake_section)
     canonical = tools.normalize_read_document_input({"lines": {"start": 1, "end": 5}, "chars": None})
     assert canonical == {"lines": {"start": 1, "end": 5}}
     invoke._api_read_document(_run(tmp_path), "live", canonical)
-    assert captured["path"].endswith("/section?lines=1-5")
+    assert captured["lines"] == "1-5"
+    assert captured["chars"] is None
 
 
 @pytest.mark.parametrize("tool_input", [{"section": ""}, {"lines": {"start": 1}}, {"unknown": "x"}])

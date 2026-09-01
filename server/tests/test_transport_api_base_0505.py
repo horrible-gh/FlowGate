@@ -153,11 +153,10 @@ class TestResolveTransportApiBase:
         assert run.get("_transport_api_base_resolved") is None
 
 
-# The five sites that need no token/binding setup -- everything but inbox_register.
-FIVE_SITES = [
-    ("conversation_context",
-     lambda run: svc._conversation_context(run, "raw"),
-     f"/conversation/{DOC}/turns?after_seq=0&include_head=1"),
+# 0505 T0018: conversation_context moved to a direct in-process call and dropped out
+# of this list -- it no longer dials self-HTTP at all, dev-type or prod-type, so it has
+# its own no-urlopen regression below instead (TestDirectCallSitesIgnoreTheTransportBase).
+FOUR_SITES = [
     ("conversation_turn_register",
      lambda run: svc._conversation_turn_register(run, "raw", {"body": "hi"}),
      f"/conversation/{DOC}/turn"),
@@ -173,19 +172,24 @@ FIVE_SITES = [
 ]
 
 
-class TestFiveSelfHttpSitesUseTheResolvedTransportBase:
+class TestFourSelfHttpSitesUseTheResolvedTransportBase:
     """Each site captured via `urllib.request.urlopen` -- not by re-reading source --
     once dev-type (operator already loopback, must be unchanged) and once prod-type
-    (public operator, configured agent loopback, must NOT dial the public origin)."""
+    (public operator, configured agent loopback, must NOT dial the public origin).
 
-    @pytest.mark.parametrize("name,call,path", FIVE_SITES, ids=[c[0] for c in FIVE_SITES])
+    0505 T0018 dependency check: these four are exactly the self-HTTP sites T0018 left
+    untouched (item 2's "group"-classified four, plus api_bound_request which still
+    serves create_question), so this is the direct proof that T#2's transport_api_base
+    separation still holds for them after the two GET-only sites were converted."""
+
+    @pytest.mark.parametrize("name,call,path", FOUR_SITES, ids=[c[0] for c in FOUR_SITES])
     def test_dev_type_stays_on_the_operator_base(self, monkeypatch, name, call, path):
         captured = _capture_urlopen(monkeypatch)
         run = _run(DEV_OPERATOR)
         call(run)
         assert captured["request"].full_url == f"{DEV_OPERATOR}{path}"
 
-    @pytest.mark.parametrize("name,call,path", FIVE_SITES, ids=[c[0] for c in FIVE_SITES])
+    @pytest.mark.parametrize("name,call,path", FOUR_SITES, ids=[c[0] for c in FOUR_SITES])
     def test_prod_type_routes_through_the_agent_base_not_the_public_origin(
         self, monkeypatch, name, call, path,
     ):
@@ -195,6 +199,43 @@ class TestFiveSelfHttpSitesUseTheResolvedTransportBase:
         call(run)
         assert captured["request"].full_url == f"{PROD_RESOLVED}{path}"
         assert "flowgate.example" not in captured["request"].full_url
+
+
+# 0505 T0018: conversation_context and api_read_document no longer dial self-HTTP at
+# all -- unlike FOUR_SITES above, dev-type vs prod-type transport-base settings must
+# make no difference to them, because they never read `_resolve_transport_api_base`'s
+# result to decide where to call.
+DIRECT_CALL_SITES = [
+    ("conversation_context", lambda run, raw: svc._conversation_context(run, raw)),
+    ("api_read_document", lambda run, raw: svc._api_read_document(run, raw, {})),
+]
+
+
+class TestDirectCallSitesIgnoreTheTransportBase:
+    """Garbage bearer token is enough here: the point is not auth (covered in depth by
+    TestProdTypeGenuineTopologyProof below), it is that urlopen is never touched under
+    either topology."""
+
+    @pytest.mark.parametrize("name,call", DIRECT_CALL_SITES, ids=[c[0] for c in DIRECT_CALL_SITES])
+    def test_dev_type_never_dials_self_http(self, monkeypatch, token_store, name, call):
+        monkeypatch.setattr(
+            svc.urllib.request, "urlopen",
+            lambda *_a, **_k: pytest.fail(f"{name} must not dial self-HTTP (0505 T0018)"),
+        )
+        run = _run(DEV_OPERATOR)
+        status, _payload = call(run, "garbage-not-a-real-token")
+        assert status == 401
+
+    @pytest.mark.parametrize("name,call", DIRECT_CALL_SITES, ids=[c[0] for c in DIRECT_CALL_SITES])
+    def test_prod_type_never_dials_self_http(self, monkeypatch, token_store, name, call):
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", PROD_AGENT_SETTING)
+        monkeypatch.setattr(
+            svc.urllib.request, "urlopen",
+            lambda *_a, **_k: pytest.fail(f"{name} must not dial self-HTTP (0505 T0018)"),
+        )
+        run = _run(PROD_OPERATOR)
+        status, _payload = call(run, "garbage-not-a-real-token")
+        assert status == 401
 
 
 class TestInboxRegisterUsesTheResolvedTransportBase:
@@ -260,7 +301,7 @@ class TestReadHelpStaysOnTheOperatorBase:
 
 # ── Genuine prod-type integration proof ───────────────────────────────────────
 #
-# TestFiveSelfHttpSitesUseTheResolvedTransportBase / TestInboxRegisterUsesTheResolvedTransportBase
+# TestFourSelfHttpSitesUseTheResolvedTransportBase / TestInboxRegisterUsesTheResolvedTransportBase
 # above capture `urllib.request.urlopen` and assert only the outgoing `Request.full_url` --
 # they never dispatch into a real route, so they cannot tell a correctly-resolved loopback
 # URL from one that would 404 or 401 on a real server. This section replaces the captured
@@ -388,11 +429,23 @@ class TestProdTypeGenuineTopologyProof:
         monkeypatch.setattr(auth_outbound, "has_permission", lambda *_a, **_k: True)
         return TestClient(_build_prod_app(), raise_server_exceptions=False)
 
-    # ── conversation_context ──────────────────────────────────────────────────
+    # ── conversation_context (0505 T0018: direct in-process call, not self-HTTP) ─
+    #
+    # Six mediated self-HTTP sites became four (T0018 item 2): GET routes never reach
+    # GroupMutationPolicyMiddleware, since mutation_policy.classify_mutation_route's
+    # first check is `methods & MUTATION_METHODS` (POST/PUT/PATCH/DELETE only) --
+    # conversation_context and api_read_document dropped the loopback round trip
+    # entirely and call the route's own plain-Python auth+handler in-process. Each test
+    # below fails `urlopen` outright to prove that.
+
+    def _no_self_http(self, monkeypatch, site_name):
+        monkeypatch.setattr(
+            svc.urllib.request, "urlopen",
+            lambda *_a, **_k: pytest.fail(f"{site_name} must not dial self-HTTP (0505 T0018)"),
+        )
 
     def test_conversation_context_authenticates_and_routes_for_real(self, monkeypatch, token_store):
         monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", PROD_AGENT_SETTING)
-        client = self._client(monkeypatch)
         raw = _seed_real_token(
             token_store, action_scope="chat", project=PROJECT, group_id=GROUP,
             doc_ref=DOC, issued_to="usr-1",
@@ -405,21 +458,30 @@ class TestProdTypeGenuineTopologyProof:
             conversation_routes.conversation_query_service, "list_turns",
             lambda **kw: {"turns": [], "head_seq": 0},
         )
-        captured: dict = {}
-        monkeypatch.setattr(svc.urllib.request, "urlopen", _forward_to_app(client, captured))
+        self._no_self_http(monkeypatch, "_conversation_context")
         run = _run(PROD_OPERATOR)
         status, payload = svc._conversation_context(run, raw)
         assert status == 200
         assert payload == {"turns": [], "head_seq": 0}
-        assert captured["request"].full_url == (
-            f"{PROD_RESOLVED}/conversation/{DOC}/turns?after_seq=0&include_head=1"
+
+    def test_conversation_context_rejects_a_token_bound_to_a_different_doc(self, monkeypatch, token_store):
+        """The binding this call has always enforced -- action_scope/doc_ref/project/
+        group match (conversation_routes._authenticate) -- must still reject a token
+        issued for a different document now that the call is direct (T0018 completion
+        criteria)."""
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", PROD_AGENT_SETTING)
+        raw = _seed_real_token(
+            token_store, action_scope="chat", project=PROJECT, group_id=GROUP,
+            doc_ref="flowgate.default.0505.9999-T", issued_to="usr-1",
         )
+        self._no_self_http(monkeypatch, "_conversation_context")
+        run = _run(PROD_OPERATOR)
+        status, _payload = svc._conversation_context(run, raw)
+        assert status == 403
 
     def test_conversation_context_rejects_a_garbage_bearer_token(self, monkeypatch, token_store):
         monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", PROD_AGENT_SETTING)
-        client = self._client(monkeypatch)
-        captured: dict = {}
-        monkeypatch.setattr(svc.urllib.request, "urlopen", _forward_to_app(client, captured))
+        self._no_self_http(monkeypatch, "_conversation_context")
         run = _run(PROD_OPERATOR)
         status, _payload = svc._conversation_context(run, "garbage-not-a-real-token")
         assert status == 401
@@ -479,6 +541,69 @@ class TestProdTypeGenuineTopologyProof:
         run = _run(PROD_OPERATOR)
         status, _payload = svc._api_bound_request(run, "garbage-not-a-real-token", f"/document/{DOC}")
         assert status == 401
+
+    # ── api_read_document (0505 T0018: direct in-process call, not self-HTTP) ────
+    #
+    # Unlike api_bound_request above (still self-HTTP, still used by create_question),
+    # _api_read_document now calls document_routes.get_document/get_document_section
+    # in-process. Its binding is auth_outbound.verify_bearer -- project + has_permission
+    # (perm_document_read), not a doc_ref/group match like conversation_context's -- so
+    # the "differently-bound token" regression this call's completion criteria calls for
+    # is a real token the permission table denies, not a different doc_ref.
+
+    def test_api_read_document_authenticates_and_routes_for_real(self, monkeypatch, token_store):
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", PROD_AGENT_SETTING)
+        monkeypatch.setattr(auth_outbound, "has_permission", lambda *_a, **_k: True)
+        raw = _seed_real_token(token_store, project=PROJECT, issued_to="usr-1")
+        monkeypatch.setattr(
+            document_routes.db_docs, "get_by_id",
+            lambda doc_id: {
+                "doc_id": doc_id, "type_code": "T", "title": "x", "status": "open",
+                "group_id": GROUP, "project_id": PROJECT,
+            },
+        )
+        monkeypatch.setattr(document_routes, "get_answers_for_document", lambda _doc_id: [])
+        self._no_self_http(monkeypatch, "_api_read_document")
+        run = _run(PROD_OPERATOR)
+        status, payload = svc._api_read_document(run, raw, {})
+        assert status == 200
+        assert payload["doc_id"] == DOC
+
+    def test_api_read_document_section_authenticates_and_routes_for_real(self, monkeypatch, token_store):
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", PROD_AGENT_SETTING)
+        monkeypatch.setattr(auth_outbound, "has_permission", lambda *_a, **_k: True)
+        raw = _seed_real_token(token_store, project=PROJECT, issued_to="usr-1")
+        monkeypatch.setattr(
+            document_routes.db_docs, "get_by_id",
+            lambda doc_id: {
+                "doc_id": doc_id, "type_code": "T", "title": "x", "status": "open",
+                "group_id": GROUP, "project_id": PROJECT, "revision_no": 0,
+            },
+        )
+        monkeypatch.setattr(
+            document_routes, "_resolve_live_content", lambda _doc: "# Heading\nBody text.\n",
+        )
+        self._no_self_http(monkeypatch, "_api_read_document")
+        run = _run(PROD_OPERATOR)
+        status, payload = svc._api_read_document(run, raw, {"lines": {"start": 1, "end": 1}})
+        assert status == 200
+        assert payload["doc_id"] == DOC
+
+    def test_api_read_document_rejects_a_garbage_bearer_token(self, monkeypatch, token_store):
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", PROD_AGENT_SETTING)
+        self._no_self_http(monkeypatch, "_api_read_document")
+        run = _run(PROD_OPERATOR)
+        status, _payload = svc._api_read_document(run, "garbage-not-a-real-token", {})
+        assert status == 401
+
+    def test_api_read_document_rejects_a_token_without_read_permission(self, monkeypatch, token_store):
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", PROD_AGENT_SETTING)
+        monkeypatch.setattr(auth_outbound, "has_permission", lambda *_a, **_k: False)
+        raw = _seed_real_token(token_store, project=PROJECT, issued_to="usr-1")
+        self._no_self_http(monkeypatch, "_api_read_document")
+        run = _run(PROD_OPERATOR)
+        status, _payload = svc._api_read_document(run, raw, {})
+        assert status == 403
 
     # ── resolve_conflict ───────────────────────────────────────────────────────
 

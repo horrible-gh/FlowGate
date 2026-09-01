@@ -2096,31 +2096,43 @@ def _workflow_decide(run: dict, raw_token: str, tool_input: dict) -> tuple[int, 
     except Exception as exc:
         return 0, {"error": str(exc)}
 
+class _BearerOnlyRequest:
+    """Request stand-in for direct in-process calls (0505 T0018).
+
+    `conversation_routes._authenticate`/`auth_outbound.verify_bearer` never read
+    anything off a live Request except this header, so a full ASGI Request is
+    unnecessary for the two sites that no longer dial self-HTTP.
+    """
+
+    __slots__ = ("headers",)
+
+    def __init__(self, raw_token: str) -> None:
+        self.headers = {"Authorization": f"Bearer {raw_token}"}
+
+
 def _conversation_context(run: dict, raw_token: str) -> tuple[int, dict]:
     """Fetch the unread conversation that an API model cannot retrieve itself.
 
-    0505 T0006 (DB0005 3.3): returns (status, body) like its five self-HTTP siblings
-    below, not a bare Optional[dict]. The old contract folded every failure -- HTTP
-    error, transport error, a non-dict body -- into a single None, so a hop that died
-    here left no status and no reason behind it, only the caller. This is the FIRST
-    self-HTTP a chat hop opens, so that silence was the whole diagnostic gap.
+    0505 T0018: in-process call, not self-HTTP. GET /conversation/{doc_id}/turns never
+    reaches GroupMutationPolicyMiddleware -- mutation_policy.classify_mutation_route's
+    first check is `methods & MUTATION_METHODS` (POST/PUT/PATCH/DELETE only), so a GET
+    route is classified "read_only" before any group-lease check runs (mutation_policy.py
+    290-304, 347). The only binding this call ever had was
+    conversation_routes._authenticate (token action_scope/doc_ref/project/group match),
+    unchanged and reused as-is through the route's own plain-Python _list_authenticated --
+    no new binding logic, no self-HTTP round trip. Still returns (status, body) like the
+    five self-HTTP call sites below (_api_bound_request/_workflow_decide/_resolve_conflict/
+    _conversation_turn_register/_inbox_register).
     """
-    api_base = _resolve_transport_api_base(run).rstrip("/")
-    req = urllib.request.Request(
-        f"{api_base}/conversation/{run['doc_ref']}/turns?after_seq=0&include_head=1",
-        headers={"Authorization": f"Bearer {raw_token}"},
-        method="GET",
-    )
+    from modules.flow_gate.api.v1 import conversation_routes
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            return resp.status, json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        try:
-            return exc.code, json.loads(exc.read().decode("utf-8"))
-        except Exception:
-            return exc.code, {"error": str(exc)}
+        response = conversation_routes._list_authenticated(
+            run["doc_ref"], raw_token, after_seq=0, before_seq=None, limit=None,
+            include_head=True,
+        )
     except Exception as exc:
         return 0, {"error": str(exc)}
+    return response.status_code, json.loads(response.body)
 
 def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     """Append an API-provider reply through the token-bound conversation endpoint."""
@@ -2179,19 +2191,48 @@ def _api_bound_request(run: dict, raw_token: str, path: str, method: str = "GET"
         return 0, {"error": str(exc)}
 
 def _api_read_document(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
-    from urllib.parse import urlencode
-    if not tool_input:
-        return _api_bound_request(run, raw_token, f"/document/{run['doc_ref']}")
-    query = {}
-    for key in ("section", "section_id"):
-        if key in tool_input:
-            query[key] = tool_input[key]
-    for key in ("lines", "chars"):
-        if key in tool_input:
-            # Public schemas use typed ranges; the document HTTP contract is a-b.
-            value = tool_input[key]
-            query[key] = f"{value['start']}-{value['end']}"
-    return _api_bound_request(run, raw_token, f"/document/{run['doc_ref']}/section?{urlencode(query)}")
+    """0505 T0018: in-process call, not self-HTTP -- same GET-skips-the-lease-middleware
+    reasoning as _conversation_context above. `_api_bound_request`/`_api_create_question`
+    keep dialing self-HTTP unchanged; this is the only call inside the shared dispatch
+    branch (1707-1719) that no longer does.
+
+    document_routes.get_document/get_document_section are FastAPI route functions whose
+    Query(...)-typed parameters must all be passed explicitly here -- calling one without
+    a value falls back to the raw `Query` sentinel object, not the default it wraps.
+    `_BearerOnlyRequest` stands in for the real Request: verify_bearer, reused unchanged,
+    only ever reads `request.headers`, and neither route reads anything else off it.
+
+    transport_api_base is still resolved here even though it is no longer dialed, so
+    DB0005 2's "first opener wins" diagnostic keeps reporting the same per-hop value
+    regardless of which of the six sites happens to run first (T0018 item 3 judgment:
+    last_tool_name/transport_api_base semantics are left unchanged for this site).
+    """
+    if run.get("transport_api_base") is None:
+        run["transport_api_base"] = _sanitize_diagnostic_base(_resolve_transport_api_base(run))
+    from modules.flow_gate.api.v1 import document_routes
+    fake_request = _BearerOnlyRequest(raw_token)
+    try:
+        if not tool_input:
+            response = document_routes.get_document(fake_request, run["doc_ref"])
+        else:
+            query = {}
+            for key in ("section", "section_id"):
+                if key in tool_input:
+                    query[key] = tool_input[key]
+            for key in ("lines", "chars"):
+                if key in tool_input:
+                    # Public schemas use typed ranges; the document HTTP contract is a-b.
+                    value = tool_input[key]
+                    query[key] = f"{value['start']}-{value['end']}"
+            response = document_routes.get_document_section(
+                fake_request, run["doc_ref"],
+                section=query.get("section"), section_id=query.get("section_id"),
+                lines=query.get("lines"), chars=query.get("chars"),
+                include_children=True, max_chars=None, revision_no=None,
+            )
+    except Exception as exc:
+        return 0, {"error": str(exc)}
+    return response.status_code, json.loads(response.body)
 
 def _api_create_question(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     return _api_bound_request(run, raw_token, f"/q/{run['doc_ref']}/questions", "POST", tool_input)
