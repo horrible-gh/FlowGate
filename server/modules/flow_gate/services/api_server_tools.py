@@ -18,21 +18,51 @@ from modules.flow_gate.services import git_service, process_runner, remote_tool_
 DOCUMENT_SCOPES = frozenset({"new", "edit", "review", "test_run"})
 SOURCE_TYPES = frozenset({"T", "TR"})
 BASE_NAMES = ("read_document", "create_question", "register_document")
-SOURCE_NAMES = ("read_source_file", "search_source", "patch_source_file", "write_source_file", "run_test")
-SOURCE_OPS = {"read_source_file": "read", "search_source": "grep", "patch_source_file": "patch", "write_source_file": "write"}
+SOURCE_NAMES = ("read_source_file", "search_source", "glob_source", "stat_source", "diff_source", "log_source", "patch_source_file", "write_source_file", "remove_source_file", "run_test")
+# Provider names are stable aliases; every source operation dispatches through the HTTP remote service.
+SOURCE_OPS = {
+    "read_source_file": "read", "search_source": "grep", "glob_source": "glob",
+    "stat_source": "stat", "diff_source": "diff", "log_source": "log",
+    "patch_source_file": "patch", "write_source_file": "write", "remove_source_file": "remove",
+}
 
 
 def _obj(properties: dict, required: list[str] | None = None) -> dict:
     return {"type": "object", "properties": properties, "required": required or [], "additionalProperties": False}
 
 
+RANGE_SCHEMA = _obj({
+    "start": {"type": "integer", "minimum": 0},
+    "end": {"type": "integer", "minimum": 0},
+}, ["start", "end"])
+RANGE_SCHEMA["x-flowgate-range"] = True
+LINE_RANGE_SCHEMA = _obj({
+    "start": {"type": "integer", "minimum": 1},
+    "end": {"type": "integer", "minimum": 1},
+}, ["start", "end"])
+LINE_RANGE_SCHEMA["x-flowgate-range"] = True
+READ_DOCUMENT_SCHEMA = {
+    "oneOf": [
+        _obj({}),
+        _obj({"section": {"type": "string"}}, ["section"]),
+        _obj({"section_id": {"type": "string"}}, ["section_id"]),
+        _obj({"lines": LINE_RANGE_SCHEMA}, ["lines"]),
+        _obj({"chars": RANGE_SCHEMA}, ["chars"]),
+    ],
+}
+
 SCHEMAS = {
-    "read_source_file": _obj({"path": {"type": "string", "minLength": 1}, "offset": {"type": "integer", "minimum": 0}, "length": {"type": "integer", "minimum": 0}, "encoding": {"type": "string"}}, ["path"]),
-    "search_source": _obj({"pattern": {"type": "string", "minLength": 1}, "path": {"type": "string"}, "glob": {"type": "string"}, "ignore_case": {"type": "boolean"}, "max_results": {"type": "integer", "minimum": 0}}, ["pattern"]),
+    "read_source_file": _obj({"path": {"type": "string", "minLength": 1}, "max_bytes": {"type": "integer", "minimum": 0}, "offset": {"type": "integer", "minimum": 0}, "length": {"type": "integer", "minimum": 0}, "encoding": {"type": "string"}, "ref": {"type": "string"}}, ["path"]),
+    "search_source": _obj({"pattern": {"type": "string", "minLength": 1}, "path": {"type": "string"}, "glob": {"type": "string"}, "ignore_case": {"type": "boolean"}, "max_results": {"type": "integer", "minimum": 0}, "ref": {"type": "string"}}, ["pattern"]),
+    "glob_source": _obj({"pattern": {"type": "string", "minLength": 1}, "path": {"type": "string"}, "ref": {"type": "string"}}, ["pattern"]),
+    "stat_source": _obj({"path": {"type": "string", "minLength": 1}, "ref": {"type": "string"}}, ["path"]),
+    "diff_source": _obj({"path": {"type": "string"}, "target_ref": {"type": "string", "minLength": 1}}),
+    "log_source": _obj({"path": {"type": "string"}, "target_ref": {"type": "string", "minLength": 1}, "max_count": {"type": "integer", "minimum": 1}}),
     "patch_source_file": _obj({"path": {"type": "string", "minLength": 1}, "old_string": {"type": "string", "minLength": 1}, "new_string": {"type": "string"}, "replace_all": {"type": "boolean"}, "encoding": {"type": "string"}}, ["path", "old_string", "new_string"]),
     "write_source_file": _obj({"path": {"type": "string", "minLength": 1}, "content": {"type": "string"}, "mode": {"type": "string", "enum": ["create", "overwrite", "append"]}, "encoding": {"type": "string"}}, ["path", "content"]),
+    "remove_source_file": _obj({"path": {"type": "string", "minLength": 1}, "recursive": {"type": "boolean"}}, ["path"]),
     "run_test": _obj({"command": {"type": "string", "minLength": 1}}, ["command"]),
-    "read_document": _obj({"section": {"type": "string"}, "section_id": {"type": "string"}, "lines": _obj({"start": {"type": "integer", "minimum": 1}, "end": {"type": "integer", "minimum": 1}}, ["start", "end"]), "chars": _obj({"start": {"type": "integer", "minimum": 0}, "length": {"type": "integer", "minimum": 0}}, ["start", "length"])}),
+    "read_document": READ_DOCUMENT_SCHEMA,
     "create_question": _obj({"questions": {"type": "array", "minItems": 1, "items": _obj({"title": {"type": "string"}, "body": {"type": "string", "minLength": 1}, "options": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 200}, "maxItems": 10}}, ["body"])}}, ["questions"]),
 }
 
@@ -71,7 +101,8 @@ def definitions_for_run(run: dict) -> list[dict]:
         raise ToolError(409, "toolset_unavailable")
     names = list(BASE_NAMES)
     if step_type in SOURCE_TYPES:
-        require_group_root(run)
+        # The remote service authenticates each live token and selects the authorized root.
+        # Definition advertisement must not reject a valid non-Git project fallback.
         names += list(SOURCE_NAMES)
     result = []
     for name in names:
@@ -81,6 +112,18 @@ def definitions_for_run(run: dict) -> list[dict]:
 
 
 def validate(schema: dict, value: Any, path: str = "input") -> None:
+    alternatives = schema.get("oneOf")
+    if alternatives is not None:
+        valid_count = 0
+        for alternative in alternatives:
+            try:
+                validate(alternative, value, path)
+                valid_count += 1
+            except ToolError:
+                pass
+        if valid_count != 1:
+            raise ToolError(422, "schema_validation_failed", f"{path} has invalid selector or range")
+        return
     typ = schema.get("type")
     valid = ((typ == "object" and isinstance(value, dict)) or (typ == "array" and isinstance(value, list)) or
              (typ == "string" and isinstance(value, str)) or (typ == "integer" and isinstance(value, int) and not isinstance(value, bool)) or
@@ -97,6 +140,8 @@ def validate(schema: dict, value: Any, path: str = "input") -> None:
         for key, item in value.items():
             if key in props:
                 validate(props[key], item, f"{path}.{key}")
+        if schema.get("x-flowgate-range") and value["start"] > value["end"]:
+            raise ToolError(422, "schema_validation_failed", f"{path}.start must not exceed {path}.end")
     elif typ == "array":
         if len(value) < schema.get("minItems", 0) or len(value) > schema.get("maxItems", 10**9):
             raise ToolError(422, "schema_validation_failed", f"{path} has invalid length")
@@ -124,22 +169,32 @@ def require_group_root(run: dict) -> Path:
 
 
 def source_call(run: dict, raw_token: str, name: str, tool_input: dict) -> tuple[int, dict]:
-    root = require_group_root(run)
-    op = SOURCE_OPS[name]
-    body = dict(tool_input)
-    if op in {"read", "grep"}:
-        body["ref"] = None
-    # The public pipeline authenticates the live token and enforces its grant.  Root
-    # equality is checked on both sides of the call to detect ledger/root rotation.
-    status, payload = remote_tool_service.handle(op, raw_token, body)
-    if require_group_root(run) != root:
-        raise ToolError(409, "group_worktree_unavailable")
+    # remote_tool_service is the sole live-token/root authority.  In particular, it
+    # preserves worktree fail-closed mutation gates while allowing approved base-root
+    # fallback projects; the API adapter must not second-guess that selection.
+    status, payload = remote_tool_service.handle(SOURCE_OPS[name], raw_token, dict(tool_input))
     payload.pop("continuation", None)
     return status, payload
 
 
+def test_root(run: dict) -> Path:
+    """Use a verified worktree for integrated projects, otherwise the server-selected root."""
+    project = run.get("project_id")
+    try:
+        integrated = bool((git_service.db_git.get_config(project) or {}).get("enabled"))
+    except Exception as exc:
+        # Unknown integration state must never be treated as non-Git: an integrated project may execute tests only in its verified group worktree.
+        raise ToolError(409, "git_integration_lookup_failed") from exc
+    if integrated:
+        return require_group_root(run)
+    root = Path(str(run.get("source_root") or ""))
+    if not root.is_dir():
+        raise ToolError(409, "source_root_unavailable")
+    return root
+
+
 def run_test(run: dict, tool_input: dict, remaining_sec: float) -> tuple[int, dict]:
-    root = require_group_root(run)
+    root = test_root(run)
     normalized = test_command_service.normalize_command(tool_input["command"])
     host_os = test_command_service.current_os()
     allowed = [row for row in test_command_service.list_for_view(run["project_id"])

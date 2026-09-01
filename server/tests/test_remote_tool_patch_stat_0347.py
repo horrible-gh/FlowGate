@@ -37,7 +37,7 @@ def _read(env, rel: str) -> bytes:
 def test_ops_and_scopes_registered():
     from modules.flow_gate.services import remote_tool_service as svc
 
-    assert set(svc.OPS) == {"read", "write", "grep", "glob", "remove", "patch", "stat"}
+    assert set(svc.OPS) == {"read", "write", "grep", "glob", "remove", "patch", "stat", "diff", "log"}
     # P0004 §0.4 — no new scope value, so remote_tool_grant_scope needs no migration.
     assert svc.OP_SCOPE["patch"] == "write"
     assert svc.OP_SCOPE["stat"] == "read"

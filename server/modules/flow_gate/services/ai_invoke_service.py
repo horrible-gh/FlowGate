@@ -4790,7 +4790,9 @@ def _api_read_document(run: dict, raw_token: str, tool_input: dict) -> tuple[int
             query[key] = tool_input[key]
     for key in ("lines", "chars"):
         if key in tool_input:
-            query[key] = json.dumps(tool_input[key], separators=(",", ":"))
+            # Public schemas use typed ranges; the document HTTP contract is a-b.
+            value = tool_input[key]
+            query[key] = f"{value['start']}-{value['end']}"
     return _api_bound_request(run, raw_token, f"/document/{run['doc_ref']}/section?{urlencode(query)}")
 
 

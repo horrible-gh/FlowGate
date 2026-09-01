@@ -26,7 +26,7 @@ def test_registry_selects_scope_schema_and_tier(monkeypatch, tmp_path, scope):
     definitions = tools.definitions_for_run(run)
     assert [d["name"] for d in definitions] == list(tools.BASE_NAMES) + list(tools.SOURCE_NAMES)
     assert next(d for d in definitions if d["name"] == "register_document")["schema"] == tools.REGISTER_SCHEMAS[scope]
-    assert all(d["schema"]["additionalProperties"] is False for d in definitions)
+    assert all("oneOf" in d["schema"] or d["schema"]["additionalProperties"] is False for d in definitions)
 
 
 def test_non_source_type_gets_base_tier(monkeypatch, tmp_path):
@@ -53,8 +53,8 @@ def test_source_call_uses_same_root_and_live_token(monkeypatch, tmp_path):
     monkeypatch.setattr(tools, "require_group_root", lambda run: seen.append(Path(run["source_root"])) or Path(run["source_root"]))
     monkeypatch.setattr(tools.remote_tool_service, "handle", lambda op, token, body: (200, {"ok": True, "op": op, "token_seen": token, "body": body}))
     status, result = tools.source_call(_run(tmp_path), "live-token", "read_source_file", {"path": "a.py"})
-    assert status == 200 and result["token_seen"] == "live-token" and result["body"]["ref"] is None
-    assert seen == [tmp_path, tmp_path]
+    assert status == 200 and result["token_seen"] == "live-token" and result["body"] == {"path": "a.py"}
+    assert seen == []
 
 
 def test_run_test_is_sync_allowlisted_and_cwd_bound(monkeypatch, tmp_path):
@@ -67,7 +67,7 @@ def test_run_test_is_sync_allowlisted_and_cwd_bound(monkeypatch, tmp_path):
     def popen(command, **kwargs):
         captured.update(command=command, **kwargs)
         return Proc()
-    monkeypatch.setattr(tools, "require_group_root", lambda _run: tmp_path)
+    monkeypatch.setattr(tools, "test_root", lambda _run: tmp_path)
     monkeypatch.setattr(tools.test_command_service, "current_os", lambda: "windows")
     monkeypatch.setattr(tools.test_command_service, "current_shell", lambda: "cmd.exe")
     monkeypatch.setattr(tools.test_command_service, "list_for_view", lambda _project: [{"command": "pytest -q", "verified_os": "windows"}])
@@ -174,3 +174,108 @@ def test_dispatcher_returns_a_result_for_every_call_id(monkeypatch, tmp_path, ca
         assert "schema_validation_failed" in invalid["content"]
     else:
         assert {"failed", "trailing"} <= returned_ids
+
+
+def test_full_remote_source_toolset_is_exposed_without_worktree(monkeypatch, tmp_path):
+    monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": "TR"})
+    names = [item["name"] for item in tools.definitions_for_run(_run(tmp_path))]
+    assert names == list(tools.BASE_NAMES) + list(tools.SOURCE_NAMES)
+    assert {"read", "grep", "glob", "stat", "diff", "log", "patch", "write", "remove"} == set(tools.SOURCE_OPS.values())
+    for name in tools.SOURCE_OPS:
+        assert tools.SCHEMAS[name]["additionalProperties"] is False
+
+
+def test_source_call_delegates_root_selection_to_remote_service(monkeypatch, tmp_path):
+    monkeypatch.setattr(tools, "require_group_root", lambda _run: pytest.fail("adapter must not precheck root"))
+    monkeypatch.setattr(tools.remote_tool_service, "handle", lambda op, token, body: (409, {"ok": False, "op": op}))
+    assert tools.source_call(_run(tmp_path), "live", "remove_source_file", {"path": "gone.py"}) == (409, {"ok": False, "op": "remove"})
+
+
+def test_read_document_ranges_are_converted_to_http_contract(monkeypatch, tmp_path):
+    captured = {}
+    monkeypatch.setattr(invoke, "_api_bound_request", lambda _run, _token, path: captured.setdefault("path", path) or (200, {}))
+    invoke._api_read_document(_run(tmp_path), "live", {"lines": {"start": 2, "end": 4}})
+    assert captured["path"].endswith("/section?lines=2-4")
+    captured.clear()
+    invoke._api_read_document(_run(tmp_path), "live", {"chars": {"start": 0, "end": 12}})
+    assert captured["path"].endswith("/section?chars=0-12")
+
+
+@pytest.mark.parametrize("tool_input, suffix", [
+    ({}, "/document/d"),
+    ({"section": "Overview"}, "/section?section=Overview"),
+    ({"section_id": "intro"}, "/section?section_id=intro"),
+    ({"lines": {"start": 1, "end": 1}}, "/section?lines=1-1"),
+    ({"chars": {"start": 0, "end": 0}}, "/section?chars=0-0"),
+])
+def test_read_document_full_selector_and_boundary_contract(monkeypatch, tmp_path, tool_input, suffix):
+    captured = {}
+    monkeypatch.setattr(invoke, "_api_bound_request", lambda _run, _token, path: captured.setdefault("path", path) or (200, {}))
+    tools.validate(tools.SCHEMAS["read_document"], tool_input)
+    invoke._api_read_document(_run(tmp_path), "live", tool_input)
+    assert captured["path"].endswith(suffix)
+
+
+@pytest.mark.parametrize("tool_input", [
+    {"lines": {"start": 4, "end": 2}},
+    {"chars": {"start": 12, "end": 1}},
+    {"section": "Overview", "lines": {"start": 1, "end": 2}},
+    {"section_id": "intro", "chars": {"start": 0, "end": 2}},
+    {"lines": {"start": 0, "end": 1}},
+    {"chars": {"start": -1, "end": 0}},
+])
+def test_read_document_rejects_invalid_selector_and_ranges(tool_input):
+    with pytest.raises(tools.ToolError) as caught:
+        tools.validate(tools.SCHEMAS["read_document"], tool_input)
+    assert caught.value.reason == "schema_validation_failed"
+
+
+@pytest.mark.parametrize("mode, config, root_exists, expected_reason", [
+    ("integrated_healthy", {"enabled": True}, True, None),
+    ("integrated_unresolved", {"enabled": True}, False, "group_worktree_unavailable"),
+    ("non_git", None, True, None),
+    ("integration_disabled", {"enabled": False}, True, None),
+    ("missing_root", None, False, "source_root_unavailable"),
+])
+def test_project_mode_root_policy(monkeypatch, tmp_path, mode, config, root_exists, expected_reason):
+    root = tmp_path / "selected"
+    if root_exists:
+        root.mkdir()
+    run = _run(root)
+    monkeypatch.setattr(tools.git_service.db_git, "get_config", lambda _project: config)
+    monkeypatch.setattr(tools, "require_group_root", lambda _run: root if root_exists else (_ for _ in ()).throw(tools.ToolError(409, "group_worktree_unavailable")))
+    if expected_reason:
+        with pytest.raises(tools.ToolError) as caught:
+            tools.test_root(run)
+        assert caught.value.reason == expected_reason
+    else:
+        assert tools.test_root(run) == root
+
+
+def test_git_integration_lookup_failure_fails_closed(monkeypatch, tmp_path):
+    monkeypatch.setattr(tools.git_service.db_git, "get_config", lambda _project: (_ for _ in ()).throw(RuntimeError("database unavailable")))
+    monkeypatch.setattr(tools, "require_group_root", lambda _run: pytest.fail("lookup failure must not select a root"))
+    with pytest.raises(tools.ToolError) as caught:
+        tools.test_root(_run(tmp_path))
+    assert caught.value.reason == "git_integration_lookup_failed"
+
+@pytest.mark.parametrize("step_type", ["T", "TR"])
+def test_non_git_t_and_tr_complete_read_mutation_test_and_register(monkeypatch, tmp_path, step_type):
+    monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": step_type})
+    seen = []
+    monkeypatch.setattr(tools.remote_tool_service, "handle", lambda op, _token, _body: seen.append(op) or (200, {"ok": True, "op": op}))
+    monkeypatch.setattr(tools, "run_test", lambda _run, _input, _remaining: seen.append("run_test") or (200, {"ok": True}))
+    monkeypatch.setattr(invoke.ai_settings_service, "get_provider_secret", lambda *_args: "key")
+    monkeypatch.setattr(invoke, "_remaining_sec", lambda _run: 30)
+    monkeypatch.setattr(invoke, "_inbox_register", lambda *_args: (200, {"ok": True, "doc_id": "registered"}))
+    calls = [
+        {"id": "read", "name": "read_source_file", "input": {"path": "a.py"}},
+        {"id": "write", "name": "write_source_file", "input": {"path": "a.py", "content": "x"}},
+        {"id": "test", "name": "run_test", "input": {"command": "pytest -q"}},
+        {"id": "register", "name": "register_document", "input": {"doc_type": "TR", "content": "complete"}},
+    ]
+    monkeypatch.setattr(invoke, "_call_openai", lambda *_args: (None, calls, {"role": "assistant", "content": None}))
+    run = _run(tmp_path)
+    run.update({"run_id": "run", "raw_token": "live", "docs_target": 1, "mode": "single", "cancel_event": SimpleNamespace(is_set=lambda: False), "timed_out": False})
+    assert invoke._api_execute({"id": "provider", "kind": "openai", "api_base_url": "https://example", "api_model": "m"}, "prompt", run) == ("started_ok", None)
+    assert seen == ["read", "write", "run_test"]
