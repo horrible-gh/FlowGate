@@ -107,9 +107,9 @@ NOTES = {
 
 FIELDS = {
     "read": {
-        "ko": [("path", "string", True, None, "소스 루트 기준 상대 경로. 절대경로와 '..' 금지."), ("max_bytes", "integer", False, None, "읽을 최대 바이트. 생략하면 파일 전체를 읽되 서버 상한을 넘으면 413."), ("offset", "integer", False, 0, "읽기를 시작할 0 기준 바이트 위치."), ("length", "integer", False, None, "읽을 바이트 창의 최대 길이. max_bytes와 함께 쓰면 더 작은 값이 적용된다."), ("encoding", "string", False, "utf-8", "디코딩 인코딩. 디코딩 실패 문자는 대체 문자로 바뀐다.")],
-        "ja": [("path", "string", True, None, "ソースルートからの相対パス。絶対パスと '..' は禁止。"), ("max_bytes", "integer", False, None, "読み取る最大バイト数。省略時はファイル全体を読み取るが、サーバー上限を超えると413。"), ("offset", "integer", False, 0, "読み取りを開始する0基準のバイト位置。"), ("length", "integer", False, None, "読み取るバイト範囲の最大長。max_bytesと併用した場合は小さい方が適用される。"), ("encoding", "string", False, "utf-8", "デコード用エンコーディング。デコードできない文字は置換文字に変わる。")],
-        "en": [("path", "string", True, None, "Path relative to the source root. Absolute paths and '..' are forbidden."), ("max_bytes", "integer", False, None, "Maximum bytes to read. If omitted, the whole file is read unless it exceeds the server limit, which returns 413."), ("offset", "integer", False, 0, "Zero-based byte position where reading starts."), ("length", "integer", False, None, "Maximum byte-window length. When used with max_bytes, the smaller value applies."), ("encoding", "string", False, "utf-8", "Decoding charset. Undecodable characters are replaced.")],
+        "ko": [("path", "string", True, None, "소스 루트 기준 상대 경로. 절대경로와 '..' 금지."), ("max_bytes", "integer", False, None, "읽을 최대 바이트. 생략하면 파일 전체를 읽되 서버 상한을 넘으면 413."), ("offset", "integer", False, 0, "읽기를 시작할 0 기준 바이트 위치."), ("length", "integer", False, None, "읽을 바이트 창의 최대 길이. max_bytes와 함께 쓰면 더 작은 값이 적용된다."), ("encoding", "string", False, "utf-8", "디코딩 인코딩. 디코딩 실패 문자는 대체 문자로 바뀐다."), ("start_line", "integer", False, None, "1부터 시작하는 읽기 시작 줄 번호. end_line과 함께 써야 하며, offset/length/max_bytes와 동시에 쓸 수 없다."), ("end_line", "integer", False, None, "1부터 시작하는 읽기 끝 줄 번호(포함). start_line <= end_line 이어야 한다. 파일 끝을 넘으면 가능한 줄까지만 반환된다.")],
+        "ja": [("path", "string", True, None, "ソースルートからの相対パス。絶対パスと '..' は禁止。"), ("max_bytes", "integer", False, None, "読み取る最大バイト数。省略時はファイル全体を読み取るが、サーバー上限を超えると413。"), ("offset", "integer", False, 0, "読み取りを開始する0基準のバイト位置。"), ("length", "integer", False, None, "読み取るバイト範囲の最大長。max_bytesと併用した場合は小さい方が適用される。"), ("encoding", "string", False, "utf-8", "デコード用エンコーディング。デコードできない文字は置換文字に変わる。"), ("start_line", "integer", False, None, "1始まりの読み取り開始行番号。end_lineと併用が必須で、offset/length/max_bytesとは同時に使えない。"), ("end_line", "integer", False, None, "1始まりの読み取り終了行番号(含む)。start_line <= end_line が必要。ファイル末尾を超える場合は取得できる行までだけ返す。")],
+        "en": [("path", "string", True, None, "Path relative to the source root. Absolute paths and '..' are forbidden."), ("max_bytes", "integer", False, None, "Maximum bytes to read. If omitted, the whole file is read unless it exceeds the server limit, which returns 413."), ("offset", "integer", False, 0, "Zero-based byte position where reading starts."), ("length", "integer", False, None, "Maximum byte-window length. When used with max_bytes, the smaller value applies."), ("encoding", "string", False, "utf-8", "Decoding charset. Undecodable characters are replaced."), ("start_line", "integer", False, None, "1-based line number to start reading from. Must be sent together with end_line, and never together with offset/length/max_bytes."), ("end_line", "integer", False, None, "1-based, inclusive line number to stop reading at. Must satisfy start_line <= end_line. Past EOF, only the available lines are returned.")],
     },
     "diff": {
         "ko": [("path", "string", False, None, "선택적 소스 루트 상대 경로."), ("target_ref", "string", False, "origin/main", "비교할 상대 ref. 옵션형과 revspec은 금지.")],
@@ -165,9 +165,9 @@ ERRORS = {
         "en": [(503, "unavailable", "The ref is missing or the merge-base/log git command failed."), (422, "invalid_request", "The ref, path, or max_count has an invalid form."), (403, "forbidden", "This token does not have the read scope.")],
     },
     "read": {
-        "ko": [(404, "not_found", "경로가 없거나 일반 파일이 아니다."), (413, "too_large", "max_bytes 를 생략했는데 파일이 서버 상한을 넘는다."), (422, "invalid_request", "경로가 소스 루트를 벗어나거나 형식이 잘못됐다."), (403, "forbidden", "이 토큰에 read 스코프가 없다.")],
-        "ja": [(404, "not_found", "パスが存在しないか通常ファイルではない。"), (413, "too_large", "max_bytes を省略し、ファイルがサーバー上限を超えている。"), (422, "invalid_request", "パスがソースルート外か形式が正しくない。"), (403, "forbidden", "このトークンにreadスコープがない。")],
-        "en": [(404, "not_found", "The path does not exist or is not a regular file."), (413, "too_large", "max_bytes was omitted and the file exceeds the server limit."), (422, "invalid_request", "The path escapes the source root or has an invalid form."), (403, "forbidden", "This token does not have the read scope.")],
+        "ko": [(404, "not_found", "경로가 없거나 일반 파일이 아니다."), (413, "too_large", "max_bytes 를 생략했는데 파일이 서버 상한을 넘는다(줄 선택자를 쓴 경우도 파일 전체 크기 기준으로 동일하게 적용)."), (422, "invalid_request", "경로가 소스 루트를 벗어나거나 형식이 잘못됐다, 요청에 read가 허용하지 않는 필드가 있다(reason=unknown_field), 또는 start_line/end_line이 잘못됐거나(reason=invalid_line_range) offset/length/max_bytes와 함께 쓰였다(reason=line_and_byte_selector)."), (403, "forbidden", "이 토큰에 read 스코프가 없다.")],
+        "ja": [(404, "not_found", "パスが存在しないか通常ファイルではない。"), (413, "too_large", "max_bytes を省略し、ファイルがサーバー上限を超えている(行選択子を使った場合もファイル全体のサイズで同様に判定する)。"), (422, "invalid_request", "パスがソースルート外か形式が正しくない、readが許可しないフィールドがリクエストに含まれる(reason=unknown_field)、またはstart_line/end_lineが不正(reason=invalid_line_range)かoffset/length/max_bytesと併用されている(reason=line_and_byte_selector)。"), (403, "forbidden", "このトークンにreadスコープがない。")],
+        "en": [(404, "not_found", "The path does not exist or is not a regular file."), (413, "too_large", "max_bytes was omitted and the file exceeds the server limit (a line selector is judged against the same whole-file size)."), (422, "invalid_request", "The path escapes the source root or has an invalid form, the request carries a field read does not allow (reason=unknown_field), or start_line/end_line is invalid (reason=invalid_line_range) or combined with offset/length/max_bytes (reason=line_and_byte_selector)."), (403, "forbidden", "This token does not have the read scope.")],
     },
     "grep": {
         "ko": [(404, "not_found", "path 가 없거나 디렉터리가 아니다."), (422, "invalid_request", "정규식이 잘못됐거나 path 가 소스 루트를 벗어난다."), (403, "forbidden", "이 토큰에 grep 스코프가 없다.")],
@@ -213,9 +213,9 @@ CAUTIONS = {
         "en": ["Only target-ref commits after the merge base are returned, newest first.", "The server cap is 1,000 commits; truncation is reported."],
     },
     "read": {
-        "ko": ["offset과 length로 바이트 단위 읽기 구간을 지정할 수 있다. offset은 0부터 시작하며 파일 끝을 넘으면 빈 내용과 eof=true를 돌려준다.", "size는 구간을 잘라 읽었을 때도 파일 전체 크기다."],
-        "ja": ["offsetとlengthでバイト単位の読み取り範囲を指定できる。offsetは0基準で、ファイル末尾を超えると空の内容とeof=trueを返す。", "sizeは範囲を切って読んだ場合もファイル全体のサイズである。"],
-        "en": ["Use offset and length to select a byte window. Offset is zero-based; past EOF returns empty content with eof=true.", "size is the complete file size even when only a window is read."],
+        "ko": ["offset과 length로 바이트 단위 읽기 구간을 지정할 수 있다. offset은 0부터 시작하며 파일 끝을 넘으면 빈 내용과 eof=true를 돌려준다.", "size는 구간을 잘라 읽었을 때도 파일 전체 크기다.", "큰 소스 파일에서 필요한 줄만 보려면 start_line/end_line(1부터 시작, 끝 줄 포함)을 쓴다. offset/length/max_bytes와 동시에 보내면 422다. 응답에는 returned_start_line/returned_end_line/total_lines가 함께 실린다.", "read가 허용하지 않는 필드를 보내면 무시되지 않고 422(reason=unknown_field)로 거절된다 — 예를 들어 start_line 없이 잘못 붙인 오타 필드는 전체 파일을 읽어오지 않는다."],
+        "ja": ["offsetとlengthでバイト単位の読み取り範囲を指定できる。offsetは0基準で、ファイル末尾を超えると空の内容とeof=trueを返す。", "sizeは範囲を切って読んだ場合もファイル全体のサイズである。", "大きなソースファイルで必要な行だけを見るにはstart_line/end_line(1始まり、終端行を含む)を使う。offset/length/max_bytesと同時に送ると422になる。応答にはreturned_start_line/returned_end_line/total_linesが含まれる。", "readが許可しないフィールドを送ると無視されず422(reason=unknown_field)で拒否される — 例えば誤って付けたタイプミスのフィールドはファイル全体を読み込ませない。"],
+        "en": ["Use offset and length to select a byte window. Offset is zero-based; past EOF returns empty content with eof=true.", "size is the complete file size even when only a window is read.", "To see only the lines you need from a large source file, use start_line/end_line (1-based, end inclusive). Sending them together with offset/length/max_bytes returns 422. The response also carries returned_start_line/returned_end_line/total_lines.", "A field read does not allow is never silently ignored — it returns 422 (reason=unknown_field), so a mistyped field can no longer trigger a whole-file read."],
     },
     "grep": {
         "ko": ["total 은 truncated=false 일 때만 정확한 개수이고, true 면 훑다 멈춘 시점까지의 하한값이다.", ".venv / venv / node_modules / .git / __pycache__ 는 순회에서 제외된다. 그 안을 보려면 path 로 직접 가리켜야 한다.", "너무 큰 파일과 바이너리 파일은 건너뛴다."],
@@ -250,7 +250,7 @@ CAUTIONS = {
 }
 
 EXAMPLE_BODIES = {
-    "read": {"path": "app/main.py", "max_bytes": 20000, "encoding": "utf-8"},
+    "read": {"path": "app/main.py", "start_line": 1, "end_line": 40, "encoding": "utf-8"},
     "diff": {"target_ref": "origin/main", "path": "server/app.py"},
     "log": {"target_ref": "origin/main", "path": "server/app.py", "max_count": 20},
     "grep": {"pattern": "TODO", "glob": "**/*.py", "ignore_case": True, "max_results": 20},
@@ -288,7 +288,7 @@ MENTION_LINES = {
 }
 
 EXAMPLE_RESPONSES = {
-    "read": {"ok": True, "op": "read", "server_ts": "2026-07-29T13:34:25+09:00", "path": "app/main.py", "content": "<file text>", "encoding": "utf-8", "size": 18342, "offset": 0, "returned_bytes": 18342, "eof": True, "truncated": False},
+    "read": {"ok": True, "op": "read", "server_ts": "2026-07-29T13:34:25+09:00", "path": "app/main.py", "content": "<lines 1-40>", "encoding": "utf-8", "size": 18342, "start_line": 1, "end_line": 40, "returned_start_line": 1, "returned_end_line": 40, "total_lines": 512, "returned_bytes": 1180, "eof": False, "truncated": True},
     "diff": {"ok": True, "op": "diff", "server_ts": "2026-07-29T13:34:25+09:00", "merge_base": "0123456789abcdef0123456789abcdef01234567", "target_ref": "origin/main", "patch": "diff --git a/server/app.py b/server/app.py\n...", "returned_bytes": 58, "truncated": False},
     "log": {"ok": True, "op": "log", "server_ts": "2026-07-29T13:34:25+09:00", "merge_base": "0123456789abcdef0123456789abcdef01234567", "target_ref": "origin/main", "commits": [{"sha": "fedcba9876543210fedcba9876543210fedcba98", "subject": "fix: update app"}], "total": 1, "truncated": False},
     "grep": {"ok": True, "op": "grep", "server_ts": "2026-07-29T13:34:25+09:00", "matches": [{"file": "server/modules/flow_gate/template_provision.py", "line": 194, "text": "def normalize_locale(x_locale: Optional[str]) -> str:"}], "total": 1, "truncated": False},
