@@ -229,7 +229,7 @@ const emit = defineEmits<{
   'created': [payload: { docId: string; title: string; body: Record<string, unknown> }]
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const docTypeStore = useDocTypeStore()
 const aiProviderStore = useAiProviderStore()
 
@@ -383,7 +383,7 @@ const blockReason = computed<string>(() => {
 async function loadTypes() {
   typesError.value = false
   try {
-    await docTypeStore.loadLabels()
+    await docTypeStore.loadLabels(locale.value)
     if (docTypeStore.countableTypes.length === 0) typesError.value = true
   } catch {
     typesError.value = true
