@@ -12,6 +12,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import i18n from '@shared/i18n'
 import WorkPlanCreateDialog from '@main/components/WorkPlanCreateDialog.vue'
 import { useProjectStore } from '@main/stores/project'
+import { useDocTypeStore } from '@main/stores/docTypeStore'
 
 const { getRequest, postRequest } = vi.hoisted(() => ({ getRequest: vi.fn(), postRequest: vi.fn() }))
 
@@ -90,6 +91,20 @@ beforeEach(() => {
 })
 
 describe('WorkPlanCreateDialog', () => {
+  it('passes the active UI locale to loadLabels when reopened', async () => {
+    i18n.global.locale.value = 'en'
+    const loadLabels = vi.spyOn(useDocTypeStore(), 'loadLabels')
+    const wrapper = mountDialog()
+    await flushPromises()
+
+    expect(loadLabels).toHaveBeenLastCalledWith('en')
+    await wrapper.setProps({ visible: false })
+    await wrapper.setProps({ visible: true })
+    await flushPromises()
+    expect(loadLabels).toHaveBeenLastCalledWith('en')
+    expect(loadLabels).toHaveBeenCalledTimes(2)
+  })
+
   it('blocks [생성] until a type AND a provider are both checked, and never calls the API meanwhile', async () => {
     const wrapper = mountDialog()
     await flushPromises()
