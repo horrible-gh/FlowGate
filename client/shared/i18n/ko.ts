@@ -1966,7 +1966,6 @@ export default {
       move_up: '위로 이동',
       move_down: '아래로 이동',
       remove: '삭제',
-      footer_note: '확정 후에도 워크플로 수정 가능 (재발사·반려 등)',
       confirm: '워크플로 확정',
     },
     workflow_edit_modal: {
@@ -2018,7 +2017,6 @@ export default {
       move_up: '위로 이동',
       move_down: '아래로 이동',
       remove: '삭제',
-      footer_note: '잠금 단계(완료·진행 중)는 수정 불가. 미완료 단계만 편집됩니다.',
       save: '저장',
       loading: '시퀀스 불러오는 중...',
       error_load: '시퀀스 불러오기 실패',
