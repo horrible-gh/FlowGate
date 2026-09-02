@@ -891,13 +891,14 @@ def resolve_review_count(review_count_overrides: Optional[dict], item_seq: Optio
 
     0 for every step the user did not pick — count 0 never reaches storage, because P0007's
     normalization already dropped it, so "absent" and "0" are the same fact. A value outside
-    REVIEW_COUNT_VALUES can only come from a hand-edited row (the write path is 422-guarded),
-    and is read as "no review" rather than crashing the chain.
+    the SSOT choice set (flowgate.default.0490 T0005: ai_execution_policy_service.repeat_count_choices,
+    not a fixed literal set) can only come from a hand-edited row (the write path is
+    422-guarded), and is read as "no review" rather than crashing the chain.
     """
     raw = _map_lookup(review_count_overrides, item_seq)
     if isinstance(raw, bool) or not isinstance(raw, int):
         return REVIEW_COUNT_DEFAULT
-    if raw not in REVIEW_COUNT_VALUES:
+    if raw not in ai_execution_policy_service.repeat_count_choices(allow_zero=True):
         logger.warning("review gate: ignoring out-of-range review count %r for item_seq %s",
                        raw, item_seq)
         return REVIEW_COUNT_DEFAULT
