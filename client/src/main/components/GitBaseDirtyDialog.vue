@@ -17,7 +17,7 @@
           </button>
         </div>
         <div class="modal-bd">
-          <p class="gbd-body">{{ t('main.git_finalize.base_dirty_dialog_body') }}</p>
+          <p class="gbd-body">{{ context === 'update' ? t('main.explorer.git_update_base_dirty') : t('main.git_finalize.base_dirty_dialog_body') }}</p>
           <ul v-if="files.length" class="gbd-files">
             <li v-for="f in files" :key="f">{{ f }}</li>
           </ul>
@@ -71,6 +71,7 @@ import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
 import { useExplorerStore } from '../stores/explorer'
 
+defineProps<{ context?: 'finalize' | 'update' }>()
 const { t } = useI18n()
 const explorerStore = useExplorerStore()
 

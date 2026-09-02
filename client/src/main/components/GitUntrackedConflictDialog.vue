@@ -51,12 +51,26 @@
           <button
             class="btn guc-remove-btn"
             type="button"
-            :disabled="busy || !files.length"
+            :disabled="busy || !(scope === 'group' ? untrackedFiles.length : files.length)"
             @click="choose('remove')"
           >
             <AppIcon name="trash" /> {{ t('main.git_finalize.untracked_conflict_remove') }}
           </button>
-          <button class="btn btn-primary" type="button" :disabled="busy" @click="choose('commit')">
+          <button
+            v-if="scope === 'group'"
+            class="btn btn-secondary"
+            type="button"
+            :disabled="busy || !trackedFiles.length"
+            @click="choose('revert')"
+          >
+            <AppIcon name="arrow-counter-clockwise" /> {{ t('main.git_finalize.base_dirty_revert_merge') }}
+          </button>
+          <button
+            class="btn btn-primary"
+            type="button"
+            :disabled="busy || !(scope === 'group' ? untrackedFiles.length : files.length)"
+            @click="choose('commit')"
+          >
             <AppIcon name="check" /> {{ t('main.git_finalize.untracked_conflict_commit') }}
           </button>
         </div>
@@ -89,10 +103,13 @@ const COMMIT_SUBJECT_MAX = 200
 const open = ref(false)
 const busy = ref(false)
 const files = ref<string[]>([])
+const untrackedFiles = ref<string[]>([])
+const trackedFiles = ref<string[]>([])
 const commitMsg = ref('')
 const errorMsg = ref('')
 
-let projectId = ''
+let targetId = ''
+const scope = ref<'base' | 'group'>('base')
 let resolver: ((v: 'proceed' | 'cancel') => void) | null = null
 
 // Mirrors git_service.default_base_commit_message — the seeded placeholder is
@@ -108,11 +125,23 @@ const suggested = computed(() => defaultMessage(files.value))
 // Imperative entry point. Given the project id and the 409's blocked-file list,
 // opens the dialog and resolves 'proceed' once every blocked path is gone (the
 // caller then retries the finalize) or 'cancel' if the operator backed out.
-async function resolve(pid: string, blockedFiles: string[]): Promise<'proceed' | 'cancel'> {
-  projectId = pid
+async function resolve(
+  id: string,
+  blockedFiles: string[],
+  targetScope: 'base' | 'group' = 'base',
+  blockerGroups?: { untrackedFiles?: string[]; trackedFiles?: string[] },
+): Promise<'proceed' | 'cancel'> {
+  targetId = id
+  scope.value = targetScope
   errorMsg.value = ''
   commitMsg.value = ''
   files.value = Array.isArray(blockedFiles) ? blockedFiles.filter(Boolean) : []
+  untrackedFiles.value = targetScope === 'group'
+    ? (blockerGroups?.untrackedFiles ?? files.value).filter(Boolean)
+    : [...files.value]
+  trackedFiles.value = targetScope === 'group'
+    ? (blockerGroups?.trackedFiles ?? []).filter(Boolean)
+    : []
   open.value = true
   return new Promise((res) => {
     resolver = res
@@ -131,25 +160,33 @@ function cancel() {
   if (busy.value) return
   settle('cancel')
 }
-async function choose(mode: 'commit' | 'remove') {
-  if (busy.value || !projectId || !files.value.length) return
+async function choose(mode: 'commit' | 'revert' | 'remove') {
+  const actionFiles = scope.value === 'group'
+    ? (mode === 'revert' ? trackedFiles.value : untrackedFiles.value)
+    : files.value
+  if (busy.value || !targetId || !actionFiles.length) return
   busy.value = true
   errorMsg.value = ''
   try {
     let data: GitResp
     if (mode === 'commit') {
       const msg = commitMsg.value.trim()
-      const body: { paths: string[]; message?: string } = { paths: [...files.value] }
+      const body: { paths?: string[]; files?: string[]; message?: string } = scope.value === 'group'
+        ? { files: [...actionFiles] }
+        : { paths: [...actionFiles] }
       if (msg) body.message = msg
       ;({ data } = await postRequest<GitResp>(
-        `/api/v1/projects/${projectId}/git/base-commit`,
+        scope.value === 'group'
+          ? `/api/v1/groups/${encodeURIComponent(targetId)}/git/untracked-commit`
+          : `/api/v1/projects/${targetId}/git/base-commit`,
         body,
       ))
     } else {
-      ;({ data } = await postRequest<GitResp>(
-        `/api/v1/projects/${projectId}/git/base-remove`,
-        { files: files.value },
-      ))
+      const action = mode === 'revert' ? 'revert' : 'remove'
+      const url = scope.value === 'group'
+        ? `/api/v1/groups/${encodeURIComponent(targetId)}/git/untracked-${action}`
+        : `/api/v1/projects/${targetId}/git/base-remove`
+      ;({ data } = await postRequest<GitResp>(url, { files: actionFiles }))
     }
     if (data.ok === false) {
       errorMsg.value = data.error?.message || t('main.git_finalize.failed')
@@ -159,15 +196,33 @@ async function choose(mode: 'commit' | 'remove') {
     const remaining: string[] = Array.isArray(data.result?.remaining_untracked)
       ? data.result.remaining_untracked : []
     emit('untracked-updated', remaining)
-    const stillBlocked = files.value.filter((f) => remaining.includes(f))
-    if (stillBlocked.length === 0) {
-      settle('proceed')
+    if (scope.value === 'group') {
+      const cleared = new Set(actionFiles)
+      untrackedFiles.value = mode === 'revert'
+        ? untrackedFiles.value
+        : untrackedFiles.value.filter((f) => !cleared.has(f))
+      trackedFiles.value = mode === 'revert'
+        ? trackedFiles.value.filter((f) => !cleared.has(f))
+        : trackedFiles.value
+      files.value = files.value.filter((f) => !cleared.has(f))
+      if (files.value.length === 0) {
+        settle('proceed')
+      } else {
+        errorMsg.value = t('main.git_finalize.untracked_conflict_still')
+        busy.value = false
+      }
     } else {
-      // A raced/partial result left something blocked — keep the dialog open on
-      // the reduced set so the operator acts again (never silently auto-decide).
-      files.value = stillBlocked
-      errorMsg.value = t('main.git_finalize.untracked_conflict_still')
-      busy.value = false
+      const stillBlocked = files.value.filter((f) => remaining.includes(f))
+      if (stillBlocked.length === 0) {
+        settle('proceed')
+      } else {
+        // A raced/partial result left something blocked — keep the dialog open on
+        // the reduced set so the operator acts again (never silently auto-decide).
+        files.value = stillBlocked
+        untrackedFiles.value = [...stillBlocked]
+        errorMsg.value = t('main.git_finalize.untracked_conflict_still')
+        busy.value = false
+      }
     }
   } catch (e: any) {
     errorMsg.value = e?.response?.data?.error?.message || t('main.git_finalize.failed')

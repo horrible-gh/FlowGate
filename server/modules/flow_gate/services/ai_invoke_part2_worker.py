@@ -614,13 +614,57 @@ def _no_output_detail(run: dict) -> Optional[str]:
 
     In the incident this text existed, was precise, and even named its own fix — and lived only
     in a scratch file the server deletes after seven days.
+
+    0505 T0009: API providers branch to diagnosis by category (exit_code / register_errors /
+    tool_call_misses / turn_limit_exhausted) instead of generic "worker exited"; CLI providers
+    keep the generic form for backward compat.
+
+    0505 T0010: API provider exit None now shows status by category (completed/failed) rather
+    than generic "worker exited None".
     """
-    head = (
-        f"worker exited {run.get('exit_code')} after {_attempt_elapsed_sec(run)}s "
-        "without registering a document"
-    )
-    message = excerpt(run.get("last_message"))
-    return head if not message else f"{head}; last message: {message}"
+    provider = run.get("provider") or {}
+    is_api_provider = provider.get("exec_type") == "api"
+
+    if is_api_provider:
+        # API provider: return diagnostic category first
+        register_errors = run.get("register_errors") or []
+        if register_errors:
+            reasons = []
+            for err in register_errors:
+                reason = err.get("reason", "registration error")
+                status = err.get("status")
+                reasons.append(f"{reason}{'/' + str(status) if status else ''}")
+            return f"register failed: {'; '.join(reasons)}"
+
+        if run.get("turn_limit_exhausted"):
+            return "worker stopped: turn limit exhausted"
+
+        tool_misses = run.get("tool_call_misses") or 0
+        if tool_misses > 0:
+            return f"worker stopped: tool not called {tool_misses} time(s)"
+
+        if run.get("oracle_mismatch"):
+            return "worker stopped: oracle mismatch detected"
+
+        # Fallback: check exit status to determine completed vs failed
+        exit_code = run.get("exit_code")
+        if exit_code is None:
+            return "completed: no output to register"
+        else:
+            head = (
+                f"failed: worker exited {exit_code} after {_attempt_elapsed_sec(run)}s "
+                "without registering a document"
+            )
+            message = excerpt(run.get("last_message"))
+            return head if not message else f"{head}; last message: {message}"
+    else:
+        # CLI provider: keep generic form for backward compat
+        head = (
+            f"worker exited {run.get('exit_code')} after {_attempt_elapsed_sec(run)}s "
+            "without registering a document"
+        )
+        message = excerpt(run.get("last_message"))
+        return head if not message else f"{head}; last message: {message}"
 
 def _archive_attempt(run: dict, reason: str, token_id: Optional[str]) -> None:
     """Fold the attempt that just ended into the history (L0007 §2.6)."""
@@ -654,6 +698,15 @@ def _reset_attempt_state(run: dict) -> None:
     run["register_errors"] = []
     run["tool_call_misses"] = 0
     run["turn_limit_exhausted"] = False
+    # 0505 T0006 (DB0005 3.3): "this attempt's last mediated self-HTTP call", not a
+    # cross-attempt history -- reset alongside the three siblings above.
+    run["last_tool_name"] = None
+    run["last_tool_status"] = None
+    run["last_tool_error"] = None
+    # 0505 T0008: re-derive next attempt's transport base rather than trust a value
+    # cached from a prior attempt -- the recompute is cheap and this keeps the cache
+    # from ever outliving the per-attempt state it was read alongside.
+    run["_transport_api_base_resolved"] = None
     run["attempt_started_mono"] = time.monotonic()
     # 0446 T0014 §4-1: the previous attempt's watchdog verdict is not this one's. The
     # no-progress window is re-anchored when the next watchdog starts; the absolute
@@ -766,12 +819,16 @@ def _truncate_front(text: Optional[str], max_bytes: int = LAST_MESSAGE_MAX_BYTES
     return encoded[-max_bytes:].decode("utf-8", errors="replace")
 
 def _resolve_agent_api_base(operator_api_base: str) -> str:
-    """Return the canonical API base used only by external CLI providers.
+    """Compute the address this server can reach itself at.
 
-    The browser/operator origin remains in the stored run and in server-direct API
-    execution. A configured agent origin wins; otherwise the operator scheme and
-    explicit port are retained while the host becomes loopback. When the operator
-    origin has no explicit port, the trusted local ``FLOWGATE_PORT`` is used.
+    Shared by external CLI process launch and, since 0505 T0008, the API provider's
+    server-mediated self-HTTP (`_resolve_transport_api_base`) -- both ask the same
+    question, "what address can this server use to reach itself?", and now get the
+    same answer. The browser/operator origin remains in the stored run and in the
+    help text/prompts a person reads. A configured agent origin wins; otherwise the
+    operator scheme and explicit port are retained while the host becomes loopback.
+    When the operator origin has no explicit port, the trusted local
+    ``FLOWGATE_PORT`` is used.
     """
     from urllib.parse import urlsplit, urlunsplit
 
@@ -829,6 +886,65 @@ def _resolve_agent_api_base(operator_api_base: str) -> str:
             raise ValueError("FLOWGATE_PORT must be between 1 and 65535")
     path = parts.path.rstrip("/")
     return urlunsplit((parts.scheme, f"127.0.0.1:{port}", path, parts.query, ""))
+
+def _sanitize_diagnostic_base(url: Optional[str]) -> Optional[str]:
+    """Strip a live `api_base_url` down to a safe diagnostic snapshot (DB0005 2, 3.3, 5-5).
+
+    `operator_api_base`/`transport_api_base` store what this returns, never the raw
+    value: run["api_base_url"] is browser/operator-supplied and unvalidated end to end
+    (ai_invoke_routes._operator_facing_api_base -> token_routes._build_api_base ->
+    str(request.base_url) -> ai_invoke_service.start_run(api_base_url=...)), and
+    _resolve_agent_api_base's userinfo check only fires on its FLOWGATE_AGENT_API_BASE
+    branch -- CLI providers, never this API path. Anything that fails to parse as an
+    absolute http(s) URL, has no hostname, or carries an unparsable port becomes None
+    outright rather than a partially-sanitized value: a NULL diagnostic column is
+    honest about "could not be read safely"; a best-effort fragment is not.
+    """
+    if not url:
+        return None
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return None
+    try:
+        port = parts.port
+    except ValueError:
+        return None
+    netloc = parts.hostname
+    if ":" in netloc:
+        netloc = f"[{netloc}]"
+    if port is not None:
+        netloc += f":{port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
+
+def _resolve_transport_api_base(run: dict) -> str:
+    """The address this hop's server-mediated self-HTTP should dial (0505 T0008).
+
+    All six mediated self-HTTP call sites (conversation_context, conversation_turn_
+    register, api_bound_request, inbox_register, resolve_conflict, workflow_decide)
+    used to send `run["api_base_url"]` -- the operator/browser origin -- straight
+    back to themselves. That is fine when operator and agent origins coincide, but
+    wrong in exactly the topology 0472 B0001 hit for the CLI path: a public/proxy
+    origin that this server cannot dial as itself. `_resolve_agent_api_base` already
+    solved this for CLI launch; this wraps it for the API provider's self-HTTP and
+    caches the result on `run` so all six sites agree within one hop.
+    """
+    cached = run.get("_transport_api_base_resolved")
+    if cached:
+        return cached
+    operator_base = run.get("api_base_url") or ""
+    try:
+        resolved = _resolve_agent_api_base(operator_base)
+    except ValueError:
+        logger.warning(
+            "ai-invoke %s: transport base resolution failed for operator base %r, "
+            "falling back to operator base for self-HTTP",
+            run.get("run_id"), operator_base,
+        )
+        resolved = operator_base
+    run["_transport_api_base_resolved"] = resolved
+    return resolved
 
 def _canonicalize_cli_prompt(prompt: str, operator_api_base: str) -> tuple[str, str]:
     """Rewrite only exact operator-base occurrences and return the exported base."""
@@ -1316,6 +1432,16 @@ def _recover_cli_last_message(run: dict, kind: str, stdout_text: str, last_messa
 
 # ── API adapter: minimal agent loop (L0006 §2.4) ─────────────────────────────
 
+def _api_system_prompt() -> str:
+    """Non-negotiable API-agent contract shared by OpenAI-compatible providers."""
+    return (
+        "You are a FlowGate API agent. Use the supplied tools to perform the bound work. "
+        "A natural-language claim of completion never registers, replies, decides, or completes "
+        "the work: call the required tool with its complete payload. Only use exposed tools and "
+        "their declared JSON schemas."
+    )
+
+
 def _api_help_prompt(prompt: str) -> str:
     """Match API-provider guidance to mediated tools; CLI mentions remain unchanged."""
     lines = [line for line in prompt.splitlines()
@@ -1325,6 +1451,38 @@ def _api_help_prompt(prompt: str) -> str:
         "the index, item returns one item, and item plus child returns one child."
     )
     return guidance + "\n\n" + "\n".join(lines)
+
+def _is_glm_openai_provider(provider: dict) -> bool:
+    """Identify GLM even when its OpenAI-compatible endpoint is configured as custom."""
+    kind = str(provider.get("kind") or "").lower()
+    base_url = str(provider.get("api_base_url") or "").lower()
+    model = str(provider.get("api_model") or "").lower()
+    return (
+        kind in {"glm", "zhipu", "zai"}
+        or model.startswith("glm-")
+        or "bigmodel.cn" in base_url
+        or "z.ai" in base_url
+    )
+
+
+_API_TRACE_MAX_TURNS = 20
+_API_TRACE_MAX_TOOLS = 12
+
+def _api_trace_turn(run: dict, turn: int, *, model_status: int, response_text: bool = False) -> dict:
+    """Append a bounded, input-free API turn record and return its mutable entry."""
+    trace = run.setdefault("api_turn_trace", [])
+    entry = {"turn": turn, "model_status": int(model_status), "response_text": bool(response_text),
+             "received": 0, "valid": 0, "dispatched": 0, "completion_selected": False,
+             "register_attempted": False, "register_succeeded": False, "tools": [], "disposition": "response"}
+    trace.append(entry)
+    if len(trace) > _API_TRACE_MAX_TURNS:
+        del trace[:-_API_TRACE_MAX_TURNS]
+    return entry
+
+def _api_trace_tool(entry: dict, name: object, status: object, *, registration: bool = False) -> None:
+    tools = entry["tools"]
+    if len(tools) < _API_TRACE_MAX_TOOLS:
+        tools.append({"name": str(name or "tool")[:80], "status": int(status or 0), "registration": registration})
 
 def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]:
     """Minimal tool loop for API providers, including workflow decision kickoff."""
@@ -1359,11 +1517,24 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     conflict_pending = run.get("action_scope") == "resolve_conflict"
     is_chat = run.get("action_scope") == "chat"
     last_text: Optional[str] = None
-    conversation: list[dict] = [{"role": "user", "content": _api_help_prompt(prompt)}]
+    conversation: list[dict] = [
+        {"role": "system", "content": _api_system_prompt()},
+        {"role": "user", "content": _api_help_prompt(prompt)},
+    ]
     if is_chat:
-        chat_context = _conversation_context(run, current_token)
-        if chat_context is None:
+        # 0505 T0006 (DB0005 3.3): the FIRST self-HTTP this hop may open. Its status/
+        # error land in the same three columns as the other five mediated calls, and a
+        # failure here ends the hop before the turn loop -- but the same `run` object
+        # carries the three fields into persist_run_record/finished_payload regardless.
+        status, chat_context = _conversation_context(run, current_token)
+        run["last_tool_name"] = "conversation_context"
+        run["last_tool_status"] = status
+        if run.get("transport_api_base") is None:
+            run["transport_api_base"] = _sanitize_diagnostic_base(_resolve_transport_api_base(run))
+        if not (200 <= status < 300 and isinstance(chat_context, dict)):
+            run["last_tool_error"] = _registration_error_summary(chat_context or {})[:500]
             return "api_error", "conversation_context_unavailable"
+        run["last_tool_error"] = None
         run["_chat_based_on_seq"] = int(chat_context.get("head_seq") or 0)
         conversation.append({
             "role": "user",
@@ -1374,6 +1545,10 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             ),
         })
     turn = 0
+    # Only a natural loop-boundary exit represents exhausted API turns. A model HTTP
+    # or transport failure can happen on the final numbered turn but has priority over
+    # the limit diagnosis.
+    model_call_failed = False
 
     while turn < max_turns:
         turn += 1
@@ -1406,24 +1581,47 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             except api_server_tools.ToolError as exc:
                 return "api_error", exc.reason
             tool_name, tool_desc, tool_schema = tool_specs, "", {}
+        # 0505 T0006 (DB0005 2/3.3): counted whether the call below succeeds, raises, or
+        # times out -- "how many model calls did this hop make" is the question, not
+        # "how many succeeded". model_last_http_status uses the same 0/exc.code sentinel
+        # convention as last_tool_status; the adapters below do not surface the real
+        # success-path status without widening _http_post_json's contract (shared with
+        # _call_openai/_call_anthropic and monkeypatched directly by existing tests as a
+        # dict-returning function) -- OpenAI/Anthropic-compatible chat completions are
+        # 200 on any non-raising return, so that is what a success is recorded as.
+        run["model_http_calls"] = run.get("model_http_calls", 0) + 1
         try:
             if kind == "claude":
                 reply_text, tool_call, assistant_msg = _call_anthropic(
                     base_url, model, key, conversation, call_timeout,
-                    tool_name, tool_desc, tool_schema, is_chat,
+                    tool_name, tool_desc, tool_schema, True,
                 )
             else:
                 reply_text, tool_call, assistant_msg = _call_openai(
                     base_url, model, key, conversation, call_timeout,
-                    tool_name, tool_desc, tool_schema, is_chat,
+                    tool_name, tool_desc, tool_schema, True,
                 )
+            run["model_last_http_status"] = 200
+            trace = _api_trace_turn(run, turn, model_status=200, response_text=bool(reply_text))
         except urllib.error.HTTPError as exc:
+            model_call_failed = True
+            run["model_last_http_status"] = exc.code
+            _api_trace_turn(run, turn, model_status=exc.code)["disposition"] = "model_http_error"
+            # An attempted first request is still a consumed turn.  Record it before
+            # returning because the shared post-loop finalizer is intentionally skipped
+            # for the immediate API-error contract.
             if turn == 1:
+                run["api_turns_used"] = turn
                 return "api_error", f"{exc.code} {exc.reason}"
             logger.warning("ai-invoke %s: api error after first turn: %s", run["run_id"], exc)
             break
         except Exception as exc:
+            model_call_failed = True
+            run["model_last_http_status"] = 0
+            _api_trace_turn(run, turn, model_status=0)["disposition"] = "model_transport_error"
+            # Keep the same attempted-turn accounting for a first transport/parse error.
             if turn == 1:
+                run["api_turns_used"] = turn
                 return "spawn_failed", str(exc)[:500]
             logger.warning("ai-invoke %s: api transport error after first turn: %s", run["run_id"], exc)
             break
@@ -1432,7 +1630,16 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         if reply_text:
             last_text = reply_text
         tool_calls = tool_call if isinstance(tool_call, list) else ([tool_call] if tool_call else [])
+        is_glm_openai = _is_glm_openai_provider(provider)
+        if tool_specs is None and not is_glm_openai:
+            # Restore the established direct-tool boundary before counting calls: a
+            # non-GLM provider that returns a name other than the sole exposed tool is
+            # indistinguishable from no tool call and must enter the miss/nudge path.
+            tool_calls = [call for call in tool_calls if (call.get("name") or tool_name) == tool_name]
+        run["tool_calls_received"] = run.get("tool_calls_received", 0) + len(tool_calls)
+        trace["received"] = len(tool_calls)
         if not tool_calls:
+            trace["disposition"] = "nudge" if run["tool_call_misses"] < API_MAX_TOOL_NUDGES else "no_tool"
             run["tool_call_misses"] += 1
             if run["tool_call_misses"] <= API_MAX_TOOL_NUDGES:
                 conversation.append({
@@ -1463,6 +1670,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     else:
                         api_server_tools.validate(spec["schema"], tool_input)
                     call["input"] = tool_input
+                    trace["valid"] += 1
                     validation_errors.append(None)
                 except api_server_tools.ToolError as exc:
                     validation_errors.append(exc)
@@ -1480,6 +1688,11 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 if call["name"] == _REGISTER_TOOL_NAME:
                     if completion_call is None:
                         completion_call = call
+                        trace["completion_selected"] = True
+                        # 0505 T0006 (DB0005 2): validated and about to be dispatched to the
+                        # register handler below (_inbox_register) -- counted here, at the
+                        # ONE call that survives the duplicate-register rejection just below.
+                        run["tool_calls_executed"] = run.get("tool_calls_executed", 0) + 1
                     else:
                         duplicate = api_server_tools.ToolError(422, "invalid_tool_call")
                         _status, resp = api_server_tools.error_payload(call["name"], duplicate)
@@ -1487,6 +1700,9 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                             kind, call, json.dumps(resp, ensure_ascii=False)[:16000]
                         ))
                     continue
+                # 0505 T0006 (DB0005 2): sent to a real handler regardless of what it
+                # returns -- "executed" counts dispatch, not success.
+                run["tool_calls_executed"] = run.get("tool_calls_executed", 0) + 1
                 try:
                     if call["name"] in api_server_tools.SOURCE_OPS:
                         _status, resp = api_server_tools.source_call(run, current_token, call["name"], call["input"])
@@ -1503,17 +1719,66 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                         _status, resp = _api_create_question(run, current_token, call["input"])
                 except api_server_tools.ToolError as exc:
                     _status, resp = api_server_tools.error_payload(call["name"], exc)
+                # 0505 T0006 (DB0005 3.3): read_document/create_question both dispatch
+                # through _api_bound_request -- one self-HTTP call point, one name. The
+                # other three branches above (SOURCE_OPS, run_test, read_help) are direct
+                # in-process handlers, never self-HTTP, and stay out of last_tool_name
+                # entirely (DB0005 2 scope note).
+                if call["name"] not in api_server_tools.SOURCE_OPS and call["name"] not in ("run_test", "read_help"):
+                    run["last_tool_name"] = "api_bound_request"
+                    run["last_tool_status"] = _status
+                    run["last_tool_error"] = (
+                        None if 200 <= _status < 300 else _registration_error_summary(resp)[:500]
+                    )
+                trace["dispatched"] += 1
+                _api_trace_tool(trace, call["name"], _status)
                 conversation.append(_tool_result_msg(
                     kind, call, json.dumps(resp, ensure_ascii=False)[:16000]
                 ))
             if completion_call is None:
+                trace["disposition"] = "direct_tools_only"
                 continue
             tool_call = completion_call
         else:
-            tool_call = tool_calls[0]
+            if not is_glm_openai:
+                # Preserve established OpenAI/Anthropic direct-scope behavior.
+                run["tool_calls_executed"] = run.get("tool_calls_executed", 0) + 1
+                tool_call = tool_calls[0]
+            else:
+                # A forced GLM provider choice is untrusted input: emit a result for every
+                # received call, and dispatch exactly one validated call.
+                completion_call = None
+                for call in tool_calls:
+                    call_name = call.get("name") or tool_name
+                    call["name"] = call_name
+                    try:
+                        if call_name != tool_name:
+                            raise api_server_tools.ToolError(422, "invalid_tool_call")
+                        api_server_tools.validate(tool_schema, call.get("input"))
+                    except api_server_tools.ToolError as exc:
+                        _status, resp = api_server_tools.error_payload(call_name or "tool_call", exc)
+                        conversation.append(_tool_result_msg(
+                            kind, call, json.dumps(resp, ensure_ascii=False)[:16000]
+                        ))
+                        continue
+                    if completion_call is not None:
+                        duplicate = api_server_tools.ToolError(422, "invalid_tool_call")
+                        _status, resp = api_server_tools.error_payload(call_name, duplicate)
+                        conversation.append(_tool_result_msg(
+                            kind, call, json.dumps(resp, ensure_ascii=False)[:16000]
+                        ))
+                        continue
+                    completion_call = call
+                    run["tool_calls_executed"] = run.get("tool_calls_executed", 0) + 1
+                if completion_call is None:
+                    continue
+                tool_call = completion_call
 
         if workflow_pending:
             status, resp = _workflow_decide(run, current_token, tool_call["input"])
+            run["last_tool_name"] = "workflow_decide"
+            run["last_tool_status"] = status
+            run["last_tool_error"] = None if 200 <= status < 300 else _registration_error_summary(resp)[:500]
             if 200 <= status < 300:
                 workflow_pending = False
                 next_token = resp.get("next_token")
@@ -1552,6 +1817,9 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
 
         if conflict_pending:
             status, resp = _resolve_conflict(run, current_token, tool_call["input"])
+            run["last_tool_name"] = "resolve_conflict"
+            run["last_tool_status"] = status
+            run["last_tool_error"] = None if 200 <= status < 300 else _registration_error_summary(resp)[:500]
             if 200 <= status < 300:
                 conversation.append(_tool_result_msg(kind, tool_call, json.dumps(resp, ensure_ascii=False)[:4000]))
                 break
@@ -1563,10 +1831,14 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
 
         if is_chat:
             status, resp = _conversation_turn_register(run, current_token, tool_call["input"])
+            run["last_tool_name"] = "conversation_turn_register"
+            run["last_tool_status"] = status
             if 200 <= status < 300:
+                run["last_tool_error"] = None
                 registered += 1
                 break
             reason = _registration_error_summary(resp)
+            run["last_tool_error"] = reason[:500]
             run["register_errors"].append({"status": status, "reason": reason, "turn": turn})
             conversation.append(_tool_result_msg(
                 kind, tool_call,
@@ -1574,8 +1846,16 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             ))
             continue
 
+        trace["register_attempted"] = True
         status, resp = _inbox_register(run, current_token, tool_call["input"])
+        trace["dispatched"] += 1
+        _api_trace_tool(trace, "register_document", status, registration=True)
+        run["last_tool_name"] = "inbox_register"
+        run["last_tool_status"] = status
         if 200 <= status < 300:
+            trace["register_succeeded"] = True
+            trace["disposition"] = "registered"
+            run["last_tool_error"] = None
             registered += 1
             next_token = resp.get("next_token")
             next_mention = resp.get("next_mention")
@@ -1592,7 +1872,9 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             if run["mode"] == "single" or registered >= run["docs_target"] or not next_token:
                 break
         else:
+            trace["disposition"] = "register_failed"
             reason = _registration_error_summary(resp)
+            run["last_tool_error"] = reason[:500]
             if not _absorb_binding_failure(run, resp, turn):
                 run["register_errors"].append({
                     "status": status,
@@ -1616,9 +1898,13 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         and not goal_met
         and not run["cancel_event"].is_set()
         and not run.get("timed_out")
+        and not model_call_failed
     ):
         run["turn_limit_exhausted"] = True
 
+    # 0505 T0006 (DB0005 2): the loop's own exit turn -- set once, here, regardless of
+    # which branch above broke out of it.
+    run["api_turns_used"] = turn
     run["exit_code"] = None
     run["last_message"] = _truncate_front(last_text)
     run["last_message_received"] = bool(last_text)
@@ -1676,12 +1962,17 @@ def _tool_result_msg(kind: str, tool_call: dict, text: str) -> dict:
     return {"role": "tool", "tool_call_id": tool_call["id"], "content": text}
 
 def _resolve_conflict(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
+    # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
+    # FIRST in this hop wins transport_api_base; already-set (e.g. by the chat
+    # prefetch) stays untouched.
+    if run.get("transport_api_base") is None:
+        run["transport_api_base"] = _sanitize_diagnostic_base(_resolve_transport_api_base(run))
     body = {
         "files": tool_input.get("files") or [],
         "complete": bool(tool_input.get("complete")),
     }
     req = urllib.request.Request(
-        f"{run['api_base_url']}/groups/{run['group_id']}/git/merge/{run['merge_id']}/resolve-token",
+        f"{_resolve_transport_api_base(run)}/groups/{run['group_id']}/git/merge/{run['merge_id']}/resolve-token",
         data=json.dumps(body).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -1724,7 +2015,7 @@ def _call_anthropic(
             "max_tokens": API_MAX_TOKENS,
             "messages": conversation,
             "tools": [{"name": spec["name"], "description": spec["description"], "input_schema": spec["schema"]} for spec in specs],
-            **({"tool_choice": {"type": "tool", "name": specs[0]["name"]}} if force_tool else {}),
+            **({"tool_choice": ({"type": "any"} if multi else {"type": "tool", "name": specs[0]["name"]})} if force_tool else {}),
         },
         timeout,
     )
@@ -1737,7 +2028,7 @@ def _call_anthropic(
             name = block.get("name")
             tool_calls.append({"id": block.get("id"), "name": name, "input": block.get("input")})
     assistant_msg = {"role": "assistant", "content": content}
-    return ("\n".join(p for p in text_parts if p) or None), (tool_calls if multi else (tool_calls[0] if tool_calls and tool_calls[0]["name"] in exposed else None)), assistant_msg
+    return ("\n".join(p for p in text_parts if p) or None), tool_calls, assistant_msg
 
 def _call_openai(
     base_url: str, model: str, key: str, conversation: list[dict], timeout: float,
@@ -1752,31 +2043,41 @@ def _call_openai(
             "model": model,
             "messages": conversation,
             "tools": [{"type": "function", "function": {"name": spec["name"], "description": spec["description"], "parameters": spec["schema"]}} for spec in specs],
-            **({"tool_choice": {"type": "function", "function": {"name": specs[0]["name"]}}} if force_tool else {}),
+            **({"tool_choice": ("required" if multi else {"type": "function", "function": {"name": specs[0]["name"]}})} if force_tool else {}),
         },
         timeout,
     )
     choices = data.get("choices") or []
     message = (choices[0].get("message") if choices else None) or {}
     tool_calls = []
-    exposed = {spec["name"] for spec in specs}
     for tc in message.get("tool_calls") or []:
         fn = tc.get("function") or {}
-        try:
-            args = json.loads(fn.get("arguments") or "{}")
-        except ValueError:
+        raw_args = fn.get("arguments", {})
+        if isinstance(raw_args, dict):
+            args = raw_args
+        elif isinstance(raw_args, str):
+            try:
+                args = json.loads(raw_args or "{}")
+            except (TypeError, ValueError):
+                args = None
+        else:
             args = None
         tool_calls.append({"id": tc.get("id"), "name": fn.get("name"), "input": args})
-    call_value = tool_calls if multi else (tool_calls[0] if tool_calls and tool_calls[0]["name"] in exposed else None)
-    return message.get("content"), call_value, message
+    # Keep every received call, including unknown names and malformed inputs, so the
+    # dispatcher can emit a call-id-specific error instead of misclassifying it as a miss.
+    return message.get("content"), tool_calls, message
 
 def _workflow_decide(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
+    # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
+    # FIRST in this hop wins transport_api_base; already-set stays untouched.
+    if run.get("transport_api_base") is None:
+        run["transport_api_base"] = _sanitize_diagnostic_base(_resolve_transport_api_base(run))
     body = {
         "doc_class": tool_input.get("doc_class") or "standard",
         "sequence": tool_input.get("sequence") or [],
     }
     req = urllib.request.Request(
-        f"{run['api_base_url']}/workflow/{run['doc_ref']}/decide",
+        f"{_resolve_transport_api_base(run)}/workflow/{run['doc_ref']}/decide",
         data=json.dumps(body).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -1795,25 +2096,51 @@ def _workflow_decide(run: dict, raw_token: str, tool_input: dict) -> tuple[int, 
     except Exception as exc:
         return 0, {"error": str(exc)}
 
-def _conversation_context(run: dict, raw_token: str) -> Optional[dict]:
-    """Fetch the unread conversation that an API model cannot retrieve itself."""
-    api_base = (run.get("api_base_url") or "").rstrip("/")
-    req = urllib.request.Request(
-        f"{api_base}/conversation/{run['doc_ref']}/turns?after_seq=0&include_head=1",
-        headers={"Authorization": f"Bearer {raw_token}"},
-        method="GET",
-    )
+class _BearerOnlyRequest:
+    """Request stand-in for direct in-process calls (0505 T0018).
+
+    `conversation_routes._authenticate`/`auth_outbound.verify_bearer` never read
+    anything off a live Request except this header, so a full ASGI Request is
+    unnecessary for the two sites that no longer dial self-HTTP.
+    """
+
+    __slots__ = ("headers",)
+
+    def __init__(self, raw_token: str) -> None:
+        self.headers = {"Authorization": f"Bearer {raw_token}"}
+
+
+def _conversation_context(run: dict, raw_token: str) -> tuple[int, dict]:
+    """Fetch the unread conversation that an API model cannot retrieve itself.
+
+    0505 T0018: in-process call, not self-HTTP. GET /conversation/{doc_id}/turns never
+    reaches GroupMutationPolicyMiddleware -- mutation_policy.classify_mutation_route's
+    first check is `methods & MUTATION_METHODS` (POST/PUT/PATCH/DELETE only), so a GET
+    route is classified "read_only" before any group-lease check runs (mutation_policy.py
+    290-304, 347). The only binding this call ever had was
+    conversation_routes._authenticate (token action_scope/doc_ref/project/group match),
+    unchanged and reused as-is through the route's own plain-Python _list_authenticated --
+    no new binding logic, no self-HTTP round trip. Still returns (status, body) like the
+    five self-HTTP call sites below (_api_bound_request/_workflow_decide/_resolve_conflict/
+    _conversation_turn_register/_inbox_register).
+    """
+    from modules.flow_gate.api.v1 import conversation_routes
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-            return payload if isinstance(payload, dict) else None
-    except Exception:
-        logger.warning("ai-invoke %s: conversation context fetch failed", run["run_id"], exc_info=True)
-        return None
+        response = conversation_routes._list_authenticated(
+            run["doc_ref"], raw_token, after_seq=0, before_seq=None, limit=None,
+            include_head=True,
+        )
+    except Exception as exc:
+        return 0, {"error": str(exc)}
+    return response.status_code, json.loads(response.body)
 
 def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     """Append an API-provider reply through the token-bound conversation endpoint."""
-    api_base = (run.get("api_base_url") or "").rstrip("/")
+    # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
+    # FIRST in this hop wins transport_api_base; already-set stays untouched.
+    if run.get("transport_api_base") is None:
+        run["transport_api_base"] = _sanitize_diagnostic_base(_resolve_transport_api_base(run))
+    api_base = _resolve_transport_api_base(run).rstrip("/")
     body = {
         "body": tool_input.get("body") or "",
         "idempotency_key": run["token_id"],
@@ -1821,7 +2148,7 @@ def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> 
         "display_name": (run.get("provider") or {}).get("name") or "AI",
     }
     req = urllib.request.Request(
-        f"{api_base}/conversation/{run["doc_ref"]}/turn",
+        f"{api_base}/conversation/{run['doc_ref']}/turn",
         data=json.dumps(body).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -1842,9 +2169,13 @@ def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> 
 
 def _api_bound_request(run: dict, raw_token: str, path: str, method: str = "GET", body: Optional[dict] = None) -> tuple[int, dict]:
     """Call a document service through its normal token gate with only server-owned routing."""
+    # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
+    # FIRST in this hop wins transport_api_base; already-set stays untouched.
+    if run.get("transport_api_base") is None:
+        run["transport_api_base"] = _sanitize_diagnostic_base(_resolve_transport_api_base(run))
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(
-        f"{run['api_base_url']}{path}", data=data,
+        f"{_resolve_transport_api_base(run)}{path}", data=data,
         headers={"Authorization": f"Bearer {raw_token}", **({"Content-Type": "application/json"} if data is not None else {})},
         method=method,
     )
@@ -1860,19 +2191,48 @@ def _api_bound_request(run: dict, raw_token: str, path: str, method: str = "GET"
         return 0, {"error": str(exc)}
 
 def _api_read_document(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
-    from urllib.parse import urlencode
-    if not tool_input:
-        return _api_bound_request(run, raw_token, f"/document/{run['doc_ref']}")
-    query = {}
-    for key in ("section", "section_id"):
-        if key in tool_input:
-            query[key] = tool_input[key]
-    for key in ("lines", "chars"):
-        if key in tool_input:
-            # Public schemas use typed ranges; the document HTTP contract is a-b.
-            value = tool_input[key]
-            query[key] = f"{value['start']}-{value['end']}"
-    return _api_bound_request(run, raw_token, f"/document/{run['doc_ref']}/section?{urlencode(query)}")
+    """0505 T0018: in-process call, not self-HTTP -- same GET-skips-the-lease-middleware
+    reasoning as _conversation_context above. `_api_bound_request`/`_api_create_question`
+    keep dialing self-HTTP unchanged; this is the only call inside the shared dispatch
+    branch (1707-1719) that no longer does.
+
+    document_routes.get_document/get_document_section are FastAPI route functions whose
+    Query(...)-typed parameters must all be passed explicitly here -- calling one without
+    a value falls back to the raw `Query` sentinel object, not the default it wraps.
+    `_BearerOnlyRequest` stands in for the real Request: verify_bearer, reused unchanged,
+    only ever reads `request.headers`, and neither route reads anything else off it.
+
+    transport_api_base is still resolved here even though it is no longer dialed, so
+    DB0005 2's "first opener wins" diagnostic keeps reporting the same per-hop value
+    regardless of which of the six sites happens to run first (T0018 item 3 judgment:
+    last_tool_name/transport_api_base semantics are left unchanged for this site).
+    """
+    if run.get("transport_api_base") is None:
+        run["transport_api_base"] = _sanitize_diagnostic_base(_resolve_transport_api_base(run))
+    from modules.flow_gate.api.v1 import document_routes
+    fake_request = _BearerOnlyRequest(raw_token)
+    try:
+        if not tool_input:
+            response = document_routes.get_document(fake_request, run["doc_ref"])
+        else:
+            query = {}
+            for key in ("section", "section_id"):
+                if key in tool_input:
+                    query[key] = tool_input[key]
+            for key in ("lines", "chars"):
+                if key in tool_input:
+                    # Public schemas use typed ranges; the document HTTP contract is a-b.
+                    value = tool_input[key]
+                    query[key] = f"{value['start']}-{value['end']}"
+            response = document_routes.get_document_section(
+                fake_request, run["doc_ref"],
+                section=query.get("section"), section_id=query.get("section_id"),
+                lines=query.get("lines"), chars=query.get("chars"),
+                include_children=True, max_chars=None, revision_no=None,
+            )
+    except Exception as exc:
+        return 0, {"error": str(exc)}
+    return response.status_code, json.loads(response.body)
 
 def _api_create_question(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     return _api_bound_request(run, raw_token, f"/q/{run['doc_ref']}/questions", "POST", tool_input)
@@ -2053,9 +2413,15 @@ def _inbox_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, d
         if rejected.record is not None:
             run.setdefault("register_errors", []).append(rejected.record)
         return int(rejected.response.get("http_status") or 403), rejected.response
+    # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
+    # FIRST in this hop wins transport_api_base; already-set stays untouched. Placed
+    # after the binding check above, not at function entry -- a binding rejection
+    # never opens a socket, so it must not claim the transport base either.
+    if run.get("transport_api_base") is None:
+        run["transport_api_base"] = _sanitize_diagnostic_base(_resolve_transport_api_base(run))
     body = _register_envelope(context, run, tool_input)
     req = urllib.request.Request(
-        f"{run['api_base_url']}/inbox",
+        f"{_resolve_transport_api_base(run)}/inbox",
         data=json.dumps(body).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -2904,6 +3270,8 @@ def _persist_run_record(run: dict) -> None:
             "last_message_excerpt": excerpt(run.get("last_message")),
             "provider_id": run.get("provider_id"),
             "provider_name": (run.get("provider") or {}).get("name"),
+            "selected_provider_source": run.get("selected_provider_source"),
+            "fallback_allowed": bool(run.get("fallback_allowed")),
             "attempt_no": int(run.get("attempt_no") or 0),
             "attempts_used": int(run.get("attempts_used") or 0),
             "attempts_max": run.get("attempts_max"),
@@ -2952,10 +3320,55 @@ def _persist_run_record(run: dict) -> None:
             "stdout_tail": run.get("stdout_tail"),
             "stderr_tail": run.get("stderr_tail"),
             "source_dirty_files": list(run.get("source_dirty_files") or []),
+            # -- 0505 T0006 (DB0005 3.3) -- API provider server-mediated self-HTTP
+            # diagnostics. Read with .get() like the exit diagnostics above: a CLI run,
+            # a spawn failure, or a row from before migration 095 has none of this and
+            # stores NULL, not zero.
+            "operator_api_base": run.get("operator_api_base"),
+            "transport_api_base": run.get("transport_api_base"),
+            "last_tool_name": run.get("last_tool_name"),
+            "last_tool_status": run.get("last_tool_status"),
+            "last_tool_error": run.get("last_tool_error"),
+            "api_turns_used": run.get("api_turns_used"),
+            "model_http_calls": run.get("model_http_calls"),
+            "model_last_http_status": run.get("model_last_http_status"),
+            "tool_calls_received": run.get("tool_calls_received"),
+            "tool_calls_executed": run.get("tool_calls_executed"),
+            "api_turn_trace": list(run.get("api_turn_trace") or []),
             "created_at": stamp,
             "updated_at": stamp,
         })
         db_runs.maybe_purge()
+        # 0505 T0006 (DB0005 3.3 / NR0003 §18 P0-1): a structured snapshot of the same
+        # diagnostic values just persisted, so a hop that leaves an unread run detail
+        # behind still leaves this in the process log. `last_tool_error` goes through
+        # `_redact_secrets` here -- a log line is a "shown elsewhere" surface exactly
+        # like `_no_output_detail`'s (DB0005 §2 masking) -- while the DB row above keeps
+        # the raw text (same trust boundary as `register_errors.reason`).
+        logger.info(
+            "ai-invoke %s: diagnostics register_errors=%d tool_call_misses=%s "
+            "turn_limit_exhausted=%s oracle_mismatch=%s last_tool_name=%s "
+            "last_tool_status=%s api_turns_used=%s model_http_calls=%s "
+            "model_last_http_status=%s tool_calls_received=%s tool_calls_executed=%s "
+            "operator_api_base=%s transport_api_base=%s last_tool_error=%s",
+            run["run_id"],
+            len(run.get("register_errors") or []),
+            run.get("tool_call_misses"),
+            run.get("turn_limit_exhausted"),
+            run.get("oracle_mismatch"),
+            run.get("last_tool_name"),
+            run.get("last_tool_status"),
+            run.get("api_turns_used"),
+            run.get("model_http_calls"),
+            run.get("model_last_http_status"),
+            run.get("tool_calls_received"),
+            run.get("tool_calls_executed"),
+            run.get("operator_api_base"),
+            run.get("transport_api_base"),
+            _redact_secrets(
+                run.get("last_tool_error"), _known_run_raw_tokens(run), _known_run_prompts(run)
+            ),
+        )
         _persist_register_context_failures(run, stamp)
     except Exception:
         # L0007 §5: a storage failure must never turn a finished hop into a crashed one.
@@ -3115,6 +3528,8 @@ def finished_payload(run: dict) -> dict:
         "last_message": run["last_message"],
         "provider_id": run["provider_id"],
         "provider_name": (run.get("provider") or {}).get("name"),
+        "selected_provider_source": run.get("selected_provider_source"),
+        "fallback_allowed": bool(run.get("fallback_allowed")),
         "started_at": run.get("started_at"),
         "finished_at": run.get("finished_at"),
         "attempt_no": run["attempt_no"],
@@ -3123,6 +3538,20 @@ def finished_payload(run: dict) -> dict:
         "tool_call_misses": run.get("tool_call_misses", 0),
         "turn_limit_exhausted": bool(run.get("turn_limit_exhausted")),
         "oracle_mismatch": bool(run.get("oracle_mismatch")),
+        # 0505 T0006 (DB0005 3.3): same names as the durable row above, same names
+        # _run_detail_from_row uses to restore a finished run after a restart -- one
+        # path renders both a live finish and a persisted one.
+        "operator_api_base": run.get("operator_api_base"),
+        "transport_api_base": run.get("transport_api_base"),
+        "last_tool_name": run.get("last_tool_name"),
+        "last_tool_status": run.get("last_tool_status"),
+        "last_tool_error": run.get("last_tool_error"),
+        "api_turns_used": run.get("api_turns_used"),
+        "model_http_calls": run.get("model_http_calls"),
+        "model_last_http_status": run.get("model_last_http_status"),
+        "tool_calls_received": run.get("tool_calls_received"),
+        "tool_calls_executed": run.get("tool_calls_executed"),
+        "api_turn_trace": list(run.get("api_turn_trace") or []),
         "source_dirty": run["source_dirty"],
         # 0446 T0016 §3-4: the live half of the restart pair. `source_dirty_files` keeps its
         # existing conditional place at the bottom of this function.

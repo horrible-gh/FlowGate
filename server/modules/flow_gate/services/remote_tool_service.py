@@ -420,6 +420,7 @@ def _validate_required(op: str, body: dict) -> None:
         _validate_ref(body)
     if op == "read":
         _require_str(body, "path")
+        _validate_line_selector(body)
         _validate_max_int(body, "max_bytes")
         # 0347 P0004 §7.1 — same rule as max_bytes: int, not bool, not negative.
         _validate_max_int(body, "offset")
@@ -488,6 +489,59 @@ def _validate_max_int(body: dict, key: str) -> None:
         return
     if not isinstance(val, int) or isinstance(val, bool) or val < 0:
         raise _OpError(422)
+
+
+# 0507 T0004 (NR0003): an unknown field used to be silently dropped, so a worker
+# that sent start_line/end_line got the WHOLE file back (≈163KB into the tool
+# result, prompt tokens 15K→72K). The per-op contract below is now explicit:
+# any field outside it is a caller bug and answers 422, never a full-file read.
+_ALLOWED_FIELDS: dict = {
+    "read": frozenset({"path", "max_bytes", "offset", "length", "encoding", "ref",
+                       "start_line", "end_line"}),
+    "grep": frozenset({"pattern", "path", "glob", "ignore_case", "max_results", "ref"}),
+    "glob": frozenset({"pattern", "path", "ref"}),
+    "stat": frozenset({"path", "ref"}),
+    "diff": frozenset({"path", "target_ref"}),
+    "log": frozenset({"path", "target_ref", "max_count"}),
+    "write": frozenset({"path", "content", "mode", "encoding"}),
+    "patch": frozenset({"path", "old_string", "new_string", "replace_all", "encoding"}),
+    "remove": frozenset({"path", "recursive"}),
+}
+
+
+def _validate_allowed_fields(op: str, body: dict) -> None:
+    """④ — reject unknown request fields instead of silently ignoring them."""
+    allowed = _ALLOWED_FIELDS.get(op)
+    if allowed is None:
+        return
+    unknown = sorted(set(body) - allowed)
+    if unknown:
+        raise _OpError(422, details={"reason": "unknown_field", "fields": unknown})
+
+
+def _validate_line_selector(body: dict) -> None:
+    """0507 T0004: the read line selector — 1-based start_line/end_line.
+
+    Both must be positive ints with start <= end, and mixing them with the
+    byte window (offset/length/max_bytes) is 422: two selectors in one request
+    have no defined precedence, and ambiguity is what produced the silent
+    whole-file fallback this work item removes.
+    """
+    start = body.get("start_line")
+    end = body.get("end_line")
+    if start is None and end is None:
+        return
+    for key, val in (("start_line", start), ("end_line", end)):
+        if val is None or not isinstance(val, int) or isinstance(val, bool) or val < 1:
+            raise _OpError(422, details={"reason": "invalid_line_range", "field": key})
+    if start > end:
+        raise _OpError(422, details={"reason": "invalid_line_range"})
+    for key in ("offset", "length", "max_bytes"):
+        if body.get(key) is not None:
+            raise _OpError(
+                422,
+                details={"reason": "line_and_byte_selector", "field": key},
+            )
 
 
 def _validate_encoding(body: dict) -> None:
@@ -855,11 +909,37 @@ def _trim_incomplete_trailing_sequence(raw: bytes) -> bytes:
     return raw
 
 
+def _slice_by_lines(text: str, start_line: int, end_line: int) -> tuple[str, int, int, int, bool]:
+    """0507 T0004 §2/§3 — 1-based inclusive line window over already-decoded text.
+
+    Slicing AFTER decoding (rather than the byte-window's slice-then-decode) means
+    a line selector never has to fix up a UTF-8 sequence the window cut in half —
+    the decode already happened on the whole file.
+
+    Returns (content, returned_start_line, returned_end_line, total_lines, eof).
+    An empty result (start_line past EOF, or an empty file) reports an empty
+    range (returned_end_line == returned_start_line - 1) with eof=True, the same
+    "past EOF is empty, not an error" rule the byte window uses.
+    """
+    lines = text.splitlines(keepends=True)
+    total_lines = len(lines)
+    if total_lines == 0 or start_line > total_lines:
+        return "", start_line, start_line - 1, total_lines, True
+    returned_end = min(end_line, total_lines)
+    content = "".join(lines[start_line - 1:returned_end])
+    return content, start_line, returned_end, total_lines, returned_end >= total_lines
+
+
 def _exec_read(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     """0347 P0004 §7: byte window (`offset`/`length`) on top of the original read.
 
     `offset`/`length` absent → byte-identical to the previous behaviour, plus the
     three new report-only fields (`offset`/`returned_bytes`/`eof`).
+
+    0507 T0004 §2: `start_line`/`end_line` is a second, mutually-exclusive selector
+    (enforced by `_validate_line_selector`) — a request carrying it never falls
+    through to the byte-window/legacy branches below, which is what used to hand
+    the AI worker a whole 196KB file for a 50-line request (NR0003).
     """
     target = resolve_in_root(root, body["path"])
     if target is None:
@@ -867,10 +947,35 @@ def _exec_read(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     if not target.is_file():
         raise _OpError(404)
     size = target.stat().st_size
+    encoding = body.get("encoding") or "utf-8"
+    start_line = body.get("start_line")
+    if start_line is not None:
+        end_line = body["end_line"]
+        if size > _MAX_READ_BYTES:
+            raise _OpError(413)
+        text = target.read_bytes().decode(encoding, errors="replace")
+        content, returned_start, returned_end, total_lines, eof = _slice_by_lines(text, start_line, end_line)
+        returned_bytes = len(content.encode(encoding))
+        return (
+            {
+                "path": body["path"],
+                "content": content,
+                "encoding": encoding,
+                "size": size,
+                "start_line": start_line,
+                "end_line": end_line,
+                "returned_start_line": returned_start,
+                "returned_end_line": returned_end,
+                "total_lines": total_lines,
+                "returned_bytes": returned_bytes,
+                "eof": eof,
+                "truncated": not eof,
+            },
+            returned_bytes,
+        )
     max_bytes = body.get("max_bytes")
     length = body.get("length")
     offset = body.get("offset") or 0
-    encoding = body.get("encoding") or "utf-8"
 
     window_start = min(offset, size)   # past EOF → empty window, not an error (§8)
     if offset == 0 and length is None and max_bytes is None:
@@ -1337,13 +1442,32 @@ def _exec_ref_read(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     proc = _git_ref_output(root, ["show", f"{body['ref']}:{body['path']}"])
     if proc.returncode != 0:
         raise _OpError(404)
-    raw = (proc.stdout or "").encode(body.get("encoding") or "utf-8", errors="replace")
+    encoding = body.get("encoding") or "utf-8"
+    raw = (proc.stdout or "").encode(encoding, errors="replace")
+    start_line = body.get("start_line")
+    if start_line is not None:
+        # 0507 T0004 §2: same line selector as the working-tree read, so a ref
+        # read cannot reopen the start_line/end_line → whole-blob hole NR0003 found.
+        end_line = body["end_line"]
+        if len(raw) > _MAX_READ_BYTES:
+            raise _OpError(413)
+        text = raw.decode(encoding, errors="replace")
+        content, returned_start, returned_end, total_lines, eof = _slice_by_lines(text, start_line, end_line)
+        returned_bytes = len(content.encode(encoding))
+        return {
+            "path": body["path"], "content": content, "encoding": encoding, "size": len(raw),
+            "start_line": start_line, "end_line": end_line,
+            "returned_start_line": returned_start, "returned_end_line": returned_end,
+            "total_lines": total_lines, "returned_bytes": returned_bytes,
+            "eof": eof, "truncated": not eof,
+            "ref": body["ref"], "mode": "committed_tree",
+        }, returned_bytes
     offset = body.get("offset") or 0
     limit = min(v for v in (body.get("length"), body.get("max_bytes"), len(raw) - offset) if v is not None)
     if limit > _MAX_READ_BYTES:
         raise _OpError(413)
     chunk = raw[offset:offset + max(limit, 0)]
-    return {"path": body["path"], "content": chunk.decode(body.get("encoding") or "utf-8", errors="replace"), "encoding": body.get("encoding") or "utf-8", "size": len(raw), "offset": offset, "returned_bytes": len(chunk), "eof": offset + len(chunk) >= len(raw), "truncated": offset + len(chunk) < len(raw), "ref": body["ref"], "mode": "committed_tree"}, len(chunk)
+    return {"path": body["path"], "content": chunk.decode(encoding, errors="replace"), "encoding": encoding, "size": len(raw), "offset": offset, "returned_bytes": len(chunk), "eof": offset + len(chunk) >= len(raw), "truncated": offset + len(chunk) < len(raw), "ref": body["ref"], "mode": "committed_tree"}, len(chunk)
 
 
 def _exec_ref_grep(body: dict, root: Path) -> tuple[dict, Optional[int]]:
@@ -1615,6 +1739,7 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
         # ③ Path safety (existing path-like values)
         _validate_paths(op, body)
         # ④ Request validity (required fields)
+        _validate_allowed_fields(op, body)
         _validate_required(op, body)
         # Resolve the target source root. write/remove must not silently fall
         # back to the base checkout when the group worktree is missing (0205

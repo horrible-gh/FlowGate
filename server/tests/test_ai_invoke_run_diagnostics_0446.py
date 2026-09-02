@@ -222,6 +222,25 @@ class TestRunRowRoundTrip:
         assert stored["stderr_tail"] == stderr
         assert stored["source_dirty_files"] == files          # native list in, native list out
 
+    def test_api_turn_trace_at_its_declared_limit_keeps_only_trace_entries(self, live_db):
+        trace = [{
+            "turn": turn, "model_status": 200, "response_text": True,
+            "received": 12, "valid": 12, "dispatched": 12,
+            "completion_selected": False, "register_attempted": False,
+            "register_succeeded": False,
+            "tools": [
+                {"name": f"source_call_{tool}", "status": 200, "registration": False}
+                for tool in range(12)
+            ],
+            "disposition": "direct_tools_only",
+        } for turn in range(1, 21)]
+        db_runs.upsert(_row("aiv_20260821_000096", api_turn_trace=trace))
+
+        stored = db_runs.get("aiv_20260821_000096")
+        assert stored["api_turn_trace"] == trace
+        assert all(set(entry) >= {"turn", "model_status", "tools", "disposition"}
+                   for entry in stored["api_turn_trace"])
+
     def test_absent_values_read_back_as_null_and_empty_list(self, live_db):
         # The shape a spawn failure / an API-mode run / the orphaned-lease record leaves.
         db_runs.upsert(_row("aiv_20260821_000002", end_reason="spawn_failed"))
@@ -968,3 +987,217 @@ class TestUnchangedContracts:
 
     def test_the_timeout_vocabulary_is_exactly_two_words_plus_null(self):
         assert svc._TIMEOUT_KINDS == ("no_progress", "absolute_cap")
+
+
+# ── flowgate.default.0505 T0006 (DB0005): API provider transport diagnostics ─
+#
+# NR0003 §13 found nine of these values at zero occurrences in the whole repository, and
+# DB0005 approved the schema/masking/compatibility design that this T implements. The
+# suite below mirrors TestMigration086's shape exactly (same file, same real-database
+# style) for the new migration 095, then covers the write helper, the sanitize helper,
+# the reset helper and the one authorized contract change (_conversation_context).
+
+MIGRATION_NAME_T0006 = "095_ai_invoke_run_transport_diagnostics.sql"
+TRANSPORT_COLUMNS = (
+    "operator_api_base", "transport_api_base", "last_tool_name", "last_tool_status",
+    "last_tool_error", "api_turns_used", "model_http_calls", "model_last_http_status",
+    "tool_calls_received", "tool_calls_executed",
+)
+
+
+class TestMigration095:
+    """One number, three dialects, additive only, every new column nullable."""
+
+    def test_all_three_dialects_carry_the_same_file(self):
+        missing = [d for d in DIALECTS if not (MIGRATIONS / d / MIGRATION_NAME_T0006).is_file()]
+        assert missing == [], f"095 missing from: {missing}"
+
+    def test_the_ordinal_is_not_shared_with_any_other_file(self):
+        for dialect in DIALECTS:
+            same = sorted(p.name for p in (MIGRATIONS / dialect).glob("095*.sql"))
+            assert same == [MIGRATION_NAME_T0006], f"{dialect}: {same}"
+
+    @pytest.mark.parametrize("dialect", DIALECTS)
+    def test_the_file_only_adds_columns(self, dialect):
+        body = (MIGRATIONS / dialect / MIGRATION_NAME_T0006).read_text(encoding="utf-8")
+        sql = "\n".join(re.sub(r"--.*$", "", line) for line in body.splitlines())
+        statements = [s.strip() for s in sql.split(";") if s.strip()]
+        for statement in statements:
+            if statement.upper() in ("BEGIN", "COMMIT"):
+                continue
+            assert re.match(r"(?is)^ALTER\s+TABLE\s+ai_invoke_runs\s+ADD\s+COLUMN", statement), (
+                f"{dialect}: 095 must be additive only, found: {statement[:80]!r}"
+            )
+        for forbidden in ("DROP", "RENAME", "UPDATE ", "INSERT ", "CREATE TABLE"):
+            assert forbidden not in sql.upper(), f"{dialect}: 095 must not {forbidden.strip()}"
+
+    @pytest.mark.parametrize("dialect", DIALECTS)
+    def test_every_new_column_is_added_and_nullable(self, dialect):
+        body = (MIGRATIONS / dialect / MIGRATION_NAME_T0006).read_text(encoding="utf-8")
+        sql = "\n".join(re.sub(r"--.*$", "", line) for line in body.splitlines())
+        for column in TRANSPORT_COLUMNS:
+            match = re.search(
+                rf"(?im)^\s*ALTER\s+TABLE\s+ai_invoke_runs\s+ADD\s+COLUMN\s+"
+                rf"(?:IF\s+NOT\s+EXISTS\s+)?{column}\b(?P<rest>[^;]*)",
+                sql,
+            )
+            assert match, f"{dialect}: 095 never adds {column}"
+            rest = match.group("rest").upper()
+            assert "NOT NULL" not in rest, f"{dialect}: {column} must stay nullable"
+            assert "DEFAULT" not in rest, f"{dialect}: {column} must have no default"
+
+    def test_sqlite_applies_the_whole_chain_and_ends_with_ten_more_nullable_columns(self):
+        conn = sqlite3.connect(":memory:")
+        try:
+            for path in sorted((MIGRATIONS / "sqlite").glob("*.sql")):
+                conn.executescript(path.read_text(encoding="utf-8"))
+            info = {row[1]: row for row in conn.execute("PRAGMA table_info(ai_invoke_runs)")}
+            for column in TRANSPORT_COLUMNS:
+                assert column in info, f"{column} missing after the full migration chain"
+                assert info[column][3] == 0, f"{column} came out NOT NULL"
+                assert info[column][4] is None, f"{column} came out with a default"
+        finally:
+            conn.close()
+
+
+class TestTransportDiagnosticsRoundTrip:
+
+    def test_all_ten_columns_round_trip(self, live_db):
+        db_runs.upsert(_row(
+            "aiv_20260901_000001",
+            operator_api_base="https://flowgate.example/flowgate",
+            transport_api_base="http://127.0.0.1:8088/flowgate",
+            last_tool_name="inbox_register",
+            last_tool_status=401,
+            last_tool_error="401 Token is invalid",
+            api_turns_used=3,
+            model_http_calls=2,
+            model_last_http_status=200,
+            tool_calls_received=2,
+            tool_calls_executed=1,
+        ))
+        stored = db_runs.get("aiv_20260901_000001")
+        assert stored["operator_api_base"] == "https://flowgate.example/flowgate"
+        assert stored["transport_api_base"] == "http://127.0.0.1:8088/flowgate"
+        assert stored["last_tool_name"] == "inbox_register"
+        assert stored["last_tool_status"] == 401
+        assert stored["last_tool_error"] == "401 Token is invalid"
+        assert stored["api_turns_used"] == 3
+        assert stored["model_http_calls"] == 2
+        assert stored["model_last_http_status"] == 200
+        assert stored["tool_calls_received"] == 2
+        assert stored["tool_calls_executed"] == 1
+
+    def test_absent_values_read_back_as_null_not_zero(self, live_db):
+        # The shape a CLI run, a spawn failure, or a row from before 095 leaves.
+        db_runs.upsert(_row("aiv_20260901_000002", end_reason="spawn_failed"))
+        stored = db_runs.get("aiv_20260901_000002")
+        for column in TRANSPORT_COLUMNS:
+            assert stored[column] is None, f"{column} should be NULL, not zero"
+
+    def test_last_tool_error_is_clipped_to_500_chars_at_write_time(self, live_db):
+        long_error = "x" * 900
+        db_runs.upsert(_row("aiv_20260901_000003", last_tool_error=long_error))
+        stored = db_runs.get("aiv_20260901_000003")
+        assert stored["last_tool_error"] == "x" * 500
+
+
+class TestSanitizeDiagnosticBase:
+    """DB0005 §3.3's four rules for `_sanitize_diagnostic_base`."""
+
+    def test_strips_userinfo(self):
+        assert svc._sanitize_diagnostic_base(
+            "https://user:pass@flowgate.example/flowgate"
+        ) == "https://flowgate.example/flowgate"
+
+    def test_strips_query_and_fragment(self):
+        assert svc._sanitize_diagnostic_base(
+            "https://flowgate.example/flowgate?x=1#y"
+        ) == "https://flowgate.example/flowgate"
+
+    def test_keeps_explicit_port(self):
+        assert svc._sanitize_diagnostic_base(
+            "http://127.0.0.1:8088/flowgate"
+        ) == "http://127.0.0.1:8088/flowgate"
+
+    def test_non_http_scheme_becomes_none(self):
+        assert svc._sanitize_diagnostic_base("ftp://flowgate.example/flowgate") is None
+
+    def test_unparseable_url_becomes_none(self):
+        assert svc._sanitize_diagnostic_base("not a url") is None
+
+    def test_empty_or_none_becomes_none(self):
+        assert svc._sanitize_diagnostic_base("") is None
+        assert svc._sanitize_diagnostic_base(None) is None
+
+
+class TestConversationContextTransportContract:
+    """0505 T0006 (DB0005 3.3): _conversation_context returns (status, body); a failure
+    there -- the FIRST self-HTTP a chat hop may open -- still leaves transport_api_base,
+    last_tool_status and last_tool_error behind instead of NULL."""
+
+    def _chat_run(self):
+        return {
+            "project_id": PROJECT, "run_id": "aiv_test_chat", "docs_target": 0,
+            "raw_token": "raw-token", "token_id": "tok_test",
+            "doc_ref": "flowgate.default.0505.0001-B",
+            "action_scope": "chat", "mode": "single", "cancel_event": threading.Event(),
+            "provider": {"name": "Test"}, "api_base_url": "http://127.0.0.1:8088/flowgate/api/v1",
+            "timed_out": False, "timeout_sec": 60, "started_mono": time.monotonic(),
+        }
+
+    def test_failure_records_transport_base_status_and_error(self, monkeypatch):
+        monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda *_: "key")
+        monkeypatch.setattr(svc, "_conversation_context",
+                             lambda *_: (0, {"error": "conn refused"}))
+
+        run = self._chat_run()
+        result = svc._api_execute(
+            {"id": "provider", "kind": "openai", "api_base_url": "https://api.example",
+             "api_model": "test"},
+            "prompt", run,
+        )
+        assert result == ("api_error", "conversation_context_unavailable")
+        assert run["last_tool_name"] == "conversation_context"
+        assert run["last_tool_status"] == 0
+        assert run["last_tool_error"] == "conn refused"
+        assert run["transport_api_base"] == "http://127.0.0.1:8088/flowgate/api/v1"
+
+    def test_success_then_a_failed_turn_register_leaves_that_as_the_last_tool(self, monkeypatch):
+        monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda *_: "key")
+        monkeypatch.setattr(svc, "_conversation_context",
+                             lambda *_: (200, {"head_seq": 1, "turns": []}))
+        monkeypatch.setattr(svc, "_call_openai", lambda *_: (
+            "reply", {"id": "c1", "input": {"body": "hi"}}, {"role": "assistant"},
+        ))
+        monkeypatch.setattr(svc, "_conversation_turn_register", lambda *_: (201, {"ok": True}))
+
+        run = self._chat_run()
+        result = svc._api_execute(
+            {"id": "provider", "kind": "openai", "api_base_url": "https://api.example",
+             "api_model": "test"},
+            "prompt", run,
+        )
+        assert result == ("started_ok", None)
+        # The turn register is the LAST mediated call this hop made, so it -- not the
+        # earlier conversation_context prefetch -- owns the three columns now.
+        assert run["last_tool_name"] == "conversation_turn_register"
+        assert run["last_tool_status"] == 201
+        assert run["last_tool_error"] is None
+        assert run["api_turns_used"] == 1
+
+
+class TestResetAttemptStateClearsTransportDiagnostics:
+
+    def test_reset_nulls_last_tool_fields(self, tmp_path):
+        run = {
+            "scratch_dir": str(tmp_path),
+            "run_id": "aiv_test_reset",
+            "last_tool_name": "inbox_register",
+            "last_tool_status": 401,
+            "last_tool_error": "401 Token is invalid",
+        }
+        svc._reset_attempt_state(run)
+        assert run["last_tool_name"] is None
+        assert run["last_tool_status"] is None
+        assert run["last_tool_error"] is None

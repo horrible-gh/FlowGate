@@ -399,6 +399,47 @@ def get_group_finalize_state(
         return _guard(exc)
 
 
+@router.post("/groups/{group_id}/git/update-from-base")
+def post_group_update_from_base(group_id: str, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied:
+        return denied
+    try:
+        return git_service.update_from_base(group_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+class GroupUntrackedBody(BaseModel):
+    files: list[str] = []
+    message: str | None = None
+
+
+def _group_untracked_recover(group_id: str, body: GroupUntrackedBody, action: str, user: dict):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied:
+        return denied
+    try:
+        return git_service.group_update_untracked_recover(group_id, body.files, action, body.message)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/groups/{group_id}/git/untracked-commit")
+def post_group_untracked_commit(group_id: str, body: GroupUntrackedBody, user=Depends(get_current_user)):
+    return _group_untracked_recover(group_id, body, "commit", user)
+
+
+@router.post("/groups/{group_id}/git/untracked-revert")
+def post_group_untracked_revert(group_id: str, body: GroupUntrackedBody, user=Depends(get_current_user)):
+    return _group_untracked_recover(group_id, body, "revert", user)
+
+
+@router.post("/groups/{group_id}/git/untracked-remove")
+def post_group_untracked_remove(group_id: str, body: GroupUntrackedBody, user=Depends(get_current_user)):
+    return _group_untracked_recover(group_id, body, "remove", user)
+
+
 class FinalizeBody(BaseModel):
     action: str | None = None  # default = the project's configured default
     # Confirmed commit subject for the absorb commit (0173 P0003 §3). Blank/omitted
