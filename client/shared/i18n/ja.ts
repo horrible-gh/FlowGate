@@ -1963,7 +1963,6 @@ export default {
       move_up: '上へ移動',
       move_down: '下へ移動',
       remove: '削除',
-      footer_note: '確定後もワークフローの修正が可能です（再発射・却下など）',
       confirm: 'ワークフロー確定',
     },
     workflow_edit_modal: {
@@ -2015,7 +2014,6 @@ export default {
       move_up: '上に移動',
       move_down: '下に移動',
       remove: '削除',
-      footer_note: 'ロック済みステップ（完了・進行中）は変更不可。未完了ステップのみ編集できます。',
       save: '保存',
       loading: 'シーケンス読み込み中...',
       error_load: 'シーケンスの読み込みに失敗しました',

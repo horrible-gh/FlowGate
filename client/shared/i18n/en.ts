@@ -1967,7 +1967,6 @@ export default {
       move_up: 'Move Up',
       move_down: 'Move Down',
       remove: 'Remove',
-      footer_note: 'Workflow can be modified after confirmation (re-launch, reject, etc.)',
       confirm: 'Confirm Workflow',
     },
     workflow_edit_modal: {
@@ -2019,7 +2018,6 @@ export default {
       move_up: 'Move Up',
       move_down: 'Move Down',
       remove: 'Remove',
-      footer_note: 'Locked steps (done / in-progress) cannot be modified. Only pending steps are editable.',
       save: 'Save',
       loading: 'Loading sequence...',
       error_load: 'Failed to load sequence',
