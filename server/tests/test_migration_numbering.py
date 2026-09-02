@@ -674,3 +674,74 @@ def test_without_the_carryover_workflow_sequence_provider_really_does_rerun_and_
     message = str(caught.value)
     assert WORKFLOW_PROVIDER_FINAL_NAME in message, message
     assert "duplicate column name: provider_id" in message, message
+
+
+# ── 10. 095 순번의 슬러그 개명이 이관되는가 (T0020, "duplicate column name: operator_api_base") ──
+#
+# 095_ai_invoke_run_transport_diagnostics.sql 은 095_ai_invoke_api_diagnostics.sql 이라는
+# 이름으로 태어나 순번은 그대로 두고 슬러그만 바뀌었다. `reconcile_renamed_migrations` 의 두
+# 패스 모두 이 모양을 못 본다 — 1패스는 순번+슬러그가 같고 글자 접미만 다른 경우, 2패스는
+# 슬러그가 같고 순번만 다른 경우만 잡는다. 순번은 같고 슬러그만 다른 순수 개명은 정적
+# RENAMES 장부로만 이관할 수 있다. 실제 dev 프리뷰 DB(FlowGate/storage/flowgate.db)의
+# `migrations` 표에서 옛 이름을 직접 읽어 확인했다.
+
+MIGRATION_095_OLD_NAME = "095_ai_invoke_api_diagnostics.sql"
+MIGRATION_095_FINAL_NAME = "095_ai_invoke_run_transport_diagnostics.sql"
+
+
+def test_the_095_rename_is_in_the_ledger():
+    assert (MIGRATION_095_OLD_NAME, MIGRATION_095_FINAL_NAME) in RENAMES
+
+
+def test_real_migrator_reboot_after_095_carryover_does_not_rerun_it(tmp_path):
+    """반려 사유("duplicate column name: operator_api_base")가 이관 뒤 사라지는가."""
+    from sqloader import SQLiteWrapper, DatabaseMigrator
+
+    db_path = _fresh_real_db(tmp_path, "reboot_095.db")
+    conn = sqlite3.connect(db_path)
+    try:
+        cursor = conn.execute(
+            "UPDATE migrations SET filename = ? WHERE filename = ?",
+            (MIGRATION_095_OLD_NAME, MIGRATION_095_FINAL_NAME),
+        )
+        assert cursor.rowcount == 1, (
+            f"{MIGRATION_095_FINAL_NAME} 행이 장부에 없다 — 파일 이름이 바뀌었거나 "
+            f"마이그레이션이 적용되지 않았다."
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert apply_migration_renames("sqlite3", sqlite_path=db_path) == 1
+    names = TestFilenameCarryOver._names(db_path)
+    assert MIGRATION_095_FINAL_NAME in names
+    assert MIGRATION_095_OLD_NAME not in names
+
+    try:
+        DatabaseMigrator(SQLiteWrapper(db_name=db_path), str(MIGRATIONS_DIR / "sqlite"), True)
+    except Exception as exc:  # pragma: no cover - failure path is the point
+        pytest.fail(f"095 이력 DB 의 재부팅이 이관 뒤에도 실패했다: {exc}")
+
+
+def test_without_the_095_carryover_it_really_does_rerun_and_fail(tmp_path):
+    """대조군. 반려 사유가 실제로 재현되는가."""
+    from sqloader import SQLiteWrapper, DatabaseMigrator
+
+    db_path = _fresh_real_db(tmp_path, "control_095.db")
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "UPDATE migrations SET filename = ? WHERE filename = ?",
+            (MIGRATION_095_OLD_NAME, MIGRATION_095_FINAL_NAME),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # apply_migration_renames() 를 일부러 호출하지 않는다.
+    with pytest.raises(Exception) as caught:
+        DatabaseMigrator(SQLiteWrapper(db_name=db_path), str(MIGRATIONS_DIR / "sqlite"), True)
+
+    message = str(caught.value)
+    assert MIGRATION_095_FINAL_NAME in message, message
+    assert "duplicate column name: operator_api_base" in message, message

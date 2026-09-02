@@ -33,6 +33,10 @@ _HISTORY_MAX_SERIALIZED_BYTES = 16384
 # the row is actually built, so no other caller can widen either of them.
 _OUTPUT_TAIL_MAX_CHARS = 8192
 _SOURCE_DIRTY_FILES_MAX_ITEMS = 20
+# 0505 T0006 (DB0005 3.3): last_tool_error's own write-time cap, separate from
+# _OUTPUT_TAIL_MAX_CHARS above -- that one keeps the END of a raw process tail, this one
+# keeps the FRONT of an already-short human-readable summary (do not reuse the name).
+_LAST_TOOL_ERROR_MAX_CHARS = 500
 
 # DB0008 3.7: no scheduler exists in this deployment, so retention is swept from the
 # write path -- at most once a day, mirroring the _cleanup_retained_scratches(project_id)
@@ -75,12 +79,21 @@ _BOUND_COLUMNS = (
     # watchdog left no mark at all (a legacy row, or a plain communicate() expiry).
     "timeout_kind", "timeout_diagnosis", "stdout_tail", "stderr_tail",
     "source_dirty_files",
+    # -- 0505 T0006 (DB0005 2-3, migration 095) -----------------------------
+    # API provider server-mediated self-HTTP diagnostics: which internal base a hop
+    # used, its last mediated tool call's outcome, and its turn/model-call/tool-call
+    # counters. All ten are read with .get() at every write site, so a run with none
+    # of this (CLI, spawn failure, a row from before this migration) stores NULL.
+    "operator_api_base", "transport_api_base",
+    "last_tool_name", "last_tool_status", "last_tool_error",
+    "api_turns_used", "model_http_calls", "model_last_http_status",
+    "tool_calls_received", "tool_calls_executed", "api_turn_trace",
     "created_at", "updated_at",
 )
 _STATUS_INSERT_AT = 5  # after (run_id, group_id, project_id, doc_ref, mode)
 
 _ARRAY_FIELDS = ("reached_doc_ids", "fallback_history", "register_errors",
-                 "auto_handled_item_seqs", "source_dirty_files")
+                 "auto_handled_item_seqs", "source_dirty_files", "api_turn_trace")
 _BOOL_FIELDS = ("resumable", "turn_limit_exhausted", "oracle_mismatch",
                 "continuation_instruction_mode_fallback_applied",
                 "prompt_common_default_applied", "fallback_allowed")
@@ -106,6 +119,12 @@ def _dump_array(field: str, value: Any) -> Optional[str]:
         # first 20. Taking the tail here would answer a different question than the run did.
         return json.dumps(items[:_SOURCE_DIRTY_FILES_MAX_ITEMS], ensure_ascii=False)
 
+    if field == "api_turn_trace":
+        # The worker has already bounded this to its newest 20 complete turn entries.  Do
+        # not apply the history byte cap below: its {reason: truncated} marker is not a
+        # trace entry and would break consumers that read every entry's trace fields.
+        return json.dumps(items[-20:], ensure_ascii=False)
+
     # fallback_history / register_errors: item cap, then byte cap, oldest dropped
     # first, with the drop count recorded at the head so a truncated history reads
     # as truncated instead of "that's all there ever was" (DB0008 2.4).
@@ -125,6 +144,18 @@ def _clip_tail(value: Any) -> Optional[str]:
     if value is None:
         return None
     return str(value)[-_OUTPUT_TAIL_MAX_CHARS:]
+
+
+def _clip_reason(value: Any) -> Optional[str]:
+    """First `_LAST_TOOL_ERROR_MAX_CHARS` characters of a diagnostic reason, or None.
+
+    Deliberately its own constant, not `_OUTPUT_TAIL_MAX_CHARS` (DB0005 3.3): a tool
+    error is already a short human-readable summary from `_registration_error_summary`
+    (itself capped at 500 chars), not a raw process tail worth keeping the END of.
+    """
+    if value is None:
+        return None
+    return str(value)[:_LAST_TOOL_ERROR_MAX_CHARS]
 
 
 def _load_array(raw: Any) -> list:
@@ -229,6 +260,20 @@ def upsert(row: dict[str, Any]) -> None:
         "stdout_tail": _clip_tail(row.get("stdout_tail")),
         "stderr_tail": _clip_tail(row.get("stderr_tail")),
         "source_dirty_files": _dump_array("source_dirty_files", row.get("source_dirty_files")),
+        # -- 0505 T0006 (DB0005 3.3): every caller reaches these through .get(), so a
+        # run with none of this diagnostic (CLI, spawn failure, orphaned-lease record)
+        # stores NULL exactly like the 086c exit diagnostics above do.
+        "operator_api_base": row.get("operator_api_base"),
+        "transport_api_base": row.get("transport_api_base"),
+        "last_tool_name": row.get("last_tool_name"),
+        "last_tool_status": row.get("last_tool_status"),
+        "last_tool_error": _clip_reason(row.get("last_tool_error")),
+        "api_turns_used": row.get("api_turns_used"),
+        "model_http_calls": row.get("model_http_calls"),
+        "model_last_http_status": row.get("model_last_http_status"),
+        "tool_calls_received": row.get("tool_calls_received"),
+        "tool_calls_executed": row.get("tool_calls_executed"),
+        "api_turn_trace": _dump_array("api_turn_trace", row.get("api_turn_trace")),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
