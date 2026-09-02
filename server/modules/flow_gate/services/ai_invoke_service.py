@@ -17,7 +17,31 @@ document at all — judging those by document-reach made success unreachable.
 Run state lives in an in-memory registry for the server's lifetime (history
 persistence is DEFERRED per D0004); a restart loses in-flight runs, which the
 status API surfaces as 404 run_not_found.
+
+── File split (flowgate.default.0497 T0009) ─────────────────────────────────
+
+This module's body had grown past 9,000 lines in one file — too large to read or
+edit in one piece, by a person or by a tool. The blank lines between top-level
+definitions were collapsed to one, and the body was then cut into three files at
+two existing section boundaries:
+
+  ai_invoke_service.py       constants, run registry, scratch, oracles, start_run
+  ai_invoke_part2_worker.py  worker, retries, CLI/API adapters, judging, stop rows
+  ai_invoke_part3_chain.py   status/cancel, pause/resume, next hop, the review gate
+
+`_load_parts()` at the bottom of this file executes the other two IN THIS MODULE'S
+globals(), in the original order. Nothing about the namespace moves: definition
+order, module-level state and every attribute visible from outside (including the
+private ones tests patch) are exactly what they were before the split. No code was
+rewritten — the lines were carried over verbatim, which is why the compiled code
+object of every function is byte-identical to the pre-split one.
+
+Each part repeats the same import block so that opening one file on its own still
+shows what it uses; a part imported directly (by tooling that walks the package)
+fills the rest of the namespace from this module. Turning the parts into a real
+import structure is a separate group's refactoring task, deliberately not done here.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -49,7 +73,7 @@ from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate import template_provision
-from modules.flow_gate.services import git_service, invoke_mention_service, process_runner, q_service, token_service
+from modules.flow_gate.services import api_server_tools, git_service, invoke_mention_service, process_runner, q_service, register_binding, token_service
 from modules.flow_gate.services.git_service import GitServiceError
 from modules.flow_gate.settings import ai_execution_policy_service
 from modules.flow_gate.settings import ai_settings_service
@@ -257,6 +281,16 @@ ANTHROPIC_VERSION = "2023-06-01"
 API_CALL_MAX_TIMEOUT_SEC = 600   # single model-call ceiling inside the run deadline
 API_MAX_TOKENS = 8192
 
+_CHAT_TOOL_NAME = "send_chat_reply"
+_CHAT_TOOL_DESC = "Send the assistant reply for this chat conversation."
+_CHAT_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "body": {"type": "string", "description": "Complete assistant reply text"},
+    },
+    "required": ["body"],
+}
+
 _REGISTER_TOOL_NAME = "register_document"
 _REGISTER_TOOL_DESC = (
     "Register a completed document to FlowGate. Call this once per finished "
@@ -349,7 +383,6 @@ _group_resume_locks_guard = threading.Lock()
 _auto_resume: dict[str, dict] = {}
 _auto_resume_lock = threading.Lock()
 
-
 def _group_resume_lock(group_id: str) -> threading.Lock:
     with _group_resume_locks_guard:
         lock = _group_resume_locks.get(group_id)
@@ -357,10 +390,8 @@ def _group_resume_lock(group_id: str) -> threading.Lock:
             lock = _group_resume_locks[group_id] = threading.Lock()
         return lock
 
-
 def _http_error(status_code: int, code: str, message: str, **payload) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"code": code, "message": message, **payload})
-
 
 # T0004 work item 6 / NR0003 finding 6: the worktree_unavailable 409 always went out in
 # Korean with no locale branch. It reuses the same locale-dictionary pattern as
@@ -393,7 +424,6 @@ _RUN_ID_COLLISION_COPY = {
     "ja": "実行番号の発行が競合しました。もう一度お試しください。",
 }
 
-
 def _is_group_worktree(project_id: str, group_id: str, root: Optional[Path]) -> bool:
     """Is *root* the group's OWN worktree, as opposed to the base project tree?
 
@@ -414,7 +444,6 @@ def _is_group_worktree(project_id: str, group_id: str, root: Optional[Path]) -> 
         return root.resolve() == expected.resolve()
     except Exception:  # noqa: BLE001 — an unanswerable comparison is a "no"
         return False
-
 
 def _require_group_worktree(
     project_id: str, module: str, group_id: str, branch: str, locale: Optional[str] = None,
@@ -480,7 +509,6 @@ def _require_group_worktree(
         group_id=group_id, cause=cause, provision_error=provision_error,
     )
 
-
 def _next_run_id() -> str:
     global _run_counter, _run_counter_floor_date
     date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
@@ -509,7 +537,6 @@ def _next_run_id() -> str:
         _run_counter += 1
         return f"aiv_{date_str}_{_run_counter:06d}"
 
-
 def _active_run_for_group(group_id: str) -> Optional[dict]:
     with _runs_lock:
         for run in _runs.values():
@@ -517,11 +544,9 @@ def _active_run_for_group(group_id: str) -> Optional[dict]:
                 return run
     return None
 
-
 def get_run_record(run_id: str) -> Optional[dict]:
     with _runs_lock:
         return _runs.get(run_id)
-
 
 def is_run_live(run_id: str) -> bool:
     """Is *run_id* an admission this process still tracks and has not finished?
@@ -533,7 +558,6 @@ def is_run_live(run_id: str) -> bool:
     """
     run = get_run_record(run_id)
     return run is not None and run.get("status") != "finished"
-
 
 def _record_orphaned_lease_run(lease_row: dict, end_reason: str) -> None:
     """Give a dead lease's run a durable end record, if it doesn't already have one
@@ -571,7 +595,6 @@ def _record_orphaned_lease_run(lease_row: dict, end_reason: str) -> None:
         "updated_at": stamp,
     })
 
-
 def _reclaim_orphan_lease_token(lease_row: dict, reason: str) -> None:
     """Best-effort revoke of a dead lease's still-active token (0447 T0007).
 
@@ -600,7 +623,6 @@ def _reclaim_orphan_lease_token(lease_row: dict, reason: str) -> None:
     if token.get("consumed_at") or token.get("revoked_at"):
         return
     token_service.revoke(token_id, reason=reason)
-
 
 def startup_recover_leases() -> int:
     """Reclaim AI-run leases orphaned by a server restart (0401 NR0003 / T0004 item 1).
@@ -638,7 +660,6 @@ def startup_recover_leases() -> int:
     startup_recover_handoffs()
     return len(victims)
 
-
 def force_release_group_lease(group_id: str) -> dict:
     """Manually release a group's lease from the blocked screen (0401 T0004 item 2).
 
@@ -664,7 +685,6 @@ def force_release_group_lease(group_id: str) -> dict:
             logger.warning("orphaned-lease end record failed for run %s", run_id, exc_info=True)
     return {"ok": True, "group_id": group_id, "run_id": run_id, "released": bool(released)}
 
-
 # ── 0359 L0007 §2.10.2~3: run lookup that survives a restart (bundle 4) ──────────
 # Live runs never leave `_runs` (a process only forgets them on restart), so the
 # DB fallback below is only ever consulted for a run that finished in an EARLIER
@@ -679,7 +699,6 @@ def ai_run_succeeded(row: dict) -> bool:
     return outcome == "complete" and not stop_code and end_reason not in {
         "cancelled", "canceled", "failed", "error", "stopped", "timeout",
     }
-
 
 def get_run_detail(run_id: str) -> dict:
     """Detail lookup for GET /ai-invoke/{run_id} (L0007 §2.10.2).
@@ -714,6 +733,15 @@ def get_run_detail(run_id: str) -> dict:
             logger.debug("AI detail document enrichment skipped", exc_info=True)
     return payload
 
+def _persisted_register_failures(run_id: str) -> list:
+    """Structured binding failures for a finished run, or [] when it predates them."""
+    try:
+        from modules.flow_gate.db import register_context_failures as db_register_failures
+
+        return db_register_failures.list_by_run(run_id)
+    except Exception:
+        logger.debug("register context failure lookup skipped", exc_info=True)
+        return []
 
 def _run_detail_from_row(row: dict) -> dict:
     """Shape a persisted `ai_invoke_runs` row like the live `finished_payload` (same
@@ -737,12 +765,34 @@ def _run_detail_from_row(row: dict) -> dict:
         "last_message_excerpt": row.get("last_message_excerpt"),
         "provider_id": row.get("provider_id"),
         "provider_name": row.get("provider_name"),
+        "selected_provider_source": row.get("selected_provider_source"),
+        "fallback_allowed": bool(row.get("fallback_allowed")),
         "attempt_no": row.get("attempt_no"),
         "fallback_history": row.get("fallback_history"),
         "register_errors": row.get("register_errors"),
+        # 0492 T0018 item 3: the axis-classified form of the same failures, when this run
+        # has one. `register_errors` above is deliberately left as it was — every existing
+        # reader still uses it, and it is both the backfill source and the rollback safety
+        # net. A run from before migration 094 has no rows here and keeps answering out of
+        # the legacy array alone.
+        "register_context_failures": _persisted_register_failures(row["run_id"]),
         "tool_call_misses": row.get("tool_call_misses"),
         "turn_limit_exhausted": bool(row.get("turn_limit_exhausted")),
         "oracle_mismatch": bool(row.get("oracle_mismatch")),
+        # 0505 T0006 (DB0005 3.3): same names, same restart-half contract as the four
+        # exit diagnostics below -- a run from before migration 095 has none of this
+        # and reads back as None on every one of these ten keys.
+        "operator_api_base": row.get("operator_api_base"),
+        "transport_api_base": row.get("transport_api_base"),
+        "last_tool_name": row.get("last_tool_name"),
+        "last_tool_status": row.get("last_tool_status"),
+        "last_tool_error": row.get("last_tool_error"),
+        "api_turns_used": row.get("api_turns_used"),
+        "model_http_calls": row.get("model_http_calls"),
+        "model_last_http_status": row.get("model_last_http_status"),
+        "tool_calls_received": row.get("tool_calls_received"),
+        "tool_calls_executed": row.get("tool_calls_executed"),
+        "api_turn_trace": row.get("api_turn_trace") or [],
         "source_dirty": row.get("source_dirty"),
         "scratch_retained": row.get("scratch_retained"),
         "duration_ms": row.get("duration_ms"),
@@ -794,7 +844,6 @@ def _run_detail_from_row(row: dict) -> dict:
         payload["source_dirty_files"] = list(row.get("source_dirty_files") or [])
     return payload
 
-
 def list_live_runs(*, group_id: Optional[str] = None, project_id: Optional[str] = None) -> list[dict]:
     """In-memory runs still going, scoped to exactly one of group/project (caller's
     choice) — the "live" half of GET /ai-invoke/runs (L0007 §2.10.3)."""
@@ -810,7 +859,6 @@ def list_live_runs(*, group_id: Optional[str] = None, project_id: Optional[str] 
             continue
         items.append(_run_list_item_live(run))
     return items
-
 
 def _run_list_item_live(run: dict) -> dict:
     status = run["status"]
@@ -842,7 +890,6 @@ def _run_list_item_live(run: dict) -> dict:
         "last_message_excerpt": None,
     }
 
-
 def _run_list_item_stored(row: dict) -> dict:
     return {
         "run_id": row["run_id"],
@@ -866,7 +913,6 @@ def _run_list_item_stored(row: dict) -> dict:
         "duration_ms": row.get("duration_ms"),
         "last_message_excerpt": row.get("last_message_excerpt"),
     }
-
 
 def list_runs(*, group_id: Optional[str] = None, project: Optional[str] = None,
                limit: Optional[int] = None) -> dict:
@@ -920,7 +966,6 @@ def list_runs(*, group_id: Optional[str] = None, project: Optional[str] = None,
         result["project"] = project_id
     return result
 
-
 def get_active_status(group_id: str) -> dict:
     """Return the live run for a group, if any, without exposing token/process state."""
     run = _active_run_for_group(group_id)
@@ -932,7 +977,6 @@ def get_active_status(group_id: str) -> dict:
         "group_id": group_id,
         "doc_ref": run["doc_ref"],
     }
-
 
 def _continuation_docs_target(
     doc_ref: str,
@@ -989,23 +1033,19 @@ def _continuation_docs_target(
         count += 1
     return count
 
-
 # ── Scratch lifecycle (L0006 §2.7) ───────────────────────────────────────────
 
 def _sanitize_project_name(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_\-]", "_", name) or "_"
-
 
 def _project_scratch_root(project_id: str) -> Path:
     project = db_projects.get_by_id(project_id)
     project_name = project["project_name"] if project else project_id
     return storage_paths.get_storage_root(project_id, create=True) / "scratch" / _sanitize_project_name(project_name)
 
-
 SCRATCH_MANIFEST_NAME = ".flowgate-ai-scratch.json"
 SCRATCH_MANIFEST_SCHEMA = 1
 _RUN_ID_RE = re.compile(r"\Aaiv_[0-9]{8}_[0-9]{6}\Z")
-
 
 def _safe_scratch_log(project_id: str, run_id: str, scratch: Path, action: str, reason: str) -> None:
     """Emit one escaped event without prompts, commands, credentials, or raw paths."""
@@ -1021,7 +1061,6 @@ def _safe_scratch_log(project_id: str, run_id: str, scratch: Path, action: str, 
         "reason": reason,
     }, ensure_ascii=True))
 
-
 def _is_reparse_or_symlink(path: Path) -> bool:
     try:
         if path.is_symlink():
@@ -1032,7 +1071,6 @@ def _is_reparse_or_symlink(path: Path) -> bool:
     except OSError:
         return True
 
-
 def _atomic_write_manifest(scratch: Path, manifest: dict) -> None:
     target = scratch / SCRATCH_MANIFEST_NAME
     temporary = scratch / (SCRATCH_MANIFEST_NAME + ".tmp")
@@ -1041,7 +1079,6 @@ def _atomic_write_manifest(scratch: Path, manifest: dict) -> None:
         handle.write(data)
         handle.flush()
     temporary.replace(target)
-
 
 def _manifest_for(project_id: str, run_id: str, scratch: Path) -> dict:
     return {
@@ -1054,7 +1091,6 @@ def _manifest_for(project_id: str, run_id: str, scratch: Path) -> dict:
         "completed_at": None,
         "policy": {"retention_days": SCRATCH_RETENTION_DAYS, "delete_on_complete": True},
     }
-
 
 def _create_scratch(project_id: str, run_id: str) -> Path:
     if not _RUN_ID_RE.fullmatch(str(run_id)):
@@ -1076,7 +1112,6 @@ def _create_scratch(project_id: str, run_id: str) -> Path:
         raise
     _safe_scratch_log(project_id, run_id, scratch, "created", "manifest_written")
     return scratch
-
 
 def _validate_scratch_manifest(project_id: str, run_id: str, scratch: Path) -> tuple[Optional[dict], str]:
     if not _RUN_ID_RE.fullmatch(str(run_id)):
@@ -1105,7 +1140,6 @@ def _validate_scratch_manifest(project_id: str, run_id: str, scratch: Path) -> t
     except (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
         return None, "manifest_unreadable"
 
-
 def _mark_scratch_completed(project_id: str, run_id: str, scratch: Path, completed_at: str) -> bool:
     manifest, reason = _validate_scratch_manifest(project_id, run_id, scratch)
     if manifest is None:
@@ -1122,7 +1156,6 @@ def _mark_scratch_completed(project_id: str, run_id: str, scratch: Path, complet
         _safe_scratch_log(project_id, run_id, scratch, "retained", "manifest_update_failed")
         return False
 
-
 def _delete_owned_scratch(project_id: str, run_id: str, scratch: Path) -> tuple[bool, str]:
     manifest, reason = _validate_scratch_manifest(project_id, run_id, scratch)
     if manifest is None:
@@ -1135,7 +1168,6 @@ def _delete_owned_scratch(project_id: str, run_id: str, scratch: Path) -> tuple[
         return False, "delete_incomplete"
     _safe_scratch_log(project_id, run_id, scratch, "deleted", "verified_absent")
     return True, "deleted"
-
 
 def _cleanup_retained_scratches(project_id: str) -> None:
     """Delete only manifest-proven direct children retained for at least seven days."""
@@ -1170,7 +1202,6 @@ def _cleanup_retained_scratches(project_id: str) -> None:
     except Exception:
         logger.warning("ai-invoke scratch sweep failed")
 
-
 # ── Source-spill check (L0006 §2.8) ──────────────────────────────────────────
 
 def _git_status_paths(source_root: Optional[Path]) -> Optional[set[str]]:
@@ -1187,7 +1218,6 @@ def _git_status_paths(source_root: Optional[Path]) -> Optional[set[str]]:
     except Exception:
         return None
 
-
 # ── Default completion oracle per token scope (0259 B0001) ───────────────────
 #
 # Only a `new`-scope token can register a document, so only a `new` run may be judged by
@@ -1202,7 +1232,6 @@ def _git_status_paths(source_root: Optional[Path]) -> Optional[set[str]]:
 # is keyed by the scope, so a scope that registers no judge cannot silently inherit the
 # document oracle; `completion_oracle` stays as the per-call override.
 
-
 def _probe_conversation_head(doc_id: str) -> int:
     """Highest stored turn seq for an append-only chat run."""
     return db_conversation_turns.current_head_seq(doc_id)
@@ -1211,11 +1240,9 @@ def _probe_doc_revision(doc_id: str) -> int:
     """Revisions of the bound document. `_handle_edit` does `revision_no = revision_no + 1`."""
     return int((db_docs.get_by_id(doc_id) or {}).get("revision_no") or 0)
 
-
 def _probe_doc_reviews(doc_id: str) -> int:
     """Review rows on the bound document. `_handle_review` INSERTs one child row per review."""
     return len(db_reviews.list_by_doc(doc_id) or [])
-
 
 def _probe_test_runs(doc_id: str) -> int:
     """Test-run rows on the bound document (0268 B0001).
@@ -1225,7 +1252,6 @@ def _probe_test_runs(doc_id: str) -> int:
     success unreachable here exactly as 0259 B0001 described for edit/review.
     """
     return len(db_test_runs.list_by_doc(doc_id) or [])
-
 
 def _probe_sequence_max_item(doc_id: str) -> int:
     """Highest item_seq in the bound document's workflow sequence (0268 B0001).
@@ -1250,7 +1276,6 @@ def _probe_sequence_max_item(doc_id: str) -> int:
         return 0
     return int(db_wfseq.get_max_item_seq(seq["id"]) or 0)
 
-
 # Keyed by TOKEN scope — the value `start_run` actually receives. Chat is no longer
 # remapped to edit: its append-only endpoint advances the conversation head without
 # revising the document row, so it needs its own completion probe.
@@ -1261,7 +1286,6 @@ _SCOPE_PROBES: dict[str, Callable[[str], int]] = {
     "test_run": _probe_test_runs,
     "workflow_sequence_edit": _probe_sequence_max_item,
 }
-
 
 def _oracle_doc_id(token_id: Optional[str], fallback: str) -> str:
     """The document the run's TOKEN binds to — the only one its worker may write.
@@ -1280,14 +1304,12 @@ def _oracle_doc_id(token_id: Optional[str], fallback: str) -> str:
         return fallback
     return (token or {}).get("doc_ref") or fallback
 
-
 def _probe(probe: Callable[[str], int], doc_id: str) -> Optional[int]:
     try:
         return probe(doc_id)
     except Exception:
         logger.warning("ai-invoke scope probe failed for %s", doc_id, exc_info=True)
         return None
-
 
 def _scope_oracle(action_scope: str, token_id: Optional[str], doc_ref: str) -> Optional[Callable[[], bool]]:
     """The scope's default "did the work land?" predicate, or None to keep the document oracle.
@@ -1311,13 +1333,11 @@ def _scope_oracle(action_scope: str, token_id: Optional[str], doc_ref: str) -> O
 
     return _oracle
 
-
 def _uses_scope_oracle(action_scope: str, mode: str, completion_oracle: Optional[Callable]) -> bool:
     """mode='single' only: a continuous run's scope is new/workflow_decide, and its
     docs_target is derived from the sequence's pending worker items, which do make
     documents — the document oracle can see those, so it was never wrong for them."""
     return completion_oracle is None and mode == "single" and action_scope in _SCOPE_PROBES
-
 
 def _scope_oracle_retry_open(mode: Optional[str], action_scope: Optional[str],
                              scope_oracle_run: Optional[bool]) -> bool:
@@ -1338,7 +1358,6 @@ def _scope_oracle_retry_open(mode: Optional[str], action_scope: Optional[str],
         the others would move the 0259/0268 judging contract with nothing behind it.
     """
     return bool(scope_oracle_run) and mode == "single" and action_scope == "edit"
-
 
 def _review_hop_recovery_open(mode: Optional[str], action_scope: Optional[str],
                               scope_oracle_run: Optional[bool],
@@ -1364,7 +1383,6 @@ def _review_hop_recovery_open(mode: Optional[str], action_scope: Optional[str],
         and hop_kind == REVIEW_HOP_KIND
     )
 
-
 def _scope_oracle_retry_run(run: dict) -> bool:
     """The same question asked of a live run dict — `scope_oracle_run` rides on it (§3-1).
 
@@ -1381,7 +1399,6 @@ def _scope_oracle_retry_run(run: dict) -> bool:
         run.get("hop_kind"),
     )
 
-
 def _review_hop_recovery_run(run: dict) -> bool:
     """`_review_hop_recovery_open` asked of a live run dict, standalone (T0007 §2.3/§3.1.5) —
     used where the caller must tell a review-hop recovery apart from an edit/rework
@@ -1390,7 +1407,6 @@ def _review_hop_recovery_run(run: dict) -> bool:
         run.get("mode"), run.get("action_scope"), run.get("scope_oracle_run"),
         run.get("hop_kind"),
     )
-
 
 # ── Start (L0006 §2.1) ───────────────────────────────────────────────────────
 
@@ -1408,7 +1424,6 @@ def list_runtime_providers(project_id: str) -> dict:
         # for an ordinary document reader).
         "execution_policy": ai_execution_policy_service.execution_policy_payload(),
     }
-
 
 def resolve_pinned_provider_name(project_id: str, provider_id: Optional[str]) -> Optional[str]:
     """The provider name a mention may claim, or None when it must not claim one.
@@ -1437,7 +1452,6 @@ def resolve_pinned_provider_name(project_id: str, provider_id: Optional[str]) ->
     if len(chain) == 1:
         return chain[0].get("name") or None
     return None
-
 
 def start_run(
     *,
@@ -1502,6 +1516,8 @@ def start_run(
     continuation_review_count_overrides: Optional[dict] = None,
     continuation_reviewer_overrides: Optional[dict] = None,
     document_review_loop: Optional[dict] = None,
+    # A single-request acknowledgement. It is intentionally never persisted or forwarded.
+    capability_warning_ack: Optional[bool] = None,
     # 0414 L0008 §5: work / review / rework. A review or rework hop makes no document, so
     # the chain counters do not move for it — this is what lets a card say WHAT is running
     # instead of reporting a frozen progress number.
@@ -1547,6 +1563,9 @@ def start_run(
     effective = ai_settings_service.resolve_effective(project_id)
     chain = effective.get("providers") or []
     chain_source = effective.get("source")
+    selected_provider_source = (
+        "review_loop" if document_review_loop is not None else "project_default"
+    )
     # A per-step override names this exact hop and remains the highest tier. 0435 T0004
     # deliberately removes every startup fallback tail from an explicit choice: a provider
     # that cannot start fails visibly instead of silently switching to a more expensive one.
@@ -1584,6 +1603,7 @@ def start_run(
             None,
         )
         chain = [selected] if selected else []
+        selected_provider_source = "step_override"
     elif mode == "continuous" and provider_pinned and provider_id:
         selected = next((provider for provider in chain if provider.get("id") == provider_id), None)
         if selected is None:
@@ -1592,9 +1612,15 @@ def start_run(
                 PROVIDER_UNAVAILABLE_MESSAGE,
             )
         chain = [selected]
+        selected_provider_source = "force_all"
     elif stored_provider_active:
         # An unpinned run still follows the persisted sequence assignment (D0006 §6.2).
-        chain = _prioritize_chain(chain, stored_provider_id)
+        selected = next(
+            (provider for provider in chain if provider.get("id") == stored_provider_id),
+            None,
+        )
+        chain = [selected] if selected else []
+        selected_provider_source = "stored_sequence"
     elif provider_id:
         selected = next((provider for provider in chain if provider.get("id") == provider_id), None)
         if selected is None:
@@ -1602,7 +1628,10 @@ def start_run(
                 422, PROVIDER_UNAVAILABLE_CODE,
                 PROVIDER_UNAVAILABLE_MESSAGE,
             )
-        chain = [selected] if mode == "single" else _prioritize_chain(chain, provider_id)
+        chain = [selected]
+        selected_provider_source = (
+            "review_loop" if document_review_loop is not None else "request"
+        )
     elif mode == "continuous":
         hop_provider = _resolve_continuation_hop_provider(
             project_id,
@@ -1611,7 +1640,13 @@ def start_run(
             continuation_auto_approve_item_seqs=continuation_auto_approve_item_seqs,
         )
         if hop_provider:
-            chain = _prioritize_chain(chain, hop_provider)
+            selected = next(
+                (provider for provider in chain if provider.get("id") == hop_provider),
+                None,
+            )
+            if selected is not None:
+                chain = [selected]
+                selected_provider_source = "document_type"
 
     if mode == "continuous" and stored_provider_id and not stored_provider_active and chain:
         logger.warning(
@@ -1642,6 +1677,32 @@ def start_run(
             409, "no_enabled_provider",
             "No enabled AI provider for this project. Configure providers in AI settings.",
         )
+
+    # Capability is checked only after the final provider resolution tier is known and before
+    # any lease, token, run record, or worker side effect. This is the server authority: UI
+    # badges are advisory and a caller cannot supply its own capability map.
+    from modules.flow_gate.services.provider_capability_service import capability_finding
+    doc_type = (db_docs.get_by_id(doc_ref) or {}).get("type")
+    capability_warning = capability_finding(doc_ref, doc_type, chain[0])
+    if capability_warning is not None:
+        detail = {
+            "code": (
+                "provider_capability_restricted"
+                if mode == "continuous" else "provider_capability_confirmation_required"
+            ),
+            "message": "The selected provider cannot modify source or run tests.",
+            **capability_warning,
+            "provider_resolution": (
+                "override" if step_override_provider else
+                "stored_step" if stored_provider_active else
+                "pinned" if provider_pinned and provider_id else
+                "selected" if provider_id else "effective_default"
+            ),
+        }
+        # Continuous execution is never forceable. A single run accepts only literal True
+        # on this request; no acknowledgement survives to a later run or hop.
+        if mode == "continuous" or capability_warning_ack is not True:
+            raise HTTPException(status_code=422, detail=detail)
 
     # Durable lease admission is authoritative. Memory remains only a UI/live-process signal.
     active = db_group_ai_leases.get_active(group_id)
@@ -1973,7 +2034,23 @@ def start_run(
         "dirty_baseline": _git_status_paths(source_root),
         "source_root": str(source_root) if source_root else None,
         "api_base_url": api_base_url,
+        # 0505 T0006 (DB0005 2/3.3): operator_api_base is a one-time sanitized snapshot
+        # of this same value, taken here at run start. transport_api_base starts empty
+        # -- it is filled once, by whichever of the six mediated self-HTTP calls opens
+        # first inside THIS hop (ai_invoke_part2_worker._sanitize_diagnostic_base).
+        "operator_api_base": _sanitize_diagnostic_base(api_base_url),
+        "transport_api_base": None,
+        "last_tool_name": None,
+        "last_tool_status": None,
+        "last_tool_error": None,
+        "api_turns_used": None,
+        "model_http_calls": 0,
+        "model_last_http_status": None,
+        "tool_calls_received": 0,
+        "tool_calls_executed": 0,
         "chain_source": chain_source,
+        "selected_provider_source": selected_provider_source,
+        "fallback_allowed": selected_provider_source == "project_default",
         "action_scope": action_scope,
         # 0446 T0008 §3-1: did the ENGINE plant this run's completion oracle, or did the
         # caller hand one in? Computed at the top of start_run and, until now, discarded —
@@ -2217,6 +2294,9 @@ def start_run(
         "worker_document_type": run["worker_document_type"],
         "auto_handled_item_seqs": run["auto_handled_item_seqs"],
         "provider": _provider_brief(chain[0]),
+        "selected_provider_source": run["selected_provider_source"],
+        "fallback_allowed": run["fallback_allowed"],
+        "warnings": [capability_warning] if capability_warning is not None else [],
         "attempt_no": 1,
         "started_at": run["started_at"],
         # 0359 P0006 [hop budget]: the budget and its wall-clock deadline travel with every
@@ -2226,7 +2306,6 @@ def start_run(
         "document_review_loop": document_review_loop_payload(run),
     }
 
-
 def _normalized_instruction_mode(mode: Optional[str]) -> str:
     from modules.flow_gate.services.workflow_decision_service import (
         normalize_continuation_instruction_mode,
@@ -2234,25 +2313,12 @@ def _normalized_instruction_mode(mode: Optional[str]) -> str:
 
     return normalize_continuation_instruction_mode(mode)
 
-
 def _instruction_mode_fallback_applied(mode: Optional[str]) -> bool:
     from modules.flow_gate.services.workflow_decision_service import (
         instruction_mode_fallback_applied,
     )
 
     return instruction_mode_fallback_applied(mode)
-
-
-def _provider_brief(provider: Optional[dict]) -> Optional[dict]:
-    if provider is None:
-        return None
-    return {
-        "id": provider.get("id"),
-        "name": provider.get("name"),
-        "exec_type": provider.get("exec_type"),
-        "kind": provider.get("kind"),
-    }
-
 
 # ── 0359 L0007: hop budget, run identity, prompt reuse ───────────────────────
 
@@ -2307,7 +2373,6 @@ def _resolve_timeout_sec(
         return RUN_TIMEOUT_CAP_SEC
     return min(RUN_TIMEOUT_BASE_SEC * max(1, docs_target), RUN_TIMEOUT_CAP_SEC)
 
-
 def _resolve_restart_max_attempts(continuation_restart_max_attempts: Optional[int]) -> int:
     """Total attempts allowed for one hop (0443 R0001 "재시작 횟수").
 
@@ -2327,7 +2392,6 @@ def _resolve_restart_max_attempts(continuation_restart_max_attempts: Optional[in
         return -1
     return int(restart_count) + 1
 
-
 def _deadline_iso(started_at: str, timeout_sec: int) -> Optional[str]:
     """started_at + timeout_sec, in the same ISO/timezone shape now_iso() produces."""
     try:
@@ -2336,7 +2400,6 @@ def _deadline_iso(started_at: str, timeout_sec: int) -> Optional[str]:
         ).isoformat(timespec="seconds")
     except Exception:
         return None
-
 
 def _call_issue_builder(issue_builder: Callable, run_id: str) -> dict:
     """Call a token issuer, handing it the run identity when it can take one (L0007 §2.9).
@@ -2357,7 +2420,6 @@ def _call_issue_builder(issue_builder: Callable, run_id: str) -> dict:
         accepts = False
     return issue_builder(ai_run_id=run_id) if accepts else issue_builder()
 
-
 def _hop_item_seq_or_none(doc_ref: str) -> Optional[int]:
     """Which workflow slot this hop is filling — best effort (L0007 §2.9 / §5).
 
@@ -2368,7 +2430,6 @@ def _hop_item_seq_or_none(doc_ref: str) -> Optional[int]:
     except Exception:
         logger.warning("ai-invoke hop item_seq lookup failed for %s", doc_ref, exc_info=True)
         return None
-
 
 def prompt_digest(text: Optional[str]) -> tuple[int, Optional[str]]:
     """Keep only the length and sha256 — never the text itself (0406 T0022 item 5).
@@ -2381,7 +2442,6 @@ def prompt_digest(text: Optional[str]) -> tuple[int, Optional[str]]:
         return 0, None
     encoded = text.encode("utf-8")
     return len(text), hashlib.sha256(encoded).hexdigest()
-
 
 def _inject_hop_notes(
     mention: Optional[str],
@@ -2486,7 +2546,6 @@ def _inject_hop_notes(
         })
     return mention
 
-
 def resolve_stored_step_note(doc_ref: str, item_seq: int) -> Optional[str]:
     """Return one normalized sequence-row note; lookup failures degrade to no note."""
     try:
@@ -2501,7 +2560,6 @@ def resolve_stored_step_note(doc_ref: str, item_seq: int) -> Optional[str]:
     except Exception:  # noqa: BLE001 — prompt enrichment must never stop execution
         logger.warning("stored step note resolution failed for %s", doc_ref, exc_info=True)
     return None
-
 
 def excerpt(text: Optional[str], max_bytes: int = LAST_MESSAGE_EXCERPT_BYTES) -> Optional[str]:
     """One-line, byte-bounded digest of a worker's message (L0007 §2.10.4).
@@ -2522,14 +2580,12 @@ def excerpt(text: Optional[str], max_bytes: int = LAST_MESSAGE_EXCERPT_BYTES) ->
         return cleaned
     return encoded[: max(0, max_bytes - 3)].decode("utf-8", errors="ignore") + "…"
 
-
 _AUTH_HEADER_RE = re.compile(r"(?i)authorization\s*:\s*[^\s,;]+(?:\s+[^\s,;]+)?")
 _BEARER_TOKEN_RE = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{6,}")
 # rev5: below this length, a shared prefix between the prompt and the raw output is too
 # likely to be ordinary shared prose ("the ", "please ") rather than a genuine echo — the
 # same floor `_BEARER_TOKEN_RE` uses for a bare token.
 _PROMPT_ECHO_MIN_LEN = 40
-
 
 def _redact_secrets(text: Optional[str], known_tokens: Optional[Iterable[str]] = None,
                     known_prompts: Optional[Iterable[str]] = None) -> Optional[str]:
@@ -2620,7 +2676,6 @@ def _redact_secrets(text: Optional[str], known_tokens: Optional[Iterable[str]] =
             redacted = redacted.replace(token, "[redacted]")
     return redacted
 
-
 def _note_issued_raw_token(run: dict, token: Optional[str]) -> None:
     """Remember every raw task token this run has handed a provider process (T0007 rev4
     §3.2.3), so a later `_redact_secrets` call can scrub an unlabeled echo of it.
@@ -2633,10 +2688,8 @@ def _note_issued_raw_token(run: dict, token: Optional[str]) -> None:
         return
     run.setdefault("_issued_raw_tokens", set()).add(token)
 
-
 def _known_run_raw_tokens(run: dict) -> set[str]:
     return {t for t in run.get("_issued_raw_tokens") or () if t}
-
 
 def _note_issued_prompt(run: dict, mention: Optional[str]) -> None:
     """Remember every prompt text this run has handed a provider process's stdin — the
@@ -2651,10 +2704,8 @@ def _note_issued_prompt(run: dict, mention: Optional[str]) -> None:
         return
     run.setdefault("_issued_prompts", set()).add(mention)
 
-
 def _known_run_prompts(run: dict) -> set[str]:
     return {p for p in run.get("_issued_prompts") or () if p}
-
 
 def _resolve_continuation_hop_provider(
     project_id: str,
@@ -2702,7 +2753,6 @@ def _resolve_continuation_hop_provider(
                        exc_info=True)
         return None
 
-
 def _paired_report_row(items: list[dict], head: dict) -> Optional[dict]:
     """Return the first paired worker report after an N/T head.
 
@@ -2724,7 +2774,6 @@ def _paired_report_row(items: list[dict], head: dict) -> Optional[dict]:
         ),
         None,
     )
-
 
 def _hop_worker_item_seq(
     seq_id: int,
@@ -2759,7 +2808,6 @@ def _hop_worker_item_seq(
     report = _paired_report_row(db_wfseq.get_sequence_items(seq_id) or [], head)
     return report.get("item_seq") if report is not None else head_item_seq
 
-
 def _hop_worker_rows(
     seq_id: int,
     head: dict,
@@ -2784,7 +2832,6 @@ def _hop_worker_rows(
         if report is not None:
             candidates.append(report)
     return candidates
-
 
 def stored_hop_provider(
     doc_ref: str,
@@ -2818,7 +2865,6 @@ def stored_hop_provider(
         logger.warning("stored continuation hop provider resolution failed for %s", doc_ref,
                        exc_info=True)
         return None, None, None
-
 
 def _resolve_continuation_hop_override(
     doc_ref: str,
@@ -2859,7 +2905,6 @@ def _resolve_continuation_hop_override(
                        exc_info=True)
         return None
 
-
 def _resolve_continuation_hop_note(
     doc_ref: str,
     overrides: dict,
@@ -2895,7 +2940,6 @@ def _resolve_continuation_hop_note(
         logger.warning("continuation hop note resolution failed for %s", doc_ref, exc_info=True)
         return None
 
-
 def _prioritize_chain(chain: list[dict], provider_id: str) -> list[dict]:
     """Move the assigned provider to the front, keeping the rest as the fallback tail
     (D0004 §3: assignment beats fallback, but a spawn failure falls through). Unlike an explicit
@@ -2906,6 +2950,7 @@ def _prioritize_chain(chain: list[dict], provider_id: str) -> list[dict]:
         return chain
     return head + [p for p in chain if p.get("id") != provider_id]
 
+<<<<<<< HEAD
 
 # ── Worker: provider fallback loop (L0006 §2.2) ──────────────────────────────
 
@@ -8709,3 +8754,21 @@ def document_review_loop_payload(run: dict) -> dict | None:
     # server restart shows the same rounds instead of only what this browser observed.
     payload["history"] = build_document_review_loop_history(loop, run.get("doc_ref"))
     return payload
+=======
+# ── Part loading (see the file-split note in the module docstring) ────────────
+_PART_FILES = (
+    "ai_invoke_part2_worker.py",
+    "ai_invoke_part3_chain.py",
+)
+
+def _load_parts() -> None:
+    """Execute each part file in THIS module's globals(), in order."""
+    from importlib.machinery import SourceFileLoader
+    here = Path(__file__).resolve().parent
+    for filename in _PART_FILES:
+        fullname = "%s.%s" % (__name__, filename[:-3])
+        code = SourceFileLoader(fullname, str(here / filename)).get_code(fullname)
+        exec(code, globals())
+
+_load_parts()
+>>>>>>> main

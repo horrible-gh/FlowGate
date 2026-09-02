@@ -46,6 +46,9 @@ def _chain_token_rec(target_seq=7):
         "token_id": "tok-1",
         "project": "flowgate",
         "issued_to": "user-1",
+        # 0492 T0018: `group_id` is a real tokens column (migration 075a) and inbox
+        # Step 3 now compares it as the `group` axis.
+        "group_id": "flowgate.default.0150",
         "action_scope": "test_run",
         "doc_ref": "flowgate.default.0150.0005-TS",
         "dry_run_count": 0,

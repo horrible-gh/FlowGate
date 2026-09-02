@@ -59,7 +59,18 @@ ITEMS = [
      "result_doc_id": None, "result_doc_review_status": None},
 ]
 
-ALL_PROVIDER_IDS = ["aip_header", "aip_n", "aip_nr", "aip_t", "aip_tr", "aip_step"]
+ALL_PROVIDER_IDS = ["aip_header", "aip_n", "aip_nr", "aip_t", "aip_tr", "aip_step", "aip_opus"]
+
+
+def test_ai_invoke_service_is_startup_parseable_and_has_no_merge_control_lines():
+    """0494 rejection: a leftover zdiff3 base block made the server fail during import."""
+    service_path = _SERVER_DIR / "modules/flow_gate/services/ai_invoke_service.py"
+    source = service_path.read_text(encoding="utf-8")
+    compile(source, str(service_path), "exec")
+    assert not any(
+        line.startswith(("<<<<<<<", "|||||||", "=======", ">>>>>>>"))
+        for line in source.splitlines()
+    )
 
 
 def provider(pid, enabled=True):
@@ -118,11 +129,15 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(svc, "_create_scratch", lambda pid, run_id: src_root)
     monkeypatch.setattr(svc, "_git_status_paths", lambda root: set())
     monkeypatch.setattr(svc, "_cleanup_retained_scratches", lambda pid: None)
-    # No worker process: this file is about which provider the hop RESOLVED, not about running it.
-    monkeypatch.setattr(svc, "_worker", lambda run, chain_, prompt: None)
+    # Capture the finalized execution chain without starting a worker process.
+    worker_chains = []
+    monkeypatch.setattr(
+        svc, "_worker",
+        lambda run, chain_, prompt: worker_chains.append([p["id"] for p in chain_]),
+    )
     monkeypatch.setattr(svc, "_broadcast", lambda run, event_type, payload: None)
     monkeypatch.setattr(svc, "_runs", {})
-    return {"wfseq": wfseq, "chain": chain}
+    return {"wfseq": wfseq, "chain": chain, "worker_chains": worker_chains}
 
 
 def start(env, **over):
@@ -201,6 +216,9 @@ def test_explicit_force_all_outranks_the_stored_provider(env):
     result = start(env, provider_id="aip_header", provider_pinned=True,
                    continuation_provider_overrides=None)
     assert result["provider"]["id"] == "aip_header"
+    assert result["selected_provider_source"] == "force_all"
+    assert result["fallback_allowed"] is False
+    assert env["worker_chains"][-1] == ["aip_header"]
 
 
 def test_step_override_outranks_an_explicit_force_all(env):
@@ -209,12 +227,18 @@ def test_step_override_outranks_an_explicit_force_all(env):
     result = start(env, provider_id="aip_header", provider_pinned=True,
                    continuation_provider_overrides={"2": "aip_step"})
     assert result["provider"]["id"] == "aip_step"
+    assert result["selected_provider_source"] == "step_override"
+    assert result["fallback_allowed"] is False
+    assert env["worker_chains"][-1] == ["aip_step"]
 
 
 def test_step_override_outranks_the_stored_provider_and_the_selection(env):
     """§7-6: plan value != sequence value becomes this run's explicit item_seq override."""
     result = start(env, continuation_provider_overrides={"2": "aip_step"})
     assert result["provider"]["id"] == "aip_step"
+    assert result["selected_provider_source"] == "step_override"
+    assert result["fallback_allowed"] is False
+    assert env["worker_chains"][-1] == ["aip_step"]
 
 
 def test_an_override_for_another_hop_is_ignored(env):
@@ -237,8 +261,176 @@ def test_inactive_stored_provider_falls_back_and_warns_once(env, caplog):
     # The request's own (unpinned) selection is what it degrades to, and the snapshot id is
     # named in the log so the screen's "지금 쓸 수 없음" badge and the server agree on WHY.
     assert result["provider"]["id"] == "aip_header"
+    assert result["selected_provider_source"] == "request"
+    assert result["fallback_allowed"] is False
+    assert svc.get_run_record(result["run_id"])["fallback_history"] == []
+    assert env["worker_chains"][-1] == ["aip_header"]
     assert caplog.messages.count(expected) == 1
 
+
+def test_inactive_document_type_assignment_uses_project_default_without_execution_fallback(
+        env, monkeypatch):
+    env["wfseq"].items = [
+        dict(row, provider_id=None, provider_display_name=None) for row in ITEMS
+    ]
+    env["chain"]["providers"] = [provider("aip_header"), provider("aip_nr")]
+    monkeypatch.setattr(svc, "_resolve_continuation_hop_provider", lambda *a, **k: "aip_t")
+
+    result = start(env, provider_id=None, continuation_provider_overrides=None)
+    run = svc.get_run_record(result["run_id"])
+
+    assert result["provider"]["id"] == "aip_header"
+    assert result["selected_provider_source"] == "project_default"
+    assert result["fallback_allowed"] is True
+    assert run["fallback_history"] == []
+    assert env["worker_chains"][-1] == ["aip_header", "aip_nr"]
+
+
+def test_active_document_type_assignment_is_a_single_audited_chain(env, monkeypatch):
+    env["wfseq"].items = [
+        dict(row, provider_id=None, provider_display_name=None) for row in ITEMS
+    ]
+    monkeypatch.setattr(svc, "_resolve_continuation_hop_provider", lambda *a, **k: "aip_t")
+
+    result = start(env, provider_id=None, continuation_provider_overrides=None)
+
+    assert result["provider"]["id"] == "aip_t"
+    assert result["selected_provider_source"] == "document_type"
+    assert result["fallback_allowed"] is False
+    assert env["worker_chains"][-1] == ["aip_t"]
+
+
+def test_document_review_loop_provider_is_a_single_audited_chain(env, monkeypatch):
+    loop = {
+        "review_count": 1,
+        "reviewer_provider_id": "aip_step",
+        "review_criteria": "document_type_default",
+        "rework_provider_id": "aip_t",
+        "rework_timeout_sec": 1800,
+        "rework_message": "fix findings",
+        "failure_restart_max_attempts": 0,
+        "total_timeout_sec": 3600,
+    }
+    monkeypatch.setattr(svc, "compute_review_baseline", lambda _doc_ref: {
+        "review_baseline_id": 1, "baseline_revision_no": 1, "starts_with_rework": False,
+    })
+    monkeypatch.setattr(svc, "_insert_document_review_loop", lambda _run: None)
+    monkeypatch.setattr(svc, "document_review_loop_payload", lambda _run: None)
+
+    result = start(
+        env,
+        action_scope="review",
+        mode="single",
+        continuation_target_seq=None,
+        continuation_review_mode=False,
+        provider_id=None,
+        continuation_provider_overrides=None,
+        document_review_loop=loop,
+    )
+
+    assert result["provider"]["id"] == "aip_step"
+    assert result["selected_provider_source"] == "review_loop"
+    assert result["fallback_allowed"] is False
+    assert env["worker_chains"][-1] == ["aip_step"]
+
+
+@pytest.mark.parametrize("classification", ["fast_fail", "spawn_failed"])
+def test_explicit_stored_selection_start_failure_never_invokes_trailing_provider(
+        env, monkeypatch, classification):
+    result = start(env, continuation_provider_overrides=None)
+    run = svc.get_run_record(result["run_id"])
+    # Both start-failure classifications must retain the stored-selection audit contract.
+    assert result["selected_provider_source"] == "stored_sequence"
+    assert result["fallback_allowed"] is False
+    assert run["selected_provider_source"] == "stored_sequence"
+    assert run["fallback_allowed"] is False
+    invoked = []
+
+    def _fail(provider_, prompt, run_):
+        invoked.append(provider_["id"])
+        return classification, f"{classification}: simulated"
+
+    monkeypatch.setattr(svc, "_cli_execute", _fail)
+    selected_chain = [provider(pid) for pid in env["worker_chains"][-1]]
+    assert selected_chain[0]["id"] == "aip_nr"
+    assert "aip_opus" not in [p["id"] for p in selected_chain]
+
+    started = svc._execute_provider_chain(run, selected_chain, "work")
+    svc._classify_end_reason(run, started)
+
+    assert started is False
+    assert invoked == ["aip_nr"]
+    assert run["attempt_no"] == 1
+    assert [item["provider_id"] for item in run["fallback_history"]] == ["aip_nr"]
+    assert run["fallback_history"][0]["reason"] == classification
+    assert run["end_reason"] == "all_providers_failed"
+
+
+@pytest.mark.parametrize("classification", ["fast_fail", "spawn_failed"])
+def test_rework_current_selection_outranks_stored_opus_and_never_falls_back(
+        env, monkeypatch, classification):
+    """0494: review-gate rework uses the current header choice even when the sequence row
+    still stores Opus, and a startup failure cannot expose an Opus execution tail."""
+    env["wfseq"].items[1]["provider_id"] = "aip_opus"
+    bundle = {
+        "provider_overrides": None,
+        "base_provider_id": "aip_header",
+        "provider_pinned": False,
+    }
+    executor_id = svc.resolve_step_executor(bundle, 2, "flowgate", ROOT)
+    assert executor_id == "aip_header"
+
+    result = svc.start_run(
+        project_id="flowgate", module="default", group_id=GROUP, doc_ref=ROOT,
+        action_scope="edit", mode="single", continuation_target_seq=None,
+        continuation_review_mode=False, continuation_instruction_mode="auto_approved",
+        continuation_locale="ko", issued_to="usr_admin", api_base_url=API_BASE,
+        mention_builder=lambda raw, scratch: "rework", provider_id=executor_id,
+        hop_kind=svc.REWORK_HOP_KIND,
+    )
+    _release(result["run_id"])
+    run = svc.get_run_record(result["run_id"])
+    assert result["provider"]["id"] == "aip_header"
+    assert result["selected_provider_source"] == "request"
+    assert result["fallback_allowed"] is False
+    assert env["worker_chains"][-1] == ["aip_header"]
+
+    invoked = []
+
+    def _fail(provider_, prompt, run_):
+        invoked.append(provider_["id"])
+        return classification, f"{classification}: simulated"
+
+    monkeypatch.setattr(svc, "_cli_execute", _fail)
+    selected_chain = [provider(pid) for pid in env["worker_chains"][-1]]
+    started = svc._execute_provider_chain(run, selected_chain, "rework")
+    svc._classify_end_reason(run, started)
+
+    assert started is False
+    assert invoked == ["aip_header"]
+    assert "aip_opus" not in invoked
+    assert run["fallback_allowed"] is False
+    assert [item["provider_id"] for item in run["fallback_history"]] == ["aip_header"]
+    assert run["fallback_history"][0]["reason"] == classification
+    assert [p["id"] for p in svc._retry_provider_chain(run)] == ["aip_header"]
+
+
+def test_rework_selection_survives_handoff_bundle_and_resume_resolution(env):
+    """The stored Opus row cannot retake priority after a pause/resume-style bundle replay."""
+    env["wfseq"].items[1]["provider_id"] = "aip_opus"
+    run = {
+        "continuation_provider_overrides": None,
+        "continuation_base_provider_id": "aip_header",
+        "continuation_provider_pinned": False,
+        "continuation_instruction_mode": "auto_approved",
+    }
+    bundle = svc._handoff_bundle(
+        {"doc_ref": ROOT, "target_seq": 4, "issued_to": "usr_admin", "api_base_url": API_BASE},
+        run,
+    )
+    assert bundle["base_provider_id"] == "aip_header"
+    assert bundle["provider_pinned"] is False
+    assert svc.resolve_step_executor(bundle, 2, "flowgate", ROOT) == "aip_header"
 
 def test_a_disabled_step_override_falls_through_instead_of_failing(env):
     """A map entry naming a provider that is no longer in the effective chain drops to the next

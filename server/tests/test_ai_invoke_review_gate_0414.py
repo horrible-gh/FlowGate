@@ -1157,8 +1157,13 @@ class TestCarriers:
         caller that forgets these two wipes the selection and the chain resumes with the gate
         switched off — L0008 R1 broken from outside the schema."""
         offenders = []
+        # 0497 T0009 split ai_invoke_service.py into three files that share one module
+        # namespace; every paused-row writer must still be scanned, so all three are listed.
+        _services = _SERVER_DIR / "modules" / "flow_gate" / "services"
         for path in (
-            _SERVER_DIR / "modules" / "flow_gate" / "services" / "ai_invoke_service.py",
+            _services / "ai_invoke_service.py",
+            _services / "ai_invoke_part2_worker.py",
+            _services / "ai_invoke_part3_chain.py",
             _SERVER_DIR / "modules" / "flow_gate" / "api" / "inbox_routes.py",
         ):
             tree = ast.parse(path.read_text(encoding="utf-8"))

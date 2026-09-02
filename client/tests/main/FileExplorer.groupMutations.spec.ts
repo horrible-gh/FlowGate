@@ -63,7 +63,7 @@ const NODES = [
 ]
 
 /** Mount the explorer with one group slot whose worktree is (or is not) live. */
-async function mountExplorer(opts: { group?: string | null; writable?: boolean } = {}) {
+async function mountExplorer(opts: { group?: string | null; writable?: boolean; mergeId?: number } = {}) {
   useLayoutStore().setFileExplorerCollapsed(false)
   // The slot list arrives through the explorer store's getRequest; the finalize
   // badge is the only api.get the component makes.
@@ -83,7 +83,10 @@ async function mountExplorer(opts: { group?: string | null; writable?: boolean }
     }
     return { data: { data: { nodes: NODES } } }
   })
-  apiGet.mockResolvedValue({ data: { state: { ahead_count: 0, status: 'none' } } })
+  apiGet.mockImplementation(async (url: string) => {
+    if (url.includes('/conflicts')) return { data: { files: [] } }
+    return { data: { state: { ahead_count: 0, status: 'none', merge_id: opts.mergeId ?? null } } }
+  })
 
   const wrapper = mount(FileExplorer, {
     props: { projectId: 'p' },
@@ -196,6 +199,16 @@ describe('FileExplorer group-branch mutations (0327 T0004 / B0001)', () => {
     const ro = await mountExplorer({ group: GROUP, writable: false })
     expect(ro.get('.fx-readonly-badge').classes()).not.toContain('fx-readonly-badge--rw')
     expect(ro.get('.fx-readonly-badge').text()).toContain('read-only')
+  })
+
+  it('reopens an existing group-update conflict from finalize state', async () => {
+    const wrapper = await mountExplorer({ group: GROUP, writable: true, mergeId: 41 })
+
+    expect(wrapper.findComponent({ name: 'GitConflictResolverDialog' }).exists()).toBe(true)
+    expect(apiGet).toHaveBeenCalledWith(
+      `/api/v1/groups/${encodeURIComponent(GROUP)}/git/merge/41/conflicts`,
+    )
+    expect(wrapper.find('.git-conflict-footer-actions').exists()).toBe(false)
   })
 
   it('leaves the base checkout view untouched', async () => {

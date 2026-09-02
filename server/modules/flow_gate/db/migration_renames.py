@@ -156,6 +156,19 @@ RENAMES: tuple[tuple[str, str], ...] = (
     ("086_tr_commit_ledger.sql", "086d_tr_commit_ledger.sql"),
     ("086a_tr_commit_ledger.sql", "086d_tr_commit_ledger.sql"),
     ("086_tr_commit_reapply.sql", "087_tr_commit_reapply.sql"),
+    # flowgate.default.0505 T0006/T0020: this migration shipped as
+    # 095_ai_invoke_api_diagnostics.sql and was renamed to its current slug,
+    # 095_ai_invoke_run_transport_diagnostics.sql, with no numbering collision --
+    # the ordinal 095 never moved, only the name after it did, so neither pass
+    # of `reconcile_renamed_migrations` catches it (pass 1 needs the same slug
+    # with only a letter suffix differing; pass 2 needs the same slug at a
+    # different number). Confirmed against the shared dev preview's live
+    # database (FlowGate/storage/flowgate.db): its `migrations` table holds
+    # `095_ai_invoke_api_diagnostics.sql`, and `ai_invoke_runs` already carries
+    # operator_api_base/transport_api_base/last_tool_name -- three of the ten
+    # columns this file adds -- so a reboot against the renamed file re-ran the
+    # first ADD COLUMN and failed with "duplicate column name: operator_api_base".
+    ("095_ai_invoke_api_diagnostics.sql", "095_ai_invoke_run_transport_diagnostics.sql"),
 )
 
 

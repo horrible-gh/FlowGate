@@ -54,10 +54,27 @@
           ? t('main.explorer.worktree_badge', { group: shortGroup(selectedGroup) })
           : t('main.explorer.readonly_badge', { group: shortGroup(selectedGroup) }) }}</span>
         <span
-          v-if="groupGitState && groupGitState.ahead_count > 0"
+          v-if="groupGitState && groupGitState.ahead_count != null && groupGitState.ahead_count > 0"
           class="fx-git-badge"
         >{{ t('main.explorer.git_ahead', { n: groupGitState.ahead_count })
           }}<template v-if="groupGitState.status === 'awaiting_choice'"> · {{ t('main.explorer.git_awaiting') }}</template></span>
+        <span
+          v-if="showBehindBadge"
+          class="fx-git-behind"
+          :class="{ 'fx-git-behind--danger': behindDanger, 'fx-git-behind--unknown': behindUnknown }"
+          :title="behindUnknown ? t('main.explorer.git_behind_unmeasured') : t('main.explorer.git_behind_tip', { n: groupGitState?.behind_count })"
+        >{{ behindUnknown ? '⇣ ?' : behindDanger ? `⚠ ${groupGitState?.behind_count}` : `⇣ ${groupGitState?.behind_count}` }}</span>
+      </div>
+      <div v-if="showUpdateRow" class="fx-git-update-row" :class="{ 'fx-git-update-row--warning': behindDanger }">
+        <button
+          class="fx-git-update-btn"
+          :disabled="!canUpdateFromBase || updatePending"
+          @click="updateFromBase"
+        >
+          <AppIcon name="arrow-clockwise" />
+          <span>{{ updatePending ? t('main.explorer.git_updating') : t('main.explorer.git_update') }}</span>
+        </button>
+        <span class="fx-git-update-status">{{ updateStatusText }}</span>
       </div>
       <div v-if="selectedGroupBusy" class="fx-readonly-badge">
         <AppIcon name="lock" />
@@ -144,6 +161,25 @@
   <input ref="rootFileInputRef" type="file" multiple style="display:none" @change="onRootFileSelected" />
   <input ref="rootFolderInputRef" type="file" multiple style="display:none" @change="onRootFolderSelected" />
 
+  <GitConflictResolverDialog
+    v-if="conflictDialogOpen"
+    :files="conflictFiles"
+    :branch="groupGitState?.branch || selectedGroup"
+    :base-branch="baseBranch"
+    :busy="updatePending"
+    :load-status="conflictLoadStatus"
+    :error-message="conflictError"
+    :providers="[]"
+    :provider-loading="false"
+    :provider-errored="false"
+    @close="closeGroupUpdateDialog"
+    @abort="abortGroupUpdate"
+    @submit="submitGroupUpdateResolve"
+    @retry="fetchGroupUpdateConflicts"
+  />
+  <GitBaseDirtyDialog ref="baseDirtyDialog" context="update" />
+  <GitUntrackedConflictDialog ref="untrackedConflictDialog" />
+
   <CreateFileFolderModal
     v-if="projectId"
     v-model:visible="showModal"
@@ -170,9 +206,17 @@ import ContextMenu from './common/ContextMenu.vue'
 import ContextMenuItem from './common/ContextMenuItem.vue'
 import CreateFileFolderModal from './CreateFileFolderModal.vue'
 import AppIcon from '@shared/AppIcon.vue'
+import { useToast } from './common/useToast'
+import GitBaseDirtyDialog from './GitBaseDirtyDialog.vue'
+import GitUntrackedConflictDialog from './GitUntrackedConflictDialog.vue'
+import GitConflictResolverDialog from './GitConflictResolverDialog.vue'
+import {
+  useConflictChunks, currentFileContent, isFileResolved, type ConflictFileState,
+} from '../composables/useConflictChunks'
 
 const props = defineProps<{ projectId: string | null; refreshToken?: number }>()
 const { t } = useI18n()
+const { showToast } = useToast()
 const explorerStore = useExplorerStore()
 const layoutStore = useLayoutStore()
 const projectStore = useProjectStore()
@@ -211,7 +255,45 @@ const groupSlots = ref<Array<{ group_id: string; branch: string; status: string;
 const selectedGroup = ref<string | null>(explorerStore.activeGroupBranch)
 const groupCommit = ref<string | null>(null)
 // P0005 §9 — group Git status badge (reuses the finalize GET, no new field).
-const groupGitState = ref<{ ahead_count: number; status: string } | null>(null)
+type GroupGitState = {
+  branch: string | null
+  ahead_count: number | null
+  behind_count: number | null
+  base_remote_behind_count: number | null
+  status: string
+  merge_id: number | null
+}
+const groupGitState = ref<GroupGitState | null>(null)
+const updatePending = ref(false)
+const baseDirtyDialog = ref<InstanceType<typeof GitBaseDirtyDialog> | null>(null)
+const untrackedConflictDialog = ref<InstanceType<typeof GitUntrackedConflictDialog> | null>(null)
+const conflictDialogOpen = ref(false)
+const conflictFiles = ref<ConflictFileState[]>([])
+const conflictLoadStatus = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
+const conflictError = ref('')
+const updateMergeId = ref<number | null>(null)
+const { initConflictFile } = useConflictChunks()
+const structurallyUnregistered = computed(() => !!groupGitState.value
+  && groupGitState.value.branch == null
+  && groupGitState.value.ahead_count == null
+  && groupGitState.value.behind_count == null)
+const behindUnknown = computed(() => !!groupGitState.value && !structurallyUnregistered.value && (
+  groupGitState.value.behind_count == null
+  || groupGitState.value.base_remote_behind_count == null
+  || groupGitState.value.base_remote_behind_count > 0
+))
+const showBehindBadge = computed(() => !!groupGitState.value && !structurallyUnregistered.value
+  && (behindUnknown.value || (groupGitState.value.behind_count ?? 0) > 0))
+const behindDanger = computed(() => !behindUnknown.value && (groupGitState.value?.behind_count ?? 0) > 20)
+const showUpdateRow = computed(() => !!groupGitState.value && !structurallyUnregistered.value)
+const canUpdateFromBase = computed(() => showUpdateRow.value && (
+  behindUnknown.value || (groupGitState.value?.behind_count ?? 0) > 0
+))
+const updateStatusText = computed(() => behindUnknown.value
+  ? t('main.explorer.git_behind_unmeasured')
+  : (groupGitState.value?.behind_count ?? 0) > 0
+    ? t('main.explorer.git_behind_tip', { n: groupGitState.value?.behind_count ?? 0 })
+    : t('main.explorer.git_same'))
 
 function shortGroup(gid: string): string {
   return gid.split('.').pop() ?? gid
@@ -287,11 +369,117 @@ async function loadGroupGitBadge(gid: string) {
   try {
     const res = await api.get(`/api/v1/groups/${encodeURIComponent(gid)}/git/finalize`)
     const st = (res.data as any)?.state
-    groupGitState.value = st
-      ? { ahead_count: Number(st.ahead_count ?? 0), status: String(st.status ?? 'none') }
-      : null
+    groupGitState.value = st ? {
+      branch: st.branch ?? null,
+      ahead_count: st.ahead_count ?? null,
+      behind_count: st.behind_count ?? null,
+      base_remote_behind_count: st.base_remote_behind_count ?? null,
+      status: String(st.status ?? 'none'),
+      merge_id: st.merge_id == null ? null : Number(st.merge_id),
+    } : null
+    if (groupGitState.value?.merge_id != null && updateMergeId.value !== groupGitState.value.merge_id) {
+      updateMergeId.value = groupGitState.value.merge_id
+      conflictDialogOpen.value = true
+      showToast(t('main.explorer.git_update_conflict'), 'warning')
+      await fetchGroupUpdateConflicts()
+    }
   } catch {
     groupGitState.value = null
+  }
+}
+
+async function fetchGroupUpdateConflicts() {
+  const gid = selectedGroup.value
+  if (!gid || updateMergeId.value == null) return
+  conflictLoadStatus.value = 'loading'
+  conflictError.value = ''
+  try {
+    const response = await api.get(
+      `/api/v1/groups/${encodeURIComponent(gid)}/git/merge/${updateMergeId.value}/conflicts`,
+    )
+    conflictFiles.value = ((response.data as any)?.files || []).map(initConflictFile)
+    conflictLoadStatus.value = 'ready'
+  } catch (error: any) {
+    conflictError.value = error?.response?.data?.error?.message || t('main.git_finalize.load_failed')
+    conflictLoadStatus.value = 'error'
+  }
+}
+
+function closeGroupUpdateDialog() {
+  conflictDialogOpen.value = false
+  updateMergeId.value = null
+}
+
+async function submitGroupUpdateResolve() {
+  const gid = selectedGroup.value
+  if (!gid || updateMergeId.value == null || !conflictFiles.value.every(isFileResolved)) return
+  updatePending.value = true
+  try {
+    await api.post(
+      `/api/v1/groups/${encodeURIComponent(gid)}/git/merge/${updateMergeId.value}/resolve`,
+      { files: conflictFiles.value.map((f) => ({ path: f.path, content: currentFileContent(f) })), complete: true },
+    )
+    conflictDialogOpen.value = false
+    updateMergeId.value = null
+    showToast(t('main.explorer.git_updated'), 'success')
+  } catch (error: any) {
+    conflictError.value = error?.response?.data?.error?.message || t('main.explorer.git_update_failed')
+  } finally {
+    updatePending.value = false
+    await loadGroupGitBadge(gid)
+  }
+}
+
+async function abortGroupUpdate() {
+  const gid = selectedGroup.value
+  if (!gid || updateMergeId.value == null) return
+  updatePending.value = true
+  try {
+    await api.post(
+      `/api/v1/groups/${encodeURIComponent(gid)}/git/merge/${updateMergeId.value}/abort`,
+    )
+    conflictDialogOpen.value = false
+    updateMergeId.value = null
+  } catch (error: any) {
+    conflictError.value = error?.response?.data?.error?.message || t('main.explorer.git_update_failed')
+  } finally {
+    updatePending.value = false
+    await loadGroupGitBadge(gid)
+  }
+}
+
+async function updateFromBase() {
+  const gid = selectedGroup.value
+  const pid = props.projectId
+  if (!gid || !canUpdateFromBase.value || updatePending.value) return
+  updatePending.value = true
+  try {
+    const response = await api.post(`/api/v1/groups/${encodeURIComponent(gid)}/git/update-from-base`)
+    const result = (response.data as any)?.result
+    if (result?.status === 'conflict') {
+      updateMergeId.value = Number(result.merge_id)
+      conflictDialogOpen.value = true
+      await fetchGroupUpdateConflicts()
+    } else {
+      showToast(t(result?.status === 'no_change' ? 'main.explorer.git_no_change' : 'main.explorer.git_updated'), 'success')
+    }
+  } catch (error: any) {
+    const err = error?.response?.data?.error || {}
+    const files = Array.isArray(err.details?.files) ? err.details.files : []
+    if (err.code === 'base_dirty' && pid && baseDirtyDialog.value) {
+      await baseDirtyDialog.value.resolve(pid, files)
+    } else if (err.code === 'group_untracked_conflict' && untrackedConflictDialog.value) {
+      const untrackedFiles = Array.isArray(err.details?.untracked_files) ? err.details.untracked_files : files
+      const trackedFiles = Array.isArray(err.details?.tracked_files) ? err.details.tracked_files : []
+      await untrackedConflictDialog.value.resolve(
+        gid, files, 'group', { untrackedFiles, trackedFiles },
+      )
+    } else {
+      showToast(err.message || t('main.explorer.git_update_failed'), 'danger')
+    }
+  } finally {
+    updatePending.value = false
+    await loadGroupGitBadge(gid)
   }
 }
 
@@ -708,4 +896,44 @@ watch(() => props.refreshToken, (next, prev) => {
   background: rgba(245, 158, 11, 0.14);
   border: 1px solid rgba(245, 158, 11, 0.3);
 }
+
+.fx-git-behind {
+  padding: 1px 6px;
+  border-radius: 6px;
+  color: #93c5fd;
+  background: rgba(59, 130, 246, 0.14);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+.fx-git-behind--danger { color: #fecaca; background: rgba(239, 68, 68, 0.16); border-color: rgba(239, 68, 68, 0.4); }
+.fx-git-behind--unknown { color: #cbd5e1; background: rgba(148, 163, 184, 0.12); border-color: rgba(148, 163, 184, 0.3); }
+.fx-git-update-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  color: #93c5fd;
+  background: rgba(59, 130, 246, 0.08);
+  border-bottom: 1px solid rgba(59, 130, 246, 0.22);
+}
+.fx-git-update-row--warning {
+  color: #fcd34d;
+  background: rgba(245, 158, 11, 0.09);
+  border-bottom-color: rgba(245, 158, 11, 0.28);
+}
+.fx-git-update-btn {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+}
+.fx-git-update-btn:not(:disabled):hover { background: rgba(255, 255, 255, 0.1); }
+.fx-git-update-btn:disabled { opacity: 0.58; cursor: not-allowed; }
+.fx-git-update-status { min-width: 0; color: var(--text-m); font-size: 0.7rem; overflow-wrap: anywhere; }
 </style>

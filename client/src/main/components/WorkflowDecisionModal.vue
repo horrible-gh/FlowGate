@@ -430,10 +430,7 @@
             hide-label
             @update:model-value="(v: string) => providerStore.selectProvider(v)"
           />
-          <span class="wdm-footer-note">
-            <AppIcon name="info" />
-            {{ mode === 'edit' ? t('main.workflow_edit_modal.footer_note') : t('main.workflow_decision_modal.footer_note') }}
-          </span>
+
           <button type="button" class="btn btn-secondary" @click="close">{{ t('common.cancel') }}</button>
           <button
             v-if="mode !== 'edit'"
@@ -1938,21 +1935,12 @@ watch(
   border-radius: var(--r);
 }
 
-/* ── Footer: provider picker pinned to the far left, note takes the slack ── */
+/* ── Footer: provider picker pinned to the far left, buttons right-aligned ── */
 .wdm-provider {
   flex-shrink: 0;
   margin-right: 10px;
 }
 
-/* ── Footer note ── */
-.wdm-footer-note {
-  font-size: .78rem;
-  color: var(--text-m);
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
 
 /* ── Edit mode: Loading / error ── */
 .wem-loading,

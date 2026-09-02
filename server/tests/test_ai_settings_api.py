@@ -211,7 +211,7 @@ class TestSystemScope:
             [_api(name="openai", kind="openai", api_base_url="",
                   api_model="gpt-5", id=None)], None, 0,
         )
-        assert result["providers"][0]["api_base_url"] == "https://api.openai.com"
+        assert result["providers"][0]["api_base_url"] == "https://api.openai.com/v1"
 
 
 class TestValidation:

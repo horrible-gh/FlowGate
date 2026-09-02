@@ -43,6 +43,10 @@ def _token_rec(scope: str, doc_ref: str, dry_run_count: int = 0) -> dict:
     return {
         "token_id": "tok-1",
         "project": "flowgate",
+        # 0492 T0018: `group_id` is a real tokens column (migration 075a) and Step 3 now
+        # compares it as the `group` axis. Leaving it out of the fixture described a token
+        # row that cannot exist, and a fail-closed group check is right to refuse it.
+        "group_id": "flowgate.default.0050",
         "issued_to": "user-1",
         "action_scope": scope,
         "doc_ref": doc_ref,

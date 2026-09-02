@@ -7,6 +7,8 @@ export interface RuntimeAiProvider {
   name: string
   exec_type: string
   kind: string
+  // Omitted or malformed values are deliberately not treated as supported by consumers.
+  capabilities?: Record<string, boolean>
 }
 
 interface RuntimeAiProvidersResponse {

@@ -294,7 +294,7 @@ const props = defineProps<{
    *  through an AI run and only answered with a 423 toast. */
   readOnly?: boolean
 }>()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { showToast } = useToast()
 const docTypeStore = useDocTypeStore()
 const aiProviderStore = useAiProviderStore()
@@ -520,7 +520,7 @@ async function fetchPlan() {
     const providerLoad = props.projectId
       ? aiProviderStore.ensureLoaded(props.projectId)
       : Promise.resolve()
-    if (!docTypeStore.loaded) await Promise.all([docTypeStore.loadLabels(), providerLoad])
+    if (!docTypeStore.loaded) await Promise.all([docTypeStore.loadLabels(locale.value), providerLoad])
     else await providerLoad
     const res = await getRequest<any>(`/api/v1/documents/${encodeURIComponent(props.docId)}/work-plan`)
     serverRegisteredProvidersKnown.value = Array.isArray(res.data.registered_providers)

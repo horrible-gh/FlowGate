@@ -47,6 +47,22 @@ describe('GitUntrackedConflictDialog', () => {
     )
   })
 
+  it('sends files for a group-scoped commit recovery', async () => {
+    postRequest.mockResolvedValue({ data: { ok: true, result: { remaining_untracked: [] } } })
+    const wrapper = mountDialog()
+
+    const outcome = (wrapper.vm as any).resolve('flowgate.default.0483', ['a.txt'], 'group')
+    await Promise.resolve()
+    await (wrapper.vm as any).choose('commit')
+
+    expect(await outcome).toBe('proceed')
+    expect(postRequest).toHaveBeenCalledWith(
+      '/api/v1/groups/flowgate.default.0483/git/untracked-commit',
+      expect.objectContaining({ files: ['a.txt'] }),
+    )
+    expect(postRequest.mock.calls[0][1]).not.toHaveProperty('paths')
+  })
+
   it('resolves proceed once delete clears every blocked path', async () => {
     postRequest.mockResolvedValue({ data: { ok: true, result: { remaining_untracked: [] } } })
     const wrapper = mountDialog()
@@ -73,6 +89,36 @@ describe('GitUntrackedConflictDialog', () => {
     // now clears the rest
     postRequest.mockResolvedValue({ data: { ok: true, result: { remaining_untracked: [] } } })
     await (wrapper.vm as any).choose('remove')
+    expect(await outcome).toBe('proceed')
+  })
+
+  it('recovers mixed group blockers with action-specific subsets', async () => {
+    postRequest.mockResolvedValue({ data: { ok: true, result: { remaining_untracked: [] } } })
+    const wrapper = mountDialog()
+
+    const outcome = (wrapper.vm as any).resolve(
+      'flowgate.default.0483',
+      ['untracked.txt', 'tracked.txt'],
+      'group',
+      { untrackedFiles: ['untracked.txt'], trackedFiles: ['tracked.txt'] },
+    )
+    await Promise.resolve()
+
+    await (wrapper.vm as any).choose('commit')
+    expect(postRequest).toHaveBeenNthCalledWith(
+      1,
+      '/api/v1/groups/flowgate.default.0483/git/untracked-commit',
+      expect.objectContaining({ files: ['untracked.txt'] }),
+    )
+    expect((wrapper.vm as any).open).toBe(true)
+    expect((wrapper.vm as any).files).toEqual(['tracked.txt'])
+
+    await (wrapper.vm as any).choose('revert')
+    expect(postRequest).toHaveBeenNthCalledWith(
+      2,
+      '/api/v1/groups/flowgate.default.0483/git/untracked-revert',
+      { files: ['tracked.txt'] },
+    )
     expect(await outcome).toBe('proceed')
   })
 
