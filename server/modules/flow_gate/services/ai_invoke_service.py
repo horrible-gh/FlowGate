@@ -352,7 +352,15 @@ _RESOLVE_TOOL_SCHEMA = {
     "required": ["files", "complete"],
 }
 
-# ── Registry ─────────────────────────────────────────────────────────────────
+# ── Registry (flowgate.default.0501 T0008 T3: access functions moved to ai_invoke_runtime) ──
+# The mutable registry objects stay DEFINED here, unmoved: roughly thirty existing
+# tests reset them by a full `monkeypatch.setattr(svc, "_runs"/"_group_resume_locks", ...)`
+# reassignment, which a plain name-copy alias in a separate module would silently stop
+# observing (T3 §9's alias-divergence warning, confirmed concretely -- see
+# ai_invoke_runtime.py's module docstring). ai_invoke_runtime.py instead reaches back
+# into THIS module's current globals at call time, so it always sees whatever this
+# module (or a test) currently holds here.
+from modules.flow_gate.services import ai_invoke_runtime as _runtime
 
 _runs: dict[str, dict] = {}
 _runs_lock = threading.Lock()
@@ -379,11 +387,7 @@ _auto_resume: dict[str, dict] = {}
 _auto_resume_lock = threading.Lock()
 
 def _group_resume_lock(group_id: str) -> threading.Lock:
-    with _group_resume_locks_guard:
-        lock = _group_resume_locks.get(group_id)
-        if lock is None:
-            lock = _group_resume_locks[group_id] = threading.Lock()
-        return lock
+    return _runtime.group_resume_lock(group_id)
 
 def _http_error(status_code: int, code: str, message: str, **payload) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"code": code, "message": message, **payload})
@@ -533,15 +537,10 @@ def _next_run_id() -> str:
         return f"aiv_{date_str}_{_run_counter:06d}"
 
 def _active_run_for_group(group_id: str) -> Optional[dict]:
-    with _runs_lock:
-        for run in _runs.values():
-            if run["group_id"] == group_id and run["status"] != "finished":
-                return run
-    return None
+    return _runtime.active_run_for_group(group_id)
 
 def get_run_record(run_id: str) -> Optional[dict]:
-    with _runs_lock:
-        return _runs.get(run_id)
+    return _runtime.get_run_record(run_id)
 
 def is_run_live(run_id: str) -> bool:
     """Is *run_id* an admission this process still tracks and has not finished?
@@ -551,8 +550,7 @@ def is_run_live(run_id: str) -> bool:
     ``GET /ai-invoke/leases`` route — a duplicated check here is exactly how the
     screen and the server told two different stories before (0401 NR0003 §3 cause 3).
     """
-    run = get_run_record(run_id)
-    return run is not None and run.get("status") != "finished"
+    return _runtime.is_run_live(run_id)
 
 def _record_orphaned_lease_run(lease_row: dict, end_reason: str) -> None:
     """Give a dead lease's run a durable end record, if it doesn't already have one
@@ -842,48 +840,10 @@ def _run_detail_from_row(row: dict) -> dict:
 def list_live_runs(*, group_id: Optional[str] = None, project_id: Optional[str] = None) -> list[dict]:
     """In-memory runs still going, scoped to exactly one of group/project (caller's
     choice) — the "live" half of GET /ai-invoke/runs (L0007 §2.10.3)."""
-    with _runs_lock:
-        snapshot = list(_runs.values())
-    items = []
-    for run in snapshot:
-        if run["status"] == "finished":
-            continue
-        if group_id is not None and run["group_id"] != group_id:
-            continue
-        if project_id is not None and run["project_id"] != project_id:
-            continue
-        items.append(_run_list_item_live(run))
-    return items
+    return _runtime.list_live_runs(group_id=group_id, project_id=project_id)
 
 def _run_list_item_live(run: dict) -> dict:
-    status = run["status"]
-    if status == "running" and run.get("pause_requested"):
-        status = "pause_requested"
-    provider = run.get("provider") or {}
-    return {
-        "run_id": run["run_id"],
-        "group_id": run["group_id"],
-        "project_id": run["project_id"],
-        "doc_ref": run["doc_ref"],
-        "mode": run["mode"],
-        "status": status,
-        "provider_id": provider.get("id") or run.get("provider_id"),
-        "provider_name": provider.get("name"),
-        "docs_target": run.get("docs_target"),
-        "attempts_used": int(run.get("attempts_used") or 0),
-        "hop_item_seq": run.get("hop_item_seq"),
-        "started_at": run.get("started_at"),
-        # L0007 §2.10.3: the finish-only columns stay null on a live row — present, not
-        # omitted, so a client can render every item through the same column set.
-        "outcome": None,
-        "docs_reached": None,
-        "end_reason": None,
-        "stop_code": None,
-        "resumable": None,
-        "finished_at": None,
-        "duration_ms": None,
-        "last_message_excerpt": None,
-    }
+    return _runtime.run_list_item_live(run)
 
 def _run_list_item_stored(row: dict) -> dict:
     return {
