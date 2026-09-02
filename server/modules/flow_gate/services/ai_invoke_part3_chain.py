@@ -40,6 +40,14 @@ from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate import template_provision
 from modules.flow_gate.services import api_server_tools, git_service, invoke_mention_service, process_runner, q_service, register_binding, token_service
+from modules.flow_gate.services.ai_invoke_helpers import (
+    map_lookup as _map_lookup,
+    review_key as _review_key,
+    review_findings as _review_findings,
+    normalize_ws as _normalize_ws,
+    review_finding_digest,
+)
+from modules.flow_gate.services import ai_invoke_helpers
 from modules.flow_gate.services.git_service import GitServiceError
 from modules.flow_gate.settings import ai_settings_service
 from modules.flow_gate.storage import paths as storage_paths
@@ -880,12 +888,6 @@ def _provider_name_of(project_id: Optional[str], provider_id: Optional[str]) -> 
             return provider.get("name") or provider_id
     return provider_id
 
-def _map_lookup(overrides: Optional[dict], item_seq: Optional[int]):
-    """Both key spellings, exactly as _resolve_continuation_hop_override accepts them."""
-    if not overrides or item_seq is None:
-        return None
-    return overrides.get(str(item_seq), overrides.get(item_seq))
-
 def resolve_review_count(review_count_overrides: Optional[dict], item_seq: Optional[int]) -> int:
     """How many times this step's output is reviewed (L0008 §2.2).
 
@@ -910,11 +912,11 @@ def resolve_round_limit(count: int) -> int:
     rejection): there is no round number at which the chain gives up and calls a human.
     Only a `pass`, a `hold`, or a loop breaker ends it.
     """
-    return REVIEW_ROUNDS_NO_LIMIT if count == -1 else int(count)
+    return ai_invoke_helpers.resolve_round_limit(count, REVIEW_ROUNDS_NO_LIMIT)
 
 def review_rounds_remain(rounds_used: int, limit: int) -> bool:
     """Is another review round allowed? An unbounded budget always says yes."""
-    return limit == REVIEW_ROUNDS_NO_LIMIT or rounds_used < limit
+    return ai_invoke_helpers.review_rounds_remain(rounds_used, limit, REVIEW_ROUNDS_NO_LIMIT)
 
 def resolve_reviewer(
     reviewer_overrides: Optional[dict], item_seq: Optional[int], project_id: Optional[str]
@@ -1037,57 +1039,6 @@ def _parse_rejection_history(raw) -> list:
         if isinstance(parsed, list):
             return [item for item in parsed if isinstance(item, dict)]
     return []
-
-def _review_key(value) -> str:
-    """One comparable form for a `document_reviews.id` (T0005 2.1.2).
-
-    The column is a positive integer, but it round-trips through the rejection_history
-    JSON and can come back as "244". Comparing normalized strings makes 244 and "244"
-    one key. Values that cannot identify a review row -- None, bool, an empty or
-    whitespace-only string, a non-numeric string -- all fold to "", which matches nothing.
-    """
-    if isinstance(value, bool):
-        return ""
-    if isinstance(value, int):
-        return str(value) if value > 0 else ""
-    if isinstance(value, str):
-        text = value.strip()
-        if not text or not text.isdecimal():
-            return ""
-        try:
-            return text if int(text) > 0 else ""
-        except ValueError:
-            return ""
-    return ""
-
-def _review_findings(review: Optional[dict]) -> list:
-    """A review row's findings as a list — the column stores a JSON array string."""
-    findings = (review or {}).get("findings")
-    if isinstance(findings, str):
-        try:
-            findings = json.loads(findings)
-        except (TypeError, ValueError):
-            return []
-    return findings if isinstance(findings, list) else []
-
-def _normalize_ws(value) -> str:
-    return " ".join(str(value or "").split())
-
-def review_finding_digest(review: Optional[dict]) -> str:
-    """A deterministic fingerprint of one review's findings (L0008 §2.3).
-
-    Whitespace-normalized so a reflowed line is not mistaken for a new complaint. Two
-    consecutive `issues` verdicts with the SAME digest mean the rework changed nothing the
-    reviewer cares about, which is the practical safety net behind an unbounded -1.
-    """
-    parts = []
-    for finding in _review_findings(review):
-        if isinstance(finding, dict):
-            parts.append(_normalize_ws(finding.get("locus")) + "\u241f"
-                         + _normalize_ws(finding.get("note")))
-        else:
-            parts.append(_normalize_ws(finding))
-    return hashlib.sha256("\u241e".join(parts).encode("utf-8")).hexdigest()
 
 def _check_expected_progress(
     bundle: dict, slot: dict, reviews: list[dict]

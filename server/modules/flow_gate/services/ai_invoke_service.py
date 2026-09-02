@@ -74,6 +74,7 @@ from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate import template_provision
 from modules.flow_gate.services import api_server_tools, git_service, invoke_mention_service, process_runner, q_service, register_binding, token_service
+from modules.flow_gate.services.ai_invoke_helpers import prioritize_chain as _prioritize_chain
 from modules.flow_gate.services.git_service import GitServiceError
 from modules.flow_gate.settings import ai_settings_service
 from modules.flow_gate.storage import paths as storage_paths
@@ -2925,16 +2926,6 @@ def _resolve_continuation_hop_note(
     except Exception:  # noqa: BLE001 — a resolution failure must not stall the hop
         logger.warning("continuation hop note resolution failed for %s", doc_ref, exc_info=True)
         return None
-
-def _prioritize_chain(chain: list[dict], provider_id: str) -> list[dict]:
-    """Move the assigned provider to the front, keeping the rest as the fallback tail
-    (D0004 §3: assignment beats fallback, but a spawn failure falls through). Unlike an explicit
-    UI pin — which collapses the chain to one provider and disables fallback — a doc-type
-    assignment only re-orders, so the existing _worker fallback loop still protects the run."""
-    head = [p for p in chain if p.get("id") == provider_id]
-    if not head:
-        return chain
-    return head + [p for p in chain if p.get("id") != provider_id]
 
 # ── Part loading (see the file-split note in the module docstring) ────────────
 _PART_FILES = (
