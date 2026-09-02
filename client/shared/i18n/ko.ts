@@ -201,12 +201,6 @@ export default {
       ai: {
         title: 'AI 설정',
         sub: 'AI 프로바이더 등록과 우선순위(대체 순서), 기본 선택을 관리합니다.',
-        execution_policy: {
-          title: '실행 정책',
-          repeat_count_max_label: '최대 반복 횟수',
-          hint: '검수 횟수·재시작 횟수 등 여러 화면의 반복 횟수 선택지 상한입니다. 화면별 기본 선택값(검수 3회, 재시작 1회 등)은 이 값을 낮춰도 바뀌지 않습니다.',
-          save_failed: '실행 정책을 저장하지 못했습니다.',
-        },
       },
       log: {
         label: '로그',

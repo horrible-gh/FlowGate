@@ -201,12 +201,6 @@ export default {
       ai: {
         title: 'AI Settings',
         sub: 'Manage AI provider registration, priority (fallback order) and the default selection.',
-        execution_policy: {
-          title: 'Execution policy',
-          repeat_count_max_label: 'Maximum repeat count',
-          hint: 'The upper bound for repeat-count choices across several screens (review count, restart count, etc). Per-feature defaults (e.g. review 3, restart 1) do not change when you lower this value.',
-          save_failed: 'Failed to save the execution policy.',
-        },
       },
       log: {
         label: 'Log',

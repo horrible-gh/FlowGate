@@ -356,7 +356,6 @@ import AiProviderSelect from './AiProviderSelect.vue'
 import WorkflowStepPicker from './WorkflowStepPicker.vue'
 import type { WorkflowStepItem, WorkflowStepPickerState } from '../types/workflowStepPicker'
 import { DEFAULT_INSTRUCTION_MODE, type WorkPlanFillPreset } from '../types/workPlanFillPreset'
-import { DEFAULT_EXECUTION_POLICY, repeatCountChoices, type RuntimeExecutionPolicy } from '../stores/aiProvider'
 import {
   CONTINUOUS_WORK_STEP_TIMEOUT_KEY,
   STEP_TIMEOUT_OPTIONS_MIN,
@@ -377,11 +376,6 @@ const props = defineProps<{
   providerLoading?: boolean
   providerErrored?: boolean
   providerPinned?: boolean
-  // 0490 T0007 §3.4: this component reads provider state via props, never its own
-  // useAiProviderStore() call — same convention as providers/providerLoading above. Owned by
-  // MainPanel (aiProviderStore.executionPolicy). Optional so existing specs that omit it keep
-  // rendering the default ceiling (§3.2/§3.4 fallback).
-  executionPolicy?: RuntimeExecutionPolicy
 }>()
 
 const emit = defineEmits<{
@@ -459,12 +453,7 @@ watch(stepTimeoutMinutes, (value) => {
 // matches the engine's pre-existing fixed behavior. Session-scoped like reviewMode — reset
 // on every open by installPreset, never remembered in localStorage (unlike the timeout
 // picker above): this is execution policy for THIS run, not a standing UI preference.
-// 0490 T0007 §4-3: the finite tail is server-controlled (R0001); repeat_count_min=1 keeps
-// RESTART_COUNT_DEFAULT always a valid option, so unlike AiInvokeDialog's reviewCount this needs
-// no clamp (§3.5).
-const RESTART_COUNT_OPTIONS = computed(() =>
-  repeatCountChoices(props.executionPolicy ?? DEFAULT_EXECUTION_POLICY, { allowZero: true }),
-)
+const RESTART_COUNT_OPTIONS = [-1, 0, 1, 2, 3]
 const RESTART_COUNT_DEFAULT = 1
 const restartMaxAttempts = ref(RESTART_COUNT_DEFAULT)
 function restartCountOptionLabel(opt: number): string {
@@ -498,15 +487,10 @@ const autoApproveItemSeqs = ref<number[]>([])
 // 0414 T0012 / P0007: [검수] 탭. 허용 집합이자 드롭다운의 DOM 표시 순서다 — -1 이 맨 앞이고
 // 0 이 그 다음이다(T0004, TR0005 rev5 가 다섯 번 반려하며 못박은 순서). 숫자를 문자열
 // 의미값으로 바꾸거나 0 을 앞으로 당기지 않는다. 의미: -1 통과할 때까지 / 0 안 함(기본값) /
-// 1~상한(설정 ai_repeat_count_max, 기본 3) 지정 횟수. 0414 M0020: 이 숫자는 [검수+수정] 짝의 횟수다 — 지적이 나온 라운드마다
+// 1~3 지정 횟수. 0414 M0020: 이 숫자는 [검수+수정] 짝의 횟수다 — 지적이 나온 라운드마다
 // 그 단계의 작업 프로바이더가 수정하고, 마지막 수정까지 끝나면 다음 단계로 넘어간다.
 // pass 가 나오면 남은 횟수와 무관하게 즉시 종료.
-// 0490 T0007 rev4: RESTART_COUNT_OPTIONS 와 대칭으로 고정 배열을 걷어낸다 — 반려("각종"이
-// 이 파일 안의 두 번째 select도 가리킨다)가 지목한 지점. 같은 SSOT(repeatCountChoices +
-// executionPolicy)를 쓴다.
-const REVIEW_COUNT_OPTIONS = computed(() =>
-  repeatCountChoices(props.executionPolicy ?? DEFAULT_EXECUTION_POLICY, { allowZero: true }),
-)
+const REVIEW_COUNT_OPTIONS = [-1, 0, 1, 2, 3]
 const REVIEW_COUNT_DEFAULT = 0
 // item_seq -> 검수 횟수. `overrides` 와 같은 규칙으로 기본값(0 = 안 함)인 행은 키를 만들지
 // 않는다 — 화면의 셀렉트는 키가 없으면 0 을 그린다.
@@ -630,7 +614,7 @@ function reviewerValue(item: WorkflowStepItem): string {
 function onReviewCountChange(item: WorkflowStepItem, value: string) {
   const count = Number(value)
   const next = { ...reviewCountOverrides.value }
-  if (!REVIEW_COUNT_OPTIONS.value.includes(count) || count === REVIEW_COUNT_DEFAULT) delete next[item.item_seq]
+  if (!REVIEW_COUNT_OPTIONS.includes(count) || count === REVIEW_COUNT_DEFAULT) delete next[item.item_seq]
   else next[item.item_seq] = count
   reviewCountOverrides.value = next
 }
@@ -965,7 +949,7 @@ function onProceed() {
   const reviewerOverridesOut: Record<number, string> = {}
   for (const item of executionSteps.value) {
     const count = reviewCountValue(item)
-    if (count === REVIEW_COUNT_DEFAULT || !REVIEW_COUNT_OPTIONS.value.includes(count)) continue
+    if (count === REVIEW_COUNT_DEFAULT || !REVIEW_COUNT_OPTIONS.includes(count)) continue
     reviewCountOverridesOut[item.item_seq] = count
     const reviewer = reviewerValue(item)
     if (reviewer) reviewerOverridesOut[item.item_seq] = reviewer

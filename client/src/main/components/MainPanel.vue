@@ -1089,7 +1089,6 @@
       :provider-pinned="aiProviderStore.pinned"
       :provider-loading="aiProviderStore.loading"
       :provider-errored="!!aiProviderStore.error"
-      :execution-policy="aiProviderStore.executionPolicy"
       @confirm="onContinuousDialogConfirm"
       @update:provider="aiProviderStore.selectProvider"
       @clear-provider-pin="aiProviderStore.clearPin"

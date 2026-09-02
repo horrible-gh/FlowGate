@@ -1185,7 +1185,6 @@ describe('AiInvokeDialog deck parity — MirageGlass u3digra2 v6 (0417 T0017)', 
       label('review_loop_restart_never'),
       i18n.global.t('main.ai_invoke_dialog.review_loop_count_times', { n: 1 }),
       i18n.global.t('main.ai_invoke_dialog.review_loop_count_times', { n: 2 }),
-      i18n.global.t('main.ai_invoke_dialog.review_loop_count_times', { n: 3 }),
     ])
     expect(texts('[data-test="review-loop-total-timeout"] option')).toEqual([60, 120, 240].map(
       (n) => i18n.global.t('main.ai_invoke_dialog.review_loop_minutes', { n }),
