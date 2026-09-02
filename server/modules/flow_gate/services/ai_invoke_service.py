@@ -18,28 +18,53 @@ Run state lives in an in-memory registry for the server's lifetime (history
 persistence is DEFERRED per D0004); a restart loses in-flight runs, which the
 status API surfaces as 404 run_not_found.
 
-── File split (flowgate.default.0497 T0009) ─────────────────────────────────
+── File split (flowgate.default.0497 T0009, re-split flowgate.default.0501 T4) ──
 
 This module's body had grown past 9,000 lines in one file — too large to read or
 edit in one piece, by a person or by a tool. The blank lines between top-level
-definitions were collapsed to one, and the body was then cut into three files at
-two existing section boundaries:
+definitions were collapsed to one, and the body was then cut into files at
+existing section boundaries:
 
-  ai_invoke_service.py       constants, run registry, scratch, oracles, start_run
-  ai_invoke_part2_worker.py  worker, retries, CLI/API adapters, judging, stop rows
-  ai_invoke_part3_chain.py   status/cancel, pause/resume, next hop, the review gate
+  ai_invoke_service.py        constants, run registry, scratch, oracles, start_run
+  ai_invoke_provider_api.py   HTTP/API transport to OpenAI/Anthropic-compatible endpoints
+  ai_invoke_provider_cli.py   subprocess/CLI transport (spawn, watchdog, exit codes)
+  ai_invoke_worker.py         worker orchestration (loop, retry, judging, finalize,
+                               stop-code records, FlowGate-tool dispatch)
+  ai_invoke_part3_chain.py    status/cancel, pause/resume, next hop, the review gate
 
-`_load_parts()` at the bottom of this file executes the other two IN THIS MODULE'S
-globals(), in the original order. Nothing about the namespace moves: definition
-order, module-level state and every attribute visible from outside (including the
-private ones tests patch) are exactly what they were before the split. No code was
-rewritten — the lines were carried over verbatim, which is why the compiled code
-object of every function is byte-identical to the pre-split one.
+T0009 originally cut this into three parts (this file, ai_invoke_part2_worker.py,
+ai_invoke_part3_chain.py); flowgate.default.0501 T4 re-split the worker part along
+its actual module boundary — worker orchestration vs. provider API transport vs.
+provider CLI/process transport — replacing ai_invoke_part2_worker.py with the three
+files above. See each new file's own header for what it holds and what it is
+FORBIDDEN from importing (no chain/review/lease/runtime-registry reach-in from
+either provider module).
 
-Each part repeats the same import block so that opening one file on its own still
-shows what it uses; a part imported directly (by tooling that walks the package)
-fills the rest of the namespace from this module. Turning the parts into a real
-import structure is a separate group's refactoring task, deliberately not done here.
+`_load_parts()` at the bottom of this file executes the other parts IN THIS
+MODULE'S globals(), in the order listed in `_PART_FILES`. Nothing about the
+namespace moves: definition order (within each part), module-level state and
+every attribute visible from outside (including the private ones tests patch)
+are exactly what they were before either split. No code was rewritten in T4's
+re-split either — every line was carried over verbatim from
+ai_invoke_part2_worker.py into whichever of the three new files now holds it,
+which is why the compiled code object of every function is still byte-identical
+to the pre-split one.
+
+Each part repeats its own import block so that opening one file on its own still
+shows what it uses (ai_invoke_worker.py and ai_invoke_part3_chain.py repeat the full
+block by T0009's original convention; the two provider modules carry only the
+imports their own pure-transport code actually uses, deliberately -- T4's forbidden-
+import guard checks THESE files by name). A part imported directly (by tooling that
+walks the package) fills the rest of the namespace from this module. Because every
+part is exec()'d
+into this module's own globals() dict, a bare global-name reference in any part
+(e.g. ai_invoke_worker.py's turn loop calling `_call_openai`, defined in
+ai_invoke_provider_api.py) resolves through THIS module's current globals at call
+time — the same dict `monkeypatch.setattr(svc, "_call_openai", fake)` patches, so
+that pattern keeps working across the file boundary with no extra indirection.
+Turning the parts into a normally-imported module structure (rather than
+exec()-assembled ones sharing this module's namespace) is a separate group's
+refactoring task, deliberately not done here.
 """
 
 from __future__ import annotations
@@ -2889,7 +2914,9 @@ def _resolve_continuation_hop_note(
 
 # ── Part loading (see the file-split note in the module docstring) ────────────
 _PART_FILES = (
-    "ai_invoke_part2_worker.py",
+    "ai_invoke_provider_api.py",
+    "ai_invoke_provider_cli.py",
+    "ai_invoke_worker.py",
     "ai_invoke_part3_chain.py",
 )
 

@@ -1,0 +1,249 @@
+"""flowgate.default.0501 T4: ai_invoke worker / provider transport module boundary.
+
+T4 split ai_invoke_part2_worker.py (flowgate.default.0497 T0009's part 2 of 3) into
+three files along the actual module boundary:
+
+  ai_invoke_worker.py         provider-neutral worker orchestration (loop, retry,
+                               judging, finalize, stop-code records, FlowGate-tool
+                               dispatch)
+  ai_invoke_provider_api.py   HTTP/API transport (_call_openai / _call_anthropic /
+                               _http_post_json and prompt/config shaping helpers)
+  ai_invoke_provider_cli.py   subprocess/CLI transport (spawn, watchdog, exit codes)
+
+This file covers the two conditions T4 itself named as the hard requirement:
+
+  * the pre-existing, pervasive `monkeypatch.setattr(svc, "_call_openai"/"_call_anthropic",
+    fake)` pattern must still be observed by the REAL worker path even though the
+    call site (`_api_execute`, now in ai_invoke_worker.py) and the callee
+    (`_call_openai`/`_call_anthropic`, now in ai_invoke_provider_api.py) live in
+    different files. This works because every part file is exec()'d into
+    ai_invoke_service's own globals() by `_load_parts()` (see that module's
+    docstring): a bare global-name reference in ai_invoke_worker.py resolves through
+    THAT SAME globals dict `monkeypatch.setattr(svc, ...)` patches, at call time --
+    no lazy-import indirection needed, unlike ai_invoke_runtime.py's registry
+    accessors (a NORMALLY-imported module with its own separate globals dict).
+  * the import-dependency guard: neither provider module may import
+    ai_invoke_part3_chain, review/rework/chain-progression, group lease DB access,
+    or the runtime registry owner (ai_invoke_runtime.py) -- and ai_invoke_worker.py
+    does not itself define lease-acquisition-policy or run-id-allocation logic
+    (those stay in ai_invoke_service.py / ai_invoke_runtime.py; worker orchestration
+    only calls into them).
+"""
+from __future__ import annotations
+
+import ast
+import os
+import sys
+import threading
+import time
+from pathlib import Path
+
+import pytest
+
+os.environ.setdefault("TESTING", "1")
+os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
+os.environ.setdefault("ALLOWED_ORIGIN", "http://localhost")
+os.environ.setdefault("CONTEXT", "/flowgate")
+os.environ.setdefault("DB_TYPE", "sqlite")
+
+_SERVER_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_SERVER_DIR))
+_SERVICES_DIR = _SERVER_DIR / "modules" / "flow_gate" / "services"
+_PROVIDER_API_PATH = _SERVICES_DIR / "ai_invoke_provider_api.py"
+_PROVIDER_CLI_PATH = _SERVICES_DIR / "ai_invoke_provider_cli.py"
+_WORKER_PATH = _SERVICES_DIR / "ai_invoke_worker.py"
+
+from modules.flow_gate.services import ai_invoke_service as svc  # noqa: E402
+
+
+def _api_run(**over):
+    """A minimal run dict the worker's provider-chain walk can drive without a
+    database -- same shape test_glm_diagnosis_paths_0505.py's `_api_run` uses for
+    `_api_execute` directly, extended with the couple of fields
+    `_execute_provider_chain` (one call frame further up, inside `_worker`'s own
+    while-loop) also touches."""
+    run = {
+        "run_id": "aiv_boundary_test",
+        "project_id": "flowgate",
+        "group_id": "flowgate.default.0501",
+        "doc_ref": None,
+        "action_scope": "new",
+        "mode": "single",
+        "docs_target": 1,
+        "raw_token": "tok_raw",
+        "token_id": "tok_20260902_000002",
+        "cancel_event": threading.Event(),
+        "started_mono": time.monotonic(),
+        "timeout_sec": 3600,
+        "api_base_url": "http://127.0.0.1:1/flowgate/api/v1",
+        "module": "default",
+        "attempt_no": 1,
+        "fallback_history": [],
+        "provider": None,
+        "provider_id": None,
+    }
+    run.update(over)
+    return run
+
+
+def _openai_provider():
+    return {"id": "aip_openai", "name": "OpenAI-compat", "exec_type": "api", "kind": "openai",
+            "api_base_url": "https://api.example.invalid/v1", "api_model": "gpt-test"}
+
+
+def _anthropic_provider():
+    return {"id": "aip_anthropic", "name": "Anthropic-compat", "exec_type": "api", "kind": "claude",
+            "api_base_url": "https://api.example.invalid", "api_model": "claude-test"}
+
+
+class TestCallOpenaiAnthropicPatchCrossesTheFileBoundary:
+    """The hard compatibility requirement T4 named explicitly: a test that patches
+    `svc._call_openai` / `svc._call_anthropic` (defined in ai_invoke_provider_api.py)
+    must still see the patch take effect when the REAL worker path (`_execute_provider_chain`,
+    defined in ai_invoke_worker.py -- the function `_worker`'s own while-loop calls
+    every attempt) drives an API provider through to that call."""
+
+    def test_execute_provider_chain_uses_the_patched_call_openai(self, monkeypatch):
+        monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret",
+                            lambda scope, pid: "sk-test")
+        calls = {"n": 0}
+
+        def fake_call_openai(*args, **kwargs):
+            calls["n"] += 1
+            tool_name = args[5]
+            return "ok", {"id": "tc1", "name": tool_name,
+                          "input": {"doc_type": "standard", "title": "t", "content": "c"}}, \
+                   {"role": "assistant", "content": "ok", "tool_calls": []}
+
+        monkeypatch.setattr(svc, "_call_openai", fake_call_openai)
+        monkeypatch.setattr(svc, "_inbox_register", lambda *a: (201, {"doc_id": "d1"}))
+
+        run = _api_run()
+        started_ok = svc._execute_provider_chain(run, [_openai_provider()], "prompt")
+
+        assert started_ok is True
+        assert calls["n"] >= 1, (
+            "svc._execute_provider_chain (ai_invoke_worker.py) did not reach the "
+            "monkeypatched svc._call_openai (ai_invoke_provider_api.py) -- the "
+            "cross-file global lookup regressed"
+        )
+
+    def test_execute_provider_chain_uses_the_patched_call_anthropic(self, monkeypatch):
+        monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret",
+                            lambda scope, pid: "sk-test")
+        calls = {"n": 0}
+
+        def fake_call_anthropic(*args, **kwargs):
+            calls["n"] += 1
+            tool_name = args[5]
+            return "ok", [{"id": "tc1", "name": tool_name,
+                           "input": {"doc_type": "standard", "title": "t", "content": "c"}}], \
+                   {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}
+
+        monkeypatch.setattr(svc, "_call_anthropic", fake_call_anthropic)
+        monkeypatch.setattr(svc, "_inbox_register", lambda *a: (201, {"doc_id": "d1"}))
+
+        run = _api_run()
+        started_ok = svc._execute_provider_chain(run, [_anthropic_provider()], "prompt")
+
+        assert started_ok is True
+        assert calls["n"] >= 1, (
+            "svc._execute_provider_chain (ai_invoke_worker.py) did not reach the "
+            "monkeypatched svc._call_anthropic (ai_invoke_provider_api.py) -- the "
+            "cross-file global lookup regressed"
+        )
+
+    def test_assembled_module_still_exposes_both_names(self):
+        # T4's explicit end-state requirement: whichever mechanism is used, the
+        # ASSEMBLED ai_invoke_service module must still carry every symbol test code
+        # reaches via svc.<name>, especially these two.
+        assert callable(svc._call_openai)
+        assert callable(svc._call_anthropic)
+
+
+class TestImportDependencyGuard:
+    """T4's recommended AST guard: neither new provider module may reach into
+    chain/review/rework/lease-DB/runtime-registry territory, and the worker module
+    does not own lease-acquisition policy or run-id allocation itself."""
+
+    _FORBIDDEN_SUFFIXES = (
+        "ai_invoke_part3_chain",
+        "ai_invoke_runtime",
+        "group_ai_leases",
+    )
+
+    def _assert_no_forbidden_imports(self, path: Path):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                assert not any(module.endswith(s) for s in self._FORBIDDEN_SUFFIXES), (
+                    f"{path.name} imports forbidden module {module!r}"
+                )
+                for alias in node.names:
+                    assert not any(alias.name.endswith(s) for s in self._FORBIDDEN_SUFFIXES), (
+                        f"{path.name} imports forbidden name {alias.name!r} from {module!r}"
+                    )
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert not any(alias.name.endswith(s) for s in self._FORBIDDEN_SUFFIXES), (
+                        f"{path.name} imports forbidden module {alias.name!r}"
+                    )
+
+    def test_provider_api_module_has_no_forbidden_imports(self):
+        self._assert_no_forbidden_imports(_PROVIDER_API_PATH)
+
+    def test_provider_cli_module_has_no_forbidden_imports(self):
+        self._assert_no_forbidden_imports(_PROVIDER_CLI_PATH)
+
+    def test_worker_module_does_not_define_lease_acquisition_or_run_id_allocation(self):
+        """T3 (flowgate.default.0501 T0008) put run-id allocation and lease
+        acquisition/admission in ai_invoke_service.py / ai_invoke_runtime.py, not in
+        the worker. T4 must not have quietly pulled either back in while relocating
+        the worker's own code around them."""
+        tree = ast.parse(_WORKER_PATH.read_text(encoding="utf-8"), filename=str(_WORKER_PATH))
+        top_level_names = {
+            node.name for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        }
+        forbidden_names = {"_next_run_id", "start_run", "_acquire_group_lease"}
+        offenders = top_level_names & forbidden_names
+        assert not offenders, f"ai_invoke_worker.py should not define {offenders}"
+
+    def test_provider_modules_do_not_call_exec_or_eval(self):
+        """Both provider modules are themselves exec()'d by _load_parts() -- but
+        neither should itself call exec/eval, which would be a second, unaudited
+        layer of code assembly inside a module that is supposed to be pure
+        transport."""
+        for path in (_PROVIDER_API_PATH, _PROVIDER_CLI_PATH):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                    assert node.func.id not in ("exec", "eval"), f"{path.name} calls {node.func.id}()"
+
+
+class TestFileSplitIsComplete:
+    """The old single file is gone and the assembled module still loads every
+    function T4's own plan named for each of the three new files."""
+
+    def test_ai_invoke_part2_worker_no_longer_exists(self):
+        assert not (_SERVICES_DIR / "ai_invoke_part2_worker.py").exists()
+
+    def test_the_three_new_files_exist(self):
+        for path in (_PROVIDER_API_PATH, _PROVIDER_CLI_PATH, _WORKER_PATH):
+            assert path.is_file(), path
+
+    @pytest.mark.parametrize("name", [
+        # worker orchestration
+        "_worker", "_execute_provider_chain", "_classify_end_reason", "_retry_eligible",
+        "_judge_hop", "_finalize_run", "_resolve_stop_code", "finished_payload",
+        # provider-neutral FlowGate-tool dispatch (stays with worker orchestration)
+        "_inbox_register", "_workflow_decide", "_resolve_conflict", "_api_execute",
+        # provider API transport
+        "_call_openai", "_call_anthropic", "_http_post_json", "_resolve_agent_api_base",
+        # provider CLI transport
+        "_cli_execute", "_resolve_cli_launch", "_start_progress_watchdog",
+        "_recover_cli_last_message",
+    ])
+    def test_symbol_still_reachable_on_the_assembled_module(self, name):
+        assert hasattr(svc, name), f"svc.{name} missing after the T4 file split"

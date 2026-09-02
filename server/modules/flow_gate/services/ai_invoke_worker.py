@@ -1,11 +1,45 @@
-# ────────────────────── ai_invoke_service part 2 of 3 — execution, judging, stop rows ──────────────────────
+# ────────────────────── ai_invoke_service part — worker orchestration ──────────────────────
 #
 # Not imported on its own in production: ai_invoke_service._load_parts() executes this
-# file in THAT module's globals(). It is a pure file split (flowgate.default.0497 T0009)
-# — the lines were carried over verbatim, nothing was rewritten. See the file-split note
-# in ai_invoke_service.py's module docstring.
+# file in THAT module's globals() (flowgate.default.0501 T4 — split out of
+# ai_invoke_part2_worker.py, itself flowgate.default.0497 T0009's part 2 of 3). The lines
+# below were carried over verbatim from ai_invoke_part2_worker.py, nothing was rewritten.
+# See the file-split note in ai_invoke_service.py's module docstring.
 #
-# Holds: the worker and its provider fallback loop, the no-output retry, the progress watchdog, the CLI and API adapters, the register context, judging, finishing and the stop-code records
+# Holds: provider-neutral worker orchestration — the hop/attempt loop and provider fallback
+# walk (_worker / _execute_provider_chain / _classify_end_reason), the no-output retry
+# (_retry_eligible / _recheck_no_output / _retry_provider_chain / _prepare_retry_token /
+# ...), judging (_judge_hop / _oracle_new_docs / _settle_and_judge), finalize and the
+# stop-code records (_finalize_run / _resolve_stop_code / _apply_stop_row /
+# _persist_run_record / stop_reason_text / mark_chain_stop / ...), and the FlowGate-tool
+# dispatch functions a hop's tool_calls reach (register/inbox/question/workflow-decide/
+# conversation — _inbox_register / _workflow_decide / _resolve_conflict /
+# _conversation_context / _api_bound_request / _api_read_document / _api_create_question /
+# _bind_register_context / _adopt_continuation_token / _register_envelope / ...). These
+# dispatch functions are providerneutral — both API and CLI providers can trigger them via
+# their own tool-call surfaces — which is why they live here and not in either provider
+# module.
+#
+# `_api_execute` (the API agent's outer turn loop) also stays here rather than in
+# ai_invoke_provider_api.py: it interleaves the raw HTTP turn-taking with dispatching
+# tool_calls to the FlowGate-tool functions above closely enough that a further split risked
+# behavior change (T4 §22 explicit guidance: when ambiguous, move less).
+# It calls `_call_openai` / `_call_anthropic` (defined in ai_invoke_provider_api.py) for the
+# raw model call, resolved as plain global names — this file, like its provider-module
+# siblings, is exec()'d into ai_invoke_service's own globals() by `_load_parts()`, so a bare
+# name reference here already resolves through THAT module's current globals dict at call
+# time. A test that does `monkeypatch.setattr(svc, "_call_openai", fake)` is setting exactly
+# the dict these names are looked up in — no separate lazy-import indirection is needed
+# (unlike ai_invoke_runtime.py's registry accessors, which live in a NORMALLY-imported
+# module with its own separate globals dict, and therefore need the lazy
+# `from ... import ai_invoke_service as svc; svc._runs` pattern to see a test's
+# reassignment). See test_ai_invoke_provider_boundary_0501.py for the regression lock.
+#
+# Keep provider-neutral: no raw HTTP JSON shape details (ai_invoke_provider_api.py), no
+# subprocess details (ai_invoke_provider_cli.py) — those are called through the two sibling
+# modules instead. This module does not own group-lease-acquisition policy or run-id
+# allocation (ai_invoke_runtime.py / ai_invoke_service.py own those); it only calls into
+# the existing functions there.
 
 from __future__ import annotations
 
@@ -45,7 +79,7 @@ from modules.flow_gate.storage import paths as storage_paths
 from modules.flow_gate.utils.api_key_crypto import ApiKeyCryptoError
 
 # Imported directly (tooling that walks the package) rather than executed by
-# _load_parts(): the earlier part's names are missing, so take them from the
+# _load_parts(): the earlier parts' names are missing, so take them from the
 # assembled module. Under _load_parts() they are already here and this is a no-op.
 if "RUN_TIMEOUT_BASE_SEC" not in globals():
     from modules.flow_gate.services import ai_invoke_service as _assembled
@@ -722,6 +756,7 @@ def _reset_attempt_state(run: dict) -> None:
         logger.warning("ai-invoke stale last-message cleanup failed for %s",
                        run["run_id"], exc_info=True)
 
+
 def _now_mono() -> float:
     """The monotonic clock behind ONE name, so the watchdog's 30-minute and 4-hour
     edges can be exercised without waiting for them (0446 T0014 §5). Nothing else
@@ -818,153 +853,6 @@ def _truncate_front(text: Optional[str], max_bytes: int = LAST_MESSAGE_MAX_BYTES
         return text
     return encoded[-max_bytes:].decode("utf-8", errors="replace")
 
-def _resolve_agent_api_base(operator_api_base: str) -> str:
-    """Compute the address this server can reach itself at.
-
-    Shared by external CLI process launch and, since 0505 T0008, the API provider's
-    server-mediated self-HTTP (`_resolve_transport_api_base`) -- both ask the same
-    question, "what address can this server use to reach itself?", and now get the
-    same answer. The browser/operator origin remains in the stored run and in the
-    help text/prompts a person reads. A configured agent origin wins; otherwise the
-    operator scheme and explicit port are retained while the host becomes loopback.
-    When the operator origin has no explicit port, the trusted local
-    ``FLOWGATE_PORT`` is used.
-    """
-    from urllib.parse import urlsplit, urlunsplit
-
-    if not operator_api_base:
-        return operator_api_base
-    parts = urlsplit(operator_api_base)
-    try:
-        operator_port = parts.port
-    except ValueError as exc:
-        raise ValueError(f"Invalid operator API base port: {exc}") from exc
-    if parts.scheme not in ("http", "https") or not parts.hostname:
-        raise ValueError(
-            "operator API base must be an absolute http(s) URL with a hostname"
-        )
-
-    from config import settings as _settings
-
-    configured = getattr(_settings, "FLOWGATE_AGENT_API_BASE", None)
-    if configured is not None:
-        setting = str(configured).strip()
-        if not setting:
-            raise ValueError(
-                "FLOWGATE_AGENT_API_BASE must not be empty or whitespace"
-            )
-        agent = urlsplit(setting)
-        try:
-            agent_port = agent.port
-        except ValueError as exc:
-            raise ValueError(f"Invalid FLOWGATE_AGENT_API_BASE port: {exc}") from exc
-        if (
-            agent.scheme not in ("http", "https")
-            or not agent.hostname
-            or agent.username is not None
-            or agent.password is not None
-            or agent.path not in ("", "/")
-            or agent.query
-            or agent.fragment
-        ):
-            raise ValueError(
-                "FLOWGATE_AGENT_API_BASE must be an http(s) origin "
-                "(scheme://host[:port])"
-            )
-        netloc = agent.hostname
-        if ":" in netloc:
-            netloc = f"[{netloc}]"
-        if agent_port is not None:
-            netloc += f":{agent_port}"
-        path = parts.path.rstrip("/")
-        return urlunsplit((agent.scheme, netloc, path, parts.query, ""))
-
-    port = operator_port
-    if port is None:
-        port = int(_settings.FLOWGATE_PORT)
-        if not 1 <= port <= 65535:
-            raise ValueError("FLOWGATE_PORT must be between 1 and 65535")
-    path = parts.path.rstrip("/")
-    return urlunsplit((parts.scheme, f"127.0.0.1:{port}", path, parts.query, ""))
-
-def _sanitize_diagnostic_base(url: Optional[str]) -> Optional[str]:
-    """Strip a live `api_base_url` down to a safe diagnostic snapshot (DB0005 2, 3.3, 5-5).
-
-    `operator_api_base`/`transport_api_base` store what this returns, never the raw
-    value: run["api_base_url"] is browser/operator-supplied and unvalidated end to end
-    (ai_invoke_routes._operator_facing_api_base -> token_routes._build_api_base ->
-    str(request.base_url) -> ai_invoke_service.start_run(api_base_url=...)), and
-    _resolve_agent_api_base's userinfo check only fires on its FLOWGATE_AGENT_API_BASE
-    branch -- CLI providers, never this API path. Anything that fails to parse as an
-    absolute http(s) URL, has no hostname, or carries an unparsable port becomes None
-    outright rather than a partially-sanitized value: a NULL diagnostic column is
-    honest about "could not be read safely"; a best-effort fragment is not.
-    """
-    if not url:
-        return None
-    from urllib.parse import urlsplit, urlunsplit
-
-    parts = urlsplit(url)
-    if parts.scheme not in ("http", "https") or not parts.hostname:
-        return None
-    try:
-        port = parts.port
-    except ValueError:
-        return None
-    netloc = parts.hostname
-    if ":" in netloc:
-        netloc = f"[{netloc}]"
-    if port is not None:
-        netloc += f":{port}"
-    return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
-
-def _resolve_transport_api_base(run: dict) -> str:
-    """The address this hop's server-mediated self-HTTP should dial (0505 T0008).
-
-    All six mediated self-HTTP call sites (conversation_context, conversation_turn_
-    register, api_bound_request, inbox_register, resolve_conflict, workflow_decide)
-    used to send `run["api_base_url"]` -- the operator/browser origin -- straight
-    back to themselves. That is fine when operator and agent origins coincide, but
-    wrong in exactly the topology 0472 B0001 hit for the CLI path: a public/proxy
-    origin that this server cannot dial as itself. `_resolve_agent_api_base` already
-    solved this for CLI launch; this wraps it for the API provider's self-HTTP and
-    caches the result on `run` so all six sites agree within one hop.
-    """
-    cached = run.get("_transport_api_base_resolved")
-    if cached:
-        return cached
-    operator_base = run.get("api_base_url") or ""
-    try:
-        resolved = _resolve_agent_api_base(operator_base)
-    except ValueError:
-        logger.warning(
-            "ai-invoke %s: transport base resolution failed for operator base %r, "
-            "falling back to operator base for self-HTTP",
-            run.get("run_id"), operator_base,
-        )
-        resolved = operator_base
-    run["_transport_api_base_resolved"] = resolved
-    return resolved
-
-def _canonicalize_cli_prompt(prompt: str, operator_api_base: str) -> tuple[str, str]:
-    """Rewrite only exact operator-base occurrences and return the exported base."""
-    agent_api_base = _resolve_agent_api_base(operator_api_base)
-    if agent_api_base and operator_api_base and agent_api_base != operator_api_base:
-        prompt = prompt.replace(operator_api_base, agent_api_base)
-    return prompt, agent_api_base or operator_api_base
-
-# ── No-progress watchdog (0446 T0014 §3) ─────────────────────────────────────
-#
-# `_cli_execute` waits for the worker with a single `communicate(timeout=...)`, so the
-# only question it could ever ask was "has the clock run out?". NR0003 measured both
-# ways that goes wrong on a fixed hour: a 74-minute TR hop that was still registering
-# documents got cut off, and a worker that died in its first minutes still held its
-# group for the remaining 59. This watchdog asks the other question — "is anything
-# still happening?" — beside that wait, on its own thread, and answers it from the two
-# signals the run already carries: the group's document max-seq and `git status` on the
-# group worktree. The stdin prompt is still handed to `communicate()` exactly once and
-# the watchdog never touches the pipes (§3-1).
-_watchdog_kill_lock = threading.Lock()
 
 def _observe_group_max_seq(run: dict) -> Optional[int]:
     """The document signal, or None for "could not observe" (§3-5).
@@ -979,490 +867,6 @@ def _observe_group_max_seq(run: dict) -> Optional[int]:
         logger.warning("ai-invoke %s: progress watchdog could not read the document seq",
                        run.get("run_id"), exc_info=True)
         return None
-
-def _claim_watchdog_kill(run: dict, proc, stop_event: threading.Event,
-                         kind: str, now: float) -> bool:
-    """Decide — once — whether the watchdog may end this process tree (§4-2).
-
-    Every other exit owns the same process, so the claim is taken under a lock and
-    re-checks all of them: the run thread already past `communicate()` (`stop_event`), a
-    user cancel (which outranks the clock in `_classify_end_reason` and must stay
-    `cancelled`), an earlier tick's claim, and a child that exited on its own between the
-    poll and here. Losing any of those races means doing nothing at all.
-    """
-    with _watchdog_kill_lock:
-        if stop_event.is_set():
-            return False
-        cancel_event = run.get("cancel_event")
-        if cancel_event is not None and cancel_event.is_set():
-            return False
-        if run.get("watchdog_kill") is not None:
-            return False
-        if proc.poll() is not None:
-            return False
-        anchor = run.get("stall_anchor_mono")
-        if anchor is None:
-            anchor = run["started_mono"]
-        run["watchdog_kill"] = {
-            "kind": kind,                       # "no_progress" | "absolute_cap"
-            "stalled_sec": int(max(0.0, now - anchor)),
-            "elapsed_sec": int(max(0.0, now - run["started_mono"])),
-            "threshold_sec": int(run.get("timeout_sec") or 0),
-            "absolute_cap_sec": _absolute_cap_sec(),
-            "last_progress_at": run.get("last_progress_at"),
-            "progress_observations": int(run.get("progress_observations") or 0),
-            "attempt_no": int(run.get("attempt_no") or 0),
-        }
-        # The same flag an expired `communicate()` raises, so this ends as end_reason
-        # "timeout" / stop_code "timeout" and NEVER as a provider spawn_failed or
-        # fast_fail (§4-3). `watchdog_kill` is the minimal in-memory mark that tells the
-        # two kinds apart; T#2 turns it into the durable sentence. No new stop code and
-        # no new column here (§3-4).
-        run["timed_out"] = True
-        claim = run["watchdog_kill"]
-    logger.warning(
-        "ai-invoke %s: %s — ending the worker (stalled %ss of %ss, elapsed %ss of %ss)",
-        run.get("run_id"), kind, claim["stalled_sec"], claim["threshold_sec"],
-        claim["elapsed_sec"], claim["absolute_cap_sec"],
-    )
-    try:
-        process_runner.kill_process_tree(proc)
-    except Exception:
-        logger.warning("ai-invoke %s: watchdog kill failed", run.get("run_id"), exc_info=True)
-    return True
-
-def _progress_watchdog_loop(run: dict, proc, stop_event: threading.Event,
-                            interval: float = STALL_POLL_INTERVAL_SEC) -> Optional[str]:
-    """The poll body. Returns the kill kind, or None if it never killed anything."""
-    source_root = Path(run["source_root"]) if run.get("source_root") else None
-    # §3-3: the run's OWN start snapshot is the first comparison point, and every tick
-    # after that is compared with the previous SUCCESSFUL read. Comparing forever against
-    # the baseline instead would count one early edit as progress on every later tick — a
-    # worker that wrote a single file and then hung would look busy until the ceiling.
-    git_watermark = run.get("dirty_baseline")
-    # A run with no source tree at all (the scratch fallback) has no source signal to
-    # fail: that is not an unreadable sample, and treating it as one would disable the
-    # guard outright for those runs. The document signal alone speaks for them.
-    git_enabled = source_root is not None and source_root.is_dir()
-    doc_watermark = run.get("baseline_seq")          # §3-2
-    if not git_enabled:
-        logger.info("ai-invoke %s: progress watchdog has no source tree — documents only",
-                    run.get("run_id"))
-
-    while not stop_event.wait(interval):
-        now = _now_mono()
-        cancel_event = run.get("cancel_event")
-        if cancel_event is not None and cancel_event.is_set():
-            return None
-        if proc.poll() is not None:
-            return None
-        # The ceiling is unconditional (§3-6): it does not care how much progress there
-        # has been, and it does not need a readable sample to be true.
-        if now - run["started_mono"] >= _absolute_cap_sec():
-            return "absolute_cap" if _claim_watchdog_kill(
-                run, proc, stop_event, "absolute_cap", now) else None
-
-        moved: list[str] = []
-        readable = True
-        seq = _observe_group_max_seq(run)
-        if seq is None:
-            readable = False
-        elif doc_watermark is None:
-            doc_watermark = seq                      # first reading: nothing to compare to
-        elif seq > doc_watermark:
-            doc_watermark = seq
-            moved.append("document")
-        if git_enabled:
-            paths = _git_status_paths(source_root)
-            if paths is None:
-                readable = False
-            elif git_watermark is None:
-                git_watermark = paths
-            elif paths != git_watermark:
-                git_watermark = paths
-                moved.append("source")               # added AND removed paths both count
-
-        if moved:
-            # §3-5, second half: one signal actually moving is enough — the other one
-            # standing still proves nothing about it.
-            run["stall_anchor_mono"] = now
-            run["last_progress_mono"] = now
-            run["last_progress_at"] = now_iso()
-            run["last_progress_signal"] = ",".join(moved)
-            run["progress_observations"] = int(run.get("progress_observations") or 0) + 1
-            continue
-        if not readable:
-            # §3-5, first half: an unreadable sample means "unknown", not "nothing
-            # happened". Warn and let the next tick decide. A permanently blind run is
-            # still ended on time by the ceiling above.
-            logger.warning("ai-invoke %s: progress watchdog sample was unreadable — retrying",
-                           run.get("run_id"))
-            continue
-        anchor = run.get("stall_anchor_mono")
-        if anchor is None:
-            anchor = run["started_mono"]
-        if now - anchor >= float(run["timeout_sec"]):
-            return "no_progress" if _claim_watchdog_kill(
-                run, proc, stop_event, "no_progress", now) else None
-    return None
-
-def _start_progress_watchdog(run: dict, proc,
-                             interval: float = STALL_POLL_INTERVAL_SEC) -> tuple:
-    """Start the watchdog for ONE attempt. Returns (stop_event, thread)."""
-    stop_event = threading.Event()
-    # Each attempt opens its own no-progress window — a fresh worker cannot be charged
-    # for the silence of the one before it. The ABSOLUTE ceiling deliberately does NOT
-    # reset: it is measured from started_mono, which `_reset_attempt_state` keeps (§2-4).
-    run["stall_anchor_mono"] = _now_mono()
-    run["watchdog_kill"] = None
-    thread = threading.Thread(
-        target=_progress_watchdog_loop, args=(run, proc, stop_event, interval),
-        name=f"ai-invoke-watchdog-{run.get('run_id')}", daemon=True,
-    )
-    thread.start()
-    return stop_event, thread
-
-def _stop_progress_watchdog(stop_event: Optional[threading.Event], thread,
-                            run_id: Optional[str] = None) -> None:
-    """Stop and join the watchdog on EVERY exit of the attempt (§4-1).
-
-    Called from `_cli_execute`'s finally, so a natural exit, a TimeoutExpired, a broken
-    stdin pipe, a user cancel and a fast-fail all come through here. The join matters as
-    much as the event: a thread left running would still hold a `proc` the next attempt
-    is about to replace.
-    """
-    if stop_event is None:
-        return
-    stop_event.set()
-    if thread is None:
-        return
-    thread.join(timeout=STALL_WATCHDOG_JOIN_SEC)
-    if thread.is_alive():
-        # It can no longer kill anything — `_claim_watchdog_kill` re-reads stop_event
-        # under the lock — but it should not have taken this long, so say so.
-        logger.warning("ai-invoke %s: progress watchdog did not stop within %ss",
-                       run_id, STALL_WATCHDOG_JOIN_SEC)
-
-# ── CLI adapter (L0006 §2.3) ─────────────────────────────────────────────────
-
-_CLI_LAUNCH_AUDIT_SCHEMA = "flowgate.external-cli-launch.v1"
-
-def _shell_kind() -> str:
-    return "windows_cmd" if os.name == "nt" else "posix_sh"
-
-def _stable_provider_kind(provider: dict) -> str:
-    kind = str(provider.get("kind") or "").lower()
-    return kind if kind in {"codex", "claude"} else "other"
-
-def _audit_cli_launch(decision: dict) -> None:
-    """Emit exactly one secret-free, line-safe launch decision event."""
-    allowed = {
-        "schema", "event", "decision", "reason", "run_id", "provider_kind",
-        "cwd_source", "spawn_cwd", "agent_cwd", "cwd_transition",
-        "shell_kind", "is_unc",
-    }
-    event = {key: decision.get(key) for key in allowed}
-    event["schema"] = _CLI_LAUNCH_AUDIT_SCHEMA
-    event["event"] = "external_cli_launch_decision"
-    try:
-        logger.info("ai-invoke cli spawn decision %s", json.dumps(event, ensure_ascii=True))
-    except Exception:
-        pass  # logging must never affect the launch outcome
-
-def _blocked_cli_launch(run: dict, provider: dict, reason: str) -> dict:
-    return {
-        "decision": "blocked", "reason": reason,
-        "run_id": run.get("run_id") if _RUN_ID_RE.fullmatch(str(run.get("run_id") or "")) else "<invalid>",
-        "provider_kind": _stable_provider_kind(provider),
-        "cwd_source": None, "spawn_cwd": None, "agent_cwd": None,
-        "cwd_transition": None, "shell_kind": _shell_kind(),
-        "is_unc": None,
-    }
-
-def _resolve_cli_launch(provider: dict, run: dict, command: str) -> tuple[Optional[dict], str]:
-    """Resolve the sole product CLI spawn contract, or fail closed with a fixed code.
-
-    Product runs always carry project_id and therefore must prove the current run scratch
-    manifest even when a group worktree is the agent cwd (the scratch is still the UNC
-    bootstrap and temp/cache boundary). The project-less compatibility branch exists only
-    for older isolated unit harnesses; start_run never creates such a run.
-    """
-    scratch = Path(run.get("scratch_dir") or "")
-    project_id = run.get("project_id")
-    run_id = str(run.get("run_id") or "")
-    if project_id:
-        manifest, reason = _validate_scratch_manifest(project_id, run_id, scratch)
-        if manifest is None:
-            return None, f"scratch_{reason}"
-    try:
-        scratch_abs = scratch.resolve(strict=True)
-    except (OSError, RuntimeError):
-        return None, "scratch_unavailable"
-    if not scratch_abs.is_absolute() or not scratch_abs.is_dir() or _is_reparse_or_symlink(scratch):
-        return None, "scratch_unavailable"
-
-    source = Path(run["source_root"]) if run.get("source_root") else None
-    agent_cwd = scratch_abs
-    cwd_source = "run_scratch"
-    if source is not None and source.is_dir() and run.get("group_id") and project_id:
-        try:
-            integrated = bool((db_git.get_config(project_id) or {}).get("enabled"))
-        except Exception:
-            integrated = False
-        if integrated:
-            if not _is_group_worktree(project_id, run["group_id"], source):
-                return None, "group_worktree_identity_invalid"
-            agent_cwd = source.absolute() if str(source).startswith("\\\\") else source.resolve(strict=True)
-            cwd_source = "group_worktree"
-    elif source is not None and source.is_dir() and not project_id:
-        # Test-only legacy run shape; real runs are covered by the manifest branch above.
-        agent_cwd = source.absolute() if str(source).startswith("\\\\") else source.resolve(strict=True)
-        cwd_source = "group_worktree"
-
-    effective_command, effective_cwd = process_runner.unc_safe_shell(command, agent_cwd)
-    is_unc = str(agent_cwd).startswith("\\\\")
-    if effective_cwd is None:
-        if not scratch_abs.is_absolute() or str(scratch_abs).startswith("\\\\"):
-            return None, "unc_bootstrap_unavailable"
-        spawn_cwd = scratch_abs
-        transition = "pushd"
-    else:
-        spawn_cwd = Path(effective_cwd).resolve(strict=True)
-        transition = "none"
-    if not spawn_cwd.is_absolute() or not spawn_cwd.is_dir():
-        return None, "spawn_cwd_unavailable"
-    return {
-        "decision": "launch", "reason": None, "run_id": run_id,
-        "provider_kind": _stable_provider_kind(provider), "cwd_source": cwd_source,
-        "spawn_cwd": str(spawn_cwd), "agent_cwd": str(agent_cwd),
-        "cwd_transition": transition,
-        "shell_kind": _shell_kind(),
-        "is_unc": is_unc, "effective_command": effective_command,
-    }, "valid"
-
-def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]:
-    """stdin-injected CLI run (claude/copilot/codex; args are forbidden — cp932
-    truncation). Returns (classification, failure_detail)."""
-    import subprocess
-
-    cmd = (provider.get("cli_command") or "").strip()
-    if not cmd:
-        return "spawn_failed", "cli_command not set"
-    kind = provider.get("kind") or ""
-    # 0295 NR0003 §5-2: injects codex's --skip-git-repo-check when the stored command lacks
-    # it. The cwd resolved below is NOT guaranteed to be a git repo (scratch fallback, or a
-    # project mirror that is not a checkout), and codex exec exits 1 immediately when it is
-    # not — burning the provider as a fast_fail before it ever reads the prompt.
-    cmd = ai_settings_service.normalize_cli_command(kind, cmd)
-    scratch = Path(run["scratch_dir"])
-    last_message_file = scratch / "last_message.txt"
-    if kind == "codex":
-        cmd = f'{cmd} --output-last-message "{last_message_file}"'
-
-    # T0011: cwd is selected once below by _resolve_cli_launch. No caller cwd, HOME,
-    # installation directory, base checkout, or OS temp fallback is permitted.
-    # Group 0235 (D0005 §3-4 / L0008 §2-5): the external agent runs on THIS host and
-    # must post results to an address it can actually reach. The mention was built
-    # with the operator-facing base; rewrite it (and export it) to an agent-reachable
-    # base (configured setting -> same-host loopback -> operator base).
-    operator_api_base = run.get("api_base_url") or ""
-    prompt, agent_api_base = _canonicalize_cli_prompt(prompt, operator_api_base)
-    # CLI providers authenticate themselves; a configured api_key is deliberately
-    # NOT exported (leak prevention, L0006 §2.3).
-    env = {
-        "FLOWGATE_TOKEN": run["raw_token"],
-        "FLOWGATE_SCRATCH": run["scratch_dir"],
-        "TMP": str(scratch / "tmp"),
-        "TEMP": str(scratch / "tmp"),
-        "TMPDIR": str(scratch / "tmp"),
-        "XDG_CACHE_HOME": str(scratch / "cache"),
-        "PIP_CACHE_DIR": str(scratch / "cache" / "pip"),
-        "NPM_CONFIG_CACHE": str(scratch / "cache" / "npm"),
-        "FLOWGATE_API_BASE": agent_api_base or operator_api_base,
-    }
-    decision, reason = _resolve_cli_launch(provider, run, cmd)
-    if decision is None:
-        blocked = _blocked_cli_launch(run, provider, reason)
-        _audit_cli_launch(blocked)
-        return "spawn_failed", f"CLI launch blocked: {reason}"
-    eff_cmd = decision.pop("effective_command")
-    agent_cwd = Path(decision["agent_cwd"])
-    kwargs = process_runner.popen_kwargs(agent_cwd, env)
-    kwargs["cwd"] = decision["spawn_cwd"]
-    kwargs["stdin"] = subprocess.PIPE
-    _audit_cli_launch(decision)
-
-    launched = time.monotonic()
-    try:
-        proc = subprocess.Popen(eff_cmd, **kwargs)
-    except Exception:
-        return "spawn_failed", "unable to start CLI process"
-
-    run["proc"] = proc
-    # Close the cancel-vs-spawn race: a cancel that landed between admission and
-    # Popen saw proc=None and killed nothing — reap the child ourselves now.
-    if run["cancel_event"].is_set():
-        process_runner.kill_process_tree(proc)
-    timed_out = False
-    # 0446 T0014 §3-1: the no-progress threshold is enforced BESIDE this wait, by the
-    # watchdog thread, because `communicate()` cannot be asked "is it still working?".
-    # What is left for the wait itself is the absolute ceiling — the one deadline that
-    # holds however well the worker is doing (§3-6) — so a run that keeps producing is
-    # no longer cut off at its threshold, and a run that produces nothing is still
-    # ended there, by the watchdog, long before this timeout could fire.
-    watchdog_stop, watchdog_thread = _start_progress_watchdog(run, proc)
-    remaining = max(1.0, _absolute_remaining_sec(run))
-    try:
-        stdout, stderr = proc.communicate(input=prompt.encode("utf-8"), timeout=remaining)
-    except subprocess.TimeoutExpired as exc:
-        timed_out = True
-        process_runner.kill_process_tree(proc)
-        try:
-            stdout, stderr = proc.communicate(timeout=5)
-        except Exception:
-            stdout = getattr(exc, "output", None)
-            stderr = getattr(exc, "stderr", None)
-    except Exception as exc:
-        # e.g. stdin pipe broken before the child read the prompt
-        process_runner.kill_process_tree(proc)
-        try:
-            stdout, stderr = proc.communicate(timeout=5)
-        except Exception:
-            stdout, stderr = None, None
-        elapsed = time.monotonic() - launched
-        if (
-            elapsed < FAST_FAIL_WINDOW_SEC
-            and not _work_landed(run)
-            # 0446 T0014 §4-3: a watchdog kill is a clock decision, never a provider
-            # startup failure — it must not send the chain to the next provider.
-            and run.get("watchdog_kill") is None
-        ):
-            return "spawn_failed", str(exc)[:500]
-    finally:
-        run["proc"] = None
-        _stop_progress_watchdog(watchdog_stop, watchdog_thread, run.get("run_id"))
-
-    # 0446 T0014 §4-3: a watchdog kill ends `communicate()` NORMALLY — the child is
-    # already gone, so there is no TimeoutExpired to catch and the local flag above is
-    # still False. Merge the verdict in before anything reads it: the exit code of a
-    # killed worker is not a verdict (it stays None, as on any other timeout) and a
-    # killed worker is not a fast_fail candidate. `watchdog_kill` — not `run["timed_out"]`
-    # — is the source here, because it is re-armed per attempt by the watchdog itself.
-    timed_out = timed_out or run.get("watchdog_kill") is not None
-    elapsed = time.monotonic() - launched
-    out_text = process_runner.safe_decode(stdout)
-    err_text = process_runner.safe_decode(stderr)
-    run["stdout_tail"] = out_text[-OUTPUT_TAIL_BYTES:]
-    run["stderr_tail"] = err_text[-OUTPUT_TAIL_BYTES:]
-    run["exit_code"] = proc.returncode if not timed_out else None
-    if timed_out:
-        run["timed_out"] = True
-
-    cancelled = run["cancel_event"].is_set()
-    # Fast-fail: startup failure ⇒ fallback candidate. A user cancel or timeout is
-    # never a provider startup failure (L0006 §2.2 / §4.3).
-    if (
-        not cancelled
-        and not timed_out
-        and proc.returncode is not None
-        and proc.returncode != 0
-        and elapsed < FAST_FAIL_WINDOW_SEC
-        and not _work_landed(run)
-    ):
-        detail = (err_text or out_text).strip()[-500:] or f"exit {proc.returncode} within {int(elapsed)}s"
-        return "fast_fail", detail
-
-    _recover_cli_last_message(run, kind, out_text, last_message_file)
-    return "started_ok", None
-
-def _copilot_last_message(stdout_text: str) -> Optional[str]:
-    """Last assistant text from copilot's `--output-format=json` event stream.
-
-    The stream is NDJSON — one event object per line, no blank lines anywhere — so the
-    blank-line block splitter below returns the WHOLE dump as a single "message" and the
-    operator sees MCP server status logs where the answer should be (0292 CH0002, 0295
-    NR0003 §6). The answer lives in the last `assistant.message` event's `data.content`;
-    `assistant.message_delta` carries the same text in fragments and `result` carries no
-    text at all, so neither is a usable substitute.
-
-    Returns None when nothing parses, leaving the caller on its block-splitting fallback —
-    a copilot run that failed before emitting any event still has stderr/plain output worth
-    showing.
-    """
-    message: Optional[str] = None
-    for line in stdout_text.splitlines():
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            event = json.loads(line)
-        except Exception:
-            continue
-        if not isinstance(event, dict) or event.get("type") != "assistant.message":
-            continue
-        data = event.get("data")
-        if not isinstance(data, dict):
-            continue
-        content = data.get("content")
-        if isinstance(content, str) and content.strip():
-            message = content.strip()
-    return message
-
-def _recover_cli_last_message(run: dict, kind: str, stdout_text: str, last_message_file: Path) -> None:
-    """Per-kind last-message recovery (hive providers.py rule table, rules only):
-    claude = full stdout trimmed / codex = --output-last-message file /
-    copilot = last `assistant.message` event / custom = last non-blank block of the tail."""
-    message: Optional[str] = None
-    if kind == "claude":
-        message = stdout_text.strip() or None
-    elif kind == "codex":
-        try:
-            if last_message_file.is_file():
-                message = last_message_file.read_text(encoding="utf-8", errors="replace").strip() or None
-        except Exception:
-            message = None
-    elif kind == "copilot":
-        message = _copilot_last_message(stdout_text)
-    if message is None and kind not in ("claude", "codex"):
-        tail = stdout_text[-OUTPUT_TAIL_BYTES:]
-        blocks = [b.strip() for b in re.split(r"\n\s*\n", tail) if b.strip()]
-        message = blocks[-1] if blocks else None
-    run["last_message"] = _truncate_front(message)
-    run["last_message_received"] = bool(message)
-
-# ── API adapter: minimal agent loop (L0006 §2.4) ─────────────────────────────
-
-def _api_system_prompt() -> str:
-    """Non-negotiable API-agent contract shared by OpenAI-compatible providers."""
-    return (
-        "You are a FlowGate API agent. Use the supplied tools to perform the bound work. "
-        "A natural-language claim of completion never registers, replies, decides, or completes "
-        "the work: call the required tool with its complete payload. Only use exposed tools and "
-        "their declared JSON schemas."
-    )
-
-
-def _api_help_prompt(prompt: str) -> str:
-    """Match API-provider guidance to mediated tools; CLI mentions remain unchanged."""
-    lines = [line for line in prompt.splitlines()
-             if not ("GET " in line and "/help" in line)]
-    guidance = (
-        "Use the `read_help` tool for personalized FlowGate help: empty input returns "
-        "the index, item returns one item, and item plus child returns one child."
-    )
-    return guidance + "\n\n" + "\n".join(lines)
-
-def _is_glm_openai_provider(provider: dict) -> bool:
-    """Identify GLM even when its OpenAI-compatible endpoint is configured as custom."""
-    kind = str(provider.get("kind") or "").lower()
-    base_url = str(provider.get("api_base_url") or "").lower()
-    model = str(provider.get("api_model") or "").lower()
-    return (
-        kind in {"glm", "zhipu", "zai"}
-        or model.startswith("glm-")
-        or "bigmodel.cn" in base_url
-        or "z.ai" in base_url
-    )
 
 
 _API_TRACE_MAX_TURNS = 20
@@ -1483,6 +887,7 @@ def _api_trace_tool(entry: dict, name: object, status: object, *, registration: 
     tools = entry["tools"]
     if len(tools) < _API_TRACE_MAX_TOOLS:
         tools.append({"name": str(name or "tool")[:80], "status": int(status or 0), "registration": registration})
+
 
 def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]:
     """Minimal tool loop for API providers, including workflow decision kickoff."""
@@ -1910,6 +1315,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     run["last_message_received"] = bool(last_text)
     return "started_ok", None
 
+
 def _absorb_binding_failure(run: dict, response: dict, turn: int) -> bool:
     """Was this 403 already recorded in full, axes and all?
 
@@ -1939,6 +1345,7 @@ def _absorb_binding_failure(run: dict, response: dict, turn: int) -> bool:
         return True
     return False
 
+
 def _registration_error_summary(response: dict) -> str:
     for key in ("code", "error", "message", "detail"):
         value = response.get(key)
@@ -1948,6 +1355,7 @@ def _registration_error_summary(response: dict) -> str:
             return json.dumps(value, ensure_ascii=False)[:500]
         return str(value)[:500]
     return json.dumps(response, ensure_ascii=False)[:500] or "unknown registration error"
+
 
 def _tool_result_msg(kind: str, tool_call: dict, text: str) -> dict:
     if kind == "claude":
@@ -1960,6 +1368,7 @@ def _tool_result_msg(kind: str, tool_call: dict, text: str) -> dict:
             }],
         }
     return {"role": "tool", "tool_call_id": tool_call["id"], "content": text}
+
 
 def _resolve_conflict(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
@@ -1991,81 +1400,6 @@ def _resolve_conflict(run: dict, raw_token: str, tool_input: dict) -> tuple[int,
     except Exception as exc:
         return 0, {"error": str(exc)}
 
-def _http_post_json(url: str, headers: dict, body: dict, timeout: float) -> dict:
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json", **headers},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-def _call_anthropic(
-    base_url: str, model: str, key: str, conversation: list[dict], timeout: float,
-    tool_name: str, tool_desc: str, tool_schema: dict, force_tool: bool = False,
-) -> tuple[Optional[str], Optional[dict], dict]:
-    multi = isinstance(tool_name, list)
-    specs = tool_name if multi else [{"name": tool_name, "description": tool_desc, "schema": tool_schema}]
-    data = _http_post_json(
-        f"{base_url}/v1/messages",
-        {"x-api-key": key, "anthropic-version": ANTHROPIC_VERSION},
-        {
-            "model": model,
-            "max_tokens": API_MAX_TOKENS,
-            "messages": conversation,
-            "tools": [{"name": spec["name"], "description": spec["description"], "input_schema": spec["schema"]} for spec in specs],
-            **({"tool_choice": ({"type": "any"} if multi else {"type": "tool", "name": specs[0]["name"]})} if force_tool else {}),
-        },
-        timeout,
-    )
-    content = data.get("content") or []
-    text_parts = [b.get("text", "") for b in content if b.get("type") == "text"]
-    tool_calls = []
-    exposed = {spec["name"] for spec in specs}
-    for block in content:
-        if block.get("type") == "tool_use":
-            name = block.get("name")
-            tool_calls.append({"id": block.get("id"), "name": name, "input": block.get("input")})
-    assistant_msg = {"role": "assistant", "content": content}
-    return ("\n".join(p for p in text_parts if p) or None), tool_calls, assistant_msg
-
-def _call_openai(
-    base_url: str, model: str, key: str, conversation: list[dict], timeout: float,
-    tool_name: str, tool_desc: str, tool_schema: dict, force_tool: bool = False,
-) -> tuple[Optional[str], Optional[dict], dict]:
-    multi = isinstance(tool_name, list)
-    specs = tool_name if multi else [{"name": tool_name, "description": tool_desc, "schema": tool_schema}]
-    data = _http_post_json(
-        f"{base_url.rstrip('/')}/chat/completions",
-        {"Authorization": f"Bearer {key}"},
-        {
-            "model": model,
-            "messages": conversation,
-            "tools": [{"type": "function", "function": {"name": spec["name"], "description": spec["description"], "parameters": spec["schema"]}} for spec in specs],
-            **({"tool_choice": ("required" if multi else {"type": "function", "function": {"name": specs[0]["name"]}})} if force_tool else {}),
-        },
-        timeout,
-    )
-    choices = data.get("choices") or []
-    message = (choices[0].get("message") if choices else None) or {}
-    tool_calls = []
-    for tc in message.get("tool_calls") or []:
-        fn = tc.get("function") or {}
-        raw_args = fn.get("arguments", {})
-        if isinstance(raw_args, dict):
-            args = raw_args
-        elif isinstance(raw_args, str):
-            try:
-                args = json.loads(raw_args or "{}")
-            except (TypeError, ValueError):
-                args = None
-        else:
-            args = None
-        tool_calls.append({"id": tc.get("id"), "name": fn.get("name"), "input": args})
-    # Keep every received call, including unknown names and malformed inputs, so the
-    # dispatcher can emit a call-id-specific error instead of misclassifying it as a miss.
-    return message.get("content"), tool_calls, message
 
 def _workflow_decide(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
@@ -2095,6 +1429,7 @@ def _workflow_decide(run: dict, raw_token: str, tool_input: dict) -> tuple[int, 
             return exc.code, {"error": str(exc)}
     except Exception as exc:
         return 0, {"error": str(exc)}
+
 
 class _BearerOnlyRequest:
     """Request stand-in for direct in-process calls (0505 T0018).
@@ -2134,6 +1469,7 @@ def _conversation_context(run: dict, raw_token: str) -> tuple[int, dict]:
         return 0, {"error": str(exc)}
     return response.status_code, json.loads(response.body)
 
+
 def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     """Append an API-provider reply through the token-bound conversation endpoint."""
     # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
@@ -2167,6 +1503,7 @@ def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> 
     except Exception as exc:
         return 0, {"error": str(exc)}
 
+
 def _api_bound_request(run: dict, raw_token: str, path: str, method: str = "GET", body: Optional[dict] = None) -> tuple[int, dict]:
     """Call a document service through its normal token gate with only server-owned routing."""
     # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
@@ -2189,6 +1526,7 @@ def _api_bound_request(run: dict, raw_token: str, path: str, method: str = "GET"
             return exc.code, {"error": str(exc)}
     except Exception as exc:
         return 0, {"error": str(exc)}
+
 
 def _api_read_document(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     """0505 T0018: in-process call, not self-HTTP -- same GET-skips-the-lease-middleware
@@ -2234,8 +1572,10 @@ def _api_read_document(run: dict, raw_token: str, tool_input: dict) -> tuple[int
         return 0, {"error": str(exc)}
     return response.status_code, json.loads(response.body)
 
+
 def _api_create_question(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     return _api_bound_request(run, raw_token, f"/q/{run['doc_ref']}/questions", "POST", tool_input)
+
 
 # ── Register mutation context (0492 T0018 item 1 / L0010 §2.1-§2.2) ──────────
 #
@@ -2263,6 +1603,7 @@ _REGISTER_MODEL_FIELDS = {
     "test_run": (),
 }
 
+
 class _RegisterBindingRejected(Exception):
     """A register call refused before any side effect. Carries the 403 body to return."""
 
@@ -2270,6 +1611,7 @@ class _RegisterBindingRejected(Exception):
         self.response = response
         self.record = record
         super().__init__(response.get("error_message") or "register binding rejected")
+
 
 def _run_register_context(run: dict) -> dict:
     """The run's CURRENT hop axes — server-owned, seeded from the run itself.
@@ -2287,6 +1629,7 @@ def _run_register_context(run: dict) -> dict:
         run["register_context"] = context
         run["current_token_id"] = run.get("current_token_id") or run.get("token_id")
     return context
+
 
 def _adopt_continuation_token(run: dict, raw_token: str) -> bool:
     """Move the run's current token and its four axes together, or not at all.
@@ -2313,6 +1656,7 @@ def _adopt_continuation_token(run: dict, raw_token: str) -> bool:
     run["register_context"] = context
     run["current_token_id"] = token_rec.get("token_id")
     return True
+
 
 def _bind_register_context(run: dict, raw_token: str) -> tuple[dict, dict]:
     """L0010 §2.2 R5. Returns (context, token_rec) or raises _RegisterBindingRejected.
@@ -2378,6 +1722,7 @@ def _bind_register_context(run: dict, raw_token: str) -> tuple[dict, dict]:
         })
     return expected, token_rec
 
+
 def _register_envelope(context: dict, run: dict, tool_input: Optional[dict]) -> dict:
     """The /inbox body: server axes plus the scope's allowlisted model fields.
 
@@ -2402,6 +1747,7 @@ def _register_envelope(context: dict, run: dict, tool_input: Optional[dict]) -> 
         body["title"] = payload.get("title") or ""
         body["content"] = payload.get("content") or ""
     return body
+
 
 def _inbox_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     """Server-side proxy registration for API providers: POST the server-assembled
@@ -2440,6 +1786,7 @@ def _inbox_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, d
     except Exception as exc:
         return 0, {"error": str(exc)}
 
+
 # ── Judge / finish (L0006 §2.6–2.8) ──────────────────────────────────────────
 
 def _oracle_new_docs(run: dict) -> list[dict]:
@@ -2459,6 +1806,7 @@ def _oracle_new_docs(run: dict) -> list[dict]:
         key=lambda d: d.get("seq") or 0,
     )
 
+
 def _settle_and_judge(run: dict) -> None:
     """Judge, then finalize — the pre-0359 shape, kept for every caller that wants both.
 
@@ -2467,6 +1815,7 @@ def _settle_and_judge(run: dict) -> None:
     """
     _judge_hop(run)
     _finalize_run(run)
+
 
 def _judge_hop(run: dict) -> None:
     """Decide what this attempt produced (L0007 §2.2). Exactly once per attempt — never twice
@@ -2569,6 +1918,7 @@ def _judge_hop(run: dict) -> None:
         and not run.get("turn_limit_exhausted")
     )
 
+
 def _conflict_resolved(run: dict) -> bool:
     merge_id = run.get("merge_id")
     if merge_id is None:
@@ -2596,12 +1946,14 @@ def _conflict_resolved(run: dict) -> bool:
 # in; the rework block that quotes this line localizes its own labels around it (§4-5).
 _TIMEOUT_KINDS = ("no_progress", "absolute_cap")
 
+
 def _format_span(seconds: int) -> str:
     """Short, stable reading of a duration — whole minutes once there is one."""
     seconds = max(0, int(seconds))
     if seconds < 60:
         return f"{seconds} sec"
     return f"{seconds // 60} min"
+
 
 def _resolve_timeout_diagnostics(run: dict) -> tuple[Optional[str], Optional[str]]:
     """`(timeout_kind, timeout_diagnosis)` for a finished run, or `(None, None)`.
@@ -2639,6 +1991,7 @@ def _resolve_timeout_diagnostics(run: dict) -> tuple[Optional[str], Optional[str
         f"No document registration or source change during the last "
         f"{_format_span(stalled_sec)} of {_format_span(total_sec)} total."
     )
+
 
 def previous_timeout_handoff(group_id: str, doc_ref: Optional[str] = None) -> Optional[dict]:
     """What the run right before this one left behind — but only if it timed out (§4-1/2).
@@ -2684,6 +2037,7 @@ def previous_timeout_handoff(group_id: str, doc_ref: Optional[str] = None) -> Op
             if source_dirty else []
         ),
     }
+
 
 def _finalize_run(run: dict) -> None:
     """Close the hop out — once, whatever it took to get here (L0007 §2.7).
@@ -2780,6 +2134,7 @@ def _finalize_run(run: dict) -> None:
 
 # ── Stop classification (0359 L0007 §4.1 ~ §4.3) ─────────────────────────────
 
+
 def _resolve_stop_code(run: dict, respawn_pending: bool) -> Optional[str]:
     """Why did the chain stop here? (L0007 §4.1 — evaluated in this exact order.)
 
@@ -2830,6 +2185,7 @@ def _resolve_stop_code(run: dict, respawn_pending: bool) -> Optional[str]:
         return "no_output_exhausted"
     return None
 
+
 def is_resumable(stop_code: Optional[str]) -> bool:
     """L0007 §4.2 — one criterion: would re-running this hop have a chance?
 
@@ -2837,6 +2193,7 @@ def is_resumable(stop_code: Optional[str]) -> bool:
     meant (cancel) are deliberately excluded. Resuming those would undo a person's decision.
     """
     return stop_code in RESUMABLE_STOP_CODES
+
 
 def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
     """L0007 §4.3 — English, because the same sentence is read by the worker, stored on the
@@ -2948,6 +2305,7 @@ def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
         )
     return None
 
+
 def stop_reason_text(stop_code: Optional[str], *, target_seq: Optional[int] = None,
                      detail: Optional[str] = None) -> Optional[str]:
     """The §4.3 sentence for a caller that has no run dict — i.e. the inbox self-chain.
@@ -2961,6 +2319,7 @@ def stop_reason_text(stop_code: Optional[str], *, target_seq: Optional[int] = No
         "continuation_target_seq": target_seq,
         "inbox_stop_detail": detail,
     })
+
 
 def mark_chain_stop(group_id: Optional[str], stop_code: str,
                     detail: Optional[str] = None) -> bool:
@@ -2981,6 +2340,7 @@ def mark_chain_stop(group_id: Optional[str], stop_code: str,
 # Bounded so a worker that retries a refused call in a loop cannot grow the record without
 # limit; the first refusal is the informative one and it is never evicted.
 LEASE_DENIAL_RECORD_LIMIT = 10
+
 
 def mark_group_lease_denied(
     *,
@@ -3026,6 +2386,7 @@ def mark_group_lease_denied(
         run["lease_denied_operation"] = operation
         run["lease_denied_count"] = int(run.get("lease_denied_count") or 0) + 1
     return True
+
 
 def stamp_chain_stop(
     envelope: dict,
@@ -3102,6 +2463,7 @@ def stamp_chain_stop(
     return envelope
 
 # ── Stop row / record / human signal (0359 L0007 §2.8, §2.10.1, §2.11) ───────
+
 
 def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
     """Maintain the miniplayer's [resume] card (L0007 §2.8 / §4.5).
@@ -3234,6 +2596,7 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
         )
     except Exception:
         logger.warning("ai-invoke stop-row update failed for %s", run["run_id"], exc_info=True)
+
 
 def _persist_run_record(run: dict) -> None:
     """Write the one durable row for this hop (L0007 §2.10.1).
@@ -3374,6 +2737,7 @@ def _persist_run_record(run: dict) -> None:
         # L0007 §5: a storage failure must never turn a finished hop into a crashed one.
         logger.warning("ai-invoke run record persist failed for %s", run["run_id"], exc_info=True)
 
+
 def _persist_register_context_failures(run: dict, stamp: str) -> None:
     """Flush this run's axis-classified binding failures to their own table (T0018 item 3).
 
@@ -3402,6 +2766,7 @@ def _persist_register_context_failures(run: dict, stamp: str) -> None:
     except Exception:
         logger.warning("register context telemetry persist failed for %s",
                        run.get("run_id"), exc_info=True)
+
 
 def _notify_chain_failure_if_needed(
     run: dict,
@@ -3469,9 +2834,11 @@ def _notify_chain_failure_if_needed(
         # Same best-effort contract as continuous_work_ended (L0007 §5).
         logger.warning("ai-invoke failure signal failed for %s", run["run_id"], exc_info=True)
 
+
 def _failure_error_text(run: dict) -> str:
     return (f"{int(run.get('attempts_used') or 0)} attempts produced no document; "
             f"last worker message: {excerpt(run.get('last_message')) or '(none)'}")
+
 
 def _anchor_document(run: dict) -> tuple[Optional[int], Optional[str]]:
     """Where the notification lands when a human clicks it (L0007 §2.11).
@@ -3509,6 +2876,7 @@ def _anchor_document(run: dict) -> tuple[Optional[int], Optional[str]]:
         if doc.get("id") is not None:
             return int(doc["id"]), doc_id
     return None, None
+
 
 def finished_payload(run: dict) -> dict:
     payload = {
@@ -3609,3 +2977,4 @@ def finished_payload(run: dict) -> dict:
     if run["scratch_retained"]:
         payload["scratch_retained"] = run["scratch_retained"]
     return payload
+

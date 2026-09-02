@@ -14,10 +14,11 @@ reassignment of ``svc._runs`` is always what these functions see.
 
 Nothing here knows how a run is executed — no worker thread wiring, no provider/CLI
 invocation, no chain continuation, no lease acquire/release. Those stay in
-``ai_invoke_service.py`` and its exec()-assembled parts (``ai_invoke_part2_worker.py``
-/ ``ai_invoke_part3_chain.py``), which call the functions below as the one place that
-knows how to read the registry, instead of each inlining its own
-``with _runs_lock: ...`` block.
+``ai_invoke_service.py`` and its exec()-assembled parts (``ai_invoke_worker.py`` /
+``ai_invoke_provider_api.py`` / ``ai_invoke_provider_cli.py`` / ``ai_invoke_part3_chain.py``,
+flowgate.default.0501 T4 re-split ``ai_invoke_part2_worker.py`` into the first three),
+which call the functions below as the one place that knows how to read the registry,
+instead of each inlining its own ``with _runs_lock: ...`` block.
 
 Deliberately NOT here (0501 T0008 T3 §2/§8/§9): the run-id counter and its floor date
 (plain ints a test also resets by reassignment), lease acquire/release, start_run's

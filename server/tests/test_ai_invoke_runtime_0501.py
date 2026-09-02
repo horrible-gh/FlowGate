@@ -42,7 +42,11 @@ _RUNTIME_PATH = (
 )
 
 _FORBIDDEN_IMPORT_SUFFIXES = (
-    "ai_invoke_part2_worker",
+    # flowgate.default.0501 T4 re-split ai_invoke_part2_worker.py into these three;
+    # the guard must track the current file names, not the pre-T4 one.
+    "ai_invoke_worker",
+    "ai_invoke_provider_api",
+    "ai_invoke_provider_cli",
     "ai_invoke_part3_chain",
     "process_runner",
 )

@@ -182,7 +182,7 @@ class TestTurnLimitExhausted:
         # _no_output_detail branches on provider.exec_type=="api", so a direct
         # _api_execute call must supply it itself before checking the detail sentence.
         run["provider"] = {"exec_type": "api"}
-        from modules.flow_gate.services.ai_invoke_part2_worker import _no_output_detail
+        from modules.flow_gate.services.ai_invoke_worker import _no_output_detail
         assert _no_output_detail(run) == "worker stopped: turn limit exhausted"
 
     def test_transport_failure_after_turn_one_does_not_set_turn_limit(self, monkeypatch):
@@ -218,7 +218,7 @@ class TestUiLabels:
         assert "reason_no_output: '결과물 없음'" in text
 
     def test_turn_limit_sentence_matches_the_i18n_backed_detail(self):
-        from modules.flow_gate.services.ai_invoke_part2_worker import _no_output_detail
+        from modules.flow_gate.services.ai_invoke_worker import _no_output_detail
         run = _judged_run(provider={"name": "GLM", "exec_type": "api"},
                           turn_limit_exhausted=True, exit_code=None)
         detail = _no_output_detail(run)
