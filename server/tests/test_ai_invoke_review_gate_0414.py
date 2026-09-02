@@ -2712,6 +2712,170 @@ class TestHopLaunchContract:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
+# flowgate.default.0501 T0004 필수1 -- the mandatory GOOD/BAD sentinel, through the real
+# gate dispatch (svc.run_review_gate -> svc._spawn_rework_hop -> svc.start_run), not
+# resolve_step_executor() called in isolation.
+# ══════════════════════════════════════════════════════════════════════════════════════
+
+class TestBaselineLockGoodBadSentinel0501:
+    """0501 T0004 필수1's mandatory integration test: work provider = GOOD, stored
+    sequence provider = BAD, review provider = REVIEWER, verdict = issues, and the
+    automatic rework must run as GOOD with BAD never invoked -- asserted through the real
+    svc.run_review_gate -> svc._spawn_rework_hop -> svc.start_run dispatch (worker chain
+    captured, not executed), not a bare svc.resolve_step_executor() call.
+
+    T0004's rework priority has no separate force-all tier ("review issues 이후 rework:
+    step override -> current request selection -> stored sequence provider -> project
+    default") -- CURRENT SELECTION must outrank stored, pinned or not. This class proves
+    both tiers through that same real gate dispatch:
+
+    - test_good_wins_bad_never_invoked_through_the_real_gate: an explicit force-all pick
+      (bundle provider_pinned=True) outranking the item's stored provider. start_run /
+      resolve_step_executor already get this right today, so it is a green lock.
+    - test_current_selection_outranks_stored_through_the_real_gate: the same dispatch
+      with provider_pinned=False, i.e. an ordinary (unpinned) current selection. This one
+      is currently broken by a lost merge fix (877da30, dropped by 24a9c4f) -- the gate
+      dispatches BAD (stored) instead of GOOD (current selection) -- so it is pinned down
+      as xfail(strict=True) rather than left uncovered at the gate level. The same
+      regression is also documented at the resolve_step_executor unit level on
+      test_ai_invoke_provider_selection_0448.py's
+      test_rework_current_selection_outranks_stored_opus_and_never_falls_back /
+      test_rework_selection_survives_handoff_bundle_and_resume_resolution -- see this T's
+      TR for the full forensics.
+    """
+
+    GOOD, BAD, REVIEWER = "aip_good", "aip_bad", "aip_rev"
+
+    def _providers(self):
+        def row(pid):
+            return {"id": pid, "name": pid, "exec_type": "cli", "kind": "claude",
+                    "enabled": True, "cli_command": "unused", "api_base_url": None,
+                    "api_model": None, "api_key_set": False, "api_key_hint": None}
+        return [row(self.GOOD), row(self.BAD), row(self.REVIEWER)]
+
+    def test_good_wins_bad_never_invoked_through_the_real_gate(
+            self, world, monkeypatch, tmp_path):
+        monkeypatch.setattr(svc.ai_settings_service, "resolve_effective",
+                            lambda pid: {"ok": True, "providers": self._providers()})
+        for row in world.items:
+            if row["item_seq"] == 5:
+                row["provider_id"] = self.BAD  # the item's own stored sequence provider
+
+        world.fill(5, "doc-5", status="rejected", revision_no=1)
+        world.review("doc-5", "issues", revision_no=1)
+
+        invoked_chains = []
+        monkeypatch.setattr(
+            svc, "_worker",
+            lambda run, chain_, prompt: invoked_chains.append([p["id"] for p in chain_]),
+        )
+        monkeypatch.setattr(svc, "_broadcast", lambda *a, **kw: None)
+        monkeypatch.setattr(svc.db_git, "get_config", lambda pid: None)
+        monkeypatch.setattr(svc.db_docs, "get_group_max_seq", lambda group_id: 0)
+        monkeypatch.setattr(svc, "_runs", {})
+        monkeypatch.setattr(svc, "_auto_resume", {})
+        src_root = tmp_path / "src"
+        src_root.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(svc.storage_paths, "resolve_project_src_root",
+                            lambda pid, branch, *, group_id: src_root)
+        monkeypatch.setattr(svc, "_create_scratch", lambda pid, run_id: src_root)
+        monkeypatch.setattr(svc, "_cleanup_retained_scratches", lambda pid: None)
+        from modules.flow_gate.services import invoke_mention_service
+        monkeypatch.setattr(invoke_mention_service, "issue_rework_request", lambda **kw: {
+            "raw_token": "raw", "token_id": "tok_0501_good_bad",
+            "scratch_dir": str(src_root), "mention": "fix it",
+        })
+
+        gate_bundle = bundle(base_provider_id=self.GOOD, provider_pinned=True,
+                             provider_overrides=None, reviewer_overrides={"5": self.REVIEWER})
+        gate = svc.resolve_review_gate(gate_bundle)
+        assert gate["stage"] == svc.REWORK_HOP_KIND, "setup must reach the rework branch"
+
+        started = svc.run_review_gate(GROUP, gate_bundle, _run())
+
+        assert started is True
+        assert invoked_chains == [[self.GOOD]], (
+            "the rework hop must run GOOD, and it alone -- no fallback tail")
+        invoked_ids = {pid for chain_ in invoked_chains for pid in chain_}
+        assert self.BAD not in invoked_ids
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "flowgate.default.0501 T0004 baseline lock: same lost-merge regression as "
+            "test_ai_invoke_provider_selection_0448.py's "
+            "test_rework_current_selection_outranks_stored_opus_and_never_falls_back / "
+            "test_rework_selection_survives_handoff_bundle_and_resume_resolution. "
+            "Commit 877da30 ('fix(ai): preserve current rework provider selection') "
+            "removed the `provider_pinned and` guard in resolve_step_executor so an "
+            "UNPINNED base_provider_id would still outrank a stored sequence provider "
+            "at rework. The 0497 3-way file split's merge commit 24a9c4f ('fix(ai): "
+            "resolve invoke service merge conflict') silently reverted that hunk inside "
+            "ai_invoke_part3_chain.py's resolve_step_executor -- the guard is back, so "
+            "this scenario (provider_pinned=False) currently dispatches the stored "
+            "provider (BAD) through the real gate instead of the current selection "
+            "(GOOD). Remove this marker once a dedicated fix T restores the 877da30 "
+            "behavior; do not fix resolve_step_executor from a baseline-lock T "
+            "(flowgate.default.0501 T0004 forbids production changes)."
+        ),
+    )
+    def test_current_selection_outranks_stored_through_the_real_gate(
+            self, world, monkeypatch, tmp_path):
+        """Same GOOD/BAD/REVIEWER/issues setup as the sibling test above, but
+        provider_pinned=False -- an ordinary current selection, not an explicit
+        force-all pick. T0004's rework priority list has no separate force-all tier:
+        current selection must outrank stored regardless of pin state. Dispatched
+        through the same real svc.resolve_review_gate -> svc.run_review_gate ->
+        svc._spawn_rework_hop -> svc.start_run path (worker chain captured, not
+        stubbed), not a bare svc.resolve_step_executor() call.
+        """
+        monkeypatch.setattr(svc.ai_settings_service, "resolve_effective",
+                            lambda pid: {"ok": True, "providers": self._providers()})
+        for row in world.items:
+            if row["item_seq"] == 5:
+                row["provider_id"] = self.BAD  # the item's own stored sequence provider
+
+        world.fill(5, "doc-5", status="rejected", revision_no=1)
+        world.review("doc-5", "issues", revision_no=1)
+
+        invoked_chains = []
+        monkeypatch.setattr(
+            svc, "_worker",
+            lambda run, chain_, prompt: invoked_chains.append([p["id"] for p in chain_]),
+        )
+        monkeypatch.setattr(svc, "_broadcast", lambda *a, **kw: None)
+        monkeypatch.setattr(svc.db_git, "get_config", lambda pid: None)
+        monkeypatch.setattr(svc.db_docs, "get_group_max_seq", lambda group_id: 0)
+        monkeypatch.setattr(svc, "_runs", {})
+        monkeypatch.setattr(svc, "_auto_resume", {})
+        src_root = tmp_path / "src"
+        src_root.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(svc.storage_paths, "resolve_project_src_root",
+                            lambda pid, branch, *, group_id: src_root)
+        monkeypatch.setattr(svc, "_create_scratch", lambda pid, run_id: src_root)
+        monkeypatch.setattr(svc, "_cleanup_retained_scratches", lambda pid: None)
+        from modules.flow_gate.services import invoke_mention_service
+        monkeypatch.setattr(invoke_mention_service, "issue_rework_request", lambda **kw: {
+            "raw_token": "raw", "token_id": "tok_0501_good_bad_unpinned",
+            "scratch_dir": str(src_root), "mention": "fix it",
+        })
+
+        gate_bundle = bundle(base_provider_id=self.GOOD, provider_pinned=False,
+                             provider_overrides=None, reviewer_overrides={"5": self.REVIEWER})
+        gate = svc.resolve_review_gate(gate_bundle)
+        assert gate["stage"] == svc.REWORK_HOP_KIND, "setup must reach the rework branch"
+
+        started = svc.run_review_gate(GROUP, gate_bundle, _run())
+
+        assert started is True
+        assert invoked_chains == [[self.GOOD]], (
+            "the rework hop must run GOOD (the current selection), and it alone -- "
+            "no fallback tail")
+        invoked_ids = {pid for chain_ in invoked_chains for pid in chain_}
+        assert self.BAD not in invoked_ids
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
 # The control group: a request that sends neither map behaves exactly as before
 # ══════════════════════════════════════════════════════════════════════════════════════
 
