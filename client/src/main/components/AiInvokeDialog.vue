@@ -348,7 +348,7 @@ import { getRequest, postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import AiProviderSelect from './AiProviderSelect.vue'
 import WorkflowStepPicker from './WorkflowStepPicker.vue'
-import { useAiProviderStore } from '../stores/aiProvider'
+import { repeatCountChoices, useAiProviderStore } from '../stores/aiProvider'
 import { aiInvokeGroupId, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import type { WorkflowStepItem, WorkflowStepPickerState } from '../types/workflowStepPicker'
 import { findSequenceHeadIndex } from '../composables/useSequenceStepNote'
@@ -427,17 +427,29 @@ type ReviewLoopTab = 'review' | 'rework' | 'stop'
 const reviewLoopTabs: ReviewLoopTab[] = ['review', 'rework', 'stop']
 const reviewInvocation = ref<'single' | 'loop'>('single')
 const reviewLoopTab = ref<ReviewLoopTab>('review')
-// Deck u3digra2 v6 screens 3~5 spell every option out; the raw numbers they carry are the
-// server contract values, so the value list and the label list are kept side by side here.
-const REVIEW_LOOP_COUNT_OPTIONS = [-1, 1, 2, 3]
+// 0490 T0007 §4-2: deck u3digra2 v6 screens 3~5 originally spelled every option out as a fixed
+// array; R0001 replaced that fixed list with the server-controlled ceiling
+// (aiProviderStore.executionPolicy, loaded from /ai-invoke/providers). The label lists next to
+// each select still read these computed refs directly — Vue auto-unwraps them in templates.
+// REVIEW_LOOP_REWORK_TIMEOUT_OPTIONS/REVIEW_LOOP_TOTAL_TIMEOUT_OPTIONS are timeouts, not repeat
+// counts, and stay fixed arrays.
+const REVIEW_LOOP_COUNT_OPTIONS = computed(() =>
+  repeatCountChoices(aiProviderStore.executionPolicy, { allowZero: false }),
+)
 const REVIEW_LOOP_REWORK_TIMEOUT_OPTIONS = [1800, 3600, 7200]
-const REVIEW_LOOP_RESTART_OPTIONS = [-1, 0, 1, 2]
+const REVIEW_LOOP_RESTART_OPTIONS = computed(() =>
+  repeatCountChoices(aiProviderStore.executionPolicy, { allowZero: true }),
+)
 const REVIEW_LOOP_TOTAL_TIMEOUT_OPTIONS = [3600, 7200, 14400]
-const reviewCount = ref(3)
+// §3.5: the feature default stays 3 (unchanged) unless the admin has lowered the system ceiling
+// below it, in which case it clamps down so a freshly opened dialog never selects a value with
+// no matching <option> (an unclamped literal 3 would render the select blank).
+const defaultReviewCount = computed(() => Math.min(3, aiProviderStore.executionPolicy.repeat_count_max))
+const reviewCount = ref(defaultReviewCount.value)
 // The [정지 조건] tab's "검수 횟수를 다 쓰면 정지" toggle turns review_count between -1 and a
 // finite count. This remembers which finite count to come back to, so toggling twice is a
-// no-op instead of silently resetting the user's 1/2 pick to 3.
-const lastFiniteReviewCount = ref(3)
+// no-op instead of silently resetting the user's 1/2 pick to the clamped default.
+const lastFiniteReviewCount = ref(defaultReviewCount.value)
 const reviewerProviderId = ref('')
 const reviewCriteria = ref<'document_type_default' | 'last_rejection_only'>('document_type_default')
 const reworkProviderId = ref('')
@@ -705,8 +717,8 @@ function resetState() {
   mode.value = canContinuous.value ? (props.initialMode ?? 'single') : 'single'
   reviewInvocation.value = 'single'
   reviewLoopTab.value = 'review'
-  reviewCount.value = 3
-  lastFiniteReviewCount.value = 3
+  reviewCount.value = defaultReviewCount.value
+  lastFiniteReviewCount.value = defaultReviewCount.value
   reviewCriteria.value = 'document_type_default'
   reworkTimeoutSec.value = 3600
   reworkMessage.value = ''
