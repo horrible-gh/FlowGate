@@ -2,13 +2,13 @@
 
 rej_01M1HZBVZ61GG8H9 finding 2가 지적한 공백을 채운다: 지금까지의 terminal-cleanup
 스냅샷/프로젝트 리스 시험은 전부 `_using_memory()`가 True인 process-local dict를
-거쳤고(테스트 프로세스에는 실 DB 연결이 없으므로), 093/094 마이그레이션의 신규
+거쳤고(테스트 프로세스에는 실 DB 연결이 없으므로), 097/098 마이그레이션(T0016 병합 전 093/094)의 신규
 적용·재실행과 `git_terminal_cleanup_snapshots`/`project_ai_leases` 테이블의 실제
 INSERT/UPSERT/SELECT/DELETE 경로는 어떤 시험에서도 실행되지 않았다.
 
 이 파일은 `FlowGateStore._db`에 실제 `sqloader.sqlite3.SQLiteWrapper`(파일 모드)를
 얹어 `_using_memory()`가 False로 떨어지게 만들고, 두 모듈의 `get_store`를 그 스토어로
-monkeypatch해 진짜 SQL 문을 sqlite 파일에 실행한다. `migrated_sqlite_db`가 093/094를
+monkeypatch해 진짜 SQL 문을 sqlite 파일에 실행한다. `migrated_sqlite_db`가 097/098을
 포함한 전체 마이그레이션 디렉터리를 적용하므로, 이 파일이 통과하는 것 자체가
 "신규 적용" 증거이고, 두 번째 `_migrate_fresh` 재실행(아래 `test_migrations_rerun_...`)이
 "재실행 안전성" 증거다.
@@ -59,7 +59,7 @@ def _seed_project(db_path: str, project_id: str) -> None:
 
 @pytest.fixture
 def real_store(migrated_sqlite_db, tmp_path):
-    """A store bound to a fresh sqlite FILE with every migration (incl. 093/094) applied."""
+    """A store bound to a fresh sqlite FILE with every migration (incl. 097/098) applied."""
     db_path = migrated_sqlite_db(f"terminal-cleanup-lease-{id(tmp_path)}.db")
     _seed_project(db_path, "flowgate")
     return _real_store(db_path), db_path
@@ -262,14 +262,17 @@ def _migrate_fresh(db_path: Path):
 
 
 class TestMigrationApplyAndRerunSafety:
-    def test_a_fresh_db_applies_093_and_094_exactly_once(self, tmp_path):
+    def test_a_fresh_db_applies_097_and_098_exactly_once(self, tmp_path):
+        # T0016 (main merge): origin/main had already claimed 093-096, so this group's
+        # two files moved to the next free ordinals and are carried across by
+        # migration_renames.RENAMES. The ordinal is the only thing that changed.
         db_path = tmp_path / "fresh.db"
         _migrate_fresh(db_path)
         conn = sqlite3.connect(str(db_path))
         try:
             applied = [row[0] for row in conn.execute("SELECT filename FROM migrations")]
-            assert applied.count("093_git_terminal_cleanup.sql") == 1
-            assert applied.count("094_project_ai_leases.sql") == 1
+            assert applied.count("097_git_terminal_cleanup.sql") == 1
+            assert applied.count("098_project_ai_leases.sql") == 1
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             assert {"git_terminal_cleanup_snapshots", "project_ai_leases"} <= tables
         finally:

@@ -713,6 +713,11 @@ def open_merge_session_of_project(project_id: str) -> Optional[dict]:
         try:
             if _project_of_group(session["group_id"]) != project_id:
                 continue
+            # A group_update merge lives exclusively in that group's worktree.
+            # It does not hold the shared base checkout and must not block other
+            # groups' base-mutating operations.
+            if db_git.session_kind(session) == db_git.SESSION_KIND_GROUP_UPDATE:
+                continue
         except Exception:
             continue
         if best is None or int(session["merge_id"]) > int(best["merge_id"]):
@@ -2167,11 +2172,15 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
     cfg = db_git.get_config(project_id)
     state = db_git.get_state(group_id)
     if cfg is None or not cfg.get("enabled") or state is None:
-        return {"ok": True, "state": {"group_id": group_id, **_NONE_STATE}}
+        return {"ok": True, "state": {
+            "group_id": group_id, **_NONE_STATE, "base_remote_behind_count": None,
+        }}
 
     status = state.get("status") or "none"
     if not state.get("worktree_registered") and status not in CLEANUP_STATUSES:
-        return {"ok": True, "state": {"group_id": group_id, **_NONE_STATE}}
+        return {"ok": True, "state": {
+            "group_id": group_id, **_NONE_STATE, "base_remote_behind_count": None,
+        }}
     # Lazy none→awaiting_choice transition (L0006 §3): the workflow module never
     # calls into git; the first state query after wf_done realizes the transition.
     # 0199 B0001: a proven no-work group is auto-discarded here instead of being
@@ -2181,14 +2190,18 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         if status != "awaiting_choice":
             # discarded (torn down, no merge/push) or none (discard lock busy —
             # retry next query): either way there is no finalize gate to show.
-            return {"ok": True, "state": {"group_id": group_id, **_NONE_STATE}}
+            return {"ok": True, "state": {
+                "group_id": group_id, **_NONE_STATE, "base_remote_behind_count": None,
+            }}
 
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
     branch = state.get("branch")
     ahead = behind = None
     project_name = _project_name(project_id)
+    base_remote_behind = None
     if project_name and git_available():
         base_root = src_root(project_name, base_branch)
+        _base_remote_ahead, base_remote_behind = _base_ahead_behind(base_root, base_branch)
         if (base_root / ".git").exists():
             proc = _run_git(
                 ["rev-list", "--left-right", "--count", f"{base_branch}...{branch}"],
@@ -2208,6 +2221,13 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         commit_message = None
 
     actionable = status in ("awaiting_choice", "waiting")
+    open_session = db_git.get_open_session_by_group(group_id)
+    group_update_merge_id = (
+        open_session.get("merge_id")
+        if open_session is not None
+        and db_git.session_kind(open_session) == db_git.SESSION_KIND_GROUP_UPDATE
+        else None
+    )
     return {"ok": True, "state": {
         "group_id": group_id,
         "branch": branch,
@@ -2226,7 +2246,9 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         } if actionable else None,
         "ahead_count": ahead,
         "behind_count": behind,
-        "merge_id": state.get("merge_id"),
+        # Local-ref-only measurement: state polling never fetches the network.
+        "base_remote_behind_count": base_remote_behind,
+        "merge_id": group_update_merge_id or state.get("merge_id"),
         "merge_commit": state.get("merge_commit"),
         "commit_message": commit_message,
         # True only for the display-only pre-approval preview (0197 T0004 §B);
@@ -4146,8 +4168,162 @@ def _merge_commit_subject(branch: str, base_branch: str) -> str:
     return f"Merge branch '{branch}' into '{base_branch}'"
 
 
+def update_from_base(group_id: str) -> dict:
+    """Explicit-only strict refresh: fetch, fast-forward base, then merge base into group."""
+    cfg, state, project_id, base_root, wt_path = _finalize_context(group_id)
+    if db_git.get_open_session_by_group(group_id) is not None:
+        raise GitServiceError(409, "invalid_state", "resolve or abort the current group update first")
+    guard_base_free(project_id)
+    if not git_available():
+        raise GitServiceError(500, "git_unavailable", "git binary not found on server")
+    holder = f"op:{uuid.uuid4()}"
+    if not _acquire_lock(project_id, holder):
+        raise GitServiceError(409, "git_busy", "another git operation is in progress")
+    try:
+        guard_base_free(project_id)
+        if _dirty(base_root, include_untracked=False):
+            raise GitServiceError(
+                409, "base_dirty", "base checkout has local modifications",
+                details={"files": _dirty_files(base_root, include_untracked=False)},
+            )
+        base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+        username = cfg.get("username")
+        secret = _load_secret_for(cfg) or ""
+        proc = _run_git(
+            ["fetch", "origin"], cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC,
+            username=username, secret=secret,
+        )
+        if proc.returncode != 0:
+            raise GitServiceError(500, "git_error", _last_line(proc.stderr))
+        if _ref_exists(base_root, f"refs/remotes/origin/{base_branch}"):
+            proc = _run_git(["merge", "--ff-only", f"origin/{base_branch}"], cwd=base_root)
+            if proc.returncode != 0:
+                ahead, _behind = _base_ahead_behind(base_root, base_branch)
+                if ahead is not None and ahead > 0:
+                    raise GitServiceError(
+                        500, "base_diverged",
+                        "base checkout has local-only commits and cannot fast-forward",
+                    )
+                raise GitServiceError(500, "git_error", _last_line(proc.stderr))
+
+        _absorb_worker_edits(
+            wt_path, f"chore: preserve {group_id} work before base update",
+            _author_env_from_cfg(cfg),
+        )
+        before = _run_git(["rev-parse", "HEAD"], cwd=wt_path)
+        proc = _run_git(
+            ["merge", "--no-ff", base_branch, "-m",
+             f"Merge base '{base_branch}' into '{state['branch']}'"],
+            cwd=wt_path, author_env=_author_env_from_cfg(cfg),
+        )
+        if proc.returncode != 0:
+            untracked_blockers = _untracked_merge_blockers(proc.stderr)
+            tracked_blockers = _tracked_merge_blockers(proc.stderr)
+            if untracked_blockers is not None or tracked_blockers is not None:
+                _run_git(["merge", "--abort"], cwd=wt_path)
+                blockers = (untracked_blockers or []) + (tracked_blockers or [])
+                raise GitServiceError(
+                    409, "group_untracked_conflict",
+                    "group update is blocked by local worktree files",
+                    details={
+                        "group_id": group_id, "files": blockers, "scope": "group",
+                        "untracked_files": untracked_blockers or [],
+                        "tracked_files": tracked_blockers or [],
+                    },
+                )
+            conflicts = _conflict_files(wt_path)
+            if conflicts:
+                merge_id = db_git.create_session(
+                    group_id, conflicts, kind=db_git.SESSION_KIND_GROUP_UPDATE,
+                    context={"prev_status": state.get("status") or "none",
+                             "branch": state.get("branch")},
+                )
+                return {"ok": True, "result": {
+                    "status": "conflict", "merge_id": merge_id,
+                    "conflict_files": conflicts,
+                }}
+            _run_git(["merge", "--abort"], cwd=wt_path)
+            raise GitServiceError(500, "git_error", _last_line(proc.stderr))
+        after = _run_git(["rev-parse", "HEAD"], cwd=wt_path)
+        changed = (before.stdout or "").strip() != (after.stdout or "").strip()
+        return {"ok": True, "result": {
+            "status": "updated" if changed else "no_change",
+            "branch": state.get("branch"),
+        }}
+    finally:
+        db_git.release_lock(project_id, holder)
+
+
+def group_update_untracked_recover(
+    group_id: str, files: list[str], action: str, message: Optional[str] = None
+) -> dict:
+    """Recover only paths that currently block base->group update in the group worktree."""
+    cfg, _state, project_id, _base_root, wt_path = _finalize_context(group_id)
+    cleaned: list[str] = []
+    for raw in files or []:
+        path = str(raw or "").strip().replace("\\", "/")
+        if not path or path.startswith("/") or re.match(r"^[A-Za-z]:", path) or ".." in path.split("/"):
+            raise GitServiceError(422, "invalid_request", f"invalid path: {raw!r}")
+        if path not in cleaned:
+            cleaned.append(path)
+    if not cleaned:
+        raise GitServiceError(422, "invalid_request", "files must name at least one path")
+    if action not in {"commit", "revert", "remove"}:
+        raise GitServiceError(422, "invalid_request", "invalid recovery action")
+    if not git_available():
+        raise GitServiceError(500, "git_unavailable", "git binary not found on server")
+    holder = f"op:{uuid.uuid4()}"
+    if not _acquire_lock(project_id, holder):
+        raise GitServiceError(409, "git_busy", "another git operation is in progress")
+    try:
+        if db_git.get_open_session_by_group(group_id) is not None:
+            raise GitServiceError(409, "invalid_state", "resolve or abort the current group update first")
+        base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+        probe = _run_git(["merge", "--no-commit", "--no-ff", base_branch], cwd=wt_path)
+        untracked_blockers = _untracked_merge_blockers(probe.stderr) or []
+        tracked_blockers = _tracked_merge_blockers(probe.stderr) or []
+        blockers = tracked_blockers if action == "revert" else untracked_blockers
+        # The probe is classification-only. Whether it stopped on a blocker,
+        # entered conflicts, or produced a clean no-commit merge, restore HEAD
+        # before applying the explicitly requested recovery.
+        _run_git(["merge", "--abort"], cwd=wt_path)
+        unknown = [path for path in cleaned if path not in blockers]
+        if unknown:
+            raise GitServiceError(
+                422, "invalid_request", "paths are not current group-update blockers",
+                details={"files": unknown, "allowed": blockers, "scope": "group"},
+            )
+        if action == "commit":
+            proc = _run_git(["add", "--", *cleaned], cwd=wt_path)
+            if proc.returncode == 0:
+                subject = normalize_subject(message) or default_base_commit_message(cleaned)
+                proc = _run_git(
+                    [*_GIT_IDENT, "commit", "-m", subject], cwd=wt_path,
+                    author_env=_author_env_from_cfg(cfg),
+                )
+        elif action == "revert":
+            proc = _run_git(["checkout", "HEAD", "--", *cleaned], cwd=wt_path)
+        else:
+            current = set(_untracked_files(wt_path, limit=0))
+            if any(path not in current for path in cleaned):
+                raise GitServiceError(422, "invalid_request", "remove accepts untracked files only")
+            proc = _run_git(["clean", "-f", "-q", "--", *cleaned], cwd=wt_path)
+        if proc.returncode != 0:
+            raise GitServiceError(500, "git_error", _last_line(proc.stderr))
+        return {"ok": True, "result": {
+            "action": action, "files": cleaned, "scope": "group",
+            "remaining_untracked": _untracked_files(wt_path),
+        }}
+    finally:
+        db_git.release_lock(project_id, holder)
+
+
 def finalize(group_id: str, action: Optional[str], commit_message: Optional[str] = None) -> dict:
     cfg, state, project_id, base_root, wt_path = _finalize_context(group_id)
+    open_session = db_git.get_open_session_by_group(group_id)
+    if (open_session is not None
+            and db_git.session_kind(open_session) == db_git.SESSION_KIND_GROUP_UPDATE):
+        raise GitServiceError(409, "invalid_state", "resolve or abort the group update first")
     action = action or cfg.get("default_finalize_action") or "wait"
     if action not in ACTION_VALUES:
         raise GitServiceError(422, "invalid_request", f"invalid action: {action!r}")
@@ -4507,6 +4683,29 @@ def _untracked_merge_blockers(stderr: Optional[str]) -> Optional[list[str]]:
     return out if found else None
 
 
+_TRACKED_MERGE_RE = re.compile(
+    r"local changes to the following files would be overwritten by merge", re.I
+)
+
+
+def _tracked_merge_blockers(stderr: Optional[str]) -> Optional[list[str]]:
+    """Tracked paths whose local modifications made Git refuse the merge."""
+    lines = (stderr or "").splitlines()
+    found = False
+    out: list[str] = []
+    for line in lines:
+        if not found:
+            if _TRACKED_MERGE_RE.search(line):
+                found = True
+            continue
+        if not line[:1].isspace():
+            break
+        path = line.strip()
+        if path:
+            out.append(path)
+    return out if found else None
+
+
 # ── Conflict session: list / resolve / abort (P0005 §6 / L0006 §2.7) ─────────
 
 _CONFLICT_OPEN_RE = re.compile(r"^<{7}( |$)")
@@ -4626,8 +4825,8 @@ def _session_context(group_id: str, merge_id: int) -> tuple[dict, dict, str, Pat
     if session is None or session.get("group_id") != group_id or session.get("status") != "open":
         raise GitServiceError(404, "not_found", f"merge session {merge_id} not found")
     cfg, _state, project_id, base_root, wt_path = _finalize_context(group_id)
-    is_tr = db_git.session_kind(session) in db_git.TR_SESSION_KINDS
-    return session, cfg, project_id, (wt_path if is_tr else base_root)
+    is_worktree_session = db_git.session_kind(session) in db_git.WORKTREE_SESSION_KINDS
+    return session, cfg, project_id, (wt_path if is_worktree_session else base_root)
 
 
 
@@ -4745,6 +4944,21 @@ def resolve_conflicts(group_id: str, merge_id: int, files: list[dict], complete:
                 "remaining_conflicts": remaining,
             },
         }
+
+    if db_git.session_kind(session) == db_git.SESSION_KIND_GROUP_UPDATE:
+        proc = _run_git(
+            [*_GIT_IDENT, "commit", "-m", "Merge updated base into group"],
+            cwd=root, author_env=_author_env_from_cfg(cfg),
+        )
+        if proc.returncode != 0:
+            raise GitServiceError(500, "git_error", _last_line(proc.stderr))
+        head = _run_git(["rev-parse", "--short", "HEAD"], cwd=root)
+        merge_commit = (head.stdout or "").strip() or None
+        db_git.close_session(merge_id, "done")
+        return {"ok": True, "result": {
+            "status": "updated", "merge_commit": merge_commit, "pushed": False,
+            "remaining_conflicts": [],
+        }}
 
     if db_git.session_kind(session) in db_git.TR_SESSION_KINDS:
         # 088 — a TR conflict STOPS here. Every file is clean of markers and staged, and the
@@ -5125,9 +5339,15 @@ def abort_merge(group_id: str, merge_id: int) -> dict:
     and `merge --abort` has nothing to abort in a group worktree — it is delegated whole
     to :func:`abort_tr_conflict` rather than given a second endpoint to learn."""
     session, _cfg, project_id, root = _session_context(group_id, merge_id)
-    if db_git.session_kind(session) in db_git.TR_SESSION_KINDS:
+    kind = db_git.session_kind(session)
+    if kind in db_git.TR_SESSION_KINDS:
         return abort_tr_conflict(group_id, merge_id)
     _run_git(["merge", "--abort"], cwd=root)
+    if kind == db_git.SESSION_KIND_GROUP_UPDATE:
+        db_git.close_session(merge_id, "aborted")
+        return {"ok": True, "result": {
+            "status": "aborted", "branch_preserved": True,
+        }}
     db_git.close_session(merge_id, "aborted")
     _set_status(group_id, "waiting")
     db_git.release_lock(project_id, f"merge:{merge_id}")   # legacy leftover, best-effort
@@ -5237,6 +5457,29 @@ def _sweep_tr_session(session: dict, project_id: str) -> None:
     _emit_auto_aborted(project_id, group_id, merge_id, "ttl_expired")
 
 
+def _sweep_group_update_session(session: dict, project_id: str) -> None:
+    """Recover a group update against the group worktree without changing its state."""
+    merge_id = int(session["merge_id"])
+    group_id = session["group_id"]
+    context = db_git.session_context(session)
+    state = db_git.get_state(group_id) or {}
+    project_name = _project_name(project_id)
+    branch = state.get("branch") or context.get("branch")
+    root = src_root(project_name, branch) if (project_name and branch) else None
+    if root is None or not root.is_dir():
+        return
+    merge_head = _run_git(["rev-parse", "--verify", "MERGE_HEAD"], cwd=root)
+    if merge_head.returncode != 0:
+        db_git.close_session(merge_id, "aborted")
+        return
+    if not _ttl_expired(session.get("touched_at") or session.get("created_at")):
+        return
+    proc = _run_git(["merge", "--abort"], cwd=root)
+    if proc.returncode == 0:
+        db_git.close_session(merge_id, "aborted")
+        _emit_auto_aborted(project_id, group_id, merge_id, "ttl_expired")
+
+
 def merge_session_sweep() -> None:
     """Auto-recover abandoned / orphaned conflict sessions (0205 L §2.5).
 
@@ -5253,7 +5496,11 @@ def merge_session_sweep() -> None:
         try:
             group_id = session["group_id"]
             project_id = _project_of_group(group_id)
-            if db_git.session_kind(session) in db_git.TR_SESSION_KINDS:
+            kind = db_git.session_kind(session)
+            if kind == db_git.SESSION_KIND_GROUP_UPDATE:
+                _sweep_group_update_session(session, project_id)
+                continue
+            if kind in db_git.TR_SESSION_KINDS:
                 # 088 — a TR conflict has no MERGE_HEAD anywhere and does not live in the
                 # base checkout, so every branch below would call it an orphan and close it
                 # while the conflicted revert sat on disk with nothing pointing at it.
@@ -5316,7 +5563,11 @@ def startup_recovery() -> None:
             group_id = session["group_id"]
             try:
                 project_id = _project_of_group(group_id)
-                if db_git.session_kind(session) in db_git.TR_SESSION_KINDS:
+                kind = db_git.session_kind(session)
+                if kind == db_git.SESSION_KIND_GROUP_UPDATE:
+                    # Its MERGE_HEAD lives in the group worktree; never rewrite group status.
+                    continue
+                if kind in db_git.TR_SESSION_KINDS:
                     # 088 — re-affirm the status and leave the on-disk question to the
                     # sweep at the end of this function, which knows where to look.
                     _set_status(group_id, "conflict", merge_id=merge_id)

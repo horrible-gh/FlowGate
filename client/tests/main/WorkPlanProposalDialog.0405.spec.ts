@@ -106,6 +106,19 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
     getRequest.mockResolvedValue({ data: { providers: PROVIDERS, default_provider_id: 'aip_opus' } })
   })
 
+  it('passes the active UI locale to loadLabels when reopened', async () => {
+    i18n.global.locale.value = 'en'
+    const loadLabels = vi.spyOn(useDocTypeStore(), 'loadLabels')
+    const wrapper = await mountDialog()
+
+    expect(loadLabels).toHaveBeenLastCalledWith('en')
+    await wrapper.setProps({ visible: false })
+    await wrapper.setProps({ visible: true })
+    await flushPromises()
+    expect(loadLabels).toHaveBeenLastCalledWith('en')
+    expect(loadLabels).toHaveBeenCalledTimes(2)
+  })
+
   it('네 버튼이 언제나 같은 개수로 그려진다', async () => {
     const wrapper = await mountDialog()
     for (const key of ['cancel', 'create-empty', 'copy-mention', 'invoke-ai']) {

@@ -55,7 +55,7 @@ _ID_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 _DEFAULT_BASE_URLS = {
     "claude": "https://api.anthropic.com",
-    "openai": "https://api.openai.com",
+    "openai": "https://api.openai.com/v1",
 }
 
 # Per-kind × host-OS example CLI commands (flowgate.default.0281 T0005, NR0003 §4 F2 / R2).
@@ -661,7 +661,8 @@ def _effective_view(project_id: str) -> dict:
         source = "system"
         default_id = _ai_db.get_system_default_provider_id()
 
-    chain = [_to_view(r) for r in rows if r["enabled"]]
+    from modules.flow_gate.services.provider_capability_service import provider_capabilities
+    chain = [{**_to_view(r), "capabilities": provider_capabilities(_to_view(r))} for r in rows if r["enabled"]]
     return {
         "source": source,
         "providers": chain,
@@ -751,7 +752,7 @@ def _doctype_view(project_id: str) -> dict:
             for r in _doctype_db.list_for_project(project_id)
         ],
         "providers": [
-            {"id": p["id"], "name": p["name"], "exec_type": p["exec_type"], "kind": p["kind"]}
+            {"id": p["id"], "name": p["name"], "exec_type": p["exec_type"], "kind": p["kind"], "capabilities": p["capabilities"]}
             for p in (effective.get("providers") or [])
         ],
         "default_provider_id": effective.get("default_provider_id"),

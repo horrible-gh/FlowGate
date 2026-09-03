@@ -18,7 +18,13 @@ def test_project_ai_lease_is_project_scoped_and_released(monkeypatch):
 def test_resolve_base_dirty_permission_and_catalog_converge():
     assert tool_registry.kind_for_step("resolve_base_dirty") == ("read_write", None)
     assert tool_registry.kind_for_token({"action_scope": "resolve_base_dirty"}) == ("read_write", None)
-    assert "resolve_base_dirty" in tool_registry.tool_names("read_write")
+    # Convergence is per SCOPE, not per kind: the op 403s for anything but its own
+    # action_scope (remote_tool_service._exec_resolve_base_dirty), so a plain read_write
+    # worker must not be advertised it (0492 D0004 D-2 "advertised == granted").
+    assert "resolve_base_dirty" in tool_registry.tool_names("read_write", "resolve_base_dirty")
+    assert "resolve_base_dirty" not in tool_registry.tool_names("read_write")
+    assert "resolve_base_dirty" not in tool_registry.tool_names("read_write", "edit")
+    assert "resolve_base_dirty" not in tool_registry.tool_names("read", "resolve_base_dirty")
     assert remote_tool_service.OP_SCOPE["resolve_base_dirty"] == "write"
 
 

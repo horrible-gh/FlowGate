@@ -25,7 +25,7 @@ def test_kind_read_write_for_new_or_edit_tr_tsr(monkeypatch, action_scope, step_
     assert result["kind"] == "read_write"
     assert result["reason"] is None
     assert [item["name"] for item in result["tools"]] == [
-        "read", "grep", "glob", "stat", "write", "patch", "remove"
+        "read", "grep", "glob", "stat", "diff", "log", "write", "patch", "remove"
     ]
 
 
@@ -43,7 +43,7 @@ def test_kind_read_only_for_t_after_write_recall(monkeypatch, action_scope):
     )
     assert result["kind"] == "read"
     assert result["reason"] is None
-    assert [item["name"] for item in result["tools"]] == ["read", "grep", "glob", "stat"]
+    assert [item["name"] for item in result["tools"]] == ["read", "grep", "glob", "stat", "diff", "log"]
 
 
 @pytest.mark.parametrize("action_scope", ["review", "workflow_decide", "chat"])
@@ -57,7 +57,7 @@ def test_kind_read_for_review_workflow_decide_and_chat_without_step_lookup(monke
     result = tool_registry.resolve_registry({"action_scope": action_scope}, "flowgate", "ja")
     assert result["kind"] == "read"
     assert result["reason"] is None
-    assert [item["name"] for item in result["tools"]] == ["read", "grep", "glob", "stat"]
+    assert [item["name"] for item in result["tools"]] == ["read", "grep", "glob", "stat", "diff", "log"]
 
 
 def test_kind_none_for_unassigned_scopes_and_user_jwt():
@@ -84,7 +84,7 @@ def test_lookup_exception_degrades_to_read_with_reason(monkeypatch):
     )
     assert result["kind"] == "read"
     assert result["reason"] == "step_lookup_failed"
-    assert [item["name"] for item in result["tools"]] == ["read", "grep", "glob", "stat"]
+    assert [item["name"] for item in result["tools"]] == ["read", "grep", "glob", "stat", "diff", "log"]
 
 
 def test_local_mode_overrides_kind_to_none(monkeypatch):
@@ -127,12 +127,23 @@ def test_locale_normalization_catalog_order_and_exact_notes(monkeypatch):
     assert template_provision.normalize_locale("en") == "en"
 
     result = tool_registry.resolve_registry({"action_scope": "edit"}, "flowgate", "ko")
-    assert [item["name"] for item in result["tools"]] == list(tool_registry.DISPLAY_ORDER)
+    # 0482 T0011 put a scope-bound tool (resolve_base_dirty) into DISPLAY_ORDER, so the
+    # catalog an `edit` token sees is DISPLAY_ORDER MINUS the scope-bound names — same
+    # order, one entry short. Both spellings are asserted: the literal list keeps this a
+    # real pin, the derived list keeps "order comes from DISPLAY_ORDER" the reason.
+    assert [item["name"] for item in result["tools"]] == [
+        "read", "grep", "glob", "stat", "diff", "log", "write", "patch", "remove"
+    ]
+    assert [item["name"] for item in result["tools"]] == [
+        name for name in tool_registry.DISPLAY_ORDER
+        if name not in tool_registry._SCOPE_BOUND_NAMES
+    ]
     assert result["tools"][0]["summary"] == "원격 프로젝트 소스의 파일 하나를 읽는다."
     assert result["notes"] == [
         tool_registry.NOTES["ko"]["path_rule"],
         tool_registry.NOTES["ko"]["auth_rule"],
         tool_registry.NOTES["ko"]["no_disk_edit"],
+        tool_registry.NOTES["ko"]["scratch_rule"],
         tool_registry.NOTES["ko"]["report_changes"],
         tool_registry.NOTES["ko"]["see_detail"],
     ]

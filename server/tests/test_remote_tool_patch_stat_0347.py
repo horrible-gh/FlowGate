@@ -37,12 +37,15 @@ def _read(env, rel: str) -> bytes:
 def test_ops_and_scopes_registered():
     from modules.flow_gate.services import remote_tool_service as svc
 
-    assert set(svc.OPS) == {"read", "write", "grep", "glob", "remove", "patch", "stat"}
+    # 0482 T0011 added the group-less base-dirty decision op; it is a real entry in the
+    # op registry (scope "write"), advertised only to its own action_scope.
+    assert set(svc.OPS) == {"read", "write", "grep", "glob", "remove", "patch", "stat", "diff", "log",
+                            "resolve_base_dirty"}
     # P0004 §0.4 — no new scope value, so remote_tool_grant_scope needs no migration.
     assert svc.OP_SCOPE["patch"] == "write"
     assert svc.OP_SCOPE["stat"] == "read"
     # P0004 §0.5 — patch mutates, stat does not.
-    assert svc._MUTATING_OPS == {"write", "remove", "patch"}
+    assert svc._MUTATING_OPS == {"write", "remove", "patch", "resolve_base_dirty"}
     assert "stat" not in svc._MUTATING_OPS
     assert svc._PATH_VALIDATE_SINGLE_FIELD_OPS >= {"patch", "stat"}
 

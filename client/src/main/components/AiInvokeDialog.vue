@@ -318,6 +318,12 @@
             </template>
             <div v-if="startError" class="aiv-error">
               <AppIcon name="warning" /> {{ startError }}
+              <div v-if="capabilityWarning" class="aiv-capability-warning" data-test="capability-warning">
+                <strong>{{ capabilityWarning.step_key }} · {{ capabilityWarning.step_type }}</strong> — {{ capabilityWarning.provider_name }}
+                <span>{{ (capabilityWarning.missing_capabilities || []).join(', ') }}</span>
+                <button type="button" class="btn btn-warning" @click="capabilityWarningAck = true; capabilityWarning = null; start()">Continue once</button>
+                <button type="button" class="btn btn-ghost" @click="capabilityWarning = null; capabilityWarningAck = false">Cancel</button>
+              </div>
               <button
                 v-if="lockedGroupId"
                 type="button"
@@ -348,7 +354,7 @@ import { getRequest, postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import AiProviderSelect from './AiProviderSelect.vue'
 import WorkflowStepPicker from './WorkflowStepPicker.vue'
-import { useAiProviderStore } from '../stores/aiProvider'
+import { repeatCountChoices, useAiProviderStore } from '../stores/aiProvider'
 import { aiInvokeGroupId, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import type { WorkflowStepItem, WorkflowStepPickerState } from '../types/workflowStepPicker'
 import { findSequenceHeadIndex } from '../composables/useSequenceStepNote'
@@ -427,17 +433,29 @@ type ReviewLoopTab = 'review' | 'rework' | 'stop'
 const reviewLoopTabs: ReviewLoopTab[] = ['review', 'rework', 'stop']
 const reviewInvocation = ref<'single' | 'loop'>('single')
 const reviewLoopTab = ref<ReviewLoopTab>('review')
-// Deck u3digra2 v6 screens 3~5 spell every option out; the raw numbers they carry are the
-// server contract values, so the value list and the label list are kept side by side here.
-const REVIEW_LOOP_COUNT_OPTIONS = [-1, 1, 2, 3]
+// 0490 T0007 §4-2: deck u3digra2 v6 screens 3~5 originally spelled every option out as a fixed
+// array; R0001 replaced that fixed list with the server-controlled ceiling
+// (aiProviderStore.executionPolicy, loaded from /ai-invoke/providers). The label lists next to
+// each select still read these computed refs directly — Vue auto-unwraps them in templates.
+// REVIEW_LOOP_REWORK_TIMEOUT_OPTIONS/REVIEW_LOOP_TOTAL_TIMEOUT_OPTIONS are timeouts, not repeat
+// counts, and stay fixed arrays.
+const REVIEW_LOOP_COUNT_OPTIONS = computed(() =>
+  repeatCountChoices(aiProviderStore.executionPolicy, { allowZero: false }),
+)
 const REVIEW_LOOP_REWORK_TIMEOUT_OPTIONS = [1800, 3600, 7200]
-const REVIEW_LOOP_RESTART_OPTIONS = [-1, 0, 1, 2]
+const REVIEW_LOOP_RESTART_OPTIONS = computed(() =>
+  repeatCountChoices(aiProviderStore.executionPolicy, { allowZero: true }),
+)
 const REVIEW_LOOP_TOTAL_TIMEOUT_OPTIONS = [3600, 7200, 14400]
-const reviewCount = ref(3)
+// §3.5: the feature default stays 3 (unchanged) unless the admin has lowered the system ceiling
+// below it, in which case it clamps down so a freshly opened dialog never selects a value with
+// no matching <option> (an unclamped literal 3 would render the select blank).
+const defaultReviewCount = computed(() => Math.min(3, aiProviderStore.executionPolicy.repeat_count_max))
+const reviewCount = ref(defaultReviewCount.value)
 // The [정지 조건] tab's "검수 횟수를 다 쓰면 정지" toggle turns review_count between -1 and a
 // finite count. This remembers which finite count to come back to, so toggling twice is a
-// no-op instead of silently resetting the user's 1/2 pick to 3.
-const lastFiniteReviewCount = ref(3)
+// no-op instead of silently resetting the user's 1/2 pick to the clamped default.
+const lastFiniteReviewCount = ref(defaultReviewCount.value)
 const reviewerProviderId = ref('')
 const reviewCriteria = ref<'document_type_default' | 'last_rejection_only'>('document_type_default')
 const reworkProviderId = ref('')
@@ -687,6 +705,8 @@ const resolvedTarget = computed<{ seq: number; fromDecision: boolean } | null>((
 })
 
 const canStart = computed(() => reviewLoopActive.value ? !!reviewerProviderId.value && !!reworkProviderId.value : mode.value === 'single' || resolvedTarget.value != null)
+const capabilityWarningAck = ref(false)
+const capabilityWarning = ref<{ step_key?: string; step_type?: string; provider_name?: string; missing_capabilities?: string[] } | null>(null)
 
 const pickerSummary = computed(() => {
   if (picker.value.loading || picker.value.errorKey) return ''
@@ -705,8 +725,8 @@ function resetState() {
   mode.value = canContinuous.value ? (props.initialMode ?? 'single') : 'single'
   reviewInvocation.value = 'single'
   reviewLoopTab.value = 'review'
-  reviewCount.value = 3
-  lastFiniteReviewCount.value = 3
+  reviewCount.value = defaultReviewCount.value
+  lastFiniteReviewCount.value = defaultReviewCount.value
   reviewCriteria.value = 'document_type_default'
   reworkTimeoutSec.value = 3600
   reworkMessage.value = ''
@@ -789,6 +809,7 @@ async function start() {
       if (aiProviderStore.selectedProviderId) body.provider_id = aiProviderStore.selectedProviderId
       if (aiProviderStore.pinned) body.provider_pinned = true
     }
+    if (mode.value === 'single' && capabilityWarningAck.value) body.capability_warning_ack = true
     if (props.module != null) body.module = props.module
     if (props.selectedDocs?.length) body.selected_docs = props.selectedDocs
     if (props.messages?.length) body.messages = props.messages
@@ -890,6 +911,11 @@ async function start() {
       startError.value = t('main.ai_invoke_dialog.error_no_provider_registered')
     } else if (status === 409 && data.code === 'no_enabled_provider') {
       startError.value = t('main.ai_invoke_dialog.error_no_provider')
+    } else if (status === 422 && data.code === 'provider_capability_confirmation_required' && mode.value === 'single') {
+      // The first request only displays the server-authoritative warning. A second explicit
+      // click is the sole path that carries the ephemeral acknowledgement.
+      capabilityWarning.value = data
+      startError.value = data.message || 'This provider cannot modify source or run tests.'
     } else if (status === 422) {
       const msgs = (data.errors ?? []).map((er: any) => `${er.loc}: ${er.msg}`).join(' / ')
       startError.value = msgs || t('main.ai_invoke_dialog.error_start_failed')

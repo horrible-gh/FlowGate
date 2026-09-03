@@ -43,6 +43,7 @@ from modules.flow_gate.documents.constants import (
 from modules.flow_gate.rbac.decorators import _has_permission, require_permission
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import git_service
+from modules.flow_gate.services import register_binding
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import tool_registry
 from modules.flow_gate.services import step_verification_service
@@ -1636,17 +1637,25 @@ def _frontmatter_guard_internal_error(where: str, exc: BaseException) -> JSONRes
     )
 
 
-def _fail(status: int, message: str, help_url: str | None = None) -> JSONResponse:
+def _fail(
+    status: int,
+    message: str,
+    help_url: str | None = None,
+    error: dict | None = None,
+) -> JSONResponse:
+    """The one failure envelope. `error_message` is unchanged and still the field every
+    existing caller reads; `error` is the P0007 normalized object (code + details.reason)
+    that 0492 T0018 adds, present only where a caller supplies one."""
     help_url = help_url or _help_url()
-    return JSONResponse(
-        status_code=status,
-        content={
-            "ok": False,
-            "http_status": status,
-            "error_message": message,
-            "help_url": help_url,
-        },
-    )
+    content: dict = {
+        "ok": False,
+        "http_status": status,
+        "error_message": message,
+        "help_url": help_url,
+    }
+    if error is not None:
+        content["error"] = error
+    return JSONResponse(status_code=status, content=content)
 
 
 # ── Corrupted-body guard + body-fingerprint match (0391 B0001 proposal 3+4, T0005) ──
@@ -2184,6 +2193,107 @@ async def inbox(request: Request):
         return await anyio.to_thread.run_sync(_handle_edit, request, raw, body)
 
 
+# ── Step 3: the one context-binding check (0492 T0018 item 2 / L0010 §2.3) ──────────
+#
+# The four handlers each carried their own two-or-three `token_rec[...] != ...` comparisons,
+# in three different orders, and NONE of them compared the group. So a rejection could only
+# ever be read as "some 403 happened here" — NR0013 had to reason from source order to say
+# which axis fired. They all call this now: the same four axes in the same fixed order
+# (action, project, group, doc), the same 403 body with the axis named in it, and one row
+# per rejection in the run's telemetry.
+
+
+def _check_context_binding(
+    *,
+    action_handler: str,
+    project: Any,
+    doc: Optional[str],
+    token_rec: dict,
+    group: Optional[str] = None,
+    prev_doc_id: Optional[str] = None,
+    target_doc_id: Optional[str] = None,
+) -> Optional[JSONResponse]:
+    """Return None when the request may proceed, or the 403 to return.
+
+    `group` is passed in only where the handler has already normalized one (new). Everywhere
+    else it is determined solely from the DB ownership of the target document — never from a
+    substring guessed out of the document id and never from the token. A failed target lookup
+    therefore leaves the expected group unresolved and the group axis fails closed with this
+    context-binding 403 before Step 5 can return a referential-integrity response.
+
+    Token-side group resolution is independent: its `group_id` column is authoritative when
+    present, with its own `doc_ref` lookup only for legacy tokens that lack that column.
+    Two unresolved values are never equal here; that is what `canonical_context` guarantees.
+    """
+    token_group = (token_rec.get("group_id") or "").strip() or register_binding.group_of_doc(
+        token_rec.get("doc_ref")
+    )
+    if group is None:
+        group = register_binding.group_of_doc(doc)
+
+    axes, expected, actual, relaxed, group_db, group_resolved = register_binding.inbox_mismatches(
+        action_handler=action_handler,
+        project=project,
+        group=group,
+        doc=doc,
+        token_rec=token_rec,
+        token_kind=register_binding.token_kind(token_rec),
+        api_run_bound=bool((token_rec.get("ai_run_id") or "").strip()),
+    )
+
+    # L0010 §5: a `new` whose predecessor belongs to a different group is a group fault, and
+    # it has to be caught here — before Step 5 would happily number a document into the group
+    # the request named.
+    if action_handler == "new" and "group" not in axes:
+        prev_group = register_binding.group_of_doc(prev_doc_id)
+        if prev_group is not None and prev_group != group:
+            axes = sorted([*axes, "group"], key=register_binding.AXIS_ORDER.index)
+
+    correlation_id = register_binding.new_correlation_id()
+    if not axes:
+        if relaxed:
+            register_binding.log_relaxation(
+                correlation_id=correlation_id,
+                token_id=token_rec.get("token_id"),
+                action_handler=action_handler,
+                unjudged_axes=[] if group_db else ["group"],
+            )
+        return None
+
+    record = register_binding.failure_record(
+        boundary=register_binding.BOUNDARY_INBOX,
+        axes=axes,
+        run_context=expected,
+        token_context=actual,
+        correlation_id=correlation_id,
+        run_id=(token_rec.get("ai_run_id") or "").strip() or None,
+        ai_run_id=(token_rec.get("ai_run_id") or "").strip() or None,
+        token_id=token_rec.get("token_id"),
+        group_token_db=group_db,
+        group_token_resolved=group_resolved,
+        action_scope_request=action_handler,
+        prev_doc_id_request=prev_doc_id,
+        target_doc_id_request=target_doc_id,
+        binding_relaxed=relaxed,
+    )
+    # Logs, and — when this token belongs to an API-provider run this process is still
+    # running — appends to that run's live diagnostics, so the dispatch side and the inbox
+    # side end up in one list and one table instead of two disagreeing stories.
+    register_binding.record_for_run(record["telemetry"].get("run_id"), record)
+    return _fail(
+        403,
+        register_binding.BINDING_MESSAGE,
+        error=register_binding.forbidden_details(record),
+    )
+
+
+def _permission_denied(message: str) -> JSONResponse:
+    """A 403 that is NOT a binding fault. Same top-level code, different reason, and never
+    an axis — an RBAC refusal misfiled as a binding mismatch sends the next reader hunting
+    for a token that was correct all along (L0010 §2.4)."""
+    return _fail(403, message, error=register_binding.permission_denied_error(message))
+
+
 def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSONResponse:
     """Start a TS test run through a test_run-scoped worker token."""
     from modules.flow_gate.services import test_run_service
@@ -2200,15 +2310,18 @@ def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSONRespon
     except HTTPException as exc:
         return _fail(exc.status_code, str(exc.detail))
 
-    if token_rec.get("action_scope") != "test_run":
-        return _fail(403, "Context binding mismatch. Use the correct token.")
-    if token_rec.get("project") != project or token_rec.get("doc_ref") != doc_id:
-        return _fail(403, "Context binding mismatch. Use the correct token.")
+    # ── Step 3: Context binding (action, project, group, doc — in that order) ──
+    binding_failure = _check_context_binding(
+        action_handler="test_run", project=project, doc=doc_id,
+        token_rec=token_rec, target_doc_id=doc_id,
+    )
+    if binding_failure is not None:
+        return binding_failure
     # Same semantics as the UI routes (is_admin bypass OR RBAC): a raw has_permission
     # here re-created the 0086 trap — live RBAC tables are unpopulated, so the admin
     # issuer's chain token 403'd at the very entrance it was minted for (group 0150).
     if not test_run_service.token_can_run_tests(token_rec["issued_to"], project):
-        return _fail(403, "Permission denied: perm_test_run required")
+        return _permission_denied("Permission denied: perm_test_run required")
 
     doc = db_docs.get_by_id(str(doc_id))
     if doc is None:
@@ -2316,16 +2429,21 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
     except HTTPException as exc:
         return _fail(exc.status_code, exc.detail)
 
-    # ── Step 3: Context binding (scope + project + target document) ──
-    # Scope guard mirrors _handle_new/_handle_edit: a review submission requires a
-    # review-scoped token. This is what stops an "edit" token from being replayed as
-    # a review (and, conversely, a review token from editing) — B0057.0001/NR0057.0003.
-    if token_rec["action_scope"] != "review":
-        return _fail(403, "Context binding mismatch. Use the correct token.")
-    if token_rec["project"] != project:
-        return _fail(403, "Context binding mismatch. Use the correct token.")
-    if token_rec.get("doc_ref") not in (None, "", doc_id):
-        return _fail(403, "Context binding mismatch. Use the correct token.")
+    # ── Step 3: Context binding (action, project, group, doc — in that order) ──
+    # The scope guard is what stops an "edit" token from being replayed as a review (and,
+    # conversely, a review token from editing) — B0057.0001/NR0057.0003. It is the `action`
+    # axis of the shared check now, so it reads the same here as in the other three.
+    #
+    # The old third line let ANY token through on an empty doc_ref. 0492 T0018 item 2 /
+    # L0010 §2.3 narrows that waiver to a human legacy token — one whose row names no AI run
+    # and no provider — and writes an audit line when it is used. A provider-run review
+    # token must now match its document exactly.
+    binding_failure = _check_context_binding(
+        action_handler="review", project=project, doc=doc_id,
+        token_rec=token_rec, target_doc_id=doc_id,
+    )
+    if binding_failure is not None:
+        return binding_failure
 
     # ── Step 3.5: load the verdict from its file / inline blob (0393 T0005 §2-7) ──
     # Same three failure messages as _handle_new/_handle_edit, and the same two reusable
@@ -2369,7 +2487,7 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
 
     # ── Step 4: Permission ──
     if not has_permission(actor_user_id, project, "perm_document_update"):
-        return _fail(403, "Insufficient permissions for this operation")
+        return _permission_denied("Insufficient permissions for this operation")
 
     # ── Step 5: Referential integrity ──
     doc = db_docs.get_by_id(doc_id)
@@ -3196,20 +3314,22 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     except HTTPException as exc:
         return _fail(exc.status_code, exc.detail)
 
-    # ── Step 3: Context binding ───────────────────────────────────────────────
-    if token_rec["project"] != project:
-        return _fail(403, "Context binding mismatch. Use the correct token.")
-    if token_rec["action_scope"] != "new":
-        return _fail(403, "Context binding mismatch. Use the correct token.")
-    if token_rec.get("doc_ref") != prev_doc_id:
-        return _fail(403, "Context binding mismatch. Use the correct token.")
+    # ── Step 3: Context binding (action, project, group, doc — in that order) ──
+    # `group` is the already-normalized group_name, and the predecessor must belong to it:
+    # a prev_doc_id from another group is a group fault, not a numbering surprise later.
+    binding_failure = _check_context_binding(
+        action_handler="new", project=project, doc=prev_doc_id,
+        token_rec=token_rec, group=group_name, prev_doc_id=prev_doc_id,
+    )
+    if binding_failure is not None:
+        return binding_failure
 
     actor_user_id: str = token_rec["issued_to"]
 
     # ── Step 4: Permission check ────────────────────────────────────────────────────
     required_perm = _permission_for_new(doc_type)
     if not has_permission(actor_user_id, project, required_perm):
-        return _fail(403, "Insufficient permissions for this operation")
+        return _permission_denied("Insufficient permissions for this operation")
 
     # ── Step 5: Referential integrity + body validation ──────────────────────────────────────
     if not _is_valid_doc_type(doc_type, project):
@@ -4097,19 +4217,22 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     except HTTPException as exc:
         return _fail(exc.status_code, exc.detail)
 
-    # ── Step 3: Context binding ───────────────────────────────────────────────
-    if token_rec["project"] != project:
-        return _fail(403, "Context binding mismatch. Use the correct token.")
-    if token_rec["action_scope"] != "edit":
-        return _fail(403, "Context binding mismatch. Use the correct token.")
-    if token_rec.get("doc_ref") != doc_id:
-        return _fail(403, "Context binding mismatch. Use the correct token.")
+    # ── Step 3: Context binding (action, project, group, doc — in that order) ──
+    # This is the check B0001 died on with the axes the wrong way round: the request said
+    # action="new", so it never reached this handler at all. The group axis — the target
+    # document's DB group — is new in 0492 T0018 item 2; nothing compared it before.
+    binding_failure = _check_context_binding(
+        action_handler="edit", project=project, doc=doc_id,
+        token_rec=token_rec, target_doc_id=doc_id,
+    )
+    if binding_failure is not None:
+        return binding_failure
 
     actor_user_id: str = token_rec["issued_to"]
 
     # ── Step 4: Permission check (D020 §6-2) ────────────────────────────────────────
     if not has_permission(actor_user_id, project, "perm_document_update"):
-        return _fail(403, "Insufficient permissions for this operation")
+        return _permission_denied("Insufficient permissions for this operation")
 
     # ── Step 5: Referential integrity + body validation ──────────────────────────────────────
     existing_doc = db_docs.get_by_id(doc_id)

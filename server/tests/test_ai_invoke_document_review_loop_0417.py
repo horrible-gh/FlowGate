@@ -112,7 +112,9 @@ def test_loop_contract_conflicts_return_422_before_database(monkeypatch, overrid
 
 @pytest.mark.parametrize("field,value", [
     ("review_count", 0), ("review_criteria", "anything"), ("rework_timeout_sec", 1),
-    ("failure_restart_max_attempts", 3), ("total_timeout_sec", 1),
+    # flowgate.default.0490 T0005 §5: the ceiling is now a setting (default max=3), not the
+    # literal 3 — the rejected value is "max + 1", not a fixed number anymore.
+    ("failure_restart_max_attempts", 4), ("total_timeout_sec", 1),
 ])
 def test_loop_range_errors_return_422(monkeypatch, field, value):
     config = {key: val for key, val in BASE.items() if key in {

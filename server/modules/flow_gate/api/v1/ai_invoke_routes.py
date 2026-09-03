@@ -28,6 +28,7 @@ from modules.flow_gate.services import invoke_mention_service
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import workflow_decision_service
 from modules.flow_gate.services import work_plan_service
+from modules.flow_gate.settings import ai_execution_policy_service
 from modules.flow_gate.workflow import prompt_copy_service
 from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.utils.id_validators import (
@@ -51,13 +52,15 @@ def _operator_facing_api_base(request: Request) -> str:
     and no chat ever arrived.
 
     Every ``api_base_url=`` in this module is this operator base and nothing else.
-    It is what a person would see in a copied mention. The AGENT-FACING base the
-    CLI process actually dials is derived from it downstream, in one place:
-    ``ai_invoke_service._resolve_agent_api_base`` (``FLOWGATE_AGENT_API_BASE``
-    when set, otherwise loopback keeping the explicit operator port or
-    ``settings.FLOWGATE_PORT``), applied at CLI launch by
-    ``_canonicalize_cli_prompt``. Do not rewrite the base here, and do not hand
-    this value to a subprocess as ``FLOWGATE_API_BASE``.
+    It is what a person would see in a copied mention. The AGENT-FACING base is
+    derived from it downstream, in one place: ``ai_invoke_service.
+    _resolve_agent_api_base`` (``FLOWGATE_AGENT_API_BASE`` when set, otherwise
+    loopback keeping the explicit operator port or ``settings.FLOWGATE_PORT``).
+    Since 0505 T0008 this applies both at CLI launch (``_canonicalize_cli_prompt``)
+    and to the API provider's server-mediated self-HTTP
+    (``_resolve_transport_api_base``) -- not "CLI launch" alone anymore. Do not
+    rewrite the base here, and do not hand this value to a subprocess as
+    ``FLOWGATE_API_BASE``.
     """
     from modules.flow_gate.api import token_routes as _token_routes
 
@@ -120,6 +123,8 @@ class AiInvokeStartRequest(BaseModel):
     # provider_id alone may be an auto-restored default. This explicit signal says the person
     # actively chose it, so start_run can let it outrank an automatically stamped sequence row.
     provider_pinned: Optional[bool] = None
+    # One-request acknowledgement; never persisted or accepted for continuous runs.
+    capability_warning_ack: Optional[bool] = None
     merge_id: Optional[int] = None
     # Parallel-invoke extras (group 0223): context the matching copy-mention flow
     # assembled in the browser, so the invoke prompt can stay byte-identical.
@@ -308,10 +313,16 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         if body.provider_id is not None or body.provider_pinned not in (None, False):
             errors.append({"loc": "provider_id", "msg": "top-level provider selection is not allowed with document_review_loop"})
         allowed = {
-            "review_count": {-1, 1, 2, 3},
+            # flowgate.default.0490 T0005 §4-6-1: the ceiling is dynamic; SSOT is
+            # ai_execution_policy_service.repeat_count_choices, not a literal set here.
+            # "failure_restart_max_attempts" widens on purpose — NR0003 §4 said failure
+            # restart shares the SAME [-1, 0, 1..max] shape as every other repeat count.
+            "review_count": set(ai_execution_policy_service.repeat_count_choices(allow_zero=False)),
             "review_criteria": {"document_type_default", "last_rejection_only"},
             "rework_timeout_sec": {1800, 3600, 7200},
-            "failure_restart_max_attempts": {-1, 0, 1, 2},
+            "failure_restart_max_attempts": set(
+                ai_execution_policy_service.repeat_count_choices(allow_zero=True)
+            ),
             "total_timeout_sec": {3600, 7200, 14400},
         }
         for field, choices in allowed.items():
@@ -340,15 +351,15 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             "msg": f"must be between {ai_invoke_service.STEP_TIMEOUT_MIN_SEC} and "
                    f"{ai_invoke_service.STEP_TIMEOUT_MAX_SEC} seconds",
         })
+    restart_max_attempts_choices = ai_invoke_service.restart_max_attempts_choices()
     if (
         body.continuation_restart_max_attempts is not None
-        and body.continuation_restart_max_attempts
-        not in ai_invoke_service.RESTART_MAX_ATTEMPTS_CHOICES
+        and body.continuation_restart_max_attempts not in restart_max_attempts_choices
     ):
         errors.append({
             "loc": "continuation_restart_max_attempts",
             "msg": "must be one of "
-                   f"{ai_invoke_service.RESTART_MAX_ATTEMPTS_CHOICES}",
+                   f"{restart_max_attempts_choices}",
         })
     if (
         body.action_scope == "workflow_decide"
@@ -832,6 +843,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             continuation_review_count_overrides=continuation_review_count_overrides,
             continuation_reviewer_overrides=continuation_reviewer_overrides,
             document_review_loop=(body.document_review_loop.dict() if body.document_review_loop else None),
+            capability_warning_ack=body.capability_warning_ack,
         )
     except HTTPException as exc:
         if project_lease_owner:

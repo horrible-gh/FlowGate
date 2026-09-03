@@ -70,6 +70,7 @@ class WorkPlanCreate(BaseModel):
 class WorkPlanSave(BaseModel):
     base_revision_no: int
     body: dict
+    capability_warning_acks: list[str] = Field(default_factory=list)
 
 
 class WorkPlanSuggest(BaseModel):
@@ -646,7 +647,15 @@ def save_work_plan(
         plan = wp.validate(body.body, project_id=doc.get("project_id"), action="save")
     except wp.WorkPlanValidationError as exc:
         return _validation_response(exc, locale)
-
+    warnings = wp.capability_warning_findings(plan, doc.get("project_id") or "")
+    expected_acks = [row["step_key"] for row in warnings]
+    supplied_acks = body.capability_warning_acks
+    if len(supplied_acks) != len(set(supplied_acks)) or any(not isinstance(key, str) for key in supplied_acks):
+        return JSONResponse(status_code=422, content={"code": "validation_failed", "message": "Capability acknowledgement keys must be unique.", "errors": [{"loc": "capability_warning_acks", "msg": "duplicate or invalid acknowledgement"}]})
+    if set(supplied_acks) - set(expected_acks):
+        return JSONResponse(status_code=422, content={"code": "validation_failed", "message": "Capability acknowledgement is stale or not applicable.", "errors": [{"loc": "capability_warning_acks", "msg": "stale acknowledgement"}]})
+    if warnings and set(supplied_acks) != set(expected_acks):
+        return JSONResponse(status_code=422, content={"code": "provider_capability_confirmation_required", "message": "Confirm providers that cannot modify source or run tests.", "findings": warnings})
     # 0403 NR0004 F1 — bind "read, check, write the file, bump the revision" into one unit.
     #
     # Before binding: two requests read the same revision, both passed the earlier checks, both
@@ -762,6 +771,7 @@ def save_work_plan(
         "unassigned_step_count": wp.unassigned_step_count(plan),
         "assignment_summary": wp.assignment_summary(plan, providers),
         "totals": wp.totals(plan),
+        "warnings": warnings,
     }
 
 
