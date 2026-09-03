@@ -41,28 +41,29 @@
          editable commit subject (seeded with the §2.2 default), and — when a merge
          finalize was parked on the base_dirty 409 — commit-then-merge in one go. -->
     <div v-if="showBaseDirtySection" class="git-base-dirty-alert" role="alert">
-      <AppIcon name="warning" />
+      <!-- 경고 아이콘은 시안대로 요약 카드(`.git-v9-summary`) 안으로 옮겼다 — 바깥에도
+           두면 같은 ⚠ 가 두 번 보인다. -->
       <div class="git-base-dirty-alert__body">
+        <!-- 0482 R0001 rev2 — 시안 v9 `.summary-chip` 그대로: 경고 아이콘 + 굵은 제목 한 줄 +
+             그 아래 작은 안내 줄, 오른쪽에 채움형 [AI에게 맡기기] 와 텍스트 링크형 펼침
+             토글([파일별로 보기 ▾]). 시안에 없던 별도 안내 문장 줄은 제거하고, AI 실행
+             중 사유는 같은 안내 줄이 넘겨받는다(aria-describedby 대상은 그대로). -->
         <div class="git-v9-summary">
-          <span class="git-v9-chip">{{ t('main.git_status.base_dirty_summary', { n: baseDirtyFiles.length }) }}</span>
-          <span>{{ t('main.git_status.base_dirty_guide') }}</span>
-          <button class="btn btn-sm btn-secondary" type="button" :disabled="busy || baseAiRunning" aria-describedby="git-base-ai-reason" @click="invokeBaseDirtyAi">{{ t('main.git_status.ai_delegate') }}</button>
-          <span id="git-base-ai-reason" class="git-v9-disabled-reason">{{ t(baseAiRunning ? 'main.git_status.base_ai_running' : 'main.git_status.base_ai_ready') }}</span>
-          <button class="btn btn-sm btn-secondary" type="button" :aria-expanded="baseDirtyOpen" aria-controls="git-base-dirty-files" @click="baseDirtyOpen = !baseDirtyOpen">{{ baseDirtyOpen ? t('main.git_status.collapse') : t('main.git_status.view_files') }}</button>
+          <AppIcon name="warning" class="git-v9-chip-icon" />
+          <span class="git-v9-chip">
+            {{ t('main.git_status.base_dirty_summary', { n: baseDirtyFiles.length }) }}
+            <span id="git-base-ai-reason" class="git-v9-chip-sub">{{
+              baseAiRunning ? t('main.git_status.base_ai_running') : t('main.git_status.base_dirty_guide')
+            }}</span>
+          </span>
+          <button class="btn btn-sm btn-primary" type="button" :disabled="busy || baseAiRunning" aria-describedby="git-base-ai-reason" @click="invokeBaseDirtyAi"><AppIcon name="magic-wand" />{{ t('main.git_status.ai_delegate') }}</button>
+          <button class="git-v9-link-btn" type="button" :aria-expanded="baseDirtyOpen" aria-controls="git-base-dirty-files" @click="baseDirtyOpen = !baseDirtyOpen">{{ baseDirtyOpen ? t('main.git_status.collapse') : t('main.git_status.view_files') }} <span class="git-v9-caret">{{ baseDirtyOpen ? '▴' : '▾' }}</span></button>
         </div>
+        <!-- 시안의 `.detail-disclosure`: 붉은 파선으로 요약과 갈라지고, 커밋 입력줄이 파일
+             목록보다 위에 온다(220px 스크롤 캡 안에서 늘 먼저 보이도록). 병합이 막힌 사유
+             안내도 접힌 기본 화면을 어지럽히지 않게 이 안으로 들어온다. -->
+        <div v-if="baseDirtyOpen" id="git-base-dirty-files" class="git-v9-scroll git-v9-scroll--220 git-v9-disclosure">
         <div class="git-base-dirty-alert__msg">{{ t('main.git_finalize.base_dirty_alert') }}</div>
-        <div v-if="baseDirtyOpen" id="git-base-dirty-files" class="git-v9-scroll git-v9-scroll--220">
-        <div v-for="f in baseDirtyFiles" :key="f" class="git-base-dirty-filerow">
-          <span class="git-base-dirty-filerow__path">{{ f }}</span>
-          <button
-            class="btn btn-sm btn-secondary"
-            type="button"
-            :disabled="busy"
-            @click="doBaseRevert(f)"
-          >
-            <AppIcon name="arrow-counter-clockwise" /> {{ t('main.git_status.base_revert_btn') }}
-          </button>
-        </div>
         <div v-if="baseDirtyFiles.length" class="git-base-commit-row">
           <input
             class="form-ctrl git-commit-msg-input"
@@ -81,6 +82,17 @@
         <div v-else-if="pendingFinalize" class="git-base-commit-row">
           <button class="btn btn-sm btn-primary" type="button" :disabled="busy" @click="resumePendingFinalize">
             <AppIcon name="play" /> {{ t('main.git_status.base_merge_now_btn') }}
+          </button>
+        </div>
+        <div v-for="f in baseDirtyFiles" :key="f" class="git-base-dirty-filerow">
+          <span class="git-base-dirty-filerow__path">{{ f }}</span>
+          <button
+            class="btn btn-sm btn-secondary"
+            type="button"
+            :disabled="busy"
+            @click="doBaseRevert(f)"
+          >
+            <AppIcon name="arrow-counter-clockwise" /> {{ t('main.git_status.base_revert_btn') }}
           </button>
         </div>
         </div>
@@ -240,13 +252,22 @@
               <AppIcon name="arrow-square-out" /> {{ t('main.git_status.open') }}
             </button>
           </div>
+          <!-- 0482 R0001 rev2 — 충돌 요약도 base-dirty 와 같은 시안 `.summary-chip` 이다:
+               붉은 카드 안에 아이콘 + 굵은 제목 + 안내 줄, 채움형 [AI에게 맡기기] 와
+               링크형 [펼쳐 보기 ▾]. 펼친 목록은 시안 `.conflict-raw-list` 처럼 파선으로
+               갈라지고 줄마다 붉은 표식이 붙는다. -->
           <div v-if="p.status === 'conflict'" class="git-v9-conflict-summary">
-            <span class="git-v9-chip">{{ t('main.git_status.conflict_files_summary', { n: pendingConflictFiles(p).length }) }}</span>
-            <span>{{ t('main.git_status.conflict_files_guide') }}</span>
-            <button class="btn btn-sm btn-secondary" type="button" :disabled="busy" @click="invokeConflictAi(p)">{{ t('main.git_status.ai_delegate') }}</button>
-            <button class="btn btn-sm btn-secondary" type="button" :aria-expanded="pendingFilesOpen === p.group_id" :aria-controls="`git-pending-files-${p.group_id}`" @click="pendingFilesOpen = pendingFilesOpen === p.group_id ? null : p.group_id">{{ pendingFilesOpen === p.group_id ? t('main.git_status.collapse') : t('main.git_status.expand') }}</button>
-            <div v-if="pendingFilesOpen === p.group_id" :id="`git-pending-files-${p.group_id}`" class="git-v9-scroll git-v9-scroll--190">
-              <div v-for="f in pendingConflictFiles(p)" :key="f" class="git-v9-file">{{ f }}</div>
+            <div class="git-v9-chip-row">
+              <AppIcon name="warning" class="git-v9-chip-icon" />
+              <span class="git-v9-chip">
+                {{ t('main.git_status.conflict_files_summary', { n: pendingConflictFiles(p).length }) }}
+                <span class="git-v9-chip-sub">{{ t('main.git_status.conflict_files_guide') }}</span>
+              </span>
+              <button class="btn btn-sm btn-primary" type="button" :disabled="busy" @click="invokeConflictAi(p)"><AppIcon name="magic-wand" />{{ t('main.git_status.ai_delegate') }}</button>
+              <button class="git-v9-link-btn" type="button" :aria-expanded="pendingFilesOpen === p.group_id" :aria-controls="`git-pending-files-${p.group_id}`" @click="pendingFilesOpen = pendingFilesOpen === p.group_id ? null : p.group_id">{{ pendingFilesOpen === p.group_id ? t('main.git_status.collapse') : t('main.git_status.expand') }} <span class="git-v9-caret">{{ pendingFilesOpen === p.group_id ? '▴' : '▾' }}</span></button>
+            </div>
+            <div v-if="pendingFilesOpen === p.group_id" :id="`git-pending-files-${p.group_id}`" class="git-v9-scroll git-v9-scroll--190 git-v9-conflict-list">
+              <div v-for="f in pendingConflictFiles(p)" :key="f" class="git-v9-file"><span class="git-v9-file-mark" aria-hidden="true">✕</span>{{ f }}</div>
             </div>
           </div>
 
@@ -332,7 +353,10 @@
               type="button"
               class="git-trc-badge"
               :aria-expanded="trCommitsOpen === s.group_id"
-              :title="t('main.git_status.tr_commits.badge', {
+              :title="t('main.git_status.tr_commits.badge_title', {
+                live: s.tr_commits?.live ?? 0, canceled: s.tr_commits?.canceled ?? 0,
+              })"
+              :aria-label="t('main.git_status.tr_commits.badge_title', {
                 live: s.tr_commits?.live ?? 0, canceled: s.tr_commits?.canceled ?? 0,
               })"
               @click="toggleTrCommits(s.group_id)"
@@ -343,6 +367,9 @@
               }) }}
               <AppIcon :name="trCommitsOpen === s.group_id ? 'caret-up' : 'caret-down'" />
             </button>
+            <!-- 시안 `.slot-card-hd` 는 배지들을 왼쪽에 모으고 상태 배지만 spacer 로 오른쪽
+                 끝에 붙인다. gid 가 자리를 다 먹어 커밋 배지가 밀려나던 배치를 되돌린다. -->
+            <span class="git-status-spacer"></span>
             <span class="badge" :class="statusBadgeClass(s.status)">{{ statusLabel(s.status) }}</span>
           </div>
           <div v-if="commitRowCount(s) > 0" class="git-trc-preview">
@@ -477,13 +504,23 @@
       <!-- Recovery (manual cleanup only; base push is a first-class header action). -->
       <div class="git-status-sect git-status-recovery">
         <p class="git-status-sub">{{ t('main.git_status.recovery_header') }}</p>
-        <p class="git-cleanup-never">{{ cleanupStatusLabel }}</p>
-        <div v-for="row in (status.terminal_cleanup?.pending ?? [])" :key="row.group_id" class="git-cleanup-pending">
-          <span>{{ row.group_id }} · {{ t(`main.git_status.cleanup_reason_${row.reason}`) }}</span>
-          <button class="btn btn-sm btn-secondary" :disabled="busy" @click="doCleanup"><AppIcon name="broom" />{{ t('main.git_status.cleanup_retry') }}</button>
+        <!-- 0482 R0001 rev2 — 시안 `.auto-clean-card`: 자동 정리 결과는 초록 체크 아이콘이
+             붙은 카드 한 장으로, 그 아래 `.auto-clean-remainder` 로 "밀린 것"만 경고
+             아이콘 + 사유 + 오른쪽 [다시 시도] 로 붙는다. -->
+        <div class="git-cleanup-card">
+          <AppIcon name="check-circle" class="git-cleanup-card__icon" />
+          <span class="git-cleanup-never">{{ cleanupStatusLabel }}</span>
+        </div>
+        <div v-if="(status.terminal_cleanup?.pending ?? []).length" class="git-cleanup-remainder">
+          <div v-for="row in (status.terminal_cleanup?.pending ?? [])" :key="row.group_id" class="git-cleanup-pending">
+            <AppIcon name="warning" class="git-cleanup-pending__icon" />
+            <span>{{ row.group_id }} · {{ t(`main.git_status.cleanup_reason_${row.reason}`) }}</span>
+            <span class="git-status-spacer"></span>
+            <button class="btn btn-sm btn-secondary" :disabled="busy" @click="doCleanup"><AppIcon name="broom" />{{ t('main.git_status.cleanup_retry') }}</button>
+          </div>
         </div>
       </div>
-      <div class="git-status-sect git-ra-placeholder">{{ t('main.git_status.ra_placeholder') }}</div>
+      <div class="git-status-sect"><div class="git-ra-placeholder">{{ t('main.git_status.ra_placeholder') }}</div></div>
     </div>
   </div>
 </template>
@@ -1832,9 +1869,13 @@ defineExpose({ fetchStatus })
   color: var(--text-m);
   margin: 0;
 }
+/* 시안 `.pending-row` — 반영 대기 줄은 흰 카드다. */
 .git-status-row {
-  padding: 6px 0;
-  border-bottom: 1px solid var(--border, #eef2f6);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 8px;
+  background: var(--surface, #fff);
 }
 .git-status-row-main {
   display: flex;
@@ -1898,12 +1939,19 @@ defineExpose({ fetchStatus })
   font-size: 0.78rem;
 }
 .git-status-branch {
-  font-family: var(--mono, ui-monospace, monospace);
-  color: #0369a1;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text, #0f172a);
 }
 .git-status-slot-gid {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.74rem;
   color: var(--text-m);
-  flex: 1 1 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* 0332 D0005 §6.2 — 그룹 커밋 목록. 슬롯 행 아래에 접어서 붙고, 펼쳐도 패널의 다른
    절(미푸시 / 마무리 대기 / 복구)을 밀어내지 않도록 상한까지만 그린다. */
@@ -1966,14 +2014,23 @@ defineExpose({ fetchStatus })
 }
 /* 0332 TR0019 — 붙들린 충돌. 되살리기 줄과 같은 형태를 쓰되 자기 클래스를 갖는다
    (남의 클래스를 재사용하면 "이 단추가 그려졌다"는 시험이 헛돈다). */
+/* 시안 `.trc-conflict-card` — 되돌리기 충돌은 카드 안의 붉은 상자로 늘 보인다. */
 .git-trc-conflict {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 4px 0 2px;
-  font-size: 0.74rem;
-  color: #b45309;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fee2e2;
+  font-size: 0.76rem;
+  color: #991b1b;
+}
+.git-trc-conflict > .git-trc-note {
+  flex: 1 1 auto;
+  color: #991b1b;
 }
 .git-trc-conflict-ready {
   color: #047857;
@@ -2016,36 +2073,130 @@ defineExpose({ fetchStatus })
   padding-top: 10px;
 }
 
+/* 0482 R0001 rev2 — 시안 v9(deck 4543n0ab v9)의 시각 언어를 그대로 옮긴다.
+   `.summary-chip`: 붉은 카드(배경 #fee2e2 / 테두리 #fecaca) 안에 경고 아이콘 + 굵은 제목
+   + 그 아래 작은 안내 줄, 오른쪽에 채움 버튼과 텍스트 링크. */
 .git-v9-summary,
-.git-v9-conflict-summary,
-.git-cleanup-pending {
+.git-v9-chip-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fee2e2;
 }
+.git-v9-conflict-summary { margin: 8px 0 2px; }
+.git-v9-chip-icon { color: #dc2626; font-size: 1.05rem; flex: 0 0 auto; }
 .git-v9-chip {
-  display: inline-flex;
-  padding: 3px 8px;
-  border: 1px solid var(--border, #cbd5e1);
-  border-radius: 999px;
-  background: var(--bg-subtle, #f8fafc);
-  font-weight: 700;
-  white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #991b1b;
 }
+.git-v9-chip-sub {
+  display: block;
+  margin-top: 1px;
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: #b91c1c;
+}
+.git-v9-link-btn {
+  border: 0;
+  background: none;
+  padding: 4px 2px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--primary, #2563eb);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.git-v9-caret { font-size: 0.68rem; }
 .git-v9-scroll { overflow-y: auto; overscroll-behavior: contain; }
 .git-v9-scroll--220 { max-height: 220px; }
 .git-v9-scroll--190 { max-height: 190px; width: 100%; }
-.git-v9-file { padding: 4px 2px; font-family: var(--font-mono, monospace); font-size: .74rem; }
+/* 시안 `.detail-disclosure` / `.conflict-raw-list` — 요약과 파선으로 갈라진 스크롤 영역. */
+.git-v9-disclosure { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #fecaca; }
+.git-v9-conflict-list { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border, #e2e8f0); }
+.git-v9-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: .74rem;
+  color: var(--text-s, #475569);
+}
+.git-v9-file-mark { color: #dc2626; font-weight: 700; flex: 0 0 auto; }
 .git-base-untracked__files { margin-top: 6px; }
-.git-status-slot-card { border: 1px solid var(--border, #e2e8f0); border-radius: 8px; padding: 0 9px 6px; margin-bottom: 8px; }
-.git-status-slot { padding: 9px 0 4px; }
-.git-trc-preview { padding: 6px 0; }
-.git-trc-more-btn { border: 0; background: transparent; cursor: pointer; color: var(--accent, #2563eb); padding: 4px 0; }
-.git-cleanup-never, .git-cleanup-pending, .git-ra-placeholder { color: var(--text-m); font-size: .76rem; }
-.git-ra-placeholder { border: 1px dashed var(--border, #cbd5e1); border-radius: 8px; padding: 12px; }
-.git-v9-disabled-reason { font-size: .72rem; color: var(--text-m); }
+/* 시안 `.slot-card` — 흰 카드. 커밋 미리보기는 아이콘 폭만큼 들여쓴다(`.commit-mini`). */
+.git-status-slot-card {
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: var(--surface, #fff);
+}
+.git-status-slot { padding: 0 0 6px; }
+.git-trc-preview { margin-left: 22px; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.git-trc-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.72rem;
+  color: var(--text-s, #475569);
+  min-width: 0;
+}
+.git-trc-preview-row.is-canceled .git-trc-sha,
+.git-trc-preview-row.is-canceled .git-trc-subject {
+  text-decoration: line-through;
+  color: var(--text-m);
+}
+.git-trc-more-btn {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--primary, #2563eb);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-align: left;
+  padding: 2px 0 0;
+}
+.git-trc-preview-more { margin-left: 22px; }
+/* 시안 `.auto-clean-card` / `.auto-clean-remainder`. */
+.git-cleanup-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 8px;
+  background: var(--surface-2, #f8fafc);
+}
+.git-cleanup-card__icon { color: #16a34a; flex: 0 0 auto; }
+.git-cleanup-remainder { margin-top: 8px; }
+.git-cleanup-pending {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border, #e2e8f0);
+}
+.git-cleanup-pending__icon { color: #d97706; flex: 0 0 auto; }
+.git-cleanup-never { font-size: 0.8rem; color: var(--text-s, #475569); flex: 1 1 auto; }
+.git-cleanup-pending { font-size: 0.76rem; color: var(--text-s, #475569); }
+/* 시안 `.reserved-slot` — 가운데 정렬 + 사선 줄무늬로 "아직 비어 있는 자리"임을 말한다. */
+.git-ra-placeholder {
+  border: 1px dashed var(--border-d, #cbd5e1);
+  border-radius: 8px;
+  padding: 14px;
+  text-align: center;
+  color: var(--text-m);
+  font-size: .74rem;
+  background: repeating-linear-gradient(45deg, #fff, #fff 10px, #f8fafc 10px, #f8fafc 20px);
+}
 .btn-sm {
   padding: 3px 9px;
   font-size: 0.75rem;
@@ -2099,35 +2250,36 @@ defineExpose({ fetchStatus })
   margin: 4px 0 0;
 }
 /* flowgate.default.0176 T0010 §b banner → 0177 L0002 §2.6 actionable section. */
+/* 0482 R0001 rev2 — 시안 v9 에서 붉은 카드는 `.summary-chip`(= .git-v9-summary) 하나뿐이다.
+   바깥 블록까지 붉게 칠하면 카드 안에 카드가 겹쳐 시안과 전혀 다른 화면이 된다. */
 .git-base-dirty-alert {
   display: flex;
   align-items: flex-start;
   gap: 10px;
   margin: 0 16px 4px;
-  padding: 10px 12px;
-  border: 1px solid var(--danger, #dc2626);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--danger, #dc2626) 10%, transparent);
   font-size: 0.8rem;
   line-height: 1.45;
-}
-.git-base-dirty-alert > i {
-  color: var(--danger, #dc2626);
-  margin-top: 2px;
-  flex: none;
 }
 .git-base-dirty-alert__body {
   flex: 1 1 auto;
   min-width: 0;
 }
 .git-base-dirty-alert__msg {
-  color: var(--text, inherit);
+  color: #991b1b;
+  font-size: 0.76rem;
+  margin-bottom: 6px;
 }
+/* 시안 `.file-row-raw` — 경로는 왼쪽, [되돌리기]는 오른쪽 끝, 줄 사이는 붉은 파선. */
 .git-base-dirty-filerow {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  margin-top: 6px;
+  padding: 5px 0;
+  border-bottom: 1px dashed #fecaca;
+}
+.git-base-dirty-filerow:last-of-type {
+  border-bottom: none;
 }
 .git-base-dirty-filerow__path {
   flex: 1 1 auto;
@@ -2165,20 +2317,21 @@ defineExpose({ fetchStatus })
 }
 /* 0296 T0004 — informational, not a blocker: an accent/neutral treatment so it
    never reads as the danger-coloured base_dirty alert directly above it. */
+/* 시안 `.alert-raw` — 미커밋 새 파일 상자는 호박색이다(회색 아님). */
 .git-base-untracked {
   display: flex;
   align-items: flex-start;
   gap: 10px;
   margin: 0 16px 4px;
-  padding: 10px 12px;
-  border: 1px solid var(--border, #e2e8f0);
+  padding: 12px 14px;
+  border: 1px solid #fed7aa;
   border-radius: 8px;
-  background: var(--bg-subtle, #f8fafc);
+  background: #fff7ed;
   font-size: 0.8rem;
   line-height: 1.45;
 }
 .git-base-untracked > i {
-  color: var(--accent, #2563eb);
+  color: #9a3412;
   margin-top: 2px;
   flex: none;
 }
@@ -2187,14 +2340,20 @@ defineExpose({ fetchStatus })
   min-width: 0;
 }
 .git-base-untracked__msg {
-  color: var(--text, inherit);
+  color: #9a3412;
+  font-weight: 600;
+  margin-bottom: 8px;
 }
 .git-base-untracked-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 6px;
+  padding: 5px 0;
+  border-bottom: 1px dashed #fed7aa;
   cursor: pointer;
+}
+.git-base-untracked-row:last-of-type {
+  border-bottom: none;
 }
 .git-base-untracked-row__path {
   flex: 1 1 auto;

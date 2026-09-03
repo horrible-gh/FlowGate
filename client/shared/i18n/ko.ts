@@ -2788,7 +2788,8 @@ export default {
       slots_header: '활성 브랜치 슬롯',
       // 0332 D0005 §6.2 — 슬롯마다의 '이 그룹의 커밋'. 개수는 늘 보이고 목록만 접힌다.
       tr_commits: {
-        badge: '커밋 {live}개 · 취소 {canceled}개',
+        badge: '{live} · {canceled}',
+        badge_title: '커밋 {live}개 · 취소 {canceled}개',
         canceled: '취소됨',
         no_source_change: '소스 변경 없음',
         commit_failed: '커밋하지 못했습니다 ({reason})',

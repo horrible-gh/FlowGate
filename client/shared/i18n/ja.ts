@@ -2783,7 +2783,8 @@ export default {
       slots_header: 'アクティブなブランチスロット',
       // 0332 D0005 §6.2 — スロットごとの「このグループのコミット」。件数は常時表示、一覧だけ折りたたむ。
       tr_commits: {
-        badge: 'コミット {live}件 · 取消 {canceled}件',
+        badge: '{live} · {canceled}',
+        badge_title: 'コミット {live}件 · 取消 {canceled}件',
         canceled: '取消済み',
         no_source_change: 'ソース変更なし',
         commit_failed: 'コミットできませんでした（{reason}）',

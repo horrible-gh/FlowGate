@@ -283,3 +283,93 @@ describe('base-dirty AI button lifecycle (0482 T0011 item 8)', () => {
     expect(wrapper.text()).toContain(i18n.global.t('main.git_status.base_ai_running'))
   })
 })
+
+// 0482 R0001 rev2 — "너희들이 하겠다고 한 시안이랑 전혀 다르잖아".
+// 앞선 라운드는 요소의 "개수"만 맞췄지 시안(deck 4543n0ab v9)이 그린 모양은 옮기지
+// 않았다. 아래는 그 모양 자체를 계약으로 못박는다: 붉은 요약 카드(.summary-chip),
+// 채움형 AI 버튼 + 링크형 펼침 토글, 파선으로 갈라진 펼침 영역, 붉은 표식이 붙은 충돌
+// 목록, 자동 정리 카드, 줄무늬 예약 자리.
+describe('deck 4543n0ab v9 shape parity (0482 R0001 rev2)', () => {
+  it('draws base-dirty as the deck summary chip: icon + title + sub line + filled AI + link toggle', async () => {
+    const wrapper = await render()
+    const summary = wrapper.find('.git-v9-summary')
+    expect(summary.find('.git-v9-chip-icon').exists()).toBe(true)
+    expect(summary.find('.git-v9-chip').text()).toContain(i18n.global.t('main.git_status.base_dirty_summary', { n: 7 }))
+    expect(summary.find('.git-v9-chip-sub').text()).toBe(i18n.global.t('main.git_status.base_dirty_guide'))
+    // 시안의 오른쪽 두 컨트롤: 채움형 [AI에게 맡기기] 와 텍스트 링크 [파일별로 보기 ▾].
+    expect(summary.find('button[aria-describedby="git-base-ai-reason"]').classes()).toContain('btn-primary')
+    const toggle = summary.find('button[aria-controls="git-base-dirty-files"]')
+    expect(toggle.classes()).toContain('git-v9-link-btn')
+    expect(toggle.classes()).not.toContain('btn-secondary')
+    expect(toggle.text()).toContain(i18n.global.t('main.git_status.view_files'))
+    // 시안에 없는 별도 안내 문장 줄은 남아 있지 않다.
+    expect(wrapper.find('.git-v9-disabled-reason').exists()).toBe(false)
+  })
+
+  it('keeps the blocked-merge note and the commit row above the file rows inside the disclosure', async () => {
+    const wrapper = await render()
+    await wrapper.find('button[aria-controls="git-base-dirty-files"]').trigger('click')
+    const detail = wrapper.find('#git-base-dirty-files')
+    expect(detail.classes()).toContain('git-v9-disclosure')
+    const order = [...detail.element.querySelectorAll('.git-base-dirty-alert__msg, .git-base-commit-row, .git-base-dirty-filerow')]
+      .map((element) => element.className.split(' ').find((name) => name.startsWith('git-base')))
+    expect(order[0]).toBe('git-base-dirty-alert__msg')
+    expect(order[1]).toBe('git-base-commit-row')
+    expect(order[2]).toBe('git-base-dirty-filerow')
+    // 접힌 기본 화면에는 이 안내가 보이지 않는다(시안: 요약 한 장만).
+    const collapsed = await render()
+    expect(collapsed.find('.git-base-dirty-alert__msg').exists()).toBe(false)
+  })
+
+  it('draws the conflict summary as the same chip and marks every expanded file row', async () => {
+    const wrapper = await render()
+    const summary = wrapper.find('.git-v9-conflict-summary')
+    expect(summary.find('.git-v9-chip-icon').exists()).toBe(true)
+    expect(summary.find('.git-v9-chip-sub').text()).toBe(i18n.global.t('main.git_status.conflict_files_guide'))
+    expect(summary.findAll('button')[0].classes()).toContain('btn-primary')
+    const toggle = summary.find('button[aria-controls]')
+    expect(toggle.classes()).toContain('git-v9-link-btn')
+    expect(toggle.text()).toContain(i18n.global.t('main.git_status.expand'))
+    await toggle.trigger('click')
+    const files = summary.findAll('.git-v9-file')
+    expect(files).toHaveLength(12)
+    files.forEach((file) => expect(file.find('.git-v9-file-mark').text()).toBe('✕'))
+    expect(summary.find('.git-v9-conflict-list').exists()).toBe(true)
+  })
+
+  it('uses the compact deck badge and pushes the status badge to the right of the slot header', async () => {
+    const card = (await render()).findAll('.git-status-slot-card')[1]
+    expect(card.find('.git-trc-badge').text().trim()).toBe(
+      i18n.global.t('main.git_status.tr_commits.badge', { live: 7, canceled: 1 }),
+    )
+    expect(card.find('.git-trc-badge').attributes('title')).toBe(
+      i18n.global.t('main.git_status.tr_commits.badge_title', { live: 7, canceled: 1 }),
+    )
+    const header = [...card.find('.git-status-slot').element.children].map((element) => element.className)
+    expect(header[header.length - 2]).toContain('git-status-spacer')
+    expect(header[header.length - 1]).toContain('badge')
+  })
+
+  it('renders terminal cleanup as a card with a residual list, and the R-A slot as a striped reservation', async () => {
+    const wrapper = await render()
+    const card = wrapper.find('.git-cleanup-card')
+    expect(card.exists()).toBe(true)
+    expect(card.find('.git-cleanup-card__icon').exists()).toBe(true)
+    expect(card.find('.git-cleanup-never').text()).toBe(wrapper.find('.git-cleanup-never').text())
+    const residual = wrapper.find('.git-cleanup-remainder .git-cleanup-pending')
+    expect(residual.find('.git-cleanup-pending__icon').exists()).toBe(true)
+    expect(residual.find('.git-status-spacer').exists()).toBe(true)
+    expect(residual.find('button').text()).toContain(i18n.global.t('main.git_status.cleanup_retry'))
+    // 잔여가 없으면 카드만 남고 목록 자체가 사라진다.
+    expect((await render(status(0))).find('.git-cleanup-remainder').exists()).toBe(false)
+    expect(wrapper.find('.git-status-sect > .git-ra-placeholder').exists()).toBe(true)
+  })
+
+  it('makes the revert-conflict note a card that never hides inside the commit fold', async () => {
+    const card = (await render()).findAll('.git-status-slot-card')[3]
+    const conflict = card.find('.git-trc-conflict')
+    expect(conflict.exists()).toBe(true)
+    expect(card.find('.git-trc-list').exists()).toBe(false)
+    expect(conflict.findAll('button')).toHaveLength(2)
+  })
+})

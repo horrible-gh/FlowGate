@@ -2789,7 +2789,8 @@ export default {
       slots_header: 'Active branch slots',
       // 0332 D0005 §6.2 — this group's commits per slot. Counts always show; only the list folds.
       tr_commits: {
-        badge: '{live} commits · {canceled} canceled',
+        badge: '{live} · {canceled}',
+        badge_title: '{live} commits · {canceled} canceled',
         canceled: 'Canceled',
         no_source_change: 'No source change',
         commit_failed: 'Could not commit ({reason})',

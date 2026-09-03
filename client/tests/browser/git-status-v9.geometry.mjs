@@ -97,7 +97,13 @@ try {
   const out = await call('Runtime.evaluate', { expression: expr, returnByValue: true })
   if (out.result.exceptionDetails) throw new Error(JSON.stringify(out.result.exceptionDetails))
   const measured = out.result.result.value
-  for (const [key, want] of [['dirty', 220], ['newFiles', 220], ['conflict', 190]]) {
+  // 0482 R0001 rev2 — 기대치는 시안(deck 4543n0ab v9)의 css/main.css 가 실제로 만드는
+  // 안쪽 높이다. box-sizing: border-box 아래에서
+  //   .detail-disclosure  max-height 220 + border-top 1  -> clientHeight 219
+  //   .untracked-raw-list max-height 220                 -> clientHeight 220
+  //   .conflict-raw-list  max-height 190 + border-top 1  -> clientHeight 189
+  // 예전 [220,220,190]은 시안 자신도 통과하지 못하는 값이었다(파선 구분선을 뺀 수치).
+  for (const [key, want] of [['dirty', 219], ['newFiles', 220], ['conflict', 189]]) {
     const value = measured.measurements[key]
     if (!value || value.clientHeight !== want || !value.scrollable || value.overflowY !== 'auto' || !value.outerDoesNotGrowToContent) {
       throw new Error(`${key} geometry failed: ${JSON.stringify(value)}`)
