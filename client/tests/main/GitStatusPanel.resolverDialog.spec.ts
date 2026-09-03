@@ -142,9 +142,12 @@ describe('GitStatusPanel × shared resolver dialog', () => {
     const files = dialog.props('files') as any[]
 
     // marker guard: an unresolved submit must never reach the backend.
+    // (T0011: mount already fired the once-per-project auto /git/cleanup call, so the guard
+    // is checked against the resolve endpoint specifically, not "postRequest never called".)
+    const resolveCalls = () => postRequest.mock.calls.filter(([url]) => String(url).includes('/git/merge/7/resolve'))
     dialog.vm.$emit('submit')
     await flushPromises()
-    expect(postRequest).not.toHaveBeenCalled()
+    expect(resolveCalls()).toHaveLength(0)
 
     // resolve the single chunk (choose ours), then submit passes the guard.
     const chunk = files[0].segments.find((s: any) => s.kind === 'chunk')
@@ -160,7 +163,7 @@ describe('GitStatusPanel × shared resolver dialog', () => {
         files: [expect.objectContaining({ path: 'shared.txt' })],
       }),
     )
-    const posted = postRequest.mock.calls[0][1] as { files: Array<{ content: string }> }
+    const posted = resolveCalls()[0][1] as { files: Array<{ content: string }> }
     expect(posted.files[0].content).not.toContain('<<<<<<<')
     expect(posted.files[0].content).toContain('ours line')
 

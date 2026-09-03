@@ -59,7 +59,7 @@ _logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-OPS = ("read", "diff", "log", "write", "grep", "glob", "remove", "patch", "stat")
+OPS = ("read", "diff", "log", "write", "grep", "glob", "remove", "patch", "stat", "resolve_base_dirty")
 _WORKER_GRANT_PREFIX = "worker_"
 # The mutating step types live in tool_registry.MUTATING_STEP_TYPES — the single judgement
 # point (0349 D0004 D-2). This module reaches them through tool_registry.kind_for_token.
@@ -88,13 +88,14 @@ OP_SCOPE = {
     "remove": "remove",
     "patch": "write",
     "stat": "read",
+    "resolve_base_dirty": "write",
 }
 
 # 0347 L0005 §1: the mutating-op set used to be the literal ("write", "remove") repeated at
 # three decision points (mutation source-root gate / explorer SSE / continuation ment). patch
 # has to appear at all three, and a single constant is what stops a future op from reaching
 # two of them and silently landing in the base checkout (0205). `stat` is NOT here — it reads.
-_MUTATING_OPS = frozenset({"write", "remove", "patch"})
+_MUTATING_OPS = frozenset({"write", "remove", "patch", "resolve_base_dirty"})
 
 # ③ path validation: ops whose only path-bearing field is `path`. grep/glob carry a second
 # pattern field and keep their own branches. Leaving patch/stat out would skip ③ entirely.
@@ -465,6 +466,19 @@ def _validate_required(op: str, body: dict) -> None:
                 details={"reason": "no_op_edit"},
             )
         _validate_encoding(body)
+    elif op == "resolve_base_dirty":
+        decisions = body.get("decisions")
+        if not isinstance(decisions, list) or not isinstance(body.get("complete"), bool):
+            raise _OpError(422)
+        if body.get("commit_message") is not None and not isinstance(body.get("commit_message"), str):
+            raise _OpError(422)
+        seen = set()
+        for decision in decisions:
+            if not isinstance(decision, dict) or not is_safe_relative(decision.get("path")):
+                raise _OpError(422)
+            if decision.get("action") not in {"commit", "discard"} or decision["path"] in seen:
+                raise _OpError(422)
+            seen.add(decision["path"])
     elif op == "stat":
         _require_str(body, "path")
     elif op in {"diff", "log"}:
@@ -594,6 +608,8 @@ def _resolve_src_root(grant: dict, op: str = "read") -> Optional[Path]:
         except Exception as exc:
             raise _OpError(404, details={"reason": "conflict_session_not_found"}) from exc
     if not group_id:
+        # resolve_base_dirty deliberately has no group; its source tools depend on
+        # this project-root fallback as well as legacy pre-group tokens.
         return _fallback_project_root(grant)   # legacy grant — silent fallback
     try:
         from modules.flow_gate.services import git_service  # lazy — import cycle
@@ -656,6 +672,8 @@ def _resolve_root_for_mutation(grant: dict, op: str) -> Optional[Path]:
     project_id = grant.get("project")
     group_id = grant.get("group_id")
     if not group_id:
+        # resolve_base_dirty deliberately has no group; mutation routing depends on
+        # this project-root fallback as well as legacy pre-group tokens.
         return _fallback_project_root(grant)   # legacy grant — unchanged
 
     from modules.flow_gate.services import git_service  # lazy — import cycle
@@ -704,7 +722,7 @@ def _resolve_root_for_mutation(grant: dict, op: str) -> Optional[Path]:
 
 # ── ⑤ Execution ───────────────────────────────────────────────────────────────
 
-def _execute(op: str, body: dict, root: Path) -> tuple[dict, Optional[int]]:
+def _execute(op: str, body: dict, root: Path, grant: Optional[dict] = None) -> tuple[dict, Optional[int]]:
     """Run the operation. Returns (response_extra_fields, bytes_processed)."""
     if body.get("ref") is not None:
         committed = {"read": _exec_ref_read, "grep": _exec_ref_grep, "glob": _exec_ref_glob, "stat": _exec_ref_stat}
@@ -728,7 +746,64 @@ def _execute(op: str, body: dict, root: Path) -> tuple[dict, Optional[int]]:
         return _exec_patch(body, root)
     if op == "stat":
         return _exec_stat(body, root)
+    if op == "resolve_base_dirty":
+        return _exec_resolve_base_dirty(body, grant or {})
     raise _OpError(422)  # unreachable (op validated earlier)
+
+
+def _exec_resolve_base_dirty(body: dict, grant: dict) -> tuple[dict, Optional[int]]:
+    """Validate the complete decision batch before applying any base-checkout change.
+
+    Holds the project git lock for the whole call (baseline capture through
+    discard/commit) via `_holder`, instead of the previous three independently
+    locked calls (project_git_status has none, base_revert/base_commit each took
+    and released their own) that left a race window where a concurrent git
+    operation could change the dirty set between baseline and application, or
+    between discard and commit."""
+    import uuid
+    from modules.flow_gate.db import git_integration as db_git
+    from modules.flow_gate.services import git_service
+    project_id = str(grant.get("project") or "")
+    token = _worker_token_for_grant(grant) or {}
+    if token.get("action_scope") != "resolve_base_dirty" or not project_id:
+        raise _OpError(403)
+    decisions = body["decisions"]
+    paths = [str(item["path"]) for item in decisions]
+    commit_paths = [str(item["path"]) for item in decisions if item["action"] == "commit"]
+    discard_paths = [str(item["path"]) for item in decisions if item["action"] == "discard"]
+    message = (body.get("commit_message") or "").strip()
+    if commit_paths and body["complete"] and not message:
+        raise _OpError(422, details={"reason": "commit_message_required"})
+
+    holder = f"resolve_base_dirty:{uuid.uuid4()}"
+    if not git_service._acquire_lock(project_id, holder):
+        raise _OpError(409, details={"reason": "git_busy"})
+    try:
+        baseline = list((((git_service.project_git_status(project_id).get("status") or {})
+                         .get("base_dirty") or {}).get("files") or []))
+        baseline_set = set(baseline)
+        if any(path not in baseline_set for path in paths):
+            raise _OpError(422, details={"reason": "path_not_dirty"})
+        if discard_paths:
+            git_service.base_revert(project_id, discard_paths, _holder=holder)
+        remaining = [path for path in baseline if path not in paths]
+        if not body["complete"]:
+            return {"status": "partial", "remaining": remaining, "commit": None}, None
+        if remaining:
+            return {"status": "dirty", "remaining": remaining, "commit": None}, None
+        commit = None
+        if commit_paths:
+            result = git_service.base_commit(project_id, message, commit_paths, _holder=holder)
+            commit = (result.get("result") or {}).get("commit")
+        return {"status": "resolved", "remaining": [], "commit": commit}, None
+    except _OpError:
+        raise
+    except Exception as exc:
+        if getattr(exc, "status_code", None) == 409:
+            raise _OpError(409, details={"reason": "git_busy"}) from exc
+        raise
+    finally:
+        db_git.release_lock(project_id, holder)
 
 
 def _merge_base(root: Path, target_ref: str) -> str:
@@ -1626,7 +1701,7 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
         if root is None:
             raise _OpError(503)
         # ⑤ Execute the operation
-        extra, nbytes = _execute(op, body, root)
+        extra, nbytes = _execute(op, body, root, grant)
     except _OpError as exc:
         _log(grant, op, log_path, log_pattern, status=exc.status)
         if exc.details is not None or exc.message is not None:
@@ -1686,3 +1761,4 @@ def _emit_explorer_refresh(grant: dict, op: str) -> None:
         ))
     except Exception:
         pass
+

@@ -47,7 +47,9 @@ def test_list_requires_bearer_and_reuses_error_envelope(monkeypatch):
 @pytest.mark.parametrize(
     "token_rec, expected_kind, expected_names",
     [
-        ({"project": "flowgate", "action_scope": "edit"}, "read_write", ["read", "grep", "glob", "stat", "diff", "log", "write", "patch", "remove"]),
+        # 0482 T0011: resolve_base_dirty joined DISPLAY_ORDER/WRITE_TOOLS as a tenth catalog
+        # tool — every read_write token's tool list grows by one, same as the mention line.
+        ({"project": "flowgate", "action_scope": "edit"}, "read_write", ["read", "grep", "glob", "stat", "diff", "log", "write", "patch", "remove", "resolve_base_dirty"]),
         ({"project": "flowgate", "action_scope": "review"}, "read", ["read", "grep", "glob", "stat", "diff", "log"]),
         ({"project": "flowgate", "action_scope": "test_run"}, "none", []),
     ],

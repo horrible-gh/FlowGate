@@ -45,6 +45,12 @@ it('exports the actual v9 default-data DOM for built-CSS geometry and parity che
       { group_id: `${GROUP}-pending`, branch: 'pending', status: 'awaiting_choice', default_action: 'merge', merge_id: 41 },
       { group_id: `${GROUP}-conflict`, branch: 'conflict', status: 'conflict', default_action: 'merge', merge_id: 42 },
     ],
+    // T0011: terminal_cleanup replaced the old cleanable_count-derived compatibility row —
+    // the DOM parity fixture must carry the real contract, not the removed legacy shape.
+    terminal_cleanup: {
+      last_run_at: '2026-08-31T12:00:00+09:00', last_run_status: 'partial', last_cleaned_count: 2,
+      pending: [{ group_id: `${GROUP}-cleanup`, reason: 'revert_conflict' }],
+    },
     unpushed: { count: 2, commit_count: 2, measured: true, merges: [{
       group_id: `${GROUP}-merged`, merge_commit: 'abc1234', subject: 'merged work', can_unmerge: true,
     }] },

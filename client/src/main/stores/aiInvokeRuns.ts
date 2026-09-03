@@ -628,9 +628,18 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     schedulePersist()
   }
 
+  function payloadGroupKey(payload: Record<string, any>): string {
+    if (payload?.group_id) return String(payload.group_id)
+    if (payload?.action_scope === 'resolve_base_dirty' && payload?.project_id) {
+      return `project:${String(payload.project_id)}`
+    }
+    return ''
+  }
+
   function trackStarted(payload: Record<string, any>): void {
-    if (!payload?.run_id || !payload?.group_id) return
-    const groupId = String(payload.group_id)
+    const groupId = payloadGroupKey(payload)
+    if (!payload?.run_id || !groupId) return
+    payload = { ...payload, group_id: groupId }
     const runId = String(payload.run_id)
     const continuationMarker = payload.continuation_pending === true
     const previous = runsByGroup[groupId]
@@ -649,8 +658,9 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
   }
 
   function trackProviderSwitched(payload: Record<string, any>): void {
-    if (!payload?.run_id || !payload?.group_id) return
-    const groupId = String(payload.group_id)
+    const groupId = payloadGroupKey(payload)
+    if (!payload?.run_id || !groupId) return
+    payload = { ...payload, group_id: groupId }
     const run = runsByGroup[groupId]
     if (!run || run.runId !== String(payload.run_id) || !ACTIVE_PHASES.includes(run.phase)) return
 
@@ -691,8 +701,9 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
   }
 
   function trackFinished(payload: Record<string, any>): void {
-    if (!payload?.run_id || !payload?.group_id) return
-    const groupId = String(payload.group_id)
+    const groupId = payloadGroupKey(payload)
+    if (!payload?.run_id || !groupId) return
+    payload = { ...payload, group_id: groupId }
     const runId = String(payload.run_id)
     const existing = runsByGroup[groupId]
     if (existing && existing.runId !== runId && existing.runId !== '') return
@@ -803,7 +814,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
 
   function applySse(detail: InvokeSseDetail | undefined): void {
     const payload = detail?.payload
-    if (!payload?.group_id) return
+    if (!payload || !payloadGroupKey(payload)) return
     if (detail?.kind === 'started') trackStarted(payload)
     else if (detail?.kind === 'switched') trackProviderSwitched(payload)
     else if (detail?.kind === 'finished') trackFinished(payload)
@@ -905,7 +916,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       const runs: Record<string, any>[] = Array.isArray(payload.runs) ? payload.runs : []
       const paused: Record<string, any>[] = Array.isArray(payload.paused) ? payload.paused : []
       for (const run of runs) {
-        if (!run?.run_id || !run?.group_id) continue
+        if (!run?.run_id || !payloadGroupKey(run)) continue
         if (run.status === 'finished') trackFinished(run)
         else trackStarted(run)
       }
@@ -1336,3 +1347,4 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     elapsedMsFor,
   }
 })
+

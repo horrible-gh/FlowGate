@@ -248,7 +248,11 @@ def test_all_seven_generic_statuses_have_zero_korean_via_worker_token(
     env.make_worker_token(worker_token, token_id=f"tok_all_statuses_{locale}", locale=locale)
 
     for expected_status in (401, 403, 404, 409, 413, 422, 503):
-        def fail_execute(_op, _body, _root, status=expected_status):
+        # flowgate.default.0482 T0011: `_execute` grew a 4th positional `grant` argument
+        # (resolve_base_dirty resolves project identity from the token, not request input).
+        # This stub must accept it explicitly — it used to be absorbed by `status`'s default,
+        # which silently made every raised status the grant dict instead of `expected_status`.
+        def fail_execute(_op, _body, _root, _grant, status=expected_status):
             raise remote_tool_service._OpError(status)
 
         monkeypatch.setattr(remote_tool_service, "_execute", fail_execute)

@@ -1245,6 +1245,14 @@ def _probe_sequence_max_item(doc_id: str) -> int:
     return int(db_wfseq.get_max_item_seq(seq["id"]) or 0)
 
 
+def _probe_base_dirty(project_id: str) -> int:
+    """Negative tracked-dirty count: each resolved file strictly increases it."""
+    from modules.flow_gate.services import git_service
+    status = git_service.project_git_status(project_id).get("status") or {}
+    files = (status.get("base_dirty") or {}).get("files") or []
+    return -len(files)
+
+
 # Keyed by TOKEN scope — the value `start_run` actually receives. Chat is no longer
 # remapped to edit: its append-only endpoint advances the conversation head without
 # revising the document row, so it needs its own completion probe.
@@ -1254,6 +1262,7 @@ _SCOPE_PROBES: dict[str, Callable[[str], int]] = {
     "review": _probe_doc_reviews,
     "test_run": _probe_test_runs,
     "workflow_sequence_edit": _probe_sequence_max_item,
+    "resolve_base_dirty": _probe_base_dirty,
 }
 
 
@@ -4827,6 +4836,14 @@ def _finalize_run(run: dict) -> None:
       3. neither of them may block the broadcast. Both swallow their own failures: a record
          is an aid, not the run.
     """
+    # Group-less base-dirty runs own a separate project admission lease.
+    if run.get("action_scope") == "resolve_base_dirty":
+        try:
+            from modules.flow_gate.db import project_ai_leases as db_project_ai_leases
+            db_project_ai_leases.release(str(run.get("project_id") or ""), str(run.get("run_id") or ""))
+        except Exception:
+            _logger.exception("failed to release project AI lease")
+
     # Final last_message (L0007 §2.6): the last attempt may have said nothing at all, while an
     # earlier one left the sentence that actually explains the failure. Keep the explanation.
     if not run.get("last_message") and run.get("last_message_seen"):
@@ -8693,3 +8710,4 @@ def document_review_loop_payload(run: dict) -> dict | None:
     # server restart shows the same rounds instead of only what this browser observed.
     payload["history"] = build_document_review_loop_history(loop, run.get("doc_ref"))
     return payload
+

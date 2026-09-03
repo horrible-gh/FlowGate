@@ -77,7 +77,10 @@ def test_section_is_five_lines_and_carries_the_fallback_facts():
     assert len(body) == 5
     assert body[0] == "첫 행동으로 GET http://h/flowgate/api/v1/help/tools 를 호출해 각 도구의 사용법을 확인하세요."
     assert body[1].startswith("디스크의 프로젝트 소스를 직접 편집하지 마세요")
-    assert body[2] == "도구: read, grep, glob, stat, diff, log, write, patch, remove"
+    # 0482 T0011: default head_type="TR" is a MUTATING_STEP_TYPES read_write kind, and
+    # `resolve_base_dirty` joined DISPLAY_ORDER/WRITE_TOOLS as a tenth catalog tool — every
+    # read_write mention's tool line grows by one, exactly like the /help catalog's count.
+    assert body[2] == "도구: read, grep, glob, stat, diff, log, write, patch, remove, resolve_base_dirty"
     assert body[3] == "Authorization: Bearer RAW"
     assert body[4] == "도구별 상세: GET http://h/flowgate/api/v1/help/tools/{name}"
 
@@ -85,7 +88,7 @@ def test_section_is_five_lines_and_carries_the_fallback_facts():
 def test_no_disk_edit_line_sits_next_to_the_tool_names_not_inside_help():
     """D-4: the accident this line prevents is a worker that never opened help."""
     body = _section(_build()).splitlines()
-    assert body.index("도구: read, grep, glob, stat, diff, log, write, patch, remove") - 1 == next(
+    assert body.index("도구: read, grep, glob, stat, diff, log, write, patch, remove, resolve_base_dirty") - 1 == next(
         i for i, line in enumerate(body) if line.startswith("디스크의")
     )
 

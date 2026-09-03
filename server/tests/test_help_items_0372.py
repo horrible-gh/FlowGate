@@ -153,7 +153,11 @@ def test_index_for_a_mutating_token_opens_write_tools_and_the_report_format(monk
     assert _hidden(body) == {"design_template": "not_design_type", "test_commands": "not_ts_type"}
     assert body["context"]["tool_kind"] == "read_write"
     counts = {item["name"]: item["children_count"] for item in body["items"]}
-    assert counts["source_tools"] == 9
+    # 9 -> 10: flowgate.default.0482 T0011 registered `resolve_base_dirty` as a tenth
+    # catalog tool (tool_registry.py DISPLAY_ORDER/WRITE_TOOLS). The catalog is kind-
+    # granular, not action_scope-granular — every read_write token's tool list grows by
+    # one, exactly like it already does for write/patch/remove.
+    assert counts["source_tools"] == 10
     assert counts["authoring_guide"] == 1
 
 

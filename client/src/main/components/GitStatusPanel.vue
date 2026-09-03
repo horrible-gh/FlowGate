@@ -46,8 +46,8 @@
         <div class="git-v9-summary">
           <span class="git-v9-chip">{{ t('main.git_status.base_dirty_summary', { n: baseDirtyFiles.length }) }}</span>
           <span>{{ t('main.git_status.base_dirty_guide') }}</span>
-          <button class="btn btn-sm btn-secondary" type="button" disabled aria-describedby="git-base-ai-disabled-reason">{{ t('main.git_status.ai_delegate') }}</button>
-          <span id="git-base-ai-disabled-reason" class="git-v9-disabled-reason">{{ t('main.git_status.base_ai_disabled_reason') }}</span>
+          <button class="btn btn-sm btn-secondary" type="button" :disabled="busy || baseAiRunning" aria-describedby="git-base-ai-reason" @click="invokeBaseDirtyAi">{{ t('main.git_status.ai_delegate') }}</button>
+          <span id="git-base-ai-reason" class="git-v9-disabled-reason">{{ t(baseAiRunning ? 'main.git_status.base_ai_running' : 'main.git_status.base_ai_ready') }}</span>
           <button class="btn btn-sm btn-secondary" type="button" :aria-expanded="baseDirtyOpen" aria-controls="git-base-dirty-files" @click="baseDirtyOpen = !baseDirtyOpen">{{ baseDirtyOpen ? t('main.git_status.collapse') : t('main.git_status.view_files') }}</button>
         </div>
         <div class="git-base-dirty-alert__msg">{{ t('main.git_finalize.base_dirty_alert') }}</div>
@@ -477,15 +477,9 @@
       <!-- Recovery (manual cleanup only; base push is a first-class header action). -->
       <div class="git-status-sect git-status-recovery">
         <p class="git-status-sub">{{ t('main.git_status.recovery_header') }}</p>
-        <p class="git-cleanup-never">{{ t('main.git_status.cleanup_never_run') }}</p>
-        <!-- 0182 NR0003 §5: backlog sweep of finalized slots' leftovers (worktree
-             dir + local work branch + ledger). New finalizes clean up after
-             themselves; this clears what accumulated before that (or failed).
-             T#2 boundary: when terminal_cleanup supplies pending[].reason, replace
-             this aggregate compatibility row with those real pending rows and a
-             per-row retry; T#1 must not synthesize that future response contract. -->
-        <div v-if="(status.cleanable_count ?? 0) > 0" class="git-cleanup-pending">
-          <span>{{ t('main.git_status.cleanup_compat_pending', { n: status.cleanable_count }) }}</span>
+        <p class="git-cleanup-never">{{ cleanupStatusLabel }}</p>
+        <div v-for="row in (status.terminal_cleanup?.pending ?? [])" :key="row.group_id" class="git-cleanup-pending">
+          <span>{{ row.group_id }} · {{ t(`main.git_status.cleanup_reason_${row.reason}`) }}</span>
           <button class="btn btn-sm btn-secondary" :disabled="busy" @click="doCleanup"><AppIcon name="broom" />{{ t('main.git_status.cleanup_retry') }}</button>
         </div>
       </div>
@@ -501,6 +495,7 @@ import { getRequest, postRequest } from '@shared/api'
 import { useToast } from './common/useToast'
 import { useExplorerStore } from '../stores/explorer'
 import { useAiProviderStore } from '../stores/aiProvider'
+import { useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import AppIcon from '@shared/AppIcon.vue'
 // 0182 NR0003 §6: chunk-based conflict resolution shared with GitFinalizePanel
 // (parser state machine + reassembly + residual-marker guard). 0212 T0009: the
@@ -522,6 +517,7 @@ const { initConflictFile } = useConflictChunks()
 // 0234 B0001: the header provider selection must reach the conflict AI run. This store
 // is the single source of truth for the runtime provider (also driven by AppHeader).
 const aiProviderStore = useAiProviderStore()
+const aiInvokeRunsStore = useAiInvokeRunsStore()
 
 // Fixed finalize actions (git_service.ACTION_VALUES). Kept as an array literal so
 // the i18n static-reference scanner sees the backtick keys, not a computed one.
@@ -610,6 +606,12 @@ interface GitStatus {
   pending_count: number
   // 0182 NR0003 §5: finalized (merged/pushed) slots whose leftovers await cleanup
   cleanable_count?: number
+  terminal_cleanup?: {
+    last_run_at: string | null
+    last_run_status: 'ok' | 'partial' | 'failed' | null
+    last_cleaned_count: number
+    pending: Array<{ group_id: string; reason: 'revert_conflict' | 'teardown_failed' }>
+  }
   unpushed?: {
     count: number
     commit_count: number
@@ -633,6 +635,10 @@ interface UnpushedMerge {
 
 const status = ref<GitStatus | null>(null)
 const busy = ref(false)
+const baseAiRunning = ref(false)
+const cleanupAttempted = new Set<string>()
+const cleanupInflight = new Set<string>()
+let statusSequence = 0
 // 0332 D0005 §6.2 — 펼쳐 둔 슬롯 하나. 목록은 기본 접힘이고 개수 배지만 늘 보인다.
 const trCommitsOpen = ref<string | null>(null)
 const baseDirtyOpen = ref(false)
@@ -1044,13 +1050,16 @@ async function fetchStatus() {
     status.value = null
     return
   }
+  const projectId = props.projectId
+  const sequence = ++statusSequence
   try {
     // 0282 NR0003 finding 3: shared store fetch — concurrent callers coalesce onto
     // one git/status request. The §2.6-a badge sync (trigger 1/4) moved into the
     // store fetch itself.
     const next = (await explorerStore.fetchGitStatus(
-      props.projectId,
+      projectId,
     )) as unknown as GitStatus | null
+    if (sequence !== statusSequence || projectId !== props.projectId) return
     if (next) await loadPendingConflictSummaries(next.pending)
     else pendingConflictPaths.value = {}
     status.value = next
@@ -1062,10 +1071,53 @@ async function fetchStatus() {
       if (!still) collapseResolve()
     }
     syncCommitDrafts()
+    if (next?.enabled && !cleanupAttempted.has(projectId)) {
+      cleanupAttempted.add(projectId)
+      void runAutomaticCleanup(projectId, sequence)
+    }
   } catch {
+    // A stale request (superseded by a newer sequence or a project switch)
+    // must not clobber whatever the current request already rendered.
+    if (sequence !== statusSequence || projectId !== props.projectId) return
     status.value = null // 403/404 — panel stays hidden
   }
 }
+
+async function runAutomaticCleanup(projectId: string, sequence: number) {
+  if (cleanupInflight.has(projectId)) return
+  cleanupInflight.add(projectId)
+  try {
+    const { data } = await postRequest<{ terminal_cleanup?: GitStatus['terminal_cleanup'] }>(
+      `/api/v1/projects/${projectId}/git/cleanup`, {},
+    )
+    if (data?.terminal_cleanup && sequence === statusSequence && projectId === props.projectId) {
+      await fetchStatus()
+    }
+  } catch (e: any) {
+    if (e?.response?.data?.error?.code === 'git_busy' && projectId === props.projectId) {
+      showToast(t('main.git_status.cleanup_git_busy'), 'warning')
+    }
+  } finally {
+    cleanupInflight.delete(projectId)
+  }
+}
+
+function cleanupAge(iso: string | null): string {
+  if (!iso) return ''
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000))
+  if (seconds < 60) return t('main.git_status.cleanup_just_now')
+  if (seconds < 3600) return t('main.git_status.cleanup_minutes_ago', { n: Math.floor(seconds / 60) })
+  if (seconds < 86400) return t('main.git_status.cleanup_hours_ago', { n: Math.floor(seconds / 3600) })
+  return t('main.git_status.cleanup_days_ago', { n: Math.floor(seconds / 86400) })
+}
+
+const cleanupStatusLabel = computed(() => {
+  const snap = status.value?.terminal_cleanup
+  if (!snap?.last_run_status) return t('main.git_status.cleanup_never_run')
+  return t(`main.git_status.cleanup_status_${snap.last_run_status}`, {
+    when: cleanupAge(snap.last_run_at), n: snap.last_cleaned_count,
+  })
+})
 
 async function execute(item: Pending) {
   if (busy.value) return
@@ -1496,6 +1548,49 @@ async function invokeConflictAi(p: ConflictTarget | null, message?: string) {
   }
 }
 
+watch(
+  () => aiInvokeRunsStore.runsByGroup[`project:${props.projectId}`]?.phase,
+  async phase => {
+    if (phase === 'finished' || phase === 'lost') {
+      baseAiRunning.value = false
+      await fetchStatus()
+    }
+  },
+)
+
+async function invokeBaseDirtyAi() {
+  if (busy.value || baseAiRunning.value || !baseDirtyFiles.value.length) return
+  busy.value = true
+  baseAiRunning.value = true
+  // A 409 run-in-progress means another session already owns the active run, so this
+  // client has no tracked store entry for it — the `finally` block's tracked-phase
+  // recompute must not be allowed to silently re-enable the button in that case.
+  let runInProgress = false
+  try {
+    await aiProviderStore.ensureLoaded(props.projectId)
+    const body: Record<string, unknown> = {
+      project: props.projectId, module: 'none', action_scope: 'resolve_base_dirty', mode: 'single',
+    }
+    if (aiProviderStore.selectedProviderId) body.provider_id = aiProviderStore.selectedProviderId
+    const response = await postRequest<Record<string, unknown>>('/api/v1/ai-invoke/start', body)
+    aiInvokeRunsStore.trackStarted({ ...response.data, project_id: props.projectId, action_scope: 'resolve_base_dirty' })
+    showToast(t('main.git_status.base_ai_started'), 'success')
+  } catch (e: any) {
+    const code = e?.response?.data?.code || e?.response?.data?.error?.code
+    if (code === 'base_dirty_run_in_progress') runInProgress = true
+    else {
+      baseAiRunning.value = false
+      if (code === 'base_dirty_empty') await fetchStatus()
+    }
+    showToast(t(`main.git_status.${code === 'base_dirty_empty' ? 'base_ai_empty' : 'base_ai_failed'}`), 'danger')
+  } finally {
+    busy.value = false
+    const tracked = aiInvokeRunsStore.runsByGroup[`project:${props.projectId}`]
+    baseAiRunning.value = runInProgress || (!!tracked && tracked.phase !== 'finished' && tracked.phase !== 'lost')
+    await fetchStatus()
+  }
+}
+
 async function copyConflictMention(p: ConflictTarget | null) {
   if (!p || p.merge_id == null || busy.value) return
   busy.value = true
@@ -1920,6 +2015,7 @@ defineExpose({ fetchStatus })
   border-top: 1px dashed var(--border, #e2e8f0);
   padding-top: 10px;
 }
+
 .git-v9-summary,
 .git-v9-conflict-summary,
 .git-cleanup-pending {
@@ -2145,4 +2241,5 @@ defineExpose({ fetchStatus })
   background: #fef2f2;
 }
 </style>
+
 

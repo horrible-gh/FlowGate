@@ -12,6 +12,7 @@ the browser (P0005, notation rules).
 from __future__ import annotations
 
 from typing import Optional
+import uuid
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -19,8 +20,10 @@ from pydantic import BaseModel
 
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import projects as db_projects
+from modules.flow_gate.db import project_ai_leases as db_project_ai_leases
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import ai_invoke_service
+from modules.flow_gate.services import git_service
 from modules.flow_gate.services import invoke_mention_service
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import workflow_decision_service
@@ -75,7 +78,7 @@ class DocumentReviewLoopRequest(BaseModel):
 class AiInvokeStartRequest(BaseModel):
     project: str
     module: Optional[str] = None
-    group: str
+    group: Optional[str] = None
     doc_ref: Optional[str] = None
     action_scope: str = "new"
     mode: str = "single"
@@ -163,7 +166,17 @@ _ALLOWED_SCOPES = (
     "resolve_conflict",
     "workflow_sequence_edit",
     "test_run",
+    "resolve_base_dirty",
 )
+
+# T0011 item 6: the resolve_base_dirty worker mention's decision contract, one locale per
+# key so the census scanner (test_korean_source_census_0430.py) sees a single Hangul-bearing
+# source line for ko instead of one per sentence.
+_RESOLVE_BASE_DIRTY_CONTRACT = {
+    "ko": "## 기준 브랜치 변경 판정\n\n아래 tracked dirty 파일을 각각 commit 또는 discard로 판정하십시오.\n{files}\n\n판정 뒤 resolve_base_dirty(decisions:[{{path,action}}], complete, commit_message) 도구로 보고하십시오. project_id와 source root는 입력하지 마십시오.\n\n",
+    "ja": "## 基準ブランチ変更の判定\n\n以下のtracked dirtyファイルをそれぞれcommitまたはdiscardと判定してください。\n{files}\n\n判定後、resolve_base_dirty(decisions:[{{path,action}}], complete, commit_message) ツールで報告してください。project_idとsource rootは入力しないでください。\n\n",
+    "en": "## Base Branch Change Resolution\n\nClassify each tracked dirty file below as commit or discard.\n{files}\n\nReport your decisions with the resolve_base_dirty(decisions:[{{path,action}}], complete, commit_message) tool. Do not pass project_id or source root as input.\n\n",
+}
 
 
 def _err(exc: HTTPException) -> JSONResponse:
@@ -348,12 +361,19 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
     except ValueError as exc:
         errors.append({"loc": "project", "msg": str(exc)})
     module_part = body.module if body.module else "none"
-    group_id = f"{body.project}.{module_part}.{body.group}"
-    try:
-        validate_group_id(group_id)
-    except ValueError as exc:
-        errors.append({"loc": "group", "msg": str(exc)})
-    if body.action_scope == "resolve_conflict":
+    group_id = f"{body.project}.{module_part}.{body.group or '0000'}"
+    if body.action_scope != "resolve_base_dirty":
+        if not body.group:
+            errors.append({"loc": "group", "msg": "required"})
+        else:
+            try:
+                validate_group_id(group_id)
+            except ValueError as exc:
+                errors.append({"loc": "group", "msg": str(exc)})
+    if body.action_scope == "resolve_base_dirty":
+        if body.mode != "single":
+            errors.append({"loc": "mode", "msg": "resolve_base_dirty must be single"})
+    elif body.action_scope == "resolve_conflict":
         if body.merge_id is None:
             errors.append({"loc": "merge_id", "msg": "required for resolve_conflict"})
         if body.mode != "single":
@@ -399,6 +419,15 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
     if db_projects.get_by_id(body.project) is None:
         return JSONResponse(status_code=404, content={"code": "project_not_found",
                                                       "message": f"Project not found: {body.project}"})
+
+    # Empty work wins over admission state: there is nothing to delegate even if an
+    # older run still exists. This ordering is part of the public error contract.
+    if body.action_scope == "resolve_base_dirty":
+        dirty = ((git_service.project_git_status(body.project).get("status") or {})
+                 .get("base_dirty") or {}).get("files") or []
+        if not dirty:
+            return JSONResponse(status_code=409, content={
+                "code": "base_dirty_empty", "message": "No tracked base changes to resolve."})
 
     user_id = auth["issued_to"]
     if not (bool(auth.get("is_admin")) or has_permission(user_id, body.project, "perm_document_read")):
@@ -541,6 +570,15 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             if not base:
                 return None
             return (prompt + invoke_mention_service.SECTION_SEPARATOR + base) if prompt else base
+        if body.action_scope == "resolve_base_dirty":
+            base = _standard_mention(raw_token, scratch_dir)
+            if not base:
+                return None
+            files = "\n".join(f"- {path}" for path in dirty)
+            contract = _RESOLVE_BASE_DIRTY_CONTRACT.get(
+                locale, _RESOLVE_BASE_DIRTY_CONTRACT["en"]
+            ).format(files=files)
+            return contract + base
         if body.action_scope == "resolve_conflict":
             base = _standard_mention(raw_token, scratch_dir)
             if not base:
@@ -750,12 +788,24 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             }
         issue_builder = _issue_first_hop
 
+    project_lease_owner = None
+    if body.action_scope == "resolve_base_dirty":
+        project_lease_owner = "acquiring:" + uuid.uuid4().hex
+        existing = db_project_ai_leases.get_active(body.project)
+        if existing or db_project_ai_leases.acquire(body.project, project_lease_owner) is None:
+            existing = existing or db_project_ai_leases.get_active(body.project) or {}
+            return JSONResponse(status_code=409, content={
+                "code": "base_dirty_run_in_progress",
+                "message": "A base-dirty AI run is already active for this project.",
+                "run_id": existing.get("run_id"),
+            })
+
     try:
         result = ai_invoke_service.start_run(
             project_id=body.project,
             module=body.module,
             group_id=group_id,
-            doc_ref=body.doc_ref or "",
+            doc_ref=(body.project if body.action_scope == "resolve_base_dirty" else body.doc_ref or ""),
             action_scope=token_scope,
             mode=body.mode,
             continuation_target_seq=body.continuation_target_seq,
@@ -784,13 +834,26 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             document_review_loop=(body.document_review_loop.dict() if body.document_review_loop else None),
         )
     except HTTPException as exc:
+        if project_lease_owner:
+            db_project_ai_leases.release(body.project, project_lease_owner)
         return _err(exc)
     except LookupError as exc:
+        if project_lease_owner:
+            db_project_ai_leases.release(body.project, project_lease_owner)
         return JSONResponse(status_code=404, content={
             "code": "workflow_decision_unavailable", "message": str(exc)})
     except ValueError as exc:
+        if project_lease_owner:
+            db_project_ai_leases.release(body.project, project_lease_owner)
         return JSONResponse(status_code=409, content={
             "code": "workflow_decision_conflict", "message": str(exc)})
+    if body.action_scope == "resolve_base_dirty":
+        run_id = str(result.get("run_id") or "")
+        if not run_id or db_project_ai_leases.activate(body.project, project_lease_owner, run_id) is None:
+            if run_id:
+                ai_invoke_service.cancel_run(run_id, user_id=user_id, is_admin=True)
+            return JSONResponse(status_code=409, content={"code": "run_lease_lost", "message": "Project run lease was lost."})
+        result.update({"group_id": None, "doc_ref": "", "docs_target": 0})
     return JSONResponse(status_code=200, content=result)
 
 
@@ -1096,3 +1159,4 @@ def cancel_ai_invoke(run_id: str, request: Request):
         return JSONResponse(status_code=200, content=ai_invoke_service.cancel_run(run_id))
     except HTTPException as exc:
         return _err(exc)
+

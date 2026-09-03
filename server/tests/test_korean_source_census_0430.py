@@ -54,6 +54,11 @@ FILE_LINE_CAPS: dict[str, int] = {
     # Step 5.71) plus its ko notice/comment text — product copy and design-rationale
     # comments, not the kind of stray Korean this census exists to catch.
     "modules/flow_gate/api/inbox_routes.py": 45,
+    # 0 -> 5: flowgate.default.0482 T0011 added the resolve_base_dirty worker mention's
+    # decision contract (_RESOLVE_BASE_DIRTY_CONTRACT) — product copy sent to the AI
+    # worker, collapsed to one ko source line plus the four pre-existing design-rationale
+    # comments (0443 T0002, 0414 P0007) already in this file.
+    "modules/flow_gate/api/v1/ai_invoke_routes.py": 5,
     # 15 -> 13: flowgate.default.0484 T0005 removed the PATCH /content submission
     # gate's Korean fallback and section-name docstring. The measured remainder is legacy
     # product copy and design rationale unrelated to the inbox-only submission check.

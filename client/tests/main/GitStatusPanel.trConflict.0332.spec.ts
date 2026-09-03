@@ -172,7 +172,10 @@ describe('GitStatusPanel × 붙들린 TR 충돌 (TR0019)', () => {
     await wrapper.find('.git-trc-conflict-commit-btn').trigger('click')
     await flushPromises()
 
-    expect(postRequest.mock.calls[0][0]).toBe(
+    // T0011: mount already fired the once-per-project auto /git/cleanup call, so the
+    // action under test is asserted by its own last call, not index 0.
+    const lastCall = postRequest.mock.calls[postRequest.mock.calls.length - 1]
+    expect(lastCall[0]).toBe(
       `/api/v1/groups/${GROUP}/git/merge/${MERGE_ID}/tr-commit`,
     )
     expect(showToast).toHaveBeenCalledWith(
@@ -191,7 +194,7 @@ describe('GitStatusPanel × 붙들린 TR 충돌 (TR0019)', () => {
     await wrapper.find('.git-trc-conflict-abort-btn').trigger('click')
     await flushPromises()
 
-    expect(postRequest.mock.calls[0][0]).toBe(
+    expect(postRequest.mock.calls[postRequest.mock.calls.length - 1][0]).toBe(
       `/api/v1/groups/${GROUP}/git/merge/${MERGE_ID}/abort`,
     )
     expect(showToast).toHaveBeenCalledWith(

@@ -1,8 +1,9 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import i18n from '@shared/i18n'
 import GitStatusPanel from '@main/components/GitStatusPanel.vue'
+import { useAiInvokeRunsStore } from '@main/stores/aiInvokeRuns'
 
 const { getRequest, postRequest } = vi.hoisted(() => ({ getRequest: vi.fn(), postRequest: vi.fn() }))
 vi.mock('@shared/api', () => ({
@@ -41,6 +42,11 @@ function status(cleanable = 1) {
       { group_id: `${GROUP}-conflict`, branch: 'conflict', status: 'conflict', default_action: 'merge', merge_id: 11 },
     ],
     pending_count: 2, cleanable_count: cleanable,
+    terminal_cleanup: {
+      last_run_at: '2026-08-31T12:00:00+09:00', last_run_status: 'ok',
+      last_cleaned_count: 3,
+      pending: cleanable ? [{ group_id: `${GROUP}-cleanup`, reason: 'revert_conflict' }] : [],
+    },
     unpushed: { count: 2, commit_count: 2, merges: [{ group_id: `${GROUP}-merged`, merge_commit: 'abc1234', subject: 'merged work', can_unmerge: true }], measured: true },
   }
 }
@@ -80,11 +86,13 @@ describe('GitStatusPanel mockup v9 rendered contract (0482 T#1)', () => {
     expect(wrapper.text()).not.toContain('main.git_finalize.status.')
   })
 
-  it('starts collapsed, exposes the disabled AI reason, and keeps commit controls inside detail', async () => {
+  it('starts collapsed, executes base-dirty AI with provider, and keeps commit controls inside detail', async () => {
     const wrapper = await render()
-    const ai = wrapper.find('button[aria-describedby="git-base-ai-disabled-reason"]')
-    expect(ai.attributes('disabled')).toBeDefined()
-    expect(wrapper.find('#git-base-ai-disabled-reason').text()).toBe(i18n.global.t('main.git_status.base_ai_disabled_reason'))
+    const ai = wrapper.find('button[aria-describedby="git-base-ai-reason"]')
+    expect(ai.attributes('disabled')).toBeUndefined()
+    await ai.trigger('click'); await flushPromises()
+    const start = postRequest.mock.calls.find(([url]) => String(url).endsWith('/ai-invoke/start'))
+    expect(start?.[1]).toMatchObject({ project: 'flowgate', module: 'none', action_scope: 'resolve_base_dirty', mode: 'single' })
     expect(wrapper.find('#git-base-dirty-files').exists()).toBe(false)
     await wrapper.find('button[aria-controls="git-base-dirty-files"]').trigger('click')
     expect(wrapper.findAll('#git-base-dirty-files .git-base-dirty-filerow')).toHaveLength(7)
@@ -125,10 +133,10 @@ describe('GitStatusPanel mockup v9 rendered contract (0482 T#1)', () => {
     expect(withServerRemainder.find('.git-trc-more').text()).toBe(i18n.global.t('main.git_status.tr_commits.more', { n: 3 }))
   })
 
-  it('calls cleanup through the existing endpoint and hides the row at zero', async () => {
+  it('calls cleanup exactly once automatically and hides rows when no residual remains', async () => {
     const wrapper = await render()
-    await wrapper.find('.git-cleanup-pending button').trigger('click'); await flushPromises()
-    expect(postRequest.mock.calls.some(([url]) => String(url).includes('/git/cleanup'))).toBe(true)
+    expect(wrapper.find('.git-cleanup-pending').exists()).toBe(true)
+    expect(postRequest.mock.calls.filter(([url]) => String(url).includes('/git/cleanup'))).toHaveLength(1)
     expect((await render(status(0))).find('.git-cleanup-pending').exists()).toBe(false)
   })
 
@@ -163,5 +171,115 @@ describe('GitStatusPanel mockup v9 rendered contract (0482 T#1)', () => {
     const placeholder = (await render()).find('.git-ra-placeholder')
     expect(placeholder.exists()).toBe(true)
     expect(placeholder.findAll('button, input, select, a')).toHaveLength(0)
+  })
+})
+
+describe('terminal_cleanup relative time and status rendering (0482 T0011 item 4)', () => {
+  const NOW = new Date('2026-08-31T12:00:00+09:00').getTime()
+
+  beforeEach(() => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW)
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  function withCleanup(overrides: Partial<{ last_run_at: string | null; last_run_status: string | null; last_cleaned_count: number; pending: any[] }>) {
+    const value = status(0)
+    value.terminal_cleanup = { last_run_at: null, last_run_status: null, last_cleaned_count: 0, pending: [], ...overrides }
+    return value
+  }
+
+  it('shows "never run" when there is no history', async () => {
+    const wrapper = await render(withCleanup({}))
+    expect(wrapper.find('.git-cleanup-never').text()).toBe(i18n.global.t('main.git_status.cleanup_never_run'))
+  })
+
+  it.each([
+    [0, 'cleanup_just_now', {}],
+    [59, 'cleanup_just_now', {}],
+    [60, 'cleanup_minutes_ago', { n: 1 }],
+    [3599, 'cleanup_minutes_ago', { n: 59 }],
+    [3600, 'cleanup_hours_ago', { n: 1 }],
+    [86399, 'cleanup_hours_ago', { n: 23 }],
+    [86400, 'cleanup_days_ago', { n: 1 }],
+    [-30, 'cleanup_just_now', {}],   // a future timestamp clamps to 0 elapsed seconds
+  ])('elapsed=%dsec renders %s', async (elapsedSec, key, params) => {
+    const lastRunAt = new Date(NOW - elapsedSec * 1000).toISOString()
+    const wrapper = await render(withCleanup({ last_run_at: lastRunAt, last_run_status: 'ok', last_cleaned_count: 3 }))
+    expect(wrapper.find('.git-cleanup-never').text()).toBe(
+      i18n.global.t('main.git_status.cleanup_status_ok', { when: i18n.global.t(`main.git_status.${key}`, params), n: 3 }),
+    )
+  })
+
+  it('distinguishes ok / partial / failed status labels', async () => {
+    const lastRunAt = new Date(NOW - 120_000).toISOString()
+    for (const st of ['ok', 'partial', 'failed'] as const) {
+      const wrapper = await render(withCleanup({ last_run_at: lastRunAt, last_run_status: st, last_cleaned_count: 2 }))
+      expect(wrapper.find('.git-cleanup-never').text()).toBe(
+        i18n.global.t(`main.git_status.cleanup_status_${st}`, { when: i18n.global.t('main.git_status.cleanup_minutes_ago', { n: 2 }), n: 2 }),
+      )
+    }
+  })
+
+  it('renders revert_conflict and teardown_failed pending rows with distinct reasons and a working retry', async () => {
+    const wrapper = await render(withCleanup({
+      last_run_at: new Date(NOW - 60_000).toISOString(), last_run_status: 'partial', last_cleaned_count: 1,
+      pending: [
+        { group_id: `${GROUP}-x1`, reason: 'revert_conflict' },
+        { group_id: `${GROUP}-x2`, reason: 'teardown_failed' },
+      ],
+    }))
+    const rows = wrapper.findAll('.git-cleanup-pending')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].text()).toContain(i18n.global.t('main.git_status.cleanup_reason_revert_conflict'))
+    expect(rows[1].text()).toContain(i18n.global.t('main.git_status.cleanup_reason_teardown_failed'))
+    expect(rows[0].text()).not.toBe(rows[1].text())
+    postRequest.mockClear()
+    await rows[1].find('button').trigger('click')
+    expect(postRequest.mock.calls.some(([url]) => String(url).includes('/git/cleanup'))).toBe(true)
+  })
+
+  it('shows zero pending rows and only the status line when nothing remains', async () => {
+    const wrapper = await render(withCleanup({ last_run_at: new Date(NOW - 60_000).toISOString(), last_run_status: 'ok', last_cleaned_count: 3, pending: [] }))
+    expect(wrapper.findAll('.git-cleanup-pending')).toHaveLength(0)
+    expect(wrapper.find('.git-cleanup-never').exists()).toBe(true)
+  })
+})
+
+describe('base-dirty AI button lifecycle (0482 T0011 item 8)', () => {
+  it('re-enables the button and refreshes status once the tracked run finishes', async () => {
+    postRequest.mockImplementation(async (url: string) => {
+      if (String(url).endsWith('/ai-invoke/start')) return { data: { ok: true, run_id: 'aiv_1' } }
+      return { data: { ok: true, result: {} } }
+    })
+    const wrapper = await render()
+    const store = useAiInvokeRunsStore()
+    await wrapper.find('button[aria-describedby="git-base-ai-reason"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('button[aria-describedby="git-base-ai-reason"]').attributes('disabled')).toBeDefined()
+
+    getRequest.mockClear()
+    store.trackFinished({ run_id: 'aiv_1', project_id: 'flowgate', action_scope: 'resolve_base_dirty', status: 'finished' })
+    await flushPromises()
+
+    expect(wrapper.find('button[aria-describedby="git-base-ai-reason"]').attributes('disabled')).toBeUndefined()
+    expect(getRequest.mock.calls.some(([url]) => String(url).includes('/git/status'))).toBe(true)
+  })
+
+  it('surfaces base_dirty_run_in_progress as a running state and base_dirty_empty as a refreshed empty state', async () => {
+    postRequest.mockImplementation(async (url: string) => {
+      if (String(url).endsWith('/ai-invoke/start')) {
+        const err: any = new Error('conflict')
+        err.response = { data: { code: 'base_dirty_run_in_progress', run_id: 'aiv_existing' } }
+        throw err
+      }
+      return { data: { ok: true, result: {} } }
+    })
+    const wrapper = await render()
+    await wrapper.find('button[aria-describedby="git-base-ai-reason"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('button[aria-describedby="git-base-ai-reason"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain(i18n.global.t('main.git_status.base_ai_running'))
   })
 })

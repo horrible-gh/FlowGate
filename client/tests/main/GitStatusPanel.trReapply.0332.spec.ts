@@ -193,7 +193,9 @@ describe('GitStatusPanel × 소스 되살리기 (T0018 K11)', () => {
     await wrapper.find('.git-trc-reapply-btn').trigger('click')
     await flushPromises()
 
-    const [url, body] = postRequest.mock.calls[0]
+    // T0011: mount already fired the once-per-project auto /git/cleanup call, so the
+    // action under test is asserted by its own last call, not index 0.
+    const [url, body] = postRequest.mock.calls[postRequest.mock.calls.length - 1]
     expect(url).toBe(
       `/api/v1/documents/workflow/${encodeURIComponent(TR_DOC)}/return-point/reapply-commits`,
     )

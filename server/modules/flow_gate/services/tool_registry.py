@@ -11,9 +11,9 @@ from modules.flow_gate.settings import source_mode_service
 _logger = logging.getLogger(__name__)
 
 VERSION = "v1"
-DISPLAY_ORDER = ("read", "grep", "glob", "stat", "diff", "log", "write", "patch", "remove")
+DISPLAY_ORDER = ("read", "grep", "glob", "stat", "diff", "log", "write", "patch", "remove", "resolve_base_dirty")
 READ_TOOLS = frozenset({"read", "grep", "glob", "stat", "diff", "log"})
-WRITE_TOOLS = frozenset({"write", "patch", "remove"})
+WRITE_TOOLS = frozenset({"write", "patch", "remove", "resolve_base_dirty"})
 MUTATING_STEP_TYPES = frozenset({"TR", "TSR", "TS"})
 
 _catalog_names = frozenset(DISPLAY_ORDER)
@@ -300,6 +300,31 @@ EXAMPLE_RESPONSES = {
 }
 
 
+# Group-less base-dirty action tool. It is advertised only for the dedicated
+# read_write token kind and obtains project/root identity from the grant.
+for _locale in ("ko", "ja", "en"):
+    SUMMARY[_locale]["resolve_base_dirty"] = "Apply validated commit/discard decisions to tracked base changes."
+FIELDS["resolve_base_dirty"] = {
+    locale: [
+        ("decisions", "array", True, None, "[{path, action: commit|discard}] decision list."),
+        ("complete", "boolean", True, None, "Whether this report covers the complete baseline."),
+        ("commit_message", "string", False, None, "Required when a complete report commits files."),
+    ] for locale in ("ko", "ja", "en")
+}
+ERRORS["resolve_base_dirty"] = {
+    locale: [(422, "invalid_request", "The whole batch is rejected before mutation when invalid."),
+             (409, "git_busy", "Another project Git operation owns the lock."),
+             (403, "forbidden", "The token is not a resolve_base_dirty read_write token.")]
+    for locale in ("ko", "ja", "en")
+}
+CAUTIONS["resolve_base_dirty"] = {
+    locale: ["Project identity and source root come from the run token, never request input.",
+             "complete=false returns partial; an incomplete complete=true report returns dirty."]
+    for locale in ("ko", "ja", "en")
+}
+EXAMPLE_BODIES["resolve_base_dirty"] = {"decisions": [{"path": "app/main.py", "action": "commit"}], "complete": True, "commit_message": "fix: resolve base changes"}
+EXAMPLE_RESPONSES["resolve_base_dirty"] = {"ok": True, "op": "resolve_base_dirty", "status": "resolved", "remaining": [], "commit": "0123456789abcdef"}
+
 def tool_names(kind: str) -> list[str]:
     """Tool names for a kind, in display order (P0005 §0-4)."""
     if kind == "read_write":
@@ -329,6 +354,8 @@ def kind_for_step(
     """
     if action_scope in {"review", "workflow_decide", "chat", "resolve_conflict"}:
         return "read", None
+    if action_scope == "resolve_base_dirty":
+        return "read_write", None
     if action_scope not in {"new", "edit"}:
         return "none", "token_scope_none"
     if lookup_failed:
@@ -457,3 +484,4 @@ def detail_notes(name: str, locale: str) -> list[str]:
 
 resolve = resolve_registry
 get_tool_detail = build_tool_detail
+
