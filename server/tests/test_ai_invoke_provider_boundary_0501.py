@@ -1,32 +1,34 @@
 """flowgate.default.0501 T4: ai_invoke worker / provider transport module boundary.
 
 T4 split ai_invoke_part2_worker.py (flowgate.default.0497 T0009's part 2 of 3) into
+three modules; T6 then moved the whole engine into the ai_invoke/ package (NR0003
+§12), where those three are
 three files along the actual module boundary:
 
-  ai_invoke_worker.py         provider-neutral worker orchestration (loop, retry,
+  ai_invoke/worker.py         provider-neutral worker orchestration (loop, retry,
                                judging, finalize, stop-code records, FlowGate-tool
                                dispatch)
-  ai_invoke_provider_api.py   HTTP/API transport (_call_openai / _call_anthropic /
+  ai_invoke/provider_api.py   HTTP/API transport (_call_openai / _call_anthropic /
                                _http_post_json and prompt/config shaping helpers)
-  ai_invoke_provider_cli.py   subprocess/CLI transport (spawn, watchdog, exit codes)
+  ai_invoke/provider_cli.py   subprocess/CLI transport (spawn, watchdog, exit codes)
 
 This file covers the two conditions T4 itself named as the hard requirement:
 
   * the pre-existing, pervasive `monkeypatch.setattr(svc, "_call_openai"/"_call_anthropic",
     fake)` pattern must still be observed by the REAL worker path even though the
-    call site (`_api_execute`, now in ai_invoke_worker.py) and the callee
-    (`_call_openai`/`_call_anthropic`, now in ai_invoke_provider_api.py) live in
+    call site (`_api_execute`, now in ai_invoke/worker.py) and the callee
+    (`_call_openai`/`_call_anthropic`, now in ai_invoke/provider_api.py) live in
     different files. flowgate.default.0501 T5 replaced the exec()-assembled shared
-    globals() dict with normal imports: `ai_invoke_worker.py` reaches
+    globals() dict with normal imports: `ai_invoke/worker.py` reaches
     `svc._call_openai`/`svc._call_anthropic` through `svc` (`ai_invoke_service`,
     imported once at its own top), so `monkeypatch.setattr(svc, ...)` still patches
     exactly the attribute every caller resolves through, the same seam
-    ai_invoke_runtime.py's registry accessors already relied on this pattern for.
+    the registry accessors (now ai_invoke/runtime.py) already relied on this pattern for.
   * the import-dependency guard: neither provider module may import
-    ai_invoke_chain, ai_invoke_review, group lease DB access, or the runtime
-    registry owner (ai_invoke_runtime.py) -- and ai_invoke_worker.py does not itself
+    chain.py, review.py, group lease DB access, or the runtime
+    registry (ai_invoke/runtime.py) -- and ai_invoke/worker.py does not itself
     define lease-acquisition-policy or run-id-allocation logic (those stay in
-    ai_invoke_service.py / ai_invoke_runtime.py; worker orchestration only calls
+    ai_invoke/admission.py / ai_invoke/runtime.py; worker orchestration only calls
     into them).
 """
 from __future__ import annotations
@@ -49,9 +51,12 @@ os.environ.setdefault("DB_TYPE", "sqlite")
 _SERVER_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_SERVER_DIR))
 _SERVICES_DIR = _SERVER_DIR / "modules" / "flow_gate" / "services"
-_PROVIDER_API_PATH = _SERVICES_DIR / "ai_invoke_provider_api.py"
-_PROVIDER_CLI_PATH = _SERVICES_DIR / "ai_invoke_provider_cli.py"
-_WORKER_PATH = _SERVICES_DIR / "ai_invoke_worker.py"
+# flowgate.default.0501 T6 moved the engine into the ai_invoke/ package (NR0003 §12);
+# the three files T4 created kept their contents and lost the redundant prefix.
+_PKG_DIR = _SERVICES_DIR / "ai_invoke"
+_PROVIDER_API_PATH = _PKG_DIR / "provider_api.py"
+_PROVIDER_CLI_PATH = _PKG_DIR / "provider_cli.py"
+_WORKER_PATH = _PKG_DIR / "worker.py"
 
 from modules.flow_gate.services import ai_invoke_service as svc  # noqa: E402
 
@@ -98,9 +103,9 @@ def _anthropic_provider():
 
 class TestCallOpenaiAnthropicPatchCrossesTheFileBoundary:
     """The hard compatibility requirement T4 named explicitly: a test that patches
-    `svc._call_openai` / `svc._call_anthropic` (defined in ai_invoke_provider_api.py)
+    `svc._call_openai` / `svc._call_anthropic` (defined in ai_invoke/provider_api.py)
     must still see the patch take effect when the REAL worker path (`_execute_provider_chain`,
-    defined in ai_invoke_worker.py -- the function `_worker`'s own while-loop calls
+    defined in ai_invoke/worker.py -- the function `_worker`'s own while-loop calls
     every attempt) drives an API provider through to that call."""
 
     def test_execute_provider_chain_uses_the_patched_call_openai(self, monkeypatch):
@@ -123,8 +128,8 @@ class TestCallOpenaiAnthropicPatchCrossesTheFileBoundary:
 
         assert started_ok is True
         assert calls["n"] >= 1, (
-            "svc._execute_provider_chain (ai_invoke_worker.py) did not reach the "
-            "monkeypatched svc._call_openai (ai_invoke_provider_api.py) -- the "
+            "svc._execute_provider_chain (ai_invoke/worker.py) did not reach the "
+            "monkeypatched svc._call_openai (ai_invoke/provider_api.py) -- the "
             "cross-file global lookup regressed"
         )
 
@@ -148,8 +153,8 @@ class TestCallOpenaiAnthropicPatchCrossesTheFileBoundary:
 
         assert started_ok is True
         assert calls["n"] >= 1, (
-            "svc._execute_provider_chain (ai_invoke_worker.py) did not reach the "
-            "monkeypatched svc._call_anthropic (ai_invoke_provider_api.py) -- the "
+            "svc._execute_provider_chain (ai_invoke/worker.py) did not reach the "
+            "monkeypatched svc._call_anthropic (ai_invoke/provider_api.py) -- the "
             "cross-file global lookup regressed"
         )
 
@@ -167,17 +172,39 @@ class TestImportDependencyGuard:
     does not own lease-acquisition policy or run-id allocation itself."""
 
     _FORBIDDEN_SUFFIXES = (
-        "ai_invoke_chain",
-        "ai_invoke_review",
-        "ai_invoke_runtime",
         "group_ai_leases",
     )
+    # Inside the package these are relative imports, so the guard matches the MODULE
+    # NAME: `from . import chain` carries no dotted path and a suffix check would
+    # silently stop guarding (NR0003 §28).
+    _FORBIDDEN_PACKAGE_MODULES = {"chain", "review", "admission", "diagnostics", "facade"}
+    # `runtime` is no longer forbidden outright -- T6 made it the home of the engine's
+    # PARAMETERS as well as the registry, and a transport legitimately reads
+    # ANTHROPIC_VERSION / OUTPUT_TAIL_BYTES from it. What a transport still may not touch
+    # is the registry itself, so the guard moved from the module to those names.
+    _FORBIDDEN_RUNTIME_NAMES = {
+        "get_run_record", "is_run_live", "active_run_for_group", "list_live_runs",
+        "run_list_item_live", "group_resume_lock", "_runs", "_runs_lock",
+        "_group_resume_locks", "_auto_resume",
+    }
 
     def _assert_no_forbidden_imports(self, path: Path):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
                 module = node.module or ""
+                if node.level:
+                    reached = ({a.name for a in node.names} if not module
+                               else {module.split(".")[0]})
+                    assert not (reached & self._FORBIDDEN_PACKAGE_MODULES), (
+                        f"{path.name} imports forbidden package module(s) {reached}"
+                    )
+                    if module.split(".")[0] == "runtime":
+                        taken = {a.name for a in node.names}
+                        assert not (taken & self._FORBIDDEN_RUNTIME_NAMES), (
+                            f"{path.name} reaches the run registry: "
+                            f"{taken & self._FORBIDDEN_RUNTIME_NAMES}"
+                        )
                 assert not any(module.endswith(s) for s in self._FORBIDDEN_SUFFIXES), (
                     f"{path.name} imports forbidden module {module!r}"
                 )
@@ -199,9 +226,9 @@ class TestImportDependencyGuard:
 
     def test_worker_module_does_not_define_lease_acquisition_or_run_id_allocation(self):
         """T3 (flowgate.default.0501 T0008) put run-id allocation and lease
-        acquisition/admission in ai_invoke_service.py / ai_invoke_runtime.py, not in
-        the worker. T4 must not have quietly pulled either back in while relocating
-        the worker's own code around them."""
+        acquisition/admission outside the worker; T6 gave both an explicit home --
+        `ai_invoke/runtime.py` for the run-id counter, `ai_invoke/admission.py` for
+        start_run and the lease. Neither may drift back into the worker."""
         tree = ast.parse(_WORKER_PATH.read_text(encoding="utf-8"), filename=str(_WORKER_PATH))
         top_level_names = {
             node.name for node in tree.body
@@ -209,7 +236,7 @@ class TestImportDependencyGuard:
         }
         forbidden_names = {"_next_run_id", "start_run", "_acquire_group_lease"}
         offenders = top_level_names & forbidden_names
-        assert not offenders, f"ai_invoke_worker.py should not define {offenders}"
+        assert not offenders, f"ai_invoke/worker.py should not define {offenders}"
 
     def test_provider_modules_do_not_call_exec_or_eval(self):
         """Neither provider module should itself call exec/eval, which would be an
@@ -228,6 +255,7 @@ class TestFileSplitIsComplete:
 
     def test_ai_invoke_part2_worker_no_longer_exists(self):
         assert not (_SERVICES_DIR / "ai_invoke_part2_worker.py").exists()
+        assert not (_SERVICES_DIR / "ai_invoke_worker.py").exists()
 
     def test_the_three_new_files_exist(self):
         for path in (_PROVIDER_API_PATH, _PROVIDER_CLI_PATH, _WORKER_PATH):

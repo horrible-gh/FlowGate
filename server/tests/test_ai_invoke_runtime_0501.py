@@ -1,4 +1,10 @@
-"""flowgate.default.0501 T0008 (T3): ai_invoke_runtime module boundary.
+"""flowgate.default.0501 T0008 (T3): ai_invoke runtime module boundary.
+
+Retargeted by T6 at `ai_invoke/runtime.py`, which is where NR0003 §13 puts this
+module: T3 first extracted the registry accessors as a flat `ai_invoke_runtime.py`
+sibling, and T6 moved them into the package together with the registry objects and
+the engine parameters they belong to. The boundary the tests below check is the same
+one; only the module path changed.
 
 Covers the completion conditions T0008 T3 §15 asks for on the NEW runtime-registry
 access module:
@@ -38,18 +44,17 @@ os.environ.setdefault("DB_TYPE", "sqlite")
 _SERVER_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_SERVER_DIR))
 _RUNTIME_PATH = (
-    _SERVER_DIR / "modules" / "flow_gate" / "services" / "ai_invoke_runtime.py"
+    _SERVER_DIR / "modules" / "flow_gate" / "services" / "ai_invoke" / "runtime.py"
 )
 
+# flowgate.default.0501 T6: inside the package these are relative imports, so the
+# guard matches the MODULE NAME rather than a dotted suffix -- `from . import worker`
+# carries no module path at all and a suffix check would silently stop guarding.
+_FORBIDDEN_PACKAGE_MODULES = {
+    "worker", "provider_api", "provider_cli", "chain", "review", "finalize",
+    "admission", "diagnostics", "facade",
+}
 _FORBIDDEN_IMPORT_SUFFIXES = (
-    # flowgate.default.0501 T4 re-split ai_invoke_part2_worker.py into these three;
-    # T5 re-split ai_invoke_part3_chain.py into chain/review; the guard must track
-    # the current file names, not any earlier one.
-    "ai_invoke_worker",
-    "ai_invoke_provider_api",
-    "ai_invoke_provider_cli",
-    "ai_invoke_chain",
-    "ai_invoke_review",
     "process_runner",
 )
 
@@ -62,7 +67,7 @@ class TestModuleOwnsNoExecutionDetail:
     def test_direct_import_succeeds_standalone(self):
         import importlib
 
-        from modules.flow_gate.services import ai_invoke_runtime
+        from modules.flow_gate.services.ai_invoke import runtime as ai_invoke_runtime
 
         importlib.reload(ai_invoke_runtime)
         assert callable(ai_invoke_runtime.get_run_record)
@@ -74,6 +79,12 @@ class TestModuleOwnsNoExecutionDetail:
             if isinstance(node, ast.ImportFrom):
                 module = node.module or ""
                 assert not any(module.endswith(suffix) for suffix in _FORBIDDEN_IMPORT_SUFFIXES)
+                if node.level:                     # from . import x  /  from .x import y
+                    reached = ({a.name for a in node.names} if not module
+                               else {module.split(".")[0]})
+                    assert not (reached & _FORBIDDEN_PACKAGE_MODULES), (
+                        f"runtime.py must stay the bottom of the graph, reached {reached}"
+                    )
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     assert not any(
@@ -104,7 +115,7 @@ class TestRegistryHasOneOwner:
     ai_invoke_runtime accessor, with no copied/aliased dict left stale."""
 
     def test_full_reassignment_of_svc_runs_is_observed_by_get_run_record(self, monkeypatch):
-        from modules.flow_gate.services import ai_invoke_runtime as runtime
+        from modules.flow_gate.services.ai_invoke import runtime
         from modules.flow_gate.services import ai_invoke_service as svc
 
         run = {"run_id": "aiv_probe", "group_id": "g1", "status": "running"}
@@ -117,7 +128,7 @@ class TestRegistryHasOneOwner:
         assert runtime.is_run_live("aiv_probe") is False
 
     def test_full_reassignment_of_svc_runs_is_observed_by_active_run_for_group(self, monkeypatch):
-        from modules.flow_gate.services import ai_invoke_runtime as runtime
+        from modules.flow_gate.services.ai_invoke import runtime
         from modules.flow_gate.services import ai_invoke_service as svc
 
         run = {"run_id": "aiv_probe2", "group_id": "g2", "status": "running"}
@@ -126,7 +137,7 @@ class TestRegistryHasOneOwner:
         assert runtime.active_run_for_group("g_absent") is None
 
     def test_full_reassignment_of_svc_runs_is_observed_by_list_live_runs(self, monkeypatch):
-        from modules.flow_gate.services import ai_invoke_runtime as runtime
+        from modules.flow_gate.services.ai_invoke import runtime
         from modules.flow_gate.services import ai_invoke_service as svc
 
         run = {
@@ -138,7 +149,7 @@ class TestRegistryHasOneOwner:
         assert [item["run_id"] for item in items] == ["aiv_probe3"]
 
     def test_full_reassignment_of_svc_group_resume_locks_is_observed(self, monkeypatch):
-        from modules.flow_gate.services import ai_invoke_runtime as runtime
+        from modules.flow_gate.services.ai_invoke import runtime
         from modules.flow_gate.services import ai_invoke_service as svc
 
         sentinel_locks = {}
@@ -151,7 +162,7 @@ class TestFacadeMatchesRuntimeModule:
     """`svc.<name>` is a thin wrapper; both sides must return the identical result."""
 
     def test_get_run_record_and_is_run_live(self, monkeypatch):
-        from modules.flow_gate.services import ai_invoke_runtime as runtime
+        from modules.flow_gate.services.ai_invoke import runtime
         from modules.flow_gate.services import ai_invoke_service as svc
 
         run = {"run_id": "aiv_facade", "group_id": "gf", "status": "running"}
@@ -161,7 +172,7 @@ class TestFacadeMatchesRuntimeModule:
         assert svc._active_run_for_group("gf") == runtime.active_run_for_group("gf")
 
     def test_list_live_runs_and_run_list_item_live(self, monkeypatch):
-        from modules.flow_gate.services import ai_invoke_runtime as runtime
+        from modules.flow_gate.services.ai_invoke import runtime
         from modules.flow_gate.services import ai_invoke_service as svc
 
         run = {
@@ -317,14 +328,14 @@ class TestRunIdCollisionUnchanged:
 
 
 class TestCancelPrimitiveUnchanged:
-    """T0008 §13-D: cancel_run (ai_invoke_chain.py since T5, unmodified in behavior by
-    T3 or T5) reaches the
+    """T0008 §13-D: cancel_run (ai_invoke/chain.py since T6, unmodified in behavior by
+    T3, T5 or T6) reaches the
     active run through `get_run_record`, now served by ai_invoke_runtime. This locks
     that cancel_run's mutation lands on the SAME object the new module hands back --
     not a stale copy -- and that the finished-run idempotent branch is unaffected."""
 
     def test_cancel_marks_the_run_and_is_visible_through_the_new_module(self, monkeypatch):
-        from modules.flow_gate.services import ai_invoke_runtime as runtime
+        from modules.flow_gate.services.ai_invoke import runtime
 
         run = {
             "run_id": "aiv_cancel_probe", "group_id": "g_cancel", "status": "running",
@@ -357,7 +368,7 @@ class TestStartRunFacadeUnchanged:
     shows the six moved functions individually agree with svc.*)."""
 
     def test_start_run_is_visible_live_then_gone_once_finished(self, admission_env):
-        from modules.flow_gate.services import ai_invoke_runtime as runtime
+        from modules.flow_gate.services.ai_invoke import runtime
 
         group_id = "flowgate.default.0501admE"
         cmd = f'"{PY}" -c "import sys; sys.stdin.read()"'

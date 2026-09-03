@@ -1157,20 +1157,15 @@ class TestCarriers:
         caller that forgets these two wipes the selection and the chain resumes with the gate
         switched off — L0008 R1 broken from outside the schema."""
         offenders = []
-        # 0497 T0009 split ai_invoke_service.py into files that share one module
-        # namespace (0501 T4 re-split the worker part further, T5 turned the whole
-        # graph into normally-imported modules); every paused-row writer must still
-        # be scanned, so every part is listed.
-        _services = _SERVER_DIR / "modules" / "flow_gate" / "services"
-        for path in (
-            _services / "ai_invoke_service.py",
-            _services / "ai_invoke_provider_api.py",
-            _services / "ai_invoke_provider_cli.py",
-            _services / "ai_invoke_worker.py",
-            _services / "ai_invoke_chain.py",
-            _services / "ai_invoke_review.py",
+        # 0501 T6 moved the engine into the ai_invoke/ package (NR0003 §12). Every
+        # paused-row writer must still be scanned, so the package is GLOBBED rather than
+        # listed file by file -- a hardcoded list is exactly the "physical filenames became
+        # a test contract" problem NR0003 §9 named, and it silently stops covering a module
+        # the next split adds.
+        _pkg = _SERVER_DIR / "modules" / "flow_gate" / "services" / "ai_invoke"
+        for path in list(sorted(_pkg.glob("*.py"))) + [
             _SERVER_DIR / "modules" / "flow_gate" / "api" / "inbox_routes.py",
-        ):
+        ]:
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call):
@@ -2816,7 +2811,7 @@ class TestBaselineLockGoodBadSentinel0501:
             "UNPINNED base_provider_id would still outrank a stored sequence provider "
             "at rework. The 0497 3-way file split's merge commit 24a9c4f ('fix(ai): "
             "resolve invoke service merge conflict') silently reverted that hunk inside "
-            "ai_invoke_part3_chain.py's resolve_step_executor -- the guard is back, so "
+            "ai_invoke/review.py's resolve_step_executor -- the guard is back, so "
             "this scenario (provider_pinned=False) currently dispatches the stored "
             "provider (BAD) through the real gate instead of the current selection "
             "(GOOD). Remove this marker once a dedicated fix T restores the 877da30 "

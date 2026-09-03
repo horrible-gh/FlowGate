@@ -374,7 +374,7 @@ def test_explicit_stored_selection_start_failure_never_invokes_trailing_provider
         "an UNPINNED base_provider_id would still outrank a stored sequence provider at "
         "rework. The 0497 3-way file split's merge commit 24a9c4f ('fix(ai): resolve "
         "invoke service merge conflict') silently reverted that hunk inside "
-        "ai_invoke_part3_chain.py's resolve_step_executor -- the guard is back, so this "
+        "ai_invoke/review.py's resolve_step_executor -- the guard is back, so this "
         "scenario (provider_pinned=False) currently returns the stored provider "
         "(aip_opus) instead of the current selection (aip_header). Remove this marker "
         "once a dedicated fix T restores the 877da30 behavior; do not fix "

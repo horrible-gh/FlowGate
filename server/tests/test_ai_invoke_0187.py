@@ -593,7 +593,7 @@ class TestRegistrationDiagnostics:
         provider = _provider(exec_type="api", kind="openai")
         run = _registration_api_run()
         run["cancel_event"].set()  # tripped before the worker's first model turn
-        # _worker sets this one line ahead of every _api_execute call (ai_invoke_part2_worker.py
+        # _worker sets this one line ahead of every _api_execute call (ai_invoke/worker.py
         # line 70); _api_execute itself never touches run["provider"], so a caller that skips
         # _worker has to reproduce that exact assignment for _no_output_detail's exec_type
         # branch to see this as an API run at all.

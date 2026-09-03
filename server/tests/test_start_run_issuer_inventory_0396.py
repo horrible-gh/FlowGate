@@ -34,12 +34,21 @@ def _is_start_run_call(node: ast.Call) -> bool:
     func = node.func
     return (
         isinstance(func, ast.Attribute)
-        # flowgate.default.0501 T5: ai_invoke_chain.py / ai_invoke_review.py / etc. all
+        # flowgate.default.0501 T6: ai_invoke/chain.py / ai_invoke/review.py / etc. all
         # reach the facade through the `svc` alias (the same one every existing
         # `monkeypatch.setattr(svc, ...)` call already assumes), not the module's own
         # full name -- both spellings mean the same call.
-        and isinstance(func.value, ast.Name)
-        and func.value.id in ("ai_invoke_service", "svc")
+        and (
+            (isinstance(func.value, ast.Name)
+             and func.value.id in ("ai_invoke_service", "svc"))
+            # ... and T6 changed that alias's SPELLING to a call-time lookup, `_svc()`,
+            # so the receiver is a Call node rather than a Name. Same call; a scan that
+            # only knew the old spelling would silently find fewer callers, which is
+            # exactly what this inventory exists to prevent.
+            or (isinstance(func.value, ast.Call)
+                and isinstance(func.value.func, ast.Name)
+                and func.value.func.id == "_svc")
+        )
         and func.attr == "start_run"
     ) or (isinstance(func, ast.Name) and func.id == "start_run")
 
@@ -162,12 +171,12 @@ def test_every_start_run_custom_issuer_accepts_the_run_id():
         ("modules/flow_gate/api/v1/ai_invoke_routes.py", "start_ai_invoke"),
         ("modules/flow_gate/api/v1/qa_routes.py", "post_answer"),
         ("modules/flow_gate/services/q_answer_invoke_service.py", "dispatch_answer_run"),
-        # 0497 T0009 split ai_invoke_service.py into three files; both self-chain callers
+        # 0497 T0009 split ai_invoke_service.py into three files; 0501 T6 turned the
         # moved verbatim into part 3, which flowgate.default.0501 T5 re-split into
-        # ai_invoke_chain.py / ai_invoke_review.py -- both callers landed in chain.
+        # result into the ai_invoke/ package -- both callers landed in chain.py.
         # The inventory still walks all of modules/**.
-        ("modules/flow_gate/services/ai_invoke_chain.py", "_spawn_auto_resume"),
-        ("modules/flow_gate/services/ai_invoke_chain.py", "resume_chain"),
+        ("modules/flow_gate/services/ai_invoke/chain.py", "_spawn_auto_resume"),
+        ("modules/flow_gate/services/ai_invoke/chain.py", "resume_chain"),
     }
     assert expected <= identities, (
         "start_run inventory missed known production callers: "
