@@ -1970,11 +1970,6 @@ export default {
     },
     workflow_edit_modal: {
       title: '워크플로 시퀀스 수정',
-      locked_section_title: '잠금 단계 (완료·진행 중)',
-      locked_empty: '잠금 단계 없음',
-      locked_badge_done: '완료',
-      locked_badge_in_progress: '진행 중',
-      pending_section_title: '미완료 단계 편집',
       preset_label: '프리셋 템플릿',
       preset_standard: '표준 풀 사이클',
       preset_bugfix: '버그 수정',

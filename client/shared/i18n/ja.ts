@@ -1967,11 +1967,6 @@ export default {
     },
     workflow_edit_modal: {
       title: 'ワークフローシーケンス編集',
-      locked_section_title: 'ロック済みステップ（完了・進行中）',
-      locked_empty: 'ロック済みステップなし',
-      locked_badge_done: '完了',
-      locked_badge_in_progress: '進行中',
-      pending_section_title: '未完了ステップ編集',
       preset_label: 'プリセットテンプレート',
       preset_standard: '標準フルサイクル',
       preset_bugfix: 'バグ修正',
