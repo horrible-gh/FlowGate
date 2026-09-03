@@ -50,7 +50,9 @@ def _tool_section(text: str) -> str:
 def test_task_report_mention_names_the_full_tool_set():
     section = _tool_section(_mention())
 
-    assert "도구: read, grep, glob, stat, write, patch, remove" in section
+    # diff/log joined the read set in 0478; this expectation was never updated with them
+    # and has been failing on main since. Named in full so the line stays a real pin.
+    assert "도구: read, grep, glob, stat, diff, log, write, patch, remove" in section
     assert "Authorization: Bearer raw-token-0136" in section
     # The one thing the worker must know before it can look anything up.
     assert "GET http://localhost:8089/flowgate/api/v1/help/tools" in section

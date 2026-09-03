@@ -169,6 +169,17 @@ RENAMES: tuple[tuple[str, str], ...] = (
     # columns this file adds -- so a reboot against the renamed file re-ran the
     # first ADD COLUMN and failed with "duplicate column name: operator_api_base".
     ("095_ai_invoke_api_diagnostics.sql", "095_ai_invoke_run_transport_diagnostics.sql"),
+    # flowgate.default.0482 T0016 (main merge): this group authored its two migrations
+    # as 093/094 against a base whose newest file was 092. origin/main has since merged
+    # 093_openai_api_base_url_contract.sql, 094_ai_invoke_provider_selection.sql,
+    # 094_register_context_failures.sql, 095_… and 096_…, so both of this group's files
+    # move to the next free ordinals -- the same "later arrival takes the next free
+    # number" rule 0413 T0007 and 0332 applied. Neither file creates anything a second
+    # run would survive (the sqlite/postgres CREATE TABLE carry IF NOT EXISTS, but the
+    # MySQL project_ai_leases INDEX clause does not), and any checkout that already ran
+    # this branch under the old names is carried across by these two lines.
+    ("093_git_terminal_cleanup.sql", "097_git_terminal_cleanup.sql"),
+    ("094_project_ai_leases.sql", "098_project_ai_leases.sql"),
 )
 
 

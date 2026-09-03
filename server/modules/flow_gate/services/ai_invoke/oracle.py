@@ -122,6 +122,14 @@ def _probe_sequence_max_item(doc_id: str) -> int:
     return int(db_wfseq.get_max_item_seq(seq["id"]) or 0)
 
 
+def _probe_base_dirty(project_id: str) -> int:
+    """Negative tracked-dirty count: each resolved file strictly increases it."""
+    from modules.flow_gate.services import git_service
+    status = git_service.project_git_status(project_id).get("status") or {}
+    files = (status.get("base_dirty") or {}).get("files") or []
+    return -len(files)
+
+
 # Keyed by TOKEN scope — the value `start_run` actually receives. Chat is no longer
 # remapped to edit: its append-only endpoint advances the conversation head without
 # revising the document row, so it needs its own completion probe.
@@ -131,6 +139,7 @@ _SCOPE_PROBES: dict[str, Callable[[str], int]] = {
     "review": _probe_doc_reviews,
     "test_run": _probe_test_runs,
     "workflow_sequence_edit": _probe_sequence_max_item,
+    "resolve_base_dirty": _probe_base_dirty,
 }
 
 

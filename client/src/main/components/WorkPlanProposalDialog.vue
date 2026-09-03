@@ -363,7 +363,7 @@ const emit = defineEmits<{
   'invoke-ai': [payload: { scope: WorkPlanScope; providerId: string }]
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const docTypeStore = useDocTypeStore()
 const aiProviderStore = useAiProviderStore()
 
@@ -519,7 +519,7 @@ function clearAllProviders() {
 async function loadTypes() {
   typesError.value = false
   try {
-    await docTypeStore.loadLabels()
+    await docTypeStore.loadLabels(locale.value)
     if (docTypeStore.countableTypes.length === 0) typesError.value = true
   } catch {
     typesError.value = true

@@ -11,11 +11,54 @@ export interface RuntimeAiProvider {
   capabilities?: Record<string, boolean>
 }
 
+// 0490 T0007 §3.1: mirrors the server's ai_execution_policy_service.execution_policy_payload()
+// shape exactly (flowgate.default.0490.0006-TR). The finite tail of every repeat-count select
+// (검수 횟수 / 재시작 횟수 / …) is built from repeat_count_max; repeat_count_min/hard_max are the
+// setting's own structural bounds, not a per-feature choice.
+export interface RuntimeExecutionPolicy {
+  repeat_count_max: number
+  repeat_count_min: number
+  repeat_count_hard_max: number
+}
+
+// Matches server ai_execution_policy_service.REPEAT_COUNT_DEFAULT_MAX/MIN_MAX/HARD_MAX. NOT a
+// client-side SSOT — only the fallback for a response that carries no execution_policy at all
+// (§3.2: dozens of existing vitest mocks predate this key).
+export const DEFAULT_EXECUTION_POLICY: RuntimeExecutionPolicy = {
+  repeat_count_max: 3,
+  repeat_count_min: 1,
+  repeat_count_hard_max: 30,
+}
+
+export function repeatCountChoices(
+  policy: RuntimeExecutionPolicy,
+  opts: { allowZero: boolean; allowUnlimited?: boolean },
+): number[] {
+  const { allowZero, allowUnlimited = true } = opts
+  const max = Math.max(policy.repeat_count_min, Math.min(policy.repeat_count_max, policy.repeat_count_hard_max))
+  const out: number[] = []
+  if (allowUnlimited) out.push(-1)
+  if (allowZero) out.push(0)
+  for (let n = 1; n <= max; n++) out.push(n)
+  return out
+}
+
+function isFiniteExecutionPolicy(value: unknown): value is RuntimeExecutionPolicy {
+  if (!value || typeof value !== 'object') return false
+  const p = value as Record<string, unknown>
+  return (
+    Number.isFinite(p.repeat_count_max) &&
+    Number.isFinite(p.repeat_count_min) &&
+    Number.isFinite(p.repeat_count_hard_max)
+  )
+}
+
 interface RuntimeAiProvidersResponse {
   ok: boolean
   project: string
   providers: RuntimeAiProvider[]
   default_provider_id: string | null
+  execution_policy?: RuntimeExecutionPolicy
 }
 
 function currentUserId(): string {
@@ -65,6 +108,10 @@ export const useAiProviderStore = defineStore('ai-provider', () => {
   const loadedProjectId = ref<string | null>(null)
   const loading = ref(false)
   const error = ref<string | null>(null)
+  // 0490 T0007 §3.1: the client SSOT for "what does a repeat-count select offer" — populated
+  // from the same /ai-invoke/providers response as `providers`, defaulted the same way `pinned`
+  // etc. are on clear()/load-failure (§3.2).
+  const executionPolicy = ref<RuntimeExecutionPolicy>({ ...DEFAULT_EXECUTION_POLICY })
   let requestSerial = 0
 
   function clear() {
@@ -76,6 +123,7 @@ export const useAiProviderStore = defineStore('ai-provider', () => {
     loadedProjectId.value = null
     loading.value = false
     error.value = null
+    executionPolicy.value = { ...DEFAULT_EXECUTION_POLICY }
   }
 
   /**
@@ -141,6 +189,12 @@ export const useAiProviderStore = defineStore('ai-provider', () => {
       const fallback = data.default_provider_id || nextProviders[0]?.id || ''
       const savedIsAvailable = nextProviders.some((provider) => provider.id === saved)
       providers.value = nextProviders
+      // §3.2: adopt the server's policy only when it is a complete, finite object; a response
+      // missing the key (every pre-0490 mock) or carrying a partial/non-numeric one falls back
+      // to DEFAULT_EXECUTION_POLICY exactly as if the key were never added.
+      const policyFromServer = data.execution_policy
+      const receivedPolicy = isFiniteExecutionPolicy(policyFromServer)
+      executionPolicy.value = receivedPolicy ? policyFromServer : { ...DEFAULT_EXECUTION_POLICY }
       loadedProjectId.value = projectId
       // The selection key survives as long as it names a provider that still exists; an
       // unusable one falls back to the project default exactly as before. Only the force
@@ -157,6 +211,7 @@ export const useAiProviderStore = defineStore('ai-provider', () => {
       pinned.value = false
       loadedProjectId.value = projectId
       error.value = 'load_failed'
+      executionPolicy.value = { ...DEFAULT_EXECUTION_POLICY }
       purgeLegacyPin(projectId)
     } finally {
       if (serial === requestSerial) loading.value = false
@@ -174,6 +229,7 @@ export const useAiProviderStore = defineStore('ai-provider', () => {
     loadedProjectId,
     loading,
     error,
+    executionPolicy,
     clear,
     clearPin,
     selectProvider,

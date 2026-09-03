@@ -87,6 +87,14 @@ def _route_edges(monkeypatch):
     monkeypatch.setattr(routes, "has_permission", lambda *_a, **_k: True)
     monkeypatch.setattr(routes, "_continuation_target_error", lambda *_a, **_k: None)
     monkeypatch.setattr(_token_routes_mod, "_build_api_base", lambda _request: API_BASE)
+    # T0011: resolve_base_dirty's admission check reads real base-dirty state before the
+    # rest of start_ai_invoke runs — the one scope in this harvesting sweep that touches
+    # git_service before issue_builder is even built. Stub it non-empty so the sweep drives
+    # every scope through the same DB-free edges the docstring above promises.
+    monkeypatch.setattr(
+        routes.git_service, "project_git_status",
+        lambda _pid: {"status": {"base_dirty": {"files": ["a.py"]}}},
+    )
 
 
 @pytest.fixture

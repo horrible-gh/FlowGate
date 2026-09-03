@@ -41,6 +41,7 @@ from typing import Iterable, Optional
 from fastapi import HTTPException
 from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
 from modules.flow_gate.db import projects as db_projects
+from modules.flow_gate.settings import ai_execution_policy_service
 from modules.flow_gate.storage import paths as storage_paths
 
 # The engine's log channel keeps its historical name: `caplog`/handler
@@ -100,10 +101,18 @@ NO_OUTPUT_MAX_ATTEMPTS = 2       # per hop: the first attempt + exactly ONE no-o
 
 # flowgate.default.0443 T0002 (R0001): ContinuousWorkDialog's 기본 설정 탭 "재시작 횟수"
 # select — the no-output retry count is now a per-run pick instead of the fixed constant
-# above. -1 is the "될 때까지" sentinel (unlimited attempts); 0/1/2/3 are restart counts
-# (RESTARTS, not total attempts — total = restarts + 1). Default matches the constant's
-# pre-existing behavior exactly: 1 restart == NO_OUTPUT_MAX_ATTEMPTS(2) total attempts.
-RESTART_MAX_ATTEMPTS_CHOICES = (-1, 0, 1, 2, 3)
+# above. -1 is the "될 때까지" sentinel (unlimited attempts); 0..N (N = the configured
+# ceiling, flowgate.default.0490 T0005) are restart counts (RESTARTS, not total attempts —
+# total = restarts + 1). Default matches the constant's pre-existing behavior exactly:
+# 1 restart == NO_OUTPUT_MAX_ATTEMPTS(2) total attempts.
+#
+# flowgate.default.0501 T0019: 0490 T0005 turned the fixed tuple into this function in
+# ai_invoke_service.py's parameter block. That block IS runtime.py now, so the function
+# lands here — same body, same SSOT call, one address further in.
+def restart_max_attempts_choices() -> tuple[int, ...]:
+    """The dialog's selectable "재시작 횟수" set. SSOT is ai_execution_policy_service
+    (flowgate.default.0490 T0005) — this used to be the fixed tuple (-1, 0, 1, 2, 3)."""
+    return ai_execution_policy_service.repeat_count_choices(allow_zero=True)
 
 RESTART_MAX_ATTEMPTS_DEFAULT = 1
 
@@ -143,8 +152,10 @@ STALL_WATCHDOG_JOIN_SEC = 40
 # rejection already happened — all of it is re-derived from document_reviews plus the
 # document's revision_no/doc_review_status on every read (§2.3), which is what makes a
 # restart, a cold [이어서 진행] and an in-flight hop boundary all agree for free.
-REVIEW_COUNT_VALUES = frozenset({-1, 0, 1, 2, 3})
-
+# flowgate.default.0490 T0005 retired the frozen REVIEW_COUNT_VALUES literal that stood
+# here: resolve_review_count reads the same live SSOT the write path validates against
+# (ai_execution_policy_service.repeat_count_choices), so there is no second ceiling to
+# drift away from the setting.
 REVIEW_COUNT_DEFAULT = 0                 # no selection = this step is not reviewed
 
 # -1 ("until it passes") has NO ceiling: review and rework repeat until a `pass`

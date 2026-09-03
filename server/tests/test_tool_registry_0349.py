@@ -127,7 +127,17 @@ def test_locale_normalization_catalog_order_and_exact_notes(monkeypatch):
     assert template_provision.normalize_locale("en") == "en"
 
     result = tool_registry.resolve_registry({"action_scope": "edit"}, "flowgate", "ko")
-    assert [item["name"] for item in result["tools"]] == list(tool_registry.DISPLAY_ORDER)
+    # 0482 T0011 put a scope-bound tool (resolve_base_dirty) into DISPLAY_ORDER, so the
+    # catalog an `edit` token sees is DISPLAY_ORDER MINUS the scope-bound names — same
+    # order, one entry short. Both spellings are asserted: the literal list keeps this a
+    # real pin, the derived list keeps "order comes from DISPLAY_ORDER" the reason.
+    assert [item["name"] for item in result["tools"]] == [
+        "read", "grep", "glob", "stat", "diff", "log", "write", "patch", "remove"
+    ]
+    assert [item["name"] for item in result["tools"]] == [
+        name for name in tool_registry.DISPLAY_ORDER
+        if name not in tool_registry._SCOPE_BOUND_NAMES
+    ]
     assert result["tools"][0]["summary"] == "원격 프로젝트 소스의 파일 하나를 읽는다."
     assert result["notes"] == [
         tool_registry.NOTES["ko"]["path_rule"],

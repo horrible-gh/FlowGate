@@ -54,6 +54,11 @@ FILE_LINE_CAPS: dict[str, int] = {
     # Step 5.71) plus its ko notice/comment text — product copy and design-rationale
     # comments, not the kind of stray Korean this census exists to catch.
     "modules/flow_gate/api/inbox_routes.py": 45,
+    # 0 -> 5: flowgate.default.0482 T0011 added the resolve_base_dirty worker mention's
+    # decision contract (_RESOLVE_BASE_DIRTY_CONTRACT) — product copy sent to the AI
+    # worker, collapsed to one ko source line plus the four pre-existing design-rationale
+    # comments (0443 T0002, 0414 P0007) already in this file.
+    "modules/flow_gate/api/v1/ai_invoke_routes.py": 5,
     # 15 -> 13: flowgate.default.0484 T0005 removed the PATCH /content submission
     # gate's Korean fallback and section-name docstring. The measured remainder is legacy
     # product copy and design rationale unrelated to the inbox-only submission check.
@@ -61,18 +66,31 @@ FILE_LINE_CAPS: dict[str, int] = {
     "modules/flow_gate/documents/routers/work_plan.py": 5,
     "modules/flow_gate/process_service.py": 2,
     # flowgate.default.0501 T6 (NR0003 §12) moved the engine into the ai_invoke/
-    # package. Not one Hangul line was written, deleted or reworded by that move: the
-    # 21 lines previously registered under services/ai_invoke_service.py are now split
-    # between admission.py (14: _WORKTREE_UNAVAILABLE_COPY / _RUN_ID_COLLISION_COPY ko
+    # package; T0019 then merged main into it. Every cap below is the freshly MEASURED
+    # count, and the arithmetic is what says no Hangul line was written by either step:
+    #
+    #   main's engine, three files:  ai_invoke_service.py 22 + part2_worker.py 2
+    #                                + part3_chain.py 31            = 55
+    #   the package, six files:      admission 14 + chain 15 + diagnostics 1
+    #                                + review 15 + runtime 8 + worker 2 = 55
+    #
+    # admission.py holds the _WORKTREE_UNAVAILABLE_COPY / _RUN_ID_COLLISION_COPY ko
     # locale strings plus the 0414/0443 product-rationale comments that travel with
-    # start_run) and runtime.py (7: the parameter block's own rationale comments), and
-    # the worker/chain/review caps are unchanged because those files only changed name.
-    # 14 + 7 = 21 is the arithmetic that says nothing new arrived.
+    # start_run; runtime.py holds the parameter block's own rationale comments.
+    #
+    # Two caps moved off T6's original numbers, both bookkeeping rather than new text:
+    # runtime.py 7 -> 8 because 0490 T0005's restart_max_attempts_choices() docstring
+    # (which named the "재시작 횟수" select) came across from main's parameter block with
+    # the function, and diagnostics.py 0 -> 1 because T6 never registered the one
+    # 0414 P0007 comment it inherited from part3_chain.py — that omission is why this
+    # census listed diagnostics.py as an offender before the merge. chain.py drops
+    # 16 -> 15 to its measured count, so no cap here is a ceiling above what is there.
     "modules/flow_gate/services/ai_invoke/admission.py": 14,
-    "modules/flow_gate/services/ai_invoke/runtime.py": 7,
-    "modules/flow_gate/services/ai_invoke/worker.py": 2,
-    "modules/flow_gate/services/ai_invoke/chain.py": 16,
+    "modules/flow_gate/services/ai_invoke/chain.py": 15,
+    "modules/flow_gate/services/ai_invoke/diagnostics.py": 1,
     "modules/flow_gate/services/ai_invoke/review.py": 15,
+    "modules/flow_gate/services/ai_invoke/runtime.py": 8,
+    "modules/flow_gate/services/ai_invoke/worker.py": 2,
     "modules/flow_gate/services/conversation_turn_service.py": 10,
     "modules/flow_gate/services/document_outline_service.py": 1,
     "modules/flow_gate/services/help_catalog.py": 70,

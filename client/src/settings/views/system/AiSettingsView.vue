@@ -42,6 +42,46 @@
         <AppIcon name="floppy-disk" /> {{ $t('common.save') }}
       </button>
     </div>
+
+    <!-- 0490 T0007 §3.6/§4-5: named for what it sets, not the screen it lives on — the card
+         title does not repeat "AI 설정" (settings.system.ai.title above it already says that).
+         Placed after the provider card's own Save/Reset row rather than directly under the
+         provider card so this card's OWN .btn-primary is never the first DOM match for a bare
+         `button.btn-primary` selector — client/tests/settings.ai-provider-errors.spec.ts targets
+         the provider Save button that way and must keep hitting it unmodified (§2.2). -->
+    <div class="card mb-4">
+      <div class="card-hd">
+        <span class="card-title">
+          <AppIcon name="sliders-horizontal" style="margin-right:6px; color:var(--primary);" />
+          {{ $t('settings.system.ai.execution_policy.title') }}
+        </span>
+      </div>
+      <div class="card-bd pad">
+        <div class="form-group">
+          <label class="form-label">{{ $t('settings.system.ai.execution_policy.repeat_count_max_label') }}</label>
+          <input
+            type="number"
+            class="form-ctrl"
+            min="1"
+            max="30"
+            v-model.number="repeatCountMax"
+            style="max-width:160px;"
+          >
+          <p class="form-hint">{{ $t('settings.system.ai.execution_policy.hint') }}</p>
+        </div>
+        <div v-if="executionPolicyError" class="alert alert-danger mb-4">{{ executionPolicyError }}</div>
+        <div class="flex" style="justify-content:flex-end;">
+          <button
+            class="btn btn-primary"
+            data-test="ai-execution-policy-save"
+            :disabled="executionPolicySaving"
+            @click="saveExecutionPolicy"
+          >
+            <AppIcon name="floppy-disk" /> {{ $t('common.save') }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -54,19 +94,60 @@ import AppIcon from '@shared/AppIcon.vue'
 import { computed, onMounted, ref } from 'vue';
 import { onBeforeRouteLeave } from 'vue-router';
 import { useI18n } from 'vue-i18n';
+import { createPinia, getActivePinia, setActivePinia } from 'pinia';
 import { getRequest, putRequest } from '@shared/api';
 import AiProviderListEditor from '../../components/AiProviderListEditor.vue';
 import { formatErrors } from '../../components/aiProviderLimits';
 import { useToast } from '../../../main/components/common/useToast';
+import { useSettingsStore } from '../../stores/settings.js';
 
 const { t, te } = useI18n();
 const { showToast } = useToast();
+// client/tests/settings.ai-provider-errors.spec.ts (protected — must not change, T0007 §2.2)
+// mounts this view standalone with no Pinia plugin, predating this view's first Pinia
+// dependency. Self-heal exactly like a component that might be mounted before the app's own
+// `app.use(createPinia())` has run: in the real app main.ts already installed one, so this is a
+// no-op there.
+if (!getActivePinia()) setActivePinia(createPinia());
+const settingsStore = useSettingsStore();
 
 const providers = ref([]);
 const defaultIndex = ref(-1);
 const catalog = ref({ exec_types: ['cli', 'api'], kinds: { cli: [], api: [] } });
 // Rendered P0003 422 `errors` (index/field/reason) from the last save attempt.
 const saveErrors = ref([]);
+
+// 0490 T0007 §3.7 / §4-5: reuses useSettingsStore()'s fetchSystemSettings()/updateSystemSettings()
+// (same store SystemSettingsView.vue already uses) instead of a new API helper. Independent of
+// the provider card above — its own load call, its own error surface, its own save button, so a
+// failure in one never blocks the other (SourceModeSettingsView.vue's per-card-save pattern).
+const repeatCountMax = ref(3);
+const executionPolicyError = ref('');
+const executionPolicySaving = ref(false);
+
+function applyExecutionPolicyFromSettings() {
+  const raw = Number(settingsStore.systemSettings.ai_repeat_count_max);
+  repeatCountMax.value = Number.isFinite(raw) ? raw : 3;
+}
+
+async function saveExecutionPolicy() {
+  executionPolicyError.value = '';
+  executionPolicySaving.value = true;
+  try {
+    await settingsStore.updateSystemSettings({ ai_repeat_count_max: String(repeatCountMax.value) });
+    applyExecutionPolicyFromSettings();
+    showToast(t('common.toast.settings_saved'), 'success');
+  } catch (e) {
+    // §3.7: routers/system.py raises HTTPException(422, detail=str(exc)) here — a raw,
+    // un-localized string, shown verbatim rather than run through the provider card's
+    // {detail:{errors:[...]}} formatter.
+    executionPolicyError.value = typeof e?.response?.data?.detail === 'string'
+      ? e.response.data.detail
+      : t('settings.system.ai.execution_policy.save_failed');
+  } finally {
+    executionPolicySaving.value = false;
+  }
+}
 
 function snapshot() {
   return JSON.stringify({ providers: providers.value, defaultIndex: defaultIndex.value });
@@ -136,5 +217,14 @@ onBeforeRouteLeave(() => {
   return true;
 });
 
-onMounted(load);
+onMounted(async () => {
+  load();
+  try {
+    await settingsStore.fetchSystemSettings();
+    applyExecutionPolicyFromSettings();
+  } catch (e) {
+    // §3.7: the server always synthesizes an effective row, so this is defensive only —
+    // repeatCountMax keeps its ref default (3) on a load failure.
+  }
+});
 </script>

@@ -135,7 +135,7 @@ def definitions_for_run(run: dict) -> list[dict]:
     # its token would allow. The remote service still authenticates each live token and picks
     # the authorized root, so advertisement must not reject a valid non-Git project fallback.
     kind, _reason = tool_registry.kind_for_step(scope, step_type)
-    allowed_ops = set(tool_registry.tool_names(kind))
+    allowed_ops = set(tool_registry.tool_names(kind, scope))
     names += [name for name, op in SOURCE_OPS.items() if op in allowed_ops]
     if kind == "read_write":
         names.append("run_test")

@@ -177,6 +177,10 @@ class TestScopeOraclesLiveHereToo:
 
         assert set(oracle._SCOPE_PROBES) == {
             "chat", "edit", "review", "test_run", "workflow_sequence_edit",
+            # flowgate.default.0482 T0011's scope, merged in by 0501 T0019: judged by
+            # tracked base-dirty file count and keyed by project_id rather than a
+            # document id, but a row-it-may-write probe exactly like the other five.
+            "resolve_base_dirty",
         }
         for scope, probe in oracle._SCOPE_PROBES.items():
             assert callable(probe), scope

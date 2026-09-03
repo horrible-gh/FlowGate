@@ -48,13 +48,11 @@ from .runtime import (
     PARK_NOTIFY_STOP_CODES,
     PROVIDER_UNAVAILABLE_CODE,
     PROVIDER_UNAVAILABLE_MESSAGE,
-    RESTART_MAX_ATTEMPTS_CHOICES,
     RESTART_MAX_ATTEMPTS_DEFAULT,
     RESUMABLE_STOP_CODES,
     RETRY_MIN_REMAINING_SEC,
     REVIEW_CAP_REACHED_STOP_CODE,
     REVIEW_COUNT_DEFAULT,
-    REVIEW_COUNT_VALUES,
     REVIEW_EXHAUSTED_STOP_CODE,
     REVIEW_HOP_KIND,
     REVIEW_NO_VERDICT_STOP_CODE,
@@ -135,6 +133,7 @@ from .runtime import (
     list_live_runs,
     logger,
     prompt_digest,
+    restart_max_attempts_choices,
 )
 
 # oracle.py — completion probes and pure helpers
@@ -146,6 +145,7 @@ from .oracle import (
     _oracle_doc_id,
     prioritize_chain as _prioritize_chain,
     _probe,
+    _probe_base_dirty,
     _probe_conversation_head,
     _probe_doc_reviews,
     _probe_doc_revision,
@@ -259,6 +259,7 @@ from .finalize import (
     _finalize_run,
     _format_span,
     _judge_hop,
+    _notify_chain_failure_if_needed,
     _persist_register_context_failures,
     _persist_run_record,
     _resolve_stop_code,
@@ -360,6 +361,7 @@ from modules.flow_gate.utils.api_key_crypto import ApiKeyCryptoError
 from modules.flow_gate.services.git_service import GitServiceError
 from fastapi import HTTPException
 from pathlib import Path
+from modules.flow_gate.settings import ai_execution_policy_service
 from modules.flow_gate.settings import ai_settings_service
 from modules.flow_gate.services import api_server_tools
 from modules.flow_gate.db import conversation_turns as db_conversation_turns
@@ -427,13 +429,11 @@ __all__ = [
     "PROVIDER_UNAVAILABLE_CODE",
     "PROVIDER_UNAVAILABLE_MESSAGE",
     "Path",
-    "RESTART_MAX_ATTEMPTS_CHOICES",
     "RESTART_MAX_ATTEMPTS_DEFAULT",
     "RESUMABLE_STOP_CODES",
     "RETRY_MIN_REMAINING_SEC",
     "REVIEW_CAP_REACHED_STOP_CODE",
     "REVIEW_COUNT_DEFAULT",
-    "REVIEW_COUNT_VALUES",
     "REVIEW_EXHAUSTED_STOP_CODE",
     "REVIEW_HOP_KIND",
     "REVIEW_LOCUS_UNSPECIFIED",
@@ -550,6 +550,7 @@ __all__ = [
     "_no_output_detail",
     "_normalize_ws",
     "_normalized_instruction_mode",
+    "_notify_chain_failure_if_needed",
     "_note_issued_prompt",
     "_note_issued_raw_token",
     "_now_mono",
@@ -567,6 +568,7 @@ __all__ = [
     "_prepare_retry_token",
     "_prioritize_chain",
     "_probe",
+    "_probe_base_dirty",
     "_probe_conversation_head",
     "_probe_doc_reviews",
     "_probe_doc_revision",
@@ -640,6 +642,7 @@ __all__ = [
     "active_all",
     "active_review_selection",
     "ai_run_succeeded",
+    "ai_execution_policy_service",
     "ai_settings_service",
     "api_server_tools",
     "build_auto_reject_reason",
@@ -706,6 +709,7 @@ __all__ = [
     "resolve_round_limit",
     "resolve_step_executor",
     "resolve_stored_step_note",
+    "restart_max_attempts_choices",
     "resume_chain",
     "review_finding_digest",
     "review_rounds_remain",
