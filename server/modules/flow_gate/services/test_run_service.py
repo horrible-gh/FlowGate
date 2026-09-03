@@ -419,6 +419,7 @@ def validate_and_create_run(
     doc_id: str,
     runner_id: str,
     triggered_via: str,
+    locale: str = "ko",
 ) -> dict:
     doc = db_docs.get_by_id(doc_id)
     if doc is None:
@@ -495,6 +496,7 @@ def validate_and_create_run(
             setup=plan["setup"],
             cases=plan["cases"],
             teardown=plan["teardown"],
+            locale=locale,
         )
 
     _emit_started(doc, run)
@@ -955,7 +957,13 @@ def _execute_run_inner(run: dict) -> None:
                     if status == "passed" and not process_service.is_group_disposed(doc.get("group_id")):
                         try:
                             all_final_items = db_test_runs.list_cases(run_id)
-                            tsr_doc_id = assemble_tsr(doc, db_test_runs.get_run(run_id) or run, all_final_items)
+                            finished_for_tsr = db_test_runs.get_run(run_id) or run
+                            tsr_doc_id = assemble_tsr(
+                                doc,
+                                finished_for_tsr,
+                                all_final_items,
+                                locale=finished_for_tsr.get("locale") or "ko",
+                            )
                         except Exception as exc:
                             # 0257 NR0003 §2: a passed run with no report is not a success — record it as a
                             # distinct terminal error rather than leaving a green run whose TSR never existed.

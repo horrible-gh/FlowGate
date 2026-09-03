@@ -63,6 +63,7 @@ def insert_run(
     setup: list[dict] | None = None,
     cases: list[dict],
     teardown: list[dict] | None = None,
+    locale: str | None = None,
 ) -> dict:
     store = get_store()
     run_id = next_run_id()
@@ -74,9 +75,9 @@ def insert_run(
             "INSERT INTO test_runs "
             "(run_id, doc_id, revision_no, status, triggered_via, runner_id, "
             "case_total, case_passed, case_failed, error, picked_at, started_at, "
-            "finished_at, port, created_at) "
-            "VALUES (?, ?, ?, 'running', ?, ?, ?, 0, 0, NULL, NULL, ?, NULL, NULL, ?)",
-            [run_id, doc_id, revision_no, triggered_via, runner_id, len(cases), now, now],
+            "finished_at, port, locale, created_at) "
+            "VALUES (?, ?, ?, 'running', ?, ?, ?, 0, 0, NULL, NULL, ?, NULL, NULL, ?, ?)",
+            [run_id, doc_id, revision_no, triggered_via, runner_id, len(cases), now, locale, now],
         )
         for item in [*setup, *cases, *teardown]:
             store._execute(

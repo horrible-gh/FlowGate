@@ -2339,11 +2339,21 @@ def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSONRespon
     if dry_resp is not None:
         return dry_resp
 
+    # T0004 §10 (flowgate.default.0520 NR0003 rework): the worker-token test_run path is the
+    # continuous-chain hand-off itself (see the continuation_target_seq branch below), so it
+    # must resolve locale with the same priority as every other continuation-token consumer
+    # (test_run_routes.py's repair_token branch) — token's own continuation_locale first, then
+    # the request's X-Locale header, then the "ko" service default.
+    effective_locale = (
+        token_rec.get("continuation_locale") or request.headers.get("x-locale") or "ko"
+    )
+
     try:
         result = test_run_service.validate_and_create_run(
             doc_id=str(doc_id),
             runner_id=token_rec["issued_to"],
             triggered_via="token",
+            locale=effective_locale,
         )
     except HTTPException as exc:
         detail = exc.detail if isinstance(exc.detail, dict) else {"error_message": str(exc.detail)}
