@@ -118,7 +118,7 @@ def _remote_source_crud_lines(
     loc = template_provision.normalize_locale(locale)
     if kind is None:
         kind, _reason = tool_registry.kind_for_step(action_scope, step_type)
-    names = tool_registry.tool_names(kind)
+    names = tool_registry.tool_names(kind, action_scope)
     if not names:
         # kind=none: sequence-edit / test-run tokens get no tools at all, and there is
         # nothing to advertise. Matches the empty list /help/tools returns them (P0005 normal-3).

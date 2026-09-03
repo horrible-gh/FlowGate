@@ -11,10 +11,22 @@ from modules.flow_gate.settings import source_mode_service
 _logger = logging.getLogger(__name__)
 
 VERSION = "v1"
-DISPLAY_ORDER = ("read", "grep", "glob", "stat", "diff", "log", "write", "patch", "remove")
+DISPLAY_ORDER = ("read", "grep", "glob", "stat", "diff", "log", "write", "patch", "remove", "resolve_base_dirty")
 READ_TOOLS = frozenset({"read", "grep", "glob", "stat", "diff", "log"})
-WRITE_TOOLS = frozenset({"write", "patch", "remove"})
+WRITE_TOOLS = frozenset({"write", "patch", "remove", "resolve_base_dirty"})
 MUTATING_STEP_TYPES = frozenset({"TR", "TSR", "TS"})
+
+# Tools that belong to ONE action scope rather than to a kind (0482 T0011 x 0507/0492).
+# `resolve_base_dirty` reads its project identity from the run token and
+# `remote_tool_service._exec_resolve_base_dirty` answers 403 to any token whose
+# action_scope is not `resolve_base_dirty`. Leaving it in the plain read_write list
+# advertised it to every TR/TSR/TS worker, which is precisely the "handed a tool its
+# live token would 403 on" break D0004 D-2 forbids, so the kind decides the generic
+# tools and the scope adds its own on top.
+SCOPE_BOUND_TOOLS: dict[str, frozenset] = {
+    "resolve_base_dirty": frozenset({"resolve_base_dirty"}),
+}
+_SCOPE_BOUND_NAMES = frozenset(name for names in SCOPE_BOUND_TOOLS.values() for name in names)
 
 _catalog_names = frozenset(DISPLAY_ORDER)
 _executable_names = frozenset(remote_tool_service.OPS)
@@ -300,10 +312,44 @@ EXAMPLE_RESPONSES = {
 }
 
 
-def tool_names(kind: str) -> list[str]:
-    """Tool names for a kind, in display order (P0005 §0-4)."""
+# Group-less base-dirty action tool. It is advertised only to a token whose
+# action_scope is `resolve_base_dirty` (see SCOPE_BOUND_TOOLS) and obtains
+# project/root identity from the grant, never from request input.
+for _locale in ("ko", "ja", "en"):
+    SUMMARY[_locale]["resolve_base_dirty"] = "Apply validated commit/discard decisions to tracked base changes."
+FIELDS["resolve_base_dirty"] = {
+    locale: [
+        ("decisions", "array", True, None, "[{path, action: commit|discard}] decision list."),
+        ("complete", "boolean", True, None, "Whether this report covers the complete baseline."),
+        ("commit_message", "string", False, None, "Required when a complete report commits files."),
+    ] for locale in ("ko", "ja", "en")
+}
+ERRORS["resolve_base_dirty"] = {
+    locale: [(422, "invalid_request", "The whole batch is rejected before mutation when invalid."),
+             (409, "git_busy", "Another project Git operation owns the lock."),
+             (403, "forbidden", "The token is not a resolve_base_dirty read_write token.")]
+    for locale in ("ko", "ja", "en")
+}
+CAUTIONS["resolve_base_dirty"] = {
+    locale: ["Project identity and source root come from the run token, never request input.",
+             "complete=false returns partial; an incomplete complete=true report returns dirty."]
+    for locale in ("ko", "ja", "en")
+}
+EXAMPLE_BODIES["resolve_base_dirty"] = {"decisions": [{"path": "app/main.py", "action": "commit"}], "complete": True, "commit_message": "fix: resolve base changes"}
+EXAMPLE_RESPONSES["resolve_base_dirty"] = {"ok": True, "op": "resolve_base_dirty", "status": "resolved", "remaining": [], "commit": "0123456789abcdef"}
+
+def tool_names(kind: str, action_scope: Optional[str] = None) -> list[str]:
+    """Tool names for a kind, in display order (P0005 §0-4).
+
+    ``action_scope`` only ever ADDS the scope-bound tools of `SCOPE_BOUND_TOOLS`; it
+    can never widen a kind. Omitting it therefore stays the conservative answer (the
+    generic tool set), which is what a caller holding no scope should advertise.
+    """
+    scoped = SCOPE_BOUND_TOOLS.get(action_scope or "", frozenset())
     if kind == "read_write":
-        return [name for name in DISPLAY_ORDER if name in _available_names]
+        return [name for name in DISPLAY_ORDER
+                if name in _available_names
+                and (name not in _SCOPE_BOUND_NAMES or name in scoped)]
     if kind == "read":
         return [name for name in DISPLAY_ORDER if name in READ_TOOLS and name in _available_names]
     return []
@@ -329,6 +375,8 @@ def kind_for_step(
     """
     if action_scope in {"review", "workflow_decide", "chat", "resolve_conflict"}:
         return "read", None
+    if action_scope == "resolve_base_dirty":
+        return "read_write", None
     if action_scope not in {"new", "edit"}:
         return "none", "token_scope_none"
     if lookup_failed:
@@ -383,7 +431,7 @@ def resolve_registry(token_rec: dict, project: Optional[str], locale: str) -> di
     tools = [
         {"name": name, "method": "POST", "path": f"/remote/{name}",
          "scope": remote_tool_service.OP_SCOPE[name], "summary": SUMMARY[locale][name]}
-        for name in tool_names(kind)
+        for name in tool_names(kind, token_rec.get("action_scope"))
     ]
     return {
         "kind": kind,
@@ -457,3 +505,4 @@ def detail_notes(name: str, locale: str) -> list[str]:
 
 resolve = resolve_registry
 get_tool_detail = build_tool_detail
+

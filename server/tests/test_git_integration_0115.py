@@ -2060,6 +2060,127 @@ class TestBaseCommitRevert0177:
         assert _git(["show", "main:a.txt"], cwd=base_origin["bare"]) == "hotfixed alpha\n"
 
 
+# ── flowgate.default.0482 T0011: resolve_base_dirty against a real repo ──────
+#
+# The automated review on TR0012 rev6 found that `remote_tool_service._exec_
+# resolve_base_dirty` called `git_service.base_commit(project_id, commit_paths,
+# message)` while `base_commit` is declared `(project_id, message, paths=None)`
+# — a real commit decision passed the path list as the commit message and the
+# message string as paths. The unit-test regression at
+# `test_base_dirty_rework_0482.py` mocked `base_commit` with the SAME reversed
+# argument order, so it masked the bug instead of catching it. These tests
+# drive the real `git_service.base_commit`/`base_revert` through a real repo
+# (no mocking of either) so a reintroduced argument swap fails for real.
+#
+# Uses its own project ("rbdprj"), not `base_origin`'s "baseprj" — the two
+# classes' fixtures both live for the pytest session and `base_origin`'s
+# teardown only clears the git config, not the `projects` row, so sharing an
+# id would collide.
+
+@pytest.fixture(scope="class")
+def resolve_base_dirty_origin(seed):
+    """A dedicated bare origin + enabled project with a provisioned base checkout."""
+    from modules.flow_gate.db import projects
+    from modules.flow_gate.services import git_service as svc
+    from modules.flow_gate.storage.paths import src_root
+
+    projects.create({"project_id": "rbdprj", "project_name": "RbdProj"})
+    tmp = Path(tempfile.mkdtemp(prefix="fg-git-0482-"))
+    bare = tmp / "origin.git"
+    seedwt = tmp / "seedwt"
+    _git(["init", "--bare", "-b", "main", str(bare)])
+    _git(["init", "-b", "main", str(seedwt)])
+    (seedwt / "README.md").write_text("hello\n", encoding="utf-8")
+    (seedwt / "a.txt").write_text("alpha\n", encoding="utf-8")
+    (seedwt / "b.txt").write_text("beta\n", encoding="utf-8")
+    _git(["add", "-A"], cwd=seedwt)
+    _git(["commit", "-m", "init"], cwd=seedwt)
+    _git(["remote", "add", "origin", str(bare)], cwd=seedwt)
+    _git(["push", "origin", "main"], cwd=seedwt)
+
+    svc.save_config("rbdprj", {
+        "repo_url": bare.as_uri(),
+        "provider": "generic",
+        "base_branch": "main",
+        "default_finalize_action": "merge",
+        "enabled": True,
+    })
+    out = svc.provision_base("rbdprj", "manual")
+    assert out["status"] == "ok"
+    base = src_root("RbdProj", "main")
+    yield {"bare": bare, "seedwt": seedwt, "tmp": tmp, "base": base}
+    svc.delete_config("rbdprj")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+@needs_git
+class TestResolveBaseDirtyRealRepo0482:
+    def test_resolve_base_dirty_commits_selected_paths_with_the_given_message(self, resolve_base_dirty_origin, monkeypatch):
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services import remote_tool_service
+
+        base = resolve_base_dirty_origin["base"]
+        (base / "a.txt").write_text("edited alpha\n", encoding="utf-8")
+        (base / "b.txt").write_text("edited beta\n", encoding="utf-8")
+        status = svc.project_git_status("rbdprj")["status"]
+        assert sorted(status["base_dirty"]["files"]) == ["a.txt", "b.txt"]
+
+        monkeypatch.setattr(
+            remote_tool_service, "_worker_token_for_grant",
+            lambda _grant: {"action_scope": "resolve_base_dirty"},
+        )
+        result, _ = remote_tool_service._exec_resolve_base_dirty(
+            {
+                "decisions": [
+                    {"path": "a.txt", "action": "commit"},
+                    {"path": "b.txt", "action": "discard"},
+                ],
+                "complete": True,
+                "commit_message": "fix: resolve base dirty a.txt",
+            },
+            {"project": "rbdprj"},
+        )
+        assert result["status"] == "resolved"
+        assert result["remaining"] == []
+        assert result["commit"]   # a short hash, not the commit message or a path
+
+        # b.txt was discarded (restored to HEAD), not committed
+        assert (base / "b.txt").read_text(encoding="utf-8") == "beta\n"
+        subject = _git(["log", "-1", "--format=%s"], cwd=base).strip()
+        assert subject == "fix: resolve base dirty a.txt"
+        committed_files = _git(["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"], cwd=base).split()
+        assert committed_files == ["a.txt"]
+        status_after = svc.project_git_status("rbdprj")["status"]
+        assert status_after["base_dirty"] == {"dirty": False, "files": []}
+
+    def test_resolve_base_dirty_lock_busy_when_project_already_locked(self, resolve_base_dirty_origin, monkeypatch):
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services import remote_tool_service
+
+        base = resolve_base_dirty_origin["base"]
+        (base / "a.txt").write_text("edited again\n", encoding="utf-8")
+        assert svc.project_git_status("rbdprj")["status"]["base_dirty"]["files"] == ["a.txt"]
+
+        monkeypatch.setattr(
+            remote_tool_service, "_worker_token_for_grant",
+            lambda _grant: {"action_scope": "resolve_base_dirty"},
+        )
+        assert db_git.try_acquire_lock("rbdprj", "op:elsewhere") is True
+        try:
+            with pytest.raises(remote_tool_service._OpError) as exc:
+                remote_tool_service._exec_resolve_base_dirty(
+                    {"decisions": [{"path": "a.txt", "action": "discard"}], "complete": True},
+                    {"project": "rbdprj"},
+                )
+            assert exc.value.status == 409
+            assert exc.value.details == {"reason": "git_busy"}
+        finally:
+            db_git.release_lock("rbdprj", "op:elsewhere")
+        # nothing was applied while the project lock was held elsewhere
+        assert svc.project_git_status("rbdprj")["status"]["base_dirty"]["files"] == ["a.txt"]
+
+
 # ── flowgate.default.0199 B0001: no-work group auto-discard (no merge/push) ───
 
 @pytest.fixture(scope="class")

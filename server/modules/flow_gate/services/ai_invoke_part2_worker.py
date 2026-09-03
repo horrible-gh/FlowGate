@@ -2696,6 +2696,16 @@ def _finalize_run(run: dict) -> None:
       3. neither of them may block the broadcast. Both swallow their own failures: a record
          is an aid, not the run.
     """
+    # 0482 T0011: group-less base-dirty runs own a separate project admission lease.
+    # This block lived in ai_invoke_service._finalize_run before main split the worker
+    # into this part file; it travels with the function, not with the filename.
+    if run.get("action_scope") == "resolve_base_dirty":
+        try:
+            from modules.flow_gate.db import project_ai_leases as db_project_ai_leases
+            db_project_ai_leases.release(str(run.get("project_id") or ""), str(run.get("run_id") or ""))
+        except Exception:
+            logger.exception("failed to release project AI lease")
+
     # Final last_message (L0007 §2.6): the last attempt may have said nothing at all, while an
     # earlier one left the sentence that actually explains the failure. Keep the explanation.
     if not run.get("last_message") and run.get("last_message_seen"):

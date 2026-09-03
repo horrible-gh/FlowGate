@@ -42,6 +42,7 @@ from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import system_settings as db_settings
+from modules.flow_gate.db import terminal_cleanup_snapshots as db_terminal_cleanup
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.services import path_exclusion_rules
 from modules.flow_gate.storage.paths import get_storage_root, src_root
@@ -5302,16 +5303,29 @@ def cleanup_terminal_slots(project_id: str) -> dict:
         )
     cleaned: list[str] = []
     failed: list[str] = []
+    pending: list[dict] = []
     try:
         for row in db_git.list_states_of_project(project_id):
             gid = row["group_id"]
             terminal = (row.get("status") or "none") in CLEANUP_STATUSES
             if not terminal and not _is_group_disposed(gid):
                 continue
-            (cleaned if _cleanup_group_slot(project_id, gid) else failed).append(gid)
+            # An open TR revert/reapply conflict owns files in this worktree. Cleanup
+            # must not destroy the session; it remains a separately actionable row.
+            if tr_conflict_session(gid) is not None:
+                pending.append({"group_id": gid, "reason": "revert_conflict"})
+                continue
+            if _cleanup_group_slot(project_id, gid):
+                cleaned.append(gid)
+            else:
+                failed.append(gid)
+                pending.append({"group_id": gid, "reason": "teardown_failed"})
     finally:
         db_git.release_lock(project_id, holder)
-    return {"ok": True, "result": {"cleaned": cleaned, "failed": failed}}
+    status = "ok" if not failed else ("partial" if cleaned else "failed")
+    snapshot = db_terminal_cleanup.put(project_id, status, len(cleaned), pending)
+    return {"ok": True, "result": {"cleaned": cleaned, "failed": failed},
+            "terminal_cleanup": snapshot}
 
 
 def abort_merge(group_id: str, merge_id: int) -> dict:
@@ -5759,6 +5773,7 @@ def project_git_status(project_id: str) -> dict:
             "enabled": False, "base_branch": None, "base_path_state": "empty",
             "ahead_count": None, "behind_count": None,
             "slots": [], "pending": [], "pending_count": 0, "cleanable_count": 0,
+            "terminal_cleanup": db_terminal_cleanup.get(project_id),
         }}
 
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
@@ -5905,6 +5920,7 @@ def project_git_status(project_id: str) -> dict:
         },
         "slots": slots, "pending": pending, "pending_count": len(pending),
         "cleanable_count": cleanable_count,
+        "terminal_cleanup": db_terminal_cleanup.get(project_id),
         "provision_failures": provision_failures,
         "unpushed": unpushed,
     }}
@@ -6192,8 +6208,91 @@ def _require_base_checkout(project_id: str) -> tuple[dict, Path]:
     return cfg, base_root
 
 
+def _base_commit_locked(
+    project_id: str, base_root: Path, subject: str, selected: list[str]
+) -> dict:
+    """Body of `base_commit` that runs under an already-held project git lock.
+
+    Split out so `resolve_base_dirty` (0482 T0011) can acquire the project lock
+    once and hold it across baseline capture, discard, and commit — see the
+    `_holder` parameter on `base_commit` below."""
+    guard_base_free(project_id)   # 0205 §2.2 — 2nd gate (race close, after lock)
+    if _merge_in_progress(base_root):
+        raise GitServiceError(
+            409, "invalid_state", "a merge is in progress; resolve or abort it first"
+        )
+    tracked = _dirty_files(base_root, include_untracked=False)
+    if selected:
+        # Explicit selection: accept anything git currently reports as a
+        # pending change — tracked edits/deletions AND untracked new files.
+        # An unbounded scan here (limit=0) is right: this is a one-shot
+        # user-initiated commit, not a status poll, and silently refusing a
+        # file only because it fell past the display cap would be a bug.
+        untracked = set(_untracked_files(base_root, limit=0))
+        allowed = set(tracked) | untracked
+        unknown = [p for p in selected if p not in allowed]
+        if unknown:
+            # `.gitignore` first: "not a pending change" would be a lie for an
+            # ignored file that plainly exists on disk. It cannot be committed
+            # at all (NR §C4) — say so, and never force with `add -f`.
+            ignored = _ignored_paths(base_root, unknown)
+            if ignored:
+                raise GitServiceError(
+                    422, "path_ignored",
+                    "these paths are excluded by .gitignore and cannot be committed",
+                    details={"files": ignored},
+                )
+            raise GitServiceError(
+                422, "invalid_request",
+                "these paths have no pending change to commit",
+                details={"files": unknown},
+            )
+        files = selected
+    else:
+        files = tracked
+    if not files:
+        return {"ok": True, "result": {
+            "committed": False, "commit": None, "subject": None,
+            "files": [], "remaining": [],
+            "remaining_untracked": _untracked_files(base_root),
+        }}
+    if not subject:
+        subject = default_base_commit_message(files)
+    if selected:
+        # Literal argv pathspecs (no shell, no globbing) matching the unquoted
+        # porcelain form the two listers produced — same contract as
+        # base_revert's `checkout HEAD -- <path>`.
+        proc = _run_git(["add", "--", *files], cwd=base_root)
+    else:
+        # `add -u` = stage tracked changes only (mod/delete), never untracked
+        # build artifacts — the exact E3/_dirty_files scope.
+        proc = _run_git(["add", "-u"], cwd=base_root)
+    if proc.returncode == 0:
+        proc = _run_git(
+            [*_GIT_IDENT, "commit", "-m", subject], cwd=base_root,
+            author_env=_author_env_for(project_id),
+        )
+    if proc.returncode != 0:
+        # The checkout stays dirty (staged-but-uncommitted is still porcelain
+        # output), so the E3 guard keeps holding and a retry re-stages.
+        raise GitServiceError(500, "git_error", _last_line(proc.stderr))
+    head = _run_git(["rev-parse", "--short", "HEAD"], cwd=base_root)
+    return {"ok": True, "result": {
+        "committed": True,
+        "commit": (head.stdout or "").strip() or None,
+        "subject": subject,
+        "files": files,
+        "remaining": _dirty_files(base_root, include_untracked=False),
+        # Kept separate from `remaining` so the FE's "base is clean → resume
+        # the parked merge" test stays the guard's test. Leftover untracked
+        # files never blocked the merge and must not block the resume.
+        "remaining_untracked": _untracked_files(base_root),
+    }}
+
+
 def base_commit(
-    project_id: str, message: Optional[str], paths: Optional[list[str]] = None
+    project_id: str, message: Optional[str], paths: Optional[list[str]] = None,
+    _holder: Optional[str] = None,
 ) -> dict:
     """POST …/projects/{id}/git/base-commit — commit the base checkout (L0002 §2.3).
 
@@ -6217,6 +6316,12 @@ def base_commit(
     (ff-only against origin stays a no-op while origin/base remains an ancestor).
     An empty dirty set is an idempotent success so the FE's commit-then-merge
     retry never turns a lost race into an error.
+
+    `_holder` (internal): when the caller already holds the project git lock
+    under this holder id, reuse it instead of acquiring a fresh one — lets
+    `resolve_base_dirty` (0482 T0011) keep baseline capture, discard, and
+    commit atomic under a single lock instead of three independently-locked
+    calls that leave a race window between them.
     """
     _, base_root = _require_base_checkout(project_id)
     subject = normalize_subject(message)
@@ -6242,6 +6347,8 @@ def base_commit(
             500, "git_unavailable",
             "git binary not found on server (install git in the runtime image)",
         )
+    if _holder is not None:
+        return _base_commit_locked(project_id, base_root, subject, selected)
     holder = f"op:{uuid.uuid4()}"
     if not _acquire_lock(project_id, holder):
         raise GitServiceError(
@@ -6249,87 +6356,49 @@ def base_commit(
             f"Another git operation is in progress for project '{project_id}' (try again shortly)",
         )
     try:
-        guard_base_free(project_id)   # 0205 §2.2 — 2nd gate (race close, after lock)
-        if _merge_in_progress(base_root):
-            raise GitServiceError(
-                409, "invalid_state", "a merge is in progress; resolve or abort it first"
-            )
-        tracked = _dirty_files(base_root, include_untracked=False)
-        if selected:
-            # Explicit selection: accept anything git currently reports as a
-            # pending change — tracked edits/deletions AND untracked new files.
-            # An unbounded scan here (limit=0) is right: this is a one-shot
-            # user-initiated commit, not a status poll, and silently refusing a
-            # file only because it fell past the display cap would be a bug.
-            untracked = set(_untracked_files(base_root, limit=0))
-            allowed = set(tracked) | untracked
-            unknown = [p for p in selected if p not in allowed]
-            if unknown:
-                # `.gitignore` first: "not a pending change" would be a lie for an
-                # ignored file that plainly exists on disk. It cannot be committed
-                # at all (NR §C4) — say so, and never force with `add -f`.
-                ignored = _ignored_paths(base_root, unknown)
-                if ignored:
-                    raise GitServiceError(
-                        422, "path_ignored",
-                        "these paths are excluded by .gitignore and cannot be committed",
-                        details={"files": ignored},
-                    )
-                raise GitServiceError(
-                    422, "invalid_request",
-                    "these paths have no pending change to commit",
-                    details={"files": unknown},
-                )
-            files = selected
-        else:
-            files = tracked
-        if not files:
-            return {"ok": True, "result": {
-                "committed": False, "commit": None, "subject": None,
-                "files": [], "remaining": [],
-                "remaining_untracked": _untracked_files(base_root),
-            }}
-        if not subject:
-            subject = default_base_commit_message(files)
-        if selected:
-            # Literal argv pathspecs (no shell, no globbing) matching the unquoted
-            # porcelain form the two listers produced — same contract as
-            # base_revert's `checkout HEAD -- <path>`.
-            proc = _run_git(["add", "--", *files], cwd=base_root)
-        else:
-            # `add -u` = stage tracked changes only (mod/delete), never untracked
-            # build artifacts — the exact E3/_dirty_files scope.
-            proc = _run_git(["add", "-u"], cwd=base_root)
-        if proc.returncode == 0:
-            proc = _run_git(
-                [*_GIT_IDENT, "commit", "-m", subject], cwd=base_root,
-                author_env=_author_env_for(project_id),
-            )
-        if proc.returncode != 0:
-            # The checkout stays dirty (staged-but-uncommitted is still porcelain
-            # output), so the E3 guard keeps holding and a retry re-stages.
-            raise GitServiceError(500, "git_error", _last_line(proc.stderr))
-        head = _run_git(["rev-parse", "--short", "HEAD"], cwd=base_root)
-        return {"ok": True, "result": {
-            "committed": True,
-            "commit": (head.stdout or "").strip() or None,
-            "subject": subject,
-            "files": files,
-            "remaining": _dirty_files(base_root, include_untracked=False),
-            # Kept separate from `remaining` so the FE's "base is clean → resume
-            # the parked merge" test stays the guard's test. Leftover untracked
-            # files never blocked the merge and must not block the resume.
-            "remaining_untracked": _untracked_files(base_root),
-        }}
+        return _base_commit_locked(project_id, base_root, subject, selected)
     finally:
         db_git.release_lock(project_id, holder)
 
 
-def base_revert(project_id: str, files: list[str]) -> dict:
+def _base_revert_locked(project_id: str, base_root: Path, cleaned: list[str]) -> dict:
+    """Body of `base_revert` that runs under an already-held project git lock.
+
+    Split out so `resolve_base_dirty` (0482 T0011) can acquire the project lock
+    once and hold it across baseline capture, discard, and commit — see the
+    `_holder` parameter on `base_revert` below."""
+    guard_base_free(project_id)   # 0205 §2.2 — 2nd gate (race close, after lock)
+    if _merge_in_progress(base_root):
+        raise GitServiceError(
+            409, "invalid_state", "a merge is in progress; resolve or abort it first"
+        )
+    dirty = set(_dirty_files(base_root, include_untracked=False))
+    results: list[dict] = []
+    for f in cleaned:
+        if f not in dirty:
+            results.append({"path": f, "result": "not_dirty"})
+            continue
+        # checkout HEAD -- <path> restores worktree AND index from HEAD; the
+        # path travels as a literal argv element (no shell), matching the
+        # unquoted porcelain form _dirty_files produced.
+        proc = _run_git(["checkout", "HEAD", "--", f], cwd=base_root)
+        results.append({"path": f, "result": "reverted" if proc.returncode == 0 else "error"})
+    remaining = _dirty_files(base_root, include_untracked=False)
+    return {
+        "ok": all(r["result"] != "error" for r in results),
+        "result": {"results": results, "remaining": remaining},
+    }
+
+
+def base_revert(project_id: str, files: list[str], _holder: Optional[str] = None) -> dict:
     """POST …/projects/{id}/git/base-revert — restore the named files of the
     base checkout to HEAD (worktree + index; undoes edits and deletions alike,
     L0002 §2.4). Per-file results; a file that is not dirty reports "not_dirty"
     and counts as success (idempotent against races and double clicks).
+
+    `_holder` (internal): when the caller already holds the project git lock
+    under this holder id, reuse it instead of acquiring a fresh one — see
+    `base_commit`'s `_holder` docstring for why.
     """
     _, base_root = _require_base_checkout(project_id)
     cleaned = [str(f or "").strip() for f in (files or [])]
@@ -6348,6 +6417,8 @@ def base_revert(project_id: str, files: list[str]) -> dict:
             500, "git_unavailable",
             "git binary not found on server (install git in the runtime image)",
         )
+    if _holder is not None:
+        return _base_revert_locked(project_id, base_root, cleaned)
     holder = f"op:{uuid.uuid4()}"
     if not _acquire_lock(project_id, holder):
         raise GitServiceError(
@@ -6355,27 +6426,7 @@ def base_revert(project_id: str, files: list[str]) -> dict:
             f"Another git operation is in progress for project '{project_id}' (try again shortly)",
         )
     try:
-        guard_base_free(project_id)   # 0205 §2.2 — 2nd gate (race close, after lock)
-        if _merge_in_progress(base_root):
-            raise GitServiceError(
-                409, "invalid_state", "a merge is in progress; resolve or abort it first"
-            )
-        dirty = set(_dirty_files(base_root, include_untracked=False))
-        results: list[dict] = []
-        for f in cleaned:
-            if f not in dirty:
-                results.append({"path": f, "result": "not_dirty"})
-                continue
-            # checkout HEAD -- <path> restores worktree AND index from HEAD; the
-            # path travels as a literal argv element (no shell), matching the
-            # unquoted porcelain form _dirty_files produced.
-            proc = _run_git(["checkout", "HEAD", "--", f], cwd=base_root)
-            results.append({"path": f, "result": "reverted" if proc.returncode == 0 else "error"})
-        remaining = _dirty_files(base_root, include_untracked=False)
-        return {
-            "ok": all(r["result"] != "error" for r in results),
-            "result": {"results": results, "remaining": remaining},
-        }
+        return _base_revert_locked(project_id, base_root, cleaned)
     finally:
         db_git.release_lock(project_id, holder)
 

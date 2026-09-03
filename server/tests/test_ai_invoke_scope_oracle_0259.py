@@ -112,7 +112,7 @@ def world(monkeypatch, tmp_path):
     return w
 
 
-def _run(world, action_scope, work=None, doc_ref=TARGET, mode="single", **kw):
+def _run(world, action_scope, work=None, doc_ref=TARGET, mode="single", group_id=GROUP, **kw):
     """Start a run whose 'AI' performs `work` (a perfect worker when work is not None)."""
 
     def _fake_cli(provider, prompt, run):
@@ -128,7 +128,7 @@ def _run(world, action_scope, work=None, doc_ref=TARGET, mode="single", **kw):
         res = svc.start_run(
             project_id="flowgate",
             module="default",
-            group_id=GROUP,
+            group_id=group_id,
             doc_ref=doc_ref,
             action_scope=action_scope,
             mode=mode,
@@ -317,3 +317,104 @@ class TestFastFailUsesTheRunsOwnJudge:
         assert svc._work_landed(run) is False
         world.do_register(seq=5)
         assert svc._work_landed(run) is True
+
+
+# ── T0011 새 판정 행: resolve_base_dirty (project_id probe key, not doc_ref) ──
+
+class TestResolveBaseDirtyScopeProbe:
+    """`resolve_base_dirty` is judged by tracked base-dirty file count, not documents.
+
+    The probe is keyed by project_id (there is no bound document for this scope), and
+    the shared `current > baseline` rule in `_scope_oracle` is untouched — only the
+    fallback oracle-key selection routes this scope to project_id instead of doc_ref.
+    """
+
+    def test_registered_in_scope_probes_and_allowed_scopes(self):
+        from modules.flow_gate.api.v1 import ai_invoke_routes as routes
+
+        assert "resolve_base_dirty" in routes._ALLOWED_SCOPES
+        assert svc._SCOPE_PROBES["resolve_base_dirty"] is svc._probe_base_dirty
+
+    def test_doc_ref_project_id_fallback_key_reaches_the_project_probe(self, monkeypatch):
+        """`ai_invoke_routes.start_ai_invoke` passes `body.project` as `doc_ref` for this
+        scope (routes.py:808) precisely so `_oracle_doc_id`'s fallback lands on project_id,
+        not a document id. Exercised here through the real `_scope_oracle` factory, the same
+        one `start_run` calls — not a re-implementation of the routing decision."""
+        from modules.flow_gate.services import git_service
+
+        counts = iter([["a.py", "b.py"], ["a.py"]])
+        monkeypatch.setattr(
+            git_service, "project_git_status",
+            lambda pid: {"status": {"base_dirty": {"files": next(counts)}}} if pid == "flowgate" else (_ for _ in ()).throw(AssertionError("wrong probe key")),
+        )
+        oracle = svc._scope_oracle("resolve_base_dirty", token_id=None, doc_ref="flowgate")
+        assert oracle() is True   # 2 files -> 1 file: progress settles complete
+
+    def test_no_output_retry_machinery_stays_closed_for_this_scope(self):
+        """L0008/T0011 give `resolve_base_dirty` its own oracle but explicitly do not open
+        the 0446 T0008 no-output-retry path to it — that machinery is deliberately narrowed
+        to `edit`/single (see `_scope_oracle_retry_open`'s own docstring). A 'none' outcome
+        here must be reported once, not silently re-run on the next provider."""
+        assert svc._scope_oracle_retry_open("single", "resolve_base_dirty", True) is False
+        # Contrast with the one scope that IS open, so this is a real assertion and not a
+        # tautology of "everything is False".
+        assert svc._scope_oracle_retry_open("single", "edit", True) is True
+
+    def test_work_landed_uses_the_scope_oracle_not_a_seq_delta(self, monkeypatch):
+        """Matrix row alongside `TestFastFailUsesTheRunsOwnJudge`: a resolve_base_dirty run
+        that reduced the tracked-dirty count must not be discarded as a startup failure just
+        because no document landed — and a run that changed nothing must not be credited."""
+        from modules.flow_gate.services import git_service
+
+        counts = iter([["a.py", "b.py"], ["a.py"]])
+        monkeypatch.setattr(
+            git_service, "project_git_status",
+            lambda _p: {"status": {"base_dirty": {"files": next(counts)}}},
+        )
+        oracle = svc._scope_oracle("resolve_base_dirty", token_id=None, doc_ref="flowgate")
+        run = {"group_id": None, "baseline_seq": 0, "run_id": "aiv_bd", "completion_oracle": oracle}
+        assert svc._work_landed(run) is True
+
+    def test_work_landed_is_false_when_the_dirty_count_does_not_shrink(self, monkeypatch):
+        from modules.flow_gate.services import git_service
+
+        monkeypatch.setattr(
+            git_service, "project_git_status",
+            lambda _p: {"status": {"base_dirty": {"files": ["a.py", "b.py"]}}},
+        )
+        oracle = svc._scope_oracle("resolve_base_dirty", token_id=None, doc_ref="flowgate")
+        run = {"group_id": None, "baseline_seq": 0, "run_id": "aiv_bd", "completion_oracle": oracle}
+        assert svc._work_landed(run) is False
+
+    def test_probe_returns_negative_file_count(self, monkeypatch):
+        from modules.flow_gate.services import git_service
+
+        monkeypatch.setattr(
+            git_service, "project_git_status",
+            lambda _p: {"status": {"base_dirty": {"files": ["a.py", "b.py", "c.py"]}}},
+        )
+        assert svc._probe_base_dirty("flowgate") == -3
+
+    def test_file_count_decrease_settles_complete(self, monkeypatch):
+        from modules.flow_gate.services import git_service
+
+        counts = iter([["a.py", "b.py"], ["b.py"]])   # baseline 2 files, then 1 remains
+        monkeypatch.setattr(
+            git_service, "project_git_status",
+            lambda _p: {"status": {"base_dirty": {"files": next(counts)}}},
+        )
+        baseline = svc._probe_base_dirty("flowgate")
+        current = svc._probe_base_dirty("flowgate")
+        assert current > baseline   # partial progress still settles complete (L0008 §2.7)
+
+    def test_same_or_increased_file_count_settles_none(self, monkeypatch):
+        from modules.flow_gate.services import git_service
+
+        counts = iter([["a.py", "b.py"], ["a.py", "b.py", "c.py"]])
+        monkeypatch.setattr(
+            git_service, "project_git_status",
+            lambda _p: {"status": {"base_dirty": {"files": next(counts)}}},
+        )
+        baseline = svc._probe_base_dirty("flowgate")
+        current = svc._probe_base_dirty("flowgate")
+        assert not (current > baseline)
