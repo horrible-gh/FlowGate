@@ -43,11 +43,13 @@ _RUNTIME_PATH = (
 
 _FORBIDDEN_IMPORT_SUFFIXES = (
     # flowgate.default.0501 T4 re-split ai_invoke_part2_worker.py into these three;
-    # the guard must track the current file names, not the pre-T4 one.
+    # T5 re-split ai_invoke_part3_chain.py into chain/review; the guard must track
+    # the current file names, not any earlier one.
     "ai_invoke_worker",
     "ai_invoke_provider_api",
     "ai_invoke_provider_cli",
-    "ai_invoke_part3_chain",
+    "ai_invoke_chain",
+    "ai_invoke_review",
     "process_runner",
 )
 
@@ -315,7 +317,8 @@ class TestRunIdCollisionUnchanged:
 
 
 class TestCancelPrimitiveUnchanged:
-    """T0008 §13-D: cancel_run (ai_invoke_part3_chain.py, unmodified by T3) reaches the
+    """T0008 §13-D: cancel_run (ai_invoke_chain.py since T5, unmodified in behavior by
+    T3 or T5) reaches the
     active run through `get_run_record`, now served by ai_invoke_runtime. This locks
     that cancel_run's mutation lands on the SAME object the new module hands back --
     not a stale copy -- and that the finished-run idempotent branch is unaffected."""

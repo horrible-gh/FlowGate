@@ -1158,15 +1158,17 @@ class TestCarriers:
         switched off — L0008 R1 broken from outside the schema."""
         offenders = []
         # 0497 T0009 split ai_invoke_service.py into files that share one module
-        # namespace (0501 T4 re-split the worker part further); every paused-row writer
-        # must still be scanned, so every part is listed.
+        # namespace (0501 T4 re-split the worker part further, T5 turned the whole
+        # graph into normally-imported modules); every paused-row writer must still
+        # be scanned, so every part is listed.
         _services = _SERVER_DIR / "modules" / "flow_gate" / "services"
         for path in (
             _services / "ai_invoke_service.py",
             _services / "ai_invoke_provider_api.py",
             _services / "ai_invoke_provider_cli.py",
             _services / "ai_invoke_worker.py",
-            _services / "ai_invoke_part3_chain.py",
+            _services / "ai_invoke_chain.py",
+            _services / "ai_invoke_review.py",
             _SERVER_DIR / "modules" / "flow_gate" / "api" / "inbox_routes.py",
         ):
             tree = ast.parse(path.read_text(encoding="utf-8"))

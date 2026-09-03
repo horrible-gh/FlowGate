@@ -1,10 +1,13 @@
 # ────────────────────── ai_invoke_service part — provider API transport (HTTP) ──────────────────────
 #
-# Not imported on its own in production: ai_invoke_service._load_parts() executes this
-# file in THAT module's globals() (flowgate.default.0501 T4 — split out of
-# ai_invoke_part2_worker.py, itself flowgate.default.0497 T0009's part 2 of 3). The lines
-# below were carried over verbatim from ai_invoke_part2_worker.py, nothing was rewritten.
-# See the file-split note in ai_invoke_service.py's module docstring.
+# A normal Python module (flowgate.default.0501 T5 retires the exec()-assembled part-file
+# scheme T4 left in place). Non-monkeypatched core constants (ANTHROPIC_VERSION,
+# API_MAX_TOKENS, logger) are a plain `from .ai_invoke_service import (...)` at this file's
+# top. The two seams existing tests patch through the facade —
+# `monkeypatch.setattr(svc, "_call_openai", fake)` / `svc, "_resolve_agent_api_base"` — go
+# through `svc.<name>` instead (`svc` = ai_invoke_service, imported once below), the one
+# runtime-lookup indirection this split keeps, and only where a real seam needs it. See
+# ai_invoke_service.py's own module docstring for the full picture.
 #
 # Holds: HTTP/API transport to OpenAI/Anthropic-compatible endpoints — the raw model call
 # (_call_openai / _call_anthropic / _http_post_json), the API-agent prompt shaping and
@@ -20,10 +23,10 @@
 # move less). Both stay in ai_invoke_worker.py, which calls the
 # functions in THIS module for the raw HTTP leg only.
 #
-# FORBIDDEN here (T4 import-dependency guard): importing ai_invoke_part3_chain, review/
-# rework/chain-progression logic, group lease DB access, or the runtime registry owner
-# (ai_invoke_runtime.py's _runs/_runs_lock ownership). This module must not know a *run*
-# exists past "conversation in, model reply out".
+# FORBIDDEN here (T4/T5 import-dependency guard): importing ai_invoke_chain, ai_invoke_review,
+# group lease DB access, or the runtime registry owner (ai_invoke_runtime.py's
+# _runs/_runs_lock ownership) directly — this module reaches `svc.<name>` for core state
+# only. This module must not know a *run* exists past "conversation in, model reply out".
 
 from __future__ import annotations
 
@@ -31,13 +34,12 @@ import json
 import urllib.request
 from typing import Optional
 
-# Imported directly (tooling that walks the package) rather than executed by
-# _load_parts(): the earlier parts' names are missing, so take them from the
-# assembled module. Under _load_parts() they are already here and this is a no-op.
-if "RUN_TIMEOUT_BASE_SEC" not in globals():
-    from modules.flow_gate.services import ai_invoke_service as _assembled
-    globals().update({k: v for k, v in vars(_assembled).items()
-                      if not k.startswith("__")})
+from modules.flow_gate.services import ai_invoke_service as svc
+from modules.flow_gate.services.ai_invoke_service import (
+    ANTHROPIC_VERSION,
+    API_MAX_TOKENS,
+    logger,
+)
 
 
 def _resolve_agent_api_base(operator_api_base: str) -> str:
@@ -159,7 +161,7 @@ def _resolve_transport_api_base(run: dict) -> str:
         return cached
     operator_base = run.get("api_base_url") or ""
     try:
-        resolved = _resolve_agent_api_base(operator_base)
+        resolved = svc._resolve_agent_api_base(operator_base)
     except ValueError:
         logger.warning(
             "ai-invoke %s: transport base resolution failed for operator base %r, "
@@ -224,7 +226,7 @@ def _call_anthropic(
 ) -> tuple[Optional[str], Optional[dict], dict]:
     multi = isinstance(tool_name, list)
     specs = tool_name if multi else [{"name": tool_name, "description": tool_desc, "schema": tool_schema}]
-    data = _http_post_json(
+    data = svc._http_post_json(
         f"{base_url}/v1/messages",
         {"x-api-key": key, "anthropic-version": ANTHROPIC_VERSION},
         {
@@ -254,7 +256,7 @@ def _call_openai(
 ) -> tuple[Optional[str], Optional[dict], dict]:
     multi = isinstance(tool_name, list)
     specs = tool_name if multi else [{"name": tool_name, "description": tool_desc, "schema": tool_schema}]
-    data = _http_post_json(
+    data = svc._http_post_json(
         f"{base_url.rstrip('/')}/chat/completions",
         {"Authorization": f"Bearer {key}"},
         {

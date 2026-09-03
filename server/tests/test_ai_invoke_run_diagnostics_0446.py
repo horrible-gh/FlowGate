@@ -952,18 +952,27 @@ class TestOtherScopesAreUntouched:
 
     def test_the_continuous_mention_path_never_calls_it(self):
         # 0497 T0009: ai_invoke_service.py is now files sharing one module namespace
-        # (0501 T4 re-split the worker part further). "defined there, never invoked
+        # (0501 T4 re-split the worker part further; 0501 T5 turned that split into a
+        # normal module graph, replacing the shared-globals re-export with one explicit
+        # facade wrapper per name). "defined there, never invoked by orchestration logic
         # there" is a property of the module, so read every part.
         _services = _SERVER_DIR / "modules" / "flow_gate" / "services"
         source = "".join(
             (_services / name).read_text(encoding="utf-8")
             for name in ("ai_invoke_service.py", "ai_invoke_provider_api.py",
                          "ai_invoke_provider_cli.py", "ai_invoke_worker.py",
-                         "ai_invoke_part3_chain.py")
+                         "ai_invoke_chain.py", "ai_invoke_review.py")
         )
         # Defined there, never invoked there: the continuous/self-chain mention builder in
-        # this module must not acquire the block through a back door.
-        assert source.count("previous_timeout_handoff") == 1     # the definition, nothing else
+        # this module must not acquire the block through a back door. Three occurrences are
+        # legitimate post-T5: the definition itself (ai_invoke_worker.py), and the explicit
+        # facade wrapper ai_invoke_service.py carries so external callers (ai_invoke_routes.py,
+        # invoke_mention_service.py) keep reaching it as `ai_invoke_service.previous_timeout_
+        # handoff` — `def previous_timeout_handoff(...)` / `return ai_invoke_worker.
+        # previous_timeout_handoff(...)` is a pure passthrough, not a second call site any
+        # internal orchestration logic (worker/chain/review hop progression) reaches through.
+        assert source.count("previous_timeout_handoff") == 3
+        assert source.count("def previous_timeout_handoff(") == 2   # real def + facade wrapper def
         assert "build_previous_run_section" not in source
 
 

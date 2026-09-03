@@ -18,53 +18,94 @@ Run state lives in an in-memory registry for the server's lifetime (history
 persistence is DEFERRED per D0004); a restart loses in-flight runs, which the
 status API surfaces as 404 run_not_found.
 
-── File split (flowgate.default.0497 T0009, re-split flowgate.default.0501 T4) ──
+── Module graph (flowgate.default.0497 T0009, re-split flowgate.default.0501 T4, exec()
+assembly retired by flowgate.default.0501 T5) ──
 
 This module's body had grown past 9,000 lines in one file — too large to read or
-edit in one piece, by a person or by a tool. The blank lines between top-level
-definitions were collapsed to one, and the body was then cut into files at
-existing section boundaries:
+edit in one piece, by a person or by a tool. T0009 first cut it into three exec()-
+assembled part files sharing this module's own globals() dict; T4 re-split the second
+part along its actual module boundary (worker orchestration vs. provider API transport
+vs. provider CLI transport); T5 finishes the job by turning every part into a normal,
+explicitly-imported Python module and retiring the exec() assembly entirely:
 
-  ai_invoke_service.py        constants, run registry, scratch, oracles, start_run
+  ai_invoke_service.py        constants, run registry, scratch, oracles, start_run (this
+                               file — the public facade every external caller still uses)
   ai_invoke_provider_api.py   HTTP/API transport to OpenAI/Anthropic-compatible endpoints
   ai_invoke_provider_cli.py   subprocess/CLI transport (spawn, watchdog, exit codes)
   ai_invoke_worker.py         worker orchestration (loop, retry, judging, finalize,
                                stop-code records, FlowGate-tool dispatch)
-  ai_invoke_part3_chain.py    status/cancel, pause/resume, next hop, the review gate
+  ai_invoke_chain.py          status/cancel, pause/resume, the global active-run/paused-
+                               chain list, per-hop re-spawn and durable handoff bookkeeping
+  ai_invoke_review.py         the review gate, review/rework hop launch, automatic
+                               rejection, and the document-scoped review loop
 
-T0009 originally cut this into three parts (this file, ai_invoke_part2_worker.py,
-ai_invoke_part3_chain.py); flowgate.default.0501 T4 re-split the worker part along
-its actual module boundary — worker orchestration vs. provider API transport vs.
-provider CLI/process transport — replacing ai_invoke_part2_worker.py with the three
-files above. See each new file's own header for what it holds and what it is
-FORBIDDEN from importing (no chain/review/lease/runtime-registry reach-in from
-either provider module).
+Each of the five files above is a normal module with explicit, individually-named
+dependencies — not a giant "import the whole service and reach through it for
+everything" hub. Three distinct wiring patterns, chosen per name by whether it is a
+genuine cross-call or a genuine compatibility seam:
 
-`_load_parts()` at the bottom of this file executes the other parts IN THIS
-MODULE'S globals(), in the order listed in `_PART_FILES`. Nothing about the
-namespace moves: definition order (within each part), module-level state and
-every attribute visible from outside (including the private ones tests patch)
-are exactly what they were before either split. No code was rewritten in T4's
-re-split either — every line was carried over verbatim from
-ai_invoke_part2_worker.py into whichever of the three new files now holds it,
-which is why the compiled code object of every function is still byte-identical
-to the pre-split one.
+  * A CONSTANT this module's core owns (a stop code, a kind string, a numeric limit)
+    that no test ever monkeypatches is a normal `from .ai_invoke_service import NAME`
+    at the top of whichever of the five files needs it — safe regardless of which of
+    the six modules a fresh interpreter loads first (T0012 §20), because this
+    module's core always finishes executing before its own bottom-of-file imports run,
+    and those imports are what pull the five files in.
+  * A function one of the five files needs from a SIBLING file (not this module) is a
+    direct `from . import ai_invoke_<sibling>` plus `ai_invoke_<sibling>.<name>(...)` —
+    e.g. `ai_invoke_chain.py` calls `ai_invoke_review.resolve_review_gate(...)`
+    directly. The one exception is the ai_invoke_chain <-> ai_invoke_review pair: T5
+    forbids that specific bidirectional import cycle (T0012 §8), so the handful of
+    names `ai_invoke_review.py` needs back from `ai_invoke_chain.py` (its own handoff
+    primitives: `_park_handoff`, `clear_auto_resume`, `request_auto_resume`, ...) keep
+    going through this module instead, the same way the compatibility seams below do.
+  * A name an existing test reaches by patching `monkeypatch.setattr(<alias>, "<name>",
+    fake)`, where `<alias>` is whatever local name that test imported this module under
+    (`svc` inside these five files, but existing tests use `service` / `invoke` / `ais` /
+    `aiv` / `ai_svc` / `svc_invoke` too — T0009/T4's own seam, T0012 §13-15 requires T5 to
+    keep it working regardless of alias) is called through `svc.<name>` at the point of
+    use inside these five files, never bound to a bare name at import time — the same
+    indirection that already existed, now used ONLY where a seam actually needs it, not
+    as the default for every cross-module reference. test_ai_invoke_svc_seam_scope_0501.py
+    makes this an enforced invariant instead of an assertion: it collects every
+    `svc.<name>` call site in the five files and every name any test monkeypatches on ANY
+    alias of this module, and fails, naming the exact symbol, the moment one of the five
+    files reaches for `svc.<name>` where `<name>` is neither an established seam nor the
+    one documented cycle-break primitive below.
 
-Each part repeats its own import block so that opening one file on its own still
-shows what it uses (ai_invoke_worker.py and ai_invoke_part3_chain.py repeat the full
-block by T0009's original convention; the two provider modules carry only the
-imports their own pure-transport code actually uses, deliberately -- T4's forbidden-
-import guard checks THESE files by name). A part imported directly (by tooling that
-walks the package) fills the rest of the namespace from this module. Because every
-part is exec()'d
-into this module's own globals() dict, a bare global-name reference in any part
-(e.g. ai_invoke_worker.py's turn loop calling `_call_openai`, defined in
-ai_invoke_provider_api.py) resolves through THIS module's current globals at call
-time — the same dict `monkeypatch.setattr(svc, "_call_openai", fake)` patches, so
-that pattern keeps working across the file boundary with no extra indirection.
-Turning the parts into a normally-imported module structure (rather than
-exec()-assembled ones sharing this module's namespace) is a separate group's
-refactoring task, deliberately not done here.
+For the reverse direction — this module's OWN core reaching a name that only exists on
+one of the five files, and every external caller (`ai_invoke_routes.py`,
+`invoke_mention_service.py`, `mutation_policy.py`, tests, ...) that still expects
+`ai_invoke_service.<name>` / `svc.<name>` to work — this module's own tail (right after
+its five explicit `from . import ai_invoke_<name>` module-object imports, below) carries
+one individually-named entry per symbol: a plain wrapper function that looks the real
+target up on the owning module AT CALL TIME (so `monkeypatch.setattr(svc, "<name>",
+fake)` still reaches every caller, and the graph still survives being entered from any
+one of the six modules first), or — for the handful of names read with
+`inspect.getsource`/`inspect.signature`, or a handful of pure re-imports already shared
+byte-for-byte with `ai_invoke_helpers.py` — a real-object binding instead of a wrapper,
+so identity and introspection are preserved too. This replaces the dynamic
+module-level `__getattr__`/`__dir__` pair T5's first revision used for the same
+purpose: every name reachable through this module is now a literal, grep-able
+definition, not a runtime hook resolved against whichever of the five files happens to
+define it.
+
+This module's own core (everything above the tail) reaches those same tail bindings
+through a bare name (`_worker`, `get_status`, `_provider_name_of`, ...), never through a
+self-import of this module under an alias: `from modules.flow_gate.services import
+ai_invoke_service as svc` written INSIDE ai_invoke_service.py's own body would bind `svc`
+to this exact module object (Python resolves a self-import against the in-progress entry
+in `sys.modules`, not a fresh copy), so `svc.<name>` and a bare `<name>` do textually
+identical lookups — both read `ai_invoke_service.__dict__["<name>"]` at call time, because
+every function's `__globals__` already IS that dict. A `monkeypatch.setattr(svc, "<name>",
+fake)` from a test cannot tell these two spellings apart, so the self-import bought nothing
+and rev1 removed it (rev2, T0012 §12/§27) — it was the one place in the six-module graph
+where "reach through svc for everything" was pure habit, not a seam or an import-order
+constraint.
+
+No function BODY was rewritten to make this split (T0009's original guarantee, kept
+through T4 and T5): every line in the five other files computes exactly what it did
+before, and this module's own core above is unchanged except for the wiring described
+above.
 """
 
 from __future__ import annotations
@@ -2912,21 +2953,461 @@ def _resolve_continuation_hop_note(
         logger.warning("continuation hop note resolution failed for %s", doc_ref, exc_info=True)
         return None
 
-# ── Part loading (see the file-split note in the module docstring) ────────────
-_PART_FILES = (
-    "ai_invoke_provider_api.py",
-    "ai_invoke_provider_cli.py",
-    "ai_invoke_worker.py",
-    "ai_invoke_part3_chain.py",
-)
+# ── Module graph (flowgate.default.0501 T5) ───────────────────────────────────────────
+#
+# Normal, explicit imports -- the exec()-assembled part-file scheme (T0009/T4) and the
+# dynamic module-level __getattr__ this file used right after the split (T5 rev 0) are
+# both retired. Every name a caller can reach as `ai_invoke_service.<name>` /
+# `svc.<name>` is now a literal, individually-named binding below -- symbol ownership is
+# grep-able, not resolved through a runtime hook. The five modules below reach this
+# module's own core (and each other, for the two names that would otherwise form a
+# ai_invoke_chain <-> ai_invoke_review import cycle) the same explicit way, documented in
+# each module's own header.
+from . import ai_invoke_provider_api
+from . import ai_invoke_provider_cli
+from . import ai_invoke_worker
+from . import ai_invoke_chain
+from . import ai_invoke_review
+from . import ai_invoke_helpers
 
-def _load_parts() -> None:
-    """Execute each part file in THIS module's globals(), in order."""
-    from importlib.machinery import SourceFileLoader
-    here = Path(__file__).resolve().parent
-    for filename in _PART_FILES:
-        fullname = "%s.%s" % (__name__, filename[:-3])
-        code = SourceFileLoader(fullname, str(here / filename)).get_code(fullname)
-        exec(code, globals())
+# ── Facade re-exports: functions ──────────────────────────────────────────────────────
+#
+# One explicit wrapper per name, grouped by true owner. Each wrapper looks its target up
+# on the owning module AT CALL TIME (not at def time), for two reasons: (1) it is what
+# preserves every existing `monkeypatch.setattr(svc, "<name>", fake)` seam (T0012 §13-15)
+# -- patching the attribute on THIS module still changes what every caller of
+# `svc.<name>` observes; (2) it is import-order-safe -- a fresh interpreter is allowed to
+# import any ONE of the six ai_invoke_* modules first (T0012 §20,
+# test_ai_invoke_module_graph_0501.py), and a call-time lookup never touches the owning
+# module's namespace until the whole graph has finished loading, however it started.
 
-_load_parts()
+# owner: ai_invoke_provider_api.py (HTTP/API transport)
+def _api_help_prompt(*args, **kwargs):
+    return ai_invoke_provider_api._api_help_prompt(*args, **kwargs)
+
+def _call_anthropic(*args, **kwargs):
+    return ai_invoke_provider_api._call_anthropic(*args, **kwargs)
+
+def _call_openai(*args, **kwargs):
+    return ai_invoke_provider_api._call_openai(*args, **kwargs)
+
+def _http_post_json(*args, **kwargs):
+    return ai_invoke_provider_api._http_post_json(*args, **kwargs)
+
+def _resolve_agent_api_base(*args, **kwargs):
+    return ai_invoke_provider_api._resolve_agent_api_base(*args, **kwargs)
+
+def _resolve_transport_api_base(*args, **kwargs):
+    return ai_invoke_provider_api._resolve_transport_api_base(*args, **kwargs)
+
+def _sanitize_diagnostic_base(*args, **kwargs):
+    return ai_invoke_provider_api._sanitize_diagnostic_base(*args, **kwargs)
+
+# owner: ai_invoke_provider_cli.py (subprocess/CLI transport)
+def _canonicalize_cli_prompt(*args, **kwargs):
+    return ai_invoke_provider_cli._canonicalize_cli_prompt(*args, **kwargs)
+
+def _claim_watchdog_kill(*args, **kwargs):
+    return ai_invoke_provider_cli._claim_watchdog_kill(*args, **kwargs)
+
+def _cli_execute(*args, **kwargs):
+    return ai_invoke_provider_cli._cli_execute(*args, **kwargs)
+
+def _progress_watchdog_loop(*args, **kwargs):
+    return ai_invoke_provider_cli._progress_watchdog_loop(*args, **kwargs)
+
+def _recover_cli_last_message(*args, **kwargs):
+    return ai_invoke_provider_cli._recover_cli_last_message(*args, **kwargs)
+
+def _resolve_cli_launch(*args, **kwargs):
+    return ai_invoke_provider_cli._resolve_cli_launch(*args, **kwargs)
+
+def _shell_kind(*args, **kwargs):
+    return ai_invoke_provider_cli._shell_kind(*args, **kwargs)
+
+def _start_progress_watchdog(*args, **kwargs):
+    return ai_invoke_provider_cli._start_progress_watchdog(*args, **kwargs)
+
+def _stop_progress_watchdog(*args, **kwargs):
+    return ai_invoke_provider_cli._stop_progress_watchdog(*args, **kwargs)
+
+# owner: ai_invoke_worker.py (worker orchestration)
+def _absolute_cap_sec(*args, **kwargs):
+    return ai_invoke_worker._absolute_cap_sec(*args, **kwargs)
+
+def _absolute_remaining_sec(*args, **kwargs):
+    return ai_invoke_worker._absolute_remaining_sec(*args, **kwargs)
+
+def _adopt_continuation_token(*args, **kwargs):
+    return ai_invoke_worker._adopt_continuation_token(*args, **kwargs)
+
+def _api_bound_request(*args, **kwargs):
+    return ai_invoke_worker._api_bound_request(*args, **kwargs)
+
+def _api_execute(*args, **kwargs):
+    return ai_invoke_worker._api_execute(*args, **kwargs)
+
+def _api_read_document(*args, **kwargs):
+    return ai_invoke_worker._api_read_document(*args, **kwargs)
+
+def _apply_stop_row(*args, **kwargs):
+    return ai_invoke_worker._apply_stop_row(*args, **kwargs)
+
+def _bind_register_context(*args, **kwargs):
+    return ai_invoke_worker._bind_register_context(*args, **kwargs)
+
+def _classify_end_reason(*args, **kwargs):
+    return ai_invoke_worker._classify_end_reason(*args, **kwargs)
+
+def _conversation_context(*args, **kwargs):
+    return ai_invoke_worker._conversation_context(*args, **kwargs)
+
+def _conversation_turn_register(*args, **kwargs):
+    return ai_invoke_worker._conversation_turn_register(*args, **kwargs)
+
+def _execute_provider_chain(*args, **kwargs):
+    return ai_invoke_worker._execute_provider_chain(*args, **kwargs)
+
+def _format_span(*args, **kwargs):
+    return ai_invoke_worker._format_span(*args, **kwargs)
+
+def _has_pending_question(*args, **kwargs):
+    return ai_invoke_worker._has_pending_question(*args, **kwargs)
+
+def _inbox_register(*args, **kwargs):
+    return ai_invoke_worker._inbox_register(*args, **kwargs)
+
+def _judge_hop(*args, **kwargs):
+    return ai_invoke_worker._judge_hop(*args, **kwargs)
+
+def _no_output_detail(*args, **kwargs):
+    return ai_invoke_worker._no_output_detail(*args, **kwargs)
+
+def _now_mono(*args, **kwargs):
+    return ai_invoke_worker._now_mono(*args, **kwargs)
+
+def _oracle_new_docs(*args, **kwargs):
+    return ai_invoke_worker._oracle_new_docs(*args, **kwargs)
+
+def _persist_register_context_failures(*args, **kwargs):
+    return ai_invoke_worker._persist_register_context_failures(*args, **kwargs)
+
+def _persist_run_record(*args, **kwargs):
+    return ai_invoke_worker._persist_run_record(*args, **kwargs)
+
+def _prepare_retry_token(*args, **kwargs):
+    return ai_invoke_worker._prepare_retry_token(*args, **kwargs)
+
+def _register_envelope(*args, **kwargs):
+    return ai_invoke_worker._register_envelope(*args, **kwargs)
+
+def _remaining_sec(*args, **kwargs):
+    return ai_invoke_worker._remaining_sec(*args, **kwargs)
+
+def _reset_attempt_state(*args, **kwargs):
+    return ai_invoke_worker._reset_attempt_state(*args, **kwargs)
+
+def _resolve_conflict(*args, **kwargs):
+    return ai_invoke_worker._resolve_conflict(*args, **kwargs)
+
+def _resolve_stop_code(*args, **kwargs):
+    return ai_invoke_worker._resolve_stop_code(*args, **kwargs)
+
+def _resolve_timeout_diagnostics(*args, **kwargs):
+    return ai_invoke_worker._resolve_timeout_diagnostics(*args, **kwargs)
+
+def _retry_eligible(*args, **kwargs):
+    return ai_invoke_worker._retry_eligible(*args, **kwargs)
+
+def _retry_provider_chain(*args, **kwargs):
+    return ai_invoke_worker._retry_provider_chain(*args, **kwargs)
+
+def _retry_remaining_sec(*args, **kwargs):
+    return ai_invoke_worker._retry_remaining_sec(*args, **kwargs)
+
+def _run_register_context(*args, **kwargs):
+    return ai_invoke_worker._run_register_context(*args, **kwargs)
+
+def _settle_and_judge(*args, **kwargs):
+    return ai_invoke_worker._settle_and_judge(*args, **kwargs)
+
+def _stall_remaining_sec(*args, **kwargs):
+    return ai_invoke_worker._stall_remaining_sec(*args, **kwargs)
+
+def _stop_reason_text(*args, **kwargs):
+    return ai_invoke_worker._stop_reason_text(*args, **kwargs)
+
+def _tool_result_msg(*args, **kwargs):
+    return ai_invoke_worker._tool_result_msg(*args, **kwargs)
+
+def _work_landed(*args, **kwargs):
+    return ai_invoke_worker._work_landed(*args, **kwargs)
+
+def _workflow_decide(*args, **kwargs):
+    return ai_invoke_worker._workflow_decide(*args, **kwargs)
+
+def finished_payload(*args, **kwargs):
+    return ai_invoke_worker.finished_payload(*args, **kwargs)
+
+def is_resumable(*args, **kwargs):
+    return ai_invoke_worker.is_resumable(*args, **kwargs)
+
+def mark_chain_stop(*args, **kwargs):
+    return ai_invoke_worker.mark_chain_stop(*args, **kwargs)
+
+def mark_group_lease_denied(*args, **kwargs):
+    return ai_invoke_worker.mark_group_lease_denied(*args, **kwargs)
+
+def previous_timeout_handoff(*args, **kwargs):
+    return ai_invoke_worker.previous_timeout_handoff(*args, **kwargs)
+
+def stamp_chain_stop(*args, **kwargs):
+    return ai_invoke_worker.stamp_chain_stop(*args, **kwargs)
+
+def stop_reason_text(*args, **kwargs):
+    return ai_invoke_worker.stop_reason_text(*args, **kwargs)
+
+# owner: ai_invoke_chain.py (chain/pause-resume/handoff)
+def _broadcast(*args, **kwargs):
+    return ai_invoke_chain._broadcast(*args, **kwargs)
+
+def _clear_handoff_row(*args, **kwargs):
+    return ai_invoke_chain._clear_handoff_row(*args, **kwargs)
+
+def _handoff_bundle(*args, **kwargs):
+    return ai_invoke_chain._handoff_bundle(*args, **kwargs)
+
+def _next_incomplete_item_seq(*args, **kwargs):
+    return ai_invoke_chain._next_incomplete_item_seq(*args, **kwargs)
+
+def _open_q_doc_ids(*args, **kwargs):
+    return ai_invoke_chain._open_q_doc_ids(*args, **kwargs)
+
+def _paused_row_resume_state(*args, **kwargs):
+    return ai_invoke_chain._paused_row_resume_state(*args, **kwargs)
+
+def _provider_brief(*args, **kwargs):
+    return ai_invoke_chain._provider_brief(*args, **kwargs)
+
+def _sequence_completion_state(*args, **kwargs):
+    return ai_invoke_chain._sequence_completion_state(*args, **kwargs)
+
+def _spawn_auto_resume(*args, **kwargs):
+    return ai_invoke_chain._spawn_auto_resume(*args, **kwargs)
+
+def active_all(*args, **kwargs):
+    return ai_invoke_chain.active_all(*args, **kwargs)
+
+def cancel_run(*args, **kwargs):
+    return ai_invoke_chain.cancel_run(*args, **kwargs)
+
+def clear_auto_resume(*args, **kwargs):
+    return ai_invoke_chain.clear_auto_resume(*args, **kwargs)
+
+def get_status(*args, **kwargs):
+    return ai_invoke_chain.get_status(*args, **kwargs)
+
+def has_active_run(*args, **kwargs):
+    return ai_invoke_chain.has_active_run(*args, **kwargs)
+
+def mark_user_paused(*args, **kwargs):
+    return ai_invoke_chain.mark_user_paused(*args, **kwargs)
+
+def pause_run(*args, **kwargs):
+    return ai_invoke_chain.pause_run(*args, **kwargs)
+
+def peek_auto_resume(*args, **kwargs):
+    return ai_invoke_chain.peek_auto_resume(*args, **kwargs)
+
+def pop_auto_resume(*args, **kwargs):
+    return ai_invoke_chain.pop_auto_resume(*args, **kwargs)
+
+def release_paused_chain(*args, **kwargs):
+    return ai_invoke_chain.release_paused_chain(*args, **kwargs)
+
+def request_auto_resume(*args, **kwargs):
+    return ai_invoke_chain.request_auto_resume(*args, **kwargs)
+
+def resume_chain(*args, **kwargs):
+    return ai_invoke_chain.resume_chain(*args, **kwargs)
+
+def startup_recover_handoffs(*args, **kwargs):
+    return ai_invoke_chain.startup_recover_handoffs(*args, **kwargs)
+
+# owner: ai_invoke_review.py (review/rework gate)
+def _append_engine_review_clause(*args, **kwargs):
+    return ai_invoke_review._append_engine_review_clause(*args, **kwargs)
+
+def _auto_reject(*args, **kwargs):
+    return ai_invoke_review._auto_reject(*args, **kwargs)
+
+def _checkpoint_document_review_loop(*args, **kwargs):
+    return ai_invoke_review._checkpoint_document_review_loop(*args, **kwargs)
+
+def _insert_document_review_loop(*args, **kwargs):
+    return ai_invoke_review._insert_document_review_loop(*args, **kwargs)
+
+def _latest_review_of(*args, **kwargs):
+    return ai_invoke_review._latest_review_of(*args, **kwargs)
+
+def _log_review_annotation_failure(*args, **kwargs):
+    return ai_invoke_review._log_review_annotation_failure(*args, **kwargs)
+
+def _parse_rejection_history(*args, **kwargs):
+    return ai_invoke_review._parse_rejection_history(*args, **kwargs)
+
+def _pending_review_slot(*args, **kwargs):
+    return ai_invoke_review._pending_review_slot(*args, **kwargs)
+
+def _provider_name_of(*args, **kwargs):
+    return ai_invoke_review._provider_name_of(*args, **kwargs)
+
+def _restore_document_review_loop(*args, **kwargs):
+    return ai_invoke_review._restore_document_review_loop(*args, **kwargs)
+
+def _resumable_reviewer_overrides(*args, **kwargs):
+    return ai_invoke_review._resumable_reviewer_overrides(*args, **kwargs)
+
+def _review_already_rejected(*args, **kwargs):
+    return ai_invoke_review._review_already_rejected(*args, **kwargs)
+
+def _spawn_review_hop(*args, **kwargs):
+    return ai_invoke_review._spawn_review_hop(*args, **kwargs)
+
+def active_review_selection(*args, **kwargs):
+    return ai_invoke_review.active_review_selection(*args, **kwargs)
+
+def build_auto_reject_reason(*args, **kwargs):
+    return ai_invoke_review.build_auto_reject_reason(*args, **kwargs)
+
+def build_document_review_loop_history(*args, **kwargs):
+    return ai_invoke_review.build_document_review_loop_history(*args, **kwargs)
+
+def check_expected_progress(*args, **kwargs):
+    return ai_invoke_review.check_expected_progress(*args, **kwargs)
+
+def compute_review_baseline(*args, **kwargs):
+    return ai_invoke_review.compute_review_baseline(*args, **kwargs)
+
+def document_review_loop_payload(*args, **kwargs):
+    return ai_invoke_review.document_review_loop_payload(*args, **kwargs)
+
+def resolve_document_review_loop_gate(*args, **kwargs):
+    return ai_invoke_review.resolve_document_review_loop_gate(*args, **kwargs)
+
+def resolve_loop_provider(*args, **kwargs):
+    return ai_invoke_review.resolve_loop_provider(*args, **kwargs)
+
+def resolve_review_count(*args, **kwargs):
+    return ai_invoke_review.resolve_review_count(*args, **kwargs)
+
+def resolve_reviewer(*args, **kwargs):
+    return ai_invoke_review.resolve_reviewer(*args, **kwargs)
+
+def resolve_round_limit(*args, **kwargs):
+    return ai_invoke_review.resolve_round_limit(*args, **kwargs)
+
+def resolve_step_executor(*args, **kwargs):
+    return ai_invoke_review.resolve_step_executor(*args, **kwargs)
+
+def review_rounds_remain(*args, **kwargs):
+    return ai_invoke_review.review_rounds_remain(*args, **kwargs)
+
+def run_review_gate(*args, **kwargs):
+    return ai_invoke_review.run_review_gate(*args, **kwargs)
+
+# owner: ai_invoke_helpers.py (pure helpers)
+def review_finding_digest(*args, **kwargs):
+    return ai_invoke_helpers.review_finding_digest(*args, **kwargs)
+
+# ── Facade re-exports: real-object bindings ───────────────────────────────────────────
+#
+# These bind the ACTUAL owned object (not a wrapper) because callers rely on identity or
+# introspection, not just call-through:
+#   * REVIEW_LOCUS_UNSPECIFIED / REVIEW_PENDING_DOC_STATUSES / REVIEW_REJECT_HEADING /
+#     _TIMEOUT_KINDS are plain data (a wrapper FUNCTION cannot stand in for a constant);
+#   * _map_lookup / _normalize_ws / _review_findings / _review_key are re-imported in
+#     ai_invoke_helpers.py's own callers by several of the five modules already -- binding
+#     the same object here keeps `svc.<name> is ai_invoke_helpers.<name>`;
+#   * _finalize_run / _maybe_auto_resume_hop / _park_handoff / _settle_gate_pass /
+#     _spawn_rework_hop / _worker / _write_handoff_row / resolve_review_gate are read with
+#     `inspect.getsource(...)` / `inspect.signature(...)` by existing regression tests
+#     (e.g. test_document_ai_running_guard_0378.py, test_ai_invoke_review_gate_0414.py) --
+#     a wrapper function would make those introspect the 2-line wrapper instead of the
+#     real implementation.
+#
+# Each bind is best-effort: in the one-of-six-modules-imported-first scenario (T0012 §20)
+# where the owning module of a given name is ITSELF still mid-import at this point, the
+# attribute simply is not defined yet on that (still loading) module either, so the bind
+# is skipped rather than raising -- the fresh-process import test only requires the import
+# to succeed, and no real caller reaches ai_invoke_service before this module's own core,
+# so every real caller (this module's own bottom-of-file position IS the entry point in
+# every case except that one fresh-process sweep) observes the real binding.
+try:
+    REVIEW_LOCUS_UNSPECIFIED = ai_invoke_review.REVIEW_LOCUS_UNSPECIFIED
+except AttributeError:
+    pass
+try:
+    REVIEW_PENDING_DOC_STATUSES = ai_invoke_review.REVIEW_PENDING_DOC_STATUSES
+except AttributeError:
+    pass
+try:
+    REVIEW_REJECT_HEADING = ai_invoke_review.REVIEW_REJECT_HEADING
+except AttributeError:
+    pass
+try:
+    _settle_gate_pass = ai_invoke_review._settle_gate_pass
+except AttributeError:
+    pass
+try:
+    _spawn_rework_hop = ai_invoke_review._spawn_rework_hop
+except AttributeError:
+    pass
+try:
+    resolve_review_gate = ai_invoke_review.resolve_review_gate
+except AttributeError:
+    pass
+try:
+    LEASE_DENIAL_RECORD_LIMIT = ai_invoke_worker.LEASE_DENIAL_RECORD_LIMIT
+except AttributeError:
+    pass
+try:
+    _TIMEOUT_KINDS = ai_invoke_worker._TIMEOUT_KINDS
+except AttributeError:
+    pass
+try:
+    _finalize_run = ai_invoke_worker._finalize_run
+except AttributeError:
+    pass
+try:
+    _worker = ai_invoke_worker._worker
+except AttributeError:
+    pass
+try:
+    _maybe_auto_resume_hop = ai_invoke_chain._maybe_auto_resume_hop
+except AttributeError:
+    pass
+try:
+    _park_handoff = ai_invoke_chain._park_handoff
+except AttributeError:
+    pass
+try:
+    _write_handoff_row = ai_invoke_chain._write_handoff_row
+except AttributeError:
+    pass
+try:
+    _map_lookup = ai_invoke_helpers.map_lookup
+except AttributeError:
+    pass
+try:
+    _normalize_ws = ai_invoke_helpers.normalize_ws
+except AttributeError:
+    pass
+try:
+    _review_findings = ai_invoke_helpers.review_findings
+except AttributeError:
+    pass
+try:
+    _review_key = ai_invoke_helpers.review_key
+except AttributeError:
+    pass

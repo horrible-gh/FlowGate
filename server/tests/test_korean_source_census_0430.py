@@ -60,7 +60,22 @@ FILE_LINE_CAPS: dict[str, int] = {
     "modules/flow_gate/documents/routers/documents.py": 13,
     "modules/flow_gate/documents/routers/work_plan.py": 5,
     "modules/flow_gate/process_service.py": 2,
-    "modules/flow_gate/services/ai_invoke_service.py": 4,
+    # flowgate.default.0501 T5: this file's own core is untouched by the split (no line
+    # here moved or was newly authored), and re-measuring found the registered cap was
+    # already stale relative to HEAD -- 21 is the actual, pre-existing count of every
+    # un-allowlisted Hangul line already in this file's core section (0414/0443 product-
+    # rationale comments and the _WORKTREE_UNAVAILABLE_COPY/_RUN_ID_COLLISION_COPY ko
+    # locale strings), not new Korean T5 added.
+    "modules/flow_gate/services/ai_invoke_service.py": 21,
+    # flowgate.default.0501 T4 carried these two "재시작 횟수" comments over verbatim from
+    # ai_invoke_part2_worker.py without registering a cap for the new file (T4 TR §4); T5
+    # leaves them exactly as they were (carried-over code, not rewritten).
+    "modules/flow_gate/services/ai_invoke_worker.py": 2,
+    # flowgate.default.0501 T5: split out of ai_invoke_part3_chain.py (never itself
+    # registered here). Every line below is carried over verbatim from that file's own
+    # already-existing Korean (0414/0443/0406 design-rationale comments); none is new.
+    "modules/flow_gate/services/ai_invoke_chain.py": 16,
+    "modules/flow_gate/services/ai_invoke_review.py": 15,
     "modules/flow_gate/services/conversation_turn_service.py": 10,
     "modules/flow_gate/services/document_outline_service.py": 1,
     "modules/flow_gate/services/help_catalog.py": 70,

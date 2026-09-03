@@ -16,18 +16,18 @@ This file covers the two conditions T4 itself named as the hard requirement:
     fake)` pattern must still be observed by the REAL worker path even though the
     call site (`_api_execute`, now in ai_invoke_worker.py) and the callee
     (`_call_openai`/`_call_anthropic`, now in ai_invoke_provider_api.py) live in
-    different files. This works because every part file is exec()'d into
-    ai_invoke_service's own globals() by `_load_parts()` (see that module's
-    docstring): a bare global-name reference in ai_invoke_worker.py resolves through
-    THAT SAME globals dict `monkeypatch.setattr(svc, ...)` patches, at call time --
-    no lazy-import indirection needed, unlike ai_invoke_runtime.py's registry
-    accessors (a NORMALLY-imported module with its own separate globals dict).
+    different files. flowgate.default.0501 T5 replaced the exec()-assembled shared
+    globals() dict with normal imports: `ai_invoke_worker.py` reaches
+    `svc._call_openai`/`svc._call_anthropic` through `svc` (`ai_invoke_service`,
+    imported once at its own top), so `monkeypatch.setattr(svc, ...)` still patches
+    exactly the attribute every caller resolves through, the same seam
+    ai_invoke_runtime.py's registry accessors already relied on this pattern for.
   * the import-dependency guard: neither provider module may import
-    ai_invoke_part3_chain, review/rework/chain-progression, group lease DB access,
-    or the runtime registry owner (ai_invoke_runtime.py) -- and ai_invoke_worker.py
-    does not itself define lease-acquisition-policy or run-id-allocation logic
-    (those stay in ai_invoke_service.py / ai_invoke_runtime.py; worker orchestration
-    only calls into them).
+    ai_invoke_chain, ai_invoke_review, group lease DB access, or the runtime
+    registry owner (ai_invoke_runtime.py) -- and ai_invoke_worker.py does not itself
+    define lease-acquisition-policy or run-id-allocation logic (those stay in
+    ai_invoke_service.py / ai_invoke_runtime.py; worker orchestration only calls
+    into them).
 """
 from __future__ import annotations
 
@@ -167,7 +167,8 @@ class TestImportDependencyGuard:
     does not own lease-acquisition policy or run-id allocation itself."""
 
     _FORBIDDEN_SUFFIXES = (
-        "ai_invoke_part3_chain",
+        "ai_invoke_chain",
+        "ai_invoke_review",
         "ai_invoke_runtime",
         "group_ai_leases",
     )
@@ -211,9 +212,8 @@ class TestImportDependencyGuard:
         assert not offenders, f"ai_invoke_worker.py should not define {offenders}"
 
     def test_provider_modules_do_not_call_exec_or_eval(self):
-        """Both provider modules are themselves exec()'d by _load_parts() -- but
-        neither should itself call exec/eval, which would be a second, unaudited
-        layer of code assembly inside a module that is supposed to be pure
+        """Neither provider module should itself call exec/eval, which would be an
+        unaudited layer of code assembly inside a module that is supposed to be pure
         transport."""
         for path in (_PROVIDER_API_PATH, _PROVIDER_CLI_PATH):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))

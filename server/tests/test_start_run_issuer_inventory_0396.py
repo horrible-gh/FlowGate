@@ -34,8 +34,12 @@ def _is_start_run_call(node: ast.Call) -> bool:
     func = node.func
     return (
         isinstance(func, ast.Attribute)
+        # flowgate.default.0501 T5: ai_invoke_chain.py / ai_invoke_review.py / etc. all
+        # reach the facade through the `svc` alias (the same one every existing
+        # `monkeypatch.setattr(svc, ...)` call already assumes), not the module's own
+        # full name -- both spellings mean the same call.
         and isinstance(func.value, ast.Name)
-        and func.value.id == "ai_invoke_service"
+        and func.value.id in ("ai_invoke_service", "svc")
         and func.attr == "start_run"
     ) or (isinstance(func, ast.Name) and func.id == "start_run")
 
@@ -159,9 +163,11 @@ def test_every_start_run_custom_issuer_accepts_the_run_id():
         ("modules/flow_gate/api/v1/qa_routes.py", "post_answer"),
         ("modules/flow_gate/services/q_answer_invoke_service.py", "dispatch_answer_run"),
         # 0497 T0009 split ai_invoke_service.py into three files; both self-chain callers
-        # moved verbatim into part 3. The inventory still walks all of modules/**.
-        ("modules/flow_gate/services/ai_invoke_part3_chain.py", "_spawn_auto_resume"),
-        ("modules/flow_gate/services/ai_invoke_part3_chain.py", "resume_chain"),
+        # moved verbatim into part 3, which flowgate.default.0501 T5 re-split into
+        # ai_invoke_chain.py / ai_invoke_review.py -- both callers landed in chain.
+        # The inventory still walks all of modules/**.
+        ("modules/flow_gate/services/ai_invoke_chain.py", "_spawn_auto_resume"),
+        ("modules/flow_gate/services/ai_invoke_chain.py", "resume_chain"),
     }
     assert expected <= identities, (
         "start_run inventory missed known production callers: "

@@ -1,10 +1,13 @@
 # ────────────────────── ai_invoke_service part — worker orchestration ──────────────────────
 #
-# Not imported on its own in production: ai_invoke_service._load_parts() executes this
-# file in THAT module's globals() (flowgate.default.0501 T4 — split out of
-# ai_invoke_part2_worker.py, itself flowgate.default.0497 T0009's part 2 of 3). The lines
-# below were carried over verbatim from ai_invoke_part2_worker.py, nothing was rewritten.
-# See the file-split note in ai_invoke_service.py's module docstring.
+# A normal Python module (flowgate.default.0501 T5 retires the exec()-assembled part-file
+# scheme T4 left in place). Non-monkeypatched core constants are a plain
+# `from .ai_invoke_service import (...)` at this file's top; the `ai_invoke_chain`/
+# `ai_invoke_review`/`ai_invoke_provider_api`-owned helpers this file needs that no test
+# monkeypatches (e.g. `ai_invoke_chain._provider_brief`, `ai_invoke_provider_api.
+# _resolve_transport_api_base`) are a direct `from . import ai_invoke_<sibling>` and called
+# as `ai_invoke_<sibling>.<name>(...)`. See ai_invoke_service.py's own module docstring for
+# the full picture.
 #
 # Holds: provider-neutral worker orchestration — the hop/attempt loop and provider fallback
 # walk (_worker / _execute_provider_chain / _classify_end_reason), the no-output retry
@@ -24,16 +27,14 @@
 # ai_invoke_provider_api.py: it interleaves the raw HTTP turn-taking with dispatching
 # tool_calls to the FlowGate-tool functions above closely enough that a further split risked
 # behavior change (T4 §22 explicit guidance: when ambiguous, move less).
-# It calls `_call_openai` / `_call_anthropic` (defined in ai_invoke_provider_api.py) for the
-# raw model call, resolved as plain global names — this file, like its provider-module
-# siblings, is exec()'d into ai_invoke_service's own globals() by `_load_parts()`, so a bare
-# name reference here already resolves through THAT module's current globals dict at call
-# time. A test that does `monkeypatch.setattr(svc, "_call_openai", fake)` is setting exactly
-# the dict these names are looked up in — no separate lazy-import indirection is needed
-# (unlike ai_invoke_runtime.py's registry accessors, which live in a NORMALLY-imported
-# module with its own separate globals dict, and therefore need the lazy
-# `from ... import ai_invoke_service as svc; svc._runs` pattern to see a test's
-# reassignment). See test_ai_invoke_provider_boundary_0501.py for the regression lock.
+# It calls `svc._call_openai` / `svc._call_anthropic` (defined in ai_invoke_provider_api.py)
+# for the raw model call, reached through `svc` (`ai_invoke_service`, imported once below)
+# like every other cross-module reference in this file — T5 (flowgate.default.0501)
+# retired the shared exec() globals() dict every part file used to be assembled into.
+# `monkeypatch.setattr(svc, "_call_openai", fake)` still patches exactly the attribute
+# `svc._call_openai` resolves at call time, the same seam ai_invoke_runtime.py's registry
+# accessors already relied on this pattern for (see that module's own docstring). See
+# test_ai_invoke_provider_boundary_0501.py for the regression lock.
 #
 # Keep provider-neutral: no raw HTTP JSON shape details (ai_invoke_provider_api.py), no
 # subprocess details (ai_invoke_provider_cli.py) — those are called through the two sibling
@@ -78,13 +79,60 @@ from modules.flow_gate.settings import ai_settings_service
 from modules.flow_gate.storage import paths as storage_paths
 from modules.flow_gate.utils.api_key_crypto import ApiKeyCryptoError
 
-# Imported directly (tooling that walks the package) rather than executed by
-# _load_parts(): the earlier parts' names are missing, so take them from the
-# assembled module. Under _load_parts() they are already here and this is a no-op.
-if "RUN_TIMEOUT_BASE_SEC" not in globals():
-    from modules.flow_gate.services import ai_invoke_service as _assembled
-    globals().update({k: v for k, v in vars(_assembled).items()
-                      if not k.startswith("__")})
+from modules.flow_gate.services import ai_invoke_service as svc
+
+from modules.flow_gate.services.ai_invoke_service import (
+    API_CALL_MAX_TIMEOUT_SEC,
+    ENGINE_NOTIFY_STOP_CODES,
+    HOP_HANDOFF_FAILED_STOP_CODE,
+    HOP_HANDOFF_STOP_CODE,
+    INBOX_NOTIFY_STOP_CODES,
+    LAST_MESSAGE_MAX_BYTES,
+    NO_OUTPUT_MAX_ATTEMPTS,
+    RESUMABLE_STOP_CODES,
+    RETRY_MIN_REMAINING_SEC,
+    REVIEW_CAP_REACHED_STOP_CODE,
+    REVIEW_EXHAUSTED_STOP_CODE,
+    REVIEW_NO_VERDICT_STOP_CODE,
+    REVIEW_REJECT_DENIED_STOP_CODE,
+    REVIEW_REJECT_FAILED_STOP_CODE,
+    REVIEW_STALLED_STOP_CODE,
+    REVIEW_VERDICT_HOLD_STOP_CODE,
+    REWORK_HOP_KIND,
+    SOURCE_DIRTY_FILES_LIMIT,
+    _CHAT_TOOL_DESC,
+    _CHAT_TOOL_NAME,
+    _CHAT_TOOL_SCHEMA,
+    _DECIDE_TOOL_DESC,
+    _DECIDE_TOOL_NAME,
+    _DECIDE_TOOL_SCHEMA,
+    _REGISTER_TOOL_DESC,
+    _REGISTER_TOOL_NAME,
+    _REGISTER_TOOL_SCHEMA,
+    _RESOLVE_TOOL_DESC,
+    _RESOLVE_TOOL_NAME,
+    _RESOLVE_TOOL_SCHEMA,
+    _call_issue_builder,
+    _continuation_docs_target,
+    _inject_hop_notes,
+    _known_run_prompts,
+    _known_run_raw_tokens,
+    _mark_scratch_completed,
+    _note_issued_prompt,
+    _note_issued_raw_token,
+    _redact_secrets,
+    _review_hop_recovery_open,
+    _review_hop_recovery_run,
+    _runs_lock,
+    _safe_scratch_log,
+    _scope_oracle_retry_run,
+    excerpt,
+    logger,
+    prompt_digest,
+)
+from modules.flow_gate.services import ai_invoke_chain
+from modules.flow_gate.services import ai_invoke_provider_api
+from modules.flow_gate.services import ai_invoke_review
 
 # ── Worker: provider fallback loop (L0006 §2.2) ──────────────────────────────
 
@@ -101,12 +149,12 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
     try:
         current_chain = chain
         current_prompt = prompt
-        run["provider"] = _provider_brief(current_chain[0])
+        run["provider"] = ai_invoke_chain._provider_brief(current_chain[0])
         run["provider_id"] = current_chain[0].get("id")
         run["attempt_no"] = 1
         # Exactly once per run, however many attempts follow (P0006 appendix D: no new event
         # types — a retry is reported as a provider switch, which the UI already draws).
-        _broadcast(run, "ai_invoke_started", {
+        svc._broadcast(run, "ai_invoke_started", {
             "run_id": run["run_id"],
             "group_id": run["group_id"],
             "doc_ref": run["doc_ref"],
@@ -127,15 +175,15 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
         })
 
         while True:
-            started_ok = _execute_provider_chain(run, current_chain, current_prompt)
-            _classify_end_reason(run, started_ok)
-            _judge_hop(run)
+            started_ok = svc._execute_provider_chain(run, current_chain, current_prompt)
+            svc._classify_end_reason(run, started_ok)
+            svc._judge_hop(run)
             run["attempts_used"] = int(run.get("attempts_used") or 0) + 1
 
             # A document review loop owns the hop boundary. Checkpoint the durable effect,
             # then either stop or mint the next stage token and continue under its fixed provider.
             if run.get("document_review_loop"):
-                loop = _checkpoint_document_review_loop(run)
+                loop = ai_invoke_review._checkpoint_document_review_loop(run)
                 run["document_review_loop_checkpointed"] = True
                 if not loop or loop.get("current_stage") == "stopped":
                     break
@@ -147,8 +195,8 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
                 loop_issue_builder = run.get("issue_builder")
                 if loop_issue_builder is not None:
                     loop_issue_builder.loop_stage = loop["current_stage"]
-                prepared = _prepare_retry_token(run)
-                selected_id = resolve_loop_provider(loop, loop["current_stage"])
+                prepared = svc._prepare_retry_token(run)
+                selected_id = ai_invoke_review.resolve_loop_provider(loop, loop["current_stage"])
                 enabled = ai_settings_service.resolve_effective(run["project_id"]).get("providers") or []
                 selected = next((item for item in enabled if item.get("id") == selected_id), None)
                 if prepared is None or selected is None:
@@ -157,9 +205,9 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
                     run["last_message"] = "next review-loop stage could not be scheduled"
                     run["document_review_loop_checkpointed"] = False
                     break
-                _reset_attempt_state(run)
+                svc._reset_attempt_state(run)
                 run["hop_kind"] = loop["current_stage"]
-                run["provider"] = _provider_brief(selected)
+                run["provider"] = ai_invoke_chain._provider_brief(selected)
                 run["provider_id"] = selected_id
                 run["attempt_no"] = int(run.get("attempt_no") or 0) + 1
                 run["document_review_loop_checkpointed"] = False
@@ -179,20 +227,20 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
             if not next_chain:
                 run["retry_block_reason"] = "providers_exhausted_for_retry"
                 break
-            prepared = _prepare_retry_token(run)
+            prepared = svc._prepare_retry_token(run)
             if prepared is None:
                 run["retry_block_reason"] = "token_unavailable"
                 break
 
             previous = run.get("provider") or {}
             _archive_attempt(run, "no_output", prepared["token_id_before"])
-            _reset_attempt_state(run)
+            svc._reset_attempt_state(run)
             current_chain = next_chain
             current_prompt = prepared["mention"]
-            run["provider"] = _provider_brief(current_chain[0])
+            run["provider"] = ai_invoke_chain._provider_brief(current_chain[0])
             run["provider_id"] = current_chain[0].get("id")
             run["attempt_no"] = len(run["fallback_history"]) + 1
-            _broadcast(run, "ai_invoke_provider_switched", {
+            svc._broadcast(run, "ai_invoke_provider_switched", {
                 "run_id": run["run_id"],
                 "group_id": run["group_id"],
                 "from_provider_id": previous.get("id"),
@@ -211,17 +259,17 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
                 "token_reissued": prepared["reissued"],
             })
 
-        _finalize_run(run)
+        svc._finalize_run(run)
         # 0317 TR0011 (Q153 opt-1): the run is now finished, so start_run's active-run guard
         # is clear — re-spawn the next hop's worker if the self-chain flagged a boundary.
-        _maybe_auto_resume_hop(run)
+        ai_invoke_chain._maybe_auto_resume_hop(run)
     except Exception:
         logger.exception("ai-invoke worker crashed for %s", run["run_id"])
         run["end_reason"] = run.get("end_reason") or "exited"
         try:
             # A crashed attempt is never retried (L0007 §2.1): judge what it left, close out.
-            _judge_hop(run)
-            _finalize_run(run)
+            svc._judge_hop(run)
+            svc._finalize_run(run)
         except Exception:
             logger.exception("ai-invoke settle failed for %s", run["run_id"])
             run["status"] = "finished"
@@ -231,12 +279,12 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
         # that does not spawn: _finalize_run only calls begin_handoff when it sees pending
         # and skips release, so just clearing it blocks the group until the lease expires.
         # A durable row lets the user resume the chain from the same place.
-        crashed_pending = pop_auto_resume(run.get("group_id"))
+        crashed_pending = ai_invoke_chain.pop_auto_resume(run.get("group_id"))
         if crashed_pending is not None:
             crashed_code = run.get("stop_code") or HOP_HANDOFF_FAILED_STOP_CODE
             if crashed_code == HOP_HANDOFF_STOP_CODE:
                 crashed_code = HOP_HANDOFF_FAILED_STOP_CODE
-            _park_handoff(run, crashed_pending, crashed_code)
+            svc._park_handoff(run, crashed_pending, crashed_code)
 
 def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
     """One attempt: walk the provider chain until one actually STARTS (L0006 §2.2).
@@ -254,10 +302,10 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
             break
         if index > 0:
             prev = chain[index - 1]
-            run["provider"] = _provider_brief(provider)
+            run["provider"] = ai_invoke_chain._provider_brief(provider)
             run["provider_id"] = provider.get("id")
             run["attempt_no"] = len(run["fallback_history"]) + 1
-            _broadcast(run, "ai_invoke_provider_switched", {
+            svc._broadcast(run, "ai_invoke_provider_switched", {
                 "run_id": run["run_id"],
                 "group_id": run["group_id"],
                 "from_provider_id": prev.get("id"),
@@ -272,9 +320,9 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
             })
 
         if provider.get("exec_type") == "api":
-            classification, detail = _api_execute(provider, prompt, run)
+            classification, detail = svc._api_execute(provider, prompt, run)
         else:
-            classification, detail = _cli_execute(provider, prompt, run)
+            classification, detail = svc._cli_execute(provider, prompt, run)
 
         if classification == "started_ok":
             started_ok = True
@@ -385,7 +433,7 @@ def _retry_eligible(run: dict) -> bool:
         run.get("mode"), run.get("action_scope"), run.get("scope_oracle_run"),
         run.get("hop_kind"),
     )
-    if peek_auto_resume(run.get("group_id")) is not None and not review_hop_recovery:
+    if svc.peek_auto_resume(run.get("group_id")) is not None and not review_hop_recovery:
         # flowgate.default.0466 T0007: this check predates the review gate (0359 L0007
         # §2.4) and reads a queue entry as proof THIS hop already produced a document and
         # handed off — true for the continuous chains it was written for, where
@@ -416,7 +464,7 @@ def _retry_eligible(run: dict) -> bool:
         return False
     # Reached with outcome == "none": a hop that only registered a Q looks exactly like one
     # that died, and the guard below is the only thing that tells them apart (§3-2).
-    if _has_pending_question(run.get("doc_ref")):
+    if svc._has_pending_question(run.get("doc_ref")):
         # NR0003 follow-up proposal 1: this hop stopped to wait for a human answer, not because
         # it failed — spending another attempt (and another provider) on a question the
         # human has not even seen yet would waste both without ever getting a different
@@ -484,14 +532,14 @@ def _recheck_no_output(run: dict) -> bool:
         run["oracle_mismatch"] = False
         return False
     try:
-        new_docs = _oracle_new_docs(run)
+        new_docs = svc._oracle_new_docs(run)
     except Exception:
         logger.warning("ai-invoke retry recheck failed for %s", run["run_id"], exc_info=True)
         return True
     if not new_docs:
         return True
     hop_target = run.get("docs_target") or 1
-    if run.get("mode") == "continuous" and peek_auto_resume(run.get("group_id")) is not None:
+    if run.get("mode") == "continuous" and svc.peek_auto_resume(run.get("group_id")) is not None:
         hop_target = 1
     run["docs_reached"] = len(new_docs)
     run["reached_doc_ids"] = [d["doc_id"] for d in new_docs]
@@ -785,7 +833,7 @@ def _stall_remaining_sec(run: dict) -> float:
     anchor = run.get("stall_anchor_mono")
     if anchor is None:
         anchor = run["started_mono"]
-    return run["timeout_sec"] - (_now_mono() - anchor)
+    return run["timeout_sec"] - (svc._now_mono() - anchor)
 
 def _absolute_cap_sec() -> int:
     """The run's hard ceiling, in seconds (0446 T0014 §2-4).
@@ -798,7 +846,7 @@ def _absolute_cap_sec() -> int:
     one second to prove the timeout path, and a bound-at-import alias would have
     silently ignored it.
     """
-    return RUN_TIMEOUT_CAP_SEC
+    return svc.RUN_TIMEOUT_CAP_SEC
 
 def _absolute_remaining_sec(run: dict) -> float:
     """Seconds left before the run's hard ceiling (0446 T0014 §2-4).
@@ -806,7 +854,7 @@ def _absolute_remaining_sec(run: dict) -> float:
     Measured from `started_mono` — the HOP's start, not the attempt's — so a no-output
     retry inherits what is left of the four hours instead of being handed a fresh four.
     """
-    return _absolute_cap_sec() - (_now_mono() - run["started_mono"])
+    return _absolute_cap_sec() - (svc._now_mono() - run["started_mono"])
 
 def _retry_remaining_sec(run: dict) -> float:
     """The budget the retry gate asks about: how long could another attempt run?
@@ -911,7 +959,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     kind = provider.get("kind") or "openai"
     base_url = (provider.get("api_base_url") or "").rstrip("/")
     model = provider.get("api_model") or ""
-    max_turns = max(API_MAX_TURNS_PER_DOC, max(1, run["docs_target"]) * API_MAX_TURNS_PER_DOC)
+    max_turns = max(svc.API_MAX_TURNS_PER_DOC, max(1, run["docs_target"]) * svc.API_MAX_TURNS_PER_DOC)
 
     current_token = run["raw_token"]
     # 0492 T0018 item 1: the run's four register axes and the token they are bound to
@@ -923,19 +971,19 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     is_chat = run.get("action_scope") == "chat"
     last_text: Optional[str] = None
     conversation: list[dict] = [
-        {"role": "system", "content": _api_system_prompt()},
-        {"role": "user", "content": _api_help_prompt(prompt)},
+        {"role": "system", "content": ai_invoke_provider_api._api_system_prompt()},
+        {"role": "user", "content": ai_invoke_provider_api._api_help_prompt(prompt)},
     ]
     if is_chat:
         # 0505 T0006 (DB0005 3.3): the FIRST self-HTTP this hop may open. Its status/
         # error land in the same three columns as the other five mediated calls, and a
         # failure here ends the hop before the turn loop -- but the same `run` object
         # carries the three fields into persist_run_record/finished_payload regardless.
-        status, chat_context = _conversation_context(run, current_token)
+        status, chat_context = svc._conversation_context(run, current_token)
         run["last_tool_name"] = "conversation_context"
         run["last_tool_status"] = status
         if run.get("transport_api_base") is None:
-            run["transport_api_base"] = _sanitize_diagnostic_base(_resolve_transport_api_base(run))
+            run["transport_api_base"] = ai_invoke_provider_api._sanitize_diagnostic_base(ai_invoke_provider_api._resolve_transport_api_base(run))
         if not (200 <= status < 300 and isinstance(chat_context, dict)):
             run["last_tool_error"] = _registration_error_summary(chat_context or {})[:500]
             return "api_error", "conversation_context_unavailable"
@@ -964,7 +1012,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         # subprocess to watch and no watchdog attached, so `_stall_remaining_sec` would
         # return this very number anyway; naming `_remaining_sec` here keeps the API
         # call ceiling and its cancel/timeout behaviour bit-for-bit unchanged.
-        remaining = _remaining_sec(run)
+        remaining = svc._remaining_sec(run)
         if remaining <= 0:
             run["timed_out"] = True
             break
@@ -997,12 +1045,12 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         run["model_http_calls"] = run.get("model_http_calls", 0) + 1
         try:
             if kind == "claude":
-                reply_text, tool_call, assistant_msg = _call_anthropic(
+                reply_text, tool_call, assistant_msg = svc._call_anthropic(
                     base_url, model, key, conversation, call_timeout,
                     tool_name, tool_desc, tool_schema, True,
                 )
             else:
-                reply_text, tool_call, assistant_msg = _call_openai(
+                reply_text, tool_call, assistant_msg = svc._call_openai(
                     base_url, model, key, conversation, call_timeout,
                     tool_name, tool_desc, tool_schema, True,
                 )
@@ -1035,7 +1083,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         if reply_text:
             last_text = reply_text
         tool_calls = tool_call if isinstance(tool_call, list) else ([tool_call] if tool_call else [])
-        is_glm_openai = _is_glm_openai_provider(provider)
+        is_glm_openai = ai_invoke_provider_api._is_glm_openai_provider(provider)
         if tool_specs is None and not is_glm_openai:
             # Restore the established direct-tool boundary before counting calls: a
             # non-GLM provider that returns a name other than the sole exposed tool is
@@ -1044,9 +1092,9 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         run["tool_calls_received"] = run.get("tool_calls_received", 0) + len(tool_calls)
         trace["received"] = len(tool_calls)
         if not tool_calls:
-            trace["disposition"] = "nudge" if run["tool_call_misses"] < API_MAX_TOOL_NUDGES else "no_tool"
+            trace["disposition"] = "nudge" if run["tool_call_misses"] < svc.API_MAX_TOOL_NUDGES else "no_tool"
             run["tool_call_misses"] += 1
-            if run["tool_call_misses"] <= API_MAX_TOOL_NUDGES:
+            if run["tool_call_misses"] <= svc.API_MAX_TOOL_NUDGES:
                 conversation.append({
                     "role": "user",
                     "content": (
@@ -1086,7 +1134,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     _status, resp = api_server_tools.error_payload(
                         call.get("name") or "tool_call", validation_error
                     )
-                    conversation.append(_tool_result_msg(
+                    conversation.append(svc._tool_result_msg(
                         kind, call, json.dumps(resp, ensure_ascii=False)[:16000]
                     ))
                     continue
@@ -1101,7 +1149,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     else:
                         duplicate = api_server_tools.ToolError(422, "invalid_tool_call")
                         _status, resp = api_server_tools.error_payload(call["name"], duplicate)
-                        conversation.append(_tool_result_msg(
+                        conversation.append(svc._tool_result_msg(
                             kind, call, json.dumps(resp, ensure_ascii=False)[:16000]
                         ))
                     continue
@@ -1112,9 +1160,9 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     if call["name"] in api_server_tools.SOURCE_OPS:
                         _status, resp = api_server_tools.source_call(run, current_token, call["name"], call["input"])
                     elif call["name"] == "run_test":
-                        _status, resp = api_server_tools.run_test(run, call["input"], _remaining_sec(run))
+                        _status, resp = api_server_tools.run_test(run, call["input"], svc._remaining_sec(run))
                     elif call["name"] == "read_document":
-                        _status, resp = _api_read_document(run, current_token, call["input"])
+                        _status, resp = svc._api_read_document(run, current_token, call["input"])
                     elif call["name"] == "read_help":
 
                         _status, resp = api_server_tools.read_help(run, current_token, call["input"])
@@ -1137,7 +1185,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     )
                 trace["dispatched"] += 1
                 _api_trace_tool(trace, call["name"], _status)
-                conversation.append(_tool_result_msg(
+                conversation.append(svc._tool_result_msg(
                     kind, call, json.dumps(resp, ensure_ascii=False)[:16000]
                 ))
             if completion_call is None:
@@ -1162,14 +1210,14 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                         api_server_tools.validate(tool_schema, call.get("input"))
                     except api_server_tools.ToolError as exc:
                         _status, resp = api_server_tools.error_payload(call_name or "tool_call", exc)
-                        conversation.append(_tool_result_msg(
+                        conversation.append(svc._tool_result_msg(
                             kind, call, json.dumps(resp, ensure_ascii=False)[:16000]
                         ))
                         continue
                     if completion_call is not None:
                         duplicate = api_server_tools.ToolError(422, "invalid_tool_call")
                         _status, resp = api_server_tools.error_payload(call_name, duplicate)
-                        conversation.append(_tool_result_msg(
+                        conversation.append(svc._tool_result_msg(
                             kind, call, json.dumps(resp, ensure_ascii=False)[:16000]
                         ))
                         continue
@@ -1180,7 +1228,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 tool_call = completion_call
 
         if workflow_pending:
-            status, resp = _workflow_decide(run, current_token, tool_call["input"])
+            status, resp = svc._workflow_decide(run, current_token, tool_call["input"])
             run["last_tool_name"] = "workflow_decide"
             run["last_tool_status"] = status
             run["last_tool_error"] = None if 200 <= status < 300 else _registration_error_summary(resp)[:500]
@@ -1205,16 +1253,16 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                         # exists, so its chain target is resolved exactly once here.
                         if run.get("chain_docs_target", 0) <= 0:
                             run["chain_docs_target"] = resolved
-                    max_turns = max(max_turns, turn + max(1, run["docs_target"]) * API_MAX_TURNS_PER_DOC)
+                    max_turns = max(max_turns, turn + max(1, run["docs_target"]) * svc.API_MAX_TURNS_PER_DOC)
                 if next_token:
                     current_token = next_token
                     _adopt_continuation_token(run, next_token)
                 result_text = next_mention or json.dumps(resp, ensure_ascii=False)[:4000]
-                conversation.append(_tool_result_msg(kind, tool_call, result_text))
+                conversation.append(svc._tool_result_msg(kind, tool_call, result_text))
                 if run["mode"] == "single" or not next_token:
                     break
                 continue
-            conversation.append(_tool_result_msg(
+            conversation.append(svc._tool_result_msg(
                 kind, tool_call,
                 f"Workflow decision failed (HTTP {status}): {json.dumps(resp, ensure_ascii=False)[:2000]}",
             ))
@@ -1226,16 +1274,16 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             run["last_tool_status"] = status
             run["last_tool_error"] = None if 200 <= status < 300 else _registration_error_summary(resp)[:500]
             if 200 <= status < 300:
-                conversation.append(_tool_result_msg(kind, tool_call, json.dumps(resp, ensure_ascii=False)[:4000]))
+                conversation.append(svc._tool_result_msg(kind, tool_call, json.dumps(resp, ensure_ascii=False)[:4000]))
                 break
-            conversation.append(_tool_result_msg(
+            conversation.append(svc._tool_result_msg(
                 kind, tool_call,
                 f"Conflict resolve failed (HTTP {status}): {json.dumps(resp, ensure_ascii=False)[:2000]}",
             ))
             continue
 
         if is_chat:
-            status, resp = _conversation_turn_register(run, current_token, tool_call["input"])
+            status, resp = svc._conversation_turn_register(run, current_token, tool_call["input"])
             run["last_tool_name"] = "conversation_turn_register"
             run["last_tool_status"] = status
             if 200 <= status < 300:
@@ -1245,14 +1293,14 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             reason = _registration_error_summary(resp)
             run["last_tool_error"] = reason[:500]
             run["register_errors"].append({"status": status, "reason": reason, "turn": turn})
-            conversation.append(_tool_result_msg(
+            conversation.append(svc._tool_result_msg(
                 kind, tool_call,
                 f"Chat reply registration failed (HTTP {status}): {json.dumps(resp, ensure_ascii=False)[:2000]}",
             ))
             continue
 
         trace["register_attempted"] = True
-        status, resp = _inbox_register(run, current_token, tool_call["input"])
+        status, resp = svc._inbox_register(run, current_token, tool_call["input"])
         trace["dispatched"] += 1
         _api_trace_tool(trace, "register_document", status, registration=True)
         run["last_tool_name"] = "inbox_register"
@@ -1273,7 +1321,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 {k: resp.get(k) for k in ("ok", "doc_id", "message") if k in resp},
                 ensure_ascii=False,
             )
-            conversation.append(_tool_result_msg(kind, tool_call, result_text))
+            conversation.append(svc._tool_result_msg(kind, tool_call, result_text))
             if run["mode"] == "single" or registered >= run["docs_target"] or not next_token:
                 break
         else:
@@ -1286,7 +1334,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     "reason": reason,
                     "turn": turn,
                 })
-            conversation.append(_tool_result_msg(
+            conversation.append(svc._tool_result_msg(
                 kind, tool_call,
                 f"Registration failed (HTTP {status}): {json.dumps(resp, ensure_ascii=False)[:2000]}",
             ))
@@ -1375,13 +1423,13 @@ def _resolve_conflict(run: dict, raw_token: str, tool_input: dict) -> tuple[int,
     # FIRST in this hop wins transport_api_base; already-set (e.g. by the chat
     # prefetch) stays untouched.
     if run.get("transport_api_base") is None:
-        run["transport_api_base"] = _sanitize_diagnostic_base(_resolve_transport_api_base(run))
+        run["transport_api_base"] = ai_invoke_provider_api._sanitize_diagnostic_base(ai_invoke_provider_api._resolve_transport_api_base(run))
     body = {
         "files": tool_input.get("files") or [],
         "complete": bool(tool_input.get("complete")),
     }
     req = urllib.request.Request(
-        f"{_resolve_transport_api_base(run)}/groups/{run['group_id']}/git/merge/{run['merge_id']}/resolve-token",
+        f"{ai_invoke_provider_api._resolve_transport_api_base(run)}/groups/{run['group_id']}/git/merge/{run['merge_id']}/resolve-token",
         data=json.dumps(body).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -1405,13 +1453,13 @@ def _workflow_decide(run: dict, raw_token: str, tool_input: dict) -> tuple[int, 
     # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
     # FIRST in this hop wins transport_api_base; already-set stays untouched.
     if run.get("transport_api_base") is None:
-        run["transport_api_base"] = _sanitize_diagnostic_base(_resolve_transport_api_base(run))
+        run["transport_api_base"] = ai_invoke_provider_api._sanitize_diagnostic_base(ai_invoke_provider_api._resolve_transport_api_base(run))
     body = {
         "doc_class": tool_input.get("doc_class") or "standard",
         "sequence": tool_input.get("sequence") or [],
     }
     req = urllib.request.Request(
-        f"{_resolve_transport_api_base(run)}/workflow/{run['doc_ref']}/decide",
+        f"{ai_invoke_provider_api._resolve_transport_api_base(run)}/workflow/{run['doc_ref']}/decide",
         data=json.dumps(body).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -1475,8 +1523,8 @@ def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> 
     # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
     # FIRST in this hop wins transport_api_base; already-set stays untouched.
     if run.get("transport_api_base") is None:
-        run["transport_api_base"] = _sanitize_diagnostic_base(_resolve_transport_api_base(run))
-    api_base = _resolve_transport_api_base(run).rstrip("/")
+        run["transport_api_base"] = ai_invoke_provider_api._sanitize_diagnostic_base(ai_invoke_provider_api._resolve_transport_api_base(run))
+    api_base = ai_invoke_provider_api._resolve_transport_api_base(run).rstrip("/")
     body = {
         "body": tool_input.get("body") or "",
         "idempotency_key": run["token_id"],
@@ -1509,10 +1557,10 @@ def _api_bound_request(run: dict, raw_token: str, path: str, method: str = "GET"
     # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
     # FIRST in this hop wins transport_api_base; already-set stays untouched.
     if run.get("transport_api_base") is None:
-        run["transport_api_base"] = _sanitize_diagnostic_base(_resolve_transport_api_base(run))
+        run["transport_api_base"] = ai_invoke_provider_api._sanitize_diagnostic_base(ai_invoke_provider_api._resolve_transport_api_base(run))
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(
-        f"{_resolve_transport_api_base(run)}{path}", data=data,
+        f"{ai_invoke_provider_api._resolve_transport_api_base(run)}{path}", data=data,
         headers={"Authorization": f"Bearer {raw_token}", **({"Content-Type": "application/json"} if data is not None else {})},
         method=method,
     )
@@ -1546,7 +1594,7 @@ def _api_read_document(run: dict, raw_token: str, tool_input: dict) -> tuple[int
     last_tool_name/transport_api_base semantics are left unchanged for this site).
     """
     if run.get("transport_api_base") is None:
-        run["transport_api_base"] = _sanitize_diagnostic_base(_resolve_transport_api_base(run))
+        run["transport_api_base"] = ai_invoke_provider_api._sanitize_diagnostic_base(ai_invoke_provider_api._resolve_transport_api_base(run))
     from modules.flow_gate.api.v1 import document_routes
     fake_request = _BearerOnlyRequest(raw_token)
     try:
@@ -1764,10 +1812,10 @@ def _inbox_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, d
     # after the binding check above, not at function entry -- a binding rejection
     # never opens a socket, so it must not claim the transport base either.
     if run.get("transport_api_base") is None:
-        run["transport_api_base"] = _sanitize_diagnostic_base(_resolve_transport_api_base(run))
-    body = _register_envelope(context, run, tool_input)
+        run["transport_api_base"] = ai_invoke_provider_api._sanitize_diagnostic_base(ai_invoke_provider_api._resolve_transport_api_base(run))
+    body = svc._register_envelope(context, run, tool_input)
     req = urllib.request.Request(
-        f"{_resolve_transport_api_base(run)}/inbox",
+        f"{ai_invoke_provider_api._resolve_transport_api_base(run)}/inbox",
         data=json.dumps(body).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -1813,8 +1861,8 @@ def _settle_and_judge(run: dict) -> None:
     0359 L0007 §2.1 split these two apart so the no-output retry has somewhere to stand:
     _worker now calls _judge_hop once per ATTEMPT and _finalize_run once per HOP.
     """
-    _judge_hop(run)
-    _finalize_run(run)
+    svc._judge_hop(run)
+    svc._finalize_run(run)
 
 
 def _judge_hop(run: dict) -> None:
@@ -1825,7 +1873,7 @@ def _judge_hop(run: dict) -> None:
     Judgment content is unchanged from the pre-0359 _settle_and_judge; only the finalize call
     that used to be welded to each branch has been lifted out.
     """
-    time.sleep(ORACLE_SETTLE_SEC)
+    time.sleep(svc.ORACLE_SETTLE_SEC)
     if run.get("action_scope") == "resolve_conflict":
         resolved = _conflict_resolved(run)
         run["docs_reached"] = 0
@@ -1860,7 +1908,7 @@ def _judge_hop(run: dict) -> None:
 
     new_docs: list[dict] = []
     try:
-        new_docs = _oracle_new_docs(run)
+        new_docs = svc._oracle_new_docs(run)
     except Exception:
         logger.warning("ai-invoke oracle query failed for %s", run["run_id"], exc_info=True)
 
@@ -1896,7 +1944,7 @@ def _judge_hop(run: dict) -> None:
     # the next hop). Judge such a hop against 1, not the whole remaining chain target, so an
     # intermediate hop settles "complete" (scratch cleaned) instead of a misleading "partial".
     hop_target = run["docs_target"]
-    if run["mode"] == "continuous" and peek_auto_resume(run.get("group_id")) is not None:
+    if run["mode"] == "continuous" and svc.peek_auto_resume(run.get("group_id")) is not None:
         hop_target = 1
     if run.get("action_scope") == "workflow_decide" and run["mode"] == "single":
         run["outcome"] = "complete" if workflow_decided else "none"
@@ -2066,7 +2114,7 @@ def _finalize_run(run: dict) -> None:
         )
         run["chain_docs_accounted"] = True
 
-    respawn_pending = peek_auto_resume(run.get("group_id")) is not None
+    respawn_pending = svc.peek_auto_resume(run.get("group_id")) is not None
     # Keep ownership across a hop boundary; the successor atomically transfers generation.
     if respawn_pending:
         db_group_ai_leases.begin_handoff(run["group_id"], run["run_id"])
@@ -2083,7 +2131,7 @@ def _finalize_run(run: dict) -> None:
     deleted = False
     cleanup_reason = "non_complete_outcome"
     if run["outcome"] == "complete" and manifest_updated:
-        deleted, cleanup_reason = _delete_owned_scratch(
+        deleted, cleanup_reason = svc._delete_owned_scratch(
             run["project_id"], run["run_id"], scratch
         )
     if not deleted:
@@ -2097,7 +2145,7 @@ def _finalize_run(run: dict) -> None:
 
     # Source-spill check (§2.8): only the delta vs the start-time snapshot.
     baseline = run.get("dirty_baseline")
-    now_paths = _git_status_paths(Path(run["source_root"]) if run.get("source_root") else None)
+    now_paths = svc._git_status_paths(Path(run["source_root"]) if run.get("source_root") else None)
     if baseline is None or now_paths is None:
         run["source_dirty"] = None
         run["source_dirty_files"] = []
@@ -2118,14 +2166,14 @@ def _finalize_run(run: dict) -> None:
     _apply_stop_row(run, respawn_pending)
     if run.get("document_review_loop") and not run.get("document_review_loop_checkpointed"):
         try:
-            _checkpoint_document_review_loop(run)
+            ai_invoke_review._checkpoint_document_review_loop(run)
         except Exception:
             logger.exception("document review-loop checkpoint failed for %s", run["run_id"])
-    _persist_run_record(run)
+    svc._persist_run_record(run)
     _notify_chain_failure_if_needed(run)
 
-    _broadcast(run, "ai_invoke_finished", finished_payload(run))
-    _broadcast(run, "group_view_refresh", {
+    svc._broadcast(run, "ai_invoke_finished", svc.finished_payload(run))
+    svc._broadcast(run, "group_view_refresh", {
         "group_id": run["group_id"],
         "reason": "ai_invoke_finished",
     })
@@ -2330,7 +2378,7 @@ def mark_chain_stop(group_id: Optional[str], stop_code: str,
     """
     if not group_id or not stop_code:
         return False
-    run = _active_run_for_group(group_id)
+    run = svc._active_run_for_group(group_id)
     if run is None:
         return False
     run["inbox_stop_code"] = stop_code
@@ -2363,7 +2411,7 @@ def mark_group_lease_denied(
       * `lease_denied_*` — read by `_resolve_stop_code` / `_stop_reason_text` so the run
         ends with the name `group_lease_denied` and a sentence, instead of exit code 0.
     """
-    run = get_run_record(run_id) or (_active_run_for_group(group_id) if group_id else None)
+    run = svc.get_run_record(run_id) or (svc._active_run_for_group(group_id) if group_id else None)
     if run is None:
         return False
     with _runs_lock:
@@ -2429,7 +2477,7 @@ def stamp_chain_stop(
     envelope["continuation_resumable"] = is_resumable(stop_code)
 
     try:
-        mark_chain_stop(group_id, stop_code, detail)
+        svc.mark_chain_stop(group_id, stop_code, detail)
     except Exception:
         logger.warning("chain stop tagging failed for %s (ignored)", group_id, exc_info=True)
 
@@ -2445,7 +2493,7 @@ def stamp_chain_stop(
         # Carry the run this stop belongs to, exactly as the engine's own signal does — NR0003
         # §4 found 1,346 continuous tokens with no bridge back to their execution, and a
         # notification that cannot name its run repeats the same dead end.
-        stopped = _active_run_for_group(group_id) if group_id else None
+        stopped = svc._active_run_for_group(group_id) if group_id else None
         event_logger.log_continuous_work_failed(
             project_id=project_id,
             actor_user_id=actor_user_id,
@@ -2950,7 +2998,7 @@ def finished_payload(run: dict) -> dict:
         "attempts_max": run.get("attempts_max"),
         "timeout_sec": run.get("timeout_sec"),
         "deadline_at": run.get("deadline_at"),
-        "document_review_loop": document_review_loop_payload(run),
+        "document_review_loop": svc.document_review_loop_payload(run),
         # 0406 T0022 items 3 and 5: values that let a finished hop's card tell "the N/T
         # vanished" apart from "the TR worker ran fine". Same names on a live run.
         "worker_document_type": run.get("worker_document_type"),

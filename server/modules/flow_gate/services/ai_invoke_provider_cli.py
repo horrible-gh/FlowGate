@@ -1,10 +1,16 @@
 # ────────────────────── ai_invoke_service part — provider CLI/process transport ──────────────────────
 #
-# Not imported on its own in production: ai_invoke_service._load_parts() executes this
-# file in THAT module's globals() (flowgate.default.0501 T4 — split out of
-# ai_invoke_part2_worker.py, itself flowgate.default.0497 T0009's part 2 of 3). The lines
-# below were carried over verbatim from ai_invoke_part2_worker.py, nothing was rewritten.
-# See the file-split note in ai_invoke_service.py's module docstring.
+# A normal Python module (flowgate.default.0501 T5 retires the exec()-assembled part-file
+# scheme T4 left in place). Non-monkeypatched core constants (OUTPUT_TAIL_BYTES,
+# STALL_POLL_INTERVAL_SEC, ...) are a plain `from .ai_invoke_service import (...)` at this
+# file's top; the five `ai_invoke_worker`-owned helpers this file needs
+# (_absolute_cap_sec / _absolute_remaining_sec / _now_mono / _observe_group_max_seq /
+# _truncate_front / _work_landed) are a direct `from . import ai_invoke_worker` and called
+# as `ai_invoke_worker.<name>(...)`. The two seams existing tests patch through the facade —
+# `monkeypatch.setattr(svc, "_cli_execute", fake)` / `svc, "_shell_kind"` — go through
+# `svc.<name>` instead (`svc` = ai_invoke_service, imported once below), the one
+# runtime-lookup indirection this split keeps, and only where a real seam needs it. See
+# ai_invoke_service.py's own module docstring for the full picture.
 #
 # Holds: subprocess/CLI transport — command construction, cwd/launch policy and its audit
 # trail (_resolve_cli_launch / _blocked_cli_launch / _audit_cli_launch / _stable_provider_kind
@@ -41,18 +47,21 @@ from modules.flow_gate.db.connection import now_iso
 from modules.flow_gate.services import process_runner
 from modules.flow_gate.settings import ai_settings_service
 
-# Imported directly (tooling that walks the package) rather than executed by
-# _load_parts(): the earlier parts' names are missing, so take them from the
-# assembled module. Under _load_parts() they are already here and this is a no-op.
-if "RUN_TIMEOUT_BASE_SEC" not in globals():
-    from modules.flow_gate.services import ai_invoke_service as _assembled
-    globals().update({k: v for k, v in vars(_assembled).items()
-                      if not k.startswith("__")})
+from modules.flow_gate.services import ai_invoke_service as svc
+from modules.flow_gate.services.ai_invoke_service import (
+    OUTPUT_TAIL_BYTES,
+    STALL_POLL_INTERVAL_SEC,
+    STALL_WATCHDOG_JOIN_SEC,
+    _RUN_ID_RE,
+    _validate_scratch_manifest,
+    logger,
+)
+from modules.flow_gate.services import ai_invoke_worker
 
 
 def _canonicalize_cli_prompt(prompt: str, operator_api_base: str) -> tuple[str, str]:
     """Rewrite only exact operator-base occurrences and return the exported base."""
-    agent_api_base = _resolve_agent_api_base(operator_api_base)
+    agent_api_base = svc._resolve_agent_api_base(operator_api_base)
     if agent_api_base and operator_api_base and agent_api_base != operator_api_base:
         prompt = prompt.replace(operator_api_base, agent_api_base)
     return prompt, agent_api_base or operator_api_base
@@ -100,7 +109,7 @@ def _claim_watchdog_kill(run: dict, proc, stop_event: threading.Event,
             "stalled_sec": int(max(0.0, now - anchor)),
             "elapsed_sec": int(max(0.0, now - run["started_mono"])),
             "threshold_sec": int(run.get("timeout_sec") or 0),
-            "absolute_cap_sec": _absolute_cap_sec(),
+            "absolute_cap_sec": ai_invoke_worker._absolute_cap_sec(),
             "last_progress_at": run.get("last_progress_at"),
             "progress_observations": int(run.get("progress_observations") or 0),
             "attempt_no": int(run.get("attempt_no") or 0),
@@ -143,7 +152,7 @@ def _progress_watchdog_loop(run: dict, proc, stop_event: threading.Event,
                     run.get("run_id"))
 
     while not stop_event.wait(interval):
-        now = _now_mono()
+        now = svc._now_mono()
         cancel_event = run.get("cancel_event")
         if cancel_event is not None and cancel_event.is_set():
             return None
@@ -151,13 +160,13 @@ def _progress_watchdog_loop(run: dict, proc, stop_event: threading.Event,
             return None
         # The ceiling is unconditional (§3-6): it does not care how much progress there
         # has been, and it does not need a readable sample to be true.
-        if now - run["started_mono"] >= _absolute_cap_sec():
+        if now - run["started_mono"] >= ai_invoke_worker._absolute_cap_sec():
             return "absolute_cap" if _claim_watchdog_kill(
                 run, proc, stop_event, "absolute_cap", now) else None
 
         moved: list[str] = []
         readable = True
-        seq = _observe_group_max_seq(run)
+        seq = ai_invoke_worker._observe_group_max_seq(run)
         if seq is None:
             readable = False
         elif doc_watermark is None:
@@ -166,7 +175,7 @@ def _progress_watchdog_loop(run: dict, proc, stop_event: threading.Event,
             doc_watermark = seq
             moved.append("document")
         if git_enabled:
-            paths = _git_status_paths(source_root)
+            paths = svc._git_status_paths(source_root)
             if paths is None:
                 readable = False
             elif git_watermark is None:
@@ -207,7 +216,7 @@ def _start_progress_watchdog(run: dict, proc,
     # Each attempt opens its own no-progress window — a fresh worker cannot be charged
     # for the silence of the one before it. The ABSOLUTE ceiling deliberately does NOT
     # reset: it is measured from started_mono, which `_reset_attempt_state` keeps (§2-4).
-    run["stall_anchor_mono"] = _now_mono()
+    run["stall_anchor_mono"] = svc._now_mono()
     run["watchdog_kill"] = None
     thread = threading.Thread(
         target=_progress_watchdog_loop, args=(run, proc, stop_event, interval),
@@ -275,7 +284,7 @@ def _blocked_cli_launch(run: dict, provider: dict, reason: str) -> dict:
         "run_id": run.get("run_id") if _RUN_ID_RE.fullmatch(str(run.get("run_id") or "")) else "<invalid>",
         "provider_kind": _stable_provider_kind(provider),
         "cwd_source": None, "spawn_cwd": None, "agent_cwd": None,
-        "cwd_transition": None, "shell_kind": _shell_kind(),
+        "cwd_transition": None, "shell_kind": svc._shell_kind(),
         "is_unc": None,
     }
 
@@ -299,7 +308,7 @@ def _resolve_cli_launch(provider: dict, run: dict, command: str) -> tuple[Option
         scratch_abs = scratch.resolve(strict=True)
     except (OSError, RuntimeError):
         return None, "scratch_unavailable"
-    if not scratch_abs.is_absolute() or not scratch_abs.is_dir() or _is_reparse_or_symlink(scratch):
+    if not scratch_abs.is_absolute() or not scratch_abs.is_dir() or svc._is_reparse_or_symlink(scratch):
         return None, "scratch_unavailable"
 
     source = Path(run["source_root"]) if run.get("source_root") else None
@@ -311,7 +320,7 @@ def _resolve_cli_launch(provider: dict, run: dict, command: str) -> tuple[Option
         except Exception:
             integrated = False
         if integrated:
-            if not _is_group_worktree(project_id, run["group_id"], source):
+            if not svc._is_group_worktree(project_id, run["group_id"], source):
                 return None, "group_worktree_identity_invalid"
             agent_cwd = source.absolute() if str(source).startswith("\\\\") else source.resolve(strict=True)
             cwd_source = "group_worktree"
@@ -337,7 +346,7 @@ def _resolve_cli_launch(provider: dict, run: dict, command: str) -> tuple[Option
         "provider_kind": _stable_provider_kind(provider), "cwd_source": cwd_source,
         "spawn_cwd": str(spawn_cwd), "agent_cwd": str(agent_cwd),
         "cwd_transition": transition,
-        "shell_kind": _shell_kind(),
+        "shell_kind": svc._shell_kind(),
         "is_unc": is_unc, "effective_command": effective_command,
     }, "valid"
 
@@ -413,7 +422,7 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     # no longer cut off at its threshold, and a run that produces nothing is still
     # ended there, by the watchdog, long before this timeout could fire.
     watchdog_stop, watchdog_thread = _start_progress_watchdog(run, proc)
-    remaining = max(1.0, _absolute_remaining_sec(run))
+    remaining = max(1.0, ai_invoke_worker._absolute_remaining_sec(run))
     try:
         stdout, stderr = proc.communicate(input=prompt.encode("utf-8"), timeout=remaining)
     except subprocess.TimeoutExpired as exc:
@@ -433,8 +442,8 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             stdout, stderr = None, None
         elapsed = time.monotonic() - launched
         if (
-            elapsed < FAST_FAIL_WINDOW_SEC
-            and not _work_landed(run)
+            elapsed < svc.FAST_FAIL_WINDOW_SEC
+            and not ai_invoke_worker._work_landed(run)
             # 0446 T0014 §4-3: a watchdog kill is a clock decision, never a provider
             # startup failure — it must not send the chain to the next provider.
             and run.get("watchdog_kill") is None
@@ -468,8 +477,8 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         and not timed_out
         and proc.returncode is not None
         and proc.returncode != 0
-        and elapsed < FAST_FAIL_WINDOW_SEC
-        and not _work_landed(run)
+        and elapsed < svc.FAST_FAIL_WINDOW_SEC
+        and not ai_invoke_worker._work_landed(run)
     ):
         detail = (err_text or out_text).strip()[-500:] or f"exit {proc.returncode} within {int(elapsed)}s"
         return "fast_fail", detail
@@ -531,5 +540,5 @@ def _recover_cli_last_message(run: dict, kind: str, stdout_text: str, last_messa
         tail = stdout_text[-OUTPUT_TAIL_BYTES:]
         blocks = [b.strip() for b in re.split(r"\n\s*\n", tail) if b.strip()]
         message = blocks[-1] if blocks else None
-    run["last_message"] = _truncate_front(message)
+    run["last_message"] = ai_invoke_worker._truncate_front(message)
     run["last_message_received"] = bool(message)

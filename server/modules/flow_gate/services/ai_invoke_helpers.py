@@ -8,7 +8,8 @@ default values) the original code read directly from the assembled namespace, so
 this module stays import-only.
 
 Functions that looked pure but log a warning on bad input (`resolve_review_count`)
-were deliberately left in place in `ai_invoke_part3_chain.py` rather than moved here
+were deliberately left in place in `ai_invoke_review.py` (flowgate.default.0501 T5 --
+formerly `ai_invoke_part3_chain.py`) rather than moved here
 — moving them would either drop that observable behavior or force this module to
 own a logger, both of which are bigger changes than a first extraction should make.
 """
