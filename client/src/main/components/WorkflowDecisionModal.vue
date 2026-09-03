@@ -87,43 +87,6 @@
               </button>
             </div>
 
-            <!-- Locked section (edit mode only) -->
-            <div v-if="mode === 'edit'" class="wem-locked-section">
-              <div class="wem-section-title wem-locked-title">
-                <AppIcon name="lock" />
-                {{ t('main.workflow_edit_modal.locked_section_title') }}
-              </div>
-              <div v-if="lockedItems.length === 0" class="wem-locked-empty">
-                <AppIcon name="radio-button" />
-                {{ t('main.workflow_edit_modal.locked_empty') }}
-              </div>
-              <div v-else class="wem-locked-list">
-                <div
-                  v-for="(item, idx) in lockedItems"
-                  :key="item.id"
-                  class="wem-locked-item"
-                >
-                  <span class="wem-seq-num">{{ idx + 1 }}</span>
-                  <span class="doc-tag" :class="`c-${item.type}`">{{ item.type }}</span>
-                  <span class="wem-locked-label">{{ docTypeStore.getLabel(item.type) }}</span>
-                  <span
-                    v-if="item.provider_id"
-                    class="wdm-provider-chip"
-                    :class="{ 'is-unavailable': item.provider_registered === false }"
-                  >
-                    <template v-if="item.provider_registered === false">⚠ {{ t('main.workflow_edit_modal.provider_unavailable', { name: item.provider_display_name || item.provider_id }) }}</template>
-                    <template v-else>🤖 {{ item.provider_display_name || item.provider_id }}</template>
-                  </span>
-                  <span class="wem-status-badge" :class="`status-${item.status}`">
-                    <AppIcon :name="item.status === 'done' ? 'check-circle' : 'radio-button'" />
-                    {{ item.status === 'done'
-                      ? t('main.workflow_edit_modal.locked_badge_done')
-                      : t('main.workflow_edit_modal.locked_badge_in_progress') }}
-                  </span>
-                </div>
-              </div>
-            </div>
-
             <!-- All-locked notice (edit mode): prior steps done — new steps can still be appended -->
             <div v-if="mode === 'edit' && allDone" class="wem-all-done">
               <AppIcon name="check-circle" />
@@ -1954,96 +1917,6 @@ watch(
 }
 .wem-error { color: #dc2626; }
 
-/* ── Edit mode: Locked section ── */
-.wem-locked-section {
-  border-bottom: 1px solid var(--border-d, #e2e8f0);
-  padding: 12px 14px;
-  background: #f8fafc;
-  flex-shrink: 0;
-}
-
-.wem-section-title {
-  font-size: .72rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: .04em;
-  margin-bottom: 8px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.wem-locked-title { color: #64748b; }
-
-.wem-locked-empty {
-  font-size: .78rem;
-  color: var(--text-m);
-  padding: 4px 2px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.wem-locked-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-height: 124px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-  scrollbar-color: #94a3b8 #e2e8f0;
-}
-
-.wem-locked-list::-webkit-scrollbar {
-  width: 8px;
-}
-
-.wem-locked-list::-webkit-scrollbar-track {
-  background: #e2e8f0;
-  border-radius: 4px;
-}
-
-.wem-locked-list::-webkit-scrollbar-thumb {
-  background: #94a3b8;
-  border-radius: 4px;
-}
-
-.wem-locked-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: .8rem;
-  padding: 4px 6px;
-  border-radius: 4px;
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
-  opacity: .85;
-}
-
-.wem-locked-label {
-  flex: 1;
-  color: var(--text-m);
-  font-size: .78rem;
-}
-
-.wem-status-badge {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: .72rem;
-  font-weight: 600;
-  padding: 2px 7px;
-  border-radius: 99px;
-}
-.wem-status-badge.status-done {
-  background: #dcfce7;
-  color: #16a34a;
-}
-.wem-status-badge.status-in_progress {
-  background: #dbeafe;
-  color: #2563eb;
-}
-
 /* ── Edit mode: All done message ── */
 .wem-all-done {
   display: flex;
@@ -2053,21 +1926,6 @@ watch(
   font-size: .8125rem;
   color: #16a34a;
   font-weight: 500;
-}
-
-/* ── Edit mode: Sequence number in locked list ── */
-.wem-seq-num {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 20px;
-  height: 20px;
-  font-size: .68rem;
-  font-weight: 700;
-  color: var(--text-m);
-  background: #f1f5f9;
-  border-radius: 4px;
-  margin-right: 2px;
 }
 
 /* ── Edit mode: Preview locked items ── */

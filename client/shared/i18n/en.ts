@@ -1977,11 +1977,6 @@ export default {
     },
     workflow_edit_modal: {
       title: 'Edit Workflow Sequence',
-      locked_section_title: 'Locked Steps (Done / In Progress)',
-      locked_empty: 'No locked steps',
-      locked_badge_done: 'Done',
-      locked_badge_in_progress: 'In Progress',
-      pending_section_title: 'Edit Pending Steps',
       preset_label: 'Preset Templates',
       preset_standard: 'Standard Full Cycle',
       preset_bugfix: 'Bug Fix',
