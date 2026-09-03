@@ -1084,6 +1084,16 @@ class TestResumeOwnership:
         ``delete_and_return(group_id)`` (the rev0 bug) would have taken it instead."""
         store = env["store"]
         store.put(paused_by=OWNER, paused_at="2026-08-25T10:00:00+09:00")
+        # Same resume-eligibility stub the sibling ownership tests in this class use
+        # (e.g. test_owner_can_still_resume_their_own_chain above) -- omitting it here
+        # left _paused_row_resume_state hitting the real (unconfigured) DB connection
+        # and raising AttributeError, which surfaced as a generic 500 instead of this
+        # test's own race-detection 409.
+        monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc",
+                            lambda doc_ref: {"id": 1})
+        monkeypatch.setattr(svc.db_wfseq, "get_sequence_items",
+                            lambda seq_id: [{"item_seq": 3, "result_doc_id": None,
+                                            "result_doc_review_status": None}])
         real_get_by_group = store.get_by_group
 
         def _racing_get_by_group(group_id):

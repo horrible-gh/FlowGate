@@ -444,6 +444,10 @@ class TestRegistrationDiagnostics:
         assert svc._api_execute(_provider(exec_type="api", kind="openai"), "prompt", run) == ("started_ok", None)
 
         assert len(handler_calls) == 1
+        # 0501 T0004 필수5: exit_code=None is the API contract even on a normal,
+        # successful registration -- there is no subprocess to hand back a real code,
+        # and this run dict is what the real turn loop produced, not a hand-built one.
+        assert run["exit_code"] is None
         assert run["turn_limit_exhausted"] is False
         assert run["api_turns_used"] == 1
         assert run["model_http_calls"] == 1
@@ -572,6 +576,38 @@ class TestRegistrationDiagnostics:
         assert run["api_turns_used"] == 1
         assert run["model_http_calls"] == 1
         assert run["model_last_http_status"] == 0
+
+    def test_exit_code_none_reads_as_completed_not_failed_on_a_real_run(self, monkeypatch):
+        """0501 T0004 필수5: test_no_output_detail_branching.py's
+        test_api_provider_fallback_to_completed_on_exit_none proves the same text on a
+        run dict it authors by hand ({"exit_code": None, ...}). This is the same contract
+        pinned to a run dict svc._api_execute() itself produced -- no register_errors, no
+        tool_call_misses, no turn_limit_exhausted, exit_code left at None -- which is
+        exactly what happens when the hop's cancel flag trips before the first model
+        turn: _api_execute breaks out of its loop immediately, without ever touching any
+        of the other diagnostic fields, and still sets exit_code=None on its way out
+        because there is no subprocess to hand one back. _no_output_detail must read
+        that as a benign 'completed', not the CLI-style 'worker exited None ... failed'.
+        """
+        monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda *_: "key")
+        provider = _provider(exec_type="api", kind="openai")
+        run = _registration_api_run()
+        run["cancel_event"].set()  # tripped before the worker's first model turn
+        # _worker sets this one line ahead of every _api_execute call (ai_invoke/worker.py
+        # line 70); _api_execute itself never touches run["provider"], so a caller that skips
+        # _worker has to reproduce that exact assignment for _no_output_detail's exec_type
+        # branch to see this as an API run at all.
+        run["provider"] = svc._provider_brief(provider)
+
+        assert svc._api_execute(provider, "prompt", run) == ("started_ok", None)
+        assert run["exit_code"] is None
+        assert run["register_errors"] == []
+        assert run["tool_call_misses"] == 0
+        assert run["turn_limit_exhausted"] is False
+
+        detail = svc._no_output_detail(run)
+        assert detail == "completed: no output to register"
+        assert "worker exited" not in detail
 
 
 # ── Workflow-decision API loop (group 0223) ──────────────────────────────────
@@ -890,3 +926,31 @@ class TestEvents:
             assert key in finished
         assert finished["provider_name"] == "good"
         assert finished["started_at"] == res["started_at"]
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# flowgate.default.0501 T0004 필수4 -- terminal run lifecycle: lease release
+# ══════════════════════════════════════════════════════════════════════════════════════
+
+class TestTerminalLeaseRelease0501:
+    """The other half of TestEvents' finished-notification coverage above: a normal
+    terminal finish must also release the group's AI lease, through the real
+    _finalize_run path -- not the inspect.getsource() text guard in
+    test_document_ai_running_guard_0378.py::test_hop_handoff_marks_releasing_before_successor_spawn,
+    which never executes the code it greps for, and not the incidental fact that this
+    same GROUP is reused, lease and all, by every other test in this file (nothing
+    asserts on that; it would only ever fail as an unrelated 409 two tests later).
+    """
+
+    def test_normal_finish_releases_the_group_lease(self, fake_env):
+        cmd = f'"{PY}" -c "import sys; sys.stdin.read(); print(\'ok\')"'
+        res = _start(fake_env, [_provider(cmd=cmd)])
+        assert svc.db_group_ai_leases.get("flowgate.default.0187") is not None, (
+            "setup check: the lease must actually be held while the run is live")
+
+        run = _wait_finished(res["run_id"])
+
+        assert run["status"] == "finished"
+        assert svc.db_group_ai_leases.get("flowgate.default.0187") is None, (
+            "a normal terminal finish must release the lease, or the next hop/run in "
+            "this group is permanently blocked behind a dead run_id")

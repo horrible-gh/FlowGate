@@ -121,6 +121,26 @@ def test_request_auto_resume_persists_the_complete_i3_bundle(monkeypatch):
     assert saved["continuation_restart_max_attempts"] == 3
 
 
+def test_request_auto_resume_persists_the_provider_pin(monkeypatch):
+    """flowgate.default.0501 T0004 필수2: continuation_provider_pinned is real state (the
+    0448 force_all pick), distinct from continuation_base_provider_id -- _run()'s own
+    "complete i3 bundle" fixture above does not set it, so a regression that dropped just
+    this one field would still show every other assertion in that test green. An ordinary
+    hop boundary (request_auto_resume -> _write_handoff_row), not a pause/resume path.
+    """
+    run = _run()
+    run["continuation_provider_pinned"] = True
+    with svc._runs_lock:
+        svc._runs[run["run_id"]] = {**run, "status": "running"}
+    saved = {}
+    monkeypatch.setattr(db_paused, "get_by_group", lambda _g: None)
+    monkeypatch.setattr(db_paused, "upsert", lambda **kw: saved.update(kw))
+
+    svc.request_auto_resume(run["group_id"], _pending())
+
+    assert saved["continuation_provider_pinned"] is True
+
+
 @pytest.mark.parametrize("end_reason", ["timeout", "all_providers_failed", "user_paused"])
 def test_unclean_end_parks_intent_and_releases_handoff_lease(monkeypatch, end_reason):
     run = _run()

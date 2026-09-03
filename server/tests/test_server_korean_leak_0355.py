@@ -44,7 +44,14 @@ _REQUIRED_DISCOVERY = {
     "db/tokens.py",
     "documents/routers/documents.py",
     "process_service.py",
-    "services/ai_invoke_service.py",
+    # 0501 T6 (NR0003 §12): the engine's locale branches moved into the ai_invoke/
+    # package -- admission (worktree/provider copy), chain and review (hop mentions)
+    # and worker (tool prose). ai_invoke_service.py is now a re-export shim with no
+    # branch of its own, so it can no longer be the thing this scan must discover.
+    "services/ai_invoke/admission.py",
+    "services/ai_invoke/chain.py",
+    "services/ai_invoke/review.py",
+    "services/ai_invoke/worker.py",
     "services/engine_recipe_service.py",
     "services/invoke_mention_service.py",
     "services/mention_service.py",
@@ -816,16 +823,26 @@ def test_local_error_helper_scan_does_not_flag_ko_branches_or_docstrings():
 
 
 def test_ai_invoke_service_worktree_unavailable_is_localized():
-    """Regression pin for NR0003 finding 6 (T0004 item 6): ai_invoke_service._http_error's
+    """Regression pin for NR0003 finding 6 (T0004 item 6): _http_error's
     worktree_unavailable 409 used to be a fixed Korean f-string that the old narrowed
     0355 scanner never saw (it matched none of the four fixed sink spellings). The
-    structural helper-detector must find _http_error on its own, and the call site's
-    message argument in ai_invoke_service.py must carry zero raw Korean now that T0004
-    routes it through _WORKTREE_UNAVAILABLE_COPY."""
-    path = _MODULE_ROOT / "services" / "ai_invoke_service.py"
-    source = path.read_text(encoding="utf-8-sig")
-    tree = ast.parse(source, filename=str(path))
-    helpers = _local_error_helpers(tree)
+    structural helper-detector must find _http_error on its own, and every call site's
+    message argument must carry zero raw Korean now that T0004 routes it through
+    _WORKTREE_UNAVAILABLE_COPY.
+
+    0501 T6 (NR0003 §12) split the engine into the ai_invoke/ package: `_http_error` is
+    DEFINED in runtime.py and CALLED from admission/chain/review/diagnostics, so the
+    helper is detected where it is defined and every module of the package is then
+    scanned for an unbranched Korean argument to it."""
+    pkg = _MODULE_ROOT / "services" / "ai_invoke"
+    runtime_source = (pkg / "runtime.py").read_text(encoding="utf-8-sig")
+    helpers = _local_error_helpers(ast.parse(runtime_source, filename="runtime.py"))
     assert "_http_error" in helpers
-    hits = list(_unbranched_korean_call_args(tree, helpers, source))
-    assert not hits, f"worktree_unavailable regressed to an unbranched Korean literal: {hits}"
+    for path in sorted(pkg.glob("*.py")):
+        source = path.read_text(encoding="utf-8-sig")
+        tree = ast.parse(source, filename=str(path))
+        hits = list(_unbranched_korean_call_args(tree, helpers, source))
+        assert not hits, (
+            f"{path.name}: worktree_unavailable regressed to an unbranched Korean "
+            f"literal: {hits}"
+        )

@@ -14,7 +14,7 @@ from pathlib import Path
 
 _SERVER_DIR = Path(__file__).resolve().parents[1]
 _MIGRATIONS = _SERVER_DIR / "sql" / "migrations"
-_MIGRATION = "086_ai_invoke_paused_provider_fk.sql"
+_MIGRATION = "086a_ai_invoke_paused_provider_fk.sql"
 
 
 def _executable_sql(path: Path) -> str:

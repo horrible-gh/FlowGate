@@ -26,7 +26,7 @@ class TestNoOutputDetailBranching:
 
     def test_cli_provider_generic_form(self):
         """CLI provider should return generic 'worker exited' form."""
-        from modules.flow_gate.services.ai_invoke_part2_worker import _no_output_detail
+        from modules.flow_gate.services.ai_invoke.worker import _no_output_detail
 
         run = _make_run(exec_type="cli", exit_code=1)
         detail = _no_output_detail(run)
@@ -36,7 +36,7 @@ class TestNoOutputDetailBranching:
 
     def test_cli_provider_with_last_message(self):
         """CLI provider should include last_message if available."""
-        from modules.flow_gate.services.ai_invoke_part2_worker import _no_output_detail
+        from modules.flow_gate.services.ai_invoke.worker import _no_output_detail
 
         run = _make_run(
             exec_type="cli",
@@ -51,7 +51,7 @@ class TestNoOutputDetailBranching:
 
     def test_api_provider_register_errors(self):
         """API provider should return register_errors diagnosis."""
-        from modules.flow_gate.services.ai_invoke_part2_worker import _no_output_detail
+        from modules.flow_gate.services.ai_invoke.worker import _no_output_detail
 
         run = _make_run(
             exec_type="api",
@@ -70,7 +70,7 @@ class TestNoOutputDetailBranching:
 
     def test_api_provider_register_errors_no_status(self):
         """API provider register_errors without HTTP status."""
-        from modules.flow_gate.services.ai_invoke_part2_worker import _no_output_detail
+        from modules.flow_gate.services.ai_invoke.worker import _no_output_detail
 
         run = _make_run(
             exec_type="api",
@@ -83,7 +83,7 @@ class TestNoOutputDetailBranching:
 
     def test_api_provider_turn_limit_exhausted(self):
         """API provider should return turn_limit_exhausted diagnosis."""
-        from modules.flow_gate.services.ai_invoke_part2_worker import _no_output_detail
+        from modules.flow_gate.services.ai_invoke.worker import _no_output_detail
 
         run = _make_run(
             exec_type="api",
@@ -96,7 +96,7 @@ class TestNoOutputDetailBranching:
 
     def test_api_provider_tool_call_misses(self):
         """API provider should return tool_call_misses diagnosis."""
-        from modules.flow_gate.services.ai_invoke_part2_worker import _no_output_detail
+        from modules.flow_gate.services.ai_invoke.worker import _no_output_detail
 
         run = _make_run(
             exec_type="api",
@@ -110,7 +110,7 @@ class TestNoOutputDetailBranching:
 
     def test_api_provider_oracle_mismatch(self):
         """API provider should return oracle_mismatch diagnosis."""
-        from modules.flow_gate.services.ai_invoke_part2_worker import _no_output_detail
+        from modules.flow_gate.services.ai_invoke.worker import _no_output_detail
 
         run = _make_run(
             exec_type="api",
@@ -123,7 +123,7 @@ class TestNoOutputDetailBranching:
 
     def test_api_provider_priority_register_errors_over_others(self):
         """register_errors take priority when multiple diagnostics present."""
-        from modules.flow_gate.services.ai_invoke_part2_worker import _no_output_detail
+        from modules.flow_gate.services.ai_invoke.worker import _no_output_detail
 
         run = _make_run(
             exec_type="api",
@@ -139,7 +139,7 @@ class TestNoOutputDetailBranching:
 
     def test_api_provider_fallback_to_generic_failed(self):
         """API provider shows 'failed' when exit_code is set but no diagnostic matched."""
-        from modules.flow_gate.services.ai_invoke_part2_worker import _no_output_detail
+        from modules.flow_gate.services.ai_invoke.worker import _no_output_detail
 
         run = _make_run(
             exec_type="api",
@@ -154,7 +154,7 @@ class TestNoOutputDetailBranching:
 
     def test_api_provider_fallback_to_completed_on_exit_none(self):
         """API provider shows 'completed' when exit_code is None and no diagnostic matched."""
-        from modules.flow_gate.services.ai_invoke_part2_worker import _no_output_detail
+        from modules.flow_gate.services.ai_invoke.worker import _no_output_detail
 
         run = _make_run(
             exec_type="api",
@@ -170,7 +170,7 @@ class TestNoOutputDetailBranching:
 
     def test_api_provider_no_provider_field(self):
         """Gracefully handle missing provider field."""
-        from modules.flow_gate.services.ai_invoke_part2_worker import _no_output_detail
+        from modules.flow_gate.services.ai_invoke.worker import _no_output_detail
 
         run = _make_run(exit_code=1)
         run["provider"] = None  # Missing provider
