@@ -22,6 +22,7 @@ from modules.flow_gate.documents.constants import (
 from modules.flow_gate.numbering import numbering_service
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import mention_service
+from modules.flow_gate.settings import ai_execution_policy_service
 
 # ── Auto report attachment ────────────────────────────────────────────────────────
 # Single source of truth for "every instruction step carries its report step" on the
@@ -270,7 +271,6 @@ def is_auto_handled_step(
 # split the error envelope in two (FastAPI's default vs validation_failed) and force every
 # unmanned caller to parse both. One envelope, produced here.
 
-REVIEW_COUNT_VALUES = frozenset({-1, 0, 1, 2, 3})
 REVIEW_COUNT_DEFAULT = 0
 # TSR is assembled by the server (its content is stitched from the TS run), so like an
 # auto-handled N/T it has no worker output anybody could review.
@@ -321,11 +321,13 @@ def normalize_continuation_review_count_overrides(raw) -> Optional[dict]:
         raise ValueError(
             f"invalid_review_count_map:{raw!r} — must be an object keyed by item_seq")
     normalized: dict[str, int] = {}
+    choices = ai_execution_policy_service.repeat_count_choices(allow_zero=True)
     for key, value in raw.items():
         item_seq = _review_item_seq_key(key)
-        if isinstance(value, bool) or not isinstance(value, int) or value not in REVIEW_COUNT_VALUES:
+        if isinstance(value, bool) or not isinstance(value, int) or value not in choices:
             raise ValueError(
-                f"invalid_review_count_value:{value!r} — must be one of -1, 0, 1, 2, 3")
+                f"invalid_review_count_value:{value!r} — must be one of "
+                f"{', '.join(str(v) for v in choices)}")
         if value == REVIEW_COUNT_DEFAULT:
             continue
         normalized[str(item_seq)] = value

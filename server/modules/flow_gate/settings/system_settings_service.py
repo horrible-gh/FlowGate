@@ -6,6 +6,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 
 from modules.flow_gate.db import system_settings as _db
+from modules.flow_gate.settings import ai_execution_policy_service as _ai_execution_policy_service
 from modules.flow_gate.storage.paths import get_storage_root
 
 _JST = timezone(timedelta(hours=9))
@@ -27,6 +28,7 @@ ALLOWLIST: set[str] = {
     "totp",
     "token_blacklist",
     "source_mode",
+    "ai_repeat_count_max",
 }
 
 _VALUE_TYPES: dict[str, str] = {
@@ -46,6 +48,7 @@ _VALUE_TYPES: dict[str, str] = {
     "totp": "boolean",
     "token_blacklist": "boolean",
     "source_mode": "string",
+    "ai_repeat_count_max": "integer",
 }
 
 
@@ -58,6 +61,10 @@ def _apply_effective_defaults(row: dict | None) -> dict | None:
         return None
     if row.get("setting_key") == "storage_root" and not (row.get("setting_value") or "").strip():
         return {**row, "setting_value": get_effective_storage_root()}
+    if row.get("setting_key") == "ai_repeat_count_max" and not _ai_execution_policy_service.valid_setting_value(
+        row.get("setting_value")
+    ):
+        return {**row, "setting_value": str(_ai_execution_policy_service.get_repeat_count_max())}
     return row
 
 
@@ -77,6 +84,15 @@ def get_all() -> list[dict]:
             "updated_at": "",
             "updated_by": None,
         })
+    if not any(row.get("setting_key") == "ai_repeat_count_max" for row in rows):
+        rows.append({
+            "setting_key": "ai_repeat_count_max",
+            "setting_value": str(_ai_execution_policy_service.get_repeat_count_max()),
+            "value_type": "integer",
+            "description": "Maximum finite repeat count selectable in AI work/review",
+            "updated_at": "",
+            "updated_by": None,
+        })
     return rows
 
 
@@ -92,6 +108,15 @@ def get_one(key: str) -> dict | None:
             "updated_at": "",
             "updated_by": None,
         }
+    if row is None and key == "ai_repeat_count_max":
+        return {
+            "setting_key": "ai_repeat_count_max",
+            "setting_value": str(_ai_execution_policy_service.get_repeat_count_max()),
+            "value_type": "integer",
+            "description": "Maximum finite repeat count selectable in AI work/review",
+            "updated_at": "",
+            "updated_by": None,
+        }
     return row
 
 
@@ -104,6 +129,10 @@ def set_values(updates: dict[str, str | None], updated_by: str | None = None) ->
     mode = updates.get("source_mode")
     if mode is not None and mode not in {"local", "remote"}:
         raise ValueError("mode must be one of: local, remote")
+    if "ai_repeat_count_max" in updates and not _ai_execution_policy_service.valid_setting_value(
+        updates["ai_repeat_count_max"]
+    ):
+        raise ValueError("ai_repeat_count_max must be an integer between 1 and 30")
 
     results = []
     for key, val in updates.items():

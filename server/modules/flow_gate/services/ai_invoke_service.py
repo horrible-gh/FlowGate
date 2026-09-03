@@ -75,6 +75,7 @@ from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate import template_provision
 from modules.flow_gate.services import api_server_tools, git_service, invoke_mention_service, process_runner, q_service, register_binding, token_service
 from modules.flow_gate.services.git_service import GitServiceError
+from modules.flow_gate.settings import ai_execution_policy_service
 from modules.flow_gate.settings import ai_settings_service
 from modules.flow_gate.storage import paths as storage_paths
 from modules.flow_gate.utils.api_key_crypto import ApiKeyCryptoError
@@ -116,10 +117,16 @@ STEP_TIMEOUT_MAX_SEC = 14400
 NO_OUTPUT_MAX_ATTEMPTS = 2       # per hop: the first attempt + exactly ONE no-output retry on the SAME provider
 # flowgate.default.0443 T0002 (R0001): ContinuousWorkDialog's 기본 설정 탭 "재시작 횟수"
 # select — the no-output retry count is now a per-run pick instead of the fixed constant
-# above. -1 is the "될 때까지" sentinel (unlimited attempts); 0/1/2/3 are restart counts
-# (RESTARTS, not total attempts — total = restarts + 1). Default matches the constant's
-# pre-existing behavior exactly: 1 restart == NO_OUTPUT_MAX_ATTEMPTS(2) total attempts.
-RESTART_MAX_ATTEMPTS_CHOICES = (-1, 0, 1, 2, 3)
+# above. -1 is the "될 때까지" sentinel (unlimited attempts); 0..N (N = the configured
+# ceiling, flowgate.default.0490 T0005) are restart counts (RESTARTS, not total attempts —
+# total = restarts + 1). Default matches the constant's pre-existing behavior exactly:
+# 1 restart == NO_OUTPUT_MAX_ATTEMPTS(2) total attempts.
+def restart_max_attempts_choices() -> tuple[int, ...]:
+    """The dialog's selectable "재시작 횟수" set. SSOT is ai_execution_policy_service
+    (flowgate.default.0490 T0005) — this used to be the fixed tuple (-1, 0, 1, 2, 3)."""
+    return ai_execution_policy_service.repeat_count_choices(allow_zero=True)
+
+
 RESTART_MAX_ATTEMPTS_DEFAULT = 1
 RETRY_MIN_REMAINING_SEC = 300    # with less budget than this left, do not open another attempt
 LAST_MESSAGE_EXCERPT_BYTES = 512 # list/notification excerpt of the worker's last message
@@ -152,7 +159,6 @@ STALL_WATCHDOG_JOIN_SEC = 40
 # rejection already happened — all of it is re-derived from document_reviews plus the
 # document's revision_no/doc_review_status on every read (§2.3), which is what makes a
 # restart, a cold [이어서 진행] and an in-flight hop boundary all agree for free.
-REVIEW_COUNT_VALUES = frozenset({-1, 0, 1, 2, 3})
 REVIEW_COUNT_DEFAULT = 0                 # no selection = this step is not reviewed
 # -1 ("until it passes") has NO ceiling: review and rework repeat until a `pass`
 # verdict. No round count hands the chain to a human. What keeps it from spinning is
@@ -1412,6 +1418,11 @@ def list_runtime_providers(project_id: str) -> dict:
         "project": project_id,
         "providers": [_provider_brief(provider) for provider in effective.get("providers") or []],
         "default_provider_id": effective.get("default_provider_id"),
+        # flowgate.default.0490 T0005 §3.5: the only metadata endpoint every execution
+        # dialog already calls, so this is the SSOT for the client-side max/min instead of
+        # a screen fetching /system/settings (system.settings.manage-gated, out of reach
+        # for an ordinary document reader).
+        "execution_policy": ai_execution_policy_service.execution_policy_payload(),
     }
 
 def resolve_pinned_provider_name(project_id: str, provider_id: Optional[str]) -> Optional[str]:
@@ -2365,14 +2376,17 @@ def _resolve_timeout_sec(
 def _resolve_restart_max_attempts(continuation_restart_max_attempts: Optional[int]) -> int:
     """Total attempts allowed for one hop (0443 R0001 "재시작 횟수").
 
-    The dialog picks a RESTART count (-1/0/1/2/3), not a total-attempts count — this
-    converts it: N restarts == N+1 total attempts, and -1 stays -1 (the "될 때까지"
-    unlimited sentinel _retry_eligible/_retry_provider_chain both check for explicitly).
-    An unset or unrecognized value falls back to RESTART_MAX_ATTEMPTS_DEFAULT, which
-    reproduces the fixed NO_OUTPUT_MAX_ATTEMPTS(2) behavior this feature replaces.
+    The dialog picks a RESTART count, not a total-attempts count — this converts it: N
+    restarts == N+1 total attempts, and -1 stays -1 (the "될 때까지" unlimited sentinel
+    _retry_eligible/_retry_provider_chain both check for explicitly). An unset or
+    unrecognized value falls back to RESTART_MAX_ATTEMPTS_DEFAULT, which reproduces the
+    fixed NO_OUTPUT_MAX_ATTEMPTS(2) behavior this feature replaces. The bound is read from
+    ai_execution_policy_service (SSOT) instead of a frozen literal, so raising the setting
+    also widens what a read accepts — flowgate.default.0490 T0005 §4-4.
     """
     restart_count = continuation_restart_max_attempts
-    if restart_count not in RESTART_MAX_ATTEMPTS_CHOICES:
+    choices = ai_execution_policy_service.repeat_count_choices(allow_zero=True)
+    if isinstance(restart_count, bool) or restart_count not in choices:
         restart_count = RESTART_MAX_ATTEMPTS_DEFAULT
     if restart_count == -1:
         return -1

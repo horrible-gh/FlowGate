@@ -25,6 +25,7 @@ from modules.flow_gate.services import invoke_mention_service
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import workflow_decision_service
 from modules.flow_gate.services import work_plan_service
+from modules.flow_gate.settings import ai_execution_policy_service
 from modules.flow_gate.workflow import prompt_copy_service
 from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.utils.id_validators import (
@@ -299,10 +300,16 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         if body.provider_id is not None or body.provider_pinned not in (None, False):
             errors.append({"loc": "provider_id", "msg": "top-level provider selection is not allowed with document_review_loop"})
         allowed = {
-            "review_count": {-1, 1, 2, 3},
+            # flowgate.default.0490 T0005 §4-6-1: the ceiling is dynamic; SSOT is
+            # ai_execution_policy_service.repeat_count_choices, not a literal set here.
+            # "failure_restart_max_attempts" widens on purpose — NR0003 §4 said failure
+            # restart shares the SAME [-1, 0, 1..max] shape as every other repeat count.
+            "review_count": set(ai_execution_policy_service.repeat_count_choices(allow_zero=False)),
             "review_criteria": {"document_type_default", "last_rejection_only"},
             "rework_timeout_sec": {1800, 3600, 7200},
-            "failure_restart_max_attempts": {-1, 0, 1, 2},
+            "failure_restart_max_attempts": set(
+                ai_execution_policy_service.repeat_count_choices(allow_zero=True)
+            ),
             "total_timeout_sec": {3600, 7200, 14400},
         }
         for field, choices in allowed.items():
@@ -331,15 +338,15 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             "msg": f"must be between {ai_invoke_service.STEP_TIMEOUT_MIN_SEC} and "
                    f"{ai_invoke_service.STEP_TIMEOUT_MAX_SEC} seconds",
         })
+    restart_max_attempts_choices = ai_invoke_service.restart_max_attempts_choices()
     if (
         body.continuation_restart_max_attempts is not None
-        and body.continuation_restart_max_attempts
-        not in ai_invoke_service.RESTART_MAX_ATTEMPTS_CHOICES
+        and body.continuation_restart_max_attempts not in restart_max_attempts_choices
     ):
         errors.append({
             "loc": "continuation_restart_max_attempts",
             "msg": "must be one of "
-                   f"{ai_invoke_service.RESTART_MAX_ATTEMPTS_CHOICES}",
+                   f"{restart_max_attempts_choices}",
         })
     if (
         body.action_scope == "workflow_decide"
