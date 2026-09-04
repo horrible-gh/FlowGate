@@ -119,6 +119,21 @@ def test_help_block_slot_holds_in_continuous_mode():
     assert headers[:3] == ["## Document information", "## Continuous work", "## 도움말"]
 
 
+# ── 1a. attachment discovery pointer (0523 T0004 §18) ────────────────────────
+# The help index block is the one place every worker mention already tells the
+# worker to call GET /help; T0004 §18 requires a short pointer from there to the
+# document_attachments help item so a worker who only reads the mention (not the
+# full /help index) still learns attachments are not a /remote/* source tool but
+# are discoverable through help. Missing this line let a worker conclude "no
+# attachment tool exists" without ever finding the item that says otherwise.
+
+@pytest.mark.parametrize("locale", ["ko", "en", "ja"])
+@pytest.mark.parametrize("build", [_build_new, _build_decide, _build_seq_edit, _build_review])
+def test_help_block_points_at_the_document_attachments_item(build, locale):
+    out = build(locale)
+    assert f"GET {_BASE}/help/items/document_attachments" in out
+
+
 # ── 2. doc_type guide absorbed into the index (D-0003 §3-2 "뺌") ─────────────
 
 @pytest.mark.parametrize("build", [_build_new, _build_decide, _build_seq_edit, _build_review])

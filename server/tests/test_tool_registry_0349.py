@@ -98,7 +98,13 @@ def test_local_mode_overrides_kind_to_none(monkeypatch):
     assert result["kind"] == "none"
     assert result["source_mode"] == "local"
     assert result["reason"] == "source_mode_local"
-    assert result["notes"] == [tool_registry.NOTES["ko"]["none_local"]]
+    # 0523 T0004 s.17: a kind=none answer now also says that the document attachment API
+    # is closed to this token. Silence there is what let a worker read "no attachment tool
+    # in the list" as "attachments cannot be reached at all".
+    assert result["notes"] == [
+        tool_registry.NOTES["ko"]["none_local"],
+        tool_registry.NOTES["ko"]["attachments_none"],
+    ]
 
 
 def test_source_mode_exception_falls_back_remote(monkeypatch):
@@ -145,5 +151,8 @@ def test_locale_normalization_catalog_order_and_exact_notes(monkeypatch):
         tool_registry.NOTES["ko"]["no_disk_edit"],
         tool_registry.NOTES["ko"]["scratch_rule"],
         tool_registry.NOTES["ko"]["report_changes"],
+        # 0523 T0004 s.17 — sits before see_detail so the "attachments are not these
+        # tools" sentence is read while the tool list is still in view.
+        tool_registry.NOTES["ko"]["attachments"],
         tool_registry.NOTES["ko"]["see_detail"],
     ]

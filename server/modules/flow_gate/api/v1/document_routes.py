@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from modules.flow_gate.db import conversation_turns as conversation_turn_store
 from modules.flow_gate.db import documents as db_docs
@@ -192,6 +193,222 @@ def get_document_rpc(doc_id: str = Query(...), request: Request = None):
 @router.get("/document/path")
 def get_document_path_rpc(doc_id: str = Query(...), request: Request = None):
     return get_document_path(request, doc_id)
+
+
+_ATTACHMENT_KIND_FORBIDDEN = frozenset({"none"})
+
+
+def _validate_document_scope(auth: dict, document: dict, doc_id: str) -> Optional[JSONResponse]:
+    """Worker document access scope (T0004 s.24) -- the same doc_ref/group_id binding
+    the conversation, workflow-decision and inbox worker surfaces already enforce
+    (conversation_routes._authenticate, workflow_decision_routes, oracle._oracle_doc_id).
+
+    A token may reach a document's attachments if it is bound to that exact document
+    (``doc_ref == doc_id``) or if the document lives inside the token's own group
+    (``group_id`` match, per T0004 s.24's "token/group A -> doc/group A attachments ->
+    allowed" example). Anything else -- an unrelated group's document -- is denied.
+    """
+    if auth.get("doc_ref") == doc_id:
+        return None
+    group_id = auth.get("group_id")
+    if group_id and group_id == document.get("group_id"):
+        return None
+    return _fail(403, "This token is not scoped to this document.")
+
+
+def _attachment_read_kind(auth: dict):
+    """SSOT reuse (T0004 s.6/s.8): the same kind judgment the source tools use.
+
+    A token whose effective source-access kind is ``none`` gets no attachment API either
+    (list/read/copy alike) -- attachments are additional access ON TOP OF source access,
+    never a side door around it.
+    """
+    from modules.flow_gate.services import tool_registry
+
+    kind, _reason = tool_registry.kind_for_token(auth)
+    if kind in _ATTACHMENT_KIND_FORBIDDEN:
+        return kind, _fail(403, "This token has no source access; attachment access is unavailable.")
+    return kind, None
+
+
+def _attachment_briefs(doc_id: str) -> list:
+    """Attachment metadata for document GET discovery (T0004 s.5, s.19) -- never the
+    content. Raises ``AttachmentError`` on a registry/storage failure instead of
+    swallowing it into ``[]``: T0004 s.19/s.38.1 require an empty list to mean a confirmed
+    absence of attachments, so a service failure must surface as an error the caller can
+    tell apart from that, not silently collapse into the same envelope."""
+    from modules.flow_gate.documents import attachments
+
+    try:
+        data = attachments.list_attachments(doc_id)
+    except attachments.AttachmentError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise attachments.unexpected(
+            exc, operation="worker:document_get:attachments", doc_id=doc_id
+        ) from exc
+    return [
+        {
+            "filename": row.get("filename"),
+            "size": row.get("size"),
+            "content_type": row.get("content_type"),
+            "uploaded_at": row.get("uploaded_at"),
+        }
+        for row in data.get("attachments") or []
+    ]
+
+
+@router.get("/document/{doc_id}/attachments")
+def get_document_attachments(request: Request, doc_id: str):
+    """Worker-token attachment list (T0004 s.4-1) -- bridges the existing attachment
+    service to the worker surface; Console keeps its own /documents/... route untouched."""
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+
+    try:
+        _validate_outbound_doc_id(doc_id)
+    except ValueError as exc:
+        return _fail(422, str(exc))
+    document = db_docs.get_by_id(doc_id)
+    if document is None:
+        return _fail(404, f"Document {doc_id} does not exist")
+    scope_err = _validate_document_scope(auth, document, doc_id)
+    if scope_err is not None:
+        return scope_err
+
+    _kind, err = _attachment_read_kind(auth)
+    if err is not None:
+        return err
+
+    from modules.flow_gate.documents import attachments
+
+    try:
+        data = attachments.list_attachments(doc_id)
+    except attachments.AttachmentError as exc:
+        return exc.response()
+    except Exception as exc:  # noqa: BLE001
+        return attachments.unexpected(
+            exc, operation="worker:attachments:list", doc_id=doc_id
+        ).response()
+
+    return JSONResponse(content={
+        "ok": True,
+        "doc_id": doc_id,
+        "attachments": [
+            {
+                "filename": row.get("filename"),
+                "size": row.get("size"),
+                "content_type": row.get("content_type"),
+                "uploaded_at": row.get("uploaded_at"),
+            }
+            for row in data.get("attachments") or []
+        ],
+        "count": data.get("count", 0),
+    })
+
+
+@router.get("/document/{doc_id}/attachments/{name}/read")
+def get_document_attachment_read(
+    request: Request,
+    doc_id: str,
+    name: str,
+    mode: str = Query("auto"),
+    encoding: str = Query("utf-8"),
+):
+    """Worker-token attachment content read (T0004 s.4-2). ``read`` and ``read_write``
+    kinds may call this; ``none`` may not (T0004 s.6)."""
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+
+    try:
+        _validate_outbound_doc_id(doc_id)
+    except ValueError as exc:
+        return _fail(422, str(exc))
+    document = db_docs.get_by_id(doc_id)
+    if document is None:
+        return _fail(404, f"Document {doc_id} does not exist")
+    scope_err = _validate_document_scope(auth, document, doc_id)
+    if scope_err is not None:
+        return scope_err
+
+    _kind, err = _attachment_read_kind(auth)
+    if err is not None:
+        return err
+
+    from modules.flow_gate.documents import attachments
+
+    try:
+        data = attachments.read_attachment(doc_id, name, mode, encoding)
+    except attachments.AttachmentError as exc:
+        return exc.response()
+    except Exception as exc:  # noqa: BLE001
+        return attachments.unexpected(
+            exc, operation="worker:attachments:read", doc_id=doc_id
+        ).response()
+
+    return JSONResponse(content={"ok": True, "doc_id": doc_id, **data})
+
+
+class _AttachmentCopyBody(BaseModel):
+    """T0004 s.11 -- worker copy carries only ``target_path``. Unlike the console
+    contract there is no ``group_id`` field: the destination is always the caller's own
+    group worktree (T0004 s.12/s.34), never a value the request can steer."""
+
+    target_path: Optional[str] = None
+
+
+@router.post("/document/{doc_id}/attachments/{name}/copy")
+def post_document_attachment_copy(
+    request: Request, doc_id: str, name: str, body: _AttachmentCopyBody
+):
+    """Worker-token attachment copy-to-source (T0004 s.4-3). Requires read_write source
+    access (T0004 s.7/s.25) -- copy is a source tree mutation, not a read."""
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+
+    try:
+        _validate_outbound_doc_id(doc_id)
+    except ValueError as exc:
+        return _fail(422, str(exc))
+    document = db_docs.get_by_id(doc_id)
+    if document is None:
+        return _fail(404, f"Document {doc_id} does not exist")
+    scope_err = _validate_document_scope(auth, document, doc_id)
+    if scope_err is not None:
+        return scope_err
+
+    from modules.flow_gate.services import tool_registry
+
+    kind, _reason = tool_registry.kind_for_token(auth)
+    if kind != "read_write":
+        return _fail(403, "Copying an attachment into source requires read_write source access.")
+
+    group_id = auth.get("group_id")
+    if not group_id:
+        # C5's caller: a doc_ref-scoped token (no group_id) would otherwise pass ``None``
+        # through to copy_to_source, which resolve_copy_root treats as "target the base
+        # checkout" (that fallback exists for the Console's own group_id:null contract,
+        # documents.py:2983 -- never for a worker). Refuse rather than let an
+        # exact-doc-match token with no group binding land a write in the base checkout.
+        return _fail(403, "Copying an attachment into source requires a group-bound token.")
+
+    from modules.flow_gate.documents import attachments
+
+    try:
+        data = attachments.copy_to_source(
+            doc_id, name, body.target_path, group_id, auth
+        )
+    except attachments.AttachmentError as exc:
+        return exc.response()
+    except Exception as exc:  # noqa: BLE001
+        return attachments.unexpected(
+            exc, operation="worker:attachments:copy", doc_id=doc_id
+        ).response()
+
+    return JSONResponse(status_code=201, content={"ok": True, "doc_id": doc_id, **data})
 
 
 # T247/T564 — path-style endpoint (including branch). Registered before the 1-segment {doc_id} endpoint.
@@ -793,7 +1010,7 @@ def get_document_relations(
 
 @router.get("/document/{doc_id}")
 def get_document(request: Request, doc_id: str):
-    """Retrieve document content and metadata (D021 §4-2)."""
+    """Retrieve document content and metadata (D021 s.4-2)."""
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
         return auth
@@ -834,6 +1051,15 @@ def get_document(request: Request, doc_id: str):
         "created_at": doc.get("created_at"),
         "updated_at": doc.get("updated_at"),
     }
+    if auth.get("_is_user_jwt") or _validate_document_scope(auth, doc, doc_id) is None:
+        from modules.flow_gate.documents import attachments
+
+        try:
+            resp["attachments"] = _attachment_briefs(doc_id)
+        except attachments.AttachmentError as exc:
+            return exc.response()
+    else:
+        resp["attachments"] = []
     qa_pairs = get_answers_for_document(doc_id)
     if qa_pairs:
         resp["answers"] = qa_pairs

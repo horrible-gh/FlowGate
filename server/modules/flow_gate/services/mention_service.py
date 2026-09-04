@@ -282,18 +282,24 @@ _HELP_INDEX_TEXT: dict[str, str] = {
         "첫 행동으로 GET {base}/help 를 호출해 도움말 목차를 받으세요.\n"
         "목차의 항목 중 필요한 것을 GET {base}/help/items/{{name}} 으로 골라 받습니다.\n"
         "한 번에 모두 받으려면 GET {base}/help?detail=true 를 쓰세요.\n"
+        "문서 첨부파일 목록·읽기·복사 방법은 별도 도구가 아니라 도움말 항목에 있습니다: "
+        "GET {base}/help/items/document_attachments\n"
         "Authorization: Bearer {token}"
     ),
     "ja": (
         "最初の行動として GET {base}/help を呼び出し、ヘルプ目次を取得してください。\n"
         "目次から必要な項目を GET {base}/help/items/{{name}} で選んで取得します。\n"
         "表示可能な全項目を一度に取得するには GET {base}/help?detail=true を使ってください。\n"
+        "文書添付ファイルの一覧・読み取り・コピー方法は専用ツールではなくヘルプ項目にあります: "
+        "GET {base}/help/items/document_attachments\n"
         "Authorization: Bearer {token}"
     ),
     "en": (
         "As your first action, call GET {base}/help to receive the help index.\n"
         "Choose what you need from the index with GET {base}/help/items/{{name}}.\n"
         "To receive all visible items at once, use GET {base}/help?detail=true.\n"
+        "Document attachment list/read/copy is not a separate tool — it is in the help item: "
+        "GET {base}/help/items/document_attachments\n"
         "Authorization: Bearer {token}"
     ),
 }
