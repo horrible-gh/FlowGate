@@ -104,7 +104,7 @@ def test_index_for_a_design_token_lists_the_template_and_hides_the_task_items(mo
     assert body["form"] == "index"
     assert body["version"] == help_catalog.VERSION
     assert _names(body) == [
-        "notices", "group_documents", "document_access", "doc_type",
+        "notices", "group_documents", "document_access", "document_attachments", "doc_type",
         "question", "submit", "source_tools", "design_template",
     ]
     assert _hidden(body) == {
@@ -335,6 +335,21 @@ def test_document_access_advertises_the_bounded_reads(monkeypatch):
     assert "section_id=<section_id>" in partial["section"]["url"]
     assert "include_matches=true" in partial["content_search"]["url"]
     assert "/documents/" in content["note"]
+
+
+def test_document_attachments_advertises_the_copy_request_body(monkeypatch):
+    """Automated-review regression: the help item used to name the copy URL without
+    saying what to send it. A worker relying on help alone must be able to build the
+    request without guessing (T0004 s.11/s.17/completion condition 14)."""
+    client = _client(monkeypatch, _token(action_scope="resolve_base_dirty"), step_type="TR")
+    content = client.get("/api/v1/help/items/document_attachments").json()["content"]
+    copy = content["copy"]
+    assert copy["method"] == "POST"
+    assert copy["url"].endswith("/attachments/{name}/copy")
+    assert copy["body"] == {
+        "target_path": "<path inside the source tree, e.g. assets/schema.json>",
+    }
+    assert copy["headers"]["Content-Type"] == "application/json"
 
 
 def test_submit_carries_this_token_own_identity(monkeypatch):

@@ -93,16 +93,33 @@ FILE_LINE_CAPS: dict[str, int] = {
     "modules/flow_gate/services/ai_invoke/worker.py": 2,
     "modules/flow_gate/services/conversation_turn_service.py": 10,
     "modules/flow_gate/services/document_outline_service.py": 1,
-    "modules/flow_gate/services/help_catalog.py": 70,
+    # 70 -> 73: flowgate.default.0523 T0004 added the document_attachments help item
+    # (title/summary/note, ko locale) that bridges attachment list/read/copy to the
+    # worker-token document surface.
+    "modules/flow_gate/services/help_catalog.py": 73,
     "modules/flow_gate/services/invoke_mention_service.py": 4,
-    "modules/flow_gate/services/mention_service.py": 157,
+    # 157 -> 176: this file was already at 175 (pre-existing drift from other merged
+    # groups untouched by 0523, same as the git_service.py/tr_commit_ledger.py/
+    # git_routes.py entries this census still doesn't list — those stay at their old
+    # caps because 0523 never edits them). flowgate.default.0523 T0004 §18 then added
+    # exactly one new ko line — the mention's document_attachments help-item pointer —
+    # bringing the measured count to 176.
+    "modules/flow_gate/services/mention_service.py": 176,
     "modules/flow_gate/services/q_answer_invoke_service.py": 24,
     "modules/flow_gate/services/remote_tool_service.py": 14,
     # New file (flowgate.default.0467 T0002) — mirrors tr_scope_service.py's shape
     # (required-section parser + ko/en notice text), so a comparable line count.
     "modules/flow_gate/services/step_verification_service.py": 49,
     "modules/flow_gate/services/test_run_service.py": 28,
-    "modules/flow_gate/services/tool_registry.py": 45,
+    # 45 -> 97. Measured, split into its two causes: 55 lines were already there before
+    # 0523 touched this file (drift merged in by other groups, the same untracked-by-this-
+    # census drift the git_service.py/tr_commit_ledger.py entries carry), and 0523 T0004
+    # §17 adds 42 more -- the ko half of ATTACHMENT_SUMMARY / ATTACHMENT_VIEW_NOTES /
+    # ATTACHMENT_FIELDS / ATTACHMENT_ERRORS / ATTACHMENT_CAUTIONS, the locale dictionary
+    # GET /help/tools serves to a ko worker. That is (A) locale-dictionary Korean, which
+    # this census budgets rather than forbids; the surrounding ja/en tables carry the
+    # identical text in their own locales.
+    "modules/flow_gate/services/tool_registry.py": 97,
     "modules/flow_gate/services/tr_scope_service.py": 53,
     # 15 -> 16: 0444 T0005 added the ko copy for the done_rows_skipped warning. _COPY is the
     # user-facing warning text, and the T doc requires all three locales, so the ko line is

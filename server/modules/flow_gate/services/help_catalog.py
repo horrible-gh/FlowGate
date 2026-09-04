@@ -51,6 +51,7 @@ CATALOG_ORDER: tuple[str, ...] = (
     "notices",
     "group_documents",
     "document_access",
+    "document_attachments",
     "doc_type",
     "question",
     "submit",
@@ -66,6 +67,7 @@ ITEM_FORM: dict[str, str] = {
     "notices": "content",
     "group_documents": "content",
     "document_access": "content",
+    "document_attachments": "content",
     "doc_type": "content",
     "question": "content",
     "submit": "content",
@@ -81,7 +83,7 @@ _CATALOG = frozenset(CATALOG_ORDER)
 
 #: Items every worker token sees, whatever it is doing.
 ALWAYS_VISIBLE = frozenset({
-    "notices", "group_documents", "document_access", "doc_type", "question", "submit",
+    "notices", "group_documents", "document_access", "document_attachments", "doc_type", "question", "submit",
 })
 #: A console user JWT carries no document context, so only the two context-free
 #: items survive (P-0004 [edge 4]).
@@ -105,6 +107,7 @@ TITLES: dict[str, dict[str, str]] = {
         "notices": "주의사항",
         "group_documents": "그룹의 문서 목록",
         "document_access": "문서 조회 방법",
+        "document_attachments": "문서 첨부파일 이용 방법",
         "doc_type": "문서 타입 안내",
         "question": "질의(Q) 등록",
         "submit": "결과 제출 방법",
@@ -119,6 +122,7 @@ TITLES: dict[str, dict[str, str]] = {
         "notices": "Notices",
         "group_documents": "Documents in this group",
         "document_access": "How to read documents",
+        "document_attachments": "How to use document attachments",
         "doc_type": "Document type guide",
         "question": "Register a query (Q)",
         "submit": "How to submit",
@@ -133,6 +137,7 @@ TITLES: dict[str, dict[str, str]] = {
         "notices": "注意事項",
         "group_documents": "グループの文書一覧",
         "document_access": "文書の参照方法",
+        "document_attachments": "文書添付ファイルの利用方法",
         "doc_type": "文書タイプ案内",
         "question": "質問(Q)の登録",
         "submit": "結果の提出方法",
@@ -170,6 +175,7 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "notices": "이 작업에서 반드시 지켜야 할 금지 사항.",
         "group_documents": "이 그룹의 문서 ID·타입·제목 목록을 바로 돌려준다.",
         "document_access": "문서 본문과 메타데이터를 읽는 주소.",
+        "document_attachments": "첨부파일 목록/읽기/소스 복사 주소와 권한.",
         "doc_type": "문서 타입 코드와 이름 목록.",
         "question": "막혔을 때 질의를 등록하는 방법.",
         "submit": "작성한 문서를 등록하는 요청 서식.",
@@ -184,6 +190,7 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "notices": "What this step forbids and must not be skipped.",
         "group_documents": "Document ids, types and titles in this group, returned directly.",
         "document_access": "Addresses that read a document body and its metadata.",
+        "document_attachments": "Addresses and permissions for attachment list/read/copy-to-source.",
         "doc_type": "Document type codes and their names.",
         "question": "How to register a query when you are blocked.",
         "submit": "Request format that registers the document you wrote.",
@@ -198,6 +205,7 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "notices": "この作業で必ず守るべき禁止事項。",
         "group_documents": "このグループの文書ID・タイプ・タイトル一覧をそのまま返す。",
         "document_access": "文書本文とメタデータを読むアドレス。",
+        "document_attachments": "添付ファイルの一覧/読み取り/ソースコピーのアドレスと権限。",
         "doc_type": "文書タイプコードと名称の一覧。",
         "question": "行き詰まったときに質問を登録する方法。",
         "submit": "作成した文書を登録するリクエスト形式。",
@@ -302,6 +310,7 @@ _ITEM_NOTES: dict[str, dict[str, str]] = {
     "ko": {
         "group_documents": "본문까지 읽으려면 GET {base}/document/{{doc_id}} 를 호출하세요.",
         "document_access": "경로는 단수형 /document/ 입니다. 복수형 /documents/ 는 콘솔 전용 API라 작업 토큰에 401 을 돌려줍니다.",
+        "document_attachments": "첨부파일은 복사하기 전까지 프로젝트 소스가 아닙니다. /remote/read, grep, glob으로 찾지 마십시오. read 권한은 list/read만, read_write 권한은 list/read/copy까지, none 권한은 이 API를 전혀 쓸 수 없습니다.",
         "design_template_children": "default_child 는 이번에 작성할 문서의 타입입니다. 특별한 이유가 없으면 그것을 받으세요. 작업계획(WP)을 쓸 때 수량은 근거 기반으로 산정하고, 근거가 없으면 counted_types/quantities에 키를 남긴 채 count 0으로 둡니다(1로 추측하지 않습니다).",
         "design_template_body": "rendered 는 예전 지시문의 '## Document template' 절과 같은 완성 블록입니다. 본문에는 파일 경로가 들어가지 않습니다. 작업계획(WP)을 쓸 때 수량은 근거 기반으로 산정하고, 근거가 없으면 counted_types/quantities에 키를 남긴 채 count 0으로 둡니다(1로 추측하지 않습니다).",
         "design_template_fallback": "resolved_locale 이 requested_locale 과 다르면 본문은 대체 로케일의 것입니다. 작업계획(WP)을 쓸 때 수량은 근거 기반으로 산정하고, 근거가 없으면 counted_types/quantities에 키를 남긴 채 count 0으로 둡니다(1로 추측하지 않습니다).",
@@ -315,6 +324,7 @@ _ITEM_NOTES: dict[str, dict[str, str]] = {
     "en": {
         "group_documents": "To read a body, call GET {base}/document/{{doc_id}}.",
         "document_access": "The path is singular /document/. The plural /documents/ is the console-only API and answers a work token with 401.",
+        "document_attachments": "An attachment is not project source until you copy it. Do not search for it through /remote/read, grep or glob. A read kind may list/read only; read_write may list/read/copy; none cannot use these endpoints at all.",
         "design_template_children": "default_child is the type you are writing now. Take that one unless you have a reason not to. When authoring a work plan (WP), derive quantities from evidence; when there is no basis, keep the key in counted_types/quantities with count 0 -- never guess 1.",
         "design_template_body": "rendered is the finished block that used to be the '## Document template' section of the mention. The body never contains a file path. When authoring a work plan (WP), derive quantities from evidence; when there is no basis, keep the key in counted_types/quantities with count 0 -- never guess 1.",
         "design_template_fallback": "When resolved_locale differs from requested_locale, the body is the fallback locale's. When authoring a work plan (WP), derive quantities from evidence; when there is no basis, keep the key in counted_types/quantities with count 0 -- never guess 1.",
@@ -328,6 +338,7 @@ _ITEM_NOTES: dict[str, dict[str, str]] = {
     "ja": {
         "group_documents": "本文まで読むには GET {base}/document/{{doc_id}} を呼び出してください。",
         "document_access": "パスは単数形の /document/ です。複数形の /documents/ はコンソール専用APIで、作業トークンには401を返します。",
+        "document_attachments": "添付ファイルはコピーするまでプロジェクトソースではありません。/remote/read、grep、globで探さないでください。read権限はlist/readのみ、read_write権限はlist/read/copyまで、none権限はこれらのエンドポイントを一切使用できません。",
         "design_template_children": "default_child は今回作成する文書のタイプです。特別な理由が無ければそれを取得してください。作業計画(WP)を書くとき、数量は根拠から算定し、根拠がなければ counted_types/quantities にキーを残したまま count 0 とします(1 と推測しません)。",
         "design_template_body": "rendered は以前の指示文の '## Document template' 節と同じ完成ブロックです。本文にファイルパスは入りません。作業計画(WP)を書くとき、数量は根拠から算定し、根拠がなければ counted_types/quantities にキーを残したまま count 0 とします(1 と推測しません)。",
         "design_template_fallback": "resolved_locale が requested_locale と異なる場合、本文は代替ロケールのものです。作業計画(WP)を書くとき、数量は根拠から算定し、根拠がなければ counted_types/quantities にキーを残したまま count 0 とします(1 と推測しません)。",
@@ -791,6 +802,55 @@ def _content_document_access(ctx: dict) -> dict:
         "note": _copy(_ITEM_NOTES, ctx["locale"], "document_access"),
     }
 
+def _attachment_permission_table() -> dict:
+    """Which operations each kind may call, derived from the one judge.
+
+    This used to be a literal table here -- a second copy of the read/read_write rule the
+    worker routes enforce, free to drift from them. It is now read out of
+    tool_registry.ATTACHMENT_KINDS, the same table /help/tools and the routes consult.
+    """
+    return {
+        kind: [name.replace("attachment_", "", 1) for name in tool_registry.attachment_names(kind)]
+        for kind in ("read", "read_write", "none")
+    }
+
+
+def _content_document_attachments(ctx: dict) -> dict:
+    """T0004 s.4/s.6 -- reuses the same tool_registry kind ctx already carries
+    (resolve_context calls tool_registry.resolve_registry once per request), so this
+    item can never advertise a permission the worker route itself would refuse.
+    """
+    base = ctx["base_url"]
+    doc_id = ctx.get("doc_id") or "{doc_id}"
+    kind = ctx.get("tool_kind") or "none"
+    table = _attachment_permission_table()
+    view = tool_registry.attachment_view(kind, ctx["locale"], base)
+    return {
+        "list": {"method": "GET", "url": f"{base}/document/{{doc_id}}/attachments",
+                 "example": f"{base}/document/{doc_id}/attachments"},
+        "read": {"method": "GET", "url": f"{base}/document/{{doc_id}}/attachments/{{name}}/read"},
+        "copy": {
+            "method": "POST",
+            "url": f"{base}/document/{{doc_id}}/attachments/{{name}}/copy",
+            "headers": {"Authorization": "Bearer <YOUR_TOKEN>", "Content-Type": "application/json"},
+            # T0004 s.11/s.34: destination is always the caller's own group worktree --
+            # there is no group_id field to steer it elsewhere, unlike the Console contract.
+            "body": {
+                "target_path": "<path inside the source tree, e.g. assets/schema.json>",
+            },
+        },
+        "permission": {
+            "kind": kind,
+            "allowed": table.get(kind, []),
+            "by_kind": table,
+        },
+        # What a work token CANNOT do with an attachment, said out loud rather than left
+        # to be inferred from the three keys above (T0004 s.19 applied to the capability
+        # list itself): uploading and deleting are Console-screen actions.
+        "absent": view["absent"],
+        "note": _copy(_ITEM_NOTES, ctx["locale"], "document_attachments"),
+    }
+
 
 def _content_doc_type(ctx: dict) -> dict:
     try:
@@ -1114,6 +1174,7 @@ _CONTENT_SUPPLIERS = {
     "notices": _content_notices,
     "group_documents": _content_group_documents,
     "document_access": _content_document_access,
+    "document_attachments": _content_document_attachments,
     "doc_type": _content_doc_type,
     "question": _content_question,
     "submit": _content_submit,
@@ -1130,6 +1191,8 @@ def _item_notes(name: str, ctx: dict) -> list[str]:
         return [_copy(_ITEM_NOTES, locale, "group_documents").format(base=base)]
     if name == "document_access":
         return [_copy(_ITEM_NOTES, locale, "document_access")]
+    if name == "document_attachments":
+        return [_copy(_ITEM_NOTES, locale, "document_attachments")]
     if name == "question":
         return [QUESTION_HELP_COPY[locale]["continue_note"]]
     if name == "design_template":
@@ -1156,6 +1219,11 @@ def build_item(name: str, ctx: dict) -> dict:
         payload["kind"] = registry["kind"]
         payload["source_mode"] = registry["source_mode"]
         payload["reason"] = registry["reason"]
+        # The same second catalog /help/tools returns (0523 T0004 s.17). The source-tool
+        # item must not be the one surface left answering "source tree only".
+        payload["document_attachments"] = tool_registry.attachment_view(
+            registry["kind"], ctx["locale"], ctx["base_url"]
+        )
 
     if form == "children":
         payload["children"] = enumerate_children(name, ctx)

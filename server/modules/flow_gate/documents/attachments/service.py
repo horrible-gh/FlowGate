@@ -82,13 +82,23 @@ def load_document(doc_id: str) -> dict:
 
 
 def assert_mutable(doc: dict, actor: Optional[dict], operation: str) -> None:
-    """A3 / X2 / C3 — the change-class guard, reusing the existing two.
+    """A3 / X2 / C3 -- the change-class guard, reusing the existing two.
 
     ``_reject_if_group_disposed`` and ``assert_group_mutation_allowed`` are the guards the
-    current upload already runs (NR0015 §6-1); this only re-labels their failures into the
+    current upload already runs (NR0015 6-1); this only re-labels their failures into the
     P0011 ``DOCUMENT_NOT_MUTABLE`` envelope so every attachment error has one shape.
-    Imported lazily — ``documents.py`` imports this module, so a module-level import here
+    Imported lazily -- ``documents.py`` imports this module, so a module-level import here
     would close the cycle.
+
+    ``actor`` is a worker token record when this is called from the T0004 worker copy route
+    (a raw source-tree mutation the same way /remote/write is) and a Console user row from
+    every other caller. The two shapes need different ``MutationPrincipal`` kinds: a worker
+    token maps to ``worker_principal`` so it is recognised as the SAME actor the group AI
+    lease already belongs to, and ``human_principal`` only ever produces ``kind="human"``.
+    Without this branch a worker mid-run -- which always holds an active lease on its own
+    group -- would fail its own lease's ownership check and see every copy answer 409
+    DOCUMENT_NOT_MUTABLE / group_ai_running, even though the request came from the very
+    principal the lease was issued to.
     """
     from fastapi import HTTPException
 
@@ -97,6 +107,7 @@ def assert_mutable(doc: dict, actor: Optional[dict], operation: str) -> None:
         MutationPolicyError,
         assert_group_mutation_allowed,
         human_principal,
+        worker_principal,
     )
 
     not_mutable = lambda reason: AttachmentError(  # noqa: E731
@@ -112,9 +123,11 @@ def assert_mutable(doc: dict, actor: Optional[dict], operation: str) -> None:
     except HTTPException:
         raise not_mutable("group_disposed")
 
+    is_worker_token = bool(actor) and "token_id" in actor and "action_scope" in actor
+    principal = worker_principal(actor) if is_worker_token else human_principal(actor)
     try:
         assert_group_mutation_allowed(
-            doc.get("group_id"), human_principal(actor), operation
+            doc.get("group_id"), principal, operation
         )
     except MutationPolicyError:
         raise not_mutable("group_ai_running")

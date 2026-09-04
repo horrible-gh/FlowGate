@@ -88,6 +88,8 @@ NOTES = {
         "none_scope": "이 작업 단계에는 원격 소스 도구가 배정되지 않았습니다. 소스 트리에 접근하지 말고 배정된 문서 작업만 수행하세요.",
         "none_local": "이 프로젝트는 원격 소스 접근을 사용하지 않습니다. 소스는 작업 환경에서 직접 다루고, 이 도구는 호출하지 마세요.",
         "none_user": "이 인증 주체에는 원격 소스 도구가 배정되지 않았습니다. 도구는 작업 토큰에만 배정됩니다.",
+        "attachments": "파일 관련이라도 문서 첨부파일은 이 소스 도구가 아닙니다. 첨부파일 목록/읽기/소스 복사는 이 응답의 document_attachments 블록과 GET /flowgate/api/v1/help/items/document_attachments 에 있습니다.",
+        "attachments_none": "이 단계는 문서 첨부파일 API도 쓸 수 없습니다. 소스 접근이 없는 토큰에는 첨부파일 접근도 없습니다.",
     },
     "ja": {
         "path_rule": "すべてのパスはプロジェクトソースルートからの相対パスです。絶対パスや '..' セグメントを送らないでください。",
@@ -101,6 +103,8 @@ NOTES = {
         "none_scope": "この作業段階にはリモートソースツールが割り当てられていません。ソースツリーに触れず、割り当てられた文書作業のみ行ってください。",
         "none_local": "このプロジェクトはリモートソースアクセスを使用しません。ソースは作業環境で直接扱い、このツールは呼び出さないでください。",
         "none_user": "この認証主体にはリモートソースツールが割り当てられていません。ツールは作業トークンにのみ割り当てられます。",
+        "attachments": "ファイル関連であっても、文書の添付ファイルはこのソースツールではありません。添付ファイルの一覧/読み取り/ソースコピーはこのレスポンスの document_attachments ブロックと GET /flowgate/api/v1/help/items/document_attachments にあります。",
+        "attachments_none": "この段階では文書の添付ファイルAPIも使えません。ソースアクセスのないトークンには添付ファイルへのアクセスもありません。",
     },
     "en": {
         "path_rule": "All paths are project-source-root relative; do not send absolute paths or '..' segments.",
@@ -114,6 +118,8 @@ NOTES = {
         "none_scope": "No remote source tool is assigned to this step. Do not touch the project source tree; carry out only the document work you were given.",
         "none_local": "This project does not use remote source access. Work with the source in your own environment and do not call these tools.",
         "none_user": "No remote source tool is assigned to this identity. Tools are assigned to work tokens only.",
+        "attachments": "Document attachments are file-related but they are not these source tools. Attachment list/read/copy-to-source live in this response's document_attachments block and at GET /flowgate/api/v1/help/items/document_attachments.",
+        "attachments_none": "This step cannot use the document attachment API either. A token with no source access has no attachment access.",
     },
 }
 
@@ -338,6 +344,323 @@ CAUTIONS["resolve_base_dirty"] = {
 EXAMPLE_BODIES["resolve_base_dirty"] = {"decisions": [{"path": "app/main.py", "action": "commit"}], "complete": True, "commit_message": "fix: resolve base changes"}
 EXAMPLE_RESPONSES["resolve_base_dirty"] = {"ok": True, "op": "resolve_base_dirty", "status": "resolved", "remaining": [], "commit": "0123456789abcdef"}
 
+# ── Document attachments (0523 T0004 §17) ───────────────────────────────────
+# An attachment hangs off a DOCUMENT, not off the source tree, so it is not a /remote/*
+# operation and must stay out of DISPLAY_ORDER (test_tool_catalog_parity_0356 pins that
+# tuple to remote_tool_service.OPS, and remote_tool_service has no attachment op to pin).
+# It is advertised from this module anyway because GET /help/tools is the one "which file
+# operations do I have?" surface every worker is told to call first: while that answer
+# spoke only for the source tree, a worker asked to touch a document's attachment read
+# the six read tools, read the "investigation only" note, and concluded that attachments
+# cannot be reached at all — which is what 0523 TR0005 was rejected for twice.
+ATTACHMENT_DISPLAY_ORDER = ("attachment_list", "attachment_read", "attachment_copy")
+ATTACHMENT_ROUTES: dict[str, tuple[str, str]] = {
+    "attachment_list": ("GET", "/document/{doc_id}/attachments"),
+    "attachment_read": ("GET", "/document/{doc_id}/attachments/{name}/read"),
+    "attachment_copy": ("POST", "/document/{doc_id}/attachments/{name}/copy"),
+}
+# Which effective kinds may call each operation. This is the SAME read/read_write
+# judgment the worker routes themselves make (document_routes._attachment_read_kind, and
+# the copy route's read_write check), so this catalog can never advertise an operation
+# the server would answer 403 to — the D0004 D-2 rule the source tools already follow.
+ATTACHMENT_KINDS: dict[str, frozenset] = {
+    "attachment_list": frozenset({"read", "read_write"}),
+    "attachment_read": frozenset({"read", "read_write"}),
+    "attachment_copy": frozenset({"read_write"}),
+}
+ATTACHMENT_SCOPE = {
+    "attachment_list": "read",
+    "attachment_read": "read",
+    "attachment_copy": "write",
+}
+# Attachment operations that exist on the Console screen but are NOT on the worker
+# surface at all. Named out loud so "control an attachment" gets a complete answer from
+# help instead of the worker having to infer absence from silence (T0004 §19's "unknown
+# must never be answered as none", applied to the capability list itself).
+ATTACHMENT_ABSENT_OPS = ("attachment_upload", "attachment_delete")
+
+ATTACHMENT_SUMMARY = {
+    "ko": {
+        "attachment_list": "이 문서에 올라온 첨부파일의 목록과 크기·종류를 조회한다.",
+        "attachment_read": "첨부파일 하나의 내용을 텍스트 또는 base64로 읽는다.",
+        "attachment_copy": "첨부파일 하나를 내 그룹 워크트리의 소스 트리로 복사한다.",
+        "attachment_upload": "첨부파일 올리기(콘솔 화면 전용).",
+        "attachment_delete": "첨부파일 삭제(콘솔 화면 전용).",
+    },
+    "ja": {
+        "attachment_list": "この文書にアップロードされた添付ファイルの一覧とサイズ・種類を取得する。",
+        "attachment_read": "添付ファイル1つの内容をテキストまたはbase64で読み取る。",
+        "attachment_copy": "添付ファイル1つを自分のグループワークツリーのソースツリーへコピーする。",
+        "attachment_upload": "添付ファイルのアップロード(コンソール画面専用)。",
+        "attachment_delete": "添付ファイルの削除(コンソール画面専用)。",
+    },
+    "en": {
+        "attachment_list": "List the attachments uploaded to this document, with size and type.",
+        "attachment_read": "Read one attachment's content as text or base64.",
+        "attachment_copy": "Copy one attachment into your own group worktree's source tree.",
+        "attachment_upload": "Upload an attachment (Console screen only).",
+        "attachment_delete": "Delete an attachment (Console screen only).",
+    },
+}
+
+ATTACHMENT_VIEW_NOTES = {
+    "ko": {
+        "what": "문서 첨부파일은 위 소스 도구(/remote/*)가 아니라 문서 API로 다룹니다. operations 의 method 와 path 를 그대로 호출하세요.",
+        "not_source": "첨부파일은 copy 로 복사하기 전까지 프로젝트 소스가 아닙니다. /remote/read, grep, glob 으로 찾지 마세요.",
+        "permission": "권한은 소스 접근 kind 를 그대로 따릅니다: read=목록/읽기, read_write=목록/읽기/복사, none=사용 불가.",
+        "scope": "볼 수 있는 문서는 이 토큰이 바인딩된 문서와 같은 그룹의 문서뿐입니다. 다른 그룹의 문서 첨부파일은 403 입니다.",
+        "denied": "이 토큰의 소스 접근 kind={kind} 에는 허용되지 않습니다.",
+        "absent": "작업 토큰에는 열려 있지 않습니다. 첨부파일을 올리거나 지우는 일은 콘솔 화면에서 사람이 합니다.",
+    },
+    "ja": {
+        "what": "文書の添付ファイルは上のソースツール(/remote/*)ではなく文書APIで扱います。operations の method と path をそのまま呼び出してください。",
+        "not_source": "添付ファイルは copy でコピーするまでプロジェクトソースではありません。/remote/read、grep、glob で探さないでください。",
+        "permission": "権限はソースアクセスの kind に従います: read=一覧/読み取り、read_write=一覧/読み取り/コピー、none=利用不可。",
+        "scope": "参照できるのはこのトークンがバインドされた文書と同じグループの文書だけです。他グループの文書の添付ファイルは403です。",
+        "denied": "このトークンのソースアクセス kind={kind} では許可されていません。",
+        "absent": "作業トークンには開放されていません。添付ファイルの追加・削除はコンソール画面で人が行います。",
+    },
+    "en": {
+        "what": "Document attachments are handled by the document API, not by the source tools above (/remote/*). Call the method and path in operations as written.",
+        "not_source": "An attachment is not project source until copy puts it there. Do not look for it through /remote/read, grep or glob.",
+        "permission": "Permission follows the source-access kind exactly: read=list/read, read_write=list/read/copy, none=unavailable.",
+        "scope": "You may reach the document this token is bound to and other documents in its own group. Another group's document attachments answer 403.",
+        "denied": "Not allowed for this token's source-access kind={kind}.",
+        "absent": "Not open to work tokens. Uploading and deleting attachments is done by a person on the Console screen.",
+    },
+}
+
+ATTACHMENT_FIELDS: dict[str, dict[str, list]] = {
+    "attachment_list": {
+        "ko": [("doc_id", "string", True, None, "path", "첨부파일을 조회할 문서 ID. 경로에 넣는다.")],
+        "ja": [("doc_id", "string", True, None, "path", "添付ファイルを取得する文書ID。パスに入れる。")],
+        "en": [("doc_id", "string", True, None, "path", "Id of the document whose attachments are listed; goes in the path.")],
+    },
+    "attachment_read": {
+        "ko": [
+            ("doc_id", "string", True, None, "path", "첨부파일이 달린 문서 ID."),
+            ("name", "string", True, None, "path", "읽을 첨부파일 이름. 목록의 filename 을 그대로 쓴다."),
+            ("mode", "string", False, "auto", "query", "auto=내용을 보고 판단 / text=텍스트로 강제 / base64=바이너리로 강제."),
+            ("encoding", "string", False, "utf-8", "query", "텍스트로 디코딩할 인코딩."),
+        ],
+        "ja": [
+            ("doc_id", "string", True, None, "path", "添付ファイルが付いている文書ID。"),
+            ("name", "string", True, None, "path", "読み取る添付ファイル名。一覧の filename をそのまま使う。"),
+            ("mode", "string", False, "auto", "query", "auto=内容から判定 / text=テキスト強制 / base64=バイナリ強制。"),
+            ("encoding", "string", False, "utf-8", "query", "テキストとしてデコードするエンコーディング。"),
+        ],
+        "en": [
+            ("doc_id", "string", True, None, "path", "Id of the document the attachment belongs to."),
+            ("name", "string", True, None, "path", "Attachment name to read; use the filename from the list."),
+            ("mode", "string", False, "auto", "query", "auto=decide from content / text=force text / base64=force binary."),
+            ("encoding", "string", False, "utf-8", "query", "Charset used to decode as text."),
+        ],
+    },
+    "attachment_copy": {
+        "ko": [
+            ("doc_id", "string", True, None, "path", "첨부파일이 달린 문서 ID."),
+            ("name", "string", True, None, "path", "복사할 첨부파일 이름."),
+            ("target_path", "string", True, None, "body", "소스 루트 기준 상대 POSIX 경로. 절대경로와 '..' 금지. 목적지 루트는 언제나 이 토큰 자신의 그룹 워크트리이며 요청으로 바꿀 수 없다."),
+        ],
+        "ja": [
+            ("doc_id", "string", True, None, "path", "添付ファイルが付いている文書ID。"),
+            ("name", "string", True, None, "path", "コピーする添付ファイル名。"),
+            ("target_path", "string", True, None, "body", "ソースルートからの相対POSIXパス。絶対パスと '..' は禁止。コピー先ルートは常にこのトークン自身のグループワークツリーであり、リクエストでは変更できない。"),
+        ],
+        "en": [
+            ("doc_id", "string", True, None, "path", "Id of the document the attachment belongs to."),
+            ("name", "string", True, None, "path", "Attachment name to copy."),
+            ("target_path", "string", True, None, "body", "Source-root-relative POSIX path. Absolute paths and '..' are forbidden. The destination root is always this token's own group worktree and the request cannot steer it elsewhere."),
+        ],
+    },
+}
+
+ATTACHMENT_ERRORS: dict[str, dict[str, list]] = {
+    "attachment_list": {
+        "ko": [(403, "forbidden", "이 토큰이 그 문서 범위 밖이거나 소스 접근 kind 가 none 이다."),
+               (404, "not_found", "그 doc_id 의 문서가 없다."),
+               (422, "invalid_request", "doc_id 형식이 잘못됐다.")],
+        "ja": [(403, "forbidden", "このトークンがその文書のスコープ外か、ソースアクセスの kind が none。"),
+               (404, "not_found", "その doc_id の文書が存在しない。"),
+               (422, "invalid_request", "doc_id の形式が正しくない。")],
+        "en": [(403, "forbidden", "This token is outside the document's scope, or its source-access kind is none."),
+               (404, "not_found", "No document with that doc_id."),
+               (422, "invalid_request", "The doc_id has an invalid form.")],
+    },
+    "attachment_read": {
+        "ko": [(403, "forbidden", "이 토큰이 그 문서 범위 밖이거나 소스 접근 kind 가 none 이다."),
+               (404, "ATTACHMENT_NOT_FOUND", "그 이름의 첨부파일이 이 문서에 없다."),
+               (413, "READ_TOO_LARGE", "첨부파일이 읽기 상한을 넘는다. 내용을 잘라 주지 않고 읽기 자체를 거부한다."),
+               (415, "INVALID_TEXT_ENCODING", "mode=text 인데 요청한 인코딩으로 디코딩할 수 없다."),
+               (422, "INVALID_REQUEST", "mode 또는 encoding 값이 잘못됐다.")],
+        "ja": [(403, "forbidden", "このトークンがその文書のスコープ外か、ソースアクセスの kind が none。"),
+               (404, "ATTACHMENT_NOT_FOUND", "その名前の添付ファイルがこの文書に存在しない。"),
+               (413, "READ_TOO_LARGE", "添付ファイルが読み取り上限を超える。内容を切り詰めず読み取り自体を拒否する。"),
+               (415, "INVALID_TEXT_ENCODING", "mode=text だが要求されたエンコーディングでデコードできない。"),
+               (422, "INVALID_REQUEST", "mode または encoding の値が正しくない。")],
+        "en": [(403, "forbidden", "This token is outside the document's scope, or its source-access kind is none."),
+               (404, "ATTACHMENT_NOT_FOUND", "This document has no attachment with that name."),
+               (413, "READ_TOO_LARGE", "The attachment exceeds the read ceiling; the read is refused rather than truncated."),
+               (415, "INVALID_TEXT_ENCODING", "mode=text but the content cannot be decoded with the requested encoding."),
+               (422, "INVALID_REQUEST", "The mode or encoding value is invalid.")],
+    },
+    "attachment_copy": {
+        "ko": [(403, "forbidden", "소스 접근 kind 가 read_write 가 아니거나, 그룹에 묶이지 않은 토큰이거나, 문서 범위 밖이다."),
+               (400, "INVALID_PATH", "target_path 가 절대경로거나 '..' 를 포함하거나 소스 루트를 벗어난다."),
+               (409, "TARGET_EXISTS", "그 경로에 파일이 이미 있다. 덮어쓰지 않는다."),
+               (409, "DOCUMENT_NOT_MUTABLE", "다른 실행이 그룹을 잠그고 있거나 문서가 읽기 전용이다."),
+               (422, "INVALID_REQUEST", "target_path 가 비어 있다.")],
+        "ja": [(403, "forbidden", "ソースアクセスの kind が read_write でない、グループに紐づかないトークン、または文書のスコープ外。"),
+               (400, "INVALID_PATH", "target_path が絶対パス、'..' を含む、またはソースルート外。"),
+               (409, "TARGET_EXISTS", "そのパスにファイルが既に存在する。上書きしない。"),
+               (409, "DOCUMENT_NOT_MUTABLE", "他の実行がグループをロックしているか、文書が読み取り専用。"),
+               (422, "INVALID_REQUEST", "target_path が空。")],
+        "en": [(403, "forbidden", "The source-access kind is not read_write, the token has no group binding, or the document is out of scope."),
+               (400, "INVALID_PATH", "target_path is absolute, contains '..', or escapes the source root."),
+               (409, "TARGET_EXISTS", "A file already exists at that path; copy never overwrites."),
+               (409, "DOCUMENT_NOT_MUTABLE", "Another run holds the group lock, or the document is read-only."),
+               (422, "INVALID_REQUEST", "target_path is empty.")],
+    },
+}
+
+ATTACHMENT_CAUTIONS: dict[str, dict[str, list]] = {
+    "attachment_list": {
+        "ko": ["빈 배열은 '첨부파일 없음'을 확정한 답이다. 조회가 실패하면 빈 배열이 아니라 오류가 온다.",
+               "GET /document/{doc_id} 응답의 attachments 필드로도 같은 목록을 받는다. 내용은 들어 있지 않다."],
+        "ja": ["空配列は「添付ファイルなし」を確定した答え。取得に失敗した場合は空配列ではなくエラーが返る。",
+               "GET /document/{doc_id} のレスポンスの attachments フィールドでも同じ一覧が得られる。内容は含まれない。"],
+        "en": ["An empty array is a confirmed 'no attachments', not a shrug: a failed lookup returns an error instead.",
+               "The same list arrives in the attachments field of GET /document/{doc_id}. It never carries content."],
+    },
+    "attachment_read": {
+        "ko": ["내용은 절대 잘리지 않는다. 상한을 넘으면 413 으로 읽기 자체가 거부된다.",
+               "kind=binary 면 content 는 base64 다. kind=text 면 그대로 쓸 수 있는 문자열이다.",
+               "읽었다고 소스가 되지 않는다. 소스로 쓰려면 attachment_copy 로 복사한다."],
+        "ja": ["内容は決して切り詰められない。上限を超えると413で読み取り自体が拒否される。",
+               "kind=binary なら content は base64。kind=text ならそのまま使える文字列。",
+               "読んでもソースにはならない。ソースとして使うには attachment_copy でコピーする。"],
+        "en": ["Content is never truncated: past the ceiling the read itself is refused with 413.",
+               "kind=binary means content is base64; kind=text means it is directly usable text.",
+               "Reading does not make it source. To work on it as source, copy it with attachment_copy."],
+    },
+    "attachment_copy": {
+        "ko": ["복사 목적지 루트는 언제나 이 토큰 자신의 그룹 워크트리다. 요청으로 다른 곳을 가리킬 수 없다.",
+               "복사된 파일은 보통의 소스 변경이다. 작업 레포트의 '## 변경 파일' 절에 반드시 적는다.",
+               "이미 있는 파일은 덮어쓰지 않고 409 다. 바꿔 쓰려면 소스 도구 write/patch 를 쓴다."],
+        "ja": ["コピー先ルートは常にこのトークン自身のグループワークツリー。リクエストで別の場所を指すことはできない。",
+               "コピーされたファイルは通常のソース変更。作業レポートの変更ファイル節に必ず記載する。",
+               "既存ファイルは上書きせず409。書き換えるにはソースツールの write/patch を使う。"],
+        "en": ["The destination root is always this token's own group worktree; the request cannot point anywhere else.",
+               "A copied file is an ordinary source change. List it in the task report's changed-files section.",
+               "An existing file is never overwritten — it answers 409. Use the write/patch source tools to change it."],
+    },
+}
+
+ATTACHMENT_EXAMPLE_BODIES = {
+    "attachment_copy": {"target_path": "assets/schema.json"},
+}
+ATTACHMENT_EXAMPLE_RESPONSES = {
+    "attachment_list": {"ok": True, "doc_id": "flowgate.default.0523.0005-TR", "attachments": [{"filename": "schema.json", "size": 12345, "content_type": "application/json", "uploaded_at": "2026-09-04T09:14:30+09:00"}], "count": 1},
+    "attachment_read": {"ok": True, "doc_id": "flowgate.default.0523.0005-TR", "attachment": {"filename": "schema.json", "size": 12345, "content_type": "application/json"}, "kind": "text", "encoding": "utf-8", "content_encoding": "identity", "content": "{\n  \"title\": \"...\"\n}", "truncated": False},
+    "attachment_copy": {"ok": True, "doc_id": "flowgate.default.0523.0005-TR", "filename": "schema.json", "destination": {"project_id": "flowgate", "group_id": "flowgate.default.0523", "target_path": "assets/schema.json", "path_base": "source"}, "size": 12345, "content_sha256": "0123456789abcdef", "copied_at": "2026-09-04T09:20:00+09:00"},
+}
+
+
+def attachment_names(kind: str) -> list[str]:
+    """Attachment operation names this kind may actually call, in display order."""
+    return [name for name in ATTACHMENT_DISPLAY_ORDER if kind in ATTACHMENT_KINDS[name]]
+
+
+def attachment_entry(name: str, locale: str, base_url: str) -> dict:
+    """One catalog row, in the same shape a ``tools`` row has, plus the full URL.
+
+    Same keys as the source-tool rows (name/method/path/scope/summary) so a worker that
+    already parses ``tools`` can read this list with the same code; ``url`` is added
+    because these paths carry {doc_id}/{name} placeholders rather than a fixed op path.
+    """
+    method, path = ATTACHMENT_ROUTES[name]
+    return {
+        "name": name,
+        "method": method,
+        "path": path,
+        "url": f"{base_url}{path}",
+        "scope": ATTACHMENT_SCOPE[name],
+        "summary": ATTACHMENT_SUMMARY[locale][name],
+    }
+
+
+def attachment_view(kind: str, locale: str, base_url: str) -> dict:
+    """The document-attachment half of "which file operations do I have?".
+
+    ``operations`` carries only what this kind may actually call, the same D0004 D-2 rule
+    the source-tool list follows. ``denied`` and ``absent`` then say out loud what is NOT
+    callable and why, so an empty or short ``operations`` list can never be read as
+    "attachments cannot be reached from here" — the wrong conclusion this block exists to
+    prevent (0523 TR0005 rejections of 2026-09-04).
+    """
+    text = ATTACHMENT_VIEW_NOTES[locale]
+    allowed = attachment_names(kind)
+    return {
+        "kind": kind,
+        "available": bool(allowed),
+        "operations": [attachment_entry(name, locale, base_url) for name in allowed],
+        "denied": [
+            {"name": name, "summary": ATTACHMENT_SUMMARY[locale][name],
+             "reason": text["denied"].format(kind=kind)}
+            for name in ATTACHMENT_DISPLAY_ORDER if name not in allowed
+        ],
+        "absent": [
+            {"name": name, "summary": ATTACHMENT_SUMMARY[locale][name], "reason": text["absent"]}
+            for name in ATTACHMENT_ABSENT_OPS
+        ],
+        "detail_url": f"{base_url}/help/tools/{{name}}",
+        "help_item_url": f"{base_url}/help/items/document_attachments",
+        "notes": [text["what"], text["not_source"], text["permission"], text["scope"]],
+    }
+
+
+def attachment_request_fields(name: str, locale: str) -> list[dict]:
+    return [
+        {"name": n, "type": t, "required": required, "default": default,
+         "in": where, "description": description}
+        for n, t, required, default, where, description in ATTACHMENT_FIELDS[name][locale]
+    ]
+
+
+def build_attachment_detail(name: str, locale: str, base_url: str) -> dict:
+    """One localized attachment-operation block, shaped like ``build_tool_detail``."""
+    method, path = ATTACHMENT_ROUTES[name]
+    example_request: dict = {
+        "method": method,
+        "url": f"{base_url}{path}",
+        "headers": {"Authorization": "Bearer <YOUR_TOKEN>"},
+    }
+    if name in ATTACHMENT_EXAMPLE_BODIES:
+        example_request["headers"]["Content-Type"] = "application/json"
+        example_request["body"] = deepcopy(ATTACHMENT_EXAMPLE_BODIES[name])
+    return {
+        "name": name,
+        "method": method,
+        "path": path,
+        "scope": ATTACHMENT_SCOPE[name],
+        "summary": ATTACHMENT_SUMMARY[locale][name],
+        "request_fields": attachment_request_fields(name, locale),
+        "example_request": example_request,
+        "example_response": deepcopy(ATTACHMENT_EXAMPLE_RESPONSES[name]),
+        "errors": [{"http_status": status, "code": code, "when": when}
+                   for status, code, when in ATTACHMENT_ERRORS[name][locale]],
+        "cautions": list(ATTACHMENT_CAUTIONS[name][locale]),
+    }
+
+
+def attachment_detail_notes(name: str, locale: str) -> list[str]:
+    text = ATTACHMENT_VIEW_NOTES[locale]
+    keys = ["what", "not_source", "permission", "scope"]
+    if name == "attachment_copy":
+        return [text[key] for key in keys] + [NOTES[locale]["report_changes"]]
+    return [text[key] for key in keys]
+
+
 def tool_names(kind: str, action_scope: Optional[str] = None) -> list[str]:
     """Tool names for a kind, in display order (P0005 §0-4).
 
@@ -399,15 +722,19 @@ def kind_for_token(token_rec: dict) -> tuple[str, Optional[str]]:
 def _list_notes(kind: str, locale: str, reason: Optional[str], user_jwt: bool) -> list[str]:
     notes = NOTES[locale]
     if kind == "read_write":
-        keys = ("path_rule", "auth_rule", "no_disk_edit", "scratch_rule", "report_changes", "see_detail")
+        keys = ("path_rule", "auth_rule", "no_disk_edit", "scratch_rule", "report_changes",
+                "attachments", "see_detail")
     elif kind == "read":
-        keys = ("path_rule", "auth_rule", "no_disk_edit", "read_only", "see_detail")
+        keys = ("path_rule", "auth_rule", "no_disk_edit", "read_only", "attachments", "see_detail")
     elif user_jwt:
+        # A console user JWT is a person on the Console screen, which manages attachments
+        # through its own /documents/... API. The worker attachment note would misdescribe
+        # what that caller may do, so this branch deliberately does not carry it.
         keys = ("none_user",)
     elif reason == "source_mode_local":
-        keys = ("none_local",)
+        keys = ("none_local", "attachments_none")
     else:
-        keys = ("none_scope",)
+        keys = ("none_scope", "attachments_none")
     return [notes[key] for key in keys]
 
 

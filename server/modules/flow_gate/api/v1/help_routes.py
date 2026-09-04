@@ -140,7 +140,15 @@ def _tools_context(request: Request, locale: Optional[str]):
 
 @router.get("/help/tools")
 def get_help_tools(request: Request, locale: Optional[str] = None):
-    """Remote source tools available to this authenticated token."""
+    """File operations available to this authenticated token.
+
+    Two catalogs, one answer: ``tools`` are the /remote/* source-tree operations, and
+    ``document_attachments`` is the document-scoped attachment API (0523 T0004 §17). They
+    stay separate keys because they address different things — a source path versus a
+    document's attachment — but they are returned together because this endpoint is the
+    single "which file operations do I have?" question a worker asks, and answering it
+    with the source tree alone taught workers that attachments cannot be reached at all.
+    """
     auth, normalized_locale, registry = _tools_context(request, locale)
     if isinstance(auth, JSONResponse):
         return auth
@@ -156,6 +164,9 @@ def get_help_tools(request: Request, locale: Optional[str] = None):
         "reason": registry["reason"],
         "detail_url": f"{base_url}/help/tools/{{name}}",
         "tools": registry["tools"],
+        "document_attachments": tool_registry.attachment_view(
+            registry["kind"], normalized_locale, base_url
+        ),
         "notes": registry["notes"],
     }
     _record_help_tools_event(
@@ -177,7 +188,27 @@ def get_help_tool(request: Request, name: str, locale: Optional[str] = None):
     if isinstance(auth, JSONResponse):
         return auth
 
-    if name not in remote_tool_service.OPS:
+    if name in tool_registry.ATTACHMENT_DISPLAY_ORDER:
+        if name not in tool_registry.attachment_names(registry["kind"]):
+            status = 403
+            response = auth_outbound._fail(
+                status, f"Tool '{name}' is not available for this token"
+            )
+        else:
+            status = 200
+            base_url = outbound_api_base()
+            response = JSONResponse(content={
+                "ok": True,
+                "version": tool_registry.VERSION,
+                "base_url": base_url,
+                "locale": normalized_locale,
+                "kind": registry["kind"],
+                "tool": tool_registry.build_attachment_detail(
+                    name, normalized_locale, base_url
+                ),
+                "notes": tool_registry.attachment_detail_notes(name, normalized_locale),
+            })
+    elif name not in remote_tool_service.OPS:
         status = 404
         response = auth_outbound._fail(status, f"Unknown tool: {name}")
     elif name not in {item["name"] for item in registry["tools"]}:
@@ -250,8 +281,8 @@ def endpoint_catalog() -> dict:
             {"method": "POST", "path": "/workflow/{doc_id}/advance", "summary": "Advance to next step (number assignment + token issue + ment creation)", "auth": "bearer_token", "example": "/workflow/R016/advance"},
             {"method": "GET", "path": "/help/doc_type", "summary": "Document type code list", "auth": "bearer_token"},
             {"method": "GET", "path": "/help/question", "summary": "Query registration guide (register as document-bound query data, not a Q document)", "auth": "bearer_token"},
-            {"method": "GET", "path": "/help/tools", "summary": "Remote source tools available to this token (name + one-line summary)", "auth": "bearer_token"},
-            {"method": "GET", "path": "/help/tools/{name}", "summary": "Usage detail for one remote source tool (request format + example)", "auth": "bearer_token", "example": "/help/tools/read"},
+            {"method": "GET", "path": "/help/tools", "summary": "File operations available to this token: remote source tools plus the document attachment operations", "auth": "bearer_token"},
+            {"method": "GET", "path": "/help/tools/{name}", "summary": "Usage detail for one source tool or attachment operation (request format + example)", "auth": "bearer_token", "example": "/help/tools/read"},
             {"method": "GET", "path": "/help/items/{name}", "summary": "One help item for this token (index at GET /help)", "auth": "bearer_token", "example": "/help/items/submit"},
             {"method": "GET", "path": "/help/items/{name}/{child}", "summary": "One child of a help item", "auth": "bearer_token", "example": "/help/items/design_template/P"},
             {"method": "GET", "path": "/events/stream", "summary": "SSE screen push stream (screen only)", "auth": "session_cookie"},
