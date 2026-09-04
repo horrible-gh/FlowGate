@@ -65,7 +65,32 @@ FILE_LINE_CAPS: dict[str, int] = {
     "modules/flow_gate/documents/routers/documents.py": 13,
     "modules/flow_gate/documents/routers/work_plan.py": 5,
     "modules/flow_gate/process_service.py": 2,
-    "modules/flow_gate/services/ai_invoke_service.py": 4,
+    # flowgate.default.0501 T6 (NR0003 §12) moved the engine into the ai_invoke/
+    # package; T0019 then merged main into it. Every cap below is the freshly MEASURED
+    # count, and the arithmetic is what says no Hangul line was written by either step:
+    #
+    #   main's engine, three files:  ai_invoke_service.py 22 + part2_worker.py 2
+    #                                + part3_chain.py 31            = 55
+    #   the package, six files:      admission 14 + chain 15 + diagnostics 1
+    #                                + review 15 + runtime 8 + worker 2 = 55
+    #
+    # admission.py holds the _WORKTREE_UNAVAILABLE_COPY / _RUN_ID_COLLISION_COPY ko
+    # locale strings plus the 0414/0443 product-rationale comments that travel with
+    # start_run; runtime.py holds the parameter block's own rationale comments.
+    #
+    # Two caps moved off T6's original numbers, both bookkeeping rather than new text:
+    # runtime.py 7 -> 8 because 0490 T0005's restart_max_attempts_choices() docstring
+    # (which named the "재시작 횟수" select) came across from main's parameter block with
+    # the function, and diagnostics.py 0 -> 1 because T6 never registered the one
+    # 0414 P0007 comment it inherited from part3_chain.py — that omission is why this
+    # census listed diagnostics.py as an offender before the merge. chain.py drops
+    # 16 -> 15 to its measured count, so no cap here is a ceiling above what is there.
+    "modules/flow_gate/services/ai_invoke/admission.py": 14,
+    "modules/flow_gate/services/ai_invoke/chain.py": 15,
+    "modules/flow_gate/services/ai_invoke/diagnostics.py": 1,
+    "modules/flow_gate/services/ai_invoke/review.py": 15,
+    "modules/flow_gate/services/ai_invoke/runtime.py": 8,
+    "modules/flow_gate/services/ai_invoke/worker.py": 2,
     "modules/flow_gate/services/conversation_turn_service.py": 10,
     "modules/flow_gate/services/document_outline_service.py": 1,
     "modules/flow_gate/services/help_catalog.py": 70,

@@ -951,17 +951,25 @@ class TestOtherScopesAreUntouched:
         assert source.count("build_rework_mention(") == 2     # definition + the rework call
 
     def test_the_continuous_mention_path_never_calls_it(self):
-        # 0497 T0009: ai_invoke_service.py is now three files sharing one module namespace.
-        # "defined there, never invoked there" is a property of the module, so read all three.
-        _services = _SERVER_DIR / "modules" / "flow_gate" / "services"
+        # 0501 T6 moved the engine into the ai_invoke/ package (NR0003 §12). "Defined
+        # there, never invoked by orchestration logic there" is a property of the whole
+        # engine, so read every module of the package -- globbed, not listed, so a future
+        # module cannot be added outside this guard's view (NR0003 §9).
+        _pkg = _SERVER_DIR / "modules" / "flow_gate" / "services" / "ai_invoke"
         source = "".join(
-            (_services / name).read_text(encoding="utf-8")
-            for name in ("ai_invoke_service.py", "ai_invoke_part2_worker.py",
-                         "ai_invoke_part3_chain.py")
+            path.read_text(encoding="utf-8") for path in sorted(_pkg.glob("*.py"))
         )
         # Defined there, never invoked there: the continuous/self-chain mention builder in
-        # this module must not acquire the block through a back door.
-        assert source.count("previous_timeout_handoff") == 1     # the definition, nothing else
+        # this module must not acquire the block through a back door. Three occurrences are
+        # legitimate post-T6, and none of them is a call: the definition itself
+        # (finalize.py), plus the two lines facade.py needs so external callers
+        # (ai_invoke_routes.py, invoke_mention_service.py) keep reaching it as
+        # `ai_invoke_service.previous_timeout_handoff` -- its `from .finalize import` entry
+        # and its `__all__` entry. A re-export is not a call site any internal
+        # orchestration logic (worker/chain/review hop progression) reaches through, which
+        # is why the second assertion now counts CALLS and expects exactly the definition.
+        assert source.count("previous_timeout_handoff") == 3
+        assert source.count("previous_timeout_handoff(") == 1   # the definition, nothing else
         assert "build_previous_run_section" not in source
 
 
