@@ -166,6 +166,66 @@ class TestCallOpenaiAnthropicPatchCrossesTheFileBoundary:
         assert callable(svc._call_anthropic)
 
 
+class TestProviderFallbackPreservesTokenIdentity:
+    """0496 T0004 §7/§11-B: a provider chain fallback within ONE hop must not touch the
+    run's token identity. `_execute_provider_chain` (ai_invoke/worker.py:229-285) never
+    reissues between chain entries -- reissue only happens one full hop later, in the
+    OUTER no-output retry loop via `_prepare_retry_token` (ai_invoke/worker.py:568-640).
+    Each provider entry's `_api_execute` re-reads `current_token = run["raw_token"]`
+    fresh at its own top (worker.py:850), so this test answers T0004 §7's six questions
+    for real instead of asserting them: (1) same run_id -- same `run` dict object,
+    never rebuilt; (2)/(3) same token_id/raw_token -- read straight off `run` again,
+    never mutated by the failed first attempt; (4) no reissue happens before the
+    fallback launches; (5) the second provider's local `current_token` IS
+    re-initialized (from the same unchanged `run["raw_token"]`), not carried over as a
+    stale Python local; (6) the first provider's spawn failure records a
+    `fallback_history` entry and nothing else -- no revoke/consume of the token."""
+
+    def test_second_provider_receives_the_same_raw_token_after_the_first_fails_to_start(
+        self, monkeypatch,
+    ):
+        def fake_get_provider_secret(_scope, provider_id):
+            # aip_openai never gets a key -> _api_execute returns before ever reading
+            # run["raw_token"] (worker.py:826-839), so the FIRST attempt touches no
+            # token at all.
+            return None if provider_id == "aip_openai" else "sk-test"
+
+        monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", fake_get_provider_secret)
+
+        def fake_call_anthropic(*args, **kwargs):
+            return "ok", [{"id": "tc1", "name": "register_document",
+                           "input": {"doc_type": "standard", "title": "t", "content": "c"}}], \
+                   {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}
+
+        monkeypatch.setattr(svc, "_call_anthropic", fake_call_anthropic)
+
+        seen_tokens = []
+
+        def fake_inbox_register(run, token, _tool_input):
+            seen_tokens.append(token)
+            return 201, {"doc_id": "d1"}
+
+        monkeypatch.setattr(svc, "_inbox_register", fake_inbox_register)
+
+        run = _api_run(raw_token="tok_original_raw", token_id="tok_original_id")
+        started_ok = svc._execute_provider_chain(
+            run, [_openai_provider(), _anthropic_provider()], "prompt",
+        )
+
+        assert started_ok is True
+        # The first provider's failure is filed as a fallback event, never as a token
+        # event (no revoke/consume/reissue side channel exists here to check for).
+        assert len(run["fallback_history"]) == 1
+        assert run["fallback_history"][0]["provider_id"] == "aip_openai"
+        assert run["fallback_history"][0]["reason"] == "spawn_failed"
+        # The second provider's self-HTTP used the run's ORIGINAL token, unchanged.
+        assert seen_tokens == ["tok_original_raw"]
+        assert run["raw_token"] == "tok_original_raw"
+        assert run["token_id"] == "tok_original_id"
+        # Landed on the provider actually being run this attempt.
+        assert run["provider_id"] == "aip_anthropic"
+
+
 class TestImportDependencyGuard:
     """T4's recommended AST guard: neither new provider module may reach into
     chain/review/rework/lease-DB/runtime-registry territory, and the worker module

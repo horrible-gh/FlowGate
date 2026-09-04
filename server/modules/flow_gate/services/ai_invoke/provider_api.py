@@ -21,7 +21,9 @@ from .runtime import (
 )
 
 
-def _resolve_agent_api_base(operator_api_base: str) -> str:
+def _resolve_agent_api_base(
+    operator_api_base: str, *, ignore_configured_override: bool = False,
+) -> str:
     """Compute the address this server can reach itself at.
 
     Shared by external CLI process launch and, since 0505 T0008, the API provider's
@@ -32,6 +34,14 @@ def _resolve_agent_api_base(operator_api_base: str) -> str:
     operator scheme and explicit port are retained while the host becomes loopback.
     When the operator origin has no explicit port, the trusted local
     ``FLOWGATE_PORT`` is used.
+
+    ``ignore_configured_override`` (0496 T0004): skips the ``FLOWGATE_AGENT_API_BASE``
+    branch entirely, as if it were unset, so a caller that already caught this
+    function raising on a malformed override can retry for the same safe
+    loopback+``FLOWGATE_PORT`` answer the "unset" case computes below -- never
+    raises on that account. CLI launch never passes this; a broken CLI override
+    must keep failing loud (spawn_failed), not silently launch against the wrong
+    address.
     """
     from urllib.parse import urlsplit, urlunsplit
 
@@ -49,7 +59,10 @@ def _resolve_agent_api_base(operator_api_base: str) -> str:
 
     from config import settings as _settings
 
-    configured = getattr(_settings, "FLOWGATE_AGENT_API_BASE", None)
+    configured = (
+        None if ignore_configured_override
+        else getattr(_settings, "FLOWGATE_AGENT_API_BASE", None)
+    )
     if configured is not None:
         setting = str(configured).strip()
         if not setting:
@@ -134,6 +147,17 @@ def _resolve_transport_api_base(run: dict) -> str:
     origin that this server cannot dial as itself. `_resolve_agent_api_base` already
     solved this for CLI launch; this wraps it for the API provider's self-HTTP and
     caches the result on `run` so all six sites agree within one hop.
+
+    0496 T0004: a `FLOWGATE_AGENT_API_BASE` that is configured but unusable (typo,
+    missing scheme, a path/query it must not carry) used to make this function fall
+    back to `operator_base` -- silently reinstating the exact cross-instance/public
+    topology NR0003 traced the original 401 "Token is invalid" to, just reached
+    through a broken override instead of a missing one. The override existing at
+    all signals prod-type intent (operator and agent origins do NOT coincide), so
+    that fallback is never safe. Retrying with the override ignored degrades to the
+    same loopback+`FLOWGATE_PORT` address dev-type already trusts; only when the
+    operator base itself cannot be parsed (no override involved) is there truly
+    nothing safer to fall back to than returning it unchanged.
     """
     cached = run.get("_transport_api_base_resolved")
     if cached:
@@ -142,12 +166,23 @@ def _resolve_transport_api_base(run: dict) -> str:
     try:
         resolved = _svc()._resolve_agent_api_base(operator_base)
     except ValueError:
-        logger.warning(
-            "ai-invoke %s: transport base resolution failed for operator base %r, "
-            "falling back to operator base for self-HTTP",
-            run.get("run_id"), operator_base,
-        )
-        resolved = operator_base
+        try:
+            resolved = _svc()._resolve_agent_api_base(
+                operator_base, ignore_configured_override=True,
+            )
+            logger.warning(
+                "ai-invoke %s: FLOWGATE_AGENT_API_BASE could not be resolved for "
+                "operator base %r, falling back to loopback for self-HTTP "
+                "(operator base is never reused as a self-HTTP target here)",
+                run.get("run_id"), operator_base,
+            )
+        except ValueError:
+            logger.warning(
+                "ai-invoke %s: transport base resolution failed for operator base %r, "
+                "falling back to operator base for self-HTTP",
+                run.get("run_id"), operator_base,
+            )
+            resolved = operator_base
     run["_transport_api_base_resolved"] = resolved
     return resolved
 
