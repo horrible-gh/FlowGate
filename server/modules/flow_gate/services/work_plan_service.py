@@ -1542,6 +1542,20 @@ def template_body(project_id: Optional[str] = None) -> str:
     return dumps(body)
 
 
+def canonical_step_examples() -> dict[str, dict]:
+    """Filled steps[] field-value examples for the design_template/WP help child
+    (flowgate.default.0488 T0005). Every value comes from make_step() itself — never
+    hand-authored JSON — so this cannot drift from what expand_steps() actually produces;
+    see the drift-guard assertions in test_work_plan_0395.py.
+    """
+    return {
+        "single": make_step("D", 1, None, "single"),
+        "paired_instruction": make_step("T", 1, "TR#1", "instruction"),
+        "paired_result": make_step("TR", 1, "T#1", "result"),
+        "locked": make_step("TSR", 1, "TS#1", "result"),
+    }
+
+
 TEMPLATE_RULES = {
     "ko": [
         "본문은 Markdown 이 아니라 UTF-8 JSON 입니다.",
@@ -1556,6 +1570,9 @@ TEMPLATE_RULES = {
         "TSR 단계에는 공급자와 멘트를 적지 않습니다.",
         "item_seq(실제 단계 번호)는 적지 않습니다.",
         "binding 은 항상 advisory 입니다.",
+        "steps[].pair_role 은 instruction/result/single 중 하나입니다. N/T/TS 같은 세트형 타입은 instruction·result 한 쌍을 이루고, DS/D/P/L/DB 같은 시트형 타입은 single 하나입니다.",
+        "steps[].origin 은 human/ai_suggested/system 중 하나입니다. 잠기지 않은 단계는 human 이고, WORK_PLAN_LOCKED_TYPES(TSR)에 속한 단계는 서버가 채우므로 system 입니다.",
+        "이 응답의 examples 필드에 single/paired instruction/paired result/locked 필드값 예시가 채워져 있습니다. 그대로 참고하되 key/provider_id/note 값은 실제 상황에 맞게 바꿉니다.",
     ],
     "en": [
         "The body is UTF-8 JSON, not Markdown.",
@@ -1570,6 +1587,9 @@ TEMPLATE_RULES = {
         "A TSR step carries no provider and no note.",
         "Never write item_seq (the real workflow step number).",
         "binding is always advisory.",
+        "steps[].pair_role is one of instruction/result/single. Set types like N/T/TS form an instruction+result pair; sheet types like DS/D/P/L/DB use single.",
+        "steps[].origin is one of human/ai_suggested/system. An unlocked step is human; a step whose type is in WORK_PLAN_LOCKED_TYPES (TSR) is filled by the server, so it is system.",
+        "This response's examples field carries filled single/paired-instruction/paired-result/locked field-value samples. Use them as a reference, but replace key/provider_id/note with values that fit the actual case.",
     ],
     "ja": [
         "本文は Markdown ではなく UTF-8 の JSON です。",
@@ -1584,6 +1604,9 @@ TEMPLATE_RULES = {
         "TSR 段階には提供者と一行メモを書きません。",
         "item_seq(実際の段階番号)は書きません。",
         "binding は常に advisory です。",
+        "steps[].pair_role は instruction/result/single のいずれかです。N/T/TS のようなセット型は instruction・result の一対を成し、DS/D/P/L/DB のようなシート型は single 一つです。",
+        "steps[].origin は human/ai_suggested/system のいずれかです。ロックされていない段階は human で、WORK_PLAN_LOCKED_TYPES(TSR)に属する段階はサーバーが埋めるため system です。",
+        "この応答の examples フィールドに single/paired instruction/paired result/locked のフィールド値例が入っています。参考にしつつ、key/provider_id/note は実際の状況に合わせて書き換えてください。",
     ],
 }
 
@@ -1604,6 +1627,7 @@ def template_payload(locale: str, project_id: Optional[str] = None) -> dict:
         "heading": TEMPLATE_HEADING.get(locale, TEMPLATE_HEADING[FALLBACK_LOCALE]),
         "body": template_body(project_id),
         "rules": TEMPLATE_RULES.get(locale, TEMPLATE_RULES[FALLBACK_LOCALE]),
+        "examples": canonical_step_examples(),
     }
 
 def request_work_plan_fill(
