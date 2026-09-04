@@ -185,6 +185,83 @@ def _require_group_worktree(
         group_id=group_id, cause=cause, provision_error=provision_error,
     )
 
+# flowgate.default.0511 T0004: the group worktree is synced to the current base
+# HEAD exactly once, right before the group's FIRST raw source-capable AI
+# invocation ever uses it. "safe skip" reasons need no action from the caller;
+# anything else means the sync could not be trusted and the run must not launch.
+_INITIAL_SYNC_SAFE_SKIP_REASONS = frozenset({
+    "git_disabled", "already_synced", "legacy_source_history",
+    # A config lookup failure reads as "not integrated" -- same contract as
+    # _require_group_worktree's own get_config try/except (never blocks a run).
+    "config_lookup_failed",
+})
+
+_INITIAL_SOURCE_SYNC_FAILED_COPY = {
+    "ko": (
+        "그룹 소스를 현재 기준 브랜치로 최초 동기화하지 못해 AI 실행을 시작하지 않습니다 "
+        "(원인: {reason}). 잠시 후 다시 시도하거나 그룹 Git 상태를 확인하십시오."
+    ),
+    "en": (
+        "AI execution was not started because the group's source could not be "
+        "synced to the current base branch for the first time (reason: {reason}). "
+        "Retry shortly or check the group's Git state."
+    ),
+    "ja": (
+        "グループのソースを現在の基準ブランチへ初回同期できなかったため、AI実行を開始しません"
+        "(原因: {reason})。しばらくしてから再試行するか、グループのGit状態を確認してください。"
+    ),
+}
+
+
+def _worker_source_kind(token_rec: dict) -> str:
+    """The raw tool_registry kind a worker token of this shape would receive.
+
+    T0004 §4/§7: this must be the RAW kind_for_token()/kind_for_step() result,
+    never resolve_registry()'s source_mode-adjusted advertising value — source
+    mode gates advertising only and never gates permission, so a project on
+    source_mode=local can still hand a worker real read/read_write source
+    access through its cwd. token_rec only needs action_scope and doc_ref;
+    kind_for_token asks for nothing else.
+    """
+    from modules.flow_gate.services import tool_registry
+
+    kind, _reason = tool_registry.kind_for_token(token_rec)
+    return kind
+
+
+def _ensure_initial_source_sync(
+    project_id: str, module: str, group_id: str,
+    action_scope: str, doc_ref: Optional[str], locale: Optional[str] = None,
+) -> None:
+    """Force the group worktree to the current base HEAD exactly once, before
+    the group's FIRST raw source-capable (read/read_write) AI invocation
+    (flowgate.default.0511 T0004). Same shape as _require_group_worktree above
+    on purpose: judge, delegate the actual git work, and block the run on any
+    outcome that could not be trusted — nothing has been created yet (token,
+    lease, scratch) when this raises, so the rollback stays trivial.
+
+    A "none"-kind invocation (review/workflow_decide/chat/resolve_conflict/any
+    other non new/edit scope) never consumes the sync — this call becomes a
+    cheap no-op for it (T0004 §5/§6/§31).
+    """
+    kind = _worker_source_kind({"action_scope": action_scope, "doc_ref": doc_ref})
+    if kind not in {"read", "read_write"}:
+        return
+    result = git_service.ensure_initial_group_source_sync(project_id, module, group_id)
+    if result.get("performed") or result.get("reason") in _INITIAL_SYNC_SAFE_SKIP_REASONS:
+        return
+    reason = result.get("reason") or "error"
+    logger.warning(
+        "ai_invoke blocked for group %s — initial source sync failed (reason=%s)",
+        group_id, reason,
+    )
+    normalized_locale = template_provision.normalize_locale(locale)
+    raise _http_error(
+        409, "initial_source_sync_failed",
+        _INITIAL_SOURCE_SYNC_FAILED_COPY[normalized_locale].format(reason=reason),
+        group_id=group_id, reason=reason,
+    )
+
 
 def _record_orphaned_lease_run(lease_row: dict, end_reason: str) -> None:
     """Give a dead lease's run a durable end record, if it doesn't already have one
@@ -689,6 +766,15 @@ def start_run(
         project_id, module, group_id,
         (db_docs.get_by_id(doc_ref) or {}).get("branch") or "main",
         locale=template_provision.normalize_locale(continuation_locale),
+    )
+    # flowgate.default.0511 T0004: force the group worktree to the current
+    # configured base HEAD exactly once, before the group's FIRST raw
+    # source-capable (read/read_write) AI invocation ever uses it. Placed here
+    # — after the worktree is confirmed to exist, before any token/lease is
+    # minted — so a sync failure blocks the run with nothing yet to unwind.
+    _svc()._ensure_initial_source_sync(
+        project_id, module, group_id, action_scope, doc_ref,
+        locale=continuation_locale,
     )
 
     baseline_seq = db_docs.get_group_max_seq(group_id)
