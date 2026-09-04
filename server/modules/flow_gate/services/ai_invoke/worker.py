@@ -740,6 +740,9 @@ def _reset_attempt_state(run: dict) -> None:
     # cached from a prior attempt -- the recompute is cheap and this keeps the cache
     # from ever outliving the per-attempt state it was read alongside.
     run["_transport_api_base_resolved"] = None
+    # 0496 T0006 §3.2: the fallback-kind cache is computed alongside the transport
+    # base above and must not outlive it either.
+    run["_transport_fallback_kind_resolved"] = None
     run["attempt_started_mono"] = time.monotonic()
     # 0446 T0014 §4-1: the previous attempt's watchdog verdict is not this one's. The
     # no-progress window is re-anchored when the next watchdog starts; the absolute
@@ -870,6 +873,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         run["last_tool_status"] = status
         if run.get("transport_api_base") is None:
             run["transport_api_base"] = provider_api._sanitize_diagnostic_base(provider_api._resolve_transport_api_base(run))
+            run["transport_fallback_kind"] = run.get("_transport_fallback_kind_resolved")
         if not (200 <= status < 300 and isinstance(chat_context, dict)):
             run["last_tool_error"] = _registration_error_summary(chat_context or {})[:500]
             return "api_error", "conversation_context_unavailable"
@@ -1310,6 +1314,7 @@ def _resolve_conflict(run: dict, raw_token: str, tool_input: dict) -> tuple[int,
     # prefetch) stays untouched.
     if run.get("transport_api_base") is None:
         run["transport_api_base"] = provider_api._sanitize_diagnostic_base(provider_api._resolve_transport_api_base(run))
+        run["transport_fallback_kind"] = run.get("_transport_fallback_kind_resolved")
     body = {
         "files": tool_input.get("files") or [],
         "complete": bool(tool_input.get("complete")),
@@ -1340,6 +1345,7 @@ def _workflow_decide(run: dict, raw_token: str, tool_input: dict) -> tuple[int, 
     # FIRST in this hop wins transport_api_base; already-set stays untouched.
     if run.get("transport_api_base") is None:
         run["transport_api_base"] = provider_api._sanitize_diagnostic_base(provider_api._resolve_transport_api_base(run))
+        run["transport_fallback_kind"] = run.get("_transport_fallback_kind_resolved")
     body = {
         "doc_class": tool_input.get("doc_class") or "standard",
         "sequence": tool_input.get("sequence") or [],
@@ -1410,6 +1416,7 @@ def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> 
     # FIRST in this hop wins transport_api_base; already-set stays untouched.
     if run.get("transport_api_base") is None:
         run["transport_api_base"] = provider_api._sanitize_diagnostic_base(provider_api._resolve_transport_api_base(run))
+        run["transport_fallback_kind"] = run.get("_transport_fallback_kind_resolved")
     api_base = provider_api._resolve_transport_api_base(run).rstrip("/")
     body = {
         "body": tool_input.get("body") or "",
@@ -1444,6 +1451,7 @@ def _api_bound_request(run: dict, raw_token: str, path: str, method: str = "GET"
     # FIRST in this hop wins transport_api_base; already-set stays untouched.
     if run.get("transport_api_base") is None:
         run["transport_api_base"] = provider_api._sanitize_diagnostic_base(provider_api._resolve_transport_api_base(run))
+        run["transport_fallback_kind"] = run.get("_transport_fallback_kind_resolved")
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(
         f"{provider_api._resolve_transport_api_base(run)}{path}", data=data,
@@ -1481,6 +1489,7 @@ def _api_read_document(run: dict, raw_token: str, tool_input: dict) -> tuple[int
     """
     if run.get("transport_api_base") is None:
         run["transport_api_base"] = provider_api._sanitize_diagnostic_base(provider_api._resolve_transport_api_base(run))
+        run["transport_fallback_kind"] = run.get("_transport_fallback_kind_resolved")
     from modules.flow_gate.api.v1 import document_routes
     fake_request = _BearerOnlyRequest(raw_token)
     try:
@@ -1699,6 +1708,7 @@ def _inbox_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, d
     # never opens a socket, so it must not claim the transport base either.
     if run.get("transport_api_base") is None:
         run["transport_api_base"] = provider_api._sanitize_diagnostic_base(provider_api._resolve_transport_api_base(run))
+        run["transport_fallback_kind"] = run.get("_transport_fallback_kind_resolved")
     body = _svc()._register_envelope(context, run, tool_input)
     req = urllib.request.Request(
         f"{provider_api._resolve_transport_api_base(run)}/inbox",

@@ -168,6 +168,103 @@ class TestResolveTransportApiBase:
         assert run.get("_transport_api_base_resolved") is None
 
 
+class TestTransportFallbackKind:
+    """0496 T0006 SS3.2: `_resolve_transport_api_base` has always known WHICH of its
+    three branches produced the value it returned -- the try succeeded outright, a
+    broken override was retried away (safe loopback), or nothing parsed at all so the
+    operator base rode through unchanged (the one branch NR0003/0496 T0004 traced the
+    original cross-instance 401 to) -- but that distinction lived only in a
+    logger.warning line until now. This pins the cached signal
+    (`run["_transport_fallback_kind_resolved"]`) the same way
+    TestResolveTransportApiBase pins `_transport_api_base_resolved` just above: one test
+    per branch, plus the reset contract."""
+
+    def test_no_override_configured_yields_none(self):
+        run = _run(DEV_OPERATOR)
+        svc._resolve_transport_api_base(run)
+        assert run["_transport_fallback_kind_resolved"] == "none"
+
+    def test_working_override_yields_none(self, monkeypatch):
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", PROD_AGENT_SETTING)
+        run = _run(PROD_OPERATOR)
+        svc._resolve_transport_api_base(run)
+        assert run["_transport_fallback_kind_resolved"] == "none"
+
+    def test_malformed_override_yields_override_ignored(self, monkeypatch):
+        """Mirrors TestResolveTransportApiBase.
+        test_malformed_agent_base_falls_back_to_loopback_not_the_public_operator: same
+        setup, but this asserts on the WHY, not just the resolved value."""
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", "not a valid origin")
+        run = _run(PROD_OPERATOR)
+        svc._resolve_transport_api_base(run)
+        assert run["_transport_fallback_kind_resolved"] == "override_ignored"
+
+    def test_unparseable_operator_base_yields_operator_base_unsafe(self):
+        """Mirrors TestResolveTransportApiBase.
+        test_falls_back_to_operator_base_without_raising_on_a_bad_port -- the ONE branch
+        that is genuinely unsafe (the operator base itself rides through unchanged), so
+        it must land a DIFFERENT string than override_ignored, never be collapsed into
+        the same flag."""
+        bad_operator = "http://host:99999/flowgate/api/v1"
+        run = _run(bad_operator)
+        svc._resolve_transport_api_base(run)
+        assert run["_transport_fallback_kind_resolved"] == "operator_base_unsafe"
+        assert run["_transport_fallback_kind_resolved"] != "override_ignored"
+
+    def test_reset_attempt_state_clears_the_fallback_kind_cache_too(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", "not a valid origin")
+        run = _run(PROD_OPERATOR, scratch_dir=str(tmp_path))
+        svc._resolve_transport_api_base(run)
+        assert run["_transport_fallback_kind_resolved"] == "override_ignored"
+        svc._reset_attempt_state(run)
+        assert run.get("_transport_fallback_kind_resolved") is None
+
+
+class TestTransportFallbackKindPersistsAlongsideTransportApiBase:
+    """0496 T0006 SS3.2 completion condition 3: the diagnostic signal must be reachable
+    through an actual mediated self-HTTP call, not just the private cache above -- the
+    same hop-first-wins call sites in worker.py that persist `transport_api_base` now
+    persist `transport_fallback_kind` alongside it (same guarded block, same `run`
+    write), ready for _persist_run_record/finished_payload/diagnostics to carry into
+    the durable row and response instead of a grep-only logger.warning line."""
+
+    def test_dev_type_hop_persists_none(self, monkeypatch):
+        _capture_urlopen(monkeypatch)
+        run = _run(DEV_OPERATOR)
+        svc._conversation_turn_register(run, "raw", {"body": "hi"})
+        assert run["transport_fallback_kind"] == "none"
+
+    def test_working_override_hop_persists_none(self, monkeypatch):
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", PROD_AGENT_SETTING)
+        _capture_urlopen(monkeypatch)
+        run = _run(PROD_OPERATOR)
+        svc._conversation_turn_register(run, "raw", {"body": "hi"})
+        assert run["transport_fallback_kind"] == "none"
+
+    def test_malformed_override_hop_persists_override_ignored(self, monkeypatch):
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", "not a valid origin")
+        _capture_urlopen(monkeypatch)
+        run = _run(PROD_OPERATOR)
+        svc._conversation_turn_register(run, "raw", {"body": "hi"})
+        assert run["transport_fallback_kind"] == "override_ignored"
+        # Sits alongside the existing base-value regression: the resolved base itself
+        # must still degrade to loopback, never the public operator origin.
+        assert run["transport_api_base"] is not None
+        assert "flowgate.example" not in run["transport_api_base"]
+
+    def test_first_site_in_the_hop_wins_like_transport_api_base_does(self, monkeypatch):
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", "not a valid origin")
+        _capture_urlopen(monkeypatch)
+        run = _run(PROD_OPERATOR)
+        svc._conversation_turn_register(run, "raw", {"body": "hi"})
+        assert run["transport_fallback_kind"] == "override_ignored"
+        # A later site in the SAME hop must not recompute or move it, mirroring
+        # transport_api_base's own "FIRST in this hop wins" contract (worker.py).
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", None)
+        svc._workflow_decide(run, "raw", {"doc_class": "standard", "sequence": []})
+        assert run["transport_fallback_kind"] == "override_ignored"
+
+
 # 0505 T0018: conversation_context moved to a direct in-process call and dropped out
 # of this list -- it no longer dials self-HTTP at all, dev-type or prod-type, so it has
 # its own no-urlopen regression below instead (TestDirectCallSitesIgnoreTheTransportBase).

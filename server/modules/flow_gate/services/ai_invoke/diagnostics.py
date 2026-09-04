@@ -196,6 +196,7 @@ def _run_detail_from_row(row: dict) -> dict:
         # and reads back as None on every one of these ten keys.
         "operator_api_base": row.get("operator_api_base"),
         "transport_api_base": row.get("transport_api_base"),
+        "transport_fallback_kind": row.get("transport_fallback_kind"),
         "last_tool_name": row.get("last_tool_name"),
         "last_tool_status": row.get("last_tool_status"),
         "last_tool_error": row.get("last_tool_error"),

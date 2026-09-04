@@ -165,11 +165,13 @@ def _resolve_transport_api_base(run: dict) -> str:
     operator_base = run.get("api_base_url") or ""
     try:
         resolved = _svc()._resolve_agent_api_base(operator_base)
+        fallback_kind = "none"
     except ValueError:
         try:
             resolved = _svc()._resolve_agent_api_base(
                 operator_base, ignore_configured_override=True,
             )
+            fallback_kind = "override_ignored"
             logger.warning(
                 "ai-invoke %s: FLOWGATE_AGENT_API_BASE could not be resolved for "
                 "operator base %r, falling back to loopback for self-HTTP "
@@ -177,6 +179,7 @@ def _resolve_transport_api_base(run: dict) -> str:
                 run.get("run_id"), operator_base,
             )
         except ValueError:
+            fallback_kind = "operator_base_unsafe"
             logger.warning(
                 "ai-invoke %s: transport base resolution failed for operator base %r, "
                 "falling back to operator base for self-HTTP",
@@ -184,6 +187,17 @@ def _resolve_transport_api_base(run: dict) -> str:
             )
             resolved = operator_base
     run["_transport_api_base_resolved"] = resolved
+    # 0496 T0006 §3.2: which of the three branches above just ran, so a caller that
+    # persists transport_api_base (worker.py's six "FIRST in this hop wins" sites) can
+    # persist WHY that base was chosen alongside it -- "none" (no override involved, or
+    # a working override), "override_ignored" (a configured-but-broken override was
+    # retried away, landing on the safe loopback+FLOWGATE_PORT answer), or
+    # "operator_base_unsafe" (nothing parsed, including the operator base itself, so
+    # the operator base rides through unchanged -- the one branch NR0003 traced the
+    # original 401 to). A string, not a boolean: the two exception branches are both
+    # "a fallback happened" but are not equally safe, and collapsing them would hide
+    # exactly the distinction T0006 exists to surface.
+    run["_transport_fallback_kind_resolved"] = fallback_kind
     return resolved
 
 
