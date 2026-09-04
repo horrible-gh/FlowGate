@@ -43,6 +43,7 @@ from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import system_settings as db_settings
 from modules.flow_gate.db import terminal_cleanup_snapshots as db_terminal_cleanup
+from modules.flow_gate.db import tr_commit_ledger as db_tr_ledger
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.services import path_exclusion_rules
 from modules.flow_gate.storage.paths import get_storage_root, src_root
@@ -1829,6 +1830,153 @@ def ensure_worktree_async(project_id: str, module: str, group_id: str) -> None:
         args=(project_id, module, group_id, "workflow_decide"),
         daemon=True,
     ).start()
+
+
+# ── Initial group source sync (flowgate.default.0511 T0004 / NR0003 v5) ──────
+# ensure_worktree above provisions a group's worktree once, at creation, and its
+# idempotence check only asks "does the directory exist and match the ledger" -
+# never "is it current". A group that starts with N/NR investigation reads
+# whatever base the worktree forked from, and by the time real source work (TR)
+# begins the base may already have moved on. This is the ONE forced reset+clean
+# that closes that gap: performed exactly once per group, right before the
+# group's FIRST raw source-capable AI invocation. The caller
+# (ai_invoke_service._ensure_initial_source_sync) gates the call on
+# tool_registry.kind_for_token() in {"read", "read_write"} -- NEVER on
+# resolve_registry()'s source_mode-adjusted advertising value, which never gates
+# permission (kind_for_step's own docstring: "Source mode gates advertising
+# only, never permission").
+
+def _has_legacy_source_history(group_id: str) -> bool:
+    """Trustworthy evidence this group already did real source work before this
+    marker existed (T0004 SS16-19/SS24-25: a false-positive SKIP is preferable to
+    destroying prior work). A tr_commit_ledger row -- live OR canceled -- proves a
+    TR actually committed source under this group at some point; canceled still
+    counts because the commit genuinely happened (FlowGate never erases
+    history -- a cancel only records a revert on top of it, D0005).
+
+    A lookup failure is itself ambiguous evidence and is read the same way
+    (T0004 SS19: safety first, never destructively reset on an unclear signal).
+    """
+    try:
+        return bool(db_tr_ledger.commit_rows_by_group(group_id))
+    except Exception:
+        _log.warning("legacy source history probe failed for %s", group_id, exc_info=True)
+        return True
+
+
+def ensure_initial_group_source_sync(project_id: str, module: str, group_id: str) -> dict:
+    """One-time, forced reset --hard + clean -fd of the group worktree to
+    the current configured base-branch HEAD (flowgate.default.0511 T0004).
+
+    module is accepted only for call-site symmetry with ensure_worktree()
+    -- the branch this function acts on always comes from db_git.get_state().
+
+    Never raises (same contract as ensure_worktree): every failure mode
+    comes back as performed=False with a reason, and the caller decides
+    which reasons are a safe no-op (git disabled, already synced, legacy
+    history) versus which must block the run (T0004 SS26-28/SS34 -- a verify
+    failure or a marker-write failure must never let the worker launch against
+    an unconfirmed tree).
+
+    Returns {"performed": bool, "reason": str, "sha": Optional[str]}.
+    """
+    # A config lookup failure must not block a run (same contract as
+    # _require_group_worktree's own get_config try/except above): an unreadable
+    # config reads as "not integrated", never as license to hold the AI run hostage.
+    try:
+        cfg = db_git.get_config(project_id)
+    except Exception:
+        _log.warning("initial source sync: config lookup failed for %s", group_id, exc_info=True)
+        return {"performed": False, "reason": "config_lookup_failed", "sha": None}
+    if cfg is None or not cfg.get("enabled"):
+        return {"performed": False, "reason": "git_disabled", "sha": None}
+
+    try:
+        # Precheck OUTSIDE the lock (T0004 SS23/SS25.12): the common case -- a group
+        # long past its first sync -- never waits on the mutex at all.
+        state = db_git.get_state(group_id)
+        if state is not None and state.get("initial_source_sync_at"):
+            return {"performed": False, "reason": "already_synced", "sha": None}
+
+        project_name = _project_name(project_id)
+        if not project_name:
+            return {"performed": False, "reason": "project_name_missing", "sha": None}
+
+        holder = f"initial_sync:{uuid.uuid4()}"
+        if not _acquire_lock(project_id, holder):
+            return {"performed": False, "reason": "git_busy", "sha": None}
+        try:
+            # Marker recheck INSIDE the lock -- the second half of the race guard a
+            # concurrent first-read pair needs to land exactly one destructive sync.
+            state = db_git.get_state(group_id)
+            if state is not None and state.get("initial_source_sync_at"):
+                return {"performed": False, "reason": "already_synced", "sha": None}
+            if state is None or not state.get("worktree_registered"):
+                return {"performed": False, "reason": "worktree_missing", "sha": None}
+            branch = (state.get("branch") or "").strip()
+            if not branch:
+                return {"performed": False, "reason": "worktree_missing", "sha": None}
+            wt_path = src_root(project_name, branch)
+            if not wt_path.is_dir():
+                return {"performed": False, "reason": "worktree_missing", "sha": None}
+
+            if _has_legacy_source_history(group_id):
+                # T0004 SS18: safe backfill, never a destructive reset -- the group
+                # already has real source work; this only stops future invocations
+                # from re-running this same legacy check.
+                head_proc = _run_git(["rev-parse", "HEAD"], cwd=wt_path)
+                legacy_sha = head_proc.stdout.strip() if head_proc.returncode == 0 else None
+                try:
+                    db_git.set_initial_source_sync(group_id, legacy_sha)
+                except Exception:
+                    _log.warning(
+                        "legacy source sync backfill failed for %s", group_id, exc_info=True,
+                    )
+                    return {"performed": False, "reason": "marker_persist_failed", "sha": None}
+                return {"performed": False, "reason": "legacy_source_history", "sha": legacy_sha}
+
+            base_branch = base_branch_for(project_id) or "main"
+            base_root = src_root(project_name, base_branch)
+            head_proc = _run_git(["rev-parse", "HEAD"], cwd=base_root)
+            if head_proc.returncode != 0:
+                return {"performed": False, "reason": "reset_failed", "sha": None}
+            base_sha = head_proc.stdout.strip()
+
+            reset_proc = _run_git(
+                ["reset", "--hard", base_sha], cwd=wt_path, timeout=GIT_LOCAL_TIMEOUT_SEC,
+            )
+            if reset_proc.returncode != 0:
+                return {"performed": False, "reason": "reset_failed", "sha": None}
+            # T0004 SS25: -fd only, never -x -- ignored files are not this
+            # feature's business, the same restraint the existing worktree-clean
+            # paths use.
+            clean_proc = _run_git(
+                ["clean", "-fd"], cwd=wt_path, timeout=GIT_LOCAL_TIMEOUT_SEC,
+            )
+            if clean_proc.returncode != 0:
+                return {"performed": False, "reason": "reset_failed", "sha": None}
+
+            verify_proc = _run_git(["rev-parse", "HEAD"], cwd=wt_path)
+            if verify_proc.returncode != 0 or verify_proc.stdout.strip() != base_sha:
+                return {"performed": False, "reason": "head_mismatch", "sha": None}
+
+            try:
+                db_git.set_initial_source_sync(group_id, base_sha)
+            except Exception:
+                _log.warning(
+                    "initial source sync marker persist failed for %s", group_id, exc_info=True,
+                )
+                return {"performed": False, "reason": "marker_persist_failed", "sha": None}
+
+            _emit("git_initial_source_sync", project_id, group_id, {
+                "project": project_id, "group_id": group_id, "branch": branch, "sha": base_sha,
+            })
+            return {"performed": True, "reason": "ok", "sha": base_sha}
+        finally:
+            db_git.release_lock(project_id, holder)
+    except Exception:
+        _log.warning("ensure_initial_group_source_sync failed for %s", group_id, exc_info=True)
+        return {"performed": False, "reason": "error", "sha": None}
 
 
 # ── Effective source-root resolution (L0006 §2.2·§4.1) ───────────────────────
