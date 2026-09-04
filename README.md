@@ -5,6 +5,8 @@
 ### Ditch your editor right now.
 **Your agent can write the code. FlowGate makes it prove the work.**
 
+![FlowGate hero](assets/images/flowgate-hero.gif)
+
 </div>
 
 > **You handed the task to an autonomous agent, said *"it'll figure it out,"* and walked away.**
@@ -23,7 +25,7 @@ A typed document pipeline where completion isn't a claim — it's evidence.
 
 *Register a requirement → start a continuous run → inspect the evidence → approve.*
 
-![FlowGate demo](assets/images/flowgate-demo.gif)
+<video src="assets/images/flowgate-demo.mp4" controls muted></video>
 
 </div>
 
