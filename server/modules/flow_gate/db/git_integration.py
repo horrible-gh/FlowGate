@@ -143,23 +143,6 @@ def unregister_worktree(group_id: str) -> None:
     )
 
 
-def set_initial_source_sync(group_id: str, sha: Optional[str]) -> None:
-    """Persist the flowgate.default.0511 T0004 initial-source-sync marker.
-
-    Called exactly once per group, inside the project git lock, right after the
-    ONE forced reset+clean lands (or, for a legacy group with prior
-    tr_commit_ledger history, as a safe non-destructive backfill — see
-    git_service.ensure_initial_group_source_sync). No CAS/rowcount check: the
-    caller already re-read the row inside the same lock immediately before
-    calling this (marker recheck), so a second writer cannot be racing it.
-    """
-    get_store()._execute(
-        "UPDATE group_git_state SET initial_source_sync_at = ?, "
-        "initial_source_sync_sha = ?, updated_at = ? WHERE group_id = ?",
-        [now_iso(), sha, now_iso(), group_id],
-    )
-
-
 def set_status(
     group_id: str,
     status: str,
