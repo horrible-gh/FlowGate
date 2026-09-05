@@ -2360,15 +2360,22 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
                 if m:
                     behind, ahead = int(m.group(1)), int(m.group(2))
 
+    # Display status for response: may differ from persisted status for preview_ac.
+    # When preview_ac=True and status=='none', show a preliminary awaiting_choice
+    # (0197 T0004 §B) for the AC approval dialog while root is still wf_in_progress.
+    display_status = status
+    if status == "none" and preview_ac:
+        display_status = "awaiting_choice"
+
     # Suggested commit message (flowgate.default.0173 P0003 §2): only meaningful
     # while the group awaits a commit-producing choice; null otherwise.
-    if status in ("awaiting_choice", "waiting"):
+    if display_status in ("awaiting_choice", "waiting"):
         subject, source = resolve_commit_message(group_id)
         commit_message: Optional[dict] = {"suggested": subject, "source": source}
     else:
         commit_message = None
 
-    actionable = status in ("awaiting_choice", "waiting")
+    actionable = display_status in ("awaiting_choice", "waiting")
     open_session = db_git.get_open_session_by_group(group_id)
     group_update_merge_id = (
         open_session.get("merge_id")
@@ -2380,7 +2387,7 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         "group_id": group_id,
         "branch": branch,
         "base_branch": base_branch,
-        "status": status,
+        "status": display_status,
         "default_action": cfg.get("default_finalize_action") or "wait",
         "choices": list(FINALIZE_MAIN_CHOICES if actionable else ()),
         "aux_choices": list(FINALIZE_AUX_CHOICES if actionable else ()),
