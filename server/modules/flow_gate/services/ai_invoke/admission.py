@@ -1092,6 +1092,10 @@ def start_run(
         # first inside THIS hop (ai_invoke/provider_api.py's _sanitize_diagnostic_base).
         "operator_api_base": provider_api._sanitize_diagnostic_base(api_base_url),
         "transport_api_base": None,
+        # 0496 T0006 §3.2: which _resolve_transport_api_base branch produced
+        # transport_api_base above -- set together with it, at the same hop-first-wins
+        # call sites in worker.py.
+        "transport_fallback_kind": None,
         "last_tool_name": None,
         "last_tool_status": None,
         "last_tool_error": None,

@@ -193,9 +193,12 @@ def _run_detail_from_row(row: dict) -> dict:
         "oracle_mismatch": bool(row.get("oracle_mismatch")),
         # 0505 T0006 (DB0005 3.3): same names, same restart-half contract as the four
         # exit diagnostics below -- a run from before migration 095 has none of this
-        # and reads back as None on every one of these ten keys.
+        # and reads back as None on every one of these ten keys. transport_fallback_kind
+        # (0496 T0006 §3.2) is the eleventh, on migration 101, and reads back the same
+        # way for any run that predates it.
         "operator_api_base": row.get("operator_api_base"),
         "transport_api_base": row.get("transport_api_base"),
+        "transport_fallback_kind": row.get("transport_fallback_kind"),
         "last_tool_name": row.get("last_tool_name"),
         "last_tool_status": row.get("last_tool_status"),
         "last_tool_error": row.get("last_tool_error"),

@@ -21,7 +21,9 @@ from .runtime import (
 )
 
 
-def _resolve_agent_api_base(operator_api_base: str) -> str:
+def _resolve_agent_api_base(
+    operator_api_base: str, *, ignore_configured_override: bool = False,
+) -> str:
     """Compute the address this server can reach itself at.
 
     Shared by external CLI process launch and, since 0505 T0008, the API provider's
@@ -32,6 +34,14 @@ def _resolve_agent_api_base(operator_api_base: str) -> str:
     operator scheme and explicit port are retained while the host becomes loopback.
     When the operator origin has no explicit port, the trusted local
     ``FLOWGATE_PORT`` is used.
+
+    ``ignore_configured_override`` (0496 T0004): skips the ``FLOWGATE_AGENT_API_BASE``
+    branch entirely, as if it were unset, so a caller that already caught this
+    function raising on a malformed override can retry for the same safe
+    loopback+``FLOWGATE_PORT`` answer the "unset" case computes below -- never
+    raises on that account. CLI launch never passes this; a broken CLI override
+    must keep failing loud (spawn_failed), not silently launch against the wrong
+    address.
     """
     from urllib.parse import urlsplit, urlunsplit
 
@@ -49,7 +59,10 @@ def _resolve_agent_api_base(operator_api_base: str) -> str:
 
     from config import settings as _settings
 
-    configured = getattr(_settings, "FLOWGATE_AGENT_API_BASE", None)
+    configured = (
+        None if ignore_configured_override
+        else getattr(_settings, "FLOWGATE_AGENT_API_BASE", None)
+    )
     if configured is not None:
         setting = str(configured).strip()
         if not setting:
@@ -133,7 +146,30 @@ def _resolve_transport_api_base(run: dict) -> str:
     wrong in exactly the topology 0472 B0001 hit for the CLI path: a public/proxy
     origin that this server cannot dial as itself. `_resolve_agent_api_base` already
     solved this for CLI launch; this wraps it for the API provider's self-HTTP and
-    caches the result on `run` so all six sites agree within one hop.
+    caches the result on `run` so every site that asks agrees within one hop. (The
+    list above is that history's six; 0505 T0018 has since moved two of them --
+    conversation_context and read_document -- off self-HTTP to direct in-process
+    calls, and they keep resolving here anyway so the per-hop diagnostic does not
+    depend on which site runs first. See the branch note below the try/except.)
+
+    0496 T0004: a `FLOWGATE_AGENT_API_BASE` that is configured but unusable (typo,
+    missing scheme, a path/query it must not carry) used to make this function fall
+    back to `operator_base` -- silently reinstating the exact cross-instance/public
+    topology NR0003 traced the original 401 "Token is invalid" to, just reached
+    through a broken override instead of a missing one. The override existing at
+    all signals prod-type intent (operator and agent origins do NOT coincide), so
+    that fallback is never safe. Retrying with the override ignored degrades to the
+    same loopback+`FLOWGATE_PORT` address dev-type already trusts; only when no safe
+    address can be computed at all is there truly nothing safer to fall back to than
+    returning the operator base unchanged.
+
+    0496 T0008 (self-review): "no safe address at all" has two causes, not one. The
+    operator base itself failing to parse is the expected one. The other is a
+    `FLOWGATE_PORT` that is not a usable port number, reachable only when the operator
+    origin also carries no explicit port -- and only on a server whose own listen-port
+    setting is unreadable, which is why both keep the single `operator_base_unsafe`
+    name rather than splitting into a fourth kind. Both are pinned by tests in
+    `tests/test_transport_api_base_0505.py`.
     """
     cached = run.get("_transport_api_base_resolved")
     if cached:
@@ -141,14 +177,44 @@ def _resolve_transport_api_base(run: dict) -> str:
     operator_base = run.get("api_base_url") or ""
     try:
         resolved = _svc()._resolve_agent_api_base(operator_base)
+        fallback_kind = "none"
     except ValueError:
-        logger.warning(
-            "ai-invoke %s: transport base resolution failed for operator base %r, "
-            "falling back to operator base for self-HTTP",
-            run.get("run_id"), operator_base,
-        )
-        resolved = operator_base
+        try:
+            resolved = _svc()._resolve_agent_api_base(
+                operator_base, ignore_configured_override=True,
+            )
+            fallback_kind = "override_ignored"
+            logger.warning(
+                "ai-invoke %s: FLOWGATE_AGENT_API_BASE could not be resolved for "
+                "operator base %r, falling back to loopback for self-HTTP "
+                "(operator base is never reused as a self-HTTP target here)",
+                run.get("run_id"), operator_base,
+            )
+        except ValueError:
+            fallback_kind = "operator_base_unsafe"
+            logger.warning(
+                "ai-invoke %s: transport base resolution failed for operator base %r, "
+                "falling back to operator base for self-HTTP",
+                run.get("run_id"), operator_base,
+            )
+            resolved = operator_base
     run["_transport_api_base_resolved"] = resolved
+    # 0496 T0006 §3.2: which of the three branches above just ran, so a caller that
+    # persists transport_api_base (worker.py's seven "FIRST in this hop wins" sites:
+    # the five that dial -- conversation_turn_register, api_bound_request,
+    # resolve_conflict, workflow_decide, inbox_register -- plus the two 0505 T0018
+    # moved in-process, the conversation_context prefetch in `_api_execute` and
+    # `_api_read_document`, which resolve without dialing so the per-hop value does
+    # not depend on call order) can persist WHY that base was
+    # chosen alongside it -- "none" (no override involved, or a working override),
+    # "override_ignored" (a configured-but-broken override was retried away, landing on
+    # the safe loopback+FLOWGATE_PORT answer), or "operator_base_unsafe" (no safe
+    # address could be computed -- the operator base itself failed to parse, or
+    # FLOWGATE_PORT is unusable -- so the operator base rides through unchanged, the
+    # one branch NR0003 traced the original 401 to). A string, not a boolean: the two
+    # exception branches are both "a fallback happened" but are not equally safe, and
+    # collapsing them would hide exactly the distinction T0006 exists to surface.
+    run["_transport_fallback_kind_resolved"] = fallback_kind
     return resolved
 
 

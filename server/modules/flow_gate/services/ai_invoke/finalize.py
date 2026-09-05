@@ -957,6 +957,7 @@ def _persist_run_record(run: dict) -> None:
             # stores NULL, not zero.
             "operator_api_base": run.get("operator_api_base"),
             "transport_api_base": run.get("transport_api_base"),
+            "transport_fallback_kind": run.get("transport_fallback_kind"),
             "last_tool_name": run.get("last_tool_name"),
             "last_tool_status": run.get("last_tool_status"),
             "last_tool_error": run.get("last_tool_error"),
@@ -981,7 +982,8 @@ def _persist_run_record(run: dict) -> None:
             "turn_limit_exhausted=%s oracle_mismatch=%s last_tool_name=%s "
             "last_tool_status=%s api_turns_used=%s model_http_calls=%s "
             "model_last_http_status=%s tool_calls_received=%s tool_calls_executed=%s "
-            "operator_api_base=%s transport_api_base=%s last_tool_error=%s",
+            "operator_api_base=%s transport_api_base=%s transport_fallback_kind=%s "
+            "last_tool_error=%s",
             run["run_id"],
             len(run.get("register_errors") or []),
             run.get("tool_call_misses"),
@@ -996,6 +998,7 @@ def _persist_run_record(run: dict) -> None:
             run.get("tool_calls_executed"),
             run.get("operator_api_base"),
             run.get("transport_api_base"),
+            run.get("transport_fallback_kind"),
             _redact_secrets(
                 run.get("last_tool_error"), _known_run_raw_tokens(run), _known_run_prompts(run)
             ),
@@ -1179,6 +1182,7 @@ def finished_payload(run: dict) -> dict:
         # path renders both a live finish and a persisted one.
         "operator_api_base": run.get("operator_api_base"),
         "transport_api_base": run.get("transport_api_base"),
+        "transport_fallback_kind": run.get("transport_fallback_kind"),
         "last_tool_name": run.get("last_tool_name"),
         "last_tool_status": run.get("last_tool_status"),
         "last_tool_error": run.get("last_tool_error"),

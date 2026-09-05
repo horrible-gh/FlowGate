@@ -612,7 +612,19 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
         # run while still claiming "the note went in".
         run.update(retry_audit)
     before = token_id
+    # 0496 T0008 (self-review of T0006 §3.1): both halves of the run's token identity land
+    # HERE, adjacent, before anything that can fail runs. They used to straddle the group
+    # lease block below -- token_id first, raw_token only after it -- so a lease-DB write,
+    # or the document_review_loop token lookup inside it, that raised left the run holding a
+    # NEW token_id next to the OLD raw_token. Neither caller (worker.py:137/169) wraps this
+    # function in try/except, so that half-updated pair is what the finalize path persists
+    # and what the next hop would have sent: a 401 "Token is invalid" of exactly the kind
+    # 0496 B0001 reported. `_note_issued_raw_token` moves up with them for the same reason --
+    # the new raw token exists in the tokens table the instant issue_builder returns, so
+    # `_redact_secrets` must already know it before any code that can fail and log.
     run["token_id"] = issue.get("token_id")
+    run["raw_token"] = issue.get("raw_token") or run.get("raw_token")
+    _note_issued_raw_token(run, run.get("raw_token"))
     if run.get("group_id"):
         # 0417 T0013: a document_review_loop hop's reissued token can carry a DIFFERENT
         # action_scope than the run started with (review <-> edit as the loop alternates
@@ -627,8 +639,6 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
         db_group_ai_leases.update_token(
             run["group_id"], run["run_id"], run["token_id"], action_scope=reissued_action_scope,
         )
-    run["raw_token"] = issue.get("raw_token") or run.get("raw_token")
-    _note_issued_raw_token(run, run.get("raw_token"))
     run["mention"] = mention
     _note_issued_prompt(run, mention)
     run["prompt_final_length"], run["prompt_final_sha256"] = prompt_digest(mention)
@@ -740,6 +750,9 @@ def _reset_attempt_state(run: dict) -> None:
     # cached from a prior attempt -- the recompute is cheap and this keeps the cache
     # from ever outliving the per-attempt state it was read alongside.
     run["_transport_api_base_resolved"] = None
+    # 0496 T0006 §3.2: the fallback-kind cache is computed alongside the transport
+    # base above and must not outlive it either.
+    run["_transport_fallback_kind_resolved"] = None
     run["attempt_started_mono"] = time.monotonic()
     # 0446 T0014 §4-1: the previous attempt's watchdog verdict is not this one's. The
     # no-progress window is re-anchored when the next watchdog starts; the absolute
@@ -870,6 +883,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         run["last_tool_status"] = status
         if run.get("transport_api_base") is None:
             run["transport_api_base"] = provider_api._sanitize_diagnostic_base(provider_api._resolve_transport_api_base(run))
+            run["transport_fallback_kind"] = run.get("_transport_fallback_kind_resolved")
         if not (200 <= status < 300 and isinstance(chat_context, dict)):
             run["last_tool_error"] = _registration_error_summary(chat_context or {})[:500]
             return "api_error", "conversation_context_unavailable"
@@ -1310,6 +1324,7 @@ def _resolve_conflict(run: dict, raw_token: str, tool_input: dict) -> tuple[int,
     # prefetch) stays untouched.
     if run.get("transport_api_base") is None:
         run["transport_api_base"] = provider_api._sanitize_diagnostic_base(provider_api._resolve_transport_api_base(run))
+        run["transport_fallback_kind"] = run.get("_transport_fallback_kind_resolved")
     body = {
         "files": tool_input.get("files") or [],
         "complete": bool(tool_input.get("complete")),
@@ -1340,6 +1355,7 @@ def _workflow_decide(run: dict, raw_token: str, tool_input: dict) -> tuple[int, 
     # FIRST in this hop wins transport_api_base; already-set stays untouched.
     if run.get("transport_api_base") is None:
         run["transport_api_base"] = provider_api._sanitize_diagnostic_base(provider_api._resolve_transport_api_base(run))
+        run["transport_fallback_kind"] = run.get("_transport_fallback_kind_resolved")
     body = {
         "doc_class": tool_input.get("doc_class") or "standard",
         "sequence": tool_input.get("sequence") or [],
@@ -1410,6 +1426,7 @@ def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> 
     # FIRST in this hop wins transport_api_base; already-set stays untouched.
     if run.get("transport_api_base") is None:
         run["transport_api_base"] = provider_api._sanitize_diagnostic_base(provider_api._resolve_transport_api_base(run))
+        run["transport_fallback_kind"] = run.get("_transport_fallback_kind_resolved")
     api_base = provider_api._resolve_transport_api_base(run).rstrip("/")
     body = {
         "body": tool_input.get("body") or "",
@@ -1444,6 +1461,7 @@ def _api_bound_request(run: dict, raw_token: str, path: str, method: str = "GET"
     # FIRST in this hop wins transport_api_base; already-set stays untouched.
     if run.get("transport_api_base") is None:
         run["transport_api_base"] = provider_api._sanitize_diagnostic_base(provider_api._resolve_transport_api_base(run))
+        run["transport_fallback_kind"] = run.get("_transport_fallback_kind_resolved")
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(
         f"{provider_api._resolve_transport_api_base(run)}{path}", data=data,
@@ -1476,11 +1494,12 @@ def _api_read_document(run: dict, raw_token: str, tool_input: dict) -> tuple[int
 
     transport_api_base is still resolved here even though it is no longer dialed, so
     DB0005 2's "first opener wins" diagnostic keeps reporting the same per-hop value
-    regardless of which of the six sites happens to run first (T0018 item 3 judgment:
+    regardless of which of the seven sites happens to run first (T0018 item 3 judgment:
     last_tool_name/transport_api_base semantics are left unchanged for this site).
     """
     if run.get("transport_api_base") is None:
         run["transport_api_base"] = provider_api._sanitize_diagnostic_base(provider_api._resolve_transport_api_base(run))
+        run["transport_fallback_kind"] = run.get("_transport_fallback_kind_resolved")
     from modules.flow_gate.api.v1 import document_routes
     fake_request = _BearerOnlyRequest(raw_token)
     try:
@@ -1699,6 +1718,7 @@ def _inbox_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, d
     # never opens a socket, so it must not claim the transport base either.
     if run.get("transport_api_base") is None:
         run["transport_api_base"] = provider_api._sanitize_diagnostic_base(provider_api._resolve_transport_api_base(run))
+        run["transport_fallback_kind"] = run.get("_transport_fallback_kind_resolved")
     body = _svc()._register_envelope(context, run, tool_input)
     req = urllib.request.Request(
         f"{provider_api._resolve_transport_api_base(run)}/inbox",

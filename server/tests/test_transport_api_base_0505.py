@@ -145,12 +145,154 @@ class TestResolveTransportApiBase:
         run = _run(bad_operator)
         assert svc._resolve_transport_api_base(run) == bad_operator
 
+    def test_malformed_agent_base_falls_back_to_loopback_not_the_public_operator(self, monkeypatch):
+        """0496 T0004: a misconfigured `FLOWGATE_AGENT_API_BASE` (prod-type intent
+        signalled but unusable) must not silently reinstate the public/proxy operator
+        origin as the self-HTTP target -- that IS the pre-0505 cross-instance topology
+        (NR0003), just reached through a broken override instead of a missing one. The
+        safe degrade is the same loopback+FLOWGATE_PORT address dev-type already uses,
+        never the public origin the override existed to avoid dialing in the first place."""
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", "not a valid origin")
+        run = _run(PROD_OPERATOR)
+        resolved = svc._resolve_transport_api_base(run)
+        # PROD_OPERATOR's own scheme (https) and path are kept -- only the host moves
+        # to loopback, exactly like the no-override dev-type computation.
+        assert resolved == "https://127.0.0.1:8089/flowgate/api/v1"
+        assert "flowgate.example" not in resolved
+
     def test_reset_attempt_state_clears_the_cache_for_the_next_attempt(self, tmp_path):
         run = _run(DEV_OPERATOR, scratch_dir=str(tmp_path))
         svc._resolve_transport_api_base(run)
         assert run["_transport_api_base_resolved"]
         svc._reset_attempt_state(run)
         assert run.get("_transport_api_base_resolved") is None
+
+
+class TestTransportFallbackKind:
+    """0496 T0006 SS3.2: `_resolve_transport_api_base` has always known WHICH of its
+    three branches produced the value it returned -- the try succeeded outright, a
+    broken override was retried away (safe loopback), or nothing parsed at all so the
+    operator base rode through unchanged (the one branch NR0003/0496 T0004 traced the
+    original cross-instance 401 to) -- but that distinction lived only in a
+    logger.warning line until now. This pins the cached signal
+    (`run["_transport_fallback_kind_resolved"]`) the same way
+    TestResolveTransportApiBase pins `_transport_api_base_resolved` just above: one test
+    per branch, plus the reset contract."""
+
+    def test_no_override_configured_yields_none(self):
+        run = _run(DEV_OPERATOR)
+        svc._resolve_transport_api_base(run)
+        assert run["_transport_fallback_kind_resolved"] == "none"
+
+    def test_working_override_yields_none(self, monkeypatch):
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", PROD_AGENT_SETTING)
+        run = _run(PROD_OPERATOR)
+        svc._resolve_transport_api_base(run)
+        assert run["_transport_fallback_kind_resolved"] == "none"
+
+    def test_malformed_override_yields_override_ignored(self, monkeypatch):
+        """Mirrors TestResolveTransportApiBase.
+        test_malformed_agent_base_falls_back_to_loopback_not_the_public_operator: same
+        setup, but this asserts on the WHY, not just the resolved value."""
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", "not a valid origin")
+        run = _run(PROD_OPERATOR)
+        svc._resolve_transport_api_base(run)
+        assert run["_transport_fallback_kind_resolved"] == "override_ignored"
+
+    def test_unparseable_operator_base_yields_operator_base_unsafe(self):
+        """Mirrors TestResolveTransportApiBase.
+        test_falls_back_to_operator_base_without_raising_on_a_bad_port -- the ONE branch
+        that is genuinely unsafe (the operator base itself rides through unchanged), so
+        it must land a DIFFERENT string than override_ignored, never be collapsed into
+        the same flag."""
+        bad_operator = "http://host:99999/flowgate/api/v1"
+        run = _run(bad_operator)
+        svc._resolve_transport_api_base(run)
+        assert run["_transport_fallback_kind_resolved"] == "operator_base_unsafe"
+        assert run["_transport_fallback_kind_resolved"] != "override_ignored"
+
+    def test_an_unusable_flowgate_port_lands_the_same_operator_base_unsafe(self, monkeypatch):
+        """0496 T0008 (self-review): "no safe address could be computed" has TWO causes
+        and only the sibling above was pinned. The other is a `FLOWGATE_PORT` that is
+        not a usable port number, reachable only when the operator origin carries no
+        explicit port of its own -- so the loopback computation has to consult it, and
+        both attempts raise on it. That must land the SAME `operator_base_unsafe` name
+        rather than a fourth kind (a server whose own listen-port setting is unreadable
+        is not a different KIND of unsafe), with the operator base riding through
+        unchanged exactly as the sibling case leaves it."""
+        monkeypatch.setattr(settings, "FLOWGATE_PORT", 70000)
+        # PROD_OPERATOR carries no explicit port, which is what forces FLOWGATE_PORT to
+        # be consulted at all; the autouse fixture leaves the override unset.
+        run = _run(PROD_OPERATOR)
+        assert svc._resolve_transport_api_base(run) == PROD_OPERATOR
+        assert run["_transport_fallback_kind_resolved"] == "operator_base_unsafe"
+
+    def test_a_broken_override_over_an_unusable_port_is_unsafe_not_override_ignored(
+        self, monkeypatch,
+    ):
+        """The two exception branches are not independent: `override_ignored` is only
+        earned when the retry actually REACHES a safe loopback answer. With the override
+        broken AND FLOWGATE_PORT unusable there is no such answer, so the retry raises
+        too, and the run must be told the unsafe truth -- the public operator origin rode
+        through -- instead of the reassuring `override_ignored`."""
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", "not a valid origin")
+        monkeypatch.setattr(settings, "FLOWGATE_PORT", 70000)
+        run = _run(PROD_OPERATOR)
+        assert svc._resolve_transport_api_base(run) == PROD_OPERATOR
+        assert run["_transport_fallback_kind_resolved"] == "operator_base_unsafe"
+
+    def test_reset_attempt_state_clears_the_fallback_kind_cache_too(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", "not a valid origin")
+        run = _run(PROD_OPERATOR, scratch_dir=str(tmp_path))
+        svc._resolve_transport_api_base(run)
+        assert run["_transport_fallback_kind_resolved"] == "override_ignored"
+        svc._reset_attempt_state(run)
+        assert run.get("_transport_fallback_kind_resolved") is None
+
+
+class TestTransportFallbackKindPersistsAlongsideTransportApiBase:
+    """0496 T0006 SS3.2 completion condition 3: the diagnostic signal must be reachable
+    through an actual mediated self-HTTP call, not just the private cache above -- the
+    same hop-first-wins call sites in worker.py that persist `transport_api_base` now
+    persist `transport_fallback_kind` alongside it (same guarded block, same `run`
+    write), ready for _persist_run_record/finished_payload/diagnostics to carry into
+    the durable row and response instead of a grep-only logger.warning line."""
+
+    def test_dev_type_hop_persists_none(self, monkeypatch):
+        _capture_urlopen(monkeypatch)
+        run = _run(DEV_OPERATOR)
+        svc._conversation_turn_register(run, "raw", {"body": "hi"})
+        assert run["transport_fallback_kind"] == "none"
+
+    def test_working_override_hop_persists_none(self, monkeypatch):
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", PROD_AGENT_SETTING)
+        _capture_urlopen(monkeypatch)
+        run = _run(PROD_OPERATOR)
+        svc._conversation_turn_register(run, "raw", {"body": "hi"})
+        assert run["transport_fallback_kind"] == "none"
+
+    def test_malformed_override_hop_persists_override_ignored(self, monkeypatch):
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", "not a valid origin")
+        _capture_urlopen(monkeypatch)
+        run = _run(PROD_OPERATOR)
+        svc._conversation_turn_register(run, "raw", {"body": "hi"})
+        assert run["transport_fallback_kind"] == "override_ignored"
+        # Sits alongside the existing base-value regression: the resolved base itself
+        # must still degrade to loopback, never the public operator origin.
+        assert run["transport_api_base"] is not None
+        assert "flowgate.example" not in run["transport_api_base"]
+
+    def test_first_site_in_the_hop_wins_like_transport_api_base_does(self, monkeypatch):
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", "not a valid origin")
+        _capture_urlopen(monkeypatch)
+        run = _run(PROD_OPERATOR)
+        svc._conversation_turn_register(run, "raw", {"body": "hi"})
+        assert run["transport_fallback_kind"] == "override_ignored"
+        # A later site in the SAME hop must not recompute or move it, mirroring
+        # transport_api_base's own "FIRST in this hop wins" contract (worker.py).
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", None)
+        svc._workflow_decide(run, "raw", {"doc_class": "standard", "sequence": []})
+        assert run["transport_fallback_kind"] == "override_ignored"
 
 
 # 0505 T0018: conversation_context moved to a direct in-process call and dropped out
@@ -749,3 +891,136 @@ class TestProdTypeGenuineTopologyProof:
         assert payload["would_register"]["doc_type"] == "T"
         assert captured["request"].full_url == f"{PROD_RESOLVED}/inbox"
         assert "flowgate.example" not in captured["request"].full_url
+
+
+# ── First failing endpoint, bound to concrete identifiers (0496 T0004 §4) ────────
+#
+# For a `new`-scope API hop, `_inbox_register` -> POST /inbox is the FIRST (and, since
+# T0018 converted read_document/read_help/source ops to in-process calls, now the ONLY)
+# self-HTTP call site the hop can reach -- worker.py:1189. This section reproduces
+# NR0003's Case A topology ("a different FlowGate DB never saw this token") for real,
+# with two separate `db_tokens.get_by_hash` backing stores standing in for two separate
+# FlowGate instances, dispatched purely by which hostname a request actually dials --
+# so which store answers is a direct function of `_resolve_transport_api_base`'s output,
+# the exact value this TR's fix changes. Unlike the malformed-agent-base string
+# comparisons above, this binds the failure to a concrete run_id, token_id, transport
+# base, method+path, and status, using the real route, the real `token_service.verify`,
+# and the real `_inbox_register`/`_bind_register_context` code paths.
+
+CROSS_INSTANCE_RUN_ID = "aiv_20260904_cross_instance_repro"
+CROSS_INSTANCE_TOKEN_ID = "tok_cross_instance_repro"
+
+
+def _dual_store_urlopen(monkeypatch, client: TestClient, active: dict):
+    """Routes to `client` regardless of destination -- both "instances" are the same
+    process/app in this proof, exactly like the pair of real FlowGate deployments
+    NR0003 SS8 describes share the same server code and differ only in which DB/pepper
+    each is wired to. `active["which"]` records which hostname was actually dialled so
+    the monkeypatched `db_tokens.get_by_hash` (installed by the caller) can answer from
+    the matching store -- the destination the real code chose decides the outcome, not
+    the test."""
+
+    def fake_open(request, timeout=None):
+        active["which"] = "public" if "flowgate.example" in request.full_url else "local"
+        parsed = urlsplit(request.full_url)
+        path_qs = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+        headers = dict(request.header_items())
+        resp = client.request(
+            request.get_method(), path_qs, content=request.data, headers=headers,
+        )
+        return _RealResponse(resp)
+
+    monkeypatch.setattr(svc.urllib.request, "urlopen", fake_open)
+
+
+class TestFirstFailingEndpointBoundToConcreteIdentifiers:
+    """T1 completion condition 1 / §14: the actual first 401, bound to run_id,
+    token_id, transport base, method/path, and status -- not a conditional example."""
+
+    @pytest.fixture(autouse=True)
+    def _inbox_dependencies(self, monkeypatch):
+        monkeypatch.setattr(process_service_module, "is_group_disposed", lambda *_a, **_k: False)
+        monkeypatch.setattr(auth_outbound, "has_permission", lambda *_a, **_k: True)
+        monkeypatch.setattr(inbox_routes, "has_permission", lambda *_a, **_k: True)
+        monkeypatch.setattr(inbox_routes, "_is_valid_doc_type", lambda *_a, **_k: True)
+        monkeypatch.setattr(inbox_routes.template_provision, "is_design_type", lambda _t: False)
+        monkeypatch.setattr(
+            inbox_routes.db_docs, "get_by_id",
+            lambda doc_id: {"doc_id": doc_id, "group_id": GROUP, "project_id": PROJECT},
+        )
+        monkeypatch.setattr(
+            inbox_routes, "_resolve_group",
+            lambda _project, _group_name: {"group_id": GROUP, "project_id": PROJECT},
+        )
+        monkeypatch.setattr(inbox_routes.db_wfseq, "get_pending_head_by_group", lambda *_a, **_k: None)
+        monkeypatch.setattr(svc.token_service, "increment_dry_run", lambda *_a, **_k: None)
+        original_envelope = svc._register_envelope
+
+        def _envelope_with_dry_run(context, run, tool_input):
+            body = original_envelope(context, run, tool_input)
+            body["dry_run"] = True
+            return body
+
+        monkeypatch.setattr(svc, "_register_envelope", _envelope_with_dry_run)
+
+    def test_wrong_destination_genuinely_401s_the_same_valid_token_the_right_one_accepts(
+        self, monkeypatch,
+    ):
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", "not a valid origin")
+        local_store: dict = {}
+        public_store: dict = {}
+        active = {"which": "local"}
+
+        def get_by_hash(h):
+            store = public_store if active["which"] == "public" else local_store
+            return dict(store[h]) if h in store else None
+
+        monkeypatch.setattr(db_tokens_module, "get_by_hash", get_by_hash)
+        raw = _seed_real_token(
+            local_store, token_id=CROSS_INSTANCE_TOKEN_ID, action_scope="new",
+            project=PROJECT, group_id=GROUP, doc_ref=DOC, issued_to="usr-1",
+            ai_run_id=CROSS_INSTANCE_RUN_ID,
+        )
+        client = TestClient(_build_prod_app(), raise_server_exceptions=False)
+        _dual_store_urlopen(monkeypatch, client, active)
+
+        # -- The concrete "first failing endpoint": the SAME real run_id/token_id,
+        # self-HTTP forced onto the public/operator origin -- the exact fallback this
+        # TR's fix removes (the pre-fix `except ValueError: resolved = operator_base`,
+        # reachable whenever FLOWGATE_AGENT_API_BASE was configured but unusable).
+        # `_bind_register_context`'s own local pre-check runs against THIS process
+        # (active=="local"), so only the outbound self-HTTP round trip below is what
+        # lands on the wrong instance.
+        active["which"] = "local"
+        run_wrong = _run(
+            PROD_OPERATOR, run_id=CROSS_INSTANCE_RUN_ID, token_id=CROSS_INSTANCE_TOKEN_ID,
+            current_token_id=CROSS_INSTANCE_TOKEN_ID,
+        )
+        run_wrong["_transport_api_base_resolved"] = PROD_OPERATOR
+        status_wrong, payload_wrong = svc._inbox_register(
+            run_wrong, raw, {"doc_type": "T", "content": "Plain body text for the repro."},
+        )
+        # Bound record (T1 §14): run_id=aiv_20260904_cross_instance_repro
+        # token_id=tok_cross_instance_repro transport_base=https://flowgate.example/...
+        # method=POST path=/inbox status=401
+        assert status_wrong == 401
+        assert payload_wrong.get("error_message") == "Token is invalid"
+
+        # -- The SAME run_id/token_id/raw token, resolved the way the FIXED
+        # `_resolve_transport_api_base` actually resolves a configured-but-malformed
+        # override: ignored, degrading to loopback -- never the public origin above.
+        # Lands on the store that actually has the token, and succeeds.
+        active["which"] = "local"
+        run_right = _run(
+            PROD_OPERATOR, run_id=CROSS_INSTANCE_RUN_ID, token_id=CROSS_INSTANCE_TOKEN_ID,
+            current_token_id=CROSS_INSTANCE_TOKEN_ID,
+        )
+        status_right, payload_right = svc._inbox_register(
+            run_right, raw, {"doc_type": "T", "content": "Plain body text for the repro."},
+        )
+        assert status_right == 200
+        assert payload_right["ok"] is True
+        assert payload_right["dry_run"] is True
+        resolved = svc._resolve_transport_api_base(run_right)
+        assert resolved != PROD_OPERATOR
+        assert "flowgate.example" not in resolved

@@ -166,6 +166,66 @@ class TestCallOpenaiAnthropicPatchCrossesTheFileBoundary:
         assert callable(svc._call_anthropic)
 
 
+class TestProviderFallbackPreservesTokenIdentity:
+    """0496 T0004 §7/§11-B: a provider chain fallback within ONE hop must not touch the
+    run's token identity. `_execute_provider_chain` (ai_invoke/worker.py:229-285) never
+    reissues between chain entries -- reissue only happens one full hop later, in the
+    OUTER no-output retry loop via `_prepare_retry_token` (ai_invoke/worker.py:568-640).
+    Each provider entry's `_api_execute` re-reads `current_token = run["raw_token"]`
+    fresh at its own top (worker.py:850), so this test answers T0004 §7's six questions
+    for real instead of asserting them: (1) same run_id -- same `run` dict object,
+    never rebuilt; (2)/(3) same token_id/raw_token -- read straight off `run` again,
+    never mutated by the failed first attempt; (4) no reissue happens before the
+    fallback launches; (5) the second provider's local `current_token` IS
+    re-initialized (from the same unchanged `run["raw_token"]`), not carried over as a
+    stale Python local; (6) the first provider's spawn failure records a
+    `fallback_history` entry and nothing else -- no revoke/consume of the token."""
+
+    def test_second_provider_receives_the_same_raw_token_after_the_first_fails_to_start(
+        self, monkeypatch,
+    ):
+        def fake_get_provider_secret(_scope, provider_id):
+            # aip_openai never gets a key -> _api_execute returns before ever reading
+            # run["raw_token"] (worker.py:826-839), so the FIRST attempt touches no
+            # token at all.
+            return None if provider_id == "aip_openai" else "sk-test"
+
+        monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", fake_get_provider_secret)
+
+        def fake_call_anthropic(*args, **kwargs):
+            return "ok", [{"id": "tc1", "name": "register_document",
+                           "input": {"doc_type": "standard", "title": "t", "content": "c"}}], \
+                   {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}
+
+        monkeypatch.setattr(svc, "_call_anthropic", fake_call_anthropic)
+
+        seen_tokens = []
+
+        def fake_inbox_register(run, token, _tool_input):
+            seen_tokens.append(token)
+            return 201, {"doc_id": "d1"}
+
+        monkeypatch.setattr(svc, "_inbox_register", fake_inbox_register)
+
+        run = _api_run(raw_token="tok_original_raw", token_id="tok_original_id")
+        started_ok = svc._execute_provider_chain(
+            run, [_openai_provider(), _anthropic_provider()], "prompt",
+        )
+
+        assert started_ok is True
+        # The first provider's failure is filed as a fallback event, never as a token
+        # event (no revoke/consume/reissue side channel exists here to check for).
+        assert len(run["fallback_history"]) == 1
+        assert run["fallback_history"][0]["provider_id"] == "aip_openai"
+        assert run["fallback_history"][0]["reason"] == "spawn_failed"
+        # The second provider's self-HTTP used the run's ORIGINAL token, unchanged.
+        assert seen_tokens == ["tok_original_raw"]
+        assert run["raw_token"] == "tok_original_raw"
+        assert run["token_id"] == "tok_original_id"
+        # Landed on the provider actually being run this attempt.
+        assert run["provider_id"] == "aip_anthropic"
+
+
 class TestImportDependencyGuard:
     """T4's recommended AST guard: neither new provider module may reach into
     chain/review/rework/lease-DB/runtime-registry territory, and the worker module
@@ -275,3 +335,179 @@ class TestFileSplitIsComplete:
     ])
     def test_symbol_still_reachable_on_the_assembled_module(self, name):
         assert hasattr(svc, name), f"svc.{name} missing after the T4 file split"
+
+
+class TestReissueBoundaryPreservesTokenIdentity:
+    """0496 T0006 §3.1: TR0005 (rev1, approved) traced the reissue boundary in
+    `_prepare_retry_token` (worker.py:560-640) by READING the code -- "token_id and
+    raw_token are updated together, in the same function, with nothing else able to
+    interleave" -- but never pinned that claim with a test that actually EXECUTES it.
+    This class closes that gap: a reusable token must come back untouched; a reissued
+    token must land BOTH `run["token_id"]` and `run["raw_token"]` pointing at the SAME
+    new grant the instant `_prepare_retry_token` returns (never a half-updated state
+    where one identifier is new and the other is stale); and the next provider's own
+    entry point (`_api_execute` via `_execute_provider_chain`, which re-reads
+    `current_token = run["raw_token"]` fresh at worker.py:850) must itself observe the
+    new raw_token when it opens its first mediated self-HTTP call, not just the `run`
+    dict in isolation.
+    """
+
+    def _run(self, **over):
+        run = {
+            "run_id": "aiv_reissue_boundary",
+            # None (like _api_run()'s default) keeps `_api_execute` on the doc_ref-less
+            # compatibility tool-selection branch (worker.py:917) instead of
+            # `api_server_tools.definitions_for_run`, which would hit a real DB this
+            # test never sets up -- this class is about token identity, not tool
+            # routing.
+            "doc_ref": None,
+            "token_id": "tok_original_id",
+            "raw_token": "tok_original_raw",
+            "mention": "## original prompt\n",
+            "issue_builder": None,
+            # None keeps _prepare_retry_token off the group-lease DB update path
+            # (worker.py: "if run.get('group_id'): db_group_ai_leases.update_token(...)")
+            # -- this class is about token identity, not lease-scope bookkeeping.
+            "group_id": None,
+        }
+        run.update(over)
+        return run
+
+    def test_reusable_token_is_returned_untouched(self, monkeypatch):
+        monkeypatch.setattr(svc.db_tokens, "get_by_id", lambda tid: {
+            "token_id": tid, "consumed_at": None, "revoked_at": None,
+            "expires_at": "2999-01-01T00:00:00+00:00",
+        })
+        run = self._run()
+
+        prepared = svc._prepare_retry_token(run)
+
+        assert prepared == {"mention": "## original prompt\n", "token_id": "tok_original_id",
+                            "token_id_before": "tok_original_id", "reissued": False}
+        assert run["token_id"] == "tok_original_id"
+        assert run["raw_token"] == "tok_original_raw"
+
+    def test_reissue_lands_token_id_and_raw_token_on_the_same_new_grant(self, monkeypatch):
+        # Consumed -> not reusable -> forces the issue_builder reissue path.
+        monkeypatch.setattr(svc.db_tokens, "get_by_id", lambda tid: {
+            "token_id": tid, "consumed_at": "2026-07-31T00:00:00+00:00",
+            "revoked_at": None, "expires_at": "2999-01-01T00:00:00+00:00",
+        })
+
+        def _issue(ai_run_id=None):
+            return {"raw_token": "tok_new_raw", "token_id": "tok_new_id",
+                    "mention": "## fresh prompt\n"}
+
+        run = self._run(issue_builder=_issue)
+
+        prepared = svc._prepare_retry_token(run)
+
+        assert prepared["reissued"] is True
+        assert prepared["token_id_before"] == "tok_original_id"
+        assert prepared["token_id"] == "tok_new_id"
+        # The instant _prepare_retry_token returns, BOTH identifiers on `run` already
+        # point at the SAME new grant -- never one updated ahead of the other.
+        assert run["token_id"] == "tok_new_id"
+        assert run["raw_token"] == "tok_new_raw"
+        assert run["token_id"] != "tok_original_id"
+        assert run["raw_token"] != "tok_original_raw"
+
+    def test_a_raising_lease_update_cannot_leave_a_half_updated_token_pair(self, monkeypatch):
+        """0496 T0008 (self-review of the test above): the sibling assertion only holds
+        on the happy path, and every test in this class steers around the group-lease
+        write by leaving `group_id` None. That write sits between the two halves of the
+        run's token identity, and neither caller of `_prepare_retry_token`
+        (worker.py:137/169) wraps it in try/except -- so whatever the run holds the
+        instant it raises is what the finalize path persists and what the next hop would
+        have sent. Pinned here by making the lease update raise for real, with
+        `group_id` set so the branch is actually entered: a NEW token_id next to an OLD
+        raw_token is a 401 "Token is invalid" of exactly the kind 0496 B0001 reported."""
+        monkeypatch.setattr(svc.db_tokens, "get_by_id", lambda tid: {
+            "token_id": tid, "consumed_at": "2026-07-31T00:00:00+00:00",
+            "revoked_at": None, "expires_at": "2999-01-01T00:00:00+00:00",
+        })
+
+        def _issue(ai_run_id=None):
+            return {"raw_token": "tok_new_raw", "token_id": "tok_new_id",
+                    "mention": "## fresh prompt\n"}
+
+        def _lease_update_explodes(*_args, **_kwargs):
+            raise RuntimeError("lease store unreachable")
+
+        # The worker holds the MODULE (`from ... import group_ai_leases as
+        # db_group_ai_leases`) and resolves `.update_token` on it at call time, so
+        # patching the attribute here is observed by the real call site.
+        monkeypatch.setattr(svc.db_group_ai_leases, "update_token", _lease_update_explodes)
+        run = self._run(issue_builder=_issue, group_id="flowgate.default.0496")
+
+        with pytest.raises(RuntimeError):
+            svc._prepare_retry_token(run)
+
+        # Not "unchanged": the reissue already happened and the old token is spent by
+        # then. The requirement is that the pair is CONSISTENT -- both halves naming the
+        # same new grant, never one new and one stale.
+        assert run["token_id"] == "tok_new_id"
+        assert run["raw_token"] == "tok_new_raw"
+        # And the new raw token is already known to `_redact_secrets` before anything
+        # that can fail and log runs, so a crash on this path cannot leak it.
+        assert "tok_new_raw" in svc._known_run_raw_tokens(run)
+
+    def test_next_provider_entry_point_reads_the_reissued_raw_token(self, monkeypatch):
+        """Same capture pattern as `TestProviderFallbackPreservesTokenIdentity`: patch
+        `_inbox_register` and record what token the mediated self-HTTP call actually
+        carried, so this answers "did the reissued raw_token really reach the wire?"
+        by execution instead of by reading `current_token = run["raw_token"]` and
+        trusting it."""
+        monkeypatch.setattr(svc.db_tokens, "get_by_id", lambda tid: {
+            "token_id": tid, "consumed_at": "2026-07-31T00:00:00+00:00",
+            "revoked_at": None, "expires_at": "2999-01-01T00:00:00+00:00",
+        })
+
+        def _issue(ai_run_id=None):
+            return {"raw_token": "tok_new_raw", "token_id": "tok_new_id",
+                    "mention": "## fresh prompt\n"}
+
+        run = self._run(issue_builder=_issue)
+        prepared = svc._prepare_retry_token(run)
+        assert prepared["reissued"] is True
+        assert run["raw_token"] == "tok_new_raw"
+
+        # Round out the run to what _execute_provider_chain/_api_execute touch, the
+        # same fields _api_run() seeds for TestProviderFallbackPreservesTokenIdentity.
+        run.update({
+            "project_id": "flowgate", "group_id": "flowgate.default.0501",
+            "action_scope": "new", "mode": "single", "docs_target": 1,
+            "cancel_event": threading.Event(), "started_mono": time.monotonic(),
+            "timeout_sec": 3600, "api_base_url": "http://127.0.0.1:1/flowgate/api/v1",
+            "module": "default", "attempt_no": 2, "fallback_history": [],
+            "provider": None, "provider_id": None,
+        })
+
+        monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret",
+                            lambda scope, pid: "sk-test")
+
+        def fake_call_anthropic(*args, **kwargs):
+            return "ok", [{"id": "tc1", "name": "register_document",
+                           "input": {"doc_type": "standard", "title": "t", "content": "c"}}], \
+                   {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}
+
+        monkeypatch.setattr(svc, "_call_anthropic", fake_call_anthropic)
+
+        seen_tokens = []
+
+        def fake_inbox_register(run, token, _tool_input):
+            seen_tokens.append(token)
+            return 201, {"doc_id": "d1"}
+
+        monkeypatch.setattr(svc, "_inbox_register", fake_inbox_register)
+
+        started_ok = svc._execute_provider_chain(
+            run, [_anthropic_provider()], prepared["mention"],
+        )
+
+        assert started_ok is True
+        # The provider entry point's own current_token = run["raw_token"] read the
+        # REISSUED value, never the pre-reissue one.
+        assert seen_tokens == ["tok_new_raw"]
+        assert run["raw_token"] == "tok_new_raw"
+        assert run["token_id"] == "tok_new_id"
