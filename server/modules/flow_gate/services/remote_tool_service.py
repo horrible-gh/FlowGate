@@ -59,7 +59,7 @@ _logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-OPS = ("read", "diff", "log", "show", "write", "grep", "glob", "remove", "patch", "stat", "resolve_base_dirty")
+OPS = ("read", "diff", "log", "show", "merge_preview", "write", "grep", "glob", "remove", "patch", "stat", "resolve_base_dirty")
 _WORKER_GRANT_PREFIX = "worker_"
 # The mutating step types live in tool_registry.MUTATING_STEP_TYPES — the single judgement
 # point (0349 D0004 D-2). This module reaches them through tool_registry.kind_for_token.
@@ -83,6 +83,7 @@ OP_SCOPE = {
     "diff": "read",
     "log": "read",
     "show": "read",
+    "merge_preview": "read",
     "write": "write",
     "grep": "grep",
     "glob": "grep",
@@ -129,6 +130,7 @@ _GREP_FILE_SKIP_BYTES = 1024 * 1024    # 1 MB — skip large files when scanning
 _STAT_SAMPLE_BYTES = 64 * 1024         # 64 KB — stat EOL/binary sample (0347 L0005 §1)
 _MAX_DIFF_BYTES = 1024 * 1024          # 1 MiB response cap for merge-base target patches
 _MAX_LOG_COUNT = 1000                  # hard cap even when max_count is omitted
+_MAX_CONFLICT_FILES = 200              # merge_preview conflict-file cap (0524 T0006)
 
 _JST = timezone(timedelta(hours=9))
 
@@ -487,7 +489,7 @@ def _validate_required(op: str, body: dict) -> None:
         sha = body.get("sha")
         if not _valid_commit_sha(sha):
             raise _OpError(422, details={"reason": "invalid_sha"})
-    elif op in {"diff", "log"}:
+    elif op in {"diff", "log", "merge_preview"}:
         path = body.get("path")
         if path is not None:
             _require_str(body, "path")
@@ -526,6 +528,7 @@ _ALLOWED_FIELDS: dict = {
     "diff": frozenset({"path", "target_ref"}),
     "log": frozenset({"path", "target_ref", "max_count", "side"}),
     "show": frozenset({"sha"}),
+    "merge_preview": frozenset({"target_ref"}),
     "write": frozenset({"path", "content", "mode", "encoding"}),
     "patch": frozenset({"path", "old_string", "new_string", "replace_all", "encoding"}),
     "remove": frozenset({"path", "recursive"}),
@@ -810,6 +813,8 @@ def _execute(op: str, body: dict, root: Path, grant: Optional[dict] = None) -> t
         return _exec_log(body, root)
     if op == "show":
         return _exec_show(body, root)
+    if op == "merge_preview":
+        return _exec_merge_preview(body, root)
     if op == "write":
         return _exec_write(body, root)
     if op == "remove":
@@ -890,6 +895,17 @@ def _merge_base(root: Path, target_ref: str) -> str:
     if proc.returncode != 0 or not re.fullmatch(r"[0-9a-fA-F]{40,64}", merge_base):
         raise _OpError(503, details={"reason": "git_error"}, message="git merge-base failed")
     return merge_base
+
+
+def _rev_parse(root: Path, ref: str) -> str:
+    """Resolve a single ref to its full commit sha (0524 T0006 §2.1(b))."""
+    from modules.flow_gate.services import git_service
+
+    proc = git_service._run_git(["rev-parse", ref], cwd=root)
+    value = (proc.stdout or "").strip()
+    if proc.returncode != 0 or not re.fullmatch(r"[0-9a-fA-F]{40,64}", value):
+        raise _OpError(503, details={"reason": "git_error"}, message="git rev-parse failed")
+    return value
 
 
 def _exec_diff(body: dict, root: Path) -> tuple[dict, Optional[int]]:
@@ -1006,6 +1022,70 @@ def _exec_show(body: dict, root: Path) -> tuple[dict, Optional[int]]:
         "returned_bytes": len(patch.encode("utf-8")),
         "truncated": truncated,
     }, len(patch.encode("utf-8"))
+
+
+def _exec_merge_preview(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+    """0524 T0006 §2.1(b): read-only 3-way merge preview of the authorized group
+    worktree's HEAD onto target_ref, via `git merge-tree --write-tree` (git 2.38+).
+
+    This never touches HEAD, the index or the working tree. It may write loose
+    objects (the candidate merge tree, and any newly merged blobs) to the object
+    database, but none of them are reachable through any ref/HEAD/index/working
+    tree, so this is not a violation of the read-only contract (T0006 §2.1(b)
+    final paragraph) -- the tests here prove HEAD/index/working-tree invariance,
+    not "no object was created".
+
+    `--merge-base` is passed explicitly (fixed to the same merge_base `_merge_base`
+    already computed) so the response's `merge_base` field always matches what
+    merge-tree actually used, even in a criss-cross history where merge-tree could
+    otherwise pick a different base on its own.
+    """
+    from modules.flow_gate.services import git_service
+
+    target_ref = body.get("target_ref", "origin/main")
+    merge_base = _merge_base(root, target_ref)
+    head_sha = _rev_parse(root, "HEAD")
+    target_sha = _rev_parse(root, target_ref)
+
+    proc = git_service._run_git(
+        ["merge-tree", "--write-tree", "--name-only", "--merge-base", merge_base, head_sha, target_sha],
+        cwd=root,
+    )
+    if proc.returncode not in (0, 1):
+        raise _OpError(503, details={"reason": "git_error"}, message="git merge-tree failed")
+    clean = proc.returncode == 0
+
+    # exit 0 (clean): stdout is a single tree-oid line, nothing else.
+    # exit 1 (conflict): stdout is TWO blank-line-separated sections -- the first
+    # is the tree oid followed by the conflicted file paths (--name-only puts
+    # them on their own lines, still inside the first section, no blank line
+    # before the file list); the second is human-readable Auto-merging/CONFLICT
+    # messages. Verified directly against this machine's git 2.52.0 (T0006 §3):
+    # a single- and a two-file conflict both come back as
+    # "<oid>\n<path1>[\n<path2>...]\n\nAuto-merging ...\nCONFLICT ...".
+    if clean:
+        conflicts: list[str] = []
+    else:
+        first_section = (proc.stdout or "").split("\n\n", 1)[0]
+        conflicts = first_section.splitlines()[1:]
+
+    truncated = len(conflicts) > _MAX_CONFLICT_FILES
+    if truncated:
+        conflicts = conflicts[:_MAX_CONFLICT_FILES]
+
+    stdout_bytes = (proc.stdout or "").encode("utf-8")
+    return (
+        {
+            "clean": clean,
+            "merge_base": merge_base,
+            "head": head_sha,
+            "target_ref": target_ref,
+            "target_sha": target_sha,
+            "conflicts": conflicts,
+            "truncated": truncated,
+        },
+        len(stdout_bytes),
+    )
 
 
 # ── Byte/EOL helpers shared by read · patch · stat (0347 L0005 §2.7) ───────────

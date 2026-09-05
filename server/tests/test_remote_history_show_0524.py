@@ -198,7 +198,7 @@ def test_show_and_log_side_head_never_change_head_index_or_worktree(diverged_rep
 
 # ── HTTP pipeline: scope / 403 ──────────────────────────────────────────────────
 
-@pytest.mark.parametrize("operation,body", [("show", {"sha": "0" * 40}), ("log", {"side": "head"})])
+@pytest.mark.parametrize("operation,body", [("show", {"sha": "0" * 40}), ("log", {"side": "head"}), ("merge_preview", {})])
 def test_http_without_read_scope_is_403(monkeypatch, operation, body):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient

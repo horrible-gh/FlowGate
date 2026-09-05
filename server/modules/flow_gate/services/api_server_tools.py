@@ -18,11 +18,12 @@ from modules.flow_gate.utils.help_url import help_url
 
 DOCUMENT_SCOPES = frozenset({"new", "edit", "review", "test_run"})
 BASE_NAMES = ("read_document", "read_help", "create_question", "register_document")
-SOURCE_NAMES = ("read_source_file", "search_source", "glob_source", "stat_source", "diff_source", "log_source", "show_commit_source", "patch_source_file", "write_source_file", "remove_source_file", "run_test")
+SOURCE_NAMES = ("read_source_file", "search_source", "glob_source", "stat_source", "diff_source", "log_source", "show_commit_source", "merge_preview_source", "patch_source_file", "write_source_file", "remove_source_file", "run_test")
 # Provider names are stable aliases; every source operation dispatches through the HTTP remote service.
 SOURCE_OPS = {
     "read_source_file": "read", "search_source": "grep", "glob_source": "glob",
     "stat_source": "stat", "diff_source": "diff", "log_source": "log", "show_commit_source": "show",
+    "merge_preview_source": "merge_preview",
     "patch_source_file": "patch", "write_source_file": "write", "remove_source_file": "remove",
 }
 
@@ -83,6 +84,7 @@ SCHEMAS = {
     "diff_source": _obj({"path": {"type": "string"}, "target_ref": {"type": "string", "minLength": 1}}),
     "log_source": _obj({"path": {"type": "string"}, "target_ref": {"type": "string", "minLength": 1}, "max_count": {"type": "integer", "minimum": 1}, "side": {"type": "string", "enum": ["head", "target"]}}),
     "show_commit_source": _obj({"sha": {"type": "string", "minLength": 4}}, ["sha"]),
+    "merge_preview_source": _obj({"target_ref": {"type": "string", "minLength": 1}}),
     "patch_source_file": _obj({"path": {"type": "string", "minLength": 1}, "old_string": {"type": "string", "minLength": 1}, "new_string": {"type": "string"}, "replace_all": {"type": "boolean"}, "encoding": {"type": "string"}}, ["path", "old_string", "new_string"]),
     "write_source_file": _obj({"path": {"type": "string", "minLength": 1}, "content": {"type": "string"}, "mode": {"type": "string", "enum": ["create", "overwrite", "append"]}, "encoding": {"type": "string"}}, ["path", "content"]),
     "remove_source_file": _obj({"path": {"type": "string", "minLength": 1}, "recursive": {"type": "boolean"}}, ["path"]),

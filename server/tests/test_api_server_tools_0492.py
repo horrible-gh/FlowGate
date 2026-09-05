@@ -218,7 +218,7 @@ def test_full_remote_source_toolset_is_exposed_without_worktree(monkeypatch, tmp
     monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": "TR"})
     names = [item["name"] for item in tools.definitions_for_run(_run(tmp_path))]
     assert names == list(tools.BASE_NAMES) + list(tools.SOURCE_NAMES)
-    assert {"read", "grep", "glob", "stat", "diff", "log", "show", "patch", "write", "remove"} == set(tools.SOURCE_OPS.values())
+    assert {"read", "grep", "glob", "stat", "diff", "log", "show", "merge_preview", "patch", "write", "remove"} == set(tools.SOURCE_OPS.values())
     for name in tools.SOURCE_OPS:
         assert tools.SCHEMAS[name]["additionalProperties"] is False
 

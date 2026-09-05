@@ -138,7 +138,7 @@ def test_index_never_carries_an_item_body(monkeypatch):
 def test_index_children_count_counts_only_the_tools_this_token_may_call(monkeypatch):
     read_only = _client(monkeypatch, _token(), step_type="P").get("/api/v1/help").json()
     counts = {item["name"]: item["children_count"] for item in read_only["items"]}
-    assert counts["source_tools"] == 7
+    assert counts["source_tools"] == 8
     assert counts["design_template"] == 4
     assert counts["notices"] is None
 
@@ -153,12 +153,12 @@ def test_index_for_a_mutating_token_opens_write_tools_and_the_report_format(monk
     assert _hidden(body) == {"design_template": "not_design_type", "test_commands": "not_ts_type"}
     assert body["context"]["tool_kind"] == "read_write"
     counts = {item["name"]: item["children_count"] for item in body["items"]}
-    # Stays 10: flowgate.default.0482 T0011 registered `resolve_base_dirty` as an
-    # eleventh catalog tool, but tool_registry.SCOPE_BOUND_TOOLS binds it to the
+    # Stays 11: flowgate.default.0482 T0011 registered `resolve_base_dirty` as a
+    # twelfth catalog tool, but tool_registry.SCOPE_BOUND_TOOLS binds it to the
     # `resolve_base_dirty` action_scope. A TR token is read_write yet would get 403 on
-    # that op, so the catalog it sees keeps the ten kind-wide tools (0524 T0004 added
-    # `show` as the tenth).
-    assert counts["source_tools"] == 10
+    # that op, so the catalog it sees keeps the eleven kind-wide tools (0524 T0004 added
+    # `show`, and 0524 T0006 added `merge_preview`).
+    assert counts["source_tools"] == 11
     assert counts["authoring_guide"] == 1
 
 
