@@ -252,7 +252,10 @@ def test_the_help_submit_item_advertises_the_file_form_for_review_tokens():
         "scratch_dir": "C:/scratch/tok-review-0393",
     })
     assert "doc_path" in content["source_choice"]
-    assert "C:/scratch/tok-review-0393" in content["source_choice"]
+    # T0004 (0506): source_choice keeps the generic scratch-directory guidance but no
+    # longer interpolates the actual server-local absolute path.
+    assert "C:/scratch/tok-review-0393" not in content["source_choice"]
+    assert "scratch directory" in content["source_choice"]
 
 
 @pytest.mark.parametrize("locale", ["ko", "en", "ja"])

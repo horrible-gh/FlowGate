@@ -65,8 +65,8 @@ def test_review_mention_includes_target_get_and_token():
     # Worker must be able to read the doc and authenticate the submission.
     assert "GET http://127.0.0.1:8088/flowgate/api/v1/document/test.none.0002.0003-DS" in m
     assert "Bearer RAWTOKEN123" in m
-    # Current contract: FlowGate and its review workers share the group-worktree
-    # filesystem, so the Scratch directory section is active and surfaces the
-    # token-owned scratch_dir (with the {SCRATCH} convention) for file artifacts.
-    assert "D:\\test\\storage2\\work\\test\\tok_x" in m
+    # T0004 (0506): the Scratch directory section stays active (workers still need
+    # {SCRATCH} guidance for file artifacts) but no longer interpolates the actual
+    # server-local absolute path — that stays internal/runtime metadata only.
+    assert "D:\\test\\storage2\\work\\test\\tok_x" not in m
     assert "{SCRATCH}" in m

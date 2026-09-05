@@ -2144,7 +2144,6 @@ export default {
       module: '- Module:',
       target_group: '- Target group:',
       scope: '- Permission scope: one-time work permission bound to the group above',
-      scratch_dir: '- Scratch directory:',
       expires_at: '- Token expires at:',
       api: '- Work API: the corresponding work endpoint in the FlowGate API',
       completion: '- Completion condition: confirm a successful work response, report the result, and do not reuse the token.',

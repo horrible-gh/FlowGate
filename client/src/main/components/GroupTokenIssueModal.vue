@@ -92,7 +92,7 @@ const mention = ref<string | null>(null)
 // Build the group-token execution mention. Faithful to the approved prototype
 // (set3/document_page_group_bootstrap.html) — one self-contained mention that carries the
 // Bearer credential together with the target group and usage steps, so the credential is
-// never handed over on its own. The real token adds scratch dir + expiry over the mock.
+// never handed over on its own. The real token adds expiry over the mock.
 function buildGroupMention(token: IssuedToken, ids: { project: string; module: string; groupId: string }): string {
   return [
     t('main.group_token_mention.title'),
@@ -104,7 +104,6 @@ function buildGroupMention(token: IssuedToken, ids: { project: string; module: s
     `${t('main.group_token_mention.module')} ${ids.module}`,
     `${t('main.group_token_mention.target_group')} ${ids.groupId}`,
     t('main.group_token_mention.scope'),
-    `${t('main.group_token_mention.scratch_dir')} ${token.scratch_dir}`,
     `${t('main.group_token_mention.expires_at')} ${token.expires_at}`,
     t('main.group_token_mention.api'),
     t('main.group_token_mention.completion'),

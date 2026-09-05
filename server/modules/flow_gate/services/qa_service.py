@@ -250,7 +250,6 @@ def build_ment_text(
         "",
         "Use the information below to resume the previous work.",
         "",
-        f"- Scratch directory: {scratch_dir}",
     ]
     if prev_doc_id:
         doc_path = prev_doc_id.replace("-", "/", 3)

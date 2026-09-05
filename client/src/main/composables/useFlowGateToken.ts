@@ -484,11 +484,6 @@ export function useFlowGateToken() {
     if (s3Lines.length > 0) parts.push(s3Lines.join('\n'))
 
     parts.push('')
-    parts.push('## Scratch Directory')
-    parts.push('---')
-    parts.push(token.scratch_dir)
-
-    parts.push('')
     parts.push('## doc_type info')
     parts.push('---')
     parts.push(`GET ${apiBase}/help/doc_type`)

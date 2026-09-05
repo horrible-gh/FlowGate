@@ -361,7 +361,10 @@ def test_submit_carries_this_token_own_identity(monkeypatch):
     assert content["body"]["doc_type"] == "TR"
     assert content["body"]["prev_doc_id"] == "flowgate.default.0372.0001-R"
     assert "commit_message" in content["body"]
-    assert r"C:\work\tok_1" in content["source_choice"]
+    # T0004 (0506): source_choice keeps the generic scratch-directory guidance but no
+    # longer interpolates the actual server-local absolute path.
+    assert r"C:\work\tok_1" not in content["source_choice"]
+    assert "scratch directory" in content["source_choice"]
 
 
 def test_changed_files_format_states_the_exact_heading(monkeypatch):

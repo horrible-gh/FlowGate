@@ -730,7 +730,6 @@ def _build_conflict_mention(
         "The bearer token is bound to exactly this group_id and merge_id. Other git/config/finalize endpoints are not authorized.\n\n"
         "## Conflict session\n"
         "---\n"
-        f"scratch_dir: {scratch_dir}\n"
         "```json\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}\n"
         "```\n"

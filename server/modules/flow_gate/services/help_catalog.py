@@ -960,10 +960,8 @@ def _content_submit(ctx: dict) -> dict:
             "source_choice": (
                 "verdict/findings/comment may travel inline (as above) or in a file. For the "
                 "file form send `doc_path` instead — an absolute path inside this token's "
-                "scratch directory"
-                + (f" ({ctx['scratch_dir']})" if ctx.get("scratch_dir") else "")
-                + " holding a JSON object with those same keys. Sending both `doc_path` and "
-                "`content` is rejected."
+                "scratch directory holding a JSON object with those same keys. Sending both "
+                "`doc_path` and `content` is rejected."
             ),
             "verdict_guide": {
                 "pass": "meets requirements, no blocking issues",
@@ -1071,8 +1069,7 @@ def _content_submit(ctx: dict) -> dict:
         "body": body,
         "source_choice": (
             "Send exactly one of `content` and `doc_path`. `doc_path` must be an absolute "
-            "path inside this token's scratch directory"
-            + (f": {ctx['scratch_dir']}" if ctx.get("scratch_dir") else ".")
+            "path inside this token's scratch directory."
         ),
         "dry_run": dry_run,
         "encoding_guard": encoding_guard,
