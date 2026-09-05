@@ -12,8 +12,10 @@
 -- 'none' = no override involved, or the configured override worked as given;
 -- 'override_ignored' = a configured-but-broken FLOWGATE_AGENT_API_BASE was retried
 --   with ignore_configured_override=True and landed on the safe loopback answer;
--- 'operator_base_unsafe' = even the operator base itself could not be parsed, so it
---   was returned unchanged -- the unsafe branch.
+-- 'operator_base_unsafe' = no safe address could be computed at all (the operator base
+--   itself failed to parse, or -- reachable only when the operator origin carries no
+--   explicit port either -- the trusted local FLOWGATE_PORT is not a usable port
+--   number), so the operator base was returned unchanged -- the unsafe branch.
 -- Additive only, NULL-allowed with no default and no CHECK (same convention as 095's
 -- ten columns). No IF NOT EXISTS (this deployment's MySQL baseline does not support
 -- it on ADD COLUMN, same as 086c/095) and no AFTER clause -- column order here is

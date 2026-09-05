@@ -82,8 +82,10 @@ _BOUND_COLUMNS = (
     # -- 0505 T0006 (DB0005 2-3, migration 095) -----------------------------
     # API provider server-mediated self-HTTP diagnostics: which internal base a hop
     # used, its last mediated tool call's outcome, and its turn/model-call/tool-call
-    # counters. All ten are read with .get() at every write site, so a run with none
-    # of this (CLI, spawn failure, a row from before this migration) stores NULL.
+    # counters -- 095's ten, plus transport_fallback_kind (migration 101, 0496 T0006
+    # §3.2), which records WHY that transport base was chosen. All eleven are read with
+    # .get() at every write site, so a run with none of this (CLI, spawn failure, a row
+    # from before the matching migration) stores NULL.
     "operator_api_base", "transport_api_base", "transport_fallback_kind",
     "last_tool_name", "last_tool_status", "last_tool_error",
     "api_turns_used", "model_http_calls", "model_last_http_status",

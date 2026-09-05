@@ -1110,6 +1110,130 @@ class TestTransportDiagnosticsRoundTrip:
         assert stored["last_tool_error"] == "x" * 500
 
 
+# ── flowgate.default.0496 T0006 §3.2 (migration 101): WHY that base, not just which ─
+#
+# 095 above stores WHICH internal base a hop dialed. It cannot say whether that value
+# was the computed answer or a fallback, nor -- when it was a fallback -- which of the
+# two, since they are not equally safe: "the configured override was unusable so it was
+# ignored and the safe loopback used" versus "nothing safe could be computed so the
+# operator base rode through unchanged", the branch NR0003 traced the original 401 to.
+# 0496 T0006 §3.2 added `transport_fallback_kind` (migration 101) for exactly that, and
+# 0496 T0008's self-review found the new column had arrived with no storage test of its
+# own: nothing proved the migration file applies, and nothing proved the value survives
+# `_BOUND_COLUMNS`/upsert/get. This mirrors TestMigration095 and
+# TestTransportDiagnosticsRoundTrip above, one for one.
+
+MIGRATION_NAME_0496_T0006 = "101_ai_invoke_run_transport_fallback_diagnostics.sql"
+FALLBACK_KIND_COLUMN = "transport_fallback_kind"
+# The exact vocabulary provider_api._resolve_transport_api_base can produce -- one
+# string per branch, never a boolean (T0006 §3.2).
+FALLBACK_KINDS = ("none", "override_ignored", "operator_base_unsafe")
+
+
+class TestMigration101:
+    """One number, three dialects, additive only, the new column nullable."""
+
+    def test_all_three_dialects_carry_the_same_file(self):
+        missing = [d for d in DIALECTS if not (MIGRATIONS / d / MIGRATION_NAME_0496_T0006).is_file()]
+        assert missing == [], f"101 missing from: {missing}"
+
+    def test_the_ordinal_is_not_shared_with_any_other_file(self):
+        for dialect in DIALECTS:
+            same = sorted(p.name for p in (MIGRATIONS / dialect).glob("101*.sql"))
+            assert same == [MIGRATION_NAME_0496_T0006], f"{dialect}: {same}"
+
+    @pytest.mark.parametrize("dialect", DIALECTS)
+    def test_the_file_only_adds_columns(self, dialect):
+        body = (MIGRATIONS / dialect / MIGRATION_NAME_0496_T0006).read_text(encoding="utf-8")
+        sql = "\n".join(re.sub(r"--.*$", "", line) for line in body.splitlines())
+        statements = [s.strip() for s in sql.split(";") if s.strip()]
+        alters = []
+        for statement in statements:
+            if statement.upper() in ("BEGIN", "COMMIT"):
+                continue
+            assert re.match(r"(?is)^ALTER\s+TABLE\s+ai_invoke_runs\s+ADD\s+COLUMN", statement), (
+                f"{dialect}: 101 must be additive only, found: {statement[:80]!r}"
+            )
+            alters.append(statement)
+        assert len(alters) == 1, f"{dialect}: 101 adds one column, found {len(alters)}"
+        for forbidden in ("DROP", "RENAME", "UPDATE ", "INSERT ", "CREATE TABLE"):
+            assert forbidden not in sql.upper(), f"{dialect}: 101 must not {forbidden.strip()}"
+
+    @pytest.mark.parametrize("dialect", DIALECTS)
+    def test_the_new_column_is_added_and_nullable(self, dialect):
+        body = (MIGRATIONS / dialect / MIGRATION_NAME_0496_T0006).read_text(encoding="utf-8")
+        sql = "\n".join(re.sub(r"--.*$", "", line) for line in body.splitlines())
+        match = re.search(
+            rf"(?im)^\s*ALTER\s+TABLE\s+ai_invoke_runs\s+ADD\s+COLUMN\s+"
+            rf"(?:IF\s+NOT\s+EXISTS\s+)?{FALLBACK_KIND_COLUMN}\b(?P<rest>[^;]*)",
+            sql,
+        )
+        assert match, f"{dialect}: 101 never adds {FALLBACK_KIND_COLUMN}"
+        rest = match.group("rest").upper()
+        assert "NOT NULL" not in rest, f"{dialect}: {FALLBACK_KIND_COLUMN} must stay nullable"
+        assert "DEFAULT" not in rest, f"{dialect}: {FALLBACK_KIND_COLUMN} must have no default"
+        # A NULL/unknown kind must never be rejected at the storage layer: every row
+        # written before 101 has one, and a CLI hop never resolves a transport base at
+        # all. The vocabulary is enforced in code (one branch, one string), not by a
+        # CHECK that a later fourth kind would have to migrate around.
+        assert "CHECK" not in rest, f"{dialect}: {FALLBACK_KIND_COLUMN} must carry no CHECK"
+
+    def test_sqlite_applies_the_whole_chain_and_ends_with_the_new_nullable_column(self):
+        conn = sqlite3.connect(":memory:")
+        try:
+            for path in sorted((MIGRATIONS / "sqlite").glob("*.sql")):
+                conn.executescript(path.read_text(encoding="utf-8"))
+            info = {row[1]: row for row in conn.execute("PRAGMA table_info(ai_invoke_runs)")}
+            assert FALLBACK_KIND_COLUMN in info, "missing after the full migration chain"
+            assert info[FALLBACK_KIND_COLUMN][3] == 0, "came out NOT NULL"
+            assert info[FALLBACK_KIND_COLUMN][4] is None, "came out with a default"
+        finally:
+            conn.close()
+
+
+class TestTransportFallbackKindRoundTrip:
+    """The write helper carries the new column the same way it carries 095's ten."""
+
+    @pytest.mark.parametrize("kind", FALLBACK_KINDS)
+    def test_every_kind_the_resolver_can_produce_round_trips(self, live_db, kind):
+        db_runs.upsert(_row(f"aiv_20260905_{kind}", transport_fallback_kind=kind))
+        assert db_runs.get(f"aiv_20260905_{kind}")["transport_fallback_kind"] == kind
+
+    def test_an_absent_kind_reads_back_as_null(self, live_db):
+        # The shape a CLI run, a spawn failure, or a row from before 101 leaves.
+        db_runs.upsert(_row("aiv_20260905_000001", end_reason="spawn_failed"))
+        assert db_runs.get("aiv_20260905_000001")["transport_fallback_kind"] is None
+
+    def test_the_kind_rides_alongside_the_base_it_explains(self, live_db):
+        # The pair a person actually reads: an unsafe fallback is the only way this
+        # public operator origin can end up in transport_api_base, and before 101 the
+        # row could not say so.
+        db_runs.upsert(_row(
+            "aiv_20260905_000002",
+            transport_api_base="https://flowgate.example/flowgate",
+            transport_fallback_kind="operator_base_unsafe",
+            last_tool_name="inbox_register",
+            last_tool_status=401,
+        ))
+        stored = db_runs.get("aiv_20260905_000002")
+        assert stored["transport_api_base"] == "https://flowgate.example/flowgate"
+        assert stored["transport_fallback_kind"] == "operator_base_unsafe"
+        assert stored["last_tool_status"] == 401
+
+    def test_the_kind_reaches_the_restored_run_detail_a_person_reads(self, live_db):
+        # Not just the row: `_run_detail_from_row` is what a restarted server answers
+        # GET run-detail out of, and it is the only reader that turns this column back
+        # into something a person sees.
+        db_runs.upsert(_row(
+            "aiv_20260905_000003",
+            transport_api_base="http://127.0.0.1:8088/flowgate",
+            transport_fallback_kind="override_ignored",
+        ))
+        detail = svc._run_detail_from_row(dict(db_runs.get("aiv_20260905_000003")))
+        assert detail["transport_fallback_kind"] == "override_ignored"
+        assert detail["transport_api_base"] == "http://127.0.0.1:8088/flowgate"
+
+
 class TestSanitizeDiagnosticBase:
     """DB0005 §3.3's four rules for `_sanitize_diagnostic_base`."""
 

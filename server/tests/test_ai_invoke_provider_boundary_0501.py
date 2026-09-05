@@ -412,6 +412,46 @@ class TestReissueBoundaryPreservesTokenIdentity:
         assert run["token_id"] != "tok_original_id"
         assert run["raw_token"] != "tok_original_raw"
 
+    def test_a_raising_lease_update_cannot_leave_a_half_updated_token_pair(self, monkeypatch):
+        """0496 T0008 (self-review of the test above): the sibling assertion only holds
+        on the happy path, and every test in this class steers around the group-lease
+        write by leaving `group_id` None. That write sits between the two halves of the
+        run's token identity, and neither caller of `_prepare_retry_token`
+        (worker.py:137/169) wraps it in try/except -- so whatever the run holds the
+        instant it raises is what the finalize path persists and what the next hop would
+        have sent. Pinned here by making the lease update raise for real, with
+        `group_id` set so the branch is actually entered: a NEW token_id next to an OLD
+        raw_token is a 401 "Token is invalid" of exactly the kind 0496 B0001 reported."""
+        monkeypatch.setattr(svc.db_tokens, "get_by_id", lambda tid: {
+            "token_id": tid, "consumed_at": "2026-07-31T00:00:00+00:00",
+            "revoked_at": None, "expires_at": "2999-01-01T00:00:00+00:00",
+        })
+
+        def _issue(ai_run_id=None):
+            return {"raw_token": "tok_new_raw", "token_id": "tok_new_id",
+                    "mention": "## fresh prompt\n"}
+
+        def _lease_update_explodes(*_args, **_kwargs):
+            raise RuntimeError("lease store unreachable")
+
+        # The worker holds the MODULE (`from ... import group_ai_leases as
+        # db_group_ai_leases`) and resolves `.update_token` on it at call time, so
+        # patching the attribute here is observed by the real call site.
+        monkeypatch.setattr(svc.db_group_ai_leases, "update_token", _lease_update_explodes)
+        run = self._run(issue_builder=_issue, group_id="flowgate.default.0496")
+
+        with pytest.raises(RuntimeError):
+            svc._prepare_retry_token(run)
+
+        # Not "unchanged": the reissue already happened and the old token is spent by
+        # then. The requirement is that the pair is CONSISTENT -- both halves naming the
+        # same new grant, never one new and one stale.
+        assert run["token_id"] == "tok_new_id"
+        assert run["raw_token"] == "tok_new_raw"
+        # And the new raw token is already known to `_redact_secrets` before anything
+        # that can fail and log runs, so a crash on this path cannot leak it.
+        assert "tok_new_raw" in svc._known_run_raw_tokens(run)
+
     def test_next_provider_entry_point_reads_the_reissued_raw_token(self, monkeypatch):
         """Same capture pattern as `TestProviderFallbackPreservesTokenIdentity`: patch
         `_inbox_register` and record what token the mediated self-HTTP call actually

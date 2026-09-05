@@ -211,6 +211,36 @@ class TestTransportFallbackKind:
         assert run["_transport_fallback_kind_resolved"] == "operator_base_unsafe"
         assert run["_transport_fallback_kind_resolved"] != "override_ignored"
 
+    def test_an_unusable_flowgate_port_lands_the_same_operator_base_unsafe(self, monkeypatch):
+        """0496 T0008 (self-review): "no safe address could be computed" has TWO causes
+        and only the sibling above was pinned. The other is a `FLOWGATE_PORT` that is
+        not a usable port number, reachable only when the operator origin carries no
+        explicit port of its own -- so the loopback computation has to consult it, and
+        both attempts raise on it. That must land the SAME `operator_base_unsafe` name
+        rather than a fourth kind (a server whose own listen-port setting is unreadable
+        is not a different KIND of unsafe), with the operator base riding through
+        unchanged exactly as the sibling case leaves it."""
+        monkeypatch.setattr(settings, "FLOWGATE_PORT", 70000)
+        # PROD_OPERATOR carries no explicit port, which is what forces FLOWGATE_PORT to
+        # be consulted at all; the autouse fixture leaves the override unset.
+        run = _run(PROD_OPERATOR)
+        assert svc._resolve_transport_api_base(run) == PROD_OPERATOR
+        assert run["_transport_fallback_kind_resolved"] == "operator_base_unsafe"
+
+    def test_a_broken_override_over_an_unusable_port_is_unsafe_not_override_ignored(
+        self, monkeypatch,
+    ):
+        """The two exception branches are not independent: `override_ignored` is only
+        earned when the retry actually REACHES a safe loopback answer. With the override
+        broken AND FLOWGATE_PORT unusable there is no such answer, so the retry raises
+        too, and the run must be told the unsafe truth -- the public operator origin rode
+        through -- instead of the reassuring `override_ignored`."""
+        monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", "not a valid origin")
+        monkeypatch.setattr(settings, "FLOWGATE_PORT", 70000)
+        run = _run(PROD_OPERATOR)
+        assert svc._resolve_transport_api_base(run) == PROD_OPERATOR
+        assert run["_transport_fallback_kind_resolved"] == "operator_base_unsafe"
+
     def test_reset_attempt_state_clears_the_fallback_kind_cache_too(self, monkeypatch, tmp_path):
         monkeypatch.setattr(settings, "FLOWGATE_AGENT_API_BASE", "not a valid origin")
         run = _run(PROD_OPERATOR, scratch_dir=str(tmp_path))
