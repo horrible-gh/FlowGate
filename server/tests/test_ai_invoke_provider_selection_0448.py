@@ -366,22 +366,6 @@ def test_explicit_stored_selection_start_failure_never_invokes_trailing_provider
     assert run["end_reason"] == "all_providers_failed"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "flowgate.default.0501 T0004 baseline lock: commit 877da30 ('fix(ai): preserve "
-        "current rework provider selection') removed the `provider_pinned and` guard so "
-        "an UNPINNED base_provider_id would still outrank a stored sequence provider at "
-        "rework. The 0497 3-way file split's merge commit 24a9c4f ('fix(ai): resolve "
-        "invoke service merge conflict') silently reverted that hunk inside "
-        "ai_invoke/review.py's resolve_step_executor -- the guard is back, so this "
-        "scenario (provider_pinned=False) currently returns the stored provider "
-        "(aip_opus) instead of the current selection (aip_header). Remove this marker "
-        "once a dedicated fix T restores the 877da30 behavior; do not fix "
-        "resolve_step_executor from a baseline-lock T (flowgate.default.0501 T0004 "
-        "forbids production changes)."
-    ),
-)
 @pytest.mark.parametrize("classification", ["fast_fail", "spawn_failed"])
 def test_rework_current_selection_outranks_stored_opus_and_never_falls_back(
         env, monkeypatch, classification):
@@ -431,16 +415,6 @@ def test_rework_current_selection_outranks_stored_opus_and_never_falls_back(
     assert [p["id"] for p in svc._retry_provider_chain(run)] == ["aip_header"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "flowgate.default.0501 T0004 baseline lock: same lost-merge regression as "
-        "test_rework_current_selection_outranks_stored_opus_and_never_falls_back above "
-        "(877da30's fix dropped by merge 24a9c4f) -- resolve_step_executor now requires "
-        "provider_pinned=True before it will prefer base_provider_id over the stored "
-        "aip_opus. Remove once a dedicated fix T restores the 877da30 behavior."
-    ),
-)
 def test_rework_selection_survives_handoff_bundle_and_resume_resolution(env):
     """The stored Opus row cannot retake priority after a pause/resume-style bundle replay."""
     env["wfseq"].items[1]["provider_id"] = "aip_opus"
