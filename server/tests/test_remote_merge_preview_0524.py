@@ -14,6 +14,8 @@ test_remote_tool_0003_T0012 (`RAW_TOKEN` / `_call` / `env`).
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from modules.flow_gate.services import remote_tool_service as svc
@@ -94,6 +96,7 @@ def test_merge_preview_conflict_case_reports_the_one_conflicted_file(diverged_re
     assert result["head"] == head_commit
     assert result["target_ref"] == "origin/main"
     assert result["target_sha"] == target
+    assert re.fullmatch(r"[0-9a-f]{40,64}", result["merge_tree"])
     # head.txt is a head-only new file -- it does not conflict with target.
     assert result["conflicts"] == ["shared.txt"]
     assert result["truncated"] is False
@@ -108,7 +111,19 @@ def test_merge_preview_clean_case_reports_no_conflicts(disjoint_repo):
     assert result["merge_base"] == base
     assert result["head"] == head_commit
     assert result["target_sha"] == target
+    assert re.fullmatch(r"[0-9a-f]{40,64}", result["merge_tree"])
     assert result["truncated"] is False
+
+
+def test_merge_preview_merge_tree_oid_is_directly_readable_via_read_op(diverged_repo):
+    root, _base, _target, _head_commit = diverged_repo
+    preview, _ = svc._exec_merge_preview({}, root)
+
+    result, _ = svc._execute("read", {"path": "shared.txt", "ref": preview["merge_tree"]}, root)
+
+    assert "<<<<<<<" in result["content"]
+    assert "=======" in result["content"]
+    assert ">>>>>>>" in result["content"]
 
 
 # ── read-only guarantee ────────────────────────────────────────────────────────

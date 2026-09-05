@@ -1038,7 +1038,8 @@ def _exec_merge_preview(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     `--merge-base` is passed explicitly (fixed to the same merge_base `_merge_base`
     already computed) so the response's `merge_base` field always matches what
     merge-tree actually used, even in a criss-cross history where merge-tree could
-    otherwise pick a different base on its own.
+    otherwise pick a different base on its own. The returned `merge_tree` is the
+    candidate merge tree oid and can be used as the `ref` for read/grep/glob.
     """
     from modules.flow_gate.services import git_service
 
@@ -1063,11 +1064,10 @@ def _exec_merge_preview(body: dict, root: Path) -> tuple[dict, Optional[int]]:
     # messages. Verified directly against this machine's git 2.52.0 (T0006 §3):
     # a single- and a two-file conflict both come back as
     # "<oid>\n<path1>[\n<path2>...]\n\nAuto-merging ...\nCONFLICT ...".
-    if clean:
-        conflicts: list[str] = []
-    else:
-        first_section = (proc.stdout or "").split("\n\n", 1)[0]
-        conflicts = first_section.splitlines()[1:]
+    first_section = (proc.stdout or "").split("\n\n", 1)[0]
+    section_lines = first_section.splitlines()
+    merge_tree = section_lines[0] if section_lines else ""
+    conflicts = [] if clean else section_lines[1:]
 
     truncated = len(conflicts) > _MAX_CONFLICT_FILES
     if truncated:
@@ -1081,6 +1081,7 @@ def _exec_merge_preview(body: dict, root: Path) -> tuple[dict, Optional[int]]:
             "head": head_sha,
             "target_ref": target_ref,
             "target_sha": target_sha,
+            "merge_tree": merge_tree,
             "conflicts": conflicts,
             "truncated": truncated,
         },
