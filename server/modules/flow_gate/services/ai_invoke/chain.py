@@ -474,7 +474,7 @@ def _park_handoff(run: dict, pending: dict, stop_code: str) -> None:
     if not group_id:
         return
     try:
-        db_group_ai_leases.release(group_id, run["run_id"])
+        db_group_ai_leases.release(group_id, run["run_id"], reason=f"handoff_abandoned:{stop_code}")
     except Exception:  # noqa: BLE001
         logger.warning("ai-invoke handoff lease release failed for %s", group_id, exc_info=True)
 

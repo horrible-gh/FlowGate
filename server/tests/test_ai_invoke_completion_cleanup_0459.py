@@ -281,7 +281,7 @@ def gate_world(monkeypatch):
     monkeypatch.setattr(svc, "_park_handoff",
                         lambda run, bundle, stop_code: spawned["parked"].append(stop_code))
     monkeypatch.setattr(svc, "_clear_handoff_row", lambda g, r: None)
-    monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda g, r: True)
+    monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda g, r, **kw: True)
     return {"world": w, "store": store, "calls": calls, "spawned": spawned}
 
 
