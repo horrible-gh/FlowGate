@@ -2361,8 +2361,10 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
                     behind, ahead = int(m.group(1)), int(m.group(2))
 
     # Display status for response: may differ from persisted status for preview_ac.
+    # At this point, if status is 'none', the root must be wf_in_progress
+    # (else lines 2336-2343 would have transitioned it when root is wf_done).
     # When preview_ac=True and status=='none', show a preliminary awaiting_choice
-    # (0197 T0004 §B) for the AC approval dialog while root is still wf_in_progress.
+    # (0197 T0004 §B) for the AC approval dialog.
     display_status = status
     if status == "none" and preview_ac:
         display_status = "awaiting_choice"
