@@ -263,15 +263,23 @@ def resolve_step_executor(
 ) -> Optional[str]:
     """Who REWORKS this step (L0008 §2.2) — the step's executor, not its reviewer.
 
-    Re-plays start_run's own priority order (step override → explicit pin → stored sequence
-    assignment → project default) ahead of time, because the rework hop is mode="single" and
-    start_run's continuous tiers would not run for it.
+    Priority order: step override → current request/work provider → stored sequence
+    assignment → project default. The rework hop is mode="single", so start_run's own
+    continuous tiers never run for it — this replays the intended order ahead of time.
+
+    The current request/work provider wins over the stored sequence provider regardless
+    of `provider_pinned`: that flag only distinguishes an explicit user pick from an
+    unpinned default elsewhere, but for rework the provider that just produced the work
+    being reworked must not be quietly swapped out for whatever a sequence row happens to
+    hold (0508 T0004 — this is the same regression fixed once before in 0389f567 and
+    877da308 and lost again in a later merge; do not reintroduce the `provider_pinned`
+    gate here).
     """
     provider_id = _map_lookup(bundle.get("provider_overrides"), item_seq)
     if provider_id and _provider_enabled(project_id, provider_id):
         return provider_id
     base_provider_id = bundle.get("base_provider_id")
-    if bundle.get("provider_pinned") and _provider_enabled(project_id, base_provider_id):
+    if base_provider_id and _provider_enabled(project_id, base_provider_id):
         return base_provider_id
     stored = _stored_provider_for_item_seq(doc_ref, item_seq)
     if stored and _provider_enabled(project_id, stored):

@@ -2140,7 +2140,6 @@ export default {
       module: '- モジュール:',
       target_group: '- 対象グループ:',
       scope: '- 権限範囲: 上記グループに紐づく一回限りの作業権限',
-      scratch_dir: '- スクラッチディレクトリ:',
       expires_at: '- トークン有効期限:',
       api: '- 作業 API: FlowGate API の該当する作業エンドポイント',
       completion: '- 完了条件: 作業成功レスポンスを確認したうえで結果を報告し、トークンを再利用しないでください。',

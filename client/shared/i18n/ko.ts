@@ -2143,7 +2143,6 @@ export default {
       module: '- 모듈:',
       target_group: '- 대상 그룹:',
       scope: '- 권한 범위: 위 그룹에 바인딩된 1회성 작업 권한',
-      scratch_dir: '- 스크래치 디렉터리:',
       expires_at: '- 토큰 만료:',
       api: '- 작업 API: FlowGate API의 해당 작업 엔드포인트',
       completion: '- 완료 조건: 작업 성공 응답을 확인한 뒤 결과를 보고하고 토큰을 재사용하지 마십시오.',

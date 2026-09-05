@@ -1958,8 +1958,8 @@ def build_mention(
         content_source_hint = (
             "Choose exactly one document source (XOR):\n"
             "- `content`: send the complete document inline, as shown in the POST example below.\n"
-            "- `doc_path`: replace `content` with the absolute path of a UTF-8 file located "
-            f"inside this token's scratch_dir: `{scratch_dir}`.\n"
+            "- `doc_path`: replace `content` with the absolute path of a UTF-8 file "
+            "inside this token's scratch directory.\n"
             "Do not send both `content` and `doc_path`."
         )
         s5_body = (
@@ -2008,11 +2008,10 @@ def build_mention(
     # Workers and FlowGate run against the same group-worktree filesystem. Expose
     # the token-owned directory so file submissions satisfy the server boundary.
     s6_body = (
-        f"{scratch_dir}\n\n"
         "Write every non-source artifact (temporary files, dumps, generated JSON, caches, "
-        "and notes) inside this run-owned directory; never place them in the source tree, "
+        "and notes) inside this token's scratch directory; never place them in the source tree, "
         "server cwd, or OS temp.\n\n"
-        "For file-based inbox submissions, `{SCRATCH}` means the path above. "
+        "For file-based inbox submissions, `{SCRATCH}` means this token's scratch directory. "
         "Create the file inside it and send that file's absolute path as `doc_path`."
     )
 
@@ -2590,7 +2589,6 @@ def build_review_mention(
     """
     project = token_rec.get("project", "")
     group_id_full = token_rec.get("group_id", "")
-    scratch_dir = token_rec.get("scratch_dir", "")
 
     parts = group_id_full.split(".", 2) if group_id_full else []
     if len(parts) == 3:
@@ -2661,8 +2659,7 @@ def build_review_mention(
     # Review workers share the FlowGate group-worktree filesystem as well. Keep
     # the same {SCRATCH} terminology used by task/test worker instructions.
     s6_body = (
-        f"{scratch_dir}\n\n"
-        "`{SCRATCH}` means the token-owned path above. Write every non-source artifact, "
+        "`{SCRATCH}` means this token's scratch directory. Write every non-source artifact, "
         "review dump, JSON, cache, and note inside this run scratch only; do not leave "
         "them in the source tree, server cwd, or OS temp."
     )
@@ -2817,13 +2814,11 @@ def build_work_plan_fill_mention(
         return "\n".join(f"- {item}" for item in items) if items else "- (none)"
 
     doc_id = target_doc.get("doc_id") or ""
-    scratch_dir = token_rec.get("scratch_dir") or ""
     return (
         f"## {copy['title']}\n\n"
         f"- target_doc_id: {doc_id}\n"
         f"- design template: GET {api_base_url}/flowgate/api/v1/help/items/design_template/WP\n"
-        f"- Authorization: Bearer {raw_token}\n"
-        f"- scratch_dir: {scratch_dir}\n\n"
+        f"- Authorization: Bearer {raw_token}\n\n"
         f"{copy['canonical']}\n\n"
         f"```json\n{json.dumps(body, ensure_ascii=False, indent=2)}\n```\n\n"
         f"### {copy['quantity']}\n\n{bullets(quantity_lines)}\n\n"

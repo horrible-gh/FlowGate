@@ -2733,12 +2733,13 @@ class TestBaselineLockGoodBadSentinel0501:
       (bundle provider_pinned=True) outranking the item's stored provider. start_run /
       resolve_step_executor already get this right today, so it is a green lock.
     - test_current_selection_outranks_stored_through_the_real_gate: the same dispatch
-      with provider_pinned=False, i.e. an ordinary (unpinned) current selection. This one
-      is currently broken by a lost merge fix (877da30, dropped by 24a9c4f) -- the gate
-      dispatches BAD (stored) instead of GOOD (current selection) -- so it is pinned down
-      as xfail(strict=True) rather than left uncovered at the gate level. The same
-      regression is also documented at the resolve_step_executor unit level on
-      test_ai_invoke_provider_selection_0448.py's
+      with provider_pinned=False, i.e. an ordinary (unpinned) current selection. This was
+      the regression a lost merge fix (877da30, dropped by 24a9c4f) reintroduced -- the
+      gate used to dispatch BAD (stored) instead of GOOD (current selection). resolve_
+      step_executor no longer gates the current selection behind provider_pinned, so this
+      now asserts the fixed, passing GOOD-only dispatch as a green lock, same as its
+      sibling above. The same regression is also documented at the resolve_step_executor
+      unit level on test_ai_invoke_provider_selection_0448.py's
       test_rework_current_selection_outranks_stored_opus_and_never_falls_back /
       test_rework_selection_survives_handoff_bundle_and_resume_resolution -- see this T's
       TR for the full forensics.
@@ -2799,26 +2800,6 @@ class TestBaselineLockGoodBadSentinel0501:
         invoked_ids = {pid for chain_ in invoked_chains for pid in chain_}
         assert self.BAD not in invoked_ids
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "flowgate.default.0501 T0004 baseline lock: same lost-merge regression as "
-            "test_ai_invoke_provider_selection_0448.py's "
-            "test_rework_current_selection_outranks_stored_opus_and_never_falls_back / "
-            "test_rework_selection_survives_handoff_bundle_and_resume_resolution. "
-            "Commit 877da30 ('fix(ai): preserve current rework provider selection') "
-            "removed the `provider_pinned and` guard in resolve_step_executor so an "
-            "UNPINNED base_provider_id would still outrank a stored sequence provider "
-            "at rework. The 0497 3-way file split's merge commit 24a9c4f ('fix(ai): "
-            "resolve invoke service merge conflict') silently reverted that hunk inside "
-            "ai_invoke/review.py's resolve_step_executor -- the guard is back, so "
-            "this scenario (provider_pinned=False) currently dispatches the stored "
-            "provider (BAD) through the real gate instead of the current selection "
-            "(GOOD). Remove this marker once a dedicated fix T restores the 877da30 "
-            "behavior; do not fix resolve_step_executor from a baseline-lock T "
-            "(flowgate.default.0501 T0004 forbids production changes)."
-        ),
-    )
     def test_current_selection_outranks_stored_through_the_real_gate(
             self, world, monkeypatch, tmp_path):
         """Same GOOD/BAD/REVIEWER/issues setup as the sibling test above, but

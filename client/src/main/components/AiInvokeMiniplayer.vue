@@ -247,12 +247,19 @@
               <AppIcon name="lock" />
               {{ t('main.ai_miniplayer.btn_release_lease') }}
             </button>
+            <!-- 0500 T0004 §7: [목록에서 제거] also has to be offered on a NON-RESUMABLE
+                 system stop, and there it is not a local dismiss -- store.removeCard()
+                 releases the durable paused row first and only then drops the card, so
+                 the ghost does not come back on the next active-all bootstrap. §20: no
+                 new wording, the existing "목록에서 제거" already says exactly this. -->
             <button
-              v-if="entry.phase === 'finished' || entry.phase === 'lost'"
+              v-if="entry.phase === 'finished' || entry.phase === 'lost' || isNonResumableSystemStop(entry)"
               type="button"
               class="btn btn-ghost btn-sm"
               data-test="ai-miniplayer-remove"
-              @click="store.dismiss(entry.groupId)"
+              :disabled="busy.has(entry.groupId)"
+              :aria-disabled="busy.has(entry.groupId)"
+              @click="doRemove(entry)"
             >
               <AppIcon name="x" />
               {{ t('main.ai_miniplayer.btn_remove') }}
@@ -279,6 +286,7 @@ import { useProjectStore } from '../stores/project'
 import { useToast } from './common/useToast'
 import {
   compareRunEntries,
+  isNonResumableSystemStop,
   openTargetDocId,
   useAiInvokeRunsStore,
   type AiInvokeRunEntry,
@@ -492,26 +500,57 @@ async function doReleasePaused(entry: AiInvokeRunEntry): Promise<void> {
       showToast(t('main.ai_miniplayer.release_paused_success'), 'success')
     }
   } catch (error: any) {
-    const status = error?.response?.status
-    const code = error?.response?.data?.code
-    if (status === 403) {
-      showToast(t('main.ai_miniplayer.error_release_paused_forbidden'), 'danger')
-    } else if (status === 409 && code === 'group_lease_active') {
-      // 0459 TR0008 rev1: distinct from the resume-conflict toast below -- a held
-      // group lease needs a separate release from the locked-group screen, not a
-      // retry of this button.
-      showToast(t('main.ai_miniplayer.error_release_paused_lease_conflict'), 'danger')
-    } else if (status === 409 && code === 'release_conflict') {
-      // 0459 TR0008 rev5: distinct from run_already_active below -- the chain was
-      // NOT resumed by anyone. A newer pause/system-stop row won the CAS race and
-      // is still sitting there paused. "already resumed elsewhere" would be false;
-      // store.releasePaused() already bootstrap()s the card back to that current row.
-      showToast(t('main.ai_miniplayer.error_release_paused_release_conflict'), 'danger')
-    } else if (status === 409) {
-      showToast(t('main.ai_miniplayer.error_release_paused_resume_conflict'), 'danger')
-    } else {
-      showToast(t('main.ai_miniplayer.error_release_paused_failed'), 'danger')
+    showReleaseError(error)
+  } finally {
+    busy.delete(entry.groupId)
+  }
+}
+
+// Shared by [취소/해제] and by [목록에서 제거] on a non-resumable system stop (0500 T0004
+// §7): both go through the same DELETE, so a refusal has to read the same way on both.
+function showReleaseError(error: any): void {
+  const status = error?.response?.status
+  const code = error?.response?.data?.code
+  if (status === 403) {
+    showToast(t('main.ai_miniplayer.error_release_paused_forbidden'), 'danger')
+  } else if (status === 409 && code === 'group_lease_active') {
+    // 0459 TR0008 rev1: distinct from the resume-conflict toast below -- a held
+    // group lease needs a separate release from the locked-group screen, not a
+    // retry of this button.
+    showToast(t('main.ai_miniplayer.error_release_paused_lease_conflict'), 'danger')
+  } else if (status === 409 && code === 'release_conflict') {
+    // 0459 TR0008 rev5: distinct from run_already_active below -- the chain was
+    // NOT resumed by anyone. A newer pause/system-stop row won the CAS race and
+    // is still sitting there paused. "already resumed elsewhere" would be false;
+    // store.releasePaused() already bootstrap()s the card back to that current row.
+    showToast(t('main.ai_miniplayer.error_release_paused_release_conflict'), 'danger')
+  } else if (status === 409) {
+    showToast(t('main.ai_miniplayer.error_release_paused_resume_conflict'), 'danger')
+  } else {
+    showToast(t('main.ai_miniplayer.error_release_paused_failed'), 'danger')
+  }
+}
+
+async function doRemove(entry: AiInvokeRunEntry): Promise<void> {
+  // 0500 T0004 §7/§8: [목록에서 제거] on a finished/lost card is the local dismiss it has
+  // always been (§19.4, no request at all). On a NON-RESUMABLE system stop the same button
+  // must clear the durable server row instead -- a local delete there is undone by the very
+  // next active-all bootstrap (NR0003 §2). The confirm is the existing system-stop one: it
+  // already says documents/run history are kept and that this cancels no live run.
+  if (!isNonResumableSystemStop(entry)) {
+    store.dismiss(entry.groupId)
+    return
+  }
+  if (!window.confirm(t('main.ai_miniplayer.release_confirm_system'))) return
+  busy.add(entry.groupId)
+  try {
+    await store.removeCard(entry.groupId)
+    // Same rule as doReleasePaused: only an actually-gone card may claim success (§16).
+    if (!store.runsByGroup[entry.groupId]) {
+      showToast(t('main.ai_miniplayer.release_paused_success'), 'success')
     }
+  } catch (error: any) {
+    showReleaseError(error)
   } finally {
     busy.delete(entry.groupId)
   }

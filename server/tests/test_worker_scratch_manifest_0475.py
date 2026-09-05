@@ -93,7 +93,9 @@ def test_actual_mention_points_all_artifacts_and_doc_path_to_same_boundary():
         head_status="pending", scratch_dir=scratch, raw_token="token",
         api_base_url="http://localhost/api/v1", continuous=True, locale="en",
     )
-    assert scratch in out
+    # T0004 (0506): the worker-facing mention keeps the boundary guidance but no longer
+    # interpolates the actual server-local absolute path.
+    assert scratch not in out
     assert "every non-source artifact" in out
     assert "source tree, server cwd, or OS temp" in out
     assert "absolute path as `doc_path`" in out
@@ -120,7 +122,9 @@ def test_review_mention_keeps_all_review_artifacts_inside_run_scratch():
         locale="en",
     )
     assert out is not None
-    assert scratch in out
+    # T0004 (0506): same boundary-guidance-without-literal-path contract as the
+    # standard mention above.
+    assert scratch not in out
     assert "every non-source artifact" in out
     assert "review dump, JSON, cache, and note" in out
     assert "source tree, server cwd, or OS temp" in out

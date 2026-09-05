@@ -324,6 +324,78 @@ def test_template_is_json_and_valid():
     assert any("advisory" in rule for rule in payload["rules"])
 
 
+def test_template_body_stays_zero_count():
+    """flowgate.default.0488 T0005: adding canonical examples must not touch the
+    zero-count template body itself (NR0003 정정본 §13 — count 0 stays 0; the examples
+    live in the separate `examples` field instead).
+    """
+    from modules.flow_gate.services import work_plan_service as wp
+
+    body = json.loads(wp.template_body())
+    assert body["steps"] == []
+    assert body["quantities"]
+    for quantity in body["quantities"].values():
+        assert quantity["count"] == 0
+
+
+def test_help_template_examples_match_make_step_and_cover_all_pair_roles():
+    """flowgate.default.0488 T0005: canonical step examples must come from
+    make_step() itself, not hand-authored JSON (NR0003 정정본 §12 R6 drift guard).
+    """
+    from modules.flow_gate.services import work_plan_service as wp
+
+    examples = wp.canonical_step_examples()
+    assert examples["single"] == wp.make_step("D", 1, None, "single")
+    assert examples["paired_instruction"] == wp.make_step("T", 1, "TR#1", "instruction")
+    assert examples["paired_result"] == wp.make_step("TR", 1, "T#1", "result")
+    assert examples["locked"] == wp.make_step("TSR", 1, "TS#1", "result")
+    assert examples["locked"]["locked"] is True
+    assert examples["locked"]["origin"] == "system"
+    assert examples["single"]["origin"] == "human"
+
+    payload = wp.template_payload("ko")
+    assert payload["examples"] == examples
+    for locale in ("ko", "en", "ja"):
+        rules = wp.TEMPLATE_RULES[locale]
+        assert any("pair_role" in rule for rule in rules)
+        assert any("origin" in rule for rule in rules)
+        assert any("examples" in rule for rule in rules)
+
+
+def test_help_template_examples_validate_when_inserted_into_a_body():
+    """Each canonical example must sit inside an otherwise-valid body without
+    tripping validate() — proving the shape is usable, not just structurally similar.
+    """
+    from modules.flow_gate.services import work_plan_service as wp
+
+    def envelope(counted_type, unit, steps):
+        return {
+            "wp_version": 1,
+            "binding": "advisory",
+            "counted_types": [counted_type],
+            "quantities": {counted_type: {"unit": unit, "count": 1}},
+            "provider_candidates": [],
+            "defaults": {"provider_id": None, "note": None},
+            "steps": steps,
+        }
+
+    single_body = envelope("D", "sheet", [wp.make_step("D", 1, None, "single")])
+    assert wp.validate(single_body)["binding"] == "advisory"
+
+    paired_body = envelope("T", "set", [
+        wp.make_step("T", 1, "TR#1", "instruction"),
+        wp.make_step("TR", 1, "T#1", "result"),
+    ])
+    assert wp.validate(paired_body)["binding"] == "advisory"
+
+    locked_body = envelope("TS", "set", [
+        wp.make_step("TS", 1, "TSR#1", "instruction"),
+        wp.make_step("TSR", 1, "TS#1", "result"),
+    ])
+    assert wp.validate(locked_body)["binding"] == "advisory"
+    assert locked_body["steps"][1]["locked"] is True
+
+
 # ── Part 4: type registration and the audited type sets (D0007 §7) ───────────
 
 def test_work_plan_is_not_auto_complete():
@@ -619,8 +691,17 @@ def test_human_create_read_save_roundtrip(seed, storage_root):
     body = view["body"]
     body["steps"][0]["provider_id"] = "aip_opus"
     body["steps"][0]["provider_display_name"] = "Claude Opus"
-    saved = client.put(f"/api/v1/documents/{doc_id}/work-plan",
-                       json={"base_revision_no": 0, "body": body})
+    # 0492 T0014 added a server-authoritative capability confirmation gate for T/TR
+    # steps with no capable provider assigned; T#1/TR#1 stay unassigned here, so this
+    # roundtrip must acknowledge them explicitly to reach the revision-conflict checks.
+    save_payload = {"base_revision_no": 0, "body": body}
+    unacked = client.put(f"/api/v1/documents/{doc_id}/work-plan", json=save_payload)
+    assert unacked.status_code == 422, unacked.text
+    assert unacked.json()["code"] == "provider_capability_confirmation_required"
+    capability_acks = [finding["step_key"] for finding in unacked.json()["findings"]]
+    assert set(capability_acks) == {"T#1", "TR#1"}
+    save_payload["capability_warning_acks"] = capability_acks
+    saved = client.put(f"/api/v1/documents/{doc_id}/work-plan", json=save_payload)
     assert saved.status_code == 200, saved.text
     assert saved.json()["revision_no"] == 1
     assert saved.json()["assignment_summary"][0]["step_count"] == 1
@@ -632,7 +713,8 @@ def test_human_create_read_save_roundtrip(seed, storage_root):
     # §4.8: a stale base revision is refused, and nothing is overwritten.
     body["steps"][0]["note"] = "덮어쓰기 시도"
     conflict = client.put(f"/api/v1/documents/{doc_id}/work-plan",
-                          json={"base_revision_no": 0, "body": body})
+                          json={"base_revision_no": 0, "body": body,
+                                "capability_warning_acks": capability_acks})
     assert conflict.status_code == 409
     assert conflict.json()["code"] == "wp_revision_conflict"
     assert conflict.json()["current_revision_no"] == 1
@@ -1564,8 +1646,13 @@ def test_work_plan_fill_mention_contains_three_scopes_and_note_instruction(monke
         "step_keys": ["D#1"],
         "provider_ids": ["prov-a"],
     }
+    sentinel_scratch_dir = r"C:\FLOWGATE_SECRET_SCRATCH\TOKEN_123"
     mention = mention_service.build_work_plan_fill_mention(
-        token_rec={"project": "wpprj", "group_id": "wpprj.default.0402", "scratch_dir": "x"},
+        token_rec={
+            "project": "wpprj",
+            "group_id": "wpprj.default.0402",
+            "scratch_dir": sentinel_scratch_dir,
+        },
         target_doc={"doc_id": "wpprj.default.0402.0002-WP"},
         body=body,
         scope=scope,
@@ -1576,7 +1663,11 @@ def test_work_plan_fill_mention_contains_three_scopes_and_note_instruction(monke
     assert "D#1 · 기본설계 1장" in mention
     assert "D#1 · D" not in mention
     assert "prov-a · Provider A" in mention
-    assert "scratch_dir: x" in mention
+    assert "scratch_dir" not in mention
+    # flowgate.default.0506 TR0005 rev1: a label-only check ("scratch_dir" not in mention)
+    # still passes if the real path leaks without its key (e.g. inside a sentence). Assert
+    # the sentinel path itself is absent, matching the other worker-facing surfaces.
+    assert sentinel_scratch_dir not in mention
     assert "범위 밖 값은 지금 값 그대로" in mention
     assert "note를 반드시 채우십시오" in mention
     assert "design_template/WP" in mention

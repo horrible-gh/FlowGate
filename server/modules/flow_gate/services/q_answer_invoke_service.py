@@ -195,7 +195,6 @@ def build_answer_mention(
         "author_kind 는 서버가 'ai' 로 고정하므로 보내지 않아도 됩니다. "
         "이 토큰은 이 문서에만 쓸 수 있습니다."
     )
-    lines.append(f"작업 디렉터리(scratch): {scratch_dir}")
     lines.append("")
     lines.append("[완료 기준]")
     lines.append("위 POST 가 200 으로 성공하면 작업 완료입니다. 그 외 문서 등록은 하지 마십시오.")
