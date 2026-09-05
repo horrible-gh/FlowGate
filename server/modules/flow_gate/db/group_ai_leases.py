@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from .connection import get_store, now_iso
+from . import group_ai_lease_events as _lease_events
 
 
 class RunIdCollision(Exception):
@@ -70,6 +71,20 @@ def _expired(row: Optional[dict], at: Optional[str] = None) -> bool:
         return True
 
 
+def _append_event(**kwargs) -> None:
+    """Best-effort forensic append (flowgate.default.0502 T0004 SS10): a write failure
+    here must never change an admission or release decision, so every lifecycle call
+    site below only logs a warning on failure instead of letting it propagate."""
+    try:
+        _lease_events.append(**kwargs)
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning(
+            "group_ai_lease_events append failed for group %s event %s",
+            kwargs.get("group_id"), kwargs.get("event_type"), exc_info=True,
+        )
+
+
 def get(group_id: str) -> Optional[dict]:
     if _using_memory():
         with _memory_lock:
@@ -79,25 +94,44 @@ def get(group_id: str) -> Optional[dict]:
     return get_store()._fetch_one("SELECT * FROM group_ai_leases WHERE group_id = ?", [group_id])
 
 
+def _log_expired_reclaim(row: dict) -> None:
+    _append_event(
+        event_type="lease_expired_reclaimed", group_id=row["group_id"],
+        project_id=row.get("project_id"), run_id=row.get("run_id"),
+        token_id=row.get("token_id"), chain_id=row.get("chain_id"),
+        action_scope=row.get("action_scope"), lease_generation=row.get("generation"),
+        reason="ttl_expired",
+        detail={
+            "acquired_at": row.get("acquired_at"), "heartbeat_at": row.get("heartbeat_at"),
+            "expires_at": row.get("expires_at"),
+        },
+    )
+
+
 def recover_expired(group_id: Optional[str] = None) -> int:
     """Reclaim leases whose heartbeat deadline passed (restart/crash recovery rule)."""
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     if _using_memory():
         with _memory_lock:
             _sync_test_scope()
-            victims = [gid for gid, row in _memory.items() if (not group_id or gid == group_id) and _expired(row, now)]
-            for gid in victims:
-                _memory.pop(gid, None)
+            victims = [dict(row) for gid, row in _memory.items() if (not group_id or gid == group_id) and _expired(row, now)]
+            for row in victims:
+                _memory.pop(row["group_id"], None)
+            for row in victims:
+                _log_expired_reclaim(row)
             return len(victims)
     store = get_store()
     if group_id:
         row = get(group_id)
         if row and _expired(row, now):
             store._execute("DELETE FROM group_ai_leases WHERE group_id = ? AND expires_at = ?", [group_id, row["expires_at"]])
+            _log_expired_reclaim(row)
             return 1
         return 0
-    rows = store._fetch_all("SELECT group_id FROM group_ai_leases WHERE expires_at <= ?", [now])
+    rows = store._fetch_all("SELECT * FROM group_ai_leases WHERE expires_at <= ?", [now])
     store._execute("DELETE FROM group_ai_leases WHERE expires_at <= ?", [now])
+    for row in rows:
+        _log_expired_reclaim(row)
     return len(rows)
 
 
@@ -114,17 +148,34 @@ def reclaim_orphaned(before: str) -> list[dict]:
     process may be mid-admission for it). Returns the reclaimed rows (group/run/
     acquired_at and the rest) so the caller can explain each one's disappearance.
     """
+    def _log_startup_reclaim(row: dict) -> None:
+        _append_event(
+            event_type="lease_startup_reclaimed", group_id=row["group_id"],
+            project_id=row.get("project_id"), run_id=row.get("run_id"),
+            token_id=row.get("token_id"), chain_id=row.get("chain_id"),
+            action_scope=row.get("action_scope"), lease_generation=row.get("generation"),
+            reason="orphaned_by_restart",
+            detail={
+                "acquired_at": row.get("acquired_at"), "heartbeat_at": row.get("heartbeat_at"),
+                "expires_at": row.get("expires_at"),
+            },
+        )
+
     if _using_memory():
         with _memory_lock:
             _sync_test_scope()
             victims = [dict(row) for row in _memory.values() if str(row.get("acquired_at") or "") < before]
             for row in victims:
                 _memory.pop(row["group_id"], None)
+            for row in victims:
+                _log_startup_reclaim(row)
             return victims
     store = get_store()
     rows = store._fetch_all("SELECT * FROM group_ai_leases WHERE acquired_at < ?", [before])
     if rows:
         store._execute("DELETE FROM group_ai_leases WHERE acquired_at < ?", [before])
+        for row in rows:
+            _log_startup_reclaim(row)
     return rows
 
 
@@ -148,7 +199,20 @@ def get_active(group_id: str) -> Optional[dict]:
 
 def acquire(*, group_id: str, project_id: str, run_id: str, chain_id: Optional[str],
             action_scope: str, worker_identity: Optional[str]) -> Optional[dict]:
-    """Atomically acquire, or transfer a releasing lease to the next hop."""
+    """Atomically acquire, or transfer a releasing lease to the next hop.
+
+    On success, returns the acquired row (``row["run_id"] == run_id``). On a
+    conflict -- an existing lease that is not a matching-chain handoff, or a
+    concurrent writer winning the insert race -- returns the BLOCKING row's
+    snapshot as captured at that exact decision point (``row["run_id"] !=
+    run_id``), not bare ``None`` (flowgate.default.0502 T0004 rev2). Reusing
+    this snapshot lets a caller attribute a 409 to its true blocker without a
+    second query: a caller-side re-fetch (e.g. get_active()) runs its own
+    recover_expired() sweep and can reclaim -- and blank out -- the very lease
+    that just caused the conflict, in the window between this call returning
+    and that re-fetch running. Only the never-had-a-snapshot edge case (no
+    conflicting row could be captured at all) still returns plain ``None``.
+    """
     stamp = now_iso()
     expires = _expiry(ACQUIRING_TTL_SEC)
     if _using_memory():
@@ -157,6 +221,7 @@ def acquire(*, group_id: str, project_id: str, run_id: str, chain_id: Optional[s
             current = _memory.get(group_id)
             if current and _expired(current):
                 _memory.pop(group_id, None)
+                _log_expired_reclaim(current)
                 current = None
             if any(row.get("run_id") == run_id for gid, row in _memory.items() if gid != group_id):
                 # 0401 NR0003 §4 / T0004 item 7: mirrors the DB-path pre-check below so the
@@ -165,7 +230,9 @@ def acquire(*, group_id: str, project_id: str, run_id: str, chain_id: Optional[s
                 raise RunIdCollision(run_id)
             if current:
                 if not (current.get("state") == "releasing" and chain_id and current.get("chain_id") == chain_id):
-                    return None
+                    # Blocked -- hand back the still-live blocker snapshot instead of
+                    # discarding it, so the caller never has to re-query for identity.
+                    return dict(current)
                 generation = int(current.get("generation") or 1) + 1
                 acquired_at = current.get("acquired_at") or stamp
             else:
@@ -177,12 +244,29 @@ def acquire(*, group_id: str, project_id: str, run_id: str, chain_id: Optional[s
                 "generation": generation, "acquired_at": acquired_at,
                 "heartbeat_at": stamp, "expires_at": expires, "updated_at": stamp,
             }
+            if current:
+                _append_event(
+                    event_type="lease_transferred", group_id=group_id, project_id=project_id,
+                    run_id=run_id, chain_id=chain_id, action_scope=action_scope,
+                    lease_generation=generation, reason="handoff_transfer",
+                    detail={
+                        "before_run_id": current.get("run_id"), "before_token_id": current.get("token_id"),
+                        "before_chain_id": current.get("chain_id"),
+                    },
+                )
+            else:
+                _append_event(
+                    event_type="lease_acquired", group_id=group_id, project_id=project_id,
+                    run_id=run_id, chain_id=chain_id, action_scope=action_scope,
+                    lease_generation=generation, reason="new_acquire",
+                )
             return dict(_memory[group_id])
     store = get_store()
     with store.transaction():
         current = get(group_id)
         if current and _expired(current):
             store._execute("DELETE FROM group_ai_leases WHERE group_id = ? AND run_id = ?", [group_id, current["run_id"]])
+            _log_expired_reclaim(current)
             current = None
         # 0401 NR0003 §4 / T0004 item 7: neither write below is protected against the
         # run_id UNIQUE index (migration 077) -- only group_id has an ON CONFLICT target.
@@ -193,7 +277,9 @@ def acquire(*, group_id: str, project_id: str, run_id: str, chain_id: Optional[s
             raise RunIdCollision(run_id)
         if current:
             if not (current.get("state") == "releasing" and chain_id and current.get("chain_id") == chain_id):
-                return None
+                # Blocked -- hand back the still-live blocker snapshot instead of
+                # discarding it, so the caller never has to re-query for identity.
+                return dict(current)
             store._execute(
                 "UPDATE group_ai_leases SET run_id = ?, token_id = NULL, action_scope = ?, worker_identity = ?, "
                 "state = 'acquiring', generation = generation + 1, heartbeat_at = ?, expires_at = ?, updated_at = ? "
@@ -208,7 +294,28 @@ def acquire(*, group_id: str, project_id: str, run_id: str, chain_id: Optional[s
                 [group_id, project_id, run_id, chain_id, action_scope, worker_identity, stamp, stamp, expires, stamp],
             )
         owned = get(group_id)
-        return owned if owned and owned.get("run_id") == run_id else None
+        if not (owned and owned.get("run_id") == run_id):
+            # Lost a concurrent insert race -- `owned` (if any) is the winner's row,
+            # captured inside this same transaction; hand it back as the blocker
+            # snapshot rather than forcing the caller to re-fetch it separately.
+            return owned
+        if current:
+            _append_event(
+                event_type="lease_transferred", group_id=group_id, project_id=project_id,
+                run_id=run_id, chain_id=chain_id, action_scope=action_scope,
+                lease_generation=owned.get("generation"), reason="handoff_transfer",
+                detail={
+                    "before_run_id": current.get("run_id"), "before_token_id": current.get("token_id"),
+                    "before_chain_id": current.get("chain_id"),
+                },
+            )
+        else:
+            _append_event(
+                event_type="lease_acquired", group_id=group_id, project_id=project_id,
+                run_id=run_id, chain_id=chain_id, action_scope=action_scope,
+                lease_generation=owned.get("generation"), reason="new_acquire",
+            )
+        return owned
 
 
 def activate(group_id: str, run_id: str, token_id: Optional[str], action_scope: str,
@@ -221,6 +328,11 @@ def activate(group_id: str, run_id: str, token_id: Optional[str], action_scope: 
                 return None
             row.update(token_id=token_id, action_scope=action_scope, worker_identity=worker_identity,
                        state="active", heartbeat_at=stamp, expires_at=expires, updated_at=stamp)
+            _append_event(
+                event_type="lease_activated", group_id=group_id, project_id=row.get("project_id"),
+                run_id=run_id, token_id=token_id, chain_id=row.get("chain_id"),
+                action_scope=action_scope, lease_generation=row.get("generation"), reason="activated",
+            )
             return dict(row)
     get_store()._execute(
         "UPDATE group_ai_leases SET token_id = ?, action_scope = ?, worker_identity = ?, state = 'active', "
@@ -228,7 +340,14 @@ def activate(group_id: str, run_id: str, token_id: Optional[str], action_scope: 
         [token_id, action_scope, worker_identity, stamp, expires, stamp, group_id, run_id],
     )
     row = get(group_id)
-    return row if row and row.get("run_id") == run_id and row.get("state") == "active" else None
+    if not (row and row.get("run_id") == run_id and row.get("state") == "active"):
+        return None
+    _append_event(
+        event_type="lease_activated", group_id=group_id, project_id=row.get("project_id"),
+        run_id=run_id, token_id=token_id, chain_id=row.get("chain_id"),
+        action_scope=action_scope, lease_generation=row.get("generation"), reason="activated",
+    )
+    return row
 
 
 def heartbeat(group_id: str, run_id: str, ttl_seconds: int = ACTIVE_HEARTBEAT_TTL_SEC) -> bool:
@@ -257,6 +376,12 @@ def begin_handoff(group_id: str, run_id: str) -> bool:
             if not row or row.get("run_id") != run_id or row.get("state") != "active":
                 return False
             row.update(state="releasing", heartbeat_at=stamp, expires_at=expires, updated_at=stamp)
+            _append_event(
+                event_type="lease_handoff_begin", group_id=group_id, project_id=row.get("project_id"),
+                run_id=run_id, token_id=row.get("token_id"), chain_id=row.get("chain_id"),
+                action_scope=row.get("action_scope"), lease_generation=row.get("generation"),
+                reason="handoff_begin",
+            )
             return True
     get_store()._execute(
         "UPDATE group_ai_leases SET state = 'releasing', heartbeat_at = ?, expires_at = ?, updated_at = ? "
@@ -264,7 +389,15 @@ def begin_handoff(group_id: str, run_id: str) -> bool:
         [stamp, expires, stamp, group_id, run_id],
     )
     row = get(group_id)
-    return bool(row and row.get("run_id") == run_id and row.get("state") == "releasing")
+    ok = bool(row and row.get("run_id") == run_id and row.get("state") == "releasing")
+    if ok:
+        _append_event(
+            event_type="lease_handoff_begin", group_id=group_id, project_id=row.get("project_id"),
+            run_id=run_id, token_id=row.get("token_id"), chain_id=row.get("chain_id"),
+            action_scope=row.get("action_scope"), lease_generation=row.get("generation"),
+            reason="handoff_begin",
+        )
+    return ok
 
 
 def update_token(group_id: str, run_id: str, token_id: Optional[str],
@@ -301,19 +434,36 @@ def update_token(group_id: str, run_id: str, token_id: Optional[str],
         )
 
 
-def release(group_id: str, run_id: str) -> bool:
+def release(group_id: str, run_id: str, reason: str = "released") -> bool:
+    """reason distinguishes a normal worker-finish release from a manual/forced one
+    (flowgate.default.0502 T0004 SS7) -- see the callers in admission.py, chain.py,
+    finalize.py and review.py for the concrete reasons each path uses."""
     if _using_memory():
         with _memory_lock:
             row = _memory.get(group_id)
             if not row or row.get("run_id") != run_id:
                 return False
             _memory.pop(group_id, None)
+            _append_event(
+                event_type="lease_released", group_id=group_id, project_id=row.get("project_id"),
+                run_id=run_id, token_id=row.get("token_id"), chain_id=row.get("chain_id"),
+                action_scope=row.get("action_scope"), lease_generation=row.get("generation"),
+                reason=reason,
+            )
             return True
     row = get(group_id)
     if not row or row.get("run_id") != run_id:
         return False
     get_store()._execute("DELETE FROM group_ai_leases WHERE group_id = ? AND run_id = ?", [group_id, run_id])
-    return get(group_id) is None
+    released = get(group_id) is None
+    if released:
+        _append_event(
+            event_type="lease_released", group_id=group_id, project_id=row.get("project_id"),
+            run_id=run_id, token_id=row.get("token_id"), chain_id=row.get("chain_id"),
+            action_scope=row.get("action_scope"), lease_generation=row.get("generation"),
+            reason=reason,
+        )
+    return released
 
 
 def max_serial_for_date(date_str: str) -> int:
