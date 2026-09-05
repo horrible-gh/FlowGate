@@ -774,6 +774,23 @@ class TestReleaseOwnerAndIdempotency:
         assert result["released"] is True
         assert GROUP not in env["store"].rows
 
+    def test_owner_releases_the_representative_group_lease_denied_row(self, env):
+        """T0004 section 11 / section 18.1: the work order's named representative
+        payload -- stop_kind=system, stop_code=group_lease_denied -- is the
+        non-resumable (resumeAvailable=false) terminal case this whole feature
+        exists for. no_output_exhausted alone never proves this exact stop_code
+        releases through the same CAS path."""
+        assert svc.is_resumable("group_lease_denied") is False
+
+        env["store"].put(stop_kind="system", stop_code="group_lease_denied",
+                         stop_run_id="aiv_lease_denied")
+
+        result = svc.release_paused_chain(group_id=GROUP, user_id=OWNER, is_admin=False)
+
+        assert result == {"ok": True, "group_id": GROUP, "released": True,
+                          "already_released": False}
+        assert GROUP not in env["store"].rows
+
     def test_admin_releases_another_users_row(self, env):
         env["store"].put(paused_by=OTHER)
 

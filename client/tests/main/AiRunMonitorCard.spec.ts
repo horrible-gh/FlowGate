@@ -4,14 +4,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import AiRunMonitorCard from '@main/components/AiRunMonitorCard.vue'
 import { useAiInvokeRunsStore } from '@main/stores/aiInvokeRuns'
+import { useToast } from '@main/components/common/useToast'
 import { mountMainPanel } from '../helpers/mountMainPanel'
 
-const { getRequest, postRequest } = vi.hoisted(() => ({ getRequest: vi.fn(), postRequest: vi.fn() }))
+const { getRequest, postRequest, deleteRequest } = vi.hoisted(() => (
+  { getRequest: vi.fn(), postRequest: vi.fn(), deleteRequest: vi.fn() }
+))
 vi.mock('@shared/api', () => ({
   default: { head: vi.fn(), get: vi.fn(), post: vi.fn(), patch: vi.fn() },
   getRequest,
   postRequest,
   patchRequest: vi.fn(),
+  deleteRequest,
 }))
 
 const t = (key: string, args?: Record<string, unknown>) => i18n.global.t(key, args ?? {})
@@ -26,6 +30,8 @@ describe('AiRunMonitorCard (dashboard)', () => {
     setActivePinia(createPinia())
     getRequest.mockReset()
     postRequest.mockReset()
+    deleteRequest.mockReset()
+    useToast().toasts.value = []
     getRequest.mockImplementation(async (url: string) => {
       if (url.includes('active-all')) return { data: { ok: true, runs: [], paused: [] } }
       if (url.includes('/documents/detail')) {
@@ -147,6 +153,98 @@ describe('AiRunMonitorCard (dashboard)', () => {
     await flushPromises()
     expect(store.runsByGroup['flowgate.default.4006']).toBeUndefined()
     wrapper.unmount()
+  })
+
+  // 0500 T0004 §7 (rev3). This dashboard list IS the "목록" of the report, and the X was
+  // gated on isFinishedCard() alone -- so the non-resumable system-stop card the whole
+  // group is about had NO remove control here at all. That is why the rev2 rejection was
+  // "난 카드가 계속 뜨고있는데?": the one place the user meets the ghost card offered
+  // nothing to press, and opening the row (which acknowledges finished cards) calls
+  // dismiss(), which refuses every paused card.
+  describe('non-resumable system-stop card (0500 T0004 §7)', () => {
+    const GROUP = 'flowgate.default.0481'
+
+    async function bootstrapGhostCard(overrides: Record<string, unknown> = {}) {
+      getRequest.mockImplementation(async (url: string) => {
+        if (url.includes('active-all')) {
+          return {
+            data: {
+              ok: true,
+              runs: [],
+              paused: [{
+                group_id: GROUP,
+                doc_ref: `${GROUP}.0004-NR`,
+                paused_at: '2026-09-01T10:00:00+09:00',
+                stop_kind: 'system',
+                stop_code: 'group_lease_denied',
+                stop_run_id: 'aiv_lease_denied',
+                resume_available: false,
+                ...overrides,
+              }],
+            },
+          }
+        }
+        return { data: {} }
+      })
+      const wrapper = mountCard()
+      const store = useAiInvokeRunsStore()
+      await store.bootstrap()
+      await flushPromises()
+      return { wrapper, store }
+    }
+
+    it('offers the remove button and releases the durable row on a confirmed click', async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      deleteRequest.mockResolvedValue({ data: { ok: true, released: true, already_released: false } })
+      const { wrapper, store } = await bootstrapGhostCard()
+      expect(store.runsByGroup[GROUP]).toMatchObject({
+        phase: 'paused', stopKind: 'system', stopCode: 'group_lease_denied', resumeAvailable: false,
+      })
+
+      const removeBtn = wrapper.find('[data-test="ai-run-monitor-remove"]')
+      expect(removeBtn.exists()).toBe(true)
+
+      await removeBtn.trigger('click')
+      await flushPromises()
+
+      expect(deleteRequest).toHaveBeenCalledWith(`/api/v1/ai-invoke/paused/${GROUP}`)
+      expect(store.runsByGroup[GROUP]).toBeUndefined()
+      expect(useToast().toasts.value.at(-1)).toMatchObject({
+        message: t('main.ai_miniplayer.release_paused_success'),
+        type: 'success',
+      })
+      wrapper.unmount()
+      vi.restoreAllMocks()
+    })
+
+    it('keeps the card and explains why when the server refuses the release', async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      deleteRequest.mockRejectedValue({ response: { status: 409, data: { code: 'group_lease_active' } } })
+      const { wrapper, store } = await bootstrapGhostCard()
+
+      await wrapper.find('[data-test="ai-run-monitor-remove"]').trigger('click')
+      await flushPromises()
+
+      expect(store.runsByGroup[GROUP]?.phase).toBe('paused')
+      expect(useToast().toasts.value.at(-1)).toMatchObject({
+        message: t('main.ai_miniplayer.error_release_paused_lease_conflict'),
+        type: 'danger',
+      })
+      wrapper.unmount()
+      vi.restoreAllMocks()
+    })
+
+    // §10: a resumable system stop keeps the paused lifecycle -- no remove control, and
+    // certainly no DELETE. §9's user pause is covered by the store's own removeCard tests.
+    it('offers no remove button on a resumable system stop', async () => {
+      const { wrapper } = await bootstrapGhostCard({
+        stop_code: 'no_output_exhausted', resume_available: true,
+      })
+
+      expect(wrapper.find('[data-test="ai-run-monitor-remove"]').exists()).toBe(false)
+      expect(deleteRequest).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
   })
 
   it('keeps live runs above finished ones', async () => {

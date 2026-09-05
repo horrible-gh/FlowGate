@@ -62,14 +62,21 @@
               {{ isAwaitingQ(entry) ? t('main.ai_miniplayer.dash_state_awaiting') : modeLabel(entry) }}
             </span>
           </button>
+          <!-- 0500 T0004 §7: this X IS the "목록에서 제거" the report is about, and gating
+               it on isFinishedCard() alone left the non-resumable system-stop card with no
+               remove control at all on this screen -- the card the user "지워도 계속 뜬다".
+               It is offered there too now, and for that class it goes through the durable
+               server release (doRemove) instead of the local-only dismiss. -->
           <button
-            v-if="isFinishedCard(entry)"
+            v-if="isFinishedCard(entry) || isNonResumableSystemStop(entry)"
             type="button"
             class="airm-row-remove"
             :title="t('main.ai_miniplayer.btn_remove')"
             :aria-label="t('main.ai_miniplayer.btn_remove')"
             data-test="ai-run-monitor-remove"
-            @click="store.dismiss(entry.groupId)"
+            :disabled="busy.has(entry.groupId)"
+            :aria-disabled="busy.has(entry.groupId)"
+            @click="doRemove(entry)"
           >
             <AppIcon name="x" />
           </button>
@@ -80,7 +87,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '@shared/AppIcon.vue'
 import { getRequest } from '@shared/api'
@@ -92,6 +99,7 @@ import {
   compareRunEntries,
   isAwaitingQ,
   isFinishedCard,
+  isNonResumableSystemStop,
   openTargetDocId,
   useAiInvokeRunsStore,
   type AiInvokeRunEntry,
@@ -107,6 +115,45 @@ const projectStore = useProjectStore()
 const entries = computed<AiInvokeRunEntry[]>(() =>
   Object.values(store.runsByGroup).slice().sort(compareRunEntries),
 )
+
+// Per-group in-flight guard for the durable remove below: the DELETE is a round trip, and
+// a second click while it is out would fire a second one against the same row.
+const busy = reactive(new Set<string>())
+
+async function doRemove(entry: AiInvokeRunEntry): Promise<void> {
+  // 0500 T0004 §7/§8: on a finished/lost card this stays the local dismiss it always was
+  // (§19.4). On a non-resumable system stop the durable ai_invoke_paused_chains row has to
+  // go first, or the next active-all bootstrap rebuilds the very card just removed
+  // (NR0003 §2/§8). store.removeCard() drops the card only on a confirmed release (§16).
+  if (!isNonResumableSystemStop(entry)) {
+    store.dismiss(entry.groupId)
+    return
+  }
+  if (!window.confirm(t('main.ai_miniplayer.release_confirm_system'))) return
+  busy.add(entry.groupId)
+  try {
+    await store.removeCard(entry.groupId)
+    if (!store.runsByGroup[entry.groupId]) {
+      showToast(t('main.ai_miniplayer.release_paused_success'), 'success')
+    }
+  } catch (error: any) {
+    const status = error?.response?.status
+    const code = error?.response?.data?.code
+    if (status === 403) {
+      showToast(t('main.ai_miniplayer.error_release_paused_forbidden'), 'danger')
+    } else if (status === 409 && code === 'group_lease_active') {
+      showToast(t('main.ai_miniplayer.error_release_paused_lease_conflict'), 'danger')
+    } else if (status === 409 && code === 'release_conflict') {
+      showToast(t('main.ai_miniplayer.error_release_paused_release_conflict'), 'danger')
+    } else if (status === 409) {
+      showToast(t('main.ai_miniplayer.error_release_paused_resume_conflict'), 'danger')
+    } else {
+      showToast(t('main.ai_miniplayer.error_release_paused_failed'), 'danger')
+    }
+  } finally {
+    busy.delete(entry.groupId)
+  }
+}
 
 function cardIcon(entry: AiInvokeRunEntry): string {
   if (isAwaitingQ(entry)) return 'question'

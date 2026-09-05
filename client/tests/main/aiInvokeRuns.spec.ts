@@ -546,6 +546,131 @@ describe('aiInvokeRuns store', () => {
     })
   })
 
+  // 0500 T0004 §7/§8: what every "목록에서 제거" control calls. The rev2 rejection was
+  // "난 카드가 계속 뜨고있는데?" -- a local dismiss() cannot remove a card that a durable
+  // ai_invoke_paused_chains row rebuilds on the next bootstrap (NR0003 §2/§8), and for
+  // paused cards dismiss() does not even fire. removeCard() splits the two lifecycles.
+  describe('removeCard', () => {
+    const LEASE_DENIED_ROW = (groupId: string) => ({
+      group_id: groupId,
+      doc_ref: `${groupId}.0001-B`,
+      paused_at: '2026-09-01T10:00:00+09:00',
+      stop_kind: 'system',
+      stop_code: 'group_lease_denied',
+      stop_run_id: 'aiv_lease_denied',
+      resume_available: false,
+    })
+
+    async function bootstrapLeaseDeniedCard(groupId: string): Promise<void> {
+      vi.mocked(getRequest).mockResolvedValueOnce({
+        data: { ok: true, runs: [], paused: [LEASE_DENIED_ROW(groupId)] },
+      } as any)
+      await store.bootstrap()
+    }
+
+    it('releases the durable row for a non-resumable system stop and drops the card', async () => {
+      const groupId = 'flowgate.default.0500.remove-lease-denied'
+      await bootstrapLeaseDeniedCard(groupId)
+      expect(store.runsByGroup[groupId]).toMatchObject({
+        phase: 'paused', stopKind: 'system', stopCode: 'group_lease_denied', resumeAvailable: false,
+      })
+      vi.mocked(deleteRequest).mockResolvedValueOnce({
+        data: { ok: true, group_id: groupId, released: true, already_released: false },
+      } as any)
+
+      await store.removeCard(groupId)
+
+      expect(vi.mocked(deleteRequest)).toHaveBeenCalledWith(
+        `/api/v1/ai-invoke/paused/${encodeURIComponent(groupId)}`,
+      )
+      expect(store.runsByGroup[groupId]).toBeUndefined()
+    })
+
+    // §16: the card may only go when the SERVER confirmed it. A refused remove that
+    // still cleared the card locally would be the same ghost one bootstrap later.
+    it('keeps the card and rethrows when the server refuses the release', async () => {
+      const groupId = 'flowgate.default.0500.remove-refused'
+      await bootstrapLeaseDeniedCard(groupId)
+      const rejection = { response: { status: 409, data: { code: 'group_lease_active' } } }
+      vi.mocked(deleteRequest).mockRejectedValueOnce(rejection)
+      vi.mocked(getRequest).mockResolvedValueOnce({
+        data: { ok: true, runs: [], paused: [LEASE_DENIED_ROW(groupId)] },
+      } as any)
+
+      await expect(store.removeCard(groupId)).rejects.toBe(rejection)
+
+      expect(store.runsByGroup[groupId]?.phase).toBe('paused')
+    })
+
+    // §9: a user pause is never removed by this shortcut -- it keeps the explicit
+    // resume / cancel-release lifecycle, and dismiss() refuses every paused card.
+    it('leaves a user pause alone and sends no request', async () => {
+      const groupId = 'flowgate.default.0500.remove-user-pause'
+      store.trackFinished({ run_id: 'run-old', group_id: groupId, end_reason: 'user_paused' })
+
+      await store.removeCard(groupId)
+
+      expect(vi.mocked(deleteRequest)).not.toHaveBeenCalled()
+      expect(store.runsByGroup[groupId]?.phase).toBe('paused')
+    })
+
+    // §10: stop_kind=system is NOT enough. A resumable system stop keeps the paused
+    // lifecycle, so this must not reach the DELETE either.
+    it('leaves a resumable system stop alone and sends no request', async () => {
+      const groupId = 'flowgate.default.0500.remove-resumable-system'
+      vi.mocked(getRequest).mockResolvedValueOnce({
+        data: {
+          ok: true,
+          runs: [],
+          paused: [{
+            group_id: groupId,
+            doc_ref: `${groupId}.0001-B`,
+            paused_at: '2026-09-01T10:00:00+09:00',
+            stop_kind: 'system',
+            stop_code: 'no_output_exhausted',
+            stop_run_id: 'aiv_resumable',
+            resume_available: true,
+          }],
+        },
+      } as any)
+      await store.bootstrap()
+
+      await store.removeCard(groupId)
+
+      expect(vi.mocked(deleteRequest)).not.toHaveBeenCalled()
+      expect(store.runsByGroup[groupId]?.phase).toBe('paused')
+    })
+
+    // §19.4: an ordinary finished card is still a purely local dismiss -- no request.
+    it('dismisses an ordinary finished card locally without any request', async () => {
+      const groupId = 'flowgate.default.0500.remove-finished'
+      finishOne(store, groupId)
+
+      await store.removeCard(groupId)
+
+      expect(vi.mocked(deleteRequest)).not.toHaveBeenCalled()
+      expect(store.runsByGroup[groupId]).toBeUndefined()
+    })
+
+    // The whole point of the rejection: after a confirmed remove the next active-all
+    // must not bring the same card back.
+    it('does not rehydrate the removed card on the next active-all', async () => {
+      const groupId = 'flowgate.default.0500.remove-no-rehydrate'
+      await bootstrapLeaseDeniedCard(groupId)
+      vi.mocked(deleteRequest).mockResolvedValueOnce({
+        data: { ok: true, group_id: groupId, released: true, already_released: false },
+      } as any)
+
+      await store.removeCard(groupId)
+      vi.mocked(getRequest).mockResolvedValueOnce({
+        data: { ok: true, runs: [], paused: [] },
+      } as any)
+      await store.bootstrap()
+
+      expect(store.runsByGroup[groupId]).toBeUndefined()
+    })
+  })
+
   // T0005 §2/§3 item 3 / §4 item 3: active-all's four resume-blocker fields must
   // survive the snake_case -> camelCase normalization losslessly (both the blocked
   // shape and the pre-existing true/null default for an ordinary paused row).
@@ -661,6 +786,54 @@ describe('aiInvokeRuns store', () => {
       stopLastMessageExcerpt: 'no output',
       pausedAt: '2026-08-03T13:56:40+09:00',
     })
+  })
+
+  // T0004 §19.3: a non-resumable system-stop card (the group_lease_denied
+  // representative payload) must not come back after it has been explicitly
+  // released -- an initial active-all bootstrap that only ever proves the card was
+  // adopted once is not the same regression as proving it stays gone.
+  it('does not rehydrate a released non-resumable system-stop card on the next active-all poll', async () => {
+    const groupId = 'flowgate.default.0459.release-no-rehydrate'
+    vi.mocked(getRequest).mockResolvedValueOnce({
+      data: {
+        ok: true,
+        runs: [],
+        paused: [{
+          group_id: groupId,
+          doc_ref: `${groupId}.0001-B`,
+          paused_at: '2026-08-25T10:00:00+09:00',
+          stop_kind: 'system',
+          stop_code: 'group_lease_denied',
+          stop_run_id: 'aiv_lease_denied',
+          resume_available: false,
+        }],
+      },
+    } as any)
+
+    await store.bootstrap()
+
+    expect(store.runsByGroup[groupId]).toMatchObject({
+      phase: 'paused',
+      stopKind: 'system',
+      stopCode: 'group_lease_denied',
+      resumeAvailable: false,
+    })
+
+    vi.mocked(deleteRequest).mockResolvedValueOnce({
+      data: { ok: true, group_id: groupId, released: true, already_released: false },
+    } as any)
+
+    await store.releasePaused(groupId)
+
+    expect(store.runsByGroup[groupId]).toBeUndefined()
+
+    vi.mocked(getRequest).mockResolvedValueOnce({
+      data: { ok: true, runs: [], paused: [] },
+    } as any)
+
+    await store.bootstrap()
+
+    expect(store.runsByGroup[groupId]).toBeUndefined()
   })
 
   // 0393 B0001 / T0005 §2-6: the server has shipped `stop_reason` on the finished payload

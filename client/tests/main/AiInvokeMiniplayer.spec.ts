@@ -1099,6 +1099,42 @@ describe('AiInvokeMiniplayer — end-of-run signal on the closed chip', () => {
       return mounted
     }
 
+    // T0004 §11/§19.1's representative payload: stop_kind=system,
+    // stop_code=group_lease_denied, resume_available=false. no_output_exhausted
+    // (mountSystemStoppedCard above) does not prove this non-resumable case.
+    function mountGroupLeaseDeniedCard() {
+      getRequest.mockImplementation(async (url: string) => {
+        if (url.includes('active-all')) {
+          return {
+            data: {
+              ok: true,
+              runs: [],
+              paused: [{
+                group_id: GROUP,
+                doc_ref: `${GROUP}.0001-B`,
+                paused_at: '2026-08-25T10:00:00+09:00',
+                stop_kind: 'system',
+                stop_code: 'group_lease_denied',
+                stop_run_id: 'aiv_lease_denied',
+                resume_available: false,
+              }],
+            },
+          }
+        }
+        return { data: {} }
+      })
+      const wrapper = mountPlayer()
+      const store = useAiInvokeRunsStore()
+      return { wrapper, store }
+    }
+
+    async function mountGroupLeaseDeniedCardAndBootstrap() {
+      const mounted = mountGroupLeaseDeniedCard()
+      await mounted.store.bootstrap()
+      await flushPromises()
+      return mounted
+    }
+
     afterEach(() => {
       vi.restoreAllMocks()
     })
@@ -1191,6 +1227,103 @@ describe('AiInvokeMiniplayer — end-of-run signal on the closed chip', () => {
       expect(deleteRequest).toHaveBeenCalledWith(`/api/v1/ai-invoke/paused/${GROUP}`)
       expect(store.runsByGroup[GROUP]).toBeUndefined()
       wrapper.unmount()
+    })
+
+    it('removes a non-resumable system-stop card (group_lease_denied) after a confirmed remove click', async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      deleteRequest.mockResolvedValue({ data: { ok: true, released: true, already_released: false } })
+      const { wrapper, store } = await mountGroupLeaseDeniedCardAndBootstrap()
+
+      expect(store.runsByGroup[GROUP]).toMatchObject({
+        phase: 'paused',
+        stopKind: 'system',
+        stopCode: 'group_lease_denied',
+        resumeAvailable: false,
+      })
+
+      await openPopover(wrapper)
+      await wrapper.find('[data-test="ai-miniplayer-release-paused"]').trigger('click')
+      await flushPromises()
+
+      expect(deleteRequest).toHaveBeenCalledWith(`/api/v1/ai-invoke/paused/${GROUP}`)
+      expect(store.runsByGroup[GROUP]).toBeUndefined()
+      wrapper.unmount()
+    })
+
+    // 0500 T0004 §7 (rev3). The rev2 rejection was "이게 통과라고? 난 카드가 계속 뜨고있는데?":
+    // [목록에서 제거] rendered on finished/lost cards ONLY, so on the non-resumable
+    // system-stop card the very control §7 names did not exist -- and the local dismiss()
+    // behind it refuses paused cards anyway. It is offered here now, and it goes through
+    // the durable server release.
+    it('offers [목록에서 제거] on a non-resumable system-stop card and releases the durable row', async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      deleteRequest.mockResolvedValue({ data: { ok: true, released: true, already_released: false } })
+      const { wrapper, store } = await mountGroupLeaseDeniedCardAndBootstrap()
+      await openPopover(wrapper)
+
+      const removeBtn = wrapper.find('[data-test="ai-miniplayer-remove"]')
+      expect(removeBtn.exists()).toBe(true)
+      expect(removeBtn.text()).toContain(t('main.ai_miniplayer.btn_remove'))
+
+      await removeBtn.trigger('click')
+      await flushPromises()
+
+      expect(deleteRequest).toHaveBeenCalledWith(`/api/v1/ai-invoke/paused/${GROUP}`)
+      expect(store.runsByGroup[GROUP]).toBeUndefined()
+      expect(useToast().toasts.value.at(-1)).toMatchObject({
+        message: t('main.ai_miniplayer.release_paused_success'),
+        type: 'success',
+      })
+      wrapper.unmount()
+    })
+
+    // §16: a refused release keeps the card AND says why -- removing it locally would
+    // just be the same ghost card again after the next bootstrap.
+    it('keeps the non-resumable system-stop card when the server refuses the remove', async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      deleteRequest.mockRejectedValue({ response: { status: 409, data: { code: 'group_lease_active' } } })
+      const { wrapper, store } = await mountGroupLeaseDeniedCardAndBootstrap()
+      await openPopover(wrapper)
+
+      await wrapper.find('[data-test="ai-miniplayer-remove"]').trigger('click')
+      await flushPromises()
+
+      expect(store.runsByGroup[GROUP]?.phase).toBe('paused')
+      expect(useToast().toasts.value.at(-1)).toMatchObject({
+        message: t('main.ai_miniplayer.error_release_paused_lease_conflict'),
+        type: 'danger',
+      })
+      wrapper.unmount()
+    })
+
+    it('sends nothing when the remove confirm is declined', async () => {
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+      const { wrapper, store } = await mountGroupLeaseDeniedCardAndBootstrap()
+      await openPopover(wrapper)
+
+      await wrapper.find('[data-test="ai-miniplayer-remove"]').trigger('click')
+      await flushPromises()
+
+      expect(confirmSpy).toHaveBeenCalledWith(t('main.ai_miniplayer.release_confirm_system'))
+      expect(deleteRequest).not.toHaveBeenCalled()
+      expect(store.runsByGroup[GROUP]?.phase).toBe('paused')
+      wrapper.unmount()
+    })
+
+    // §9/§10: the durable remove is offered for exactly one class. A user pause and a
+    // RESUMABLE system stop keep [재개]/[취소·해제] and get no [목록에서 제거] at all.
+    it('does not offer [목록에서 제거] on a user pause or on a resumable system stop', async () => {
+      const { wrapper } = mountUserPausedCard()
+      await flushPromises()
+      await openPopover(wrapper)
+      expect(wrapper.find('[data-test="ai-miniplayer-remove"]').exists()).toBe(false)
+      wrapper.unmount()
+
+      const resumable = await mountSystemStoppedCardAndBootstrap()
+      await openPopover(resumable.wrapper)
+      expect(resumable.wrapper.find('[data-test="ai-miniplayer-remove"]').exists()).toBe(false)
+      expect(resumable.wrapper.find('[data-test="ai-miniplayer-release-paused"]').exists()).toBe(true)
+      resumable.wrapper.unmount()
     })
 
     it('shows a success toast once the card is actually removed', async () => {

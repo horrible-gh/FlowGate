@@ -450,6 +450,18 @@ export function isFinishedAlert(entry: AiInvokeRunEntry): boolean {
   return isFinishedCard(entry) && (entry.phase === 'lost' || entry.outcome !== 'complete')
 }
 
+// 0500 T0004 §4: the ONE predicate for "a terminal system failure parked in the paused
+// registry" — group_lease_denied is its representative. Every field is the SERVER's own
+// answer (§10): resume_available decides resumability, never a client-side stop-code list,
+// and stop_kind decides who parked it. A user pause (§9) and a resumable system stop (§10)
+// both answer false here, so the durable remove path below can never reach them.
+export function isNonResumableSystemStop(entry: AiInvokeRunEntry): boolean {
+  return entry.phase === 'paused'
+    && entry.stopKind === 'system'
+    && entry.resumeAvailable === false
+    && !!entry.stopRunId
+}
+
 function sortRank(entry: AiInvokeRunEntry): number {
   if (isAwaitingQ(entry)) return 0
   if (ACTIVE_PHASES.includes(entry.phase)) return 1
@@ -1057,6 +1069,30 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     }
   }
 
+  async function removeCard(groupId: string): Promise<void> {
+    // 0500 T0004 §7/§8: what every "목록에서 제거" control on a card must call.
+    //
+    // A local dismiss() alone CANNOT remove a non-resumable system stop: the card is
+    // backed by a durable ai_invoke_paused_chains row, and the next active-all bootstrap
+    // rebuilds it from that row (0500 NR0003 §2/§8) -- which is exactly the ghost card
+    // that "지워도 안 없어진다". So for that one class the remove goes through the server
+    // first, and releasePaused() drops the card ONLY on a confirmed released /
+    // already_released (§16) -- a 403/409/5xx leaves it on screen and rethrows so the
+    // surface can say why.
+    //
+    // Everything else keeps its existing lifecycle untouched (§8/§9/§19.4): a user pause
+    // and a resumable system stop are not removed by this at all (dismiss() refuses every
+    // paused card), and a finished/lost card is still a purely local dismiss with no
+    // request at all.
+    const run = runsByGroup[groupId]
+    if (!run) return
+    if (isNonResumableSystemStop(run)) {
+      await releasePaused(groupId)
+      return
+    }
+    dismiss(groupId)
+  }
+
   function dismissAllFinished(): void {
     // Bulk counterpart to dismiss(), for when a 30-minute TTL has stacked up results.
     // Same guard: only finished/lost cards go, running and paused ones stay put.
@@ -1334,6 +1370,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     pause,
     resume,
     releasePaused,
+    removeCard,
     dismiss,
     dismissAllFinished,
     sweepFinishedCards,
