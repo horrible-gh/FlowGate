@@ -11,8 +11,8 @@ from modules.flow_gate.settings import source_mode_service
 _logger = logging.getLogger(__name__)
 
 VERSION = "v1"
-DISPLAY_ORDER = ("read", "grep", "glob", "stat", "diff", "log", "write", "patch", "remove", "resolve_base_dirty")
-READ_TOOLS = frozenset({"read", "grep", "glob", "stat", "diff", "log"})
+DISPLAY_ORDER = ("read", "grep", "glob", "stat", "diff", "log", "show", "write", "patch", "remove", "resolve_base_dirty")
+READ_TOOLS = frozenset({"read", "grep", "glob", "stat", "diff", "log", "show"})
 WRITE_TOOLS = frozenset({"write", "patch", "remove", "resolve_base_dirty"})
 MUTATING_STEP_TYPES = frozenset({"TR", "TSR", "TS"})
 
@@ -47,6 +47,7 @@ SUMMARY = {
         "stat": "경로의 존재 여부와 종류·크기 등 메타데이터를 조회한다.",
         "diff": "merge-base 이후 상대 ref 쪽 변경 patch를 조회한다.",
         "log": "merge-base 이후 상대 ref 쪽 커밋을 최신순으로 조회한다.",
+        "show": "커밋 하나의 메타데이터·변경 파일 통계·patch를 조회한다.",
         "write": "파일을 새로 만들거나 내용을 통째로 바꾼다.",
         "patch": "파일에서 글자 그대로 일치하는 텍스트를 찾아 일부를 바꾼다.",
         "remove": "파일 하나를 삭제한다.",
@@ -58,6 +59,7 @@ SUMMARY = {
         "stat": "パスの存在有無と種類・サイズなどのメタデータを取得する。",
         "diff": "merge-base以降の相手ref側の変更patchを取得する。",
         "log": "merge-base以降の相手ref側のcommitを新しい順に取得する。",
+        "show": "commit1件のメタデータ・変更ファイルの統計・patchを取得する。",
         "write": "ファイルを新規作成、または内容を丸ごと置き換える。",
         "patch": "ファイル内で完全一致する文字列を検索し、該当部分を置き換える。",
         "remove": "ファイルを1つ削除する。",
@@ -69,6 +71,7 @@ SUMMARY = {
         "stat": "Inspect whether a path exists and return its type, size, and metadata.",
         "diff": "Return the target ref patch since its merge base with HEAD.",
         "log": "List target-ref commits since its merge base with HEAD, newest first.",
+        "show": "Inspect one commit's metadata, per-file change stats, and patch.",
         "write": "Create a file or replace its entire content.",
         "patch": "Replace exact matching text within a file.",
         "remove": "Delete a single file.",
@@ -135,9 +138,14 @@ FIELDS = {
         "en": [("path", "string", False, None, "Optional source-root-relative path."), ("target_ref", "string", False, "origin/main", "Target ref; option-shaped values and revspecs are forbidden.")],
     },
     "log": {
-        "ko": [("path", "string", False, None, "선택적 소스 루트 상대 경로."), ("target_ref", "string", False, "origin/main", "비교할 상대 ref. 옵션형과 revspec은 금지."), ("max_count", "integer", False, None, "반환할 최대 커밋 수. 양의 정수.")],
-        "ja": [("path", "string", False, None, "任意のソースルート相対パス。"), ("target_ref", "string", False, "origin/main", "比較対象ref。option形式とrevspecは禁止。"), ("max_count", "integer", False, None, "返す最大commit数。正の整数。")],
-        "en": [("path", "string", False, None, "Optional source-root-relative path."), ("target_ref", "string", False, "origin/main", "Target ref; option-shaped values and revspecs are forbidden."), ("max_count", "integer", False, None, "Maximum commits to return; a positive integer.")],
+        "ko": [("path", "string", False, None, "선택적 소스 루트 상대 경로."), ("target_ref", "string", False, "origin/main", "비교할 상대 ref. 옵션형과 revspec은 금지."), ("max_count", "integer", False, None, "반환할 최대 커밋 수. 양의 정수."), ("side", "string", False, "target", "target=merge-base..target_ref(기본값) / head=merge-base..HEAD. HEAD 쪽에만 있는 커밋은 side=head 로 조회한다.")],
+        "ja": [("path", "string", False, None, "任意のソースルート相対パス。"), ("target_ref", "string", False, "origin/main", "比較対象ref。option形式とrevspecは禁止。"), ("max_count", "integer", False, None, "返す最大commit数。正の整数。"), ("side", "string", False, "target", "target=merge-base..target_ref(既定) / head=merge-base..HEAD。HEAD側にのみあるcommitはside=headで取得する。")],
+        "en": [("path", "string", False, None, "Optional source-root-relative path."), ("target_ref", "string", False, "origin/main", "Target ref; option-shaped values and revspecs are forbidden."), ("max_count", "integer", False, None, "Maximum commits to return; a positive integer."), ("side", "string", False, "target", "target=merge-base..target_ref (default) / head=merge-base..HEAD. Use side=head to see commits that exist only on HEAD.")],
+    },
+    "show": {
+        "ko": [("sha", "string", True, None, "조회할 commit의 hex id(4~64자). 옵션형 문자열이나 revspec은 거절된다.")],
+        "ja": [("sha", "string", True, None, "取得するcommitのhex id(4〜64文字)。option形式の文字列やrevspecは拒否される。")],
+        "en": [("sha", "string", True, None, "Hex id of the commit to inspect (4-64 chars). Option-shaped strings and revspecs are rejected.")],
     },
     "grep": {
         "ko": [("pattern", "string", True, None, "찾을 정규식(파이썬 re 문법)."), ("path", "string", False, "", "검색을 시작할 디렉터리. 비우면 소스 루트 전체."), ("glob", "string", False, None, "파일 필터. 예: **/*.py"), ("ignore_case", "boolean", False, False, "대소문자 무시."), ("max_results", "integer", False, None, "돌려줄 최대 매치 수. 채워지면 그 파일까지만 훑고 멈춘다.")],
@@ -178,9 +186,14 @@ ERRORS = {
         "en": [(503, "unavailable", "The ref is missing or the merge-base/diff git command failed."), (422, "invalid_request", "The ref or path has an invalid form."), (403, "forbidden", "This token does not have the read scope.")],
     },
     "log": {
-        "ko": [(503, "unavailable", "ref가 없거나 merge-base/log git 명령이 실패했다."), (422, "invalid_request", "ref, path 또는 max_count 형식이 잘못됐다."), (403, "forbidden", "이 토큰에 read 스코프가 없다.")],
-        "ja": [(503, "unavailable", "refがないかmerge-base/logのgit commandが失敗した。"), (422, "invalid_request", "ref、pathまたはmax_countの形式が正しくない。"), (403, "forbidden", "このtokenにread scopeがない。")],
-        "en": [(503, "unavailable", "The ref is missing or the merge-base/log git command failed."), (422, "invalid_request", "The ref, path, or max_count has an invalid form."), (403, "forbidden", "This token does not have the read scope.")],
+        "ko": [(503, "unavailable", "ref가 없거나 merge-base/log git 명령이 실패했다."), (422, "invalid_request", "ref, path, max_count 형식이 잘못됐거나 side 가 head/target 이 아니다(reason=invalid_side)."), (403, "forbidden", "이 토큰에 read 스코프가 없다.")],
+        "ja": [(503, "unavailable", "refがないかmerge-base/logのgit commandが失敗した。"), (422, "invalid_request", "ref、path、max_countの形式が正しくないか、sideがhead/targetのいずれでもない(reason=invalid_side)。"), (403, "forbidden", "このtokenにread scopeがない。")],
+        "en": [(503, "unavailable", "The ref is missing or the merge-base/log git command failed."), (422, "invalid_request", "The ref, path, or max_count has an invalid form, or side is neither head nor target (reason=invalid_side)."), (403, "forbidden", "This token does not have the read scope.")],
+    },
+    "show": {
+        "ko": [(404, "not_found", "sha가 없거나 이 저장소의 commit이 아니다."), (422, "invalid_request", "sha 형식이 잘못됐다(reason=invalid_sha) 또는 요청에 show가 허용하지 않는 필드가 있다(reason=unknown_field)."), (403, "forbidden", "이 토큰에 read 스코프가 없다."), (503, "unavailable", "git show/diff-tree 명령이 실패했다.")],
+        "ja": [(404, "not_found", "shaが存在しないか、このリポジトリのcommitではない。"), (422, "invalid_request", "shaの形式が正しくない(reason=invalid_sha)、またはshowが許可しないフィールドがリクエストに含まれる(reason=unknown_field)。"), (403, "forbidden", "このtokenにread scopeがない。"), (503, "unavailable", "git show/diff-treeコマンドが失敗した。")],
+        "en": [(404, "not_found", "The sha is missing or is not a commit in this repository."), (422, "invalid_request", "The sha has an invalid form (reason=invalid_sha), or the request carries a field show does not allow (reason=unknown_field)."), (403, "forbidden", "This token does not have the read scope."), (503, "unavailable", "The git show/diff-tree command failed.")],
     },
     "read": {
         "ko": [(404, "not_found", "경로가 없거나 일반 파일이 아니다."), (413, "too_large", "max_bytes 를 생략했는데 파일이 서버 상한을 넘는다(줄 선택자를 쓴 경우도 파일 전체 크기 기준으로 동일하게 적용)."), (422, "invalid_request", "경로가 소스 루트를 벗어나거나 형식이 잘못됐다, 요청에 read가 허용하지 않는 필드가 있다(reason=unknown_field), 또는 start_line/end_line이 잘못됐거나(reason=invalid_line_range) offset/length/max_bytes와 함께 쓰였다(reason=line_and_byte_selector)."), (403, "forbidden", "이 토큰에 read 스코프가 없다.")],
@@ -226,9 +239,14 @@ CAUTIONS = {
         "en": ["Only merge-base-to-target_ref changes are compared; HEAD-only changes are excluded.", "The patch is capped at 1 MiB and truncation is reported."],
     },
     "log": {
-        "ko": ["merge-base 이후 target_ref 쪽 커밋만 최신순으로 반환한다.", "서버 상한은 1000개이며 제한되면 truncated=true다."],
-        "ja": ["merge-base以降のtarget_ref側commitだけを新しい順で返す。", "server上限は1000件で、制限時はtruncated=true。"],
-        "en": ["Only target-ref commits after the merge base are returned, newest first.", "The server cap is 1,000 commits; truncation is reported."],
+        "ko": ["merge-base 이후 target_ref 쪽 커밋만 최신순으로 반환한다(side=head 를 주면 HEAD 쪽으로 바뀐다).", "서버 상한은 1000개이며 제한되면 truncated=true다.", "side=head 는 authorized group worktree HEAD에만 있는 커밋(target_ref 에는 없음)을, side=target(기본값)은 target_ref 쪽 변경을 본다."],
+        "ja": ["merge-base以降のtarget_ref側commitだけを新しい順で返す(side=headを指定するとHEAD側になる)。", "server上限は1000件で、制限時はtruncated=true。", "side=headはauthorized group worktreeのHEADにのみあるcommit(target_refにはない)を、side=target(既定)はtarget_ref側の変更を見る。"],
+        "en": ["Only target-ref commits after the merge base are returned, newest first (side=head switches to the HEAD side).", "The server cap is 1,000 commits; truncation is reported.", "side=head sees commits that exist only on the authorized group worktree's HEAD (not on target_ref); side=target (default) sees target_ref's own changes."],
+    },
+    "show": {
+        "ko": ["HEAD/index/working tree를 바꾸지 않는 read-only 조회다(cat-file/show/diff-tree).", "patch는 diff와 같은 1 MiB 상한에서 잘리며 truncated로 알린다.", "sha는 이 저장소에 실제로 존재하는 commit이어야 한다 — 다른 그룹 worktree에만 있는 커밋은 404다."],
+        "ja": ["HEAD/index/working treeを変更しないread-only参照である(cat-file/show/diff-tree)。", "patchはdiffと同じ1 MiB上限で切り詰められ、truncatedで示す。", "shaはこのリポジトリに実在するcommitでなければならない — 別グループのworktreeにのみあるcommitは404である。"],
+        "en": ["A read-only inspection that never changes HEAD, the index, or the working tree (cat-file/show/diff-tree).", "The patch is capped at the same 1 MiB limit as diff, and truncation is reported.", "sha must be a commit that actually exists in this repository — a commit that exists only in another group's worktree returns 404."],
     },
     "read": {
         "ko": ["offset과 length로 바이트 단위 읽기 구간을 지정할 수 있다. offset은 0부터 시작하며 파일 끝을 넘으면 빈 내용과 eof=true를 돌려준다.", "size는 구간을 잘라 읽었을 때도 파일 전체 크기다.", "큰 소스 파일에서 필요한 줄만 보려면 start_line/end_line(1부터 시작, 끝 줄 포함)을 쓴다. offset/length/max_bytes와 동시에 보내면 422다. 응답에는 returned_start_line/returned_end_line/total_lines가 함께 실린다.", "read가 허용하지 않는 필드를 보내면 무시되지 않고 422(reason=unknown_field)로 거절된다 — 예를 들어 start_line 없이 잘못 붙인 오타 필드는 전체 파일을 읽어오지 않는다."],
@@ -271,6 +289,7 @@ EXAMPLE_BODIES = {
     "read": {"path": "app/main.py", "start_line": 1, "end_line": 40, "encoding": "utf-8"},
     "diff": {"target_ref": "origin/main", "path": "server/app.py"},
     "log": {"target_ref": "origin/main", "path": "server/app.py", "max_count": 20},
+    "show": {"sha": "fedcba9876543210fedcba9876543210fedcba98"},
     "grep": {"pattern": "TODO", "glob": "**/*.py", "ignore_case": True, "max_results": 20},
     "glob": {"pattern": "**/*.py"},
     "stat": {"path": "app/main.py"},
@@ -308,7 +327,8 @@ MENTION_LINES = {
 EXAMPLE_RESPONSES = {
     "read": {"ok": True, "op": "read", "server_ts": "2026-07-29T13:34:25+09:00", "path": "app/main.py", "content": "<lines 1-40>", "encoding": "utf-8", "size": 18342, "start_line": 1, "end_line": 40, "returned_start_line": 1, "returned_end_line": 40, "total_lines": 512, "returned_bytes": 1180, "eof": False, "truncated": True},
     "diff": {"ok": True, "op": "diff", "server_ts": "2026-07-29T13:34:25+09:00", "merge_base": "0123456789abcdef0123456789abcdef01234567", "target_ref": "origin/main", "patch": "diff --git a/server/app.py b/server/app.py\n...", "returned_bytes": 58, "truncated": False},
-    "log": {"ok": True, "op": "log", "server_ts": "2026-07-29T13:34:25+09:00", "merge_base": "0123456789abcdef0123456789abcdef01234567", "target_ref": "origin/main", "commits": [{"sha": "fedcba9876543210fedcba9876543210fedcba98", "subject": "fix: update app"}], "total": 1, "truncated": False},
+    "log": {"ok": True, "op": "log", "server_ts": "2026-07-29T13:34:25+09:00", "merge_base": "0123456789abcdef0123456789abcdef01234567", "target_ref": "origin/main", "side": "target", "commits": [{"sha": "fedcba9876543210fedcba9876543210fedcba98", "subject": "fix: update app"}], "total": 1, "truncated": False},
+    "show": {"ok": True, "op": "show", "server_ts": "2026-07-29T13:34:25+09:00", "sha": "fedcba9876543210fedcba9876543210fedcba98", "parents": ["0123456789abcdef0123456789abcdef01234567"], "author_name": "Jane Doe", "author_email": "jane@example.com", "author_date": "2026-07-29T13:20:00+09:00", "subject": "fix: update app", "files": [{"path": "server/app.py", "insertions": 3, "deletions": 1}], "patch": "diff --git a/server/app.py b/server/app.py\n...", "returned_bytes": 58, "truncated": False},
     "grep": {"ok": True, "op": "grep", "server_ts": "2026-07-29T13:34:25+09:00", "matches": [{"file": "server/modules/flow_gate/template_provision.py", "line": 194, "text": "def normalize_locale(x_locale: Optional[str]) -> str:"}], "total": 1, "truncated": False},
     "glob": {"ok": True, "op": "glob", "server_ts": "2026-07-29T13:34:31+09:00", "paths": ["server/modules/flow_gate/db/events.py", "server/modules/flow_gate/db/documents.py"], "total": 2},
     "stat": {"ok": True, "op": "stat", "server_ts": "2026-07-29T13:34:25+09:00", "path": "app/main.py", "exists": True, "type": "file", "size": 18342, "mtime": "2026-07-29T13:30:00+09:00", "eol": "lf", "binary": False},

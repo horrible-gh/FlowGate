@@ -59,7 +59,7 @@ _logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-OPS = ("read", "diff", "log", "write", "grep", "glob", "remove", "patch", "stat", "resolve_base_dirty")
+OPS = ("read", "diff", "log", "show", "write", "grep", "glob", "remove", "patch", "stat", "resolve_base_dirty")
 _WORKER_GRANT_PREFIX = "worker_"
 # The mutating step types live in tool_registry.MUTATING_STEP_TYPES — the single judgement
 # point (0349 D0004 D-2). This module reaches them through tool_registry.kind_for_token.
@@ -82,6 +82,7 @@ OP_SCOPE = {
     "read": "read",
     "diff": "read",
     "log": "read",
+    "show": "read",
     "write": "write",
     "grep": "grep",
     "glob": "grep",
@@ -482,6 +483,10 @@ def _validate_required(op: str, body: dict) -> None:
             seen.add(decision["path"])
     elif op == "stat":
         _require_str(body, "path")
+    elif op == "show":
+        sha = body.get("sha")
+        if not _valid_commit_sha(sha):
+            raise _OpError(422, details={"reason": "invalid_sha"})
     elif op in {"diff", "log"}:
         path = body.get("path")
         if path is not None:
@@ -495,6 +500,9 @@ def _validate_required(op: str, body: dict) -> None:
                 not isinstance(max_count, int) or isinstance(max_count, bool) or max_count <= 0
             ):
                 raise _OpError(422)
+            side = body.get("side")
+            if side is not None and side not in ("head", "target"):
+                raise _OpError(422, details={"reason": "invalid_side"})
 
 
 def _validate_max_int(body: dict, key: str) -> None:
@@ -516,7 +524,8 @@ _ALLOWED_FIELDS: dict = {
     "glob": frozenset({"pattern", "path", "ref"}),
     "stat": frozenset({"path", "ref"}),
     "diff": frozenset({"path", "target_ref"}),
-    "log": frozenset({"path", "target_ref", "max_count"}),
+    "log": frozenset({"path", "target_ref", "max_count", "side"}),
+    "show": frozenset({"sha"}),
     "write": frozenset({"path", "content", "mode", "encoding"}),
     "patch": frozenset({"path", "old_string", "new_string", "replace_all", "encoding"}),
     "remove": frozenset({"path", "recursive"}),
@@ -583,6 +592,13 @@ def _safe_target_ref(value: str) -> bool:
         and "@{" not in value
         and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", value)
     )
+
+
+def _valid_commit_sha(value: object) -> bool:
+    """Pure hex commit-id shape (0524 T0004) — stricter than `_safe_target_ref`,
+    since a `show` sha is spliced straight into a `{sha}^{commit}` / `{sha}` argv
+    element and must never be mistakable for a git option or revspec."""
+    return isinstance(value, str) and bool(re.fullmatch(r"[0-9a-fA-F]{4,64}", value))
 
 
 def _validate_ref(body: dict) -> None:
@@ -792,6 +808,8 @@ def _execute(op: str, body: dict, root: Path, grant: Optional[dict] = None) -> t
         return _exec_diff(body, root)
     if op == "log":
         return _exec_log(body, root)
+    if op == "show":
+        return _exec_show(body, root)
     if op == "write":
         return _exec_write(body, root)
     if op == "remove":
@@ -895,13 +913,20 @@ def _exec_diff(body: dict, root: Path) -> tuple[dict, Optional[int]]:
 
 
 def _exec_log(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+    """0524 T0004 §2.1(a): `side` selects which end of the merge-base range is
+    walked. `target` (default, unchanged) is `merge_base..target_ref`; `head` is
+    the symmetric `merge_base..HEAD` — the authorized group worktree's own
+    branch-only history that `target` can never see (NR0003 §4/§5).
+    """
     from modules.flow_gate.services import git_service
 
     target_ref = body.get("target_ref", "origin/main")
+    side = body.get("side") or "target"
     merge_base = _merge_base(root, target_ref)
     requested = body.get("max_count")
     limit = min(requested or _MAX_LOG_COUNT, _MAX_LOG_COUNT)
-    args = ["log", "--format=%H%x00%s", f"--max-count={limit + 1}", f"{merge_base}..{target_ref}", "--"]
+    range_end = "HEAD" if side == "head" else target_ref
+    args = ["log", "--format=%H%x00%s", f"--max-count={limit + 1}", f"{merge_base}..{range_end}", "--"]
     if body.get("path") is not None:
         args.append(body["path"])
     proc = git_service._run_git(args, cwd=root)
@@ -916,9 +941,71 @@ def _exec_log(body: dict, root: Path) -> tuple[dict, Optional[int]]:
             raise _OpError(503, details={"reason": "git_error"}, message="git log output invalid")
         commits.append({"sha": sha, "subject": subject})
     return {
-        "merge_base": merge_base, "target_ref": target_ref,
+        "merge_base": merge_base, "target_ref": target_ref, "side": side,
         "commits": commits, "total": len(commits), "truncated": truncated,
     }, len((proc.stdout or "").encode("utf-8"))
+
+
+def _exec_show(body: dict, root: Path) -> tuple[dict, Optional[int]]:
+    """0524 T0004 §2.1(b): individual commit inspection — metadata, per-file
+    stat and a bounded patch — for a `sha` already confirmed to be a real commit
+    object in this repository. `cat-file -e`/`show`/`diff-tree` are read-only;
+    none of them touch HEAD, the index or the working tree.
+    """
+    from modules.flow_gate.services import git_service
+
+    sha = body["sha"]
+    exists = git_service._run_git(["cat-file", "-e", f"{sha}^{{commit}}"], cwd=root)
+    if exists.returncode != 0:
+        raise _OpError(404, details={"reason": "not_found", "sha": sha})
+
+    meta = git_service._run_git(
+        ["show", "-s", "--format=%H%x00%P%x00%an%x00%ae%x00%aI%x00%s", sha], cwd=root,
+    )
+    if meta.returncode != 0:
+        raise _OpError(503, details={"reason": "git_error"}, message="git show failed")
+    fields = (meta.stdout or "").rstrip("\n").split("\x00")
+    if len(fields) != 6:
+        raise _OpError(503, details={"reason": "git_error"}, message="git show output invalid")
+    full_sha, parents_raw, author_name, author_email, author_date, subject = fields
+    parents = parents_raw.split() if parents_raw else []
+
+    numstat = git_service._run_git(
+        ["diff-tree", "--root", "--no-commit-id", "--numstat", "-r", sha], cwd=root,
+    )
+    if numstat.returncode != 0:
+        raise _OpError(503, details={"reason": "git_error"}, message="git diff-tree numstat failed")
+    files = []
+    for line in (numstat.stdout or "").splitlines():
+        if not line:
+            continue
+        parts = line.split("\t", 2)
+        if len(parts) != 3:
+            raise _OpError(503, details={"reason": "git_error"}, message="git diff-tree numstat output invalid")
+        ins_raw, del_raw, file_path = parts
+        insertions = None if ins_raw == "-" else int(ins_raw)
+        deletions = None if del_raw == "-" else int(del_raw)
+        files.append({"path": file_path, "insertions": insertions, "deletions": deletions})
+
+    patch_proc = git_service._run_git(["diff-tree", "--root", "-p", "--no-commit-id", "-r", sha], cwd=root)
+    if patch_proc.returncode != 0:
+        raise _OpError(503, details={"reason": "git_error"}, message="git diff-tree patch failed")
+    raw = (patch_proc.stdout or "").encode("utf-8")
+    truncated = len(raw) > _MAX_DIFF_BYTES
+    patch = raw[:_MAX_DIFF_BYTES].decode("utf-8", errors="replace")
+
+    return {
+        "sha": full_sha,
+        "parents": parents,
+        "author_name": author_name,
+        "author_email": author_email,
+        "author_date": author_date,
+        "subject": subject,
+        "files": files,
+        "patch": patch,
+        "returned_bytes": len(patch.encode("utf-8")),
+        "truncated": truncated,
+    }, len(patch.encode("utf-8"))
 
 
 # ── Byte/EOL helpers shared by read · patch · stat (0347 L0005 §2.7) ───────────
