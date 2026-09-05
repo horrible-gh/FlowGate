@@ -58,7 +58,7 @@ def test_mention_keeps_remote_crud_by_default(monkeypatch):
     # write" is the tool list, not a /remote/write example. tool_registry.DISPLAY_ORDER
     # since gained "diff"/"log" (merge-base patch/commit lookups), so the full read_write
     # kind now lists nine tools, not seven.
-    assert "도구: read, grep, glob, stat, diff, log, write, patch, remove" in out
+    assert "도구: read, grep, glob, stat, diff, log, show, merge_preview, write, patch, remove" in out
 
 
 def test_mention_omits_remote_crud_in_local_mode(monkeypatch):
