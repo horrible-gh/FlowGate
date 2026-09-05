@@ -1564,8 +1564,13 @@ def test_work_plan_fill_mention_contains_three_scopes_and_note_instruction(monke
         "step_keys": ["D#1"],
         "provider_ids": ["prov-a"],
     }
+    sentinel_scratch_dir = r"C:\FLOWGATE_SECRET_SCRATCH\TOKEN_123"
     mention = mention_service.build_work_plan_fill_mention(
-        token_rec={"project": "wpprj", "group_id": "wpprj.default.0402", "scratch_dir": "x"},
+        token_rec={
+            "project": "wpprj",
+            "group_id": "wpprj.default.0402",
+            "scratch_dir": sentinel_scratch_dir,
+        },
         target_doc={"doc_id": "wpprj.default.0402.0002-WP"},
         body=body,
         scope=scope,
@@ -1576,7 +1581,11 @@ def test_work_plan_fill_mention_contains_three_scopes_and_note_instruction(monke
     assert "D#1 · 기본설계 1장" in mention
     assert "D#1 · D" not in mention
     assert "prov-a · Provider A" in mention
-    assert "scratch_dir: x" in mention
+    assert "scratch_dir" not in mention
+    # flowgate.default.0506 TR0005 rev1: a label-only check ("scratch_dir" not in mention)
+    # still passes if the real path leaks without its key (e.g. inside a sentence). Assert
+    # the sentinel path itself is absent, matching the other worker-facing surfaces.
+    assert sentinel_scratch_dir not in mention
     assert "범위 밖 값은 지금 값 그대로" in mention
     assert "note를 반드시 채우십시오" in mention
     assert "design_template/WP" in mention
