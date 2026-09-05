@@ -5948,24 +5948,50 @@ def project_git_status(project_id: str) -> dict:
     # into a single IN query so the loop only does set membership.
     all_rows = db_git.list_states_of_project_any(project_id)
     rows = [r for r in all_rows if r.get("worktree_registered")]
+    # T0009: one batched root lookup serves both the existing lazy transition
+    # and stale-pending recovery. A pending ledger row is displayable only while
+    # its workflow root remains wf_done; interrupted/rework paths can otherwise
+    # leave awaiting_choice/waiting visible after approval was withdrawn.
+    root_candidate_statuses = ("none", "awaiting_choice", "waiting")
     wf_done_groups = _groups_root_wf_done(
-        [r["group_id"] for r in rows if (r.get("status") or "none") == "none"]
+        [
+            r["group_id"] for r in rows
+            if (r.get("status") or "none") in root_candidate_statuses
+        ]
     )
     for row in rows:
-        if (row.get("status") or "none") == "none" and row["group_id"] in wf_done_groups:
+        status = row.get("status") or "none"
+        group_id = row["group_id"]
+        if status in ("awaiting_choice", "waiting") and group_id not in wf_done_groups:
+            try:
+                # Status-only repair: preserve the branch, registered worktree, and
+                # any merge ledger fields. conflict remains an active-session state
+                # and is deliberately excluded from this recovery. The row's status
+                # is now "none", which SLOT_STATUSES already keeps in `slots` below
+                # and PENDING_STATUSES already keeps out of `pending` — no separate
+                # exclusion list is needed.
+                _set_status(group_id, "none")
+                row["status"] = "none"
+            except Exception:
+                # Keep the row visible when persistence fails; hiding it without
+                # repairing the ledger would make the UI disagree with the SSOT.
+                _log.warning(
+                    "stale git pending recovery failed for %s", group_id, exc_info=True
+                )
+        elif status == "none" and group_id in wf_done_groups:
             try:
                 # 0199 B0001: proven no-work groups are discarded (torn down, no
                 # merge/push) here; real groups still transition to awaiting_choice.
                 # A discarded group's slot is unregistered by the cleanup, so it
                 # drops out of every list below (SLOT/PENDING/CLEANUP filters).
                 row["status"] = _decide_pending_transition(
-                    project_id, cfg, row, row["group_id"]
+                    project_id, cfg, row, group_id
                 )
             except Exception:
                 # One broken group must not sink the whole aggregation
                 # (0115 batch-fetch exception-isolation lesson, L §5).
                 _log.warning(
-                    "lazy git transition failed for %s", row.get("group_id"), exc_info=True
+                    "lazy git transition failed for %s", group_id, exc_info=True
                 )
 
     # 0327 T0004 (B0001): `writable` tells the file explorer whether this slot's

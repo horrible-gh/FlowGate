@@ -501,6 +501,82 @@ def test_11_wf_done_none_lazy_transition_still_finalizes(finalize_pending_state)
     )
 
 
+# ── Part E — project status stale-pending recovery (T#3) ─────────────────────────
+
+
+def test_14_project_status_recovers_stale_pending_before_header_aggregation(monkeypatch):
+    """T0009: status polling repairs only stale awaiting_choice/waiting rows.
+
+    The test supplies root-missing/non-wf_done stale rows, approved pending
+    controls, a conflict control, and a normal lazy-none row. It pins the
+    single batch root lookup and proves recovery has no Git/worktree action.
+    """
+    project_id = "flowgate"
+    rows = [
+        {"group_id": "stale-awaiting", "status": "awaiting_choice", "worktree_registered": 1, "branch": "a"},
+        {"group_id": "stale-waiting", "status": "waiting", "worktree_registered": 1, "branch": "b"},
+        {"group_id": "approved-awaiting", "status": "awaiting_choice", "worktree_registered": 1, "branch": "c"},
+        {"group_id": "approved-waiting", "status": "waiting", "worktree_registered": 1, "branch": "d"},
+        {"group_id": "active-conflict", "status": "conflict", "worktree_registered": 1, "branch": "e"},
+        {"group_id": "lazy-none", "status": "none", "worktree_registered": 1, "branch": "f"},
+    ]
+    root_lookup = MagicMock(return_value={
+        "approved-awaiting", "approved-waiting", "lazy-none",
+    })
+    repaired: list[tuple[str, str]] = []
+    lazy = MagicMock(return_value="awaiting_choice")
+
+    monkeypatch.setattr(svc.db_projects, "get_by_id", lambda value: {"project_id": value})
+    monkeypatch.setattr(svc.db_git, "get_config", lambda value: {
+        "enabled": 1, "base_branch": "main", "default_finalize_action": "wait",
+    })
+    monkeypatch.setattr(svc.db_git, "list_states_of_project_any", lambda value: rows)
+    monkeypatch.setattr(svc, "_groups_root_wf_done", root_lookup)
+    monkeypatch.setattr(
+        svc, "_set_status",
+        lambda group_id, status, **kwargs: repaired.append((group_id, status)),
+    )
+    monkeypatch.setattr(svc, "_decide_pending_transition", lazy)
+    monkeypatch.setattr(svc, "_project_name", lambda value: None)
+    monkeypatch.setattr(svc, "group_worktree_writable", lambda *args: True)
+    monkeypatch.setattr(svc, "_group_ac_doc_ids", lambda group_ids: {})
+    monkeypatch.setattr(svc, "_base_ahead_behind", lambda *args: (0, 0))
+    monkeypatch.setattr(svc, "_build_unpushed", lambda *args: [])
+    monkeypatch.setattr(svc.db_terminal_cleanup, "get", lambda value: None)
+
+    status = svc.project_git_status(project_id)["status"]
+
+    root_lookup.assert_called_once_with([
+        "stale-awaiting", "stale-waiting", "approved-awaiting",
+        "approved-waiting", "lazy-none",
+    ])
+    assert repaired == [("stale-awaiting", "none"), ("stale-waiting", "none")]
+    lazy.assert_called_once_with(
+        project_id, svc.db_git.get_config(project_id), rows[5], "lazy-none",
+    )
+
+    pending_ids = [item["group_id"] for item in status["pending"]]
+    slot_ids = [item["group_id"] for item in status["slots"]]
+    assert pending_ids == ["approved-awaiting", "approved-waiting", "active-conflict", "lazy-none"]
+    # Recovery is a pending-only demotion: the row's status is now "none", which
+    # SLOT_STATUSES already keeps in `slots` (matching every other "none" group) —
+    # a recovered group must stay selectable/visible, not vanish from the header.
+    assert "stale-awaiting" not in pending_ids
+    assert "stale-waiting" not in pending_ids
+    assert "stale-awaiting" in slot_ids
+    assert "stale-waiting" in slot_ids
+    slots_by_id = {item["group_id"]: item for item in status["slots"]}
+    assert slots_by_id["stale-awaiting"]["status"] == "none"
+    assert slots_by_id["stale-awaiting"]["branch"] == "a"
+    assert slots_by_id["stale-waiting"]["status"] == "none"
+    assert slots_by_id["stale-waiting"]["branch"] == "b"
+    assert status["pending_count"] == len(status["pending"]) == 4
+    assert rows[0]["status"] == rows[1]["status"] == "none"
+    assert rows[0]["branch"] == "a"
+    assert rows[1]["branch"] == "b"
+    assert rows[4]["status"] == "conflict"
+
+
 # ── Part D — router/HTTP envelope for the stale-pending 409 (0007-T 완료 기준 3) ──
 
 
