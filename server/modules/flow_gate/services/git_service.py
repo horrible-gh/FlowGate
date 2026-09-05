@@ -4487,8 +4487,15 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         )
 
     # Refresh the lazy wf_done transition before the state guard (L0006 §4.2).
+    # Pending ledger states are only a cached consequence of final workflow approval,
+    # never proof of it: re-check the root here to contain stale historical/manual data.
     status = (state.get("status") or "none")
-    if status == "none" and _group_root_wf_done(group_id):
+    root_wf_done = (
+        _group_root_wf_done(group_id)
+        if status in ("none", "awaiting_choice", "waiting")
+        else None
+    )
+    if status == "none" and root_wf_done:
         _set_status(group_id, "awaiting_choice")
         status = "awaiting_choice"
     if status in ("merged", "pushed"):
@@ -4502,6 +4509,12 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         )
     if status not in ("awaiting_choice", "waiting"):
         raise GitServiceError(409, "invalid_state", f"finalize not available in state '{status}'")
+    if not root_wf_done:
+        raise GitServiceError(
+            409,
+            "invalid_state",
+            "final workflow approval is required before Git finalize",
+        )
 
     if action == "wait":
         _set_status(group_id, "waiting")

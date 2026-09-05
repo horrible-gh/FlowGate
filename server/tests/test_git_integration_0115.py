@@ -585,6 +585,7 @@ class TestFinalizeGuards:
             "enabled": True,
         })
         db_git.register_worktree(group, "gitprj", "gitprj_default_0101")
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
         db_git.set_status(group, "awaiting_choice")
 
         state = svc.get_finalize_state(group, preview_ac=True)
@@ -617,6 +618,7 @@ class TestFinalizeActionContract0331:
             "enabled": True,
         })
         db_git.register_worktree(self.GROUP, "gitprj", "gitprj_default_0109")
+        _seed_wf_done_root(self.GROUP, project_id=self.GROUP.split(".", 1)[0])
         db_git.set_status(self.GROUP, "awaiting_choice")
         yield self.GROUP
 
@@ -807,6 +809,7 @@ class TestGitEndToEnd:
         wt = src_root("GitProj", "gitprj_default_0100")
         (wt / "work.txt").write_text("group work\n", encoding="utf-8")
 
+        _seed_wf_done_root(self.GROUP, project_id=self.GROUP.split(".", 1)[0])
         db_git.set_status(self.GROUP, "awaiting_choice")
         out = svc.finalize(self.GROUP, "wait")
         assert out["result"]["status"] == "waiting"
@@ -856,6 +859,7 @@ class TestGitEndToEnd:
         (wt / "feature.txt").write_text("branch only\n", encoding="utf-8")
         _git(["add", "-A"], cwd=wt)
         _git(["commit", "-m", "feat: branch only"], cwd=wt)
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
         db_git.set_status(group, "awaiting_choice")
         out = svc.finalize(group, "push")
         assert out["result"]["status"] == "pushed"
@@ -876,6 +880,7 @@ class TestGitEndToEnd:
         assert svc.ensure_worktree("gitprj", "default", group) == "ok"
         wt = src_root("GitProj", "gitprj_default_0106")
         (wt / "feature.txt").write_text("branch only\n", encoding="utf-8")
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
         db_git.set_status(group, "awaiting_choice")
 
         with pytest.raises(svc.GitServiceError) as exc:
@@ -902,6 +907,7 @@ class TestGitEndToEnd:
         assert svc.ensure_worktree("gitprj", "default", group) == "ok"
         wt = src_root("GitProj", "gitprj_default_0107")
         (wt / "feature.txt").write_text("branch only\n", encoding="utf-8")
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
         db_git.set_status(group, "awaiting_choice")
 
         out = svc.finalize(group, "commit_push", commit_message="feat: commit and push")
@@ -925,6 +931,7 @@ class TestGitEndToEnd:
         assert svc.ensure_worktree("gitprj", "default", group) == "ok"
         wt = src_root("GitProj", "gitprj_default_0108")
         (wt / "feature.txt").write_text("branch only\n", encoding="utf-8")
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
         db_git.set_status(group, "awaiting_choice")
 
         out = svc.finalize(group, "commit_only", commit_message="feat: commit only")
@@ -955,6 +962,7 @@ class TestGitEndToEnd:
         assert svc.ensure_worktree("gitprj", "default", group) == "ok"
         wt = src_root("GitProj", "gitprj_default_0105")
         (wt / "local-only.txt").write_text("not pushed yet\n", encoding="utf-8")
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
         db_git.set_status(group, "awaiting_choice")
 
         out = svc.finalize(group, "merge_only", commit_message="feat: local merge only")
@@ -1004,6 +1012,7 @@ class TestGitEndToEnd:
         _git(["commit", "-am", "mainline change"], cwd=seedwt)
         _git(["push", "origin", "main"], cwd=seedwt)
 
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
         db_git.set_status(group, "awaiting_choice")
         out = svc.finalize(group, "merge")
         assert out["result"]["status"] == "conflict"
@@ -1015,6 +1024,7 @@ class TestGitEndToEnd:
         assert svc.open_merge_session_of_project("gitprj")["merge_id"] == merge_id
         group2 = "gitprj.default.0103"
         assert svc.ensure_worktree("gitprj", "default", group2) == "ok"
+        _seed_wf_done_root(group2, project_id=group2.split(".", 1)[0])
         db_git.set_status(group2, "awaiting_choice")
         with pytest.raises(svc.GitServiceError) as exc:
             svc.finalize(group2, "merge")
@@ -1099,6 +1109,7 @@ class TestGitEndToEnd:
         _git(["commit", "-am", "mainline change to sidecheck"], cwd=seedwt)
         _git(["push", "origin", "main"], cwd=seedwt)
 
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
         db_git.set_status(group, "awaiting_choice")
         out = svc.finalize(group, "merge")
         assert out["result"]["status"] == "conflict"
@@ -1155,6 +1166,7 @@ class TestGitEndToEnd:
         _git(["commit", "-am", "mainline change to sidecheck2"], cwd=seedwt)
         _git(["push", "origin", "main"], cwd=seedwt)
 
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
         db_git.set_status(group, "awaiting_choice")
         out = svc.finalize(group, "merge")
         assert out["result"]["status"] == "conflict"
@@ -1202,6 +1214,7 @@ class TestGitEndToEnd:
         _git(["commit", "-m", "mainline adds onlynew.txt independently"], cwd=seedwt)
         _git(["push", "origin", "main"], cwd=seedwt)
 
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
         db_git.set_status(group, "awaiting_choice")
         out = svc.finalize(group, "merge")
         assert out["result"]["status"] == "conflict"
@@ -1260,6 +1273,7 @@ class TestGitEndToEnd:
         _git(["commit", "-am", "mainline change to sidecheck3"], cwd=seedwt)
         _git(["push", "origin", "main"], cwd=seedwt)
 
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
         db_git.set_status(group, "awaiting_choice")
         out = svc.finalize(group, "merge")
         assert out["result"]["status"] == "conflict"
@@ -1342,6 +1356,7 @@ class TestGitEndToEnd:
         _git(["commit", "-am", "mainline change to sidecheck4"], cwd=seedwt)
         _git(["push", "origin", "main"], cwd=seedwt)
 
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
         db_git.set_status(group, "awaiting_choice")
         out = svc.finalize(group, "merge")
         assert out["result"]["status"] == "conflict"
@@ -1480,6 +1495,7 @@ class TestGitEndToEnd:
         _git(["commit", "-am", "mainline again"], cwd=seedwt)
         _git(["push", "origin", "main"], cwd=seedwt)
 
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
         db_git.set_status(group, "awaiting_choice")
         out = svc.finalize(group, "merge")
         assert out["result"]["status"] == "conflict"
@@ -1600,6 +1616,7 @@ class TestProvision0161:
         # ignores it was only ever a way to lose work.
         assert (wt / "shared.txt").read_text(encoding="utf-8") == "local version\n"
         (wt / "work.txt").write_text("group work\n", encoding="utf-8")
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
         db_git.set_status(group, "awaiting_choice")
         out = svc.finalize(group, "merge")
         assert out["result"]["status"] == "merged"
@@ -1776,6 +1793,7 @@ class TestGitActions0162:
         for g in (g_wait, g_conf, g_done):
             assert svc.ensure_worktree("gitactprj", "default", g) == "ok"
 
+        _seed_wf_done_root(g_wait, project_id=g_wait.split(".", 1)[0])
         db_git.set_status(g_wait, "waiting")
         db_git.set_status(g_conf, "conflict", merge_id=None)
         db_git.set_status(g_done, "merged", merge_commit="deadbee")
@@ -1850,6 +1868,7 @@ class TestGitActions0162:
         from modules.flow_gate.storage.paths import src_root
         wt = src_root("GitActProj", "gitactprj_default_0204")
         (wt / "work.txt").write_text("group work\n", encoding="utf-8")
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
         db_git.set_status(group, "awaiting_choice")
 
         # precheck passes for an AC doc of this git-active group
@@ -2037,6 +2056,7 @@ class TestBaseCommitRevert0177:
         assert svc.ensure_worktree("baseprj", "default", group) == "ok"
         wt = src_root("BaseProj", "baseprj_default_0301")
         (wt / "work.txt").write_text("group work\n", encoding="utf-8")
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
         db_git.set_status(group, "awaiting_choice")
 
         base = base_origin["base"]
@@ -2275,6 +2295,7 @@ class TestConfigurableAuthor0237:
         wt = src_root("AuthProj", "authprj_default_0300")
         (wt / "feature.txt").write_text("work\n", encoding="utf-8")
 
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
         db_git.set_status(group, "awaiting_choice")
         out = svc.finalize(group, "merge")
         assert out["result"]["status"] == "merged"
@@ -2347,16 +2368,18 @@ def _seed_wf_done_root(group_id: str, project_id: str = "gitnoop") -> None:
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.db import groups as db_groups
 
-    db_groups.create({
-        "group_id": group_id, "project_id": project_id,
-        "module": "default", "title": "inquiry",
-    })
+    if db_groups.get_by_id(group_id) is None:
+        db_groups.create({
+            "group_id": group_id, "project_id": project_id,
+            "module": "default", "title": "inquiry",
+        })
     doc_id = f"{group_id}.0001-R"
-    db_docs.create({
-        "doc_id": doc_id, "project_id": project_id, "module": "default",
-        "group_id": group_id, "type_code": "R", "seq": 1, "title": "inquiry root",
-        "file_path": f"documents/{group_id}/0001-R.md",
-    })
+    if db_docs.get_by_id(doc_id) is None:
+        db_docs.create({
+            "doc_id": doc_id, "project_id": project_id, "module": "default",
+            "group_id": group_id, "type_code": "R", "seq": 1, "title": "inquiry root",
+            "file_path": f"documents/{group_id}/0001-R.md",
+        })
     db_docs.update(doc_id, {"doc_review_status": "wf_done"})
 
 
@@ -2436,6 +2459,7 @@ class TestNoWorkAutoDiscard0199:
         # Force the gate open on a clean worktree (branch at base, no work) and
         # explicitly pick merge — the no-change guard must still refuse to stamp an
         # empty merge commit / push.
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
         db_git.set_status(group, "awaiting_choice")
 
         out = svc.finalize(group, "merge")["result"]
@@ -2453,6 +2477,7 @@ class TestNoWorkAutoDiscard0199:
 
         group = "gitnoop.default.0214"
         assert svc.ensure_worktree("gitnoop", "default", group) == "ok"
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
         db_git.set_status(group, "awaiting_choice")
 
         out = svc.finalize(group, "push")["result"]
@@ -2770,6 +2795,7 @@ def _make_untracked_collision(
     assert svc.ensure_worktree(project_id, module, group) == "ok"
     wt = src_root(project_name, group.replace(".", "_"))
     (wt / path).write_text(content, encoding="utf-8")
+    _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
     db_git.set_status(group, "awaiting_choice")
     return wt
 

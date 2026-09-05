@@ -392,3 +392,244 @@ def test_8_merging_blocks_while_awaiting_choice_reopens_cleanly(reopen_store):
     task_ok = db_docs.get_by_id(ids_ok["T"])
     assert task_ok["doc_review_status"] == "pending_review"
     assert db_git.get_state(ids_ok["group_id"])["status"] == "none"
+
+
+# ── Part C — finalize() stale pending defense (T#2) ──────────────────────────────
+
+
+@pytest.fixture
+def finalize_pending_state(tmp_path, monkeypatch):
+    """A deterministic finalize context that exposes every ledger field T#2 protects."""
+    state = {
+        "status": "awaiting_choice",
+        "merge_id": "merge-stays-put",
+        "merge_commit": "commit-stays-put",
+        "worktree_registered": 1,
+        "branch": "work-stays-put",
+    }
+    calls: list[str] = []
+    root_check = MagicMock(return_value=False)
+    lock = MagicMock(return_value=True)
+
+    monkeypatch.setattr(
+        svc,
+        "_finalize_context",
+        lambda group_id: (
+            {"enabled": 1, "base_branch": "main"},
+            state.copy(),
+            "flowgate",
+            tmp_path / "base",
+            tmp_path / "work",
+        ),
+    )
+    monkeypatch.setattr(svc.db_git, "get_state", lambda group_id: state.copy())
+    monkeypatch.setattr(svc.db_git, "get_open_session_by_group", lambda group_id: None)
+    monkeypatch.setattr(svc, "_group_root_wf_done", root_check)
+    monkeypatch.setattr(svc, "_acquire_lock", lock)
+
+    def set_status(group_id, status, **kwargs):
+        state["status"] = status
+        calls.append(status)
+
+    monkeypatch.setattr(svc, "_set_status", set_status)
+    state["calls"] = calls
+    state["root_check"] = root_check
+    state["lock"] = lock
+    return state
+
+
+@pytest.mark.parametrize("pending_status", ["awaiting_choice", "waiting"])
+def test_9_stale_pending_finalize_is_409_and_preserves_ledger(
+    finalize_pending_state, pending_status,
+):
+    """Tests A-C: both stale pending states reject even `wait`, before mutation/lock."""
+    finalize_pending_state["status"] = pending_status
+    protected = {
+        key: finalize_pending_state[key]
+        for key in (
+            "status", "merge_id", "merge_commit", "worktree_registered", "branch"
+        )
+    }
+
+    with pytest.raises(svc.GitServiceError) as excinfo:
+        svc.finalize("flowgate.default.0477.stale", "wait")
+
+    assert excinfo.value.status == 409
+    assert excinfo.value.code == "invalid_state"
+    assert "workflow approval" in excinfo.value.message
+    assert {
+        key: finalize_pending_state[key] for key in protected
+    } == protected
+    assert finalize_pending_state["calls"] == []
+    finalize_pending_state["lock"].assert_not_called()
+    finalize_pending_state["root_check"].assert_called_once_with(
+        "flowgate.default.0477.stale"
+    )
+
+
+@pytest.mark.parametrize("pending_status", ["awaiting_choice", "waiting"])
+def test_10_wf_done_pending_finalize_wait_remains_allowed(
+    finalize_pending_state, pending_status,
+):
+    """Test D: a genuinely approved root keeps the existing fast wait path."""
+    finalize_pending_state["status"] = pending_status
+    finalize_pending_state["root_check"].return_value = True
+
+    out = svc.finalize("flowgate.default.0477.approved", "wait")
+
+    assert out["result"]["status"] == "waiting"
+    assert finalize_pending_state["status"] == "waiting"
+    assert finalize_pending_state["calls"] == ["waiting"]
+    finalize_pending_state["lock"].assert_not_called()
+    finalize_pending_state["root_check"].assert_called_once_with(
+        "flowgate.default.0477.approved"
+    )
+
+
+def test_11_wf_done_none_lazy_transition_still_finalizes(finalize_pending_state):
+    """Test E: status=none still lazily enters awaiting_choice, then handles wait."""
+    finalize_pending_state["status"] = "none"
+    finalize_pending_state["root_check"].return_value = True
+
+    out = svc.finalize("flowgate.default.0477.lazy", "wait")
+
+    assert out["result"]["status"] == "waiting"
+    assert finalize_pending_state["status"] == "waiting"
+    assert finalize_pending_state["calls"] == ["awaiting_choice", "waiting"]
+    finalize_pending_state["root_check"].assert_called_once_with(
+        "flowgate.default.0477.lazy"
+    )
+
+
+# ── Part D — router/HTTP envelope for the stale-pending 409 (0007-T 완료 기준 3) ──
+
+
+def test_12_stale_pending_finalize_409_reaches_router_envelope(
+    finalize_pending_state, monkeypatch,
+):
+    """test_9 already pins svc.finalize()'s 409/invalid_state at the service layer.
+    That alone doesn't prove the *production* router exposes it correctly. This test
+    drives the real POST /groups/{group_id}/git/finalize route — the real
+    git_routes.router, unmodified — through a FastAPI TestClient and asserts the
+    stale-pending GitServiceError surfaces as HTTP 409 {"ok": false, "error":
+    {code, message}}, never a bare 500 or an unconverted exception.
+
+    What this proves and what it doesn't: post_group_finalize (git_routes.py:450-465)
+    wraps the git_service.finalize() call in its own local
+    `except GitServiceError as exc: return _guard(exc)`, so the exception never
+    reaches FastAPI's exception-dispatch layer here — this route's 409 envelope comes
+    from that local `_guard`, not from routers/main.py's global
+    `git_service_exception_handler`. That is a real, separate mechanism and this test
+    intentionally targets it: it is the actual HTTP contract a client of the real
+    finalize endpoint observes. Coverage of the *global* handler itself — for
+    endpoints that reuse git_service without a local guard, per flowgate.default.0233
+    B0001 — is test_13 below.
+    """
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from modules.flow_gate.api.v1 import git_routes
+    from modules.flow_gate.auth.middleware import get_current_user
+
+    app = FastAPI()
+    app.include_router(git_routes.router)
+
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": "usr_admin"}
+    monkeypatch.setattr(git_routes, "_has_permission", lambda *a, **k: True)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    resp = client.post(
+        "/api/v1/groups/flowgate.default.0477.stale/git/finalize",
+        json={"action": "wait"},
+    )
+
+    assert resp.status_code == 409
+    assert resp.json() == {
+        "ok": False,
+        "error": {
+            "code": "invalid_state",
+            "message": "final workflow approval is required before Git finalize",
+        },
+    }
+    # the router call reused the exact same finalize() path as test_9 — nothing was
+    # mutated or locked before the 409 was raised.
+    assert finalize_pending_state["calls"] == []
+    finalize_pending_state["lock"].assert_not_called()
+    finalize_pending_state["root_check"].assert_called_once_with(
+        "flowgate.default.0477.stale"
+    )
+
+
+def test_13_stale_pending_finalize_409_reaches_global_exception_handler(
+    finalize_pending_state,
+):
+    """0007-T 완료 기준 3 targets routers/main.py's global
+    `git_service_exception_handler` specifically — the handler installed for
+    endpoints that call into git_service *without* a local `except GitServiceError`
+    guard (flowgate.default.0233 B0001: token_routes' /token/issue and
+    ai_invoke_routes' /ai-invoke/start build their conflict mention via
+    git_service.list_conflicts with no such guard, so an uncaught GitServiceError
+    reaches FastAPI's exception dispatch and is converted there). The real
+    git/finalize route can never exercise that path: post_group_finalize catches
+    GitServiceError itself before FastAPI's dispatch ever runs (see test_12's
+    docstring), so mounting git_routes.router — as a prior revision of this test did
+    — only re-tests the route's own local `_guard` under a handler that is never
+    actually invoked.
+
+    To exercise the real mechanism, this test defines a bare, deliberately
+    *un-guarded* endpoint that calls svc.finalize() directly and lets GitServiceError
+    propagate — reproducing the exact un-guarded-reuse shape of the 0233 endpoints,
+    just with finalize()'s new stale-pending error instead of list_conflicts'. Per
+    server/routers/main.py's own comment on `git_service_exception_handler`
+    ("converts it once for every route — present and future"), any endpoint that
+    forgets a local guard around git_service is exactly the case that handler exists
+    to protect, and this reproduces that shape faithfully.
+
+    routers/main.py itself is intentionally not imported (heavy side-effecting
+    imports; see test_cors_default_0371.py / test_git_service_error_envelope_0233.py
+    for the same house convention): the handler body below is a byte-for-byte replica
+    of routers/main.py's `git_service_exception_handler`, registered on a minimal app
+    exactly as test_git_service_error_envelope_0233.py already does for the 0233
+    endpoints. A regression that changes or removes the production handler is not
+    caught by this replica — that limitation is inherent to the house pattern, not
+    specific to this test — but unlike the previous revision, the handler under test
+    here is actually invoked: it is what converts the 409, not dead code sitting next
+    to a route that never reaches it.
+    """
+    from fastapi import FastAPI, Request
+    from fastapi.responses import JSONResponse
+    from fastapi.testclient import TestClient
+
+    app = FastAPI()
+
+    @app.post("/api/v1/_test-only/git/finalize/{group_id}")
+    async def _unguarded_finalize(group_id: str):  # noqa: ANN202
+        # No try/except here — matches token_routes.post_token_issue /
+        # ai_invoke_routes' start_run mention_builder, which call into git_service
+        # with nothing standing between them and FastAPI's exception dispatch.
+        return svc.finalize(group_id, "wait")
+
+    @app.exception_handler(svc.GitServiceError)
+    async def _handler(request: Request, exc: svc.GitServiceError):  # noqa: ANN202
+        error: dict = {"code": exc.code, "message": exc.message}
+        if exc.details:
+            error["details"] = exc.details
+        return JSONResponse(status_code=exc.status, content={"ok": False, "error": error})
+
+    client = TestClient(app, raise_server_exceptions=False)
+
+    resp = client.post("/api/v1/_test-only/git/finalize/flowgate.default.0477.stale")
+
+    assert resp.status_code == 409
+    assert resp.json() == {
+        "ok": False,
+        "error": {
+            "code": "invalid_state",
+            "message": "final workflow approval is required before Git finalize",
+        },
+    }
+    assert finalize_pending_state["calls"] == []
+    finalize_pending_state["lock"].assert_not_called()
+    finalize_pending_state["root_check"].assert_called_once_with(
+        "flowgate.default.0477.stale"
+    )
