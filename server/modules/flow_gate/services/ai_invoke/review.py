@@ -694,7 +694,7 @@ def _settle_gate_pass(group_id: str, slot: dict, bundle: dict, run: dict) -> str
         # settle_completed_step already removed the paused row, so only the lease is left.
         _svc()._clear_handoff_row(group_id, run.get("run_id"))
         try:
-            db_group_ai_leases.release(group_id, run["run_id"], reason="chain_completed")
+            db_group_ai_leases.release(group_id, run["run_id"])
         except Exception:  # noqa: BLE001
             logger.warning("review gate lease release failed for %s", group_id, exc_info=True)
         return outcome

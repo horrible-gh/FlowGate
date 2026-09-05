@@ -246,7 +246,7 @@ def _stub_finalize_dependencies(monkeypatch, svc, tmp_path):
     """
     monkeypatch.setattr(svc, "peek_auto_resume", lambda _g: None)
     monkeypatch.setattr(svc.db_group_ai_leases, "begin_handoff", lambda *a: None)
-    monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda *a, **kw: None)
+    monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda *a: None)
     monkeypatch.setattr(svc, "_resolve_stop_code", lambda run, respawn_pending: None)
     monkeypatch.setattr(svc, "is_resumable", lambda code: False)
     monkeypatch.setattr(svc, "_stop_reason_text", lambda code, run: None)

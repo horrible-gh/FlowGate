@@ -395,7 +395,7 @@ def _finalize_run(run: dict) -> None:
         "reason": "ai_invoke_finished",
     })
     if not respawn_pending:
-        db_group_ai_leases.release(run["group_id"], run["run_id"], reason="normal_finish")
+        db_group_ai_leases.release(run["group_id"], run["run_id"])
 
 
 # ── Stop classification (0359 L0007 §4.1 ~ §4.3) ─────────────────────────────

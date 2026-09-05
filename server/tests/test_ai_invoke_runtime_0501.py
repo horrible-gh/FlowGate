@@ -327,69 +327,6 @@ class TestRunIdCollisionUnchanged:
         assert exc.value.detail["code"] == "run_id_collision"
 
 
-class TestAcquireRaceBlockerIdentityUnchanged:
-    """flowgate.default.0502 T0004 rev2: the acquire_race 409 (start_run's admission
-    check passes because no lease is active yet, but `acquire()` itself then loses to a
-    concurrently-active lease) must record the BLOCKING run's identity using the
-    snapshot `acquire()` captured at its own conflict decision, never a fresh
-    `get_active()` re-query. A re-query runs its own `recover_expired()` sweep and can
-    reclaim -- and null out -- the very lease that just caused the conflict, in the
-    window between `acquire()` failing and admission.py's next line running. This
-    reproduces exactly that window: the pre-check `get_active()` sees nothing (proving
-    the conflict is only visible inside `acquire()`), `acquire()` returns a full blocker
-    snapshot, and `get_active()` is asserted to never be called again afterward."""
-
-    def test_acquire_race_conflict_uses_acquires_own_snapshot_not_a_second_get_active(
-        self, admission_env, monkeypatch
-    ):
-        from fastapi import HTTPException
-
-        from modules.flow_gate.db import group_ai_lease_events as db_lease_events
-
-        group_id = "flowgate.default.0501admRace"
-        blocker = {
-            "group_id": group_id, "project_id": "flowgate", "run_id": "aiv_blocker",
-            "chain_id": "aiv_blocker", "token_id": "tok_blocker", "action_scope": "new",
-            "worker_identity": "usr_other", "state": "active", "generation": 1,
-            "acquired_at": "2026-09-05T00:00:00+00:00",
-            "heartbeat_at": "2026-09-05T00:01:00+00:00",
-            "expires_at": "2026-09-05T04:00:00+00:00",
-        }
-        calls = {"get_active": 0}
-
-        def _get_active(gid):
-            calls["get_active"] += 1
-            # The pre-check sees no active lease -- the conflict only materializes
-            # inside acquire() itself. If admission.py ever re-queried get_active()
-            # for the blocker snapshot, it would land here a second time and see
-            # None, exactly the bug this test pins shut.
-            return None
-
-        monkeypatch.setattr(svc.db_group_ai_leases, "get_active", _get_active)
-        monkeypatch.setattr(svc.db_group_ai_leases, "acquire", lambda **kw: dict(blocker))
-
-        with pytest.raises(HTTPException) as exc:
-            _start(admission_env, group_id, [_provider(cmd="echo hi")])
-        assert exc.value.status_code == 409
-        assert exc.value.detail["code"] == "run_in_progress"
-        assert exc.value.detail["run_id"] == "aiv_blocker"
-        assert calls["get_active"] == 1, "acquire_race must not re-query get_active for blocker identity"
-
-        events = db_lease_events.list_for_group(group_id, event_type="lease_admission_rejected")
-        assert len(events) == 1
-        assert events[0]["blocking"]["blocking_run_id"] == "aiv_blocker"
-        assert events[0]["blocking"]["blocking_token_id"] == "tok_blocker"
-        assert events[0]["blocking"]["blocking_worker_id"] == "usr_other"
-        assert events[0]["detail"]["admission_stage"] == "acquire_race"
-        # T0004 SS5/SS23(1)-(2): the run_id start_run minted for the LOSING candidate
-        # (before acquire() lost the race) must survive into the event too -- both the
-        # correlation column and the requested snapshot -- distinct from the blocker's
-        # own run_id ("aiv_blocker") asserted above.
-        requested_run_id = events[0]["requested"]["requested_run_id"]
-        assert requested_run_id and requested_run_id != "aiv_blocker"
-        assert events[0]["run_id"] == requested_run_id
-
-
 class TestCancelPrimitiveUnchanged:
     """T0008 §13-D: cancel_run (ai_invoke/chain.py since T6, unmodified in behavior by
     T3, T5 or T6) reaches the

@@ -1128,44 +1128,6 @@ def release_ai_invoke_lease(group_id: str, request: Request):
     return JSONResponse(status_code=200, content=result)
 
 
-@router.get("/lease-events")
-def list_ai_invoke_lease_events(
-    group_id: str, request: Request,
-    run_id: Optional[str] = None, token_id: Optional[str] = None,
-    event_type: Optional[str] = None, since: Optional[str] = None,
-    until: Optional[str] = None, limit: int = 200,
-):
-    """Durable lease/admission forensic history (flowgate.default.0502 T0004 §14).
-
-    Admin-only on purpose (§14/§21): this is the append-only audit trail behind a
-    group's lease acquire/activate/handoff/release/reclaim/admission-reject
-    decisions, not a signal ordinary document readers are meant to see -- unlike
-    GET /leases above, `perm_document_read` is not enough here.
-    Declared ahead of GET /{run_id} for the same path-shadowing reason as
-    /leases and /leases/{group_id}/release.
-
-    ``since``/``until`` are the T0004 §14 time-range filter: inclusive ISO-8601
-    bounds on ``created_at`` so an incident window can be isolated instead of
-    always pulling the whole group history."""
-    auth = _require_user(request)
-    if isinstance(auth, JSONResponse):
-        return auth
-    try:
-        validate_group_id(group_id)
-    except ValueError as exc:
-        return _validation_failed([{"loc": "group_id", "msg": str(exc)}])
-    if not bool(auth.get("is_admin")):
-        return JSONResponse(status_code=403, content={"code": "permission_denied",
-                                                      "message": "admin required"})
-    from modules.flow_gate.db import group_ai_lease_events as db_lease_events
-
-    items = db_lease_events.list_for_group(
-        group_id, run_id=run_id, token_id=token_id, event_type=event_type,
-        since=since, until=until, limit=limit,
-    )
-    return JSONResponse(status_code=200, content={"ok": True, "group_id": group_id, "items": items})
-
-
 @router.get("/{run_id}")
 def get_ai_invoke_status(run_id: str, request: Request):
     auth = _require_user(request)
