@@ -93,6 +93,28 @@ FALLBACK_LOCALE = "ko"
 DOCUMENT_FILENAME = "document.json"
 HELP_TEMPLATE_PATH = "/help/items/design_template/WP"
 
+# locked_reason has exactly two legal values: unset, or the one reason the server ever
+# assigns. A tuple (not a set) so step_contract() can publish it in a stable order.
+LOCKED_REASON_VALUES = (None, LOCKED_REASON_SERVER_ASSEMBLED)
+
+
+def step_contract() -> dict:
+    """The canonical steps[] schema, as data (T0004 §15/§16).
+
+    validate() and the design_template/WP help item must never carry two separately
+    typed-out copies of the same field list / enums / pair map — that drift is exactly
+    what NR0003 reported. Both now read this function instead of restating the values.
+    """
+    return {
+        "step_fields": list(STEP_FIELD_ORDER),
+        "pair_roles": list(PAIR_ROLES),
+        "origins": list(ORIGINS),
+        "locked_reason_values": list(LOCKED_REASON_VALUES),
+        "pair_map": dict(WORK_PLAN_PAIR_MAP),
+        "single_types": list(WORK_PLAN_SHEET_TYPES),
+        "locked_types": sorted(WORK_PLAN_LOCKED_TYPES),
+    }
+
 
 # ── Errors ───────────────────────────────────────────────────────────────────
 
@@ -269,6 +291,11 @@ _ERROR_COPY: dict[str, dict[str, str]] = {
         "ko": "한줄 멘트에 개행·탭 같은 제어문자를 쓸 수 없습니다.",
         "en": "A note cannot contain control characters such as newline or tab.",
         "ja": "一行メモに改行・タブなどの制御文字は使えません。",
+    },
+    "provider_display_name_without_provider_id": {
+        "ko": "provider_id 가 비어 있으면 provider_display_name 도 null 이어야 합니다.",
+        "en": "provider_display_name must be null whenever provider_id is null.",
+        "ja": "provider_id が空なら provider_display_name も null でなければなりません。",
     },
 }
 
@@ -996,6 +1023,11 @@ def _check_step_shape(step: Any, loc: str) -> list[dict]:
     if display is not None and not isinstance(display, str):
         errors.append(_error("type_invalid", f"{loc}.provider_display_name", key,
                              field=f"{loc}.provider_display_name"))
+    elif provider_id is None and display is not None:
+        # T0004 §12/§26.8: provider-unspecified is the pair (provider_id=null,
+        # provider_display_name=null) — never id=null with a leftover display name.
+        errors.append(_error("provider_display_name_without_provider_id",
+                             f"{loc}.provider_display_name", key))
     errors.extend(_note_errors(step.get("note"), f"{loc}.note", key))
     return errors
 
@@ -1556,16 +1588,50 @@ def canonical_step_examples() -> dict[str, dict]:
     }
 
 
+def contract_example(project_id: Optional[str] = None) -> dict:
+    """A worked WP body -- T x2, TS x2, D x1 -- built with expand_steps()/canonicalize().
+
+    T0004 §13/§20: the help item must show a canonical example that actually passes
+    validate() unchanged, so it is built from the very functions validate() itself
+    calls instead of a second hand-written JSON blob that could silently drift from
+    them. Every non-locked step keeps provider_id/provider_display_name at null (the
+    provider-unspecified case, always valid regardless of project/candidate state) and
+    is marked origin="ai_suggested"; every TSR step keeps make_step()'s server-assembled
+    values untouched.
+    """
+    counted_types = ["D", "T", "TS"]
+    quantities = {
+        "D": {"unit": WORK_PLAN_TYPE_UNITS["D"], "count": 1},
+        "T": {"unit": WORK_PLAN_TYPE_UNITS["T"], "count": 2},
+        "TS": {"unit": WORK_PLAN_TYPE_UNITS["TS"], "count": 2},
+    }
+    steps = expand_steps(counted_types, quantities, project_id)
+    for step in steps:
+        if not step["locked"]:
+            step["origin"] = "ai_suggested"
+    body = {
+        "wp_version": WP_VERSION_SUPPORTED,
+        "binding": BINDING_ADVISORY,
+        "counted_types": type_order(counted_types, project_id),
+        "quantities": quantities,
+        "provider_candidates": [],
+        "defaults": {"provider_id": None, "note": ""},
+        "steps": steps,
+    }
+    return canonicalize(body)
+
+
 TEMPLATE_RULES = {
     "ko": [
         "본문은 Markdown 이 아니라 UTF-8 JSON 입니다.",
         "제목과 연결 대상은 인박스 요청의 title / prev_doc_id 를 쓰고 본문에 적지 않습니다.",
         "steps 의 key 는 <타입코드>#<회차> 서식이며 문서 안에서 유일해야 합니다.",
         "steps 는 quantities 에서 펼쳐지는 목록과 순서까지 같아야 합니다.",
-        "steps[].note 는 그 단계를 맡을 AI에게 줄 한 줄 지시이며 TSR 외 모든 단계에 200자 이내로 채웁니다. 줄바꿈과 탭은 쓰지 않습니다.",
+        "steps[].note 는 그 단계를 맡을 AI에게 줄 한 줄 지시입니다. TSR 외 단계는 null이어도 되지만, 값을 채우면 한 줄로 200자 이내여야 하며 줄바꿈과 탭은 쓰지 않습니다.",
         "수량은 근거(부모 R/B, workflow_type_counts, group_documents)에서 산정하고, 근거가 없으면 counted_types/quantities에 키를 남긴 채 0으로 둡니다. 1을 기본값으로 추측하지 않습니다.",
         "defaults.note 는 모든 단계에 공통으로 붙일 한 줄입니다. 요청 멘트의 '작업계획 맡길 범위' 절에 '전달 멘트'가 있으면 그 값을 그대로 옮겨 적습니다.",
         "steps[].provider_id 는 provider_candidates 안의 값이거나 이 프로젝트에 등록된 공급자여야 하며, 고를 것이 없으면 비워 둡니다.",
+        "공급자를 지정하지 않는다는 뜻은 steps[].provider_id 와 steps[].provider_display_name 을 둘 다 null 로 두는 것입니다. provider_id 가 null 인데 provider_display_name 만 채우는 것은 허용되지 않습니다(validate() 가 거부합니다).",
         "defaults.provider_id 는 provider_candidates 안의 값이거나 null 입니다. 요청 멘트의 '실행 프로바이더'는 그 멘트를 실행 중인 공급자일 뿐이므로 여기에 옮겨 적지 않습니다.",
         "TSR 단계에는 공급자와 멘트를 적지 않습니다.",
         "item_seq(실제 단계 번호)는 적지 않습니다.",
@@ -1579,10 +1645,11 @@ TEMPLATE_RULES = {
         "Title and parent come from the inbox request (title / prev_doc_id); never write them in the body.",
         "Each steps[].key is <TYPE>#<ordinal> and must be unique in the document.",
         "steps must equal the list expanded from quantities, in the same order.",
-        "steps[].note is a one-line instruction for the AI assigned to that step; fill it for every non-TSR step, within 200 characters and without newlines or tabs.",
+        "steps[].note is a one-line instruction for the AI assigned to that step; non-TSR steps may leave it null, but a non-null note must be one line, within 200 characters, and without newlines or tabs.",
         "Quantities are derived from evidence (the parent R/B, workflow_type_counts, group_documents); when there is no basis, keep the key in counted_types/quantities with count 0. Never guess 1 as a default.",
         "defaults.note is the one-line instruction shared by every step; when the request mention carries a Delivery note in its work-plan scope section, copy that value verbatim.",
         "steps[].provider_id must be one of provider_candidates or a provider registered in this project; leave it empty when there is nothing to choose.",
+        "Provider-unspecified means BOTH steps[].provider_id and steps[].provider_display_name are null. Leaving provider_id null while still filling provider_display_name is rejected by validate().",
         "defaults.provider_id is one of provider_candidates or null. The mention's Execution provider is merely the provider running that mention, so never copy it here.",
         "A TSR step carries no provider and no note.",
         "Never write item_seq (the real workflow step number).",
@@ -1596,10 +1663,11 @@ TEMPLATE_RULES = {
         "タイトルと連結対象はインボックス要求の title / prev_doc_id を使い、本文には書きません。",
         "steps の key は <タイプコード>#<回次> の書式で、文書内で一意でなければなりません。",
         "steps は quantities から展開されるリストと順序まで一致していなければなりません。",
-        "steps[].note はその段階を担当するAIへの一行指示です。TSR以外の全段階に200文字以内、改行・タブなしで記入します。",
+        "steps[].note はその段階を担当するAIへの一行指示です。TSR以外の段階は null でも構いませんが、値を入れる場合は一行・200文字以内、改行・タブなしとします。",
         "数量は根拠(親 R/B、workflow_type_counts、group_documents)から算定し、根拠がなければ counted_types/quantities にキーを残したまま 0 とします。1 を既定値として推測しません。",
         "defaults.note は全段階に共通する一行指示です。要求メモの「作業計画を任せる範囲」節に「伝達メモ」があれば、その値をそのまま書き写します。",
         "steps[].provider_id は provider_candidates 内の値、またはこのプロジェクトに登録された提供者でなければならず、選べるものが無ければ空欄にします。",
+        "提供者を指定しないとは steps[].provider_id と steps[].provider_display_name の両方を null にすることです。provider_id が null なのに provider_display_name だけ値を入れることは validate() が拒否します。",
         "defaults.provider_id は provider_candidates 内の値または null です。要求メモの「実行プロバイダー」はそのメモを実行中の提供者にすぎないため、ここに書き写しません。",
         "TSR 段階には提供者と一行メモを書きません。",
         "item_seq(実際の段階番号)は書きません。",
@@ -1617,8 +1685,53 @@ TEMPLATE_HEADING = {
 }
 
 
+def _contract_rule_lines(locale: str) -> list[str]:
+    """Rules generated FROM step_contract()'s data, not retyped (T0004 §15/§17).
+
+    A hand-written sentence naming '11 fields' would itself rot the moment a twelfth
+    field were added. Building the sentence from STEP_FIELD_ORDER/PAIR_ROLES/ORIGINS/
+    WORK_PLAN_PAIR_MAP means it can only ever describe what validate() enforces today.
+    """
+    fields = ", ".join(STEP_FIELD_ORDER)
+    pair_roles = " | ".join(PAIR_ROLES)
+    origins = " | ".join(ORIGINS)
+    locked_reasons = " | ".join("null" if v is None else v for v in LOCKED_REASON_VALUES)
+    pairs = ", ".join(f"{code}\u2194{pair}" for code, pair in WORK_PLAN_PAIR_MAP.items())
+    single_types = ", ".join(WORK_PLAN_SHEET_TYPES)
+    if locale == "en":
+        return [
+            f"Every steps[] entry must carry exactly these {len(STEP_FIELD_ORDER)} required fields, in any JSON key order: {fields}. Never omit a key just because its value is null. Extra fields are rejected unless their name starts with x_, which is preserved as an optional extension.",
+            f"pair_role allowed values: {pair_roles}. origin allowed values: {origins}. locked_reason allowed values: {locked_reasons}.",
+            f"A set type's instruction/result steps pair with each other: {pairs}. The instruction step has pair_role=instruction and pair_key = the result step's key; the result step has pair_role=result and pair_key = the instruction step's key.",
+            f"Sheet types ({single_types}) are unpaired single steps: pair_role=single, pair_key=null.",
+            "A non-locked step with no provider chosen represents that with BOTH fields null: provider_id=null AND provider_display_name=null. provider_id=null with a non-null provider_display_name is invalid and validate() rejects it.",
+            "TSR is assembled by the server from a finished test run, never written by a human or an AI: provider_id=null, provider_display_name=null, note=null, locked=true, locked_reason=server_assembled, origin=system.",
+            "This same schema is also published as data in this item's `contract` field; `example` is a whole minimal body that passes validate() unchanged, while `examples` carries one filled sample step per pair_role.",
+        ]
+    if locale == "ja":
+        return [
+            f"steps[] の各項目は必ず次の{len(STEP_FIELD_ORDER)}個の必須フィールドを持ちます(JSON内の順序は問いません): {fields}。値が null でもキー自体を省略しません。x_ で始まる名前の追加フィールドは任意の拡張として許可され、それ以外の未知のフィールドは拒否されます。",
+            f"pair_role の許容値: {pair_roles}。origin の許容値: {origins}。locked_reason の許容値: {locked_reasons}。",
+            f"セット型の instruction/result 段階は互いに対になります: {pairs}。instruction 段階は pair_role=instruction、pair_key=result 段階の key。result 段階は pair_role=result、pair_key=instruction 段階の key です。",
+            f"シート型({single_types})は対のない単独段階です: pair_role=single, pair_key=null。",
+            "提供者を選ばない非ロック段階は provider_id=null と provider_display_name=null の両方で表します。provider_id が null なのに provider_display_name だけ値がある状態は無効で、validate() が拒否します。",
+            "TSR はサーバーが完了したテスト実行から組み立てる段階で、人間もAIも書きません: provider_id=null, provider_display_name=null, note=null, locked=true, locked_reason=server_assembled, origin=system。",
+            "同じ契約はこの項目の `contract` フィールドにもデータとして載っており、`example` は validate() をそのまま通る最小の本文全体、`examples` は pair_role ごとに値を埋めた単一段階の見本です。",
+        ]
+    return [
+        f"steps[] 각 항목은 JSON 키 순서와 무관하게 반드시 다음 {len(STEP_FIELD_ORDER)}개 필수 필드를 가져야 합니다: {fields}. 값이 null이어도 키 자체를 생략하지 않습니다. x_ 로 시작하는 이름의 추가 필드는 선택적 확장으로 허용되며, 그 외 알 수 없는 필드는 거부됩니다.",
+        f"pair_role 허용값: {pair_roles}. origin 허용값: {origins}. locked_reason 허용값: {locked_reasons}.",
+        f"set 타입의 instruction/result 단계는 서로 짝입니다: {pairs}. instruction 단계는 pair_role=instruction, pair_key=result 단계의 key이고, result 단계는 pair_role=result, pair_key=instruction 단계의 key입니다.",
+        f"sheet 타입({single_types})은 짝이 없는 단일 단계입니다: pair_role=single, pair_key=null.",
+        "공급자를 고르지 않은 non-locked 단계는 provider_id=null 과 provider_display_name=null 둘 다로 표시합니다. provider_id 가 null인데 provider_display_name 만 값이 있는 상태는 무효이며 validate() 가 거부합니다.",
+        "TSR은 서버가 완료된 test run에서 조립하는 단계이며 사람도 AI도 작성하지 않습니다: provider_id=null, provider_display_name=null, note=null, locked=true, locked_reason=server_assembled, origin=system.",
+        "같은 계약이 이 항목의 `contract` 필드에도 데이터로 실려 있고, `example`은 validate()를 그대로 통과하는 최소 본문 전체이며, `examples`는 pair_role 별로 값을 채운 단일 단계 견본입니다.",
+    ]
+
+
 def template_payload(locale: str, project_id: Optional[str] = None) -> dict:
     locale = normalize_locale(locale)
+    rules = TEMPLATE_RULES.get(locale, TEMPLATE_RULES[FALLBACK_LOCALE])
     return {
         "type_code": WORK_PLAN_TYPE,
         "requested_locale": locale,
@@ -1626,7 +1739,9 @@ def template_payload(locale: str, project_id: Optional[str] = None) -> dict:
         "body_format": "json",
         "heading": TEMPLATE_HEADING.get(locale, TEMPLATE_HEADING[FALLBACK_LOCALE]),
         "body": template_body(project_id),
-        "rules": TEMPLATE_RULES.get(locale, TEMPLATE_RULES[FALLBACK_LOCALE]),
+        "rules": [*rules, *_contract_rule_lines(locale)],
+        "contract": step_contract(),
+        "example": contract_example(project_id),
         "examples": canonical_step_examples(),
     }
 
