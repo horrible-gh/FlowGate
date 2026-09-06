@@ -1265,6 +1265,31 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 f"Registration failed (HTTP {status}): {json.dumps(resp, ensure_ascii=False)[:2000]}",
             ))
 
+    # 0470 T0009: a chat model can still finish with plain assistant text instead of
+    # calling the forced tool (or exhaust its turns after a rejected tool call).  That
+    # text used to survive only as the diagnostic last_message, leaving the conversation
+    # completely empty.  If no chat turn was registered, make one final append attempt
+    # through the exact same token-bound/idempotent endpoint.  Never run this after a
+    # successful tool registration, so an acknowledged reply cannot be duplicated.
+    if (
+        is_chat
+        and registered == 0
+        and last_text
+        and last_text.strip()
+        and not run["cancel_event"].is_set()
+        and not run.get("timed_out")
+    ):
+        status, resp = _svc()._conversation_turn_register(run, current_token, {"body": last_text})
+        run["last_tool_name"] = "conversation_turn_register"
+        run["last_tool_status"] = status
+        if 200 <= status < 300:
+            run["last_tool_error"] = None
+            registered += 1
+        else:
+            reason = _registration_error_summary(resp)
+            run["last_tool_error"] = reason[:500]
+            run["register_errors"].append({"status": status, "reason": reason, "turn": turn})
+
     goal_met = (
         not workflow_pending
         and (
