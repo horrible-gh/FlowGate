@@ -22,6 +22,7 @@ from typing import Callable, Optional
 
 from fastapi import HTTPException
 from modules.flow_gate import template_provision
+from modules.flow_gate.db import connection as db_connection
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
@@ -384,7 +385,7 @@ def force_release_group_lease(group_id: str) -> dict:
         raise _http_error(409, "run_still_live",
                           "This group's AI run is still active; it cannot be force-released.",
                           group_id=group_id, run_id=run_id)
-    released = db_group_ai_leases.release(group_id, run_id)
+    released = db_group_ai_leases.release(group_id, run_id, reason="manual_force_release")
     if released:
         try:
             _svc()._record_orphaned_lease_run(lease, "orphaned_by_manual_release")
@@ -494,6 +495,123 @@ def resolve_pinned_provider_name(project_id: str, provider_id: Optional[str]) ->
     if len(chain) == 1:
         return chain[0].get("name") or None
     return None
+
+
+def _record_lease_admission_rejected(
+    *, group_id: str, project_id: str, doc_ref: str, action_scope: str,
+    chain_id: Optional[str], issued_to: str, provider_id: Optional[str],
+    active: dict, handoff_allowed: bool, admission_stage: str,
+    requested_run_id: Optional[str] = None,
+) -> None:
+    """Durable snapshot of a 409 `run_in_progress` rejection (flowgate.default.0502
+    T0004 §5/§18) -- the requested/blocking identity a future forensic reconstruction
+    needs, taken from data `start_run` already holds so this adds no new lookups.
+    Best-effort (T0004 §10): a write failure here must never turn this 409 into
+    anything else, so this only logs a warning and lets the caller's raise proceed.
+
+    ``requested_run_id`` (T0004 §5/§23(1)-(2)): the acquire_race stage already minted a
+    run_id (db_group_ai_leases.acquire()'s losing candidate) before this rejection fires,
+    so it is known and must be reconstructible from the durable event. pre_acquire fires
+    before any run_id is minted, so it always passes None here -- that stays NULL by design,
+    not by omission.
+
+    ``requested_token_id`` is always NULL: `start_run` mints its token AFTER a lease is
+    successfully acquired (never before), so no requesting token exists yet at either
+    rejection stage. The key is still present (T0004 §5 lists it as a minimum field) so a
+    reader never has to guess whether it was omitted or genuinely absent.
+
+    Provider identity (T0004 §5 "있다면", §15 allows provider_id/provider_name): the
+    requesting side already has its resolved provider_id in the ``provider_id`` argument,
+    so its name is resolved the same way `resolve_pinned_provider_name` names a mention
+    (chain lookup by id). The blocking side has no provider_id on the lease row itself --
+    only `token_id` -- so it is looked up one hop further via the blocking token's stored
+    provider_id (0164 DB0005 `tokens.provider_id`). Either lookup failing (deleted token,
+    provider no longer in the effective chain) leaves the *_provider_name NULL rather than
+    guessing -- T0004 §6 forbids inventing values that no longer exist.
+
+    Both call sites fire outside any DB transaction (`acquire()`'s transaction has
+    already closed by then), but the append is still routed through
+    `db_connection.after_commit` for the same reason `group_ai_leases._append_event`
+    is: inside a PostgreSQL transaction a failed forensic INSERT aborts the whole
+    transaction, so catching its exception would not be enough to keep the caller's
+    own outcome intact (T0004 §10).
+    """
+    def _write() -> None:
+        _write_lease_admission_rejected(
+            group_id=group_id, project_id=project_id, doc_ref=doc_ref,
+            action_scope=action_scope, chain_id=chain_id, issued_to=issued_to,
+            provider_id=provider_id, active=active, handoff_allowed=handoff_allowed,
+            admission_stage=admission_stage, requested_run_id=requested_run_id,
+        )
+
+    if not db_connection.after_commit(_write):
+        _write()
+
+
+def _write_lease_admission_rejected(
+    *, group_id: str, project_id: str, doc_ref: str, action_scope: str,
+    chain_id: Optional[str], issued_to: str, provider_id: Optional[str],
+    active: dict, handoff_allowed: bool, admission_stage: str,
+    requested_run_id: Optional[str],
+) -> None:
+    """Build and append the rejection event. Never raises -- see the caller."""
+    try:
+        from modules.flow_gate.db import group_ai_lease_events as db_lease_events
+
+        requested_provider_name = (
+            resolve_pinned_provider_name(project_id, provider_id) if provider_id else None
+        )
+        blocking_token_id = active.get("token_id")
+        blocking_provider_id = None
+        if blocking_token_id:
+            # Best-effort, like resolve_pinned_provider_name above: this is enrichment on
+            # top of the required event, so a token-store lookup failure must not cost the
+            # durable rejection event itself (T0004 SS10).
+            try:
+                blocking_token_row = db_tokens.get_by_id(blocking_token_id)
+            except Exception:  # noqa: BLE001
+                blocking_token_row = None
+            blocking_provider_id = (blocking_token_row or {}).get("provider_id")
+        blocking_provider_name = (
+            resolve_pinned_provider_name(project_id, blocking_provider_id)
+            if blocking_provider_id else None
+        )
+
+        db_lease_events.append(
+            event_type="lease_admission_rejected",
+            group_id=group_id,
+            project_id=project_id,
+            run_id=requested_run_id,
+            chain_id=chain_id,
+            action_scope=action_scope,
+            lease_generation=active.get("generation"),
+            reason="group_lease_active",
+            requested={
+                "group_id": group_id, "project_id": project_id, "doc_ref": doc_ref,
+                "action_scope": action_scope, "requested_run_id": requested_run_id,
+                "requested_chain_id": chain_id, "requested_token_id": None,
+                "requested_worker_id": issued_to, "requested_provider_id": provider_id,
+                "requested_provider_name": requested_provider_name,
+                "requested_at": now_iso(),
+            },
+            blocking={
+                "blocking_run_id": active.get("run_id"), "blocking_token_id": blocking_token_id,
+                "blocking_chain_id": active.get("chain_id"),
+                "blocking_action_scope": active.get("action_scope"),
+                "blocking_worker_id": active.get("worker_identity"),
+                "blocking_provider_id": blocking_provider_id,
+                "blocking_provider_name": blocking_provider_name,
+                "lease_state": active.get("state"),
+                "lease_generation": active.get("generation"), "lease_acquired_at": active.get("acquired_at"),
+                "lease_heartbeat_at": active.get("heartbeat_at"), "lease_expires_at": active.get("expires_at"),
+                "lease_owner_identity": active.get("worker_identity"),
+            },
+            detail={"handoff_allowed": handoff_allowed, "admission_stage": admission_stage},
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "lease_admission_rejected forensic append failed for group %s", group_id, exc_info=True,
+        )
 
 
 def start_run(
@@ -757,6 +875,12 @@ def start_run(
         and active.get("chain_id") == chain_id
     )
     if active is not None and not handoff_allowed:
+        _record_lease_admission_rejected(
+            group_id=group_id, project_id=project_id, doc_ref=doc_ref, action_scope=action_scope,
+            chain_id=chain_id, issued_to=issued_to,
+            provider_id=(chain[0].get("id") if chain else provider_id),
+            active=active, handoff_allowed=handoff_allowed, admission_stage="pre_acquire",
+        )
         raise _http_error(409, "run_in_progress", "An AI run is already in progress for this group.",
                           run_id=active["run_id"])
     # 0299 R0001: refuse before minting a token / creating scratch — a run that would
@@ -867,8 +991,21 @@ def start_run(
                 409, "run_id_collision",
                 _RUN_ID_COLLISION_COPY[template_provision.normalize_locale(continuation_locale)],
             )
-    if lease is None:
-        active = db_group_ai_leases.get_active(group_id) or {}
+    if lease is None or lease.get("run_id") != run_id:
+        # T0004 rev2: acquire() itself already captured the blocking row at the exact
+        # instant it decided to conflict -- reuse THAT snapshot instead of calling
+        # get_active() here, which runs its own recover_expired() sweep and can reclaim
+        # (and null out) the very blocker lease in the window between acquire()'s
+        # failure and this line. Only fall back to a fresh lookup for the pathological
+        # case where acquire() had no row to snapshot at all.
+        active = lease if lease is not None else (db_group_ai_leases.get_active(group_id) or {})
+        _record_lease_admission_rejected(
+            group_id=group_id, project_id=project_id, doc_ref=doc_ref, action_scope=action_scope,
+            chain_id=lease_chain_id, issued_to=issued_to,
+            provider_id=(chain[0].get("id") if chain else provider_id),
+            active=active, handoff_allowed=False, admission_stage="acquire_race",
+            requested_run_id=run_id,
+        )
         raise _http_error(409, "run_in_progress", "An AI run is already in progress for this group.",
                           run_id=active.get("run_id"))
 
@@ -910,7 +1047,7 @@ def start_run(
             token_service.revoke(issue["token_id"], reason="ai_invoke_mention_unavailable")
         except Exception:
             logger.warning("token revoke failed after mention_unavailable", exc_info=True)
-        db_group_ai_leases.release(group_id, run_id)
+        db_group_ai_leases.release(group_id, run_id, reason="admission_rollback_mention_unavailable")
         raise _http_error(409, "mention_unavailable",
                           "Could not build a worker mention for this document.")
 
@@ -1296,7 +1433,9 @@ def start_run(
             try:
                 _svc()._insert_document_review_loop(run)
             except Exception:
-                db_group_ai_leases.release(group_id, run_id)
+                db_group_ai_leases.release(
+                    group_id, run_id, reason="admission_rollback_review_loop_persist_failed"
+                )
                 try:
                     token_service.revoke(issue["token_id"], reason="document_review_loop_persist_failed")
                 except Exception:
