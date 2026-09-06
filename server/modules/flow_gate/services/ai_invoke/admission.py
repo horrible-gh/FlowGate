@@ -511,6 +511,7 @@ def start_run(
     issued_to: str,
     api_base_url: str,
     mention_builder: Callable[[str, str], Optional[str]],
+    continuation_to_end: bool = False,
     provider_id: Optional[str] = None,
     provider_pinned: Optional[bool] = None,
     issue_builder: Optional[Callable[[], dict]] = None,
@@ -778,7 +779,11 @@ def start_run(
     )
 
     baseline_seq = db_docs.get_group_max_seq(group_id)
-    target_to_end = mode == "continuous" and continuation_target_seq == -1
+    # The -1 sentinel is accepted only at the original pre-decision admission. Once
+    # kickoff resolves it, this internal flag preserves the run-to-end intent.
+    target_to_end = mode == "continuous" and (
+        continuation_target_seq == -1 or continuation_to_end is True
+    )
     scope_oracle_run = oracle._uses_scope_oracle(action_scope, mode, completion_oracle)
     if completion_oracle is not None:
         # Scoped-oracle run: success is judged by the caller's predicate, not by documents.
