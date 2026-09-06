@@ -128,6 +128,18 @@ def live_rows(group_id: str, doc_ids: Iterable[str]) -> list[dict[str, Any]]:
     )
 
 
+def latest_canceled_subject(group_id: str, doc_id: str) -> Optional[str]:
+    """Return the durable subject of the most recently uncommitted approval round."""
+    row = get_store()._fetch_one(
+        "SELECT commit_subject FROM tr_commit_ledger "
+        "WHERE group_id = ? AND doc_id = ? AND state = 'canceled' "
+        "  AND cancel_commit IS NULL AND cancel_reason IS NULL "
+        "ORDER BY id DESC LIMIT 1",
+        [group_id, doc_id],
+    )
+    return row.get("commit_subject") if row else None
+
+
 def reappliable_rows(group_id: str, doc_ids: Iterable[str]) -> list[dict[str, Any]]:
     """T0018 K11 — the canceled rows a forward restore looks at, in peel order.
 

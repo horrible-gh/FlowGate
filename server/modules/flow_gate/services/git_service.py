@@ -3928,6 +3928,49 @@ def close_cancel_session(session: Optional[dict]) -> None:
     _release_cancel_lock(session["project_id"], session["holder"])
 
 
+def uncommit_tr_suffix(session: dict, target_shas: Sequence[str]) -> dict:
+    """Remove an exact TR-only HEAD suffix while preserving its tree delta unstaged.
+
+    The validation and reset run under the cancel session's project lock.  Every target
+    must equal the current first-parent suffix in the supplied newest-first order; an
+    unknown/manual or non-target commit therefore fails closed before history moves.
+    """
+    wt_path = session["wt_path"]
+    expected = [str(sha or "").strip() for sha in target_shas]
+    if not expected or any(not sha for sha in expected):
+        return {"kind": "blocked", "sub": "unsafe_suffix", "before": None}
+
+    head_proc = _run_git(
+        ["rev-parse", "HEAD"], cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    before = (head_proc.stdout or "").strip()
+    if head_proc.returncode != 0 or not before:
+        return {"kind": "blocked", "sub": "unsafe_suffix", "before": before or None}
+
+    cursor = before
+    for sha in expected:
+        if cursor != sha:
+            return {"kind": "blocked", "sub": "unsafe_suffix", "before": before}
+        parent_proc = _run_git(
+            ["rev-parse", f"{cursor}^"], cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+        )
+        cursor = (parent_proc.stdout or "").strip()
+        if parent_proc.returncode != 0 or not cursor:
+            return {"kind": "blocked", "sub": "unsafe_suffix", "before": before}
+
+    reset = _run_git(["reset", "--mixed", cursor], cwd=wt_path)
+    if reset.returncode != 0:
+        return {"kind": "blocked", "sub": "reset_failed", "before": before}
+
+    after_proc = _run_git(
+        ["rev-parse", "HEAD"], cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    after = (after_proc.stdout or "").strip()
+    if after_proc.returncode != 0 or after != cursor:
+        return {"kind": "blocked", "sub": "reset_failed", "before": before}
+    return {"kind": "ok", "before": before, "head": after}
+
+
 def revert_tr_commit(session: dict, *, commit_sha: str, subject: str, body: str) -> dict:
     """Lay one revert commit on top of the worktree (L0007 §2.3). One TR, one commit.
 

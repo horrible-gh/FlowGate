@@ -890,3 +890,137 @@ def test_a_rewind_with_nothing_to_cancel_writes_no_audit_row(monkeypatch):
     rework._rearm_git(_PROJECT, _GROUP, [_TR_A], "usr_1")
 
     assert logged == []
+
+
+# ── 9. live rewind uncommit semantics (0532 T0005) ───────────────────────────
+
+@needs_git
+def test_live_rewind_uncommits_single_tr_without_deleting_content_or_revert(
+    real_store, git_active, repo, monkeypatch,
+):
+    (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
+    before_target = _git(["rev-parse", "HEAD"], repo).strip()
+    old_sha = _commit(repo, "feat(git): keep content")
+    row = _ledger_commit(_GROUP, _TR_A, old_sha, "feat(git): keep content")
+    content_before = (repo / "a.py").read_text(encoding="utf-8")
+    revert_calls = []
+    monkeypatch.setattr(
+        svc, "revert_tr_commit",
+        lambda *args, **kwargs: revert_calls.append((args, kwargs)),
+    )
+
+    result = trc.cancel_for_reopen(_GROUP, [_TR_A])
+
+    assert result["blocked_reason"] is None
+    assert _git(["rev-parse", "HEAD"], repo).strip() == before_target
+    assert (repo / "a.py").read_text(encoding="utf-8") == content_before
+    assert _git(["status", "--porcelain"], repo).strip() == "?? a.py"
+    assert revert_calls == []
+    after = db_ledger.get_by_id(row["id"])
+    assert after["state"] == "canceled"
+    assert after["cancel_commit"] is None
+
+
+@needs_git
+def test_live_rewind_uncommits_tr3_only_and_multi_tr_suffix(real_store, git_active, repo):
+    base_sha = _git(["rev-parse", "HEAD"], repo).strip()
+    (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
+    sha_a = _commit(repo, "TR1")
+    _ledger_commit(_GROUP, _TR_A, sha_a, "TR1")
+    (repo / "b.py").write_text("b = 1\n", encoding="utf-8")
+    sha_b = _commit(repo, "TR2")
+    _ledger_commit(_GROUP, _TR_B, sha_b, "TR2")
+
+    one = trc.cancel_for_reopen(_GROUP, [_TR_B])
+    assert one["blocked_reason"] is None
+    assert _git(["rev-parse", "HEAD"], repo).strip() == sha_a
+    assert (repo / "b.py").read_text(encoding="utf-8") == "b = 1\n"
+
+    # Recommit the retained delta as a new live TR2, then rewind the complete suffix.
+    sha_b2 = _commit(repo, "TR2")
+    _ledger_commit(_GROUP, _TR_B, sha_b2, "TR2")
+    both = trc.cancel_for_reopen(_GROUP, [_TR_A, _TR_B])
+    assert both["blocked_reason"] is None
+    assert _git(["rev-parse", "HEAD"], repo).strip() == base_sha
+    assert (repo / "a.py").read_text(encoding="utf-8") == "a = 1\n"
+    assert (repo / "b.py").read_text(encoding="utf-8") == "b = 1\n"
+    assert [r["state"] for r in db_ledger.list_by_group(_GROUP)] == [
+        "canceled", "canceled", "canceled",
+    ]
+
+
+@needs_git
+def test_live_rewind_fails_closed_on_interleaved_commit(real_store, git_active, repo):
+    (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
+    sha_a = _commit(repo, "TR1")
+    _ledger_commit(_GROUP, _TR_A, sha_a, "TR1")
+    (repo / "manual.py").write_text("manual = 1\n", encoding="utf-8")
+    _commit(repo, "manual")
+    (repo / "b.py").write_text("b = 1\n", encoding="utf-8")
+    sha_b = _commit(repo, "TR2")
+    _ledger_commit(_GROUP, _TR_B, sha_b, "TR2")
+    head_before = _git(["rev-parse", "HEAD"], repo).strip()
+
+    result = trc.cancel_for_reopen(_GROUP, [_TR_A, _TR_B])
+
+    assert result["blocked_reason"] is None
+    assert result["stopped_reason"] == "unsafe_suffix"
+    assert _git(["rev-parse", "HEAD"], repo).strip() == head_before
+    assert [r["state"] for r in db_ledger.list_by_group(_GROUP)] == ["live", "live"]
+
+
+@needs_git
+def test_live_rewind_reports_reset_failure_without_preflight_block(
+    real_store, git_active, repo, monkeypatch,
+):
+    (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
+    sha = _commit(repo, "TR1")
+    _ledger_commit(_GROUP, _TR_A, sha, "TR1")
+
+    monkeypatch.setattr(
+        trc.git_service,
+        "uncommit_tr_suffix",
+        lambda _session, _target_shas: {"kind": "blocked", "sub": "reset_failed"},
+    )
+    result = trc.cancel_for_reopen(_GROUP, [_TR_A])
+
+    assert result["attempted"] is True
+    assert result["blocked_reason"] is None
+    assert result["stopped_reason"] == "reset_failed"
+    assert _git(["rev-parse", "HEAD"], repo).strip() == sha
+    assert [r["state"] for r in db_ledger.list_by_group(_GROUP)] == ["live"]
+
+
+@needs_git
+def test_live_rewind_dirty_guard_preserves_history_and_edit(real_store, git_active, repo):
+    (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
+    sha = _commit(repo, "TR1")
+    _ledger_commit(_GROUP, _TR_A, sha, "TR1")
+    (repo / "f.txt").write_text("dirty\n", encoding="utf-8")
+
+    result = trc.cancel_for_reopen(_GROUP, [_TR_A])
+
+    assert result["blocked_reason"] == "dirty_worktree"
+    assert _git(["rev-parse", "HEAD"], repo).strip() == sha
+    assert (repo / "f.txt").read_text(encoding="utf-8") == "dirty\n"
+
+
+@needs_git
+def test_reapproval_creates_new_sha_with_preserved_message_and_content(
+    real_store, git_active, repo,
+):
+    (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
+    original_subject = "feat(git): preserve rewind content"
+    old_sha = _commit(repo, original_subject)
+    _ledger_commit(_GROUP, _TR_A, old_sha, original_subject)
+    trc.cancel_for_reopen(_GROUP, [_TR_A])
+
+    payload = trc.on_document_approved(_TR_A)
+    new_sha = payload["commit"]
+
+    assert payload["committed"] is True
+    assert new_sha != old_sha[:7]
+    assert _git(["log", "-1", "--pretty=%s"], repo).strip() == original_subject
+    assert _git(["show", "HEAD:a.py"], repo) == "a = 1\n"
+    rows = db_ledger.list_by_group(_GROUP)
+    assert [r["state"] for r in rows] == ["live", "canceled"]

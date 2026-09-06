@@ -216,7 +216,15 @@ def on_document_approved(doc_id: str, document: Optional[dict] = None) -> Option
                 reported_diff={"unreported": [], "missing": []},
             )
 
+        # A Time Machine uncommit preserves the original logical TR message as
+        # durable ledger metadata.  Reapproval creates a new SHA from the current
+        # worktree, but reuses that exact subject unless the document now carries an
+        # explicit replacement draft.
         subject = commit_subject(doc)
+        if not git_service.normalize_subject(doc.get("commit_message")):
+            preserved = db_ledger.latest_canceled_subject(group_id, doc["doc_id"])
+            if preserved:
+                subject = preserved
         outcome = git_service.create_tr_commit(group_id, subject)
         artifacts = list(outcome.get("excluded_artifacts") or [])
 
@@ -679,9 +687,48 @@ def _blocked(
 
 
 def cancel_for_reopen(group_id: str, reopened_doc_ids: Iterable[str]) -> dict[str, Any]:
-    """The rewind's cancel (P0006 §3). Runs BEFORE the git re-arm — a re-armed slot is
-    rebuilt from base HEAD and holds none of the commits this is here to undo."""
-    return cancel_tr_commits(group_id, reopened_doc_ids)
+    """Uncommit an exact live TR suffix and retain its content in the worktree."""
+    result = empty_cancel_result()
+    targets = db_ledger.live_rows(group_id, reopened_doc_ids)
+    if not targets:
+        result["attempted"] = True
+        return result
+
+    codes = _doc_codes(targets)
+    opened = git_service.open_cancel_session(
+        group_id, [row.get("commit_sha") for row in targets],
+    )
+    if not opened.get("ok"):
+        return _blocked(result, group_id, opened["blocked_reason"], opened["block_sub"])
+
+    session = opened["session"]
+    try:
+        result["attempted"] = True
+        outcome = git_service.uncommit_tr_suffix(
+            session, [row.get("commit_sha") for row in targets],
+        )
+        if outcome["kind"] != "ok":
+            sub = outcome.get("sub") or "unsafe_suffix"
+            for row in targets:
+                db_ledger.record_cancel_attempt(row["id"], failed_reason=sub)
+                result["skipped"].append(
+                    _skip_line(row, codes.get(row.get("doc_id"), ""), "not_attempted")
+                )
+            # The cancel session has already passed all preflight gates. A suffix
+            # validation or reset failure is an attempted-operation failure, not a
+            # missing-worktree block; preserve its precise subcode for the caller.
+            result["stopped_reason"] = sub
+            return result
+
+        for row in targets:
+            code = codes.get(row.get("doc_id"), "")
+            if db_ledger.mark_canceled(row["id"], cancel_commit=None):
+                result["canceled"].append(_cancel_line(row, code, None))
+            else:
+                result["skipped"].append(_skip_line(row, code, "already_canceled"))
+        return result
+    finally:
+        git_service.close_cancel_session(session)
 
 
 def cancel_retry(group_id: str) -> dict[str, Any]:
