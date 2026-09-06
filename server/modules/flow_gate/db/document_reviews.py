@@ -43,7 +43,14 @@ def insert_review(
             doc_id, revision_no, reviewer_id, verdict, findings_json, comment, reviewed_at, now, now,
             review_run_id, requested_provider_id, actual_provider_id, actual_provider_name,
             provider_source, attempt_no,
-            None if fallback_used is None else (1 if fallback_used else 0),
+            # fallback_used binds as a plain Optional[bool] (0535 T0005): the old
+            # 1/0-int coercion here was written for SQLite, but PostgreSQL's
+            # fallback_used BOOLEAN column rejects an integer parameter outright
+            # ("column ... is of type boolean but expression is of type integer").
+            # sqlite3/psycopg2/pymysql each bind a native Python bool correctly for
+            # their own column type (SQLite INTEGER CHECK(0,1), PostgreSQL/MySQL
+            # BOOLEAN), so passing it straight through is the dialect-portable form.
+            fallback_used,
         ],
     )
     row = store._fetch_one(
