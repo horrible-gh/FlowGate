@@ -9,10 +9,23 @@
           <AppIcon name="robot" style="margin-right:6px; color:var(--primary);" />
           {{ $t('settings.ai.providers_title') }}
         </span>
+        <!-- v3 deck ① puts "프로바이더 추가" in the card header, right-aligned, as a
+             btn-primary btn-sm. The editor owns the dialog, so the header button calls its
+             exposed openAdd() and the editor's own inline button is turned off. -->
+        <button
+          class="btn btn-primary btn-sm"
+          style="margin-left:auto;"
+          data-test="ai-provider-add"
+          @click="openAddProvider"
+        >
+          <AppIcon name="plus" /> {{ $t('settings.ai.add_provider') }}
+        </button>
       </div>
       <div class="card-bd pad">
         <p class="form-hint" style="margin-bottom:12px;">{{ $t('settings.ai.providers_hint') }}</p>
         <AiProviderListEditor
+          ref="providerEditor"
+          :show-add-button="false"
           :providers="providers"
           :default-index="defaultIndex"
           :catalog="catalog"
@@ -101,7 +114,12 @@ const { showToast } = useToast();
 if (!getActivePinia()) setActivePinia(createPinia());
 const settingsStore = useSettingsStore();
 
+const providerEditor = ref(null);
 const providers = ref([]);
+
+function openAddProvider(event) {
+  providerEditor.value?.openAdd(event);
+}
 const defaultIndex = ref(-1);
 const catalog = ref({ exec_types: ['cli', 'api'], kinds: { cli: [], api: [] } });
 // Rendered P0003 422 `errors` (index/field/reason) from the last save attempt.

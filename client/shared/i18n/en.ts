@@ -312,7 +312,7 @@ export default {
     },
     ai: {
       providers_title: 'Provider list',
-      providers_hint: 'Higher rows take priority. The list order becomes the fallback order on failure or quota exhaustion.',
+      providers_hint: 'Higher rows take priority. The list order becomes the fallback order on failure or quota exhaustion. Reorder by dragging the handle or with the up/down buttons.',
       empty: 'No providers registered.',
       add_provider: 'Add provider',
       edit_provider: 'Edit provider',
@@ -334,6 +334,8 @@ export default {
       exec_mode_cli: 'CLI execution',
       exec_mode_api: 'API execution',
       view_command: 'View command',
+      command_title: '{name} · Command',
+      skip_permissions_cmd_warn: 'This CLI reads, writes and runs commands without asking.',
       delete_provider_title: 'Delete provider',
       delete_provider_body: 'Delete the "{name}" provider.',
       delete_provider_hint: 'Deleting it removes it from the fallback order.',

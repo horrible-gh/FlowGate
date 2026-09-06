@@ -312,7 +312,7 @@ export default {
     },
     ai: {
       providers_title: 'プロバイダー一覧',
-      providers_hint: '上にあるほど優先されます。一覧の順序が障害・使用量超過時のフォールバック順になります。',
+      providers_hint: '上にあるほど優先されます。一覧の順序が障害・使用量超過時のフォールバック順になります。順序はハンドルをドラッグするか、上・下ボタンで変更します。',
       empty: '登録されたプロバイダーがありません。',
       add_provider: 'プロバイダー追加',
       edit_provider: 'プロバイダー編集',
@@ -334,6 +334,8 @@ export default {
       exec_mode_cli: 'CLI実行',
       exec_mode_api: 'API実行',
       view_command: 'コマンドを見る',
+      command_title: '{name} · コマンド',
+      skip_permissions_cmd_warn: 'この CLI は確認なしでファイルを読み書きし、コマンドを実行します。',
       delete_provider_title: 'プロバイダー削除',
       delete_provider_body: '「{name}」プロバイダーを削除します。',
       delete_provider_hint: '削除すると、フォールバック順から外れます。',

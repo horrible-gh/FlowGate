@@ -84,21 +84,21 @@
         </span>
         <span class="ai-row-spacer"></span>
         <div v-if="!readonly" class="ai-row-btns">
-          <button class="ai-row-btn" :disabled="i === 0" :title="t('settings.ai.move_up')" @click="move(i, -1)">
-            <AppIcon name="arrow-up" />
+          <button class="ai-row-btn" :disabled="i === 0" :title="t('settings.ai.move_up')" :aria-label="t('settings.ai.move_up')" @click="move(i, -1)">
+            <AppIcon name="arrow-up" aria-hidden="true" />
           </button>
-          <button class="ai-row-btn" :disabled="i === providers.length - 1" :title="t('settings.ai.move_down')" @click="move(i, 1)">
-            <AppIcon name="arrow-down" />
+          <button class="ai-row-btn" :disabled="i === providers.length - 1" :title="t('settings.ai.move_down')" :aria-label="t('settings.ai.move_down')" @click="move(i, 1)">
+            <AppIcon name="arrow-down" aria-hidden="true" />
           </button>
           <span class="ai-btn-div"></span>
-          <button class="ai-row-btn" :title="t('settings.ai.view_command')" @click="openCmd(i)">
-            <AppIcon name="terminal" />
+          <button class="ai-row-btn" :title="t('settings.ai.view_command')" :aria-label="t('settings.ai.view_command')" @click="openCmd(i, $event)">
+            <AppIcon name="terminal" aria-hidden="true" />
           </button>
-          <button class="ai-row-btn" :title="t('common.edit')" @click="openEdit(i)">
-            <AppIcon name="pencil-simple" />
+          <button class="ai-row-btn" :title="t('common.edit')" :aria-label="t('common.edit')" @click="openEdit(i, $event)">
+            <AppIcon name="pencil-simple" aria-hidden="true" />
           </button>
-          <button class="ai-row-btn del" :title="t('common.delete')" @click="openDeleteConfirm(i)">
-            <AppIcon name="trash" />
+          <button class="ai-row-btn del" :title="t('common.delete')" :aria-label="t('common.delete')" @click="openDeleteConfirm(i, $event)">
+            <AppIcon name="trash" aria-hidden="true" />
           </button>
         </div>
       </div>
@@ -107,116 +107,122 @@
       <AppIcon name="info" /> {{ t('settings.ai.empty') }}
     </div>
 
-    <div v-if="!readonly" style="margin-top:12px;">
+    <!-- v3 deck ①: on the system screen the add button lives in the card header
+         (AiSettingsView.vue passes :show-add-button="false" and calls openAdd() through a
+         template ref). The project screen's card header carries a mode badge instead, so it
+         keeps this inline button. -->
+    <div v-if="!readonly && showAddButton" style="margin-top:12px;">
       <button class="btn btn-secondary" @click="openAdd">
         <AppIcon name="plus" /> {{ t('settings.ai.add_provider') }}
       </button>
     </div>
 
     <!-- Add/edit dialog: never dismissed by a backdrop click (T4 §3) -->
-    <div v-if="formOpen" class="modal-bg">
-      <div class="modal-box modal-lg">
+    <div v-if="formOpen" ref="formOverlay" class="modal-bg" tabindex="-1" @keydown.esc.stop="closeForm">
+      <div class="modal-box modal-lg" role="dialog" aria-modal="true" :aria-label="editIndex === null ? t('settings.ai.add_provider') : t('settings.ai.edit_provider')">
         <div class="modal-hd">
           <span class="modal-title">
             {{ editIndex === null ? t('settings.ai.add_provider') : t('settings.ai.edit_provider') }}
           </span>
-          <button class="modal-close" type="button" @click="closeForm"><AppIcon name="x" /></button>
+          <button class="modal-close" type="button" :aria-label="t('common.close')" @click="closeForm"><AppIcon name="x" aria-hidden="true" /></button>
         </div>
+        <!-- v3 deck ②③: the body is a flat list of .form-group (no .form-section wrapper,
+             which would add its own 24px bottom margin), 실행 방식 / 종류 share one .form-row,
+             and every control fills the dialog width instead of carrying its own max-width. -->
         <div class="modal-bd">
-          <div class="form-section">
-            <div class="form-group">
-              <label class="form-label">{{ t('settings.ai.label_name') }}</label>
-              <input class="form-ctrl" v-model="form.name" :placeholder="t('settings.ai.placeholder_name')" style="max-width:420px;" />
-            </div>
+          <div class="form-group">
+            <label class="form-label">{{ t('settings.ai.label_name') }}</label>
+            <input ref="formInitialFocus" class="form-ctrl" v-model="form.name" :placeholder="t('settings.ai.placeholder_name')" />
+          </div>
+          <div class="form-row">
             <div class="form-group">
               <label class="form-label">{{ t('settings.ai.label_exec_type') }}</label>
-              <select class="form-ctrl" v-model="form.exec_type" style="max-width:200px;">
+              <select class="form-ctrl" v-model="form.exec_type">
                 <option v-for="e in catalog.exec_types" :key="e" :value="e">{{ execTypeLabel(e) }}</option>
               </select>
             </div>
             <div class="form-group">
               <label class="form-label">{{ t('settings.ai.label_kind') }}</label>
-              <select class="form-ctrl" v-model="form.kind" style="max-width:200px;">
+              <select class="form-ctrl" v-model="form.kind">
                 <option v-for="k in kindOptions" :key="k" :value="k">{{ kindLabel(k) }}</option>
               </select>
             </div>
+          </div>
 
-            <div v-if="form.exec_type === 'cli'" class="form-group">
-              <label class="form-label">{{ t('settings.ai.label_cli_command') }}</label>
-              <input class="form-ctrl mono" v-model="form.cli_command" :placeholder="t('settings.ai.placeholder_cli_command')" style="max-width:520px;" />
+          <div v-if="form.exec_type === 'cli'" class="form-group">
+            <label class="form-label">{{ t('settings.ai.label_cli_command') }}</label>
+            <input class="form-ctrl mono" v-model="form.cli_command" :placeholder="t('settings.ai.placeholder_cli_command')" />
+          </div>
+          <template v-else>
+            <div class="form-group">
+              <label class="form-label">{{ t('settings.ai.label_api_model') }}</label>
+              <input class="form-ctrl mono" v-model="form.api_model" :placeholder="t('settings.ai.placeholder_api_model')" />
             </div>
-            <template v-else>
-              <div class="form-group">
-                <label class="form-label">{{ t('settings.ai.label_api_model') }}</label>
-                <input class="form-ctrl mono" v-model="form.api_model" :placeholder="t('settings.ai.placeholder_api_model')" style="max-width:420px;" />
-              </div>
-              <div class="form-group">
-                <label class="form-label">{{ t('settings.ai.label_api_base_url') }}</label>
-                <input class="form-ctrl mono" v-model="form.api_base_url" :placeholder="t('settings.ai.placeholder_api_base_url')" style="max-width:520px;" />
-              </div>
-              <div class="form-group">
-                <label class="form-label">{{ t('settings.ai.label_api_key') }}</label>
-                <input
-                  class="form-ctrl mono"
-                  type="password"
-                  v-model="form.keyInput"
-                  :placeholder="t('settings.ai.placeholder_api_key')"
-                  :disabled="form.keyClear"
-                  autocomplete="new-password"
-                  style="max-width:420px;"
-                />
-                <p v-if="editingHasKey" class="form-hint">
-                  {{ t('settings.ai.key_set_hint', { hint: editingKeyHint }) }} —
-                  {{ t('settings.ai.key_keep_hint') }}
-                  <label style="margin-left:8px;">
-                    <input type="checkbox" v-model="form.keyClear" /> {{ t('settings.ai.key_clear') }}
-                  </label>
-                  <span v-if="form.keyClear" class="text-s"> {{ t('settings.ai.key_cleared') }}</span>
-                </p>
-              </div>
-            </template>
-
-            <div v-if="form.exec_type === 'cli' && permissionRule" class="form-group">
-              <label class="form-label">
-                <input
-                  type="checkbox"
-                  v-model="form.skip_permissions"
-                  @change="onPermissionSkipToggle"
-                />
-                {{ t('settings.ai.label_skip_permissions') }}
-              </label>
-              <p class="form-hint">{{ t('settings.ai.skip_permissions_hint') }}</p>
-              <p v-if="form.skip_permissions" class="form-hint ai-skip-warn">
-                {{ t('settings.ai.skip_permissions_warn') }}
+            <div class="form-group">
+              <label class="form-label">{{ t('settings.ai.label_api_base_url') }}</label>
+              <input class="form-ctrl mono" v-model="form.api_base_url" :placeholder="t('settings.ai.placeholder_api_base_url')" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">{{ t('settings.ai.label_api_key') }}</label>
+              <input
+                class="form-ctrl mono"
+                type="password"
+                v-model="form.keyInput"
+                :placeholder="t('settings.ai.placeholder_api_key')"
+                :disabled="form.keyClear"
+                autocomplete="new-password"
+              />
+              <p v-if="editingHasKey" class="form-hint">
+                {{ t('settings.ai.key_set_hint', { hint: editingKeyHint }) }} —
+                {{ t('settings.ai.key_keep_hint') }}
+                <label style="margin-left:8px;">
+                  <input type="checkbox" v-model="form.keyClear" /> {{ t('settings.ai.key_clear') }}
+                </label>
+                <span v-if="form.keyClear" class="text-s"> {{ t('settings.ai.key_cleared') }}</span>
               </p>
             </div>
+          </template>
 
-            <div class="form-group">
-              <label class="form-label">
-                <input type="checkbox" v-model="form.enabled" /> {{ t('settings.ai.label_enabled') }}
-              </label>
-            </div>
-
-            <p v-if="formError" class="text-sm" style="color:var(--danger, #d64545);">{{ formError }}</p>
+          <div v-if="form.exec_type === 'cli' && permissionRule" class="form-group">
+            <label class="form-label">
+              <input
+                type="checkbox"
+                v-model="form.skip_permissions"
+                @change="onPermissionSkipToggle"
+              />
+              {{ t('settings.ai.label_skip_permissions') }}
+            </label>
+            <p class="form-hint">{{ t('settings.ai.skip_permissions_hint') }}</p>
+            <p v-if="form.skip_permissions" class="form-hint ai-skip-warn">
+              {{ t('settings.ai.skip_permissions_warn') }}
+            </p>
           </div>
+
+          <div class="form-group">
+            <label class="form-label">
+              <input type="checkbox" v-model="form.enabled" /> {{ t('settings.ai.label_enabled') }}
+            </label>
+          </div>
+
+          <p v-if="formError" class="text-sm" style="color:var(--danger, #d64545);">{{ formError }}</p>
         </div>
         <div class="modal-ft">
           <button class="btn btn-secondary" @click="closeForm">{{ t('common.cancel') }}</button>
           <button class="btn btn-primary" @click="confirmForm">
-            <AppIcon name="floppy-disk" /> {{ t('common.confirm') }}
+            <AppIcon name="floppy-disk" /> {{ t('common.save') }}
           </button>
         </div>
       </div>
     </div>
 
     <!-- Command/info view dialog: informational only, closes on backdrop click -->
-    <div v-if="cmdRow" class="modal-bg" @click.self="closeCmd">
-      <div class="modal-box">
+    <div v-if="cmdRow" ref="cmdOverlay" class="modal-bg" tabindex="-1" @click.self="closeCmd" @keydown.esc.stop="closeCmd">
+      <div class="modal-box" role="dialog" aria-modal="true" :aria-label="commandTitle">
         <div class="modal-hd">
           <span class="modal-title">
-            <AppIcon name="terminal" style="margin-right:6px; color:var(--primary);" /> {{ cmdRow.name }}
+            <AppIcon name="terminal" style="margin-right:6px; color:var(--primary);" /> {{ commandTitle }}
           </span>
-          <button class="modal-close" type="button" @click="closeCmd"><AppIcon name="x" /></button>
+          <button class="modal-close" type="button" :aria-label="t('common.close')" @click="closeCmd"><AppIcon name="x" aria-hidden="true" /></button>
         </div>
         <div class="modal-bd">
           <template v-if="cmdRow.exec_type === 'cli'">
@@ -225,7 +231,7 @@
               <div class="code-block mono">{{ cmdRow.cli_command || '—' }}</div>
             </div>
             <p v-if="skipsPermissions(cmdRow)" class="form-hint ai-skip-warn">
-              {{ t('settings.ai.skip_permissions_badge') }} — {{ t('settings.ai.skip_permissions_warn') }}
+              {{ t('settings.ai.skip_permissions_badge') }} — {{ t('settings.ai.skip_permissions_cmd_warn') }}
             </p>
           </template>
           <template v-else>
@@ -250,11 +256,11 @@
     </div>
 
     <!-- Delete confirmation dialog: never dismissed by a backdrop click -->
-    <div v-if="deleteRow" class="modal-bg">
-      <div class="modal-box" style="width:440px;">
+    <div v-if="deleteRow" ref="deleteOverlay" class="modal-bg" tabindex="-1" @keydown.esc.stop="closeDelete">
+      <div class="modal-box" role="dialog" aria-modal="true" :aria-label="t('settings.ai.delete_provider_title')" style="width:440px;">
         <div class="modal-hd">
           <span class="modal-title">{{ t('settings.ai.delete_provider_title') }}</span>
-          <button class="modal-close" type="button" @click="closeDelete"><AppIcon name="x" /></button>
+          <button class="modal-close" type="button" :aria-label="t('common.close')" @click="closeDelete"><AppIcon name="x" aria-hidden="true" /></button>
         </div>
         <div class="modal-bd">
           <p style="margin:0 0 8px;">{{ t('settings.ai.delete_provider_body', { name: deleteRow.name }) }}</p>
@@ -282,7 +288,7 @@
 // by object identity in `next`, not by recomputing from `id`, so a row added earlier in the
 // same tick (still `id: null` until the parent's immediate-save round-trip returns) keeps its
 // default status too.
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, nextTick, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AppIcon from '@shared/AppIcon.vue';
 import { hasPermissionSkip, permissionSkipRule, setPermissionSkip } from './aiPermissionSkip';
@@ -305,6 +311,9 @@ const props = defineProps({
     default: () => ({ exec_types: ['cli', 'api'], kinds: { cli: [], api: [] } }),
   },
   readonly: { type: Boolean, default: false },
+  // The system screen renders its own add button in the card header (v3 deck ①) and turns
+  // this one off; the project screen keeps it.
+  showAddButton: { type: Boolean, default: true },
 });
 const emit = defineEmits(['update:providers', 'update:defaultIndex']);
 
@@ -329,6 +338,23 @@ const draggedIndex = ref(null);
 const dragOverIndex = ref(null);
 const deleteIndex = ref(null);
 const cmdIndex = ref(null);
+const formInitialFocus = ref(null);
+// Escape is handled on the overlay, so the overlay has to be able to hold focus: without a
+// focusable overlay a real key event fires on <body> and never reaches this handler (the
+// info/confirm dialogs put focus nowhere, and clicking the backdrop of the form dialog blurs
+// its input). tabindex="-1" + focus() is the same pattern TimeMachineDialog.vue uses.
+const formOverlay = ref(null);
+const cmdOverlay = ref(null);
+const deleteOverlay = ref(null);
+let lastTrigger = null;
+
+function rememberTrigger(event) {
+  lastTrigger = event?.currentTarget || null;
+}
+
+function restoreTriggerFocus() {
+  nextTick(() => lastTrigger?.focus?.());
+}
 
 const kindOptions = computed(() => props.catalog.kinds?.[form.exec_type] || []);
 const permissionRule = computed(() => permissionSkipRule(props.catalog, form.kind));
@@ -337,6 +363,9 @@ const editingHasKey = computed(() => !!editingRow.value?.api_key_set && editingR
 const editingKeyHint = computed(() => editingRow.value?.api_key_hint || '');
 const deleteRow = computed(() => (deleteIndex.value === null ? null : props.providers[deleteIndex.value]));
 const cmdRow = computed(() => (cmdIndex.value === null ? null : props.providers[cmdIndex.value]));
+const commandTitle = computed(() => (
+  cmdRow.value ? t('settings.ai.command_title', { name: cmdRow.value.name }) : ''
+));
 
 watch(() => form.exec_type, (execType) => {
   const kinds = props.catalog.kinds?.[execType] || [];
@@ -435,12 +464,15 @@ function onDragEnd() {
   dragOverIndex.value = null;
 }
 
-function openDeleteConfirm(index) {
+function openDeleteConfirm(index, event) {
+  rememberTrigger(event);
   deleteIndex.value = index;
+  nextTick(() => deleteOverlay.value?.focus?.());
 }
 
 function closeDelete() {
   deleteIndex.value = null;
+  restoreTriggerFocus();
 }
 
 function confirmDelete() {
@@ -454,15 +486,19 @@ function confirmDelete() {
   closeDelete();
 }
 
-function openCmd(index) {
+function openCmd(index, event) {
+  rememberTrigger(event);
   cmdIndex.value = index;
+  nextTick(() => cmdOverlay.value?.focus?.());
 }
 
 function closeCmd() {
   cmdIndex.value = null;
+  restoreTriggerFocus();
 }
 
-function openAdd() {
+function openAdd(event) {
+  rememberTrigger(event);
   editIndex.value = null;
   form.name = '';
   form.exec_type = props.catalog.exec_types?.[0] || 'cli';
@@ -477,9 +513,13 @@ function openAdd() {
   form.skip_permissions = false;
   formError.value = '';
   formOpen.value = true;
+  nextTick(() => formInitialFocus.value?.focus?.());
 }
 
-function openEdit(index) {
+defineExpose({ openAdd });
+
+function openEdit(index, event) {
+  rememberTrigger(event);
   const p = props.providers[index];
   editIndex.value = index;
   form.name = p.name || '';
@@ -496,12 +536,14 @@ function openEdit(index) {
   form.skip_permissions = hasPermissionSkip(props.catalog, form.kind, form.cli_command);
   formError.value = '';
   formOpen.value = true;
+  nextTick(() => formInitialFocus.value?.focus?.());
 }
 
 function closeForm() {
   formOpen.value = false;
   editIndex.value = null;
   formError.value = '';
+  restoreTriggerFocus();
 }
 
 function tooLong(fieldKey, value, max) {

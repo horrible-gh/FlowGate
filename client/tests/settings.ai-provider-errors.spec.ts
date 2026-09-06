@@ -108,7 +108,7 @@ describe('AiSettingsView immediate save', () => {
   async function saveViaEditDialog(wrapper, row = 0) {
     const editButtons = wrapper.findAll(`button[title="${i18n.global.t('common.edit')}"]`)
     await editButtons[row].trigger('click')
-    await wrapper.get('button.btn-primary').trigger('click')
+    await wrapper.get('.modal-bg button.btn-primary').trigger('click')
     await flushPromises()
   }
 
@@ -143,10 +143,10 @@ describe('AiSettingsView immediate save', () => {
     putRequest.mockResolvedValue({
       data: { providers: [ROW], default_provider_id: ROW.id, catalog: CATALOG },
     })
-    // The only unconditional .btn-primary left on the page belongs to the execution policy
-    // card (data-test="ai-execution-policy-save") — there is no provider list save button.
-    expect(wrapper.findAll('button.btn-primary')).toHaveLength(1)
+    // The v3 header has its own Add button; the only non-modal save remains execution policy.
+    expect(wrapper.find('[data-test="ai-provider-add"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="ai-execution-policy-save"]').exists()).toBe(true)
+    expect(wrapper.findAll('.ai-list button.btn-primary')).toHaveLength(0)
     expect(wrapper.find('.badge-yellow').exists()).toBe(false)
 
     await saveViaEditDialog(wrapper)
@@ -219,7 +219,7 @@ describe('AiSettingsView immediate save', () => {
     const editButtons = wrapper.findAll(`button[title="${i18n.global.t('common.edit')}"]`)
     await editButtons[0].trigger('click')
     await wrapper.get('input[type="checkbox"]').setValue(true)
-    await wrapper.get('button.btn-primary').trigger('click')
+    await wrapper.get('.modal-bg button.btn-primary').trigger('click')
     await flushPromises()
     payload = putRequest.mock.calls.at(-1)[1]
     expect(payload.providers[0].api_key).toBe('')
@@ -292,13 +292,59 @@ describe('AiSettingsView immediate save', () => {
   })
 })
 
+describe('AI provider dialog accessibility and dismissal', () => {
+  const PROVIDER = {
+    id: 'aip_dialog', name: 'dialog provider', exec_type: 'cli', kind: 'claude',
+    enabled: true, cli_command: 'claude -p',
+  }
+
+  it('names every icon-only row action for assistive technology', () => {
+    const wrapper = mountEditor([PROVIDER])
+    const labels = wrapper.findAll('.ai-row-btn').map((button) => button.attributes('aria-label'))
+    expect(labels).toEqual([
+      i18n.global.t('settings.ai.move_up'),
+      i18n.global.t('settings.ai.move_down'),
+      i18n.global.t('settings.ai.view_command'),
+      i18n.global.t('common.edit'),
+      i18n.global.t('common.delete'),
+    ])
+  })
+
+  it('keeps edit, add, and delete dialogs open on backdrop clicks but dismisses them with Escape', async () => {
+    const wrapper = mountEditor([PROVIDER])
+    await openEditForm(wrapper)
+    await wrapper.get('.modal-bg').trigger('click')
+    expect(wrapper.find('.modal-bg').exists()).toBe(true)
+    await wrapper.get('.modal-bg').trigger('keydown', { key: 'Escape' })
+    expect(wrapper.find('.modal-bg').exists()).toBe(false)
+
+    await openAddForm(wrapper)
+    await wrapper.get('.modal-bg').trigger('keydown', { key: 'Escape' })
+    expect(wrapper.find('.modal-bg').exists()).toBe(false)
+
+    await wrapper.find(`button[title="${i18n.global.t('common.delete')}"]`).trigger('click')
+    await wrapper.get('.modal-bg').trigger('click')
+    expect(wrapper.find('.modal-bg').exists()).toBe(true)
+    await wrapper.get('.modal-bg').trigger('keydown', { key: 'Escape' })
+    expect(wrapper.find('.modal-bg').exists()).toBe(false)
+  })
+
+  it('allows only the command dialog to close by clicking its backdrop', async () => {
+    const wrapper = mountEditor([PROVIDER])
+    await wrapper.find(`button[title="${i18n.global.t('settings.ai.view_command')}"]`).trigger('click')
+    expect(wrapper.get('[role="dialog"]').attributes('aria-modal')).toBe('true')
+    await wrapper.get('.modal-bg').trigger('click')
+    expect(wrapper.find('.modal-bg').exists()).toBe(false)
+  })
+})
+
 describe('AI provider form pre-flight validation', () => {
   it('rejects a cli_command past the limit instead of letting the save 422', async () => {
     const wrapper = mountEditor()
     await openAddForm(wrapper)
     await wrapper.get('input.form-ctrl').setValue('claude cli')
     await wrapper.get('input.mono').setValue('c'.repeat(CLI_COMMAND_MAX + 1))
-    await wrapper.get('button.btn-primary').trigger('click')
+    await wrapper.get('.modal-bg button.btn-primary').trigger('click')
 
     expect(formError(wrapper)).toContain(String(CLI_COMMAND_MAX))
     expect(wrapper.emitted('update:providers')).toBeUndefined()
@@ -309,7 +355,7 @@ describe('AI provider form pre-flight validation', () => {
     await openAddForm(wrapper)
     await wrapper.get('input.form-ctrl').setValue('claude cli')
     await wrapper.get('input.mono').setValue('c'.repeat(CLI_COMMAND_MAX))
-    await wrapper.get('button.btn-primary').trigger('click')
+    await wrapper.get('.modal-bg button.btn-primary').trigger('click')
 
     expect(formError(wrapper)).toBe('')
     expect(wrapper.emitted('update:providers')).toHaveLength(1)
@@ -322,7 +368,7 @@ describe('AI provider form pre-flight validation', () => {
     await openAddForm(wrapper)
     await wrapper.get('input.form-ctrl').setValue('claude cli')
     await wrapper.get('input.mono').setValue('claude -p')
-    await wrapper.get('button.btn-primary').trigger('click')
+    await wrapper.get('.modal-bg button.btn-primary').trigger('click')
 
     expect(formError(wrapper)).not.toBe('')
     expect(wrapper.emitted('update:providers')).toBeUndefined()
@@ -334,7 +380,7 @@ describe('AI provider form pre-flight validation', () => {
     ])
     await openEditForm(wrapper)
     await wrapper.get('input.mono').setValue('claude -p --verbose')
-    await wrapper.get('button.btn-primary').trigger('click')
+    await wrapper.get('.modal-bg button.btn-primary').trigger('click')
 
     expect(formError(wrapper)).toBe('')
     expect(wrapper.emitted('update:providers')).toHaveLength(1)
