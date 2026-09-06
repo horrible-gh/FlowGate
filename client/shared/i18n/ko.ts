@@ -1441,6 +1441,9 @@ export default {
       error_release_paused_release_conflict: '해제가 완료되기 전에 더 최신 정지 정보로 대체되어 해제할 수 없습니다. 최신 상태로 새로고침했습니다.',
       error_release_paused_failed: '정지 카드 해제에 실패했습니다.',
       release_paused_success: '정지된 체인의 재개 정보를 해제했습니다.',
+      error_remove_card_forbidden: '다른 사용자가 시작한 실행의 카드는 지울 수 없습니다. 관리자만 가능합니다.',
+      error_remove_card_still_active: '아직 실행 중이어서 목록에서 지울 수 없습니다. 먼저 실행을 취소하세요.',
+      error_remove_card_failed: '목록에서 지우지 못했습니다. 카드가 그대로 남아 있습니다.',
     },
     answer_editor: {
       title: '답변 작성',

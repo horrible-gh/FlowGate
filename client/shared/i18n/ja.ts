@@ -1439,6 +1439,9 @@ export default {
       error_release_paused_release_conflict: '解除が完了する前により新しい一時停止またはシステム停止情報に置き換えられたため解除できませんでした。最新の状態に更新しました。',
       error_release_paused_failed: '停止カードの解除に失敗しました。',
       release_paused_success: '一時停止したチェーンの再開情報を解除しました。',
+      error_remove_card_forbidden: 'この実行を開始したユーザー(または管理者)以外はカードを削除できません。',
+      error_remove_card_still_active: 'まだ実行中のため一覧から削除できません。先に実行をキャンセルしてください。',
+      error_remove_card_failed: '一覧から削除できませんでした。カードはそのまま残っています。',
     },
     answer_editor: {
       title: '回答を作成',

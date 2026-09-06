@@ -1441,6 +1441,9 @@ export default {
       error_release_paused_release_conflict: 'This card was replaced by a newer pause or system stop before the release completed, so it could not be released. It has been refreshed to the current state.',
       error_release_paused_failed: 'Failed to release the paused card.',
       release_paused_success: 'Released the resume information for the paused chain.',
+      error_remove_card_forbidden: 'Only the user who started this run (or an admin) may remove its card.',
+      error_remove_card_still_active: 'This run is still active, so its card cannot be removed. Cancel the run first.',
+      error_remove_card_failed: 'Could not remove the card from the list. It is still there.',
     },
     answer_editor: {
       title: 'Write an answer',
