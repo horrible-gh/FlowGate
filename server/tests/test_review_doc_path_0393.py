@@ -44,6 +44,7 @@ from modules.flow_gate.db import document_reviews as db_reviews  # noqa: E402
 from modules.flow_gate.services import help_catalog  # noqa: E402
 from modules.flow_gate.services import mention_service  # noqa: E402
 from modules.flow_gate.services.ai_invoke import runtime as ai_runtime  # noqa: E402
+from store_transaction_support import install_null_transaction_store  # noqa: E402
 
 DOC_ID = "flowgate.v02.0003.0005-NR"
 GROUP_ID = "flowgate.v02.0003"
@@ -86,6 +87,10 @@ def review_env(monkeypatch, tmp_path):
     insert = MagicMock()
     monkeypatch.setattr(db_reviews, "insert_review", insert)
     monkeypatch.setattr(inbox_routes.token_service, "consume", MagicMock())
+    # 0535 T0007 §3: the review path claims its token and stores the review inside one
+    # store.transaction(). Both writes are mocked here (this file is about doc_path),
+    # but the transaction itself is real, so the store has to be able to open one.
+    install_null_transaction_store(monkeypatch)
     return {"scratch": scratch, "insert": insert, "outside": tmp_path / "outside"}
 
 

@@ -161,6 +161,29 @@ def consume(token_id: str) -> Optional[dict]:
     return get_by_id(token_id)
 
 
+def consume_claim(token_id: str) -> bool:
+    """CAS-consume: True only when THIS call flipped consumed_at NULL -> now.
+
+    Same guarded statement as :func:`consume`, read through
+    ``FlowGateStore._execute_affected`` so the caller learns whether it won. consume()
+    cannot answer that: it re-reads the row afterwards, and a row consumed a
+    millisecond earlier by a competing request looks exactly like one this call
+    consumed itself. A single guarded UPDATE is atomic against every other writer
+    regardless of process boundary (the db_tokens.revoke() precedent, 0447 T0007 rev1),
+    so exactly one concurrent caller can ever see True.
+
+    0535 T0007 §3: the review path claims its token this way *inside* the same
+    transaction that stores the review, which is what makes "one submission = one
+    review row + one consumed token" hold under a retry or a double submit.
+    """
+    affected = get_store()._execute_affected(
+        "UPDATE tokens SET consumed_at = ? WHERE token_id = ? AND consumed_at IS NULL",
+        [now_iso(), token_id],
+    )
+    _invalidate_token_cache()
+    return affected > 0
+
+
 def increment_dry_run(token_id: str) -> None:
     """Atomically bump the per-token dry-run attempt counter (R0001 dry-run, group 0050).
 
