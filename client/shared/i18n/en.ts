@@ -2382,6 +2382,8 @@ export default {
       qa_open: 'Open',
       qa_unanswered_count: 'Unanswered {n}',
       section_tr_scope: 'Work Scope Check',
+      markdown_download: 'Download Markdown',
+      markdown_download_failed: 'Could not download the document Markdown.',
       review_package_download: 'Download Review Package',
       review_package_download_failed: 'Could not download the review package.',
       section_changes: 'Source Changes',

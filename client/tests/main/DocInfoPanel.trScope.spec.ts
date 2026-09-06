@@ -232,8 +232,9 @@ describe('DocInfoPanel TR 작업범위 검증 영역', () => {
 
 describe('DocInfoPanel review package download', () => {
   it('shows the localized action in work-scope and downloads with group/document context', async () => {
-    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:review')
-    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+    const createObjectURL = vi.fn().mockReturnValue('blob:review')
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL })
     apiGet.mockResolvedValue({
       data: new Blob(['zip']),
       headers: { 'content-disposition': 'attachment; filename="flowgate.default.0534-review-package.zip"' },
