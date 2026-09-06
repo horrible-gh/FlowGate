@@ -1,167 +1,270 @@
 <template>
   <div>
-    <table v-if="providers.length" class="tbl">
-      <thead>
-        <tr>
-          <th style="width:48px; text-align:center;">{{ t('settings.ai.col_default') }}</th>
-          <th>{{ t('settings.ai.col_name') }}</th>
-          <th style="width:90px;">{{ t('settings.ai.col_exec_type') }}</th>
-          <th style="width:110px;">{{ t('settings.ai.col_kind') }}</th>
-          <th>{{ t('settings.ai.col_connection') }}</th>
-          <th style="width:90px;">{{ t('settings.ai.col_enabled') }}</th>
-          <th v-if="!readonly" style="width:180px;">{{ t('settings.ai.col_action') }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="(p, i) in providers" :key="p.id || `row-${i}`">
-          <td style="text-align:center;">
-            <input
-              type="radio"
-              :checked="i === defaultIndex"
-              :disabled="readonly"
-              :aria-label="t('settings.ai.default_select_aria')"
-              @change="emit('update:defaultIndex', i)"
-            />
-          </td>
-          <td>
-            {{ p.name }}
-            <span v-if="i === defaultIndex" class="badge badge-blue" style="margin-left:6px;">
-              {{ t('settings.ai.default_badge') }}
-            </span>
-          </td>
-          <td><span class="badge">{{ execTypeLabel(p.exec_type) }}</span></td>
-          <td>{{ kindLabel(p.kind) }}</td>
-          <td>
-            <span class="mono ai-conn">{{ connectionSummary(p) }}</span>
-            <span v-if="p.exec_type === 'api'" class="text-xs text-s" style="display:block;">
-              {{ keyStateLabel(p) }}
-            </span>
-            <span
-              v-if="skipsPermissions(p)"
-              class="ai-skip-flag"
-              :title="t('settings.ai.skip_permissions_warn')"
-            >
-              {{ t('settings.ai.skip_permissions_badge') }}
-            </span>
-          </td>
-          <td>
-            <span class="badge" :class="p.enabled ? 'badge-green' : 'badge-gray'">
-              {{ p.enabled ? t('settings.ai.enabled') : t('settings.ai.disabled_label') }}
-            </span>
-          </td>
-          <td v-if="!readonly" style="white-space:nowrap;">
-            <button class="btn btn-secondary btn-sm" :disabled="i === 0" :title="t('settings.ai.move_up')" @click="move(i, -1)">
-              <AppIcon name="arrow-up" />
-            </button>
-            <button class="btn btn-secondary btn-sm" :disabled="i === providers.length - 1" :title="t('settings.ai.move_down')" @click="move(i, 1)">
-              <AppIcon name="arrow-down" />
-            </button>
-            <button class="btn btn-secondary btn-sm" :title="t('common.edit')" @click="openEdit(i)">
-              <AppIcon name="pencil-simple" />
-            </button>
-            <button class="btn btn-secondary btn-sm" :title="t('common.delete')" @click="remove(i)">
-              <AppIcon name="trash" />
-            </button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+    <div v-if="providers.length" class="ai-list">
+      <div
+        v-for="(p, i) in providers"
+        :key="p.id || `row-${i}`"
+        class="ai-row"
+        :class="{ 'is-dragging': draggedIndex === i, 'drag-over': dragOverIndex === i && draggedIndex !== i }"
+        :draggable="!readonly"
+        @dragstart="onDragStart(i)"
+        @dragover.prevent="onDragOver(i)"
+        @drop.prevent="onDrop(i)"
+        @dragend="onDragEnd"
+      >
+        <AppIcon v-if="!readonly" name="dots-six-vertical" class="ai-drag-handle" />
+        <span class="ai-rank">{{ i + 1 }}</span>
+        <input
+          type="radio"
+          :checked="i === defaultIndex"
+          :disabled="readonly"
+          :aria-label="t('settings.ai.default_select_aria')"
+          @change="emit('update:defaultIndex', i)"
+        />
+        <span class="ai-name">{{ p.name }}</span>
+        <span class="ai-kind">{{ kindLabel(p.kind) }}</span>
+        <span class="ai-icons">
+          <i
+            v-if="i === defaultIndex"
+            class="ai-badge-icon ai-badge-default"
+            role="img"
+            :aria-label="t('settings.ai.default_badge')"
+            :data-tip="t('settings.ai.default_badge')"
+            :title="t('settings.ai.default_badge')"
+          >
+            <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
+              <path d="M128,24 L157,100 L238,104 L174,152 L196,230 L128,184 L60,230 L82,152 L18,104 L99,100 Z" />
+            </svg>
+          </i>
+          <i
+            class="ai-badge-icon"
+            :class="p.exec_type === 'cli' ? 'ai-badge-mode-cli' : 'ai-badge-mode-api'"
+            role="img"
+            :aria-label="execModeLabel(p)"
+            :data-tip="execModeLabel(p)"
+            :title="execModeLabel(p)"
+          >
+            <svg v-if="p.exec_type === 'cli'" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="20" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M72,88 L120,128 L72,168" />
+              <line x1="140" y1="168" x2="192" y2="168" />
+            </svg>
+            <svg v-else viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
+              <circle cx="96" cy="144" r="34" />
+              <circle cx="148" cy="120" r="44" />
+              <circle cx="192" cy="146" r="30" />
+              <rect x="86" y="140" width="122" height="40" rx="20" />
+            </svg>
+          </i>
+          <i
+            class="ai-badge-icon"
+            :class="p.enabled ? 'ai-badge-active' : 'ai-badge-inactive'"
+            role="img"
+            :aria-label="p.enabled ? t('settings.ai.enabled') : t('settings.ai.disabled_label')"
+            :data-tip="p.enabled ? t('settings.ai.enabled') : t('settings.ai.disabled_label')"
+            :title="p.enabled ? t('settings.ai.enabled') : t('settings.ai.disabled_label')"
+          >
+            <svg viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="20" stroke-linecap="round" aria-hidden="true">
+              <line x1="128" y1="40" x2="128" y2="120" />
+              <path d="M76,72 a76,76 0 1 0 104,0" fill="none" />
+            </svg>
+          </i>
+          <i
+            v-if="skipsPermissions(p)"
+            class="ai-badge-icon ai-badge-skip"
+            role="img"
+            :aria-label="t('settings.ai.skip_permissions_badge')"
+            :data-tip="t('settings.ai.skip_permissions_badge')"
+            :title="t('settings.ai.skip_permissions_badge')"
+          >
+            <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
+              <path d="M92,108 v-24 a36,36 0 0 1 72,0" fill="none" stroke="currentColor" stroke-width="18" stroke-linecap="round" />
+              <rect x="70" y="108" width="116" height="88" rx="14" />
+            </svg>
+          </i>
+        </span>
+        <span class="ai-row-spacer"></span>
+        <div v-if="!readonly" class="ai-row-btns">
+          <button class="ai-row-btn" :disabled="i === 0" :title="t('settings.ai.move_up')" @click="move(i, -1)">
+            <AppIcon name="arrow-up" />
+          </button>
+          <button class="ai-row-btn" :disabled="i === providers.length - 1" :title="t('settings.ai.move_down')" @click="move(i, 1)">
+            <AppIcon name="arrow-down" />
+          </button>
+          <span class="ai-btn-div"></span>
+          <button class="ai-row-btn" :title="t('settings.ai.view_command')" @click="openCmd(i)">
+            <AppIcon name="terminal" />
+          </button>
+          <button class="ai-row-btn" :title="t('common.edit')" @click="openEdit(i)">
+            <AppIcon name="pencil-simple" />
+          </button>
+          <button class="ai-row-btn del" :title="t('common.delete')" @click="openDeleteConfirm(i)">
+            <AppIcon name="trash" />
+          </button>
+        </div>
+      </div>
+    </div>
     <div v-else class="alert alert-info">
       <AppIcon name="info" /> {{ t('settings.ai.empty') }}
     </div>
 
-    <div v-if="!readonly && !formOpen" style="margin-top:12px;">
+    <div v-if="!readonly" style="margin-top:12px;">
       <button class="btn btn-secondary" @click="openAdd">
         <AppIcon name="plus" /> {{ t('settings.ai.add_provider') }}
       </button>
     </div>
 
-    <div v-if="formOpen" class="card" style="margin-top:12px;">
-      <div class="card-hd">
-        <span class="card-title">
-          {{ editIndex === null ? t('settings.ai.add_provider') : t('settings.ai.edit_provider') }}
-        </span>
-      </div>
-      <div class="card-bd pad">
-        <div class="form-section">
-          <div class="form-group">
-            <label class="form-label">{{ t('settings.ai.label_name') }}</label>
-            <input class="form-ctrl" v-model="form.name" :placeholder="t('settings.ai.placeholder_name')" style="max-width:420px;" />
-          </div>
-          <div class="form-group">
-            <label class="form-label">{{ t('settings.ai.label_exec_type') }}</label>
-            <select class="form-ctrl" v-model="form.exec_type" style="max-width:200px;">
-              <option v-for="e in catalog.exec_types" :key="e" :value="e">{{ execTypeLabel(e) }}</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label">{{ t('settings.ai.label_kind') }}</label>
-            <select class="form-ctrl" v-model="form.kind" style="max-width:200px;">
-              <option v-for="k in kindOptions" :key="k" :value="k">{{ kindLabel(k) }}</option>
-            </select>
-          </div>
+    <!-- Add/edit dialog: never dismissed by a backdrop click (T4 §3) -->
+    <div v-if="formOpen" class="modal-bg">
+      <div class="modal-box modal-lg">
+        <div class="modal-hd">
+          <span class="modal-title">
+            {{ editIndex === null ? t('settings.ai.add_provider') : t('settings.ai.edit_provider') }}
+          </span>
+          <button class="modal-close" type="button" @click="closeForm"><AppIcon name="x" /></button>
+        </div>
+        <div class="modal-bd">
+          <div class="form-section">
+            <div class="form-group">
+              <label class="form-label">{{ t('settings.ai.label_name') }}</label>
+              <input class="form-ctrl" v-model="form.name" :placeholder="t('settings.ai.placeholder_name')" style="max-width:420px;" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">{{ t('settings.ai.label_exec_type') }}</label>
+              <select class="form-ctrl" v-model="form.exec_type" style="max-width:200px;">
+                <option v-for="e in catalog.exec_types" :key="e" :value="e">{{ execTypeLabel(e) }}</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">{{ t('settings.ai.label_kind') }}</label>
+              <select class="form-ctrl" v-model="form.kind" style="max-width:200px;">
+                <option v-for="k in kindOptions" :key="k" :value="k">{{ kindLabel(k) }}</option>
+              </select>
+            </div>
 
-          <div v-if="form.exec_type === 'cli'" class="form-group">
-            <label class="form-label">{{ t('settings.ai.label_cli_command') }}</label>
-            <input class="form-ctrl mono" v-model="form.cli_command" :placeholder="t('settings.ai.placeholder_cli_command')" style="max-width:520px;" />
+            <div v-if="form.exec_type === 'cli'" class="form-group">
+              <label class="form-label">{{ t('settings.ai.label_cli_command') }}</label>
+              <input class="form-ctrl mono" v-model="form.cli_command" :placeholder="t('settings.ai.placeholder_cli_command')" style="max-width:520px;" />
+            </div>
+            <template v-else>
+              <div class="form-group">
+                <label class="form-label">{{ t('settings.ai.label_api_model') }}</label>
+                <input class="form-ctrl mono" v-model="form.api_model" :placeholder="t('settings.ai.placeholder_api_model')" style="max-width:420px;" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">{{ t('settings.ai.label_api_base_url') }}</label>
+                <input class="form-ctrl mono" v-model="form.api_base_url" :placeholder="t('settings.ai.placeholder_api_base_url')" style="max-width:520px;" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">{{ t('settings.ai.label_api_key') }}</label>
+                <input
+                  class="form-ctrl mono"
+                  type="password"
+                  v-model="form.keyInput"
+                  :placeholder="t('settings.ai.placeholder_api_key')"
+                  :disabled="form.keyClear"
+                  autocomplete="new-password"
+                  style="max-width:420px;"
+                />
+                <p v-if="editingHasKey" class="form-hint">
+                  {{ t('settings.ai.key_set_hint', { hint: editingKeyHint }) }} —
+                  {{ t('settings.ai.key_keep_hint') }}
+                  <label style="margin-left:8px;">
+                    <input type="checkbox" v-model="form.keyClear" /> {{ t('settings.ai.key_clear') }}
+                  </label>
+                  <span v-if="form.keyClear" class="text-s"> {{ t('settings.ai.key_cleared') }}</span>
+                </p>
+              </div>
+            </template>
+
+            <div v-if="form.exec_type === 'cli' && permissionRule" class="form-group">
+              <label class="form-label">
+                <input
+                  type="checkbox"
+                  v-model="form.skip_permissions"
+                  @change="onPermissionSkipToggle"
+                />
+                {{ t('settings.ai.label_skip_permissions') }}
+              </label>
+              <p class="form-hint">{{ t('settings.ai.skip_permissions_hint') }}</p>
+              <p v-if="form.skip_permissions" class="form-hint ai-skip-warn">
+                {{ t('settings.ai.skip_permissions_warn') }}
+              </p>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">
+                <input type="checkbox" v-model="form.enabled" /> {{ t('settings.ai.label_enabled') }}
+              </label>
+            </div>
+
+            <p v-if="formError" class="text-sm" style="color:var(--danger, #d64545);">{{ formError }}</p>
           </div>
+        </div>
+        <div class="modal-ft">
+          <button class="btn btn-secondary" @click="closeForm">{{ t('common.cancel') }}</button>
+          <button class="btn btn-primary" @click="confirmForm">
+            <AppIcon name="floppy-disk" /> {{ t('common.confirm') }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Command/info view dialog: informational only, closes on backdrop click -->
+    <div v-if="cmdRow" class="modal-bg" @click.self="closeCmd">
+      <div class="modal-box">
+        <div class="modal-hd">
+          <span class="modal-title">
+            <AppIcon name="terminal" style="margin-right:6px; color:var(--primary);" /> {{ cmdRow.name }}
+          </span>
+          <button class="modal-close" type="button" @click="closeCmd"><AppIcon name="x" /></button>
+        </div>
+        <div class="modal-bd">
+          <template v-if="cmdRow.exec_type === 'cli'">
+            <div class="form-group">
+              <label class="form-label">{{ t('settings.ai.label_cli_command') }}</label>
+              <div class="code-block mono">{{ cmdRow.cli_command || '—' }}</div>
+            </div>
+            <p v-if="skipsPermissions(cmdRow)" class="form-hint ai-skip-warn">
+              {{ t('settings.ai.skip_permissions_badge') }} — {{ t('settings.ai.skip_permissions_warn') }}
+            </p>
+          </template>
           <template v-else>
             <div class="form-group">
               <label class="form-label">{{ t('settings.ai.label_api_model') }}</label>
-              <input class="form-ctrl mono" v-model="form.api_model" :placeholder="t('settings.ai.placeholder_api_model')" style="max-width:420px;" />
+              <div class="code-block mono">{{ cmdRow.api_model || '—' }}</div>
             </div>
-            <div class="form-group">
+            <div v-if="cmdRow.api_base_url" class="form-group">
               <label class="form-label">{{ t('settings.ai.label_api_base_url') }}</label>
-              <input class="form-ctrl mono" v-model="form.api_base_url" :placeholder="t('settings.ai.placeholder_api_base_url')" style="max-width:520px;" />
+              <div class="code-block mono">{{ cmdRow.api_base_url }}</div>
             </div>
             <div class="form-group">
               <label class="form-label">{{ t('settings.ai.label_api_key') }}</label>
-              <input
-                class="form-ctrl mono"
-                type="password"
-                v-model="form.keyInput"
-                :placeholder="t('settings.ai.placeholder_api_key')"
-                :disabled="form.keyClear"
-                autocomplete="new-password"
-                style="max-width:420px;"
-              />
-              <p v-if="editingHasKey" class="form-hint">
-                {{ t('settings.ai.key_set_hint', { hint: editingKeyHint }) }} —
-                {{ t('settings.ai.key_keep_hint') }}
-                <label style="margin-left:8px;">
-                  <input type="checkbox" v-model="form.keyClear" /> {{ t('settings.ai.key_clear') }}
-                </label>
-                <span v-if="form.keyClear" class="text-s"> {{ t('settings.ai.key_cleared') }}</span>
-              </p>
+              <p class="form-hint" style="margin:0;">{{ keyStateLabel(cmdRow) }}</p>
             </div>
           </template>
+        </div>
+        <div class="modal-ft">
+          <button class="btn btn-secondary" @click="closeCmd">{{ t('common.close') }}</button>
+        </div>
+      </div>
+    </div>
 
-          <div v-if="form.exec_type === 'cli' && permissionRule" class="form-group">
-            <label class="form-label">
-              <input
-                type="checkbox"
-                v-model="form.skip_permissions"
-                @change="onPermissionSkipToggle"
-              />
-              {{ t('settings.ai.label_skip_permissions') }}
-            </label>
-            <p class="form-hint">{{ t('settings.ai.skip_permissions_hint') }}</p>
-            <p v-if="form.skip_permissions" class="form-hint ai-skip-warn">
-              {{ t('settings.ai.skip_permissions_warn') }}
-            </p>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">
-              <input type="checkbox" v-model="form.enabled" /> {{ t('settings.ai.label_enabled') }}
-            </label>
-          </div>
-
-          <p v-if="formError" class="text-sm" style="color:var(--danger, #d64545);">{{ formError }}</p>
-          <div class="flex" style="gap:8px;">
-            <button class="btn btn-primary" @click="confirmForm">{{ t('common.confirm') }}</button>
-            <button class="btn btn-secondary" @click="closeForm">{{ t('common.cancel') }}</button>
-          </div>
+    <!-- Delete confirmation dialog: never dismissed by a backdrop click -->
+    <div v-if="deleteRow" class="modal-bg">
+      <div class="modal-box" style="width:440px;">
+        <div class="modal-hd">
+          <span class="modal-title">{{ t('settings.ai.delete_provider_title') }}</span>
+          <button class="modal-close" type="button" @click="closeDelete"><AppIcon name="x" /></button>
+        </div>
+        <div class="modal-bd">
+          <p style="margin:0 0 8px;">{{ t('settings.ai.delete_provider_body', { name: deleteRow.name }) }}</p>
+          <p class="form-hint" style="margin:0;">{{ t('settings.ai.delete_provider_hint') }}</p>
+        </div>
+        <div class="modal-ft">
+          <button class="btn btn-secondary" @click="closeDelete">{{ t('common.cancel') }}</button>
+          <button class="btn btn-danger" @click="confirmDelete">
+            <AppIcon name="trash" /> {{ t('common.delete') }}
+          </button>
         </div>
       </div>
     </div>
@@ -173,6 +276,12 @@
 // shared by the global screen and the project custom tab. Purely local state — the parent
 // owns load/save; rows carry an `api_key` property ONLY when the user set ('' = delete,
 // value = replace) so the parent can omit the field to mean "keep" (P0003 write-only key).
+//
+// 0469 T4 (v3 deck 8bqoacqs): table -> single-column row list + CRUD/command-view dialogs +
+// drag & drop. Reorder (arrow buttons and drag) always resolves the default row's new index
+// by object identity in `next`, not by recomputing from `id`, so a row added earlier in the
+// same tick (still `id: null` until the parent's immediate-save round-trip returns) keeps its
+// default status too.
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AppIcon from '@shared/AppIcon.vue';
@@ -216,11 +325,18 @@ const form = reactive({
   skip_permissions: false,
 });
 
+const draggedIndex = ref(null);
+const dragOverIndex = ref(null);
+const deleteIndex = ref(null);
+const cmdIndex = ref(null);
+
 const kindOptions = computed(() => props.catalog.kinds?.[form.exec_type] || []);
 const permissionRule = computed(() => permissionSkipRule(props.catalog, form.kind));
 const editingRow = computed(() => (editIndex.value === null ? null : props.providers[editIndex.value]));
 const editingHasKey = computed(() => !!editingRow.value?.api_key_set && editingRow.value?.api_key !== '');
 const editingKeyHint = computed(() => editingRow.value?.api_key_hint || '');
+const deleteRow = computed(() => (deleteIndex.value === null ? null : props.providers[deleteIndex.value]));
+const cmdRow = computed(() => (cmdIndex.value === null ? null : props.providers[cmdIndex.value]));
 
 watch(() => form.exec_type, (execType) => {
   const kinds = props.catalog.kinds?.[execType] || [];
@@ -249,15 +365,13 @@ function execTypeLabel(execType) {
   return te(key) ? t(key) : execType;
 }
 
+function execModeLabel(p) {
+  return p.exec_type === 'cli' ? t('settings.ai.exec_mode_cli') : t('settings.ai.exec_mode_api');
+}
+
 function kindLabel(kind) {
   const key = `settings.ai.kind.${kind}`;
   return te(key) ? t(key) : kind;
-}
-
-function connectionSummary(p) {
-  if (p.exec_type === 'cli') return p.cli_command || '—';
-  const model = p.api_model || '—';
-  return p.api_base_url ? `${model} @ ${p.api_base_url}` : model;
 }
 
 function keyStateLabel(p) {
@@ -283,12 +397,69 @@ function move(index, delta) {
   else if (props.defaultIndex === target) emit('update:defaultIndex', index);
 }
 
-function remove(index) {
+// Drag & drop reorder is remove-then-insert (not an index swap): dropping row A on row B
+// removes A and inserts it right before B's current slot, matching the `.drag-over` top
+// border indicator. The default row's new index is resolved by object identity so it keeps
+// pointing at the same row no matter how many other rows moved around it.
+function onDragStart(index) {
+  if (props.readonly) return;
+  draggedIndex.value = index;
+}
+
+function onDragOver(index) {
+  if (props.readonly || draggedIndex.value === null) return;
+  dragOverIndex.value = index;
+}
+
+function onDrop(index) {
+  if (props.readonly) return;
+  const from = draggedIndex.value;
+  draggedIndex.value = null;
+  dragOverIndex.value = null;
+  if (from === null || from === index) return;
+
+  const defaultRow = props.defaultIndex >= 0 ? props.providers[props.defaultIndex] : null;
+  const next = [...props.providers];
+  const [item] = next.splice(from, 1);
+  const insertAt = index > from ? index - 1 : index;
+  next.splice(insertAt, 0, item);
+  commit(next);
+  if (defaultRow) {
+    const newIndex = next.indexOf(defaultRow);
+    if (newIndex !== props.defaultIndex) emit('update:defaultIndex', newIndex);
+  }
+}
+
+function onDragEnd() {
+  draggedIndex.value = null;
+  dragOverIndex.value = null;
+}
+
+function openDeleteConfirm(index) {
+  deleteIndex.value = index;
+}
+
+function closeDelete() {
+  deleteIndex.value = null;
+}
+
+function confirmDelete() {
+  const index = deleteIndex.value;
+  if (index === null) return;
   const next = props.providers.filter((_, i) => i !== index);
   commit(next);
   if (props.defaultIndex === index) emit('update:defaultIndex', next.length ? 0 : -1);
   else if (props.defaultIndex > index) emit('update:defaultIndex', props.defaultIndex - 1);
   if (editIndex.value === index) closeForm();
+  closeDelete();
+}
+
+function openCmd(index) {
+  cmdIndex.value = index;
+}
+
+function closeCmd() {
+  cmdIndex.value = null;
 }
 
 function openAdd() {
@@ -400,6 +571,9 @@ function confirmForm() {
     api_key_hint: base?.api_key_hint ?? null,
     api_key_unreadable: base?.api_key_unreadable ?? false,
   };
+  // Opaque local identity the parent assigns to a row the server has not issued an id for yet.
+  // Carry it across the edit so an in-flight save's response can still find this row.
+  if (base?._localKey !== undefined) row._localKey = base._localKey;
   // Key intent: keep (no property), replace (value), delete ('').
   if (base && base.api_key !== undefined) row.api_key = base.api_key; // carry unsaved intent
   if (form.exec_type === 'api') {
@@ -421,18 +595,68 @@ function confirmForm() {
 </script>
 
 <style scoped>
-.ai-conn {
-  font-size: .8rem;
-  color: var(--text-m);
-  word-break: break-all;
-}
 .ai-skip-warn {
   color: var(--danger, #d64545);
 }
-.ai-skip-flag {
-  display: block;
-  margin-top: 2px;
-  font-size: .75rem;
-  color: var(--danger, #d64545);
+
+/* v3 deck 8bqoacqs: table -> single-column row list, ported from WorkflowDecisionModal.vue's
+   sequence-row rules (extra.css keeps the same selectors for parity with the mockup). */
+.ai-list { display: block; }
+.ai-row {
+  display: flex; align-items: center; gap: 8px; padding: 9px 11px;
+  border: 1px solid var(--border); border-radius: var(--r); background: var(--surface);
+  margin-bottom: 4px; transition: box-shadow var(--tr);
 }
+.ai-row:last-child { margin-bottom: 0; }
+.ai-row:hover { box-shadow: var(--sh-sm); }
+.ai-drag-handle { color: var(--text-m); font-size: .78rem; opacity: .3; cursor: grab; flex-shrink: 0; transition: opacity var(--tr); }
+.ai-row:hover .ai-drag-handle { opacity: .65; }
+.ai-row.is-dragging { opacity: .35; box-shadow: none; background: rgba(37,99,235,.08); border-color: #2563eb; }
+.ai-row.drag-over { border-top: 2px solid var(--primary); margin-top: -1px; }
+.ai-rank {
+  width: 22px; height: 22px; border-radius: 50%; background: var(--bg);
+  border: 1px solid var(--border); display: flex; align-items: center; justify-content: center;
+  font-size: .68rem; font-weight: 700; color: var(--text-s); flex-shrink: 0;
+}
+.ai-name { font-size: .84rem; font-weight: 600; color: var(--text); }
+.ai-kind { font-size: .78rem; color: var(--text-s); }
+.ai-row-spacer { flex: 1; }
+.ai-row-btns { display: flex; gap: 2px; flex-shrink: 0; align-items: center; }
+.ai-btn-div { width: 1px; height: 16px; background: var(--border); margin: 0 4px; }
+.ai-row-btn {
+  width: 26px; height: 26px; border-radius: var(--r-sm); border: 1px solid var(--border);
+  background: var(--surface); display: flex; align-items: center; justify-content: center;
+  font-size: .7rem; color: var(--text-m); cursor: pointer; transition: all var(--tr);
+}
+.ai-row-btn:hover { background: var(--bg); color: var(--text); border-color: var(--border-d); }
+.ai-row-btn.del:hover { background: var(--danger-l); color: var(--danger); border-color: #fca5a5; }
+.ai-row-btn:disabled { opacity: .25; pointer-events: none; }
+
+/* Status badges as icons rather than a row of text badges (rej_01M1TBYZTTTC9VFX). Each icon
+   keeps a hover tooltip (data-tip/title) AND an always-on role=img + aria-label so a screen
+   reader gets the same information a sighted user only sees on hover. */
+.ai-icons { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
+.ai-badge-icon {
+  position: relative; width: 22px; height: 22px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; flex-shrink: 0; cursor: default;
+}
+.ai-badge-icon svg { width: 13px; height: 13px; }
+.ai-badge-icon::after {
+  content: attr(data-tip); position: absolute; bottom: calc(100% + 7px); left: 50%;
+  transform: translateX(-50%); background: #0f172a; color: #fff; padding: 4px 9px;
+  border-radius: 6px; font-size: .68rem; font-weight: 500; white-space: nowrap;
+  opacity: 0; pointer-events: none; transition: opacity .12s; box-shadow: var(--sh-sm); z-index: 60;
+}
+.ai-badge-icon::before {
+  content: ''; position: absolute; bottom: calc(100% + 2px); left: 50%; transform: translateX(-50%);
+  border: 5px solid transparent; border-top-color: #0f172a; opacity: 0; transition: opacity .12s; z-index: 60;
+}
+.ai-badge-icon:hover::after, .ai-badge-icon:hover::before { opacity: 1; }
+.ai-badge-default { background: #d97706; }
+.ai-badge-mode-cli { background: #7c3aed; }
+.ai-badge-mode-api { background: #2563eb; }
+.ai-badge-active { background: var(--success, #16a34a); }
+.ai-badge-inactive { background: var(--text-m, #94a3b8); }
+.ai-badge-skip { background: var(--danger, #d64545); }
 </style>

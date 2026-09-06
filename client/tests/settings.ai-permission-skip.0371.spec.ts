@@ -5,6 +5,11 @@
 //
 // The flags are not hard-coded on this side: they come down with the settings catalog, so
 // these tests feed the same shape the server publishes.
+//
+// 0469 T4: the list row no longer renders a text badge for "skip" — it renders a
+// `.ai-badge-skip` icon that carries the same wording as a hover tooltip (title/data-tip) and
+// an always-on `aria-label` (§5 accessibility requirement), so the visibility tests below
+// check the icon and its aria-label instead of `wrapper.text()`.
 import { mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
@@ -197,21 +202,23 @@ describe('permission-skip control in the provider editor', () => {
 
 describe('permission-skip visibility in the provider list', () => {
   it('marks a row that runs without permission checks', () => {
-    const text = mountEditor([
+    const wrapper = mountEditor([
       cliProvider({ cli_command: `claude ${CLAUDE_SKIP} -p -` }),
-    ]).text()
-    expect(text).toContain(i18n.global.t('settings.ai.skip_permissions_badge'))
+    ])
+    const badge = wrapper.find('.ai-badge-skip')
+    expect(badge.exists()).toBe(true)
+    expect(badge.attributes('aria-label')).toBe(i18n.global.t('settings.ai.skip_permissions_badge'))
   })
 
   it('says nothing on a row that still asks', () => {
-    const text = mountEditor([cliProvider()]).text()
-    expect(text).not.toContain(i18n.global.t('settings.ai.skip_permissions_badge'))
+    const wrapper = mountEditor([cliProvider()])
+    expect(wrapper.find('.ai-badge-skip').exists()).toBe(false)
   })
 
   it('says nothing on an API provider, which spawns nothing', () => {
-    const text = mountEditor([
+    const wrapper = mountEditor([
       cliProvider({ exec_type: 'api', kind: 'claude', cli_command: null, api_model: 'gpt-5.6-sol' }),
-    ]).text()
-    expect(text).not.toContain(i18n.global.t('settings.ai.skip_permissions_badge'))
+    ])
+    expect(wrapper.find('.ai-badge-skip').exists()).toBe(false)
   })
 })

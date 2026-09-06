@@ -16,8 +16,8 @@
           :providers="providers"
           :default-index="defaultIndex"
           :catalog="catalog"
-          @update:providers="providers = $event"
-          @update:defaultIndex="defaultIndex = $event"
+          @update:providers="onUpdateProviders"
+          @update:defaultIndex="onUpdateDefaultIndex"
         />
       </div>
     </div>
@@ -33,22 +33,13 @@
       </div>
     </div>
 
-    <div class="flex" style="justify-content:flex-end; align-items:center; gap:10px;">
-      <span v-if="dirty" class="badge badge-yellow" style="margin-right:2px;">{{ $t('settings.ai.unsaved_badge') }}</span>
-      <button class="btn btn-secondary" @click="load">
-        <AppIcon name="arrow-counter-clockwise" /> {{ $t('common.reset') }}
-      </button>
-      <button class="btn btn-primary" @click="save">
-        <AppIcon name="floppy-disk" /> {{ $t('common.save') }}
-      </button>
-    </div>
-
-    <!-- 0490 T0007 §3.6/§4-5: named for what it sets, not the screen it lives on — the card
-         title does not repeat "AI 설정" (settings.system.ai.title above it already says that).
-         Placed after the provider card's own Save/Reset row rather than directly under the
-         provider card so this card's OWN .btn-primary is never the first DOM match for a bare
-         `button.btn-primary` selector — client/tests/settings.ai-provider-errors.spec.ts targets
-         the provider Save button that way and must keep hitting it unmodified (§2.2). -->
+    <!-- 0469 T4: the provider card saves itself immediately on every add/edit/delete/move/
+         drag/default-select (§4) — no Save/Reset row, no dirty badge, no leave confirmation
+         for this card. The execution policy card below is untouched: its own Save button is
+         now the only *unconditional* `button.btn-primary` on this view. Opening a provider
+         dialog (add/edit) inserts that dialog's own `.btn-primary` earlier in DOM order, which
+         is what client/tests/settings.ai-provider-errors.spec.ts relies on to target the
+         provider save path instead of the execution-policy one (§2.2/§7). -->
     <div class="card mb-4">
       <div class="card-hd">
         <span class="card-title">
@@ -91,8 +82,7 @@ import AppIcon from '@shared/AppIcon.vue'
 // (order = fallback chain) and pick the current default. Contract: GET/PUT
 // /api/v1/system/ai-settings (P0003). api_key is write-only — the payload carries it only
 // when the user typed a new value ('' = delete); omission means keep.
-import { computed, onMounted, ref } from 'vue';
-import { onBeforeRouteLeave } from 'vue-router';
+import { nextTick, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { createPinia, getActivePinia, setActivePinia } from 'pinia';
 import { getRequest, putRequest } from '@shared/api';
@@ -149,18 +139,11 @@ async function saveExecutionPolicy() {
   }
 }
 
-function snapshot() {
-  return JSON.stringify({ providers: providers.value, defaultIndex: defaultIndex.value });
-}
-const baseline = ref(snapshot());
-const dirty = computed(() => baseline.value !== snapshot());
-
 function applyResponse(data) {
   saveErrors.value = [];
   providers.value = data.providers || [];
   defaultIndex.value = providers.value.findIndex((p) => p.id === data.default_provider_id);
   if (data.catalog) catalog.value = data.catalog;
-  baseline.value = snapshot();
 }
 
 async function load() {
@@ -195,13 +178,82 @@ function buildPayload() {
   };
 }
 
-async function save() {
+// 0469 T4 §4: every row operation (add/edit/delete/move/drag/default-select) saves the whole
+// list immediately instead of waiting for a Save button. `lastGoodSnapshot` is the state the
+// server last confirmed (or the initial load) — a failed save rolls all the way back to it
+// rather than to whatever was on screen right before the failing operation, since a
+// queued-but-not-yet-sent later operation may already have moved past that point.
+let lastGoodSnapshot = snapshot();
+let saveScheduled = false;
+let saveChain = Promise.resolve();
+// Bumped by every local row mutation. A save reads it before its PUT leaves and compares on
+// the way back, so a response can tell whether the screen has moved on since it was sent.
+let localVersion = 0;
+// Client-side identity for a row the server has not issued an id for yet. It outlives the row
+// object being replaced by a later edit, so an in-flight save's response can still hand the id
+// the server just issued to the right local row.
+let localKeySeq = 0;
+
+function snapshot() {
+  return JSON.stringify({ providers: providers.value, defaultIndex: defaultIndex.value });
+}
+
+// The state the server confirmed, read off its response rather than off the screen — the
+// screen may already carry a later operation this response knows nothing about.
+function serverSnapshot(data) {
+  const list = data.providers || [];
+  return JSON.stringify({
+    providers: list,
+    defaultIndex: list.findIndex((p) => p.id === data.default_provider_id),
+  });
+}
+
+function tagNewRows(list) {
+  list.forEach((p) => {
+    if (!p.id && p._localKey === undefined) p._localKey = `lk${(localKeySeq += 1)}`;
+  });
+}
+
+// A response that lands after the screen has moved on must not overwrite the newer rows, but
+// it does carry one thing they cannot reconstruct: the id the server issued to each row that
+// save created. The saved list comes back in the order it was sent (the server stores
+// sort_order = request index), so the two line up position by position.
+function adoptIssuedIds(sentKeys, savedRows) {
+  sentKeys.forEach((key, i) => {
+    const issued = savedRows[i]?.id;
+    if (!key || !issued) return;
+    const row = providers.value.find((p) => !p.id && p._localKey === key);
+    if (row) row.id = issued;
+  });
+}
+
+function restoreSnapshot(snap) {
+  const parsed = JSON.parse(snap);
+  providers.value = parsed.providers;
+  defaultIndex.value = parsed.defaultIndex;
+}
+
+async function doSave() {
   saveErrors.value = [];
+  const sentVersion = localVersion;
+  // Only rows the server has never seen need an id handed back to them.
+  const sentKeys = providers.value.map((p) => (p.id ? null : p._localKey));
   try {
     const { data } = await putRequest('/api/v1/system/ai-settings', buildPayload());
-    applyResponse(data);
+    if (localVersion === sentVersion) {
+      applyResponse(data);
+    } else {
+      // Another operation edited the list while this PUT was in flight and queued its own save
+      // behind this one. Replacing the list with this now-stale response would make the queued
+      // save re-send the state we just saved and silently drop that later operation — so keep
+      // the local rows and take only the ids this save had issued to them.
+      adoptIssuedIds(sentKeys, data.providers || []);
+      if (data.catalog) catalog.value = data.catalog;
+    }
+    lastGoodSnapshot = serverSnapshot(data);
     showToast(t('common.toast.settings_saved'), 'success');
   } catch (e) {
+    restoreSnapshot(lastGoodSnapshot);
     if (e?.response?.status === 422) {
       // The server collects every offending row/field; surface them instead of only the toast.
       saveErrors.value = formatErrors(e.response.data?.detail?.errors, providers.value, { t, te });
@@ -212,13 +264,36 @@ async function save() {
   }
 }
 
-onBeforeRouteLeave(() => {
-  if (dirty.value && !window.confirm(t('settings.ai.unsaved_confirm'))) return false;
-  return true;
-});
+// update:providers and update:defaultIndex can both fire in the same synchronous tick (e.g.
+// adding a provider that also becomes the new default) — nextTick collapses them into a
+// single save. A save already in flight when the next operation arrives is not interrupted:
+// the new save is appended to `saveChain` and runs afterwards against the then-current local
+// state, which `localVersion` keeps the earlier response from overwriting first.
+function scheduleSave() {
+  if (saveScheduled) return;
+  saveScheduled = true;
+  nextTick(() => {
+    saveScheduled = false;
+    saveChain = saveChain.then(doSave);
+  });
+}
+
+function onUpdateProviders(next) {
+  tagNewRows(next);
+  providers.value = next;
+  localVersion += 1;
+  scheduleSave();
+}
+
+function onUpdateDefaultIndex(next) {
+  defaultIndex.value = next;
+  localVersion += 1;
+  scheduleSave();
+}
 
 onMounted(async () => {
-  load();
+  await load();
+  lastGoodSnapshot = snapshot();
   try {
     await settingsStore.fetchSystemSettings();
     applyExecutionPolicyFromSettings();
