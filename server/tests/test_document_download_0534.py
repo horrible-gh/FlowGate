@@ -59,7 +59,7 @@ def test_file_backed_download_has_exact_utf8_bytes_and_filename(client, monkeypa
     assert response.status_code == 200
     assert response.content == content.encode("utf-8")
     assert response.headers["content-type"] == "text/markdown; charset=utf-8"
-    assert response.headers["content-disposition"] == 'attachment; filename="TR0006.md"'
+    assert response.headers["content-disposition"] == f'attachment; filename="{DOC_ID}.md"'
 
 
 def test_migrated_ch_download_uses_canonical_render_not_stale_snapshot(client, monkeypatch, tmp_path):
@@ -76,7 +76,7 @@ def test_migrated_ch_download_uses_canonical_render_not_stale_snapshot(client, m
     assert response.status_code == 200
     assert response.content == b"# canonical live\n"
     assert b"stale snapshot" not in response.content
-    assert response.headers["content-disposition"] == 'attachment; filename="CH0012.md"'
+    assert response.headers["content-disposition"] == f'attachment; filename="{CH_ID}.md"'
 
 
 @pytest.mark.parametrize("type_code", ["AC", "DC"])

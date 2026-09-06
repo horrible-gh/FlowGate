@@ -122,10 +122,9 @@ def _download_available(doc: dict) -> bool:
 
 
 def _document_filename(doc_id: str) -> str:
-    match = _re.search(r"(?:^|[.-])(\d{4})-([A-Z]+)$", doc_id)
-    if match is None:
+    if _re.search(r"(?:^|[.-])(\d{4})-([A-Z]+)$", doc_id) is None:
         raise ValueError(f"doc_id format is invalid: {doc_id!r}")
-    return f"{match.group(2)}{match.group(1)}.md"
+    return f"{doc_id}.md"
 
 
 def _uses_live_conversation_content(doc: dict) -> bool:

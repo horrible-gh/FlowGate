@@ -142,3 +142,31 @@ def test_worktree_missing_is_a_structured_error(tmp_path, monkeypatch):
         rps.build_review_package("flowgate", "flowgate.default.0534")
     assert raised.value.code == "worktree_missing"
     assert raised.value.status == 409
+
+
+def test_deleted_tracked_file_is_reflected_in_diff_and_changed_files(tmp_path, monkeypatch):
+    root, _ = make_repo(tmp_path)
+    # base.txt was committed on main (before the group branch existed), so deleting it
+    # here shows up as a real "D" relative to merge-base — unlike a file added and
+    # removed entirely within the group branch, which nets to no change at all.
+    (root / "base.txt").unlink()
+    patch_context(monkeypatch, root, None)
+    package = rps.build_review_package("flowgate", "flowgate.default.0534")
+    with unzip(package) as archive:
+        metadata = json.loads(archive.read("metadata.json"))
+        patch = archive.read("diff.patch").decode()
+        changed_files = archive.read("changed-files.txt").decode()
+        assert "base.txt" in metadata["changed_files"]
+        assert "deleted file mode" in patch and "base.txt" in patch
+        assert "D base.txt" in changed_files
+        assert "untracked/base.txt" not in archive.namelist()
+
+
+def test_git_inactive_is_a_structured_error(tmp_path, monkeypatch):
+    root, _ = make_repo(tmp_path)
+    patch_context(monkeypatch, root, None)
+    monkeypatch.setattr(rps.db_git, "get_config", lambda project_id: {"enabled": 0, "base_branch": "main"})
+    with pytest.raises(GitServiceError) as raised:
+        rps.build_review_package("flowgate", "flowgate.default.0534")
+    assert raised.value.code == "git_inactive"
+    assert raised.value.status == 409

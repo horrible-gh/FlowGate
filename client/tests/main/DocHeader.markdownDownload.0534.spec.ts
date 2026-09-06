@@ -59,7 +59,7 @@ describe('DocHeader current Markdown download', () => {
     vi.stubGlobal('URL', { createObjectURL, revokeObjectURL })
     apiGet.mockResolvedValue({
       data: new Blob(['markdown']),
-      headers: { 'content-disposition': 'attachment; filename="TR0006.md"' },
+      headers: { 'content-disposition': 'attachment; filename="flowgate.default.0534.0006-TR.md"' },
     })
     const wrapper = mountHeader(true)
     await flushPromises()
@@ -72,6 +72,27 @@ describe('DocHeader current Markdown download', () => {
     )
     expect(createObjectURL).toHaveBeenCalled()
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:markdown')
+    wrapper.unmount()
+  })
+
+  it('falls back to the full doc_id filename when the header is missing (R0001 §3.3)', async () => {
+    downloadable = true
+    const createObjectURL = vi.fn().mockReturnValue('blob:markdown')
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL })
+    apiGet.mockResolvedValue({ data: new Blob(['markdown']), headers: {} })
+    const realCreateElement = document.createElement.bind(document)
+    const anchor = realCreateElement('a')
+    const createElementSpy = vi.spyOn(document, 'createElement')
+      .mockImplementation((tag: string) => (tag === 'a' ? anchor : realCreateElement(tag)))
+
+    const wrapper = mountHeader(true)
+    await flushPromises()
+    await wrapper.get('.doc-markdown-download').trigger('click')
+    await flushPromises()
+
+    expect(anchor.download).toBe('flowgate.default.0534.0006-TR.md')
+    createElementSpy.mockRestore()
     wrapper.unmount()
   })
 

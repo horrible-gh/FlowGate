@@ -1678,6 +1678,24 @@ onBeforeUnmount(() => window.removeEventListener('fg:qa_refresh', _onQaRefresh))
 .dip-trs-skipped { background: var(--muted-bg, #f1f5f9); color: var(--muted, #64748b); }
 .dip-trs-stage { font-size: .7rem; color: var(--muted, #64748b); }
 .dip-trs-assign { margin: 6px 0 0; font-size: .72rem; color: var(--muted, #64748b); }
+.dip-trs-download {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin: 9px 0 0;
+  padding: 7px 9px;
+  font-size: .72rem;
+  font-weight: 600;
+  color: var(--primary, #1d4ed8);
+  background: var(--primary-bg, #eff6ff);
+  border: 1px solid var(--primary-border, #bfdbfe);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.dip-trs-download:hover:not(:disabled) { background: var(--primary-bg-hover, #dbeafe); }
+.dip-trs-download:disabled { opacity: .55; cursor: not-allowed; }
 /* Unverified notice (0390 TR0005 rev2). One line right under the verdict badge, read before the list. */
 .dip-trs-unevaluated { margin: 6px 0 0; font-size: .72rem; line-height: 1.5; color: var(--muted, #64748b); }
 .dip-trs-codes { margin: 6px 0 0; padding-left: 16px; font-size: .72rem; line-height: 1.5; }

@@ -343,8 +343,7 @@ const mentionCopy = ref<{ kind: string; copiedAt: string } | null>(null)
 const markdownDownloadBusy = ref(false)
 
 function fallbackMarkdownFilename(docId: string): string {
-  const match = docId.match(/(?:^|[.-])(\d{4})-([A-Z]+)$/)
-  return match ? `${match[2]}${match[1]}.md` : 'document.md'
+  return docId ? `${docId}.md` : 'document.md'
 }
 
 async function downloadMarkdown() {
