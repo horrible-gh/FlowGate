@@ -2382,6 +2382,8 @@ export default {
       qa_open: 'Open',
       qa_unanswered_count: 'Unanswered {n}',
       section_tr_scope: 'Work Scope Check',
+      review_package_download: 'Download Review Package',
+      review_package_download_failed: 'Could not download the review package.',
       section_changes: 'Source Changes',
       changes_files: '{n} file(s) changed',
       changes_kind_added: 'Added',

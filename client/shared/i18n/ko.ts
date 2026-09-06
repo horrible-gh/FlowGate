@@ -2381,6 +2381,8 @@ export default {
       qa_open: '열기',
       qa_unanswered_count: '미응답 {n}',
       section_tr_scope: '작업범위 검증',
+      review_package_download: '검수 패키지 다운로드',
+      review_package_download_failed: '검수 패키지를 다운로드하지 못했습니다.',
       section_changes: '소스 변경 요약',
       changes_files: '변경 파일 {n}개',
       changes_kind_added: '신규',

@@ -2378,6 +2378,8 @@ export default {
       qa_open: '開く',
       qa_unanswered_count: '未回答 {n}',
       section_tr_scope: '作業範囲チェック',
+      review_package_download: 'レビューパッケージをダウンロード',
+      review_package_download_failed: 'レビューパッケージをダウンロードできませんでした。',
       section_changes: 'ソース変更サマリー',
       changes_files: '変更ファイル {n} 件',
       changes_kind_added: '新規',
