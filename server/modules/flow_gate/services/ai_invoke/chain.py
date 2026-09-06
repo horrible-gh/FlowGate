@@ -111,7 +111,10 @@ def pause_run(run_id: str, user_id: str) -> dict:
             doc_ref=run["doc_ref"],
             paused_by=user_id,
             paused_at=now_iso(),
-            continuation_target_seq=run.get("continuation_target_seq"),
+            # None is the durable paused-row spelling of run-to-end.
+            continuation_target_seq=(
+                None if run.get("target_to_end") else run.get("continuation_target_seq")
+            ),
             docs_target=run.get("docs_target"),
             docs_reached=docs_reached,
             chain_id=run.get("chain_id"),
@@ -210,6 +213,22 @@ def has_active_run(group_id: Optional[str]) -> bool:
     return _svc()._active_run_for_group(group_id) is not None
 
 
+def is_active_run_to_end(group_id: Optional[str]) -> bool:
+    """Whether the live engine run for this group is a run-to-end continuation (0415 T0007).
+
+    The only durable-while-running carrier of that intent is the active run dict's
+    ``target_to_end`` (set by admission.start_run from the ``continuation_to_end``/``-1``
+    sentinel and carried hop to hop by _spawn_auto_resume/resume_chain). A consumed token
+    never carries this fact — it always stores a concrete resolved number — so the inbox
+    self-chain (which only ever sees the just-consumed token) asks here instead of trying
+    to read it off the token.
+    """
+    if not group_id:
+        return False
+    run = _svc()._active_run_for_group(group_id)
+    return bool(run is not None and run.get("target_to_end"))
+
+
 def request_auto_resume(group_id: Optional[str], payload: dict) -> None:
     """Queue the next hop of an unmanned continuous chain for a fresh worker. Called by the
     inbox self-chain at a step boundary INSTEAD of handing next_token to the still-running
@@ -249,7 +268,13 @@ def _handoff_bundle(pending: dict, run: Optional[dict]) -> dict:
     run = run or {}
     return {
         "doc_ref": pending.get("doc_ref") or run.get("doc_ref"),
-        "target_seq": pending.get("target_seq"),
+        # Preserve run-to-end as None in the durable handoff row.
+        "to_end": bool(pending.get("to_end") or run.get("target_to_end")),
+        "target_seq": (
+            None
+            if pending.get("to_end") or run.get("target_to_end")
+            else pending.get("target_seq")
+        ),
         "review_mode": bool(pending.get("review_mode")),
         "instruction_mode": (
             pending.get("instruction_mode") or run.get("continuation_instruction_mode")
@@ -635,7 +660,8 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
     from modules.flow_gate.services import workflow_decision_service
 
     doc_ref = pending["doc_ref"]
-    target_seq = pending["target_seq"]
+    to_end = bool(pending.get("to_end") or pending.get("target_seq") is None)
+    target_seq = _resolve_continuation_target(doc_ref, pending.get("target_seq"), to_end=to_end)
     review_mode = bool(pending.get("review_mode"))
     instruction_mode = pending.get("instruction_mode")
     locale = pending.get("locale") or "ko"
@@ -696,6 +722,7 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
         mode="continuous",
         continuation_target_seq=target_seq,
         continuation_review_mode=review_mode,
+        continuation_to_end=to_end,
         continuation_instruction_mode=instruction_mode,
         continuation_locale=locale,
         issued_to=issued_to,
@@ -716,6 +743,66 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
         continuation_review_count_overrides=review_count_overrides,
         continuation_reviewer_overrides=reviewer_overrides,
     )
+
+
+def _resolve_continuation_target(
+    doc_ref: str, target_seq: Optional[int], *, to_end: bool = False,
+) -> int:
+    """Resolve run-to-end against the sequence at the hop boundary."""
+    if not to_end and target_seq is not None:
+        return int(target_seq)
+    sequence = db_wfseq.get_sequence_for_member_doc(doc_ref)
+    items = db_wfseq.get_sequence_items(sequence["id"]) if sequence is not None else []
+    resolved = max(
+        (item["item_seq"] for item in items or [] if item.get("item_seq") is not None),
+        default=None,
+    )
+    if resolved is None:
+        raise HTTPException(status_code=409, detail={
+            "code": "sequence_changed",
+            "message": "The workflow sequence has no continuation target.",
+        })
+    head = _next_incomplete_item_seq(doc_ref)
+    if head is not None and resolved < head:
+        raise HTTPException(status_code=409, detail={
+            "code": "sequence_changed",
+            "message": "The rebased continuation target precedes the workflow head.",
+        })
+    return int(resolved)
+
+
+def resolve_continuation_target(
+    doc_ref: str, target_seq: Optional[int], *, to_end: bool = False,
+) -> int:
+    """Public entry point for _resolve_continuation_target (0415 T0007 task 2).
+
+    Used by inbox_routes._continuation_self_chain / settle_completed_step and by
+    review._settle_gate_pass — every "next hop is about to be issued/decided" point that
+    lives outside this module — so a WP or human/worker sequence expansion is picked up
+    the moment it matters instead of only when the chain happens to pause and resume.
+    """
+    return _resolve_continuation_target(doc_ref, target_seq, to_end=to_end)
+
+
+def rebase_active_to_end(group_id: Optional[str], doc_ref: str) -> Optional[int]:
+    """Eagerly refresh a live run-to-end target after WP expansion.
+
+    Paused/handoff rows intentionally remain None: that is their durable run-to-end marker
+    and resume resolves it through _resolve_continuation_target.
+    """
+    if not group_id:
+        return None
+    run = _svc()._active_run_for_group(group_id)
+    if (
+        run is None
+        or run.get("mode") != "continuous"
+        or not run.get("target_to_end")
+        or run.get("doc_ref") != doc_ref
+    ):
+        return None
+    resolved = _resolve_continuation_target(doc_ref, None, to_end=True)
+    run["continuation_target_seq"] = resolved
+    return resolved
 
 
 def _sequence_completion_state(doc_ref: Optional[str]) -> tuple[bool, Optional[int]]:
@@ -924,13 +1011,12 @@ def _paused_row_resume_state(
             f"continuous run requires a decided workflow sequence on {row['doc_ref']}",
         )
 
-    target_seq = row.get("continuation_target_seq")
-    if target_seq is None:
-        target_seq = max(
-            (item["item_seq"] for item in items or [] if item.get("item_seq") is not None),
-            default=None,
+    stored_target_seq = row.get("continuation_target_seq")
+    try:
+        target_seq = _resolve_continuation_target(
+            row["doc_ref"], stored_target_seq, to_end=stored_target_seq is None,
         )
-    if target_seq is None:
+    except HTTPException:
         return _state(
             False,
             "sequence_unavailable",
@@ -1207,6 +1293,7 @@ def resume_chain(
         gate_bundle = {
             "doc_ref": row["doc_ref"],
             "target_seq": target_seq,
+            "to_end": row.get("continuation_target_seq") is None,
             "review_count_overrides": review_count_overrides,
             "reviewer_overrides": reviewer_overrides,
             "locale": locale,
@@ -1318,6 +1405,7 @@ def resume_chain(
                 continuation_instruction_mode=resume_instruction_mode,
                 continuation_locale=locale,
                 issued_to=user_id,
+                continuation_to_end=row.get("continuation_target_seq") is None,
                 api_base_url=api_base_url,
                 mention_builder=lambda _raw, _scratch: None,
                 issue_builder=_issue_resume,

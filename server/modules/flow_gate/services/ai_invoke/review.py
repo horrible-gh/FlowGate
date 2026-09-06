@@ -683,6 +683,11 @@ def _settle_gate_pass(group_id: str, slot: dict, bundle: dict, run: dict) -> str
         actor_user_id=bundle.get("issued_to"),
         completed_seq=slot.get("item_seq"),
         target_seq=bundle.get("target_seq"),
+        # 0415 T0007: a review round can span multiple hops, so the target this gated
+        # step settles against is re-checked against the current sequence right here too
+        # — the same lazy re-check settle_completed_step's inbox caller does, not a second
+        # implementation of it.
+        to_end=bool(bundle.get("to_end")),
         user_paused_probe=lambda: _user_pause_row_pending(group_id),
     )
     outcome = result.get("outcome")

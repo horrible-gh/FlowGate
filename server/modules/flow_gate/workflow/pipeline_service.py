@@ -764,9 +764,20 @@ def transition_document_review(
                     _wp.plan_path_for_doc(fresh_plan_doc),
                     project_id=fresh_plan_doc.get("project_id"),
                 )
-                _wpseq.expand_final_work_plan(
+                expansion = _wpseq.expand_final_work_plan(
                     doc=fresh_plan_doc, plan=plan_body, locale=locale,
                 )
+                if expansion.get("status") == "expanded":
+                    # Eagerly refresh the live target. Durable paused/handoff rows retain
+                    # None, their existing run-to-end marker, and resolve the same latest
+                    # sequence max on resume.
+                    from modules.flow_gate.services import ai_invoke_service as _ai_invoke
+                    _ai_invoke.rebase_active_to_end(
+                        fresh_plan_doc.get("group_id"),
+                        expansion.get("result", {}).get("doc_id")
+                        or fresh_plan_doc.get("target_id")
+                        or fresh_plan_doc.get("triggered_by"),
+                    )
         except Exception as exc:  # final expansion follows a durable approval
             _log.warning(
                 "[work plan] final expansion after approving %s failed: %s", doc_id, exc, exc_info=True

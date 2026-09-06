@@ -2751,6 +2751,7 @@ def settle_completed_step(
     completed_seq: Optional[int],
     target_seq: Optional[int],
     user_paused_probe,
+    to_end: bool = False,
     locale: Optional[str] = None,
 ) -> dict:
     """What happens after a step's output is accepted (0414 L0008 §2.7).
@@ -2860,6 +2861,26 @@ def settle_completed_step(
             except Exception:
                 import LogAssist.log as logger
                 logger.warning("[inbox] tr_commit SSE emission failed (ignored)")
+
+    # 0415 T0007 task 2: a run-to-end target is re-checked against the CURRENT sequence
+    # right here, at the hop's own issuance/settlement point — not the number resolved
+    # (possibly hops ago) when this call's target_seq argument was put together. Both
+    # callers (the inbox's direct settle and review._settle_gate_pass's gated settle)
+    # pass their own to_end, so a WP/human/worker expansion mid-run is picked up whichever
+    # path this particular hop happens to settle through.
+    if to_end:
+        from modules.flow_gate.services import ai_invoke_service as _ai_invoke
+
+        try:
+            target_seq = _ai_invoke.resolve_continuation_target(doc_id, target_seq, to_end=True)
+        except HTTPException as exc:
+            return {
+                **settled_extra,
+                "outcome": "stopped",
+                "stop_code": "advance_blocked",
+                "reason": f"continuation target rebase failed: {exc.detail}",
+                "detail": str(exc.detail),
+            }
 
     # Target reached → stop the chain. Reached only AFTER the just-submitted document was
     # auto-approved above, so the last step ends approved (point 2), not left submitted.
@@ -3009,6 +3030,29 @@ def _continuation_self_chain(
     from modules.flow_gate.db import workflow_sequences as _wfseq
     completed_item = _wfseq.get_item_by_result_doc_id(canonical_doc_id)
     completed_seq = completed_item.get("item_seq") if completed_item else None
+
+    # 0415 T0007 task 1/4: a consumed token always stores a concrete resolved number —
+    # never a "this was run-to-end" fact — so that fact is asked from the still-live engine
+    # run for this hop instead (a copy-mention chain has no such run and keeps the token's
+    # own frozen target unchanged, exactly as before). Task 2's lazy re-check: re-resolve
+    # against the CURRENT sequence right here, at this hop's own decision point, so a WP or
+    # human/worker expansion that landed after this token was minted is picked up now
+    # rather than staying frozen at whatever number an earlier hop saw.
+    from modules.flow_gate.services import ai_invoke_service as _ai_invoke
+
+    to_end = bool(chain_group) and _ai_invoke.is_active_run_to_end(chain_group)
+    if to_end:
+        try:
+            target_seq = _ai_invoke.resolve_continuation_target(
+                spine_doc_ref, target_seq, to_end=True,
+            )
+        except HTTPException as exc:
+            envelope["continuation_paused"] = True
+            envelope["continuation_reason"] = (
+                f"continuation target rebase failed: {exc.detail}"
+            )
+            return _stop("advance_blocked", detail=str(exc.detail))
+
     target_seq = _normalize_continuation_target(
         target_seq,
         instruction_mode,
@@ -3041,8 +3085,6 @@ def _continuation_self_chain(
     #    hop once this one settles, and that start_run re-resolves the hop's OWN provider.
     #  • Copy-mention semi-manned run (no engine worker to re-spawn): keep minting next_token so
     #    the human's external AI self-continues exactly as before.
-    from modules.flow_gate.services import ai_invoke_service as _ai_invoke
-
     def _hand_off_to_engine(*, review_pending: bool) -> dict:
         """Queue the next hop, tell the browser, and end this worker's step.
 
@@ -3060,6 +3102,14 @@ def _continuation_self_chain(
         _ai_invoke.request_auto_resume(chain_group, {
             "doc_ref": spine_doc_ref,
             "target_seq": target_seq,
+            # 0415 T0007 finding: the ORIGINAL gap. Without this key, _spawn_auto_resume's
+            # `to_end = bool(pending.get("to_end") or pending.get("target_seq") is None)`
+            # is always False on this — the ordinary, most common — hop-to-hop path, since
+            # target_seq above is always a concrete number by this point. Carrying the flag
+            # this hop already resolved (via is_active_run_to_end, just above) is what lets
+            # the re-spawned next hop re-resolve against the latest sequence instead of
+            # freezing on today's number.
+            "to_end": to_end,
             "review_mode": review_mode,
             "instruction_mode": instruction_mode,
             # 0352 T0004 §3.4/§3.5: carry the selection forward the same way instruction_mode
@@ -3167,6 +3217,7 @@ def _continuation_self_chain(
         actor_user_id=actor_user_id,
         completed_seq=completed_seq,
         target_seq=target_seq,
+        to_end=to_end,
         user_paused_probe=lambda: bool(
             chain_group and _ai_invoke.mark_user_paused(chain_group, token_rec.get("ai_run_id"))
         ),
