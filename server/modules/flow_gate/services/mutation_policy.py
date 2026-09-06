@@ -276,7 +276,13 @@ def is_policy_control_path(path: str) -> bool:
     (0401 T0004 item 2 adds the lease-release case; 0459 T0007 §2-7 adds the paused-
     chain DELETE -- its own internal active-run/lease conflict judgement in
     release_paused_chain still runs, this only keeps the group mutation lease
-    middleware from pre-empting it)."""
+    middleware from pre-empting it).
+
+    0529 B0001 adds the finished-card removal for the same reason as the paused DELETE:
+    clearing a leftover card is how a user gets rid of the wreckage a stuck group left
+    behind, so the very lease that group is holding must not be what refuses it. The
+    service still makes its own judgement -- a run that is genuinely still live answers
+    409 `run_still_active`."""
     if "ai-invoke" not in path:
         return False
     return bool(
@@ -284,6 +290,7 @@ def is_policy_control_path(path: str) -> bool:
         or re.search(r"/(?:cancel|pause)$", path)
         or re.search(r"/leases/[^/]+/release$", path)
         or re.search(r"/paused/[^/]+$", path)
+        or re.search(r"/runs/[^/]+/card$", path)
     )
 
 

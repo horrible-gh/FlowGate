@@ -1445,6 +1445,100 @@ def release_paused_chain(*, group_id: str, user_id: str, is_admin: bool = False)
                 "already_released": False}
 
 
+def _finished_card_retention_minutes(user_id: str) -> int:
+    """This user's finished-card retention, in minutes (0452 L0003 1-1).
+
+    Read through `ui_settings_service`, never re-derived: it is the same number the
+    browser's own sweep uses, and two definitions would age a card out on one side and
+    keep it on the other. A read that fails must not be able to blank a card, so the
+    failure answers RETENTION_NEVER -- the bound simply does not apply this time.
+    """
+    from modules.flow_gate.services import ui_settings_service
+
+    try:
+        settings, _ = ui_settings_service.resolve_ui_settings(user_id)
+        return int(settings[ui_settings_service.RETENTION_FIELD])
+    except Exception:  # noqa: BLE001
+        logger.warning("finished-card retention lookup failed for %s", user_id, exc_info=True)
+        return ui_settings_service.RETENTION_NEVER
+
+
+def _review_loop_card_expired(row: dict, retention_minutes: int) -> bool:
+    """Has this restored review-loop card outlived the retention its owner chose?
+
+    -1 ("never expires") is a real choice, not a lower bound (L0003 2-1): it means the
+    card stays until somebody removes it, which is exactly what `card_dismissed_at` is
+    for. 0 ("disappears immediately") means the bootstrap restores no finished card at
+    all, matching the browser's own `retentionTtlMs === 0` branch.
+
+    A row with no readable `finished_at` is NOT expired: the age is unknown, and guessing
+    "old" would drop a card nobody asked to lose.
+    """
+    from modules.flow_gate.services import ui_settings_service
+
+    if retention_minutes == ui_settings_service.RETENTION_NEVER:
+        return False
+    if retention_minutes == ui_settings_service.RETENTION_IMMEDIATE:
+        return True
+    stamp = row.get("finished_at")
+    if not stamp:
+        return False
+    try:
+        finished = datetime.fromisoformat(str(stamp))
+    except ValueError:
+        return False
+    if finished.tzinfo is None:
+        finished = finished.astimezone()
+    age_sec = (datetime.now(timezone.utc) - finished.astimezone(timezone.utc)).total_seconds()
+    return age_sec >= retention_minutes * 60
+
+
+def dismiss_review_loop_card(*, run_id: str, user_id: str, is_admin: bool = False) -> dict:
+    """Durable [remove from list] for a FINISHED run's monitor card (0529 B0001).
+
+    The counterpart of :func:`release_paused_chain`, for the other kind of card that is
+    rebuilt from the database on every bootstrap. A finished document-review-loop card
+    used to be removed by a purely local delete in the browser, and `active_all` handed
+    the very same card straight back on the next `/ai-invoke/active-all` -- the "it does
+    not go away when I press remove" this bug report is about.
+
+    Deliberately NOT a delete (FlowGate is a time machine): the run row and the loop row
+    both stay, with every round, stop reason and stop detail still readable through GET
+    /ai-invoke/{run_id} and the run list. Only the bootstrap listing skips it afterwards.
+
+    A LIVE run is refused with 409: its card is not a leftover, and dismissing it would
+    hide a run that is still working. The idempotent branches mirror release_paused_chain
+    -- a replay answers 200 `already_dismissed`, never 404 -- so a double click and a
+    retry after a dropped response both land on the same state.
+    """
+    from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
+    from modules.flow_gate.db import ai_invoke_runs as db_runs
+
+    row = db_runs.get(run_id)
+    if row is None:
+        raise _http_error(404, "run_not_found", "Unknown or expired run id.")
+    if not is_admin and row.get("issued_to") != user_id:
+        raise _http_error(403, "run_card_forbidden",
+                          "Only the user who started this run (or an admin) may remove "
+                          "its card.", run_id=run_id)
+    live = _svc().get_run_record(run_id)
+    if live is not None and live.get("status") != "finished":
+        raise _http_error(409, "run_still_active",
+                          "This run is still active; its card is not a leftover. Cancel "
+                          "the run first if you want it to stop.",
+                          run_id=run_id, group_id=row.get("group_id"))
+    if db_loops.get(run_id) is None:
+        # No durable card behind this run at all -- nothing to keep out of the next
+        # bootstrap, so the goal state already holds. Idempotent 200, never 404.
+        return {"ok": True, "run_id": run_id, "group_id": row.get("group_id"),
+                "dismissed": False, "already_dismissed": True}
+    if not db_loops.dismiss_card(run_id):
+        return {"ok": True, "run_id": run_id, "group_id": row.get("group_id"),
+                "dismissed": False, "already_dismissed": True}
+    return {"ok": True, "run_id": run_id, "group_id": row.get("group_id"),
+            "dismissed": True, "already_dismissed": False}
+
+
 def _open_q_doc_ids(group_id: str) -> list[str]:
     """Group documents that still have at least one unanswered container item."""
     try:
@@ -1540,6 +1634,16 @@ def active_all(user_id: str) -> dict:
     # Discover those rows here (the bootstrap path), not only when a caller already knows a
     # run_id. Memory wins during the small finalize overlap and one bad stored row cannot
     # blank every other card.
+    #
+    # 0529 B0001: "a restart" is the whole of what this restore is for. Until now it had no
+    # end at all -- `list_review_loops_by_user` answered with every loop row the user ever
+    # owned, so a card came back on every bootstrap, days after the run ended and after its
+    # owner had removed it by hand (run aiv_20260830_000075, still on screen 2026-09-06).
+    # Two bounds fix that, and both are the user's OWN existing rules rather than a new
+    # policy invented here: the query now skips a card its owner removed
+    # (`card_dismissed_at`), and `_review_loop_card_expired` below drops one older than the
+    # finished-card retention this user chose -- the same L0003 number the browser already
+    # sweeps its in-memory copy of this very card with.
     from modules.flow_gate.db import ai_invoke_runs as db_runs
     live_ids = {run["run_id"] for run in candidates}
     try:
@@ -1547,8 +1651,11 @@ def active_all(user_id: str) -> dict:
     except Exception:
         logger.warning("stored review-loop list failed for %s", user_id, exc_info=True)
         stored_loop_rows = []
+    retention_minutes = _finished_card_retention_minutes(user_id)
     for row in stored_loop_rows:
         if row["run_id"] in live_ids:
+            continue
+        if _review_loop_card_expired(row, retention_minutes):
             continue
         try:
             restored = diagnostics._run_detail_from_row(row)

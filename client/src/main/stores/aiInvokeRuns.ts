@@ -98,6 +98,11 @@ export interface AiInvokeRunEntry {
   stopRunId: string | null
   stopLastMessageExcerpt: string | null
   finishedAtMs: number | null
+  // 0529 B0001: this finished card was REBUILT from the database by active-all, not
+  // observed live. That is the whole difference between a card a local dismiss can get
+  // rid of and one that comes straight back on the next bootstrap, so removeCard() has
+  // to ask the server before it drops this one (see `isDurableFinishedCard`).
+  persisted: boolean
   // T0005 §2: whether THIS paused card can actually resume under the current provider
   // settings snapshot. A display hint from active-all only — resume() below still
   // shows the server's own 422 message verbatim if this hint is stale (§3 item 5).
@@ -314,6 +319,7 @@ function startedEntry(
     stopRunId: sameRun ? previous?.stopRunId ?? null : null,
     stopLastMessageExcerpt: sameRun ? previous?.stopLastMessageExcerpt ?? null : null,
     finishedAtMs: null,
+    persisted: false,
     // A live/running card carries no provider-settings blocker of its own — only a
     // fetched paused row (pausedEntry below) ever sets these to a real block.
     resumeAvailable: true,
@@ -378,6 +384,9 @@ function pausedEntry(payload: Record<string, any>, previous?: AiInvokeRunEntry):
     stopRunId: nullableString(payload.stop_run_id),
     stopLastMessageExcerpt: nullableString(payload.stop_last_message_excerpt),
     finishedAtMs: null,
+    // A paused card is removed through releasePaused()/ai_invoke_paused_chains, never
+    // through the finished-card dismissal — so this stays false at every setting.
+    persisted: false,
     // T0005 §2/§3 item 3: preserve active-all's blocker fields losslessly. A response
     // that predates this field (older deploy) has no key here at all, so the missing
     // case defaults to the pre-existing behavior — resumable, no blocker.
@@ -450,6 +459,16 @@ export function isFinishedAlert(entry: AiInvokeRunEntry): boolean {
   return isFinishedCard(entry) && (entry.phase === 'lost' || entry.outcome !== 'complete')
 }
 
+// 0529 B0001: the ONE predicate for "a finished card the server will hand back". A
+// finished card that this tab watched end lives only in memory + sessionStorage, so
+// dismiss() really is enough for it. A card active-all rebuilt from
+// `ai_invoke_document_review_loops` is the opposite: deleting it locally lasts exactly
+// until the next bootstrap, which is the ghost card this bug is about. `runId` is
+// required because the durable dismissal addresses the RUN, not the group.
+export function isDurableFinishedCard(entry: AiInvokeRunEntry): boolean {
+  return isFinishedCard(entry) && entry.persisted && !!entry.runId
+}
+
 // 0500 T0004 §4: the ONE predicate for "a terminal system failure parked in the paused
 // registry" — group_lease_denied is its representative. Every field is the SERVER's own
 // answer (§10): resume_available decides resumability, never a client-side stop-code list,
@@ -495,6 +514,15 @@ export function compareRunEntries(a: AiInvokeRunEntry, b: AiInvokeRunEntry): num
 function retentionMsFromMirror(): number {
   const mirrored = readRetentionMirror()
   return mirrored == null ? Number.POSITIVE_INFINITY : retentionMs(mirrored)
+}
+
+// The run's own finish time, for a card active-all rebuilt from the database (0529
+// B0001). An unparseable or missing stamp falls back to "now" — the same value the card
+// used to get unconditionally — because the alternative, a card with no finishedAtMs,
+// is not a finished card at all (isFinishedCard) and would vanish from the list.
+function persistedFinishedAtMs(payload: Record<string, any>): number {
+  const parsed = Date.parse(String(payload.finished_at ?? ''))
+  return Number.isNaN(parsed) ? Date.now() : parsed
 }
 
 function loadPersistedFinished(): Record<string, AiInvokeRunEntry> {
@@ -739,6 +767,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       return
     }
     const finishedSwitches = normalizeSwitches(payload.fallback_history)
+    const persisted = payload.persisted === true
     runsByGroup[groupId] = {
       ...base,
       runId,
@@ -791,7 +820,15 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       stopReason: nullableString(payload.stop_reason) ?? base.stopReason,
       stopRunId: userPaused ? runId : base.stopRunId,
       stopLastMessageExcerpt: base.stopLastMessageExcerpt,
-      finishedAtMs: userPaused || handoffPending ? null : Date.now(),
+      // 0529 B0001: a RESTORED row must carry the moment it actually finished, not the
+      // moment it was restored. Stamping Date.now() on every bootstrap restarted the
+      // retention clock of a card that ended days ago, so the TTL sweep could never
+      // reach it — the second half of why the ghost card was immortal. `persisted` is
+      // the server's own word for "this came from the DB, not from a live SSE".
+      finishedAtMs: userPaused || handoffPending
+        ? null
+        : (persisted ? persistedFinishedAtMs(payload) : Date.now()),
+      persisted,
     }
     if (handoffPending) {
       handoffFinishedPayloads.set(groupId, { ...payload })
@@ -1061,6 +1098,27 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     }
   }
 
+  async function dismissFinishedCard(groupId: string): Promise<void> {
+    // 0529 B0001: the finished-card counterpart of releasePaused() above. A card
+    // active-all rebuilt from `ai_invoke_document_review_loops` needs the SERVER to be
+    // told it is gone; a local delete is undone by the very next bootstrap.
+    //
+    // Run-keyed, not group-keyed: the durable row is the run's, and the same group can
+    // own several of them over time. Same success rule as releasePaused() — only the
+    // server confirming dismissed/already_dismissed drops the card, so a 403/409/5xx
+    // leaves it on screen and rethrows for the surface to explain.
+    const run = runsByGroup[groupId]
+    if (!run || !isDurableFinishedCard(run)) return
+    const response = await deleteRequest<any>(
+      `/api/v1/ai-invoke/runs/${encodeURIComponent(run.runId)}/card`,
+    )
+    const payload = response.data ?? {}
+    if (payload.dismissed || payload.already_dismissed) {
+      delete runsByGroup[groupId]
+      schedulePersist()
+    }
+  }
+
   function dismiss(groupId: string): void {
     const run = runsByGroup[groupId]
     if (run && !ACTIVE_PHASES.includes(run.phase) && run.phase !== 'paused') {
@@ -1090,20 +1148,42 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       await releasePaused(groupId)
       return
     }
+    // 0529 B0001: a finished card the bootstrap rebuilds from the DB has the same
+    // problem for a different reason — no paused row, a durable review-loop row — so it
+    // takes the same shape of answer rather than the local dismiss below.
+    if (isDurableFinishedCard(run)) {
+      await dismissFinishedCard(groupId)
+      return
+    }
     dismiss(groupId)
   }
 
-  function dismissAllFinished(): void {
+  async function dismissAllFinished(): Promise<void> {
     // Bulk counterpart to dismiss(), for when a 30-minute TTL has stacked up results.
     // Same guard: only finished/lost cards go, running and paused ones stay put.
+    //
+    // 0529 B0001: [완료 항목 모두 지우기] has to clear the SAME cards [목록에서 제거]
+    // does, or the bulk button becomes the new way to make a ghost come back. The
+    // durable ones go through the server first; each answers for itself
+    // (Promise.allSettled), so one card the server refuses cannot strand the rest.
     let removed = false
+    const durable: Array<Promise<void>> = []
     for (const [groupId, run] of Object.entries(runsByGroup)) {
-      if (isFinishedCard(run)) {
-        delete runsByGroup[groupId]
-        removed = true
+      if (!isFinishedCard(run)) continue
+      if (isDurableFinishedCard(run)) {
+        durable.push(dismissFinishedCard(groupId))
+        continue
       }
+      delete runsByGroup[groupId]
+      removed = true
     }
     if (removed) schedulePersist()
+    if (durable.length === 0) return
+    // Every card answers for itself first; only then is the first refusal rethrown, so
+    // the surface can say something happened without any card blocking another.
+    const settled = await Promise.allSettled(durable)
+    const refused = settled.find(result => result.status === 'rejected')
+    if (refused) throw (refused as PromiseRejectedResult).reason
   }
 
   async function refreshGroupLease(groupId: string): Promise<void> {
@@ -1371,6 +1451,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     resume,
     releasePaused,
     removeCard,
+    dismissFinishedCard,
     dismiss,
     dismissAllFinished,
     sweepFinishedCards,

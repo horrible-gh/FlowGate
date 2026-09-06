@@ -993,6 +993,31 @@ def release_paused_ai_invoke(group_id: str, request: Request):
     return JSONResponse(status_code=200, content=result)
 
 
+@router.delete("/runs/{run_id}/card")
+def dismiss_ai_invoke_run_card(run_id: str, request: Request):
+    """Durable [remove from list] for a FINISHED run's monitor card (0529 B0001).
+
+    The finished-card counterpart of DELETE /paused/{group_id}: that one releases a
+    paused-chain row, this one marks a document-review-loop card as removed so
+    /ai-invoke/active-all stops rebuilding it on every bootstrap. Neither deletes any
+    history -- the run and its loop stay readable through GET /ai-invoke/{run_id}.
+
+    Declared ahead of GET /{run_id} for the same path-shadowing reason as GET /runs
+    below: "runs" must never be read as a run id.
+    """
+    auth = _require_user(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    try:
+        return JSONResponse(status_code=200, content=ai_invoke_service.dismiss_review_loop_card(
+            run_id=run_id,
+            user_id=auth["issued_to"],
+            is_admin=bool(auth.get("is_admin")),
+        ))
+    except HTTPException as exc:
+        return _err(exc)
+
+
 @router.get("/runs")
 def list_ai_invoke_runs(
     request: Request,
