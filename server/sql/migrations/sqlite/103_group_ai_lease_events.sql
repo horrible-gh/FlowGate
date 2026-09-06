@@ -1,10 +1,11 @@
--- 101_group_ai_lease_events.sql — flowgate.default.0502 T0004
+-- 103_group_ai_lease_events.sql — flowgate.default.0502 T0004
 -- Append-only forensic history behind group_ai_leases (a current-state table with no
 -- ownership audit trail). One row per lifecycle transition: acquired / transferred /
 -- activated / handoff-begin / released / expired-reclaimed / startup-reclaimed /
 -- admission-rejected. Rows are never UPDATEd or DELETEd by normal operation.
+BEGIN;
 CREATE TABLE IF NOT EXISTS group_ai_lease_events (
-    id                  SERIAL PRIMARY KEY,
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id            TEXT    NOT NULL UNIQUE,
     event_type          TEXT    NOT NULL,
     group_id            TEXT    NOT NULL REFERENCES groups(group_id) ON DELETE CASCADE,
@@ -28,3 +29,4 @@ CREATE INDEX IF NOT EXISTS idx_group_ai_lease_events_run
     ON group_ai_lease_events(run_id);
 CREATE INDEX IF NOT EXISTS idx_group_ai_lease_events_token
     ON group_ai_lease_events(token_id);
+COMMIT;

@@ -1,4 +1,4 @@
--- 101_group_ai_lease_events.sql — flowgate.default.0502 T0004 (MySQL/MariaDB)
+-- 103_group_ai_lease_events.sql — flowgate.default.0502 T0004 (MySQL/MariaDB)
 -- Append-only forensic history behind group_ai_leases (a current-state table with no
 -- ownership audit trail). One row per lifecycle transition: acquired / transferred /
 -- activated / handoff-begin / released / expired-reclaimed / startup-reclaimed /
