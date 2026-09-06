@@ -2487,6 +2487,8 @@ export default {
       filter_ai_review: 'AI 검수',
       empty: '이력이 없습니다.',
       ai_response: 'AI 응답',
+      actual_provider: '검수 AI',
+      requested_provider: '요청된 검수 AI',
     },
     doc_workflow: {
       title: '워크플로',

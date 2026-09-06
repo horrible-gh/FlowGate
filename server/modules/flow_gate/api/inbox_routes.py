@@ -2553,6 +2553,39 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
         return dry_resp
 
     # ── Step 6: Insert review record ──
+    # The token binds this submission to a live run. Provider evidence is server-owned;
+    # model payload and mutable project settings never participate.
+    review_provider: dict[str, Any] = {}
+    review_run_id = token_rec.get("ai_run_id")
+    if review_run_id:
+        try:
+            from modules.flow_gate.services.ai_invoke.runtime import get_run_record
+            review_run = get_run_record(review_run_id)
+            if (
+                review_run
+                and review_run.get("action_scope") == "review"
+                and review_run.get("doc_ref") == doc_id
+            ):
+                requested_id = review_run.get("requested_provider_id")
+                actual_id = review_run.get("provider_id")
+                review_provider = {
+                    "review_run_id": review_run_id,
+                    "requested_provider_id": requested_id,
+                    "actual_provider_id": actual_id,
+                    "actual_provider_name": (review_run.get("provider") or {}).get("name"),
+                    "provider_source": (
+                        "fallback"
+                        if requested_id and actual_id and requested_id != actual_id
+                        else review_run.get("selected_provider_source")
+                    ),
+                    "attempt_no": int(review_run.get("attempt_no") or 0) or None,
+                    "fallback_used": bool(
+                        requested_id and actual_id and requested_id != actual_id
+                    ),
+                }
+        except Exception:
+            review_provider = {}
+
     revision_no = int(doc.get("revision_no") or 0)
     findings_json = json.dumps(findings, ensure_ascii=False)
     try:
@@ -2564,6 +2597,7 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
             findings_json=findings_json,
             comment=comment if (comment is None or isinstance(comment, str)) else str(comment),
             reviewed_at=now_iso(),
+            **review_provider,
         )
     except Exception as exc:
         return _fail(500, f"DB registration error: {exc}")

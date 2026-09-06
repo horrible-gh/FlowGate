@@ -2488,6 +2488,8 @@ export default {
       filter_ai_review: 'AI Review',
       empty: 'No history.',
       ai_response: 'AI Response',
+      actual_provider: 'Review AI',
+      requested_provider: 'Requested review AI',
     },
     doc_workflow: {
       title: 'Workflow',

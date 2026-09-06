@@ -82,6 +82,16 @@
                   </button>
                 </div>
                 <div v-if="entry.kind === 'ai_review'" class="rhd-body-text">
+                  <div
+                    v-if="entry.review.review_provider?.actual_provider_name || entry.review.review_provider?.actual_provider_id"
+                    class="rhd-provider"
+                    :class="{ 'rhd-provider--mismatch': providerMismatch(entry.review) }"
+                  >
+                    <span>{{ t('main.qa_review_history.actual_provider') }}: {{ actualProviderLabel(entry.review) }}</span>
+                    <span v-if="providerMismatch(entry.review)">
+                      {{ t('main.qa_review_history.requested_provider') }}: {{ entry.review.review_provider?.requested_provider_id }}
+                    </span>
+                  </div>
                   <p v-if="entry.review.comment" class="rhd-comment" :class="{ collapsed: collapsed.reason[entry.key] }">{{ entry.review.comment }}</p>
                   <ul v-if="entry.review.findings && entry.review.findings.length" class="rhd-findings">
                     <li v-for="(f, fi) in entry.review.findings" :key="fi">
@@ -208,6 +218,19 @@ function toggleFold(kind: 'reason' | 'response', key: string) {
   collapsed[kind][key] = !collapsed[kind][key]
 }
 
+function providerMismatch(review: AiReview): boolean {
+  const provider = review.review_provider
+  return Boolean(
+    provider?.requested_provider_id
+    && provider?.actual_provider_id
+    && provider.requested_provider_id !== provider.actual_provider_id,
+  )
+}
+function actualProviderLabel(review: AiReview): string {
+  return review.review_provider?.actual_provider_name
+    || review.review_provider?.actual_provider_id
+    || ''
+}
 function verdictClass(verdict?: string | null): string {
   return verdict === 'pass' ? 'pass' : 'warn'
 }
@@ -272,6 +295,8 @@ function onClose() {
 /* R0001 (full-content view): the review comment took its full height like the
    reason / AI response — no inner scrollbox. TR0005 rev6 rejection §2: it now folds the
    same way the rejection reason does — 2-line clamp when collapsed. */
+.rhd-provider { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0 0 7px; font-size: .7rem; color: var(--text-s); }
+.rhd-provider--mismatch { color: var(--danger, #dc2626); font-weight: 700; }
 .rhd-comment { font-size: .8rem; color: var(--text); white-space: pre-wrap; line-height: 1.55; margin: 0; overflow-wrap: anywhere; }
 .rhd-comment.collapsed { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; max-height: 3.2em; overflow: hidden; }
 .rhd-findings { list-style: disc; padding-left: 18px; margin: 6px 0 0; font-size: .76rem; color: var(--text-s); }

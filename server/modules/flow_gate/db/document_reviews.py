@@ -18,6 +18,13 @@ def insert_review(
     findings_json: str,
     comment: Optional[str],
     reviewed_at: str,
+    review_run_id: Optional[str] = None,
+    requested_provider_id: Optional[str] = None,
+    actual_provider_id: Optional[str] = None,
+    actual_provider_name: Optional[str] = None,
+    provider_source: Optional[str] = None,
+    attempt_no: Optional[int] = None,
+    fallback_used: Optional[bool] = None,
 ) -> dict:
     """Insert one review result and return the inserted row.
 
@@ -28,9 +35,16 @@ def insert_review(
     now = now_iso()
     store._execute(
         "INSERT INTO document_reviews "
-        "(doc_id, revision_no, reviewer_id, verdict, findings, comment, reviewed_at, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [doc_id, revision_no, reviewer_id, verdict, findings_json, comment, reviewed_at, now, now],
+        "(doc_id, revision_no, reviewer_id, verdict, findings, comment, reviewed_at, created_at, updated_at, "
+        "review_run_id, requested_provider_id, actual_provider_id, actual_provider_name, "
+        "provider_source, attempt_no, fallback_used) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            doc_id, revision_no, reviewer_id, verdict, findings_json, comment, reviewed_at, now, now,
+            review_run_id, requested_provider_id, actual_provider_id, actual_provider_name,
+            provider_source, attempt_no,
+            None if fallback_used is None else (1 if fallback_used else 0),
+        ],
     )
     row = store._fetch_one(
         "SELECT * FROM document_reviews ORDER BY id DESC LIMIT 1"

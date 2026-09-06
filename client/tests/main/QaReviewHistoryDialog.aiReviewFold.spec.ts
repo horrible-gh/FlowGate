@@ -21,6 +21,15 @@ const REVIEW = {
   findings: [{ locus: 'app.py:12', note: '널 검사가 없다' }],
   comment: '전반적으로는 통과 가능하나 몇 가지 고칠 점이 있습니다.',
   reviewed_at: '2026-06-12T20:50:00+09:00',
+  review_provider: {
+    run_id: 'air_20260906_000001',
+    requested_provider_id: 'aip_sonnet',
+    actual_provider_id: 'aip_opus',
+    actual_provider_name: 'Opus',
+    provider_source: 'reviewer_override',
+    attempt_no: 2,
+    fallback_used: true,
+  },
 }
 
 describe('QaReviewHistoryDialog title (TR0005 rev6 반려 §1)', () => {
@@ -49,6 +58,39 @@ describe('QaReviewHistoryDialog AI 검수 fold (TR0005 rev6 반려 §2)', () => 
   it('omits the fold button when the review has no comment (nothing to fold)', () => {
     const wrapper = mountDialog({ reviews: [{ ...REVIEW, comment: null }] })
     expect(wrapper.find('.rhd-item--review .rhd-fold').exists()).toBe(false)
+  })
+})
+
+describe('QaReviewHistoryDialog provider provenance', () => {
+  it('shows actual provider and highlights requested/actual mismatch', () => {
+    const wrapper = mountDialog({ reviews: [REVIEW] })
+    const provider = wrapper.find('.rhd-provider')
+    expect(provider.text()).toContain('Opus')
+    expect(provider.text()).toContain('aip_sonnet')
+    expect(provider.classes()).toContain('rhd-provider--mismatch')
+  })
+
+  it('shows only actual provider when requested and actual match', () => {
+    const matching = {
+      ...REVIEW,
+      review_provider: {
+        ...REVIEW.review_provider,
+        requested_provider_id: 'aip_opus',
+        fallback_used: false,
+      },
+    }
+    const wrapper = mountDialog({ reviews: [matching] })
+    const provider = wrapper.find('.rhd-provider')
+    expect(provider.text()).toContain('Opus')
+    expect(provider.classes()).not.toContain('rhd-provider--mismatch')
+    expect(provider.text()).not.toContain('aip_opus')
+  })
+
+  it('keeps legacy reviews without provenance renderable', () => {
+    const legacy = { ...REVIEW, review_provider: undefined }
+    const wrapper = mountDialog({ reviews: [legacy] })
+    expect(wrapper.find('.rhd-item--review').exists()).toBe(true)
+    expect(wrapper.find('.rhd-provider').exists()).toBe(false)
   })
 })
 

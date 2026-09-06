@@ -1207,6 +1207,8 @@ def start_run(
         "stderr_tail": None,
         "provider": None,
         "provider_id": None,
+        # Immutable selection evidence. provider_id/provider may move during fallback.
+        "requested_provider_id": chain[0].get("id") if chain else None,
         "attempt_no": 0,
         "fallback_history": [],
         "register_errors": [],

@@ -69,6 +69,17 @@ def _shape_review(row: dict) -> dict:
         "id": row.get("id"),
         "revision_no": row.get("revision_no"),
         "reviewer_id": row.get("reviewer_id"),
+        "review_provider": {
+            "run_id": row.get("review_run_id"),
+            "requested_provider_id": row.get("requested_provider_id"),
+            "actual_provider_id": row.get("actual_provider_id"),
+            "actual_provider_name": row.get("actual_provider_name"),
+            "provider_source": row.get("provider_source"),
+            "attempt_no": row.get("attempt_no"),
+            "fallback_used": (
+                bool(row.get("fallback_used")) if row.get("fallback_used") is not None else None
+            ),
+        },
         "verdict": row.get("verdict"),
         "finding_count": len(findings),
         "findings": findings,
