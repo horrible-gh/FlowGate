@@ -1246,6 +1246,59 @@ class TestCarriers:
         assert json.loads(row["continuation_provider_overrides"]) == {"5": "aip_step5"}
         assert row["continuation_step_timeout_sec"] == 10800
 
+    def test_rework_inbox_handoff_cannot_overwrite_the_gate_owned_queue(
+            self, paused, monkeypatch, world):
+        """0536 T0005: the edit submitted by a rework reaches inbox after the gate has
+        already queued its successor.  That ordinary handoff must refresh routing without
+        erasing last_stage/progress or the maps a single-mode child cannot carry itself."""
+        gate_owned = {
+            **_pending(), "last_stage": "rework", "revision_before": 0,
+            "review_count_overrides": {"5": 3},
+            "reviewer_overrides": {"5": "aip_rev"},
+            "chain_id": "run_chain",
+        }
+        child = _run(
+            mode="single", hop_kind="rework",
+            continuation_review_count_overrides=None,
+            continuation_reviewer_overrides=None,
+        )
+        monkeypatch.setattr(svc, "_active_run_for_group", lambda _group: child)
+
+        svc.request_auto_resume(GROUP, gate_owned)
+        # This is the later payload emitted by inbox_routes._hand_off_to_engine().
+        svc.request_auto_resume(GROUP, {
+            **_pending(), "target_seq": 10, "review_mode": False,
+        })
+
+        queued = svc.pop_auto_resume(GROUP)
+        assert queued["target_seq"] == 10, "inbox still refreshes ordinary routing"
+        assert queued["last_stage"] == "rework"
+        assert queued["revision_before"] == 0
+        assert queued["review_count_overrides"] == {"5": 3}
+        assert queued["reviewer_overrides"] == {"5": "aip_rev"}
+        row = paused.rows[GROUP]
+        assert json.loads(row["continuation_review_count_overrides"]) == {"5": 3}
+        assert json.loads(row["continuation_reviewer_overrides"]) == {"5": "aip_rev"}
+
+        # Land the actual first rework and feed the surviving queue back to the gate.
+        world.fill(5, "doc-5").review("doc-5", "issues", revision_no=0)
+        world.rework("doc-5", 1)
+        gate2 = svc.resolve_review_gate(queued)
+        assert gate2["stage"] == "review"
+        assert (gate2["count"], gate2["rounds_used"], gate2["round_no"]) == (3, 1, 2)
+        assert world.docs["doc-5"]["revision_no"] == 1
+
+    def test_an_ordinary_new_intent_still_replaces_an_ordinary_old_intent(
+            self, paused, monkeypatch):
+        """The merge is gate-scoped; unrelated handoffs must not retain stale picks."""
+        child = _run()
+        monkeypatch.setattr(svc, "_active_run_for_group", lambda _group: child)
+        svc.request_auto_resume(GROUP, {**_pending(), "target_seq": 8, "marker": "old"})
+        svc.request_auto_resume(GROUP, {**_pending(), "target_seq": 10})
+        queued = svc.pop_auto_resume(GROUP)
+        assert queued["target_seq"] == 10
+        assert "marker" not in queued
+
     def test_resume_hands_both_maps_back_to_start_run(self, paused, monkeypatch, world):
         svc._write_handoff_row(GROUP, _pending(), _run())
         captured: dict = {}
