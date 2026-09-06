@@ -33,6 +33,7 @@ from modules.flow_gate.storage import paths as storage_paths
 from modules.flow_gate import process_service
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services import tr_commit_service
+from modules.flow_gate.services import tr_scope_service
 from modules.flow_gate.services.git_service import GitServiceError
 from modules.flow_gate.services.mutation_policy import MutationPolicyError
 
@@ -477,6 +478,27 @@ def finalize_workflow_endpoint(
 
     if root_doc.get("doc_review_status") == "wf_done":
         return {"document": root_doc}  # idempotent
+
+    scope = tr_scope_service.evaluate_group_unreported(project_id, group_id)
+    unresolved = scope.get("unreported") or []
+    if unresolved:
+        limit = tr_scope_service.FINALIZE_UNREPORTED_LIST_MAX
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "unresolved_unreported_changes",
+                "message": (
+                    "Final approval is blocked because actual worktree changes remain "
+                    "unreported. Investigate EACH path. If it is intended output, submit "
+                    "a new TR/TS that reports it; if it is unnecessary or accidental, "
+                    "remove or revert it in a new TR/TS. After that document passes review "
+                    "and the path is no longer unresolved, retry final approval."
+                ),
+                "unresolved_count": len(unresolved),
+                "unresolved": unresolved[:limit],
+                "truncated": len(unresolved) > limit,
+            },
+        )
 
     updated = db_docs.update(root_doc["doc_id"], {"doc_review_status": "wf_done"})
     # 0177 NR0016 §3: same eager realization as the AC-approve cascade — emit the

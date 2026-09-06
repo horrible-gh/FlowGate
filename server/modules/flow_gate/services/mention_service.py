@@ -2569,6 +2569,86 @@ def build_sequence_edit_mention(
 # document and submit a verdict (inbox action:review). No sequence/next_type is
 # resolved — the target IS the document, so this works for any non-R doc.
 
+def _scope_context_section(target_doc: dict) -> Optional[str]:
+    """0493 T0005: the reviewer-facing actual-vs-reported scope manifest.
+
+    Reads the frozen tr_scope verdict off ``target_doc['meta']`` -- the same value
+    tr_scope_service.evaluate() computed and inbox_routes._tr_scope_meta() stored at the
+    reviewed document's own submission time. Deliberately does NOT recompute against the
+    live worktree here: meta['tr_scope'] is a point-in-time record (see
+    tr_scope_service.unevaluated_verdict's docstring), and recomputing at review time
+    would let the reviewer prompt drift from what the document detail page and the
+    submission-time verdict itself show for the exact same document.
+
+    Returns None when the document carries no stored verdict (non-mutating types, or a
+    document submitted before tr_scope existed) -- there is nothing authoritative to add.
+    """
+    verdict = tr_scope_service.verdict_from_meta(target_doc.get("meta"))
+    if not verdict:
+        return None
+
+    manifest = ((verdict.get("file_manifest") or {}).get("items")
+                if isinstance(verdict.get("file_manifest"), dict)
+                else verdict.get("file_manifest")) or []
+    codes = verdict.get("codes") or []
+    lines = [
+        "This manifest is computed by the server from the actual group worktree at "
+        "submission time -- it replaces the TR body's self-reported changed-files list "
+        "as the source of truth for what to review. Do not treat the body's own list as "
+        "authoritative.",
+        "",
+        f"scope verdict: {verdict.get('verdict') or 'n/a'}"
+        f"  codes: {', '.join(codes) if codes else '(none)'}",
+        "",
+        "Actual worktree changes (path [status] [<- renamed from] -- reporting_state):",
+    ]
+    if manifest:
+        for entry in manifest:
+            status = entry.get("actual_status") or "?"
+            old_path = entry.get("old_path")
+            rename_note = f" <- renamed from {old_path}" if old_path else ""
+            lines.append(
+                f"  - {entry.get('path')} [{status}]{rename_note}"
+                f" -- {entry.get('reporting_state')}"
+            )
+    else:
+        lines.append("  (no actual changes detected in the assigned worktree)")
+
+    unconfirmed = verdict.get("unconfirmed") or []
+    lines.append("")
+    lines.append(
+        "Reported by this TR but NOT found in the worktree (unconfirmed -- may mean the "
+        "wrong location was edited, the change was not saved, or the path is wrong):"
+    )
+    if unconfirmed:
+        lines.extend(f"  - {path}" for path in unconfirmed)
+    else:
+        lines.append("  (none)")
+
+    unreported = [
+        entry.get("path") for entry in manifest
+        if entry.get("reporting_state") == "unreported"
+    ]
+    lines.append("")
+    if unreported:
+        lines.append(
+            "Unreported changes -- present in the worktree but missing from the report "
+            "(TRV-004). Investigate EACH one with the source read/diff tools before "
+            "approving:"
+        )
+        lines.extend(f"  - {path}" for path in unreported)
+        lines.append(
+            "For each: if it is a legitimate output of this task, treat the omission as "
+            "a reporting defect the author must fix. If it is unnecessary or accidental "
+            "output, flag it for removal. If you cannot tell which, do not approve -- "
+            "record it as a blocking finding instead."
+        )
+    else:
+        lines.append("Unreported changes: (none)")
+
+    return "\n".join(lines)
+
+
 def build_review_mention(
     *,
     token_rec: dict,
@@ -2697,8 +2777,11 @@ def build_review_mention(
         )
         if review_tools:
             sections.append(review_tools)
+    sections.append(_section("Review instructions", s2_body))
+    scope_context_body = _scope_context_section(target_doc)
+    if scope_context_body:
+        sections.append(_section("Actual changed-files manifest (server-computed)", scope_context_body))
     sections.extend([
-        _section("Review instructions", s2_body),
         _section("Reference documents", s3_body),
         # MERGE NOTE (branch base predates group 0370 on main): keep NO inline
         # "Efficient document lookup" section here on merge — absorbed into the

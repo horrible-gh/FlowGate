@@ -2863,15 +2863,21 @@ def collect_scope_changes(project_id: str, group_id: str) -> dict:
         the path after the rename"), hence ``-M`` instead of ``--no-renames``
 
     Returns ``{"available": bool, "reason": str, "worktree": str|None,
-    "branch": str|None, "paths": [str]}``. Never raises: an unavailable worktree or
-    a failing git call is a *result* (``available=False`` + reason), because the
-    caller must turn that into TRV-006 rather than a 500 on someone's TR.
-    Exclusion rules are NOT applied here — tr_scope_service owns them so the same
-    filter runs over the reported list too.
+    "branch": str|None, "paths": [str], "entries": [dict]}``. ``entries`` carries one
+    manifest row per path in ``paths``: ``{"path", "status", "old_path"}``, where
+    ``status`` is one of ``A``/``M``/``D``/``R`` (falling back to ``M`` — best-effort,
+    still content-changed — for a git status letter this check does not otherwise
+    recognise) and ``old_path`` is set only for a rename. A path is never omitted from
+    ``entries`` just because its status could not be classified precisely (0493 T0005 —
+    reviewers need per-file status, not just a bare path list). Never raises: an
+    unavailable worktree or a failing git call is a *result* (``available=False`` +
+    reason), because the caller must turn that into TRV-006 rather than a 500 on
+    someone's TR. Exclusion rules are NOT applied here — tr_scope_service owns them so
+    the same filter runs over the reported list too.
     """
     result: dict = {
         "available": False, "reason": SRC_ROOT_ERROR,
-        "worktree": None, "branch": None, "paths": [],
+        "worktree": None, "branch": None, "paths": [], "entries": [],
     }
     wt_path, reason = effective_src_root_ex(project_id, group_id)
     result["reason"] = reason
@@ -2884,7 +2890,7 @@ def collect_scope_changes(project_id: str, group_id: str) -> dict:
         cfg = db_git.get_config(project_id) or {}
         base_branch = (cfg.get("base_branch") or "main").strip() or "main"
 
-        paths: set[str] = set()
+        entries_by_path: dict[str, dict] = {}
         merge_proc = _run_git(
             ["merge-base", f"refs/heads/{base_branch}", "HEAD"],
             cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
@@ -2898,7 +2904,8 @@ def collect_scope_changes(project_id: str, group_id: str) -> dict:
             if diff_proc.returncode != 0:
                 result["reason"] = SRC_ROOT_ERROR
                 return result
-            paths.update(_parse_name_status_z(diff_proc.stdout or ""))
+            for entry in _parse_name_status_manifest(diff_proc.stdout or ""):
+                entries_by_path[entry["path"]] = entry
         else:
             # No merge base (unrelated histories / missing base branch) — the
             # committed half cannot be computed. Working-tree state alone would be
@@ -2915,12 +2922,14 @@ def collect_scope_changes(project_id: str, group_id: str) -> dict:
             result["reason"] = SRC_ROOT_ERROR
             return result
         for path in (others.stdout or "").split("\0"):
-            if path:
-                paths.add(path)
+            if path and path not in entries_by_path:
+                # A never-added file deletes nothing and was never renamed from anywhere.
+                entries_by_path[path] = {"path": path, "status": "A", "old_path": None}
 
         result["available"] = True
         result["reason"] = SRC_ROOT_WORKTREE
-        result["paths"] = sorted(paths)
+        result["paths"] = sorted(entries_by_path)
+        result["entries"] = [entries_by_path[path] for path in sorted(entries_by_path)]
         return result
     except Exception:  # noqa: BLE001 — a verification helper must never 500 a TR
         _log.warning("collect_scope_changes failed for %s", group_id, exc_info=True)
@@ -2959,6 +2968,59 @@ def _parse_name_status_z(stdout: str) -> list[str]:
         elif first:
             paths.append(first)
     return paths
+
+
+def _normalize_git_status(code: str) -> str:
+    """A raw ``git diff --name-status`` letter (possibly with a similarity suffix, e.g.
+    ``R100``) → one of ``A``/``M``/``D``/``R``. Anything else git might emit (``T``
+    type-change, ``U`` unmerged, ...) falls back to ``M``: the path did change and is
+    never dropped, it is just not classified more precisely (0493 T0005)."""
+    letter = (code or "")[:1].upper()
+    if letter in ("A", "M", "D"):
+        return letter
+    if letter in ("R", "C"):
+        return "R"
+    return "M"
+
+
+def _parse_name_status_manifest(stdout: str) -> list[dict]:
+    """Same ``-M -z`` stream as ``_parse_name_status_z``, but keeps status and the
+    rename's old path instead of collapsing to a bare path list (0493 T0005 —
+    reviewers need per-file actual status, not just a path).
+
+    Returns one entry per changed path: ``{"path", "status", "old_path"}``. ``old_path``
+    is set only for a rename/copy record (``take_second``); every other status carries
+    it as ``None``. Field-walking logic mirrors ``_parse_name_status_z`` — see its
+    docstring for why a fixed stride desyncs on the first rename.
+    """
+    fields = (stdout or "").split("\0")
+    entries: list[dict] = []
+    index = 0
+    while index < len(fields):
+        status = fields[index]
+        index += 1
+        if not status:
+            continue
+        take_second = status[:1] in ("R", "C")
+        if index >= len(fields):
+            break
+        first = fields[index]
+        index += 1
+        if take_second:
+            if index >= len(fields):
+                break
+            second = fields[index]
+            index += 1
+            if second:
+                entries.append({
+                    "path": second, "status": _normalize_git_status(status),
+                    "old_path": first or None,
+                })
+        elif first:
+            entries.append({
+                "path": first, "status": _normalize_git_status(status), "old_path": None,
+            })
+    return entries
 
 
 def _validate_blob_path(path: str) -> None:
