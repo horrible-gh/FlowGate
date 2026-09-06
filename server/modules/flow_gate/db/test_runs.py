@@ -82,9 +82,9 @@ def insert_run(
         for item in [*setup, *cases, *teardown]:
             store._execute(
                 "INSERT INTO test_run_cases "
-                "(run_id, kind, case_no, case_title, cmd, expect, result, exit_code, "
-                "duration_ms, output_tail, finished_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)",
+                "(run_id, kind, case_no, case_title, cmd, expect, assert_mode, result, "
+                "exit_code, duration_ms, output_tail, actual, comparison_result, finished_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
                 [
                     run_id,
                     item.get("kind") or "case",
@@ -92,6 +92,7 @@ def insert_run(
                     item.get("title") or "",
                     item["cmd"],
                     item.get("expect") or "",
+                    item.get("assert_mode"),
                 ],
             )
     run = get_run(run_id)  # type: ignore[assignment]
@@ -138,11 +139,13 @@ def mark_case_finished(
     exit_code: Optional[int],
     duration_ms: int,
     output_tail: str,
+    actual: Optional[str] = None,
+    comparison_result: Optional[str] = None,
 ) -> None:
     get_store()._execute(
         "UPDATE test_run_cases SET result = ?, exit_code = ?, duration_ms = ?, "
-        "output_tail = ?, finished_at = ? WHERE id = ?",
-        [result, exit_code, duration_ms, output_tail, now_iso(), case_id],
+        "output_tail = ?, actual = ?, comparison_result = ?, finished_at = ? WHERE id = ?",
+        [result, exit_code, duration_ms, output_tail, actual, comparison_result, now_iso(), case_id],
     )
 
 

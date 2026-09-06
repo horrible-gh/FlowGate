@@ -1615,6 +1615,9 @@ export default {
       rerun_failed: 'Failed to start the test re-run.',
       rerun_not_approved: 'This test document is not in a re-runnable state.',
       rerun_disposed: 'The group has been discarded; tests cannot be run.',
+      assert_line: 'assert: {value}',
+      actual_line: 'actual: {value}',
+      comparison_line: 'comparison result: {value}',
     },
     test_run_strip: {
       ready: 'Approved test document. You can run it now.',
