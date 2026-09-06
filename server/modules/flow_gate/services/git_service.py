@@ -2360,15 +2360,24 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
                 if m:
                     behind, ahead = int(m.group(1)), int(m.group(2))
 
+    # Display status for response: may differ from persisted status for preview_ac.
+    # At this point, if status is 'none', the root must be wf_in_progress
+    # (else lines 2336-2343 would have transitioned it when root is wf_done).
+    # When preview_ac=True and status=='none', show a preliminary awaiting_choice
+    # (0197 T0004 §B) for the AC approval dialog.
+    display_status = status
+    if status == "none" and preview_ac:
+        display_status = "awaiting_choice"
+
     # Suggested commit message (flowgate.default.0173 P0003 §2): only meaningful
     # while the group awaits a commit-producing choice; null otherwise.
-    if status in ("awaiting_choice", "waiting"):
+    if display_status in ("awaiting_choice", "waiting"):
         subject, source = resolve_commit_message(group_id)
         commit_message: Optional[dict] = {"suggested": subject, "source": source}
     else:
         commit_message = None
 
-    actionable = status in ("awaiting_choice", "waiting")
+    actionable = display_status in ("awaiting_choice", "waiting")
     open_session = db_git.get_open_session_by_group(group_id)
     group_update_merge_id = (
         open_session.get("merge_id")
@@ -2380,7 +2389,7 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         "group_id": group_id,
         "branch": branch,
         "base_branch": base_branch,
-        "status": status,
+        "status": display_status,
         "default_action": cfg.get("default_finalize_action") or "wait",
         "choices": list(FINALIZE_MAIN_CHOICES if actionable else ()),
         "aux_choices": list(FINALIZE_AUX_CHOICES if actionable else ()),
@@ -4487,8 +4496,15 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         )
 
     # Refresh the lazy wf_done transition before the state guard (L0006 §4.2).
+    # Pending ledger states are only a cached consequence of final workflow approval,
+    # never proof of it: re-check the root here to contain stale historical/manual data.
     status = (state.get("status") or "none")
-    if status == "none" and _group_root_wf_done(group_id):
+    root_wf_done = (
+        _group_root_wf_done(group_id)
+        if status in ("none", "awaiting_choice", "waiting")
+        else None
+    )
+    if status == "none" and root_wf_done:
         _set_status(group_id, "awaiting_choice")
         status = "awaiting_choice"
     if status in ("merged", "pushed"):
@@ -4502,6 +4518,12 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         )
     if status not in ("awaiting_choice", "waiting"):
         raise GitServiceError(409, "invalid_state", f"finalize not available in state '{status}'")
+    if not root_wf_done:
+        raise GitServiceError(
+            409,
+            "invalid_state",
+            "final workflow approval is required before Git finalize",
+        )
 
     if action == "wait":
         _set_status(group_id, "waiting")
@@ -5935,24 +5957,50 @@ def project_git_status(project_id: str) -> dict:
     # into a single IN query so the loop only does set membership.
     all_rows = db_git.list_states_of_project_any(project_id)
     rows = [r for r in all_rows if r.get("worktree_registered")]
+    # T0009: one batched root lookup serves both the existing lazy transition
+    # and stale-pending recovery. A pending ledger row is displayable only while
+    # its workflow root remains wf_done; interrupted/rework paths can otherwise
+    # leave awaiting_choice/waiting visible after approval was withdrawn.
+    root_candidate_statuses = ("none", "awaiting_choice", "waiting")
     wf_done_groups = _groups_root_wf_done(
-        [r["group_id"] for r in rows if (r.get("status") or "none") == "none"]
+        [
+            r["group_id"] for r in rows
+            if (r.get("status") or "none") in root_candidate_statuses
+        ]
     )
     for row in rows:
-        if (row.get("status") or "none") == "none" and row["group_id"] in wf_done_groups:
+        status = row.get("status") or "none"
+        group_id = row["group_id"]
+        if status in ("awaiting_choice", "waiting") and group_id not in wf_done_groups:
+            try:
+                # Status-only repair: preserve the branch, registered worktree, and
+                # any merge ledger fields. conflict remains an active-session state
+                # and is deliberately excluded from this recovery. The row's status
+                # is now "none", which SLOT_STATUSES already keeps in `slots` below
+                # and PENDING_STATUSES already keeps out of `pending` — no separate
+                # exclusion list is needed.
+                _set_status(group_id, "none")
+                row["status"] = "none"
+            except Exception:
+                # Keep the row visible when persistence fails; hiding it without
+                # repairing the ledger would make the UI disagree with the SSOT.
+                _log.warning(
+                    "stale git pending recovery failed for %s", group_id, exc_info=True
+                )
+        elif status == "none" and group_id in wf_done_groups:
             try:
                 # 0199 B0001: proven no-work groups are discarded (torn down, no
                 # merge/push) here; real groups still transition to awaiting_choice.
                 # A discarded group's slot is unregistered by the cleanup, so it
                 # drops out of every list below (SLOT/PENDING/CLEANUP filters).
                 row["status"] = _decide_pending_transition(
-                    project_id, cfg, row, row["group_id"]
+                    project_id, cfg, row, group_id
                 )
             except Exception:
                 # One broken group must not sink the whole aggregation
                 # (0115 batch-fetch exception-isolation lesson, L §5).
                 _log.warning(
-                    "lazy git transition failed for %s", row.get("group_id"), exc_info=True
+                    "lazy git transition failed for %s", group_id, exc_info=True
                 )
 
     # 0327 T0004 (B0001): `writable` tells the file explorer whether this slot's
@@ -6712,24 +6760,44 @@ def run_approve_git_action(group_id: str, git_action: str) -> dict:
 
 def reopen_group_git(project_id: str, group_id: str) -> None:
     """Re-arm a group's git slot after a time-machine rewind past finalize (B0001,
-    flowgate.default.0211).
+    flowgate.default.0211; extended by NR0003 R1/R2, flowgate.default.0477).
 
     The reverse-time-machine rewinds only the document/workflow layer; the git
-    ledger keeps whatever the prior finalize left it in. When that state is
-    terminal (merged/pushed) the group's worktree was already torn down and
-    unregistered by slot cleanup (0182), so the next finalize on the re-worked
-    group is impossible: precheck_approve_git_action rejects 422 ("not a git-active
-    group") while the worktree is gone, or finalize rejects 409 ("already
-    finalized") once a write-gate self-heal re-registers the worktree but leaves
-    the status terminal (register_worktree never touches status). Restore the
-    invariant "a workflow below final approval is not git-terminal": drop the
-    status back to 'none' and re-provision the worktree from base HEAD so the
-    group can be finalized again.
+    ledger keeps whatever the prior finalize left it in. Restore the invariant
+    this module now states explicitly:
 
-    Only terminal slots are touched — a healthy in-progress slot needs no
-    re-arming, and an in-flight merge/conflict owns the base checkout and must not
-    be disturbed (its own state gate and the sweep handle those). Never raises: the
-    caller's document rewind has already committed and must stand regardless.
+        Git status in (awaiting_choice, waiting) ⇒ workflow root == wf_done
+
+    A rewind that takes root back to wf_in_progress must therefore also take the
+    git ledger back to a non-pending state, or the header/finalize gate keeps
+    treating an unapproved group as "ready to merge" (NR0003 §9-§13).
+
+        merged / pushed
+            → terminal: the group's worktree was already torn down and
+              unregistered by slot cleanup (0182), so the next finalize on the
+              re-worked group is impossible (precheck_approve_git_action 422
+              "not a git-active group", or finalize 409 "already finalized" once
+              a write-gate self-heal re-registers the worktree but leaves status
+              terminal — register_worktree never touches status). Drop the status
+              back to 'none' and re-provision the worktree from base HEAD.
+
+        awaiting_choice / waiting
+            → inert bookkeeping: finalize was reachable (root had reached
+              wf_done) but no real git operation ever ran — no worktree/session
+              to lose. Drop the status straight back to 'none'; the existing
+              worktree is untouched and stays usable.
+
+        conflict / merging
+            → a real git operation/session (an open merge, a base checkout
+              mid-conflict) may be live for this group. Silently resetting it out
+              from under a rewind would either orphan the session or corrupt the
+              shared base checkout, so these are NEVER touched here — the reopen
+              itself is refused with 409 before this function runs
+              (``raise_if_git_session_blocks_reopen``), leaving both the
+              workflow layer and the git session exactly as they were.
+
+    Never raises: the caller's document rewind has already committed and must
+    stand regardless.
     """
     try:
         cfg = db_git.get_config(project_id)
@@ -6739,18 +6807,55 @@ def reopen_group_git(project_id: str, group_id: str) -> None:
         if state is None:
             return
         status = (state.get("status") or "none")
-        if status not in ("merged", "pushed"):
+        if status in ("merged", "pushed"):
+            # Clear the terminal marker FIRST so the re-provision below cannot leave a
+            # "registered worktree, still merged" contradiction (register_worktree only
+            # updates branch/worktree_registered, never the status column).
+            _set_status(group_id, "none")
+            # Re-provision a clean worktree for the re-work. Idempotent and best-effort:
+            # a 'failed' result leaves status 'none', and the existing write-gate
+            # self-heal re-attempts provisioning on the next source write.
+            ensure_worktree(project_id, _module_of(group_id), group_id, trigger="timemachine_reopen")
             return
-        # Clear the terminal marker FIRST so the re-provision below cannot leave a
-        # "registered worktree, still merged" contradiction (register_worktree only
-        # updates branch/worktree_registered, never the status column).
-        _set_status(group_id, "none")
-        # Re-provision a clean worktree for the re-work. Idempotent and best-effort:
-        # a 'failed' result leaves status 'none', and the existing write-gate
-        # self-heal re-attempts provisioning on the next source write.
-        ensure_worktree(project_id, _module_of(group_id), group_id, trigger="timemachine_reopen")
+        if status in ("awaiting_choice", "waiting"):
+            _set_status(group_id, "none")
+            return
+        # status in ("none", "conflict", "merging"): nothing to do. conflict/merging are
+        # deliberately left alone — see the docstring above.
     except Exception:
         _log.warning("git reopen re-arm failed for %s", group_id, exc_info=True)
+
+
+def raise_if_git_session_blocks_reopen(project_id: str, group_id: str) -> None:
+    """Refuse a workflow reopen (Time Machine rewind) outright while the group's git
+    ledger holds an active session (NR0003 R2, flowgate.default.0477).
+
+    ``conflict``/``merging`` mean a real git operation is in flight for this group — an
+    open merge session or a base checkout mid-conflict. ``reopen_group_git`` never touches
+    those statuses (nothing to silently reset without risking an orphaned session or a
+    corrupted shared base checkout), so the reopen request itself must be rejected before
+    the rewind transaction runs, preserving both the workflow state and the git session
+    untouched. ``awaiting_choice``/``waiting`` are fine to let through — they hold no live
+    session and ``reopen_group_git`` resets them to ``none`` after the rewind commits.
+    """
+    cfg = db_git.get_config(project_id)
+    if cfg is None or not cfg.get("enabled"):
+        return
+    state = db_git.get_state(group_id)
+    if state is None:
+        return
+    status = (state.get("status") or "none")
+    if status == "conflict":
+        raise GitServiceError(
+            409, "invalid_state",
+            "cannot reopen while a merge conflict is unresolved for this group; "
+            "resolve or abort it first",
+        )
+    if status == "merging":
+        raise GitServiceError(
+            409, "git_busy",
+            f"Another git operation is in progress for project '{project_id}' (try again shortly)",
+        )
 
 
 # ── Base source-root resolution for the file explorer (0319 B0001) ────────────

@@ -476,6 +476,10 @@ def reopen_to_target(
         user_id=_actor_user_id(actor), group_id=group_id, run_id=run_id
     )
     assert_group_mutation_allowed(group_id, principal, "workflow reopen")
+    # NR0003 R2 (flowgate.default.0477): conflict/merging hold a live git session — refuse
+    # the reopen itself (409) BEFORE the rewind transaction below, instead of letting the
+    # workflow layer roll back while _rearm_git silently leaves the session untouched.
+    git_service.raise_if_git_session_blocks_reopen(project_id, group_id)
 
     resolved_target_seq = int(target_seq)
     with get_store().transaction():
