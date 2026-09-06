@@ -315,11 +315,16 @@ def evaluate(
         codes.append(TRV_OUT_OF_SCOPE)
 
     actual = git_service.collect_scope_changes(project_id, group_id)
+    actual_entries = {
+        e.get("path"): e for e in (actual.get("entries") or [])
+        if e.get("path") and not is_excluded_path(e["path"])
+    }
     detected = [p for p in actual.get("paths") or [] if not is_excluded_path(p)]
     declared = [p for p in reported.paths if not is_excluded_path(p)]
 
     unconfirmed: list[str] = []
     unreported: list[str] = []
+    file_manifest: list[dict] = []
     if not actual.get("available"):
         # 4) scope undeterminable — judging stops here. Comparing while blind to the
         #    worktree would stamp every declaration TRV-003 and mislead the worker.
@@ -340,6 +345,28 @@ def evaluate(
             codes.append(TRV_UNCONFIRMED)
         if unreported:
             codes.append(TRV_UNREPORTED)
+        # 7) file-level manifest (0493 T0005): one row per ACTUAL changed path, built from
+        #    the same detected/declared/prior_declared sets above so it can never drift
+        #    from unconfirmed/unreported. reporting_state is mutually exclusive and a
+        #    current-TR declaration always wins over a prior one — prior-reported must
+        #    never be used to explain away this body's own unconfirmed report.
+        for path in detected:
+            entry = actual_entries.get(path) or {}
+            in_current = path in declared_set
+            in_prior = path in prior_declared_set
+            reporting_state = (
+                "reported" if in_current
+                else "prior-reported" if in_prior
+                else "unreported"
+            )
+            file_manifest.append({
+                "path": path,
+                "actual_status": entry.get("status"),
+                "old_path": entry.get("old_path"),
+                "reported_in_current_tr": in_current,
+                "reported_in_prior_tr": in_prior,
+                "reporting_state": reporting_state,
+            })
 
     verdict = _verdict_for(codes, stage)
     result: dict = {
@@ -355,6 +382,7 @@ def evaluate(
         "branch": actual.get("branch"),
         "worktree": actual.get("worktree"),
         "scope_reason": actual.get("reason"),
+        "file_manifest": file_manifest,
     }
     if verdict == VERDICT_REJECT:
         result["notice"] = build_notice(result, locale)

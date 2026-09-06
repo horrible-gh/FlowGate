@@ -790,3 +790,74 @@ def test_document_detail_still_prefers_the_stored_verdict(monkeypatch, tmp_path)
 
     assert out["tr_scope"] == stored
     assert "evaluated" not in out["tr_scope"]
+
+
+# ── 0493 T0005: per-file actual status manifest ──────────────────────────────
+
+def test_collect_scope_changes_entries_carry_status_and_rename_old_path(work_repo, monkeypatch):
+    """Reviewers need per-file status, not just a bare path list (0493 T0005)."""
+    from modules.flow_gate.services import git_service
+
+    monkeypatch.setattr(
+        git_service, "effective_src_root_ex",
+        lambda project_id, group_id: (work_repo, git_service.SRC_ROOT_WORKTREE),
+    )
+    monkeypatch.setattr(git_service.db_git, "get_state", lambda gid: {"branch": "work"})
+    monkeypatch.setattr(git_service.db_git, "get_config", lambda pid: {"base_branch": "main"})
+
+    result = git_service.collect_scope_changes("p", "g")
+    by_path = {entry["path"]: entry for entry in result["entries"]}
+
+    # entries and paths never drift apart -- a path is never dropped for lacking status.
+    assert set(by_path) == set(result["paths"])
+    assert by_path["committed.py"]["status"] == "A"
+    assert by_path["staged.py"]["status"] == "A"
+    assert by_path["untracked.py"]["status"] == "A"
+    assert by_path["edited.py"]["status"] == "M"
+    assert by_path["edited.py"]["old_path"] is None
+    assert by_path["deleted.py"]["status"] == "D"
+    assert by_path["renamed_to.py"]["status"] == "R"
+    assert by_path["renamed_to.py"]["old_path"] == "renamed_from.py"
+
+
+def test_evaluate_file_manifest_marks_reported_prior_reported_and_unreported_exclusively(monkeypatch):
+    """reporting_state is mutually exclusive; a current declaration always wins over a
+    prior one, and prior-reported must never explain away this body's own unconfirmed
+    report (0493 T0005 acceptance criteria)."""
+    monkeypatch.setattr(trs, "resolve_stage", lambda project_id: trs.STAGE_ENFORCE)
+    monkeypatch.setattr(
+        trs.git_service, "collect_scope_changes",
+        lambda project_id, group_id: {
+            "available": True, "reason": "worktree", "worktree": "C:/wt", "branch": "work",
+            "paths": ["server/a.py", "server/b.py", "server/c.py"],
+            "entries": [
+                {"path": "server/a.py", "status": "M", "old_path": None},
+                {"path": "server/b.py", "status": "A", "old_path": None},
+                {"path": "server/c.py", "status": "D", "old_path": None},
+            ],
+        },
+    )
+    # a.py: reported now AND previously declared -- current wins ("reported").
+    # b.py: only previously declared -- "prior-reported".
+    # c.py: neither -- "unreported" (TRV-004).
+    body = "## 변경 파일\n\n- server/a.py\n- server/ghost.py\n"
+    result = trs.evaluate("p", "g", body, prior_declared=["server/a.py", "server/b.py"])
+
+    manifest = {row["path"]: row for row in result["file_manifest"]}
+    assert manifest["server/a.py"]["reporting_state"] == "reported"
+    assert manifest["server/a.py"]["reported_in_current_tr"] is True
+    assert manifest["server/a.py"]["reported_in_prior_tr"] is True
+    assert manifest["server/b.py"]["reporting_state"] == "prior-reported"
+    assert manifest["server/b.py"]["reported_in_current_tr"] is False
+    assert manifest["server/c.py"]["reporting_state"] == "unreported"
+    assert manifest["server/c.py"]["actual_status"] == "D"
+
+    states = {row["reporting_state"] for row in result["file_manifest"]}
+    assert states == {"reported", "prior-reported", "unreported"}
+
+    # server/ghost.py was declared but never actually changed -- unconfirmed, and the
+    # prior-declared pool (which does not name it) must not hide that.
+    assert result["unconfirmed"] == ["server/ghost.py"]
+    assert "server/ghost.py" not in manifest
+    assert trs.TRV_UNREPORTED in result["codes"]
+    assert trs.TRV_UNCONFIRMED in result["codes"]

@@ -1904,6 +1904,11 @@ def _design_template_submission_error(
 
 
 _TR_SCOPE_META_MAX_PATHS = 50
+# 0493 T0005: the file-level manifest is the reviewer's SSOT for actual-vs-reported
+# status, so it is NOT sliced to the 50-item UI limit above — that limit exists for
+# display honesty ("n items" with a true count), not for the data a reviewer/verifier
+# consumes. This is a safety ceiling against a pathological group, not a display cap.
+_TR_SCOPE_FILE_MANIFEST_MAX = 2000
 
 
 def _tr_scope_meta(result: dict) -> dict:
@@ -1915,11 +1920,19 @@ def _tr_scope_meta(result: dict) -> dict:
     parser's full supported maximum instead of the display-only 50-path limit. `notice`
     is never persisted — it only exists for a rejection, and a rejection has no document
     to persist onto.
+
+    ``file_manifest`` (0493 T0005) is kept separate from the other path lists above: it
+    carries every actual worktree path with its status and reporting_state (reported /
+    prior-reported / unreported), and reviewer mention generation reads it directly off
+    this same stored value rather than re-deriving it — so the reviewer prompt, the
+    document detail payload and this meta all show the identical manifest. ``total`` and
+    ``truncated`` stay honest even in the pathological case where the safety ceiling is hit.
     """
     def _slice(key: str, limit: int = _TR_SCOPE_META_MAX_PATHS) -> dict:
         values = list(result.get(key) or [])
         return {"count": len(values), "items": values[:limit]}
 
+    manifest = list(result.get("file_manifest") or [])
     return {
         "verdict": result.get("verdict"),
         "stage": result.get("stage"),
@@ -1932,6 +1945,11 @@ def _tr_scope_meta(result: dict) -> dict:
         "unreported": _slice("unreported"),
         "out_of_scope": _slice("out_of_scope"),
         "format_errors": _slice("format_errors"),
+        "file_manifest": {
+            "total": len(manifest),
+            "truncated": len(manifest) > _TR_SCOPE_FILE_MANIFEST_MAX,
+            "items": manifest[:_TR_SCOPE_FILE_MANIFEST_MAX],
+        },
     }
 
 
