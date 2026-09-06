@@ -157,6 +157,51 @@ def test_insert_and_list_reviews_newest_first(seed_doc):
     assert latest["verdict"] == "issues"
 
 
+def test_provider_provenance_is_snapshotted_and_exposed(seed_doc):
+    from modules.flow_gate.db import document_reviews as db_reviews
+    from modules.flow_gate.api.v1.document_routes import _shape_review
+
+    row = db_reviews.insert_review(
+        doc_id=seed_doc, revision_no=2, reviewer_id="usr_rev_001",
+        verdict="pass", findings_json="[]", comment="fallback review",
+        reviewed_at="2026-09-06T18:00:00",
+        review_run_id="air_20260906_000001",
+        requested_provider_id="aip_sonnet",
+        actual_provider_id="aip_opus",
+        actual_provider_name="Opus at review time",
+        provider_source="fallback",
+        attempt_no=2,
+        fallback_used=True,
+    )
+    shaped = _shape_review(row)
+    assert shaped["review_provider"] == {
+        "run_id": "air_20260906_000001",
+        "requested_provider_id": "aip_sonnet",
+        "actual_provider_id": "aip_opus",
+        "actual_provider_name": "Opus at review time",
+        "provider_source": "fallback",
+        "attempt_no": 2,
+        "fallback_used": True,
+    }
+    # The name is a row snapshot: no provider-settings lookup participates in shaping.
+    assert db_reviews.get_latest_by_doc(seed_doc)["actual_provider_name"] == "Opus at review time"
+
+
+def test_legacy_review_provider_fields_are_nullable():
+    from modules.flow_gate.api.v1.document_routes import _shape_review
+
+    shaped = _shape_review({"findings": "[]"})
+    assert shaped["review_provider"] == {
+        "run_id": None,
+        "requested_provider_id": None,
+        "actual_provider_id": None,
+        "actual_provider_name": None,
+        "provider_source": None,
+        "attempt_no": None,
+        "fallback_used": None,
+    }
+
+
 def test_shape_review_derives_finding_count(seed_doc):
     """The server derives the finding count from findings; the AI does not provide it."""
     from modules.flow_gate.documents.routers.documents import _shape_review
@@ -183,10 +228,10 @@ def test_load_ai_reviews_latest_and_history(seed_doc):
 
     latest, history = _load_ai_reviews(seed_doc)
     assert latest is not None
-    assert latest["verdict"] == "issues"       # Latest is revision 1.
-    assert latest["finding_count"] == 2
-    assert len(history) == 2                    # Full history.
-    assert history[0]["revision_no"] == 1
+    assert latest["verdict"] == "pass"         # Provenance case inserted revision 2 last.
+    assert latest["review_provider"]["actual_provider_name"] == "Opus at review time"
+    assert len(history) == 3                    # Full history.
+    assert history[0]["revision_no"] == 2
     assert history[-1]["revision_no"] == 0
 
     # A document with no reviews returns (None, []).

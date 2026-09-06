@@ -1140,7 +1140,14 @@ def start_run(
     reviewer_overrides = (
         continuation_reviewer_overrides if mode == "continuous" else None
     )
-    hop_item_seq = _hop_item_seq_or_none(doc_ref) if mode == "continuous" else None
+    hop_item_seq = (
+        continuation_hop_item_seq(
+            doc_ref,
+            continuation_instruction_mode=continuation_instruction_mode,
+            continuation_auto_approve_item_seqs=continuation_auto_approve_item_seqs,
+        )
+        if mode == "continuous" else None
+    )
     hop_review_count = review.resolve_review_count(review_count_overrides, hop_item_seq)
     hop_reviewer_provider_id = (
         review.resolve_reviewer(reviewer_overrides, hop_item_seq, project_id)
@@ -1200,6 +1207,8 @@ def start_run(
         "stderr_tail": None,
         "provider": None,
         "provider_id": None,
+        # Immutable selection evidence. provider_id/provider may move during fallback.
+        "requested_provider_id": chain[0].get("id") if chain else None,
         "attempt_no": 0,
         "fallback_history": [],
         "register_errors": [],
@@ -1889,6 +1898,32 @@ def _hop_worker_rows(
     return candidates
 
 
+def continuation_hop_item_seq(
+    doc_ref: str,
+    *,
+    continuation_instruction_mode: Optional[str] = None,
+    continuation_auto_approve_item_seqs: Optional[list] = None,
+) -> Optional[int]:
+    """Resolve the mode-aware sequence slot used by every per-step bundle lookup."""
+    try:
+        seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+        if seq is None:
+            return None
+        head = db_wfseq.get_effective_head(seq["id"])
+        if not head:
+            return None
+        return _hop_worker_item_seq(
+            seq["id"],
+            head,
+            continuation_instruction_mode=continuation_instruction_mode,
+            continuation_auto_approve_item_seqs=continuation_auto_approve_item_seqs,
+        )
+    except Exception:  # noqa: BLE001 — caller decides whether a missing binding is fatal
+        logger.warning("continuation hop item_seq resolution failed for %s", doc_ref,
+                       exc_info=True)
+        return None
+
+
 def stored_hop_provider(
     doc_ref: str,
     *,
@@ -1931,36 +1966,40 @@ def _resolve_continuation_hop_override(
     continuation_instruction_mode: Optional[str] = None,
     continuation_auto_approve_item_seqs: Optional[list] = None,
 ) -> Optional[str]:
-    """Return the enabled provider override keyed to this mode-aware worker item_seq.
+    """Return the explicit provider override for this mode-aware worker item_seq.
 
-    String JSON keys and integer keys are both accepted. A missing or disabled provider
-    silently falls through to the explicit pin / doc-type / default tiers.
+    String JSON keys and integer keys are both accepted. Once an entry binds to this hop it
+    is an explicit user choice: an unavailable provider or an unresolvable binding fails
+    visibly and must never fall through to a stored or project-default provider.
+
+    A `workflow_decide` pre-decision hop has no sequence yet — `continuation_provider_overrides`
+    describing later steps arrives ahead of the slots it targets, since the client sends this
+    field regardless of `preDecision` state. That is not a binding failure: there is no hop to
+    bind to yet, so the override is inapplicable here and simply applies once its slot exists
+    on a later hop. Only a sequence that already exists but still fails to resolve an item_seq
+    is a genuine binding failure worth failing visibly for.
     """
-    try:
-        seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
-        if seq is None:
-            return None
-        head = db_wfseq.get_effective_head(seq["id"])
-        if not head:
-            return None
-        item_seq = _hop_worker_item_seq(
-            seq["id"],
-            head,
-            continuation_instruction_mode=continuation_instruction_mode,
-            continuation_auto_approve_item_seqs=continuation_auto_approve_item_seqs,
-        )
-        if item_seq is None:
-            return None
-        provider_id = overrides.get(str(item_seq), overrides.get(item_seq))
-        if not provider_id:
-            return None
-        if not any(p.get("id") == provider_id for p in chain):
-            return None
-        return provider_id
-    except Exception:  # noqa: BLE001 — a resolution failure must not stall the hop
-        logger.warning("continuation hop override resolution failed for %s", doc_ref,
-                       exc_info=True)
+    if db_wfseq.get_sequence_for_member_doc(doc_ref) is None:
         return None
+    item_seq = continuation_hop_item_seq(
+        doc_ref,
+        continuation_instruction_mode=continuation_instruction_mode,
+        continuation_auto_approve_item_seqs=continuation_auto_approve_item_seqs,
+    )
+    if item_seq is None:
+        raise _http_error(
+            409, "provider_override_binding_failed",
+            "Could not bind per-step provider overrides to the current workflow hop.",
+        )
+    provider_id = overrides.get(str(item_seq), overrides.get(item_seq))
+    if not provider_id:
+        return None
+    if not any(p.get("id") == provider_id for p in chain):
+        raise _http_error(
+            422, PROVIDER_UNAVAILABLE_CODE,
+            PROVIDER_UNAVAILABLE_MESSAGE,
+        )
+    return provider_id
 
 
 def _resolve_continuation_hop_note(

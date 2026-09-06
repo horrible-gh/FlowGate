@@ -432,11 +432,46 @@ def test_rework_selection_survives_handoff_bundle_and_resume_resolution(env):
     assert bundle["provider_pinned"] is False
     assert svc.resolve_step_executor(bundle, 2, "flowgate", ROOT) == "aip_header"
 
-def test_a_disabled_step_override_falls_through_instead_of_failing(env):
-    """A map entry naming a provider that is no longer in the effective chain drops to the next
-    tier — the stored provider — rather than pinning the run to something unrunnable."""
+def test_a_disabled_explicit_step_override_fails_visible_without_default_fallback(env):
+    """A bound explicit pick cannot silently become the stored or project-default provider."""
     env["chain"]["providers"] = [provider(pid) for pid in ALL_PROVIDER_IDS if pid != "aip_step"]
-    assert start(env, continuation_provider_overrides={"2": "aip_step"})["provider"]["id"] == "aip_nr"
+    with pytest.raises(Exception) as caught:
+        start(env, continuation_provider_overrides={"2": "aip_step"})
+    assert getattr(caught.value, "status_code", None) == 422
+    assert getattr(caught.value, "detail", {}).get("code") == "provider_unavailable"
+    assert env["worker_chains"] == []
+
+
+def test_folded_worker_item_seq_binds_provider_reviewer_and_diagnostics_to_same_slot(env):
+    """An auto-approved N head executes NR(2); every per-step map and diagnostic uses 2."""
+    result = start(
+        env,
+        continuation_provider_overrides={"2": "aip_step"},
+        continuation_review_count_overrides={"2": 1},
+        continuation_reviewer_overrides={"2": "aip_t"},
+    )
+    run = svc.get_run_record(result["run_id"])
+    assert result["provider"]["id"] == "aip_step"
+    assert result["hop_item_seq"] == 2
+    assert result["hop_reviewer_provider_id"] == "aip_t"
+    assert run["hop_item_seq"] == 2
+    assert run["continuation_provider_overrides"] == {"2": "aip_step"}
+    assert run["continuation_reviewer_overrides"] == {"2": "aip_t"}
+
+
+def test_workflow_decide_predecision_override_is_inapplicable_not_a_409(env, monkeypatch):
+    """The client sends continuation_provider_overrides for later steps even on the
+    pre-decision workflow_decide hop, before any sequence exists to bind them to (0516
+    rejection rework). No sequence means no slot to apply the override to yet -- this must
+    fall through to the next tier, not fail the whole continuous kickoff with a 409."""
+    monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda doc_id: None)
+    result = start(
+        env,
+        action_scope="workflow_decide",
+        continuation_provider_overrides={"1": "aip_bad", "2": "aip_opus"},
+    )
+    assert result["provider"]["id"] == "aip_header"
+    assert env["worker_chains"] == [["aip_header"]]
 
 
 # ── §7-9: what the next hop, a pause/resume and a no-output retry replay ──────

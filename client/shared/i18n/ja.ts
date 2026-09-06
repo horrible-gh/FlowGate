@@ -2484,6 +2484,8 @@ export default {
       filter_ai_review: 'AI検収',
       empty: '履歴がありません。',
       ai_response: 'AI応答',
+      actual_provider: '検収AI',
+      requested_provider: 'リクエストされた検収AI',
     },
     doc_workflow: {
       title: 'ワークフロー',
