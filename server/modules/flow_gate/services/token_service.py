@@ -334,12 +334,34 @@ def _find_token_by_raw(raw_token: str) -> Optional[dict]:
     return None
 
 
-def consume(token_id: str, project_id: str, doc_id: Optional[str] = None) -> None:
-    """consumed_at = now() + workflow_events.token_consumed (D020 §2-5)."""
-    db_tokens.consume(token_id)
+def consume(
+    token_id: str, project_id: str, doc_id: Optional[str] = None,
+    *, require_claim: bool = False,
+) -> bool:
+    """consumed_at = now() + workflow_events.token_consumed (D020 §2-5).
+
+    Returns True when the token is consumed by this call. With ``require_claim=True``
+    the consume is a compare-and-swap: a token some other request already consumed
+    returns False and writes NO token_consumed event, so the caller can abort instead
+    of adding a second artifact for one token (0535 T0007 §3). The default stays the
+    historical unconditional behaviour for every other inbox action, which returns
+    True and is still safe to call twice.
+
+    Both the UPDATE and the event are ordinary store writes, so a caller that wraps
+    this in ``FlowGateStore.transaction()`` gets claim + event + its own row in one
+    durable commit boundary; on rollback the token goes back to unconsumed with no
+    event behind it.
+    """
+    if require_claim:
+        if not db_tokens.consume_claim(token_id):
+            return False
+    else:
+        db_tokens.consume(token_id)
     token_rec = db_tokens.get_by_id(token_id)
     if token_rec is None:
-        return
+        # The row is gone between the UPDATE and this read: there is nothing left to
+        # describe in an event, but a claim that landed is still a claim.
+        return require_claim
 
     db_events.create({
         "event_type": "token_consumed",
@@ -355,6 +377,7 @@ def consume(token_id: str, project_id: str, doc_id: Optional[str] = None) -> Non
             + "}"
         ),
     })
+    return True
 
 
 def increment_dry_run(token_id: str) -> None:

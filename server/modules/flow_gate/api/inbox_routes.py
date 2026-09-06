@@ -2390,6 +2390,72 @@ def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSONRespon
     return JSONResponse(status_code=202, content=result)
 
 
+class _ReviewTokenAlreadyClaimed(Exception):
+    """Raised inside the review transaction when the token was consumed elsewhere."""
+
+
+def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
+    """Server-owned provider evidence for one review submission (0535 T0007 §2).
+
+    The three states of ``fallback_used`` are decided ONLY from the ai-invoke run
+    record this token is bound to — never from the submitted payload, never from the
+    project's current provider settings:
+
+    ==========================================  =============  ==========
+    evidence in the verified review run         fallback_used  API reads
+    ==========================================  =============  ==========
+    both provider ids present and different     True           true
+    both present and equal                      False          false
+    anything else                               (row omitted)  null
+    ==========================================  =============  ==========
+
+    "Anything else" is a legacy/non-AI token, a run lookup that failed or raised, a run
+    bound to another action or another document, or a run missing either provider id.
+    All of them return ``{}`` so every provenance column is stored NULL: with one id
+    missing there is no evidence that the requested provider is what actually ran, and
+    the old ``bool(requested and actual and requested != actual)`` collapsed exactly
+    that unknown into ``False`` — "we checked, no fallback happened" — which is a
+    different claim from "we could not check". provider_source is derived from the same
+    two ids, so it must not be guessed ("fallback"/the run's selected source) from
+    evidence too incomplete to decide, and attempt_no is snapshotted only alongside the
+    evidence it belongs to.
+
+    Lookup failures degrade gracefully (empty provenance) rather than failing the whole
+    registration: a review that reached this point is a real result, and the provider
+    columns are provenance, not the artifact.
+    """
+    run_id = token_rec.get("ai_run_id")
+    if not run_id:
+        return {}
+    try:
+        from modules.flow_gate.services.ai_invoke.runtime import get_run_record
+        review_run = get_run_record(run_id)
+        if (
+            not review_run
+            or review_run.get("action_scope") != "review"
+            or review_run.get("doc_ref") != doc_id
+        ):
+            return {}
+        requested_id = review_run.get("requested_provider_id")
+        actual_id = review_run.get("provider_id")
+        if not requested_id or not actual_id:
+            return {}
+        fallback_used = requested_id != actual_id
+        return {
+            "review_run_id": run_id,
+            "requested_provider_id": requested_id,
+            "actual_provider_id": actual_id,
+            "actual_provider_name": (review_run.get("provider") or {}).get("name"),
+            "provider_source": (
+                "fallback" if fallback_used else review_run.get("selected_provider_source")
+            ),
+            "attempt_no": int(review_run.get("attempt_no") or 0) or None,
+            "fallback_used": fallback_used,
+        }
+    except Exception:
+        return {}
+
+
 def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse:
     """Store an AI review result for action: review (document_reviews child record).
 
@@ -2540,6 +2606,14 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
     if _review_encoding_fail is not None:
         return _review_encoding_fail
 
+    # ── Step 5.95: provider provenance (0535 T0007 §2/§3.4) ──
+    # The token binds this submission to a live run. Provider evidence is server-owned;
+    # model payload and mutable project settings never participate. Computed BEFORE the
+    # dry-run gate so a dry-run performs exactly the server-side resolution a real
+    # submit does — it just never writes any of it. It is a read of in-memory run state
+    # and cannot fail the request (see _review_provenance).
+    review_provider = _review_provenance(token_rec, doc_id)
+
     # ── Dry-run short-circuit (R0001 dry-run, L0007 §3/§4.3) ──
     # All validation has passed; bail out before any side effect (insert_review/consume/SSE).
     dry_resp = _maybe_dry_run(body, token_rec, {
@@ -2552,62 +2626,44 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
     if dry_resp is not None:
         return dry_resp
 
-    # ── Step 6: Insert review record ──
-    # The token binds this submission to a live run. Provider evidence is server-owned;
-    # model payload and mutable project settings never participate.
-    review_provider: dict[str, Any] = {}
-    review_run_id = token_rec.get("ai_run_id")
-    if review_run_id:
-        try:
-            from modules.flow_gate.services.ai_invoke.runtime import get_run_record
-            review_run = get_run_record(review_run_id)
-            if (
-                review_run
-                and review_run.get("action_scope") == "review"
-                and review_run.get("doc_ref") == doc_id
-            ):
-                requested_id = review_run.get("requested_provider_id")
-                actual_id = review_run.get("provider_id")
-                review_provider = {
-                    "review_run_id": review_run_id,
-                    "requested_provider_id": requested_id,
-                    "actual_provider_id": actual_id,
-                    "actual_provider_name": (review_run.get("provider") or {}).get("name"),
-                    "provider_source": (
-                        "fallback"
-                        if requested_id and actual_id and requested_id != actual_id
-                        else review_run.get("selected_provider_source")
-                    ),
-                    "attempt_no": int(review_run.get("attempt_no") or 0) or None,
-                    "fallback_used": bool(
-                        requested_id and actual_id and requested_id != actual_id
-                    ),
-                }
-        except Exception:
-            review_provider = {}
-
+    # ── Step 6+7: claim the token and store the review, atomically (0535 T0007 §3) ──
+    # One transaction covers the token claim, the review row, its readback and the
+    # token_consumed event, so a submission is all of it or none of it:
+    #
+    #   * the token is claimed with a CAS UPDATE, so a token another request already
+    #     consumed loses here (409) instead of adding a second review for one token;
+    #   * an INSERT failure, a readback failure, or an event-write failure rolls the
+    #     claim back with it — the token stays unconsumed and re-submittable, and no
+    #     partial review row survives;
+    #   * the 201 below is only reached after the commit returned.
+    #
+    # The claim goes first on purpose: it is the cheap statement that decides who owns
+    # this submission, and every writer after it is inside the same rollback boundary.
     revision_no = int(doc.get("revision_no") or 0)
     findings_json = json.dumps(findings, ensure_ascii=False)
     try:
-        db_reviews.insert_review(
-            doc_id=doc_id,
-            revision_no=revision_no,
-            reviewer_id=actor_user_id,
-            verdict=verdict,
-            findings_json=findings_json,
-            comment=comment if (comment is None or isinstance(comment, str)) else str(comment),
-            reviewed_at=now_iso(),
-            **review_provider,
-        )
+        with get_store().transaction():
+            if not token_service.consume(
+                token_id=token_rec["token_id"],
+                project_id=project,
+                doc_id=doc_id,
+                require_claim=True,
+            ):
+                raise _ReviewTokenAlreadyClaimed()
+            db_reviews.insert_review(
+                doc_id=doc_id,
+                revision_no=revision_no,
+                reviewer_id=actor_user_id,
+                verdict=verdict,
+                findings_json=findings_json,
+                comment=comment if (comment is None or isinstance(comment, str)) else str(comment),
+                reviewed_at=now_iso(),
+                **review_provider,
+            )
+    except _ReviewTokenAlreadyClaimed:
+        return _fail(409, "This review token has already been consumed; no review was added.")
     except Exception as exc:
         return _fail(500, f"DB registration error: {exc}")
-
-    # ── Step 7: Token consumption ──
-    token_service.consume(
-        token_id=token_rec["token_id"],
-        project_id=project,
-        doc_id=doc_id,
-    )
 
     # ── Step 8: Screen push — notify reviewers an AI verdict arrived ──
     # Without this, a review lands silently: the human's open tab shows no "AI review arrived"
