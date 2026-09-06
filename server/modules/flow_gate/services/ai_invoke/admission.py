@@ -22,6 +22,7 @@ from typing import Callable, Optional
 
 from fastapi import HTTPException
 from modules.flow_gate import template_provision
+from modules.flow_gate.db import connection as db_connection
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
@@ -513,9 +514,68 @@ def _record_lease_admission_rejected(
     so it is known and must be reconstructible from the durable event. pre_acquire fires
     before any run_id is minted, so it always passes None here -- that stays NULL by design,
     not by omission.
+
+    ``requested_token_id`` is always NULL: `start_run` mints its token AFTER a lease is
+    successfully acquired (never before), so no requesting token exists yet at either
+    rejection stage. The key is still present (T0004 §5 lists it as a minimum field) so a
+    reader never has to guess whether it was omitted or genuinely absent.
+
+    Provider identity (T0004 §5 "있다면", §15 allows provider_id/provider_name): the
+    requesting side already has its resolved provider_id in the ``provider_id`` argument,
+    so its name is resolved the same way `resolve_pinned_provider_name` names a mention
+    (chain lookup by id). The blocking side has no provider_id on the lease row itself --
+    only `token_id` -- so it is looked up one hop further via the blocking token's stored
+    provider_id (0164 DB0005 `tokens.provider_id`). Either lookup failing (deleted token,
+    provider no longer in the effective chain) leaves the *_provider_name NULL rather than
+    guessing -- T0004 §6 forbids inventing values that no longer exist.
+
+    Both call sites fire outside any DB transaction (`acquire()`'s transaction has
+    already closed by then), but the append is still routed through
+    `db_connection.after_commit` for the same reason `group_ai_leases._append_event`
+    is: inside a PostgreSQL transaction a failed forensic INSERT aborts the whole
+    transaction, so catching its exception would not be enough to keep the caller's
+    own outcome intact (T0004 §10).
     """
+    def _write() -> None:
+        _write_lease_admission_rejected(
+            group_id=group_id, project_id=project_id, doc_ref=doc_ref,
+            action_scope=action_scope, chain_id=chain_id, issued_to=issued_to,
+            provider_id=provider_id, active=active, handoff_allowed=handoff_allowed,
+            admission_stage=admission_stage, requested_run_id=requested_run_id,
+        )
+
+    if not db_connection.after_commit(_write):
+        _write()
+
+
+def _write_lease_admission_rejected(
+    *, group_id: str, project_id: str, doc_ref: str, action_scope: str,
+    chain_id: Optional[str], issued_to: str, provider_id: Optional[str],
+    active: dict, handoff_allowed: bool, admission_stage: str,
+    requested_run_id: Optional[str],
+) -> None:
+    """Build and append the rejection event. Never raises -- see the caller."""
     try:
         from modules.flow_gate.db import group_ai_lease_events as db_lease_events
+
+        requested_provider_name = (
+            resolve_pinned_provider_name(project_id, provider_id) if provider_id else None
+        )
+        blocking_token_id = active.get("token_id")
+        blocking_provider_id = None
+        if blocking_token_id:
+            # Best-effort, like resolve_pinned_provider_name above: this is enrichment on
+            # top of the required event, so a token-store lookup failure must not cost the
+            # durable rejection event itself (T0004 SS10).
+            try:
+                blocking_token_row = db_tokens.get_by_id(blocking_token_id)
+            except Exception:  # noqa: BLE001
+                blocking_token_row = None
+            blocking_provider_id = (blocking_token_row or {}).get("provider_id")
+        blocking_provider_name = (
+            resolve_pinned_provider_name(project_id, blocking_provider_id)
+            if blocking_provider_id else None
+        )
 
         db_lease_events.append(
             event_type="lease_admission_rejected",
@@ -529,17 +589,22 @@ def _record_lease_admission_rejected(
             requested={
                 "group_id": group_id, "project_id": project_id, "doc_ref": doc_ref,
                 "action_scope": action_scope, "requested_run_id": requested_run_id,
-                "requested_chain_id": chain_id,
+                "requested_chain_id": chain_id, "requested_token_id": None,
                 "requested_worker_id": issued_to, "requested_provider_id": provider_id,
+                "requested_provider_name": requested_provider_name,
                 "requested_at": now_iso(),
             },
             blocking={
-                "blocking_run_id": active.get("run_id"), "blocking_token_id": active.get("token_id"),
+                "blocking_run_id": active.get("run_id"), "blocking_token_id": blocking_token_id,
                 "blocking_chain_id": active.get("chain_id"),
                 "blocking_action_scope": active.get("action_scope"),
-                "blocking_worker_id": active.get("worker_identity"), "lease_state": active.get("state"),
+                "blocking_worker_id": active.get("worker_identity"),
+                "blocking_provider_id": blocking_provider_id,
+                "blocking_provider_name": blocking_provider_name,
+                "lease_state": active.get("state"),
                 "lease_generation": active.get("generation"), "lease_acquired_at": active.get("acquired_at"),
                 "lease_heartbeat_at": active.get("heartbeat_at"), "lease_expires_at": active.get("expires_at"),
+                "lease_owner_identity": active.get("worker_identity"),
             },
             detail={"handoff_allowed": handoff_allowed, "admission_stage": admission_stage},
         )

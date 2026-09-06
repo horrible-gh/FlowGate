@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,8 @@ _SERVER_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_SERVER_DIR))
 
 from modules.flow_gate.api.v1 import ai_invoke_routes  # noqa: E402
+from modules.flow_gate.db import connection as db_connection  # noqa: E402
+from modules.flow_gate.db import dialect as _dialect  # noqa: E402
 from modules.flow_gate.db import group_ai_lease_events as db_lease_events  # noqa: E402
 from modules.flow_gate.db import group_ai_leases as db_leases  # noqa: E402
 from modules.flow_gate.services.ai_invoke import admission  # noqa: E402
@@ -279,6 +282,62 @@ def test_lease_admission_rejected_captures_requested_and_blocking_identity():
     assert ev["run_id"] is None
 
 
+def test_lease_admission_rejected_snapshot_resolves_provider_identity(monkeypatch):
+    """T0004 SS5/SS23(2) rev5 finding: requested_token_id must be present (NULL, since
+    no token is ever minted before a lease is acquired), and both sides' provider
+    identity must be reconstructible -- the requesting side from its own resolved
+    provider_id, the blocking side one hop further via the blocking token's stored
+    provider_id (0164 DB0005 tokens.provider_id), never left silently absent."""
+    monkeypatch.setattr(
+        admission, "resolve_pinned_provider_name",
+        lambda project_id, provider_id: {"prov_req": "Requester Provider", "prov_block": "Blocker Provider"}.get(provider_id),
+    )
+    monkeypatch.setattr(
+        admission.db_tokens, "get_by_id",
+        lambda token_id: {"token_id": token_id, "provider_id": "prov_block"} if token_id == "TOKEN-A" else None,
+    )
+    active = {
+        "run_id": "RUN-A", "token_id": "TOKEN-A", "chain_id": "RUN-A",
+        "action_scope": "new", "worker_identity": "WORKER-A", "state": "active",
+        "generation": 1, "acquired_at": "2026-09-01T17:20:00+00:00",
+        "heartbeat_at": "2026-09-01T17:24:00+00:00", "expires_at": "2026-09-01T21:29:00+00:00",
+    }
+    admission._record_lease_admission_rejected(
+        group_id=GROUP, project_id=PROJECT, doc_ref=f"{GROUP}.0001-B", action_scope="new",
+        chain_id="RUN-B", issued_to="WORKER-B", provider_id="prov_req",
+        active=active, handoff_allowed=False, admission_stage="pre_acquire",
+    )
+    ev = db_lease_events.list_for_group(GROUP)[0]
+    assert ev["requested"]["requested_token_id"] is None
+    assert ev["requested"]["requested_provider_id"] == "prov_req"
+    assert ev["requested"]["requested_provider_name"] == "Requester Provider"
+    assert ev["blocking"]["blocking_provider_id"] == "prov_block"
+    assert ev["blocking"]["blocking_provider_name"] == "Blocker Provider"
+    assert ev["blocking"]["lease_owner_identity"] == "WORKER-A"
+
+
+def test_lease_admission_rejected_snapshot_leaves_provider_name_null_when_unresolvable():
+    """No provider_id / no blocking token -> both provider_name fields stay NULL
+    rather than guessing (T0004 SS6)."""
+    active = {
+        "run_id": "RUN-A", "token_id": None, "chain_id": "RUN-A",
+        "action_scope": "new", "worker_identity": "WORKER-A", "state": "acquiring",
+        "generation": 1, "acquired_at": "2026-09-01T17:20:00+00:00",
+        "heartbeat_at": "2026-09-01T17:24:00+00:00", "expires_at": "2026-09-01T21:29:00+00:00",
+    }
+    admission._record_lease_admission_rejected(
+        group_id=GROUP, project_id=PROJECT, doc_ref=f"{GROUP}.0001-B", action_scope="new",
+        chain_id="RUN-B", issued_to="WORKER-B", provider_id=None,
+        active=active, handoff_allowed=False, admission_stage="pre_acquire",
+    )
+    ev = db_lease_events.list_for_group(GROUP)[0]
+    assert ev["requested"]["requested_token_id"] is None
+    assert ev["requested"]["requested_provider_name"] is None
+    assert ev["blocking"]["blocking_provider_id"] is None
+    assert ev["blocking"]["blocking_provider_name"] is None
+    assert ev["blocking"]["lease_owner_identity"] == "WORKER-A"
+
+
 def test_lease_admission_rejected_acquire_race_captures_the_requested_run_id():
     """T0004 SS5/SS23(1)-(2): unlike pre_acquire, the acquire_race stage fires AFTER
     start_run already minted a run_id for the losing candidate (db_group_ai_leases
@@ -351,6 +410,189 @@ def test_acquire_and_release_succeed_even_if_forensic_append_fails(monkeypatch):
     assert lease is not None and lease["run_id"] == "R1"
     released = db_leases.release(GROUP, "R1")
     assert released is True
+
+
+# ── SS17.7 / SS10 failure isolation on the transactional (PostgreSQL) acquire path ───
+#
+# The tests above drive both stores' `_memory` fallback, where an append failure is a
+# plain Python exception. Production's acquire() takes a different shape: it mutates
+# group_ai_leases inside `store.transaction()` and appends the forensic event on that
+# same connection. Under PostgreSQL a failed statement aborts the WHOLE transaction --
+# every later statement and the COMMIT itself then fail -- so merely catching the
+# append's exception would still roll the lease acquisition back and surface a 500 on
+# an admission that had already succeeded (T0004 SS10 / SS23(6)). These tests run the real
+# FlowGateStore.transaction() against a backend that reproduces that abort semantics.
+
+
+class _FakeTxn:
+    def __init__(self, db: "_PgLikeDB"):
+        self._db = db
+        self._row = None
+
+    def execute(self, sql, params=None):
+        self._row = self._db.run(sql, params or [], in_txn=True)
+        return self
+
+    def fetchone(self):
+        return self._row
+
+    def fetchall(self):
+        return [self._row] if self._row else []
+
+
+class _PgLikeDB:
+    """sqloader-shaped backend with PostgreSQL's "a failed statement aborts the
+    transaction" behaviour, and just enough table emulation for acquire().
+
+    ``commit_reports_failure`` covers both endings the abort has. Verified against the
+    live PostgreSQL backend (192.168.0.250 flowgate, inside a rolled-back transaction):
+    a failed statement leaves the session in 25P02, and psycopg2's ``commit()`` on that
+    session RETURNS SUCCESSFULLY because the server turns COMMIT on an aborted
+    transaction into ROLLBACK -- so sqloader's PostgreSQLTransaction.__exit__ raises
+    nothing and the lease INSERT is discarded *silently*. False models that (the real
+    production shape); True models the driver reporting the failure instead. The
+    durable assertion below is the same either way: the lease must still be there.
+    """
+
+    db_type = _dialect.POSTGRESQL
+
+    def __init__(self, *, event_writes_fail: bool, commit_reports_failure: bool = False):
+        self.event_writes_fail = event_writes_fail
+        self.commit_reports_failure = commit_reports_failure
+        self.leases: dict[str, dict] = {}
+        self.events: list[dict] = []
+        self.log: list[tuple[str, str]] = []   # (in_txn|autocommit, sql)
+        self.aborted = False
+
+    # -- statement dispatch (matched on table name; the SQL itself is dialect-translated)
+    def run(self, sql, params, *, in_txn: bool):
+        self.log.append(("in_txn" if in_txn else "autocommit", sql))
+        if in_txn and self.aborted:
+            raise RuntimeError("current transaction is aborted, commands ignored")
+        if "group_ai_lease_events" in sql:
+            if self.event_writes_fail:
+                if in_txn:
+                    self.aborted = True          # exactly what psycopg2 does
+                raise RuntimeError("relation \"group_ai_lease_events\" does not exist")
+            if sql.lstrip().upper().startswith("INSERT"):
+                self.events.append({"sql": sql, "params": list(params)})
+                return None
+            return {"event_id": params[0] if params else None}
+        if "group_ai_leases" in sql:
+            head = sql.lstrip().upper()
+            if head.startswith("INSERT"):
+                (group_id, project_id, run_id, chain_id, action_scope, worker_identity,
+                 acquired_at, heartbeat_at, expires_at, updated_at) = params
+                self.leases.setdefault(group_id, {
+                    "group_id": group_id, "project_id": project_id, "run_id": run_id,
+                    "chain_id": chain_id, "token_id": None, "action_scope": action_scope,
+                    "worker_identity": worker_identity, "state": "acquiring", "generation": 1,
+                    "acquired_at": acquired_at, "heartbeat_at": heartbeat_at,
+                    "expires_at": expires_at, "updated_at": updated_at,
+                })
+                return None
+            if head.startswith("SELECT 1"):
+                return None                       # no run_id collision
+            if head.startswith("SELECT"):
+                return self.leases.get(params[0]) if params else None
+            if head.startswith("DELETE"):
+                self.leases.pop(params[0], None)
+                return None
+        raise AssertionError(f"unexpected statement in test backend: {sql}")
+
+    # -- FlowGateStore's non-transactional path
+    def execute(self, sql, params=None):
+        self.run(sql, params or [], in_txn=False)
+        return self
+
+    def fetch_one(self, sql, params=None):
+        return self.run(sql, params or [], in_txn=False)
+
+    @contextmanager
+    def begin_transaction(self):
+        snapshot = {gid: dict(row) for gid, row in self.leases.items()}
+        self.aborted = False
+        try:
+            yield _FakeTxn(self)
+        except BaseException:
+            self.leases = snapshot
+            raise
+        if self.aborted:
+            # COMMIT on an aborted PostgreSQL transaction is executed as ROLLBACK: the
+            # writes are gone whether or not the driver reports that back to the caller.
+            self.leases = snapshot
+            if self.commit_reports_failure:
+                raise RuntimeError("current transaction is aborted, commands ignored")
+
+
+@pytest.fixture
+def pg_like(monkeypatch):
+    """Point both lease stores at a live FlowGateStore over the PG-like backend."""
+    def _make(*, event_writes_fail: bool, commit_reports_failure: bool = False) -> tuple[_PgLikeDB, object]:
+        db = _PgLikeDB(event_writes_fail=event_writes_fail,
+                       commit_reports_failure=commit_reports_failure)
+        store = db_connection.FlowGateStore.__new__(db_connection.FlowGateStore)
+        store._db, store._sq = db, None
+        for module in (db_leases, db_lease_events):
+            monkeypatch.setattr(module, "_using_memory", lambda: False)
+            monkeypatch.setattr(module, "get_store", lambda store=store: store)
+        return db, store
+    return _make
+
+
+@pytest.mark.parametrize("commit_reports_failure", [False, True])
+def test_acquire_survives_a_forensic_write_that_aborts_the_transaction(pg_like, commit_reports_failure):
+    db, _ = pg_like(event_writes_fail=True, commit_reports_failure=commit_reports_failure)
+
+    lease = db_leases.acquire(
+        group_id=GROUP, project_id=PROJECT, run_id="R1", chain_id="c1",
+        action_scope="new", worker_identity="w1",
+    )
+
+    # The admission succeeded and stayed committed: the event-store failure neither
+    # raised out of acquire() nor rolled the lease row back with the transaction.
+    assert lease is not None and lease["run_id"] == "R1"
+    assert db.leases[GROUP]["run_id"] == "R1", "the lease INSERT was silently rolled back with the aborted transaction"
+    # ...and it failed where it can do no harm: outside the transaction.
+    event_writes = [entry for entry in db.log if "group_ai_lease_events" in entry[1]]
+    assert event_writes and all(where == "autocommit" for where, _ in event_writes)
+
+
+def test_acquire_appends_its_event_only_after_the_transaction_commits(pg_like):
+    db, _ = pg_like(event_writes_fail=False)
+
+    lease = db_leases.acquire(
+        group_id=GROUP, project_id=PROJECT, run_id="R1", chain_id="c1",
+        action_scope="new", worker_identity="w1",
+    )
+
+    assert lease is not None and lease["run_id"] == "R1"
+    assert len(db.events) == 1
+    assert "lease_acquired" in db.events[0]["params"]
+    # The history is still written -- just on the post-commit connection, which is the
+    # only placement where its failure cannot take the lease mutation with it.
+    event_writes = [entry for entry in db.log if "group_ai_lease_events" in entry[1]]
+    assert event_writes and all(where == "autocommit" for where, _ in event_writes)
+    lease_writes = [i for i, (_, sql) in enumerate(db.log) if "group_ai_leases" in sql]
+    assert max(lease_writes) < min(
+        i for i, (_, sql) in enumerate(db.log) if "group_ai_lease_events" in sql
+    )
+
+
+def test_after_commit_queue_is_dropped_when_the_transaction_rolls_back(pg_like):
+    db, store = pg_like(event_writes_fail=False)
+    ran: list[str] = []
+
+    with pytest.raises(RuntimeError, match="boom"):
+        with store.transaction():
+            assert db_connection.after_commit(lambda: ran.append("x")) is True
+            raise RuntimeError("boom")
+
+    # The write the callback described was rolled back with the transaction, so
+    # recording it would fabricate history (T0004 SS7).
+    assert ran == []
+    assert db_connection.in_transaction() is False
+    assert db_connection.after_commit(lambda: ran.append("y")) is False
 
 
 # ── SS14 read path: GET /api/v1/ai-invoke/lease-events (admin-only) ────────────────

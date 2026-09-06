@@ -6,7 +6,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from .connection import get_store, now_iso
+from .connection import after_commit, get_store, now_iso
 from . import group_ai_lease_events as _lease_events
 
 
@@ -71,10 +71,7 @@ def _expired(row: Optional[dict], at: Optional[str] = None) -> bool:
         return True
 
 
-def _append_event(**kwargs) -> None:
-    """Best-effort forensic append (flowgate.default.0502 T0004 SS10): a write failure
-    here must never change an admission or release decision, so every lifecycle call
-    site below only logs a warning on failure instead of letting it propagate."""
+def _append_now(**kwargs) -> None:
     try:
         _lease_events.append(**kwargs)
     except Exception:  # noqa: BLE001
@@ -83,6 +80,25 @@ def _append_event(**kwargs) -> None:
             "group_ai_lease_events append failed for group %s event %s",
             kwargs.get("group_id"), kwargs.get("event_type"), exc_info=True,
         )
+
+
+def _append_event(**kwargs) -> None:
+    """Best-effort forensic append (flowgate.default.0502 T0004 SS10): a write failure
+    here must never change an admission or release decision, so the append only ever
+    logs a warning on failure instead of letting it propagate.
+
+    Swallowing the exception is not enough on its own. `acquire()` mutates the lease
+    inside `store.transaction()`, and under PostgreSQL a failed statement poisons the
+    whole transaction: a failed event INSERT on that same connection makes every later
+    statement -- and the COMMIT itself -- fail, so a caught forensic error would still
+    roll the lease mutation back and surface as a 500 on an admission that had already
+    succeeded. So while a transaction is open the append is queued to run after that
+    transaction commits, on a connection the transaction no longer owns; outside a
+    transaction it runs inline. Events for a rolled-back transaction are dropped with
+    it -- the mutation they describe never happened."""
+    if after_commit(lambda: _append_now(**kwargs)):
+        return
+    _append_now(**kwargs)
 
 
 def get(group_id: str) -> Optional[dict]:
