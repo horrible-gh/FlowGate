@@ -1999,22 +1999,7 @@ def _prior_tr_declared(group_id: str, exclude_doc_id: Optional[str] = None) -> l
     same tool_registry.MUTATING_STEP_TYPES membership used everywhere else in this
     gate, so T/TR/TSR/TS all feed and read the same declared-paths pool.
     """
-    declared: set[str] = set()
-    for document in db_docs.get_documents_by_group_id(group_id):
-        if str(document.get("type_code") or "").upper() not in tool_registry.MUTATING_STEP_TYPES:
-            continue
-        if exclude_doc_id and document.get("doc_id") == exclude_doc_id:
-            continue
-        verdict = tr_scope_service.verdict_from_meta(document.get("meta"))
-        if not verdict:
-            continue
-        reported = verdict.get("reported")
-        if not isinstance(reported, dict):
-            continue
-        for path in reported.get("items") or []:
-            if isinstance(path, str) and path:
-                declared.add(path)
-    return sorted(declared)
+    return tr_scope_service.group_declared_paths(group_id, exclude_doc_id)
 
 
 def _disposed_group_fail(group_id: Optional[str], action: str) -> Optional[JSONResponse]:

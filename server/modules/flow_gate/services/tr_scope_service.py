@@ -106,6 +106,7 @@ SECTION_HEADING_EN = "## Changed Files"  # T0009: English alias the parser accep
 NONE_MARKER = "없음"
 MAX_ITEMS = 200
 _MAX_LISTED = 40  # max lines actually listed in the rejection notice (D0004 §3.8-3)
+FINALIZE_UNREPORTED_LIST_MAX = _MAX_LISTED
 
 # ── Exclusion rules (D0004 §3.3 → merged with the screen rules in 0382 NR0003) ──
 #
@@ -648,6 +649,72 @@ def build_notice(result: dict, locale: str = "ko") -> str:
     if TRV_OUT_OF_SCOPE in codes or TRV_UNCONFIRMED in codes:
         parts.append(strings["revert"])
     return "\n".join(parts)
+
+
+def group_declared_paths(group_id: str, exclude_doc_id: Optional[str] = None) -> list[str]:
+    """Return the union of paths reported by mutating documents in a group."""
+    # Local imports keep this low-level comparison service free of import cycles during
+    # router initialization.
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.services import tool_registry
+
+    declared: set[str] = set()
+    for document in db_docs.get_documents_by_group_id(group_id):
+        if str(document.get("type_code") or "").upper() not in tool_registry.MUTATING_STEP_TYPES:
+            continue
+        if exclude_doc_id and document.get("doc_id") == exclude_doc_id:
+            continue
+        verdict = verdict_from_meta(document.get("meta"))
+        reported = verdict.get("reported") if verdict else None
+        if not isinstance(reported, dict):
+            continue
+        for path in reported.get("items") or []:
+            if isinstance(path, str) and path and not is_excluded_path(path):
+                declared.add(path)
+    return sorted(declared)
+
+
+def evaluate_group_unreported(project_id: str, group_id: str) -> dict:
+    """Re-evaluate the live group worktree for final-approval scope mismatches.
+
+    Unlike a stored submission verdict this always collects the current worktree. Git-off
+    projects and unavailable worktrees are explicitly skipped, matching ``evaluate``.
+    """
+    if resolve_stage(project_id) is None:
+        return {"checked": False, "reason": "git_integration_off", "unreported": []}
+
+    actual = git_service.collect_scope_changes(project_id, group_id)
+    if not actual.get("available"):
+        return {
+            "checked": False,
+            "reason": actual.get("reason") or "scope_unavailable",
+            "unreported": [],
+        }
+
+    entries = {
+        entry.get("path"): entry
+        for entry in (actual.get("entries") or [])
+        if entry.get("path") and not is_excluded_path(entry["path"])
+    }
+    detected = {
+        path for path in (actual.get("paths") or [])
+        if isinstance(path, str) and path and not is_excluded_path(path)
+    }
+    unresolved = []
+    for path in sorted(detected - set(group_declared_paths(group_id))):
+        entry = entries.get(path) or {}
+        unresolved.append({
+            "path": path,
+            "actual_status": entry.get("status") or "M",
+            "old_path": entry.get("old_path"),
+        })
+    return {
+        "checked": True,
+        "reason": None,
+        "branch": actual.get("branch"),
+        "worktree": actual.get("worktree"),
+        "unreported": unresolved,
+    }
 
 
 # ── Document-detail lookup (D0004 §6) ───────────────────────────────────────
