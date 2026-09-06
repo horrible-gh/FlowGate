@@ -250,7 +250,9 @@ class TestMentionBlock:
         block = svc.build_verified_commands_block("tcprj")
         assert block != ""
         assert "- cd server && python -m pytest -q" in block
-        assert "Prefer these over guessing" in block
+        assert "syntax/execution-known examples" in block
+        assert "not feature-correctness" in block
+        assert "exit 0 proves execution only" in block
 
 
 # ── router (P §3-5) ───────────────────────────────────────────────────────────
