@@ -4438,7 +4438,7 @@ async function doCreateApprovedDocument() {
     const res = await postRequest<any>('/api/v1/documents/next-approved', {
       project_id: project,
       group_id: groupId,
-      prev_doc_id: tabId,
+      prev_doc_id: nextActionDocRef(tabId),
       type_code: typeCode,
       module: moduleName || 'none',
     })
@@ -4485,7 +4485,7 @@ async function onActionBarCreateConversation(tabId: string) {
     const res = await postRequest<any>('/api/v1/documents/next-empty', {
       project_id: project,
       group_id: groupId,
-      prev_doc_id: tabId,
+      prev_doc_id: nextActionDocRef(tabId),
       type_code: 'CH',
       title: t('main.review_action_bar.conversation_default_title'),
       module: moduleName || 'none',
