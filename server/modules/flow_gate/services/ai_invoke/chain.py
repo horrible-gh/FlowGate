@@ -243,8 +243,22 @@ def request_auto_resume(group_id: Optional[str], payload: dict) -> None:
     if not group_id:
         return
     with _auto_resume_lock:
-        _svc()._auto_resume[group_id] = dict(payload)
-    _svc()._write_handoff_row(group_id, payload, _svc()._active_run_for_group(group_id))
+        queued = dict(payload)
+        existing = _svc()._auto_resume.get(group_id)
+        if (
+            existing
+            and existing.get("last_stage") in (REVIEW_HOP_KIND, REWORK_HOP_KIND)
+            and not payload.get("last_stage")
+        ):
+            # A rework registers its edit through inbox while the gate-owned successor
+            # intent is already queued.  Inbox's ordinary handoff has no gate fields and
+            # the single-mode child run has None for their continuous-only counterparts;
+            # replacing the dict here therefore used to turn count=N into count=0 at the
+            # very next gate.  Refresh ordinary routing fields from inbox, but retain the
+            # gate's last_stage/progress markers and carrier maps.
+            queued = {**existing, **payload}
+        _svc()._auto_resume[group_id] = queued
+    _svc()._write_handoff_row(group_id, queued, _svc()._active_run_for_group(group_id))
 
 
 def _carry(pending: dict, pending_key: str, run: dict, run_key: str):
