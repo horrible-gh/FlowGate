@@ -29,6 +29,7 @@
           :providers="providers"
           :default-index="defaultIndex"
           :catalog="catalog"
+          :build-preset-command="buildPresetCommand"
           @update:providers="onUpdateProviders"
           @update:defaultIndex="onUpdateDefaultIndex"
         />
@@ -98,7 +99,7 @@ import AppIcon from '@shared/AppIcon.vue'
 import { nextTick, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { createPinia, getActivePinia, setActivePinia } from 'pinia';
-import { getRequest, putRequest } from '@shared/api';
+import { getRequest, postRequest, putRequest } from '@shared/api';
 import AiProviderListEditor from '../../components/AiProviderListEditor.vue';
 import { formatErrors } from '../../components/aiProviderLimits';
 import { useToast } from '../../../main/components/common/useToast';
@@ -155,6 +156,16 @@ async function saveExecutionPolicy() {
   } finally {
     executionPolicySaving.value = false;
   }
+}
+
+// 0519 T0009: read-only build for the magic tool, never the provider-save PUT. The editor
+// writes the result into the dialog's local form only; it is persisted (if at all) through
+// this dialog's own Save.
+async function buildPresetCommand({ kind, model_name, skip_permissions }) {
+  const { data } = await postRequest('/api/v1/system/ai-settings/cli-preset-command', {
+    kind, model_name, skip_permissions,
+  });
+  return data;
 }
 
 function applyResponse(data) {

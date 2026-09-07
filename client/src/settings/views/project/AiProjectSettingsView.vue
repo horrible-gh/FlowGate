@@ -24,6 +24,7 @@
             :providers="providers"
             :default-index="defaultIndex"
             :catalog="catalog"
+            :build-preset-command="buildPresetCommand"
             @update:providers="providers = $event"
             @update:defaultIndex="defaultIndex = $event"
           />
@@ -74,7 +75,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { onBeforeRouteLeave } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import { getRequest, putRequest } from '@shared/api';
+import { getRequest, postRequest, putRequest } from '@shared/api';
 import AiProviderListEditor from '../../components/AiProviderListEditor.vue';
 import { formatErrors } from '../../components/aiProviderLimits';
 import AppIcon from '@shared/AppIcon.vue';
@@ -115,6 +116,16 @@ const badgeClass = computed(() => {
   if (savedMode.value === 'disabled') return 'badge-gray';
   return 'badge-blue';
 });
+
+// 0519 T0009: read-only build for the magic tool, scoped to this project's own permission
+// and project_id — never the settings-save PUT below.
+async function buildPresetCommand({ kind, model_name, skip_permissions }) {
+  const { data } = await postRequest(
+    `/api/v1/projects/${projectId.value}/ai-settings/cli-preset-command`,
+    { kind, model_name, skip_permissions },
+  );
+  return data;
+}
 
 function applyResponse(data) {
   saveErrors.value = [];

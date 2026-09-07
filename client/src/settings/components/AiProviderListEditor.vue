@@ -151,7 +151,34 @@
 
           <div v-if="form.exec_type === 'cli'" class="form-group">
             <label class="form-label">{{ t('settings.ai.label_cli_command') }}</label>
-            <input class="form-ctrl mono" v-model="form.cli_command" :placeholder="t('settings.ai.placeholder_cli_command')" />
+            <!-- 0519 T0009/rej_01M1YTRN0SD379SG: the magic tool is one small button at the
+                 right edge of the command input. It always fills the unmanned-run form (every
+                 flag, skip permissions on) for the kind on screen, and leaves `model_name` in
+                 it for the user to replace by hand. There is no separate "skip permission
+                 confirmation" control to show or explain — FlowGate always runs a CLI
+                 unattended (nobody is there to answer that CLI's own prompt), so the flag is
+                 an internal detail of the generated command, not a user-facing choice. -->
+            <div class="cli-cmd-row">
+              <input class="form-ctrl mono" v-model="form.cli_command" :placeholder="t('settings.ai.placeholder_cli_command')" />
+              <button
+                v-if="magicToolAvailable"
+                type="button"
+                class="cli-magic-btn"
+                :title="t('settings.ai.magic_tool')"
+                :aria-label="t('settings.ai.magic_tool')"
+                :disabled="magicFilling"
+                @click="fillCliCommand"
+              >
+                <AppIcon name="magic-wand" aria-hidden="true" />
+              </button>
+            </div>
+            <!-- rej_01M1YY7MQRQZAZG1: the magic tool leaves the literal `model_name` in the
+                 command for the user to replace by hand (§ above) — this hint is the only
+                 place that tells them so. It reflects the command text itself, so it appears
+                 the moment a fill (or a hand edit) leaves the placeholder in, and clears the
+                 moment the placeholder is replaced with a real model name. -->
+            <p v-if="showModelPlaceholderHint" class="form-hint ai-model-hint" role="status">{{ t('settings.ai.magic_model_hint') }}</p>
+            <p v-if="magicError" class="text-sm ai-magic-error" role="alert">{{ magicError }}</p>
           </div>
           <template v-else>
             <div class="form-group">
@@ -182,21 +209,6 @@
               </p>
             </div>
           </template>
-
-          <div v-if="form.exec_type === 'cli' && permissionRule" class="form-group">
-            <label class="form-label">
-              <input
-                type="checkbox"
-                v-model="form.skip_permissions"
-                @change="onPermissionSkipToggle"
-              />
-              {{ t('settings.ai.label_skip_permissions') }}
-            </label>
-            <p class="form-hint">{{ t('settings.ai.skip_permissions_hint') }}</p>
-            <p v-if="form.skip_permissions" class="form-hint ai-skip-warn">
-              {{ t('settings.ai.skip_permissions_warn') }}
-            </p>
-          </div>
 
           <div class="form-group">
             <label class="form-label">
@@ -291,7 +303,7 @@
 import { computed, nextTick, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AppIcon from '@shared/AppIcon.vue';
-import { hasPermissionSkip, permissionSkipRule, setPermissionSkip } from './aiPermissionSkip';
+import { hasPermissionSkip } from './aiPermissionSkip';
 import {
   NAME_MAX,
   CLI_COMMAND_MAX,
@@ -314,6 +326,11 @@ const props = defineProps({
   // The system screen renders its own add button in the card header (v3 deck ①) and turns
   // this one off; the project screen keeps it.
   showAddButton: { type: Boolean, default: true },
+  // 0519 T0009: the parent owns which endpoint the magic tool calls (system vs. this
+  // project's own permission + project_id) — this component never guesses a URL. Given
+  // { kind, model_name, skip_permissions } it resolves to { cli_command }. null when a
+  // screen has not wired one (e.g. a bare unit mount), which hides the button.
+  buildPresetCommand: { type: Function, default: null },
 });
 const emit = defineEmits(['update:providers', 'update:defaultIndex']);
 
@@ -330,8 +347,6 @@ const form = reactive({
   api_model: '',
   keyInput: '',
   keyClear: false,
-  // 0371 NR0007 §5: mirrors what the command string says, never a stored field of its own.
-  skip_permissions: false,
 });
 
 const draggedIndex = ref(null);
@@ -357,7 +372,36 @@ function restoreTriggerFocus() {
 }
 
 const kindOptions = computed(() => props.catalog.kinds?.[form.exec_type] || []);
-const permissionRule = computed(() => permissionSkipRule(props.catalog, form.kind));
+
+// 0519 T0009: magic tool state. The model name is deliberately not asked for — the command
+// is filled with the literal `model_name` and the user edits it in the command box like any
+// other part of the string. The CLI flags stay on the server (build_preset_command), so this
+// asks the parent-supplied builder for the string instead of assembling one here.
+const MAGIC_MODEL_PLACEHOLDER = 'model_name';
+const magicToolAvailable = computed(() => (
+  !!props.buildPresetCommand && !!props.catalog.cli_presets?.[form.kind]
+));
+const magicFilling = ref(false);
+const magicError = ref('');
+// rej_01M1YY7MQRQZAZG1: purely derived from the command text on screen, not from whether the
+// magic tool was clicked — a hand-typed placeholder shows the same reminder, and replacing it
+// (by hand or with a fresh fill that no longer contains it) clears the reminder either way.
+const showModelPlaceholderHint = computed(() => (
+  form.exec_type === 'cli' && form.cli_command.includes(MAGIC_MODEL_PLACEHOLDER)
+));
+// Bumped whenever an in-flight fill stops belonging to what is on screen (kind switch,
+// leaving CLI, dialog close) so a late response cannot overwrite the command the user is
+// looking at.
+const magicGeneration = ref(0);
+
+function resetMagicTool() {
+  magicGeneration.value += 1;
+  magicFilling.value = false;
+  magicError.value = '';
+}
+
+watch(() => form.kind, () => resetMagicTool());
+
 const editingRow = computed(() => (editIndex.value === null ? null : props.providers[editIndex.value]));
 const editingHasKey = computed(() => !!editingRow.value?.api_key_set && editingRow.value?.api_key !== '');
 const editingKeyHint = computed(() => editingRow.value?.api_key_hint || '');
@@ -370,19 +414,47 @@ const commandTitle = computed(() => (
 watch(() => form.exec_type, (execType) => {
   const kinds = props.catalog.kinds?.[execType] || [];
   if (!kinds.includes(form.kind)) form.kind = kinds[0] || '';
+  // Leaving CLI hides the button, but a kind published on both sides (claude is a CLI kind
+  // and an API kind) leaves form.kind untouched, so the kind watcher never fires. Reset here
+  // too: a fill still in flight belongs to the CLI form the user just walked away from.
+  resetMagicTool();
 });
 
-// The command string is the truth: typing the flag by hand ticks the box, and switching to
-// a kind whose flag is spelled differently re-reads it. The checkbox handler below edits the
-// command, this puts the box back in step with the result.
-watch(() => [form.kind, form.cli_command], () => {
-  form.skip_permissions = hasPermissionSkip(props.catalog, form.kind, form.cli_command);
-});
+// 0519 T0009: the only place that writes a generated command into form.cli_command, and only
+// when the user clicks the magic tool. Single-flight (the button is disabled while filling)
+// plus the generation guard cover every way a request can go stale mid-flight.
+function magicRequestIsCurrent(request) {
+  return magicGeneration.value === request.generation
+    && form.exec_type === request.execType
+    && form.kind === request.kind;
+}
 
-function onPermissionSkipToggle() {
-  form.cli_command = setPermissionSkip(
-    props.catalog, form.kind, form.cli_command, form.skip_permissions,
-  );
+async function fillCliCommand() {
+  if (magicFilling.value || !props.buildPresetCommand) return;
+  const request = {
+    generation: magicGeneration.value,
+    execType: form.exec_type,
+    kind: form.kind,
+  };
+  magicError.value = '';
+  magicFilling.value = true;
+  try {
+    // rej_01M1YTRN0SD379SG: the magic tool is for unmanned runs, so it always fills the
+    // skip-permissions form (every flag present) — this is an internal parameter of the
+    // request, not something a checkbox on screen decides or reflects back.
+    const result = await props.buildPresetCommand({
+      kind: request.kind,
+      model_name: MAGIC_MODEL_PLACEHOLDER,
+      skip_permissions: true,
+    });
+    if (!magicRequestIsCurrent(request)) return; // stale: kind/exec_type changed or dialog closed
+    form.cli_command = result?.cli_command || '';
+  } catch {
+    if (!magicRequestIsCurrent(request)) return;
+    magicError.value = t('settings.ai.magic_tool_error');
+  } finally {
+    if (magicGeneration.value === request.generation) magicFilling.value = false;
+  }
 }
 
 function skipsPermissions(p) {
@@ -509,9 +581,8 @@ function openAdd(event) {
   form.api_model = '';
   form.keyInput = '';
   form.keyClear = false;
-  // A new provider always starts with permission confirmation ON (0371 NR0007 §5).
-  form.skip_permissions = false;
   formError.value = '';
+  resetMagicTool();
   formOpen.value = true;
   nextTick(() => formInitialFocus.value?.focus?.());
 }
@@ -531,10 +602,8 @@ function openEdit(index, event) {
   form.api_model = p.api_model || '';
   form.keyInput = '';
   form.keyClear = false;
-  // Read from the stored command, not assumed: an existing row is never rewritten, so the
-  // box has to show what that row actually does.
-  form.skip_permissions = hasPermissionSkip(props.catalog, form.kind, form.cli_command);
   formError.value = '';
+  resetMagicTool();
   formOpen.value = true;
   nextTick(() => formInitialFocus.value?.focus?.());
 }
@@ -543,6 +612,9 @@ function closeForm() {
   formOpen.value = false;
   editIndex.value = null;
   formError.value = '';
+  // Invalidates any fill still in flight so its response cannot land after the dialog (and
+  // the row it was meant for) are gone.
+  resetMagicTool();
   restoreTriggerFocus();
 }
 
@@ -640,6 +712,29 @@ function confirmForm() {
 .ai-skip-warn {
   color: var(--danger, #d64545);
 }
+
+/* rej_01M1Z03ZN4DXP4N9: the model_name reminder rode on plain .form-hint (var(--text-m),
+   the same faint gray used for ordinary captions), so it read as decorative filler instead
+   of "you still have to act before saving". It shares the app's warning color/weight with
+   .alert-warning and .wf-next-action (client/shared/app.css) — the other spots that flag an
+   unfinished, must-fix-before-you-move-on state. */
+.ai-model-hint {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+/* 0519 T0009: the magic tool rides at the right edge of the command input, sized like the
+   row buttons above so it reads as an affordance on the field rather than a section. */
+.cli-cmd-row { display: flex; align-items: stretch; gap: 6px; }
+.cli-cmd-row .form-ctrl { flex: 1 1 auto; min-width: 0; }
+.cli-magic-btn {
+  flex: 0 0 auto; width: 30px; border-radius: var(--r-sm); border: 1px solid var(--border);
+  background: var(--surface); display: flex; align-items: center; justify-content: center;
+  padding: 0; color: var(--text-m); cursor: pointer; transition: all var(--tr);
+}
+.cli-magic-btn:hover:not(:disabled) { background: var(--bg); color: var(--primary); border-color: var(--border-d); }
+.cli-magic-btn:disabled { opacity: .45; cursor: default; }
+.ai-magic-error { color: var(--danger, #d64545); margin: 6px 0 0; }
 
 /* v3 deck 8bqoacqs: table -> single-column row list, ported from WorkflowDecisionModal.vue's
    sequence-row rules (extra.css keeps the same selectors for parity with the mockup). */

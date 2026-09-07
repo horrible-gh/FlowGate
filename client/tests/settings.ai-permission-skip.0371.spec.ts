@@ -1,7 +1,17 @@
 // flowgate.default.0371 T0014 (NR0007 §5): "skip the permission confirmation" used to be a
 // word inside the suggested CLI command, so every provider registered the easy way ran
-// without permission checks and nobody had chosen that. The screen now renders it as its
-// own control, unticked for a new provider, and says so on a row that does skip.
+// without permission checks and nobody had chosen that. The screen briefly rendered it as
+// its own control (unticked for a new provider), and said so on a row that does skip.
+//
+// flowgate.default.0519 TR0010 rev2 (rej_01M1YTRN0SD379SG): that control is gone again. The
+// human rejection said "skip permission confirmation" has no meaning as a user choice in
+// FlowGate — every CLI run here is unattended, so nobody is ever there to answer that
+// confirmation prompt either way — and asked for it to become purely an internal detail (the
+// magic tool always requests the unattended form) with no checkbox and no hint/warning text
+// under it. The `describe('permission-skip control in the provider editor', ...)` block that
+// used to live in this file tested that now-removed checkbox; it has been replaced below with
+// a regression test that the control stays gone. The pure catalog-driven functions and the
+// list row's read-only status badge are unaffected and still tested as before.
 //
 // The flags are not hard-coded on this side: they come down with the settings catalog, so
 // these tests feed the same shape the server publishes.
@@ -73,14 +83,6 @@ function mountEditor(providers = []) {
   })
 }
 
-/** The checkbox is found by its label so a new form field cannot silently shift an index. */
-function skipCheckbox(wrapper) {
-  const label = wrapper.findAll('label').find(
-    (l) => l.text().includes(i18n.global.t('settings.ai.label_skip_permissions')),
-  )
-  return label ? label.find('input[type="checkbox"]') : null
-}
-
 async function openAddForm(wrapper) {
   const add = wrapper.findAll('button').find(
     (b) => b.text().includes(i18n.global.t('settings.ai.add_provider')),
@@ -134,69 +136,45 @@ describe('permission-skip rules (catalog driven)', () => {
   })
 })
 
-describe('permission-skip control in the provider editor', () => {
-  it('starts unticked for a new provider', async () => {
+// flowgate.default.0519 TR0010 rev2 (rej_01M1YTRN0SD379SG): the checkbox this describe block
+// used to exercise is gone — "skip permission confirmation" is no longer offered as a user
+// choice anywhere in the add/edit dialog, for any kind, in either direction (typing the flag
+// by hand no longer ticks anything either, because there is nothing left to tick). The magic
+// tool still always requests the unattended form (see settings.ai-magic-tool.0519.spec.ts);
+// that is an internal parameter of the request now, not a control on screen.
+describe('permission-skip control is not offered in the provider editor', () => {
+  it('a new provider has no permission-skip checkbox, hint or warning text', async () => {
     const wrapper = await openAddForm(mountEditor())
-    const box = skipCheckbox(wrapper)
-    expect(box).not.toBeNull()
-    expect(box.element.checked).toBe(false)
+    expect(wrapper.get('.modal-bg').findAll('input[type="checkbox"]').length).toBe(1) // just "enabled"
+    expect(wrapper.get('.modal-bg').findAll('.form-hint').length).toBe(0)
   })
 
-  it('writes the flag into the command only when it is ticked', async () => {
-    const wrapper = await openAddForm(mountEditor())
-    const command = wrapper.find('input.mono')
-    await command.setValue('claude --model m -p -')
-    expect(command.element.value).not.toContain(CLAUDE_SKIP)
-
-    await skipCheckbox(wrapper).setValue(true)
-    expect(wrapper.find('input.mono').element.value)
-      .toBe(`claude ${CLAUDE_SKIP} --model m -p -`)
-    expect(wrapper.text()).toContain(i18n.global.t('settings.ai.skip_permissions_warn'))
-  })
-
-  it('takes the flag back out when it is unticked', async () => {
+  it('an existing row that already skips still shows no checkbox when edited', async () => {
     const wrapper = await openEditForm(
       mountEditor([cliProvider({ cli_command: `claude ${CLAUDE_SKIP} --model m -p -` })]),
     )
-    const box = skipCheckbox(wrapper)
-    // An existing row is never rewritten, so the box has to report what it really does.
-    expect(box.element.checked).toBe(true)
-
-    await box.setValue(false)
-    expect(wrapper.find('input.mono').element.value).toBe('claude --model m -p -')
+    expect(wrapper.get('.modal-bg').findAll('input[type="checkbox"]').length).toBe(1) // just "enabled"
   })
 
-  it('offers nothing for a CLI whose permission flag we do not know', async () => {
-    const wrapper = await openEditForm(
-      mountEditor([cliProvider({ kind: 'copilot', cli_command: 'copilot --output-format=json' })]),
-    )
-    expect(skipCheckbox(wrapper)).toBeNull()
-  })
-
-  it('ticks itself when the flag is typed into the command by hand', async () => {
+  it('typing the flag into the command by hand does not conjure a checkbox', async () => {
     const wrapper = await openAddForm(mountEditor())
     await wrapper.find('input.mono').setValue(`claude ${CLAUDE_SKIP} -p -`)
-    expect(skipCheckbox(wrapper).element.checked).toBe(true)
+    expect(wrapper.get('.modal-bg').findAll('input[type="checkbox"]').length).toBe(1) // just "enabled"
   })
 
-  it('does not come between the CLI fields and the API ones', async () => {
-    // The command box and the API block are a v-if/v-else pair, and that only holds while
-    // the two stay adjacent. Put this control between them and the `v-else` binds to IT
-    // instead — every API field then appears on a CLI form for any kind the control hides
-    // itself for, which is why copilot (no known flag) is the case checked here.
+  it('is absent for every kind, including one with no known flag', async () => {
     const wrapper = await openAddForm(mountEditor())
     for (const kind of ['claude', 'copilot', 'custom']) {
       await wrapper.findAll('select')[1].setValue(kind)
-      expect(wrapper.text()).toContain(i18n.global.t('settings.ai.label_cli_command'))
-      expect(wrapper.text()).not.toContain(i18n.global.t('settings.ai.label_api_model'))
+      expect(wrapper.get('.modal-bg').findAll('input[type="checkbox"]').length).toBe(1) // just "enabled"
     }
   })
 
-  it('is not offered for an API provider, which spawns no command', async () => {
+  it('an API provider, which spawns no command, is unaffected either way', async () => {
     const wrapper = await openAddForm(mountEditor())
     await wrapper.findAll('select')[0].setValue('api')
     expect(wrapper.text()).toContain(i18n.global.t('settings.ai.label_api_model'))
-    expect(skipCheckbox(wrapper)).toBeNull()
+    expect(wrapper.get('.modal-bg').findAll('input[type="checkbox"]').length).toBe(1) // just "enabled"
   })
 })
 
