@@ -60,6 +60,12 @@ function mountDialog(overrides: Record<string, unknown> = {}) {
       busy: false,
       loadStatus: 'ready',
       errorMessage: '',
+      // 0234 B0001 RC1/RC2 added the footer provider select gated behind
+      // `providers?.length` — without a fixture here the footer-actions block
+      // (and everything in it: copy-mention/AI-invoke/abort/submit) never
+      // renders, which silently broke every test below that queries it.
+      providers: [{ id: 'p1', name: 'Claude Sonnet 5' }],
+      selectedProvider: 'p1',
       ...overrides,
     },
     global: {
@@ -223,9 +229,35 @@ describe('GitConflictResolverDialog (shared 0207 시안 A resolver)', () => {
     expect(invoke).toBeTruthy()
     await invoke!.trigger('click')
 
+    // 0481 D0006 §6.2 / L0007 §2.2 — [자동] rides along as the second argument,
+    // read fresh from the footer checkbox at the moment [AI 호출] is pressed.
     expect(wrapper.emitted('ai-invoke')).toEqual([
-      ['Preserve the current source and resolve only the markers.'],
+      ['Preserve the current source and resolve only the markers.', false],
     ])
+
+    wrapper.unmount()
+  })
+
+  it('checking [자동] sends auto=true with AI 호출 and 해소 제출, and resets on a fresh files load', async () => {
+    const { wrapper, files } = mountDialog()
+
+    await wrapper.find('.git-conflict-auto-toggle input').setValue(true)
+    const invoke = wrapper.findAll('.git-conflict-footer-actions .btn-secondary')
+      .find(button => button.text().includes('Call AI'))
+    await invoke!.trigger('click')
+    expect(wrapper.emitted('ai-invoke')?.[0]).toEqual(['', true])
+
+    // 0234-shared submit gate: resolve everything so the primary button is enabled.
+    await wrapper.find('.git-ai-assist-strip .btn').trigger('click')
+    const pendingChunk = wrapper.findAll('.git-conflict-chunk')[1]
+    const [, theirsBtn] = pendingChunk.findAll('.git-chunk-actions button')
+    await theirsBtn.trigger('click')
+    await wrapper.find('.git-conflict-footer-actions .btn-primary').trigger('click')
+    expect(wrapper.emitted('submit')?.[0]).toEqual([true])
+
+    // A fresh files prop (re-fetch/re-open) must not carry the checkbox forward.
+    await wrapper.setProps({ files: [...files] })
+    expect((wrapper.find('.git-conflict-auto-toggle input').element as HTMLInputElement).checked).toBe(false)
 
     wrapper.unmount()
   })

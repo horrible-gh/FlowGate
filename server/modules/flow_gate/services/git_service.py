@@ -21,6 +21,7 @@ is scrubbed before storage/return.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -574,12 +575,16 @@ def _run_git(
     username: Optional[str] = None,
     secret: Optional[str] = None,
     author_env: Optional[dict] = None,
+    extra_env: Optional[dict] = None,
 ) -> subprocess.CompletedProcess:
     """Run git with prompt-free auth injection and secret-scrubbed output.
 
     ``author_env`` carries GIT_AUTHOR_NAME/GIT_AUTHOR_EMAIL for a project-configured
     commit author (0237); None keeps git's own default, which the `-c user.*` ident
-    on commit/merge argv resolves to the FlowGate identity.
+    on commit/merge argv resolves to the FlowGate identity. ``extra_env`` is a plain
+    passthrough for anything else a caller needs set for one call — currently only
+    ``GIT_INDEX_FILE``, which `_apply_write_plan_locked`'s isolated scratch-index helpers use
+    to build/inspect a tree without ever touching this checkout's real index.
     """
     env = os.environ.copy()
     env["GIT_TERMINAL_PROMPT"] = "0"
@@ -591,6 +596,8 @@ def _run_git(
     env.pop("GIT_AUTHOR_EMAIL", None)
     if author_env:
         env.update(author_env)
+    if extra_env:
+        env.update(extra_env)
     askpass_dir: Optional[Path] = None
     if secret is not None:
         launcher, askpass_dir = _write_askpass()
@@ -2385,6 +2392,23 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         and db_git.session_kind(open_session) == db_git.SESSION_KIND_GROUP_UPDATE
         else None
     )
+    # 0481 D0006 §6.4 / L0007 §2.11: the finalize panel's own "승인 대기" entry
+    # badge needs to tell a still-resolving conflict (review_state is None/absent)
+    # apart from one already sitting in resolved_pending_review/re_review/
+    # applying/reconciling — this endpoint is the only state poll GitFinalizePanel
+    # makes, so the review gate's phase has to ride along with it rather than
+    # forcing a second round-trip to GET .../review just to render a badge.
+    review_state = None
+    reconciliation_kind = None
+    if display_status == "conflict" and state.get("merge_id") is not None:
+        try:
+            merge_session = db_git.get_session(int(state["merge_id"]))
+        except Exception:
+            merge_session = None
+        if merge_session is not None and db_git.session_kind(merge_session) == db_git.SESSION_KIND_MERGE:
+            merge_context = db_git.session_context(merge_session)
+            review_state = merge_context.get("review_state")
+            reconciliation_kind = merge_context.get("reconciliation_kind")
     return {"ok": True, "state": {
         "group_id": group_id,
         "branch": branch,
@@ -2407,6 +2431,8 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         "base_remote_behind_count": base_remote_behind,
         "merge_id": group_update_merge_id or state.get("merge_id"),
         "merge_commit": state.get("merge_commit"),
+        "review_state": review_state,
+        "reconciliation_kind": reconciliation_kind,
         "commit_message": commit_message,
         # True only for the display-only pre-approval preview (0197 T0004 §B);
         # the persisted status is still 'none'. Advisory for the FE.
@@ -4827,7 +4853,26 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
                     details={"files": blockers},
                 )
             raise GitServiceError(500, "git_error", _last_line(proc.stderr))
-        merge_id = db_git.create_session(group_id, files, finalize_action=action)
+        # 0481 D0006 §3.4 / L0007 §2.1: the review gate's `resolver_baseline` and its
+        # eventual `expected_remote_head` CAS-push condition both need the exact
+        # inputs this merge attempt started from, captured now while MERGE_HEAD is
+        # still the one this conflict is about — a later fetch/merge on this base
+        # checkout must never be mistaken for the same merge.
+        review_base_head = _rev_parse(base_root, "HEAD")
+        review_merge_head = _rev_parse(base_root, "MERGE_HEAD")
+        review_expected_remote_head = _rev_parse(base_root, f"refs/remotes/origin/{base_branch}")
+        merge_id = db_git.create_session(
+            group_id, files, finalize_action=action,
+            context={
+                "review_state": None,
+                "auto_authority": False,
+                "resolver_baseline": {
+                    "base_head": review_base_head,
+                    "merge_head": review_merge_head,
+                    "expected_remote_head": review_expected_remote_head,
+                },
+            },
+        )
         _set_status(group_id, "conflict", merge_id=merge_id)
         # 0205 L §2.1: DO NOT transfer the lock to the session. The conflict wait
         # is expressed by the persistent 'conflict' state + open session — which
@@ -5045,6 +5090,65 @@ def _conflict_side_dropped(original: str, submitted: str) -> bool:
     return False
 
 
+def _find_subsequence(haystack: list[str], needle: list[str], start: int) -> Optional[int]:
+    """First index ``i >= start`` where ``haystack[i:i+len(needle)] == needle``, else None."""
+    if not needle:
+        return None
+    n = len(needle)
+    for i in range(start, len(haystack) - n + 1):
+        if haystack[i:i + n] == needle:
+            return i
+    return None
+
+
+def _classify_conflict_chunks(path: str, original: str, submitted: str) -> list[dict]:
+    """D0006 §3.3 / L0007 §2.4 — per-chunk selection the review screen overlays on
+    the real diff: which conflict chunk resolved to ``ours``/``theirs``/``both``/
+    ``manual``, and (best-effort) where that ended up in the submitted text.
+
+    Priority mirrors L0007 §2.4: an exact match of ``ours`` wins, then ``theirs``,
+    then either concatenation order of both, else ``manual``. Line ranges are found
+    by a left-to-right subsequence search advancing a cursor per chunk (chunks are
+    resolved in original document order) rather than L0007's stricter "unique
+    match only" rule — a pragmatic narrowing for this pass; an ambiguous/no-match
+    chunk still gets a selection label, just no line range.
+    """
+    chunks = _split_conflict_chunks_with_base(original)
+    if not chunks:
+        return []
+    submitted_lines = (submitted or "").splitlines()
+    cursor = 0
+    results: list[dict] = []
+    for idx, chunk in enumerate(chunks):
+        ours, theirs = chunk["ours"], chunk["theirs"]
+        ours_text, theirs_text = "\n".join(ours), "\n".join(theirs)
+        chunk_id = hashlib.sha256(
+            "\x00".join((path, str(idx), ours_text, theirs_text)).encode("utf-8", errors="surrogateescape")
+        ).hexdigest()
+        # "both" combinations are checked BEFORE the bare single-side texts: a bare
+        # `ours` is a byte-prefix of `ours + theirs`, so checking single-side first
+        # would report "ours" for a chunk the human plainly combined — the longer,
+        # more specific match should win (a deliberate reordering from L0007 §2.4's
+        # literal ours-then-theirs-then-both listing, kept because in practice it
+        # is what makes a genuinely-combined resolution show up as "both" at all).
+        candidates = [(ours + theirs, "both"), (theirs + ours, "both"), (ours, "ours"), (theirs, "theirs")]
+        selection, start_line, end_line = "manual", None, None
+        for candidate_lines, label in candidates:
+            if not candidate_lines:
+                continue
+            found_at = _find_subsequence(submitted_lines, candidate_lines, cursor)
+            if found_at is not None:
+                selection, start_line, end_line = label, found_at + 1, found_at + len(candidate_lines)
+                cursor = found_at + len(candidate_lines)
+                break
+        results.append({
+            "path": path, "chunk_id": chunk_id, "selection": selection,
+            "start_line": start_line, "end_line": end_line,
+            "range_ambiguous": start_line is None,
+        })
+    return results
+
+
 def _session_context(group_id: str, merge_id: int) -> tuple[dict, dict, str, Path]:
     """``(session, cfg, project_id, root)`` — ``root`` is the repo the conflict lives in.
 
@@ -5111,7 +5215,10 @@ def list_conflicts(group_id: str, merge_id: int) -> dict:
     }
 
 
-def resolve_conflicts(group_id: str, merge_id: int, files: list[dict], complete: bool) -> dict:
+def resolve_conflicts(
+    group_id: str, merge_id: int, files: list[dict], complete: bool,
+    *, resolver_run_id: Optional[str] = None,
+) -> dict:
     from modules.flow_gate.storage.safe_path import resolve_in_root
 
     session, cfg, project_id, root = _session_context(group_id, merge_id)
@@ -5157,15 +5264,33 @@ def resolve_conflicts(group_id: str, merge_id: int, files: list[dict], complete:
         target = resolve_in_root(root, path)
         if target is None:
             raise GitServiceError(422, "invalid_request", f"unsafe path: '{path}'")
-        staged.append((path, target, content))
+        staged.append((path, target, content, original))
 
-    for path, target, content in staged:
+    for path, target, content, _original in staged:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         proc = _run_git(["add", "--", path], cwd=root)
         if proc.returncode != 0:
             raise GitServiceError(500, "git_error", _last_line(proc.stderr))
         db_git.mark_file_resolved(merge_id, path)
+
+    if staged and db_git.session_kind(session) == db_git.SESSION_KIND_MERGE:
+        # D0006 §3.3 / L0007 §2.4: record which side each conflict chunk resolved to
+        # (ours/theirs/both/manual) so the review screen can overlay it on the real
+        # diff. Recomputed per path on every submission that touches it — a
+        # re-instruction that changes a file's resolution replaces that path's
+        # origins rather than appending stale ones.
+        context = db_git.session_context(session)
+        origins = [o for o in (context.get("conflict_origins") or []) if o.get("path") not in {p for p, *_ in staged}]
+        for path, _target, content, original in staged:
+            origins.extend(_classify_conflict_chunks(path, original, content))
+        context["conflict_origins"] = origins
+        db_git.set_session_context(merge_id, context)
+        # `session` (fetched once, above) still carries the pre-write context JSON;
+        # every read below this point goes through `db_git.session_context(session)`,
+        # so re-fetch the row now or the conflict_origins write above would be
+        # invisible to the rest of this call.
+        session = db_git.get_session(merge_id)
 
     remaining = db_git.remaining_conflicts(merge_id)
     if not complete or remaining:
@@ -5217,57 +5342,1775 @@ def resolve_conflicts(group_id: str, merge_id: int, files: list[dict], complete:
 
     # From here down the session is a finalize merge, so the conflict root IS the base
     # checkout; the name change keeps the merge/push reads saying what they mean.
+    #
+    # 0481 R0001/D0006/L0007 (T0008): a resolved general merge no longer commits on
+    # "the markers are gone" alone. It freezes the FULL commit-candidate tree (every
+    # path the merge commit would carry — resolved files, auto-merged files, deletes,
+    # renames, mode changes) under the project lock, persists it as
+    # resolved_pending_review, and stops there for a human to review real diff +
+    # conflict-origin chunks and press [승인]/[반려]. The only bypass is
+    # `auto_authority`, a boolean the session already carries BEFORE this submission
+    # — stamped by a human's [AI 호출] or direct [해결 제출] press via
+    # `record_auto_authority`, never by a field on this request (§2.2 — a worker
+    # token cannot self-approve its own resolution).
     base_root = root
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-    # 0232 B0001: finishing a conflicted merge also creates a merge commit over the
-    # absorb commit — give it the same conventional Merge subject (not the work
-    # subject) so the resolved merge is not a title-duplicate of the work commit.
-    state = db_git.get_state(group_id) or {}
-    branch = (state.get("branch")
-              or worktree_branch_name(project_id, _module_of(group_id), group_id))
-    proc = _run_git(
-        [*_GIT_IDENT, "commit", "-m", _merge_commit_subject(branch, base_branch)],
-        cwd=base_root, author_env=_author_env_from_cfg(cfg),
-    )
-    if proc.returncode != 0:
-        raise GitServiceError(500, "git_error", _last_line(proc.stderr))
-    session_action = (session.get("finalize_action") or SESSION_ACTION_DEFAULT)
-    pushed = False
-    if session_action != "merge_only":
-        push = _run_git(
-            ["push", "origin", base_branch],
-            cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC,
-            username=cfg.get("username"), secret=_load_secret_for(cfg) or "",
+    holder = f"review:{merge_id}:{uuid.uuid4()}"
+    if not _acquire_lock(project_id, holder, wait_sec=LOCK_WAIT_SEC):
+        raise GitServiceError(
+            409, "git_busy", f"another git operation is in progress for '{project_id}'"
         )
-        if push.returncode != 0:
-            # E6 — roll the merge commit back; the session ends and the group re-chooses.
-            _run_git(["reset", "--hard", "ORIG_HEAD"], cwd=base_root)
-            db_git.close_session(merge_id, "aborted")
-            _set_status(group_id, "waiting")
-            db_git.release_lock(project_id, f"merge:{merge_id}")
-            raise GitServiceError(500, "push_rejected", _last_line(push.stderr))
-        pushed = True
+    try:
+        snapshot = _freeze_commit_candidate(base_root, base_branch)
+        context = db_git.session_context(session)
+        context.update(snapshot)
+        context["review_state"] = REVIEW_STATE_PENDING
+        context["instruction_generation"] = int(context.get("instruction_generation") or 0)
+        context["resolver_run_id"] = resolver_run_id
+        provider_id, provider_name = _resolver_run_provider(resolver_run_id)
+        context["resolver_provider"] = provider_name or provider_id
+        context.setdefault("conversation", [])
+        db_git.set_session_context(merge_id, context)
+        automatic = bool(context.get("auto_authority"))
+    finally:
+        db_git.release_lock(project_id, holder)
 
-    head = _run_git(["rev-parse", "--short", "HEAD"], cwd=base_root)
-    merge_commit = (head.stdout or "").strip() or None
-    db_git.close_session(merge_id, "done")
-    _set_status(group_id, "merged", merge_commit=merge_commit)
-    # 0182 NR0003 §5: same post-merge cleanup as the conflict-free path — while
-    # the merge session still holds the project lock.
-    _cleanup_group_slot(project_id, group_id)
-    db_git.release_lock(project_id, f"merge:{merge_id}")
-    _emit("git_finalize_done", project_id, group_id, {
-        "project": project_id, "group_id": group_id,
-        "action": session_action, "status": "merged", "merge_commit": merge_commit,
-        "pushed": pushed,
-    })
+    if automatic:
+        return approve_merge_review(
+            group_id, merge_id,
+            attempt_id=str(uuid.uuid4()),
+            review_fingerprint=snapshot["review_fingerprint"],
+            authority="automatic",
+        )
     return {
         "ok": True,
         "result": {
-            "status": "merged", "merge_commit": merge_commit, "pushed": pushed,
-            "remaining_conflicts": [],
+            "status": "resolved_pending_review", "merge_commit": None, "pushed": False,
+            "remaining_conflicts": [], "review_fingerprint": snapshot["review_fingerprint"],
         },
     }
+
+
+# ── General-merge review gate (flowgate.default.0481 D0006/L0007, T0008) ─────
+# TR revert/reapply conflicts have stopped at a human commit press since 0332 (see
+# TR_CONFLICT_REVIEW_* above); this extends the same stop-and-look principle to an
+# ordinary finalize merge, whose resolution used to commit and push itself the
+# moment conflict markers were gone. The full state machine lives in the session's
+# free-form `context` (no schema change, matching every TR field before it):
+#
+#   review_state          resolved_pending_review | re_review | applying |
+#                         reconciling | completed
+#   auto_authority        recorded ONLY by record_auto_authority, from a human's
+#                         [AI 호출] or direct [해결 제출] press — never from a
+#                         resolve/approve/reject request's own fields
+#   snapshot_tree/_manifest, base_head, merge_head, expected_remote_head,
+#   review_fingerprint    the ONE frozen commit-candidate the human reviews,
+#                         approves against, and that is committed verbatim
+#   resolver_baseline     {base_head, merge_head} captured at session creation —
+#                         a reject re-runs THIS SAME merge to regenerate byte-
+#                         identical conflict markers, rather than hand-snapshotting
+#                         every conflicted file's raw index stage
+#   approval_attempt_id, merge_commit, apply_phase   idempotent approval/push
+#   reconciliation_kind, reconcile_next_at, reconcile_attempt_count   push outcome
+#                         unknown → durable retry, survives a server restart
+#   conversation          human/AI turns exchanged before approval
+
+REVIEW_STATE_PENDING = "resolved_pending_review"
+REVIEW_STATE_RE_REVIEW = "re_review"
+REVIEW_STATE_APPLYING = "applying"
+REVIEW_STATE_RECONCILING = "reconciling"
+REVIEW_STATE_COMPLETED = "completed"
+REVIEW_PENDING_STATES = (REVIEW_STATE_PENDING, REVIEW_STATE_RE_REVIEW)
+
+REVIEW_FINGERPRINT_VERSION = "flowgate-review-fingerprint-v1"
+MAX_CHAT_TURNS = 20
+MAX_CHAT_MESSAGE_CHARS = 4000
+PUSH_RECONCILE_DELAYS_SEC = (0, 1, 3)
+PUSH_RECONCILE_RETRY_INTERVAL_SEC = 60
+# Reconciliation kinds a durable worker (§2.8.1) is allowed to keep retrying.
+RECONCILE_AUTO_RETRY_KINDS = ("push_remote_unknown", "post_push_cleanup")
+
+
+def _parse_ls_tree_z(stdout: str) -> list[dict]:
+    """``git ls-tree -r -z <tree>`` → ``[{path, mode, kind, oid}]`` sorted by the
+    raw path bytes (not a locale collation), matching L0007 §2.3's manifest order."""
+    entries: list[dict] = []
+    for record in (stdout or "").split("\0"):
+        if not record:
+            continue
+        meta, sep, path = record.partition("\t")
+        if not sep:
+            continue
+        parts = meta.split(" ", 2)
+        if len(parts) != 3:
+            continue
+        mode, kind, oid = parts
+        entries.append({"path": path, "mode": mode, "kind": kind, "oid": oid})
+    entries.sort(key=lambda e: e["path"].encode("utf-8", errors="surrogateescape"))
+    return entries
+
+
+def _canonical_encode_manifest(manifest: list[dict]) -> bytes:
+    """Length-prefixed encoding of the manifest so no field boundary is ambiguous
+    (L0007 §2.3 — the same principle as the conflict-chunk ``canonical_encode``)."""
+    chunks: list[bytes] = []
+    for entry in manifest:
+        path_bytes = entry["path"].encode("utf-8", errors="surrogateescape")
+        chunks.append(str(len(path_bytes)).encode("ascii"))
+        chunks.append(b":")
+        chunks.append(path_bytes)
+        chunks.append(b"|")
+        chunks.append((entry.get("mode") or "").encode("ascii"))
+        chunks.append(b"|")
+        chunks.append((entry.get("oid") or "").encode("ascii"))
+        chunks.append(b"\n")
+    return b"".join(chunks)
+
+
+def _compute_review_fingerprint(
+    base_head: Optional[str], merge_head: Optional[str],
+    expected_remote_head: Optional[str], manifest: list[dict],
+) -> str:
+    digest = hashlib.sha256()
+    for part in (
+        REVIEW_FINGERPRINT_VERSION, base_head or "", merge_head or "",
+        expected_remote_head or "",
+    ):
+        digest.update(part.encode("ascii", errors="ignore"))
+        digest.update(b"\x00")
+    digest.update(_canonical_encode_manifest(manifest))
+    return digest.hexdigest()
+
+
+def _freeze_commit_candidate(base_root: Path, base_branch: str) -> dict:
+    """Fork of D0006 §3.4 / L0007 §2.3's ``freeze_commit_candidate``.
+
+    MUST be called with the project git lock already held by the caller — this
+    function never acquires or releases it. Returns the one frozen commit
+    candidate: the full index/tree this merge would commit (every path, not just
+    the ones a person or AI resolved), the heads it was built from, and the
+    fingerprint that ties a review screen to a specific approval."""
+    if not _merge_in_progress(base_root):
+        raise GitServiceError(409, "invalid_state", "no merge in progress to freeze")
+    unmerged = _unmerged_paths(base_root)
+    if unmerged:
+        raise GitServiceError(
+            409, "conflict_markers_remain",
+            f"git still reports {len(unmerged)} unmerged path(s)",
+        )
+    base_head = _rev_parse(base_root, "HEAD")
+    merge_head = _rev_parse(base_root, "MERGE_HEAD")
+    expected_remote_head = _rev_parse(base_root, f"refs/remotes/origin/{base_branch}")
+    write_tree = _run_git(["write-tree"], cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC)
+    if write_tree.returncode != 0:
+        raise GitServiceError(500, "git_error", _last_line(write_tree.stderr))
+    snapshot_tree = (write_tree.stdout or "").strip()
+    ls = _run_git(["ls-tree", "-r", "-z", snapshot_tree], cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC)
+    if ls.returncode != 0:
+        raise GitServiceError(500, "git_error", _last_line(ls.stderr))
+    manifest = _parse_ls_tree_z(ls.stdout or "")
+    diff_proc = _run_git(
+        ["diff", "--name-status", "-M", "-z", base_head or "", snapshot_tree, "--"],
+        cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    if diff_proc.returncode != 0:
+        raise GitServiceError(500, "git_error", _last_line(diff_proc.stderr))
+    changes = _parse_name_status_manifest(diff_proc.stdout or "")
+    fingerprint = _compute_review_fingerprint(base_head, merge_head, expected_remote_head, manifest)
+    return {
+        "snapshot_tree": snapshot_tree,
+        "snapshot_manifest": manifest,
+        "base_head": base_head,
+        "merge_head": merge_head,
+        "expected_remote_head": expected_remote_head,
+        "changes": changes,
+        "review_fingerprint": fingerprint,
+    }
+
+
+def _live_candidate_matches_snapshot(base_root: Path, context: dict) -> bool:
+    """The TOCTOU identity check (D0006 §3.4): is the tree the base checkout would
+    commit RIGHT NOW, from the SAME heads, byte-identical to the frozen one? A tree
+    object id already encodes every path's content/mode/existence recursively, so
+    comparing two tree ids is exactly the manifest comparison L0007 describes."""
+    if not _merge_in_progress(base_root):
+        return False
+    if _unmerged_paths(base_root):
+        return False
+    if _rev_parse(base_root, "HEAD") != context.get("base_head"):
+        return False
+    if _rev_parse(base_root, "MERGE_HEAD") != context.get("merge_head"):
+        return False
+    write_tree = _run_git(["write-tree"], cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC)
+    if write_tree.returncode != 0:
+        return False
+    return (write_tree.stdout or "").strip() == context.get("snapshot_tree")
+
+
+def _resolver_run_provider(run_id: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """``(provider_id, provider_name)`` of the AI run that produced this
+    resolution, or ``(None, None)`` for a human-typed resolution or an unknown
+    run — best-effort, a lookup failure must never break the resolve response."""
+    if not run_id:
+        return None, None
+    try:
+        from modules.flow_gate.services.ai_invoke import diagnostics as ai_diagnostics
+
+        payload = ai_diagnostics.get_run_detail(run_id)
+        return payload.get("provider_id"), payload.get("provider_name")
+    except Exception:
+        return None, None
+
+
+_JS_LIKE_EXTENSIONS = {"js", "mjs", "cjs", "jsx", "ts", "mts", "cts", "tsx"}
+_CSS_LIKE_EXTENSIONS = {"css", "scss"}
+_VOID_HTML_ELEMENTS = {
+    "area", "base", "br", "col", "embed", "hr", "img", "input",
+    "link", "meta", "param", "source", "track", "wbr",
+}
+
+
+_FLOWGATE_REPO_ROOT = Path(__file__).resolve().parents[4]
+_FLOWGATE_CLIENT_DIR = _FLOWGATE_REPO_ROOT / "client"
+_SYNTAX_CHECK_SCRIPT = _FLOWGATE_CLIENT_DIR / "scripts" / "git-review-syntax-check.mjs"
+_NODE_SYNTAX_CHECK_TIMEOUT_SEC = 20
+
+
+def _run_node_syntax_check(ext: str, text: str) -> Optional[dict]:
+    """Real-parser syntax check for JS/TS/CSS/SCSS/Vue (D0006 §3.5 / L0007 §2.7):
+    shells out to ``client/scripts/git-review-syntax-check.mjs``, which parses
+    ``text`` with the SAME compiler packages the client build already depends on
+    (typescript's no-emit `transpileModule`, `@vue/compiler-sfc`, `postcss`,
+    `@babel/parser`) — a real ECMAScript/TypeScript/Vue-SFC/CSS grammar check,
+    not a delimiter-balance heuristic. Runs against THIS server's own
+    ``client/node_modules`` (``cwd=_FLOWGATE_CLIENT_DIR``), never the reviewed
+    project's own checkout — ``text`` goes over stdin and nothing touches disk,
+    so this works for any target project regardless of whether it has a JS
+    toolchain of its own. Returns ``None`` on success, or
+    ``{"line": int | None, "message": str}`` on the first syntax error."""
+    node = shutil.which("node")
+    if not node:
+        return {"line": None, "message": "node executable not found on PATH — cannot run the real syntax checker"}
+    try:
+        proc = subprocess.run(
+            [node, str(_SYNTAX_CHECK_SCRIPT)],
+            input=json.dumps({"ext": ext, "content": text}),
+            capture_output=True, text=True, encoding="utf-8",
+            cwd=str(_FLOWGATE_CLIENT_DIR), timeout=_NODE_SYNTAX_CHECK_TIMEOUT_SEC,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"line": None, "message": f"syntax checker subprocess failed: {exc}"}
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except ValueError:
+        detail = (proc.stderr or proc.stdout or "").strip()[:500]
+        return {"line": None, "message": f"syntax checker returned invalid output: {detail}"}
+    if payload.get("ok"):
+        return None
+    return {"line": payload.get("line"), "message": payload.get("message") or "syntax error"}
+
+
+def _check_html_syntax(text: str) -> Optional[str]:
+    """Dependency-free balanced-tag check for `*.html`/`*.htm`/`*.vue` (D0006
+    §3.5 / L0007 §2.7) — a tag stack over a lightweight regex tokenizer, not a
+    real HTML5 parser. `<script>`/`<style>` bodies are skipped verbatim so angle
+    brackets inside JS/CSS content never desync the stack."""
+    tag_re = re.compile(r"<(/?)([a-zA-Z][a-zA-Z0-9:_-]*)([^>]*)>")
+    stack: list[str] = []
+    pos, n = 0, len(text)
+    while pos < n:
+        m = tag_re.search(text, pos)
+        if not m:
+            break
+        closing, name, attrs = m.group(1), m.group(2).lower(), m.group(3)
+        pos = m.end()
+        if closing:
+            if not stack:
+                return f"closing tag </{name}> with nothing open"
+            if name not in stack:
+                return f"closing tag </{name}> does not match any open tag"
+            while stack and stack[-1] != name:
+                stack.pop()
+            stack.pop()
+            continue
+        if name in _VOID_HTML_ELEMENTS or attrs.rstrip().endswith("/"):
+            continue
+        if name in ("script", "style"):
+            close_m = re.search(r"</" + name + r"\s*>", text[pos:], re.IGNORECASE)
+            if not close_m:
+                return f"<{name}> is never closed"
+            pos += close_m.end()
+            continue
+        stack.append(name)
+    if stack:
+        return f"<{stack[-1]}> is never closed"
+    return None
+
+
+def _validate_review_changed_paths(base_root: Path, context: dict) -> list[dict]:
+    """Pre-commit content sanity over every changed/created path in the frozen
+    candidate (D0006 §3.5 / L0007 §2.7). Every text path must decode as UTF-8 and
+    carry no leftover conflict marker. Extension selects the validator per
+    L0007 §2.7's table:
+
+    `*.py` parses AND `py_compile`s; `*.json` and `*.yaml`/`*.yml` get a real
+    strict parser (the stdlib's / PyYAML, already a dependency); `*.html`/`*.htm`
+    get `_check_html_syntax`; the JS/TS family, `*.vue`, and `*.css`/`*.scss` get
+    a real compiler/parser via `_run_node_syntax_check` (see its docstring). A
+    path whose extension is not in this table is NOT accepted on a generic
+    pass-through — the whole plan is rejected (`validator: "unsupported"`,
+    surfaced by the caller as `422 unsupported_syntax_validation`), exactly as
+    L0007 §2.7 requires: there is no fallback that lets an unvalidated file type
+    reach approval. Deletes are skipped (nothing to validate); oversized/binary
+    blobs are skipped (nothing this check can read).
+    """
+    import ast
+    import json as _json
+    import py_compile
+    import tempfile
+
+    import yaml as _yaml
+
+    manifest_by_path = {entry["path"]: entry for entry in (context.get("snapshot_manifest") or [])}
+    errors: list[dict] = []
+    for change in context.get("changes") or []:
+        if change.get("status") == "D":
+            continue
+        path = change.get("path") or ""
+        entry = manifest_by_path.get(path)
+        if entry is None or entry.get("kind") != "blob":
+            continue
+        size = _cat_file_size(base_root, entry["oid"])
+        if size > BLOB_MAX_RETURN_BYTES:
+            continue
+        blob = _cat_file_blob_head(base_root, entry["oid"], size)
+        if b"\x00" in blob[:BLOB_BINARY_SNIFF_BYTES]:
+            continue
+        try:
+            text = blob.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            errors.append({"path": path, "validator": "utf8", "line": None, "message": str(exc)})
+            continue
+        if has_conflict_markers(text):
+            errors.append({
+                "path": path, "validator": "conflict_marker", "line": None,
+                "message": "conflict markers remain in the frozen candidate",
+            })
+            continue
+        ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+        if ext == "py":
+            try:
+                ast.parse(text, filename=path)
+                tmp_path = None
+                try:
+                    with tempfile.NamedTemporaryFile(
+                        suffix=".py", delete=False, dir=str(base_root),
+                    ) as handle:
+                        handle.write(blob)
+                        tmp_path = handle.name
+                    py_compile.compile(tmp_path, doraise=True)
+                finally:
+                    if tmp_path:
+                        try:
+                            os.unlink(tmp_path)
+                        except OSError:
+                            pass
+            except SyntaxError as exc:
+                errors.append({
+                    "path": path, "validator": "python",
+                    "line": getattr(exc, "lineno", None), "message": str(exc),
+                })
+            except py_compile.PyCompileError as exc:
+                errors.append({"path": path, "validator": "py_compile", "line": None, "message": str(exc)})
+        elif ext == "json":
+            try:
+                _json.loads(text)
+            except ValueError as exc:
+                errors.append({"path": path, "validator": "json", "line": None, "message": str(exc)})
+        elif ext in ("yaml", "yml"):
+            try:
+                _yaml.safe_load(text)
+            except _yaml.YAMLError as exc:
+                mark = getattr(exc, "problem_mark", None)
+                errors.append({
+                    "path": path, "validator": "yaml",
+                    "line": (mark.line + 1) if mark else None, "message": str(exc),
+                })
+        elif ext in ("html", "htm"):
+            msg = _check_html_syntax(text)
+            if msg:
+                errors.append({"path": path, "validator": "html", "line": None, "message": msg})
+        elif ext in _CSS_LIKE_EXTENSIONS:
+            result = _run_node_syntax_check(ext, text)
+            if result:
+                errors.append({"path": path, "validator": "css", "line": result["line"], "message": result["message"]})
+        elif ext in _JS_LIKE_EXTENSIONS:
+            result = _run_node_syntax_check(ext, text)
+            if result:
+                errors.append({"path": path, "validator": "ecmascript", "line": result["line"], "message": result["message"]})
+        elif ext == "vue":
+            result = _run_node_syntax_check(ext, text)
+            if result:
+                errors.append({"path": path, "validator": "vue", "line": result["line"], "message": result["message"]})
+        else:
+            # L0007 §2.7: an extension outside the registered table is not
+            # generically accepted — reject the whole plan instead.
+            label = f"'.{ext}'" if ext else "files without an extension"
+            errors.append({
+                "path": path, "validator": "unsupported", "line": None,
+                "message": f"no syntax validator registered for {label}",
+            })
+    return errors
+
+
+# ── Anchored write-plan engine (flowgate.default.0481 T0008 item 1 / L0007 §2.5-§2.9,
+# Q&A on 0009-TR) ─────────────────────────────────────────────────────────────
+# The merge review's explicit [수정 적용] turn is the only conversation turn that
+# may change the source tree. Its AI run has no write tool at all (SCOPE_BOUND_TOOLS
+# demotes action_scope=resolve_conflict to "read") — the anchored plan it submits to
+# `POST .../write-plan-token` (git_routes.post_merge_write_plan_token ->
+# submit_review_write_plan below) is the only channel, and everything below builds
+# and validates the result ENTIRELY off-tree before ever touching the live checkout.
+
+WRITE_PLAN_SCHEMA_VERSION = "flowgate.write-plan.v1"
+MAX_APPLY_OPERATIONS = 200
+
+
+def _is_test_write_plan_path(path: str) -> bool:
+    """L0007 §2.7's "test file" definition for held_test_operations gating."""
+    if path.startswith("server/tests/") or path.startswith("client/tests/"):
+        return True
+    return any(seg in ("test", "tests") for seg in path.split("/"))
+
+
+def _validate_write_plan_path(path) -> None:
+    if not isinstance(path, str) or not path:
+        raise GitServiceError(422, "invalid_write_plan", "operation path must be a non-empty string")
+    if "\\" in path or path.startswith("/") or re.match(r"^[A-Za-z]:", path):
+        raise GitServiceError(
+            422, "invalid_write_plan",
+            f"operation path must be a project-root-relative '/'-separated path: {path!r}",
+        )
+    segments = path.split("/")
+    if any(seg in ("", ".", "..") for seg in segments):
+        raise GitServiceError(422, "invalid_write_plan", f"operation path is not a clean relative path: {path!r}")
+    if ".git" in segments:
+        raise GitServiceError(422, "invalid_write_plan", f"operation path may not touch .git: {path!r}")
+
+
+def _decode_write_plan_bytes(value, field: str) -> bytes:
+    if not isinstance(value, str) or not value:
+        raise GitServiceError(422, "invalid_write_plan", f"{field} must be a non-empty base64 string")
+    try:
+        return base64.b64decode(value, validate=True)
+    except ValueError:
+        raise GitServiceError(422, "invalid_write_plan", f"{field} is not valid base64")
+
+
+def _validate_write_plan_structure(plan: dict, *, allow_test_edits: bool) -> None:
+    """Structural/shape validation only — everything that does not require reading
+    the live tree (L0007 §2.5, Q&A on 0009-TR's schema). ``_apply_write_plan_locked``
+    separately re-validates each operation's claims (expected blob, anchor
+    occurrence count, path absence) against the tree it is actually about to
+    touch; a plan can pass this and still fail there."""
+    if not isinstance(plan, dict):
+        raise GitServiceError(422, "invalid_write_plan", "write plan must be a JSON object")
+    if plan.get("schema_version") != WRITE_PLAN_SCHEMA_VERSION:
+        raise GitServiceError(422, "invalid_write_plan", f"schema_version must be {WRITE_PLAN_SCHEMA_VERSION!r}")
+    base_fingerprint = plan.get("base_fingerprint")
+    if not isinstance(base_fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", base_fingerprint):
+        raise GitServiceError(422, "invalid_write_plan", "base_fingerprint must be a 64-char lowercase sha256 hex string")
+    operations = plan.get("operations")
+    if operations is None:
+        operations = []
+    if not isinstance(operations, list):
+        raise GitServiceError(422, "invalid_write_plan", "operations must be an array")
+    if len(operations) > MAX_APPLY_OPERATIONS:
+        raise GitServiceError(422, "invalid_write_plan", f"operations exceeds the {MAX_APPLY_OPERATIONS}-operation limit")
+    held = plan.get("held_test_operations") or []
+    if not isinstance(held, list):
+        raise GitServiceError(422, "invalid_write_plan", "held_test_operations must be an array")
+    # 0009-TR rev3 (AI review finding 2): a plan whose AI proposed ONLY test-path
+    # edits is legitimate — every proposed operation lands in held_test_operations
+    # and operations[] is empty. L0007 §2.7's held-edit flow requires that to be
+    # SHOWN, not rejected outright; the plan is only meaningless if BOTH arrays
+    # are empty.
+    if not operations and not held:
+        raise GitServiceError(422, "invalid_write_plan", "plan must contain at least one operation or held_test_operation")
+
+    seen_ids: set = set()
+    seen_paths: set = set()
+    for op in [*operations, *held]:
+        if not isinstance(op, dict):
+            raise GitServiceError(422, "invalid_write_plan", "each operation must be a JSON object")
+        operation_id = op.get("operation_id")
+        if not isinstance(operation_id, str) or not operation_id:
+            raise GitServiceError(422, "invalid_write_plan", "operation_id must be a non-empty string")
+        if operation_id in seen_ids:
+            raise GitServiceError(422, "invalid_write_plan", f"duplicate operation_id: {operation_id!r}")
+        seen_ids.add(operation_id)
+        purpose = op.get("purpose")
+        if not isinstance(purpose, str) or not purpose.strip():
+            raise GitServiceError(422, "invalid_write_plan", f"{operation_id}: purpose must be a non-empty string")
+        path = op.get("path")
+        _validate_write_plan_path(path)
+        kind = op.get("kind")
+        if kind == "edit":
+            if not isinstance(op.get("expected_before_blob"), str) or not op["expected_before_blob"]:
+                raise GitServiceError(422, "invalid_write_plan", f"{operation_id}: edit requires expected_before_blob")
+            anchor = op.get("anchor")
+            if not isinstance(anchor, dict):
+                raise GitServiceError(422, "invalid_write_plan", f"{operation_id}: edit requires anchor")
+            _decode_write_plan_bytes(anchor.get("body_base64"), f"{operation_id}.anchor.body_base64")
+            expected_count = anchor.get("expected_count")
+            if not isinstance(expected_count, int) or isinstance(expected_count, bool) or expected_count < 1:
+                raise GitServiceError(422, "invalid_write_plan", f"{operation_id}: anchor.expected_count must be a positive integer")
+            _decode_write_plan_bytes(op.get("replacement_bytes_base64"), f"{operation_id}.replacement_bytes_base64")
+        elif kind == "create_file":
+            if op.get("absent") is not True:
+                raise GitServiceError(422, "invalid_write_plan", f"{operation_id}: create_file requires absent=true")
+            _decode_write_plan_bytes(op.get("content_bytes_base64"), f"{operation_id}.content_bytes_base64")
+            if op.get("mode") not in ("100644", "100755"):
+                raise GitServiceError(422, "invalid_write_plan", f"{operation_id}: mode must be '100644' or '100755'")
+        else:
+            raise GitServiceError(422, "invalid_write_plan", f"{operation_id}: kind must be 'edit' or 'create_file'")
+        if path in seen_paths:
+            raise GitServiceError(422, "invalid_write_plan", f"duplicate/overlapping path across operations: {path!r}")
+        seen_paths.add(path)
+        if not allow_test_edits and op not in held and _is_test_write_plan_path(path):
+            raise GitServiceError(
+                422, "invalid_write_plan",
+                f"{operation_id}: test-path operations must go in held_test_operations unless "
+                "this turn was started with the human's second explicit authorization "
+                "(allow_test_edits)",
+            )
+
+    encoded_size = len(json.dumps(plan, ensure_ascii=False).encode("utf-8"))
+    if encoded_size > _WRITE_PLAN_MAX_SERIALIZED_BYTES:
+        raise GitServiceError(422, "invalid_write_plan", "write plan is too large to persist")
+
+
+# Mirrors db.ai_invoke_runs._WRITE_PLAN_MAX_SERIALIZED_BYTES (MySQL TEXT's 65,535-byte
+# ceiling) — enforced here too so an oversized plan is rejected at submission with a
+# clear 422 instead of silently losing operations at the storage layer later.
+_WRITE_PLAN_MAX_SERIALIZED_BYTES = 65000
+
+
+def submit_review_write_plan(group_id: str, merge_id: int, *, plan: dict, ai_run_id: Optional[str] = None) -> dict:
+    """``POST .../write-plan-token`` (git_routes.post_merge_write_plan_token) — the
+    ONLY entry point by which a review-message write turn's AI run can change the
+    source tree. Attaches ``plan`` to whichever run this session's pending write
+    turn is currently waiting on; the plan is VALIDATED here (structure only) but
+    not applied — apply happens once the run is observed finished
+    (`_materialize_pending_conversation_run` -> `_apply_write_plan_locked`), never
+    synchronously from this worker-token call.
+
+    0009-TR rev3 (AI review finding 1): ``ai_run_id`` is the SUBMITTING token's
+    own bound run — the caller (git_routes) reads it from the verified worker
+    token, never from the request body. A resolve_conflict token that is still
+    valid for this group/merge but belongs to a different (stale, or simply
+    another) run must not be able to attach a plan to the CURRENT pending write
+    turn, so this is checked against ``pending_conversation_run_id`` before the
+    plan is recorded — the same run-bound authority the rest of this session's
+    state machine already assumes."""
+    session, context, _project_id, _base_root, _base_branch = _merge_review_session(group_id, merge_id)
+    if context.get("review_state") not in REVIEW_PENDING_STATES:
+        raise GitServiceError(409, "review_not_ready", f"session is in state {context.get('review_state')!r}")
+    run_id = context.get("pending_conversation_run_id")
+    if not run_id or not context.get("pending_conversation_write_requested"):
+        raise GitServiceError(
+            409, "write_plan_not_requested",
+            "no pending write turn on this session is waiting for a plan",
+        )
+    if not ai_run_id or ai_run_id != run_id:
+        raise GitServiceError(
+            403, "write_plan_run_mismatch",
+            "this token's ai_run_id does not match the session's pending write turn",
+        )
+    allow_test_edits = bool(context.get("pending_conversation_allow_test_edits"))
+    _validate_write_plan_structure(plan, allow_test_edits=allow_test_edits)
+
+    from modules.flow_gate.services import ai_invoke_service
+
+    ai_invoke_service.record_run_write_plan(run_id, plan)
+    return {"ok": True, "result": {"status": "accepted", "run_id": run_id}}
+
+
+def _tree_manifest_map(base_root: Path, tree: str) -> dict[str, dict]:
+    ls = _run_git(["ls-tree", "-r", "-z", tree], cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC)
+    if ls.returncode != 0:
+        raise GitServiceError(500, "git_error", _last_line(ls.stderr))
+    return {entry["path"]: entry for entry in _parse_ls_tree_z(ls.stdout or "")}
+
+
+def _git_hash_object_write(base_root: Path, content: bytes) -> str:
+    """Writes ``content`` as a new blob, byte-exact — a raw-bytes subprocess call,
+    deliberately NOT routed through ``_run_git`` (whose ``text=True`` UTF-8
+    decode/re-encode is safe for valid UTF-8 but must never be trusted with
+    arbitrary plan-supplied bytes)."""
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        proc = subprocess.run(
+            ["git", "hash-object", "-w", "--stdin"], cwd=str(base_root),
+            input=content, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=GIT_LOCAL_TIMEOUT_SEC, env=env,
+        )
+    except FileNotFoundError:
+        raise GitServiceError(500, "git_unavailable", "git binary not found on server")
+    except subprocess.TimeoutExpired:
+        raise GitServiceError(500, "git_error", "hash-object timed out")
+    if proc.returncode != 0:
+        raise GitServiceError(500, "git_error", _last_line((proc.stderr or b"").decode("utf-8", "replace")))
+    return proc.stdout.decode("ascii", "strict").strip()
+
+
+def _count_nonoverlapping(haystack: bytes, needle: bytes) -> int:
+    return haystack.count(needle) if needle else 0
+
+
+def _build_write_plan_tree(
+    base_root: Path, before_tree: str, operations: list[dict],
+) -> tuple[Optional[str], list[dict]]:
+    """Materializes ``operations`` (already structurally valid) into a NEW tree
+    object entirely inside an isolated scratch git index — ``GIT_INDEX_FILE``
+    points at a temp file only this function touches, so neither the real
+    ``.git/index`` nor the working tree are read or written no matter what this
+    returns (L0007 §2.6 ``isolated_apply_area``). Returns ``(new_tree, errors)``;
+    ``new_tree`` is ``None`` whenever ``errors`` is non-empty."""
+    before_map = _tree_manifest_map(base_root, before_tree)
+    errors: list[dict] = []
+    updates: list[tuple[str, str, str]] = []  # (mode, oid, path)
+    for op in operations:
+        path = op["path"]
+        if op["kind"] == "edit":
+            entry = before_map.get(path)
+            if entry is None or entry.get("kind") != "blob":
+                errors.append({"operation_id": op["operation_id"], "path": path,
+                                "message": "path does not exist in the reviewed candidate"})
+                continue
+            if entry["oid"] != op["expected_before_blob"]:
+                errors.append({"operation_id": op["operation_id"], "path": path,
+                                "message": "expected_before_blob does not match the current blob"})
+                continue
+            size = _cat_file_size(base_root, entry["oid"])
+            content = _cat_file_blob_head(base_root, entry["oid"], size)
+            anchor_bytes = base64.b64decode(op["anchor"]["body_base64"])
+            expected_count = op["anchor"]["expected_count"]
+            actual_count = _count_nonoverlapping(content, anchor_bytes)
+            if actual_count != expected_count:
+                errors.append({
+                    "operation_id": op["operation_id"], "path": path,
+                    "message": f"anchor occurs {actual_count} time(s) in the current file, expected {expected_count}",
+                })
+                continue
+            replacement = base64.b64decode(op["replacement_bytes_base64"])
+            new_content = content.replace(anchor_bytes, replacement)
+            updates.append((entry["mode"], _git_hash_object_write(base_root, new_content), path))
+        else:  # kind == "create_file" (the only other structurally-valid kind)
+            if path in before_map:
+                errors.append({"operation_id": op["operation_id"], "path": path,
+                                "message": "path already exists in the reviewed candidate"})
+                continue
+            content = base64.b64decode(op["content_bytes_base64"])
+            updates.append((op["mode"], _git_hash_object_write(base_root, content), path))
+    if errors:
+        return None, errors
+
+    index_path = str(base_root / ".git" / f"flowgate-writeplan-{uuid.uuid4().hex}.index")
+    extra_env = {"GIT_INDEX_FILE": index_path}
+    try:
+        read = _run_git(["read-tree", before_tree], cwd=base_root, extra_env=extra_env)
+        if read.returncode != 0:
+            return None, [{"message": f"isolated read-tree failed: {_last_line(read.stderr)}"}]
+        for mode, oid, path in updates:
+            upd = _run_git(
+                ["update-index", "--add", "--cacheinfo", f"{mode},{oid},{path}"],
+                cwd=base_root, extra_env=extra_env,
+            )
+            if upd.returncode != 0:
+                return None, [{"message": f"isolated update-index failed for {path!r}: {_last_line(upd.stderr)}"}]
+        write = _run_git(["write-tree"], cwd=base_root, extra_env=extra_env)
+        if write.returncode != 0:
+            return None, [{"message": f"isolated write-tree failed: {_last_line(write.stderr)}"}]
+        return (write.stdout or "").strip(), []
+    finally:
+        try:
+            os.unlink(index_path)
+        except OSError:
+            pass
+
+
+def _restore_write_plan_worktree(base_root: Path, before_tree: str) -> bool:
+    """Best-effort restore + VERIFIED check — used only when the one real-tree
+    step (the final ``read-tree --reset -u`` in ``_apply_write_plan_locked``) itself
+    fails partway. Every earlier step only reads blobs/builds an isolated tree,
+    so there is nothing to restore if THEY fail."""
+    _run_git(["read-tree", "--reset", "-u", before_tree], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC)
+    check = _run_git(["write-tree"], cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC)
+    if check.returncode != 0:
+        return False
+    return (check.stdout or "").strip() == before_tree and not _unmerged_paths(base_root)
+
+
+def _apply_write_plan_locked(
+    group_id: str, merge_id: int, plan: dict, base_root: Path, base_branch: str,
+) -> dict:
+    """L0007 §2.6 ``apply_write_plan`` — the anchored write-plan engine's atomic
+    apply/rollback core (flowgate.default.0481 T0008 item 1). Never reached
+    directly by a route: `_materialize_pending_conversation_run` applies a plan
+    once a review-message write turn's AI run finishes with a ``write_plan``
+    attached (Q&A on 0009-TR's ``GET /ai-invoke/{run_id}`` contract). The new
+    candidate tree is built ENTIRELY off-tree (`_build_write_plan_tree`'s
+    isolated scratch index) and validated (real syntax/py_compile checks,
+    reusing `_validate_review_changed_paths`) before the live checkout is ever
+    touched — a plan that fails validation leaves the real index/worktree
+    completely untouched, so recovery is only ever needed for the one step that
+    DOES touch them (the final ``read-tree --reset -u``).
+
+    0009-TR rev5: the project git lock is the CALLER's to hold, not this
+    function's. L0007 §2.6 opens with `acquire project_git_lock`, but the only
+    caller must decide staleness (L0007 §2.9) and apply in the SAME critical
+    section, and the lock is non-reentrant single-owner (D0006 §3.3) — so a
+    self-locking wrapper could not be called from inside that decision at all,
+    and having one for nobody would be dead code that invites exactly the
+    check-then-act split this revision removes. Every piece of session state
+    decided on here is re-read from the DB inside the caller's hold, so the
+    view of review_state/review_fingerprint is consistent from the check right
+    through to the tree swap."""
+    session = db_git.get_session(merge_id)
+    context = db_git.session_context(session)
+    if context.get("review_state") not in REVIEW_PENDING_STATES:
+        return {"status": "apply_failed",
+                "errors": [{"message": f"session is in state {context.get('review_state')!r}"}]}
+    if plan.get("base_fingerprint") != context.get("review_fingerprint"):
+        return {"status": "apply_failed",
+                "errors": [{"message": "base_fingerprint does not match the current review_fingerprint"}]}
+    if not _live_candidate_matches_snapshot(base_root, context):
+        return _refreeze_for_re_review(group_id, merge_id, base_root, base_branch, context, "identity_mismatch")
+
+    held_test_operations = plan.get("held_test_operations") or []
+    operations = plan.get("operations") or []
+    if not operations:
+        # 0009-TR rev3 (AI review finding 2): a plan whose only content is
+        # held test edits touches nothing — there is no tree to build or
+        # apply. Persist the held operations onto the session so the review
+        # screen can show them (L0007 §2.7's "이유와 예상 검증을 화면에
+        # 표시") instead of silently discarding them, and leave
+        # review_state/review_fingerprint exactly where they were: nothing
+        # changed, so nothing needs re-review.
+        context["held_test_operations"] = held_test_operations
+        db_git.set_session_context(merge_id, context)
+        return {"status": "held_only", "held_test_operations": held_test_operations}
+
+    before_write = _run_git(["write-tree"], cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC)
+    if before_write.returncode != 0:
+        return {"status": "apply_failed", "errors": [{"message": _last_line(before_write.stderr)}]}
+    before_tree = (before_write.stdout or "").strip()
+
+    new_tree, build_errors = _build_write_plan_tree(base_root, before_tree, operations)
+    if build_errors:
+        return {"status": "apply_failed", "errors": build_errors}
+
+    # L0007 §2.7 step 6: nothing outside the plan's own paths may have moved —
+    # checked here directly against the two isolated manifests (no git diff
+    # needed for this check, and no live tree involved yet).
+    before_map = _tree_manifest_map(base_root, before_tree)
+    new_map = _tree_manifest_map(base_root, new_tree)
+    plan_paths = {op["path"] for op in operations}
+    drifted = [
+        path for path in set(before_map) | set(new_map)
+        if path not in plan_paths
+        and (before_map.get(path, {}).get("oid"), before_map.get(path, {}).get("mode"))
+            != (new_map.get(path, {}).get("oid"), new_map.get(path, {}).get("mode"))
+    ]
+    if drifted:
+        return {"status": "apply_failed",
+                "errors": [{"message": f"unexpected change outside the plan: {sorted(drifted)[:5]}"}]}
+
+    diff_proc = _run_git(
+        ["diff", "--name-status", "-M", "-z", before_tree, new_tree, "--"],
+        cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    if diff_proc.returncode != 0:
+        return {"status": "apply_failed", "errors": [{"message": _last_line(diff_proc.stderr)}]}
+    plan_changes = _parse_name_status_manifest(diff_proc.stdout or "")
+    syntax_errors = _validate_review_changed_paths(
+        base_root, {"snapshot_manifest": list(new_map.values()), "changes": plan_changes},
+    )
+    if syntax_errors:
+        return {"status": "apply_failed", "errors": syntax_errors}
+
+    # The one step that touches the REAL index/worktree — everything above only
+    # read blobs or built the isolated tree above.
+    apply_proc = _run_git(["read-tree", "--reset", "-u", new_tree], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC)
+    if apply_proc.returncode != 0:
+        if not _restore_write_plan_worktree(base_root, before_tree):
+            context["review_state"] = REVIEW_STATE_RECONCILING
+            context["reconciliation_kind"] = "apply_restore_failed"
+            context["last_error"] = {"code": "rollback_verification_failed"}
+            db_git.set_session_context(merge_id, context)
+            return {"status": "rollback_verification_failed"}
+        return {"status": "apply_failed", "errors": [{"message": _last_line(apply_proc.stderr)}]}
+
+    if not _merge_in_progress(base_root) or _unmerged_paths(base_root):
+        # Should be unreachable — read-tree --reset -u never touches MERGE_HEAD
+        # and this plan never introduces conflict markers — but this is the one
+        # invariant _freeze_commit_candidate below requires, verified explicitly
+        # rather than letting IT raise mid-apply with the tree already swapped.
+        context["review_state"] = REVIEW_STATE_RECONCILING
+        context["reconciliation_kind"] = "apply_restore_failed"
+        context["last_error"] = {"code": "merge_state_lost_after_apply"}
+        db_git.set_session_context(merge_id, context)
+        return {"status": "rollback_verification_failed"}
+
+    snapshot = _freeze_commit_candidate(base_root, base_branch)
+    context.update(snapshot)
+    context["review_state"] = REVIEW_STATE_RE_REVIEW
+    context["instruction_generation"] = int(context.get("instruction_generation") or 0) + 1
+    context["approval_attempt_id"] = None
+    context["merge_commit"] = None
+    context["apply_phase"] = None
+    context["last_error"] = None
+    # 0009-TR rev3 (AI review finding 2): a MIXED plan (some operations applied,
+    # some test-path proposals held) must not silently drop the held half —
+    # persist it alongside the freshly-applied candidate so it stays visible.
+    context["held_test_operations"] = held_test_operations
+    db_git.set_session_context(merge_id, context)
+    return {
+        "status": "re_review", "review_state": REVIEW_STATE_RE_REVIEW,
+        "review_fingerprint": snapshot["review_fingerprint"],
+        "changed_paths": sorted(plan_paths),
+        "held_test_operations": held_test_operations,
+    }
+
+
+def _merge_review_session(group_id: str, merge_id: int) -> tuple[dict, dict, str, Path, str]:
+    """``(session, context, project_id, base_root, base_branch)`` for a general
+    merge review session, or raises 404/409 when this merge_id is not one."""
+    session = db_git.get_session(merge_id)
+    if session is None or session.get("group_id") != group_id:
+        raise GitServiceError(404, "review_not_found", f"merge session {merge_id} not found")
+    if db_git.session_kind(session) != db_git.SESSION_KIND_MERGE:
+        raise GitServiceError(409, "review_not_ready", "not a general merge review session")
+    context = db_git.session_context(session)
+    project_id = _project_of_group(group_id)
+    cfg = db_git.get_config(project_id) or {}
+    base_root = _base_root_of(project_id)
+    if base_root is None:
+        raise GitServiceError(409, "invalid_state", "base checkout is not provisioned")
+    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    return session, context, project_id, base_root, base_branch
+
+
+def record_auto_authority(group_id: str, merge_id: int, requested_auto: bool) -> None:
+    """D0006 §3.2 / L0007 §2.2 ``record_auto_authority`` — the ONLY place
+    ``auto_authority`` is ever written. Called from a human-authenticated request
+    at the exact moment a resolution run starts ([AI 호출]) or a human submits a
+    direct [해결 제출], with THAT request's checkbox value; a worker token's own
+    resolve submission never reaches this function.
+
+    A TR revert/reapply conflict silently ignores this call — "TR 세션에는 적용되지
+    않는다" (D0006 §3.2) is modeled as a no-op here, not an error, because the
+    generic [AI 호출] start path calls this unconditionally for every
+    resolve_conflict invocation and must not regress the pre-existing,
+    already-working TR conflict AI-call flow (T0008 completion criteria: no
+    regression in the TR/group-update flows)."""
+    session = db_git.get_session(merge_id)
+    if session is None or session.get("group_id") != group_id:
+        raise GitServiceError(404, "review_not_found", f"merge session {merge_id} not found")
+    if db_git.session_kind(session) != db_git.SESSION_KIND_MERGE:
+        return
+    context = db_git.session_context(session)
+    context["auto_authority"] = bool(requested_auto)
+    db_git.set_session_context(merge_id, context)
+
+
+def get_merge_review(group_id: str, merge_id: int) -> dict:
+    """Approval-screen payload (L0007 §2.11 GET .../review) assembled ENTIRELY from
+    the frozen candidate — never a fresh worktree read (D0006 §3.3/§3.4)."""
+    _session, _context, project_id, base_root, base_branch = _merge_review_session(group_id, merge_id)
+    _materialize_pending_conversation_run(group_id, merge_id, project_id, base_root, base_branch)
+    session = db_git.get_session(merge_id)
+    context = db_git.session_context(session)
+    review_state = context.get("review_state")
+    if not review_state:
+        raise GitServiceError(409, "review_not_ready", "this merge has not reached review yet")
+    pending = review_state in REVIEW_PENDING_STATES
+    return {
+        "ok": True,
+        "result": {
+            "group_id": group_id,
+            "merge_id": merge_id,
+            "review_state": review_state,
+            "review_fingerprint": context.get("review_fingerprint"),
+            "instruction_generation": int(context.get("instruction_generation") or 0),
+            "base_head": context.get("base_head"),
+            "merge_head": context.get("merge_head"),
+            "snapshot_tree": context.get("snapshot_tree"),
+            "changes": context.get("changes") or [],
+            "conflict_origins": context.get("conflict_origins") or [],
+            "conversation": context.get("conversation") or [],
+            "held_test_operations": context.get("held_test_operations") or [],
+            "resolver_provider": context.get("resolver_provider"),
+            "auto_authority": bool(context.get("auto_authority")),
+            "reconciliation_kind": context.get("reconciliation_kind"),
+            "last_error": context.get("last_error"),
+            "can_approve": pending,
+            "can_reject": pending,
+            "can_send": pending,
+        },
+    }
+
+
+def read_merge_review_file_diff(group_id: str, merge_id: int, path: str) -> dict:
+    """Old(``base_head``)/new(``snapshot_tree``) content of one changed path in the
+    frozen candidate — the review screen's per-file expand, reusing the same
+    old/new payload shape ``read_group_file_diff`` already returns so the client's
+    existing file-diff viewer needs no new prop shape."""
+    _validate_blob_path(path)
+    normalized = path.replace("\\", "/")
+    _session, context, _project_id, base_root, _base_branch = _merge_review_session(group_id, merge_id)
+    if not context.get("snapshot_tree"):
+        raise GitServiceError(409, "review_not_ready", "this merge has not reached review yet")
+    old = _diff_side_from_commit(base_root, context.get("base_head"), normalized)
+    new = _diff_side_from_commit(base_root, context.get("snapshot_tree"), normalized)
+    return {"ok": True, "data": {
+        "group_id": group_id, "merge_id": merge_id, "path": path,
+        "status": _diff_status(old, new, path), "old": old, "new": new,
+    }}
+
+
+def _refreeze_for_re_review(
+    group_id: str, merge_id: int, base_root: Path, base_branch: str,
+    context: dict, reason: str,
+) -> dict:
+    """D0006 §3.4/§3.6 — the target changed under review (or a conditional push was
+    rejected). Discard the stale approval bookkeeping, re-freeze the WHOLE tree
+    from scratch, and land back at re_review with a new fingerprint. Never
+    commits, never reuses the old approval_attempt_id."""
+    if reason == "push_rejected":
+        # The caller already `git reset --hard ORIG_HEAD`ed the rolled-back merge
+        # commit — but that commit had ALREADY completed the merge, so git cleared
+        # MERGE_HEAD the moment it was created; resetting the ref/tree does not
+        # bring MERGE_HEAD back. There is nothing "in progress" left to write-tree
+        # from, and the base_head this candidate was built on may not even be
+        # origin/base_branch's ancestor anymore (someone else's push moved it) —
+        # so re-fetch and redo the SAME merge against the base's current tip
+        # before falling through to the ordinary freeze below.
+        project_id = _project_of_group(group_id)
+        cfg = db_git.get_config(project_id) or {}
+        fetch = _run_git(
+            ["fetch", "origin"], cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC,
+            username=cfg.get("username"), secret=_load_secret_for(cfg) or "",
+        )
+        ff = _run_git(
+            ["merge", "--ff-only", f"origin/{base_branch}"],
+            cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC,
+        ) if fetch.returncode == 0 else None
+        if fetch.returncode != 0 or ff is None or ff.returncode != 0:
+            context["review_state"] = REVIEW_STATE_RECONCILING
+            context["reconciliation_kind"] = "push_remote_third"
+            context["last_error"] = {"code": "base_diverged_after_rollback"}
+            db_git.set_session_context(merge_id, context)
+            return {"ok": True, "result": {
+                "status": "reconciling", "review_state": REVIEW_STATE_RECONCILING,
+            }}
+        # Redo against the OLD MERGE COMMIT itself, not the raw group branch: that
+        # commit's tree already carries the human-reviewed resolution (shared.txt
+        # etc.), so re-merging it onto the refreshed base only re-raises a conflict
+        # when the concurrent remote change actually touches the same content —
+        # an unrelated concurrent change (the common case) auto-merges cleanly and
+        # the approved resolution is preserved instead of being thrown away.
+        old_merge_commit = context.get("merge_commit")
+        redo = _run_git(
+            ["-c", "merge.conflictStyle=zdiff3", "merge", "--no-commit", "--no-ff", old_merge_commit],
+            cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC,
+        )
+        if redo.returncode != 0 and _unmerged_paths(base_root):
+            # The advanced base now genuinely conflicts with the reviewed
+            # resolution — a fresh conflict, not something a push-result
+            # reconciler should try to auto-resolve. Park it for a human;
+            # automatic re-resolution is out of scope for this retry path.
+            _run_git(["merge", "--abort"], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC)
+            context["review_state"] = REVIEW_STATE_RECONCILING
+            context["reconciliation_kind"] = "push_remote_third"
+            context["last_error"] = {"code": "conflicts_after_remote_moved"}
+            db_git.set_session_context(merge_id, context)
+            return {"ok": True, "result": {
+                "status": "reconciling", "review_state": REVIEW_STATE_RECONCILING,
+            }}
+    if not _merge_in_progress(base_root) or _unmerged_paths(base_root):
+        context["review_state"] = REVIEW_STATE_RECONCILING
+        context["reconciliation_kind"] = "apply_restore_failed"
+        context["last_error"] = {"code": reason}
+        db_git.set_session_context(merge_id, context)
+        return {"ok": True, "result": {
+            "status": "reconciling", "review_state": REVIEW_STATE_RECONCILING,
+            "error": reason,
+        }}
+    snapshot = _freeze_commit_candidate(base_root, base_branch)
+    context.update(snapshot)
+    context["review_state"] = REVIEW_STATE_RE_REVIEW
+    context["instruction_generation"] = int(context.get("instruction_generation") or 0) + 1
+    context["approval_attempt_id"] = None
+    context["merge_commit"] = None
+    context["apply_phase"] = None
+    context["last_error"] = {"code": reason}
+    db_git.set_session_context(merge_id, context)
+    return {"ok": True, "result": {
+        "status": "re_review", "review_state": REVIEW_STATE_RE_REVIEW,
+        "review_fingerprint": snapshot["review_fingerprint"],
+        "changed_paths": [c["path"] for c in snapshot["changes"]],
+        "error": reason,
+    }}
+
+
+def _complete_merge_review(
+    group_id: str, merge_id: int, project_id: str, context: dict, *, pushed: bool,
+) -> dict:
+    context["review_state"] = REVIEW_STATE_COMPLETED
+    context["apply_phase"] = "completed"
+    db_git.set_session_context(merge_id, context)
+    merge_commit = context.get("merge_commit") or ""
+    merge_commit_short = merge_commit[:7] or None
+    db_git.close_session(merge_id, "done")
+    _set_status(group_id, "merged", merge_commit=merge_commit_short)
+    _cleanup_group_slot(project_id, group_id)
+    _emit("git_finalize_done", project_id, group_id, {
+        "project": project_id, "group_id": group_id,
+        "action": context.get("finalize_action") or SESSION_ACTION_DEFAULT,
+        "status": "merged", "merge_commit": merge_commit_short, "pushed": pushed,
+    })
+    # "merged" (not "completed") on the top-level `status` — the pre-existing
+    # external contract every caller of resolve_conflicts/resolve-token already
+    # matches on (git_routes.py's token-consume check, the resolver dialog, the
+    # worker's HTTP tool reader). `review_state` is where the NEW completed/
+    # reconciling/re_review vocabulary lives; `status` keeps meaning what it
+    # always meant to keep this a non-breaking extension (T0008 completion
+    # criteria: existing TR/group-update flows unaffected).
+    return {"ok": True, "result": {
+        "status": "merged", "review_state": REVIEW_STATE_COMPLETED,
+        "merge_commit": merge_commit_short, "pushed": pushed,
+    }}
+
+
+def _enter_reconciling(merge_id: int, context: dict, kind: str, *, schedule_retry: bool) -> dict:
+    context["review_state"] = REVIEW_STATE_RECONCILING
+    context["reconciliation_kind"] = kind
+    context["reconcile_attempt_count"] = int(context.get("reconcile_attempt_count") or 0)
+    context["reconcile_next_at"] = _seconds_from_now_iso(PUSH_RECONCILE_RETRY_INTERVAL_SEC) if schedule_retry else None
+    db_git.set_session_context(merge_id, context)
+    return {"ok": True, "result": {
+        "status": "reconciling", "review_state": REVIEW_STATE_RECONCILING,
+        "reconciliation_kind": kind,
+    }}
+
+
+def _seconds_from_now_iso(seconds: float) -> str:
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+
+
+def _iso_is_due(value: Optional[str]) -> bool:
+    if not value:
+        return False
+    from datetime import datetime, timezone
+    try:
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) >= dt
+    except Exception:
+        return False
+
+
+def _query_remote_ref(base_root: Path, cfg: dict, base_branch: str) -> Optional[str]:
+    """Best-effort, network ``ls-remote`` read of the real current position of the
+    remote base ref (D0006 §3.6 / L0007 §2.8.1) — ``None`` when the query itself
+    fails (unreachable/timeout), which the caller must NOT treat as "not found"."""
+    proc = _run_git(
+        ["ls-remote", "origin", f"refs/heads/{base_branch}"],
+        cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC,
+        username=cfg.get("username"), secret=_load_secret_for(cfg) or "",
+    )
+    if proc.returncode != 0:
+        return None
+    line = (proc.stdout or "").strip().splitlines()[:1]
+    if not line:
+        return None
+    sha = line[0].split("\t", 1)[0].strip()
+    return sha or None
+
+
+def _conditionally_push_or_reconcile(
+    group_id: str, merge_id: int, session: dict, project_id: str,
+    base_root: Path, cfg: dict, base_branch: str, context: dict,
+) -> dict:
+    """D0006 §3.6 conditional push — CAS on ``expected_remote_head`` via
+    ``--force-with-lease`` (safe for a fast-forward update, not a history rewrite),
+    with an explicit unknown-result branch instead of folding it into failure."""
+    session_action = session.get("finalize_action") or SESSION_ACTION_DEFAULT
+    if session_action == "merge_only":
+        return _complete_merge_review(group_id, merge_id, project_id, context, pushed=False)
+    expected = context.get("expected_remote_head") or ""
+    lease = f"{base_branch}:{expected}" if expected else base_branch
+    push = _run_git(
+        ["push", f"--force-with-lease={lease}", "origin", base_branch],
+        cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC,
+        username=cfg.get("username"), secret=_load_secret_for(cfg) or "",
+    )
+    if push.returncode == 0:
+        return _complete_merge_review(group_id, merge_id, project_id, context, pushed=True)
+    stderr_l = (push.stderr or "").lower()
+    if push.returncode == -1 or "timeout" in stderr_l or "could not resolve host" in stderr_l:
+        return _enter_reconciling(merge_id, context, "push_remote_unknown", schedule_retry=True)
+    if "stale info" in stderr_l or "rejected" in stderr_l or "fetch first" in stderr_l or "non-fast-forward" in stderr_l:
+        _run_git(["reset", "--hard", "ORIG_HEAD"], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC)
+        return _refreeze_for_re_review(group_id, merge_id, base_root, base_branch, context, "push_rejected")
+    # An error this function cannot classify is treated as "result unknown" rather
+    # than assumed-failed (D0006 §3.6): the remote may or may not have the commit.
+    return _enter_reconciling(merge_id, context, "push_remote_unknown", schedule_retry=True)
+
+
+def approve_merge_review(
+    group_id: str, merge_id: int, *, attempt_id: str, review_fingerprint: str,
+    authority: str,
+) -> dict:
+    """D0006 §3.5·§3.6 / L0007 §2.8 ``approve_snapshot``.
+
+    ``authority`` is ``"human"`` (the person pressing [승인]) or ``"automatic"``
+    (the internal call `submit_resolution` makes for its own auto_authority
+    session, immediately after freezing and BEFORE ever returning a review screen
+    to the client — an automatic approval never reaches this function through the
+    public HTTP route)."""
+    session = db_git.get_session(merge_id)
+    if session is None or session.get("group_id") != group_id:
+        raise GitServiceError(404, "review_not_found", f"merge session {merge_id} not found")
+    if db_git.session_kind(session) != db_git.SESSION_KIND_MERGE:
+        raise GitServiceError(409, "review_not_ready", "not a general merge review session")
+    project_id = _project_of_group(group_id)
+    holder = f"review:{merge_id}:{uuid.uuid4()}"
+    if not _acquire_lock(project_id, holder, wait_sec=LOCK_WAIT_SEC):
+        raise GitServiceError(409, "git_busy", f"another git operation is in progress for '{project_id}'")
+    try:
+        session = db_git.get_session(merge_id)
+        context = db_git.session_context(session)
+        if authority == "automatic" and not context.get("auto_authority"):
+            raise GitServiceError(403, "human_authority_required", "auto_authority was not recorded for this session")
+        if context.get("approval_attempt_id") == attempt_id and context.get("merge_commit"):
+            state = context.get("review_state")
+            if state == REVIEW_STATE_COMPLETED:
+                return {"ok": True, "result": {
+                    "status": "already_applied", "review_state": state,
+                    "merge_commit": (context.get("merge_commit") or "")[:7],
+                }}
+            return {"ok": True, "result": {
+                "status": state or "reconciling", "review_state": state,
+                "reconciliation_kind": context.get("reconciliation_kind"),
+            }}
+        if context.get("review_state") not in REVIEW_PENDING_STATES:
+            raise GitServiceError(409, "review_not_ready", f"session is in state {context.get('review_state')!r}")
+        if review_fingerprint != context.get("review_fingerprint"):
+            raise GitServiceError(
+                409, "stale_review", "the reviewed target has changed since this fingerprint was shown",
+            )
+        cfg = db_git.get_config(project_id) or {}
+        base_root = _base_root_of(project_id)
+        if base_root is None:
+            raise GitServiceError(409, "invalid_state", "base checkout is not provisioned")
+        base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+
+        pre_apply_review_state = context["review_state"]
+        context["review_state"] = REVIEW_STATE_APPLYING
+        db_git.set_session_context(merge_id, context)
+
+        if not _live_candidate_matches_snapshot(base_root, context):
+            return _refreeze_for_re_review(group_id, merge_id, base_root, base_branch, context, "identity_mismatch")
+
+        try:
+            errors = _validate_review_changed_paths(base_root, context)
+            if errors:
+                context["review_state"] = pre_apply_review_state
+                # L0007 §2.7/§2.11: an unregistered-extension rejection is a
+                # distinct error code from an ordinary parser/compile failure.
+                code = (
+                    "unsupported_syntax_validation"
+                    if any(e.get("validator") == "unsupported" for e in errors)
+                    else "syntax_validation_failed"
+                )
+                context["last_error"] = {"code": code, "files": errors}
+                db_git.set_session_context(merge_id, context)
+                return {"ok": True, "result": {
+                    "status": "pre_commit_validation_failed", "review_state": pre_apply_review_state,
+                    "errors": errors,
+                }}
+
+            context["approval_attempt_id"] = attempt_id
+            context["apply_phase"] = "committing"
+            db_git.set_session_context(merge_id, context)
+
+            state = db_git.get_state(group_id) or {}
+            branch = (state.get("branch")
+                      or worktree_branch_name(project_id, _module_of(group_id), group_id))
+            commit_proc = _run_git(
+                [*_GIT_IDENT, "commit", "-m", _merge_commit_subject(branch, base_branch)],
+                cwd=base_root, author_env=_author_env_from_cfg(cfg),
+            )
+            if commit_proc.returncode != 0:
+                context["approval_attempt_id"] = None
+                context["apply_phase"] = None
+                context["review_state"] = pre_apply_review_state
+                context["last_error"] = {"code": "commit_creation_failed", "detail": _last_line(commit_proc.stderr)}
+                db_git.set_session_context(merge_id, context)
+                return {"ok": True, "result": {
+                    "status": "commit_creation_failed", "review_state": pre_apply_review_state,
+                }}
+            commit_sha = _rev_parse(base_root, "HEAD")
+            commit_tree = _rev_parse(base_root, "HEAD^{tree}")
+            if commit_tree != context.get("snapshot_tree"):
+                # Defensive only — the identity check above already guarantees this.
+                # The restore itself is verified, not assumed: a `reset --hard` that
+                # fails (or leaves HEAD somewhere other than the pre-commit head) is
+                # a DIFFERENT failure than "the commit did not match" — the tree this
+                # process actually left behind is now unknown, so this must park at
+                # `reconciling`/`apply_restore_failed` for a human, never silently
+                # report the safe `pre_apply_review_state` it did not actually reach.
+                reset_proc = _run_git(
+                    ["reset", "--hard", "ORIG_HEAD"], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC,
+                )
+                restored = (
+                    reset_proc.returncode == 0
+                    and _rev_parse(base_root, "HEAD") == context.get("base_head")
+                )
+                if not restored:
+                    context["review_state"] = REVIEW_STATE_RECONCILING
+                    context["reconciliation_kind"] = "apply_restore_failed"
+                    context["last_error"] = {
+                        "code": "commit_creation_failed",
+                        "detail": "tree_mismatch_reset_failed",
+                    }
+                    db_git.set_session_context(merge_id, context)
+                    return {"ok": True, "result": {
+                        "status": "reconciling", "review_state": REVIEW_STATE_RECONCILING,
+                        "reconciliation_kind": "apply_restore_failed",
+                    }}
+                context["approval_attempt_id"] = None
+                context["apply_phase"] = None
+                context["review_state"] = pre_apply_review_state
+                context["last_error"] = {"code": "commit_creation_failed", "detail": "tree_mismatch"}
+                db_git.set_session_context(merge_id, context)
+                return {"ok": True, "result": {
+                    "status": "commit_creation_failed", "review_state": pre_apply_review_state,
+                }}
+            context["merge_commit"] = commit_sha
+            context["apply_phase"] = "committed_local"
+            db_git.set_session_context(merge_id, context)
+        except Exception:
+            # Nothing has committed yet on ANY path that can reach this except
+            # clause (every commit/tree-mismatch failure above already returns
+            # instead of raising) — so an unexpected exception here (a git binary
+            # gone missing mid-call, a DB write failure, …) is still safe to fully
+            # revert, unlike a failure after the commit exists (handled below).
+            context["approval_attempt_id"] = None
+            context["apply_phase"] = None
+            context["review_state"] = pre_apply_review_state
+            context["last_error"] = {"code": "commit_creation_failed", "detail": "unexpected_error"}
+            db_git.set_session_context(merge_id, context)
+            raise
+        try:
+            return _conditionally_push_or_reconcile(
+                group_id, merge_id, session, project_id, base_root, cfg, base_branch, context,
+            )
+        except Exception:
+            # The commit above already exists locally — D0006 §3.6's rollback
+            # promise ends at push, so an unexpected exception here (as opposed to
+            # the classified push outcomes _conditionally_push_or_reconcile already
+            # returns instead of raising) must land at reconciling/push_remote_unknown,
+            # never revert review_state, and never touch the local commit.
+            context["review_state"] = REVIEW_STATE_RECONCILING
+            context["reconciliation_kind"] = "push_remote_unknown"
+            context["reconcile_attempt_count"] = int(context.get("reconcile_attempt_count") or 0)
+            context["reconcile_next_at"] = _seconds_from_now_iso(PUSH_RECONCILE_RETRY_INTERVAL_SEC)
+            context["last_error"] = {"code": "push_exception", "detail": "unexpected_error"}
+            db_git.set_session_context(merge_id, context)
+            return {"ok": True, "result": {
+                "status": "reconciling", "review_state": REVIEW_STATE_RECONCILING,
+                "reconciliation_kind": "push_remote_unknown",
+            }}
+    finally:
+        db_git.release_lock(project_id, holder)
+
+
+def reject_merge_review(
+    group_id: str, merge_id: int, *, reason: str, provider_id: Optional[str],
+    provider_pinned: bool, start_run: "Callable[[Optional[str]], Optional[str]]",
+) -> dict:
+    """D0006 §3.7 / L0007 §2.9 ``reject_and_return_to_resolver``.
+
+    Restores the conflict by re-running the ORIGINAL merge (same base_head,
+    same merge_head, captured in ``resolver_baseline`` at session creation) —
+    git's merge algorithm is deterministic over the same two inputs, so this
+    regenerates byte-identical conflict markers without needing a separate
+    file-by-file snapshot of the pre-resolution working tree. ``start_run`` is
+    supplied by the caller (the API layer already knows how to build a
+    resolve_conflict mention/token; this module must not reach into it) and is
+    invoked with the new run's id filled in once known, mirroring every other
+    ``issue_builder``/``ai_run_id`` seam in this codebase."""
+    session, context, project_id, base_root, base_branch = _merge_review_session(group_id, merge_id)
+    if context.get("review_state") not in REVIEW_PENDING_STATES:
+        raise GitServiceError(409, "review_not_ready", f"session is in state {context.get('review_state')!r}")
+    baseline = context.get("resolver_baseline") or {}
+    base_head = baseline.get("base_head")
+    merge_head = baseline.get("merge_head")
+    if not base_head or not merge_head:
+        raise GitServiceError(409, "restoration_verification_failed", "no resolver baseline recorded for this session")
+
+    holder = f"review:{merge_id}:{uuid.uuid4()}"
+    if not _acquire_lock(project_id, holder, wait_sec=LOCK_WAIT_SEC):
+        raise GitServiceError(409, "git_busy", f"another git operation is in progress for '{project_id}'")
+    try:
+        # 0009-TR rev5 (AI review finding): the checks above ran WITHOUT the lock,
+        # so an approval (or another rejection) may have moved this session in the
+        # meantime. Re-read and re-check here: restoring the conflict from a
+        # context read before that transition would both undo it in the checkout
+        # and write that transition's bookkeeping back out of a pre-transition copy.
+        context = db_git.session_context(db_git.get_session(merge_id))
+        if context.get("review_state") not in REVIEW_PENDING_STATES:
+            raise GitServiceError(409, "review_not_ready", f"session is in state {context.get('review_state')!r}")
+        baseline = context.get("resolver_baseline") or {}
+        base_head = baseline.get("base_head")
+        merge_head = baseline.get("merge_head")
+        if not base_head or not merge_head:
+            raise GitServiceError(409, "restoration_verification_failed", "no resolver baseline recorded for this session")
+        if (base_root / ".git" / "MERGE_HEAD").exists():
+            _run_git(["merge", "--abort"], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC)
+        current_head = _rev_parse(base_root, "HEAD")
+        if current_head != base_head:
+            context["review_state"] = REVIEW_STATE_RECONCILING
+            context["reconciliation_kind"] = "restoration_verification_failed"
+            context["last_error"] = {"code": "base_head_moved"}
+            db_git.set_session_context(merge_id, context)
+            raise GitServiceError(
+                409, "restoration_verification_failed",
+                "the base checkout has moved since this merge started",
+            )
+        # Merge by the group's BRANCH NAME, not the raw merge_head sha: git's own
+        # conflict-marker label (">>>>>>> <name>") comes from whatever ref name was
+        # given to `merge`, and the original conflict was created the same way
+        # (finalize()'s `merge ... branch`). Merging the bare sha would still
+        # conflict on the same content but relabel every ">>>>>>> branch" marker
+        # as ">>>>>>> <sha>" — byte-DIFFERENT from what the AI/human saw before,
+        # which is exactly the identity this restore promises. merge_head is kept
+        # as the integrity check: if the branch has moved, its tip no longer
+        # matches the sha this session was frozen against, and that mismatch (not
+        # a silently-different merge) is what must fail restoration.
+        state = db_git.get_state(group_id) or {}
+        branch = (state.get("branch")
+                  or worktree_branch_name(project_id, _module_of(group_id), group_id))
+        redo = _run_git(
+            ["-c", "merge.conflictStyle=zdiff3", "merge", "--no-commit", "--no-ff", branch],
+            cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC,
+        )
+        remaining = _unmerged_paths(base_root)
+        original_paths = {row["path"] for row in db_git.session_files(merge_id)}
+        redo_merge_head = _rev_parse(base_root, "MERGE_HEAD")
+        if redo.returncode == 0 or redo_merge_head != merge_head or set(remaining) != original_paths:
+            context["review_state"] = REVIEW_STATE_RECONCILING
+            context["reconciliation_kind"] = "restoration_verification_failed"
+            context["last_error"] = {"code": "restoration_verification_failed"}
+            db_git.set_session_context(merge_id, context)
+            raise GitServiceError(
+                409, "restoration_verification_failed",
+                "could not restore the original conflict markers",
+            )
+        for key in (
+            "snapshot_tree", "snapshot_manifest", "review_fingerprint", "changes",
+            "resolver_run_id", "resolver_provider", "approval_attempt_id",
+            "merge_commit", "apply_phase", "last_error", "held_test_operations",
+        ):
+            context.pop(key, None)
+        db_git.set_session_context(merge_id, context)
+        # Reset every file's resolved flag — the redo merge put fresh markers back.
+        for row in db_git.session_files(merge_id):
+            get_store()._execute(
+                "UPDATE git_merge_session_file SET resolved = 0, resolved_at = NULL "
+                "WHERE merge_id = ? AND path = ?",
+                [merge_id, row["path"]],
+            )
+        context["auto_authority"] = False
+        context["review_state"] = None
+        conversation = context.get("conversation") or []
+        conversation.append({
+            "turn_id": str(uuid.uuid4()), "role": "human", "message": reason,
+            "provider_id": provider_id, "status": "rejected", "created_at": now_iso(),
+        })
+        context["conversation"] = conversation[-MAX_CHAT_TURNS:]
+        db_git.set_session_context(merge_id, context)
+    finally:
+        db_git.release_lock(project_id, holder)
+
+    run_id = start_run(reason)
+    return {"ok": True, "result": {
+        "status": "returned_to_resolver", "review_state": None,
+        "instruction_generation": int(context.get("instruction_generation") or 0),
+        "resolver_run_id": run_id,
+    }}
+
+
+def _materialize_pending_conversation_run(
+    group_id: str, merge_id: int, project_id: str, base_root: Path, base_branch: str,
+) -> None:
+    """Lazily folds a finished conversation run's answer into ``conversation`` the
+    next time the review screen is read (L0007 §2.9 — this process starts runs
+    asynchronously; nothing else calls back into this module when one finishes).
+
+    A propose-only run (or a write turn whose run finished without ever
+    submitting a plan) just appends its ``last_message`` — L0007 §2.9's "on run
+    success without plan" branch. A write turn whose run DID submit a plan
+    (``get_run_detail(run_id).write_plan`` — the bound contract from the Q&A on
+    0009-TR) is applied here via ``_apply_write_plan_locked``, and its outcome
+    (new fingerprint / held_only / apply_failed / rollback_verification_failed)
+    becomes the AI turn instead of the run's raw last_message. Whenever the
+    plan is actually recorded against the session (``re_review`` or
+    ``held_only`` — i.e. the plan passed the fingerprint/identity checks), any
+    ``held_test_operations`` it carried (L0007 §2.7) are persisted onto the
+    session (``get_merge_review``'s ``held_test_operations``) so they stay
+    visible for the human's second explicit [테스트 편집 포함 재지시] action;
+    a rejected plan (``apply_failed``/``rollback_verification_failed``)
+    changes nothing about the session's prior held-operations display.
+
+    Before any of the above: if the review this run was bound to at launch
+    (``pending_conversation_start_fingerprint``/``_start_generation``, and
+    implicitly its pending ``review_state``) is no longer the one on screen —
+    approved, rejected, or superseded by an earlier write turn's new candidate
+    while this run was in flight — the result is discarded as ``stale_run``
+    instead (L0007 §2.9), regardless of whether it carried a write plan.
+
+    0009-TR rev5 (AI review finding): that decision and everything it authorizes
+    happen inside ONE hold of the project git lock — the same lock every review
+    state transition (``approve_merge_review``, ``reject_merge_review``,
+    ``_apply_write_plan_locked``) takes before it moves the session — so nothing
+    can approve, reject or refreeze between "this run is not stale" and the
+    result being applied or appended. Clearing the pending bookkeeping under
+    that hold is also the CLAIM on the run: two review screens polling at the
+    same instant materialize it exactly once. The lock is taken non-blocking
+    (``wait_sec=0``) because this is the read path — when another git operation
+    owns the project, the honest thing is to leave the run pending and fold it
+    in on the next poll against whatever state that operation leaves behind,
+    never against a state nobody re-checked."""
+    session = db_git.get_session(merge_id)
+    context = db_git.session_context(session) if session else {}
+    run_id = context.get("pending_conversation_run_id")
+    if not run_id:
+        return
+    try:
+        from modules.flow_gate.services.ai_invoke import diagnostics as ai_diagnostics
+
+        detail = ai_diagnostics.get_run_detail(run_id)
+    except Exception:
+        return
+    if (detail.get("status") or "").lower() not in ("finished", "done", "completed", "failed", "error"):
+        return  # still running
+
+    holder = f"review:{merge_id}:{uuid.uuid4()}"
+    if not _acquire_lock(project_id, holder, wait_sec=0):
+        return
+    try:
+        context = db_git.session_context(db_git.get_session(merge_id))
+        if context.get("pending_conversation_run_id") != run_id:
+            return  # a concurrent poll already claimed and materialized this run
+
+        # 0009-TR rev5: the RUN row is re-read inside the hold too, not just the
+        # session. `detail` above was fetched BEFORE the lock, and
+        # `submit_review_write_plan` (the worker-token window, which takes no git
+        # lock) can still attach a newer plan to this run right up until the claim
+        # below — the run's LAST submission is the one that counts
+        # (`test_review_gate_write_plan_submission_overwrites_the_runs_own_prior_plan`),
+        # so applying the pre-lock copy would silently drop a submission the worker
+        # was told was `accepted`. EVERY input to the decision below has to come
+        # from inside this hold, not just the session state.
+        try:
+            detail = ai_diagnostics.get_run_detail(run_id)
+        except Exception:
+            return
+        if (detail.get("status") or "").lower() not in ("finished", "done", "completed", "failed", "error"):
+            return  # went back to running under the lock: leave it pending
+
+        # Only fold this run's result in if the review it started against is
+        # STILL the one on screen — same pending review_state, same
+        # review_fingerprint, same instruction_generation as when
+        # `send_review_message` launched it (start values persisted there). A
+        # human can approve, reject, or (via an EARLIER write turn) already
+        # refreeze a new candidate while this run was in flight; in every one of
+        # those cases the run's answer/plan describes a target that no longer
+        # exists and must be discarded as `stale_run` (L0007 §2.9) — never
+        # applied, never appended as if it still answered the current candidate.
+        # Checking `review_state` in addition to fingerprint/generation matters
+        # because approval does NOT change either of those.
+        start_fingerprint = context.get("pending_conversation_start_fingerprint")
+        start_generation = int(context.get("pending_conversation_start_generation") or 0)
+        stale_run = (
+            context.get("review_state") not in REVIEW_PENDING_STATES
+            or context.get("review_fingerprint") != start_fingerprint
+            or int(context.get("instruction_generation") or 0) != start_generation
+        )
+
+        write_requested = bool(context.get("pending_conversation_write_requested"))
+        succeeded = bool(detail.get("succeeded"))
+        plan = detail.get("write_plan") if (write_requested and succeeded and not stale_run) else None
+
+        # The claim is persisted BEFORE the plan is applied: should this process
+        # die mid-apply, the next poll must not apply the same plan a second
+        # time on top of the candidate this one already changed.
+        for key in (
+            "pending_conversation_run_id", "pending_conversation_write_requested",
+            "pending_conversation_allow_test_edits",
+            "pending_conversation_start_fingerprint", "pending_conversation_start_generation",
+        ):
+            context.pop(key, None)
+        db_git.set_session_context(merge_id, context)
+
+        apply_result: Optional[dict] = None
+        if plan:
+            try:
+                apply_result = _apply_write_plan_locked(
+                    group_id, merge_id, plan, base_root, base_branch,
+                )
+            except GitServiceError as exc:
+                apply_result = {"status": "apply_failed", "errors": [{"message": f"{exc.code}: {exc.message}"}]}
+            # _apply_write_plan_locked persisted its own context changes (under
+            # this same hold) — re-read so the turn appended below lands on top
+            # of them instead of a stale copy that would silently undo them.
+            context = db_git.session_context(db_git.get_session(merge_id))
+
+        conversation = context.get("conversation") or []
+        if stale_run:
+            conversation.append({
+                "turn_id": str(uuid.uuid4()), "role": "ai",
+                "message": "실행이 끝나기 전에 승인 대상이 바뀌어(승인/반려/재지시로 새 후보 고정) 결과를 버렸습니다(stale_run). 다시 지시하십시오.",
+                "provider_id": detail.get("provider_id"), "status": "stale_run",
+                "created_at": now_iso(),
+            })
+        elif apply_result is not None:
+            status = apply_result.get("status")
+            # 0009-TR rev3 (AI review finding 2): held test operations must be
+            # OBSERVABLE, not just structurally accepted — surface them in the same
+            # AI turn that reports the apply outcome, in addition to the structured
+            # `held_test_operations` context field `get_merge_review` now exposes.
+            held = apply_result.get("held_test_operations") or []
+            held_note = ""
+            if held:
+                held_desc = ", ".join(f"{op.get('path', '?')}({op.get('purpose', '')})" for op in held)
+                held_note = f" 보류된 테스트 편집 {len(held)}건(미적용, [테스트 편집 포함 재지시]로 재요청 가능): {held_desc}"
+            if status == "re_review":
+                paths = ", ".join(apply_result.get("changed_paths") or []) or "(없음)"
+                message = f"요청한 수정을 적용해 새 승인 대상을 만들었습니다. 변경된 파일: {paths}" + held_note
+            elif status == "held_only":
+                held_desc = ", ".join(f"{op.get('path', '?')}({op.get('purpose', '')})" for op in held) or "(없음)"
+                message = f"제출된 연산이 모두 테스트 경로라 보류했습니다({len(held)}건, 미적용): {held_desc}. [테스트 편집 포함 재지시]로 다시 요청하십시오."
+            elif status == "rollback_verification_failed":
+                message = "수정 적용 실패 후 상태 복구 확인에도 실패했습니다 — 사람 확인이 필요합니다."
+            else:
+                message = "수정 적용에 실패했습니다: " + json.dumps(apply_result.get("errors") or [], ensure_ascii=False) + held_note
+            conversation.append({
+                "turn_id": str(uuid.uuid4()), "role": "ai", "message": message,
+                "provider_id": detail.get("provider_id"),
+                "status": "accepted" if status in ("re_review", "held_only") else "failed",
+                "created_at": now_iso(),
+            })
+        else:
+            message = detail.get("last_message") or ("(no answer)" if succeeded else "(run failed)")
+            conversation.append({
+                "turn_id": str(uuid.uuid4()), "role": "ai", "message": message,
+                "provider_id": detail.get("provider_id"), "status": "accepted" if succeeded else "failed",
+                "created_at": now_iso(),
+            })
+        context["conversation"] = conversation[-MAX_CHAT_TURNS:]
+        db_git.set_session_context(merge_id, context)
+    finally:
+        db_git.release_lock(project_id, holder)
+
+
+def send_review_message(
+    group_id: str, merge_id: int, *, message: str, provider_id: Optional[str],
+    provider_pinned: bool, apply_requested: bool,
+    start_run: "Callable[[], Optional[str]]",
+    allow_test_edits: bool = False,
+) -> dict:
+    """D0006 §3.7 / L0007 §2.9 ``send_review_message``. A propose-only turn
+    (``apply_requested=False``) asks a question against the frozen candidate and
+    never touches the source tree. An explicit-write turn (``apply_requested=True``,
+    flowgate.default.0481 T0008 item 1) starts the SAME kind of run but marks the
+    session as waiting for an anchored write plan (Q&A on 0009-TR's bound
+    contract); the run's AI has no write tool at all and can only submit that plan
+    to ``POST .../write-plan-token`` (``submit_review_write_plan``). Nothing is
+    applied synchronously here — ``_materialize_pending_conversation_run`` calls
+    ``_apply_write_plan_locked`` once the run is later observed finished, exactly like the
+    propose-only turn's answer is folded in lazily today. This launch also
+    freezes ``pending_conversation_start_fingerprint``/``_start_generation`` from
+    the CURRENT (already-validated-pending) ``review_fingerprint``/
+    ``instruction_generation``, so materialization can later tell a `stale_run`
+    apart from one still answering the review on screen (L0007 §2.9). Both that
+    freeze and the human turn are written from a session re-read INSIDE the
+    project git lock (0009-TR rev5), so this turn can never write back over an
+    approval/rejection that landed while the run was starting."""
+    session, context, project_id, _base_root, _base_branch = _merge_review_session(group_id, merge_id)
+    if context.get("review_state") not in REVIEW_PENDING_STATES:
+        raise GitServiceError(409, "review_not_ready", f"session is in state {context.get('review_state')!r}")
+    if context.get("pending_conversation_run_id"):
+        raise GitServiceError(409, "re_instruction_busy", "a review conversation run is already active")
+    if not (message or "").strip():
+        raise GitServiceError(400, "invalid_message", "message must not be blank")
+    if len(message) > MAX_CHAT_MESSAGE_CHARS:
+        raise GitServiceError(400, "invalid_message", f"message exceeds {MAX_CHAT_MESSAGE_CHARS} characters")
+    if not provider_pinned:
+        raise GitServiceError(422, "provider_not_pinned", "provider_pinned must be true")
+
+    # Starting the run stays OUTSIDE the project git lock (the same shape
+    # `reject_merge_review` uses): `start_run` reaches into the AI-invoke stack,
+    # which is not this module's critical section and must never run while the
+    # non-reentrant git lock is held. That makes the checks above advisory — a
+    # human can approve or reject while the run is starting — so NOTHING is
+    # written from the context read above. Everything below re-reads the session
+    # inside the lock and re-checks the same conditions, so this turn can never
+    # overwrite (or resurrect) a state transition that won the race; the run it
+    # started is simply left unrecorded, and that run's own write-plan
+    # submission is refused by `submit_review_write_plan`'s pending-run check.
+    run_id = start_run()
+    holder = f"review:{merge_id}:{uuid.uuid4()}"
+    if not _acquire_lock(project_id, holder, wait_sec=LOCK_WAIT_SEC):
+        raise GitServiceError(409, "git_busy", f"another git operation is in progress for '{project_id}'")
+    try:
+        context = db_git.session_context(db_git.get_session(merge_id))
+        if context.get("review_state") not in REVIEW_PENDING_STATES:
+            raise GitServiceError(409, "review_not_ready", f"session is in state {context.get('review_state')!r}")
+        if context.get("pending_conversation_run_id"):
+            raise GitServiceError(409, "re_instruction_busy", "a review conversation run is already active")
+        conversation = context.get("conversation") or []
+        conversation.append({
+            "turn_id": str(uuid.uuid4()), "role": "human", "message": message,
+            "provider_id": provider_id, "status": "accepted", "created_at": now_iso(),
+        })
+        context["conversation"] = conversation[-MAX_CHAT_TURNS:]
+        if apply_requested:
+            context["pending_conversation_write_requested"] = True
+            context["pending_conversation_allow_test_edits"] = bool(allow_test_edits)
+        # L0007 §2.9 stale_run guard: freeze the review identity THIS run is bound to
+        # at launch, so `_materialize_pending_conversation_run` can tell — once the
+        # run finishes, possibly much later — whether the review it answered is
+        # still the one on screen.
+        context["pending_conversation_start_fingerprint"] = context.get("review_fingerprint")
+        context["pending_conversation_start_generation"] = int(context.get("instruction_generation") or 0)
+        context["pending_conversation_run_id"] = run_id
+        db_git.set_session_context(merge_id, context)
+    finally:
+        db_git.release_lock(project_id, holder)
+    return {"ok": True, "result": {
+        "status": "accepted", "review_state": context.get("review_state"),
+        "run_id": run_id, "review_fingerprint": context.get("review_fingerprint"),
+        "instruction_generation": int(context.get("instruction_generation") or 0),
+    }}
+
+
+def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional[dict]:
+    """D0006 §3.6 / L0007 §2.8.1 ``reconcile_push_session`` — re-asks the remote
+    where the base branch actually points and settles a session stuck in
+    ``reconciling`` after a push whose result this process never learned. Not a
+    re-entry into ``approve_merge_review``: it never commits or pushes again."""
+    session = db_git.get_session(merge_id)
+    if session is None or db_git.session_kind(session) != db_git.SESSION_KIND_MERGE:
+        return None
+    group_id = session["group_id"]
+    context = db_git.session_context(session)
+    if context.get("review_state") != REVIEW_STATE_RECONCILING:
+        return None
+    if context.get("reconciliation_kind") not in RECONCILE_AUTO_RETRY_KINDS:
+        return None
+    if trigger != "server_startup" and not _iso_is_due(context.get("reconcile_next_at")):
+        return None
+    project_id = _project_of_group(group_id)
+    holder = f"reconcile:{merge_id}:{uuid.uuid4()}"
+    if not _acquire_lock(project_id, holder, wait_sec=LOCK_WAIT_SEC):
+        return None
+    try:
+        session = db_git.get_session(merge_id)
+        context = db_git.session_context(session)
+        if context.get("review_state") != REVIEW_STATE_RECONCILING:
+            return {"ok": True, "result": {"status": context.get("review_state")}}
+        context["reconcile_next_at"] = _seconds_from_now_iso(PUSH_RECONCILE_RETRY_INTERVAL_SEC)
+        context["reconcile_attempt_count"] = int(context.get("reconcile_attempt_count") or 0) + 1
+        db_git.set_session_context(merge_id, context)
+        cfg = db_git.get_config(project_id) or {}
+        base_root = _base_root_of(project_id)
+        base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+        if base_root is None:
+            return {"ok": True, "result": {"status": "retry_scheduled"}}
+
+        observed: Optional[str] = None
+        for i, delay in enumerate(PUSH_RECONCILE_DELAYS_SEC):
+            if delay:
+                time.sleep(delay)
+            observed = _query_remote_ref(base_root, cfg, base_branch)
+            if observed is not None:
+                break
+
+        merge_commit = context.get("merge_commit")
+        expected = context.get("expected_remote_head")
+        if observed is not None and merge_commit and observed == merge_commit:
+            context["review_state"] = REVIEW_STATE_COMPLETED
+            context["apply_phase"] = "completed"
+            context.pop("reconciliation_kind", None)
+            context.pop("reconcile_next_at", None)
+            db_git.set_session_context(merge_id, context)
+            db_git.close_session(merge_id, "done")
+            _set_status(group_id, "merged", merge_commit=merge_commit[:7])
+            _cleanup_group_slot(project_id, group_id)
+            _emit("git_finalize_done", project_id, group_id, {
+                "project": project_id, "group_id": group_id, "status": "merged",
+                "merge_commit": merge_commit[:7], "pushed": True,
+            })
+            return {"ok": True, "result": {"status": "completed"}}
+        if observed is not None and observed == expected:
+            _run_git(["reset", "--hard", "ORIG_HEAD"], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC)
+            context["approval_attempt_id"] = None
+            context["merge_commit"] = None
+            context["apply_phase"] = None
+            context["review_state"] = REVIEW_STATE_PENDING
+            context.pop("reconciliation_kind", None)
+            context.pop("reconcile_next_at", None)
+            db_git.set_session_context(merge_id, context)
+            return {"ok": True, "result": {"status": "pending_review"}}
+        if observed is not None:
+            context["reconciliation_kind"] = "push_remote_third"
+            context["reconcile_next_at"] = None
+            db_git.set_session_context(merge_id, context)
+            _emit("git_merge_review_manual_reconciliation", project_id, group_id, {
+                "project": project_id, "group_id": group_id, "merge_id": merge_id,
+                "observed": observed,
+            })
+            return {"ok": True, "result": {"status": "manual_reconciliation_needed"}}
+        return {"ok": True, "result": {"status": "retry_scheduled"}}
+    finally:
+        db_git.release_lock(project_id, holder)
+
+
+def reconcile_due_merge_review_sessions(trigger: str) -> None:
+    """Scan every open general-merge session for a due reconciliation, called from
+    the existing sweep daemon and from startup recovery (§2.8.1 lifecycle)."""
+    for session in db_git.list_open_sessions():
+        if db_git.session_kind(session) != db_git.SESSION_KIND_MERGE:
+            continue
+        context = db_git.session_context(session)
+        if context.get("review_state") != REVIEW_STATE_RECONCILING:
+            continue
+        try:
+            reconcile_push_session(int(session["merge_id"]), trigger=trigger)
+        except Exception:
+            _log.warning(
+                "merge review reconciliation failed for merge_id=%s", session.get("merge_id"),
+                exc_info=True,
+            )
 
 
 # ── Post-finalize slot cleanup (flowgate.default.0182 NR0003 §5) ─────────────
@@ -5738,6 +7581,22 @@ def merge_session_sweep() -> None:
                 # while the conflicted revert sat on disk with nothing pointing at it.
                 _sweep_tr_session(session, project_id)
                 continue
+            review_state = db_git.session_context(session).get("review_state")
+            if review_state in (REVIEW_STATE_APPLYING, REVIEW_STATE_RECONCILING):
+                # 0481 T0008: `approve_merge_review` already committed by this point, so
+                # MERGE_HEAD is gone from disk exactly like a normal successful merge —
+                # every branch below would misread that as an orphan and abort a session
+                # that is mid-push or already pushed. This state belongs to
+                # reconcile_push_session, not the orphan/TTL sweep.
+                if review_state == REVIEW_STATE_RECONCILING:
+                    try:
+                        reconcile_push_session(int(session["merge_id"]), trigger="periodic")
+                    except Exception:
+                        _log.warning(
+                            "merge review reconciliation failed for merge_id=%s",
+                            session.get("merge_id"), exc_info=True,
+                        )
+                continue
             base_root = _base_root_of(project_id)
             if base_root is None or not (base_root / ".git").exists():
                 continue   # checkout gone — do not touch (log only)
@@ -5804,6 +7663,16 @@ def startup_recovery() -> None:
                     # sweep at the end of this function, which knows where to look.
                     _set_status(group_id, "conflict", merge_id=merge_id)
                     continue
+                review_state = db_git.session_context(session).get("review_state")
+                if review_state in (REVIEW_STATE_APPLYING, REVIEW_STATE_RECONCILING):
+                    # 0481 T0008 / L0007 §2.8.1 item 1: the commit already landed by this
+                    # point, so MERGE_HEAD is gone exactly like an ordinary successful
+                    # merge — re-affirm 'conflict' (still not merged from the group's
+                    # point of view) and let the immediate reconcile scan below settle
+                    # push-unknown/post-push-cleanup sessions without waiting a full
+                    # PUSH_RECONCILE_RETRY_INTERVAL_SEC.
+                    _set_status(group_id, "conflict", merge_id=merge_id)
+                    continue
                 base_root = _base_root_of(project_id)
                 merge_head_exists = bool(
                     base_root and (base_root / ".git" / "MERGE_HEAD").exists()
@@ -5821,6 +7690,7 @@ def startup_recovery() -> None:
             holder = str(lock.get("holder") or "")
             if holder.startswith(("op:", "sweep:", "merge:", "dispose:")):
                 db_git.force_release_lock(lock["project_id"])
+        reconcile_due_merge_review_sessions("server_startup")   # L0007 §2.8.1 item 1
         merge_session_sweep()   # reclaim anything already past TTL
         _start_sweep_daemon()
     except Exception:
@@ -6117,8 +7987,21 @@ def project_git_status(project_id: str) -> dict:
             try:
                 s = db_git.get_session(int(row["merge_id"]))
                 row["conflict_since"] = s.get("created_at") if s else None
+                # 0481 D0006 §6.4: the same badge slot doubles as the general-merge
+                # review gate's entry point — None/absent means "still resolving"
+                # (the resolver dialog), any REVIEW_PENDING_STATES value means
+                # "승인 대기" (the review dialog instead).
+                if s is not None and db_git.session_kind(s) == db_git.SESSION_KIND_MERGE:
+                    ctx = db_git.session_context(s)
+                    row["review_state"] = ctx.get("review_state")
+                    row["reconciliation_kind"] = ctx.get("reconciliation_kind")
+                else:
+                    row["review_state"] = None
+                    row["reconciliation_kind"] = None
             except Exception:
                 row["conflict_since"] = None
+                row["review_state"] = None
+                row["reconciliation_kind"] = None
     # 0205 P scenario 8: persisted worktree provisioning failures (unregistered
     # rows with a provision_error) so a slot-less group's "not tracked by git" warning
     # survives the one-shot SSE. Disposed groups are excluded. Newest first.

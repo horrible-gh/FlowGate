@@ -208,6 +208,13 @@ def _run_detail_from_row(row: dict) -> dict:
         "tool_calls_received": row.get("tool_calls_received"),
         "tool_calls_executed": row.get("tool_calls_executed"),
         "api_turn_trace": row.get("api_turn_trace") or [],
+        # -- flowgate.default.0481 T0008 item 1: same three names `finished_payload`
+        # answers with for a live finish, read here off the already-parsed
+        # `db.ai_invoke_runs._row_to_payload` shape (`write_plan` is the decoded
+        # dict, not the raw `write_plan_json` column).
+        "write_requested_by_human": row.get("write_requested_by_human"),
+        "allow_test_edits": row.get("allow_test_edits"),
+        "write_plan": row.get("write_plan"),
         "source_dirty": row.get("source_dirty"),
         "scratch_retained": row.get("scratch_retained"),
         "duration_ms": row.get("duration_ms"),

@@ -680,6 +680,17 @@ def start_run(
     document_review_loop: Optional[dict] = None,
     # A single-request acknowledgement. It is intentionally never persisted or forwarded.
     capability_warning_ack: Optional[bool] = None,
+    # flowgate.default.0481 T0008 item 1 / L0007 §2.5-§2.9: only meaningful for
+    # action_scope="resolve_conflict" — whether THIS hop is the merge review's
+    # explicit [수정 적용] conversation turn (vs. the ordinary resolve/[반려] retry/
+    # propose-only question runs that share the same action_scope), and whether
+    # the human additionally chose [테스트 편집 포함 재지시]. Both ride the run the
+    # same way merge_id already does (never persisted outside this row), and are
+    # the run-start half of the bound write-plan contract (Q&A on 0009-TR) — the
+    # other half, `write_plan` itself, arrives later via `record_run_write_plan`
+    # once the worker's write-plan submission endpoint is called.
+    write_requested_by_human: bool = False,
+    allow_test_edits: bool = False,
     # 0414 L0008 §5: work / review / rework. A review or rework hop makes no document, so
     # the chain counters do not move for it — this is what lets a card say WHAT is running
     # instead of reporting a frozen progress number.
@@ -1381,6 +1392,13 @@ def start_run(
         "user_paused": False,
         "raw_token": issue["raw_token"],
         "merge_id": merge_id,
+        "write_requested_by_human": (
+            bool(write_requested_by_human) if action_scope == "resolve_conflict" else None
+        ),
+        "allow_test_edits": (
+            bool(allow_test_edits) if action_scope == "resolve_conflict" else None
+        ),
+        "write_plan": None,
         "completion_oracle": completion_oracle,
         # ── 0359 L0007 §2.9 / §2.6: what the no-output retry loop needs to open attempt 2 ──
         # The token ID (was: only the raw token, so the retry could not ask whether the token

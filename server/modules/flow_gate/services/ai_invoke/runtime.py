@@ -889,6 +889,30 @@ def get_run_record(run_id: str) -> Optional[dict]:
         return svc._runs.get(run_id)
 
 
+def record_run_write_plan(run_id: str, write_plan: dict) -> bool:
+    """Attach a write plan to the run it belongs to (flowgate.default.0481 T0008
+    item 1 / L0007 §2.5-§2.9): the worker-token submission endpoint's ONLY write
+    into the ai-invoke run record. A run is normally still live when its own
+    write-plan turn submits this (the run has not exited yet), so the ordinary
+    path mutates the SAME dict `_runs` holds, under its lock -- the next
+    `finalize._persist_run_record` upsert then carries `write_plan` into the
+    durable row exactly like every other in-memory field. The already-finished
+    fallback (a race between the submission call and this process's own
+    finalize) goes straight to the durable row via `db.ai_invoke_runs.set_write_plan`
+    instead, so neither path can silently no-op and leave a submitted plan
+    unreachable from `GET /ai-invoke/{run_id}`. Returns whether either path found
+    a matching run/row."""
+    svc = _svc()
+    with svc._runs_lock:
+        run = svc._runs.get(run_id)
+        if run is not None:
+            run["write_plan"] = write_plan
+            return True
+    from modules.flow_gate.db import ai_invoke_runs as db_runs
+
+    return db_runs.set_write_plan(run_id, write_plan)
+
+
 def is_run_live(run_id: str) -> bool:
     """Is *run_id* an admission this process still tracks and has not finished?
 

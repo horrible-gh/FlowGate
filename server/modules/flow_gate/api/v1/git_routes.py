@@ -17,7 +17,14 @@ POST           /api/v1/groups/{group_id}/git/unmerge
 GET            /api/v1/groups/{group_id}/git/merge/{merge_id}/conflicts
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/tr-commit
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/resolve
+POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/resolve-token
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/abort
+GET            /api/v1/groups/{group_id}/git/merge/{merge_id}/review          (0481 D0006/L0007)
+GET            /api/v1/groups/{group_id}/git/merge/{merge_id}/review-diff     (0481 D0006/L0007)
+POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/approve         (0481 D0006/L0007 — human only)
+POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/reject          (0481 D0006/L0007 — human only)
+POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/review-message  (0481 D0006/L0007 — human only)
+POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/write-plan-token (0481 T0008 item 1 — resolve_conflict worker token only)
 
 RBAC (P0005, common): read = project.settings.read, mutate = project.settings.edit.
 Group-scoped routes resolve the project from the group_id prefix and check the
@@ -26,11 +33,12 @@ Errors follow the source-mode envelope {"ok": false, "error": {code, message}}.
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.rbac.decorators import _has_permission, require_permission
@@ -39,6 +47,8 @@ from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.services.git_service import GitServiceError
 
 router = APIRouter(prefix="/api/v1", tags=["Git"])
+
+_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 
 def _error_response(status_code: int, code: str, message: str, details: Optional[dict] = None) -> JSONResponse:
@@ -504,21 +514,39 @@ class ResolveFile(BaseModel):
 
 
 class ResolveBody(BaseModel):
+    # 0481 D0006 §3.2 / L0007 §2.2: extra="forbid" rejects (422) any stray
+    # auto_apply/write/approve field outright instead of silently ignoring it —
+    # this endpoint has exactly two legitimate fields, files and complete, plus
+    # (on the human route's subclass below) the [자동] checkbox itself.
+    model_config = ConfigDict(extra="forbid")
+
     files: list[ResolveFile] = []
     complete: bool = False
+
+
+class ResolveBodyHuman(ResolveBody):
+    # The [자동] checkbox, sent ONLY on a human's own direct [해결 제출] (no AI
+    # call). record_auto_authority — the one function allowed to write
+    # session.auto_authority — is called from THIS route, never from
+    # git_service.resolve_conflicts itself, so there is no path by which the
+    # value can travel through the worker-token route below (whose body model,
+    # plain ResolveBody, has no such field and forbids it as an extra key).
+    auto: Optional[bool] = None
 
 
 @router.post("/groups/{group_id}/git/merge/{merge_id}/resolve")
 def post_merge_resolve(
     group_id: str,
     merge_id: int,
-    body: ResolveBody,
+    body: ResolveBodyHuman,
     user=Depends(get_current_user),
 ):
     denied = _check_group_permission(user, group_id, "project.settings.edit")
     if denied:
         return denied
     try:
+        if body.auto is not None:
+            git_service.record_auto_authority(group_id, merge_id, bool(body.auto))
         return git_service.resolve_conflicts(
             group_id, merge_id,
             [f.model_dump() for f in body.files],
@@ -551,9 +579,12 @@ def post_merge_resolve_token(
             group_id, merge_id,
             [f.model_dump() for f in body.files],
             bool(body.complete),
+            resolver_run_id=auth.get("ai_run_id"),
         )
         # TR0019 — a TR conflict session ends the worker's job at `resolved_pending_review`,
         # not at `merged`: the commit is a person's press. Both are "this token is done".
+        # 0481 T0008 — a general merge session now ends the worker's job the same way, at
+        # resolved_pending_review (this submission's job was resolving, not approving).
         if result.get("ok") and result.get("result", {}).get("status") in (
             "merged", "resolved_pending_review",
         ):
@@ -596,5 +627,281 @@ def post_tr_conflict_commit(group_id: str, merge_id: int, user=Depends(get_curre
         return denied
     try:
         return tr_commit_service.commit_conflict_resolution(group_id, merge_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+# ── General-merge review gate (flowgate.default.0481 D0006/L0007, T0008) ────
+# GET review / POST approve / POST reject / POST review-message are the four new
+# windows D0006 §4 [DEFERRED] left to this WP's logic design (L0007 §2.11); all
+# four require a human (project.settings.edit) — a resolve_conflict worker token
+# can reach /resolve and /resolve-token above, never these.
+
+def _review_group_parts(group_id: str) -> tuple[str, Optional[str]]:
+    parts = group_id.split(".")
+    project_id = parts[0] if parts else group_id
+    module = parts[1] if len(parts) > 1 else None
+    return project_id, module
+
+
+def _resolve_conflict_mention_builder(
+    *, group_id: str, project_id: str, merge_id: int,
+    request: Request, locale: str, messages: list[str],
+    write_requested_by_human: bool = False, allow_test_edits: bool = False,
+):
+    def _builder(raw_token: str, scratch_dir: str) -> Optional[str]:
+        from modules.flow_gate.api import token_routes as _token_routes
+        from modules.flow_gate.services import invoke_mention_service
+
+        base = _token_routes._build_mention_for_token(
+            doc_ref="", group_id=group_id, project_id=project_id,
+            scratch_dir=scratch_dir, raw_token=raw_token, request=request,
+            ref_doc_ids=None, action_scope="resolve_conflict", locale=locale,
+            continuous=False, merge_id=merge_id, continuous_review_mode=False,
+            write_requested_by_human=write_requested_by_human,
+            allow_test_edits=allow_test_edits,
+        )
+        if not base:
+            return None
+        return invoke_mention_service.prepend_messages_section(base, messages, locale)
+    return _builder
+
+
+def _start_resolve_conflict_run(
+    *, group_id: str, merge_id: int, request: Request, user_id: str,
+    provider_id: Optional[str], provider_pinned: bool, messages: list[str],
+    write_requested_by_human: bool = False, allow_test_edits: bool = False,
+) -> Optional[str]:
+    """Kicks off a fresh resolve_conflict run bound to this merge session — the
+    same mechanism [AI 호출] already uses, reused here for the [반려] retry run
+    (D0006 §3.7), the review screen's propose-only conversation turn (§3.7/§3.9),
+    and (flowgate.default.0481 T0008 item 1) its explicit [수정 적용] write turn.
+    ``write_requested_by_human``/``allow_test_edits`` ride the run exactly like
+    ``merge_id`` does — see ``admission.start_run``'s matching parameters — and
+    are the run-start half of the anchored write-plan engine's bound contract
+    (L0007 §2.5-§2.9, Q&A on 0009-TR)."""
+    from modules.flow_gate.api import token_routes as _token_routes
+    from modules.flow_gate.services import ai_invoke_service
+
+    project_id, module = _review_group_parts(group_id)
+    locale = request.headers.get("x-locale") or "ko"
+    api_base_url = _token_routes._build_api_base(request)
+    result = ai_invoke_service.start_run(
+        project_id=project_id, module=module, group_id=group_id,
+        doc_ref="", action_scope="resolve_conflict", mode="single",
+        continuation_target_seq=None, continuation_review_mode=False,
+        continuation_instruction_mode=None, continuation_locale=None,
+        issued_to=user_id, api_base_url=api_base_url,
+        mention_builder=_resolve_conflict_mention_builder(
+            group_id=group_id, project_id=project_id, merge_id=merge_id,
+            request=request, locale=locale, messages=messages,
+            write_requested_by_human=write_requested_by_human,
+            allow_test_edits=allow_test_edits,
+        ),
+        provider_id=provider_id, provider_pinned=bool(provider_pinned),
+        merge_id=merge_id,
+        write_requested_by_human=bool(write_requested_by_human),
+        allow_test_edits=bool(allow_test_edits),
+    )
+    return result.get("run_id")
+
+
+@router.get("/groups/{group_id}/git/merge/{merge_id}/review")
+def get_merge_review(group_id: str, merge_id: int, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.read")
+    if denied:
+        return denied
+    try:
+        return git_service.get_merge_review(group_id, merge_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.get("/groups/{group_id}/git/merge/{merge_id}/review-diff")
+def get_merge_review_diff(
+    group_id: str, merge_id: int, path: str, user=Depends(get_current_user),
+):
+    denied = _check_group_permission(user, group_id, "project.settings.read")
+    if denied:
+        return denied
+    try:
+        return git_service.read_merge_review_file_diff(group_id, merge_id, path)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+class ApproveBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    attempt_id: str
+    review_fingerprint: str
+
+
+@router.post("/groups/{group_id}/git/merge/{merge_id}/approve")
+def post_merge_review_approve(
+    group_id: str, merge_id: int, body: ApproveBody, user=Depends(get_current_user),
+):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied:
+        return denied
+    if not _UUID_RE.match(body.attempt_id or ""):
+        return _error_response(400, "invalid_attempt_id", "attempt_id must be a UUID")
+    try:
+        return git_service.approve_merge_review(
+            group_id, merge_id,
+            attempt_id=body.attempt_id, review_fingerprint=body.review_fingerprint,
+            authority="human",
+        )
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+class RejectBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str
+    provider_id: str
+    provider_pinned: bool = False
+
+
+@router.post("/groups/{group_id}/git/merge/{merge_id}/reject")
+def post_merge_review_reject(
+    group_id: str, merge_id: int, body: RejectBody, request: Request,
+    user=Depends(get_current_user),
+):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied:
+        return denied
+    reason = (body.reason or "").strip()
+    if not reason or len(reason) > 4000:
+        return _error_response(400, "invalid_reason", "reason must be 1..4000 characters")
+    if body.provider_pinned is not True:
+        return _error_response(422, "provider_not_pinned", "provider_pinned must be true")
+    user_id = user.get("user_id") or user.get("id") or user.get("email") or "unknown"
+    try:
+        return git_service.reject_merge_review(
+            group_id, merge_id, reason=reason,
+            provider_id=body.provider_id, provider_pinned=True,
+            start_run=lambda first_message: _start_resolve_conflict_run(
+                group_id=group_id, merge_id=merge_id, request=request, user_id=user_id,
+                provider_id=body.provider_id, provider_pinned=True,
+                messages=[first_message] if first_message else [],
+            ),
+        )
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+class ReviewMessageBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message: str
+    provider_id: str
+    provider_pinned: bool = False
+    apply_requested: bool = False
+    # 0481 T0008 item 1 / L0007 §2.7: only meaningful with apply_requested=true —
+    # [테스트 편집 포함 재지시]. A propose-only or plain apply turn defaults this
+    # to false, which is also what a missing/omitted value must mean (the server
+    # fixes this, never the model's own plan — see _apply_write_plan_locked).
+    allow_test_edits: bool = False
+
+
+@router.post("/groups/{group_id}/git/merge/{merge_id}/review-message")
+def post_merge_review_message(
+    group_id: str, merge_id: int, body: ReviewMessageBody, request: Request,
+    user=Depends(get_current_user),
+):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied:
+        return denied
+    if body.provider_pinned is not True:
+        return _error_response(422, "provider_not_pinned", "provider_pinned must be true")
+    user_id = user.get("user_id") or user.get("id") or user.get("email") or "unknown"
+    apply_requested = bool(body.apply_requested)
+    allow_test_edits = bool(body.allow_test_edits) and apply_requested
+    try:
+        return git_service.send_review_message(
+            group_id, merge_id, message=body.message,
+            provider_id=body.provider_id, provider_pinned=True,
+            apply_requested=apply_requested, allow_test_edits=allow_test_edits,
+            start_run=lambda: _start_resolve_conflict_run(
+                group_id=group_id, merge_id=merge_id, request=request, user_id=user_id,
+                provider_id=body.provider_id, provider_pinned=True,
+                messages=[body.message],
+                write_requested_by_human=apply_requested,
+                allow_test_edits=allow_test_edits,
+            ),
+        )
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+class WritePlanAnchor(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    body_base64: str
+    expected_count: int
+
+
+class WritePlanOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation_id: str
+    kind: str
+    path: str
+    purpose: str
+    # `edit`-only fields
+    expected_before_blob: Optional[str] = None
+    anchor: Optional[WritePlanAnchor] = None
+    replacement_bytes_base64: Optional[str] = None
+    # `create_file`-only fields
+    absent: Optional[bool] = None
+    content_bytes_base64: Optional[str] = None
+    mode: Optional[str] = None
+
+
+class WritePlanBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str
+    base_fingerprint: str
+    operations: list[WritePlanOperation] = []
+    held_test_operations: list[WritePlanOperation] = []
+
+
+@router.post("/groups/{group_id}/git/merge/{merge_id}/write-plan-token")
+def post_merge_write_plan_token(
+    group_id: str, merge_id: int, body: WritePlanBody, request: Request,
+):
+    """flowgate.default.0481 T0008 item 1 / L0007 §2.5-§2.9, Q&A on 0009-TR: the
+    ONLY channel by which a review-message write turn's AI run can change the
+    source tree — the run's own toolset is read-only (SCOPE_BOUND_TOOLS demotes
+    action_scope=resolve_conflict to "read"). Same worker-token shape as
+    /resolve-token: bound to exactly this group_id/merge_id, never a human JWT.
+
+    0009-TR rev3 (AI review finding 1): action_scope/group_id/merge_id alone
+    bind a token to the MERGE, not to the specific pending write TURN — any
+    still-valid resolve_conflict token issued for this merge (a stale/earlier
+    run's token included) would otherwise be able to inject or overwrite the
+    current human-authorized turn's plan. The token's own `ai_run_id` claim is
+    forwarded so the service can require it match `pending_conversation_run_id`
+    exactly.
+    """
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    if auth.get("_is_user_jwt"):
+        return _error_response(403, "conflict_token_required", "A resolve_conflict worker token is required")
+    if (
+        auth.get("action_scope") != "resolve_conflict"
+        or auth.get("group_id") != group_id
+        or int(auth.get("merge_id") or -1) != int(merge_id)
+    ):
+        return _error_response(403, "conflict_token_required", "A resolve_conflict worker token is required")
+    try:
+        return git_service.submit_review_write_plan(
+            group_id, merge_id, plan=body.model_dump(exclude_none=True),
+            ai_run_id=auth.get("ai_run_id"),
+        )
     except GitServiceError as exc:
         return _guard(exc)

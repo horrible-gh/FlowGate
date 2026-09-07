@@ -221,9 +221,20 @@
             <span class="badge" :class="statusBadgeClass(p.status)">{{ statusLabel(p.status) }}</span>
             <span class="git-status-spacer"></span>
 
+            <!-- 0481 D0006 §6.4: a resolved general merge stops at the human
+                 approval gate, not the resolver — same row, different button. -->
+            <button
+              v-if="p.status === 'conflict' && isReviewPending(p)"
+              class="btn btn-sm btn-primary"
+              :disabled="busy"
+              @click="reviewDialogTarget = { group_id: p.group_id, merge_id: p.merge_id as number }"
+            >
+              <AppIcon name="eye" />
+              {{ t('main.git_review.open_review') }}
+            </button>
             <!-- conflict: toggle the inline resolution editor (no R document) -->
             <button
-              v-if="p.status === 'conflict'"
+              v-else-if="p.status === 'conflict'"
               class="btn btn-sm btn-danger-ol"
               :disabled="busy"
               @click="toggleResolve(p)"
@@ -256,7 +267,13 @@
                붉은 카드 안에 아이콘 + 굵은 제목 + 안내 줄, 채움형 [AI에게 맡기기] 와
                링크형 [펼쳐 보기 ▾]. 펼친 목록은 시안 `.conflict-raw-list` 처럼 파선으로
                갈라지고 줄마다 붉은 표식이 붙는다. -->
-          <div v-if="p.status === 'conflict'" class="git-v9-conflict-summary">
+          <div v-if="p.status === 'conflict' && isReviewPending(p)" class="git-v9-conflict-summary">
+            <div class="git-v9-chip-row">
+              <AppIcon name="clock" class="git-v9-chip-icon" />
+              <span class="git-v9-chip">{{ t(`main.git_review.badge.${reviewBadgeKeyOf(p)}`) }}</span>
+            </div>
+          </div>
+          <div v-else-if="p.status === 'conflict'" class="git-v9-conflict-summary">
             <div class="git-v9-chip-row">
               <AppIcon name="warning" class="git-v9-chip-icon" />
               <span class="git-v9-chip">
@@ -322,9 +339,9 @@
             :provider-errored="!!aiProviderStore.error"
             @close="collapseResolve"
             @abort="abortInline(p)"
-            @submit="submitResolveInline(p)"
+            @submit="(auto) => submitResolveInline(p, auto)"
             @retry="openResolve(p.group_id)"
-            @ai-invoke="invokeConflictAi(p, $event)"
+            @ai-invoke="(msg, auto) => invokeConflictAi(p, msg, auto)"
             @copy-mention="copyConflictMention(p)"
             @update:provider="aiProviderStore.selectProvider"
           />
@@ -431,9 +448,9 @@
             :provider-errored="!!aiProviderStore.error"
             @close="collapseResolve"
             @abort="abortTrConflict(s)"
-            @submit="submitResolveInline(trConflictTarget(s))"
+            @submit="(auto) => submitResolveInline(trConflictTarget(s), auto)"
             @retry="openResolve(s.group_id)"
-            @ai-invoke="invokeConflictAi(trConflictTarget(s), $event)"
+            @ai-invoke="(msg, auto) => invokeConflictAi(trConflictTarget(s), msg, auto)"
             @copy-mention="copyConflictMention(trConflictTarget(s))"
             @update:provider="aiProviderStore.selectProvider"
           />
@@ -523,6 +540,21 @@
       <div class="git-status-sect"><div class="git-ra-placeholder">{{ t('main.git_status.ra_placeholder') }}</div></div>
     </div>
   </div>
+
+  <GitMergeReviewDialog
+    v-if="reviewDialogTarget"
+    :group-id="reviewDialogTarget.group_id"
+    :merge-id="reviewDialogTarget.merge_id"
+    :branch="status?.slots.find((s) => s.group_id === reviewDialogTarget?.group_id)?.branch || null"
+    :base-branch="status?.base_branch || null"
+    :providers="aiProviderStore.providers"
+    :selected-provider="aiProviderStore.selectedProviderId"
+    :provider-loading="aiProviderStore.loading"
+    :provider-errored="!!aiProviderStore.error"
+    @close="reviewDialogTarget = null"
+    @resolved="fetchStatus"
+    @update:provider="aiProviderStore.selectProvider"
+  />
 </template>
 
 <script setup lang="ts">
@@ -544,6 +576,7 @@ import {
   type ConflictFileState,
 } from '../composables/useConflictChunks'
 import GitConflictResolverDialog from './GitConflictResolverDialog.vue'
+import GitMergeReviewDialog from './GitMergeReviewDialog.vue'
 
 const props = defineProps<{ projectId: string }>()
 const emit = defineEmits<{ 'open-group': [groupId: string] }>()
@@ -626,6 +659,11 @@ interface Pending {
   merge_id: number | null
   // 0182 NR0003 §4: the group's final-approval doc (pending implies wf_done)
   ac_doc_id?: string | null
+  // 0481 D0006 §6.4 / L0007 §2.11 — null/absent means the conflict is still being
+  // resolved (the resolver dialog); any REVIEW_PENDING_STATES value means the
+  // human approval gate is waiting instead (the review dialog).
+  review_state?: string | null
+  reconciliation_kind?: string | null
 }
 interface GitStatus {
   enabled: boolean
@@ -946,6 +984,21 @@ const conflictFiles = ref<ConflictFileState[]>([])
 const conflictError = ref('')
 // Load lifecycle for the shared resolver dialog (loading spinner / retry state).
 const conflictLoadStatus = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
+
+// 0481 D0006 §6.4 / L0007 §2.11 — the general-merge human approval gate's own
+// entry point, same row/slot the resolver otherwise occupies.
+const REVIEW_PENDING_STATES = new Set(['resolved_pending_review', 're_review', 'applying', 'reconciling'])
+function isReviewPending(p: Pick<Pending, 'review_state'>): boolean {
+  return !!p.review_state && REVIEW_PENDING_STATES.has(p.review_state)
+}
+function reviewBadgeKeyOf(p: Pick<Pending, 'review_state'>): string {
+  const rs = p.review_state
+  if (rs === 'reconciling') return 'reconciling'
+  if (rs === 're_review') return 're_review'
+  if (rs === 'applying') return 'applying'
+  return 'pending'
+}
+const reviewDialogTarget = ref<{ group_id: string; merge_id: number } | null>(null)
 
 // Per-group commit-subject draft (B0001 F1). Lazily hydrated from the group's
 // finalize state (state.commit_message) the first time its row shows merge/push;
@@ -1505,7 +1558,7 @@ async function openResolve(groupId: string) {
   }
 }
 
-async function submitResolveInline(p: ConflictTarget | null) {
+async function submitResolveInline(p: ConflictTarget | null, auto: boolean) {
   if (!p || p.merge_id == null || busy.value || !inlineResolved.value) return
   busy.value = true
   conflictError.value = ''
@@ -1515,6 +1568,9 @@ async function submitResolveInline(p: ConflictTarget | null) {
       {
         files: conflictFiles.value.map((f) => ({ path: f.path, content: currentFileContent(f) })),
         complete: true,
+        // 0481 D0006 §3.2 / L0007 §2.2 — no-op for a TR session (record_auto_authority
+        // silently ignores it there); stamps auto_authority for a general merge.
+        auto,
       },
     )
     if (data.ok === false) {
@@ -1524,9 +1580,12 @@ async function submitResolveInline(p: ConflictTarget | null) {
       showToast(t(key, { commit: data.result.merge_commit || '' }), 'success')
       collapseResolve()
     } else if (data.result?.status === 'resolved_pending_review') {
-      // 0332 TR0019 — TR 충돌은 여기서 끝나지 않는다. 표식이 사라졌다는 것과 이 되돌림이
-      // 옳다는 것은 다른 주장이라, 커밋은 사람이 눌러야 한다.
-      showToast(t('main.git_status.tr_commits.conflict_resolved_toast'), 'success')
+      // 0332 TR0019 — a TR conflict does not end here either way: the markers being
+      // gone and the revert being correct are different claims, so a person still
+      // presses the commit button. A general merge instead now stops at the human
+      // approval gate (0481 T0008) — either way this submission's own job is done.
+      const isTr = !!status.value?.slots.some((slot) => trConflictOf(slot)?.merge_id === p.merge_id)
+      showToast(t(isTr ? 'main.git_status.tr_commits.conflict_resolved_toast' : 'main.git_review.resolved_pending_toast'), 'success')
       collapseResolve()
     }
   } catch (e: any) {
@@ -1560,7 +1619,7 @@ async function copyToClipboard(text: string) {
 
 // 0332 + main: `p` is a ConflictTarget so the slot row's parked TR conflict can call this
 // too, and `message` stays optional because that row's dialog sends no free text.
-async function invokeConflictAi(p: ConflictTarget | null, message?: string) {
+async function invokeConflictAi(p: ConflictTarget | null, message?: string, auto?: boolean) {
   if (!p || p.merge_id == null || busy.value) return
   busy.value = true
   try {
@@ -1572,6 +1631,9 @@ async function invokeConflictAi(p: ConflictTarget | null, message?: string) {
       action_scope: 'resolve_conflict',
       mode: 'single',
       merge_id: p.merge_id,
+      // 0481 D0006 §3.2 / L0007 §2.2 — stamped at THIS human-authenticated [AI 호출]
+      // moment (record_auto_authority); a no-op for a TR conflict session.
+      auto: !!auto,
     }
     if (aiProviderStore.selectedProviderId) body.provider_id = aiProviderStore.selectedProviderId
     if (message) body.messages = [message]

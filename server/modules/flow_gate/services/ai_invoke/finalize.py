@@ -967,6 +967,14 @@ def _persist_run_record(run: dict) -> None:
             "tool_calls_received": run.get("tool_calls_received"),
             "tool_calls_executed": run.get("tool_calls_executed"),
             "api_turn_trace": list(run.get("api_turn_trace") or []),
+            # -- flowgate.default.0481 T0008 item 1 (migration 105) ---------
+            # The anchored write-plan engine's bound contract (L0007 §2.5-§2.6,
+            # Q&A on 0009-TR): read with .get() like every field above it, so a
+            # run that was never a review-message write turn stores NULL on
+            # all three, not False/{}.
+            "write_requested_by_human": run.get("write_requested_by_human"),
+            "allow_test_edits": run.get("allow_test_edits"),
+            "write_plan": run.get("write_plan"),
             "created_at": stamp,
             "updated_at": stamp,
         })
@@ -1192,6 +1200,12 @@ def finished_payload(run: dict) -> dict:
         "tool_calls_received": run.get("tool_calls_received"),
         "tool_calls_executed": run.get("tool_calls_executed"),
         "api_turn_trace": list(run.get("api_turn_trace") or []),
+        # -- flowgate.default.0481 T0008 item 1: same names as the durable row
+        # above and `_run_detail_from_row` below, so a live finish and a
+        # restart-restored one answer `GET /ai-invoke/{run_id}` identically.
+        "write_requested_by_human": run.get("write_requested_by_human"),
+        "allow_test_edits": run.get("allow_test_edits"),
+        "write_plan": run.get("write_plan"),
         "source_dirty": run["source_dirty"],
         # 0446 T0016 §3-4: the live half of the restart pair. `source_dirty_files` keeps its
         # existing conditional place at the bottom of this function.

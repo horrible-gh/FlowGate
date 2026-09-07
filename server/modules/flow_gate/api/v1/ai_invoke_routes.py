@@ -136,6 +136,11 @@ class AiInvokeStartRequest(BaseModel):
     design_first_label: Optional[str] = None       # design_handoff single-mode type label
     work_plan_scope: Optional[dict] = None
     document_review_loop: Optional[DocumentReviewLoopRequest] = None
+    # 0481 D0006 §3.2 / L0007 §2.2: the [자동] checkbox on the resolver dialog's action
+    # bar, sent ONLY with action_scope=resolve_conflict. record_auto_authority stamps
+    # this value onto the session BEFORE the run starts — the run's own eventual
+    # /resolve or /resolve-token submission never carries or can change it.
+    auto: Optional[bool] = None
 
 
 # Wire scope → token scope. The extra invoke scopes reuse the edit/new token
@@ -810,6 +815,16 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 "message": "A base-dirty AI run is already active for this project.",
                 "run_id": existing.get("run_id"),
             })
+
+    if body.action_scope == "resolve_conflict" and body.merge_id is not None:
+        # 0481 D0006 §3.2 / L0007 §2.2: this [AI 호출] press is one of the exactly two
+        # human-authenticated moments record_auto_authority may be called from — stamp
+        # the session's auto_authority BEFORE the run starts, so the run's own eventual
+        # resolve submission has nothing left to decide about it.
+        try:
+            git_service.record_auto_authority(group_id, int(body.merge_id), bool(body.auto))
+        except git_service.GitServiceError as exc:
+            return JSONResponse(status_code=exc.status, content={"code": exc.code, "message": exc.message})
 
     try:
         result = ai_invoke_service.start_run(

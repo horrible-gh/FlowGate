@@ -54,17 +54,29 @@ FILE_LINE_CAPS: dict[str, int] = {
     # Step 5.71) plus its ko notice/comment text — product copy and design-rationale
     # comments, not the kind of stray Korean this census exists to catch.
     "modules/flow_gate/api/inbox_routes.py": 45,
-    # 0 -> 5: flowgate.default.0482 T0011 added the resolve_base_dirty worker mention's
-    # decision contract (_RESOLVE_BASE_DIRTY_CONTRACT) — product copy sent to the AI
-    # worker, collapsed to one ko source line plus the four pre-existing design-rationale
-    # comments (0443 T0002, 0414 P0007) already in this file.
-    "modules/flow_gate/api/v1/ai_invoke_routes.py": 5,
+    # 5 -> 7: flowgate.default.0481 T0008 added the merge review gate's [자동]
+    # checkbox wiring (record_auto_authority called from the [AI 호출] start path) —
+    # two design-rationale comment lines quoting the D0006/L0007 Korean button labels,
+    # on top of the five already measured here.
+    "modules/flow_gate/api/v1/ai_invoke_routes.py": 7,
     # 15 -> 13: flowgate.default.0484 T0005 removed the PATCH /content submission
     # gate's Korean fallback and section-name docstring. The measured remainder is legacy
     # product copy and design rationale unrelated to the inbox-only submission check.
     "modules/flow_gate/documents/routers/documents.py": 13,
     "modules/flow_gate/documents/routers/work_plan.py": 5,
     "modules/flow_gate/process_service.py": 2,
+    # New (0 -> 21): flowgate.default.0481 T0008 item 1 (0009-TR rev2) added
+    # `_build_write_plan_section` — the merge review's explicit [수정 적용] turn has
+    # no write tool at all, so this mention section is the ONLY place the AI worker
+    # learns the anchored write-plan schema and the bound submission endpoint. All 21
+    # lines are that instructional Korean text (product copy the worker reads), not a
+    # design-rationale comment. This file had no measured Korean before 0481.
+    "modules/flow_gate/api/token_routes.py": 21,
+    # 4 -> 6: flowgate.default.0481 T0008 item 1 (the anchored write-plan engine's
+    # apply route, 0009-TR rev2) added the [수정 적용]/[테스트 편집 포함 재지시]
+    # button labels to two design-rationale docstring/comment lines, on top of the
+    # four already measured here (the earlier general-merge review gate windows).
+    "modules/flow_gate/api/v1/git_routes.py": 6,
     # flowgate.default.0501 T6 (NR0003 §12) moved the engine into the ai_invoke/
     # package; T0019 then merged main into it. Every cap below is the freshly MEASURED
     # count, and the arithmetic is what says no Hangul line was written by either step:
@@ -85,7 +97,16 @@ FILE_LINE_CAPS: dict[str, int] = {
     # 0414 P0007 comment it inherited from part3_chain.py — that omission is why this
     # census listed diagnostics.py as an offender before the merge. chain.py drops
     # 16 -> 15 to its measured count, so no cap here is a ceiling above what is there.
-    "modules/flow_gate/services/ai_invoke/admission.py": 14,
+    #
+    # 14 -> 19: re-measured for flowgate.default.0481 T0008 item 1 (0009-TR rev2).
+    # This file's true count was ALREADY 17 (not 14) before this change — drift from
+    # other groups' work landing after the T6 merge's cap was last measured, same
+    # untracked-by-this-census pattern the tr_commit_ledger.py/mention_service.py
+    # entries describe elsewhere in this dict. 0481's own addition is exactly 2 lines
+    # (start_run's write_requested_by_human/allow_test_edits parameter doc, quoting the
+    # [수정 적용]/[반려]/[테스트 편집 포함 재지시] button labels it threads through to
+    # the merge review's write-plan engine) — 17 + 2 = 19.
+    "modules/flow_gate/services/ai_invoke/admission.py": 19,
     "modules/flow_gate/services/ai_invoke/chain.py": 15,
     "modules/flow_gate/services/ai_invoke/diagnostics.py": 1,
     "modules/flow_gate/services/ai_invoke/review.py": 15,
@@ -93,15 +114,47 @@ FILE_LINE_CAPS: dict[str, int] = {
     "modules/flow_gate/services/ai_invoke/worker.py": 2,
     "modules/flow_gate/services/conversation_turn_service.py": 10,
     "modules/flow_gate/services/document_outline_service.py": 1,
+    # New (0 -> 21): this census never listed git_service.py before — flowgate.default.0481
+    # T0008's general-merge human approval gate (freeze/approve/reject/reconcile) is the
+    # first change to this file this census tracks. All 21 are design-rationale comments
+    # quoting the D0006/L0007 Korean button labels ([AI 호출]/[해결 제출]/[승인]/[반려]/
+    # [병합]/[다시 시도]) and section names ("그룹 관측 상태", "TR 세션에는 적용되지 않는다")
+    # the code implements — not product copy, and not new Korean this file lacked before;
+    # the file already carried plenty (this census simply never measured it until now).
+    #
+    # 21 -> 27: flowgate.default.0481 T0008 item 1 (0009-TR rev2) added the anchored
+    # write-plan engine (apply_write_plan / submit_review_write_plan /
+    # _validate_write_plan_structure / _materialize_pending_conversation_run's apply
+    # branch) — 6 more design-rationale comments and AI-turn message strings quoting
+    # the same [수정 적용]/[테스트 편집 포함 재지시] button labels and reporting the
+    # apply outcome in Korean (the conversation panel's own language).
+    #
+    # 27 -> 33: flowgate.default.0481 0009-TR rev3 (AI review finding 2) made
+    # held_test_operations OBSERVABLE instead of silently dropped after
+    # validation: apply_write_plan's held-only/mixed branches and
+    # _materialize_pending_conversation_run's held-operation summary added 6
+    # more Korean AI-turn message strings/comments quoting held paths, purposes,
+    # and the same [테스트 편집 포함 재지시] label.
+    #
+    # 33 -> 34 -> 33: flowgate.default.0481 0009-TR rev4 (AI review finding) added
+    # the L0007 §2.9 stale_run guard — 1 new Korean AI-turn message string reporting
+    # a discarded (stale) re-instruction run result to the human in the same
+    # conversation panel language as the other apply-outcome messages already
+    # counted above. rev5 then took one line back OUT: the write-plan structure
+    # check's 422 payload quoted the [테스트 편집 포함 재지시] button label inside a
+    # `raise`, which test_server_korean_leak_0355 forbids (an error payload is not
+    # panel copy), so that message is English again. Freshly re-measured, not
+    # inherited.
+    "modules/flow_gate/services/git_service.py": 33,
     # 70 -> 73: flowgate.default.0523 T0004 added the document_attachments help item
     # (title/summary/note, ko locale) that bridges attachment list/read/copy to the
     # worker-token document surface.
     "modules/flow_gate/services/help_catalog.py": 73,
     "modules/flow_gate/services/invoke_mention_service.py": 4,
     # 157 -> 176: this file was already at 175 (pre-existing drift from other merged
-    # groups untouched by 0523, same as the git_service.py/tr_commit_ledger.py/
-    # git_routes.py entries this census still doesn't list — those stay at their old
-    # caps because 0523 never edits them). flowgate.default.0523 T0004 §18 then added
+    # groups untouched by 0523, same as the tr_commit_ledger.py entry this census still
+    # doesn't list — it stays at its old cap because 0523 never edits it).
+    # flowgate.default.0523 T0004 §18 then added
     # exactly one new ko line — the mention's document_attachments help-item pointer —
     # bringing the measured count to 176.
     "modules/flow_gate/services/mention_service.py": 176,
@@ -113,7 +166,7 @@ FILE_LINE_CAPS: dict[str, int] = {
     "modules/flow_gate/services/test_run_service.py": 28,
     # 45 -> 97. Measured, split into its two causes: 55 lines were already there before
     # 0523 touched this file (drift merged in by other groups, the same untracked-by-this-
-    # census drift the git_service.py/tr_commit_ledger.py entries carry), and 0523 T0004
+    # census drift the tr_commit_ledger.py entry carries), and 0523 T0004
     # §17 adds 42 more -- the ko half of ATTACHMENT_SUMMARY / ATTACHMENT_VIEW_NOTES /
     # ATTACHMENT_FIELDS / ATTACHMENT_ERRORS / ATTACHMENT_CAUTIONS, the locale dictionary
     # GET /help/tools serves to a ko worker. That is (A) locale-dictionary Korean, which

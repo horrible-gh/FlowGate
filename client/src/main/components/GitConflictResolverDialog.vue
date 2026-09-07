@@ -191,13 +191,21 @@
               hide-label
               @update:model-value="(v) => emit('update:provider', v)"
             />
-            <button class="btn btn-secondary" :disabled="busy" @click="emit('ai-invoke', conflictMessage.trim())">
+            <!-- 0481 D0006 §6.2 v13 화면 1: [자동] 은 호출 시점에만 정하는 옵션이라
+                 공급자 셀렉트 바로 옆에 둔다. 이 세션의 해결 실행을 새로 시작하는
+                 [AI 호출]/[해결 제출] 요청에만 실려 나가고, 그 뒤 회신(재지시 대화,
+                 승인 대기 화면)에는 아예 존재하지 않는 필드다. -->
+            <label class="git-conflict-auto-toggle" :class="{ disabled: busy }">
+              <input type="checkbox" v-model="autoResolve" :disabled="busy" />
+              <span>{{ t('main.git_finalize.auto_resolve_label') }}</span>
+            </label>
+            <button class="btn btn-secondary" :disabled="busy" @click="emit('ai-invoke', conflictMessage.trim(), autoResolve)">
               <AppIcon name="robot" /> {{ t('main.git_finalize.invoke_conflict_ai') }}
             </button>
             <button class="btn btn-secondary" :disabled="busy" @click="emit('abort')">
               <AppIcon name="prohibit" /> {{ t('main.git_finalize.abort') }}
             </button>
-            <button class="btn btn-primary" :disabled="busy || !allConflictsResolved" @click="emit('submit')">
+            <button class="btn btn-primary" :disabled="busy || !allConflictsResolved" @click="emit('submit', autoResolve)">
               <AppIcon name="check" /> {{ t('main.git_finalize.resolve_submit') }}
             </button>
           </div>
@@ -248,7 +256,15 @@ const props = defineProps<{
   providerLoading?: boolean
   providerErrored?: boolean
 }>()
-const emit = defineEmits<{ close: []; abort: []; submit: []; retry: []; 'ai-invoke': [message: string]; 'copy-mention': []; 'update:provider': [value: string] }>()
+const emit = defineEmits<{
+  close: []
+  abort: []
+  submit: [auto: boolean]
+  retry: []
+  'ai-invoke': [message: string, auto: boolean]
+  'copy-mention': []
+  'update:provider': [value: string]
+}>()
 
 const { t } = useI18n()
 const { switchToDirectEdit, switchToChunkView } = useConflictChunks()
@@ -258,6 +274,10 @@ const currentChunkSegment = ref(-1)
 const collapsedCommon = ref<Record<string, boolean>>({})
 const codeFontRem = ref(0.86)
 const conflictMessage = ref('')
+// 0481 D0006 §3.2 / L0007 §2.2: [자동] is a per-session UI toggle owned by this
+// dialog — it is only ever read at the moment [AI 호출]/[해결 제출] is pressed,
+// never persisted here and never sent with anything else this dialog emits.
+const autoResolve = ref(false)
 const COMMON_COLLAPSE_LINES = 12
 
 const selectedConflictFile = computed(() => props.files[selectedConflictIndex.value] || null)
@@ -467,6 +487,7 @@ watch(
   (files) => {
     selectedConflictIndex.value = 0
     resetCommonCollapse()
+    autoResolve.value = false
     const firstFile = files[0]
     currentChunkSegment.value = firstFile ? (chunkIndexes(firstFile)[0] ?? -1) : -1
   },
@@ -824,6 +845,23 @@ watch(
 .git-conflict-provider {
   flex: 0 1 210px;
   max-width: 210px;
+}
+.git-conflict-auto-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+  color: var(--text-m, #475569);
+  font-size: 0.76rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.git-conflict-auto-toggle.disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.git-conflict-auto-toggle input {
+  cursor: inherit;
 }
 .git-ai-assist-strip {
   flex: 0 0 auto;

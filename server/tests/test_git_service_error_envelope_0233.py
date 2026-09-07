@@ -131,6 +131,9 @@ def _ai_client(monkeypatch, *, list_conflicts, captured_mentions: list[str] | No
     )
     monkeypatch.setattr(ai_invoke_routes.db_projects, "get_by_id", lambda pid: {"project_id": pid})
     monkeypatch.setattr(token_routes.git_service, "list_conflicts", list_conflicts)
+    # 0481 D0006 §3.2 / L0007 §2.2: record_auto_authority is a new DB touch-point this
+    # minimal, DB-free app does not provision — stubbed like every other edge here.
+    monkeypatch.setattr(ai_invoke_routes.git_service, "record_auto_authority", lambda *a, **k: None)
 
     # Faithfully reproduce the resolve_conflict path: start_run invokes the injected
     # mention_builder, whose conflict branch calls list_conflicts. A GitServiceError

@@ -157,6 +157,23 @@
         <p class="git-fin-meta"><AppIcon name="spinner" spin /> {{ t('main.git_finalize.merging_msg') }}</p>
       </template>
 
+      <template v-else-if="state.status === 'conflict' && reviewPending">
+        <!-- 0481 D0006 §6.4: same slot the resolver otherwise occupies — a
+             resolved general merge stopped at the human approval gate instead
+             of committing, and the badge/button here is how a person notices. -->
+        <p class="git-fin-conflict-msg">
+          <AppIcon name="clock" />
+          {{ t(`main.git_review.badge.${reviewBadgeKey}`) }}
+        </p>
+        <div class="flex" style="justify-content:flex-end; gap:10px; margin-top:10px;">
+          <button class="btn btn-secondary" :disabled="busy" @click="abortMerge">
+            <AppIcon name="prohibit" /> {{ t('main.git_finalize.abort') }}
+          </button>
+          <button class="btn btn-primary" :disabled="busy" @click="reviewDialogOpen = true">
+            <AppIcon name="eye" /> {{ t('main.git_review.open_review') }}
+          </button>
+        </div>
+      </template>
       <template v-else-if="state.status === 'conflict'">
         <p class="git-fin-conflict-msg">
           <AppIcon name="warning" />
@@ -182,6 +199,21 @@
 
     </div>
   </div>
+
+  <GitMergeReviewDialog
+    v-if="reviewDialogOpen && state?.merge_id != null"
+    :group-id="props.groupId"
+    :merge-id="state.merge_id"
+    :branch="state?.branch || null"
+    :base-branch="state?.base_branch || null"
+    :providers="aiProviderStore.providers"
+    :selected-provider="aiProviderStore.selectedProviderId"
+    :provider-loading="aiProviderStore.loading"
+    :provider-errored="!!aiProviderStore.error"
+    @close="reviewDialogOpen = false"
+    @resolved="fetchState"
+    @update:provider="aiProviderStore.selectProvider"
+  />
 
   <!-- 0382 B0001 / review: temporary artifacts the finalize commit didn't absorb.
        This card stays even if the worktree disappears on status re-fetch, so an
@@ -256,6 +288,7 @@ import {
   type ConflictFileState,
 } from '../composables/useConflictChunks'
 import GitConflictResolverDialog from './GitConflictResolverDialog.vue'
+import GitMergeReviewDialog from './GitMergeReviewDialog.vue'
 import GitBaseDirtyDialog from './GitBaseDirtyDialog.vue'
 import GitUntrackedConflictDialog from './GitUntrackedConflictDialog.vue'
 import GitFinalizeAxis from './GitFinalizeAxis.vue'
@@ -304,6 +337,11 @@ interface GitFinState {
   behind_count: number | null
   merge_id: number | null
   merge_commit?: string | null
+  // 0481 D0006 §6.4 / L0007 §2.11 — null/absent means the conflict is still being
+  // resolved (the resolver dialog); any REVIEW_PENDING_STATES value means the
+  // human approval gate is waiting instead (the review dialog).
+  review_state?: string | null
+  reconciliation_kind?: string | null
   commit_message?: GitCommitMessage | null
 }
 
@@ -322,6 +360,7 @@ const mergeCommit = ref<string | null>(null)
 const conflictFiles = ref<ConflictFileState[]>([])
 const conflictError = ref('')
 const conflictDialogOpen = ref(false)
+const reviewDialogOpen = ref(false)
 const conflictLoadStatus = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
 const auxOpen = ref(false)
 const archiveSelected = ref(false)
@@ -376,6 +415,19 @@ const runDisabled = computed(
 function restoreSuggested() {
   commitMessage.value = commitSuggested.value
 }
+// 0481 D0006 §6.4 — same states approve_merge_review/reconcile_push_session use.
+const REVIEW_PENDING_STATES = new Set(['resolved_pending_review', 're_review', 'applying', 'reconciling'])
+const reviewPending = computed(() => {
+  const rs = state.value?.review_state
+  return !!rs && REVIEW_PENDING_STATES.has(rs)
+})
+const reviewBadgeKey = computed(() => {
+  const rs = state.value?.review_state
+  if (rs === 'reconciling') return 'reconciling'
+  if (rs === 're_review') return 're_review'
+  if (rs === 'applying') return 'applying'
+  return 'pending'
+})
 const resolvedFileCount = computed(() => conflictFiles.value.filter(isFileResolved).length)
 const allConflictsResolved = computed(
   () => conflictFiles.value.length > 0 && conflictFiles.value.every(isFileResolved),
@@ -487,7 +539,7 @@ async function copyToClipboard(text: string) {
   document.body.removeChild(ta)
 }
 
-async function invokeConflictAi(message: string) {
+async function invokeConflictAi(message: string, auto: boolean) {
   const mergeId = state.value?.merge_id
   if (!props.groupId || mergeId == null || busy.value) return
   busy.value = true
@@ -500,6 +552,10 @@ async function invokeConflictAi(message: string) {
       action_scope: 'resolve_conflict',
       mode: 'single',
       merge_id: mergeId,
+      // 0481 D0006 §3.2 / L0007 §2.2: [자동] is stamped onto the session at THIS
+      // human-authenticated moment (record_auto_authority), never at resolution
+      // submission time.
+      auto,
     }
     if (aiProviderStore.selectedProviderId) body.provider_id = aiProviderStore.selectedProviderId
     if (message) body.messages = [message]
@@ -637,7 +693,7 @@ async function handleFinalizeConflict(err: any): Promise<boolean> {
   return (await handleBaseDirty(err)) || (await handleUntrackedConflict(err))
 }
 
-async function submitResolve() {
+async function submitResolve(auto: boolean) {
   const mergeId = state.value?.merge_id
   if (!props.groupId || mergeId == null || !allConflictsResolved.value) return
   busy.value = true
@@ -648,6 +704,9 @@ async function submitResolve() {
       {
         files: conflictFiles.value.map((f) => ({ path: f.path, content: currentFileContent(f) })),
         complete: true,
+        // 0481 D0006 §3.2 / L0007 §2.2 — a human's own direct [해결 제출] (no AI
+        // call) also stamps auto_authority, at this same request.
+        auto,
       },
     )
     if (data.ok === false) {
@@ -657,6 +716,12 @@ async function submitResolve() {
       conflictDialogOpen.value = false
       const key = data.result?.pushed === false ? 'main.git_finalize.merged_local_toast' : 'main.git_finalize.merged_toast'
       showToast(t(key, { commit: data.result.merge_commit || '' }), 'success')
+    } else if (data.result?.status === 'resolved_pending_review') {
+      // 0481 T0008 — a resolved general merge stops at the human approval gate
+      // instead of committing itself; the badge/button appears once fetchState()
+      // (below) re-reads review_state.
+      conflictDialogOpen.value = false
+      showToast(t('main.git_review.resolved_pending_toast'), 'success')
     } else if (data.result?.status === 'conflict') {
       conflictError.value = data.result?.remaining_conflicts || t('main.git_finalize.failed')
     }

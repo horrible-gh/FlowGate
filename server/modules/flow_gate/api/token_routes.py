@@ -488,6 +488,13 @@ def _build_mention_for_token(
     # from a background thread. The only thing `request` was ever used for here is the API
     # base, so callers that already know it hand it over directly and pass no Request.
     api_base_url: Optional[str] = None,
+    # flowgate.default.0481 T0008 item 1 / L0007 §2.5-§2.9: only meaningful with
+    # action_scope="resolve_conflict" — whether this run is the merge review's
+    # explicit [수정 적용] write turn, which gets an EXTRA mention section (the
+    # bound write-plan submission endpoint) that an ordinary resolve/[반려]/
+    # propose-only run does not.
+    write_requested_by_human: bool = False,
+    allow_test_edits: bool = False,
 ) -> Optional[str]:
     """R015 token issuance flow — R018 improved mention generation.
 
@@ -506,6 +513,8 @@ def _build_mention_for_token(
             scratch_dir=scratch_dir,
             raw_token=raw_token,
             api_base_url=resolved_api_base,
+            write_requested_by_human=write_requested_by_human,
+            allow_test_edits=allow_test_edits,
         )
 
     if not doc_ref or not group_id:
@@ -676,6 +685,82 @@ def _conflict_task_section(kind: str, tr: dict) -> str:
     )
 
 
+def _build_write_plan_section(
+    *, group_id: str, merge_id: int, raw_token: str, api_base_url: str, allow_test_edits: bool,
+) -> str:
+    """flowgate.default.0481 T0008 item 1 / L0007 §2.5-§2.9, Q&A on 0009-TR: the
+    ONLY way this run's write turn can change the source tree. There is no write
+    tool in this run's read-only toolset (SCOPE_BOUND_TOOLS demotes
+    action_scope=resolve_conflict to "read") — the anchored plan below, submitted
+    to the bound endpoint, is the sole channel, and the server validates and
+    applies it in isolation (git_service's L0007 §2.6 apply engine), never trusting the
+    plan's own claims about the source tree."""
+    from modules.flow_gate.db import git_integration as db_git
+
+    session = db_git.get_session(merge_id)
+    context = db_git.session_context(session) if session is not None else {}
+    base_fingerprint = context.get("review_fingerprint") or "<unknown — the review screen was not in a pending state>"
+    write_plan_url = f"{api_base_url}/groups/{group_id}/git/merge/{merge_id}/write-plan-token"
+    test_edit_note = (
+        "테스트 경로 편집이 이번 재지시에서 허용되었습니다 (allow_test_edits=true) — "
+        "제품 코드와 같은 절차로 operations[]에 넣어도 됩니다."
+        if allow_test_edits else
+        "테스트 경로(server/tests/**, client/tests/**, 경로 세그먼트 test/tests)의 변경은 "
+        "operations[]에 넣지 마십시오 — 이유와 함께 held_test_operations[]에만 넣고, "
+        "적용되지 않은 채 사람에게 표시됩니다."
+    )
+    example = {
+        "schema_version": "flowgate.write-plan.v1",
+        "base_fingerprint": base_fingerprint,
+        "operations": [
+            {
+                "operation_id": "op1",
+                "kind": "edit",
+                "path": "server/modules/example.py",
+                "expected_before_blob": "<git blob oid of the file BEFORE this edit>",
+                "anchor": {"body_base64": "<exact non-empty preimage bytes, base64>", "expected_count": 1},
+                "replacement_bytes_base64": "<replacement bytes, base64>",
+                "purpose": "<non-empty reason>",
+            },
+            {
+                "operation_id": "op2",
+                "kind": "create_file",
+                "path": "server/modules/new_file.py",
+                "absent": True,
+                "content_bytes_base64": "<complete bytes, base64>",
+                "mode": "100644",
+                "purpose": "<non-empty reason>",
+            },
+        ],
+        "held_test_operations": [],
+    }
+    return (
+        "## Write plan submission\n"
+        "---\n"
+        "이 재지시는 [수정 적용]으로 시작되었습니다 — 질문/설명이 아니라 실제 소스 변경을 요구합니다. "
+        "직접 파일을 쓰는 도구는 이 실행에 없습니다: 아래 anchored write plan을 만들어 이 창구로 "
+        "제출하는 것이 유일한 반영 경로이며, 서버가 격리된 곳에서 검증한 뒤 원자적으로 반영하거나 "
+        "실패 시 그대로 롤백합니다.\n\n"
+        f"POST {write_plan_url}\n"
+        f"Authorization: Bearer {raw_token}\n"
+        "Content-Type: application/json\n\n"
+        "```json\n"
+        f"{json.dumps(example, ensure_ascii=False, indent=2)}\n"
+        "```\n\n"
+        "- `base_fingerprint`은 위 세션이 보여준 `review_fingerprint`와 정확히 같아야 합니다 (달라졌으면 "
+        "제출 전에 read/grep/glob/stat/diff/log/show 도구로 현재 상태를 다시 확인하십시오).\n"
+        "- `edit`의 `anchor.body_base64`는 치환 대상 자체의 정확한 바이트이며, 적용 전 파일에서 겹치지 "
+        "않는 일치 수가 `expected_count`와 정확히 같아야 합니다.\n"
+        "- `create_file`은 세션이 보여준 스냅샷에 없는 경로에만 허용됩니다 — 기존 파일을 덮어쓰는 "
+        "fallback이 아닙니다.\n"
+        "- 모든 바이트 필드는 base64입니다. 경로는 프로젝트 소스 루트 상대 경로이며 절대 경로, `..`, "
+        "`.git` 내부 경로는 거절됩니다.\n"
+        f"- {test_edit_note}\n"
+        "- 이 창구는 이 group_id와 merge_id에 바인딩된 토큰만 받습니다. 다른 git/config/finalize "
+        "엔드포인트는 이 토큰으로 접근할 수 없습니다.\n\n"
+    )
+
+
 def _build_conflict_mention(
     *,
     group_id: str,
@@ -684,6 +769,8 @@ def _build_conflict_mention(
     scratch_dir: str,
     raw_token: str,
     api_base_url: str,
+    write_requested_by_human: bool = False,
+    allow_test_edits: bool = False,
 ) -> Optional[str]:
     conflicts = git_service.list_conflicts(group_id, merge_id)
     files = conflicts.get("files") or []
@@ -708,6 +795,13 @@ def _build_conflict_mention(
         "tr_conflict": conflicts.get("tr_conflict") or None,
         "files": chunks_payload,
     }
+    write_plan_section = (
+        _build_write_plan_section(
+            group_id=group_id, merge_id=merge_id, raw_token=raw_token,
+            api_base_url=api_base_url, allow_test_edits=allow_test_edits,
+        )
+        if write_requested_by_human else ""
+    )
     return (
         "## Document information\n"
         "---\n"
@@ -728,7 +822,8 @@ def _build_conflict_mention(
         "  \"complete\": true\n"
         "}\n\n"
         "The bearer token is bound to exactly this group_id and merge_id. Other git/config/finalize endpoints are not authorized.\n\n"
-        "## Conflict session\n"
+        + write_plan_section
+        + "## Conflict session\n"
         "---\n"
         "```json\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}\n"
