@@ -11,7 +11,7 @@ import re as _re
 from typing import Any, Optional
 
 from fastapi import APIRouter, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from modules.flow_gate.db import conversation_turns as conversation_turn_store
@@ -19,6 +19,7 @@ from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import document_reviews as db_reviews
 from modules.flow_gate.storage.paths import resolve_storage_path
 from modules.flow_gate.services.auth_outbound import verify_bearer
+from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services.q_service import get_answers_for_document
 from modules.flow_gate.services import conversation_markdown_service
 from modules.flow_gate.services import document_outline_service as outline_svc
@@ -109,6 +110,24 @@ def _file_content(doc: dict) -> Optional[str]:
     if resolved is None:
         return None
     return resolved.read_text(encoding="utf-8")
+
+
+def _download_available(doc: dict) -> bool:
+    """Return whether the row has a currently readable durable Markdown artifact."""
+    file_path = doc.get("file_path")
+    if not file_path:
+        return False
+    try:
+        resolved = resolve_storage_path(file_path, doc.get("project_id"), branch=doc.get("branch", "main") or "main")
+        return resolved is not None and resolved.is_file()
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def _document_filename(doc_id: str) -> str:
+    if _re.search(r"(?:^|[.-])(\d{4})-([A-Z]+)$", doc_id) is None:
+        raise ValueError(f"doc_id format is invalid: {doc_id!r}")
+    return f"{doc_id}.md"
 
 
 def _uses_live_conversation_content(doc: dict) -> bool:
@@ -458,6 +477,7 @@ def get_document_by_path(
         "module": document.get("module"),
         "stored_path": file_path,
         "content": content,
+        "download_available": _download_available(document),
         "doc_review_status": document.get("doc_review_status"),
         "rejection_reason": document.get("rejection_reason"),
         "rejection_history": _parse_rejection_history(document.get("rejection_history")),
@@ -1011,6 +1031,43 @@ def get_document_relations(
     return JSONResponse(content=resp)
 
 
+@router.get("/document/{doc_id}/download")
+def download_document(request: Request, doc_id: str):
+    """Download the current canonical Markdown using document-read authorization."""
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    try:
+        _validate_outbound_doc_id(doc_id)
+        filename = _document_filename(doc_id)
+    except ValueError as exc:
+        return _fail(422, str(exc))
+    doc = db_docs.get_by_id(doc_id)
+    if doc is None:
+        return _fail(404, f"Document {doc_id} does not exist")
+    if auth.get("_is_user_jwt"):
+        user_id = auth.get("issued_to")
+        if not user_id or not has_permission(user_id, doc.get("project_id"), "perm_document_read"):
+            return _fail(403, "Insufficient permissions for this operation (perm_document_read required)")
+    else:
+        scope_err = _validate_document_scope(auth, doc, doc_id)
+        if scope_err is not None:
+            return scope_err
+    if not _download_available(doc):
+        return _fail(404, "This document has no readable Markdown artifact")
+    try:
+        content = _resolve_live_content(doc)
+    except (OSError, UnicodeError):
+        return _fail(500, "An error occurred while reading the document content")
+    if content is None:
+        return _fail(500, "An error occurred while reading the document content")
+    return Response(
+        content=content.encode("utf-8"),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/document/{doc_id}")
 def get_document(request: Request, doc_id: str):
     """Retrieve document content and metadata (D021 s.4-2)."""
@@ -1048,6 +1105,7 @@ def get_document(request: Request, doc_id: str):
         "branch": doc.get("branch", "main"),
         "stored_path": file_path,
         "content": content,
+        "download_available": _download_available(doc),
         "doc_review_status": doc.get("doc_review_status"),
         "rejection_reason": doc.get("rejection_reason"),
         "rejection_history": _parse_rejection_history(doc.get("rejection_history")),

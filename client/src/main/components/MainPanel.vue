@@ -332,6 +332,16 @@
                 <span v-else class="ro-badge ro-badge-sm">
                   <AppIcon name="lock-simple" /> {{ t('main.document_preview.edit_locked') }}
                 </span>
+                <button
+                  v-if="exposedValue(docHeaderRefs[tab.id]?.downloadAvailable)"
+                  class="btn btn-secondary btn-sm doc-markdown-download"
+                  type="button"
+                  :disabled="exposedValue(docHeaderRefs[tab.id]?.markdownDownloadBusy)"
+                  :title="t('main.doc_info_panel.markdown_download')"
+                  @click="docHeaderRefs[tab.id]?.downloadMarkdown?.()"
+                >
+                  <AppIcon name="download-simple" /> {{ t('main.doc_info_panel.markdown_download') }}
+                </button>
               </div>
             </div>
             <div class="card-bd">

@@ -2457,6 +2457,10 @@ def get_document(
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
     out = _parse_doc_workflow(doc)
+    try:
+        out["download_available"] = bool(doc.get("file_path")) and _document_file_path(doc).is_file()
+    except (HTTPException, OSError, ValueError):
+        out["download_available"] = False
     # AI review results (document_reviews child records), variant C: latest review plus full history.
     out["ai_review"], out["ai_review_history"] = _load_ai_reviews(doc_id)
     out["test_run"], out["test_run_history"] = _load_test_runs(doc_id)
