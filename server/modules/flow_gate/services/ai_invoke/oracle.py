@@ -88,6 +88,14 @@ def _probe_doc_reviews(doc_id: str) -> int:
     return len(db_reviews.list_by_doc(doc_id) or [])
 
 
+def _probe_failure_origin_reviews(doc_id: str) -> int:
+    """Count durable classifications; the captured baseline rejects stale values."""
+    return sum(
+        1 for run in (db_test_runs.list_by_doc(doc_id) or [])
+        if run.get("failure_origin") and run.get("failure_origin_reviewed_at")
+    )
+
+
 def _probe_test_runs(doc_id: str) -> int:
     """Test-run rows on the bound document (0268 B0001).
 
@@ -137,6 +145,7 @@ _SCOPE_PROBES: dict[str, Callable[[str], int]] = {
     "chat": _probe_conversation_head,
     "edit": _probe_doc_revision,
     "review": _probe_doc_reviews,
+    "failure_origin_review": _probe_failure_origin_reviews,
     "test_run": _probe_test_runs,
     "workflow_sequence_edit": _probe_sequence_max_item,
     "resolve_base_dirty": _probe_base_dirty,
@@ -179,6 +188,20 @@ def _scope_oracle(action_scope: str, token_id: Optional[str], doc_ref: str) -> O
     if probe is None:
         return None
     doc_id = _oracle_doc_id(token_id, doc_ref)
+    if action_scope == "failure_origin_review":
+        token = db_tokens.get_by_id(token_id) if token_id else None
+        target_run_id = (token or {}).get("failure_origin_target_run_id")
+        before_marker = (token or {}).get("failure_origin_before_marker")
+
+        def _failure_origin_oracle() -> bool:
+            run = db_test_runs.get_run(target_run_id) if target_run_id else None
+            marker = (run or {}).get("failure_origin_reviewed_at")
+            return bool(
+                run and run.get("doc_id") == doc_id and run.get("failure_origin")
+                and marker and marker != before_marker
+            )
+
+        return _failure_origin_oracle
     # Baseline BEFORE the worker starts, so the oracle only credits this run's work.
     baseline = _probe(probe, doc_id)
 

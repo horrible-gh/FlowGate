@@ -38,7 +38,10 @@ def test_inbox_action_allowlist_accepts_test_run(monkeypatch):
 def test_inbox_action_allowlist_still_rejects_unknown():
     resp = post_inbox({"action": "bogus"})
     assert resp.status_code == 400
-    assert resp.json()["error_message"] == "action must be new, edit, review, or test_run"
+    # 0503: the allowlist gained failure_origin_review, so the sentence it prints did too.
+    assert resp.json()["error_message"] == (
+        "action must be new, edit, review, test_run, or failure_origin_review"
+    )
 
 
 def _chain_token_rec(target_seq=7):

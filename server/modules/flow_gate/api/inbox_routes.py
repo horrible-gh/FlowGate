@@ -2183,13 +2183,17 @@ async def inbox(request: Request):
     # "test_run" was dispatched below but missing from this allowlist, so the inbox
     # rejected every action:test_run POST with 400 before reaching _handle_test_run
     # (group 0150 NR0003 §4 — the chain entrance was dead code).
-    if action not in ("new", "edit", "review", "test_run"):
-        return _fail(400, "action must be new, edit, review, or test_run")
+    if action not in ("new", "edit", "review", "test_run", "failure_origin_review"):
+        return _fail(400, "action must be new, edit, review, test_run, or failure_origin_review")
 
     if action == "new":
         return await anyio.to_thread.run_sync(_handle_new, request, raw, body)
     elif action == "review":
         return await anyio.to_thread.run_sync(_handle_review, request, raw, body)
+    elif action == "failure_origin_review":
+        return await anyio.to_thread.run_sync(
+            _handle_failure_origin_review, request, raw, body
+        )
     elif action == "test_run":
         return await anyio.to_thread.run_sync(_handle_test_run, request, raw, body)
     else:
@@ -2295,6 +2299,78 @@ def _permission_denied(message: str) -> JSONResponse:
     an axis — an RBAC refusal misfiled as a binding mismatch sends the next reader hunting
     for a token that was correct all along (L0010 §2.4)."""
     return _fail(403, message, error=register_binding.permission_denied_error(message))
+
+
+def _handle_failure_origin_review(
+    request: Request, raw_token: str, body: dict
+) -> JSONResponse:
+    """Persist only canonical run-level failure-origin evidence."""
+    from modules.flow_gate.db import test_runs as db_test_runs
+    from modules.flow_gate.services import failure_origin_review_service
+    from modules.flow_gate.services import test_run_service
+
+    project = str(body.get("project") or "")
+    doc_id = str(body.get("doc_id") or "")
+    run_id = str(body.get("run_id") or "")
+    classification = body.get("classification")
+    findings = body.get("findings", [])
+    comment = body.get("comment")
+    if not project or not doc_id or not run_id:
+        return _fail(422, "project, doc_id, and run_id are required")
+    if classification not in failure_origin_review_service.CLASSIFICATIONS:
+        return _fail(422, "classification must be one of: product_defect, test_defect, hold")
+    if not isinstance(findings, list):
+        return _fail(422, "findings must be a list")
+
+    try:
+        token_rec = token_service.verify(raw_token)
+    except HTTPException as exc:
+        return _fail(exc.status_code, exc.detail)
+    binding_failure = _check_context_binding(
+        action_handler="failure_origin_review", project=project, doc=doc_id,
+        token_rec=token_rec, target_doc_id=doc_id,
+    )
+    if binding_failure is not None:
+        return binding_failure
+    actor_user_id = token_rec["issued_to"]
+    if not has_permission(actor_user_id, project, "perm_document_update"):
+        return _permission_denied("Insufficient permissions for this operation")
+
+    doc = db_docs.get_by_id(doc_id)
+    run = db_test_runs.get_run(run_id)
+    if doc is None or run is None:
+        return _fail(422, "failure-origin target does not exist")
+    if (
+        doc.get("project_id") != project
+        or doc.get("group_id") != token_rec.get("group_id")
+        or run.get("doc_id") != doc_id
+        or run.get("status") != "failed"
+        or token_rec.get("failure_origin_target_run_id") != run_id
+        or token_rec.get("failure_origin_before_marker") != run.get("failure_origin_reviewed_at")
+    ):
+        return _fail(409, "failure_origin_target_mismatch")
+    if run.get("failure_origin") is not None:
+        return _fail(409, "failure_origin_already_classified")
+
+    reviewed_at = now_iso()
+    db_test_runs.store_failure_origin(
+        run_id=run_id, reviewer_id=actor_user_id, classification=classification,
+        findings_json=json.dumps(findings, ensure_ascii=False),
+        comment=comment if comment is None or isinstance(comment, str) else str(comment),
+        reviewed_at=reviewed_at,
+    )
+    saved = db_test_runs.get_run(run_id) or {}
+    if saved.get("failure_origin_reviewed_at") != reviewed_at:
+        return _fail(409, "failure_origin_write_conflict")
+    token_service.consume(
+        token_id=token_rec["token_id"], project_id=project, doc_id=doc_id
+    )
+    branch = test_run_service.resume_failure_origin_branch(doc, saved)
+    return JSONResponse(status_code=200, content={
+        "ok": True, "action": "failure_origin_review", "run_id": run_id,
+        "doc_id": doc_id, "classification": classification,
+        "failure_origin_reviewed_at": reviewed_at, "continuation": branch,
+    })
 
 
 def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSONResponse:

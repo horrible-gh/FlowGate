@@ -1,6 +1,7 @@
 """Remote TS test execution service."""
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -50,6 +51,7 @@ MAX_SETUP_STEPS = 20
 MAX_TEARDOWN_STEPS = 20
 MAX_SERVICES = 5
 TSR_CASE_EXCERPT_CHARS = 1000
+MAX_CODE_REWORK_CYCLES = 3
 
 _admission_lock = threading.Lock()
 
@@ -180,6 +182,73 @@ _FIELD_ALIASES = {
 }
 _DISPLAY_FIELD = {"기대": "expect", "기동": "start", "대기": "wait"}
 
+# flowgate.default.0503 T0007 §1: the `assert` field key is never translated (like `cmd`),
+# so it is not part of _FIELD_ALIASES/_DISPLAY_FIELD above.
+_ASSERT_MODES = (
+    "exit_code",
+    "stdout_equals",
+    "stdout_contains",
+    "stdout_not_contains",
+    "json_equals",
+    "json_subset",
+)
+
+
+def _validate_assert_field(case_no: str, raw: str) -> None:
+    """Validate an `assert: <mode>:<spec>` field at parse time (§1).
+
+    Mode-name validity, the exit_code `:<N>` grammar, and JSON-literal syntax are
+    checked here — dotted-path resolution and JSON stdout parsing depend on the
+    command's actual output, so those stay a grading-time mismatch (§2's
+    _evaluate_case_assertion), not a 422.
+    """
+    mode, sep, spec = raw.partition(":")
+    mode = mode.strip()
+    if mode not in _ASSERT_MODES:
+        raise TestCaseParseError(
+            "invalid_case_block", f"{case_no}: unknown assert mode '{mode}'"
+        )
+    if mode == "exit_code":
+        if not sep:
+            raise TestCaseParseError(
+                "invalid_case_block",
+                f"{case_no}: assert exit_code requires <mode>:<N>",
+            )
+        try:
+            int(spec.strip())
+        except ValueError as exc:
+            raise TestCaseParseError(
+                "invalid_case_block",
+                f"{case_no}: assert exit_code value is not an integer: {spec.strip()!r}",
+            ) from exc
+    if mode == "json_equals":
+        if "=" not in spec:
+            raise TestCaseParseError(
+                "invalid_case_block",
+                f"{case_no}: assert json_equals requires <path>=<value>",
+            )
+        _, _, value_part = spec.partition("=")
+        try:
+            json.loads(value_part)
+        except ValueError as exc:
+            raise TestCaseParseError(
+                "invalid_case_block",
+                f"{case_no}: assert json_equals value is not valid JSON: {exc}",
+            ) from exc
+    elif mode == "json_subset":
+        try:
+            parsed = json.loads(spec)
+        except ValueError as exc:
+            raise TestCaseParseError(
+                "invalid_case_block",
+                f"{case_no}: assert json_subset value is not valid JSON: {exc}",
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise TestCaseParseError(
+                "invalid_case_block",
+                f"{case_no}: assert json_subset value must be a JSON object",
+            )
+
 
 def _normalize_field(field: str) -> str:
     return _FIELD_ALIASES.get(field.strip().lower(), field.strip())
@@ -266,6 +335,9 @@ def parse_test_cases(content: str) -> list[dict]:
             raise TestCaseParseError(
                 "invalid_case_block", f"{case_no}: required field 'expect' missing"
             )
+        assert_raw = fields.get("assert", "").strip()
+        if assert_raw:
+            _validate_assert_field(case_no, assert_raw)
         cases.append(
             {
                 "kind": "case",
@@ -273,6 +345,7 @@ def parse_test_cases(content: str) -> list[dict]:
                 "title": case_title,
                 "cmd": cmd,
                 "expect": expect,
+                "assert_mode": assert_raw or None,
             }
         )
     return cases
@@ -483,6 +556,11 @@ def validate_and_create_run(
         raise _http_error(422, exc.code, doc_id=doc_id, detail=exc.detail) from exc
 
     with _admission_lock:
+        pending = db_test_runs.get_pending_failure_origin(doc_id)
+        if pending is not None:
+            raise _http_error(
+                409, "failure_origin_pending", doc_id=doc_id, run_id=pending["run_id"]
+            )
         running = db_test_runs.get_running_by_doc(doc_id)
         if running is not None:
             raise _http_error(
@@ -700,6 +778,10 @@ def shape_run(run: dict, *, include_cases: bool = False) -> dict:
         "case_failed": run.get("case_failed"),
         "error": run.get("error"),
         "tsr_doc_id": run.get("tsr_doc_id"),
+        "failure_origin": run.get("failure_origin"),
+        "failure_origin_comment": run.get("failure_origin_comment"),
+        "code_rework_cycle": count_code_rework_cycles(run.get("doc_id"))
+        if run.get("failure_origin") else None,
         # 0280 T0005: expose the recorded execution root so a "ran in main" report
         # can be checked against the run itself, not just the assembled TSR.
         "source_root": run.get("source_root"),
@@ -730,6 +812,11 @@ def _shape_case_item(case: dict) -> dict:
         "duration_ms": case.get("duration_ms"),
         "output_tail": case.get("output_tail"),
         "finished_at": case.get("finished_at"),
+        # flowgate.default.0503 T0007 §6: exposed as-is (already human-readable strings
+        # produced by _evaluate_case_assertion); NULL for legacy (assert-less) cases.
+        "assert_mode": case.get("assert_mode"),
+        "actual": case.get("actual"),
+        "comparison_result": case.get("comparison_result"),
     }
 
 
@@ -1025,13 +1112,78 @@ def _execute_run_inner(run: dict) -> None:
         _unregister_active_run(run_id)
 
 
+def count_code_rework_cycles(doc_id: Optional[str]) -> int:
+    """History-derived consecutive PRODUCT_DEFECT count since the latest PASS."""
+    if not doc_id:
+        return 0
+    count = 0
+    for candidate in db_test_runs.list_by_doc(doc_id):
+        if candidate.get("status") == "passed":
+            break
+        if candidate.get("failure_origin") == "product_defect":
+            count += 1
+    return count
+
+
+def resume_failure_origin_branch(doc: dict, run: dict) -> dict:
+    """Continue the exact classified failed run; safe to replay after restart."""
+    classification = run.get("failure_origin")
+    if run.get("doc_id") != doc.get("doc_id") or not classification:
+        return {"continued": False, "hold_reason": "failure_origin_target_mismatch"}
+    if classification == "hold":
+        db_test_runs.set_failure_origin_hold(run["run_id"], "failure_origin_hold")
+        return {"continued": False, "hold_reason": "failure_origin_hold", "run_id": run["run_id"]}
+    if classification == "product_defect" and count_code_rework_cycles(doc["doc_id"]) >= MAX_CODE_REWORK_CYCLES:
+        db_test_runs.set_failure_origin_hold(run["run_id"], "test_code_rework_exhausted")
+        return {"continued": False, "hold_reason": "test_code_rework_exhausted", "run_id": run["run_id"]}
+    reason = (
+        "test_run_product_defect_rework"
+        if classification == "product_defect"
+        else "test_run_test_defect_rework"
+    )
+    from modules.flow_gate.services import failure_origin_review_service
+
+    rework_instruction = failure_origin_review_service.build_rework_instruction(
+        classification=classification, doc=doc, run=run,
+        items=db_test_runs.list_cases(run["run_id"]),
+    )
+    reopened = _auto_reopen_failed_scenario(doc, run, reason, rework_instruction=rework_instruction)
+    if not reopened.get("auto_reopened") and reopened.get("auto_reopen_skipped") != "duplicate_completion":
+        db_test_runs.set_failure_origin_hold(
+            run["run_id"], "failure_origin_reopen_conflict:"
+            + str(reopened.get("auto_reopen_skipped") or "unknown")
+        )
+        return {"continued": False, "hold_reason": "failure_origin_reopen_conflict", **reopened}
+    return {"continued": True, "rework_kind": classification, **reopened}
+
+
 def _handle_terminal_case_failure(doc: dict, run: dict, items: list[dict]) -> dict | None:
-    """Route one case-level terminal failure through repair or CODE rework."""
+    """Classification precedes reopen for continuous CODE failures."""
     failure_kind = engine_recipe_service.classify_failure(run, items)
     recovery = engine_recipe_service.handle_run_failure(doc, run, items)
     auto_reopen = None
     if failure_kind == engine_recipe_service.CODE:
-        auto_reopen = _auto_reopen_failed_scenario(doc, run, "test_run_code_failure")
+        if recovery == engine_recipe_service.CODE:
+            db_test_runs.set_failure_origin_pending(run["run_id"])
+            try:
+                from modules.flow_gate.services import failure_origin_review_service
+                failure_origin_review_service.dispatch_failure_origin_review(
+                    doc=doc, run=run, issued_to=run.get("runner_id") or doc.get("owner_id") or "system",
+                    api_base_url="/flowgate/api/v1",
+                )
+            except Exception:
+                logger.warning("failure-origin invocation issuance failed for %s", run.get("run_id"), exc_info=True)
+                db_test_runs.set_failure_origin_hold(run["run_id"], "failure_origin_invoke_error")
+            return {"classification_pending": True, "run_id": run["run_id"]}
+        if recovery == "skip":
+            auto_reopen = _auto_reopen_failed_scenario(doc, run, "test_run_code_failure")
+        elif recovery == "error":
+            db_test_runs.set_failure_origin_hold(run["run_id"], "failure_origin_recovery_error")
+            _maybe_notify_chain_failure(
+                doc, {**run, "error": "failure_origin_recovery_error"},
+                auto_reopen={"auto_reopened": False, "hold_reason": "failure_origin_recovery_error"},
+            )
+            return {"hold_reason": "failure_origin_recovery_error", "run_id": run["run_id"]}
     if recovery not in ("repair", "escalated"):
         _maybe_notify_chain_failure(doc, run, auto_reopen=auto_reopen)
     return auto_reopen
@@ -1063,7 +1215,9 @@ def _handle_setup_stage_failure(doc: dict, run: dict, items: list[dict]) -> dict
     return auto_reopen
 
 
-def _auto_reopen_failed_scenario(doc: dict, run: dict, reason: str) -> dict:
+def _auto_reopen_failed_scenario(
+    doc: dict, run: dict, reason: str, rework_instruction: Optional[str] = None
+) -> dict:
     """Send one failed test-scenario instruction back to its pre-approval state through the shared Time Machine."""
     try:
         from modules.flow_gate.services import workflow_rework_service
@@ -1080,6 +1234,7 @@ def _auto_reopen_failed_scenario(doc: dict, run: dict, reason: str) -> dict:
                 group_id=doc.get("group_id"),
                 run_id=run["run_id"],
             ),
+            rework_instruction=rework_instruction,
         )
     except Exception:
         logger.warning(
@@ -1264,7 +1419,7 @@ def _execute_case(
     if active is not None and active.cancel_event.is_set():
         return  # cancelled before this case started — leave it NULL, not a result
     started = time.monotonic()
-    result, exit_code, output = _run_shell_command(
+    result, exit_code, output, stdout_raw = _run_shell_command(
         _replace_placeholders(case["cmd"], port, scratch),
         root,
         CASE_TIMEOUT_SEC,
@@ -1278,18 +1433,33 @@ def _execute_case(
         return
     duration_ms = int((time.monotonic() - started) * 1000)
     output_tail = output[-OUTPUT_TAIL_CHARS:]
+    # flowgate.default.0503 T0007 §3: an assert field replaces the legacy exit-code
+    # verdict with the native comparator's — including the exit_code==0 + fail combination
+    # (NR0003 §23). exit_code is None only on timeout; a case that never finished has
+    # nothing to grade, so it keeps the legacy "timeout" result with actual/comparison_result
+    # left NULL.
+    assert_mode = case.get("assert_mode")
+    actual = None
+    comparison_result = None
+    if assert_mode and exit_code is not None:
+        actual, comparison_result = _evaluate_case_assertion(assert_mode, exit_code, stdout_raw)
+        result = "pass" if comparison_result == "match" else "fail"
     db_test_runs.mark_case_finished(
         case_id=case["id"],
         result=result,
         exit_code=exit_code,
         duration_ms=duration_ms,
         output_tail=output_tail,
+        actual=actual,
+        comparison_result=comparison_result,
     )
     refreshed = {
         **case,
         "result": result,
         "exit_code": exit_code,
         "duration_ms": duration_ms,
+        "actual": actual,
+        "comparison_result": comparison_result,
     }
     _emit_case_finished(doc, run, refreshed, idx, total)
 
@@ -1306,7 +1476,7 @@ def _execute_step_command(
     if active is not None and active.cancel_event.is_set():
         return "cancelled"
     started = time.monotonic()
-    result, exit_code, output = _run_shell_command(
+    result, exit_code, output, _stdout_raw = _run_shell_command(
         _replace_placeholders(step["cmd"], port, scratch),
         root,
         timeout,
@@ -1417,7 +1587,8 @@ def _mark_step_timeout(step: dict, output_tail: str) -> None:
 
 
 def _run_case_command(cmd: str, root: Path) -> tuple[str, Optional[int], str]:
-    return _run_shell_command(cmd, root, CASE_TIMEOUT_SEC, None)
+    result, exit_code, output, _stdout_raw = _run_shell_command(cmd, root, CASE_TIMEOUT_SEC, None)
+    return result, exit_code, output
 
 
 def _run_shell_command(
@@ -1426,7 +1597,13 @@ def _run_shell_command(
     timeout: int,
     env: Optional[dict[str, str]],
     active: Optional[_ActiveRun] = None,
-) -> tuple[str, Optional[int], str]:
+) -> tuple[str, Optional[int], str, str]:
+    """Run cmd; returns (result, exit_code, combined_output, raw_stdout).
+
+    raw_stdout (flowgate.default.0503 T0007 §3) excludes stderr so assert grading of
+    stdout_*/json_* modes never sees a false match/mismatch from interleaved stderr text
+    that the legacy combined `output`/`output_tail` intentionally still includes.
+    """
     eff_cmd, eff_cwd = process_runner.unc_safe_shell(cmd, root)
     kwargs = {
         "shell": True,
@@ -1453,11 +1630,11 @@ def _run_shell_command(
                 stdout = getattr(exc, "output", None)
                 stderr = getattr(exc, "stderr", None)
             output = _safe_decode(stdout) + _safe_decode(stderr)
-            return "timeout", None, output
+            return "timeout", None, output, _safe_decode(stdout)
 
         result = "pass" if proc.returncode == CASE_EXIT_PASS else "fail"
         output = _safe_decode(stdout) + _safe_decode(stderr)
-        return result, proc.returncode, output
+        return result, proc.returncode, output, _safe_decode(stdout)
     finally:
         if active is not None:
             _clear_current_proc(active, proc)
@@ -1509,6 +1686,99 @@ def _execution_env(port: int, scratch: Path) -> dict[str, str]:
 
 def _replace_placeholders(value: str, port: int, scratch: Path) -> str:
     return value.replace("{PORT}", str(port)).replace("{SCRATCH}", str(scratch))
+
+
+def _evaluate_case_assertion(
+    assert_mode: str, exit_code: Optional[int], stdout: str
+) -> tuple[str, str]:
+    """Native comparator for a case's `assert: <mode>:<spec>` field (§2).
+
+    Returns (actual, comparison_result) where comparison_result is the literal
+    "match"/"mismatch" — never raises. exit_code/json_equals/json_subset specs are
+    already validated at parse time (_validate_assert_field), so the int()/json.loads()
+    calls below never actually fail for an admitted run; the fallbacks stay only as a
+    defensive backstop.
+    """
+    mode, _, spec = assert_mode.partition(":")
+    mode = mode.strip()
+    if mode == "exit_code":
+        try:
+            expected = int(spec.strip())
+        except ValueError:
+            return "<invalid assert spec>", "mismatch"
+        return str(exit_code), "match" if exit_code == expected else "mismatch"
+    if mode == "stdout_equals":
+        return _truncate_actual(stdout), "match" if stdout == spec else "mismatch"
+    if mode == "stdout_contains":
+        return _truncate_actual(stdout), "match" if spec in stdout else "mismatch"
+    if mode == "stdout_not_contains":
+        return _truncate_actual(stdout), "match" if spec not in stdout else "mismatch"
+    if mode == "json_equals":
+        path, _, value_raw = spec.partition("=")
+        try:
+            expected = json.loads(value_raw)
+        except ValueError:
+            return "<invalid assert spec>", "mismatch"
+        try:
+            parsed = json.loads(stdout)
+        except ValueError:
+            return "<non-json output>", "mismatch"
+        try:
+            actual_value = _resolve_dotted_path(parsed, path)
+        except (KeyError, IndexError, TypeError):
+            return "<path not found>", "mismatch"
+        return _serialize_actual(actual_value), "match" if actual_value == expected else "mismatch"
+    if mode == "json_subset":
+        try:
+            expected = json.loads(spec)
+        except ValueError:
+            return "<invalid assert spec>", "mismatch"
+        try:
+            parsed = json.loads(stdout)
+        except ValueError:
+            return "<non-json output>", "mismatch"
+        return _serialize_actual(parsed), "match" if _is_json_subset(expected, parsed) else "mismatch"
+    # Unreachable in practice: parse_test_cases._validate_assert_field already rejected
+    # any mode outside _ASSERT_MODES before a run could be admitted.
+    return "<unknown assert mode>", "mismatch"
+
+
+def _truncate_actual(value: str) -> str:
+    return value[-OUTPUT_TAIL_CHARS:]
+
+
+def _serialize_actual(value) -> str:
+    text = json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)
+    return text[-OUTPUT_TAIL_CHARS:]
+
+
+def _resolve_dotted_path(obj, path: str):
+    """Navigate a `.`-separated dotted path (numeric segments index into lists)."""
+    current = obj
+    for segment in path.split("."):
+        if isinstance(current, list):
+            if not re.fullmatch(r"-?\d+", segment):
+                raise KeyError(path)
+            current = current[int(segment)]
+        elif isinstance(current, dict):
+            if segment not in current:
+                raise KeyError(path)
+            current = current[segment]
+        else:
+            raise TypeError(path)
+    return current
+
+
+def _is_json_subset(expected, actual) -> bool:
+    """True if every key/value in ``expected`` also matches in ``actual`` (recursive)."""
+    if isinstance(expected, dict):
+        if not isinstance(actual, dict):
+            return False
+        return all(
+            key in actual and _is_json_subset(value, actual[key])
+            for key, value in expected.items()
+        )
+    return expected == actual
 
 
 def _finalize_services(services: list[dict], active: Optional[_ActiveRun] = None) -> None:
@@ -2308,9 +2578,31 @@ def get_worker() -> TestRunWorker:
         return _worker
 
 
+def _resume_failure_origin_after_restart() -> None:
+    """Recover pending/classified CODE state without selecting a different failed run."""
+    from modules.flow_gate.services import failure_origin_review_service
+
+    for run in db_test_runs.list_failure_origin_recovery_candidates():
+        doc = db_docs.get_by_id(run.get("doc_id"))
+        if doc is None:
+            continue
+        if run.get("failure_origin"):
+            resume_failure_origin_branch(doc, run)
+            continue
+        try:
+            failure_origin_review_service.dispatch_failure_origin_review(
+                doc=doc, run=run,
+                issued_to=run.get("runner_id") or doc.get("owner_id") or "system",
+                api_base_url="/flowgate/api/v1",
+            )
+        except Exception:
+            logger.warning("failure-origin restart issuance failed for %s", run.get("run_id"), exc_info=True)
+
+
 def startup() -> None:
     try:
         db_test_runs.mark_orphaned_running()
+        _resume_failure_origin_after_restart()
     except Exception:
-        logger.warning("failed to mark orphaned test runs", exc_info=True)
+        logger.warning("failed to recover test runs", exc_info=True)
     get_worker().start()

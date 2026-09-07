@@ -18,7 +18,7 @@ from modules.flow_gate import process_service
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import test_runs as db_test_runs
 from modules.flow_gate.db import workflow_sequences as db_wfseq
-from modules.flow_gate.db.connection import get_store
+from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.documents.constants import (
     AUTO_COMPLETE_TYPES,
     NON_SLOT_WORKFLOW_TYPES,
@@ -301,6 +301,7 @@ def _reopen_in_transaction(
     reason: Optional[str],
     run_id: Optional[str],
     preserve_ac: bool,
+    rework_instruction: Optional[str] = None,
 ) -> dict:
     project_id = doc.get("project_id")
     group_id = doc.get("group_id")
@@ -339,7 +340,30 @@ def _reopen_in_transaction(
         ):
             continue
         if is_rewindable_step(candidate):
-            db_docs.update(candidate["doc_id"], {"doc_review_status": "pending_review"})
+            update_fields: dict[str, Any] = {"doc_review_status": "pending_review"}
+            # NR0003 §10-12: the reopened TS itself (not sibling steps swept up by the same
+            # rewind) carries the classification-specific rework handoff, delivered the same
+            # way a human [반려] carries its reason — rejection_reason/history, read by the
+            # worker off this same document. Written in the same transaction as the status
+            # flip so a crash never leaves "reopened but no instruction" for the worker to hit.
+            if rework_instruction and candidate["doc_id"] == doc["doc_id"]:
+                from modules.flow_gate.workflow.pipeline_service import parse_rejection_history
+                from modules.flow_gate.workflow.rejection_identity import new_rejection_id
+
+                update_fields["rejection_reason"] = rework_instruction
+                existing_history = parse_rejection_history(candidate.get("rejection_history"))
+                existing_history.append({
+                    "rejection_id": new_rejection_id(),
+                    "reason": rework_instruction,
+                    "rejected_at": now_iso(),
+                    "rejected_by": actor_user_id,
+                    "ai_response": None,
+                    "responded_at": None,
+                    "response_recorded_by": None,
+                    "response_revision_no": None,
+                })
+                update_fields["rejection_history"] = json.dumps(existing_history, ensure_ascii=False)
+            db_docs.update(candidate["doc_id"], update_fields)
             reopened.append(candidate["doc_id"])
 
     if root_was_done and root_doc is not None:
@@ -476,6 +500,7 @@ def reopen_to_target(
     preserve_ac: bool = False,
     run_id: Optional[str] = None,
     precondition: Optional[Callable[[dict, int], Optional[dict]]] = None,
+    rework_instruction: Optional[str] = None,
 ) -> dict:
     """Run the Time Machine reopen operation for one real workflow slot.
 
@@ -517,6 +542,7 @@ def reopen_to_target(
                 reason=reason,
                 run_id=run_id,
                 preserve_ac=preserve_ac,
+                rework_instruction=rework_instruction,
             )
             cancel_result = None
             if terminal_session is not None:
@@ -562,6 +588,7 @@ def auto_reopen_failed_ts(
     reason: str,
     run_id: str,
     mutation_context: Optional[MutationPrincipal] = None,
+    rework_instruction: Optional[str] = None,
 ) -> dict:
     """Send one current CODE-failed TS through the shared Time Machine reopen path."""
     doc = db_docs.get_by_id(ts_doc_id)
@@ -628,6 +655,7 @@ def auto_reopen_failed_ts(
         preserve_ac=True,
         run_id=run_id,
         precondition=validate_failed_run,
+        rework_instruction=rework_instruction,
     )
     if "auto_reopened" in result:
         return result

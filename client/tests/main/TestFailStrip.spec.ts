@@ -130,4 +130,66 @@ describe('TestFailStrip', () => {
       expect(postRequest).toHaveBeenCalledWith('/api/v1/documents/test-run/99/cancel', {})
     })
   })
+
+  // flowgate.default.0503 T0007 §7: a case's `assert` field grades natively; the
+  // detail strip must show the raw assert spec, the observed actual value, and the
+  // comparison verdict for THAT case only -- a legacy (assert-less) case keeps the
+  // old expect/output-tail-only layout.
+  it('renders assert evidence for a failed case with an assert field, and omits it for a legacy case', async () => {
+    const wrapper = mount(TestFailStrip, {
+      props: {
+        docId: 'flowgate.default.0183.0004-TS',
+        testRun: failedRun({
+          cases: [
+            {
+              case_no: 'TC-1',
+              case_title: 'enabled flag mismatches',
+              result: 'fail',
+              exit_code: 0,
+              output_tail: '{"enabled": false}',
+              assert_mode: 'json_equals:enabled=true',
+              actual: 'false',
+              comparison_result: 'mismatch',
+            },
+            {
+              case_no: 'TC-2',
+              case_title: 'legacy case',
+              result: 'fail',
+              exit_code: 1,
+              output_tail: 'boom',
+            },
+          ],
+        }),
+      },
+      global: { plugins: [i18n] },
+    })
+
+    await wrapper.find('.fail-strip-bar').trigger('click')
+
+    const assertBlocks = wrapper.findAll('.fail-case-assert')
+    expect(assertBlocks).toHaveLength(1)
+    expect(assertBlocks[0].text()).toContain('assert: json_equals:enabled=true')
+    expect(assertBlocks[0].text()).toContain('actual: false')
+    expect(assertBlocks[0].text()).toContain('mismatch')
+  })
+
+  it('shows failure origin and CODE cycle only when classified', async () => {
+    const classified = mount(TestFailStrip, {
+      props: {
+        docId: 'flowgate.default.0503.0001-TS',
+        testRun: failedRun({ failure_origin: 'product_defect', code_rework_cycle: 2 }),
+      },
+      global: { plugins: [i18n] },
+    })
+    await classified.find('.fail-strip-bar').trigger('click')
+    expect(classified.find('.fail-origin').text()).toContain('failure origin: product_defect')
+    expect(classified.find('.fail-origin').text()).toContain('CODE rework cycle 2/3')
+
+    const pending = mount(TestFailStrip, {
+      props: { docId: 'flowgate.default.0503.0001-TS', testRun: failedRun() },
+      global: { plugins: [i18n] },
+    })
+    await pending.find('.fail-strip-bar').trigger('click')
+    expect(pending.find('.fail-origin').exists()).toBe(false)
+  })
 })

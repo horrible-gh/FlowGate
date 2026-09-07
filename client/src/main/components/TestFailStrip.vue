@@ -78,6 +78,10 @@
     </button>
 
     <div v-if="expanded && !optimisticRunning" class="fail-strip-detail">
+      <div v-if="testRun?.failure_origin" class="fail-origin">
+        <div>{{ t('main.test_fail_strip.failure_origin_line', { value: testRun.failure_origin }) }}</div>
+        <div>{{ t('main.test_fail_strip.code_rework_cycle_line', { current: testRun.code_rework_cycle ?? 0, max: 3 }) }}</div>
+      </div>
       <div v-for="(c, idx) in failedCases" :key="idx" class="fail-case">
         <div class="fail-case-hd">
           <span class="fail-case-name">
@@ -89,6 +93,11 @@
           </span>
         </div>
         <div v-if="c.expect" class="fail-case-msg">{{ c.expect }}</div>
+        <div v-if="c.assert_mode" class="fail-case-assert">
+          <div class="fail-case-assert-line">{{ t('main.test_fail_strip.assert_line', { value: c.assert_mode }) }}</div>
+          <div class="fail-case-assert-line">{{ t('main.test_fail_strip.actual_line', { value: c.actual ?? '' }) }}</div>
+          <div class="fail-case-assert-line">{{ t('main.test_fail_strip.comparison_line', { value: c.comparison_result ?? '' }) }}</div>
+        </div>
         <pre v-if="c.output_tail" class="fail-case-log">{{ c.output_tail }}</pre>
       </div>
       <div v-if="failedCases.length === 0" class="fail-case-empty">
@@ -446,6 +455,18 @@ async function onRerun() {
   font-size: 0.76rem;
   color: var(--text-s, #475569);
   margin-top: 3px;
+}
+.fail-case-assert {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.fail-case-assert-line {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--text-s, #475569);
+  word-break: break-all;
 }
 .fail-case-log {
   margin: 5px 0 0;

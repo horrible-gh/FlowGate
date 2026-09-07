@@ -136,6 +136,28 @@ def test_ts_authoring_full_grammar_still_locale_correct():
     assert "実行可能なスペック" in ja
 
 
+def test_ts_authoring_requires_functional_assertions_in_all_locales():
+    from modules.flow_gate.services import mention_service
+
+    ko = mention_service._ts_authoring_section("ko")
+    assert "기능 결과 검증" in ko
+    assert "종료코드 0은 실행 성공일 뿐 기능 정합성의 증거가 아닙니다" in ko
+    assert "기대값을 실제값에 맞춰 약화하지" in ko
+    assert "assert 필드가 없는 기존" in ko
+
+    en = mention_service._ts_authoring_section("en")
+    assert "verify required functional results" in en
+    assert "Exit 0 alone proves only process execution" in en
+    assert "Never weaken an expected value" in en
+    assert "legacy TS without assert remains valid" in en
+
+    ja = mention_service._ts_authoring_section("ja")
+    assert "要件どおりの機能結果" in ja
+    assert "終了コード0は実行成功だけ" in ja
+    assert "期待値を実際値に合わせて弱めず" in ja
+    assert "assertなしの従来TS" in ja
+
+
 # ── (§5.3 c / WI-6) inbox self-chain carries the mode onto the next hop ───────────────
 
 class _FakeRequest:

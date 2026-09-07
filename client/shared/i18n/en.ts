@@ -1619,6 +1619,11 @@ export default {
       rerun_failed: 'Failed to start the test re-run.',
       rerun_not_approved: 'This test document is not in a re-runnable state.',
       rerun_disposed: 'The group has been discarded; tests cannot be run.',
+      assert_line: 'assert: {value}',
+      actual_line: 'actual: {value}',
+      comparison_line: 'comparison result: {value}',
+      failure_origin_line: 'failure origin: {value}',
+      code_rework_cycle_line: 'CODE rework cycle {current}/{max}',
     },
     test_run_strip: {
       ready: 'Approved test document. You can run it now.',

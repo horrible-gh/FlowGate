@@ -180,6 +180,25 @@ RENAMES: tuple[tuple[str, str], ...] = (
     # this branch under the old names is carried across by these two lines.
     ("093_git_terminal_cleanup.sql", "097_git_terminal_cleanup.sql"),
     ("094_project_ai_leases.sql", "098_project_ai_leases.sql"),
+    # flowgate.default.0503 T0014 (main merge): this group authored 102/103/104 against a
+    # base whose newest file on disk was 101. origin/main has since merged
+    # 102_ai_invoke_review_loop_card_dismissed.sql, 103_group_ai_lease_events.sql,
+    # 103_tr_commit_ledger_terminal_reopen.sql and 104_document_review_provider_provenance.sql,
+    # so all three of this group's files move to the ordinals that are free on both sides --
+    # the same "later arrival takes the next free number" rule 0413 T0007, 0332 and 0482 T0016
+    # applied. Neither renumbered file survives a second run (the sqlite tokens rebuild drops
+    # and recreates the table; the MySQL/postgres ADD COLUMNs carry no IF NOT EXISTS), so any
+    # checkout that already ran this branch under the old numbers is carried by these lines.
+    #
+    # main's own 104_document_review_provider_provenance.sql is deliberately NOT in this table:
+    # it keeps its name, this branch carries a byte-identical copy of it, and the databases that
+    # already applied it (stg PostgreSQL, the dev preview) must go on skipping it by that name.
+    ("102_test_run_cases_assert_evidence.sql", "105_test_run_cases_assert_evidence.sql"),
+    ("103_test_runs_failure_origin.sql", "106_test_runs_failure_origin.sql"),
+    (
+        "104_tokens_failure_origin_review_scope.sql",
+        "107_tokens_failure_origin_review_scope.sql",
+    ),
 )
 
 

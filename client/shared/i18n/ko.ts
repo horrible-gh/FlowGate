@@ -1619,6 +1619,11 @@ export default {
       rerun_failed: '테스트 재실행을 시작하지 못했습니다.',
       rerun_not_approved: '이 테스트 문서는 재실행할 수 있는 상태가 아닙니다.',
       rerun_disposed: '그룹이 폐기되어 테스트를 실행할 수 없습니다.',
+      assert_line: 'assert: {value}',
+      actual_line: 'actual: {value}',
+      comparison_line: '판정 결과: {value}',
+      failure_origin_line: '실패 원인: {value}',
+      code_rework_cycle_line: 'CODE 재작업 주기 {current}/{max}',
     },
     test_run_strip: {
       ready: '승인된 테스트 문서입니다. 지금 실행할 수 있습니다.',

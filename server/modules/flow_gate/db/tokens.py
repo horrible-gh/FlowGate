@@ -122,8 +122,9 @@ def create(data: dict[str, Any]) -> dict:
         "action_scope, issued_to, created_at, expires_at, consumed_at, revoked_at, scratch_dir, "
         "continuation_target_seq, continuation_review_mode, continuation_locale, "
         "merge_id, continuation_instruction_mode, provider_id, ai_run_id, "
-        "continuation_auto_approve_item_seqs) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "continuation_auto_approve_item_seqs, failure_origin_target_run_id, "
+        "failure_origin_before_marker) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             data["token_id"], data["hash"], data["pepper_id"],
             data["project"], data.get("group_id"), data.get("doc_ref"),
@@ -144,6 +145,8 @@ def create(data: dict[str, Any]) -> dict:
             # 0352 T0004 §2: per-item_seq N/T auto-approve selection (migration 078).
             # NULL/[] for every non-ai_direct or selection-less continuation token.
             _dump_auto_approve_item_seqs(data.get("continuation_auto_approve_item_seqs")),
+            data.get("failure_origin_target_run_id"),
+            data.get("failure_origin_before_marker"),
         ],
     )
     _invalidate_token_cache()

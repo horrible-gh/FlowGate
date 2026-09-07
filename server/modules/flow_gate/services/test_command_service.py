@@ -268,8 +268,10 @@ def build_verified_commands_block(project: str) -> str:
     hidden = len(usable) - len(shown)
     lines = [
         f"This host runs test commands through {current_shell()} (os.name={host_os}). The",
-        "commands below are registered for this project (auto entries were verified by a",
-        "previous successful remote test run ON THIS OS). Prefer these over guessing:",
+        "commands below are syntax/execution-known examples for this project (auto entries ran",
+        "successfully in a previous remote run ON THIS OS). They are not feature-correctness",
+        "oracles. Reuse their runnable form where suitable, but independently assert the current",
+        "requirement and its expected output/JSON/response value:",
         "",
     ]
     for row in shown:
@@ -295,8 +297,9 @@ def build_verified_commands_block(project: str) -> str:
             f"and are not listed — they will not run as-is under {current_shell()}.)"
         )
         lines.append("")
-    lines.append("If none of these fit the code under test, you may still author a new command —")
-    lines.append("it will be verified when the remote test run executes it.")
+    lines.append("Whether reusing or authoring a command, exit 0 proves execution only; the command")
+    lines.append("must fail when the current requirement or expected functional result does not hold.")
+    lines.append("If none fit the code under test, author a new executable assertion command.")
     return "\n".join(lines)
 
 

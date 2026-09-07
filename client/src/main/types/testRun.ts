@@ -14,6 +14,11 @@ export interface TestRunCase {
   duration_ms?: number | null
   output_tail?: string | null
   finished_at?: string | null
+  // flowgate.default.0503 T0007: native assertion evidence. All three are null for a
+  // legacy case with no `assert` field (exit-code-only judging, unchanged).
+  assert_mode?: string | null
+  actual?: string | null
+  comparison_result?: 'match' | 'mismatch' | string | null
 }
 
 export interface TestRun {
@@ -27,6 +32,9 @@ export interface TestRun {
   case_failed?: number | null
   error?: string | null
   tsr_doc_id?: string | null
+  failure_origin?: 'product_defect' | 'test_defect' | 'hold' | string | null
+  failure_origin_comment?: string | null
+  code_rework_cycle?: number | null
   port?: number | null
   started_at?: string | null
   finished_at?: string | null

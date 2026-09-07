@@ -146,6 +146,8 @@ def issue(
     # chain. NULL/[] for every non-continuous or selection-less token (db/tokens.py
     # normalizes and JSON-round-trips this — see _dump_auto_approve_item_seqs).
     continuation_auto_approve_item_seqs: Optional[list] = None,
+    failure_origin_target_run_id: Optional[str] = None,
+    failure_origin_before_marker: Optional[str] = None,
 ) -> dict:
     """Issue a token → return dict containing (raw_token, token_id, expires_at, scratch_dir).
 
@@ -198,6 +200,8 @@ def issue(
         "provider_id": provider_id,
         "ai_run_id": ai_run_id,
         "continuation_auto_approve_item_seqs": continuation_auto_approve_item_seqs,
+        "failure_origin_target_run_id": failure_origin_target_run_id,
+        "failure_origin_before_marker": failure_origin_before_marker,
     })
 
     db_events.create({
@@ -229,6 +233,8 @@ def issue(
         "provider_id": provider_id,
         "ai_run_id": ai_run_id,
         "continuation_auto_approve_item_seqs": continuation_auto_approve_item_seqs,
+        "failure_origin_target_run_id": failure_origin_target_run_id,
+        "failure_origin_before_marker": failure_origin_before_marker,
     }
 
 

@@ -1617,6 +1617,11 @@ export default {
       rerun_failed: 'テストの再実行を開始できませんでした。',
       rerun_not_approved: 'このテスト文書は再実行できる状態ではありません。',
       rerun_disposed: 'グループが廃棄されているため、テストを実行できません。',
+      assert_line: 'assert: {value}',
+      actual_line: 'actual: {value}',
+      comparison_line: '比較結果: {value}',
+      failure_origin_line: '失敗原因: {value}',
+      code_rework_cycle_line: 'CODE再作業サイクル {current}/{max}',
     },
     test_run_strip: {
       ready: '承認済みのテスト文書です。今すぐ実行できます。',
