@@ -1702,6 +1702,8 @@ export default {
       // 差し戻し自体は確定したことを明言する。
       result_title: 'ワークフローは差し戻しました。ソースコミットは以下のとおりです。',
       result_canceled: '取り消しました（{commit}）',
+      // 0532 T0007 — マージ済みまたは push 済みの terminal コミットを履歴として残し、取り消してはいない。
+      result_terminal_reopened: 'すでに反映済みのため履歴として残しました（{commit}）。再承認すると新しいコミットが作成されます。',
       reason_already_canceled: '取り消し済み',
       reason_not_attempted: '未試行',
       reason_conflict: '取り消しが競合したためここで停止しました。ワークツリーで整理するか、この状態から作業を続けてください。',
@@ -2797,6 +2799,9 @@ export default {
         badge: '{live} · {canceled}',
         badge_title: 'コミット {live}件 · 取消 {canceled}件',
         canceled: '取消済み',
+        // 0532 T0007 §5/§6 — 行の `state` は 'live' のまま（コミット自体は消えない履歴）
+        // だが、今の有効なコミットではないことを示す。
+        terminal_reopened: '反映済み・履歴として保持',
         no_source_change: 'ソース変更なし',
         commit_failed: 'コミットできませんでした（{reason}）',
         more: '他 {n}件',

@@ -1703,6 +1703,8 @@ export default {
       // 확정됐다는 사실을 먼저 못 박는다.
       result_title: '워크플로는 되감았습니다. 소스 커밋은 아래와 같습니다.',
       result_canceled: '취소했습니다 ({commit})',
+      // 0532 T0007 — 병합되었거나 push된 terminal 커밋을 이력으로 보존했다는 뜻. 취소가 아니다.
+      result_terminal_reopened: '이미 반영된 커밋이라 이력으로 그대로 두었습니다 ({commit}). 수정 후 다시 승인하면 새 커밋이 만들어집니다.',
       reason_already_canceled: '이미 취소됨',
       reason_not_attempted: '시도되지 않음',
       reason_conflict: '되돌림이 충돌해 여기서 멈췄습니다. 워크트리에서 정리하거나 이대로 새로 작업하세요.',
@@ -2802,6 +2804,9 @@ export default {
         badge: '{live} · {canceled}',
         badge_title: '커밋 {live}개 · 취소 {canceled}개',
         canceled: '취소됨',
+        // 0532 T0007 §5/§6 — 행의 `state` 는 계속 'live' 다(커밋 자체는 지워지지 않는
+        // 역사). 다만 지금 취소 가능한 활성 커밋은 아니라는 뜻이다.
+        terminal_reopened: '이미 반영됨 · 이력으로 보존',
         no_source_change: '소스 변경 없음',
         commit_failed: '커밋하지 못했습니다 ({reason})',
         more: '{n}개 더',

@@ -69,6 +69,17 @@ def git_state(monkeypatch):
     monkeypatch.setattr(svc.db_git, "get_state", _get_state)
     monkeypatch.setattr(svc, "_set_status", _set_status)
     monkeypatch.setattr(svc, "ensure_worktree", MagicMock())
+    # T0007's terminal dirty-guard (0532) makes raise_if_git_session_blocks_reopen take a
+    # real project lock for merged/pushed. This fixture stays DB-state-only, so fake a
+    # clean, lock-free terminal check here; the dirty/lock-contention paths themselves are
+    # covered directly against real locking in test_tr_commit_cancel_0332.py.
+    monkeypatch.setattr(svc, "open_terminal_reopen_session", lambda group_id: {
+        "ok": True, "blocked_reason": None, "block_sub": None,
+        "session": {
+            "project_id": "flowgate", "group_id": group_id,
+            "holder": "test-terminal-reopen", "wt_path": None, "author_env": {},
+        },
+    })
     cell["calls"] = calls
     return cell
 
@@ -110,12 +121,15 @@ def test_5_terminal_statuses_still_reset_and_reprovision(git_state, terminal_sta
     """Regression: the pre-existing merged/pushed re-arm path must survive the R2 change
     (it now shares the function with a new awaiting_choice/waiting branch)."""
     git_state["status"] = terminal_status
-    svc.reopen_group_git("flowgate", "flowgate.default.0477.g5")
+    c1 = "a" * 40
+    svc.reopen_group_git(
+        "flowgate", "flowgate.default.0477.g5", terminal_commit_sha=c1,
+    )
     assert git_state["status"] == "none"
     assert git_state["calls"] == ["none"]
     svc.ensure_worktree.assert_called_once_with(
         "flowgate", svc._module_of("flowgate.default.0477.g5"),
-        "flowgate.default.0477.g5", trigger="timemachine_reopen",
+        "flowgate.default.0477.g5", trigger="timemachine_reopen", start_point=c1,
     )
 
 

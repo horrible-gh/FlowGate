@@ -1706,6 +1706,8 @@ export default {
       // states first that the rewind itself is final.
       result_title: 'The workflow was rewound. The source commits stand as follows.',
       result_canceled: 'Canceled ({commit})',
+      // 0532 T0007 — this terminal row was merged or pushed and preserved as history, not canceled.
+      result_terminal_reopened: 'Already published, left as history ({commit}). Re-approving will create a new commit.',
       reason_already_canceled: 'Already canceled',
       reason_not_attempted: 'Not attempted',
       reason_conflict: 'The revert conflicted and stopped here. Clean up in the worktree or carry on from this state.',
@@ -2803,6 +2805,9 @@ export default {
         badge: '{live} · {canceled}',
         badge_title: '{live} commits · {canceled} canceled',
         canceled: 'Canceled',
+        // 0532 T0007 §5/§6 — the row's `state` stays 'live' (the commit is
+        // permanent history), but it is no longer today's active commit.
+        terminal_reopened: 'Already published, kept as history',
         no_source_change: 'No source change',
         commit_failed: 'Could not commit ({reason})',
         more: '{n} more',

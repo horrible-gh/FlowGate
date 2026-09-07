@@ -414,6 +414,7 @@ def _rearm_git(
     group_id: str,
     reopened_doc_ids: Optional[list[str]] = None,
     actor_user_id: Optional[str] = None,
+    terminal_session: Optional[dict] = None,
 ) -> Optional[dict]:
     """Cancel the rewound TR commits, then re-arm the slot (0332 L0007 §2.1).
 
@@ -430,19 +431,37 @@ def _rearm_git(
     """
     cancel_result: Optional[dict] = None
     try:
-        cancel_result = tr_commit_service.cancel_for_reopen(
-            group_id, reopened_doc_ids or []
-        )
+        if terminal_session is None:
+            cancel_result = tr_commit_service.cancel_for_reopen(
+                group_id, reopened_doc_ids or [],
+            )
+        else:
+            cancel_result = tr_commit_service.cancel_for_reopen(
+                group_id, reopened_doc_ids or [], terminal_session=terminal_session,
+            )
     except Exception as exc:
+        if terminal_session is not None:
+            raise
         # L0007 §5 — the key is dropped, not half-filled, and the rewind still returns 200.
         logger.warning(
             "[workflow reopen] tr commit cancel failed for %s: %s", group_id, exc,
             exc_info=True,
         )
     _log_cancel_event(project_id, group_id, actor_user_id, cancel_result)
+    if cancel_result and cancel_result.get("blocked_reason") == "dirty_worktree":
+        return cancel_result
+    terminal_sha = cancel_result.pop("_terminal_commit_sha", None) if cancel_result else None
+    if terminal_session is not None:
+        # Strict terminal path: still inside the workflow DB transaction and holding
+        # the project lock. Any inability to preserve C1 aborts the whole reopen.
+        git_service.reopen_group_git(
+            project_id, group_id, terminal_commit_sha=terminal_sha,
+            terminal_session=terminal_session,
+        )
+        return cancel_result
     try:
         git_service.reopen_group_git(project_id, group_id)
-    except Exception as exc:  # pragma: no cover - document transaction has committed
+    except Exception as exc:  # pragma: no cover - non-terminal best-effort compatibility
         logger.warning("[workflow reopen] git re-arm failed for %s: %s", group_id, exc, exc_info=True)
     return cancel_result
 
@@ -479,31 +498,42 @@ def reopen_to_target(
     # NR0003 R2 (flowgate.default.0477): conflict/merging hold a live git session — refuse
     # the reopen itself (409) BEFORE the rewind transaction below, instead of letting the
     # workflow layer roll back while _rearm_git silently leaves the session untouched.
-    git_service.raise_if_git_session_blocks_reopen(project_id, group_id)
+    terminal_session = git_service.raise_if_git_session_blocks_reopen(project_id, group_id)
 
     resolved_target_seq = int(target_seq)
-    with get_store().transaction():
-        current_doc = db_docs.get_by_id(doc_id)
-        if current_doc is None:
-            raise LookupError(f"Document not found: {doc_id}")
-        if precondition is not None:
-            skipped = precondition(current_doc, resolved_target_seq)
-            if skipped is not None:
-                return skipped
-        result = _reopen_in_transaction(
-            doc=current_doc,
-            target_seq=resolved_target_seq,
-            actor_user_id=_actor_user_id(actor),
-            reason=reason,
-            run_id=run_id,
-            preserve_ac=preserve_ac,
-        )
-    cancel_result = _rearm_git(
-        project_id, group_id, result.get("reopened") or [], _actor_user_id(actor),
-    )
-    if cancel_result is not None:
-        result["tr_commit_cancel"] = cancel_result
-    return result
+    try:
+        with get_store().transaction():
+            current_doc = db_docs.get_by_id(doc_id)
+            if current_doc is None:
+                raise LookupError(f"Document not found: {doc_id}")
+            if precondition is not None:
+                skipped = precondition(current_doc, resolved_target_seq)
+                if skipped is not None:
+                    return skipped
+            result = _reopen_in_transaction(
+                doc=current_doc,
+                target_seq=resolved_target_seq,
+                actor_user_id=_actor_user_id(actor),
+                reason=reason,
+                run_id=run_id,
+                preserve_ac=preserve_ac,
+            )
+            cancel_result = None
+            if terminal_session is not None:
+                cancel_result = _rearm_git(
+                    project_id, group_id, result.get("reopened") or [],
+                    _actor_user_id(actor), terminal_session=terminal_session,
+                )
+        if terminal_session is None:
+            cancel_result = _rearm_git(
+                project_id, group_id, result.get("reopened") or [], _actor_user_id(actor),
+            )
+        if cancel_result is not None:
+            result["tr_commit_cancel"] = cancel_result
+        return result
+    finally:
+        if terminal_session is not None:
+            git_service.close_cancel_session(terminal_session)
 
 
 def _skip(ts_doc_id: str, target_seq: Optional[int], run_id: str, reason: str) -> dict:

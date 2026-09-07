@@ -1,0 +1,29 @@
+-- 103_tr_commit_ledger_terminal_reopen.sql
+-- flowgate.default.0532 T0007 (T2 — merged/pushed terminal TR Time Machine reopen):
+-- a plain live rewind uncommits the TR's commit and writes `state='canceled'` onto its row
+-- (086/D0005 K5). A group whose commits are already `merged`/`pushed` may not do that — the
+-- commit is historical fact baked into base by the merge, and `git_service.open_cancel_session`
+-- correctly refuses with `already_merged` before touching anything (085 G5). Until now that
+-- refusal left the row `state='live'` forever with nothing to say a reopen had happened, so
+-- (a) a later plain rewind of the SAME step would offer it again as a cancel target even
+-- though no reset can ever reach it (it is buried under the merge commit), and (b) the
+-- reapproval's subject-preservation query only reads `state='canceled'` rows, so a terminal
+-- reopen's reapproval always fell back to the generic subject instead of reusing the original.
+--
+-- One nullable column, and deliberately NOT a new `state` value or a `cancel_reason` — see
+-- 087's own note on this: writing `state='canceled'` here would claim, falsely, that the
+-- commit was reverted (D0005 K5), and the whole point of T0007 is that it was not. The row
+-- stays `live` and keeps its `commit_sha` forever; `reopened_terminal_at` is the only thing
+-- that changes, and it does two jobs: it takes the row out of
+-- `tr_commit_ledger.live_rows()`'s cancel-target set, and it makes the row's subject eligible
+-- for reuse by `latest_reopened_subject()` on the reapproval that follows.
+--
+-- IF NOT EXISTS follows 087's postgres-only deviation (supported since 9.6).
+--
+-- Additive only. Rollback is `ALTER TABLE tr_commit_ledger DROP COLUMN reopened_terminal_at`.
+
+BEGIN;
+
+ALTER TABLE tr_commit_ledger ADD COLUMN IF NOT EXISTS reopened_terminal_at TEXT;
+
+COMMIT;
