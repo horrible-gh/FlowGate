@@ -804,6 +804,94 @@ describe('AiInvokeMiniplayer', () => {
   })
 })
 
+// 0538 T0004: a long single/rework hop (mode="single", docs_target=0) never satisfies the
+// progress bar's own condition (mode === "continuous" || target > 1), so before this fix the
+// only signal on screen was the ticking elapsed clock -- indistinguishable from a stalled
+// worker. The watchdog was always observing document/source activity every 15s; this pins
+// that last_progress_at reaches the card as a "last activity" line, independent of the
+// progress bar's own condition, and disappears again once the entry stops being live.
+describe('AiInvokeMiniplayer — watchdog last-activity signal (0538 T0004)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-07T12:00:00.000Z'))
+    sessionStorage.clear()
+    setActivePinia(createPinia())
+    getRequest.mockReset()
+    postRequest.mockReset()
+    getRequest.mockImplementation(async (url: string) => {
+      if (url.includes('active-all')) return { data: { ok: true, runs: [], paused: [] } }
+      return { data: {} }
+    })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    document.body.innerHTML = ''
+  })
+
+  const lastActivity = (w: ReturnType<typeof mountPlayer>) =>
+    w.find('[data-test="ai-miniplayer-last-activity"]')
+
+  // Case A: single/rework -- no progress bar, but the survival line still shows.
+  it('shows the last-activity line for a single/rework hop with no progress bar', async () => {
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'run-single-progress', group_id: 'flowgate.default.4001',
+      doc_ref: 'flowgate.default.4001.0015-TR', mode: 'single', docs_target: 0,
+      last_progress_at: '2026-09-07T11:59:23.000Z',
+    })
+    await flushPromises()
+    await openPopover(wrapper)
+
+    expect(wrapper.find('.aiv-mini__progress').exists()).toBe(false)
+    expect(lastActivity(wrapper).exists()).toBe(true)
+    expect(lastActivity(wrapper).text()).toBe(t('main.ai_miniplayer.last_activity', { seconds: 37 }))
+    wrapper.unmount()
+  })
+
+  // Case B: continuous/multi-target -- the existing progress bar is untouched, and the
+  // survival line shows alongside it, not instead of it.
+  it('keeps the progress bar and adds the last-activity line for a continuous run', async () => {
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'run-continuous-progress', group_id: 'flowgate.default.4002',
+      doc_ref: 'flowgate.default.4002.0001-B', mode: 'continuous', docs_target: 5,
+      last_progress_at: '2026-09-07T11:59:55.000Z',
+    })
+    await flushPromises()
+    await openPopover(wrapper)
+
+    expect(wrapper.find('.aiv-mini__progress').exists()).toBe(true)
+    expect(wrapper.find('.aiv-mini__progress-text').text()).toBe(
+      t('main.ai_miniplayer.progress', { reached: 0, target: 5 }),
+    )
+    expect(lastActivity(wrapper).exists()).toBe(true)
+    expect(lastActivity(wrapper).text()).toBe(t('main.ai_miniplayer.last_activity', { seconds: 5 }))
+    wrapper.unmount()
+  })
+
+  // Case C: no progress information at all -- an old/initial entry the watchdog has not
+  // (yet) ticked for. The card must not break; it just keeps showing what it always did.
+  it('omits the last-activity line and renders unchanged when there is no progress signal', async () => {
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'run-no-progress', group_id: 'flowgate.default.4003',
+      doc_ref: 'flowgate.default.4003.0001-R', mode: 'single', docs_target: 0,
+    })
+    await flushPromises()
+    await openPopover(wrapper)
+
+    expect(wrapper.find('.aiv-mini__progress').exists()).toBe(false)
+    expect(lastActivity(wrapper).exists()).toBe(false)
+    expect(wrapper.find('.aiv-mini__card').exists()).toBe(true)
+    expect(wrapper.text()).toContain(t('main.ai_miniplayer.provider', { name: '—' }))
+    wrapper.unmount()
+  })
+})
+
 // 0294 B0001 회귀: the finished card lives for FINISHED_CARD_TTL_MS, but the closed chip
 // used to stop counting it the instant the run ended — and the popover is closed by
 // default, so "완료" was the one state the user could never see. The store-level TTL test

@@ -1408,6 +1408,7 @@ export default {
       mode_single: '단일',
       progress: '도달 {reached}/{target}',
       provider: '실행: {name}',
+      last_activity: '마지막 활동: {seconds}초 전',
       worker_fact: '실제 AI 실행: {type} · item_seq {seq}',
       worker_short: 'AI 실행 {type}',
       end_reason_fact: '정지 사유: {reason}',

@@ -64,6 +64,10 @@ export interface AiInvokeRunEntry {
   chainDocsReached: number
   startedAt: string | null
   elapsedMs: number
+  // 0538 T0004: the watchdog's last observed liveness tick (document/source change),
+  // surfaced by diagnostics.get_status. null until the run's first 15s poll lands, or
+  // for a card type (paused/finished) the live meta row never renders it for.
+  lastProgressAt: string | null
   providerSwitches: AiInvokeProviderSwitch[]
   // The completed hop is waiting for the next run_id; this is live chain state, not terminal.
   handoffPending: boolean
@@ -289,6 +293,7 @@ function startedEntry(
     ),
     startedAt: nullableString(payload.started_at) ?? (sameRun ? previous?.startedAt ?? null : null),
     elapsedMs: Number(payload.elapsed_ms ?? (sameRun ? previous?.elapsedMs : 0) ?? 0),
+    lastProgressAt: nullableString(payload.last_progress_at) ?? (sameRun ? previous?.lastProgressAt ?? null : null),
     providerSwitches: sameRun ? previous?.providerSwitches ?? [] : [],
     handoffPending: sameRun ? previous?.handoffPending ?? false : false,
     finishedPayload: null,
@@ -354,6 +359,7 @@ function pausedEntry(payload: Record<string, any>, previous?: AiInvokeRunEntry):
     ),
     startedAt: null,
     elapsedMs: previous?.elapsedMs ?? 0,
+    lastProgressAt: null,
     providerSwitches: [],
     handoffPending: false,
     finishedPayload: null,

@@ -1406,6 +1406,7 @@ export default {
       mode_single: '単発',
       progress: '到達 {reached}/{target}',
       provider: '実行: {name}',
+      last_activity: '最終活動: {seconds}秒前',
       worker_fact: '実際のAI実行: {type} · item_seq {seq}',
       worker_short: 'AI実行 {type}',
       end_reason_fact: '停止理由: {reason}',

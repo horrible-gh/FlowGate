@@ -1408,6 +1408,7 @@ export default {
       mode_single: 'single',
       progress: 'Reached {reached}/{target}',
       provider: 'Provider: {name}',
+      last_activity: 'Last activity: {seconds}s ago',
       worker_fact: 'Actual AI worker: {type} · item_seq {seq}',
       worker_short: 'AI worker {type}',
       end_reason_fact: 'Stop reason: {reason}',

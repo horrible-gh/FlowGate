@@ -104,6 +104,13 @@ def get_status(run_id: str) -> dict:
         "deadline_at": run.get("deadline_at"),
         "attempts_used": int(run.get("attempts_used") or 0),
         "attempts_max": run.get("attempts_max"),
+        # 0538 T0004: the watchdog (provider_cli._progress_watchdog_loop) already writes
+        # these onto `run` every poll -- this is a pure read-model exposure, no new
+        # storage. A run the watchdog has not polled yet reads back as None/0, same as
+        # any other field this run has not reached.
+        "last_progress_at": run.get("last_progress_at"),
+        "last_progress_signal": run.get("last_progress_signal"),
+        "progress_observations": int(run.get("progress_observations") or 0),
         # Server truth: an explicit empty array clears stale client state on the next poll.
         "pending_q_doc_ids": _svc()._open_q_doc_ids(run["group_id"]),
         "document_review_loop": _svc().document_review_loop_payload(run),
