@@ -104,6 +104,13 @@
             <template v-else>
               <span>{{ t('main.ai_miniplayer.provider', { name: entry.provider?.name || '—' }) }}</span>
               <span>{{ elapsedText(entry) }}</span>
+              <!-- 0538 T0004: single/rework hops (mode="single", docs_target=0) never show
+                   the progress bar above -- this is the only liveness signal they get, so it
+                   rides right next to the elapsed clock regardless of that condition. -->
+              <span
+                v-if="entry.lastProgressAt"
+                data-test="ai-miniplayer-last-activity"
+              >{{ lastActivityText(entry) }}</span>
             </template>
           </div>
           <div
@@ -415,6 +422,16 @@ function progressPercent(entry: AiInvokeRunEntry): string {
 function elapsedText(entry: AiInvokeRunEntry): string {
   const total = Math.floor(store.elapsedMsFor(entry.groupId) / 1000)
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+}
+
+// 0538 T0004: the watchdog's own liveness tick (document/source change observed by
+// provider_cli._progress_watchdog_loop), independent of the progress-bar's docs-target
+// gate -- a single/rework hop with no target still gets to say "something moved".
+function lastActivityText(entry: AiInvokeRunEntry): string {
+  const at = entry.lastProgressAt ? Date.parse(entry.lastProgressAt) : NaN
+  if (!Number.isFinite(at)) return ''
+  const seconds = Math.max(0, Math.floor((store.now - at) / 1000))
+  return t('main.ai_miniplayer.last_activity', { seconds })
 }
 
 function titleFor(entry: AiInvokeRunEntry): string {

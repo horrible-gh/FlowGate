@@ -1333,3 +1333,80 @@ class TestResetAttemptStateClearsTransportDiagnostics:
         assert run["last_tool_name"] is None
         assert run["last_tool_status"] is None
         assert run["last_tool_error"] is None
+
+
+class TestGetStatusExposesWatchdogProgress:
+    """0538 T0004: the watchdog (provider_cli._progress_watchdog_loop) already writes
+    last_progress_at / last_progress_signal / progress_observations onto the live `run`
+    dict on every 15s poll. `get_status` must pass those straight through for a
+    still-running run, without disturbing the finished-branch contract or any of the
+    fields it already carried (docs_reached_so_far, elapsed_ms, timeout/deadline,
+    attempt counters)."""
+
+    def test_a_running_run_carries_the_three_progress_fields(self, finalize_env, monkeypatch):
+        monkeypatch.setattr(svc.db_docs, "get_documents_by_group_id", lambda _g: [])
+        run = _live_run(finalize_env, run_id="aiv_20260907_000101",
+                        last_progress_at="2026-09-07T16:26:03+09:00",
+                        last_progress_signal="source", progress_observations=37)
+        with svc._runs_lock:
+            svc._runs[run["run_id"]] = run
+
+        status = svc.get_status(run["run_id"])
+
+        assert status["status"] != "finished"
+        assert status["last_progress_at"] == "2026-09-07T16:26:03+09:00"
+        assert status["last_progress_signal"] == "source"
+        assert status["progress_observations"] == 37
+
+    def test_existing_live_fields_stay_intact_alongside_the_new_ones(self, finalize_env,
+                                                                     monkeypatch):
+        monkeypatch.setattr(svc.db_docs, "get_documents_by_group_id", lambda _g: [])
+        run = _live_run(finalize_env, run_id="aiv_20260907_000102",
+                        last_progress_at="2026-09-07T16:26:03+09:00",
+                        last_progress_signal="document,source", progress_observations=5)
+        with svc._runs_lock:
+            svc._runs[run["run_id"]] = run
+
+        status = svc.get_status(run["run_id"])
+
+        assert status["docs_reached_so_far"] == 0
+        assert status["timeout_sec"] == run["timeout_sec"]
+        assert status["deadline_at"] == run["deadline_at"]
+        assert status["attempts_used"] == run["attempts_used"]
+        assert status["attempts_max"] == run["attempts_max"]
+        assert isinstance(status["elapsed_ms"], int)
+
+    def test_a_run_the_watchdog_has_not_polled_yet_reads_back_as_none_and_zero(
+            self, finalize_env, monkeypatch):
+        # No watchdog tick has landed on this run yet -- exactly the shape a run has in
+        # the instant after admission, before the first 15s poll.
+        monkeypatch.setattr(svc.db_docs, "get_documents_by_group_id", lambda _g: [])
+        run = _live_run(finalize_env, run_id="aiv_20260907_000103")
+        with svc._runs_lock:
+            svc._runs[run["run_id"]] = run
+
+        status = svc.get_status(run["run_id"])
+
+        assert status["last_progress_at"] is None
+        assert status["last_progress_signal"] is None
+        assert status["progress_observations"] == 0
+
+    def test_the_finished_payload_contract_does_not_grow_the_new_keys(self, live_db,
+                                                                       finalize_env):
+        # T0004 완료 조건: "finished 상태의 기존 응답 contract도 불필요하게 변경하지 않는다"
+        # -- `finished_payload` is a different shape from the live branch above, and these
+        # fields must not leak onto it.
+        run = _live_run(finalize_env, run_id="aiv_20260907_000104",
+                        end_reason="exited", outcome="complete",
+                        last_progress_at="2026-09-07T16:26:03+09:00",
+                        last_progress_signal="source", progress_observations=12)
+        svc._finalize_run(run)
+        with svc._runs_lock:
+            svc._runs[run["run_id"]] = run
+
+        status = svc.get_status(run["run_id"])
+
+        assert status["status"] == "finished"
+        assert "last_progress_at" not in status
+        assert "last_progress_signal" not in status
+        assert "progress_observations" not in status
