@@ -2375,6 +2375,8 @@ def _shape_review(row: dict) -> dict:
         "revision_no": row.get("revision_no"),
         "reviewer_id": reviewer_id,
         "reviewer_name": reviewer_name,
+        # 0535 T0007 §2: one shared builder for both read surfaces, so the key set and
+        # the true/false/null normalization of fallback_used cannot drift apart.
         "review_provider": _db_reviews_shape.review_provider_payload(row),
         "verdict": row.get("verdict"),
         "finding_count": len(findings),  # Computed by the server, not the AI.

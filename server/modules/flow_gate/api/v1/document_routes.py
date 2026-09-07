@@ -69,6 +69,8 @@ def _shape_review(row: dict) -> dict:
         "id": row.get("id"),
         "revision_no": row.get("revision_no"),
         "reviewer_id": row.get("reviewer_id"),
+        # 0535 T0007 §2: one shared builder for both read surfaces, so the key set and
+        # the true/false/null normalization of fallback_used cannot drift apart.
         "review_provider": db_reviews.review_provider_payload(row),
         "verdict": row.get("verdict"),
         "finding_count": len(findings),
