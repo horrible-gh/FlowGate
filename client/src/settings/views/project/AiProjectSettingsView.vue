@@ -24,6 +24,7 @@
             :providers="providers"
             :default-index="defaultIndex"
             :catalog="catalog"
+            :build-preset-command="buildPresetCommand"
             @update:providers="providers = $event"
             @update:defaultIndex="defaultIndex = $event"
           />
@@ -74,7 +75,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { onBeforeRouteLeave } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import { getRequest, putRequest } from '@shared/api';
+import { getRequest, postRequest, putRequest } from '@shared/api';
 import AiProviderListEditor from '../../components/AiProviderListEditor.vue';
 import { formatErrors } from '../../components/aiProviderLimits';
 import AppIcon from '@shared/AppIcon.vue';
@@ -115,6 +116,18 @@ const badgeClass = computed(() => {
   if (savedMode.value === 'disabled') return 'badge-gray';
   return 'badge-blue';
 });
+
+// 0519 T0007 §3: read-only preview/build, scoped to this project's own permission +
+// project_id — never the settings-save PUT below. project_id may briefly be empty while the
+// project context is still resolving; buildPresetCommand() is only ever invoked from inside
+// the already-mounted editor dialog, by which point projectId.value is set.
+async function buildPresetCommand({ kind, model_name, skip_permissions }) {
+  const { data } = await postRequest(
+    `/api/v1/projects/${projectId.value}/ai-settings/cli-preset-command`,
+    { kind, model_name, skip_permissions },
+  );
+  return data;
+}
 
 function applyResponse(data) {
   saveErrors.value = [];

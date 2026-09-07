@@ -152,6 +152,47 @@
           <div v-if="form.exec_type === 'cli'" class="form-group">
             <label class="form-label">{{ t('settings.ai.label_cli_command') }}</label>
             <input class="form-ctrl mono" v-model="form.cli_command" :placeholder="t('settings.ai.placeholder_cli_command')" />
+
+            <!-- 0519 T0007: canonical command builder. Local staging only — kind/model/permission
+                 choices here never touch form.cli_command until "Apply" resolves (§1/§2). -->
+            <div v-if="presetInfo" class="ai-preset-panel">
+              <p class="form-hint">{{ t('settings.ai.preset_hint') }}</p>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label" :for="presetModelInputId">{{ t('settings.ai.preset_model_label') }}</label>
+                  <input
+                    :id="presetModelInputId"
+                    class="form-ctrl mono"
+                    v-model="presetModelName"
+                    :placeholder="presetInfo.default_model"
+                    :disabled="presetApplying"
+                  />
+                </div>
+                <div v-if="presetInfo.supports_permission_skip" class="form-group">
+                  <label class="form-label" :for="presetPermissionSelectId">{{ t('settings.ai.preset_permission_label') }}</label>
+                  <select
+                    :id="presetPermissionSelectId"
+                    class="form-ctrl"
+                    v-model="presetSkipPermissions"
+                    :disabled="presetApplying"
+                  >
+                    <option :value="false">{{ t('settings.ai.preset_permission_safe') }}</option>
+                    <option :value="true">{{ t('settings.ai.preset_permission_skip') }}</option>
+                  </select>
+                </div>
+              </div>
+              <p class="form-hint">{{ t('settings.ai.preset_replace_warning') }}</p>
+              <button
+                type="button"
+                class="btn btn-secondary btn-sm"
+                :disabled="presetApplying"
+                @click="applyPresetCommand"
+              >
+                <AppIcon v-if="!presetApplying" name="magic-wand" aria-hidden="true" />
+                {{ presetApplying ? t('settings.ai.preset_applying') : t('settings.ai.preset_apply_button') }}
+              </button>
+              <p v-if="presetError" class="text-sm ai-preset-error" role="alert">{{ presetError }}</p>
+            </div>
           </div>
           <template v-else>
             <div class="form-group">
@@ -314,6 +355,12 @@ const props = defineProps({
   // The system screen renders its own add button in the card header (v3 deck ①) and turns
   // this one off; the project screen keeps it.
   showAddButton: { type: Boolean, default: true },
+  // 0519 T0007 §3: the parent owns which endpoint/context this calls (system vs. project
+  // permission + project_id) — this component never guesses a URL. Given
+  // { kind, model_name, skip_permissions }, must resolve to { cli_command } or reject with
+  // an axios-shaped error (err.response.data.detail). null when the parent screen has not
+  // wired a builder (e.g. a bare unit mount), which simply hides the panel.
+  buildPresetCommand: { type: Function, default: null },
 });
 const emit = defineEmits(['update:providers', 'update:defaultIndex']);
 
@@ -358,6 +405,39 @@ function restoreTriggerFocus() {
 
 const kindOptions = computed(() => props.catalog.kinds?.[form.exec_type] || []);
 const permissionRule = computed(() => permissionSkipRule(props.catalog, form.kind));
+
+// 0519 T0007 §2: canonical command builder panel state. Entirely local to the dialog —
+// none of it is committed to `form.cli_command` except inside applyPresetCommand()'s success
+// path, so typing a model name, flipping the permission select, or switching kind can never
+// silently rewrite a command the user already has (typed by hand or loaded from a saved row).
+const instanceId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+const presetModelInputId = `ai-preset-model-${instanceId}`;
+const presetPermissionSelectId = `ai-preset-permission-${instanceId}`;
+const presetInfo = computed(() => props.catalog.cli_presets?.[form.kind] || null);
+const presetModelName = ref('');
+const presetSkipPermissions = ref(false);
+const presetApplying = ref(false);
+const presetError = ref('');
+// Bumped whenever the in-flight request's own inputs (exec_type, kind) or its home (the
+// dialog) stop matching what was asked for. applyPresetCommand() captures the value before
+// awaiting and only commits its response if it is still current — a fast kind switch, a
+// switch away from CLI, a dialog close, or a second Apply click cannot let a late response
+// land on the wrong row/kind/execution mode.
+const presetGeneration = ref(0);
+
+function resetPresetPanel(kind) {
+  presetGeneration.value += 1;
+  presetApplying.value = false;
+  presetError.value = '';
+  const info = props.catalog.cli_presets?.[kind] || null;
+  presetModelName.value = info?.default_model || '';
+  presetSkipPermissions.value = form.skip_permissions;
+}
+
+// A kind switch mid-flight invalidates whatever the panel was building for the old kind —
+// same default_model reset the exec_type watcher already gives form.kind itself.
+watch(() => form.kind, (kind) => resetPresetPanel(kind));
+
 const editingRow = computed(() => (editIndex.value === null ? null : props.providers[editIndex.value]));
 const editingHasKey = computed(() => !!editingRow.value?.api_key_set && editingRow.value?.api_key !== '');
 const editingKeyHint = computed(() => editingRow.value?.api_key_hint || '');
@@ -367,9 +447,14 @@ const commandTitle = computed(() => (
   cmdRow.value ? t('settings.ai.command_title', { name: cmdRow.value.name }) : ''
 ));
 
+// Leaving CLI hides the panel, but a kind published on both sides (claude is a CLI kind and
+// an API kind) leaves form.kind untouched, so the kind watcher above never fires. Reset here
+// as well: an in-flight request belongs to the CLI form the user just walked away from, and
+// its late response must not rewrite the command waiting for them if they switch back.
 watch(() => form.exec_type, (execType) => {
   const kinds = props.catalog.kinds?.[execType] || [];
   if (!kinds.includes(form.kind)) form.kind = kinds[0] || '';
+  resetPresetPanel(form.kind);
 });
 
 // The command string is the truth: typing the flag by hand ticks the box, and switching to
@@ -383,6 +468,52 @@ function onPermissionSkipToggle() {
   form.cli_command = setPermissionSkip(
     props.catalog, form.kind, form.cli_command, form.skip_permissions,
   );
+}
+
+function describePresetError(err) {
+  const errors = err?.response?.data?.detail?.errors;
+  const first = Array.isArray(errors) ? errors[0] : null;
+  if (!first) return t('settings.ai.preset_error_generic');
+  const key = `settings.ai.reason.${first.reason}`;
+  return te(key) ? t(key, { max: 200 }) : first.reason;
+}
+
+// 0519 T0007 §2: the only place that ever writes a generated command into form.cli_command.
+// Single-flight (the button is disabled while presetApplying) plus a generation guard cover
+// every way a request can go stale while it is in flight: the dialog closing, a kind switch,
+// or a switch away from CLI. The captured inputs are re-checked next to the generation so a
+// response can only ever be committed onto the exact form state that asked for it.
+function presetRequestIsCurrent(request) {
+  return presetGeneration.value === request.generation
+    && form.exec_type === request.execType
+    && form.kind === request.kind;
+}
+
+async function applyPresetCommand() {
+  if (presetApplying.value || !props.buildPresetCommand) return;
+  const request = {
+    generation: presetGeneration.value,
+    execType: form.exec_type,
+    kind: form.kind,
+  };
+  presetError.value = '';
+  presetApplying.value = true;
+  try {
+    const result = await props.buildPresetCommand({
+      kind: request.kind,
+      model_name: presetModelName.value,
+      skip_permissions: presetSkipPermissions.value,
+    });
+    if (!presetRequestIsCurrent(request)) return; // stale: dialog closed / kind or exec_type changed
+    form.cli_command = result?.cli_command || '';
+    // The existing [form.kind, form.cli_command] watcher re-syncs form.skip_permissions (and
+    // therefore the checkbox/warning) from the command this just wrote — no extra code needed.
+  } catch (e) {
+    if (!presetRequestIsCurrent(request)) return;
+    presetError.value = describePresetError(e);
+  } finally {
+    if (presetGeneration.value === request.generation) presetApplying.value = false;
+  }
 }
 
 function skipsPermissions(p) {
@@ -512,6 +643,7 @@ function openAdd(event) {
   // A new provider always starts with permission confirmation ON (0371 NR0007 §5).
   form.skip_permissions = false;
   formError.value = '';
+  resetPresetPanel(form.kind);
   formOpen.value = true;
   nextTick(() => formInitialFocus.value?.focus?.());
 }
@@ -535,6 +667,7 @@ function openEdit(index, event) {
   // box has to show what that row actually does.
   form.skip_permissions = hasPermissionSkip(props.catalog, form.kind, form.cli_command);
   formError.value = '';
+  resetPresetPanel(form.kind);
   formOpen.value = true;
   nextTick(() => formInitialFocus.value?.focus?.());
 }
@@ -543,6 +676,10 @@ function closeForm() {
   formOpen.value = false;
   editIndex.value = null;
   formError.value = '';
+  // Invalidates any Apply request still in flight so its response cannot land after the
+  // dialog (and the row it was meant for) are gone.
+  presetGeneration.value += 1;
+  presetApplying.value = false;
   restoreTriggerFocus();
 }
 
@@ -639,6 +776,15 @@ function confirmForm() {
 <style scoped>
 .ai-skip-warn {
   color: var(--danger, #d64545);
+}
+
+.ai-preset-panel {
+  margin-top: 10px; padding: 10px 12px; border: 1px dashed var(--border);
+  border-radius: var(--r-sm); background: var(--bg);
+}
+.ai-preset-panel .form-hint:first-child { margin-top: 0; }
+.ai-preset-error {
+  color: var(--danger, #d64545); margin: 6px 0 0;
 }
 
 /* v3 deck 8bqoacqs: table -> single-column row list, ported from WorkflowDecisionModal.vue's

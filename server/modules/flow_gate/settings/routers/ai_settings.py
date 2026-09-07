@@ -54,6 +54,18 @@ class ProviderProbeIn(BaseModel):
     prompt: str | None = None
 
 
+class CliPresetCommandIn(BaseModel):
+    """Inputs for the canonical CLI command builder (flowgate.default.0519 T0007 §1).
+
+    Read-only: this never touches a stored provider row. kind/model_name/skip_permissions
+    map straight onto ai_settings_service.build_preset_command()'s own parameters.
+    """
+
+    kind: str = ""
+    model_name: str | None = None
+    skip_permissions: bool = False
+
+
 class ProjectAiSettingsPut(SystemAiSettingsPut):
     mode: str
 
@@ -81,6 +93,16 @@ def _validation_error(exc: _svc.AiSettingsValidationError) -> HTTPException:
         status_code=422,
         detail={"code": "validation_failed", "errors": exc.errors},
     )
+
+
+def _preset_command_payload(command: str | None) -> dict:
+    """None means the kind has no preset (custom, or anything unrecognized) — answered
+    as the same 422 validation_failed shape as an invalid model_name (T0007 §1)."""
+    if command is None:
+        raise _validation_error(
+            _svc.AiSettingsValidationError([{"field": "kind", "reason": "unsupported_kind"}])
+        )
+    return {"ok": True, "cli_command": command}
 
 
 @router.get("/system/ai-settings")
@@ -155,6 +177,41 @@ def test_project_ai_provider(
     user=Depends(require_permission("project.settings.edit", "project_id")),
 ):
     return _probe.probe_provider(body.model_dump())
+
+
+@router.post("/system/ai-settings/cli-preset-command")
+def build_system_cli_preset_command(
+    body: CliPresetCommandIn,
+    user=Depends(require_permission("system.settings.manage")),
+):
+    """Canonical claude/codex/copilot command for kind + model_name + permission state
+    (flowgate.default.0519 T0007 §1). Always calls ai_settings_service.build_preset_command()
+    — this router never reimplements a CLI's flags. Read-only: never saves a provider row;
+    the editor only persists the result through the ordinary settings PUT."""
+    try:
+        command = _svc.build_preset_command(
+            body.kind, body.model_name, skip_permissions=body.skip_permissions,
+        )
+    except _svc.AiSettingsValidationError as exc:
+        raise _validation_error(exc)
+    return _preset_command_payload(command)
+
+
+@router.post("/projects/{project_id}/ai-settings/cli-preset-command")
+def build_project_cli_preset_command(
+    project_id: str,
+    body: CliPresetCommandIn,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    try:
+        command = _svc.build_preset_command_for_project(
+            project_id, body.kind, body.model_name, skip_permissions=body.skip_permissions,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except _svc.AiSettingsValidationError as exc:
+        raise _validation_error(exc)
+    return _preset_command_payload(command)
 
 
 @router.get("/projects/{project_id}/ai-settings/effective")

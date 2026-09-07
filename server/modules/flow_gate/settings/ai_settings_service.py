@@ -768,6 +768,20 @@ def save_project_settings(
     return get_project_settings(project_id, include_catalog=False)
 
 
+def build_preset_command_for_project(
+    project_id: str,
+    kind: Optional[str],
+    model_name: Optional[str],
+    *,
+    skip_permissions: bool = False,
+) -> Optional[str]:
+    """build_preset_command(), gated behind the same project-exists contract every other
+    project route enforces (flowgate.default.0519 T0007 §1). Raises LookupError for an
+    unknown project so the router can answer 404 the same way it already does elsewhere."""
+    _require_project(project_id)
+    return build_preset_command(kind, model_name, skip_permissions=skip_permissions)
+
+
 # ── Effective resolution (L0004 §2.4) ────────────────────────────────────────
 
 def _effective_view(project_id: str) -> dict:
