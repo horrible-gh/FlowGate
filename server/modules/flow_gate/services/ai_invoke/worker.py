@@ -63,6 +63,9 @@ from .runtime import (
     _RESOLVE_TOOL_DESC,
     _RESOLVE_TOOL_NAME,
     _RESOLVE_TOOL_SCHEMA,
+    _SEQUENCE_EDIT_TOOL_DESC,
+    _SEQUENCE_EDIT_TOOL_NAME,
+    _SEQUENCE_EDIT_TOOL_SCHEMA,
     _absolute_remaining_sec,
     _note_issued_prompt,
     _note_issued_raw_token,
@@ -868,6 +871,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     workflow_pending = run.get("action_scope") == "workflow_decide"
     conflict_pending = run.get("action_scope") == "resolve_conflict"
     is_chat = run.get("action_scope") == "chat"
+    is_sequence_edit = run.get("action_scope") == "workflow_sequence_edit"
     last_text: Optional[str] = None
     conversation: list[dict] = [
         {"role": "system", "content": provider_api._api_system_prompt()},
@@ -924,6 +928,10 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             tool_name, tool_desc, tool_schema = _RESOLVE_TOOL_NAME, _RESOLVE_TOOL_DESC, _RESOLVE_TOOL_SCHEMA
         elif is_chat:
             tool_name, tool_desc, tool_schema = _CHAT_TOOL_NAME, _CHAT_TOOL_DESC, _CHAT_TOOL_SCHEMA
+        elif is_sequence_edit:
+            tool_name, tool_desc, tool_schema = (
+                _SEQUENCE_EDIT_TOOL_NAME, _SEQUENCE_EDIT_TOOL_DESC, _SEQUENCE_EDIT_TOOL_SCHEMA
+            )
         elif run.get("action_scope") == "workflow_decide" or not run.get("doc_ref"):
             # Compatibility for the post-decision continuation and old isolated harnesses.
             # Production document runs always carry doc_ref and take the mediated registry.
@@ -1199,6 +1207,24 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             ))
             continue
 
+        if is_sequence_edit:
+            status, resp = _sequence_edit_register(run, current_token, tool_call["input"])
+            run["last_tool_name"] = "sequence_edit_register"
+            run["last_tool_status"] = status
+            if 200 <= status < 300:
+                run["last_tool_error"] = None
+                registered += 1
+                break
+            reason = _registration_error_summary(resp)
+            run["last_tool_error"] = reason[:500]
+            run["register_errors"].append({"status": status, "reason": reason, "turn": turn})
+            conversation.append(_svc()._tool_result_msg(
+                kind, tool_call,
+                f"Workflow sequence registration failed (HTTP {status}): "
+                f"{json.dumps(resp, ensure_ascii=False)[:2000]}",
+            ))
+            continue
+
         trace["register_attempted"] = True
         status, resp = _svc()._inbox_register(run, current_token, tool_call["input"])
         trace["dispatched"] += 1
@@ -1238,6 +1264,31 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 kind, tool_call,
                 f"Registration failed (HTTP {status}): {json.dumps(resp, ensure_ascii=False)[:2000]}",
             ))
+
+    # 0470 T0009: a chat model can still finish with plain assistant text instead of
+    # calling the forced tool (or exhaust its turns after a rejected tool call).  That
+    # text used to survive only as the diagnostic last_message, leaving the conversation
+    # completely empty.  If no chat turn was registered, make one final append attempt
+    # through the exact same token-bound/idempotent endpoint.  Never run this after a
+    # successful tool registration, so an acknowledged reply cannot be duplicated.
+    if (
+        is_chat
+        and registered == 0
+        and last_text
+        and last_text.strip()
+        and not run["cancel_event"].is_set()
+        and not run.get("timed_out")
+    ):
+        status, resp = _svc()._conversation_turn_register(run, current_token, {"body": last_text})
+        run["last_tool_name"] = "conversation_turn_register"
+        run["last_tool_status"] = status
+        if 200 <= status < 300:
+            run["last_tool_error"] = None
+            registered += 1
+        else:
+            reason = _registration_error_summary(resp)
+            run["last_tool_error"] = reason[:500]
+            run["register_errors"].append({"status": status, "reason": reason, "turn": turn})
 
     goal_met = (
         not workflow_pending
@@ -1453,6 +1504,12 @@ def _conversation_turn_register(run: dict, raw_token: str, tool_input: dict) -> 
             return exc.code, {"error": str(exc)}
     except Exception as exc:
         return 0, {"error": str(exc)}
+
+
+def _sequence_edit_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
+    """Replace the workflow sequence for the bound document through its dedicated token gate."""
+    body = {"doc_id": run["doc_ref"], **tool_input}
+    return _api_bound_request(run, raw_token, "/workflow/sequence", method="PATCH", body=body)
 
 
 def _api_bound_request(run: dict, raw_token: str, path: str, method: str = "GET", body: Optional[dict] = None) -> tuple[int, dict]:

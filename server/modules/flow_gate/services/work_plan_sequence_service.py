@@ -765,3 +765,25 @@ def build_candidates(*, doc: dict, plan: dict, mode: str, locale: str = "ko") ->
         ),
         "workflow_tag": build_workflow_tag(sequence, items),
     }
+
+
+def expand_final_work_plan(*, doc: dict, plan: dict, locale: str = "ko") -> dict:
+    """Persist a final WP through the shared sequence-edit SSOT exactly once."""
+    if str(doc.get("doc_review_status") or "") != "approved":
+        return {"status": "skipped", "reason": "not_final"}
+    wp_doc_id = str(doc.get("doc_id") or "")
+    revision_no = _int(doc.get("revision_no"), 0)
+    owner_doc_id = doc.get("target_id") or doc.get("triggered_by")
+    if not wp_doc_id or not owner_doc_id:
+        return {"status": "skipped", "reason": "missing_workflow_owner"}
+    sequence = db_wfseq.get_sequence_by_doc_id(owner_doc_id)
+    existing = list(db_wfseq.get_sequence_items(sequence["id"]) or []) if sequence else []
+    if any(str(row.get("source_doc_id") or "") == wp_doc_id and _int(row.get("source_revision_no"), -1) == revision_no for row in existing):
+        return {"status": "skipped", "reason": "already_applied", "revision_no": revision_no}
+    candidate = build_candidates(doc=doc, plan=plan, mode="append", locale=locale)
+    if not candidate.get("plan_step_count"):
+        return {"status": "skipped", "reason": "no_placeable_steps", "revision_no": revision_no}
+    pending_rows = [{key: row.get(key) for key in ("type", "label", "note", "source_doc_id", "source_revision_no", "provider_id", "provider_display_name")} for row in candidate["rows"] if row.get("status") == "pending"]
+    from modules.flow_gate.services.workflow_decision_service import edit_workflow_pending
+    result = edit_workflow_pending(owner_doc_id, pending_rows, expected_workflow_tag=candidate["workflow_tag"], expected_plan={"wp_doc_id": wp_doc_id, "wp_revision_no": revision_no}, applied_by="wp_final_auto_expand", locale=locale)
+    return {"status": "expanded", "revision_no": revision_no, "result": result}

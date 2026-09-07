@@ -1015,6 +1015,31 @@ def release_paused_ai_invoke(group_id: str, request: Request):
     return JSONResponse(status_code=200, content=result)
 
 
+@router.delete("/runs/{run_id}/card")
+def dismiss_ai_invoke_run_card(run_id: str, request: Request):
+    """Durable [remove from list] for a FINISHED run's monitor card (0529 B0001).
+
+    The finished-card counterpart of DELETE /paused/{group_id}: that one releases a
+    paused-chain row, this one marks a document-review-loop card as removed so
+    /ai-invoke/active-all stops rebuilding it on every bootstrap. Neither deletes any
+    history -- the run and its loop stay readable through GET /ai-invoke/{run_id}.
+
+    Declared ahead of GET /{run_id} for the same path-shadowing reason as GET /runs
+    below: "runs" must never be read as a run id.
+    """
+    auth = _require_user(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    try:
+        return JSONResponse(status_code=200, content=ai_invoke_service.dismiss_review_loop_card(
+            run_id=run_id,
+            user_id=auth["issued_to"],
+            is_admin=bool(auth.get("is_admin")),
+        ))
+    except HTTPException as exc:
+        return _err(exc)
+
+
 @router.get("/runs")
 def list_ai_invoke_runs(
     request: Request,
@@ -1148,6 +1173,44 @@ def release_ai_invoke_lease(group_id: str, request: Request):
     except HTTPException as exc:
         return _err(exc)
     return JSONResponse(status_code=200, content=result)
+
+
+@router.get("/lease-events")
+def list_ai_invoke_lease_events(
+    group_id: str, request: Request,
+    run_id: Optional[str] = None, token_id: Optional[str] = None,
+    event_type: Optional[str] = None, since: Optional[str] = None,
+    until: Optional[str] = None, limit: int = 200,
+):
+    """Durable lease/admission forensic history (flowgate.default.0502 T0004 §14).
+
+    Admin-only on purpose (§14/§21): this is the append-only audit trail behind a
+    group's lease acquire/activate/handoff/release/reclaim/admission-reject
+    decisions, not a signal ordinary document readers are meant to see -- unlike
+    GET /leases above, `perm_document_read` is not enough here.
+    Declared ahead of GET /{run_id} for the same path-shadowing reason as
+    /leases and /leases/{group_id}/release.
+
+    ``since``/``until`` are the T0004 §14 time-range filter: inclusive ISO-8601
+    bounds on ``created_at`` so an incident window can be isolated instead of
+    always pulling the whole group history."""
+    auth = _require_user(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    try:
+        validate_group_id(group_id)
+    except ValueError as exc:
+        return _validation_failed([{"loc": "group_id", "msg": str(exc)}])
+    if not bool(auth.get("is_admin")):
+        return JSONResponse(status_code=403, content={"code": "permission_denied",
+                                                      "message": "admin required"})
+    from modules.flow_gate.db import group_ai_lease_events as db_lease_events
+
+    items = db_lease_events.list_for_group(
+        group_id, run_id=run_id, token_id=token_id, event_type=event_type,
+        since=since, until=until, limit=limit,
+    )
+    return JSONResponse(status_code=200, content={"ok": True, "group_id": group_id, "items": items})
 
 
 @router.get("/{run_id}")

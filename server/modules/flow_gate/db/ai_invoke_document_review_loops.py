@@ -32,6 +32,23 @@ def checkpoint(run_id: str, *, expected_round_no: int, expected_stage: str, expe
         latest = store._fetch_one("SELECT * FROM ai_invoke_document_review_loops WHERE run_id = ?", [run_id])
         return affected == 1, latest
 
+def dismiss_card(run_id: str, *, at: Optional[str] = None) -> bool:
+    """Mark this loop's MONITOR CARD as removed by its owner (0529 B0001).
+
+    Not a delete: the loop row and every round it recorded stay readable through the
+    run detail and the run list. Only `ai_invoke_runs.list_review_loops_by_user` -- the
+    one query /ai-invoke/active-all rebuilds bootstrap cards from -- skips it afterwards.
+
+    The `card_dismissed_at IS NULL` guard makes this a compare-and-swap rather than a
+    blind UPDATE, so the caller can tell a first removal (True) from a replay of one
+    that already happened (False) instead of reporting success twice for one card.
+    """
+    return get_store()._execute_affected(
+        "UPDATE ai_invoke_document_review_loops SET card_dismissed_at = ? "
+        "WHERE run_id = ? AND card_dismissed_at IS NULL",
+        [at or now_iso(), run_id],
+    ) == 1
+
 def list_by_group(group_id: str, limit: int = 50) -> list[dict]:
     return get_store()._fetch_all("SELECT * FROM ai_invoke_document_review_loops WHERE group_id = ? ORDER BY updated_at DESC LIMIT ?", [group_id, limit])
 

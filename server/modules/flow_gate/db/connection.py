@@ -6,6 +6,7 @@ When TESTING=1, it runs without external dependencies.
 from __future__ import annotations
 
 import json
+import logging as _logging
 import os
 import threading
 from contextlib import contextmanager
@@ -88,9 +89,41 @@ class FlowGateStore:
 
     @contextmanager
     def transaction(self) -> Iterator["FlowGateStore"]:
+        """Run the body in one transaction, then drain the after-commit queue.
+
+        Callbacks registered with :func:`after_commit` while this frame is open run
+        only after the outermost frame has committed, on a connection that is no
+        longer the transaction's. That distinction matters for best-effort side
+        writes (the forensic `group_ai_lease_events` appends, 0502 T0004 §10): under
+        PostgreSQL a failed statement aborts the whole transaction, so a side write
+        that fails *inside* the transaction takes the real mutation down with it even
+        when its own exception is caught. Deferring it past the commit keeps a
+        forensic write failure from ever changing the outcome it was recording.
+        """
         if getattr(_tx_local, "txn", None) is not None:
             yield self
             return
+        _tx_local.after_commit = []
+        try:
+            with self._transaction_frame():
+                yield self
+        except BaseException:
+            # Rolled back: whatever the queued callbacks were going to record describes
+            # writes that no longer exist, so drop them instead of running them.
+            _tx_local.after_commit = []
+            raise
+        callbacks, _tx_local.after_commit = list(getattr(_tx_local, "after_commit", None) or []), []
+        for callback in callbacks:
+            # after_commit() is documented as best-effort: a failing callback must not
+            # turn an already-committed transaction into a failed request.
+            try:
+                callback()
+            except Exception:  # noqa: BLE001
+                _logging.getLogger(__name__).warning(
+                    "after-commit callback failed", exc_info=True)
+
+    @contextmanager
+    def _transaction_frame(self) -> Iterator["FlowGateStore"]:
         with self._db.begin_transaction() as txn:
             # L0007 §9: the live sqlite backend opens a fresh connection per call and
             # does NOT default foreign_keys ON, so ON DELETE CASCADE (questions/answers
@@ -309,3 +342,28 @@ def get_store() -> FlowGateStore:
     if STORE is None:
         STORE = FlowGateStore()
     return STORE
+
+
+def in_transaction() -> bool:
+    """True while this thread is inside a :meth:`FlowGateStore.transaction` frame."""
+    return getattr(_tx_local, "txn", None) is not None
+
+
+def after_commit(callback) -> bool:
+    """Queue *callback* to run once the current transaction commits.
+
+    Returns True when it was queued (a transaction is open) and False when there is
+    no transaction to wait for -- the caller should then just run it inline. The
+    queue is dropped, not run, if the transaction rolls back, and a callback that
+    raises is logged and skipped: this is for best-effort side effects only (see
+    :meth:`FlowGateStore.transaction`), never for writes the caller must keep.
+    """
+    if not in_transaction():
+        return False
+    queue = getattr(_tx_local, "after_commit", None)
+    if queue is None:
+        # Defensive: a transaction opened before this facility existed, or a caller
+        # that stashed the txn itself. Inline is still better than losing the call.
+        return False
+    queue.append(callback)
+    return True

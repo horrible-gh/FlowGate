@@ -418,6 +418,16 @@
           <p v-if="trScope.branch" class="dip-trs-assign">
             {{ t('main.doc_info_panel.tr_scope_branch') }}: <code>{{ trScope.branch }}</code>
           </p>
+          <button
+            v-if="props.groupId"
+            type="button"
+            class="dip-trs-download"
+            :disabled="reviewPackageBusy"
+            @click="downloadReviewPackage"
+          >
+            <AppIcon name="download-simple" />
+            {{ t('main.doc_info_panel.review_package_download') }}
+          </button>
           <!-- A document where verification did not run at submission time, so there is
                no comparison result. Instead of hiding the section, this states why there is
                no verdict and shows only the list reported in the body. rev3: a document
@@ -522,7 +532,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { getRequest, postRequest } from '@shared/api'
+import api, { getRequest, postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import QaHistoryDialog from './QaHistoryDialog.vue'
 import QaReviewHistoryDialog from './QaReviewHistoryDialog.vue'
@@ -641,6 +651,35 @@ onMounted(() => window.addEventListener('fg:document_content_changed', _onWorkPl
 onBeforeUnmount(() => window.removeEventListener('fg:document_content_changed', _onWorkPlanDocChanged))
 
 // Mismatched items — shown prominently, before the full reported/detected lists (D0004 §6).
+const reviewPackageBusy = ref(false)
+async function downloadReviewPackage() {
+  if (!props.groupId || reviewPackageBusy.value) return
+  reviewPackageBusy.value = true
+  try {
+    const projectId = props.groupId.split('.')[0]
+    const path = `/api/v1/projects/${encodeURIComponent(projectId)}/git/groups/${encodeURIComponent(props.groupId)}/review-package`
+    const response = await api.get(path, {
+      params: { target_doc_id: props.docId },
+      responseType: 'blob',
+    })
+    const disposition = String(response.headers['content-disposition'] ?? '')
+    const match = disposition.match(/filename="?([^";]+)"?/i)
+    const filename = match?.[1] ?? `${props.groupId}-review-package.zip`
+    const href = URL.createObjectURL(response.data)
+    const anchor = document.createElement('a')
+    anchor.href = href
+    anchor.download = filename
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(href)
+  } catch {
+    showToast(t('main.doc_info_panel.review_package_download_failed'), 'danger')
+  } finally {
+    reviewPackageBusy.value = false
+  }
+}
+
 const trScopeDiffKeys = ['out_of_scope', 'unconfirmed', 'unreported', 'format_errors'] as const
 
 // Full reported/detected lists — placed side by side in the same shape after the
@@ -1639,6 +1678,24 @@ onBeforeUnmount(() => window.removeEventListener('fg:qa_refresh', _onQaRefresh))
 .dip-trs-skipped { background: var(--muted-bg, #f1f5f9); color: var(--muted, #64748b); }
 .dip-trs-stage { font-size: .7rem; color: var(--muted, #64748b); }
 .dip-trs-assign { margin: 6px 0 0; font-size: .72rem; color: var(--muted, #64748b); }
+.dip-trs-download {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin: 9px 0 0;
+  padding: 7px 9px;
+  font-size: .72rem;
+  font-weight: 600;
+  color: var(--primary, #1d4ed8);
+  background: var(--primary-bg, #eff6ff);
+  border: 1px solid var(--primary-border, #bfdbfe);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.dip-trs-download:hover:not(:disabled) { background: var(--primary-bg-hover, #dbeafe); }
+.dip-trs-download:disabled { opacity: .55; cursor: not-allowed; }
 /* Unverified notice (0390 TR0005 rev2). One line right under the verdict badge, read before the list. */
 .dip-trs-unevaluated { margin: 6px 0 0; font-size: .72rem; line-height: 1.5; color: var(--muted, #64748b); }
 .dip-trs-codes { margin: 6px 0 0; padding-left: 16px; font-size: .72rem; line-height: 1.5; }

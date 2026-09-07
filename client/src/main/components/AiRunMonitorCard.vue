@@ -98,6 +98,7 @@ import { useToast } from './common/useToast'
 import {
   compareRunEntries,
   isAwaitingQ,
+  isDurableFinishedCard,
   isFinishedCard,
   isNonResumableSystemStop,
   openTargetDocId,
@@ -121,37 +122,67 @@ const entries = computed<AiInvokeRunEntry[]>(() =>
 const busy = reactive(new Set<string>())
 
 async function doRemove(entry: AiInvokeRunEntry): Promise<void> {
-  // 0500 T0004 §7/§8: on a finished/lost card this stays the local dismiss it always was
-  // (§19.4). On a non-resumable system stop the durable ai_invoke_paused_chains row has to
-  // go first, or the next active-all bootstrap rebuilds the very card just removed
-  // (NR0003 §2/§8). store.removeCard() drops the card only on a confirmed release (§16).
-  if (!isNonResumableSystemStop(entry)) {
+  // 0500 T0004 §7/§8: on a purely local finished/lost card this stays the local dismiss it
+  // always was (§19.4). On a non-resumable system stop the durable ai_invoke_paused_chains
+  // row has to go first, or the next active-all bootstrap rebuilds the very card just
+  // removed (NR0003 §2/§8). store.removeCard() drops the card only on a confirmed release
+  // (§16).
+  //
+  // 0529 B0001: a FINISHED card active-all rebuilt from `ai_invoke_document_review_loops`
+  // is durable in the same sense and came back the same way, so it takes the server route
+  // too -- without a confirm, since nothing but the card is removed. This screen and the
+  // miniplayer share one registry and one button; they must not disagree about which
+  // cards are durable, or the ghost simply moves to whichever surface still dismisses
+  // locally.
+  const durable = isNonResumableSystemStop(entry) || isDurableFinishedCard(entry)
+  if (!durable) {
     store.dismiss(entry.groupId)
     return
   }
-  if (!window.confirm(t('main.ai_miniplayer.release_confirm_system'))) return
+  if (isNonResumableSystemStop(entry)
+    && !window.confirm(t('main.ai_miniplayer.release_confirm_system'))) return
   busy.add(entry.groupId)
   try {
     await store.removeCard(entry.groupId)
-    if (!store.runsByGroup[entry.groupId]) {
+    if (isNonResumableSystemStop(entry) && !store.runsByGroup[entry.groupId]) {
       showToast(t('main.ai_miniplayer.release_paused_success'), 'success')
     }
   } catch (error: any) {
-    const status = error?.response?.status
-    const code = error?.response?.data?.code
-    if (status === 403) {
-      showToast(t('main.ai_miniplayer.error_release_paused_forbidden'), 'danger')
-    } else if (status === 409 && code === 'group_lease_active') {
-      showToast(t('main.ai_miniplayer.error_release_paused_lease_conflict'), 'danger')
-    } else if (status === 409 && code === 'release_conflict') {
-      showToast(t('main.ai_miniplayer.error_release_paused_release_conflict'), 'danger')
-    } else if (status === 409) {
-      showToast(t('main.ai_miniplayer.error_release_paused_resume_conflict'), 'danger')
-    } else {
-      showToast(t('main.ai_miniplayer.error_release_paused_failed'), 'danger')
-    }
+    if (isNonResumableSystemStop(entry)) showReleaseError(error)
+    else showRemoveCardError(error)
   } finally {
     busy.delete(entry.groupId)
+  }
+}
+
+function showReleaseError(error: any): void {
+  const status = error?.response?.status
+  const code = error?.response?.data?.code
+  if (status === 403) {
+    showToast(t('main.ai_miniplayer.error_release_paused_forbidden'), 'danger')
+  } else if (status === 409 && code === 'group_lease_active') {
+    showToast(t('main.ai_miniplayer.error_release_paused_lease_conflict'), 'danger')
+  } else if (status === 409 && code === 'release_conflict') {
+    showToast(t('main.ai_miniplayer.error_release_paused_release_conflict'), 'danger')
+  } else if (status === 409) {
+    showToast(t('main.ai_miniplayer.error_release_paused_resume_conflict'), 'danger')
+  } else {
+    showToast(t('main.ai_miniplayer.error_release_paused_failed'), 'danger')
+  }
+}
+
+// 0529 B0001: the durable finished-card removal has its own refusals, and none of the
+// paused-release wording fits them. Silence would be worse than either: the card stays
+// on screen, which is exactly the symptom the user reported, so it has to say why.
+function showRemoveCardError(error: any): void {
+  const status = error?.response?.status
+  const code = error?.response?.data?.code
+  if (status === 403) {
+    showToast(t('main.ai_miniplayer.error_remove_card_forbidden'), 'danger')
+  } else if (status === 409 && code === 'run_still_active') {
+    showToast(t('main.ai_miniplayer.error_remove_card_still_active'), 'danger')
+  } else {
+    showToast(t('main.ai_miniplayer.error_remove_card_failed'), 'danger')
   }
 }
 

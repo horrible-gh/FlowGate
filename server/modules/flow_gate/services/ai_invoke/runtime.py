@@ -317,6 +317,41 @@ _CHAT_TOOL_SCHEMA = {
     "required": ["body"],
 }
 
+_SEQUENCE_EDIT_TOOL_NAME = "save_workflow_sequence"
+
+_SEQUENCE_EDIT_TOOL_DESC = (
+    "Save the complete editable workflow sequence for the bound document. Return all five "
+    "provenance values (note, source_doc_id, source_revision_no, provider_id, "
+    "provider_display_name) unchanged for untouched instruction/general rows; clear all five "
+    "for new rows or rows whose type changed. Omit deleted rows and NR/TR/TSR rows."
+)
+
+_SEQUENCE_EDIT_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "type": {"type": "string"},
+                    "label": {"type": "string"},
+                    "note": {"type": ["string", "null"]},
+                    "source_doc_id": {"type": ["string", "null"]},
+                    "source_revision_no": {"type": ["integer", "null"]},
+                    "provider_id": {"type": ["string", "null"]},
+                    "provider_display_name": {"type": ["string", "null"]},
+                },
+                "required": ["type", "label"],
+            },
+        },
+        "force_encoding_reason": {"type": ["string", "null"]},
+        "expected_workflow_tag": {"type": ["string", "null"]},
+        "expected_plan": {"type": ["object", "null"]},
+    },
+    "required": ["items"],
+}
+
 _REGISTER_TOOL_NAME = "register_document"
 
 _REGISTER_TOOL_DESC = (

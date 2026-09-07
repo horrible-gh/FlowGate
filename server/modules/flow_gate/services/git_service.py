@@ -1610,7 +1610,8 @@ def provision_manual(project_id: str) -> dict:
 
 
 def ensure_worktree(
-    project_id: str, module: str, group_id: str, trigger: str = "remote_access"
+    project_id: str, module: str, group_id: str, trigger: str = "remote_access",
+    start_point: Optional[str] = None,
 ) -> str:
     """Create/guarantee the group's branch + worktree. Idempotent; never raises.
 
@@ -1642,7 +1643,9 @@ def ensure_worktree(
             _fail_worktree(project_id, group_id, branch, "git_busy")  # E11
             return "failed"
         try:
-            return _ensure_worktree_locked(cfg, project_id, project_name, group_id, branch, trigger)
+            return _ensure_worktree_locked(
+                cfg, project_id, project_name, group_id, branch, trigger, start_point,
+            )
         finally:
             db_git.release_lock(project_id, holder)
     except Exception as exc:  # noqa: BLE001 — the hook must never break its caller
@@ -1656,7 +1659,7 @@ def ensure_worktree(
 
 def _ensure_worktree_locked(
     cfg: dict, project_id: str, project_name: str, group_id: str, branch: str,
-    trigger: str = "remote_access",
+    trigger: str = "remote_access", start_point: Optional[str] = None,
 ) -> str:
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
     base_root = src_root(project_name, base_branch)
@@ -1683,6 +1686,9 @@ def _ensure_worktree_locked(
         # a tree that no longer holds the source.
         and _worktree_link_ok(wt_path)
     ):
+        if start_point and not _commits_present(wt_path, [start_point]):
+            _fail_worktree(project_id, group_id, branch, "terminal_commit_absent")
+            return "failed"
         db_git.clear_provision_failure(group_id)   # a stale marker must not linger (L §2.4)
         _emit_worktree_ready(
             project_id, group_id, branch, base_branch, wt_path,
@@ -1703,7 +1709,47 @@ def _ensure_worktree_locked(
         _fail_worktree(project_id, group_id, branch, proc.stderr.strip())
         return "failed"
 
-    if _ref_exists(base_root, f"refs/heads/{branch}"):
+    # Terminal reopen supplies C1 explicitly.  Never silently fall back to base HEAD:
+    # pushed-but-unmerged content normally is not in the configured base yet.
+    if start_point:
+        present = _run_git(["cat-file", "-e", f"{start_point}^{{commit}}"], cwd=base_root)
+        if present.returncode != 0:
+            _fail_worktree(project_id, group_id, branch, "terminal_commit_absent")
+            return "failed"
+        if _ref_exists(base_root, f"refs/heads/{branch}"):
+            contains = _run_git(["merge-base", "--is-ancestor", start_point, branch], cwd=base_root)
+            if contains.returncode != 0:
+                _fail_worktree(project_id, group_id, branch, "terminal_branch_mismatch")
+                return "failed"
+            proc = _run_git(["worktree", "add", str(wt_path), branch], cwd=base_root)
+        elif _ref_exists(base_root, f"refs/remotes/origin/{branch}"):
+            contains = _run_git(
+                ["merge-base", "--is-ancestor", start_point, f"origin/{branch}"], cwd=base_root,
+            )
+            if contains.returncode != 0:
+                _fail_worktree(project_id, group_id, branch, "terminal_branch_mismatch")
+                return "failed"
+            proc = _run_git(
+                ["worktree", "add", "--track", "-b", branch, str(wt_path), f"origin/{branch}"],
+                cwd=base_root,
+            )
+        else:
+            # T0007 §4 condition 1 — re-provisioning from bare C1 would silently
+            # drop any base commit made after C1 was merged (base B1 = B0+C1 may
+            # already have moved on to B2). C1 is an ancestor of the current base
+            # tip whenever the merge that terminalized it actually landed, so fork
+            # from that tip instead — C1's content stays in history either way.
+            # If the tip does NOT contain C1, this base/history relationship
+            # cannot be trusted; fail closed rather than guess (T0007 §11).
+            base_tip = _worktree_start_point(base_root, base_branch)
+            contains_c1 = _run_git(
+                ["merge-base", "--is-ancestor", start_point, base_tip], cwd=base_root,
+            )
+            if contains_c1.returncode != 0:
+                _fail_worktree(project_id, group_id, branch, "terminal_base_diverged")
+                return "failed"
+            proc = _run_git(["worktree", "add", "-b", branch, str(wt_path), base_tip], cwd=base_root)
+    elif _ref_exists(base_root, f"refs/heads/{branch}"):
         proc = _run_git(["worktree", "add", str(wt_path), branch], cwd=base_root)
     elif _ref_exists(base_root, f"refs/remotes/origin/{branch}"):
         # Reconnect to the group's existing remote branch (restart survival).
@@ -2360,15 +2406,24 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
                 if m:
                     behind, ahead = int(m.group(1)), int(m.group(2))
 
+    # Display status for response: may differ from persisted status for preview_ac.
+    # At this point, if status is 'none', the root must be wf_in_progress
+    # (else lines 2336-2343 would have transitioned it when root is wf_done).
+    # When preview_ac=True and status=='none', show a preliminary awaiting_choice
+    # (0197 T0004 §B) for the AC approval dialog.
+    display_status = status
+    if status == "none" and preview_ac:
+        display_status = "awaiting_choice"
+
     # Suggested commit message (flowgate.default.0173 P0003 §2): only meaningful
     # while the group awaits a commit-producing choice; null otherwise.
-    if status in ("awaiting_choice", "waiting"):
+    if display_status in ("awaiting_choice", "waiting"):
         subject, source = resolve_commit_message(group_id)
         commit_message: Optional[dict] = {"suggested": subject, "source": source}
     else:
         commit_message = None
 
-    actionable = status in ("awaiting_choice", "waiting")
+    actionable = display_status in ("awaiting_choice", "waiting")
     open_session = db_git.get_open_session_by_group(group_id)
     group_update_merge_id = (
         open_session.get("merge_id")
@@ -2380,7 +2435,7 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         "group_id": group_id,
         "branch": branch,
         "base_branch": base_branch,
-        "status": status,
+        "status": display_status,
         "default_action": cfg.get("default_finalize_action") or "wait",
         "choices": list(FINALIZE_MAIN_CHOICES if actionable else ()),
         "aux_choices": list(FINALIZE_AUX_CHOICES if actionable else ()),
@@ -2854,15 +2909,21 @@ def collect_scope_changes(project_id: str, group_id: str) -> dict:
         the path after the rename"), hence ``-M`` instead of ``--no-renames``
 
     Returns ``{"available": bool, "reason": str, "worktree": str|None,
-    "branch": str|None, "paths": [str]}``. Never raises: an unavailable worktree or
-    a failing git call is a *result* (``available=False`` + reason), because the
-    caller must turn that into TRV-006 rather than a 500 on someone's TR.
-    Exclusion rules are NOT applied here — tr_scope_service owns them so the same
-    filter runs over the reported list too.
+    "branch": str|None, "paths": [str], "entries": [dict]}``. ``entries`` carries one
+    manifest row per path in ``paths``: ``{"path", "status", "old_path"}``, where
+    ``status`` is one of ``A``/``M``/``D``/``R`` (falling back to ``M`` — best-effort,
+    still content-changed — for a git status letter this check does not otherwise
+    recognise) and ``old_path`` is set only for a rename. A path is never omitted from
+    ``entries`` just because its status could not be classified precisely (0493 T0005 —
+    reviewers need per-file status, not just a bare path list). Never raises: an
+    unavailable worktree or a failing git call is a *result* (``available=False`` +
+    reason), because the caller must turn that into TRV-006 rather than a 500 on
+    someone's TR. Exclusion rules are NOT applied here — tr_scope_service owns them so
+    the same filter runs over the reported list too.
     """
     result: dict = {
         "available": False, "reason": SRC_ROOT_ERROR,
-        "worktree": None, "branch": None, "paths": [],
+        "worktree": None, "branch": None, "paths": [], "entries": [],
     }
     wt_path, reason = effective_src_root_ex(project_id, group_id)
     result["reason"] = reason
@@ -2875,7 +2936,7 @@ def collect_scope_changes(project_id: str, group_id: str) -> dict:
         cfg = db_git.get_config(project_id) or {}
         base_branch = (cfg.get("base_branch") or "main").strip() or "main"
 
-        paths: set[str] = set()
+        entries_by_path: dict[str, dict] = {}
         merge_proc = _run_git(
             ["merge-base", f"refs/heads/{base_branch}", "HEAD"],
             cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
@@ -2889,7 +2950,8 @@ def collect_scope_changes(project_id: str, group_id: str) -> dict:
             if diff_proc.returncode != 0:
                 result["reason"] = SRC_ROOT_ERROR
                 return result
-            paths.update(_parse_name_status_z(diff_proc.stdout or ""))
+            for entry in _parse_name_status_manifest(diff_proc.stdout or ""):
+                entries_by_path[entry["path"]] = entry
         else:
             # No merge base (unrelated histories / missing base branch) — the
             # committed half cannot be computed. Working-tree state alone would be
@@ -2906,12 +2968,14 @@ def collect_scope_changes(project_id: str, group_id: str) -> dict:
             result["reason"] = SRC_ROOT_ERROR
             return result
         for path in (others.stdout or "").split("\0"):
-            if path:
-                paths.add(path)
+            if path and path not in entries_by_path:
+                # A never-added file deletes nothing and was never renamed from anywhere.
+                entries_by_path[path] = {"path": path, "status": "A", "old_path": None}
 
         result["available"] = True
         result["reason"] = SRC_ROOT_WORKTREE
-        result["paths"] = sorted(paths)
+        result["paths"] = sorted(entries_by_path)
+        result["entries"] = [entries_by_path[path] for path in sorted(entries_by_path)]
         return result
     except Exception:  # noqa: BLE001 — a verification helper must never 500 a TR
         _log.warning("collect_scope_changes failed for %s", group_id, exc_info=True)
@@ -2950,6 +3014,59 @@ def _parse_name_status_z(stdout: str) -> list[str]:
         elif first:
             paths.append(first)
     return paths
+
+
+def _normalize_git_status(code: str) -> str:
+    """A raw ``git diff --name-status`` letter (possibly with a similarity suffix, e.g.
+    ``R100``) → one of ``A``/``M``/``D``/``R``. Anything else git might emit (``T``
+    type-change, ``U`` unmerged, ...) falls back to ``M``: the path did change and is
+    never dropped, it is just not classified more precisely (0493 T0005)."""
+    letter = (code or "")[:1].upper()
+    if letter in ("A", "M", "D"):
+        return letter
+    if letter in ("R", "C"):
+        return "R"
+    return "M"
+
+
+def _parse_name_status_manifest(stdout: str) -> list[dict]:
+    """Same ``-M -z`` stream as ``_parse_name_status_z``, but keeps status and the
+    rename's old path instead of collapsing to a bare path list (0493 T0005 —
+    reviewers need per-file actual status, not just a path).
+
+    Returns one entry per changed path: ``{"path", "status", "old_path"}``. ``old_path``
+    is set only for a rename/copy record (``take_second``); every other status carries
+    it as ``None``. Field-walking logic mirrors ``_parse_name_status_z`` — see its
+    docstring for why a fixed stride desyncs on the first rename.
+    """
+    fields = (stdout or "").split("\0")
+    entries: list[dict] = []
+    index = 0
+    while index < len(fields):
+        status = fields[index]
+        index += 1
+        if not status:
+            continue
+        take_second = status[:1] in ("R", "C")
+        if index >= len(fields):
+            break
+        first = fields[index]
+        index += 1
+        if take_second:
+            if index >= len(fields):
+                break
+            second = fields[index]
+            index += 1
+            if second:
+                entries.append({
+                    "path": second, "status": _normalize_git_status(status),
+                    "old_path": first or None,
+                })
+        elif first:
+            entries.append({
+                "path": first, "status": _normalize_git_status(status), "old_path": None,
+            })
+    return entries
 
 
 def _validate_blob_path(path: str) -> None:
@@ -3835,6 +3952,46 @@ def open_cancel_session(group_id: str, target_shas: Sequence[str]) -> dict:
     }
 
 
+def open_terminal_reopen_session(group_id: str) -> dict:
+    """Lock and check a terminal reopen before it can re-provision a worktree.
+
+    The ordinary cancel gate returns ``already_merged`` before G8--G10 because a
+    merged slot may legitimately be unregistered. Terminal reopen does not reset or
+    revert, but its following re-arm can recreate the slot; therefore any existing
+    worktree must still be checked under the project lock so unrelated edits cannot
+    be overwritten. A missing terminal worktree is valid and needs no cleanliness
+    check.
+    """
+    def block(reason: str, sub: str) -> dict:
+        return {"ok": False, "blocked_reason": reason, "block_sub": sub, "session": None}
+
+    gate = _cancel_prelock_gate(group_id)
+    if gate["blocked_reason"] != "already_merged":
+        return block(gate["blocked_reason"] or "git_inactive", gate["block_sub"] or "terminal_status_changed")
+    project_id, cfg, state = gate["project_id"], gate["cfg"], gate["state"]
+    holder = f"terminal-reopen:{uuid.uuid4()}"
+    if not _acquire_lock(project_id, holder, wait_sec=CANCEL_LOCK_WAIT_SEC):
+        return block("git_busy", "lock_timeout")
+    try:
+        project_name = _project_name(project_id)
+        wt_path = src_root(project_name, state["branch"]) if project_name else None
+        if wt_path is not None and wt_path.is_dir() and cancel_blocking_dirty(wt_path):
+            raise _CancelGateFailed("dirty_worktree", "dirty_worktree")
+    except _CancelGateFailed as gate_error:
+        _release_cancel_lock(project_id, holder)
+        return block(gate_error.reason, gate_error.sub)
+    except Exception:
+        _release_cancel_lock(project_id, holder)
+        raise
+    return {
+        "ok": True, "blocked_reason": None, "block_sub": None,
+        "session": {
+            "project_id": project_id, "group_id": group_id, "holder": holder,
+            "wt_path": wt_path, "author_env": _author_env_from_cfg(cfg),
+        },
+    }
+
+
 class _CancelGateFailed(Exception):
     """Internal: a post-lock gate refused. Carries the pair the caller reports."""
 
@@ -3855,6 +4012,49 @@ def close_cancel_session(session: Optional[dict]) -> None:
     if not session:
         return
     _release_cancel_lock(session["project_id"], session["holder"])
+
+
+def uncommit_tr_suffix(session: dict, target_shas: Sequence[str]) -> dict:
+    """Remove an exact TR-only HEAD suffix while preserving its tree delta unstaged.
+
+    The validation and reset run under the cancel session's project lock.  Every target
+    must equal the current first-parent suffix in the supplied newest-first order; an
+    unknown/manual or non-target commit therefore fails closed before history moves.
+    """
+    wt_path = session["wt_path"]
+    expected = [str(sha or "").strip() for sha in target_shas]
+    if not expected or any(not sha for sha in expected):
+        return {"kind": "blocked", "sub": "unsafe_suffix", "before": None}
+
+    head_proc = _run_git(
+        ["rev-parse", "HEAD"], cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    before = (head_proc.stdout or "").strip()
+    if head_proc.returncode != 0 or not before:
+        return {"kind": "blocked", "sub": "unsafe_suffix", "before": before or None}
+
+    cursor = before
+    for sha in expected:
+        if cursor != sha:
+            return {"kind": "blocked", "sub": "unsafe_suffix", "before": before}
+        parent_proc = _run_git(
+            ["rev-parse", f"{cursor}^"], cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+        )
+        cursor = (parent_proc.stdout or "").strip()
+        if parent_proc.returncode != 0 or not cursor:
+            return {"kind": "blocked", "sub": "unsafe_suffix", "before": before}
+
+    reset = _run_git(["reset", "--mixed", cursor], cwd=wt_path)
+    if reset.returncode != 0:
+        return {"kind": "blocked", "sub": "reset_failed", "before": before}
+
+    after_proc = _run_git(
+        ["rev-parse", "HEAD"], cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    after = (after_proc.stdout or "").strip()
+    if after_proc.returncode != 0 or after != cursor:
+        return {"kind": "blocked", "sub": "reset_failed", "before": before}
+    return {"kind": "ok", "before": before, "head": after}
 
 
 def revert_tr_commit(session: dict, *, commit_sha: str, subject: str, body: str) -> dict:
@@ -4487,8 +4687,15 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         )
 
     # Refresh the lazy wf_done transition before the state guard (L0006 §4.2).
+    # Pending ledger states are only a cached consequence of final workflow approval,
+    # never proof of it: re-check the root here to contain stale historical/manual data.
     status = (state.get("status") or "none")
-    if status == "none" and _group_root_wf_done(group_id):
+    root_wf_done = (
+        _group_root_wf_done(group_id)
+        if status in ("none", "awaiting_choice", "waiting")
+        else None
+    )
+    if status == "none" and root_wf_done:
         _set_status(group_id, "awaiting_choice")
         status = "awaiting_choice"
     if status in ("merged", "pushed"):
@@ -4502,6 +4709,12 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         )
     if status not in ("awaiting_choice", "waiting"):
         raise GitServiceError(409, "invalid_state", f"finalize not available in state '{status}'")
+    if not root_wf_done:
+        raise GitServiceError(
+            409,
+            "invalid_state",
+            "final workflow approval is required before Git finalize",
+        )
 
     if action == "wait":
         _set_status(group_id, "waiting")
@@ -5935,24 +6148,50 @@ def project_git_status(project_id: str) -> dict:
     # into a single IN query so the loop only does set membership.
     all_rows = db_git.list_states_of_project_any(project_id)
     rows = [r for r in all_rows if r.get("worktree_registered")]
+    # T0009: one batched root lookup serves both the existing lazy transition
+    # and stale-pending recovery. A pending ledger row is displayable only while
+    # its workflow root remains wf_done; interrupted/rework paths can otherwise
+    # leave awaiting_choice/waiting visible after approval was withdrawn.
+    root_candidate_statuses = ("none", "awaiting_choice", "waiting")
     wf_done_groups = _groups_root_wf_done(
-        [r["group_id"] for r in rows if (r.get("status") or "none") == "none"]
+        [
+            r["group_id"] for r in rows
+            if (r.get("status") or "none") in root_candidate_statuses
+        ]
     )
     for row in rows:
-        if (row.get("status") or "none") == "none" and row["group_id"] in wf_done_groups:
+        status = row.get("status") or "none"
+        group_id = row["group_id"]
+        if status in ("awaiting_choice", "waiting") and group_id not in wf_done_groups:
+            try:
+                # Status-only repair: preserve the branch, registered worktree, and
+                # any merge ledger fields. conflict remains an active-session state
+                # and is deliberately excluded from this recovery. The row's status
+                # is now "none", which SLOT_STATUSES already keeps in `slots` below
+                # and PENDING_STATUSES already keeps out of `pending` — no separate
+                # exclusion list is needed.
+                _set_status(group_id, "none")
+                row["status"] = "none"
+            except Exception:
+                # Keep the row visible when persistence fails; hiding it without
+                # repairing the ledger would make the UI disagree with the SSOT.
+                _log.warning(
+                    "stale git pending recovery failed for %s", group_id, exc_info=True
+                )
+        elif status == "none" and group_id in wf_done_groups:
             try:
                 # 0199 B0001: proven no-work groups are discarded (torn down, no
                 # merge/push) here; real groups still transition to awaiting_choice.
                 # A discarded group's slot is unregistered by the cleanup, so it
                 # drops out of every list below (SLOT/PENDING/CLEANUP filters).
                 row["status"] = _decide_pending_transition(
-                    project_id, cfg, row, row["group_id"]
+                    project_id, cfg, row, group_id
                 )
             except Exception:
                 # One broken group must not sink the whole aggregation
                 # (0115 batch-fetch exception-isolation lesson, L §5).
                 _log.warning(
-                    "lazy git transition failed for %s", row.get("group_id"), exc_info=True
+                    "lazy git transition failed for %s", group_id, exc_info=True
                 )
 
     # 0327 T0004 (B0001): `writable` tells the file explorer whether this slot's
@@ -6710,26 +6949,49 @@ def run_approve_git_action(group_id: str, git_action: str) -> dict:
         return {"ok": False, "error": error}
 
 
-def reopen_group_git(project_id: str, group_id: str) -> None:
+def reopen_group_git(
+    project_id: str, group_id: str, terminal_commit_sha: Optional[str] = None,
+    terminal_session: Optional[dict] = None,
+) -> None:
     """Re-arm a group's git slot after a time-machine rewind past finalize (B0001,
-    flowgate.default.0211).
+    flowgate.default.0211; extended by NR0003 R1/R2, flowgate.default.0477).
 
     The reverse-time-machine rewinds only the document/workflow layer; the git
-    ledger keeps whatever the prior finalize left it in. When that state is
-    terminal (merged/pushed) the group's worktree was already torn down and
-    unregistered by slot cleanup (0182), so the next finalize on the re-worked
-    group is impossible: precheck_approve_git_action rejects 422 ("not a git-active
-    group") while the worktree is gone, or finalize rejects 409 ("already
-    finalized") once a write-gate self-heal re-registers the worktree but leaves
-    the status terminal (register_worktree never touches status). Restore the
-    invariant "a workflow below final approval is not git-terminal": drop the
-    status back to 'none' and re-provision the worktree from base HEAD so the
-    group can be finalized again.
+    ledger keeps whatever the prior finalize left it in. Restore the invariant
+    this module now states explicitly:
 
-    Only terminal slots are touched — a healthy in-progress slot needs no
-    re-arming, and an in-flight merge/conflict owns the base checkout and must not
-    be disturbed (its own state gate and the sweep handle those). Never raises: the
-    caller's document rewind has already committed and must stand regardless.
+        Git status in (awaiting_choice, waiting) ⇒ workflow root == wf_done
+
+    A rewind that takes root back to wf_in_progress must therefore also take the
+    git ledger back to a non-pending state, or the header/finalize gate keeps
+    treating an unapproved group as "ready to merge" (NR0003 §9-§13).
+
+        merged / pushed
+            → terminal: the group's worktree was already torn down and
+              unregistered by slot cleanup (0182), so the next finalize on the
+              re-worked group is impossible (precheck_approve_git_action 422
+              "not a git-active group", or finalize 409 "already finalized" once
+              a write-gate self-heal re-registers the worktree but leaves status
+              terminal — register_worktree never touches status). Drop the status
+              back to 'none' and re-provision the worktree from base HEAD.
+
+        awaiting_choice / waiting
+            → inert bookkeeping: finalize was reachable (root had reached
+              wf_done) but no real git operation ever ran — no worktree/session
+              to lose. Drop the status straight back to 'none'; the existing
+              worktree is untouched and stays usable.
+
+        conflict / merging
+            → a real git operation/session (an open merge, a base checkout
+              mid-conflict) may be live for this group. Silently resetting it out
+              from under a rewind would either orphan the session or corrupt the
+              shared base checkout, so these are NEVER touched here — the reopen
+              itself is refused with 409 before this function runs
+              (``raise_if_git_session_blocks_reopen``), leaving both the
+              workflow layer and the git session exactly as they were.
+
+    Never raises: the caller's document rewind has already committed and must
+    stand regardless.
     """
     try:
         cfg = db_git.get_config(project_id)
@@ -6739,18 +7001,91 @@ def reopen_group_git(project_id: str, group_id: str) -> None:
         if state is None:
             return
         status = (state.get("status") or "none")
-        if status not in ("merged", "pushed"):
+        if status in ("merged", "pushed"):
+            if not terminal_commit_sha:
+                raise GitServiceError(409, "terminal_commit_absent", "terminal reopen requires C1")
+            # When called from reopen_to_target, the terminal session still owns the
+            # project lock and this code runs inside the workflow DB transaction.
+            # Provision directly under that lock so no source write can interleave.
+            if terminal_session is not None:
+                project_name = _project_name(project_id)
+                if not project_name:
+                    raise GitServiceError(409, "terminal_reprovision_failed", "project name missing")
+                branch = worktree_branch_name(project_id, _module_of(group_id), group_id)
+                provisioned = _ensure_worktree_locked(
+                    cfg, project_id, project_name, group_id, branch,
+                    "timemachine_reopen", terminal_commit_sha,
+                )
+            else:
+                provisioned = ensure_worktree(
+                    project_id, _module_of(group_id), group_id,
+                    trigger="timemachine_reopen", start_point=terminal_commit_sha,
+                )
+            if provisioned == "failed":
+                raise GitServiceError(
+                    409, "terminal_reprovision_failed",
+                    "cannot preserve the terminal commit while reopening the worktree",
+                )
+            _set_status(group_id, "none")
             return
-        # Clear the terminal marker FIRST so the re-provision below cannot leave a
-        # "registered worktree, still merged" contradiction (register_worktree only
-        # updates branch/worktree_registered, never the status column).
-        _set_status(group_id, "none")
-        # Re-provision a clean worktree for the re-work. Idempotent and best-effort:
-        # a 'failed' result leaves status 'none', and the existing write-gate
-        # self-heal re-attempts provisioning on the next source write.
-        ensure_worktree(project_id, _module_of(group_id), group_id, trigger="timemachine_reopen")
+        if status in ("awaiting_choice", "waiting"):
+            _set_status(group_id, "none")
+            return
+        # status in ("none", "conflict", "merging"): nothing to do. conflict/merging are
+        # deliberately left alone — see the docstring above.
+    except GitServiceError:
+        raise
     except Exception:
         _log.warning("git reopen re-arm failed for %s", group_id, exc_info=True)
+
+
+def raise_if_git_session_blocks_reopen(project_id: str, group_id: str) -> Optional[dict]:
+    """Refuse a workflow reopen (Time Machine rewind) outright while the group's git
+    ledger holds an active session (NR0003 R2, flowgate.default.0477).
+
+    ``conflict``/``merging`` mean a real git operation is in flight for this group — an
+    open merge session or a base checkout mid-conflict. ``reopen_group_git`` never touches
+    those statuses (nothing to silently reset without risking an orphaned session or a
+    corrupted shared base checkout), so the reopen request itself must be rejected before
+    the rewind transaction runs, preserving both the workflow state and the git session
+    untouched. ``awaiting_choice``/``waiting`` are fine to let through — they hold no live
+    session and ``reopen_group_git`` resets them to ``none`` after the rewind commits.
+    """
+    cfg = db_git.get_config(project_id)
+    if cfg is None or not cfg.get("enabled"):
+        return
+    state = db_git.get_state(group_id)
+    if state is None:
+        return
+    status = (state.get("status") or "none")
+    if status in ("merged", "pushed"):
+        # A terminal reopen will re-provision this slot after the workflow transaction.
+        # Check an extant worktree before that transaction, so a dirty terminal group
+        # cannot reopen documents or have its user edits overwritten.
+        terminal = open_terminal_reopen_session(group_id)
+        if not terminal.get("ok"):
+            reason = terminal.get("blocked_reason") or "git_busy"
+            if reason == "dirty_worktree":
+                raise GitServiceError(
+                    409, "dirty_worktree",
+                    "cannot reopen while the terminal worktree has uncommitted changes",
+                )
+            raise GitServiceError(
+                409, reason,
+                f"Terminal reopen is currently blocked for project '{project_id}' (try again shortly)",
+            )
+        return terminal["session"]
+    if status == "conflict":
+        raise GitServiceError(
+            409, "invalid_state",
+            "cannot reopen while a merge conflict is unresolved for this group; "
+            "resolve or abort it first",
+        )
+    if status == "merging":
+        raise GitServiceError(
+            409, "git_busy",
+            f"Another git operation is in progress for project '{project_id}' (try again shortly)",
+        )
 
 
 # ── Base source-root resolution for the file explorer (0319 B0001) ────────────

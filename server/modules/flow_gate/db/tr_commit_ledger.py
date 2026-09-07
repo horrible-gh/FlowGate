@@ -114,6 +114,12 @@ def live_rows(group_id: str, doc_ids: Iterable[str]) -> list[dict[str, Any]]:
 
     Ordered by ``id DESC`` and NOT by seq: a TR that was rewound and re-approved
     has a small seq but a late commit, and reverts must peel the newest one first.
+
+    Excludes rows :func:`mark_terminal_reopened` has already marked (T0007 §5/§9). A
+    terminal row's commit is buried under a merge — no reset can ever reach it as a
+    contiguous HEAD suffix — so offering it here would only ever end in
+    ``unsafe_suffix``. It is not live-for-cancel-purposes even though ``state`` still
+    says ``live``; that column is the historical-fact flag, not this one's.
     """
     ids = [d for d in doc_ids if d]
     if not ids:
@@ -122,10 +128,68 @@ def live_rows(group_id: str, doc_ids: Iterable[str]) -> list[dict[str, Any]]:
     return get_store()._fetch_all(
         "SELECT id, group_id, doc_id, commit_sha, commit_subject, state "
         "FROM tr_commit_ledger "
-        f"WHERE group_id = ? AND state = 'live' AND doc_id IN ({placeholders}) "
+        "WHERE group_id = ? AND state = 'live' AND reopened_terminal_at IS NULL "
+        f"AND doc_id IN ({placeholders}) "
         "ORDER BY id DESC",
         [group_id, *ids],
     )
+
+
+def latest_reopened_subject(group_id: str, doc_id: str) -> Optional[str]:
+    """Return the durable subject of the most recent prior approval round this
+    document's Time Machine reopen left behind, whichever of the two shapes it took.
+
+    Two disjoint sources, both meaning "a reopen happened and nothing overrode the
+    subject since":
+
+    * ``state = 'canceled' AND cancel_commit IS NULL AND cancel_reason IS NULL`` — a
+      plain live rewind's ``uncommit_tr_suffix`` row (0332 D0005 K5). Excludes revert-based
+      cancels (T0018's forward-restore counterpart writes a real ``cancel_commit``), which
+      are a different feature's rows and never meant subject reuse.
+    * ``state = 'live' AND reopened_terminal_at IS NOT NULL`` — a merged/pushed terminal
+      reopen's row (flowgate.default.0532 T0007 §7). Nothing was uncommitted — the row is
+      still ``live`` because the commit is permanent history — but the reopen happened just
+      the same and the same default applies: reuse the subject unless the document now
+      carries an explicit replacement draft.
+    """
+    row = get_store()._fetch_one(
+        "SELECT commit_subject FROM tr_commit_ledger "
+        "WHERE group_id = ? AND doc_id = ? AND ( "
+        "    (state = 'canceled' AND cancel_commit IS NULL AND cancel_reason IS NULL) "
+        "    OR (state = 'live' AND reopened_terminal_at IS NOT NULL) "
+        ") "
+        "ORDER BY id DESC LIMIT 1",
+        [group_id, doc_id],
+    )
+    return row.get("commit_subject") if row else None
+
+
+def mark_terminal_reopened(row_id: int) -> bool:
+    """T0007 §5/§9 — this row's commit is baked into base by a merge/push, so a Time
+    Machine reopen may not uncommit it. Record that its cycle closed here instead of
+    writing ``state='canceled'``, which would claim, falsely, that the commit was
+    reverted (D0005 K5 — the ledger never misstates git history).
+
+    The row otherwise stays ``live`` and keeps its ``commit_sha`` forever — the content
+    is permanent, merged history. ``reopened_terminal_at`` is the only thing that
+    changes: it is what takes the row out of :func:`live_rows`'s cancel-target set and
+    makes its subject reusable by :func:`latest_reopened_subject` on the reapproval that
+    follows.
+
+    Idempotent by construction — a terminal reopen carries no per-attempt payload (no
+    cancel commit, no reason code) the way a real cancel does, so a row already marked
+    and one just marked by this call are indistinguishable and equally correct to report
+    as terminal. Returns whether the row ended up terminal, not whether THIS call was
+    the one that set it.
+    """
+    now = now_iso()
+    get_store()._execute(
+        "UPDATE tr_commit_ledger SET reopened_terminal_at = ?, updated_at = ? "
+        "WHERE id = ? AND state = 'live' AND reopened_terminal_at IS NULL",
+        [now, now, row_id],
+    )
+    row = get_by_id(row_id)
+    return bool(row) and row.get("reopened_terminal_at") is not None
 
 
 def reappliable_rows(group_id: str, doc_ids: Iterable[str]) -> list[dict[str, Any]]:
@@ -233,6 +297,7 @@ def latest_by_doc(doc_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
         "       cancel_commit, cancel_reason, skip_reason, restored_from_id, created_at "
         "FROM tr_commit_ledger "
         f"WHERE doc_id IN ({placeholders}) AND state IN ('live', 'canceled') "
+        "AND reopened_terminal_at IS NULL "
         "ORDER BY id ASC",
         list(ids),
     )
@@ -252,7 +317,8 @@ def list_by_group(group_id: str, limit: int = 200) -> list[dict[str, Any]]:
     return get_store()._fetch_all(
         "SELECT l.id, l.doc_id, l.state, l.commit_sha, l.commit_subject, "
         "       l.skip_reason, l.cancel_commit, l.cancel_reason, l.canceled_at, "
-        "       l.restored_from_id, l.created_at, d.seq, d.type_code, d.title "
+        "       l.restored_from_id, l.reopened_terminal_at, l.created_at, "
+        "       d.seq, d.type_code, d.title "
         "FROM tr_commit_ledger l "
         "LEFT JOIN documents d ON d.doc_id = l.doc_id "
         "WHERE l.group_id = ? "
@@ -275,7 +341,8 @@ def list_by_groups(group_ids: Iterable[str], limit: int = 400) -> list[dict[str,
     return get_store()._fetch_all(
         "SELECT l.id, l.group_id, l.doc_id, l.state, l.commit_sha, l.commit_subject, "
         "       l.skip_reason, l.cancel_commit, l.cancel_reason, l.canceled_at, "
-        "       l.restored_from_id, l.created_at, d.seq, d.type_code, d.title "
+        "       l.restored_from_id, l.reopened_terminal_at, l.created_at, "
+        "       d.seq, d.type_code, d.title "
         "FROM tr_commit_ledger l "
         "LEFT JOIN documents d ON d.doc_id = l.doc_id "
         f"WHERE l.group_id IN ({placeholders}) "
@@ -303,6 +370,7 @@ def commit_rows_by_group(group_id: str) -> list[dict[str, Any]]:
         "FROM tr_commit_ledger l "
         "JOIN documents d ON d.doc_id = l.doc_id "
         "WHERE l.group_id = ? AND l.state IN ('live', 'canceled') "
+        "AND l.reopened_terminal_at IS NULL "
         "ORDER BY d.seq ASC, l.id ASC",
         [group_id],
     )

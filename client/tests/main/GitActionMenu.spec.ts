@@ -32,9 +32,9 @@ function gitStatus(pendingCount = 1) {
   }
 }
 
-function mountMenu() {
+function mountMenu(pendingCount = 1) {
   useProjectStore().setCurrentProject('flowgate')
-  getRequest.mockResolvedValue({ data: { ok: true, status: gitStatus() } })
+  getRequest.mockResolvedValue({ data: { ok: true, status: gitStatus(pendingCount) } })
   return shallowMount(GitActionMenu, {
     global: {
       plugins: [i18n],
@@ -98,6 +98,27 @@ describe('GitActionMenu approval-result events', () => {
     expect(dropdown.text()).toContain('flowgate.default.0170')
     expect(dropdown.text()).not.toContain('Git integration is not set up')
     expect(wrapper.find('.git-menu-status-link').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('renders recovered stale status as an openable, quiet empty Git menu', async () => {
+    // Contract returned after project_git_status() resets stale awaiting_choice/
+    // waiting ledger rows: the header must not keep an attention badge or a
+    // finalize row merely because a prior response had one.
+    const wrapper = mountMenu(0)
+    await flushPromises()
+
+    const button = wrapper.get('.git-menu-btn')
+    expect(button.attributes('disabled')).toBeUndefined()
+    expect(button.classes()).not.toContain('git-menu-attn')
+    expect(wrapper.find('.git-menu-label').exists()).toBe(false)
+    expect(wrapper.find('.git-menu-badge').exists()).toBe(false)
+
+    await button.trigger('click')
+    const dropdown = wrapper.get('.git-menu-dd')
+    expect(dropdown.get('.git-menu-dd-hd').text()).toContain('(0)')
+    expect(dropdown.find('.git-menu-row').exists()).toBe(false)
+    expect(dropdown.find('.git-menu-empty').exists()).toBe(true)
     wrapper.unmount()
   })
 

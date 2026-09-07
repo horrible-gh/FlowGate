@@ -130,3 +130,77 @@ def test_chat_forces_provider_tool_choice(monkeypatch, kind):
         else {"type": "function", "function": {"name": "send_chat_reply"}}
     )
     assert captured["body"]["tool_choice"] == expected
+
+
+def test_plain_last_message_is_appended_when_chat_tool_was_never_called(monkeypatch):
+    """T0009: a dying plain response must become the missing assistant chat turn."""
+    appended = []
+    monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda *_: "key")
+    monkeypatch.setattr(svc, "_remaining_sec", lambda _run: 60)
+    monkeypatch.setattr(svc, "_conversation_context", lambda *_: (200, {
+        "head_seq": 3, "turns": [{"seq": 3, "role": "user", "body": "question"}],
+    }))
+    monkeypatch.setattr(svc, "_call_openai", lambda *_: (
+        "마지막 다잉메세지", None, {"role": "assistant", "content": "마지막 다잉메세지"},
+    ))
+    monkeypatch.setattr(svc, "_conversation_turn_register", lambda run, token, payload: (
+        appended.append((token, payload)) or (201, {"ok": True})
+    ))
+
+    run = _run()
+    assert svc._api_execute(
+        {"id": "provider", "kind": "openai", "api_base_url": "https://api.example", "api_model": "test"},
+        "prompt", run,
+    ) == ("started_ok", None)
+    assert appended == [("raw-token", {"body": "마지막 다잉메세지"})]
+    assert run["last_message"] == "마지막 다잉메세지"
+    assert run["last_tool_status"] == 201
+
+
+def test_cancelled_chat_does_not_append_plain_last_message(monkeypatch):
+    """A human cancellation must suppress the post-loop fallback write."""
+    appended = []
+    monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda *_: "key")
+    monkeypatch.setattr(svc, "_remaining_sec", lambda _run: 60)
+    monkeypatch.setattr(svc, "_conversation_context", lambda *_: (200, {
+        "head_seq": 3, "turns": [{"seq": 3, "role": "user", "body": "question"}],
+    }))
+
+    run = _run()
+
+    def cancel_after_response(*_):
+        run["cancel_event"].set()
+        return "cancelled response", None, {"role": "assistant", "content": "cancelled response"}
+
+    monkeypatch.setattr(svc, "_call_openai", cancel_after_response)
+    monkeypatch.setattr(svc, "_conversation_turn_register", lambda *args: (
+        appended.append(args) or (201, {"ok": True})
+    ))
+
+    assert svc._api_execute(
+        {"id": "provider", "kind": "openai", "api_base_url": "https://api.example", "api_model": "test"},
+        "prompt", run,
+    ) == ("started_ok", None)
+    assert run["cancel_event"].is_set()
+    assert run["last_message"] == "cancelled response"
+    assert appended == []
+
+
+def test_failed_last_message_append_remains_diagnostic(monkeypatch):
+    monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda *_: "key")
+    monkeypatch.setattr(svc, "_remaining_sec", lambda _run: 60)
+    monkeypatch.setattr(svc, "_conversation_context", lambda *_: (200, {"head_seq": 1, "turns": []}))
+    monkeypatch.setattr(svc, "_call_openai", lambda *_: (
+        "rescue me", None, {"role": "assistant", "content": "rescue me"},
+    ))
+    monkeypatch.setattr(svc, "_conversation_turn_register", lambda *_: (409, {"error": "stale head"}))
+
+    run = _run()
+    assert svc._api_execute(
+        {"id": "provider", "kind": "openai", "api_base_url": "https://api.example", "api_model": "test"},
+        "prompt", run,
+    ) == ("started_ok", None)
+    assert run["last_message"] == "rescue me"
+    assert run["last_tool_status"] == 409
+    assert run["register_errors"][-1]["status"] == 409
+    assert "stale head" in run["register_errors"][-1]["reason"]

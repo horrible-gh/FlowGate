@@ -372,11 +372,18 @@ def list_by_group(group_id: str, limit: int) -> list[dict]:
 
 
 def list_review_loops_by_user(user_id: str, limit: int = 100) -> list[dict]:
-    """Finished runs that own durable document-review-loop cards, newest first."""
+    """Finished runs that own a still-showing document-review-loop card, newest first.
+
+    0529 B0001: `card_dismissed_at IS NULL` is what makes [remove from list] stick. This
+    query is the ONLY source of the bootstrap cards /ai-invoke/active-all rebuilds after
+    a restart, so without the filter the card a user just removed came back on the next
+    bootstrap -- forever, since nothing else here ages a row out either.
+    """
     rows = get_store()._fetch_all(
         "SELECT r.* FROM ai_invoke_runs r "
         "INNER JOIN ai_invoke_document_review_loops l ON l.run_id = r.run_id "
-        "WHERE r.issued_to = ? ORDER BY r.started_at DESC, r.run_id DESC LIMIT ?",
+        "WHERE r.issued_to = ? AND l.card_dismissed_at IS NULL "
+        "ORDER BY r.started_at DESC, r.run_id DESC LIMIT ?",
         [user_id, limit],
     )
     return [_row_to_payload(row) for row in rows]

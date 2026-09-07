@@ -29,12 +29,14 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.rbac.decorators import _has_permission, require_permission
-from modules.flow_gate.services import git_service, token_service, tr_commit_service
+from modules.flow_gate.services import (
+    git_service, review_package_service, token_service, tr_commit_service,
+)
 from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.services.git_service import GitServiceError
 
@@ -305,6 +307,30 @@ def get_group_branch_tree(
     """Recursive file tree of a group branch's HEAD commit (read-only, no checkout)."""
     try:
         return git_service.read_group_tree(project_id, group_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.get("/projects/{project_id}/git/groups/{group_id}/review-package")
+def get_group_review_package(
+    project_id: str,
+    group_id: str,
+    target_doc_id: str | None = None,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    """Download the current group worktree delta as a reviewer-safe ZIP."""
+    try:
+        package = review_package_service.build_review_package(
+            project_id, group_id, target_doc_id
+        )
+        return Response(
+            content=package.content,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f"attachment; filename=\"{package.filename}\"",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
     except GitServiceError as exc:
         return _guard(exc)
 

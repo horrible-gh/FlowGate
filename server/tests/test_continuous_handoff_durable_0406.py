@@ -148,7 +148,7 @@ def test_unclean_end_parks_intent_and_releases_handoff_lease(monkeypatch, end_re
     run["stop_code"] = end_reason
     writes, releases, spawns = [], [], []
     monkeypatch.setattr(svc, "_write_handoff_row", lambda *a, **kw: writes.append((a, kw)))
-    monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda *a: releases.append(a))
+    monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda *a, **kw: releases.append(a))
     monkeypatch.setattr(svc, "_spawn_auto_resume", lambda *a: spawns.append(a))
     with svc._auto_resume_lock:
         svc._auto_resume[run["group_id"]] = _pending()
@@ -164,7 +164,7 @@ def test_spawn_exception_keeps_durable_row_and_releases_lease(monkeypatch):
     run = _run()
     writes, releases = [], []
     monkeypatch.setattr(svc, "_write_handoff_row", lambda *a, **kw: writes.append((a, kw)))
-    monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda *a: releases.append(a))
+    monkeypatch.setattr(svc.db_group_ai_leases, "release", lambda *a, **kw: releases.append(a))
     monkeypatch.setattr(svc, "_spawn_auto_resume", lambda *_a: (_ for _ in ()).throw(RuntimeError("boom")))
     with svc._auto_resume_lock:
         svc._auto_resume[run["group_id"]] = _pending()

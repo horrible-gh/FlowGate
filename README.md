@@ -25,7 +25,7 @@ A typed document pipeline where completion isn't a claim — it's evidence.
 
 *Register a requirement → start a continuous run → inspect the evidence → approve.*
 
-<video src="[https://github.com/horrible-gh/FlowGate/blob/main/assets/images/flowgate-demo.mp4](https://github.com/horrible-gh/FlowGate/blob/main/assets/images/flowgate-demo.mp4)" controls muted></video>
+![FlowGate demo](assets/images/flowgate-demo.gif)
 
 </div>
 

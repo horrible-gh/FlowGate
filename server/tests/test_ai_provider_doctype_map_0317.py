@@ -606,12 +606,31 @@ class TestPerStepOverrideOffByOne:
             continuation_instruction_mode="auto_approved",
         ) == "aip_opus"
 
-    def test_disabled_override_degrades_to_none(self, monkeypatch):
+    def test_disabled_explicit_override_fails_visible(self, monkeypatch):
         svc = self._wire(monkeypatch, head_item_seq=1)
         chain = [{"id": "aip_fable"}]  # aip_opus no longer enabled
+        with pytest.raises(Exception) as caught:
+            svc._resolve_continuation_hop_override(
+                "flowgate.default.0317.0001-R",
+                {"2": "aip_opus"},
+                chain,
+                continuation_instruction_mode="auto_approved",
+            )
+        assert getattr(caught.value, "status_code", None) == 422
+        assert getattr(caught.value, "detail", {}).get("code") == "provider_unavailable"
+
+    def test_no_sequence_yet_is_inapplicable_not_a_binding_failure(self, monkeypatch):
+        """workflow_decide (pre-decision): the client sends continuation_provider_overrides
+        for later steps before any sequence exists to bind them to. There is no slot yet, so
+        this must resolve to "no override here" (None), not the 409 reserved for a sequence
+        that exists but still fails to resolve an item_seq."""
+        from modules.flow_gate.services import ai_invoke_service as svc
+
+        monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda _d: None)
+        chain = [{"id": "aip_fable"}, {"id": "aip_opus"}]
         assert svc._resolve_continuation_hop_override(
             "flowgate.default.0317.0001-R",
-            {"2": "aip_opus"},
+            {"1": "aip_fable", "2": "aip_opus"},
             chain,
-            continuation_instruction_mode="auto_approved",
+            continuation_instruction_mode="continuous",
         ) is None

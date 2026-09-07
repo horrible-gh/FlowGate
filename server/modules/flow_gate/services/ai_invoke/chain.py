@@ -111,7 +111,10 @@ def pause_run(run_id: str, user_id: str) -> dict:
             doc_ref=run["doc_ref"],
             paused_by=user_id,
             paused_at=now_iso(),
-            continuation_target_seq=run.get("continuation_target_seq"),
+            # None is the durable paused-row spelling of run-to-end.
+            continuation_target_seq=(
+                None if run.get("target_to_end") else run.get("continuation_target_seq")
+            ),
             docs_target=run.get("docs_target"),
             docs_reached=docs_reached,
             chain_id=run.get("chain_id"),
@@ -210,6 +213,22 @@ def has_active_run(group_id: Optional[str]) -> bool:
     return _svc()._active_run_for_group(group_id) is not None
 
 
+def is_active_run_to_end(group_id: Optional[str]) -> bool:
+    """Whether the live engine run for this group is a run-to-end continuation (0415 T0007).
+
+    The only durable-while-running carrier of that intent is the active run dict's
+    ``target_to_end`` (set by admission.start_run from the ``continuation_to_end``/``-1``
+    sentinel and carried hop to hop by _spawn_auto_resume/resume_chain). A consumed token
+    never carries this fact — it always stores a concrete resolved number — so the inbox
+    self-chain (which only ever sees the just-consumed token) asks here instead of trying
+    to read it off the token.
+    """
+    if not group_id:
+        return False
+    run = _svc()._active_run_for_group(group_id)
+    return bool(run is not None and run.get("target_to_end"))
+
+
 def request_auto_resume(group_id: Optional[str], payload: dict) -> None:
     """Queue the next hop of an unmanned continuous chain for a fresh worker. Called by the
     inbox self-chain at a step boundary INSTEAD of handing next_token to the still-running
@@ -224,8 +243,22 @@ def request_auto_resume(group_id: Optional[str], payload: dict) -> None:
     if not group_id:
         return
     with _auto_resume_lock:
-        _svc()._auto_resume[group_id] = dict(payload)
-    _svc()._write_handoff_row(group_id, payload, _svc()._active_run_for_group(group_id))
+        queued = dict(payload)
+        existing = _svc()._auto_resume.get(group_id)
+        if (
+            existing
+            and existing.get("last_stage") in (REVIEW_HOP_KIND, REWORK_HOP_KIND)
+            and not payload.get("last_stage")
+        ):
+            # A rework registers its edit through inbox while the gate-owned successor
+            # intent is already queued.  Inbox's ordinary handoff has no gate fields and
+            # the single-mode child run has None for their continuous-only counterparts;
+            # replacing the dict here therefore used to turn count=N into count=0 at the
+            # very next gate.  Refresh ordinary routing fields from inbox, but retain the
+            # gate's last_stage/progress markers and carrier maps.
+            queued = {**existing, **payload}
+        _svc()._auto_resume[group_id] = queued
+    _svc()._write_handoff_row(group_id, queued, _svc()._active_run_for_group(group_id))
 
 
 def _carry(pending: dict, pending_key: str, run: dict, run_key: str):
@@ -249,7 +282,13 @@ def _handoff_bundle(pending: dict, run: Optional[dict]) -> dict:
     run = run or {}
     return {
         "doc_ref": pending.get("doc_ref") or run.get("doc_ref"),
-        "target_seq": pending.get("target_seq"),
+        # Preserve run-to-end as None in the durable handoff row.
+        "to_end": bool(pending.get("to_end") or run.get("target_to_end")),
+        "target_seq": (
+            None
+            if pending.get("to_end") or run.get("target_to_end")
+            else pending.get("target_seq")
+        ),
         "review_mode": bool(pending.get("review_mode")),
         "instruction_mode": (
             pending.get("instruction_mode") or run.get("continuation_instruction_mode")
@@ -474,7 +513,7 @@ def _park_handoff(run: dict, pending: dict, stop_code: str) -> None:
     if not group_id:
         return
     try:
-        db_group_ai_leases.release(group_id, run["run_id"])
+        db_group_ai_leases.release(group_id, run["run_id"], reason=f"handoff_abandoned:{stop_code}")
     except Exception:  # noqa: BLE001
         logger.warning("ai-invoke handoff lease release failed for %s", group_id, exc_info=True)
 
@@ -635,7 +674,8 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
     from modules.flow_gate.services import workflow_decision_service
 
     doc_ref = pending["doc_ref"]
-    target_seq = pending["target_seq"]
+    to_end = bool(pending.get("to_end") or pending.get("target_seq") is None)
+    target_seq = _resolve_continuation_target(doc_ref, pending.get("target_seq"), to_end=to_end)
     review_mode = bool(pending.get("review_mode"))
     instruction_mode = pending.get("instruction_mode")
     locale = pending.get("locale") or "ko"
@@ -696,6 +736,7 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
         mode="continuous",
         continuation_target_seq=target_seq,
         continuation_review_mode=review_mode,
+        continuation_to_end=to_end,
         continuation_instruction_mode=instruction_mode,
         continuation_locale=locale,
         issued_to=issued_to,
@@ -716,6 +757,66 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
         continuation_review_count_overrides=review_count_overrides,
         continuation_reviewer_overrides=reviewer_overrides,
     )
+
+
+def _resolve_continuation_target(
+    doc_ref: str, target_seq: Optional[int], *, to_end: bool = False,
+) -> int:
+    """Resolve run-to-end against the sequence at the hop boundary."""
+    if not to_end and target_seq is not None:
+        return int(target_seq)
+    sequence = db_wfseq.get_sequence_for_member_doc(doc_ref)
+    items = db_wfseq.get_sequence_items(sequence["id"]) if sequence is not None else []
+    resolved = max(
+        (item["item_seq"] for item in items or [] if item.get("item_seq") is not None),
+        default=None,
+    )
+    if resolved is None:
+        raise HTTPException(status_code=409, detail={
+            "code": "sequence_changed",
+            "message": "The workflow sequence has no continuation target.",
+        })
+    head = _next_incomplete_item_seq(doc_ref)
+    if head is not None and resolved < head:
+        raise HTTPException(status_code=409, detail={
+            "code": "sequence_changed",
+            "message": "The rebased continuation target precedes the workflow head.",
+        })
+    return int(resolved)
+
+
+def resolve_continuation_target(
+    doc_ref: str, target_seq: Optional[int], *, to_end: bool = False,
+) -> int:
+    """Public entry point for _resolve_continuation_target (0415 T0007 task 2).
+
+    Used by inbox_routes._continuation_self_chain / settle_completed_step and by
+    review._settle_gate_pass — every "next hop is about to be issued/decided" point that
+    lives outside this module — so a WP or human/worker sequence expansion is picked up
+    the moment it matters instead of only when the chain happens to pause and resume.
+    """
+    return _resolve_continuation_target(doc_ref, target_seq, to_end=to_end)
+
+
+def rebase_active_to_end(group_id: Optional[str], doc_ref: str) -> Optional[int]:
+    """Eagerly refresh a live run-to-end target after WP expansion.
+
+    Paused/handoff rows intentionally remain None: that is their durable run-to-end marker
+    and resume resolves it through _resolve_continuation_target.
+    """
+    if not group_id:
+        return None
+    run = _svc()._active_run_for_group(group_id)
+    if (
+        run is None
+        or run.get("mode") != "continuous"
+        or not run.get("target_to_end")
+        or run.get("doc_ref") != doc_ref
+    ):
+        return None
+    resolved = _resolve_continuation_target(doc_ref, None, to_end=True)
+    run["continuation_target_seq"] = resolved
+    return resolved
 
 
 def _sequence_completion_state(doc_ref: Optional[str]) -> tuple[bool, Optional[int]]:
@@ -924,13 +1025,12 @@ def _paused_row_resume_state(
             f"continuous run requires a decided workflow sequence on {row['doc_ref']}",
         )
 
-    target_seq = row.get("continuation_target_seq")
-    if target_seq is None:
-        target_seq = max(
-            (item["item_seq"] for item in items or [] if item.get("item_seq") is not None),
-            default=None,
+    stored_target_seq = row.get("continuation_target_seq")
+    try:
+        target_seq = _resolve_continuation_target(
+            row["doc_ref"], stored_target_seq, to_end=stored_target_seq is None,
         )
-    if target_seq is None:
+    except HTTPException:
         return _state(
             False,
             "sequence_unavailable",
@@ -1207,6 +1307,7 @@ def resume_chain(
         gate_bundle = {
             "doc_ref": row["doc_ref"],
             "target_seq": target_seq,
+            "to_end": row.get("continuation_target_seq") is None,
             "review_count_overrides": review_count_overrides,
             "reviewer_overrides": reviewer_overrides,
             "locale": locale,
@@ -1318,6 +1419,7 @@ def resume_chain(
                 continuation_instruction_mode=resume_instruction_mode,
                 continuation_locale=locale,
                 issued_to=user_id,
+                continuation_to_end=row.get("continuation_target_seq") is None,
                 api_base_url=api_base_url,
                 mention_builder=lambda _raw, _scratch: None,
                 issue_builder=_issue_resume,
@@ -1445,6 +1547,100 @@ def release_paused_chain(*, group_id: str, user_id: str, is_admin: bool = False)
                 "already_released": False}
 
 
+def _finished_card_retention_minutes(user_id: str) -> int:
+    """This user's finished-card retention, in minutes (0452 L0003 1-1).
+
+    Read through `ui_settings_service`, never re-derived: it is the same number the
+    browser's own sweep uses, and two definitions would age a card out on one side and
+    keep it on the other. A read that fails must not be able to blank a card, so the
+    failure answers RETENTION_NEVER -- the bound simply does not apply this time.
+    """
+    from modules.flow_gate.services import ui_settings_service
+
+    try:
+        settings, _ = ui_settings_service.resolve_ui_settings(user_id)
+        return int(settings[ui_settings_service.RETENTION_FIELD])
+    except Exception:  # noqa: BLE001
+        logger.warning("finished-card retention lookup failed for %s", user_id, exc_info=True)
+        return ui_settings_service.RETENTION_NEVER
+
+
+def _review_loop_card_expired(row: dict, retention_minutes: int) -> bool:
+    """Has this restored review-loop card outlived the retention its owner chose?
+
+    -1 ("never expires") is a real choice, not a lower bound (L0003 2-1): it means the
+    card stays until somebody removes it, which is exactly what `card_dismissed_at` is
+    for. 0 ("disappears immediately") means the bootstrap restores no finished card at
+    all, matching the browser's own `retentionTtlMs === 0` branch.
+
+    A row with no readable `finished_at` is NOT expired: the age is unknown, and guessing
+    "old" would drop a card nobody asked to lose.
+    """
+    from modules.flow_gate.services import ui_settings_service
+
+    if retention_minutes == ui_settings_service.RETENTION_NEVER:
+        return False
+    if retention_minutes == ui_settings_service.RETENTION_IMMEDIATE:
+        return True
+    stamp = row.get("finished_at")
+    if not stamp:
+        return False
+    try:
+        finished = datetime.fromisoformat(str(stamp))
+    except ValueError:
+        return False
+    if finished.tzinfo is None:
+        finished = finished.astimezone()
+    age_sec = (datetime.now(timezone.utc) - finished.astimezone(timezone.utc)).total_seconds()
+    return age_sec >= retention_minutes * 60
+
+
+def dismiss_review_loop_card(*, run_id: str, user_id: str, is_admin: bool = False) -> dict:
+    """Durable [remove from list] for a FINISHED run's monitor card (0529 B0001).
+
+    The counterpart of :func:`release_paused_chain`, for the other kind of card that is
+    rebuilt from the database on every bootstrap. A finished document-review-loop card
+    used to be removed by a purely local delete in the browser, and `active_all` handed
+    the very same card straight back on the next `/ai-invoke/active-all` -- the "it does
+    not go away when I press remove" this bug report is about.
+
+    Deliberately NOT a delete (FlowGate is a time machine): the run row and the loop row
+    both stay, with every round, stop reason and stop detail still readable through GET
+    /ai-invoke/{run_id} and the run list. Only the bootstrap listing skips it afterwards.
+
+    A LIVE run is refused with 409: its card is not a leftover, and dismissing it would
+    hide a run that is still working. The idempotent branches mirror release_paused_chain
+    -- a replay answers 200 `already_dismissed`, never 404 -- so a double click and a
+    retry after a dropped response both land on the same state.
+    """
+    from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
+    from modules.flow_gate.db import ai_invoke_runs as db_runs
+
+    row = db_runs.get(run_id)
+    if row is None:
+        raise _http_error(404, "run_not_found", "Unknown or expired run id.")
+    if not is_admin and row.get("issued_to") != user_id:
+        raise _http_error(403, "run_card_forbidden",
+                          "Only the user who started this run (or an admin) may remove "
+                          "its card.", run_id=run_id)
+    live = _svc().get_run_record(run_id)
+    if live is not None and live.get("status") != "finished":
+        raise _http_error(409, "run_still_active",
+                          "This run is still active; its card is not a leftover. Cancel "
+                          "the run first if you want it to stop.",
+                          run_id=run_id, group_id=row.get("group_id"))
+    if db_loops.get(run_id) is None:
+        # No durable card behind this run at all -- nothing to keep out of the next
+        # bootstrap, so the goal state already holds. Idempotent 200, never 404.
+        return {"ok": True, "run_id": run_id, "group_id": row.get("group_id"),
+                "dismissed": False, "already_dismissed": True}
+    if not db_loops.dismiss_card(run_id):
+        return {"ok": True, "run_id": run_id, "group_id": row.get("group_id"),
+                "dismissed": False, "already_dismissed": True}
+    return {"ok": True, "run_id": run_id, "group_id": row.get("group_id"),
+            "dismissed": True, "already_dismissed": False}
+
+
 def _open_q_doc_ids(group_id: str) -> list[str]:
     """Group documents that still have at least one unanswered container item."""
     try:
@@ -1540,6 +1736,16 @@ def active_all(user_id: str) -> dict:
     # Discover those rows here (the bootstrap path), not only when a caller already knows a
     # run_id. Memory wins during the small finalize overlap and one bad stored row cannot
     # blank every other card.
+    #
+    # 0529 B0001: "a restart" is the whole of what this restore is for. Until now it had no
+    # end at all -- `list_review_loops_by_user` answered with every loop row the user ever
+    # owned, so a card came back on every bootstrap, days after the run ended and after its
+    # owner had removed it by hand (run aiv_20260830_000075, still on screen 2026-09-06).
+    # Two bounds fix that, and both are the user's OWN existing rules rather than a new
+    # policy invented here: the query now skips a card its owner removed
+    # (`card_dismissed_at`), and `_review_loop_card_expired` below drops one older than the
+    # finished-card retention this user chose -- the same L0003 number the browser already
+    # sweeps its in-memory copy of this very card with.
     from modules.flow_gate.db import ai_invoke_runs as db_runs
     live_ids = {run["run_id"] for run in candidates}
     try:
@@ -1547,8 +1753,11 @@ def active_all(user_id: str) -> dict:
     except Exception:
         logger.warning("stored review-loop list failed for %s", user_id, exc_info=True)
         stored_loop_rows = []
+    retention_minutes = _finished_card_retention_minutes(user_id)
     for row in stored_loop_rows:
         if row["run_id"] in live_ids:
+            continue
+        if _review_loop_card_expired(row, retention_minutes):
             continue
         try:
             restored = diagnostics._run_detail_from_row(row)

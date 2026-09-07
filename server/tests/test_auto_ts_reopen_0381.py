@@ -536,7 +536,74 @@ def test_8_done_root_preserves_ac_and_rearms_git(auto_store, monkeypatch):
     reopen_git.assert_called_once_with(ids["project_id"], ids["group_id"])
 
 
-def test_9_phantom_document_is_not_reopened(auto_store, monkeypatch):
+def test_9_sequence_mutation_archives_approved_ac_and_reopens_atomically(auto_store):
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.documents.routers import documents as doc_routes
+    from modules.flow_gate.services import git_service
+    from modules.flow_gate.services import workflow_decision_service as decision
+
+    ids = _seed_group(auto_store, "seqmut", root_done=True, with_ac=True)
+    result = decision.edit_workflow_pending(
+        ids["R"], [{"type": "M", "label": "Follow-up"}]
+    )
+
+    assert result["pending_count"] == 1
+    assert db_docs.get_by_id(ids["R"])["doc_review_status"] == "wf_in_progress"
+    old_ac = db_docs.get_by_id(ids["AC"])
+    assert old_ac["status"] == "archived"
+    assert json.loads(old_ac["meta"])["workflow_invalidated_reason"] == "workflow_sequence_changed"
+    assert git_service._group_ac_doc_id(ids["group_id"]) is None
+    parsed = doc_routes._parse_doc_workflow(db_docs.get_by_id(ids["R"]))
+    assert parsed["workflow_head_type"] == "M"
+    assert parsed["workflow_head_status"] == "pending"
+
+
+def test_10_empty_pending_tail_mutation_archives_approved_ac(auto_store):
+    """Removing the final pending row is a definition change even when no rows replace it."""
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db import workflow_sequences as db_wfseq
+    from modules.flow_gate.services import git_service
+    from modules.flow_gate.services import workflow_decision_service as decision
+
+    # Without TSR, the seeded sequence has locked realised rows plus one pending TSR tail.
+    ids = _seed_group(auto_store, "seqempty", root_done=True, with_ac=True)
+    sequence = db_wfseq.get_sequence_by_doc_id(ids["R"])
+    assert any(
+        item["result_doc_id"] is None
+        for item in db_wfseq.get_sequence_items(sequence["id"])
+    )
+
+    result = decision.edit_workflow_pending(ids["R"], [])
+
+    assert result["pending_count"] == 0
+    assert db_docs.get_by_id(ids["R"])["doc_review_status"] == "wf_in_progress"
+    assert all(
+        item["result_doc_id"] is not None
+        for item in db_wfseq.get_sequence_items(sequence["id"])
+    )
+    old_ac = db_docs.get_by_id(ids["AC"])
+    assert old_ac["status"] == "archived"
+    assert json.loads(old_ac["meta"])["workflow_invalidated_reason"] == "workflow_sequence_changed"
+    assert git_service._group_ac_doc_id(ids["group_id"]) is None
+
+
+def test_11_identical_final_sequence_save_preserves_current_approval(auto_store):
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.services import git_service
+    from modules.flow_gate.services import workflow_decision_service as decision
+
+    ids = _seed_group(
+        auto_store, "seqnoop", root_done=True, with_ac=True, with_tsr=True
+    )
+    result = decision.edit_workflow_pending(ids["R"], [])
+
+    assert result["workflow_changed"] is False
+    assert db_docs.get_by_id(ids["R"])["doc_review_status"] == "wf_done"
+    assert db_docs.get_by_id(ids["AC"])["status"] != "archived"
+    assert git_service._group_ac_doc_id(ids["group_id"]) == ids["AC"]
+
+
+def test_11_phantom_document_is_not_reopened(auto_store, monkeypatch):
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.services import workflow_rework_service as rework
 

@@ -221,7 +221,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { getRequest, patchRequest, postRequest } from '@shared/api'
+import api, { getRequest, patchRequest, postRequest } from '@shared/api'
 import { qApiPath } from '@shared/utils/docIdFormatter'
 import FileUploadModal from './FileUploadModal.vue'
 import NewRelatedDocModal from './NewRelatedDocModal.vue'
@@ -297,6 +297,7 @@ interface DocDetail {
   module?: string | null
   target_id?: string | null
   file_path?: string | null
+  download_available?: boolean
   workflow_steps?: string[] | null
   parent_r_doc_id?: string | null
   workflow_root_type?: string | null
@@ -328,6 +329,41 @@ const groupTitle = ref('')
 // (no badge renders; there is no 'before copy' state). Hydrated from server user-state on open,
 // updated live via the fg:mention_copied window bridge when this user copies a mention.
 const mentionCopy = ref<{ kind: string; copiedAt: string } | null>(null)
+const markdownDownloadBusy = ref(false)
+// Rendered by MainPanel's document-preview card, immediately left of its own
+// [수정] button (R0001 §3.2) — not here. DocHeader keeps owning the fetch/download
+// logic (doc.download_available already lives on the detail response it loads)
+// and exposes it below so MainPanel can drive the button without a second fetch.
+const downloadAvailable = computed(() => !!doc.value?.download_available)
+
+function fallbackMarkdownFilename(docId: string): string {
+  return docId ? `${docId}.md` : 'document.md'
+}
+
+async function downloadMarkdown() {
+  if (!doc.value?.download_available || markdownDownloadBusy.value) return
+  markdownDownloadBusy.value = true
+  try {
+    const response = await api.get(`/api/v1/document/${encodeURIComponent(doc.value.doc_id)}/download`, { responseType: 'blob' })
+    const disposition = String(response.headers['content-disposition'] ?? '')
+    const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+    const plain = disposition.match(/filename="?([^";]+)"?/i)?.[1]
+    const filename = encoded ? decodeURIComponent(encoded) : (plain ?? fallbackMarkdownFilename(doc.value.doc_id))
+    const href = URL.createObjectURL(response.data)
+    const anchor = document.createElement('a')
+    anchor.href = href
+    anchor.download = filename
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(href)
+  } catch {
+    showToast(t('main.doc_info_panel.markdown_download_failed'), 'error')
+  } finally {
+    markdownDownloadBusy.value = false
+  }
+}
+
 const showUploadModal = ref(false)
 const showRelatedDocModal = ref(false)
 const showWorkflowDecisionModal = ref(false)
@@ -1325,6 +1361,9 @@ defineExpose({
   doConvertRootType,
   openConvertConfirm,
   openConvertFromMenu,
+  downloadAvailable,
+  markdownDownloadBusy,
+  downloadMarkdown,
 })
 
 const docTypeStore = useDocTypeStore()

@@ -2133,6 +2133,30 @@ def edit_workflow_pending(
     if force_encoding_reason_accepted(force_encoding_reason):
         _log_force_encoding_reason(doc_id, db_documents.get_by_id(doc_id), force_encoding_reason)
 
+    # A row rewrite changes item ids/item_seq and therefore the workflow tag even when the
+    # definition did not change. Compare definition fields before writing so an identical
+    # save remains a true no-op and cannot retire a valid final approval.
+    pending_before = [it for it in existing if it.get("result_doc_id") is None]
+    _definition_fields = (
+        "type", "label", "note", "source_doc_id", "source_revision_no",
+        "provider_id", "provider_display_name",
+    )
+
+    def _definition(row: dict) -> tuple:
+        return tuple(row.get(key) for key in _definition_fields)
+
+    if not create_sequence and [_definition(it) for it in pending_before] == [
+        _definition(it) for it in new_items
+    ]:
+        return {
+            "status": "updated",
+            "doc_id": doc_id,
+            "pending_count": len(new_items),
+            "workflow_changed": False,
+        }
+
+    definition_changed = True
+
     # doc_class is inherited from locked items, defaults to 'R'
     doc_class = locked[0]["doc_class"] if locked else "R"
     if create_sequence:
@@ -2159,10 +2183,6 @@ def edit_workflow_pending(
                 label=item["label"] or "",  # NR0003 §7-2 / 0391 T0005 §5-5 (edit path)
                 doc_class=doc_class,
                 sort_order=locked_count + idx,
-                # 0399 D0010 §3.4: the note belongs to the row, not to the row number —
-                # which is exactly why it has to travel through this rewrite. The save
-                # renumbers every pending row, so anything keyed on item_seq would land on
-                # the wrong step the first time somebody reorders the list.
                 note=_normalized_sequence_note(item.get("note"), strict=True),
                 source_doc_id=item.get("source_doc_id"),
                 source_revision_no=item.get("source_revision_no"),
@@ -2170,37 +2190,37 @@ def edit_workflow_pending(
                 provider_display_name=item.get("provider_display_name"),
             )
 
-    # Sync documents.workflow_steps
-    all_items = db_wfseq.get_sequence_items(seq["id"])
-    db_documents.update(
-        doc_id,
-        {"workflow_steps": _json.dumps([it["type"] for it in all_items])},
-    )
+        # The definition replacement, root reopen and approval retirement are one atomic
+        # state change. Approved AC rows are archived (historical), while premature
+        # unapproved AC rows remain ephemeral and are deleted.
+        all_items = db_wfseq.get_sequence_items(seq["id"])
+        db_documents.update(
+            doc_id,
+            {"workflow_steps": _json.dumps([it["type"] for it in all_items])},
+        )
+        if definition_changed:
+            parent = db_documents.get_by_id(doc_id)
+            if parent is not None and parent.get("doc_review_status") == "wf_done":
+                db_documents.update(doc_id, {"doc_review_status": "wf_in_progress"})
+            if parent is not None and parent.get("project_id") and parent.get("group_id"):
+                from modules.flow_gate.services.workflow_rework_service import _archive_ac
 
-    # Revive a finalized workflow. When the last sequence item is consumed the inbox
-    # path marks the parent root doc 'wf_done' (e.g. the memo-only "advise then extend"
-    # flow: M is auto-approved → sequence exhausted → wf_done). Appending new pending
-    # steps here must re-open the doc, otherwise the workflow view treats it as complete
-    # and the freshly-added steps are unreachable.
-    if new_items:
-        parent = db_documents.get_by_id(doc_id)
-        if parent is not None and parent.get("doc_review_status") == "wf_done":
-            db_documents.update(doc_id, {"doc_review_status": "wf_in_progress"})
-        # Drop any not-yet-approved final-approval (AC) document. AC is opened only
-        # when the head reaches final approval; inserting new pending steps before
-        # it makes that AC premature and lets it (a) hijack head resolution and
-        # (b) be approved out of order. Mirror reopen_workflow, which deletes the
-        # ephemeral file-less AC; it is idempotently recreated once the new steps
-        # are realized and the head reaches AC again.
-        if parent is not None and parent.get("project_id") and parent.get("group_id"):
-            _APPROVED = {"approved", "wf_done"}
-            for _c in db_documents.list_documents(
-                project_id=parent["project_id"],
-                group_id=parent["group_id"],
-                limit=200,
-            ):
-                if _c.get("type_code") == "AC" and _c.get("doc_review_status") not in _APPROVED:
-                    db_documents.delete(_c["doc_id"])
+                _APPROVED = {"approved", "wf_done"}
+                for _c in db_documents.list_documents(
+                    project_id=parent["project_id"],
+                    group_id=parent["group_id"],
+                    limit=200,
+                ):
+                    if _c.get("type_code") != "AC" or _c.get("status") == "archived":
+                        continue
+                    if _c.get("doc_review_status") in _APPROVED:
+                        _archive_ac(
+                            _c,
+                            reason="workflow_sequence_changed",
+                            run_id=None,
+                        )
+                    else:
+                        db_documents.delete(_c["doc_id"])
 
     result = {
         "status": "updated",

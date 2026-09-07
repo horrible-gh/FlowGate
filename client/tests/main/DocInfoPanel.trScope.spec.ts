@@ -10,10 +10,10 @@ import type { TrScopeVerdict } from '@main/types/trScope'
 // 으로 추론됐다. 렌더 결과를 여기서 묶어 두면 같은 자리를 다시 건드릴 때 vitest 로도
 // 걸린다 (타입 쪽은 `npm run typecheck` 가 본다).
 
-const { getRequest } = vi.hoisted(() => ({ getRequest: vi.fn() }))
+const { getRequest, apiGet } = vi.hoisted(() => ({ getRequest: vi.fn(), apiGet: vi.fn() }))
 
 vi.mock('@shared/api', () => ({
-  default: { head: vi.fn(), get: vi.fn(), post: vi.fn(), patch: vi.fn() },
+  default: { head: vi.fn(), get: apiGet, post: vi.fn(), patch: vi.fn() },
   getRequest,
   patchRequest: vi.fn(),
   postRequest: vi.fn(),
@@ -39,6 +39,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   getRequest.mockReset()
   getRequest.mockResolvedValue({ data: { qa: { items: [] } } })
+  apiGet.mockReset()
 })
 
 describe('DocInfoPanel TR 작업범위 검증 영역', () => {
@@ -226,5 +227,32 @@ describe('DocInfoPanel TR 작업범위 검증 영역', () => {
     })
     expect(section.classes()).toContain('collapsed')
     expect(toggle.attributes('aria-expanded')).toBe('false')
+  })
+})
+
+describe('DocInfoPanel review package download', () => {
+  it('shows the localized action in work-scope and downloads with group/document context', async () => {
+    const createObjectURL = vi.fn().mockReturnValue('blob:review')
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL })
+    apiGet.mockResolvedValue({
+      data: new Blob(['zip']),
+      headers: { 'content-disposition': 'attachment; filename="flowgate.default.0534-review-package.zip"' },
+    })
+    const wrapper = mountPanel({ verdict: 'pass', stage: 'observe' })
+    await wrapper.setProps({ groupId: 'flowgate.default.0534' })
+    await wrapper.get('.dip-trs-download').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.dip-trs-download').text()).toContain('Download Review Package')
+    expect(apiGet).toHaveBeenCalledWith(
+      '/api/v1/projects/flowgate/git/groups/flowgate.default.0534/review-package',
+      expect.objectContaining({
+        params: { target_doc_id: 'flowgate.default.0300.0005-TR' },
+        responseType: 'blob',
+      }),
+    )
+    expect(createObjectURL).toHaveBeenCalled()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:review')
   })
 })

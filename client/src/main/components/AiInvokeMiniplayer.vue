@@ -43,7 +43,7 @@
           type="button"
           class="aiv-mini__clearbtn"
           data-test="ai-miniplayer-clear-finished"
-          @click="store.dismissAllFinished()"
+          @click="doClearFinished()"
         >
           {{ t('main.ai_miniplayer.btn_clear_finished') }}
         </button>
@@ -286,6 +286,7 @@ import { useProjectStore } from '../stores/project'
 import { useToast } from './common/useToast'
 import {
   compareRunEntries,
+  isDurableFinishedCard,
   isNonResumableSystemStop,
   openTargetDocId,
   useAiInvokeRunsStore,
@@ -532,27 +533,62 @@ function showReleaseError(error: any): void {
 }
 
 async function doRemove(entry: AiInvokeRunEntry): Promise<void> {
-  // 0500 T0004 §7/§8: [목록에서 제거] on a finished/lost card is the local dismiss it has
-  // always been (§19.4, no request at all). On a NON-RESUMABLE system stop the same button
-  // must clear the durable server row instead -- a local delete there is undone by the very
-  // next active-all bootstrap (NR0003 §2). The confirm is the existing system-stop one: it
-  // already says documents/run history are kept and that this cancels no live run.
-  if (!isNonResumableSystemStop(entry)) {
+  // 0500 T0004 §7/§8: [목록에서 제거] on a purely local finished/lost card is the local
+  // dismiss it has always been (§19.4, no request at all). On a NON-RESUMABLE system stop
+  // the same button must clear the durable server row instead -- a local delete there is
+  // undone by the very next active-all bootstrap (NR0003 §2). The confirm is the existing
+  // system-stop one: it already says documents/run history are kept and that this cancels
+  // no live run.
+  //
+  // 0529 B0001 adds the third case: a FINISHED card active-all rebuilt from
+  // `ai_invoke_document_review_loops` is durable for a different reason and came back the
+  // same way. It goes through store.removeCard() too, but with no confirm -- removing a
+  // finished result from a list is not a decision worth interrupting, and nothing is
+  // deleted server-side beyond the card itself.
+  const durable = isNonResumableSystemStop(entry) || isDurableFinishedCard(entry)
+  if (!durable) {
     store.dismiss(entry.groupId)
     return
   }
-  if (!window.confirm(t('main.ai_miniplayer.release_confirm_system'))) return
+  if (isNonResumableSystemStop(entry)
+    && !window.confirm(t('main.ai_miniplayer.release_confirm_system'))) return
   busy.add(entry.groupId)
   try {
     await store.removeCard(entry.groupId)
     // Same rule as doReleasePaused: only an actually-gone card may claim success (§16).
-    if (!store.runsByGroup[entry.groupId]) {
+    if (isNonResumableSystemStop(entry) && !store.runsByGroup[entry.groupId]) {
       showToast(t('main.ai_miniplayer.release_paused_success'), 'success')
     }
   } catch (error: any) {
-    showReleaseError(error)
+    if (isNonResumableSystemStop(entry)) showReleaseError(error)
+    else showRemoveCardError(error)
   } finally {
     busy.delete(entry.groupId)
+  }
+}
+
+// 0529 B0001: the durable finished-card removal has its own refusals, and none of the
+// paused-release wording fits them. Silence would be worse than either: the card stays on
+// screen, which is exactly the symptom the user reported, so it has to say why it stayed.
+function showRemoveCardError(error: any): void {
+  const status = error?.response?.status
+  const code = error?.response?.data?.code
+  if (status === 403) {
+    showToast(t('main.ai_miniplayer.error_remove_card_forbidden'), 'danger')
+  } else if (status === 409 && code === 'run_still_active') {
+    showToast(t('main.ai_miniplayer.error_remove_card_still_active'), 'danger')
+  } else {
+    showToast(t('main.ai_miniplayer.error_remove_card_failed'), 'danger')
+  }
+}
+
+async function doClearFinished(): Promise<void> {
+  // 0529 B0001: [완료 항목 모두 지우기] now clears the durable cards too, so it can fail
+  // the same way one card can. Awaiting it is what makes that visible at all.
+  try {
+    await store.dismissAllFinished()
+  } catch (error: any) {
+    showRemoveCardError(error)
   }
 }
 

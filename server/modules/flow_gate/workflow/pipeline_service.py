@@ -745,6 +745,43 @@ def transition_document_review(
                 "[return point] cleanup after approving %s failed: %s", doc_id, exc, exc_info=True
             )
 
+    # A WP is expanded only after its review state has become final.  Re-read both the
+    # document and canonical body here: review/rework can have changed the revision since
+    # this transition began.  The converter supplies candidates; the domain edit service
+    # owns persistence, race checks, provenance and the application record.
+    if next_status == "approved" and str(doc.get("type_code") or "").upper() == "WP":
+        # Approval is already durable at this point.  Final expansion is deliberately
+        # best-effort, like the return-point cleanup above: a stale sequence/plan or an
+        # unreadable body must not turn a completed approval into an approve_failed/400
+        # response.  expand_final_work_plan itself has no partial sequence write on its
+        # conflict path; logging retains the exact failure for operator recovery.
+        try:
+            fresh_plan_doc = db_docs.get_by_id(doc_id)
+            if fresh_plan_doc is not None and fresh_plan_doc.get("doc_review_status") == "approved":
+                from modules.flow_gate.services import work_plan_sequence_service as _wpseq
+                from modules.flow_gate.services import work_plan_service as _wp
+                plan_body = _wp.load_body(
+                    _wp.plan_path_for_doc(fresh_plan_doc),
+                    project_id=fresh_plan_doc.get("project_id"),
+                )
+                expansion = _wpseq.expand_final_work_plan(
+                    doc=fresh_plan_doc, plan=plan_body, locale=locale,
+                )
+                if expansion.get("status") == "expanded":
+                    # Eagerly refresh the live target. Durable paused/handoff rows retain
+                    # None, their existing run-to-end marker, and resolve the same latest
+                    # sequence max on resume.
+                    from modules.flow_gate.services import ai_invoke_service as _ai_invoke
+                    _ai_invoke.rebase_active_to_end(
+                        fresh_plan_doc.get("group_id"),
+                        expansion.get("result", {}).get("doc_id")
+                        or fresh_plan_doc.get("target_id")
+                        or fresh_plan_doc.get("triggered_by"),
+                    )
+        except Exception as exc:  # final expansion follows a durable approval
+            _log.warning(
+                "[work plan] final expansion after approving %s failed: %s", doc_id, exc, exc_info=True
+            )
     return updated
 
 
