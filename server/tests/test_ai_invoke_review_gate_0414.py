@@ -1299,6 +1299,80 @@ class TestCarriers:
         assert queued["target_seq"] == 10
         assert "marker" not in queued
 
+    @pytest.mark.parametrize(("count", "verdicts", "expected_reviews", "expected_reworks"), [
+        (1, ["issues"], 1, 1),
+        (2, ["issues", "issues"], 2, 2),
+        (3, ["issues", "issues", "issues"], 3, 3),
+        (3, ["issues", "pass"], 2, 1),
+        (-1, ["issues", "issues", "pass"], 3, 2),
+    ])
+    def test_every_rework_inbox_boundary_preserves_multi_round_gate_state(
+            self, paused, monkeypatch, world, count, verdicts,
+            expected_reviews, expected_reworks):
+        """0536 T0007: exercise the production queue collision on every landed edit.
+
+        The second request is the exact gate-field-free payload emitted by
+        inbox_routes._hand_off_to_engine.  Each iteration checks both the live queue and
+        the durable handoff row before feeding the survivor into the next gate decision.
+        """
+        counts = {"5": count}
+        reviewers = {"5": "aip_rev"}
+        child = _run(
+            mode="single", hop_kind="rework",
+            continuation_review_count_overrides=None,
+            continuation_reviewer_overrides=None,
+        )
+        monkeypatch.setattr(svc, "_active_run_for_group", lambda _group: child)
+        world.fill(5, "doc-5")
+        current = bundle(review_count_overrides=counts, reviewer_overrides=reviewers)
+        reworks = 0
+
+        for round_no, verdict in enumerate(verdicts, 1):
+            gate = svc.resolve_review_gate(current)
+            assert (gate["stage"], gate["rounds_used"], gate["round_no"]) == (
+                "review", round_no - 1, round_no)
+            world.review("doc-5", verdict, revision_no=round_no - 1,
+                         findings=([{"locus": f"§{round_no}",
+                                    "note": f"issue {round_no}"}]
+                                   if verdict == "issues" else None))
+            current = {**current, "last_stage": "review", "rounds_before": round_no - 1}
+            gate = svc.resolve_review_gate(current)
+            if verdict == "pass":
+                assert gate["stage"] == "work" and gate["approve_first"] is True
+                break
+
+            assert (gate["stage"], gate["count"], gate["rounds_used"], gate["round_no"]) == (
+                "rework", count, round_no, round_no)
+            gate_owned = {
+                **current, "last_stage": "rework",
+                "revision_before": round_no - 1,
+            }
+            svc.request_auto_resume(GROUP, gate_owned)
+            svc.request_auto_resume(GROUP, {
+                **_pending(), "target_seq": 10, "review_mode": False,
+            })
+            current = svc.pop_auto_resume(GROUP)
+            assert current["review_count_overrides"] == counts
+            assert current["reviewer_overrides"] == reviewers
+            assert current["last_stage"] == "rework"
+            assert current["revision_before"] == round_no - 1
+            row = paused.rows[GROUP]
+            assert json.loads(row["continuation_review_count_overrides"]) == counts
+            assert json.loads(row["continuation_reviewer_overrides"]) == reviewers
+
+            world.reject("doc-5")
+            world.rework("doc-5", round_no)
+            reworks += 1
+            after = svc.resolve_review_gate(current)
+            if count > 0 and round_no == count:
+                assert after["stage"] == "work" and after["approve_first"] is True
+            else:
+                assert (after["stage"], after["count"], after["rounds_used"],
+                        after["round_no"]) == ("review", count, round_no, round_no + 1)
+
+        assert len(world.reviews.get("doc-5", [])) == expected_reviews
+        assert reworks == expected_reworks
+
     def test_resume_hands_both_maps_back_to_start_run(self, paused, monkeypatch, world):
         svc._write_handoff_row(GROUP, _pending(), _run())
         captured: dict = {}
