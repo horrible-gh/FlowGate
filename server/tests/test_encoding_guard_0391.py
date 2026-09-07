@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from inbox_client import post_inbox
+from store_transaction_support import install_null_transaction_store
 from modules.flow_gate.services import workflow_decision_service as wf_decision
 
 CORRUPT = "??? ?? ? 0082(??3) ?? ? ?? ??"
@@ -384,6 +385,8 @@ def _patch_review_validation(monkeypatch):
     consume = MagicMock()
     monkeypatch.setattr(db_reviews, "insert_review", insert_review)
     monkeypatch.setattr(inbox_routes.token_service, "consume", consume)
+    # 0535 T0007 §3: review registration now runs inside one store.transaction().
+    install_null_transaction_store(monkeypatch)
     return {"insert_review": insert_review, "consume": consume}
 
 

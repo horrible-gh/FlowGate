@@ -438,6 +438,7 @@ def _rearm_git(
     group_id: str,
     reopened_doc_ids: Optional[list[str]] = None,
     actor_user_id: Optional[str] = None,
+    terminal_session: Optional[dict] = None,
 ) -> Optional[dict]:
     """Cancel the rewound TR commits, then re-arm the slot (0332 L0007 §2.1).
 
@@ -501,31 +502,46 @@ def reopen_to_target(
         user_id=_actor_user_id(actor), group_id=group_id, run_id=run_id
     )
     assert_group_mutation_allowed(group_id, principal, "workflow reopen")
+    # On the merged main tree this protects live Git merge/cancel sessions.  Keep the
+    # group branch runnable until the clean git-service side of that merge is present.
+    session_gate = getattr(git_service, "raise_if_git_session_blocks_reopen", None)
+    terminal_session = session_gate(project_id, group_id) if callable(session_gate) else None
 
     resolved_target_seq = int(target_seq)
-    with get_store().transaction():
-        current_doc = db_docs.get_by_id(doc_id)
-        if current_doc is None:
-            raise LookupError(f"Document not found: {doc_id}")
-        if precondition is not None:
-            skipped = precondition(current_doc, resolved_target_seq)
-            if skipped is not None:
-                return skipped
-        result = _reopen_in_transaction(
-            doc=current_doc,
-            target_seq=resolved_target_seq,
-            actor_user_id=_actor_user_id(actor),
-            reason=reason,
-            run_id=run_id,
-            preserve_ac=preserve_ac,
-            rework_instruction=rework_instruction,
-        )
-    cancel_result = _rearm_git(
-        project_id, group_id, result.get("reopened") or [], _actor_user_id(actor),
-    )
-    if cancel_result is not None:
-        result["tr_commit_cancel"] = cancel_result
-    return result
+    try:
+        with get_store().transaction():
+            current_doc = db_docs.get_by_id(doc_id)
+            if current_doc is None:
+                raise LookupError(f"Document not found: {doc_id}")
+            if precondition is not None:
+                skipped = precondition(current_doc, resolved_target_seq)
+                if skipped is not None:
+                    return skipped
+            result = _reopen_in_transaction(
+                doc=current_doc,
+                target_seq=resolved_target_seq,
+                actor_user_id=_actor_user_id(actor),
+                reason=reason,
+                run_id=run_id,
+                preserve_ac=preserve_ac,
+                rework_instruction=rework_instruction,
+            )
+            cancel_result = None
+            if terminal_session is not None:
+                cancel_result = _rearm_git(
+                    project_id, group_id, result.get("reopened") or [],
+                    _actor_user_id(actor), terminal_session=terminal_session,
+                )
+        if terminal_session is None:
+            cancel_result = _rearm_git(
+                project_id, group_id, result.get("reopened") or [], _actor_user_id(actor),
+            )
+        if cancel_result is not None:
+            result["tr_commit_cancel"] = cancel_result
+        return result
+    finally:
+        if terminal_session is not None:
+            git_service.close_cancel_session(terminal_session)
 
 
 def _skip(ts_doc_id: str, target_seq: Optional[int], run_id: str, reason: str) -> dict:

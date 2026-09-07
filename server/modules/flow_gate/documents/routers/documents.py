@@ -2345,6 +2345,8 @@ async def upload_attachment_rpc(
 
 def _shape_review(row: dict) -> dict:
     """Convert a document_reviews row for the frontend, parsing findings JSON and deriving its count."""
+    from modules.flow_gate.db import document_reviews as _db_reviews_shape
+
     raw = row.get("findings")
     findings: list = []
     if isinstance(raw, str):
@@ -2373,6 +2375,7 @@ def _shape_review(row: dict) -> dict:
         "revision_no": row.get("revision_no"),
         "reviewer_id": reviewer_id,
         "reviewer_name": reviewer_name,
+        "review_provider": _db_reviews_shape.review_provider_payload(row),
         "verdict": row.get("verdict"),
         "finding_count": len(findings),  # Computed by the server, not the AI.
         "findings": findings,
