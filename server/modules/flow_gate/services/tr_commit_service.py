@@ -216,7 +216,17 @@ def on_document_approved(doc_id: str, document: Optional[dict] = None) -> Option
                 reported_diff={"unreported": [], "missing": []},
             )
 
+        # A Time Machine reopen preserves the original logical TR message as durable
+        # ledger metadata, whether it uncommitted the prior round (a plain live rewind)
+        # or left it in place because it is merged/pushed history (flowgate.default.0532
+        # T0007 terminal reopen). Reapproval creates a new SHA from the current worktree
+        # either way, but reuses that exact subject unless the document now carries an
+        # explicit replacement draft.
         subject = commit_subject(doc)
+        if not git_service.normalize_subject(doc.get("commit_message")):
+            preserved = db_ledger.latest_reopened_subject(group_id, doc["doc_id"])
+            if preserved:
+                subject = preserved
         outcome = git_service.create_tr_commit(group_id, subject)
         artifacts = list(outcome.get("excluded_artifacts") or [])
 
@@ -281,6 +291,11 @@ def _row_view(row: dict, doc: Optional[dict] = None) -> dict[str, Any]:
         # T0018 K11 — two live rows for one step are otherwise indistinguishable.
         # A boolean, not the raw id: the screen says "restored", it does not join.
         "restored": row.get("restored_from_id") is not None,
+        # flowgate.default.0532 T0007 §5/§6 — `state` stays 'live' forever (the
+        # commit really happened and was never reverted), but a terminal-reopened
+        # row is no longer today's live/cancelable commit for this document; the
+        # panel must render it as historical, not as the active step.
+        "terminal_reopened": row.get("reopened_terminal_at") is not None,
     }
 
 
@@ -371,8 +386,17 @@ def _last_block(block: Optional[dict]) -> Optional[dict[str, Any]]:
 
 
 def _summarize(rows: list[dict], block: Optional[dict] = None) -> dict[str, Any]:
-    counts = {"live": 0, "canceled": 0, "no_commit": 0}
+    counts = {"live": 0, "canceled": 0, "no_commit": 0, "terminal_reopened": 0}
     for row in rows:
+        # flowgate.default.0532 T0007 §5/§6 — a terminal-reopened row keeps
+        # `state = 'live'` (the commit is permanent history) but is no longer the
+        # active/cancelable live commit for its document; counting it as `live`
+        # here is exactly the miscount T0007 §6 forbids ("latest live marker"
+        # must not point at a terminal-reopened C1). It gets its own bucket
+        # instead of being dropped, so the panel still accounts for every row.
+        if row.get("reopened_terminal_at"):
+            counts["terminal_reopened"] += 1
+            continue
         state = row.get("state")
         if state in counts:
             counts[state] += 1
@@ -389,7 +413,7 @@ def _summarize(rows: list[dict], block: Optional[dict] = None) -> dict[str, Any]
 
 
 EMPTY_SUMMARY = {
-    "live": 0, "canceled": 0, "no_commit": 0, "commits": [], "more": 0,
+    "live": 0, "canceled": 0, "no_commit": 0, "terminal_reopened": 0, "commits": [], "more": 0,
     "reapply_pending": False, "last_block": None,
     # TR0019 — the parked conflict this group is sitting on, if any. Sent rather than
     # inferred: the panel must not have to guess from a `git_busy` block whether the group
@@ -464,6 +488,10 @@ def empty_cancel_result() -> dict[str, Any]:
     return {
         "attempted": False, "blocked_reason": None,
         "canceled": [], "skipped": [], "stopped_reason": None, "retryable": False,
+        # flowgate.default.0532 T0007 — merged/pushed rows the gate correctly refused to
+        # reset/revert. Always present, like `conflict_session` below, so a terminal reopen
+        # is never mistaken for the plain "nothing happened" shape.
+        "terminal_reopened": [],
         # TR0019 — the parked conflict, when a revert stopped on one. Always present so a
         # reader never has to tell "no conflict" apart from "an older build's payload".
         "conflict_session": None,
@@ -678,10 +706,96 @@ def _blocked(
     return result
 
 
-def cancel_for_reopen(group_id: str, reopened_doc_ids: Iterable[str]) -> dict[str, Any]:
-    """The rewind's cancel (P0006 §3). Runs BEFORE the git re-arm — a re-armed slot is
-    rebuilt from base HEAD and holds none of the commits this is here to undo."""
-    return cancel_tr_commits(group_id, reopened_doc_ids)
+def _terminal_reopen(
+    result: dict[str, Any], targets: list[dict], codes: dict[str, str],
+) -> dict[str, Any]:
+    """flowgate.default.0532 T0007 §3/§5/§9 — the merged/pushed reopen path.
+
+    ``open_cancel_session`` has already refused with ``already_merged`` before
+    acquiring the project lock or touching the worktree — no reset, no revert, base
+    content untouched. That refusal is not a failure of this reopen; it IS the
+    terminal reopen T0007 asks for: the commit stays exactly as merged, and each
+    target row is marked so :func:`~modules.flow_gate.db.tr_commit_ledger.live_rows`
+    stops offering it as a cancel target a plain rewind could never actually reach
+    (it is buried under the merge). The workflow-level rewind that made the document
+    editable again already ran before this function was ever called (T1's contract,
+    unchanged); reapproval commits only the new delta on top of base, which already
+    contains this content.
+    """
+    result["attempted"] = True
+    result["_terminal_commit_sha"] = targets[0].get("commit_sha")
+    for row in targets:
+        code = codes.get(row.get("doc_id"), "")
+        db_ledger.mark_terminal_reopened(row["id"])
+        result["terminal_reopened"].append(_line(row, code))
+    return result
+
+
+def cancel_for_reopen(
+    group_id: str, reopened_doc_ids: Iterable[str],
+    terminal_session: Optional[dict] = None,
+) -> dict[str, Any]:
+    """Uncommit an exact live TR suffix and retain its content in the worktree.
+
+    A group whose targets are already ``merged``/``pushed`` takes the DIFFERENT path
+    T0007 defines: see :func:`_terminal_reopen`.
+    """
+    result = empty_cancel_result()
+    targets = db_ledger.live_rows(group_id, reopened_doc_ids)
+    if not targets:
+        result["attempted"] = True
+        return result
+
+    codes = _doc_codes(targets)
+    opened = git_service.open_cancel_session(
+        group_id, [row.get("commit_sha") for row in targets],
+    )
+    if not opened.get("ok"):
+        if opened["blocked_reason"] == "already_merged":
+            # The normal session deliberately reports terminal status before G8--G10.
+            # Reopen will re-provision the slot, so take a terminal-specific locked
+            # session to fail closed if an extant worktree has unrelated edits.
+            if terminal_session is not None:
+                return _terminal_reopen(result, targets, codes)
+            terminal = git_service.open_terminal_reopen_session(group_id)
+            if not terminal.get("ok"):
+                return _blocked(
+                    result, group_id, terminal["blocked_reason"], terminal["block_sub"],
+                )
+            try:
+                return _terminal_reopen(result, targets, codes)
+            finally:
+                git_service.close_cancel_session(terminal["session"])
+        return _blocked(result, group_id, opened["blocked_reason"], opened["block_sub"])
+
+    session = opened["session"]
+    try:
+        result["attempted"] = True
+        outcome = git_service.uncommit_tr_suffix(
+            session, [row.get("commit_sha") for row in targets],
+        )
+        if outcome["kind"] != "ok":
+            sub = outcome.get("sub") or "unsafe_suffix"
+            for row in targets:
+                db_ledger.record_cancel_attempt(row["id"], failed_reason=sub)
+                result["skipped"].append(
+                    _skip_line(row, codes.get(row.get("doc_id"), ""), "not_attempted")
+                )
+            # The cancel session has already passed all preflight gates. A suffix
+            # validation or reset failure is an attempted-operation failure, not a
+            # missing-worktree block; preserve its precise subcode for the caller.
+            result["stopped_reason"] = sub
+            return result
+
+        for row in targets:
+            code = codes.get(row.get("doc_id"), "")
+            if db_ledger.mark_canceled(row["id"], cancel_commit=None):
+                result["canceled"].append(_cancel_line(row, code, None))
+            else:
+                result["skipped"].append(_skip_line(row, code, "already_canceled"))
+        return result
+    finally:
+        git_service.close_cancel_session(session)
 
 
 def cancel_retry(group_id: str) -> dict[str, Any]:

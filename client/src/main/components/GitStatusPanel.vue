@@ -461,6 +461,13 @@
                   {{ t('main.git_status.tr_commits.canceled') }}
                   <span v-if="c.cancel_commit" class="git-trc-sha">{{ c.cancel_commit }}</span>
                 </span>
+                <!-- flowgate.default.0532 T0007 §5/§6 — merged/pushed rows stay `state:
+                     'live'` (the commit really happened), but they are no longer today's
+                     active/cancelable step; a bare "live" row here would contradict the
+                     historical-not-canceled contract T0007 requires. -->
+                <span v-else-if="c.terminal_reopened" class="git-trc-note">
+                  {{ t('main.git_status.tr_commits.terminal_reopened') }}
+                </span>
                 <!-- 0332 T0018 K11 — 되살린 커밋은 살아 있는 커밋이지만 처음 승인이
                      남긴 것과는 다른 줄이다. 표식이 없으면 한 단계에 똑같아 보이는
                      live 줄이 둘 생긴다. -->
@@ -575,6 +582,10 @@ interface TrCommitRow {
   cancel_commit: string | null
   /** 0332 T0018 K11 — this live row came back through a forward restore */
   restored?: boolean
+  /** flowgate.default.0532 T0007 §5/§6 — `state` stays 'live' (the commit is
+   *  permanent history) but this row is no longer today's active/cancelable
+   *  commit for its document; render it as historical, not as a live step. */
+  terminal_reopened?: boolean
 }
 // 0332 T0018 §3-5 — 마지막으로 취소/되살리기 게이트가 거절한 사유. `retryable` 은
 // 서버의 한 표(CANCEL_BLOCK_RETRYABLE)에서 오고 화면이 다시 판단하지 않는다.
@@ -588,6 +599,9 @@ interface TrCommits {
   live: number
   canceled: number
   no_commit: number
+  /** flowgate.default.0532 T0007 §5/§6 — terminal-reopened rows, counted apart
+   *  from `live` so a merged/pushed C1 is never reported as the active commit. */
+  terminal_reopened?: number
   commits: TrCommitRow[]
   /** rows the server folded away — shown as "N개 더", never dropped silently */
   more: number
@@ -713,10 +727,11 @@ function commitPreviewMore(slot: Slot): number {
 function commitRowCount(slot: Slot): number {
   const c = slot.tr_commits
   if (!c) return 0
-  return (c.live ?? 0) + (c.canceled ?? 0) + (c.no_commit ?? 0)
+  return (c.live ?? 0) + (c.canceled ?? 0) + (c.no_commit ?? 0) + (c.terminal_reopened ?? 0)
 }
 
 function trRowClass(row: TrCommitRow): string {
+  if (row.terminal_reopened) return 'is-terminal'
   if (row.state === 'canceled') return 'is-canceled'
   if (row.state === 'no_commit') {
     return row.skipped_reason === 'no_changes' || row.skipped_reason === 'artifacts_only'
@@ -1990,6 +2005,12 @@ defineExpose({ fetchStatus })
   color: var(--text-m);
 }
 .git-trc-row.is-quiet {
+  color: var(--text-m);
+}
+/* flowgate.default.0532 T0007 §5/§6 — terminal-reopened rows are historical, not
+   canceled: no strikethrough (the commit was never reverted), just muted like a
+   past step so it reads apart from today's active `is-live` row. */
+.git-trc-row.is-terminal .git-trc-note {
   color: var(--text-m);
 }
 /* 0332 T0018 K11 — 되살린 커밋 배지와, 그 아래 붙는 재시도 줄. */

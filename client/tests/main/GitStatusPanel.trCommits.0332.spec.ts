@@ -142,4 +142,28 @@ describe('GitStatusPanel × 이 그룹의 커밋', () => {
 
     expect(wrapper.find('.git-trc-more').text()).toContain('4')
   })
+
+  // flowgate.default.0532 T0007 §5/§6 — a terminal-reopened row keeps `state: 'live'`
+  // (the commit is permanent history), but it must never render as today's active
+  // commit: it is excluded from the `live` count and shown with its own historical note.
+  it('병합/푸시로 종료돼 재개된 커밋은 live 로 세거나 표시하지 않는다', async () => {
+    getRequest.mockResolvedValue({ data: { ok: true, status: statusWith(
+      {
+        live: 0, canceled: 0, no_commit: 0, terminal_reopened: 1,
+        commits: [{ ...LIVE_ROW, terminal_reopened: true }], more: 0,
+      },
+    ) } })
+
+    const wrapper = mountPanel()
+    await flushPromises()
+    await wrapper.find('.git-trc-badge').trigger('click')
+
+    const rows = wrapper.findAll('.git-trc-row')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].classes()).not.toContain('is-live')
+    expect(rows[0].classes()).toContain('is-terminal')
+    expect(rows[0].text()).toContain(
+      i18n.global.t('main.git_status.tr_commits.terminal_reopened'),
+    )
+  })
 })

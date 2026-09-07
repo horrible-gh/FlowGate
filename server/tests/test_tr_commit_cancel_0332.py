@@ -513,7 +513,8 @@ def test_a_group_that_never_committed_ends_quietly_not_on_an_error(real_store):
 
     assert result == {
         "attempted": True, "blocked_reason": None,
-        "canceled": [], "skipped": [], "stopped_reason": None, "retryable": False,
+        "canceled": [], "skipped": [], "terminal_reopened": [],
+        "stopped_reason": None, "retryable": False,
         "conflict_session": None,
     }
 
@@ -890,3 +891,407 @@ def test_a_rewind_with_nothing_to_cancel_writes_no_audit_row(monkeypatch):
     rework._rearm_git(_PROJECT, _GROUP, [_TR_A], "usr_1")
 
     assert logged == []
+
+
+def test_terminal_dirty_cancel_never_reprovisions_the_worktree(monkeypatch):
+    """A late terminal-dirty result must not let best-effort re-arm overwrite it."""
+    reprovisioned: list[tuple] = []
+    monkeypatch.setattr(
+        rework.tr_commit_service, "cancel_for_reopen",
+        lambda *_: trc.empty_cancel_result() | {
+            "attempted": False, "blocked_reason": "dirty_worktree",
+        },
+    )
+    monkeypatch.setattr(
+        rework.git_service, "reopen_group_git",
+        lambda *args: reprovisioned.append(args),
+    )
+
+    result = rework._rearm_git(_PROJECT, _GROUP, [_TR_A], "usr_1")
+
+    assert result["blocked_reason"] == "dirty_worktree"
+    assert reprovisioned == []
+
+
+# ── 9. live rewind uncommit semantics (0532 T0005) ───────────────────────────
+
+@needs_git
+def test_live_rewind_uncommits_single_tr_without_deleting_content_or_revert(
+    real_store, git_active, repo, monkeypatch,
+):
+    (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
+    before_target = _git(["rev-parse", "HEAD"], repo).strip()
+    old_sha = _commit(repo, "feat(git): keep content")
+    row = _ledger_commit(_GROUP, _TR_A, old_sha, "feat(git): keep content")
+    content_before = (repo / "a.py").read_text(encoding="utf-8")
+    revert_calls = []
+    monkeypatch.setattr(
+        svc, "revert_tr_commit",
+        lambda *args, **kwargs: revert_calls.append((args, kwargs)),
+    )
+
+    result = trc.cancel_for_reopen(_GROUP, [_TR_A])
+
+    assert result["blocked_reason"] is None
+    assert _git(["rev-parse", "HEAD"], repo).strip() == before_target
+    assert (repo / "a.py").read_text(encoding="utf-8") == content_before
+    assert _git(["status", "--porcelain"], repo).strip() == "?? a.py"
+    assert revert_calls == []
+    after = db_ledger.get_by_id(row["id"])
+    assert after["state"] == "canceled"
+    assert after["cancel_commit"] is None
+
+
+@needs_git
+def test_live_rewind_uncommits_tr3_only_and_multi_tr_suffix(real_store, git_active, repo):
+    base_sha = _git(["rev-parse", "HEAD"], repo).strip()
+    (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
+    sha_a = _commit(repo, "TR1")
+    _ledger_commit(_GROUP, _TR_A, sha_a, "TR1")
+    (repo / "b.py").write_text("b = 1\n", encoding="utf-8")
+    sha_b = _commit(repo, "TR2")
+    _ledger_commit(_GROUP, _TR_B, sha_b, "TR2")
+
+    one = trc.cancel_for_reopen(_GROUP, [_TR_B])
+    assert one["blocked_reason"] is None
+    assert _git(["rev-parse", "HEAD"], repo).strip() == sha_a
+    assert (repo / "b.py").read_text(encoding="utf-8") == "b = 1\n"
+
+    # Recommit the retained delta as a new live TR2, then rewind the complete suffix.
+    sha_b2 = _commit(repo, "TR2")
+    _ledger_commit(_GROUP, _TR_B, sha_b2, "TR2")
+    both = trc.cancel_for_reopen(_GROUP, [_TR_A, _TR_B])
+    assert both["blocked_reason"] is None
+    assert _git(["rev-parse", "HEAD"], repo).strip() == base_sha
+    assert (repo / "a.py").read_text(encoding="utf-8") == "a = 1\n"
+    assert (repo / "b.py").read_text(encoding="utf-8") == "b = 1\n"
+    assert [r["state"] for r in db_ledger.list_by_group(_GROUP)] == [
+        "canceled", "canceled", "canceled",
+    ]
+
+
+@needs_git
+def test_live_rewind_fails_closed_on_interleaved_commit(real_store, git_active, repo):
+    (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
+    sha_a = _commit(repo, "TR1")
+    _ledger_commit(_GROUP, _TR_A, sha_a, "TR1")
+    (repo / "manual.py").write_text("manual = 1\n", encoding="utf-8")
+    _commit(repo, "manual")
+    (repo / "b.py").write_text("b = 1\n", encoding="utf-8")
+    sha_b = _commit(repo, "TR2")
+    _ledger_commit(_GROUP, _TR_B, sha_b, "TR2")
+    head_before = _git(["rev-parse", "HEAD"], repo).strip()
+
+    result = trc.cancel_for_reopen(_GROUP, [_TR_A, _TR_B])
+
+    assert result["blocked_reason"] is None
+    assert result["stopped_reason"] == "unsafe_suffix"
+    assert _git(["rev-parse", "HEAD"], repo).strip() == head_before
+    assert [r["state"] for r in db_ledger.list_by_group(_GROUP)] == ["live", "live"]
+
+
+@needs_git
+def test_live_rewind_reports_reset_failure_without_preflight_block(
+    real_store, git_active, repo, monkeypatch,
+):
+    (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
+    sha = _commit(repo, "TR1")
+    _ledger_commit(_GROUP, _TR_A, sha, "TR1")
+
+    monkeypatch.setattr(
+        trc.git_service,
+        "uncommit_tr_suffix",
+        lambda _session, _target_shas: {"kind": "blocked", "sub": "reset_failed"},
+    )
+    result = trc.cancel_for_reopen(_GROUP, [_TR_A])
+
+    assert result["attempted"] is True
+    assert result["blocked_reason"] is None
+    assert result["stopped_reason"] == "reset_failed"
+    assert _git(["rev-parse", "HEAD"], repo).strip() == sha
+    assert [r["state"] for r in db_ledger.list_by_group(_GROUP)] == ["live"]
+
+
+@needs_git
+def test_live_rewind_dirty_guard_preserves_history_and_edit(real_store, git_active, repo):
+    (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
+    sha = _commit(repo, "TR1")
+    _ledger_commit(_GROUP, _TR_A, sha, "TR1")
+    (repo / "f.txt").write_text("dirty\n", encoding="utf-8")
+
+    result = trc.cancel_for_reopen(_GROUP, [_TR_A])
+
+    assert result["blocked_reason"] == "dirty_worktree"
+    assert _git(["rev-parse", "HEAD"], repo).strip() == sha
+    assert (repo / "f.txt").read_text(encoding="utf-8") == "dirty\n"
+
+
+@needs_git
+def test_reapproval_creates_new_sha_with_preserved_message_and_content(
+    real_store, git_active, repo,
+):
+    (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
+    original_subject = "feat(git): preserve rewind content"
+    old_sha = _commit(repo, original_subject)
+    _ledger_commit(_GROUP, _TR_A, old_sha, original_subject)
+    trc.cancel_for_reopen(_GROUP, [_TR_A])
+
+    payload = trc.on_document_approved(_TR_A)
+    new_sha = payload["commit"]
+
+    assert payload["committed"] is True
+    assert new_sha != old_sha[:7]
+    assert _git(["log", "-1", "--pretty=%s"], repo).strip() == original_subject
+    assert _git(["show", "HEAD:a.py"], repo) == "a = 1\n"
+    rows = db_ledger.list_by_group(_GROUP)
+    assert [r["state"] for r in rows] == ["live", "canceled"]
+
+# ── 5. merged/pushed terminal reopen (flowgate.default.0532 T0007) ──────────
+
+@needs_git
+@pytest.mark.parametrize("status", ["merged", "pushed"])
+def test_terminal_reopen_marks_the_row_terminal_without_touching_git(
+    real_store, git_active, repo, monkeypatch, status,
+):
+    """T0007 §3/§9 — merged/pushed 은 revert/reset 대상이 아니다. 게이트가
+    ``already_merged`` 로 답해도 원장은 그 사실을 ``canceled`` 로 왜곡하지 않고
+    ``reopened_terminal_at`` 로만 기록하며, git 은 전혀 건드리지 않는다."""
+    (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
+    sha = _commit(repo, "feat(git): merged content")
+    row = _ledger_commit(_GROUP, _TR_A, sha, "feat(git): merged content")
+    head_before = _git(["rev-parse", "HEAD"], repo).strip()
+    monkeypatch.setattr(svc.db_git, "get_state", lambda group_id: {
+        "worktree_registered": 0, "branch": "work", "status": status,
+    })
+
+    result = trc.cancel_for_reopen(_GROUP, [_TR_A])
+
+    assert result["attempted"] is True
+    assert result["blocked_reason"] is None
+    assert result["stopped_reason"] is None
+    assert result["canceled"] == []
+    assert result["skipped"] == []
+    assert result["terminal_reopened"] == [
+        {"doc_id": _TR_A, "doc_code": "0009-TR", "commit": sha[:7]}
+    ]
+    # base content and history are exactly as they were — no reset, no revert.
+    assert _git(["rev-parse", "HEAD"], repo).strip() == head_before
+    assert (repo / "a.py").read_text(encoding="utf-8") == "a = 1\n"
+    after = db_ledger.get_by_id(row["id"])
+    assert after["state"] == "live"
+    assert after["commit_sha"] == sha
+    assert after["cancel_commit"] is None
+    assert after["reopened_terminal_at"] is not None
+
+
+def test_a_terminal_row_stops_being_a_live_cancel_target(real_store):
+    """T0007 §5 — 한 번 terminal 로 표시된 행은 이후의 일반 되감기 대상에서 빠진다.
+    빠지지 않으면 그 행의 커밋은 병합 아래 묻혀 있어 어떤 reset 도 닿을 수 없는데도
+    다음 rewind 가 그것을 대상으로 골라 ``unsafe_suffix`` 로 헛되이 막히게 된다."""
+    row = db_ledger.record_commit(
+        group_id=_GROUP, doc_id=_TR_A, commit_sha="a" * 40, commit_subject="x",
+    )
+
+    assert db_ledger.live_rows(_GROUP, [_TR_A]) != []
+    assert db_ledger.mark_terminal_reopened(row["id"]) is True
+    assert db_ledger.live_rows(_GROUP, [_TR_A]) == []
+    # state itself is untouched — a terminal row is still, truthfully, `live` history.
+    assert db_ledger.get_by_id(row["id"])["state"] == "live"
+
+
+def test_terminal_history_is_not_a_marker_or_preview_until_reapproval(real_store):
+    """T0007 §5--6 — C1 is permanent history, not a current live commit.
+
+    All three read models must agree immediately after terminal reopen: cancel targets,
+    strip marker, and Time Machine preview are empty. A subsequent approval's C2 is
+    then the only current row exposed by each marker/preview query.
+    """
+    c1 = db_ledger.record_commit(
+        group_id=_GROUP, doc_id=_TR_A, commit_sha="a" * 40, commit_subject="C1",
+    )
+    assert db_ledger.latest_by_doc([_TR_A])[_TR_A]["id"] == c1["id"]
+    assert [r["id"] for r in db_ledger.commit_rows_by_group(_GROUP)] == [c1["id"]]
+
+    assert db_ledger.mark_terminal_reopened(c1["id"]) is True
+    assert db_ledger.live_rows(_GROUP, [_TR_A]) == []
+    assert db_ledger.latest_by_doc([_TR_A]) == {}
+    assert db_ledger.commit_rows_by_group(_GROUP) == []
+
+    c2 = db_ledger.record_commit(
+        group_id=_GROUP, doc_id=_TR_A, commit_sha="b" * 40, commit_subject="C2",
+    )
+    assert db_ledger.latest_by_doc([_TR_A])[_TR_A]["id"] == c2["id"]
+    assert [r["id"] for r in db_ledger.commit_rows_by_group(_GROUP)] == [c2["id"]]
+
+
+def test_group_commit_summary_does_not_count_a_terminal_row_as_live(real_store):
+    """T0007 §5/§6 — ``list_by_group``/``list_by_groups`` used to omit
+    ``reopened_terminal_at``, so a terminal-reopened C1 was counted as ``live`` and sent
+    to the status panel as a plain live row, which then rendered it as today's active,
+    cancelable commit. The row must stay in the summary (§5 keeps it as history) but stop
+    being counted/marked as live; the panel is what tells them apart on ``terminal_reopened``."""
+    row = db_ledger.record_commit(
+        group_id=_GROUP, doc_id=_TR_A, commit_sha="a" * 40, commit_subject="C1",
+    )
+    assert db_ledger.mark_terminal_reopened(row["id"]) is True
+
+    summary = trc.group_commit_summary(_GROUP)
+    assert summary["live"] == 0
+    assert summary["terminal_reopened"] == 1
+    [commit_row] = summary["commits"]
+    # `state` never lies about history (D0005 K5) — it stays 'live' — but the panel
+    # needs the separate flag to avoid rendering this as the active step.
+    assert commit_row["state"] == "live"
+    assert commit_row["terminal_reopened"] is True
+
+    summaries = trc.group_commit_summaries([_GROUP])
+    assert summaries[_GROUP]["live"] == 0
+    assert summaries[_GROUP]["terminal_reopened"] == 1
+
+
+def test_terminal_reopen_session_checks_existing_worktree_for_dirt(
+    real_store, git_active, tmp_path, monkeypatch,
+):
+    """The terminal-only session holds the lock while applying the G10 equivalent."""
+    monkeypatch.setattr(svc.db_git, "get_state", lambda group_id: {
+        "worktree_registered": 1, "branch": "work", "status": "merged",
+    })
+    monkeypatch.setattr(svc, "src_root", lambda *_: tmp_path)
+    monkeypatch.setattr(svc, "cancel_blocking_dirty", lambda _: True)
+
+    opened = svc.open_terminal_reopen_session(_GROUP)
+
+    assert opened == {
+        "ok": False, "blocked_reason": "dirty_worktree",
+        "block_sub": "dirty_worktree", "session": None,
+    }
+
+
+def test_terminal_reopen_preflight_refuses_dirty_worktree_before_workflow_rewind(
+    real_store, git_active, monkeypatch,
+):
+    monkeypatch.setattr(svc.db_git, "get_state", lambda group_id: {
+        "worktree_registered": 1, "branch": "work", "status": "pushed",
+    })
+    monkeypatch.setattr(
+        svc, "open_terminal_reopen_session",
+        lambda *_: {
+            "ok": False, "blocked_reason": "dirty_worktree",
+            "block_sub": "dirty_worktree", "session": None,
+        },
+    )
+
+    with pytest.raises(svc.GitServiceError) as excinfo:
+        svc.raise_if_git_session_blocks_reopen(_PROJECT, _GROUP)
+
+    assert excinfo.value.code == "dirty_worktree"
+
+
+def test_terminal_reopen_dirty_guard_stops_before_ledger_mark(real_store, monkeypatch):
+    """T0007 §4/§11 — terminal status cannot bypass the dirty-worktree guard."""
+    row = db_ledger.record_commit(
+        group_id=_GROUP, doc_id=_TR_A, commit_sha="a" * 40, commit_subject="C1",
+    )
+    monkeypatch.setattr(
+        trc.git_service,
+        "open_cancel_session",
+        lambda *_: {
+            "ok": False, "blocked_reason": "already_merged",
+            "block_sub": "already_merged", "session": None,
+        },
+    )
+    monkeypatch.setattr(
+        trc.git_service,
+        "open_terminal_reopen_session",
+        lambda *_: {
+            "ok": False, "blocked_reason": "dirty_worktree",
+            "block_sub": "dirty_worktree", "session": None,
+        },
+    )
+
+    result = trc.cancel_for_reopen(_GROUP, [_TR_A])
+
+    assert result["attempted"] is False
+    assert result["blocked_reason"] == "dirty_worktree"
+    assert result["terminal_reopened"] == []
+    assert db_ledger.get_by_id(row["id"])["reopened_terminal_at"] is None
+
+
+def test_marking_terminal_twice_is_idempotent(real_store):
+    row = db_ledger.record_commit(
+        group_id=_GROUP, doc_id=_TR_A, commit_sha="a" * 40, commit_subject="x",
+    )
+
+    assert db_ledger.mark_terminal_reopened(row["id"]) is True
+    first_at = db_ledger.get_by_id(row["id"])["reopened_terminal_at"]
+    assert db_ledger.mark_terminal_reopened(row["id"]) is True
+    assert db_ledger.get_by_id(row["id"])["reopened_terminal_at"] == first_at
+
+
+@needs_git
+def test_terminal_reopen_reapproval_commits_delta_only_with_reused_message(
+    real_store, git_active, repo, monkeypatch,
+):
+    """T0007 §3/§7/§8 — base(B1)가 이미 C1 을 담고 있는 워크트리에서 재승인하면,
+    새 커밋은 C1 을 중복하지 않고 Δ만 담아야 하며, 메시지는 명시적 draft 가 없는 한
+    C1 의 것을 재사용하고, SHA 는 반드시 새로 생긴다."""
+    (repo / "a.py").write_text("a = 1\n", encoding="utf-8")
+    original_subject = "feat(git): merged content"
+    old_sha = _commit(repo, original_subject)
+    _ledger_commit(_GROUP, _TR_A, old_sha, original_subject)
+
+    monkeypatch.setattr(svc.db_git, "get_state", lambda group_id: {
+        "worktree_registered": 0, "branch": "work", "status": "merged",
+    })
+    result = trc.cancel_for_reopen(_GROUP, [_TR_A])
+    assert result["blocked_reason"] is None
+    assert result["terminal_reopened"] != []
+
+    # 0477's reopen_group_git re-arms the group (status back to 'none') and
+    # reprovisions the worktree from base HEAD — which, for a merged group, already
+    # IS this exact tree. This fixture's `repo` already models that reprovisioned
+    # worktree, so only the state needs to flip back before the user edits Δ.
+    monkeypatch.setattr(svc.db_git, "get_state", lambda group_id: {
+        "worktree_registered": 1, "branch": "work", "status": "none",
+    })
+    (repo / "a.py").write_text("a = 2\n", encoding="utf-8")
+
+    payload = trc.on_document_approved(_TR_A)
+
+    assert payload["committed"] is True
+    new_sha = _git(["rev-parse", "HEAD"], repo).strip()
+    assert new_sha != old_sha
+    # message reused from the terminal C1 row, not the generic fallback subject.
+    assert _git(["log", "-1", "--pretty=%s"], repo).strip() == original_subject
+    assert _git(["show", "HEAD:a.py"], repo) == "a = 2\n"
+    # the new commit's own diff is the delta only — C1's content does not arrive again.
+    diff = _git(["diff", old_sha, new_sha, "--", "a.py"], repo)
+    assert "-a = 1" in diff
+    assert "+a = 2" in diff
+
+    rows = db_ledger.list_by_group(_GROUP)
+    assert [r["state"] for r in rows] == ["live", "live"]
+    new_row, old_row = rows[0], rows[1]
+    assert new_row["commit_sha"] == new_sha
+    assert db_ledger.get_by_id(new_row["id"])["reopened_terminal_at"] is None
+    assert old_row["commit_sha"] == old_sha
+    assert db_ledger.get_by_id(old_row["id"])["reopened_terminal_at"] is not None
+    # the terminal C1 row is out of the cancel-target set; only C2 is live-for-cancel.
+    live = db_ledger.live_rows(_GROUP, [_TR_A])
+    assert len(live) == 1
+    assert live[0]["commit_sha"] == new_sha
+
+
+def test_terminal_reopen_result_never_carries_a_blocked_reason(real_store):
+    """The screen reads ``blocked_reason`` as \"nothing was attempted\" (P0006 §5-3).
+    A terminal reopen DID attempt something (it marked history) and must never be
+    reported through that field, or the UI shows [Git 상태 패널 열기] for a reopen that
+    already succeeded."""
+    result = trc.empty_cancel_result()
+    row = {"id": 1, "doc_id": _TR_A, "commit_sha": "a" * 40}
+    out = trc._terminal_reopen(result, [row], {_TR_A: "0009-TR"})
+
+    assert out["attempted"] is True
+    assert out["blocked_reason"] is None
+    assert out["retryable"] is False
+

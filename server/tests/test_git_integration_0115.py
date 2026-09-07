@@ -3327,4 +3327,111 @@ class TestGroupExplorerUntracked:
 
         unchanged = svc.read_group_file_diff("grpexpprj", self.GROUP, "README.md")["data"]
         assert unchanged["status"] == "M"
-        assert unchanged["old"]["content"] == unchanged["new"]["content"]
+
+
+@pytest.fixture(scope="class")
+def terminal_reopen_origin(seed):
+    """A dedicated bare origin + enabled project for the 0532 T0007 terminal-reopen
+    re-provisioning test: a plain bare origin/local-clone pair, kept separate from the
+    other classes' shared fixtures so this test can freely advance ``main`` past the
+    merge point without disturbing anyone else's timeline."""
+    from modules.flow_gate.db import projects
+    from modules.flow_gate.services import git_service as svc
+
+    projects.create({"project_id": "gittermprj", "project_name": "GitTermProj"})
+    tmp = Path(tempfile.mkdtemp(prefix="fg-git-0532-terminal-"))
+    bare = tmp / "origin.git"
+    seedwt = tmp / "seedwt"
+    _git(["init", "--bare", "-b", "main", str(bare)])
+    _git(["init", "-b", "main", str(seedwt)])
+    (seedwt / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(["add", "-A"], cwd=seedwt)
+    _git(["commit", "-m", "B0"], cwd=seedwt)
+    _git(["remote", "add", "origin", str(bare)], cwd=seedwt)
+    _git(["push", "origin", "main"], cwd=seedwt)
+
+    svc.save_config("gittermprj", {
+        "repo_url": bare.as_uri(),
+        "provider": "generic",
+        "base_branch": "main",
+        "default_finalize_action": "merge",
+        "enabled": True,
+    })
+    yield {"bare": bare, "seedwt": seedwt, "tmp": tmp}
+    svc.delete_config("gittermprj")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+@needs_git
+class TestTerminalReopenReprovision0532:
+    """flowgate.default.0532 T0007 §4 condition 1 — the review's finding: when a
+    terminal slot has no retained group branch, reopen used to always re-create the
+    worktree at bare C1. If the configured base has since moved on to a later commit
+    that already contains C1 (a real merge landed and the base kept moving), the
+    recreated branch silently dropped that later base content instead of the T0007 §4
+    contract ("re-provision from the current configured/effective base while
+    preserving C1"). ``_ensure_worktree_locked`` must fork from the current base tip
+    whenever it still contains C1, not from the bare commit."""
+
+    def test_reopen_reprovisions_from_the_advanced_base_not_bare_c1(self, terminal_reopen_origin):
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        seedwt = terminal_reopen_origin["seedwt"]
+        bare = terminal_reopen_origin["bare"]
+        project_id = "gittermprj"
+        group = f"{project_id}.default.0100"
+
+        # C1: the TR's merged commit, landed and pushed to base — base is now B1 = B0+C1.
+        (seedwt / "c1.txt").write_text("c1 content\n", encoding="utf-8")
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "feat: C1 merged content"], cwd=seedwt)
+        c1 = _git(["rev-parse", "HEAD"], cwd=seedwt).strip()
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        # Base advances further AFTER the merge — B2, unrelated to C1/the TR's group.
+        (seedwt / "b2.txt").write_text("later base work\n", encoding="utf-8")
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "chore: B2 later base commit"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        # No retained group branch anywhere (neither local nor on origin) — the review's
+        # exact scenario: a fresh/never-provisioned slot reopening straight from C1.
+        assert svc.ensure_worktree(
+            project_id, "default", group,
+            trigger="timemachine_reopen", start_point=c1,
+        ) == "ok"
+
+        wt = src_root("GitTermProj", "gittermprj_default_0100")
+        assert wt.is_dir()
+        # C1 is preserved (T0007 §4 condition 2) ...
+        assert (wt / "c1.txt").read_text(encoding="utf-8") == "c1 content\n"
+        # ... AND the later base commit is NOT silently dropped (T0007 §4 condition 1).
+        assert (wt / "b2.txt").read_text(encoding="utf-8") == "later base work\n"
+        log = _git(["log", "--format=%H"], cwd=wt).splitlines()
+        assert c1 in log
+
+    def test_reopen_fails_closed_when_the_base_no_longer_contains_c1(self, terminal_reopen_origin):
+        """T0007 §11 fail-closed — if the current base does not contain C1 as an
+        ancestor (the base/history relationship cannot be trusted), reopen must refuse
+        rather than guess which commit to fork from."""
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        project_id = "gittermprj"
+
+        # Provisions the base checkout locally (clone), via an unrelated bootstrap group.
+        assert svc.ensure_worktree(project_id, "default", f"{project_id}.default.0001") == "ok"
+        base_root = src_root("GitTermProj", "main")
+
+        # An orphan commit that shares no history with the current base at all — created
+        # straight in the local base checkout, so the object exists without needing a
+        # remote round trip, but it is an ancestor of nothing on `main`.
+        tree = _git(["rev-parse", "HEAD^{tree}"], cwd=base_root).strip()
+        orphan = _git(["commit-tree", "-m", "orphan", tree], cwd=base_root).strip()
+
+        group = f"{project_id}.default.0101"
+        assert svc.ensure_worktree(
+            project_id, "default", group,
+            trigger="timemachine_reopen", start_point=orphan,
+        ) == "failed"

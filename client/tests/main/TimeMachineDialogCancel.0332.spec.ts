@@ -40,7 +40,7 @@ function preview(overrides: Record<string, unknown> = {}) {
 function cancelResult(overrides: Record<string, unknown> = {}) {
   return {
     attempted: true, blocked_reason: null, canceled: [], skipped: [],
-    stopped_reason: null, retryable: false, ...overrides,
+    terminal_reopened: [], stopped_reason: null, retryable: false, ...overrides,
   }
 }
 

@@ -1610,7 +1610,8 @@ def provision_manual(project_id: str) -> dict:
 
 
 def ensure_worktree(
-    project_id: str, module: str, group_id: str, trigger: str = "remote_access"
+    project_id: str, module: str, group_id: str, trigger: str = "remote_access",
+    start_point: Optional[str] = None,
 ) -> str:
     """Create/guarantee the group's branch + worktree. Idempotent; never raises.
 
@@ -1642,7 +1643,9 @@ def ensure_worktree(
             _fail_worktree(project_id, group_id, branch, "git_busy")  # E11
             return "failed"
         try:
-            return _ensure_worktree_locked(cfg, project_id, project_name, group_id, branch, trigger)
+            return _ensure_worktree_locked(
+                cfg, project_id, project_name, group_id, branch, trigger, start_point,
+            )
         finally:
             db_git.release_lock(project_id, holder)
     except Exception as exc:  # noqa: BLE001 — the hook must never break its caller
@@ -1656,7 +1659,7 @@ def ensure_worktree(
 
 def _ensure_worktree_locked(
     cfg: dict, project_id: str, project_name: str, group_id: str, branch: str,
-    trigger: str = "remote_access",
+    trigger: str = "remote_access", start_point: Optional[str] = None,
 ) -> str:
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
     base_root = src_root(project_name, base_branch)
@@ -1683,6 +1686,9 @@ def _ensure_worktree_locked(
         # a tree that no longer holds the source.
         and _worktree_link_ok(wt_path)
     ):
+        if start_point and not _commits_present(wt_path, [start_point]):
+            _fail_worktree(project_id, group_id, branch, "terminal_commit_absent")
+            return "failed"
         db_git.clear_provision_failure(group_id)   # a stale marker must not linger (L §2.4)
         _emit_worktree_ready(
             project_id, group_id, branch, base_branch, wt_path,
@@ -1703,7 +1709,47 @@ def _ensure_worktree_locked(
         _fail_worktree(project_id, group_id, branch, proc.stderr.strip())
         return "failed"
 
-    if _ref_exists(base_root, f"refs/heads/{branch}"):
+    # Terminal reopen supplies C1 explicitly.  Never silently fall back to base HEAD:
+    # pushed-but-unmerged content normally is not in the configured base yet.
+    if start_point:
+        present = _run_git(["cat-file", "-e", f"{start_point}^{{commit}}"], cwd=base_root)
+        if present.returncode != 0:
+            _fail_worktree(project_id, group_id, branch, "terminal_commit_absent")
+            return "failed"
+        if _ref_exists(base_root, f"refs/heads/{branch}"):
+            contains = _run_git(["merge-base", "--is-ancestor", start_point, branch], cwd=base_root)
+            if contains.returncode != 0:
+                _fail_worktree(project_id, group_id, branch, "terminal_branch_mismatch")
+                return "failed"
+            proc = _run_git(["worktree", "add", str(wt_path), branch], cwd=base_root)
+        elif _ref_exists(base_root, f"refs/remotes/origin/{branch}"):
+            contains = _run_git(
+                ["merge-base", "--is-ancestor", start_point, f"origin/{branch}"], cwd=base_root,
+            )
+            if contains.returncode != 0:
+                _fail_worktree(project_id, group_id, branch, "terminal_branch_mismatch")
+                return "failed"
+            proc = _run_git(
+                ["worktree", "add", "--track", "-b", branch, str(wt_path), f"origin/{branch}"],
+                cwd=base_root,
+            )
+        else:
+            # T0007 §4 condition 1 — re-provisioning from bare C1 would silently
+            # drop any base commit made after C1 was merged (base B1 = B0+C1 may
+            # already have moved on to B2). C1 is an ancestor of the current base
+            # tip whenever the merge that terminalized it actually landed, so fork
+            # from that tip instead — C1's content stays in history either way.
+            # If the tip does NOT contain C1, this base/history relationship
+            # cannot be trusted; fail closed rather than guess (T0007 §11).
+            base_tip = _worktree_start_point(base_root, base_branch)
+            contains_c1 = _run_git(
+                ["merge-base", "--is-ancestor", start_point, base_tip], cwd=base_root,
+            )
+            if contains_c1.returncode != 0:
+                _fail_worktree(project_id, group_id, branch, "terminal_base_diverged")
+                return "failed"
+            proc = _run_git(["worktree", "add", "-b", branch, str(wt_path), base_tip], cwd=base_root)
+    elif _ref_exists(base_root, f"refs/heads/{branch}"):
         proc = _run_git(["worktree", "add", str(wt_path), branch], cwd=base_root)
     elif _ref_exists(base_root, f"refs/remotes/origin/{branch}"):
         # Reconnect to the group's existing remote branch (restart survival).
@@ -3906,6 +3952,46 @@ def open_cancel_session(group_id: str, target_shas: Sequence[str]) -> dict:
     }
 
 
+def open_terminal_reopen_session(group_id: str) -> dict:
+    """Lock and check a terminal reopen before it can re-provision a worktree.
+
+    The ordinary cancel gate returns ``already_merged`` before G8--G10 because a
+    merged slot may legitimately be unregistered. Terminal reopen does not reset or
+    revert, but its following re-arm can recreate the slot; therefore any existing
+    worktree must still be checked under the project lock so unrelated edits cannot
+    be overwritten. A missing terminal worktree is valid and needs no cleanliness
+    check.
+    """
+    def block(reason: str, sub: str) -> dict:
+        return {"ok": False, "blocked_reason": reason, "block_sub": sub, "session": None}
+
+    gate = _cancel_prelock_gate(group_id)
+    if gate["blocked_reason"] != "already_merged":
+        return block(gate["blocked_reason"] or "git_inactive", gate["block_sub"] or "terminal_status_changed")
+    project_id, cfg, state = gate["project_id"], gate["cfg"], gate["state"]
+    holder = f"terminal-reopen:{uuid.uuid4()}"
+    if not _acquire_lock(project_id, holder, wait_sec=CANCEL_LOCK_WAIT_SEC):
+        return block("git_busy", "lock_timeout")
+    try:
+        project_name = _project_name(project_id)
+        wt_path = src_root(project_name, state["branch"]) if project_name else None
+        if wt_path is not None and wt_path.is_dir() and cancel_blocking_dirty(wt_path):
+            raise _CancelGateFailed("dirty_worktree", "dirty_worktree")
+    except _CancelGateFailed as gate_error:
+        _release_cancel_lock(project_id, holder)
+        return block(gate_error.reason, gate_error.sub)
+    except Exception:
+        _release_cancel_lock(project_id, holder)
+        raise
+    return {
+        "ok": True, "blocked_reason": None, "block_sub": None,
+        "session": {
+            "project_id": project_id, "group_id": group_id, "holder": holder,
+            "wt_path": wt_path, "author_env": _author_env_from_cfg(cfg),
+        },
+    }
+
+
 class _CancelGateFailed(Exception):
     """Internal: a post-lock gate refused. Carries the pair the caller reports."""
 
@@ -3926,6 +4012,49 @@ def close_cancel_session(session: Optional[dict]) -> None:
     if not session:
         return
     _release_cancel_lock(session["project_id"], session["holder"])
+
+
+def uncommit_tr_suffix(session: dict, target_shas: Sequence[str]) -> dict:
+    """Remove an exact TR-only HEAD suffix while preserving its tree delta unstaged.
+
+    The validation and reset run under the cancel session's project lock.  Every target
+    must equal the current first-parent suffix in the supplied newest-first order; an
+    unknown/manual or non-target commit therefore fails closed before history moves.
+    """
+    wt_path = session["wt_path"]
+    expected = [str(sha or "").strip() for sha in target_shas]
+    if not expected or any(not sha for sha in expected):
+        return {"kind": "blocked", "sub": "unsafe_suffix", "before": None}
+
+    head_proc = _run_git(
+        ["rev-parse", "HEAD"], cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    before = (head_proc.stdout or "").strip()
+    if head_proc.returncode != 0 or not before:
+        return {"kind": "blocked", "sub": "unsafe_suffix", "before": before or None}
+
+    cursor = before
+    for sha in expected:
+        if cursor != sha:
+            return {"kind": "blocked", "sub": "unsafe_suffix", "before": before}
+        parent_proc = _run_git(
+            ["rev-parse", f"{cursor}^"], cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+        )
+        cursor = (parent_proc.stdout or "").strip()
+        if parent_proc.returncode != 0 or not cursor:
+            return {"kind": "blocked", "sub": "unsafe_suffix", "before": before}
+
+    reset = _run_git(["reset", "--mixed", cursor], cwd=wt_path)
+    if reset.returncode != 0:
+        return {"kind": "blocked", "sub": "reset_failed", "before": before}
+
+    after_proc = _run_git(
+        ["rev-parse", "HEAD"], cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+    )
+    after = (after_proc.stdout or "").strip()
+    if after_proc.returncode != 0 or after != cursor:
+        return {"kind": "blocked", "sub": "reset_failed", "before": before}
+    return {"kind": "ok", "before": before, "head": after}
 
 
 def revert_tr_commit(session: dict, *, commit_sha: str, subject: str, body: str) -> dict:
@@ -6820,7 +6949,10 @@ def run_approve_git_action(group_id: str, git_action: str) -> dict:
         return {"ok": False, "error": error}
 
 
-def reopen_group_git(project_id: str, group_id: str) -> None:
+def reopen_group_git(
+    project_id: str, group_id: str, terminal_commit_sha: Optional[str] = None,
+    terminal_session: Optional[dict] = None,
+) -> None:
     """Re-arm a group's git slot after a time-machine rewind past finalize (B0001,
     flowgate.default.0211; extended by NR0003 R1/R2, flowgate.default.0477).
 
@@ -6870,25 +7002,44 @@ def reopen_group_git(project_id: str, group_id: str) -> None:
             return
         status = (state.get("status") or "none")
         if status in ("merged", "pushed"):
-            # Clear the terminal marker FIRST so the re-provision below cannot leave a
-            # "registered worktree, still merged" contradiction (register_worktree only
-            # updates branch/worktree_registered, never the status column).
+            if not terminal_commit_sha:
+                raise GitServiceError(409, "terminal_commit_absent", "terminal reopen requires C1")
+            # When called from reopen_to_target, the terminal session still owns the
+            # project lock and this code runs inside the workflow DB transaction.
+            # Provision directly under that lock so no source write can interleave.
+            if terminal_session is not None:
+                project_name = _project_name(project_id)
+                if not project_name:
+                    raise GitServiceError(409, "terminal_reprovision_failed", "project name missing")
+                branch = worktree_branch_name(project_id, _module_of(group_id), group_id)
+                provisioned = _ensure_worktree_locked(
+                    cfg, project_id, project_name, group_id, branch,
+                    "timemachine_reopen", terminal_commit_sha,
+                )
+            else:
+                provisioned = ensure_worktree(
+                    project_id, _module_of(group_id), group_id,
+                    trigger="timemachine_reopen", start_point=terminal_commit_sha,
+                )
+            if provisioned == "failed":
+                raise GitServiceError(
+                    409, "terminal_reprovision_failed",
+                    "cannot preserve the terminal commit while reopening the worktree",
+                )
             _set_status(group_id, "none")
-            # Re-provision a clean worktree for the re-work. Idempotent and best-effort:
-            # a 'failed' result leaves status 'none', and the existing write-gate
-            # self-heal re-attempts provisioning on the next source write.
-            ensure_worktree(project_id, _module_of(group_id), group_id, trigger="timemachine_reopen")
             return
         if status in ("awaiting_choice", "waiting"):
             _set_status(group_id, "none")
             return
         # status in ("none", "conflict", "merging"): nothing to do. conflict/merging are
         # deliberately left alone — see the docstring above.
+    except GitServiceError:
+        raise
     except Exception:
         _log.warning("git reopen re-arm failed for %s", group_id, exc_info=True)
 
 
-def raise_if_git_session_blocks_reopen(project_id: str, group_id: str) -> None:
+def raise_if_git_session_blocks_reopen(project_id: str, group_id: str) -> Optional[dict]:
     """Refuse a workflow reopen (Time Machine rewind) outright while the group's git
     ledger holds an active session (NR0003 R2, flowgate.default.0477).
 
@@ -6907,6 +7058,23 @@ def raise_if_git_session_blocks_reopen(project_id: str, group_id: str) -> None:
     if state is None:
         return
     status = (state.get("status") or "none")
+    if status in ("merged", "pushed"):
+        # A terminal reopen will re-provision this slot after the workflow transaction.
+        # Check an extant worktree before that transaction, so a dirty terminal group
+        # cannot reopen documents or have its user edits overwritten.
+        terminal = open_terminal_reopen_session(group_id)
+        if not terminal.get("ok"):
+            reason = terminal.get("blocked_reason") or "git_busy"
+            if reason == "dirty_worktree":
+                raise GitServiceError(
+                    409, "dirty_worktree",
+                    "cannot reopen while the terminal worktree has uncommitted changes",
+                )
+            raise GitServiceError(
+                409, reason,
+                f"Terminal reopen is currently blocked for project '{project_id}' (try again shortly)",
+            )
+        return terminal["session"]
     if status == "conflict":
         raise GitServiceError(
             409, "invalid_state",

@@ -169,6 +169,10 @@ interface TrCommitCancel {
   blocked_reason: string | null
   canceled: { doc_id: string; doc_code: string; commit: string | null; cancel_commit: string | null }[]
   skipped: { doc_id: string; doc_code: string; commit: string | null; reason: string }[]
+  /** flowgate.default.0532 T0007 — merged/pushed rows the gate correctly refused to
+   *  reset/revert. The commit stays exactly as merged; re-approving will commit only
+   *  the new delta on top of it. */
+  terminal_reopened: { doc_id: string; doc_code: string; commit: string | null }[]
   stopped_reason: string | null
   retryable: boolean
   /** 0332 TR0019 — present when the conflict was kept as a resolvable session
@@ -328,6 +332,12 @@ const resultRows = computed(() => {
     ok: true,
     code: c.doc_code,
     message: t('main.time_machine.result_canceled', { commit: c.cancel_commit ?? '' }),
+  }))
+  result.terminal_reopened.forEach((c, i) => rows.push({
+    key: `terminal:${c.doc_id}:${i}`,
+    ok: true,
+    code: c.doc_code,
+    message: t('main.time_machine.result_terminal_reopened', { commit: c.commit ?? '' }),
   }))
   result.skipped.forEach((s, i) => rows.push({
     key: `skip:${s.doc_id}:${i}`,
