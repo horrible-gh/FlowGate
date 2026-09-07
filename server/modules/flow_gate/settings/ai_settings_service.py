@@ -58,6 +58,113 @@ _DEFAULT_BASE_URLS = {
     "openai": "https://api.openai.com/v1",
 }
 
+# Per-kind canonical preset (flowgate.default.0519 T0005): the ONE place that knows what a
+# claude/codex/copilot command line looks like. The per-OS example catalog below, the
+# settings screen's suggestion, and the model-name-driven "magic tool" command a client can
+# ask for are all derived from this dict — never a second hand-written copy.
+#
+# `safe_template`/`skip_template` are the two ends of "preset + permission state → safe /
+# unattended command" (T0005 §0/§2); the model name is the only blank left to fill in.
+# `custom` is deliberately absent — it is the escape hatch for an arbitrary command, so
+# there is no canonical shape to hand out (T0005 §1).
+#
+# Codex's skip_template is not "the safe template with one flag flipped": an unattended run
+# has nobody to answer an approval prompt, so the sandbox itself has to widen from
+# `workspace-write` to `danger-full-access`, and the workspace-write-only `-c
+# sandbox_workspace_write.network_access=true` config token is dropped because it does not
+# apply to that sandbox. That is more than the generic marker toggle
+# (_PERMISSION_SKIP_RULES / set_permission_skip below) is meant to do to an arbitrary
+# hand-typed command, so it is modeled here instead of being forced through that helper
+# (T0005 §2 "Codex").
+_CLI_PRESETS: dict[str, dict[str, str]] = {
+    "claude": {
+        "default_model": "claude-opus-4-8",
+        "safe_template": "claude --model {model} -p -",
+        "skip_template": "claude --model {model} --dangerously-skip-permissions -p -",
+    },
+    "codex": {
+        "default_model": "gpt-5.6-sol",
+        "safe_template": (
+            "codex --ask-for-approval on-request --sandbox workspace-write exec "
+            "--skip-git-repo-check "
+            "-c sandbox_workspace_write.network_access=true --json --model {model} -"
+        ),
+        "skip_template": (
+            "codex --ask-for-approval never --sandbox danger-full-access exec "
+            "--skip-git-repo-check --json --model {model} -"
+        ),
+    },
+    "copilot": {
+        # --no-ask-user is FlowGate's own non-interactive contract for a CLI it drives over
+        # a pipe, not part of the permission-skip toggle — so it belongs in both forms
+        # rather than living behind the skip flag (T0005 §2 "Copilot").
+        "default_model": "claude-sonnet-5",
+        "safe_template": "copilot --no-ask-user --model {model} --output-format=json",
+        "skip_template": (
+            "copilot --allow-all --no-ask-user --model {model} --output-format=json"
+        ),
+    },
+}
+
+
+# A model name stops being free text the moment it lands in a preset: the string built
+# below becomes a provider's cli_command, which FlowGate eventually spawns with
+# shell=True — and the follow-up magic-tool UI fills the name in from a text box (T0005
+# §4). Quoting it is not a usable defence here, because one catalog serves both POSIX
+# shells and cmd.exe and their quoting rules disagree (shlex.quote's single quotes are
+# literal characters to cmd.exe). So the identifier itself is constrained instead: an
+# allowlist of what real model ids are actually made of, and anything carrying whitespace
+# or a shell operator (`;` `&` `|` `$` backtick `>` `<` quotes parens ...) is refused
+# rather than escaped.
+MODEL_NAME_MAX = API_MODEL_MAX
+_MODEL_NAME_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._:/@-]*\Z")
+
+
+def is_valid_model_name(model_name: Optional[str]) -> bool:
+    """True when *model_name* is safe to interpolate into a preset command line.
+
+    Deliberately an allowlist, not a blocklist of bad characters: vendor model ids are
+    alphanumerics with `.`, `-` and `_`, plus the `/`, `:` and `@` that routed or dated ids
+    (`anthropic/claude-sonnet-5`, `...-v2:0`, `gpt-5.6-sol@2026-01`) use. Anything else is
+    not a model name, whatever else it might be.
+    """
+    name = (model_name or "").strip()
+    if not name or len(name) > MODEL_NAME_MAX:
+        return False
+    return bool(_MODEL_NAME_RE.match(name))
+
+
+def build_preset_command(
+    kind: Optional[str], model_name: Optional[str], *, skip_permissions: bool = False,
+) -> Optional[str]:
+    """The canonical command for *kind* + *model_name* + permission state — what the
+    model_name-driven "magic tool" hands a client instead of it owning any CLI's flags
+    (T0005 §2/§4). None for a kind with no preset (`custom`, or anything unrecognized).
+
+    A blank/whitespace model name falls back to the preset's own default_model rather than
+    baking an empty `--model` into the command.
+
+    A model name that is not an identifier raises AiSettingsValidationError (field
+    `model_name`, reason `invalid_model_name`) — see is_valid_model_name above. None
+    stays reserved for "this kind has no preset", so the two failures never blur into one
+    ambiguous return value, and a caller that wants to pre-check without catching can ask
+    is_valid_model_name() first.
+    """
+    preset = _CLI_PRESETS.get(kind or "")
+    if preset is None:
+        return None
+    model = (model_name or "").strip() or preset["default_model"]
+    if not is_valid_model_name(model):
+        # Defined below in the validation section; it carries the same {field, reason}
+        # array the settings API already answers 422 with, so the magic-tool route gets
+        # the ordinary error shape for free.
+        raise AiSettingsValidationError(
+            [{"field": "model_name", "reason": "invalid_model_name"}]
+        )
+    template = preset["skip_template"] if skip_permissions else preset["safe_template"]
+    return template.format(model=model)
+
+
 # Per-kind × host-OS example CLI commands (flowgate.default.0281 T0005, NR0003 §4 F2 / R2).
 # Before this, the only guidance the product offered was the static claude-shaped
 # placeholder `claude -p` (client i18n `placeholder_cli_command`), which stayed put even
@@ -81,32 +188,14 @@ _DEFAULT_BASE_URLS = {
 # spelled as a word inside a free-text command box. These examples now carry the SAFE form.
 # The permissive form still exists and is one checkbox (editor) or one flag (seed) away —
 # see _PERMISSION_SKIP_RULES / set_permission_skip below — it just has to be asked for.
+#
+# 0519 T0005: derived from _CLI_PRESETS' safe_template + default_model instead of a second
+# hand-written copy, so fixing a command in the preset reaches this catalog too.
 _CLI_COMMAND_EXAMPLES: dict[str, dict[str, str]] = {
-    "claude": {
-        "posix": "claude --model claude-opus-4-8 -p -",
-        "nt": "claude --model claude-opus-4-8 -p -",
-    },
-    "codex": {
-        "posix": (
-            "codex --ask-for-approval on-request --sandbox workspace-write exec "
-            "--skip-git-repo-check "
-            "-c sandbox_workspace_write.network_access=true --json --model gpt-5.6-sol -"
-        ),
-        "nt": (
-            "codex --ask-for-approval on-request --sandbox workspace-write exec "
-            "--skip-git-repo-check "
-            "-c sandbox_workspace_write.network_access=true --json --model gpt-5.6-sol -"
-        ),
-    },
-    "copilot": {
-        "posix": "copilot --model claude-sonnet-5 --output-format=json",
-        "nt": "copilot --model claude-sonnet-5 --output-format=json",
-    },
-    "custom": {
-        "posix": "",
-        "nt": "",
-    },
+    kind: {"posix": build_preset_command(kind, None), "nt": build_preset_command(kind, None)}
+    for kind in _CLI_PRESETS
 }
+_CLI_COMMAND_EXAMPLES["custom"] = {"posix": "", "nt": ""}
 
 
 # ── Permission confirmation (0371 NR0007 §5) ───────────────────────────────────
@@ -144,6 +233,13 @@ _PERMISSION_SKIP_RULES: dict[str, dict] = {
             "--yolo",
         ),
     },
+    # 0519 T0005: copilot joins the same abstraction. Its flag is a plain on/off switch (no
+    # codex-style "name the policy that still asks"), so safe is simply "absent".
+    "copilot": {
+        "skip": "--allow-all",
+        "safe": "",
+        "markers": ("--allow-all",),
+    },
 }
 
 
@@ -177,7 +273,8 @@ def _insert_after_program(cmd: str, token: str) -> str:
 
 
 def permission_skip_rule(kind: Optional[str]) -> Optional[dict]:
-    """The rule for *kind*, or None for a kind with no known flag (copilot, custom).
+    """The rule for *kind*, or None for a kind with no known flag (`custom`, or anything
+    unrecognized; copilot joined the abstraction in 0519 T0005).
 
     None means "this screen has nothing to offer here" — not "this CLI always asks".
     """
@@ -232,17 +329,34 @@ def set_permission_skip(
 def _unattended_cli_examples() -> dict[str, dict[str, str]]:
     """The examples above with permission confirmation switched off.
 
-    Derived, never a second copy: a fix to a command string reaches both forms, and the
-    editor's checkbox and this catalog can never disagree about what "off" looks like.
+    Derived, never a second copy: a fix to a preset reaches both forms, and the editor's
+    checkbox and this catalog can never disagree about what "off" looks like.
+
+    0519 T0005: derived from the preset's OWN skip form (`skip_template`), not from running
+    the generic marker toggle over the safe example. For copilot the two agree exactly and
+    for claude they differ only in where the flag lands, but codex's unattended form also
+    widens the sandbox to
+    `danger-full-access` and drops the workspace-write-only `-c
+    sandbox_workspace_write.network_access=true` token — which set_permission_skip() must
+    not do to an arbitrary operator-typed command, and therefore cannot produce here
+    either. Publishing the toggle's output as the example would have advertised a
+    permissive codex command that still claims `--sandbox workspace-write`.
+    set_permission_skip() stays exactly as it was for the editor checkbox; only what this
+    catalog derives FROM changed.
     """
-    return {
-        kind: {
-            host_os: set_permission_skip(kind, command, True)
+    examples: dict[str, dict[str, str]] = {}
+    for kind, per_os in _CLI_COMMAND_EXAMPLES.items():
+        if kind not in _PERMISSION_SKIP_RULES:
+            continue
+        canonical = build_preset_command(kind, None, skip_permissions=True)
+        examples[kind] = {
+            # A rule kind with no preset (none today) still gets an answer, from the same
+            # generic toggle the editor uses — better a derived example than a hole.
+            host_os: canonical if canonical is not None
+            else set_permission_skip(kind, command, True)
             for host_os, command in per_os.items()
         }
-        for kind, per_os in _CLI_COMMAND_EXAMPLES.items()
-        if kind in _PERMISSION_SKIP_RULES
-    }
+    return examples
 
 
 # Fixing the example above only helps providers registered AFTER the fix — rows already in
@@ -299,6 +413,11 @@ def get_catalog() -> dict:
     opt-in without owning a second copy of the flags: `default_enabled` is the answer to
     "what does a new provider start as" (false), `rules` drives detect/apply on the command
     string, and `examples` is `cli_examples` with the skip already applied.
+
+    `cli_presets` (0519 T0005) is what a model_name-driven "magic tool" needs to build a
+    canonical command without knowing any CLI's flags itself: default_model to prefill, and
+    whether this kind has a permission-skip form at all. `custom` never appears here — it is
+    the escape hatch for an arbitrary command, so it has no canonical shape to advertise.
     """
     return {
         "exec_types": list(EXEC_TYPES),
@@ -306,6 +425,13 @@ def get_catalog() -> dict:
         "host_os": _tcs.current_os(),
         "host_shell": _tcs.current_shell(),
         "cli_examples": {k: dict(v) for k, v in _CLI_COMMAND_EXAMPLES.items()},
+        "cli_presets": {
+            kind: {
+                "default_model": preset["default_model"],
+                "supports_permission_skip": kind in _PERMISSION_SKIP_RULES,
+            }
+            for kind, preset in _CLI_PRESETS.items()
+        },
         "cli_permission_skip": {
             "default_enabled": False,
             "rules": {

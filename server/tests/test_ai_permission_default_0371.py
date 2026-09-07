@@ -42,6 +42,7 @@ HOST_KEYS = ("posix", "nt")
 CLAUDE_SKIP = "--dangerously-skip-permissions"
 CODEX_SKIP = "--ask-for-approval never"
 CODEX_SAFE = "--ask-for-approval on-request"
+COPILOT_SKIP = "--allow-all"
 
 ALL_MARKERS = tuple(
     marker
@@ -94,22 +95,52 @@ class TestCatalogDefaultsAreSafe:
         assert rules["claude"]["skip"] == CLAUDE_SKIP
         assert rules["codex"]["skip"] == CODEX_SKIP
         assert rules["codex"]["safe"] == CODEX_SAFE
+        assert rules["copilot"]["skip"] == COPILOT_SKIP
+        assert rules["copilot"]["safe"] == ""
         assert CLAUDE_SKIP in rules["claude"]["markers"]
+        assert COPILOT_SKIP in rules["copilot"]["markers"]
         # A kind with no verified flag gets no rule — the editor hides the control rather
         # than inventing an option that does nothing.
-        assert "copilot" not in rules and "custom" not in rules
+        assert "custom" not in rules
 
 
 class TestUnattendedExamplesAreDerived:
     @pytest.mark.parametrize("host_os", HOST_KEYS)
-    @pytest.mark.parametrize("kind", ["claude", "codex"])
-    def test_the_opt_in_example_is_the_safe_one_plus_the_flag(self, kind, host_os):
+    @pytest.mark.parametrize("kind", ["claude", "codex", "copilot"])
+    def test_the_opt_in_example_is_the_canonical_unattended_preset(self, kind, host_os):
+        """0519 T0005: what this catalog publishes as "permission checks off" is the
+        preset's OWN unattended form, not the generic toggle run over the safe example.
+        For codex those two are different commands (see
+        test_codex_cannot_round_trip_because_the_sandbox_also_widened below), and the one
+        that is true is the preset's."""
         unattended = _skip_block()["examples"][kind][host_os]
+        assert unattended == svc.build_preset_command(kind, None, skip_permissions=True)
         assert svc.has_permission_skip(kind, unattended)
+
+    @pytest.mark.parametrize("host_os", HOST_KEYS)
+    @pytest.mark.parametrize("kind", ["claude", "copilot"])
+    def test_switching_the_published_example_back_off_returns_the_safe_one(self, kind,
+                                                                          host_os):
+        """Where the skip really is one added flag, both catalogs still round-trip through
+        the editor's toggle."""
+        unattended = _skip_block()["examples"][kind][host_os]
         assert svc.set_permission_skip(kind, unattended, False) == _examples()[kind][host_os]
 
+    @pytest.mark.parametrize("host_os", HOST_KEYS)
+    def test_codex_cannot_round_trip_because_the_sandbox_also_widened(self, host_os):
+        """set_permission_skip() only rewrites the approval flag — deliberately, because it
+        also runs over arbitrary operator-typed commands — so switching the published
+        unattended codex example back off leaves `danger-full-access` standing. That is why
+        the example is derived from the preset instead: the safe counterpart is the preset's
+        safe form, which is exactly what cli_examples already publishes."""
+        unattended = _skip_block()["examples"]["codex"][host_os]
+        back_off = svc.set_permission_skip("codex", unattended, False)
+        assert "--sandbox danger-full-access" in back_off
+        assert back_off != _examples()["codex"][host_os]
+        assert _examples()["codex"][host_os] == svc.build_preset_command("codex", None)
+
     def test_only_kinds_with_a_known_flag_appear(self):
-        assert set(_skip_block()["examples"]) == {"claude", "codex"}
+        assert set(_skip_block()["examples"]) == {"claude", "codex", "copilot"}
 
 
 # ── Detection ────────────────────────────────────────────────────────────────
@@ -121,6 +152,7 @@ class TestDetection:
         ("codex", "codex --ask-for-approval=never exec -"),
         ("codex", "codex --yolo exec -"),
         ("codex", "codex --dangerously-bypass-approvals-and-sandbox exec -"),
+        ("copilot", f"copilot {COPILOT_SKIP} --no-ask-user --model m --output-format=json"),
     ])
     def test_reports_a_command_that_does_not_ask(self, kind, command):
         assert svc.has_permission_skip(kind, command) is True
@@ -129,6 +161,7 @@ class TestDetection:
         ("claude", "claude --model claude-opus-4-8 -p -"),
         ("codex", "codex --ask-for-approval on-request exec -"),
         ("codex", "codex --ask-for-approval untrusted exec -"),
+        ("copilot", "copilot --no-ask-user --model m --output-format=json"),
     ])
     def test_reports_a_command_that_asks(self, kind, command):
         assert svc.has_permission_skip(kind, command) is False
@@ -137,13 +170,14 @@ class TestDetection:
         ("codex", "codex --ask-for-approval never-mind exec -"),
         ("codex", "codex --yolo-mode exec -"),
         ("claude", f"claude {CLAUDE_SKIP}-not -p -"),
+        ("copilot", f"copilot {COPILOT_SKIP}-not --no-ask-user -p -"),
     ])
     def test_a_longer_word_is_not_the_flag(self, kind, command):
         """Substring matching here would flag commands that do ask, and the editor would
         then offer to "turn off" something that is not there."""
         assert svc.has_permission_skip(kind, command) is False
 
-    @pytest.mark.parametrize("kind", ["copilot", "custom", "", None])
+    @pytest.mark.parametrize("kind", ["custom", "", None])
     def test_kinds_without_a_known_flag_are_never_reported(self, kind):
         assert svc.has_permission_skip(kind, f"anything {CLAUDE_SKIP}") is False
         assert svc.permission_skip_rule(kind) is None
@@ -157,7 +191,7 @@ class TestDetection:
 
 class TestSetPermissionSkip:
     @pytest.mark.parametrize("host_os", HOST_KEYS)
-    @pytest.mark.parametrize("kind", ["claude", "codex"])
+    @pytest.mark.parametrize("kind", ["claude", "codex", "copilot"])
     def test_toggling_twice_returns_the_original(self, kind, host_os):
         """The editor lets someone tick and untick the box before saving; that must not
         leave the command subtly rewritten."""
@@ -188,17 +222,29 @@ class TestSetPermissionSkip:
         assert svc.set_permission_skip("claude", once, True) == once
         assert once.count(CLAUDE_SKIP) == 1
 
+    def test_copilot_flag_lands_right_after_the_program_name(self):
+        """Unlike claude/codex, copilot's canonical preset puts the flag straight after the
+        --no-ask-user contract flag, but the generic editor toggle only knows "right after
+        the program" — that is still a correct, if differently ordered, on-command."""
+        out = svc.set_permission_skip(
+            "copilot", "copilot --no-ask-user --model m --output-format=json", True,
+        )
+        assert out == f"copilot {COPILOT_SKIP} --no-ask-user --model m --output-format=json"
+        assert svc.set_permission_skip("copilot", out, False) == \
+            "copilot --no-ask-user --model m --output-format=json"
+
     def test_switching_off_a_command_that_already_asks_changes_nothing(self):
         for kind, command in [
             ("claude", "claude --model m -p -"),
             ("codex", "codex exec --json -"),
             ("codex", "codex --yolo-mode exec -"),
+            ("copilot", "copilot --no-ask-user --model m --output-format=json"),
         ]:
             assert svc.set_permission_skip(kind, command, False) == command
 
-    @pytest.mark.parametrize("kind", ["copilot", "custom", "", None])
+    @pytest.mark.parametrize("kind", ["custom", "", None])
     def test_a_kind_with_no_known_flag_is_left_alone(self, kind):
-        command = "copilot --model claude-sonnet-5 --output-format=json"
+        command = "some-custom-cli --model claude-sonnet-5 --output-format=json"
         assert svc.set_permission_skip(kind, command, True) == command
         assert svc.set_permission_skip(kind, command, False) == command
 
@@ -267,8 +313,23 @@ class TestProbeReportsThePermissionMode:
         assert "permission-skip" not in result["message"]
 
     def test_a_kind_without_a_known_flag_is_not_offered_an_option(self, monkeypatch):
-        result = self._probe(monkeypatch, "copilot", "copilot --output-format=json")
+        result = self._probe(monkeypatch, "custom", "some-custom-cli --flag")
         assert result["permission_skip"] is False
+        assert "permission-skip" not in result["message"]
+
+    def test_a_copilot_command_that_asks_is_flagged_too(self, monkeypatch):
+        result = self._probe(
+            monkeypatch, "copilot", "copilot --no-ask-user --model m --output-format=json",
+        )
+        assert result["permission_skip"] is False
+        assert "permission-skip" in result["message"]
+
+    def test_a_skipping_copilot_command_gets_no_such_note(self, monkeypatch):
+        result = self._probe(
+            monkeypatch, "copilot",
+            f"copilot {COPILOT_SKIP} --no-ask-user --model m --output-format=json",
+        )
+        assert result["permission_skip"] is True
         assert "permission-skip" not in result["message"]
 
     def test_a_clean_exit_is_reported_as_before(self, monkeypatch):
@@ -337,10 +398,17 @@ class TestSeedOptIn:
         ))
         assert row["cli_command"] == "codex --ask-for-approval never exec --json -"
 
-    def test_the_opt_in_is_a_no_op_for_a_kind_with_no_known_flag(self, seed):
+    def test_the_flag_switches_off_copilot_too(self, seed):
         row = seed.provider_from_options(
             svc, _args(seed, "--kind", "copilot", "--skip-permissions"))
-        assert row["cli_command"] == seed.default_cli_command(svc, "copilot")
+        assert svc.has_permission_skip("copilot", row["cli_command"])
+
+    def test_the_opt_in_is_a_no_op_for_a_kind_with_no_known_flag(self, seed):
+        row = seed.provider_from_options(svc, _args(
+            seed, "--kind", "custom", "--command", "some-custom-cli --flag",
+            "--skip-permissions",
+        ))
+        assert row["cli_command"] == "some-custom-cli --flag"
 
     def test_the_interactive_prompt_defaults_to_keeping_the_confirmation(self, seed,
                                                                         monkeypatch):
@@ -369,5 +437,5 @@ class TestSeedOptIn:
         assert "ON" in asks and "--skip-permissions" in asks
         assert "OFF" in skips
         # Nothing to say for a kind with no known flag.
-        seed.announce_permission_mode(svc, "copilot", "copilot --output-format=json")
+        seed.announce_permission_mode(svc, "custom", "some-custom-cli --flag")
         assert capsys.readouterr().out == ""
