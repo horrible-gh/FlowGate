@@ -69,6 +69,7 @@ def _shape_review(row: dict) -> dict:
         "id": row.get("id"),
         "revision_no": row.get("revision_no"),
         "reviewer_id": row.get("reviewer_id"),
+        "review_provider": db_reviews.review_provider_payload(row),
         "verdict": row.get("verdict"),
         "finding_count": len(findings),
         "findings": findings,

@@ -17,6 +17,7 @@ import os
 from unittest.mock import MagicMock
 
 from inbox_client import post_inbox
+from store_transaction_support import install_null_transaction_store
 
 os.environ.setdefault("TESTING", "1")
 
@@ -116,6 +117,8 @@ def test_handle_review_accepts_review_scope_token(monkeypatch):
     insert = MagicMock()
     monkeypatch.setattr(db_reviews, "insert_review", insert)
     monkeypatch.setattr(inbox_routes.token_service, "consume", MagicMock())
+    # 0535 T0007 §3: review registration now runs inside one store.transaction().
+    install_null_transaction_store(monkeypatch)
 
     resp = post_inbox(_review_body())
     assert resp.status_code == 201
