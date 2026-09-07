@@ -168,6 +168,7 @@ _TOKEN_SCOPE = {
 _ALLOWED_SCOPES = (
     *_TOKEN_SCOPE.keys(),
     "review",
+    "failure_origin_review",
     "resolve_conflict",
     "workflow_sequence_edit",
     "test_run",
@@ -657,6 +658,27 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 "mention": issued.get("mention") or "",
             }
         issue_builder = _issue_review
+    if body.action_scope == "failure_origin_review":
+        def _issue_failure_origin_review(ai_run_id: Optional[str] = None):
+            from modules.flow_gate.db import test_runs as db_test_runs
+            from modules.flow_gate.services import failure_origin_review_service
+
+            runs = db_test_runs.list_by_doc(body.doc_ref or "")
+            target = next(
+                (run for run in runs if run.get("status") == "failed"
+                 and run.get("failure_origin") is None),
+                None,
+            )
+            if target is None:
+                raise HTTPException(status_code=409, detail="failure_origin_target_missing")
+            doc = db_docs.get_by_id(body.doc_ref or "")
+            if doc is None:
+                raise HTTPException(status_code=404, detail="doc_not_found")
+            return failure_origin_review_service.issue_failure_origin_review(
+                doc=doc, run=target, issued_to=user_id,
+                api_base_url=_operator_facing_api_base(request), ai_run_id=ai_run_id,
+            )
+        issue_builder = _issue_failure_origin_review
     if body.action_scope == "workflow_sequence_edit":
         # 0268 B0001 (NR0003 defect 1): the invoke twin of WorkflowDecisionModal's [copy mention].
         # Same issuer as POST /workflow/sequence-edit-request, so the worker reads the exact

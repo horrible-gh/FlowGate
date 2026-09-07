@@ -51,6 +51,7 @@ MAX_SETUP_STEPS = 20
 MAX_TEARDOWN_STEPS = 20
 MAX_SERVICES = 5
 TSR_CASE_EXCERPT_CHARS = 1000
+MAX_CODE_REWORK_CYCLES = 3
 
 _admission_lock = threading.Lock()
 
@@ -555,6 +556,11 @@ def validate_and_create_run(
         raise _http_error(422, exc.code, doc_id=doc_id, detail=exc.detail) from exc
 
     with _admission_lock:
+        pending = db_test_runs.get_pending_failure_origin(doc_id)
+        if pending is not None:
+            raise _http_error(
+                409, "failure_origin_pending", doc_id=doc_id, run_id=pending["run_id"]
+            )
         running = db_test_runs.get_running_by_doc(doc_id)
         if running is not None:
             raise _http_error(
@@ -772,6 +778,10 @@ def shape_run(run: dict, *, include_cases: bool = False) -> dict:
         "case_failed": run.get("case_failed"),
         "error": run.get("error"),
         "tsr_doc_id": run.get("tsr_doc_id"),
+        "failure_origin": run.get("failure_origin"),
+        "failure_origin_comment": run.get("failure_origin_comment"),
+        "code_rework_cycle": count_code_rework_cycles(run.get("doc_id"))
+        if run.get("failure_origin") else None,
         # 0280 T0005: expose the recorded execution root so a "ran in main" report
         # can be checked against the run itself, not just the assembled TSR.
         "source_root": run.get("source_root"),
@@ -1102,13 +1112,78 @@ def _execute_run_inner(run: dict) -> None:
         _unregister_active_run(run_id)
 
 
+def count_code_rework_cycles(doc_id: Optional[str]) -> int:
+    """History-derived consecutive PRODUCT_DEFECT count since the latest PASS."""
+    if not doc_id:
+        return 0
+    count = 0
+    for candidate in db_test_runs.list_by_doc(doc_id):
+        if candidate.get("status") == "passed":
+            break
+        if candidate.get("failure_origin") == "product_defect":
+            count += 1
+    return count
+
+
+def resume_failure_origin_branch(doc: dict, run: dict) -> dict:
+    """Continue the exact classified failed run; safe to replay after restart."""
+    classification = run.get("failure_origin")
+    if run.get("doc_id") != doc.get("doc_id") or not classification:
+        return {"continued": False, "hold_reason": "failure_origin_target_mismatch"}
+    if classification == "hold":
+        db_test_runs.set_failure_origin_hold(run["run_id"], "failure_origin_hold")
+        return {"continued": False, "hold_reason": "failure_origin_hold", "run_id": run["run_id"]}
+    if classification == "product_defect" and count_code_rework_cycles(doc["doc_id"]) >= MAX_CODE_REWORK_CYCLES:
+        db_test_runs.set_failure_origin_hold(run["run_id"], "test_code_rework_exhausted")
+        return {"continued": False, "hold_reason": "test_code_rework_exhausted", "run_id": run["run_id"]}
+    reason = (
+        "test_run_product_defect_rework"
+        if classification == "product_defect"
+        else "test_run_test_defect_rework"
+    )
+    from modules.flow_gate.services import failure_origin_review_service
+
+    rework_instruction = failure_origin_review_service.build_rework_instruction(
+        classification=classification, doc=doc, run=run,
+        items=db_test_runs.list_cases(run["run_id"]),
+    )
+    reopened = _auto_reopen_failed_scenario(doc, run, reason, rework_instruction=rework_instruction)
+    if not reopened.get("auto_reopened") and reopened.get("auto_reopen_skipped") != "duplicate_completion":
+        db_test_runs.set_failure_origin_hold(
+            run["run_id"], "failure_origin_reopen_conflict:"
+            + str(reopened.get("auto_reopen_skipped") or "unknown")
+        )
+        return {"continued": False, "hold_reason": "failure_origin_reopen_conflict", **reopened}
+    return {"continued": True, "rework_kind": classification, **reopened}
+
+
 def _handle_terminal_case_failure(doc: dict, run: dict, items: list[dict]) -> dict | None:
-    """Route one case-level terminal failure through repair or CODE rework."""
+    """Classification precedes reopen for continuous CODE failures."""
     failure_kind = engine_recipe_service.classify_failure(run, items)
     recovery = engine_recipe_service.handle_run_failure(doc, run, items)
     auto_reopen = None
     if failure_kind == engine_recipe_service.CODE:
-        auto_reopen = _auto_reopen_failed_scenario(doc, run, "test_run_code_failure")
+        if recovery == engine_recipe_service.CODE:
+            db_test_runs.set_failure_origin_pending(run["run_id"])
+            try:
+                from modules.flow_gate.services import failure_origin_review_service
+                failure_origin_review_service.dispatch_failure_origin_review(
+                    doc=doc, run=run, issued_to=run.get("runner_id") or doc.get("owner_id") or "system",
+                    api_base_url="/flowgate/api/v1",
+                )
+            except Exception:
+                logger.warning("failure-origin invocation issuance failed for %s", run.get("run_id"), exc_info=True)
+                db_test_runs.set_failure_origin_hold(run["run_id"], "failure_origin_invoke_error")
+            return {"classification_pending": True, "run_id": run["run_id"]}
+        if recovery == "skip":
+            auto_reopen = _auto_reopen_failed_scenario(doc, run, "test_run_code_failure")
+        elif recovery == "error":
+            db_test_runs.set_failure_origin_hold(run["run_id"], "failure_origin_recovery_error")
+            _maybe_notify_chain_failure(
+                doc, {**run, "error": "failure_origin_recovery_error"},
+                auto_reopen={"auto_reopened": False, "hold_reason": "failure_origin_recovery_error"},
+            )
+            return {"hold_reason": "failure_origin_recovery_error", "run_id": run["run_id"]}
     if recovery not in ("repair", "escalated"):
         _maybe_notify_chain_failure(doc, run, auto_reopen=auto_reopen)
     return auto_reopen
@@ -1140,7 +1215,9 @@ def _handle_setup_stage_failure(doc: dict, run: dict, items: list[dict]) -> dict
     return auto_reopen
 
 
-def _auto_reopen_failed_scenario(doc: dict, run: dict, reason: str) -> dict:
+def _auto_reopen_failed_scenario(
+    doc: dict, run: dict, reason: str, rework_instruction: Optional[str] = None
+) -> dict:
     """Send one failed test-scenario instruction back to its pre-approval state through the shared Time Machine."""
     try:
         from modules.flow_gate.services import workflow_rework_service
@@ -1157,6 +1234,7 @@ def _auto_reopen_failed_scenario(doc: dict, run: dict, reason: str) -> dict:
                 group_id=doc.get("group_id"),
                 run_id=run["run_id"],
             ),
+            rework_instruction=rework_instruction,
         )
     except Exception:
         logger.warning(
@@ -2500,9 +2578,31 @@ def get_worker() -> TestRunWorker:
         return _worker
 
 
+def _resume_failure_origin_after_restart() -> None:
+    """Recover pending/classified CODE state without selecting a different failed run."""
+    from modules.flow_gate.services import failure_origin_review_service
+
+    for run in db_test_runs.list_failure_origin_recovery_candidates():
+        doc = db_docs.get_by_id(run.get("doc_id"))
+        if doc is None:
+            continue
+        if run.get("failure_origin"):
+            resume_failure_origin_branch(doc, run)
+            continue
+        try:
+            failure_origin_review_service.dispatch_failure_origin_review(
+                doc=doc, run=run,
+                issued_to=run.get("runner_id") or doc.get("owner_id") or "system",
+                api_base_url="/flowgate/api/v1",
+            )
+        except Exception:
+            logger.warning("failure-origin restart issuance failed for %s", run.get("run_id"), exc_info=True)
+
+
 def startup() -> None:
     try:
         db_test_runs.mark_orphaned_running()
+        _resume_failure_origin_after_restart()
     except Exception:
-        logger.warning("failed to mark orphaned test runs", exc_info=True)
+        logger.warning("failed to recover test runs", exc_info=True)
     get_worker().start()

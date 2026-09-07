@@ -78,6 +78,10 @@
     </button>
 
     <div v-if="expanded && !optimisticRunning" class="fail-strip-detail">
+      <div v-if="testRun?.failure_origin" class="fail-origin">
+        <div>{{ t('main.test_fail_strip.failure_origin_line', { value: testRun.failure_origin }) }}</div>
+        <div>{{ t('main.test_fail_strip.code_rework_cycle_line', { current: testRun.code_rework_cycle ?? 0, max: 3 }) }}</div>
+      </div>
       <div v-for="(c, idx) in failedCases" :key="idx" class="fail-case">
         <div class="fail-case-hd">
           <span class="fail-case-name">

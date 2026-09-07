@@ -172,4 +172,24 @@ describe('TestFailStrip', () => {
     expect(assertBlocks[0].text()).toContain('actual: false')
     expect(assertBlocks[0].text()).toContain('mismatch')
   })
+
+  it('shows failure origin and CODE cycle only when classified', async () => {
+    const classified = mount(TestFailStrip, {
+      props: {
+        docId: 'flowgate.default.0503.0001-TS',
+        testRun: failedRun({ failure_origin: 'product_defect', code_rework_cycle: 2 }),
+      },
+      global: { plugins: [i18n] },
+    })
+    await classified.find('.fail-strip-bar').trigger('click')
+    expect(classified.find('.fail-origin').text()).toContain('failure origin: product_defect')
+    expect(classified.find('.fail-origin').text()).toContain('CODE rework cycle 2/3')
+
+    const pending = mount(TestFailStrip, {
+      props: { docId: 'flowgate.default.0503.0001-TS', testRun: failedRun() },
+      global: { plugins: [i18n] },
+    })
+    await pending.find('.fail-strip-bar').trigger('click')
+    expect(pending.find('.fail-origin').exists()).toBe(false)
+  })
 })

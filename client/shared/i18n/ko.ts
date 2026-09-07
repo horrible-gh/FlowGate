@@ -1618,6 +1618,8 @@ export default {
       assert_line: 'assert: {value}',
       actual_line: 'actual: {value}',
       comparison_line: '판정 결과: {value}',
+      failure_origin_line: '실패 원인: {value}',
+      code_rework_cycle_line: 'CODE 재작업 주기 {current}/{max}',
     },
     test_run_strip: {
       ready: '승인된 테스트 문서입니다. 지금 실행할 수 있습니다.',

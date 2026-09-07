@@ -207,7 +207,7 @@ def _create_run(ts_doc_id: str, runner_id: str, *, result: str = "fail", finish:
     return db_runs.get_run(run["run_id"])
 
 
-def _auto(ids: dict, run: dict):
+def _auto(ids: dict, run: dict, rework_instruction=None):
     from modules.flow_gate.services import workflow_rework_service as rework
     from modules.flow_gate.services.mutation_policy import system_principal
 
@@ -220,6 +220,7 @@ def _auto(ids: dict, run: dict):
         mutation_context=system_principal(
             user_id=ids["user_id"], group_id=ids["group_id"], run_id=run["run_id"]
         ),
+        rework_instruction=rework_instruction,
     )
 
 
@@ -267,9 +268,50 @@ def test_1_unmanned_code_red_reopens_preserves_run_and_notifies_once(auto_store,
     assert metadata["run_id"] == run["run_id"]
 
 
-def _drive_code_red_broadcasts(monkeypatch, *, continuation_token):
-    """Run the CODE-RED hook with the SSE bus captured, for one token flavour."""
+def test_1b_rework_instruction_lands_only_on_the_reopened_ts(auto_store, monkeypatch):
+    """T3 rework handoff (NR0003 §10-12): the classification-specific instruction and
+    evidence must be readable off the reopened TS document itself (rejection_reason /
+    rejection_history), not just implied by a bare reason string, and must not leak onto
+    sibling documents (e.g. the TR at a later seq) swept into the same rewind."""
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.services import workflow_rework_service as rework
+
+    ids = _seed_group(auto_store, "u1b")
+    run = _create_run(ids["TS"], ids["user_id"])
+    monkeypatch.setattr(rework.git_service, "reopen_group_git", MagicMock())
+
+    instruction = (
+        "PRODUCT_DEFECT: modify the product source guided by the evidence below...\n\n"
+        "- run_id: " + run["run_id"]
+    )
+    outcome = _auto(ids, run, rework_instruction=instruction)
+    assert outcome["auto_reopened"] is True
+
+    ts_doc = db_docs.get_by_id(ids["TS"])
+    assert ts_doc["doc_review_status"] == "pending_review"
+    assert ts_doc["rejection_reason"] == instruction
+    history = json.loads(ts_doc["rejection_history"])
+    assert history[-1]["reason"] == instruction
+    assert history[-1]["rejected_by"] == ids["user_id"]
+    assert history[-1]["ai_response"] is None
+
+    tr_doc = db_docs.get_by_id(ids["TR"])
+    assert tr_doc["doc_review_status"] == "pending_review"
+    assert not tr_doc.get("rejection_reason")
+    assert json.loads(tr_doc["rejection_history"] or "[]") == []
+
+
+def _drive_code_red_broadcasts(monkeypatch, *, continuation_token, recovery="code"):
+    """Run the CODE-RED hook with the SSE bus captured, for one token flavour.
+
+    ``recovery`` mirrors what the real ``engine_recipe_service.handle_run_failure`` returns:
+    "skip" for a manual/UI run (no consumed chain token) and "code" for an unmanned/continuous
+    one (T3, NR0003 §14.1) — the classification-pending branch that "code" now takes needs its
+    own DB writes stubbed out since these tests never touch a real store.
+    """
+    from modules.flow_gate.db import test_runs as db_test_runs
     from modules.flow_gate.services import engine_recipe_service
+    from modules.flow_gate.services import failure_origin_review_service
     from modules.flow_gate.services import test_run_service
     from modules.flow_gate.services import workflow_rework_service as rework
 
@@ -278,9 +320,12 @@ def _drive_code_red_broadcasts(monkeypatch, *, continuation_token):
     emitted: list[tuple[str, dict]] = []
     monkeypatch.setattr(test_run_service, "_broadcast", lambda kind, _doc, payload: emitted.append((kind, payload)))
     monkeypatch.setattr(engine_recipe_service, "classify_failure", lambda *_: engine_recipe_service.CODE)
-    monkeypatch.setattr(engine_recipe_service, "handle_run_failure", lambda *_: "code")
+    monkeypatch.setattr(engine_recipe_service, "handle_run_failure", lambda *_: recovery)
     monkeypatch.setattr(test_run_service, "_continuation_token_for_doc", lambda *_a, **_k: continuation_token)
     monkeypatch.setattr(test_run_service, "_maybe_notify_chain_failure", lambda *_a, **_k: None)
+    monkeypatch.setattr(db_test_runs, "set_failure_origin_pending", lambda *_a: None)
+    monkeypatch.setattr(db_test_runs, "set_failure_origin_hold", lambda *_a: None)
+    monkeypatch.setattr(failure_origin_review_service, "dispatch_failure_origin_review", lambda **_k: None)
     monkeypatch.setattr(
         rework,
         "auto_reopen_failed_ts",
@@ -293,7 +338,11 @@ def _drive_code_red_broadcasts(monkeypatch, *, continuation_token):
 
 
 def test_2_manual_code_red_emits_post_rework_refresh(monkeypatch):
-    emitted = _drive_code_red_broadcasts(monkeypatch, continuation_token=None)
+    # A manual/UI run carries no consumed chain token, so the real
+    # engine_recipe_service.handle_run_failure returns "skip" here — CODE reds outside an
+    # unmanned chain still reopen immediately (T0009 §6, "manual/UI 실행은 기존 동작을 그대로
+    # 보존한다"), unlike the continuous "code" path covered by test_11 below.
+    emitted = _drive_code_red_broadcasts(monkeypatch, continuation_token=None, recovery="skip")
     assert [kind for kind, _ in emitted] == [
         "test_run_finished", "group_view_refresh", "group_view_refresh"
     ]
@@ -309,18 +358,38 @@ def test_2_manual_code_red_emits_post_rework_refresh(monkeypatch):
     )
 
 
-def test_11_unmanned_code_red_also_refreshes_after_the_rewind(monkeypatch):
+def test_11_unmanned_code_red_defers_reopen_then_refreshes_once_classified(monkeypatch):
     """The unmanned chain is watched on screen too.
 
     _emit_finished broadcasts this run's group_view_refresh BEFORE the rewind commits, so
     a browser that only sees that one keeps rendering the TS as approved. Gating the
     post-rewind refresh on "manual runs only" made the unmanned chain — the main automation
     path — silently keep the stale, pre-rewind screen until a hand reload.
+
+    T3 (NR0003 §14.1) inserted failure-origin classification between a continuous CODE red and
+    its reopen, so the second refresh no longer fires inside _handle_terminal_case_failure
+    itself (it only dispatches the classifier and parks the run) — it fires once
+    resume_failure_origin_branch performs the now-classified reopen. Both halves are checked
+    here so the original guarantee (the unmanned chain never keeps a stale screen) still holds.
     """
+    from modules.flow_gate.db import test_runs as db_test_runs
+    from modules.flow_gate.services import test_run_service
+
     emitted = _drive_code_red_broadcasts(
         monkeypatch,
         continuation_token={"issued_to": "u", "continuation_target_seq": 9},
     )
+    assert [kind for kind, _ in emitted] == ["test_run_finished", "group_view_refresh"]
+
+    monkeypatch.setattr(test_run_service, "count_code_rework_cycles", lambda _doc_id: 0)
+    monkeypatch.setattr(db_test_runs, "list_cases", lambda _run_id: [])
+    doc = {"doc_id": "g.0003-TS", "group_id": "g", "project_id": "p", "seq": 3, "owner_id": "u"}
+    classified_run = {
+        "run_id": "run-ui", "runner_id": "u", "status": "failed",
+        "doc_id": "g.0003-TS", "failure_origin": "product_defect",
+    }
+    test_run_service.resume_failure_origin_branch(doc, classified_run)
+
     refresh_reasons = [payload.get("reason") for kind, payload in emitted if kind == "group_view_refresh"]
     assert refresh_reasons == ["test_run_finished", "test_run_code_failure_auto_reopen"]
 

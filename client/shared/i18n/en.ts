@@ -1618,6 +1618,8 @@ export default {
       assert_line: 'assert: {value}',
       actual_line: 'actual: {value}',
       comparison_line: 'comparison result: {value}',
+      failure_origin_line: 'failure origin: {value}',
+      code_rework_cycle_line: 'CODE rework cycle {current}/{max}',
     },
     test_run_strip: {
       ready: 'Approved test document. You can run it now.',

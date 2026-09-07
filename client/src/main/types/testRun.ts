@@ -32,6 +32,9 @@ export interface TestRun {
   case_failed?: number | null
   error?: string | null
   tsr_doc_id?: string | null
+  failure_origin?: 'product_defect' | 'test_defect' | 'hold' | string | null
+  failure_origin_comment?: string | null
+  code_rework_cycle?: number | null
   port?: number | null
   started_at?: string | null
   finished_at?: string | null

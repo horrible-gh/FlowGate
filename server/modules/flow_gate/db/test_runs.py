@@ -109,6 +109,60 @@ def list_by_doc(doc_id: str) -> list[dict]:
     )
 
 
+def get_pending_failure_origin(doc_id: str) -> Optional[dict]:
+    """Latest failed CODE run awaiting the dedicated classifier."""
+    return get_store()._fetch_one(
+        "SELECT * FROM test_runs WHERE doc_id = ? AND status = 'failed' "
+        "AND failure_origin IS NULL AND error = 'failure_origin_pending' "
+        "ORDER BY created_at DESC, run_id DESC LIMIT 1",
+        [doc_id],
+    )
+
+
+def set_failure_origin_pending(run_id: str) -> None:
+    get_store()._execute(
+        "UPDATE test_runs SET error = 'failure_origin_pending' "
+        "WHERE run_id = ? AND status = 'failed' AND failure_origin IS NULL",
+        [run_id],
+    )
+
+
+def store_failure_origin(*, run_id: str, reviewer_id: str, classification: str,
+                         findings_json: str, comment: Optional[str],
+                         reviewed_at: str) -> None:
+    get_store()._execute(
+        "UPDATE test_runs SET failure_origin = ?, failure_origin_reviewer_id = ?, "
+        "failure_origin_findings = ?, failure_origin_comment = ?, "
+        "failure_origin_reviewed_at = ?, error = NULL "
+        "WHERE run_id = ? AND status = 'failed' AND failure_origin IS NULL",
+        [classification, reviewer_id, findings_json, comment, reviewed_at, run_id],
+    )
+
+
+def set_failure_origin_hold(run_id: str, reason: str) -> None:
+    get_store()._execute(
+        "UPDATE test_runs SET error = ? WHERE run_id = ? AND status = 'failed'",
+        [reason, run_id],
+    )
+
+
+def list_failure_origin_recovery_candidates() -> list[dict]:
+    """Newest durable classification state per TS for cold-start recovery."""
+    rows = get_store()._fetch_all(
+        "SELECT * FROM test_runs WHERE status = 'failed' AND "
+        "(error = 'failure_origin_pending' OR "
+        "(failure_origin IS NOT NULL AND (error IS NULL OR error = 'failure_origin_pending'))) "
+        "ORDER BY created_at DESC, run_id DESC"
+    )
+    seen: set[str] = set()
+    result = []
+    for row in rows:
+        if row["doc_id"] not in seen:
+            seen.add(row["doc_id"])
+            result.append(row)
+    return result
+
+
 def list_cases(run_id: str) -> list[dict]:
     return get_store()._fetch_all(
         "SELECT * FROM test_run_cases WHERE run_id = ? ORDER BY id ASC",
