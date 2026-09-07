@@ -35,24 +35,31 @@ beforeEach(() => {
   })
 })
 
-describe('DocHeader current Markdown download', () => {
-  it('shows immediately left of edit and remains available in read-only mode', async () => {
+// R0001 §3.2 puts the download button immediately left of the document-detail [수정]
+// button. That button lives in MainPanel's "문서 내용 미리보기" card (see
+// MainPanel.markdownDownloadPlacement.0534.spec.ts), not in DocHeader's title row —
+// DocHeader's own title-edit control is an icon-only pencil labelled "타이틀 편집", never
+// "수정" (rej_01M1WH0B2S5DWNA8). DocHeader keeps owning the fetch/download mechanics
+// (it already loads doc.download_available) and exposes them for MainPanel to drive.
+describe('DocHeader current Markdown download (fetch/download mechanics owned here)', () => {
+  it('exposes downloadAvailable from the loaded document, and renders no download button itself', async () => {
     downloadable = true
-    const editable = mountHeader()
+    const wrapper = mountHeader()
     await flushPromises()
-    const rowButtons = editable.findAll('.doc-title-row button')
-    expect(rowButtons[0].classes()).toContain('doc-markdown-download')
-    expect(rowButtons[1].classes()).toContain('doc-title-pencil')
-    editable.unmount()
-
-    const readOnly = mountHeader(true)
-    await flushPromises()
-    expect(readOnly.find('.doc-markdown-download').exists()).toBe(true)
-    expect(readOnly.findAll('.doc-title-row button')).toHaveLength(1)
-    readOnly.unmount()
+    expect((wrapper.vm as any).downloadAvailable).toBe(true)
+    expect(wrapper.find('.doc-markdown-download').exists()).toBe(false)
+    wrapper.unmount()
   })
 
-  it('uses the endpoint filename and revokes the object URL', async () => {
+  it('downloadAvailable is false when the server capability is false', async () => {
+    downloadable = false
+    const wrapper = mountHeader()
+    await flushPromises()
+    expect((wrapper.vm as any).downloadAvailable).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('exposed downloadMarkdown uses the endpoint filename and revokes the object URL', async () => {
     downloadable = true
     const createObjectURL = vi.fn().mockReturnValue('blob:markdown')
     const revokeObjectURL = vi.fn()
@@ -63,7 +70,7 @@ describe('DocHeader current Markdown download', () => {
     })
     const wrapper = mountHeader(true)
     await flushPromises()
-    await wrapper.get('.doc-markdown-download').trigger('click')
+    await (wrapper.vm as any).downloadMarkdown()
     await flushPromises()
 
     expect(apiGet).toHaveBeenCalledWith(
@@ -75,7 +82,7 @@ describe('DocHeader current Markdown download', () => {
     wrapper.unmount()
   })
 
-  it('falls back to the full doc_id filename when the header is missing (R0001 §3.3)', async () => {
+  it('exposed downloadMarkdown falls back to the full doc_id filename when the header is missing (R0001 §3.3)', async () => {
     downloadable = true
     const createObjectURL = vi.fn().mockReturnValue('blob:markdown')
     const revokeObjectURL = vi.fn()
@@ -88,7 +95,7 @@ describe('DocHeader current Markdown download', () => {
 
     const wrapper = mountHeader(true)
     await flushPromises()
-    await wrapper.get('.doc-markdown-download').trigger('click')
+    await (wrapper.vm as any).downloadMarkdown()
     await flushPromises()
 
     expect(anchor.download).toBe('flowgate.default.0534.0006-TR.md')
@@ -96,11 +103,14 @@ describe('DocHeader current Markdown download', () => {
     wrapper.unmount()
   })
 
-  it('hides the action when the server capability is false', async () => {
+  it('exposed downloadMarkdown is a no-op when the server capability is false', async () => {
     downloadable = false
+    apiGet.mockClear()
     const wrapper = mountHeader(true)
     await flushPromises()
-    expect(wrapper.find('.doc-markdown-download').exists()).toBe(false)
+    await (wrapper.vm as any).downloadMarkdown()
+    await flushPromises()
+    expect(apiGet).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 })

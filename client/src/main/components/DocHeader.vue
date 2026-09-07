@@ -88,17 +88,6 @@
       <template v-else>
         <span class="doc-title">{{ doc.title }}</span>
         <button
-          v-if="doc.download_available"
-          class="doc-title-pencil doc-markdown-download"
-          type="button"
-          :disabled="markdownDownloadBusy"
-          :title="t('main.doc_info_panel.markdown_download')"
-          :aria-label="t('main.doc_info_panel.markdown_download')"
-          @click="downloadMarkdown"
-        >
-          <AppIcon name="download-simple" />
-        </button>
-        <button
           v-if="!readOnly && canEditDocument && headerTypeCode !== 'DC'"
           class="doc-title-pencil"
           :title="t('main.doc_header.edit_title')"
@@ -341,6 +330,11 @@ const groupTitle = ref('')
 // updated live via the fg:mention_copied window bridge when this user copies a mention.
 const mentionCopy = ref<{ kind: string; copiedAt: string } | null>(null)
 const markdownDownloadBusy = ref(false)
+// Rendered by MainPanel's document-preview card, immediately left of its own
+// [수정] button (R0001 §3.2) — not here. DocHeader keeps owning the fetch/download
+// logic (doc.download_available already lives on the detail response it loads)
+// and exposes it below so MainPanel can drive the button without a second fetch.
+const downloadAvailable = computed(() => !!doc.value?.download_available)
 
 function fallbackMarkdownFilename(docId: string): string {
   return docId ? `${docId}.md` : 'document.md'
@@ -1367,6 +1361,9 @@ defineExpose({
   doConvertRootType,
   openConvertConfirm,
   openConvertFromMenu,
+  downloadAvailable,
+  markdownDownloadBusy,
+  downloadMarkdown,
 })
 
 const docTypeStore = useDocTypeStore()
