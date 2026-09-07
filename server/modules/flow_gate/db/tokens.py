@@ -164,16 +164,6 @@ def consume(token_id: str) -> Optional[dict]:
     return get_by_id(token_id)
 
 
-def consume_claim(token_id: str) -> bool:
-    """CAS-consume: return True only when this call flips consumed_at from NULL."""
-    affected = get_store()._execute_affected(
-        "UPDATE tokens SET consumed_at = ? WHERE token_id = ? AND consumed_at IS NULL",
-        [now_iso(), token_id],
-    )
-    _invalidate_token_cache()
-    return affected > 0
-
-
 def increment_dry_run(token_id: str) -> None:
     """Atomically bump the per-token dry-run attempt counter (R0001 dry-run, group 0050).
 

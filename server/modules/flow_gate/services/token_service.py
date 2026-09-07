@@ -340,19 +340,12 @@ def _find_token_by_raw(raw_token: str) -> Optional[dict]:
     return None
 
 
-def consume(
-    token_id: str, project_id: str, doc_id: Optional[str] = None,
-    *, require_claim: bool = False,
-) -> bool:
-    """Consume a token and record its event; require_claim uses an atomic CAS claim."""
-    if require_claim:
-        if not db_tokens.consume_claim(token_id):
-            return False
-    else:
-        db_tokens.consume(token_id)
+def consume(token_id: str, project_id: str, doc_id: Optional[str] = None) -> None:
+    """consumed_at = now() + workflow_events.token_consumed (D020 §2-5)."""
+    db_tokens.consume(token_id)
     token_rec = db_tokens.get_by_id(token_id)
     if token_rec is None:
-        return require_claim
+        return
 
     db_events.create({
         "event_type": "token_consumed",
@@ -368,7 +361,6 @@ def consume(
             + "}"
         ),
     })
-    return True
 
 
 def increment_dry_run(token_id: str) -> None:
