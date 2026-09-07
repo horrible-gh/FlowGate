@@ -158,9 +158,8 @@ async function saveExecutionPolicy() {
   }
 }
 
-// 0519 T0007 §3: a read-only preview/build call, never the provider-save PUT — the editor
-// only ever writes its result into the dialog's local form.cli_command, and that value is
-// persisted (if at all) through the ordinary immediate-save path below when the user hits
+// 0519 T0009: read-only build for the magic tool, never the provider-save PUT. The editor
+// writes the result into the dialog's local form only; it is persisted (if at all) through
 // this dialog's own Save.
 async function buildPresetCommand({ kind, model_name, skip_permissions }) {
   const { data } = await postRequest('/api/v1/system/ai-settings/cli-preset-command', {

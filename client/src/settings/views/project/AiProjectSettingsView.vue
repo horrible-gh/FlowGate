@@ -117,10 +117,8 @@ const badgeClass = computed(() => {
   return 'badge-blue';
 });
 
-// 0519 T0007 §3: read-only preview/build, scoped to this project's own permission +
-// project_id — never the settings-save PUT below. project_id may briefly be empty while the
-// project context is still resolving; buildPresetCommand() is only ever invoked from inside
-// the already-mounted editor dialog, by which point projectId.value is set.
+// 0519 T0009: read-only build for the magic tool, scoped to this project's own permission
+// and project_id — never the settings-save PUT below.
 async function buildPresetCommand({ kind, model_name, skip_permissions }) {
   const { data } = await postRequest(
     `/api/v1/projects/${projectId.value}/ai-settings/cli-preset-command`,

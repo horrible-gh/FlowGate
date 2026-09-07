@@ -202,9 +202,10 @@ class TestSetPermissionSkip:
 
     def test_the_flag_lands_before_the_stdin_dash_not_after_it(self):
         """`-p -` ends the claude command with the prompt argument; a flag appended after
-        it is read by the wrong parsing stage."""
+        it is read by the wrong parsing stage. It also lands after the leading `--model`
+        pair (0519 TR0010 rev1), not before it — the model name stays the leftmost flag."""
         out = svc.set_permission_skip("claude", "claude --model m -p -", True)
-        assert out == f"claude {CLAUDE_SKIP} --model m -p -"
+        assert out == f"claude --model m {CLAUDE_SKIP} -p -"
 
     def test_codex_policy_is_rewritten_where_it_stands(self):
         out = svc.set_permission_skip(

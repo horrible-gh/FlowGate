@@ -85,23 +85,25 @@ _CLI_PRESETS: dict[str, dict[str, str]] = {
     "codex": {
         "default_model": "gpt-5.6-sol",
         "safe_template": (
-            "codex --ask-for-approval on-request --sandbox workspace-write exec "
-            "--skip-git-repo-check "
-            "-c sandbox_workspace_write.network_access=true --json --model {model} -"
+            "codex --model {model} --ask-for-approval on-request --sandbox workspace-write "
+            "exec --skip-git-repo-check "
+            "-c sandbox_workspace_write.network_access=true --json -"
         ),
         "skip_template": (
-            "codex --ask-for-approval never --sandbox danger-full-access exec "
-            "--skip-git-repo-check --json --model {model} -"
+            "codex --model {model} --ask-for-approval never --sandbox danger-full-access "
+            "exec --skip-git-repo-check --json -"
         ),
     },
     "copilot": {
         # --no-ask-user is FlowGate's own non-interactive contract for a CLI it drives over
         # a pipe, not part of the permission-skip toggle — so it belongs in both forms
-        # rather than living behind the skip flag (T0005 §2 "Copilot").
+        # rather than living behind the skip flag (T0005 §2 "Copilot"). {model} leads every
+        # template (0519 TR0010 rev1): the human rejection said the model name has to be the
+        # first thing visible on the line, not buried after the CLI's own flags.
         "default_model": "claude-sonnet-5",
-        "safe_template": "copilot --no-ask-user --model {model} --output-format=json",
+        "safe_template": "copilot --model {model} --no-ask-user --output-format=json",
         "skip_template": (
-            "copilot --allow-all --no-ask-user --model {model} --output-format=json"
+            "copilot --model {model} --allow-all --no-ask-user --output-format=json"
         ),
     },
 }
@@ -259,17 +261,28 @@ def _drop_token(cmd: str, token: str) -> str:
     return re.sub(r"\s*" + _token_re(token).pattern, "", cmd).strip()
 
 
+_LEADING_MODEL_FLAG_RE = re.compile(r"\A\S+(?:\s+--model\s+\S+)?")
+
+
 def _insert_after_program(cmd: str, token: str) -> str:
-    """Put *token* directly after the executable name.
+    """Put *token* directly after the executable name — and after a leading `--model`
+    pair, if the command already starts with one.
 
     Both CLIs take these as global options that precede the subcommand (`codex ... exec`),
     and a working command usually ends in a bare `-` meaning "prompt on stdin" — appending
     there would hand the flag to the wrong parsing stage.
+
+    Every 0519 preset now leads with `--model` (TR0010 rev1: the human rejection wanted the
+    model name to be the first thing visible on the line), so "right after the program name"
+    has to mean "right after that pair too" — otherwise toggling permission-skip on a
+    preset-shaped command would silently knock the model name out of the leftmost slot, and
+    toggling it back off would not reproduce the original string.
     """
-    parts = cmd.split(None, 1)
-    if len(parts) == 1:
-        return f"{parts[0]} {token}"
-    return f"{parts[0]} {token} {parts[1]}"
+    head = _LEADING_MODEL_FLAG_RE.match(cmd).group(0)
+    rest = cmd[len(head):].strip()
+    if not rest:
+        return f"{head} {token}"
+    return f"{head} {token} {rest}"
 
 
 def permission_skip_rule(kind: Optional[str]) -> Optional[dict]:
