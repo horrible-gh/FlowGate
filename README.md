@@ -65,13 +65,15 @@ Each unit of work is a **document** with a type and a place in a sequence. Docum
 ![FlowGate workflow](assets/images/flowgate-workflow.png)
 
 - **Typed documents & auto-numbering** — `R` (requirement), `T` (task), `TR` (task report), conversation docs, and more, each numbered and chained within a group.
-- **Review gates** — approve / reject-with-reason / request-revision, with full rejection history kept on the document.
+- **Work plans & sequences** — a Work Plan (`WP`, approval not required) pours into candidate rows that seed the sequence edit dialog's starting state; the workflow sequence itself only changes once a human reviews it and presses **Save**, with per-step AI provider, note, and review configuration set at that point.
+- **Review gates & rework** — the default gate is approve / reject-with-reason / request-revision, with full rejection history kept on the document. Separately, an optional automated document review loop can be invoked to drive reviewer selection and AI-assisted correction through repeated rounds until the document passes review or reaches a configured review, retry, or total-time limit — it is an opt-in AI execution feature, not something every rejection triggers.
 - **Remote worker API** — agents authenticate with **scoped Bearer tokens** and submit work over HTTP. A **dry-run** mode validates a submission (URL, token, fields, permissions) without consuming the token.
 - **Structured clarification (Q)** — when an agent is unsure, it doesn't guess and it doesn't pop a dialog into the void: it **registers a question bound to the document**, which the system routes for a definite answer.
 - **Live updates** — Server-Sent Events push status changes to every watcher in real time, with a notification feed and unread badge.
-- **Mentions & handoffs** — generated, copy-ready mention blocks carry the exact context (references, predecessors) the next worker needs.
-- **Continuous (unmanned) work** — a scoped continuation token lets an agent run a self-chaining sequence: the server auto-advances through the workflow toward a target stage, optionally pausing for human Q&A in review mode, so a long task can run unattended without dropping its gates.
-- **Conversation documents** — a dedicated chat-style document type (`CH`) for back-and-forth that doesn't fit the requirement → task → report spine.
+- **Mentions & handoffs** — generated, copy-ready mention blocks carry the exact context (references, predecessors) the next worker needs, including hop handoff between chained runs.
+- **AI execution & continuous (unmanned) work** — direct AI invocation or a scoped continuation token that self-chains through the workflow toward a target stage: provider selection/pinning, pause/resume, per-step review, step timeouts, run diagnostics, and prompt audit, with optional human Q&A along the way.
+- **Git-backed branches & worktrees** — a group branch explorer with live worktrees where available, file diffs, changed/untracked/deleted indicators, update-from-base, a merge conflict resolver, and finalize actions.
+- **Conversation documents** — a dedicated chat-style document type (`CH`) for back-and-forth that doesn't fit the requirement → task → report spine, with user-controlled, configurable AI source access — read-only, persistent edit, or one-time edit.
 
 ---
 
@@ -80,7 +82,9 @@ Each unit of work is a **document** with a type and a place in a sequence. Docum
 | Area | What's in the box |
 |------|-------------------|
 | **Backend** | Python · FastAPI · v1 route modules for documents, workflow, RBAC, tokens, remote tools, SSE, dashboard, inbox, Q&A, and more |
-| **Database** | SQLite / MySQL / PostgreSQL — **86 ordered migrations per backend** (258 SQL files total; one matching set in each of `sqlite`, `mysql`, and `postgres`) plus a runtime dialect-translation layer (`db/dialect.py`), clean module split (`api` / `auth` / `db` / `rbac` / `workflow` / `numbering`) |
+| **Database** | SQLite / MySQL / PostgreSQL — **130+ ordered migrations per backend**, one matching set in each of `sqlite`, `mysql`, and `postgres`, plus a runtime dialect-translation layer (`db/dialect.py`), clean module split (`api` / `auth` / `db` / `rbac` / `workflow` / `numbering`) |
+| **AI orchestration** | A dedicated invoke engine (`services/ai_invoke/`) driving Claude, Copilot, Codex, custom-CLI, and API-based providers — continuous chains, pause/resume, provider pin, per-step review, step timeouts, run diagnostics, and prompt audit |
+| **Git integration** | Group branch/worktree lifecycle, file diff/blob browsing, update-from-base, merge conflict resolution, and finalize actions (`services/git_service.py`, `api/v1/git_routes.py`) |
 | **Auth & security** | JWT + bcrypt + **TOTP 2FA** (with backup codes) + refresh/blacklist · per-token action scopes · `slowapi` rate limiting |
 | **Frontend** | Vue 3 · Pinia · vue-i18n (ko / ja / en) · vue-router · Vite |
 | **Testing** | Focused backend and frontend regression tests around workflow, auth, documents, SSE, dashboard, Q&A, and review flows |
@@ -168,14 +172,18 @@ FlowGate/
 ├── server/                    # FastAPI backend
 │   ├── routers/               # app wiring (main.py mounts every sub-router)
 │   ├── modules/flow_gate/     # the real domain
-│   │   ├── api/               # inbox, tokens, v1 routes (documents, workflow, SSE, dashboard, q&a, remote…)
+│   │   ├── api/                # inbox, tokens (top level) + v1/ routes: documents, workflow, git, AI invoke, conversation, remote tools, SSE, dashboard, Q&A…
+│   │   ├── services/           # work_plan_* (plan → sequence), git_service, ai_invoke/ (chain, admission, provider_cli, provider_api, review, diagnostics…), conversation_*, mutation_policy…
 │   │   ├── auth/  rbac/        # JWT + 2FA, role-based access
 │   │   ├── workflow/  numbering/
 │   │   ├── documents/  conversation.py  process_service.py
-│   │   └── db/                # multi-backend data access
-│   ├── sql/migrations/        # 86 ordered migrations in each of {sqlite, mysql, postgres}
-│   └── tests/                 # backend regression tests
-├── client/                    # Vue 3 + Pinia + Vite SPA
+│   │   └── db/                 # multi-backend data access
+│   ├── sql/migrations/         # 130+ ordered migrations in each of {sqlite, mysql, postgres}
+│   ├── tools/                  # maintenance/one-off scripts, incl. the dialect migration generator (regen_dialect_migrations.py)
+│   └── tests/                  # backend regression tests
+├── client/src/main/            # Vue 3 + Pinia + Vite SPA
+│   ├── components/             # WorkPlanEditor/ProposalDialog, AiInvokeDialog, Git* (status/diff/conflict/finalize), ConversationView, TimeMachineDialog…
+│   └── stores/  composables/  router/  workflow/  views/
 ├── Dockerfile                 # multi-stage: build client → Python runtime
 ├── docker-compose.yml         # one-command stack (SQLite / Postgres / MySQL profiles)
 ├── deploy/
@@ -190,15 +198,13 @@ FlowGate/
 
 ## Status
 
-FlowGate is **built as a working system**, not a throwaway prototype — it runs the document pipeline that drives its own development. The backend, auth, workflow engine, multi-database support, and remote API are the solid, well-tested core; the frontend's conversation and review-UI polish is the area under active iteration.
-
-Current highlights: full **multi-database** migration sets (MySQL / PostgreSQL alongside SQLite) plus a runtime dialect-translation layer · **continuous (unmanned) work** chains · Git-backed group branches, worktrees, diffs, and finalize actions · configurable Claude, Copilot, Codex, custom CLI, and API-based AI invocation · a notification feed · and conversation documents.
+FlowGate is **built as a working system**, not a throwaway prototype — it runs the document pipeline that drives its own development, including this README's own update. What started as a document-approval pipeline is now an actively evolving orchestration workspace, with several fronts moving at once: **workflow orchestration** (Work Plans, sequence editing, per-step provider/review configuration), the **AI execution lifecycle** (direct invocation, continuous chains, pause/resume, provider pin, step timeouts, run diagnostics, prompt audit), **review/rework automation** (reviewer selection, AI-assisted correction, rework loops), **Git/worktree operation** (branch explorer, diff, update-from-base, conflict resolution, finalize), **multi-dialect database support** (SQLite / MySQL / PostgreSQL), and **conversation-based source access control** (read-only / persistent edit / one-time edit).
 
 **Roadmap:**
 
-- **Deeper Git automation** — build on the existing repository, branch/worktree, diff, merge, and finalize support with pull-request hosting integrations and configurable transition policies.
-- **Richer agent integrations** — expand the current CLI/API invocation flow with more provider-aware commands and tighter submit, advance, clarify, and review ergonomics.
-- **GUI transition** — evolve the current browser SPA toward a full graphical client for authoring, reviewing, and conversing across pipelines — a desktop-grade workspace rather than a set of web pages.
+- **Workspace evolution** — sharpen the existing SPA's operator UX and orchestration visibility (clearer AI/group execution management, run diagnostics surfaced more directly) rather than a ground-up GUI rebuild — FlowGate's primary surface is already this SPA, not a CLI.
+- **Deeper Git / hosting integration** — build on the existing branch/worktree, diff, merge, and finalize support with pull-request hosting integrations and configurable transition policies.
+- **Agent protocol / integration evolution** — more provider-aware orchestration and broader external agent interoperability beyond the current CLI/API invocation surface.
 
 ---
 
