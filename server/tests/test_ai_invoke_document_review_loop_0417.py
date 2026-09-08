@@ -43,6 +43,43 @@ def gate(**updates):
     return service.resolve_document_review_loop_gate({**BASE, **updates})
 
 
+@pytest.mark.parametrize(("doc_review_status", "expected_stage"), [
+    ("pending_review", "review"),
+    ("revised", "review"),
+    ("rejected", "rework"),
+])
+def test_compute_review_baseline_uses_current_document_status_not_historical_verdict(
+    monkeypatch, doc_review_status, expected_stage,
+):
+    # `document_reviews` rows do not carry `responded_at`; a historical issues
+    # verdict is context only, not a reason to begin a new review request in rework.
+    monkeypatch.setattr(service.db_docs, "get_by_id", lambda _doc_id: {
+        "doc_review_status": doc_review_status, "revision_no": 7,
+    })
+    monkeypatch.setattr(service.db_reviews, "list_by_doc", lambda _doc_id: [
+        {"id": 13, "verdict": "issues", "findings": "[\"keep for context\"]"},
+    ])
+
+    baseline = service.compute_review_baseline("flowgate.default.0486.0005-T")
+
+    assert baseline == {
+        "review_baseline_id": 13,
+        "starts_with_rework": expected_stage == "rework",
+        "baseline_revision_no": 7,
+    }
+
+
+def test_compute_review_baseline_starts_pending_review_without_history(monkeypatch):
+    monkeypatch.setattr(service.db_docs, "get_by_id", lambda _doc_id: {
+        "doc_review_status": "pending_review", "revision_no": 2,
+    })
+    monkeypatch.setattr(service.db_reviews, "list_by_doc", lambda _doc_id: [])
+
+    assert service.compute_review_baseline("flowgate.default.0486.0005-T") == {
+        "review_baseline_id": 0, "starts_with_rework": False, "baseline_revision_no": 2,
+    }
+
+
 def test_review_pass_stops_immediately_and_does_not_schedule_another_hop():
     timeline = []
     state = gate(reviews=[])

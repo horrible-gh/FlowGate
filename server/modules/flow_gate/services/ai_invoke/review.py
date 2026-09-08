@@ -1018,8 +1018,11 @@ def compute_review_baseline(doc_id: str) -> dict:
         raise _http_error(404, "document_not_found", "Document disappeared before review-loop start.")
     reviews = db_reviews.list_by_doc(doc_id) or []
     latest_id = max((int(item.get("id") or 0) for item in reviews), default=0)
-    latest = max(reviews, key=lambda item: int(item.get("id") or 0), default={})
-    return {"review_baseline_id": latest_id, "starts_with_rework": latest.get("verdict") == "issues" and not latest.get("responded_at"), "baseline_revision_no": int(doc.get("revision_no") or 0)}
+    # The document's current review status is the single source of truth for a
+    # new loop's first stage. Historical findings remain available to later
+    # prompt/history construction, but must not reopen a revised document in rework.
+    starts_with_rework = doc.get("doc_review_status") == "rejected"
+    return {"review_baseline_id": latest_id, "starts_with_rework": starts_with_rework, "baseline_revision_no": int(doc.get("revision_no") or 0)}
 
 
 def resolve_loop_provider(bundle: dict, stage: str) -> str:
