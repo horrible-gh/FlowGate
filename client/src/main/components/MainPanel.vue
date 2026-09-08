@@ -2170,7 +2170,7 @@ function canDirectEditSource(tab: Tab): boolean {
     isFileTab(tab)
     && !!tab.projectId
     && !!getTabSourcePath(tab)
-    && !tab.gitGroupId
+    && tab.readonly !== true
     && (tab.type === 'md' || tab.type === 'text')
   )
 }
@@ -2184,8 +2184,8 @@ function sourceContentUrl(tab: Tab): string {
     : base
 }
 
-// Group file tabs stay read-only. src-content resolves only the BASE checkout, so
-// enabling direct editing for a group tab would write the wrong tree.
+// A group file tab is editable only when FileExplorer marked its live worktree
+// writable. sourceContentUrl preserves that group context for both load and save.
 function isDeletedGroupFileTab(tab: Tab | null): boolean {
   return !!tab
     && isFileTab(tab)

@@ -410,3 +410,71 @@ def test_group_delete_rejects_a_symlink_component(monkeypatch, tmp_path):
     assert res.status_code == 400
     assert res.json()["error"]["code"] == "INVALID_PATH"
     assert (victim / "secret.md").exists()
+
+
+# ── 5. existing-file edits use the same live-worktree isolation ──────────────
+
+PATCH_URL = "/flowgate/api/v1/projects/flowgate/files/src-content"
+
+
+def test_group_src_content_patch_changes_only_the_group_copy(monkeypatch, tmp_path):
+    client, wt, base = _delete_client(monkeypatch, tmp_path)
+    (wt / "docs").mkdir(parents=True, exist_ok=True)
+    (base / "docs").mkdir(parents=True, exist_ok=True)
+    group_file = wt / "docs" / "note.md"
+    base_file = base / "docs" / "note.md"
+    group_file.write_text("group before", encoding="utf-8")
+    base_file.write_text("base bytes stay identical", encoding="utf-8")
+    base_before = base_file.read_bytes()
+
+    read_res = client.get(PATCH_URL, params={"path": "docs/note.md", "group_id": GID})
+    res = client.patch(
+        PATCH_URL,
+        params={"path": "docs/note.md", "group_id": GID},
+        json={"content": "group after"},
+    )
+
+    assert read_res.status_code == 200
+    assert read_res.text == "group before"
+    assert res.status_code == 200
+    payload = res.json()
+    assert payload["path"] == "docs/note.md"
+    assert payload["content_length"] == len("group after")
+    assert "base_git" not in payload
+    assert payload["group_git"]["group_id"] == GID
+    assert group_file.read_text(encoding="utf-8") == "group after"
+    assert base_file.read_bytes() == base_before
+
+
+def test_group_src_content_patch_without_worktree_is_409_without_base_fallback(
+    monkeypatch, tmp_path
+):
+    client, _wt, base = _delete_client(monkeypatch, tmp_path, registered=False)
+    base_file = base / "keep.md"
+    base_file.write_text("base stays", encoding="utf-8")
+
+    res = client.patch(
+        PATCH_URL,
+        params={"path": "keep.md", "group_id": GID},
+        json={"content": "must not land"},
+    )
+
+    assert res.status_code == 409
+    assert "base checkout was not used" in res.json()["detail"]
+    assert base_file.read_text(encoding="utf-8") == "base stays"
+
+
+def test_group_src_content_patch_rejects_another_projects_group(monkeypatch, tmp_path):
+    client, wt, base = _delete_client(monkeypatch, tmp_path, owner_project="other-project")
+    (wt / "keep.md").write_text("group stays", encoding="utf-8")
+    (base / "keep.md").write_text("base stays", encoding="utf-8")
+
+    res = client.patch(
+        PATCH_URL,
+        params={"path": "keep.md", "group_id": GID},
+        json={"content": "must not land"},
+    )
+
+    assert res.status_code == 404
+    assert (wt / "keep.md").read_text(encoding="utf-8") == "group stays"
+    assert (base / "keep.md").read_text(encoding="utf-8") == "base stays"

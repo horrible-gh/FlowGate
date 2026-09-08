@@ -166,11 +166,17 @@ def _seal_under_root(root, path: str):
 
 
 @router.api_route("/projects/{project_id}/files/src-content", methods=["GET", "HEAD"], response_class=PlainTextResponse)
-def get_src_file_content(request: Request, project_id: str, path: str = Query(..., description="relative path from docs_root")):
-    """Return the content of a src-tree file as UTF-8 text.
+def get_src_file_content(
+    request: Request,
+    project_id: str,
+    path: str = Query(..., description="relative path from docs_root"),
+    group_id: str | None = Query(None, description="optional live group worktree"),
+):
+    """Return the content of a base or live-group src-tree file as UTF-8 text.
     For HEAD requests, return only the Content-Length header (for file size checks).
     """
-    full_path = _resolve_src_path(project_id, path)
+    group_id = (group_id or "").strip() or None
+    full_path = _resolve_src_path(project_id, path, group_id)
     if not full_path.is_file():
         raise HTTPException(status_code=404, detail="Not found")
 
@@ -187,20 +193,22 @@ def update_src_file_content(
     project_id: str,
     body: SrcContentUpdate,
     path: str = Query(..., description="relative path from docs_root"),
+    group_id: str | None = Query(None, description="optional live group worktree"),
 ):
-    """Save the content of a src-tree file as UTF-8 text."""
-    full_path = _resolve_src_path(project_id, path)
+    """Save the content of a base or live-group src-tree file as UTF-8 text."""
+    group_id = (group_id or "").strip() or None
+    full_path = _resolve_src_path(project_id, path, group_id)
     if not full_path.is_file():
         raise HTTPException(status_code=404, detail="Not found")
 
     full_path.write_text(body.content, encoding="utf-8")
 
-    # flowgate.default.0176 T0010 §a: this write lands directly in the project's
-    # base checkout (an intended admin edit — the write path is NOT changed). That
-    # leaves the base dirty, which blocks merge finalize for EVERY group of this
-    # project via the E3 guard (NR flowgate.default.0176.0009). Return the base git
-    # status so the editor can warn the operator immediately, rather than the
-    # contamination staying invisible until a later finalize returns a bare 500.
+    # Base edits retain the contamination warning contract. A group edit is isolated
+    # in its live worktree, so it deliberately does not report base_git; the client
+    # refreshes the existing group changes channel instead.
+    if group_id:
+        return {"path": path, "content_length": len(body.content), "group_id": group_id}
+
     from modules.flow_gate.services import git_service
     base_git = git_service.base_checkout_dirty_status(project_id)
     return {"path": path, "content_length": len(body.content), "base_git": base_git}
