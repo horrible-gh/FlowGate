@@ -212,6 +212,23 @@
             </p>
           </div>
 
+          <!-- AI source access (group 0515, T0009 server contract / T0011 client UI):
+               whether a CH token minted from this dialog on may write to source. -->
+          <div class="conv-settings-group">
+            <span class="conv-settings-group-label">{{ t('main.conversation_view.source_access_label') }}</span>
+            <div
+              class="conv-settings-radios"
+              role="radiogroup"
+              :aria-label="t('main.conversation_view.source_access_label')"
+            >
+              <label v-for="mode in sourceAccessOptions" :key="mode" class="conv-radio">
+                <input type="radio" :value="mode" v-model="draftSourceAccessMode" />
+                {{ t(SOURCE_ACCESS_LABEL_KEYS[mode]) }}
+              </label>
+            </div>
+            <p class="conv-settings-hint">{{ t('main.conversation_view.source_access_hint') }}</p>
+          </div>
+
           <p v-if="chatSettingsErrorMessage && chatSettingsErrorField !== 'context_turns'" class="conv-settings-error">
             {{ chatSettingsErrorMessage }}
           </p>
@@ -479,6 +496,9 @@ interface ChatSettingsValue {
   send_action: SendAction
   context_mode: ContextMode
   context_turns: number
+  // Group 0515 (T0009 server contract): per-user CH write capability. read_only/edit
+  // are sticky; edit_once is consumed by the next successful CH token handoff.
+  source_access_mode: string
   updated_at: string | null
 }
 interface ChatSettingsDomain {
@@ -487,6 +507,7 @@ interface ChatSettingsDomain {
   context_turns_presets: number[]
   context_turns_min: number
   context_turns_max: number
+  source_access_mode: string[]
 }
 interface ChatSettingsResponse {
   ok: boolean
@@ -527,12 +548,33 @@ const chatSettingsDomain = ref<ChatSettingsDomain>({
   context_turns_presets: [5, 10, 15, 20, 30],
   context_turns_min: 1,
   context_turns_max: 200,
+  source_access_mode: ['read_only', 'edit', 'edit_once'],
 })
+
+// ── AI source access (group 0515, T0009 server contract / T0011 client UI) ───
+// sourceAccessMode is the last value the server confirmed (settings/domain response);
+// draftSourceAccessMode is what the radio group shows while the settings dialog is
+// open; sourceAccessBaseline is what the dialog opened with, so saveChatSettings can
+// tell a real user choice from an untouched draft (§6/§13).
+const sourceAccessMode = ref<string>('read_only')
+const draftSourceAccessMode = ref<string>('read_only')
+const sourceAccessBaseline = ref<string>('read_only')
+// §3/§11: labels for the three known values. An unexpected domain value from the
+// server is fail-closed -- filtered out rather than shown as a new, unlabeled choice.
+const SOURCE_ACCESS_LABEL_KEYS: Record<string, string> = {
+  read_only: 'main.conversation_view.source_access_read_only',
+  edit: 'main.conversation_view.source_access_edit',
+  edit_once: 'main.conversation_view.source_access_edit_once',
+}
+const sourceAccessOptions = computed(() =>
+  chatSettingsDomain.value.source_access_mode.filter((mode) => mode in SOURCE_ACCESS_LABEL_KEYS),
+)
 
 function applyChatSettings(data: ChatSettingsResponse): void {
   sendAction.value = data.settings.send_action
   contextMode.value = data.settings.context_mode
   contextTurns.value = data.settings.context_turns
+  sourceAccessMode.value = data.settings.source_access_mode
   chatSettingsIsDefault.value = data.is_default
   chatSettingsDomain.value = data.domain
 }
@@ -628,6 +670,8 @@ function openChatSettings(): void {
   draftSendAction.value = sendAction.value
   draftRangeChoice.value = draftRangeChoiceFor(contextMode.value, contextTurns.value)
   draftContextTurnsCustom.value = contextTurns.value
+  draftSourceAccessMode.value = sourceAccessMode.value
+  sourceAccessBaseline.value = sourceAccessMode.value
   chatSettingsErrorField.value = null
   chatSettingsErrorMessage.value = null
   showChatSettings.value = true
@@ -646,6 +690,13 @@ async function saveChatSettings(): Promise<void> {
   if (savingChatSettings.value) return
   const mode: ContextMode = draftRangeChoice.value === 'all' ? 'all' : 'recent'
   const patch: Record<string, unknown> = { send_action: draftSendAction.value, context_mode: mode }
+  // T0011 §6: source_access_mode is PATCHed only when the user actually moved the
+  // radio away from the value the dialog opened with. A one-shot claim consumed by
+  // the server WHILE the dialog sat open (edit_once -> read_only) must not be
+  // re-armed by an untouched, now-stale draft riding along with an unrelated save.
+  if (draftSourceAccessMode.value !== sourceAccessBaseline.value) {
+    patch.source_access_mode = draftSourceAccessMode.value
+  }
   // §2-7-4: never send context_turns alongside context_mode: 'all' — the number the
   // user was using must survive an [전체] round trip untouched (server only writes
   // fields present in the request body).
@@ -673,6 +724,32 @@ async function saveChatSettings(): Promise<void> {
     chatSettingsErrorMessage.value = data?.error?.message ?? t('main.conversation_view.chat_settings_save_failed')
   } finally {
     savingChatSettings.value = false
+  }
+}
+
+// T0011 §7: re-pull chat-settings after a same-tab event that may have changed the
+// server's authoritative source_access_mode out from under this component -- a
+// consumed edit_once one-shot (copy or invoke handoff) or a handoff abort that
+// rolled the claim back. A failed GET is silently ignored (§7: never blocks chat);
+// the screen-entry migration logic in loadChatSettings() is deliberately not re-run.
+async function refreshChatSettings(): Promise<void> {
+  try {
+    const res = await getRequest<ChatSettingsResponse>('/api/v1/me/chat-settings')
+    if (disposed) return
+    applyChatSettings(res.data)
+    if (showChatSettings.value) {
+      // Untouched draft follows the server; a draft the user already changed is kept as-is
+      // so a refresh triggered by an unrelated action cannot clobber a choice still
+      // sitting in the open dialog (§13 scenario B).
+      if (draftSourceAccessMode.value === sourceAccessBaseline.value) {
+        draftSourceAccessMode.value = sourceAccessMode.value
+      }
+      sourceAccessBaseline.value = sourceAccessMode.value
+    }
+  } catch {
+    // A refresh that cannot complete (network failure, or a response with no
+    // recognizable chat-settings shape) leaves the tab on its last known values --
+    // it must never block chat (§7).
   }
 }
 
@@ -1088,6 +1165,17 @@ function onSendButtonClick(): void {
   if (stopMode.value) void cancelRun()
 }
 
+// T0011 §10: server codes that mean a CH one-shot claim/token was already resolved
+// (consumed, revoked, or rolled back) by the time this call's outcome is known. Kept
+// as one literal list so every one of them refreshes the same way, regardless of
+// which endpoint happens to report it.
+const HANDOFF_ABORT_REFRESH_CODES = [
+  'chat_one_shot_claim_superseded',
+  'chat_token_revoked_before_handoff',
+  'chat_one_shot_commit_failed',
+  'ai_invoke_worker_gate_lost',
+]
+
 // ── Chat immediate AI call (D0005 §3-1, L0008 §2-3 / §3) ─────────────────────
 // Runs the header-selected provider directly (no settings dialog). Owns the spinner
 // state and prevents duplicate runs; the server also enforces one run per group
@@ -1120,17 +1208,33 @@ async function invokeAi(trigger: 'manual' | 'auto'): Promise<void> {
       provider_id: providerStore.selectedProviderId || undefined,
     })
     const runId = (res.data as any)?.run_id
-    if (runId) void pollRun(runId, turns.value.filter((turn) => turn.speaker === 'ai').length)
-    else releaseRun()
+    if (runId) {
+      // T0011 §9: a fresh run means /ai-invoke/start actually minted (and, for an
+      // edit_once mode, consumed) a chat capability -- refresh so this tab's radio
+      // reflects the authoritative value right away instead of waiting on the next
+      // unrelated GET/PATCH.
+      void refreshChatSettings()
+      void pollRun(runId, turns.value.filter((turn) => turn.speaker === 'ai').length)
+    } else {
+      releaseRun()
+    }
   } catch (e: any) {
     const data = e?.response?.data
     // 409 run_in_progress: a run already exists for this group — adopt it and keep
-    // the stop button rather than surfacing an error or restarting (L0008 §5).
+    // the stop button rather than surfacing an error or restarting (L0008 §5). No new
+    // token/claim was minted on this path, so no refresh (T0011 §9).
     if (data?.code === 'run_in_progress' && data?.run_id) {
       void pollRun(data.run_id, turns.value.filter((turn) => turn.speaker === 'ai').length)
       return
     }
     releaseRun()
+    // T0011 §10: each of these codes means a one-shot claim was consumed/rolled back or
+    // a token was revoked before handoff completed -- this tab's cached mode can be
+    // stale regardless of what this call itself was trying to do, so refresh alongside
+    // (not instead of) the failure toast below.
+    if (HANDOFF_ABORT_REFRESH_CODES.includes(data?.code)) {
+      void refreshChatSettings()
+    }
     const detail = describeErrorDetail(data?.detail ?? data ?? e)
     showToast(t('main.conversation_view.invoke_ai_failed', { detail }), 'danger')
   }
@@ -1508,7 +1612,7 @@ async function jumpToSeq(seq: number): Promise<void> {
 // between the card and the dialog detaches and re-attaches .conv-scroll, and a re-attached
 // element comes back at scrollTop 0 — the log stuck at the TOP, the same symptom rev8 fixed
 // for new turns. The mover re-pins once the node lands.
-defineExpose({ load, scrollToBottom, jumpToSeq })
+defineExpose({ load, scrollToBottom, jumpToSeq, refreshChatSettings })
 </script>
 
 <style scoped>

@@ -1886,6 +1886,13 @@ export default {
       context_range_custom: '直接入力',
       context_range_hint: 'AIを呼び出す際、直近のこの範囲の会話から読み込みます。それ以前は削除されず折りたたまれ、必要ならAIが自分で開けます。',
       context_range_invalid: '会話提供範囲の数値を確認してください。',
+      // グループ0515 (T0009 サーバー契約 / T0011 クライアントUI): CHトークンがソースへの
+      // 書き込み権限を持つかをサーバーがユーザーごとに判定する3値のラベル。
+      source_access_label: 'AIソースアクセス権限',
+      source_access_read_only: '読み取り専用',
+      source_access_edit: '編集許可',
+      source_access_edit_once: '次の1回のみ編集許可',
+      source_access_hint: '読み取り専用: AIはソースを読むことのみ可能。編集許可: AIはソースを編集し続けられます。次の1回のみ編集許可: 次に成功したCHトークンハンドオフ1回だけ編集を許可し、その後読み取り専用に戻ります。',
       chat_settings_save_failed: '設定の保存に失敗しました。',
       invoke_ai_running: 'AI呼び出し中…',
       invoke_ai_failed: 'AI呼び出しに失敗しました: {detail}',
