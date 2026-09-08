@@ -83,6 +83,8 @@ CONCURRENT_RUNS_PER_GROUP = 1
 # NR0003 §3: the hop loop only ever moved FORWARD ("a document was registered"); a hop that
 # ran, produced nothing and exited 0 fell straight out of the loop with no retry, no record
 # and no signal. These parameters bound the retry branch that closes that hole.
+POST_PROCESS_RECOVERY_SEC = 120  # bounded terminal recovery after a provider has returned
+
 HOP_TIMEOUT_SEC = 3600           # continuous hop budget — fixed, never scaled by slots left
 
 # flowgate.default.0400 M0005: the duration section's fixed option list, as seconds —
