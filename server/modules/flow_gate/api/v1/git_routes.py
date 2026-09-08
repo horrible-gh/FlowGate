@@ -648,6 +648,7 @@ def _resolve_conflict_mention_builder(
     *, group_id: str, project_id: str, merge_id: int,
     request: Request, locale: str, messages: list[str],
     write_requested_by_human: bool = False, allow_test_edits: bool = False,
+    review_conversation: bool = False,
 ):
     def _builder(raw_token: str, scratch_dir: str) -> Optional[str]:
         from modules.flow_gate.api import token_routes as _token_routes
@@ -660,6 +661,7 @@ def _resolve_conflict_mention_builder(
             continuous=False, merge_id=merge_id, continuous_review_mode=False,
             write_requested_by_human=write_requested_by_human,
             allow_test_edits=allow_test_edits,
+            review_conversation=review_conversation,
         )
         if not base:
             return None
@@ -671,6 +673,7 @@ def _start_resolve_conflict_run(
     *, group_id: str, merge_id: int, request: Request, user_id: str,
     provider_id: Optional[str], provider_pinned: bool, messages: list[str],
     write_requested_by_human: bool = False, allow_test_edits: bool = False,
+    review_conversation: bool = False,
 ) -> Optional[str]:
     """Kicks off a fresh resolve_conflict run bound to this merge session — the
     same mechanism [AI 호출] already uses, reused here for the [반려] retry run
@@ -697,6 +700,7 @@ def _start_resolve_conflict_run(
             request=request, locale=locale, messages=messages,
             write_requested_by_human=write_requested_by_human,
             allow_test_edits=allow_test_edits,
+            review_conversation=review_conversation,
         ),
         provider_id=provider_id, provider_pinned=bool(provider_pinned),
         merge_id=merge_id,
@@ -830,6 +834,11 @@ def post_merge_review_message(
                 messages=[body.message],
                 write_requested_by_human=apply_requested,
                 allow_test_edits=allow_test_edits,
+                # 0481 T0010 rev6 (rejection 3): a question typed at the approval screen
+                # is a conversation turn, not a resolver run. The reject route above is the
+                # opposite -- it restores the conflict and wants a new resolution -- so it
+                # deliberately does not pass this.
+                review_conversation=True,
             ),
         )
     except GitServiceError as exc:

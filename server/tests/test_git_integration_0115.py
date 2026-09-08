@@ -1213,6 +1213,57 @@ class TestGitEndToEnd:
         # abort so this session doesn't block later tests' project-level lock
         svc.abort_merge(group, merge_id)
 
+    def test_base_dirty_belongs_to_the_merge_while_a_conflict_is_open(self, origin_repo):
+        """0481 T0010 #1 — why [AI에게 맡기기] kept answering "…시작하지 못했습니다.".
+
+        A stopped merge leaves its unmerged AND its cleanly-merged paths in the base
+        checkout's `git status --porcelain`, so `base_dirty` fills up with the merge itself
+        and the Git panel offers it as stray-edit cleanup: [AI에게 맡기기], per-file
+        [되돌리기], [커밋]. All three are wrong there, and the AI one could never start.
+        `base_dirty.merge_in_progress` is the fact the panel needs to say so instead.
+        """
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0172"
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "ownership.txt").write_text("base line\n", encoding="utf-8")
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "add ownership base"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0172")
+        (wt / "ownership.txt").write_text("group change\n", encoding="utf-8")
+
+        (seedwt / "ownership.txt").write_text("mainline change\n", encoding="utf-8")
+        _git(["commit", "-am", "mainline change to ownership"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        # No merge yet: the base checkout is clean and owns nothing.
+        assert svc.base_merge_in_progress("gitprj") is None
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        assert out["result"]["status"] == "conflict"
+        merge_id = out["result"]["merge_id"]
+
+        # The conflict really does show up as base-checkout dirt — this is the pile the
+        # panel was inviting the operator to "clean up".
+        base_dirty = svc.project_git_status("gitprj")["status"]["base_dirty"]
+        assert "ownership.txt" in base_dirty["files"]
+        assert base_dirty["merge_in_progress"] == {"merge_id": merge_id, "group_id": group}
+        assert svc.base_merge_in_progress("gitprj") == {"merge_id": merge_id, "group_id": group}
+
+        svc.abort_merge(group, merge_id)
+
+        # Once the merge is gone the same files are ordinary base dirt again (or gone).
+        assert svc.base_merge_in_progress("gitprj") is None
+        assert svc.project_git_status("gitprj")["status"]["base_dirty"]["merge_in_progress"] is None
+
     def test_resolve_conflicts_allows_both_sides_kept(self, origin_repo):
         # 0478 T0012 completion (ii): the ordinary "markers just gone" GREEN path is
         # untouched when both sides' added lines survive — exact line reproduction of
@@ -1984,11 +2035,19 @@ class TestGitEndToEnd:
         assert sent2["result"]["status"] == "accepted"
         svc.abort_merge(group, merge_id)
 
-    def test_review_gate_unsupported_extension_blocks_approval(self, origin_repo):
-        # 0481 TR0009 rev1 (AI review finding 1): L0007 §2.7 requires that ANY
-        # changed/created path whose extension is not in the registered 8-category
-        # table reject the WHOLE plan with 422 unsupported_syntax_validation —
-        # there is no generic plain-text pass-through fallback.
+    def test_review_gate_lets_an_unvalidatable_file_type_through_the_merge(self, origin_repo):
+        # 0481 TR0010 rev3, human rejection 2026-09-08 10:33 ("머지는 되지도 않음").
+        #
+        # This test used to assert the opposite: TR0009 rev1 (AI review finding 1)
+        # read L0007 §2.7 as covering every changed path in the candidate, so an
+        # extension with no registered validator vetoed the approval. §2.7 scopes
+        # that rule to the WRITE PLAN's own targets (`syntax_validation_scope` =
+        # "변경되거나 생성된 모든 plan 대상 파일"), and applying it to a merge made any
+        # merge carrying a `.md`, `.txt`, `.lock` or `.tsbuildinfo` permanently
+        # unapprovable — [승인] could only ever answer pre_commit_validation_failed.
+        #
+        # The merge must complete. The plan-side rule is unchanged and is asserted
+        # on the very same tree at the end of this test.
         import uuid
 
         from modules.flow_gate.db import git_integration as db_git
@@ -2023,19 +2082,29 @@ class TestGitEndToEnd:
         assert out["result"]["status"] == "resolved_pending_review"
         fingerprint = out["result"]["review_fingerprint"]
 
-        rejected = svc.approve_merge_review(
+        # The candidate the human approves, captured before the commit exists.
+        context = db_git.session_context(db_git.get_session(merge_id))
+        base_root = svc._base_root_of("gitprj")
+
+        approved = svc.approve_merge_review(
             group, merge_id, attempt_id=str(uuid.uuid4()),
             review_fingerprint=fingerprint, authority="human",
         )
-        assert rejected["result"]["status"] == "pre_commit_validation_failed"
-        errors = rejected["result"]["errors"]
-        assert any(e["path"] == "notes.rst" and e["validator"] == "unsupported" for e in errors)
-        context = db_git.session_context(db_git.get_session(merge_id))
-        assert context["last_error"]["code"] == "unsupported_syntax_validation"
-        assert _git(["rev-parse", "main"], cwd=origin_repo["bare"]).strip() == before_head
-        assert db_git.get_session(merge_id)["status"] == "open"
+        assert approved["result"]["status"] == "merged", approved
+        assert approved["result"]["review_state"] == "completed"
+        # It really merged and really pushed — the remote head moved.
+        assert _git(["rev-parse", "main"], cwd=origin_repo["bare"]).strip() != before_head
+        assert db_git.get_session(merge_id)["status"] != "open"
 
-        svc.abort_merge(group, merge_id)
+        # The write-plan rule is untouched: the SAME path, the SAME candidate tree,
+        # asked with the plan's mode, is still refused whole.
+        plan_errors = svc._validate_review_changed_paths(
+            base_root, context, unregistered_extension="reject",
+        )
+        assert any(
+            e["path"] == "notes.rst" and e["validator"] == "unsupported"
+            for e in plan_errors
+        ), plan_errors
 
     def test_review_gate_real_typescript_parser_blocks_approval(self, origin_repo):
         # 0481 TR0009 rev1 (AI review finding 2): L0007 §2.7 requires the project
@@ -3033,6 +3102,13 @@ class TestGitEndToEnd:
         roles = [(t["role"], t["status"]) for t in review["conversation"]]
         assert ("ai", "stale_run") in roles
         assert not any(t["role"] == "ai" and t["status"] == "accepted" for t in review["conversation"])
+        # 0481 T0010 rev6 (rejection 3): the PLAN is still discarded, but the ANSWER is
+        # kept. Before this the operator got only "the approval target changed, instruct
+        # again" -- twice in the rejected transcript -- and never saw what the run said.
+        stale = next(t for t in review["conversation"] if t["status"] == "stale_run")
+        assert "수정했습니다." in stale["message"]
+        assert "승인 대기가 끝났습니다" in stale["message"]
+        assert "수정안은 적용하지 않았습니다" in stale["message"]
 
         # the plan never touched the tree: mainline still has exactly the commit
         # approval created, and no new candidate/generation was minted.
@@ -3108,6 +3184,11 @@ class TestGitEndToEnd:
         roles = [(t["role"], t["status"]) for t in context["conversation"]]
         assert ("ai", "stale_run") in roles
         assert not any(t["role"] == "ai" and t["status"] == "accepted" for t in context["conversation"])
+        # rev6: kept, under a line that names what moved (here: the reject ended the wait
+        # and refroze nothing, so the candidate identity is gone too).
+        stale = next(t for t in context["conversation"] if t["status"] == "stale_run")
+        assert "이 답은 이미 버려진 후보에 대한 것입니다." in stale["message"]
+        assert "stale_run" in stale["message"]
         assert context.get("pending_conversation_run_id") is None
 
         svc.abort_merge(group, merge_id)
@@ -4046,7 +4127,10 @@ class TestBaseCommitRevert0177:
         from modules.flow_gate.services import git_service as svc
 
         out = svc.project_git_status("baseprj")["status"]
-        assert out["base_dirty"] == {"dirty": False, "files": []}
+        # rev6: ai_run rides alongside (the project AI-cleanup lease as server truth).
+        assert out["base_dirty"] == {
+            "dirty": False, "files": [], "merge_in_progress": None, "ai_run": None,
+        }
         # dirty 0개인데 base-commit → 멱등 성공 (§5 경합 케이스)
         out = svc.base_commit("baseprj", None)["result"]
         assert out["committed"] is False
@@ -4080,7 +4164,10 @@ class TestBaseCommitRevert0177:
         assert out["commit"]
         # committed but NOT pushed: base is ahead of origin by exactly 1
         st = svc.project_git_status("baseprj")["status"]
-        assert st["base_dirty"] == {"dirty": False, "files": []}
+        # rev6: ai_run rides alongside (the project AI-cleanup lease as server truth).
+        assert st["base_dirty"] == {
+            "dirty": False, "files": [], "merge_in_progress": None, "ai_run": None,
+        }
         assert st["ahead_count"] == 1 and st["behind_count"] == 0
         log = _git(["log", "-1", "--pretty=%s"], cwd=base)
         assert log.strip() == "fix: a.txt"
@@ -4261,7 +4348,11 @@ class TestResolveBaseDirtyRealRepo0482:
         committed_files = _git(["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"], cwd=base).split()
         assert committed_files == ["a.txt"]
         status_after = svc.project_git_status("rbdprj")["status"]
-        assert status_after["base_dirty"] == {"dirty": False, "files": []}
+        # rev6: ai_run rides alongside — the project AI-cleanup lease as server truth,
+        # so the panel stops latching "already running" in the browser (rejection 2).
+        assert status_after["base_dirty"] == {
+            "dirty": False, "files": [], "merge_in_progress": None, "ai_run": None,
+        }
 
     def test_resolve_base_dirty_lock_busy_when_project_already_locked(self, resolve_base_dirty_origin, monkeypatch):
         from modules.flow_gate.db import git_integration as db_git
@@ -4289,6 +4380,96 @@ class TestResolveBaseDirtyRealRepo0482:
             db_git.release_lock("rbdprj", "op:elsewhere")
         # nothing was applied while the project lock was held elsewhere
         assert svc.project_git_status("rbdprj")["status"]["base_dirty"]["files"] == ["a.txt"]
+
+
+@pytest.fixture(scope="class")
+def project_scoped_admission_origin(seed):
+    """A dedicated bare origin + enabled project for the 0481 T0010 admission tests.
+
+    Its own project id on purpose: `resolve_base_dirty_origin` above is class-scoped, so
+    sharing it would re-run `projects.create("rbdprj")` for this class and error at setup.
+    """
+    from modules.flow_gate.db import projects
+    from modules.flow_gate.services import git_service as svc
+
+    projects.create({"project_id": "psaprj", "project_name": "PsaProj"})
+    tmp = Path(tempfile.mkdtemp(prefix="fg-git-0481-t0010-"))
+    bare = tmp / "origin.git"
+    seedwt = tmp / "seedwt"
+    _git(["init", "--bare", "-b", "main", str(bare)])
+    _git(["init", "-b", "main", str(seedwt)])
+    (seedwt / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(["add", "-A"], cwd=seedwt)
+    _git(["commit", "-m", "init"], cwd=seedwt)
+    _git(["remote", "add", "origin", str(bare)], cwd=seedwt)
+    _git(["push", "origin", "main"], cwd=seedwt)
+
+    svc.save_config("psaprj", {
+        "repo_url": bare.as_uri(),
+        "provider": "generic",
+        "base_branch": "main",
+        "default_finalize_action": "merge",
+        "enabled": True,
+    })
+    assert svc.provision_base("psaprj", "manual")["status"] == "ok"
+    yield {"bare": bare, "seedwt": seedwt, "tmp": tmp}
+    svc.delete_config("psaprj")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+@needs_git
+class TestBaseDirtyDelegationAdmission0481:
+    """0481 T0010 #1 — [AI에게 맡기기] answered "기준 브랜치 AI 정리를 시작하지 못했습니다."
+    on every press, forever.
+
+    `resolve_base_dirty` is the one action_scope with NO group of its own: it works in the
+    project's BASE checkout, and `start_ai_invoke` synthesizes `<project>.none.0000` only so
+    the run/lease rows have a key. Admission then ran BOTH group-worktree gates against that
+    phantom group, which by construction can never have a worktree, so every press died with
+    409 `worktree_unavailable` before a token was ever minted. 0482's own tests all stubbed
+    the surrounding calls, so nothing exercised this pair against a real git-enabled project.
+    """
+
+    # What `start_ai_invoke` synthesizes for a group-less resolve_base_dirty press.
+    PHANTOM_GROUP = "psaprj.none.0000"
+
+    def test_group_worktree_gate_lets_a_project_scoped_run_through(self, project_scoped_admission_origin):
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services.ai_invoke import admission
+
+        # The same arguments start_run passes for a resolve_base_dirty press.
+        admission._require_group_worktree(
+            "psaprj", "none", self.PHANTOM_GROUP, "main",
+            locale="ko", action_scope="resolve_base_dirty",
+        )
+        # …and it must not have INVENTED the group on the way through. Before this fix the
+        # gate's ensure_worktree self-heal happily provisioned a real branch
+        # (`psaprj_none_0000`), a checked-out worktree and a group_git_state row for a group
+        # that does not exist — junk that outlives the press.
+        assert db_git.get_state(self.PHANTOM_GROUP) is None
+
+    def test_initial_source_sync_gate_lets_a_project_scoped_run_through(self, project_scoped_admission_origin):
+        from modules.flow_gate.services.ai_invoke import admission
+
+        admission._ensure_initial_source_sync(
+            "psaprj", "none", self.PHANTOM_GROUP, "resolve_base_dirty", "psaprj", locale="ko",
+        )
+
+    def test_an_ordinary_scope_still_goes_through_the_base_tree_guard(self, project_scoped_admission_origin):
+        # The base-tree guard itself (0299 R0001) must not be weakened for the scopes it was
+        # written for. An `edit` run on a group with no worktree still engages the gate, and
+        # the gate's self-heal provisions the group — the exact work the project-scoped skip
+        # above must NOT do for a group that does not exist.
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services.ai_invoke import admission
+
+        assert db_git.get_state("psaprj.default.0001") is None
+        admission._require_group_worktree(
+            "psaprj", "default", "psaprj.default.0001", "main",
+            locale="ko", action_scope="edit",
+        )
+        state = db_git.get_state("psaprj.default.0001")
+        assert state is not None and state["branch"] == "psaprj_default_0001"
 
 
 # ── flowgate.default.0199 B0001: no-work group auto-discard (no merge/push) ───
@@ -4739,7 +4920,10 @@ class TestBaseUntrackedCommit0296:
 
         st = svc.project_git_status("untrkprj")["status"]
         # E3 scope untouched: an uncommitted NEW file blocks nothing.
-        assert st["base_dirty"] == {"dirty": False, "files": []}
+        # rev6: ai_run rides alongside (the project AI-cleanup lease as server truth).
+        assert st["base_dirty"] == {
+            "dirty": False, "files": [], "merge_in_progress": None, "ai_run": None,
+        }
         # Directories are expanded to individual paths — a bare "sub/" entry is
         # not a `git add` target the operator can reason about.
         assert sorted(st["base_untracked"]["files"]) == ["brand_new.md", "sub/nested.txt"]

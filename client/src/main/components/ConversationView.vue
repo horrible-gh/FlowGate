@@ -327,6 +327,7 @@ import { useToast } from './common/useToast'
 import { useAiProviderStore } from '../stores/aiProvider'
 import { consumeLastFailedCopyText, copyToClipboard } from '../utils/clipboard'
 import AppIcon from '@shared/AppIcon.vue'
+import { randomUuid } from '@shared/utils/uuid'
 import AiProviderSelect from './AiProviderSelect.vue'
 
 // P0003 §0-2. The conversation of record is a list of turns, not a markdown body, so
@@ -1267,12 +1268,11 @@ async function pollRun(runId: string, baselineAiTurns: number): Promise<void> {
   releaseRun()
 }
 
+// Same secure-context trap as the merge-approve attempt id: `crypto.randomUUID` is absent on
+// the HTTP LAN origin this app is served from. Route through the shared generator so the key
+// keeps a UUID shape everywhere (@shared/utils/uuid).
 function newIdempotencyKey(): string {
-  const uuid =
-    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`
-  return `sess_${uuid}`
+  return `sess_${randomUuid()}`
 }
 
 /** POST one turn, replacing its optimistic bubble on success.

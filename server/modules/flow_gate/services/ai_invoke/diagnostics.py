@@ -78,6 +78,16 @@ def get_status(run_id: str) -> dict:
         "status": status,
         "mode": run["mode"],
         "group_id": run["group_id"],
+        # 0481 T0010 rev3: the `ai_invoke_started` SSE frame already ships both of
+        # these, and the browser reads them (`payloadGroupKey` files a
+        # resolve_base_dirty card under `project:<id>`; the document column keeps
+        # a resolve_conflict run's own screen mounted instead of covering it).
+        # This endpoint is the SAME registry read on the reload/poll path — the
+        # store rebuilds every live entry from it every 5s — so leaving them out
+        # here made both facts survive exactly until the first poll and then
+        # vanish. Ship them from both places or neither.
+        "project_id": run.get("project_id"),
+        "action_scope": run.get("action_scope"),
         "docs_target": run["docs_target"],
         "docs_reached_so_far": docs_so_far,
         "chain_id": run.get("chain_id"),

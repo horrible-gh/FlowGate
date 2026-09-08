@@ -252,6 +252,8 @@
     :selected-provider="aiProviderStore.selectedProviderId"
     :provider-loading="aiProviderStore.loading"
     :provider-errored="!!aiProviderStore.error"
+    :ai-run-notice="conflictAiRunNotice"
+    :ai-run-pending="conflictAiStarting"
     @close="closeConflictDialog"
     @abort="abortMerge"
     @submit="submitResolve"
@@ -259,6 +261,7 @@
     @ai-invoke="invokeConflictAi"
     @copy-mention="copyConflictMention"
     @update:provider="aiProviderStore.selectProvider"
+    @reload-providers="reloadProviders"
   />
 
   <!-- 0177 0007-CH: base_dirty 409 → operator chooses commit / revert / cancel
@@ -276,6 +279,7 @@ import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import { useProjectStore } from '../stores/project'
 import { useAiProviderStore } from '../stores/aiProvider'
+import { isScreenOwnedRun, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import { useToast } from './common/useToast'
 // 0182 NR0003 §6: the chunk parser/assembler state machine lives in a shared
 // composable; 0212 T0009 moved the resolver dialog itself into
@@ -306,6 +310,11 @@ const projectStore = useProjectStore()
 // 0234 B0001: single source of truth for the runtime provider (shared with AppHeader),
 // so the conflict AI run started here honours the selection.
 const aiProviderStore = useAiProviderStore()
+// 0481 T0010 rev3: this panel no longer disappears while its own conflict AI run
+// works (MainPanel's `activeGitOwnRun`), so it owns saying that the run is
+// happening and reacting when it ends — the AI-run surface that used to do both
+// by covering the column is deliberately not shown for this scope any more.
+const aiInvokeRunsStore = useAiInvokeRunsStore()
 const { initConflictFile } = useConflictChunks()
 const baseDirtyDialog = ref<InstanceType<typeof GitBaseDirtyDialog> | null>(null)
 const untrackedConflictDialog = ref<InstanceType<typeof GitUntrackedConflictDialog> | null>(null)
@@ -539,10 +548,24 @@ async function copyToClipboard(text: string) {
   document.body.removeChild(ta)
 }
 
+/**
+ * 0481 T0010 rev5 (반려 #4) — see GitStatusPanel.reloadProviders: `ensureLoaded` treats a
+ * failed load as "already loaded", so the dialog's own retry has to force it.
+ */
+async function reloadProviders() {
+  await aiProviderStore.loadForProject(providerProject.value, true)
+}
+
+// 0481 T0010 rev5 (반려 #1): the window between "the start request returned" and "this
+// browser has a run entry". Before rev5 nothing was drawn in it, so a pressed [AI 호출]
+// and an unpressed one looked exactly alike.
+const conflictAiStarting = ref(false)
+
 async function invokeConflictAi(message: string, auto: boolean) {
   const mergeId = state.value?.merge_id
   if (!props.groupId || mergeId == null || busy.value) return
   busy.value = true
+  conflictAiStarting.value = true
   try {
     // RC1: forward the current provider selection so the run honours it instead of
     // silently falling back to the server default chain.
@@ -559,12 +582,22 @@ async function invokeConflictAi(message: string, auto: boolean) {
     }
     if (aiProviderStore.selectedProviderId) body.provider_id = aiProviderStore.selectedProviderId
     if (message) body.messages = [message]
-    await postRequest('/api/v1/ai-invoke/start', body)
+    const response = await postRequest<Record<string, unknown>>('/api/v1/ai-invoke/start', body)
+    // 0481 T0010 rev5 (반려 #1): adopt our own start response so the dialog shows the run
+    // immediately rather than whenever the worker thread's SSE frame lands. group_id and
+    // action_scope are re-stamped so a server whose start payload predates this revision
+    // still yields a screen-owned entry (isScreenOwnedRun) instead of a covered dialog.
+    aiInvokeRunsStore.trackStarted({
+      ...response.data,
+      group_id: props.groupId,
+      action_scope: 'resolve_conflict',
+    })
     showToast(t('main.git_finalize.conflict_ai_started'), 'success')
   } catch (e: any) {
     showToast(e?.response?.data?.message || e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')
   } finally {
     busy.value = false
+    conflictAiStarting.value = false
     await fetchState()
   }
 }
@@ -693,11 +726,25 @@ async function handleFinalizeConflict(err: any): Promise<boolean> {
   return (await handleBaseDirty(err)) || (await handleUntrackedConflict(err))
 }
 
+// 0481 T0010 rev2: see GitStatusPanel — the remaining-conflict list is paths, not a
+// sentence, so it is joined for display rather than dropped into the message raw.
+function remainingText(remaining: unknown): string {
+  if (Array.isArray(remaining)) return remaining.map((r: any) => (typeof r === 'string' ? r : r?.path ?? '')).filter(Boolean).join(', ')
+  return String(remaining ?? '')
+}
+
 async function submitResolve(auto: boolean) {
   const mergeId = state.value?.merge_id
   if (!props.groupId || mergeId == null || !allConflictsResolved.value) return
   busy.value = true
   conflictError.value = ''
+  // 0481 T0010 rev2 — the refresh in `finally` calls fetchState() → fetchConflicts(),
+  // whose first act is `conflictError.value = ''`. Every failure message this function
+  // wrote was therefore erased milliseconds after it appeared, and a rejected submit
+  // looked exactly like a submit that did nothing. Hold the outcome in a local and
+  // write it AFTER the refresh; the successful branches close the dialog, so they have
+  // nothing to hold.
+  let outcome = ''
   try {
     const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
       `/api/v1/groups/${props.groupId}/git/merge/${mergeId}/resolve`,
@@ -710,7 +757,7 @@ async function submitResolve(auto: boolean) {
       },
     )
     if (data.ok === false) {
-      conflictError.value = data.error?.message || t('main.git_finalize.failed')
+      outcome = data.error?.message || t('main.git_finalize.failed')
     } else if (data.result?.status === 'merged') {
       mergeCommit.value = data.result.merge_commit || null
       conflictDialogOpen.value = false
@@ -720,21 +767,39 @@ async function submitResolve(auto: boolean) {
       // 0481 T0008 — a resolved general merge stops at the human approval gate
       // instead of committing itself; the badge/button appears once fetchState()
       // (below) re-reads review_state.
+      //
+      // 0481 T0010 rev5 (반려 #3) — and this panel OWNS that gate, so it hands over
+      // instead of describing the way there. The identical handover already existed one
+      // screen later (the AI-run watcher below); a human's own [해결 제출] had been left
+      // out of it, which is the half the rejection is about.
       conflictDialogOpen.value = false
-      showToast(t('main.git_review.resolved_pending_toast'), 'success')
+      reviewDialogOpen.value = true
+      showToast(t('main.git_review.resolved_pending_opened'), 'success')
     } else if (data.result?.status === 'conflict') {
-      conflictError.value = data.result?.remaining_conflicts || t('main.git_finalize.failed')
+      outcome = t('main.git_finalize.resolve_remaining', {
+        paths: remainingText(data.result?.remaining_conflicts),
+      })
+    } else {
+      // 0481 T0010 rev2 — the fall-through that produced "제출했는데 반응이 없다": this
+      // chain knew `merged` and `conflict` only, so when 0481 T0008 made a resolved
+      // general merge answer `resolved_pending_review` a screen built before that change
+      // sat there mute. Any unrecognised state says so now.
+      outcome = t('main.git_finalize.resolve_unknown_result', {
+        status: String(data.result?.status ?? ''),
+      })
+      showToast(outcome, 'danger')
     }
   } catch (e: any) {
     if (e?.response?.status === 404) {
       conflictDialogOpen.value = false
       showToast(e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')
     } else {
-      conflictError.value = e?.response?.data?.error?.message || t('main.git_finalize.failed')
+      outcome = e?.response?.data?.error?.message || t('main.git_finalize.failed')
     }
   } finally {
     busy.value = false
     await fetchState()
+    if (outcome) conflictError.value = outcome
   }
 }
 
@@ -802,6 +867,48 @@ watch(() => props.groupId, () => {
   archiveReason.value = ''
   void fetchState()
 }, { immediate: true })
+
+/**
+ * 0481 T0010 rev3 — this group's own conflict AI run, as a sentence for the
+ * resolver dialog. `null` while nothing of this scope is running.
+ */
+const conflictAiRun = computed(() => {
+  const entry = aiInvokeRunsStore.runsByGroup[props.groupId]
+  if (!entry || !isScreenOwnedRun(entry)) return null
+  return entry.phase === 'running' || entry.phase === 'pause_requested' ? entry : null
+})
+const conflictAiRunNotice = computed(() => {
+  const entry = conflictAiRun.value
+  if (!entry) return null
+  const total = Math.floor(aiInvokeRunsStore.elapsedMsFor(props.groupId) / 1000)
+  return t('main.git_finalize.conflict_ai_running', {
+    provider: entry.provider?.name || t('main.git_review.unknown_provider'),
+    elapsed: `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`,
+  })
+})
+// The run used to end by REMOVING the cover, which remounted this panel and
+// refetched everything. Now that the panel stays, the end of the run is the
+// signal to re-read the conflict list and the finalize state ourselves —
+// otherwise the resolver keeps showing the pre-run files and looks like the
+// call did nothing.
+watch(conflictAiRun, (run, previous) => {
+  if (run || !previous) return
+  void (async () => {
+    const resolverWasOpen = conflictDialogOpen.value
+    await fetchState()
+    const mergeId = state.value?.merge_id
+    if (!resolverWasOpen || mergeId == null) return
+    if (reviewPending.value) {
+      // The run resolved it. The resolver has nothing left to show, and its
+      // successor screen is the approval gate — hand straight over instead of
+      // leaving a dialog full of stale conflicts the operator cannot act on.
+      conflictDialogOpen.value = false
+      reviewDialogOpen.value = true
+      return
+    }
+    await fetchConflicts(mergeId)
+  })()
+})
 
 defineExpose({ fetchState })
 </script>

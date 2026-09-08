@@ -41,6 +41,7 @@ from Crypto.Cipher import AES as _AES
 from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.db import groups as db_groups
+from modules.flow_gate.db import project_ai_leases as db_project_ai_leases
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import system_settings as db_settings
 from modules.flow_gate.db import terminal_cleanup_snapshots as db_terminal_cleanup
@@ -731,6 +732,34 @@ def open_merge_session_of_project(project_id: str) -> Optional[dict]:
         if best is None or int(session["merge_id"]) > int(best["merge_id"]):
             best = session
     return best
+
+
+def base_merge_in_progress(project_id: str) -> Optional[dict]:
+    """The merge that currently OWNS the base checkout's dirty files, or None.
+
+    flowgate.default.0481 T0010 #1. While `git merge` is stopped on a conflict, the base
+    checkout's `git status --porcelain` reports every unmerged path AND every side that
+    merged cleanly — so `base_dirty` fills up with the merge itself. The Git panel then
+    offers that pile as an uncommitted-base-changes summary with an AI-delegation button,
+    a per-file revert and a commit: three actions that are all wrong for a half-finished
+    merge, and the AI one could never even start (see PROJECT_SCOPED_ACTION_SCOPES in
+    ai_invoke's admission). Read the fact straight off the tree — MERGE_HEAD is git's own
+    "a merge is stopped here" flag — and carry the session ids so the caller can point at
+    the resolver instead of at a cleanup that must not happen.
+    """
+    base_root = _base_root_of(project_id)
+    if base_root is None:
+        return None
+    try:
+        if not (base_root / ".git" / "MERGE_HEAD").exists():
+            return None
+    except OSError:
+        return None
+    session = open_merge_session_of_project(project_id)
+    return {
+        "merge_id": int(session["merge_id"]) if session else None,
+        "group_id": session.get("group_id") if session else None,
+    }
 
 
 def guard_base_free(project_id: str) -> None:
@@ -5223,6 +5252,24 @@ def resolve_conflicts(
 
     session, cfg, project_id, root = _session_context(group_id, merge_id)
     db_git.touch_session(merge_id)   # activity → resets the sweep TTL (0205 L §1)
+    # 0481 T0010 rev6 (rejection 3): a review-conversation turn's run must never submit a
+    # resolution. Until rev5 it was launched with the ordinary resolver mention -- resolve
+    # every conflict, call the bound endpoint -- so it did, and a submission re-freezes the
+    # candidate further down. That new fingerprint then fails
+    # `_materialize_pending_conversation_run`'s identity check and the run's OWN answer is
+    # discarded as `stale_run`. Both thrown-away answers in the rejected transcript were
+    # self-inflicted exactly this way: the human asked a question, the run answered it AND
+    # submitted, and its submission deleted the answer. The mention no longer asks for one;
+    # this refuses it even if a model tries anyway, and it refuses BEFORE any file is
+    # written, so the reviewer's frozen candidate never moves mid-question.
+    if resolver_run_id and (
+        db_git.session_context(session).get("pending_conversation_run_id") == resolver_run_id
+    ):
+        raise GitServiceError(
+            409, "review_conversation_cannot_resolve",
+            "this run is a review conversation turn: answer in your final message, "
+            "do not submit a resolution",
+        )
     session_paths = {row["path"] for row in db_git.session_files(merge_id)}
 
     # Validate EVERYTHING before writing anything (E12 — all-or-nothing).
@@ -5647,7 +5694,9 @@ def _check_html_syntax(text: str) -> Optional[str]:
     return None
 
 
-def _validate_review_changed_paths(base_root: Path, context: dict) -> list[dict]:
+def _validate_review_changed_paths(
+    base_root: Path, context: dict, *, unregistered_extension: str = "reject",
+) -> list[dict]:
     """Pre-commit content sanity over every changed/created path in the frozen
     candidate (D0006 §3.5 / L0007 §2.7). Every text path must decode as UTF-8 and
     carry no leftover conflict marker. Extension selects the validator per
@@ -5656,14 +5705,35 @@ def _validate_review_changed_paths(base_root: Path, context: dict) -> list[dict]
     `*.py` parses AND `py_compile`s; `*.json` and `*.yaml`/`*.yml` get a real
     strict parser (the stdlib's / PyYAML, already a dependency); `*.html`/`*.htm`
     get `_check_html_syntax`; the JS/TS family, `*.vue`, and `*.css`/`*.scss` get
-    a real compiler/parser via `_run_node_syntax_check` (see its docstring). A
-    path whose extension is not in this table is NOT accepted on a generic
-    pass-through — the whole plan is rejected (`validator: "unsupported"`,
-    surfaced by the caller as `422 unsupported_syntax_validation`), exactly as
-    L0007 §2.7 requires: there is no fallback that lets an unvalidated file type
-    reach approval. Deletes are skipped (nothing to validate); oversized/binary
-    blobs are skipped (nothing this check can read).
+    a real compiler/parser via `_run_node_syntax_check` (see its docstring).
+    Deletes are skipped (nothing to validate); oversized/binary blobs are skipped
+    (nothing this check can read).
+
+    ``unregistered_extension`` decides what an extension outside that table means,
+    and the two callers genuinely need different answers.
+
+    ``"reject"`` (the default, and what `_apply_write_plan_locked` passes) is
+    L0007 §2.7 as written: the scope of that rule is the WRITE PLAN's own target
+    files (`syntax_validation_scope` = "변경되거나 생성된 모든 **plan** 대상 파일"),
+    so a plan that asks to write a file type we cannot syntax-check is rejected
+    whole. There is no fallback that lets an unvalidated AI-written file reach
+    approval.
+
+    ``"skip"`` is what `approve_merge_review` passes, and 0481 T0010 rev3 is why.
+    Approval validates the WHOLE merge candidate, not a plan — every file the two
+    branches happen to touch. Reusing "reject" there made the rule mean something
+    it never said: any merge carrying a `.md`, `.txt`, `.lock`, `.png` or (the
+    reviewer's actual case) a `.tsbuildinfo` was permanently unapprovable, and
+    [승인] could only ever answer `pre_commit_validation_failed`. That is the
+    "머지는 되지도 않음" rejection of 2026-09-08 10:33, reproduced on a copy of
+    the reviewer's own base checkout. Nothing is lost by skipping here: a
+    plan-written path with an unregistered extension can never be in the
+    candidate in the first place, because the apply gate above already refused
+    it. UTF-8 and conflict-marker checks still run on EVERY path either way —
+    only the "I have no validator for this" verdict is dropped.
     """
+    if unregistered_extension not in ("reject", "skip"):
+        raise ValueError(f"unregistered_extension must be 'reject' or 'skip', got {unregistered_extension!r}")
     import ast
     import json as _json
     import py_compile
@@ -5752,7 +5822,7 @@ def _validate_review_changed_paths(base_root: Path, context: dict) -> list[dict]
             result = _run_node_syntax_check(ext, text)
             if result:
                 errors.append({"path": path, "validator": "vue", "line": result["line"], "message": result["message"]})
-        else:
+        elif unregistered_extension == "reject":
             # L0007 §2.7: an extension outside the registered table is not
             # generically accepted — reject the whole plan instead.
             label = f"'.{ext}'" if ext else "files without an extension"
@@ -6252,6 +6322,10 @@ def get_merge_review(group_id: str, merge_id: int) -> dict:
             "conflict_origins": context.get("conflict_origins") or [],
             "conversation": context.get("conversation") or [],
             "held_test_operations": context.get("held_test_operations") or [],
+            # 0481 T0010 rev1 — non-null while a chat turn's run is still working, so
+            # the approval screen can show the wait in place instead of sending the
+            # operator out to the generic AI-run dialog to find out what is happening.
+            "pending_conversation": _pending_conversation_view(context),
             "resolver_provider": context.get("resolver_provider"),
             "auto_authority": bool(context.get("auto_authority")),
             "reconciliation_kind": context.get("reconciliation_kind"),
@@ -6260,6 +6334,39 @@ def get_merge_review(group_id: str, merge_id: int) -> dict:
             "can_reject": pending,
             "can_send": pending,
         },
+    }
+
+
+def review_conversation_brief(group_id: str, merge_id: int) -> dict:
+    """What a review-conversation run has to be told about the review it is answering
+    (0481 T0010 rev6, rejection 3).
+
+    A chat turn on the approval screen used to be launched with the ORDINARY conflict
+    mention: "two branches changed the same lines, resolve every conflict, call the bound
+    resolve endpoint", plus a dump of a conflict session that is empty by then because the
+    conflicts were resolved before the review even opened. The run therefore answered the
+    prompt it was given instead of the question it was asked -- "conflict_count: 0, chunks:
+    [], there is nothing to resolve, tell me what is confusing" -- and it could not resolve a
+    reference like "what was the problem THIS time?", because not one turn of the
+    conversation was ever handed to it.
+
+    Deliberately does NOT go through get_merge_review: that materializes the pending run and
+    takes the project git lock, and this is called from inside `send_review_message`'s
+    `start_run()` -- before the turn is even recorded. A plain session read is all it needs.
+    """
+    session = db_git.get_session(merge_id)
+    if session is None or session.get("group_id") != group_id:
+        return {}
+    context = db_git.session_context(session)
+    return {
+        "review_state": context.get("review_state"),
+        "base_head": context.get("base_head"),
+        "merge_head": context.get("merge_head"),
+        "resolver_provider": context.get("resolver_provider"),
+        "changes": context.get("changes") or [],
+        "conversation": context.get("conversation") or [],
+        "last_error": context.get("last_error"),
+        "held_test_operations": context.get("held_test_operations") or [],
     }
 
 
@@ -6529,7 +6636,12 @@ def approve_merge_review(
             return _refreeze_for_re_review(group_id, merge_id, base_root, base_branch, context, "identity_mismatch")
 
         try:
-            errors = _validate_review_changed_paths(base_root, context)
+            # 0481 T0010 rev3: the candidate is a MERGE, not a write plan — see
+            # `_validate_review_changed_paths`' docstring for why an extension we
+            # have no validator for must not veto a merge here.
+            errors = _validate_review_changed_paths(
+                base_root, context, unregistered_extension="skip",
+            )
             if errors:
                 context["review_state"] = pre_apply_review_state
                 # L0007 §2.7/§2.11: an unregistered-extension rejection is a
@@ -6758,6 +6870,60 @@ def reject_merge_review(
     }}
 
 
+def _conversation_run_detail(run_id: str) -> tuple[Optional[dict], bool]:
+    """Read a review-conversation run's detail. Returns ``(detail, lost)``.
+
+    ``lost`` is True ONLY when the run id itself is gone (``get_run_detail``
+    answers 404 ``run_not_found``): the process that owned it restarted before
+    finalize wrote a row, so no later poll can ever observe it finishing. Any
+    other failure (a transient DB error, an import problem) returns
+    ``(None, False)`` — "ask again next poll" — because treating a hiccup as a
+    lost run would throw away an answer that is still coming.
+    """
+    try:
+        from modules.flow_gate.services.ai_invoke import diagnostics as ai_diagnostics
+
+        return ai_diagnostics.get_run_detail(run_id), False
+    except Exception as exc:  # HTTPException(404) is the only *decidable* failure
+        return None, getattr(exc, "status_code", None) == 404
+
+
+def _pending_conversation_view(context: dict) -> Optional[dict]:
+    """0481 T0010 rev1 — the in-flight chat turn, as the approval screen sees it.
+
+    The review screen's chat used to be fire-and-forget: ``send_review_message``
+    starts a run and nothing in the payload said one was in flight, so the only
+    surface that could tell the operator whether the AI was working at all was
+    the generic AI-run dialog — "it leaves the dialog entirely and shows the default
+    AI-run dialog" (2026-09-08 rejection). This block is what lets the operator stay
+    in the dialog and wait: it names the run, its live status, its provider and
+    how long it has been going, so the screen can show the wait in place and keep
+    polling until the answer lands. ``None`` means "no turn is in flight", which
+    is also the signal the client stops waiting on.
+    """
+    run_id = context.get("pending_conversation_run_id")
+    if not run_id:
+        return None
+    detail, lost = _conversation_run_detail(run_id)
+    detail = detail or {}
+    provider = detail.get("provider")
+    if isinstance(provider, dict):
+        provider_name = provider.get("name") or provider.get("id")
+    else:
+        provider_name = detail.get("provider_name") or detail.get("provider_id") or (
+            provider if isinstance(provider, str) else None
+        )
+    return {
+        "run_id": run_id,
+        "status": "lost" if lost else (str(detail.get("status") or "unknown").lower() or "unknown"),
+        "provider": provider_name,
+        "started_at": detail.get("started_at"),
+        "elapsed_ms": detail.get("elapsed_ms"),
+        "write_requested": bool(context.get("pending_conversation_write_requested")),
+        "allow_test_edits": bool(context.get("pending_conversation_allow_test_edits")),
+    }
+
+
 def _materialize_pending_conversation_run(
     group_id: str, merge_id: int, project_id: str, base_root: Path, base_branch: str,
 ) -> None:
@@ -6804,13 +6970,10 @@ def _materialize_pending_conversation_run(
     run_id = context.get("pending_conversation_run_id")
     if not run_id:
         return
-    try:
-        from modules.flow_gate.services.ai_invoke import diagnostics as ai_diagnostics
-
-        detail = ai_diagnostics.get_run_detail(run_id)
-    except Exception:
+    detail, lost = _conversation_run_detail(run_id)
+    if detail is None and not lost:
         return
-    if (detail.get("status") or "").lower() not in ("finished", "done", "completed", "failed", "error"):
+    if detail is not None and (detail.get("status") or "").lower() not in ("finished", "done", "completed", "failed", "error"):
         return  # still running
 
     holder = f"review:{merge_id}:{uuid.uuid4()}"
@@ -6830,12 +6993,12 @@ def _materialize_pending_conversation_run(
         # so applying the pre-lock copy would silently drop a submission the worker
         # was told was `accepted`. EVERY input to the decision below has to come
         # from inside this hold, not just the session state.
-        try:
-            detail = ai_diagnostics.get_run_detail(run_id)
-        except Exception:
+        detail, lost = _conversation_run_detail(run_id)
+        if detail is None and not lost:
             return
-        if (detail.get("status") or "").lower() not in ("finished", "done", "completed", "failed", "error"):
+        if detail is not None and (detail.get("status") or "").lower() not in ("finished", "done", "completed", "failed", "error"):
             return  # went back to running under the lock: leave it pending
+        detail = detail or {}
 
         # Only fold this run's result in if the review it started against is
         # STILL the one on screen — same pending review_state, same
@@ -6886,10 +7049,44 @@ def _materialize_pending_conversation_run(
 
         conversation = context.get("conversation") or []
         if stale_run:
+            # 0481 T0010 rev6 (rejection 3): the answer is KEPT. Until rev5 this branch
+            # replaced whatever the run had said with one sentence -- "the approval target
+            # changed, so the result was discarded (stale_run). Instruct again." -- and the
+            # operator, who had asked "what was the problem this time?", got that instead of
+            # the answer, twice, with no way to tell WHICH of the three identity checks
+            # fired. The plan-discard rule (L0007 §2.9) is unchanged and `plan` above still
+            # enforces it: nothing a stale run submitted is ever applied. But an ANSWER is
+            # text about a candidate one revision behind, not a danger, so it is appended
+            # under a line that says exactly what moved underneath it.
+            changed = []
+            if context.get("review_state") not in REVIEW_PENDING_STATES:
+                changed.append(f"승인 대기가 끝났습니다(현재 {context.get('review_state')})")
+            if context.get("review_fingerprint") != start_fingerprint:
+                changed.append("승인 대상이 새 후보로 바뀌었습니다")
+            if int(context.get("instruction_generation") or 0) != start_generation:
+                changed.append("재지시로 지시 회차가 올라갔습니다")
+            note = "이 답을 만드는 동안 " + ", ".join(changed) + "."
+            note += " 아래 내용은 그 이전 후보를 보고 쓴 것입니다(stale_run)."
+            if write_requested and detail.get("write_plan"):
+                note += " 함께 제출된 수정안은 적용하지 않았습니다."
+            answer = (detail.get("last_message") or "").strip()
             conversation.append({
                 "turn_id": str(uuid.uuid4()), "role": "ai",
-                "message": "실행이 끝나기 전에 승인 대상이 바뀌어(승인/반려/재지시로 새 후보 고정) 결과를 버렸습니다(stale_run). 다시 지시하십시오.",
+                "message": f"{note}\n\n{answer}" if answer else note,
                 "provider_id": detail.get("provider_id"), "status": "stale_run",
+                "created_at": now_iso(),
+            })
+        elif lost:
+            # 0481 T0010 rev1: the run id is gone for good, so no later poll can ever
+            # fold an answer in. Before this branch the pending bookkeeping stayed set
+            # forever and every further message was refused with `re_instruction_busy`
+            # — the operator waited in the approval screen for a reply that could not
+            # arrive, and had nowhere to go but the generic AI-run dialog to find out.
+            # Say so in the conversation and free the chat for another turn.
+            conversation.append({
+                "turn_id": str(uuid.uuid4()), "role": "ai",
+                "message": "이 지시를 맡은 실행의 기록이 남아 있지 않아 답을 받지 못했습니다(run_lost). 같은 내용을 다시 보내 주십시오.",
+                "provider_id": None, "status": "run_lost",
                 "created_at": now_iso(),
             })
         elif apply_result is not None:
@@ -8043,6 +8240,26 @@ def project_git_status(project_id: str) -> dict:
     except Exception:
         _log.warning("base_dirty aggregation failed for %s", project_id, exc_info=True)
         base_dirty_files = []
+    # 0481 T0010 #1: whose changes are these? While a merge is stopped on a conflict the
+    # base checkout's dirty set IS the merge, and the panel must offer the resolver instead
+    # of the commit / revert / AI-delegation cleanup it offers for stray edits.
+    try:
+        base_dirty_merge = base_merge_in_progress(project_id) if base_readable else None
+    except Exception:
+        _log.warning("base merge-in-progress lookup failed for %s", project_id, exc_info=True)
+        base_dirty_merge = None
+    # 0481 T0010 rev6 (rejection 2): whether a base-branch AI cleanup run owns this
+    # project RIGHT NOW, straight from the durable admission lease the start route
+    # takes. Before this the panel only had its own in-browser latch, so a 409
+    # "already running" refusal disabled [AI에게 맡기기] for good in that tab: the
+    # blocking run belongs to another session, so no SSE frame for it ever arrives
+    # and nothing could clear the latch. Advisory display state, never-raise, exactly
+    # like the two lookups above.
+    try:
+        base_ai_lease = db_project_ai_leases.get_active(project_id)
+    except Exception:
+        _log.warning("base AI cleanup lease lookup failed for %s", project_id, exc_info=True)
+        base_ai_lease = None
     try:
         base_untracked_files = _untracked_files(base_root) if base_readable else []
     except Exception:
@@ -8053,7 +8270,18 @@ def project_git_status(project_id: str) -> dict:
         "enabled": True, "base_branch": base_branch,
         "base_path_state": base_path_state,
         "ahead_count": ahead, "behind_count": behind,
-        "base_dirty": {"dirty": bool(base_dirty_files), "files": base_dirty_files},
+        "base_dirty": {
+            "dirty": bool(base_dirty_files), "files": base_dirty_files,
+            "merge_in_progress": base_dirty_merge,
+            "ai_run": (
+                {
+                    "run_id": base_ai_lease.get("run_id"),
+                    "state": base_ai_lease.get("state"),
+                    "acquired_at": base_ai_lease.get("acquired_at"),
+                }
+                if base_ai_lease else None
+            ),
+        },
         "base_untracked": {
             "count": len(base_untracked_files),
             "files": base_untracked_files,

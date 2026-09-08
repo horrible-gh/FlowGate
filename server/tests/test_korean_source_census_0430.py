@@ -145,7 +145,22 @@ FILE_LINE_CAPS: dict[str, int] = {
     # `raise`, which test_server_korean_leak_0355 forbids (an error payload is not
     # panel copy), so that message is English again. Freshly re-measured, not
     # inherited.
-    "modules/flow_gate/services/git_service.py": 33,
+    # 33 -> 34: flowgate.default.0481 T0010 rev1 (2026-09-08 rejection — the approval
+    # screen's chat must be waited out in place) added ONE Korean AI-turn message: the
+    # `run_lost` turn that tells the human, in the conversation panel, that the run
+    # holding their question left no record and the message has to be sent again. Same
+    # panel copy, same language as the stale_run/apply-outcome turns already counted
+    # here; the rest of that change's comments are English on purpose.
+    # 34 -> 37: T0010 rev3 quotes, in the one docstring that decides the rule, the
+    # design sentence it turns on (L0007 `syntax_validation_scope`), the button the
+    # human presses, and the rejection itself. Comments, not panel copy; the rest of
+    # that change is English.
+    # 37 -> 43: T0010 rev6 (2026-09-08 반려 3) rewrites the stale_run conversation turn.
+    # Five of the six are that turn's PANEL COPY — the sentence the operator reads in the
+    # approval screen's chat, which now names which of the three identity checks fired and
+    # keeps the answer instead of replacing it. The sixth is one comment quoting the
+    # [AI에게 맡기기] button the base-dirty AI-run field on the status payload feeds.
+    "modules/flow_gate/services/git_service.py": 43,
     # 70 -> 73: flowgate.default.0523 T0004 added the document_attachments help item
     # (title/summary/note, ko locale) that bridges attachment list/read/copy to the
     # worker-token document surface.

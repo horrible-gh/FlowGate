@@ -48,9 +48,11 @@
         <span class="badge" :class="statusBadgeClass(p.status)">{{ statusLabel(p.status) }}</span>
         <span class="git-menu-spacer"></span>
         <!-- conflict: send to the status panel, which now resolves inline -->
+        <!-- 0481 T0010 #3: same reason as GitStatusPanel's row button — the conflict entry
+             point is the primary action here, so it is filled, not outlined. -->
         <button
           v-if="p.status === 'conflict'"
-          class="btn btn-sm btn-danger-ol"
+          class="btn btn-sm btn-danger"
           @click="openPanel"
         >
           <AppIcon name="warning" /> {{ t('main.git_status.resolve_inline') }}

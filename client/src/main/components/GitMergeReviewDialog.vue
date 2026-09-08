@@ -36,7 +36,11 @@
         </div>
         <div v-else-if="loadError" class="gmr-state gmr-state-error">
           <span>{{ loadError }}</span>
-          <button type="button" class="btn btn-secondary" @click="loadReview">
+          <!-- 0481 T0010 rev2 — 괄호 없는 `@click="loadReview"` 는 PointerEvent 를 이 함수의
+               `{ background }` 옵션 객체 자리로 넘긴다. 실행은 되지만 `vue-tsc -b` 가 TS2345 로
+               거절하고, 배포 스크립트는 빌드가 실패하면 "이전 dist 를 계속 서빙" 하므로 화면이
+               통째로 옛 번들로 되돌아간다(rev1 이 그렇게 배포되지 못했다). 인자 없이 부른다. -->
+          <button type="button" class="btn btn-secondary" @click="loadReview()">
             <AppIcon name="arrows-clockwise" /> {{ t('main.group_changes.retry') }}
           </button>
         </div>
@@ -127,11 +131,21 @@
                   <strong>{{ t('main.git_review.conversation_title') }}</strong>
                   <span v-if="awaitingReply" class="badge badge-yellow">{{ t('main.git_review.awaiting_reply') }}</span>
                 </div>
-                <div class="gmr-conv-log">
-                  <div v-if="!conversation.length" class="gmr-conv-empty">{{ t('main.git_review.conversation_empty') }}</div>
+                <div ref="convLogEl" class="gmr-conv-log">
+                  <div v-if="!conversation.length && !awaitingReply" class="gmr-conv-empty">{{ t('main.git_review.conversation_empty') }}</div>
+                  <!-- 0481 T0010 rev6 (반려 3): 차례의 결과를 본문 밖에도 단단히 붙인다.
+                       버려진 답·실패한 차례가 성공한 차례와 똑같이 보이면 안 된다. -->
                   <div v-for="turn in conversation" :key="turn.turn_id" class="gmr-turn" :class="`gmr-turn-${turn.role}`">
                     <strong>{{ turn.role === 'human' ? t('main.git_review.turn_human') : t('main.git_review.turn_ai') }}:</strong>
+                    <span v-if="turnStatusLabel(turn)" class="badge badge-yellow gmr-turn-status" data-test="gmr-turn-status">{{ turnStatusLabel(turn) }}</span>
                     <span>{{ turn.message }}</span>
+                  </div>
+                  <!-- 0481 T0010 rev1: the reply is written HERE, in the log the operator is
+                       already reading, and the wait says so in place. Not a control — the
+                       action row below is unchanged (시안 v13 화면 2 parity). -->
+                  <div v-if="awaitingReply" class="gmr-turn gmr-turn-ai gmr-turn-waiting" data-test="gmr-waiting-turn">
+                    <strong>{{ t('main.git_review.turn_ai') }}:</strong>
+                    <span><AppIcon name="spinner" spin /> {{ waitingText }}</span>
                   </div>
                 </div>
                 <div v-if="heldTestOperations.length" class="gmr-held-tests">
@@ -167,7 +181,8 @@
                     <button
                       type="button"
                       class="btn btn-secondary gmr-send-btn"
-                      :disabled="sending || !canSend || !messageDraft.trim() || !selectedProvider"
+                      :disabled="sending || !canSend || awaitingReply || !messageDraft.trim() || !selectedProvider"
+                      :title="awaitingReply ? waitingText : undefined"
                       @click="sendMessage(false)"
                     >
                       <AppIcon name="paper-plane-tilt" /> {{ t('main.git_review.send') }}
@@ -176,7 +191,8 @@
                       v-if="heldTestOperations.length"
                       type="button"
                       class="btn btn-secondary gmr-allow-test-edits-btn"
-                      :disabled="sending || !canSend || !messageDraft.trim() || !selectedProvider"
+                      :disabled="sending || !canSend || awaitingReply || !messageDraft.trim() || !selectedProvider"
+                      :title="awaitingReply ? waitingText : undefined"
                       @click="sendMessage(true)"
                     >
                       <AppIcon name="flask" /> {{ t('main.git_review.allow_test_edits') }}
@@ -188,6 +204,32 @@
           </div>
 
           <div class="modal-ft gmr-ft">
+            <!-- 0481 T0010 rev3: [승인]이 왜 안 됐는지를 여기서 말한다. 전에는
+                 성공/재검토/정합화 셋만 문장이 있었고 나머지는 사라지는 위험
+                 토스트 한 줄이라, "머지는 되지도 않음"이 되었다. 파일별 진단이
+                 있으면 그대로 보여 준다 — 눌러도 안 되는 이유는 언제나 화면에
+                 남아 있어야 한다. -->
+            <div v-if="approveOutcome" class="gmr-approve-outcome" data-test="gmr-approve-outcome" role="alert">
+              <p class="gmr-approve-outcome-hd">
+                <AppIcon name="warning" />
+                {{ approveOutcomeTitle }}
+              </p>
+              <ul v-if="approveOutcome.errors.length" class="gmr-approve-outcome-list">
+                <li v-for="(row, i) in approveOutcome.errors" :key="`${row.path}-${i}`">
+                  <span class="gcd-mono">{{ row.path }}</span>
+                  <span class="gcd-dot">·</span>
+                  <span>{{ row.validator }}</span>
+                  <template v-if="row.line != null">
+                    <span class="gcd-dot">·</span>
+                    <span>{{ row.line }}{{ t('main.git_review.line_suffix') }}</span>
+                  </template>
+                  <template v-if="row.message">
+                    <span class="gcd-dot">·</span>
+                    <span>{{ row.message }}</span>
+                  </template>
+                </li>
+              </ul>
+            </div>
             <p class="gmr-ft-note">{{ t('main.git_review.apply_safety_note') }}</p>
             <div class="gmr-ft-actions">
               <button type="button" class="btn btn-danger-ol" :disabled="busy || !canReject" @click="openRejectPrompt">
@@ -232,10 +274,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '@shared/AppIcon.vue'
 import { getRequest, postRequest } from '@shared/api'
+import { randomUuid } from '@shared/utils/uuid'
 import AiProviderSelect from './AiProviderSelect.vue'
 import { useToast } from './common/useToast'
 import {
@@ -284,6 +327,20 @@ interface ConversationTurn {
   status: string
   created_at: string
 }
+// 0481 T0010 rev1 — server truth about a chat turn whose run is still working.
+// Local `sending` state alone could not answer this: it dies with the component,
+// so reopening the screen (or a reload) showed a silent, idle-looking chat while
+// a run was mid-flight and the only place to learn otherwise was the generic
+// AI-run dialog.
+interface PendingConversation {
+  run_id: string
+  status: string
+  provider: string | null
+  started_at: string | null
+  elapsed_ms: number | null
+  write_requested: boolean
+  allow_test_edits: boolean
+}
 interface HeldTestOperation {
   operation_id: string
   kind: string
@@ -302,12 +359,25 @@ interface ReviewPayload {
   conflict_origins: ConflictOrigin[]
   conversation: ConversationTurn[]
   held_test_operations: HeldTestOperation[]
+  pending_conversation?: PendingConversation | null
   resolver_provider: string | null
   reconciliation_kind: string | null
   last_error: { code?: string } | null
   can_approve: boolean
   can_reject: boolean
   can_send: boolean
+}
+/** L0007 §2.11 approve response. `errors` rides `pre_commit_validation_failed`. */
+interface ApproveError {
+  path: string
+  validator: string
+  line: number | null
+  message: string
+}
+interface ApproveResult {
+  status?: string
+  review_state?: string
+  errors?: ApproveError[]
 }
 interface ReviewDiffData {
   path: string
@@ -330,11 +400,75 @@ const applyRequested = ref(false)
 const rejectPromptOpen = ref(false)
 const rejectReason = ref('')
 const attemptId = ref('')
-const awaitingReply = ref(false)
+// Why the last [승인] did not merge. Cleared only when the next attempt starts.
+const approveOutcome = ref<{ status: string; errors: ApproveError[]; message?: string } | null>(null)
+// Set between "the POST returned" and "the first poll came back", so the wait is on
+// screen from the very first frame after [전송]; from then on the server's own
+// `pending_conversation` is what decides (a run started here is indistinguishable
+// from one started before this screen was opened).
+const locallyPending = ref<PendingConversation | null>(null)
+const nowMs = ref(Date.now())
 let pollTimer: ReturnType<typeof setTimeout> | null = null
+let elapsedTimer: ReturnType<typeof setInterval> | null = null
+let waitStartedAt = 0
 
 const changes = computed(() => review.value?.changes ?? [])
 const conversation = computed(() => review.value?.conversation ?? [])
+// 0481 T0010 rev6 (반려 3) — 끝난 방식이 accepted 가 아닌 AI 차례에만 붙는 말.
+// 사람의 차례와 정상 답변에는 아무것도 붙지 않는다.
+const TURN_STATUS_LABELS: Record<string, string> = {
+  stale_run: 'turn_status_stale_run',
+  run_lost: 'turn_status_run_lost',
+  failed: 'turn_status_failed',
+  rejected: 'turn_status_rejected',
+}
+function turnStatusLabel(turn: ConversationTurn): string {
+  if (turn.role !== 'ai') return ''
+  const key = TURN_STATUS_LABELS[turn.status]
+  return key ? t(`main.git_review.${key}`) : ''
+}
+const pendingConversation = computed<PendingConversation | null>(
+  () => review.value?.pending_conversation ?? locallyPending.value,
+)
+const awaitingReply = computed(() => !!pendingConversation.value)
+// Whole minutes:seconds since the wait began — the screen has to say *something* is
+// still happening, or waiting in place looks the same as a dead dialog.
+const waitElapsedLabel = computed(() => {
+  // `waitStartedAt` is anchored to the run's own elapsed_ms the first time a pending
+  // run is seen, so a screen opened mid-run counts from the run's start, not from
+  // the moment it happened to be opened. The tick itself is local (1s) so the number
+  // moves between polls instead of freezing.
+  const total = Math.floor(Math.max(0, nowMs.value - (waitStartedAt || nowMs.value)) / 1000)
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+})
+const waitingText = computed(() =>
+  t('main.git_review.waiting_in_place', {
+    provider: pendingConversation.value?.provider || t('main.git_review.unknown_provider'),
+    elapsed: waitElapsedLabel.value,
+  }),
+)
+/**
+ * One sentence naming what came back. A status the screen has a sentence for gets
+ * that sentence; anything else is named literally rather than hidden — a screen
+ * that is older than the server must still say what the server answered
+ * (0481 T0010 rev2 taught this on [해소 제출]; the same silence was still here).
+ */
+const approveOutcomeTitle = computed(() => {
+  const outcome = approveOutcome.value
+  if (!outcome) return ''
+  if (outcome.status === 'pre_commit_validation_failed') {
+    return t('main.git_review.approve_validation_failed')
+  }
+  if (outcome.status === 'commit_creation_failed') {
+    return t('main.git_review.approve_commit_failed')
+  }
+  if (outcome.status === 're_review') return t('main.git_review.re_review_toast')
+  if (outcome.status === 'reconciling') return t('main.git_review.reconciling_toast')
+  if (outcome.message) return outcome.message
+  return t('main.git_review.approve_unknown_status', {
+    status: outcome.status || t('main.git_review.unknown_provider'),
+  })
+})
 const heldTestOperations = computed(() => review.value?.held_test_operations ?? [])
 const canApprove = computed(() => !!review.value?.can_approve)
 const canReject = computed(() => !!review.value?.can_reject)
@@ -369,10 +503,19 @@ const warningText = computed(() => {
   return t('main.git_review.warning.pending')
 })
 
+function aiTurnCount(turns: ConversationTurn[]): number {
+  return turns.filter((turn) => turn.role === 'ai').length
+}
+
+function providerName(providerId?: string): string | null {
+  return (props.providers ?? []).find((p) => p.id === providerId)?.name || providerId || null
+}
+
+// The approve route validates this against a UUID regex. It has to stay a real UUID on the
+// insecure (HTTP LAN) origin this app is served from, where `crypto.randomUUID` is missing —
+// see @shared/utils/uuid.
 function newAttemptId(): string {
-  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`
+  return randomUuid()
 }
 
 function statusKind(status: string): 'added' | 'modified' | 'deleted' {
@@ -454,28 +597,40 @@ async function loadDiff(path: string) {
   }
 }
 
-async function loadReview() {
-  loading.value = true
-  loadError.value = ''
+/**
+ * `background: true` is a poll — it must never raise the full-screen loading gate
+ * or replace the screen with an error box. Before 0481 T0010 rev1 every 2-second
+ * poll blanked the whole dialog (diff, file list and the conversation the operator
+ * was reading) down to a spinner and back, which is a large part of what "the
+ * dialog goes away while I wait" meant. A poll that fails is simply retried.
+ */
+async function loadReview({ background = false } = {}) {
+  if (!background) {
+    loading.value = true
+    loadError.value = ''
+  }
   try {
     const { data } = await getRequest<{ ok: boolean; result: ReviewPayload }>(
       `/api/v1/groups/${props.groupId}/git/merge/${props.mergeId}/review`,
     )
-    const prevConvLen = review.value?.conversation.length ?? -1
+    const priorAiTurns = aiTurnCount(review.value?.conversation ?? [])
     review.value = data.result
+    // Server truth from here on: if it says nothing is in flight, nothing is. The
+    // second arm only matters against a server that does not report the field at
+    // all — then an AI turn arriving is what ends the wait.
+    if (data.result.pending_conversation !== undefined) locallyPending.value = null
+    else if (aiTurnCount(data.result.conversation) > priorAiTurns) locallyPending.value = null
+    syncWaitClock()
     if (!attemptId.value) attemptId.value = newAttemptId()
     if (!selectedPath.value && data.result.changes.length) {
       selectedPath.value = data.result.changes[0].path
       void loadDiff(selectedPath.value)
     }
-    if (prevConvLen >= 0 && data.result.conversation.length > prevConvLen) {
-      awaitingReply.value = false
-      stopPolling()
-    }
+    if (!background) loadError.value = ''
   } catch (e: any) {
-    loadError.value = e?.response?.data?.error?.message || t('main.git_finalize.failed')
+    if (!background) loadError.value = e?.response?.data?.error?.message || t('main.git_finalize.failed')
   } finally {
-    loading.value = false
+    if (!background) loading.value = false
   }
 }
 
@@ -484,36 +639,85 @@ function stopPolling() {
     clearTimeout(pollTimer)
     pollTimer = null
   }
+  if (elapsedTimer) {
+    clearInterval(elapsedTimer)
+    elapsedTimer = null
+  }
+}
+
+/** Anchor/clear the wait clock as the pending run appears and disappears. */
+function syncWaitClock() {
+  const pending = pendingConversation.value
+  if (!pending) {
+    waitStartedAt = 0
+    return
+  }
+  if (!waitStartedAt) {
+    const elapsed = typeof pending.elapsed_ms === 'number' && pending.elapsed_ms >= 0 ? pending.elapsed_ms : 0
+    waitStartedAt = Date.now() - elapsed
+  }
+  nowMs.value = Date.now()
+}
+
+/**
+ * Wait here until the answer actually lands. The old loop gave up after 40 ticks
+ * (80 seconds) without saying so — far shorter than any real run — so "chat and
+ * wait for the reply" ended in a screen that had quietly stopped listening, and
+ * the only way to learn anything was the generic AI-run dialog. This one keeps
+ * asking for as long as the server still reports a run in flight, backing off
+ * (2s → 5s → 15s) instead of stopping.
+ */
+function pollDelay(): number {
+  const waited = waitStartedAt ? Date.now() - waitStartedAt : 0
+  if (waited < 60_000) return 2000
+  if (waited < 600_000) return 5000
+  return 15_000
 }
 function startPolling() {
   stopPolling()
-  let attempts = 0
-  const tick = () => {
-    attempts += 1
-    if (attempts > 40 || !awaitingReply.value) return
-    void loadReview().finally(() => {
-      if (awaitingReply.value && attempts <= 40) pollTimer = setTimeout(tick, 2000)
-    })
+  if (!awaitingReply.value) return
+  elapsedTimer = setInterval(() => { nowMs.value = Date.now() }, 1000)
+  const tick = async () => {
+    pollTimer = null
+    if (!awaitingReply.value) return stopPolling()
+    await loadReview({ background: true })
+    if (!awaitingReply.value) return stopPolling()
+    pollTimer = setTimeout(tick, pollDelay())
   }
-  pollTimer = setTimeout(tick, 2000)
+  pollTimer = setTimeout(tick, pollDelay())
 }
 
 async function sendMessage(allowTestEdits = false) {
   const message = messageDraft.value.trim()
-  if (!message || !props.selectedProvider || sending.value) return
+  if (!message || !props.selectedProvider || sending.value || awaitingReply.value) return
   sending.value = true
   try {
     // The [테스트 편집 포함 재지시] button is the human's second, EXPLICIT
     // action (L0007 §2.7) — allow_test_edits is never carried by the ordinary
     // apply-requested toggle above, only by this dedicated action.
-    await postRequest(`/api/v1/groups/${props.groupId}/git/merge/${props.mergeId}/review-message`, {
-      message, provider_id: props.selectedProvider, provider_pinned: true,
-      apply_requested: allowTestEdits ? true : applyRequested.value,
-      allow_test_edits: allowTestEdits,
-    })
+    const { data } = await postRequest<{ ok: boolean; result?: { run_id?: string | null } }>(
+      `/api/v1/groups/${props.groupId}/git/merge/${props.mergeId}/review-message`,
+      {
+        message, provider_id: props.selectedProvider, provider_pinned: true,
+        apply_requested: allowTestEdits ? true : applyRequested.value,
+        allow_test_edits: allowTestEdits,
+      },
+    )
     messageDraft.value = ''
-    awaitingReply.value = true
-    startPolling()
+    // Show the wait immediately, then let the first poll replace it with server truth.
+    locallyPending.value = {
+      run_id: data?.result?.run_id || '',
+      status: 'running',
+      provider: providerName(props.selectedProvider),
+      started_at: null,
+      elapsed_ms: 0,
+      write_requested: allowTestEdits ? true : applyRequested.value,
+      allow_test_edits: allowTestEdits,
+    }
+    syncWaitClock()
+    // The human turn is already persisted by the POST — pull it straight back so the
+    // message appears in the log at once instead of two seconds later.
+    void loadReview({ background: true }).finally(startPolling)
   } catch (e: any) {
     showToast(e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')
   } finally {
@@ -521,21 +725,35 @@ async function sendMessage(allowTestEdits = false) {
   }
 }
 
+/**
+ * 0481 T0010 rev3 — [승인]은 반드시 무언가를 말한다.
+ *
+ * Before this revision the chain named exactly three outcomes and let every other
+ * one fall into a single vanishing danger toast with no status, no file and no
+ * reason. The server's real answer for the reviewer's own merge was
+ * `pre_commit_validation_failed` with two per-file diagnostics attached — none of
+ * which ever reached the screen — so pressing [승인] looked like it did nothing,
+ * every time, forever ("머지는 되지도 않음", 2026-09-08 10:33). The outcome box
+ * stays on screen until the next attempt; the refresh afterwards is a BACKGROUND
+ * one so it cannot blank the dialog (or the box) the way rev1's full reload did.
+ */
 async function approve() {
   if (!review.value || busy.value) return
   busy.value = true
+  approveOutcome.value = null
   try {
-    const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
+    const { data } = await postRequest<{ ok: boolean; result?: ApproveResult; error?: any }>(
       `/api/v1/groups/${props.groupId}/git/merge/${props.mergeId}/approve`,
       { attempt_id: attemptId.value, review_fingerprint: review.value.review_fingerprint },
     )
-    const status = data.result?.status
+    const status = String(data.result?.status ?? '')
     if (status === 'completed' || status === 'merged' || status === 'already_applied') {
       showToast(t('main.git_review.approved_toast'), 'success')
       emit('resolved')
       emit('close')
       return
     }
+    const errors = Array.isArray(data.result?.errors) ? data.result!.errors! : []
     if (status === 're_review') {
       showToast(t('main.git_review.re_review_toast'), 'warning')
     } else if (status === 'reconciling') {
@@ -543,10 +761,17 @@ async function approve() {
     } else {
       showToast(t('main.git_review.approve_failed_toast'), 'danger')
     }
+    approveOutcome.value = { status, errors }
     attemptId.value = newAttemptId()
-    await loadReview()
+    await loadReview({ background: true })
   } catch (e: any) {
-    showToast(e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')
+    const message = e?.response?.data?.error?.message || t('main.git_finalize.failed')
+    showToast(message, 'danger')
+    approveOutcome.value = {
+      status: String(e?.response?.data?.error?.code || ''),
+      errors: [],
+      message,
+    }
   } finally {
     busy.value = false
   }
@@ -576,7 +801,25 @@ async function reject() {
   }
 }
 
-onMounted(loadReview)
+// A reply that lands below the fold is the same as no reply — keep the newest turn
+// (and the wait line under it) in view.
+const convLogEl = ref<HTMLElement | null>(null)
+watch(
+  () => [conversation.value.length, awaitingReply.value] as const,
+  async () => {
+    await nextTick()
+    const el = convLogEl.value
+    if (el) el.scrollTop = el.scrollHeight
+  },
+)
+
+onMounted(async () => {
+  await loadReview()
+  // A run started before this screen was opened (or before a reload) is still the
+  // operator's own pending question — pick the wait back up here rather than making
+  // them go find it in the AI-run dialog.
+  if (awaitingReply.value) startPolling()
+})
 onBeforeUnmount(stopPolling)
 </script>
 
@@ -666,6 +909,10 @@ onBeforeUnmount(stopPolling)
 .gmr-turn { font-size: 0.78rem; line-height: 1.4; }
 .gmr-turn-human strong { color: #1d4ed8; }
 .gmr-turn-ai strong { color: #047857; }
+/* The waiting turn reads as the reply's placeholder in the log itself, not as a
+   separate status area — quieter than a real turn, same slot. */
+.gmr-turn-waiting { color: var(--text-m, #64748b); }
+.gmr-turn-waiting span { display: inline-flex; align-items: center; gap: 5px; }
 .gmr-conv-compose {
   flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px;
   border-top: 1px solid var(--border, #e2e8f0); margin-top: auto;
@@ -687,6 +934,12 @@ onBeforeUnmount(stopPolling)
 .gmr-held-tests ul { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 2px; }
 .gmr-ft { flex-direction: column; align-items: stretch; gap: 8px; }
 .gmr-ft-note { margin: 0; font-size: 0.72rem; color: var(--text-m); }
+.gmr-approve-outcome {
+  border: 1px solid var(--danger, #dc2626); border-radius: 8px;
+  background: #fef2f2; color: #991b1b; padding: 9px 11px;
+}
+.gmr-approve-outcome-hd { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 0.78rem; font-weight: 600; }
+.gmr-approve-outcome-list { margin: 6px 0 0; padding-left: 18px; font-size: 0.72rem; line-height: 1.55; }
 .gmr-ft-actions { display: flex; justify-content: flex-end; gap: 10px; }
 .gmr-reject-overlay {
   position: fixed; inset: 0; z-index: 1500; display: flex; align-items: center; justify-content: center;

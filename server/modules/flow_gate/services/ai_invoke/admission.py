@@ -122,8 +122,21 @@ def _is_group_worktree(project_id: str, group_id: str, root: Optional[Path]) -> 
         return False
 
 
+# flowgate.default.0481 T0010 #1 — the ONE action_scope that has no group of its own.
+# `resolve_base_dirty` works in the project's BASE checkout by design; `start_ai_invoke`
+# synthesizes `<project>.none.0000` purely so the run and lease rows have a key. Running the
+# two group-worktree gates below against that phantom group was never right: outside a merge
+# the self-heal INVENTED the group (a real `<project>_none_0000` branch, worktree and
+# group_git_state row), and during a merge — exactly when the base checkout is dirty and the
+# panel offers the AI-delegation button — ensure_worktree refuses, so every press died with
+# 409 `worktree_unavailable` and the operator only ever saw the generic "could not start"
+# toast. The live database has never held a single resolve_base_dirty token.
+PROJECT_SCOPED_ACTION_SCOPES = frozenset({"resolve_base_dirty"})
+
+
 def _require_group_worktree(
     project_id: str, module: str, group_id: str, branch: str, locale: Optional[str] = None,
+    action_scope: Optional[str] = None,
 ) -> None:
     """Refuse to launch a run that would execute in the base tree (0299 R0001).
 
@@ -140,6 +153,11 @@ def _require_group_worktree(
     group-less runs are untouched — they have no worktree to demand.
     """
     if not group_id or not project_id:
+        return
+    # A project-scoped run works in the base checkout on purpose — there is no group
+    # worktree to demand, and demanding one either invents a junk group or blocks the
+    # press outright (0481 T0010 #1).
+    if action_scope in PROJECT_SCOPED_ACTION_SCOPES:
         return
     try:
         cfg = db_git.get_config(project_id)
@@ -247,6 +265,11 @@ def _ensure_initial_source_sync(
     """
     kind = _worker_source_kind({"action_scope": action_scope, "doc_ref": doc_ref})
     if kind not in {"read", "read_write"}:
+        return
+    # Same reason as _require_group_worktree above: there is no group worktree to sync for a
+    # project-scoped run, and `resolve_base_dirty` is read_write so it would otherwise fall
+    # straight into this gate (0481 T0010 #1).
+    if action_scope in PROJECT_SCOPED_ACTION_SCOPES:
         return
     result = git_service.ensure_initial_group_source_sync(project_id, module, group_id)
     if result.get("performed") or result.get("reason") in _INITIAL_SYNC_SAFE_SKIP_REASONS:
@@ -877,8 +900,21 @@ def start_run(
         if mode == "continuous" or capability_warning_ack is not True:
             raise HTTPException(status_code=422, detail=detail)
 
+    # 0481 T0010 rev6 (rejection 1-2) - a PROJECT-scoped run has no group of its own, so it
+    # must not take a GROUP lease. `group_ai_leases.group_id` is a foreign key into `groups`
+    # and the synthetic `<project>.none.0000` key has no row there, so the INSERT below died
+    # with `FOREIGN KEY constraint failed` on every live press. `start_ai_invoke` does not
+    # roll back on a raw IntegrityError, so the press answered 500 (the generic "could not
+    # start" toast) AND left behind the project lease it had already taken, which turned
+    # every retry for the next two minutes into "this project's AI cleanup is running".
+    # The unit suites never saw it: their in-memory lease store has no foreign keys.
+    # Admission for these runs is the PROJECT lease (`project_ai_leases`, taken by the route
+    # before it calls in here); every other group-lease call in the run's life (heartbeat,
+    # release, handoff, update_token) already no-ops on a missing row.
+    # (Deliberately ASCII: the 0430 census caps this file's Korean lines and it is full.)
+    project_scoped = action_scope in PROJECT_SCOPED_ACTION_SCOPES
     # Durable lease admission is authoritative. Memory remains only a UI/live-process signal.
-    active = db_group_ai_leases.get_active(group_id)
+    active = None if project_scoped else db_group_ai_leases.get_active(group_id)
     handoff_allowed = bool(
         active
         and active.get("state") == "releasing"
@@ -902,6 +938,7 @@ def start_run(
         project_id, module, group_id,
         (db_docs.get_by_id(doc_ref) or {}).get("branch") or "main",
         locale=template_provision.normalize_locale(continuation_locale),
+        action_scope=action_scope,
     )
     # flowgate.default.0511 T0004: force the group worktree to the current
     # configured base HEAD exactly once, before the group's FIRST raw
@@ -971,23 +1008,8 @@ def start_run(
     # concurrent starts atomic across processes; an acquiring lease self-reclaims on expiry.
     run_id = _svc()._next_run_id()
     lease_chain_id = chain_id or run_id
-    try:
-        lease = db_group_ai_leases.acquire(
-            group_id=group_id,
-            project_id=project_id,
-            run_id=run_id,
-            chain_id=lease_chain_id,
-            action_scope=action_scope,
-            worker_identity=issued_to,
-        )
-    except db_group_ai_leases.RunIdCollision:
-        # 0401 NR0003 §4 / T0004 work item 7: two runs minted the same today-serial in the
-        # instant -- genuinely rare even without the floor in _next_run_id, and that floor
-        # makes it rarer still. One retry with a freshly minted id is enough for something
-        # this rare; a second hit is a real systemic problem, so it surfaces as a clean
-        # 409 instead of retrying forever or falling through as a raw DB error.
-        run_id = _svc()._next_run_id()
-        lease_chain_id = chain_id or run_id
+    lease = None
+    if not project_scoped:
         try:
             lease = db_group_ai_leases.acquire(
                 group_id=group_id,
@@ -998,27 +1020,44 @@ def start_run(
                 worker_identity=issued_to,
             )
         except db_group_ai_leases.RunIdCollision:
-            raise _http_error(
-                409, "run_id_collision",
-                _RUN_ID_COLLISION_COPY[template_provision.normalize_locale(continuation_locale)],
+            # 0401 NR0003 §4 / T0004 work item 7: two runs minted the same today-serial in the
+            # instant -- genuinely rare even without the floor in _next_run_id, and that floor
+            # makes it rarer still. One retry with a freshly minted id is enough for something
+            # this rare; a second hit is a real systemic problem, so it surfaces as a clean
+            # 409 instead of retrying forever or falling through as a raw DB error.
+            run_id = _svc()._next_run_id()
+            lease_chain_id = chain_id or run_id
+            try:
+                lease = db_group_ai_leases.acquire(
+                    group_id=group_id,
+                    project_id=project_id,
+                    run_id=run_id,
+                    chain_id=lease_chain_id,
+                    action_scope=action_scope,
+                    worker_identity=issued_to,
+                )
+            except db_group_ai_leases.RunIdCollision:
+                raise _http_error(
+                    409, "run_id_collision",
+                    _RUN_ID_COLLISION_COPY[template_provision.normalize_locale(continuation_locale)],
+                )
+        if lease is None or lease.get("run_id") != run_id:
+            # T0004 rev2: acquire() itself already captured the blocking row at the exact
+            # instant it decided to conflict -- reuse THAT snapshot instead of calling
+            # get_active() here, which runs its own recover_expired() sweep and can reclaim
+            # (and null out) the very blocker lease in the window between acquire()'s
+            # failure and this line. Only fall back to a fresh lookup for the pathological
+            # case where acquire() had no row to snapshot at all.
+            active = lease if lease is not None else (db_group_ai_leases.get_active(group_id) or {})
+            _record_lease_admission_rejected(
+                group_id=group_id, project_id=project_id, doc_ref=doc_ref, action_scope=action_scope,
+                chain_id=lease_chain_id, issued_to=issued_to,
+                provider_id=(chain[0].get("id") if chain else provider_id),
+                active=active, handoff_allowed=False, admission_stage="acquire_race",
+                requested_run_id=run_id,
             )
-    if lease is None or lease.get("run_id") != run_id:
-        # T0004 rev2: acquire() itself already captured the blocking row at the exact
-        # instant it decided to conflict -- reuse THAT snapshot instead of calling
-        # get_active() here, which runs its own recover_expired() sweep and can reclaim
-        # (and null out) the very blocker lease in the window between acquire()'s
-        # failure and this line. Only fall back to a fresh lookup for the pathological
-        # case where acquire() had no row to snapshot at all.
-        active = lease if lease is not None else (db_group_ai_leases.get_active(group_id) or {})
-        _record_lease_admission_rejected(
-            group_id=group_id, project_id=project_id, doc_ref=doc_ref, action_scope=action_scope,
-            chain_id=lease_chain_id, issued_to=issued_to,
-            provider_id=(chain[0].get("id") if chain else provider_id),
-            active=active, handoff_allowed=False, admission_stage="acquire_race",
-            requested_run_id=run_id,
-        )
-        raise _http_error(409, "run_in_progress", "An AI run is already in progress for this group.",
-                          run_id=active.get("run_id"))
+            raise _http_error(409, "run_in_progress", "An AI run is already in progress for this group.",
+                              run_id=active.get("run_id"))
 
     if document_review_loop is not None and issue_builder is not None:
         # 0417 T0013: tell the (possibly stage-aware) issue_builder which stage this hop is —
@@ -1036,7 +1075,12 @@ def start_run(
     else:
         issue = token_service.issue(
             project=project_id,
-            group_id=group_id,
+            # A project-scoped run has no group, and `tokens.group_id` is a foreign key
+            # into `groups`: minting this token against the synthetic `<project>.none.0000`
+            # key violated it the same way the group lease above did. The remote source
+            # tools already document and take the group-less path for these tokens
+            # (remote_tool_service._resolve_root / _resolve_root_for_mutation).
+            group_id=None if project_scoped else group_id,
             action_scope=action_scope,
             doc_ref=doc_ref,
             issued_to=issued_to,
@@ -1058,14 +1102,19 @@ def start_run(
             token_service.revoke(issue["token_id"], reason="ai_invoke_mention_unavailable")
         except Exception:
             logger.warning("token revoke failed after mention_unavailable", exc_info=True)
-        db_group_ai_leases.release(group_id, run_id, reason="admission_rollback_mention_unavailable")
+        if not project_scoped:
+            db_group_ai_leases.release(group_id, run_id, reason="admission_rollback_mention_unavailable")
         raise _http_error(409, "mention_unavailable",
                           "Could not build a worker mention for this document.")
 
-    lease = db_group_ai_leases.activate(
-        group_id, run_id, issue.get("token_id"), action_scope, issued_to, _svc().RUN_TIMEOUT_CAP_SEC
+    lease = (
+        db_group_ai_leases.activate(
+            group_id, run_id, issue.get("token_id"), action_scope, issued_to,
+            _svc().RUN_TIMEOUT_CAP_SEC,
+        )
+        if not project_scoped else None
     )
-    if lease is None:
+    if not project_scoped and lease is None:
         try:
             token_service.revoke(issue["token_id"], reason="ai_invoke_lease_lost")
         except Exception:
@@ -1484,6 +1533,18 @@ def start_run(
         "status": "running",
         "mode": mode,
         "group_id": group_id,
+        # 0481 T0010 rev5 (rejection 1) - the run identity keys the browser gates on, on
+        # the ONE payload that still omitted them. The `ai_invoke_started` SSE frame ships
+        # them (worker._worker) and so does GET /ai-invoke/{run_id} (diagnostics.get_status),
+        # so a caller that adopts its OWN start response - the only way to show a run before
+        # the first SSE frame arrives - built an entry with action_scope=None. That entry is
+        # not `isScreenOwnedRun`, so MainPanel covers the dialog that started the run and no
+        # surface says the call began; the operator sees a press that changes nothing. Ship
+        # these from all three places or from none.
+        # (Deliberately ASCII: the 0430 census caps this file's Korean lines and it is full.)
+        "project_id": run["project_id"],
+        "action_scope": action_scope,
+        "merge_id": merge_id,
         "doc_ref": doc_ref,
         "docs_target": docs_target,
         "chain_id": run["chain_id"],

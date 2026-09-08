@@ -1161,6 +1161,10 @@ def finished_payload(run: dict) -> dict:
     payload = {
         "run_id": run["run_id"],
         "group_id": run["group_id"],
+        # 0481 T0010 #1 — see the ai_invoke_started payload: both identities travel together
+        # so a project-scoped run's card finishes where it started.
+        "project_id": run.get("project_id"),
+        "action_scope": run.get("action_scope"),
         "doc_ref": run.get("doc_ref"),
         "outcome": run["outcome"],
         "docs_reached": run["docs_reached"],

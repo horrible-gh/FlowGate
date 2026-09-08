@@ -89,7 +89,8 @@ describe('GitStatusPanel × shared resolver dialog', () => {
 
     expect(wrapper.findComponent(GitConflictResolverDialog).exists()).toBe(false)
 
-    await wrapper.find('.btn-danger-ol').trigger('click')
+    // 0481 T0010 #3: the conflict row's [충돌 해소] is a filled danger button now.
+    await wrapper.find('.git-status-row-main .btn-danger').trigger('click')
     await flushPromises()
 
     const dialog = wrapper.findComponent(GitConflictResolverDialog)
@@ -135,7 +136,8 @@ describe('GitStatusPanel × shared resolver dialog', () => {
       },
     })
     await flushPromises()
-    await wrapper.find('.btn-danger-ol').trigger('click')
+    // 0481 T0010 #3: the conflict row's [충돌 해소] is a filled danger button now.
+    await wrapper.find('.git-status-row-main .btn-danger').trigger('click')
     await flushPromises()
 
     const dialog = wrapper.findComponent(GitConflictResolverDialog)

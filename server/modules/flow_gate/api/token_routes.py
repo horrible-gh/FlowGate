@@ -495,6 +495,10 @@ def _build_mention_for_token(
     # propose-only run does not.
     write_requested_by_human: bool = False,
     allow_test_edits: bool = False,
+    # 0481 T0010 rev6 (rejection 3): only meaningful with action_scope="resolve_conflict" -
+    # whether this run is a merge-review CONVERSATION turn (a question typed at the approval
+    # screen) rather than a resolver run. It gets a different prompt entirely.
+    review_conversation: bool = False,
 ) -> Optional[str]:
     """R015 token issuance flow — R018 improved mention generation.
 
@@ -506,6 +510,16 @@ def _build_mention_for_token(
     if action_scope == "resolve_conflict":
         if not group_id or merge_id is None:
             return None
+        if review_conversation:
+            return _build_review_conversation_mention(
+                group_id=group_id,
+                project_id=project_id,
+                merge_id=merge_id,
+                raw_token=raw_token,
+                api_base_url=resolved_api_base,
+                write_requested_by_human=write_requested_by_human,
+                allow_test_edits=allow_test_edits,
+            )
         return _build_conflict_mention(
             group_id=group_id,
             project_id=project_id,
@@ -651,11 +665,30 @@ def _conflict_task_section(kind: str, tr: dict) -> str:
     commit the person just asked to cancel.
     """
     if kind not in ("tr_revert", "tr_reapply"):
+        # flowgate.default.0481 T0010 #5 (the resolution came back wrong). This branch used to say two
+        # sentences — resolve autonomously, strip the markers — which is a description of a
+        # SYNTACTICALLY finished file, not of a correct merge. It also still described the
+        # pre-T0008 world where a submission committed: since T0008 a general merge stops at
+        # `resolved_pending_review` and a person reads the whole candidate diff, exactly as
+        # the tr_* branch below has always told its worker. Both facts belong in the task.
         return (
             "## Git conflict auto-resolve task\n"
             "---\n"
-            "Resolve every conflict autonomously. Do not ask the user to choose chunks. "
-            "Produce complete file contents with all conflict markers removed, then call the bound resolve endpoint.\n\n"
+            "Two branches changed the same lines. Resolve every conflict so that BOTH sides' "
+            "intent survives — carry over each side's behaviour change, not each side's text. "
+            "Keeping both blocks verbatim is a resolution only when the two are genuinely "
+            "independent; when they are two versions of the same thing, merge them into the "
+            "one version that does what both authors wanted. The `base` block in a zdiff3 "
+            "chunk is the common ancestor: read it to see what each side actually changed.\n"
+            "Before you decide a chunk, read the whole file and the surrounding code with the "
+            "read/grep/glob/diff/log/show tools — a chunk resolved correctly in isolation can "
+            "still leave a name undefined, an import dropped or a branch unreachable.\n"
+            "Do not ask the user to choose chunks. Produce complete file contents with all "
+            "conflict markers removed, then call the bound resolve endpoint.\n"
+            "Your call ends at `resolved_pending_review`, not at a commit: a person reads the "
+            "whole candidate diff and presses the approve button. Leave the tree in the state "
+            "you would want them to read, and say in your final message which chunks you were unsure "
+            "about — an honest doubt is cheaper for them than a confident wrong merge.\n\n"
         )
     code = tr.get("doc_code") or "a TR"
     subject = tr.get("subject") or ""
@@ -758,6 +791,137 @@ def _build_write_plan_section(
         f"- {test_edit_note}\n"
         "- 이 창구는 이 group_id와 merge_id에 바인딩된 토큰만 받습니다. 다른 git/config/finalize "
         "엔드포인트는 이 토큰으로 접근할 수 없습니다.\n\n"
+    )
+
+
+# 0481 T0010 rev6 (rejection 3): how much of the approval screen's chat is replayed to
+# the run answering it, and how much of one turn survives the replay. Both caps exist so a
+# long review cannot push the task section out of a model's context, not for privacy.
+_REVIEW_CONVERSATION_MAX_TURNS = 20
+_REVIEW_CONVERSATION_MAX_TURN_CHARS = 1500
+_REVIEW_CONVERSATION_MAX_FILES = 80
+
+
+def _build_review_conversation_mention(
+    *,
+    group_id: str,
+    project_id: str,
+    merge_id: int,
+    raw_token: str,
+    api_base_url: str,
+    write_requested_by_human: bool = False,
+    allow_test_edits: bool = False,
+) -> Optional[str]:
+    """The prompt for a merge-review CONVERSATION turn (0481 T0010 rev6, rejection 3).
+
+    A question typed into the approval screen used to be launched with
+    `_build_conflict_mention`: "two branches changed the same lines, resolve every
+    conflict, produce complete file contents, call the bound resolve endpoint", followed
+    by a conflict-session dump that is empty by then -- the conflicts were resolved before
+    the review even opened. Nothing in it said a human was waiting for an answer, and not
+    one turn of the conversation was included. So the run did what it was told: it reported
+    "conflict_count: 0, chunks: [], there is nothing to resolve, tell me what is confusing",
+    it could not resolve "what was the problem THIS time?" to anything, and when it obeyed
+    the endpoint instruction anyway its submission re-froze the candidate -- which made its
+    own answer stale and deleted it. This mention replaces all three: the task is to answer,
+    the conversation is replayed, and there is no resolve endpoint in it (resolve_conflicts
+    refuses one from this run regardless).
+    """
+    brief = git_service.review_conversation_brief(group_id, merge_id)
+    if not brief:
+        return None
+
+    changes = brief.get("changes") or []
+    shown = changes[:_REVIEW_CONVERSATION_MAX_FILES]
+    changed_lines = "\n".join(
+        f"- {(row.get('status') or '?')} {row.get('path')}" for row in shown
+    ) or "- (no changed paths recorded)"
+    if len(changes) > len(shown):
+        changed_lines += f"\n- ... and {len(changes) - len(shown)} more"
+
+    turns = (brief.get("conversation") or [])[-_REVIEW_CONVERSATION_MAX_TURNS:]
+    lines = []
+    for index, turn in enumerate(turns, start=1):
+        who = "reviewer" if turn.get("role") == "human" else "you (AI)"
+        status = turn.get("status") or ""
+        tag = f" [{status}]" if status and status != "accepted" else ""
+        body = " ".join((turn.get("message") or "").split())
+        if len(body) > _REVIEW_CONVERSATION_MAX_TURN_CHARS:
+            body = body[:_REVIEW_CONVERSATION_MAX_TURN_CHARS] + " ...(truncated)"
+        lines.append(f"[{index}] {who}{tag}: {body}")
+    history = "\n".join(lines) or "(empty - the message above is the first turn)"
+
+    last_error = brief.get("last_error")
+    held = brief.get("held_test_operations") or []
+    extra = ""
+    if last_error:
+        extra += f"last_error: {json.dumps(last_error, ensure_ascii=False)}\n"
+    if held:
+        extra += f"held_test_operations: {len(held)} (submitted earlier, not applied)\n"
+
+    write_plan_section = (
+        _build_write_plan_section(
+            group_id=group_id, merge_id=merge_id, raw_token=raw_token,
+            api_base_url=api_base_url, allow_test_edits=allow_test_edits,
+        )
+        if write_requested_by_human else ""
+    )
+    write_note = (
+        "The reviewer asked for the change to be applied, so this turn MAY also submit one "
+        "anchored write "
+        "plan through the section below. Answer first; the plan is optional and is applied "
+        "by the server, never by you.\n"
+        if write_requested_by_human else
+        "This turn changes nothing. You have read-only source tools and no write channel: "
+        "your entire output is your final message.\n"
+    )
+
+    return (
+        "## Document information\n"
+        "---\n"
+        f"project: {project_id}\n"
+        f"group: {group_id}\n"
+        "type: merge_review_conversation\n"
+        f"merge_id: {merge_id}\n\n"
+        "## Merge review conversation - your task\n"
+        "---\n"
+        "A human reviewer is at the merge approval screen, reading a frozen commit "
+        "candidate, and has just sent you the message in the section above. Answer it.\n"
+        "This is NOT a conflict-resolution job. The conflicts were resolved before this "
+        "review opened, there is nothing left to resolve, and a resolution submitted from a "
+        "conversation turn is refused (409 review_conversation_cannot_resolve) precisely "
+        "because it would re-freeze the candidate the reviewer is reading and throw your own "
+        "answer away with it.\n"
+        "Read '## Conversation so far' BEFORE you answer. The new message is almost always a "
+        "follow-up to it - \"what was the problem this time?\" points at the turns above, not "
+        "at the current state of the working tree - and answering a question about an earlier "
+        "failure with a fresh report of `git status` is the exact behaviour this screen was "
+        "rejected for. Never ask the reviewer to repeat something that is already in that "
+        "section.\n"
+        "Use the read/grep/glob/diff/log/show tools when the answer needs evidence: the "
+        "candidate below names both commits and every path the merge would carry, so you can "
+        "read either side and say what actually changed.\n"
+        "Answer in the language the reviewer wrote in. If you do not know, say so plainly and "
+        "say what you would need to find out - that is an answer; a confident guess is not.\n"
+        + write_note
+        + "\n"
+        + write_plan_section
+        + "## Review candidate\n"
+        "---\n"
+        f"review_state: {brief.get('review_state')}\n"
+        f"base_head: {brief.get('base_head')}\n"
+        f"merge_head: {brief.get('merge_head')}\n"
+        f"resolved_by: {brief.get('resolver_provider') or '(unknown)'}\n"
+        + extra
+        + f"changed paths ({len(changes)}):\n"
+        f"{changed_lines}\n\n"
+        "## Conversation so far\n"
+        "---\n"
+        "Oldest first. 'reviewer' is the human at the approval screen; 'you (AI)' is an "
+        "earlier turn of this same conversation, possibly by another provider. A [tag] is "
+        "that turn's outcome. The reviewer's newest message is NOT repeated here - it is the "
+        "one at the top of this prompt.\n"
+        f"{history}\n"
     )
 
 
