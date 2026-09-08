@@ -1,7 +1,6 @@
 -- 109_tokens_source_access.sql
-ALTER TABLE tokens
-    ADD COLUMN source_access TEXT;
+-- flowgate.default.0515: token row에 발행 시 확정된 CH capability를 고정 저장한다.
 
 ALTER TABLE tokens
-    ADD CONSTRAINT tokens_source_access_check
-    CHECK (source_access IN ('read', 'read_write'));
+    ADD COLUMN source_access TEXT
+        CHECK (source_access IN ('read', 'read_write'));

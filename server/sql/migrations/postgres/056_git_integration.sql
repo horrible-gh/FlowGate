@@ -3,8 +3,6 @@
 -- per-group worktree ledger + finalize state machine, merge-conflict sessions,
 -- project-level git mutex, and the grant group_id for worktree source resolution.
 -- Additive only: 5 new tables + 1 new nullable column.
--- Note: group_git_state.merge_id <-> git_merge_session.group_id are mutually
--- referencing, so the merge_id FK is added AFTER both tables exist.
 
 CREATE TABLE IF NOT EXISTS project_git_config (
     project_id              TEXT PRIMARY KEY REFERENCES projects(project_id) ON DELETE CASCADE,
@@ -20,7 +18,6 @@ CREATE TABLE IF NOT EXISTS project_git_config (
     created_at              TEXT    NOT NULL,
     updated_at              TEXT    NOT NULL
 );
-
 CREATE TABLE IF NOT EXISTS group_git_state (
     group_id            TEXT PRIMARY KEY,
     project_id          TEXT    NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
@@ -28,12 +25,11 @@ CREATE TABLE IF NOT EXISTS group_git_state (
     worktree_registered INTEGER NOT NULL DEFAULT 0 CHECK (worktree_registered IN (0,1)),
     status              TEXT    NOT NULL DEFAULT 'none'
         CHECK (status IN ('none','awaiting_choice','merging','conflict','merged','pushed','waiting')),
-    merge_id            INTEGER,
+    merge_id            INTEGER REFERENCES git_merge_session(merge_id) ON DELETE SET NULL,
     merge_commit        TEXT,
     created_at          TEXT    NOT NULL,
     updated_at          TEXT    NOT NULL
 );
-
 CREATE TABLE IF NOT EXISTS git_merge_session (
     merge_id   SERIAL PRIMARY KEY,
     group_id   TEXT NOT NULL REFERENCES group_git_state(group_id) ON DELETE CASCADE,
@@ -41,11 +37,6 @@ CREATE TABLE IF NOT EXISTS git_merge_session (
     created_at TEXT NOT NULL,
     closed_at  TEXT
 );
-
-ALTER TABLE group_git_state
-    ADD CONSTRAINT fk_group_git_state_merge
-    FOREIGN KEY (merge_id) REFERENCES git_merge_session(merge_id) ON DELETE SET NULL;
-
 CREATE TABLE IF NOT EXISTS git_merge_session_file (
     merge_id    INTEGER NOT NULL REFERENCES git_merge_session(merge_id) ON DELETE CASCADE,
     path        TEXT    NOT NULL,
@@ -53,18 +44,14 @@ CREATE TABLE IF NOT EXISTS git_merge_session_file (
     resolved_at TEXT,
     PRIMARY KEY (merge_id, path)
 );
-
 CREATE TABLE IF NOT EXISTS git_project_lock (
     project_id  TEXT PRIMARY KEY REFERENCES projects(project_id) ON DELETE CASCADE,
     holder      TEXT NOT NULL,
     acquired_at TEXT NOT NULL
 );
-
 ALTER TABLE remote_tool_grant ADD COLUMN group_id TEXT;
-
 CREATE INDEX IF NOT EXISTS idx_group_git_state_project
     ON group_git_state(project_id, status);
-
 -- At most one open merge session per group (DB0007 I3).
 CREATE UNIQUE INDEX IF NOT EXISTS uq_git_merge_session_open
     ON git_merge_session(group_id) WHERE status = 'open';

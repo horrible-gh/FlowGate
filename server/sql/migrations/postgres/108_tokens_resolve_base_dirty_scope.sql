@@ -17,6 +17,30 @@
 -- workflow_sequence_edit, 064 resolve_conflict, 075a chat): SQLite cannot alter a CHECK,
 -- so the table is rebuilt with the same columns and the widened constraint.
 
+-- [pg-fk-rebuild] preserve inbound FOREIGN KEYs across the drop+recreate of "tokens"
+DO $$
+DECLARE _stmt text;
+BEGIN
+    CREATE TEMP TABLE _fk_rb_tokens ON COMMIT DROP AS
+            SELECT 'ALTER TABLE ' || quote_ident(n.nspname) || '.' || quote_ident(c.relname)
+                   || ' ADD CONSTRAINT ' || quote_ident(con.conname) || ' ' || pg_get_constraintdef(con.oid) AS stmt
+            FROM pg_constraint con
+            JOIN pg_class c ON c.oid = con.conrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE con.contype = 'f' AND con.confrelid = to_regclass('tokens')
+              AND con.conrelid <> con.confrelid;
+    FOR _stmt IN
+        SELECT 'ALTER TABLE ' || quote_ident(n.nspname) || '.' || quote_ident(c.relname)
+               || ' DROP CONSTRAINT ' || quote_ident(con.conname)
+        FROM pg_constraint con
+        JOIN pg_class c ON c.oid = con.conrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE con.contype = 'f' AND con.confrelid = to_regclass('tokens')
+          AND con.conrelid <> con.confrelid
+    LOOP
+        EXECUTE _stmt;
+    END LOOP;
+END $$;
 ALTER TABLE tokens RENAME TO tokens_before_base_dirty_scope;
 CREATE TABLE tokens (
     token_id TEXT PRIMARY KEY, hash TEXT NOT NULL UNIQUE, pepper_id TEXT NOT NULL,
@@ -40,42 +64,18 @@ SELECT token_id, hash, pepper_id, project, group_id, doc_ref, action_scope, issu
     continuation_target_seq, continuation_review_mode, continuation_locale, merge_id,
     continuation_instruction_mode, provider_id, ai_run_id,
     continuation_auto_approve_item_seqs, revoke_claim FROM tokens_before_base_dirty_scope;
--- [pg-fk-rebuild] preserve inbound FOREIGN KEYs across the drop+recreate of "tokens_before_base_dirty_scope"
-DO $$
-DECLARE _stmt text;
-BEGIN
-    CREATE TEMP TABLE _fk_rb_tokens_before_base_dirty_scope ON COMMIT DROP AS
-            SELECT 'ALTER TABLE ' || quote_ident(n.nspname) || '.' || quote_ident(c.relname)
-                   || ' ADD CONSTRAINT ' || quote_ident(con.conname) || ' ' || pg_get_constraintdef(con.oid) AS stmt
-            FROM pg_constraint con
-            JOIN pg_class c ON c.oid = con.conrelid
-            JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE con.contype = 'f' AND con.confrelid = to_regclass('tokens_before_base_dirty_scope')
-              AND con.conrelid <> con.confrelid;
-    FOR _stmt IN
-        SELECT 'ALTER TABLE ' || quote_ident(n.nspname) || '.' || quote_ident(c.relname)
-               || ' DROP CONSTRAINT ' || quote_ident(con.conname)
-        FROM pg_constraint con
-        JOIN pg_class c ON c.oid = con.conrelid
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE con.contype = 'f' AND con.confrelid = to_regclass('tokens_before_base_dirty_scope')
-          AND con.conrelid <> con.confrelid
-    LOOP
-        EXECUTE _stmt;
-    END LOOP;
-END $$;
 DROP TABLE tokens_before_base_dirty_scope;
 CREATE UNIQUE INDEX ux_tokens_hash ON tokens(hash);
 CREATE INDEX idx_tokens_expires_at ON tokens(expires_at);
 CREATE INDEX idx_tokens_issued_to ON tokens(issued_to);
 CREATE INDEX idx_tokens_project ON tokens(project);
 
--- [pg-fk-rebuild] restore inbound FOREIGN KEYs for "tokens_before_base_dirty_scope"
+-- [pg-fk-rebuild] restore inbound FOREIGN KEYs for "tokens"
 DO $$
 DECLARE _stmt text;
 BEGIN
-    IF to_regclass('pg_temp._fk_rb_tokens_before_base_dirty_scope') IS NOT NULL THEN
-        FOR _stmt IN SELECT stmt FROM _fk_rb_tokens_before_base_dirty_scope LOOP
+    IF to_regclass('pg_temp._fk_rb_tokens') IS NOT NULL THEN
+        FOR _stmt IN SELECT stmt FROM _fk_rb_tokens LOOP
             EXECUTE _stmt;
         END LOOP;
     END IF;

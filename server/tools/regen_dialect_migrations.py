@@ -57,6 +57,18 @@ TARGETS = [("mysql", "mysql"), ("postgres", "postgresql")]
 # (broken) output. The sqlite source is left untouched.
 _CODE_HANDLED_IDS = {"037"}
 
+# PostgreSQL-only hand-authored migrations (found during group 0542's audit of the full regen).
+# Each of these rewrites a CHECK constraint or FK in place (ALTER TABLE ... DROP/ADD CONSTRAINT)
+# instead of the SQLite source's rename+recreate+drop table-rebuild idiom, because PostgreSQL can
+# ALTER a CHECK/FK directly and does not need the rebuild dance the SQLite dialect requires. Every
+# one of these has its own NR/T history fixing a real boot failure (e.g. 107 is flowgate.default.
+# 0539 T0004's fix for a schema-drift bug; 075 documents why 074a's PostgreSQL file never renames
+# anything). A generic regen from the SQLite source would silently replace the deliberate, already
+# -fixed file with the generic (heavier, and in 107's case, previously *broken*) rebuild — exactly
+# what group 0542 caught happening to itself. Regen skips these ids entirely on the postgres
+# target: it neither overwrites nor diffs them, leaving the committed file exactly as authored.
+_PG_HAND_AUTHORED_IDS = {"064", "074a", "075", "092", "107"}
+
 # SQLite-only JSON DML the converter cannot translate (table-valued json_each and
 # the aggregate json_group_array / json_array_length). If any file NOT in
 # _CODE_HANDLED_IDS reaches a non-SQLite target still carrying these, fail loudly
@@ -429,19 +441,39 @@ def fix_pg_groupby_pk(text: str) -> str:
     return _PG_GROUPBY_DOC_ID.sub(lambda m: f"GROUP BY {m.group(1)}.id", text)
 
 
-# The SQLite "drop & recreate a table to alter it" idiom (003 groups, plus the _new+RENAME
-# variant used by 023/024/025/027/033/039/044) does a bare ``DROP TABLE x``. SQLite allows it
-# with foreign_keys OFF; MySQL is fenced by fix_mysql_fk_during_recreate. PostgreSQL refuses to
-# drop a table still referenced by a FOREIGN KEY ("cannot drop table x because other objects
-# depend on it … Use DROP … CASCADE", B0095, migration 003 — surfaces once the ->>/GROUP BY view
-# fixes let the chain reach 003). DROP … CASCADE is wrong here: it would silently drop the
-# dependents' FK constraints and never restore them, leaving the recreated table with weaker
-# integrity than the SQLite/MySQL targets. Instead, fence each non-temp DROP TABLE with a pair of
-# DO blocks that snapshot the inbound FKs from the catalog, drop them so the rebuild can proceed,
-# and re-add them verbatim (original name + full pg_get_constraintdef, incl. ON DELETE / composite
-# keys) after every table has been recreated. The recreated table keeps its original name in both
-# idioms, so the saved "REFERENCES <name>" statements re-resolve. Views that depend on the table
-# are dropped/recreated by the migration itself (e.g. 027), so only FKs are at stake here.
+# The SQLite "drop & recreate a table to alter it" idiom does a bare ``DROP TABLE x``. SQLite
+# allows it with foreign_keys OFF; MySQL is fenced by fix_mysql_fk_during_recreate. PostgreSQL
+# refuses to drop a table still referenced by a FOREIGN KEY ("cannot drop table x because other
+# objects depend on it … Use DROP … CASCADE", B0095, migration 003). DROP … CASCADE is wrong here:
+# it would silently drop the dependents' FK constraints and never restore them, leaving the
+# recreated table with weaker integrity than the SQLite/MySQL targets. Instead, fence each
+# non-temp DROP TABLE with a pair of DO blocks that snapshot the inbound FKs from the catalog,
+# drop them so the rebuild can proceed, and re-add them verbatim (original name + full
+# pg_get_constraintdef, incl. ON DELETE / composite keys) after every table has been recreated.
+# Views that depend on the table are dropped/recreated by the migration itself (e.g. 027), so
+# only FKs are at stake here.
+#
+# The source set uses two different rebuild idioms, and they need the fence at *different*
+# points relative to the DROP:
+#   * _new+RENAME idiom (003 groups, 023/024/025/027/033/039/044): ``DROP TABLE x; CREATE TABLE
+#     x_new (...); ...; ALTER TABLE x_new RENAME TO x;``. The DROP targets the still-original-
+#     named table, so a snapshot taken immediately *before* that DROP sees "REFERENCES x" and
+#     restoring it after the rename re-resolves against the freshly renamed x. This is the
+#     classic case: table key == the DROP's own target, fence goes right before the DROP.
+#   * rename-to-backup idiom (the SQLite source of 036, 042a, 052, 062a, 064, 075a, 086b, 107,
+#     108, ...): ``ALTER TABLE x RENAME TO x_before_...; CREATE TABLE x (...); ...; DROP TABLE
+#     x_before_...;``. Here the DROP targets the *backup* name, and by the time it runs, a
+#     brand-new `x` already exists. A snapshot taken at the DROP site (the bug this fences: group
+#     0542) would read the catalog *after* the rename, so pg_get_constraintdef renders
+#     "REFERENCES x_before_...(...)" — a name that no longer exists once the DROP below it
+#     executes ("relation ... does not exist"). The fence must instead run *before* the RENAME,
+#     keyed on the original name `x`: at that point pg_get_constraintdef still renders
+#     "REFERENCES x(...)", and replaying it after the rebuild binds to the new `x`.
+#     _pg_rebuild_backup_renames() detects this idiom generically (no hardcoded backup-name
+#     strings) by matching any ``ALTER TABLE <x> RENAME TO <backup>`` that precedes a
+#     ``DROP TABLE <backup>`` in the same file. Of that list, 064 and 107's *postgres* files are
+#     hand-authored exceptions (see _PG_HAND_AUTHORED_IDS below) that never reach this idiom at
+#     all on postgres — only their SQLite source uses it.
 #
 # Implementation notes that keep this invisible to the other passes:
 #   * Temp tables are named `_fk_rb_<table>` (leading underscore) so _PG_DROP_TABLE_STMT — which
@@ -451,12 +483,40 @@ def fix_pg_groupby_pk(text: str) -> str:
 #   * ON COMMIT DROP cleans the temp table at the migrator's per-file transaction boundary.
 #   * Self-referential FKs (conrelid = confrelid) are excluded: the recreate body re-declares them
 #     inline, so re-adding the saved copy would duplicate them.
-# A table with no inbound FK (id_counter / answers / the tokens_before_* backups) snapshots zero
-# rows and the fence is a harmless no-op, so the rule "fence every non-temp DROP TABLE" is uniform.
+# A table with no inbound FK (id_counter / answers) snapshots zero rows and the fence is a
+# harmless no-op, so the rule "fence every non-temp DROP TABLE" is uniform.
 _PG_DROP_TABLE_STMT = re.compile(
     r"(?im)^[ \t]*DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([A-Za-z]\w*)\s*;[ \t]*$"
 )
+_PG_RENAME_TO_STMT = re.compile(
+    r"(?im)^[ \t]*ALTER\s+TABLE\s+([A-Za-z]\w*)\s+RENAME\s+TO\s+([A-Za-z]\w*)\s*;[ \t]*$"
+)
 _PG_FK_REBUILD_TAG = "[pg-fk-rebuild]"
+
+
+def _pg_rebuild_backup_renames(text: str) -> dict[str, tuple[str, int]]:
+    """Map a RENAME TO target ("backup" name) -> (original name, position of the RENAME stmt).
+
+    Detects the "ALTER TABLE x RENAME TO x_before_...; ...; DROP TABLE x_before_...;" idiom
+    generically, with no hardcoded backup-name string: any RENAME TO target that is later
+    DROP TABLE'd in the same file qualifies, whatever suffix the backup name carries.
+    """
+    return {m.group(2): (m.group(1), m.start()) for m in _PG_RENAME_TO_STMT.finditer(text)}
+
+
+def _pg_rebuild_fence_key(dropped: str, drop_pos: int,
+                           renames: dict[str, tuple[str, int]]) -> tuple[str, int]:
+    """Return (table, insert_pos) for the FK fence of a ``DROP TABLE <dropped>`` at drop_pos.
+
+    If <dropped> is a backup created by an earlier RENAME in this file (the rename-to-backup
+    idiom), the fence must be keyed on the *original* name and inserted before that RENAME
+    (see the module note above); otherwise it is keyed on <dropped> itself, inserted right
+    before the DROP (the classic _new+RENAME idiom).
+    """
+    rename = renames.get(dropped)
+    if rename is not None and rename[1] < drop_pos:
+        return rename[0], rename[1]
+    return dropped, drop_pos
 
 
 def _pg_fk_snapshot_block(table: str) -> str:
@@ -516,33 +576,42 @@ def fix_pg_table_rebuild(text: str) -> str:
     """Fence every non-temp DROP TABLE so PostgreSQL can drop & recreate FK-referenced tables.
 
     Snapshots and re-adds the inbound foreign keys around the drop (see the module-level note).
+    For the rename-to-backup idiom the snapshot is inserted before the RENAME, keyed on the
+    original table name, not at the DROP site — see _pg_rebuild_fence_key.
     Idempotent: a file already carrying the fence tag is returned unchanged.
     """
     if _PG_FK_REBUILD_TAG in text:
         return text
+    renames = _pg_rebuild_backup_renames(text)
+
     tables: list[str] = []
+    inserts: list[tuple[int, str]] = []
+    for m in _PG_DROP_TABLE_STMT.finditer(text):
+        table, insert_pos = _pg_rebuild_fence_key(m.group(1), m.start(), renames)
+        if table in tables:
+            continue
+        tables.append(table)
+        inserts.append((insert_pos, _pg_fk_snapshot_block(table)))
 
-    def repl(m: "re.Match") -> str:
-        table = m.group(1)
-        if table not in tables:
-            tables.append(table)
-        return _pg_fk_snapshot_block(table) + m.group(0)
-
-    rewritten = _PG_DROP_TABLE_STMT.sub(repl, text)
     if not tables:
         return text
-    if not rewritten.endswith("\n"):
-        rewritten += "\n"
+
+    for pos, block in sorted(inserts, key=lambda item: item[0], reverse=True):
+        text = text[:pos] + block + text[pos:]
+    if not text.endswith("\n"):
+        text += "\n"
     restore = "\n".join(_pg_fk_restore_block(t) for t in tables)
-    return rewritten + "\n" + restore
+    return text + "\n" + restore
 
 
 def pg_unfenced_drop_table(text: str) -> str | None:
     """Return the first non-temp table dropped without an FK fence above it, else None."""
+    renames = _pg_rebuild_backup_renames(text)
     for m in _PG_DROP_TABLE_STMT.finditer(text):
+        table, _ = _pg_rebuild_fence_key(m.group(1), m.start(), renames)
         sentinel = (
             f'{_PG_FK_REBUILD_TAG} preserve inbound FOREIGN KEYs across '
-            f'the drop+recreate of "{m.group(1)}"'
+            f'the drop+recreate of "{table}"'
         )
         if sentinel not in text[: m.start()]:
             return m.group(1)
@@ -781,6 +850,10 @@ def regenerate(verify_only: bool) -> int:
                     staged[fname] = fix_mysql_drop_index(staged[fname], imap)
 
             for fname in fnames:
+                if out_name == "postgres" and _migration_id(fname) in _PG_HAND_AUTHORED_IDS:
+                    print(f"-- hand-authored, skipped {out_name}/{fname}")
+                    continue
+
                 src_text = open(os.path.join(SRC, fname), encoding="utf-8").read()
                 final = staged[fname]
 
@@ -861,7 +934,11 @@ def regenerate(verify_only: bool) -> int:
                         rc = 1
                         print(f"~~ DIFF {out_name}/{fname} (committed != regenerated)")
                 else:
-                    with open(dpath, "w", encoding="utf-8") as f:
+                    # newline="\n": write exact LF bytes on every platform. Without it, a
+                    # text-mode write on Windows translates every "\n" to os.linesep ("\r\n"),
+                    # corrupting the repo's LF-only migration files (git core.autocrlf is off
+                    # here, so nothing normalizes it back on commit).
+                    with open(dpath, "w", encoding="utf-8", newline="\n") as f:
                         f.write(final)
 
             print(f"{'verified' if verify_only else 'wrote'} {out_name}: "

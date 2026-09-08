@@ -18,12 +18,6 @@
 -- `tr_commit_ledger.live_rows()`'s cancel-target set, and it makes the row's subject eligible
 -- for reuse by `latest_reopened_subject()` on the reapproval that follows.
 --
--- IF NOT EXISTS follows 087's postgres-only deviation (supported since 9.6).
---
 -- Additive only. Rollback is `ALTER TABLE tr_commit_ledger DROP COLUMN reopened_terminal_at`.
 
-BEGIN;
-
-ALTER TABLE tr_commit_ledger ADD COLUMN IF NOT EXISTS reopened_terminal_at TEXT;
-
-COMMIT;
+ALTER TABLE tr_commit_ledger ADD COLUMN reopened_terminal_at TEXT;

@@ -7,7 +7,6 @@
 -- back to auto_approved" — both preserve today's behavior for pre-migration rows.
 
 ALTER TABLE tokens ADD COLUMN continuation_auto_approve_item_seqs TEXT;
-
 -- ai_invoke_paused_chains never stored the instruction mode at all — that omission is the root
 -- of the resume bug (T0004 §3.6): resume_chain read nothing back and hard-coded "auto_approved".
 ALTER TABLE ai_invoke_paused_chains ADD COLUMN continuation_instruction_mode TEXT;

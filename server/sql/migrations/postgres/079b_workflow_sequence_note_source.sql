@@ -9,18 +9,18 @@
 -- Additive only: ADD COLUMN x3. No backfill — pre-migration rows read note='' /
 -- source_doc_id=NULL, which is exactly "there is no record that this row came from a plan"
 -- (L0011 §2.1 origin_of_loaded_row reads a NULL source as "manual").
+--
+-- DB0012 §5 불변식 2 (source_revision_no IS NULL OR source_doc_id IS NOT NULL) is a CHECK in
+-- the postgres/mysql dialects. SQLite has no ALTER TABLE ... ADD CONSTRAINT, and the only way
+-- to add one is the full table rebuild 033 had to do — which would drop and recreate a table
+-- that other rows point at, for an invariant no write path can reach: the API layer rejects
+-- that pair before insert (P0013 ② invalid_sequence_item, 422). The rebuild is not worth the
+-- risk here, so this dialect enforces the invariant one layer up.
 
 ALTER TABLE workflow_sequence_items
     ADD COLUMN note TEXT NOT NULL DEFAULT '';
-
 ALTER TABLE workflow_sequence_items
     ADD COLUMN source_doc_id TEXT DEFAULT NULL
         REFERENCES documents(doc_id) ON DELETE SET NULL;
-
 ALTER TABLE workflow_sequence_items
     ADD COLUMN source_revision_no INTEGER DEFAULT NULL;
-
--- DB0012 §5 불변식 2: a revision number without the document it belongs to is meaningless.
-ALTER TABLE workflow_sequence_items
-    ADD CONSTRAINT ck_wfseq_items_source_revision
-        CHECK (source_revision_no IS NULL OR source_doc_id IS NOT NULL);

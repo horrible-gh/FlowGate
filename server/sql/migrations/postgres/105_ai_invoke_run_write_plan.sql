@@ -10,13 +10,9 @@
 -- plan itself, written once by the worker-token submission endpoint before the
 -- run exits. NULL on all three = this hop predates the migration, or was never a
 -- review-message write turn (the overwhelming majority of resolve_conflict runs).
--- Additive only, no default, no CHECK (same convention as every prior
--- ai_invoke_runs column added this way).
+-- Additive only, no default, no CHECK (SQLite ADD COLUMN cannot carry one, same
+-- as every prior ai_invoke_runs column added this way).
 
-BEGIN;
-
-ALTER TABLE ai_invoke_runs ADD COLUMN IF NOT EXISTS write_requested_by_human BOOLEAN;
-ALTER TABLE ai_invoke_runs ADD COLUMN IF NOT EXISTS allow_test_edits BOOLEAN;
-ALTER TABLE ai_invoke_runs ADD COLUMN IF NOT EXISTS write_plan_json TEXT;
-
-COMMIT;
+ALTER TABLE ai_invoke_runs ADD COLUMN write_requested_by_human INTEGER;
+ALTER TABLE ai_invoke_runs ADD COLUMN allow_test_edits INTEGER;
+ALTER TABLE ai_invoke_runs ADD COLUMN write_plan_json TEXT;
