@@ -394,7 +394,7 @@
             @update:model-value="(v: string) => providerStore.selectProvider(v)"
           />
 
-          <button type="button" class="btn btn-secondary" @click="close">{{ t('common.cancel') }}</button>
+          <button v-if="mode !== 'edit'" type="button" class="btn btn-secondary" @click="close">{{ t('common.cancel') }}</button>
           <button
             v-if="mode !== 'edit'"
             type="button"
@@ -429,6 +429,14 @@
           >
             <AppIcon :name="invokingAi ? 'spinner' : 'robot'" :spin="invokingAi" />
             {{ t('main.workflow_edit_modal.invoke_ai') }}
+          </button>
+          <button
+            v-if="mode === 'edit' && !loading && !loadError"
+            type="button"
+            class="btn btn-secondary wdm-cancel-btn"
+            @click="close"
+          >
+            {{ t('common.cancel') }}
           </button>
           <button
             v-if="mode === 'edit' && !loading && !loadError"
@@ -1904,6 +1912,15 @@ watch(
   margin-right: 10px;
 }
 
+.wdm-cancel-btn {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+  background: color-mix(in srgb, var(--danger) 7%, var(--surface));
+}
+
+.wdm-cancel-btn:hover {
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+}
 
 /* ── Edit mode: Loading / error ── */
 .wem-loading,
