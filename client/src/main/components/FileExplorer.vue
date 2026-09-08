@@ -633,8 +633,8 @@ async function openFile(node: FileNode) {
   const projectId = props.projectId
   if (!projectId) return
   let type: 'md' | 'text' | 'too_large' = isMarkdownFile(node.path) ? 'md' : 'text'
-  // Group-branch read (checkout-free, read-only): the viewer loads content from
-  // the blob endpoint (pinned to the tree commit) and handles binary/oversize.
+  // Group views still load through the commit-aware blob viewer. A live worktree
+  // may be edited; worktree-less or currently busy groups remain read-only.
   if (selectedGroup.value) {
     tabsStore.openTab({
       id: `git:${selectedGroup.value}:${node.id}`,
@@ -645,7 +645,7 @@ async function openFile(node: FileNode) {
       projectId,
       gitGroupId: selectedGroup.value,
       gitCommit: groupCommit.value,
-      readonly: true,
+      readonly: !canMutate.value,
     })
     return
   }

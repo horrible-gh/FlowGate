@@ -201,6 +201,17 @@ describe('FileExplorer group-branch mutations (0327 T0004 / B0001)', () => {
     expect(ro.get('.fx-readonly-badge').text()).toContain('read-only')
   })
 
+  it('marks existing files editable only for a group with a live writable worktree', async () => {
+    const rw = await mountExplorer({ group: GROUP, writable: true })
+    expect(rw.findComponent(FileTreeNode).props('readonly')).toBe(false)
+
+    rw.unmount()
+    setActivePinia(createPinia())
+
+    const ro = await mountExplorer({ group: GROUP, writable: false })
+    expect(ro.findComponent(FileTreeNode).props('readonly')).toBe(true)
+  })
+
   it('reopens an existing group-update conflict from finalize state', async () => {
     const wrapper = await mountExplorer({ group: GROUP, writable: true, mergeId: 41 })
 

@@ -31,14 +31,16 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, nextTick } from 'vue'
 
-const { getRequest, postRequest, workflowNextStepCode } = vi.hoisted(() => ({
+const { getRequest, postRequest, apiGet, apiPatch, workflowNextStepCode } = vi.hoisted(() => ({
   getRequest: vi.fn(),
   postRequest: vi.fn(),
+  apiGet: vi.fn(),
+  apiPatch: vi.fn(),
   workflowNextStepCode: { value: null as string | null },
 }))
 
 vi.mock('@shared/api', () => ({
-  default: { head: vi.fn(), get: vi.fn(), post: vi.fn(), patch: vi.fn() },
+  default: { head: vi.fn(), get: apiGet, post: vi.fn(), patch: apiPatch },
   getRequest,
   postRequest,
   patchRequest: vi.fn(),
@@ -147,10 +149,10 @@ const actionBar = (w: Probe) => w.find('review-action-bar-stub').exists()
 const documentLocked = (w: Probe) => w.find('.doc-header-stub').attributes('data-read-only') === 'true'
 const workflowLocked = (w: Probe) => w.find('.doc-workflow-stub').attributes('data-read-only') === 'true'
 
-function mountPanel(tabs = [R_TAB]) {
+function mountPanel(tabs = [R_TAB], stubs: Record<string, unknown> = {}) {
   return mountMainPanel({
     tabs,
-    stubs: { DocHeader: DocHeaderStub, DocWorkflow: DocWorkflowStub },
+    stubs: { DocHeader: DocHeaderStub, DocWorkflow: DocWorkflowStub, ...stubs },
   })
 }
 
@@ -170,6 +172,8 @@ beforeEach(() => {
   fetchDoc.mockReset()
   getRequest.mockReset().mockResolvedValue({ data: { ok: true, runs: [], paused: [], questions: [] } })
   postRequest.mockReset().mockResolvedValue({ data: {} })
+  apiGet.mockReset().mockResolvedValue({ data: 'group before', headers: {} })
+  apiPatch.mockReset().mockResolvedValue({ data: { group_id: GROUP_ID } })
   workflowNextStepCode.value = null
 })
 
@@ -188,7 +192,7 @@ describe('MainPanel — what an AI run does to the document on screen', () => {
     wrapper.unmount()
   })
 
-  it('keeps a group file tab read-only and does not expose src-content editing', async () => {
+  it('keeps a worktree-less group file tab read-only', async () => {
     const fileTab = {
       id: 'file:flowgate:flowgate.default.0394:src/a.ts',
       title: 'a.ts',
@@ -199,8 +203,40 @@ describe('MainPanel — what an AI run does to the document on screen', () => {
       readonly: true,
     }
     const wrapper = await mountPanel([fileTab as any])
-    expect(wrapper.find('.edit-dropdown-wrap').exists()).toBe(false)
-    expect(wrapper.find('.doc-action-edit').exists()).toBe(false)
+    expect(wrapper.find('.text-preview-card .btn-outline').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('loads and saves a writable group file with group_id in src-content', async () => {
+    const fileTab = {
+      id: 'file:flowgate:flowgate.default.0394:src/a.ts',
+      title: 'a.ts',
+      path: 'src/a.ts',
+      type: 'text' as const,
+      projectId: 'flowgate',
+      gitGroupId: GROUP_ID,
+      readonly: false,
+    }
+    const wrapper = await mountPanel([fileTab as any], { teleport: false })
+    await wrapper.get('.text-preview-card .btn-outline').trigger('click')
+    await flushPromises()
+
+    const expectedUrl = '/api/v1/projects/flowgate/files/src-content'
+      + '?path=src%2Fa.ts&group_id=' + encodeURIComponent(GROUP_ID)
+    expect(apiGet).toHaveBeenCalledWith(expectedUrl, { responseType: 'text' })
+
+    const textarea = document.body.querySelector<HTMLTextAreaElement>('.document-editor__textarea')
+    expect(textarea).not.toBeNull()
+    textarea!.value = 'group after'
+    textarea!.dispatchEvent(new Event('input', { bubbles: true }))
+    document.body.querySelector<HTMLButtonElement>('.document-modal--edit .btn-primary')!.click()
+    await flushPromises()
+
+    expect(apiPatch).toHaveBeenCalledWith(expectedUrl, { content: 'group after' }, undefined)
+    expect(getRequest).toHaveBeenCalledWith(
+      '/api/v1/projects/flowgate/git/groups/'
+        + encodeURIComponent(GROUP_ID) + '/changes',
+    )
     wrapper.unmount()
   })
 
