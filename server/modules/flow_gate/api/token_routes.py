@@ -86,6 +86,10 @@ def _finish_chat_handoff(result: dict, mention: Optional[str], user_id: str) -> 
     token_id = result["token_id"]
     if not mention:
         token_service.revoke(token_id, reason="chat_mention_build_failed")
+        _log.warning(
+            "chat_token_revoked_before_handoff token_id=%s user_id=%s",
+            token_id, user_id,
+        )
         raise HTTPException(
             status_code=500,
             detail={
@@ -103,6 +107,10 @@ def _finish_chat_handoff(result: dict, mention: Optional[str], user_id: str) -> 
         try:
             outcome = db_source_access.commit(user_id, token_id, now_iso())
         except Exception:
+            _log.error(
+                "chat_one_shot_commit_failed token_id=%s user_id=%s",
+                token_id, user_id, exc_info=True,
+            )
             # T0009 §9 "예외: token revoke + rollback": the marker's post-failure shape
             # is unknown, so roll it back to edit_once explicitly rather than leaving a
             # CLAIMED row nothing will ever recover (the token itself is being revoked,
@@ -126,6 +134,10 @@ def _finish_chat_handoff(result: dict, mention: Optional[str], user_id: str) -> 
                 },
             ) from None
         if outcome == "ALREADY_CLEARED":
+            _log.warning(
+                "chat_one_shot_claim_superseded token_id=%s user_id=%s",
+                token_id, user_id,
+            )
             # A user PATCH or a stale-recovery sweep cleared the marker first (T0009
             # §3.4, §9) -- handoff never proceeds for this token regardless of cause.
             token_service.revoke(token_id, reason="chat_one_shot_claim_superseded")

@@ -123,6 +123,10 @@ def _abort_handoff(run: dict, reason: str) -> None:
     token, and ``HandoffGate.abort()`` itself is a harmless no-op once the state is
     already ABORT).
     """
+    logger.error(
+        "ai_invoke_worker_gate_lost run_id=%s group_id=%s reason=%s",
+        run.get("run_id"), run.get("group_id"), reason,
+    )
     gate = run.get("handoff_gate")
     if gate is not None:
         gate.abort()
@@ -153,8 +157,8 @@ def _abort_handoff(run: dict, reason: str) -> None:
                 token_service.revoke(token_id, reason="ai_invoke_worker_gate_lost")
             except Exception:
                 logger.warning(
-                    "CH token revoke failed during gate-lost abort for run %s",
-                    run_id, exc_info=True,
+                    "chat_token_revoke_failed run_id=%s token_id=%s reason=worker_gate_lost",
+                    run_id, token_id, exc_info=True,
                 )
 
 
@@ -1551,6 +1555,10 @@ def start_run(
                 _abort_handoff(run, "claim_already_cleared")
             raise _http_error(500, "ai_invoke_worker_gate_lost", _GATE_LOST_MESSAGE)
         if not gate.open_after_seal():
+            logger.error(
+                "one_shot_consumed_without_handoff run_id=%s token_id=%s",
+                run_id, issue["token_id"],
+            )
             # T0009 §10.1 (c): the SEALED watchdog inside the worker thread already won
             # CAS SEALED -> ABORT and already ran abort_handoff itself.
             raise _http_error(500, "ai_invoke_worker_gate_lost", _GATE_LOST_MESSAGE)

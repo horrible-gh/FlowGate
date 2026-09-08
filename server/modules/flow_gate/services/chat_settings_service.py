@@ -347,7 +347,14 @@ def recover_stale_claim(user_id: str) -> str:
             return "NOTHING_TO_DO"  # normal AVAILABLE row
         # B-type corruption (DB0008 §5.2): no token identity survives, so this can
         # never re-arm edit_once -- fail-closed, marker-only cleanup.
-        source_access_store.clear_b_type_marker(user_id, now_iso())
+        try:
+            source_access_store.clear_b_type_marker(user_id, now_iso())
+        except Exception:
+            _log.error(
+                "stale_one_shot_claim_recovery_failed user_id=%s recovery=b_type",
+                user_id, exc_info=True,
+            )
+            raise
         return "B_TYPE_CLEANED"
 
     if not _is_stale(claimed_at):
@@ -360,7 +367,14 @@ def recover_stale_claim(user_id: str) -> str:
 
     token_rec = db_tokens.get_by_id(token_id)
     if token_rec is None:
-        source_access_store.rollback(token_id, now_iso())
+        try:
+            source_access_store.rollback(token_id, now_iso())
+        except Exception:
+            _log.error(
+                "stale_one_shot_claim_recovery_failed token_id=%s user_id=%s recovery=missing",
+                token_id, user_id, exc_info=True,
+            )
+            raise
         return "MISSING_RECOVERED"
     if token_rec.get("consumed_at"):
         # edit_once must never be re-armed for a token that was genuinely used
@@ -368,13 +382,20 @@ def recover_stale_claim(user_id: str) -> str:
         # this should not normally reach (a CLAIMED row surviving past commit()).
         source_access_store.commit(user_id, token_id, now_iso())
         _log.warning(
-            "edit_once claim invariant violated: token %s already CONSUMED while still "
-            "CLAIMED for user %s; marker cleared without re-arming edit_once",
+            "one_shot_marker_on_consumed_token token_id=%s user_id=%s; "
+            "marker cleared without re-arming edit_once",
             token_id, user_id,
         )
         return "CONSUMED_MARKER_CLEANED"
     if token_rec.get("revoked_at"):
-        source_access_store.rollback(token_id, now_iso())
+        try:
+            source_access_store.rollback(token_id, now_iso())
+        except Exception:
+            _log.error(
+                "stale_one_shot_claim_recovery_failed token_id=%s user_id=%s recovery=revoked",
+                token_id, user_id, exc_info=True,
+            )
+            raise
         return "REVOKED_RECOVERED"
 
     # LIVE: ask token_service to revoke it. Its own claim-winner -> rollback wiring
@@ -383,7 +404,14 @@ def recover_stale_claim(user_id: str) -> str:
     # needed here; re-calling rollback() afterwards would just be a harmless no-op.
     from modules.flow_gate.services import token_service
 
-    token_service.revoke(token_id, reason="chat_one_shot_stale")
+    try:
+        token_service.revoke(token_id, reason="chat_one_shot_stale")
+    except Exception:
+        _log.error(
+            "stale_one_shot_claim_recovery_failed token_id=%s user_id=%s recovery=live_revoke",
+            token_id, user_id, exc_info=True,
+        )
+        raise
     refreshed = db_tokens.get_by_id(token_id)
     if refreshed is not None and refreshed.get("consumed_at"):
         # Lost the revoke race to a legitimate consume landing in the same window.
@@ -393,6 +421,11 @@ def recover_stale_claim(user_id: str) -> str:
             token_id, user_id,
         )
         return "CONSUMED_MARKER_CLEANED"
+    if refreshed is not None and not refreshed.get("revoked_at"):
+        _log.error(
+            "stale_one_shot_claim_still_live token_id=%s user_id=%s",
+            token_id, user_id,
+        )
     return "LIVE_REVOKED"
 
 

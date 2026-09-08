@@ -407,7 +407,7 @@ class TestRecoverStaleClaim:
         assert row["source_access_mode"] == "edit_once"
         assert row["one_shot_token_id"] is None
 
-    def test_consumed_token_marker_cleared_without_rearming(self, db_env):
+    def test_consumed_token_marker_cleared_without_rearming(self, db_env, caplog):
         db_source_access.upsert(USER, "edit_once", "T1")
         _insert_token(db_env, "tok-consumed", consumed_at=OLD_TS)
         db_source_access.claim(USER, "tok-consumed", OLD_TS, OLD_TS)
@@ -415,6 +415,7 @@ class TestRecoverStaleClaim:
         row = db_source_access.get(USER)
         assert row["source_access_mode"] == "read_only"
         assert row["one_shot_token_id"] is None
+        assert "one_shot_marker_on_consumed_token" in caplog.text
 
     def test_live_stale_token_gets_revoked_and_rolled_back(self, db_env):
         db_source_access.upsert(USER, "edit_once", "T1")
@@ -425,6 +426,29 @@ class TestRecoverStaleClaim:
         assert row["source_access_mode"] == "edit_once"
         tok = db_env.rows("SELECT revoked_at FROM tokens WHERE token_id='tok-live'")[0]
         assert tok["revoked_at"] is not None
+
+    def test_live_recovery_failure_is_logged_and_raised(self, db_env, monkeypatch, caplog):
+        db_source_access.upsert(USER, "edit_once", "T1")
+        _insert_token(db_env, "tok-live-fail")
+        db_source_access.claim(USER, "tok-live-fail", OLD_TS, OLD_TS)
+
+        def _boom(*_args, **_kwargs):
+            raise RuntimeError("revoke failed")
+
+        monkeypatch.setattr(token_service, "revoke", _boom)
+        with pytest.raises(RuntimeError, match="revoke failed"):
+            css.recover_stale_claim(USER)
+        assert "stale_one_shot_claim_recovery_failed" in caplog.text
+        assert "tok-live-fail" in caplog.text
+
+    def test_live_token_left_live_after_revoke_is_logged(self, db_env, monkeypatch, caplog):
+        db_source_access.upsert(USER, "edit_once", "T1")
+        _insert_token(db_env, "tok-still-live")
+        db_source_access.claim(USER, "tok-still-live", OLD_TS, OLD_TS)
+        monkeypatch.setattr(token_service, "revoke", lambda *_args, **_kwargs: None)
+        assert css.recover_stale_claim(USER) == "LIVE_REVOKED"
+        assert "stale_one_shot_claim_still_live" in caplog.text
+        assert "tok-still-live" in caplog.text
 
     def test_b_type_marker_is_cleaned_via_recover(self, db_env):
         db_source_access.upsert(USER, "read_only", "T1")
@@ -647,7 +671,7 @@ class TestAwaitHandoffGate:
 # ── 10. token_routes._finish_chat_handoff ───────────────────────────────────────
 
 class TestFinishChatHandoff:
-    def test_empty_mention_revokes_and_raises_gate_lost_code(self, monkeypatch):
+    def test_empty_mention_revokes_and_raises_gate_lost_code(self, monkeypatch, caplog):
         revoked = []
         monkeypatch.setattr(
             token_routes.token_service, "revoke",
@@ -658,13 +682,14 @@ class TestFinishChatHandoff:
         assert exc.value.status_code == 500
         assert exc.value.detail["code"] == "chat_token_revoked_before_handoff"
         assert revoked == [("tok-x", "chat_mention_build_failed")]
+        assert "chat_token_revoked_before_handoff" in caplog.text
 
     def test_committed_claim_returns_the_mention(self, monkeypatch):
         monkeypatch.setattr(db_source_access, "commit", lambda user_id, token_id, updated_at: "COMMITTED")
         result = {"token_id": "tok-y", "one_shot_claimed": True}
         assert token_routes._finish_chat_handoff(result, "## mention", USER) == "## mention"
 
-    def test_already_cleared_revokes_and_returns_409(self, monkeypatch):
+    def test_already_cleared_revokes_and_returns_409(self, monkeypatch, caplog):
         monkeypatch.setattr(db_source_access, "commit", lambda user_id, token_id, updated_at: "ALREADY_CLEARED")
         revoked = []
         monkeypatch.setattr(
@@ -677,8 +702,9 @@ class TestFinishChatHandoff:
         assert exc.value.status_code == 409
         assert exc.value.detail["code"] == "chat_one_shot_claim_superseded"
         assert revoked == [("tok-z", "chat_one_shot_claim_superseded")]
+        assert "chat_one_shot_claim_superseded" in caplog.text
 
-    def test_commit_exception_revokes_rolls_back_and_returns_500(self, monkeypatch):
+    def test_commit_exception_revokes_rolls_back_and_returns_500(self, monkeypatch, caplog):
         def _boom(user_id, token_id, updated_at):
             raise RuntimeError("db down")
 
@@ -700,6 +726,7 @@ class TestFinishChatHandoff:
         assert exc.value.detail["code"] == "chat_one_shot_commit_failed"
         assert revoked == [("tok-w", "chat_one_shot_commit_failed")]
         assert rolled_back == ["tok-w"]
+        assert "chat_one_shot_commit_failed" in caplog.text
 
     def test_read_only_result_with_a_mention_passes_through_untouched(self, monkeypatch):
         called = []
