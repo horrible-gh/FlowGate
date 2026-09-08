@@ -125,10 +125,25 @@ export function buildDiffRows(oldLines: string[], newLines: string[]): DiffRowsR
     while (i < side.ours.length || j < side.theirs.length) {
       const left = i < side.ours.length ? side.ours[i] : null
       const right = j < side.theirs.length ? side.theirs[j] : null
-      // The two side arrays are produced in lockstep per LCS run (paired
-      // changed lines, then ours-only removals, then theirs-only additions,
-      // then the common pair), so matching statuses re-pairs them exactly.
-      if (left && right && left.status === right.status) {
+      // `common`/`changed` entries are always pushed to both side arrays in
+      // the same call (buildAnchoredRunDiff's anchor push, or appendDiffRun's
+      // paired loop), so the Nth common/changed entry in `ours` always lines
+      // up with the Nth one in `theirs` regardless of how many anchor
+      // segments produced them. `removed`/`added` entries exist on one side
+      // only and never need a counterpart, so they must be drained first —
+      // pairing purely by scanning index (as opposed to draining one-sided
+      // entries first) misfires once an anchor split lets an added-only run
+      // on one side sit ahead of a common/changed entry the other side has
+      // already reached (flowgate.default.0540 T0007).
+      if (left && left.status === 'removed') {
+        rows.push({ status: 'removed', left, right: null, leftNumber: oldNumber, rightNumber: null })
+        i += 1
+        oldNumber += 1
+      } else if (right && right.status === 'added') {
+        rows.push({ status: 'added', left: null, right, leftNumber: null, rightNumber: newNumber })
+        j += 1
+        newNumber += 1
+      } else if (left && right && left.status === right.status) {
         rows.push({
           status: left.status,
           left,
@@ -140,7 +155,7 @@ export function buildDiffRows(oldLines: string[], newLines: string[]): DiffRowsR
         j += 1
         oldNumber += 1
         newNumber += 1
-      } else if (left && left.status !== 'added' && (!right || right.status === 'added' || right.status === 'common')) {
+      } else if (left) {
         rows.push({ status: 'removed', left, right: null, leftNumber: oldNumber, rightNumber: null })
         i += 1
         oldNumber += 1

@@ -104,6 +104,47 @@ describe('buildDiffRows', () => {
   })
 })
 
+describe('buildDiffRows shares the anchor-stabilized line engine (R0001 / T0007)', () => {
+  // flowgate.default.0540 T0007 — buildDiffRows delegates its mid-section to
+  // buildChunkSideDiff (useConflictChunks), the same engine the conflict
+  // resolver uses. This reproduces the R0001 shape (unique lines flanked by
+  // repeated blank runs of different lengths on each side) through the
+  // FileDiffViewer-facing entry point, not just the conflict-chunk one, so a
+  // future change to the shared engine cannot silently regress this path
+  // while leaving useConflictChunks.spec.ts green.
+  it('keeps a unique line common even when repeated blank runs of different lengths surround it', () => {
+    const oldLines = [
+      'unique A', '', '', '',
+      'unique B',
+      '',
+      'old body',
+      '',
+      'unique C',
+    ]
+    const newLines = [
+      '', '', '',
+      'unique A',
+      'unique B',
+      '',
+      'new body',
+      '',
+      'unique C',
+    ]
+    const { rows, approximate } = buildDiffRows(oldLines, newLines)
+    expect(approximate).toBe(false)
+
+    const byLine = (line: string) => rows.find((row) => row.left?.line === line || row.right?.line === line)
+    expect(byLine('unique A')?.status).toBe('common')
+    expect(byLine('unique B')?.status).toBe('common')
+    expect(byLine('unique C')?.status).toBe('common')
+
+    const changed = rows.filter((row) => row.status === 'changed')
+    expect(changed).toHaveLength(1)
+    expect(changed[0].left?.line).toBe('old body')
+    expect(changed[0].right?.line).toBe('new body')
+  })
+})
+
 describe('toUnifiedRows', () => {
   it('expands a changed row into the old then new patch lines', () => {
     const { rows } = buildDiffRows(['keep', 'two'], ['keep', 'TWO'])
