@@ -72,6 +72,76 @@ _WIRE_SCOPES = ("new", "edit", "chat", "resolve_conflict")
 _WIRE_TOKEN_SCOPE = {"chat": "chat"}
 
 
+def _finish_chat_handoff(result: dict, mention: Optional[str], user_id: str) -> str:
+    """0515 T0009 §9 -- /token/issue's post-mint handoff gate for a CH token.
+
+    Every CH token (read_only / edit / edit_once) is revoked when the mention that
+    would hand it to a worker never materializes -- ``one_shot_claimed`` is NOT
+    consulted to decide whether cleanup runs (T0009 §9 "one_shot_claimed 여부로
+    cleanup 여부를 가르지 않는다"). A one-shot (edit_once) claim that DID win the
+    claim CAS additionally has to commit here before the token may leave this
+    function: commit() is what turns CLAIMED into CONSUMED and makes the claim
+    un-revocable by a later stale-recovery sweep (T0009 §4.3, §5).
+    """
+    token_id = result["token_id"]
+    if not mention:
+        token_service.revoke(token_id, reason="chat_mention_build_failed")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "chat_token_revoked_before_handoff",
+                "message": (
+                    "Conversation mention could not be built; the minted token was revoked."
+                ),
+            },
+        )
+
+    if result.get("one_shot_claimed"):
+        from modules.flow_gate.db import user_chat_source_access as db_source_access
+        from modules.flow_gate.db.connection import now_iso
+
+        try:
+            outcome = db_source_access.commit(user_id, token_id, now_iso())
+        except Exception:
+            # T0009 §9 "예외: token revoke + rollback": the marker's post-failure shape
+            # is unknown, so roll it back to edit_once explicitly rather than leaving a
+            # CLAIMED row nothing will ever recover (the token itself is being revoked,
+            # so it can never come back to finish this commit itself).
+            token_service.revoke(token_id, reason="chat_one_shot_commit_failed")
+            try:
+                db_source_access.rollback(token_id, now_iso())
+            except Exception:
+                _log.warning(
+                    "edit_once rollback failed after commit exception for token %s",
+                    token_id, exc_info=True,
+                )
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "chat_one_shot_commit_failed",
+                    "message": (
+                        "Committing the one-shot claim failed; the token was revoked "
+                        "and the claim rolled back."
+                    ),
+                },
+            ) from None
+        if outcome == "ALREADY_CLEARED":
+            # A user PATCH or a stale-recovery sweep cleared the marker first (T0009
+            # §3.4, §9) -- handoff never proceeds for this token regardless of cause.
+            token_service.revoke(token_id, reason="chat_one_shot_claim_superseded")
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "chat_one_shot_claim_superseded",
+                    "message": (
+                        "The one-shot claim was cleared before handoff (a newer save "
+                        "or recovery landed first)."
+                    ),
+                },
+            )
+    return mention
+
+
 class TokenIssueRequest(BaseModel):
     project: str
     module: Optional[str] = None
@@ -369,7 +439,14 @@ def _issue_token(
             # 0362 T0012: the range is this user's own setting and the server reads it
             # from their authentication. The request body still carries nothing about it.
             user_id=user_id,
+            # 0515 T0009 §8: the capability token_service.issue() just fixed on this
+            # token, so the mention's CRUD section matches the real grant.
+            source_access=result.get("source_access"),
         )
+        # 0515 T0009 §9: mention-build failure/empty always revokes the just-minted CH
+        # token; a one-shot claim that won additionally has to commit before the token
+        # (and its mention) may leave this function.
+        mention = _finish_chat_handoff(result, mention, user_id)
     else:
         mention = _build_mention_for_token(
             doc_ref=body.doc_ref,

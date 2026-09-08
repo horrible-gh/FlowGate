@@ -123,8 +123,8 @@ def create(data: dict[str, Any]) -> dict:
         "continuation_target_seq, continuation_review_mode, continuation_locale, "
         "merge_id, continuation_instruction_mode, provider_id, ai_run_id, "
         "continuation_auto_approve_item_seqs, failure_origin_target_run_id, "
-        "failure_origin_before_marker) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "failure_origin_before_marker, source_access) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             data["token_id"], data["hash"], data["pepper_id"],
             data["project"], data.get("group_id"), data.get("doc_ref"),
@@ -147,6 +147,9 @@ def create(data: dict[str, Any]) -> dict:
             _dump_auto_approve_item_seqs(data.get("continuation_auto_approve_item_seqs")),
             data.get("failure_origin_target_run_id"),
             data.get("failure_origin_before_marker"),
+            # 0515 T0009 (D0006 §2.3, DB0008 §2.2): capability fixed at issue time for
+            # a chat (CH) token -- "read"/"read_write"/NULL (legacy or non-CH).
+            data.get("source_access"),
         ],
     )
     _invalidate_token_cache()
@@ -185,6 +188,25 @@ def consume_claim(token_id: str) -> bool:
     )
     _invalidate_token_cache()
     return affected > 0
+
+
+def set_source_access(token_id: str, source_access: str) -> None:
+    """Fix up ``tokens.source_access`` after a deferred edit_once claim resolves it.
+
+    0515 T0009 §6 / DB0008 §2.1: the claim CAS's ``one_shot_token_id`` has an FK to
+    ``tokens(token_id)``, so the token row has to exist before the claim can reference
+    it -- token_service.issue() therefore inserts the row with a conservative "read"
+    placeholder first and calls this only when the claim actually won, still inside the
+    same transaction the INSERT belongs to. No reader outside that transaction can ever
+    observe the placeholder, so "fixed at issue time" (D0006 §2.3) holds from any other
+    caller's point of view even though this is technically a second write to the column.
+    Never called once issuance has returned.
+    """
+    get_store()._execute(
+        "UPDATE tokens SET source_access = ? WHERE token_id = ?",
+        [source_access, token_id],
+    )
+    _invalidate_token_cache()
 
 
 def increment_dry_run(token_id: str) -> None:

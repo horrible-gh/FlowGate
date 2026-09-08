@@ -116,7 +116,8 @@ def _locale(locale: Optional[str]) -> str:
 
 
 def _chat_lookup_sections(
-    *, base: str, raw_token: str, project: str, group_name: str
+    *, base: str, raw_token: str, project: str, group_name: str,
+    source_access: Optional[str] = None,
 ) -> list[str]:
     """Read-only source + document search block for the chat mention (0334 R0001).
 
@@ -155,8 +156,13 @@ def _chat_lookup_sections(
         # for "chat" at the same early branch as "review"/"workflow_decide", so the
         # section renders the four read-only tools, still matching what the token can
         # actually call.
+        # 0515 T0009 §8: the just-issued token's real capability, when known, wins over
+        # the generic chat default (kind_for_step("chat", ...) always answers "read",
+        # blind to this user's edit/edit_once setting). None/damaged falls through to
+        # that same default via _remote_source_crud_section's own kind=None branch.
         section = mention_service._remote_source_crud_section(
-            base, raw_token, "CH", "en", action_scope="chat"
+            base, raw_token, "CH", "en", action_scope="chat",
+            kind=source_access if source_access in ("read", "read_write") else None,
         )
         if section:
             sections.append(section)
@@ -264,6 +270,11 @@ def build_conversation_mention(
     provider: Optional[str] = None,
     provider_id: Optional[str] = None,
     user_id: Optional[str] = None,
+    # 0515 T0009 §8: the just-minted token's own `source_access` ("read"/"read_write"/
+    # None) -- both call sites (token_routes, ai_invoke_routes) already hold it on the
+    # token they just issued/inspected. Threaded to _chat_lookup_sections so the CRUD
+    # section this mention advertises matches the real grant, not a generic chat guess.
+    source_access: Optional[str] = None,
 ) -> str:
     """Build the single-turn chat mention used by copy and in-app invoke paths.
 
@@ -374,7 +385,8 @@ def build_conversation_mention(
             "know your own model name, omit the field.",
         ]
     for section in _chat_lookup_sections(
-        base=api_base, raw_token=raw_token, project=project, group_name=group_name
+        base=api_base, raw_token=raw_token, project=project, group_name=group_name,
+        source_access=source_access,
     ):
         lines += ["", section]
     return "\n".join(lines)

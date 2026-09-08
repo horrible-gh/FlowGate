@@ -27,6 +27,7 @@ from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
 from modules.flow_gate.db import tokens as db_tokens
+from modules.flow_gate.db import user_chat_source_access as db_source_access
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import now_iso
 from modules.flow_gate.services import git_service
@@ -57,6 +58,7 @@ from .runtime import (
     STEP_TIMEOUT_MAX_SEC,
     STEP_TIMEOUT_MIN_SEC,
     WORK_HOP_KIND,
+    HandoffGate,
     _absolute_cap_sec,
     _http_error,
     _note_issued_prompt,
@@ -98,6 +100,62 @@ _RUN_ID_COLLISION_COPY = {
     "en": "Run-id issuance collided. Please try again.",
     "ja": "実行番号の発行が競合しました。もう一度お試しください。",
 }
+
+# 0515 T0009 §10.1: the invoke path unifies every handoff-gate loss (claim-less open()
+# failure, seal() failure, post-commit open() failure, and a commit that raises or comes
+# back ALREADY_CLEARED) behind this one code -- unlike the copy path (§9), which has three
+# distinct codes for its own three outcomes.
+_GATE_LOST_MESSAGE = (
+    "The AI run's handoff gate could not be opened before its worker started; "
+    "the run was aborted and cleaned up."
+)
+
+
+def _abort_handoff(run: dict, reason: str) -> None:
+    """T0009 §10.2 cleanup: gate abort, ``_runs`` removal, lease release, CH token revoke.
+
+    Called ONLY by whichever side's ``HandoffGate.abort()`` call actually won the CAS
+    (T0009 §10.1) -- never speculatively by the loser of a race, so this does not need
+    to defend against being invoked twice by the SAME lost handoff. It is still written
+    defensively idempotent (§10.2 "watchdog/admission이 둘 다 호출할 수 있으므로
+    멱등이어야 한다"): every step here already tolerates being re-run (``dict.pop`` with
+    a default, ``token_service.revoke`` is its own idempotent no-op on an already-revoked
+    token, and ``HandoffGate.abort()`` itself is a harmless no-op once the state is
+    already ABORT).
+    """
+    gate = run.get("handoff_gate")
+    if gate is not None:
+        gate.abort()
+    run_id = run.get("run_id")
+    with _runs_lock:
+        _svc()._runs.pop(run_id, None)
+    group_id = run.get("group_id")
+    if group_id and run_id:
+        try:
+            db_group_ai_leases.release(
+                group_id, run_id, reason=f"ai_invoke_worker_gate_lost_{reason}"
+            )
+        except Exception:
+            logger.warning(
+                "lease release failed during gate-lost abort for run %s", run_id, exc_info=True
+            )
+    # T0009 §10.2: "CH token revoke는 issue.source_access is not None 기준이다. edit
+    # token도 포함한다." -- re-read the token row rather than trust a stashed value, so
+    # this stays correct even if the run dict never carried source_access explicitly.
+    token_id = run.get("token_id")
+    if token_id:
+        try:
+            token_rec = db_tokens.get_by_id(token_id)
+        except Exception:
+            token_rec = None
+        if token_rec is not None and token_rec.get("source_access") is not None:
+            try:
+                token_service.revoke(token_id, reason="ai_invoke_worker_gate_lost")
+            except Exception:
+                logger.warning(
+                    "CH token revoke failed during gate-lost abort for run %s",
+                    run_id, exc_info=True,
+                )
 
 
 def _is_group_worktree(project_id: str, group_id: str, root: Optional[Path]) -> bool:
@@ -1433,6 +1491,11 @@ def start_run(
         "inbox_stop_code": None,
         "failure_signal_sent": False,
     }
+    # 0515 T0009 §10: every run gets a handoff gate. The worker thread must not run its
+    # real body (in particular the ai_invoke_started broadcast, T0009 §11) until this
+    # opens -- see worker._worker()'s own gate wait at its very top.
+    gate = HandoffGate()
+    run["handoff_gate"] = gate
     _note_issued_raw_token(run, run.get("raw_token"))
     _note_issued_prompt(run, mention)
     with _runs_lock:
@@ -1459,6 +1522,43 @@ def start_run(
         name=f"ai-invoke-{run_id}",
     )
     thread.start()
+
+    # 0515 T0009 §10: claim 유무는 issue.one_shot_claimed 하나로만 분기한다 -- 워커를
+    # 두 벌 만들지 않는다. Every non-chat and every chat read_only/edit run has
+    # one_shot_claimed falsy and takes the direct-open branch below; only a chat
+    # edit_once run that actually won the claim CAS carries seal/commit/open.
+    if issue.get("one_shot_claimed"):
+        if not gate.seal():
+            # T0009 §10.1 (b): the worker's own PENDING wait already won CAS
+            # PENDING -> ABORT and already ran abort_handoff itself -- do not repeat it
+            # (§10.1 "CAS 승자만 admission 대신 cleanup한다").
+            raise _http_error(500, "ai_invoke_worker_gate_lost", _GATE_LOST_MESSAGE)
+        try:
+            commit_outcome = db_source_access.commit(issued_to, issue["token_id"], now_iso())
+        except Exception:
+            # Admission itself hits the failure here, so admission itself claims ABORT
+            # and runs cleanup (unlike the two races above, where the worker got there
+            # first). token_service.revoke (inside _abort_handoff) performs the
+            # edit_once rollback as its own §4.4 side effect -- no separate rollback call.
+            if gate.abort():
+                _abort_handoff(run, "commit_exception")
+            raise _http_error(500, "ai_invoke_worker_gate_lost", _GATE_LOST_MESSAGE) from None
+        if commit_outcome == "ALREADY_CLEARED":
+            # A user PATCH or the stale-recovery sweep cleared the marker first. The
+            # copy path (§9) has its own 409 chat_one_shot_claim_superseded for this;
+            # the invoke path unifies every gate-loss cause behind one code (§10.1).
+            if gate.abort():
+                _abort_handoff(run, "claim_already_cleared")
+            raise _http_error(500, "ai_invoke_worker_gate_lost", _GATE_LOST_MESSAGE)
+        if not gate.open_after_seal():
+            # T0009 §10.1 (c): the SEALED watchdog inside the worker thread already won
+            # CAS SEALED -> ABORT and already ran abort_handoff itself.
+            raise _http_error(500, "ai_invoke_worker_gate_lost", _GATE_LOST_MESSAGE)
+    else:
+        if not gate.open_direct():
+            # T0009 §10.1 (a): the worker's own PENDING wait already won CAS
+            # PENDING -> ABORT and already ran abort_handoff itself.
+            raise _http_error(500, "ai_invoke_worker_gate_lost", _GATE_LOST_MESSAGE)
 
     return {
         "ok": True,

@@ -51,6 +51,12 @@ from .runtime import (
     NO_OUTPUT_MAX_ATTEMPTS,
     RETRY_MIN_REMAINING_SEC,
     REWORK_HOP_KIND,
+    # 0515 T0009 §10: handoff-gate state names, aliased so a generic bare `OPEN`/`ABORT`
+    # never shadows anything else in this module's namespace.
+    ABORT as _GATE_ABORT,
+    OPEN as _GATE_OPEN,
+    PENDING as _GATE_PENDING,
+    SEALED as _GATE_SEALED,
     _CHAT_TOOL_DESC,
     _CHAT_TOOL_NAME,
     _CHAT_TOOL_SCHEMA,
@@ -78,6 +84,51 @@ from .runtime import (
 
 # ── Worker: provider fallback loop (L0006 §2.2) ──────────────────────────────
 
+def _await_handoff_gate(run: dict) -> bool:
+    """Block until this run's handoff gate is OPEN (0515 T0009 §10).
+
+    Returns False for every terminal outcome that is NOT "OPEN" -- ABORT (whether this
+    call or admission's own commit-failure path is the one that actually won the CAS),
+    or a timeout this call itself turns into an ABORT it wins. In every False case the
+    caller (``_worker``) must return immediately without running any real work: nothing
+    below this gate may touch ``run``'s token/prompt (T0009 §10 "worker는 OPEN 전
+    token/prompt 사용 금지").
+
+    A run with no gate at all (defensive: only reachable if some future caller starts a
+    worker thread outside admission.start_run) is treated as already open, so this can
+    never itself become the reason an otherwise-normal run fails to execute.
+    """
+    gate = run.get("handoff_gate")
+    if gate is None:
+        return True
+
+    state = gate.wait_pending()
+    if state == _GATE_PENDING:
+        # T0009 §10.1 (a)/(b): admission never called seal()/open_direct() in time --
+        # possibly because it died before reaching that line. Claim ABORT ourselves; if
+        # we win, we are the one that runs cleanup (§10.1 "CAS 승자만 cleanup한다").
+        if gate.abort():
+            admission._abort_handoff(run, "pending_timeout")
+        return False
+    if state == _GATE_OPEN:
+        return True
+    if state == _GATE_ABORT:
+        # Admission's own seal()/open_direct() attempt already lost that race and
+        # already ran abort_handoff itself -- nothing left for this call to do.
+        return False
+
+    # SEALED: admission is mid-commit (a chat edit_once claim). Wait for it to finish.
+    state = gate.wait_sealed()
+    if state == _GATE_OPEN:
+        return True
+    if state == _GATE_SEALED:
+        # T0009 §10.1 (c), the seal watchdog: 120s elapsed with no open_after_seal().
+        if gate.abort():
+            admission._abort_handoff(run, "sealed_timeout")
+        return False
+    return False  # ABORT: admission's own commit-failure path already cleaned up.
+
+
 def _worker(run: dict, chain: list[dict], prompt: str) -> None:
     """One hop — one or more attempts (0359 L0007 §2.1).
 
@@ -87,7 +138,15 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
     ("a document was registered") and no other edge at all, so a single wasted lap ended the
     whole chain — silently, with 11 untried providers still on the bench. Judgment and finalize
     are separated here, and the no-output retry lives in the seam between them.
+
+    0515 T0009 §10/§11: the handoff gate is awaited BEFORE the try block below -- in
+    particular before the `ai_invoke_started` broadcast, which must never fire ahead of
+    OPEN (§11 "ai_invoke_started broadcast는 gate OPEN 전 발생하면 실패다"). A gate that
+    never opens ends this function here, with no broadcast, no provider call, and no use
+    of `run`'s token/prompt at all.
     """
+    if not _await_handoff_gate(run):
+        return
     try:
         current_chain = chain
         current_prompt = prompt

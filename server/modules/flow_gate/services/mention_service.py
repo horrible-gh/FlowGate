@@ -140,6 +140,7 @@ def _remote_source_crud_section(
     locale: str = "ko",
     *,
     action_scope: str = "new",
+    kind: Optional[str] = None,
 ) -> str:
     """``_remote_source_crud_lines`` as a mention section.
 
@@ -152,9 +153,16 @@ def _remote_source_crud_section(
     ``action_scope``. Both spellings must keep working — 0349 introduced ``action_scope``
     and 0355 introduced the locale argument on separate branches, and only the merge sees
     both call shapes at once.
+
+    ``kind`` (0515 T0009 §8): passed straight through to ``_remote_source_crud_lines``.
+    A chat (CH) caller that already knows its token's real ``read``/``read_write``
+    capability (from the just-issued token's ``source_access``) passes it here so the
+    mention advertises exactly that, not the generic chat default ``kind_for_step``
+    would otherwise compute (always ``read``, blind to the per-user setting). ``None``
+    keeps every other caller's existing behaviour (kind judged from step type).
     """
     lines = _remote_source_crud_lines(
-        base, raw_token, step_type, action_scope=action_scope, locale=locale
+        base, raw_token, step_type, action_scope=action_scope, locale=locale, kind=kind
     )
     if not lines:
         return ""

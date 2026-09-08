@@ -542,13 +542,16 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         # Each extra scope reproduces the text its [copy mention] counterpart put on the
         # clipboard (group 0223 parallel-invoke; builders in invoke_mention_service).
         if body.action_scope == "chat":
+            # 0515 T0009 §8: one inspect, reused for both token_id and the real
+            # source_access this token was fixed with at issue time.
+            _chat_token_rec = token_service.inspect_for_replay(raw_token)
             return invoke_mention_service.build_conversation_mention(
                 doc_id=body.doc_ref,
                 project=body.project,
                 module=body.module,
                 group_name=group_id,
                 raw_token=raw_token,
-                token_id=token_service.inspect_for_replay(raw_token)["token_id"],
+                token_id=_chat_token_rec["token_id"],
                 api_base_url=_operator_facing_api_base(request),
                 # 0293: the AI turn header carries the provider. Unlike the copy path,
                 # here the server knows who is being invoked — but only when the run
@@ -560,6 +563,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 # 0362 T0012: whoever pressed [AI invoke]. Their saved range decides how
                 # far back the worker is told to start reading.
                 user_id=user_id,
+                source_access=_chat_token_rec.get("source_access"),
             )
         if body.action_scope == "rework":
             base = _standard_mention(raw_token, scratch_dir)
