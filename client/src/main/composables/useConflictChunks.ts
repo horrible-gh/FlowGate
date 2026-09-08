@@ -275,24 +275,105 @@ function appendDiffRun(
   }
 }
 
+function longestIncreasingByTheirs(
+  candidates: Array<{ oursIndex: number; theirsIndex: number }>,
+): Array<{ oursIndex: number; theirsIndex: number }> {
+  const n = candidates.length
+  if (n === 0) return []
+  const lengths = new Array<number>(n).fill(1)
+  const prev = new Array<number>(n).fill(-1)
+  let bestEnd = 0
+  for (let i = 1; i < n; i += 1) {
+    for (let j = 0; j < i; j += 1) {
+      if (candidates[j].theirsIndex < candidates[i].theirsIndex && lengths[j] + 1 > lengths[i]) {
+        lengths[i] = lengths[j] + 1
+        prev[i] = j
+      }
+    }
+    if (lengths[i] > lengths[bestEnd]) bestEnd = i
+  }
+  const chain: Array<{ oursIndex: number; theirsIndex: number }> = []
+  for (let cur = bestEnd; cur !== -1; cur = prev[cur]) chain.unshift(candidates[cur])
+  return chain
+}
+
+// Stable anchors are non-empty lines that appear exactly once on each side.
+// Ordering both by ours-index and picking the longest theirs-increasing chain
+// guarantees the anchor sequence advances on both sides, so a run of repeated
+// blank/heading lines can no longer be chosen as a false anchor that shoves
+// the real unmatched content into one long "changed" run.
+function computePrimaryAnchors(
+  ours: Array<{ line: string; index: number }>,
+  theirs: Array<{ line: string; index: number }>,
+): Array<[number, number]> {
+  const oursCount = new Map<string, number>()
+  const oursIndexOf = new Map<string, number>()
+  for (const entry of ours) {
+    const key = normalizedLine(entry.line)
+    if (!key.trim()) continue
+    oursCount.set(key, (oursCount.get(key) || 0) + 1)
+    oursIndexOf.set(key, entry.index)
+  }
+  const theirsCount = new Map<string, number>()
+  const theirsIndexOf = new Map<string, number>()
+  for (const entry of theirs) {
+    const key = normalizedLine(entry.line)
+    if (!key.trim()) continue
+    theirsCount.set(key, (theirsCount.get(key) || 0) + 1)
+    theirsIndexOf.set(key, entry.index)
+  }
+
+  const candidates: Array<{ oursIndex: number; theirsIndex: number }> = []
+  for (const [key, count] of oursCount) {
+    if (count !== 1 || theirsCount.get(key) !== 1) continue
+    candidates.push({ oursIndex: oursIndexOf.get(key)!, theirsIndex: theirsIndexOf.get(key)! })
+  }
+  candidates.sort((a, b) => a.oursIndex - b.oursIndex)
+
+  return longestIncreasingByTheirs(candidates).map((c) => [c.oursIndex, c.theirsIndex])
+}
+
+// Reuses the existing full LCS + appendDiffRun pairing, scoped to the slice
+// between two stable anchors (or before the first / after the last one).
+function buildAnchoredRunDiff(
+  oursOut: DiffLine[],
+  theirsOut: DiffLine[],
+  oursSlice: Array<{ line: string; index: number }>,
+  theirsSlice: Array<{ line: string; index: number }>,
+) {
+  const pairs = lcsPairs(oursSlice, theirsSlice, (entry) => normalizedLine(entry.line))
+  let oursPos = 0
+  let theirsPos = 0
+  for (const [nextOurs, nextTheirs] of pairs) {
+    appendDiffRun(oursOut, theirsOut, oursSlice.slice(oursPos, nextOurs), theirsSlice.slice(theirsPos, nextTheirs))
+    const oursLine = oursSlice[nextOurs]
+    const theirsLine = theirsSlice[nextTheirs]
+    oursOut.push({ line: oursLine.line, sourceIndex: oursLine.index, status: 'common', tokens: plainTokens(oursLine.line, 'common') })
+    theirsOut.push({ line: theirsLine.line, sourceIndex: theirsLine.index, status: 'common', tokens: plainTokens(theirsLine.line, 'common') })
+    oursPos = nextOurs + 1
+    theirsPos = nextTheirs + 1
+  }
+  appendDiffRun(oursOut, theirsOut, oursSlice.slice(oursPos), theirsSlice.slice(theirsPos))
+}
+
 export function buildChunkSideDiff(oursLines: string[], theirsLines: string[]): ChunkSideDiff {
   const ours = oursLines.map((line, index) => ({ line, index }))
   const theirs = theirsLines.map((line, index) => ({ line, index }))
-  const pairs = lcsPairs(ours, theirs, (entry) => normalizedLine(entry.line))
+  const anchors = computePrimaryAnchors(ours, theirs)
   const result: ChunkSideDiff = { ours: [], theirs: [] }
   let oursPos = 0
   let theirsPos = 0
 
-  for (const [nextOurs, nextTheirs] of pairs) {
-    appendDiffRun(result.ours, result.theirs, ours.slice(oursPos, nextOurs), theirs.slice(theirsPos, nextTheirs))
-    const oursLine = ours[nextOurs]
-    const theirsLine = theirs[nextTheirs]
+  for (const [oursIndex, theirsIndex] of anchors) {
+    buildAnchoredRunDiff(result.ours, result.theirs, ours.slice(oursPos, oursIndex), theirs.slice(theirsPos, theirsIndex))
+    const oursLine = ours[oursIndex]
+    const theirsLine = theirs[theirsIndex]
     result.ours.push({ line: oursLine.line, sourceIndex: oursLine.index, status: 'common', tokens: plainTokens(oursLine.line, 'common') })
     result.theirs.push({ line: theirsLine.line, sourceIndex: theirsLine.index, status: 'common', tokens: plainTokens(theirsLine.line, 'common') })
-    oursPos = nextOurs + 1
-    theirsPos = nextTheirs + 1
+    oursPos = oursIndex + 1
+    theirsPos = theirsIndex + 1
   }
-  appendDiffRun(result.ours, result.theirs, ours.slice(oursPos), theirs.slice(theirsPos))
+  buildAnchoredRunDiff(result.ours, result.theirs, ours.slice(oursPos), theirs.slice(theirsPos))
   return result
 }
 export function applyChunkChoice(seg: ChunkSegment, choice: ConcreteChunkChoice) {
