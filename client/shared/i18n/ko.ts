@@ -2699,6 +2699,9 @@ export default {
       conflict_ai_message_label: '전달 멘트',
       conflict_ai_message_placeholder: 'AI가 현재 변경을 보존하며 충돌을 해소하도록 전달할 내용을 입력하세요.',
       conflict_ai_started: 'AI 충돌 해소를 시작했습니다',
+      // 0481 T0010 rev3 — 이 다이얼로그는 이제 자기 실행이 도는 동안에도 닫히지 않는다.
+      // 진행 상황을 보러 기본 AI 실행 화면으로 나갈 이유를 없애는 줄.
+      conflict_ai_running: '{provider} 이(가) 충돌을 해소하는 중입니다 · {elapsed} 경과 — 끝나면 이 화면이 결과로 바뀝니다.',
       conflict_mention_copied: '충돌 해소 멘션을 복사했습니다',
       remaining_chunks: '미해소 {remaining}/{total}',
       resolve_progress: '해소 {done} / {total}',
@@ -2725,6 +2728,18 @@ export default {
       load_failed: '충돌 목록을 불러오지 못했습니다.',
       retry: '재시도',
       no_conflicts: '표시할 충돌 파일이 없습니다.',
+      // 0481 T0010 #2 — 빈 목록도 막다른 길이 아니다: 다시 읽거나, AI를 부르거나, 병합을 중단할 수 있다.
+      no_conflicts_hint: '남은 충돌 파일이 없습니다 — 목록을 다시 읽거나, AI를 호출하거나, 병합을 중단할 수 있습니다.',
+      reload_conflicts: '목록 다시 읽기',
+      // 0481 T0010 rev5 (반려 #1·#4) — [AI 호출]이 지금 어디까지 갔는지, 혹은 왜 아직
+      // 누를 수 없는지를 다이얼로그 안에서 말하는 줄들. rev4 까지 이 자리는 버튼의 title
+      // 속성 하나뿐이어서, 못 누르는 버튼과 눌러도 아무 일이 없는 버튼이 구분되지 않았다.
+      conflict_ai_starting: 'AI 호출을 보냈습니다 — 실행이 시작되면 이 줄이 진행 상황으로 바뀝니다.',
+      provider_loading: 'AI 공급자 목록을 읽는 중입니다 — 다 읽으면 [AI 호출]을 누를 수 있습니다.',
+      provider_load_failed: 'AI 공급자 목록을 읽지 못했습니다. 다시 읽기 전에는 [AI 호출]을 누를 수 없습니다.',
+      provider_none: '이 프로젝트에 등록된 AI 공급자가 없습니다. AI 설정에서 등록한 뒤 다시 읽어 주세요.',
+      provider_reload: '공급자 다시 읽기',
+      invoke_options: 'AI 호출 옵션',
       chunk_view: '청크 뷰',
       direct_edit: '직접 편집',
       direct_only: '직접 편집 전용',
@@ -2740,6 +2755,12 @@ export default {
       marker_summary_item: '{path}: {lines}행',
       submit_disabled_hint: '모든 충돌 청크를 선택하거나 직접 편집으로 마커를 제거하세요.',
       resolve_submit: '해소 제출',
+      // 0481 T0010 rev2 — 제출은 서버에 닿았는데 화면이 그 결과 상태를 모르는 경우.
+      // 화면이 서버보다 낡으면(배포 빌드가 실패해 이전 번들이 계속 서빙되면) 반드시
+      // 이 자리로 온다. 그때 아무 말도 하지 않으면 사용자에게는 "눌러도 반응이 없다"가 된다.
+      resolve_unknown_result: '해소 제출은 서버가 받았지만 이 화면이 결과 상태({status})를 알지 못합니다. 화면을 새로고침해 최신 상태를 확인하세요.',
+      resolve_remaining: '아직 해소되지 않은 파일이 남아 있습니다: {paths}',
+      auto_resolve_label: '자동 (커밋/머지까지 자동 진행)',
       abort: '머지 중단',
       merged_toast: '본 브랜치에 병합했습니다 ({commit})',
       merged_local_toast: '본 브랜치에 병합했습니다 ({commit}) — 푸시는 관제소에서',
@@ -2808,6 +2829,12 @@ export default {
       base_ai_started: '기준 브랜치 AI 정리를 시작했습니다.',
       base_ai_empty: '정리할 미커밋 파일이 없습니다.',
       base_ai_failed: '기준 브랜치 AI 정리를 시작하지 못했습니다.',
+      // 0481 T0010 #1 — 병합이 충돌에서 멈춰 있으면 이 변경들은 "정리할 미커밋 파일"이 아니라
+      // 병합 그 자체다. 커밋도 되돌리기도 AI 정리도 하면 안 되고, 갈 곳은 충돌 해소뿐이다.
+      base_ai_merge_in_progress: '진행 중인 병합이 이 변경을 갖고 있습니다 — [충돌 해소]에서 이어서 처리하세요.',
+      base_dirty_merge_summary: '진행 중인 병합의 변경 {n}개',
+      base_dirty_merge_guide: '충돌에서 멈춘 병합입니다. 커밋·되돌리기·AI 정리 대신 충돌을 해소하세요.',
+      base_dirty_merge_alert: '이 파일들은 진행 중인 병합의 것입니다. 여기서 커밋하거나 되돌리면 병합이 깨집니다.',
       view_files: '파일별로 보기',
       expand: '펼쳐 보기',
       collapse: '접기',
@@ -2913,6 +2940,79 @@ export default {
       cleanup_btn: '종결 브랜치 정리 ({n})',
       cleanup_done: '종결 브랜치 {n}건을 정리했습니다',
       cleanup_partial: '{n}건 정리, {failed}건 실패 (서버 로그 참조)',
+    },
+    // 0481 D0006 §6.3/§6.4 · L0007 §2.11 — 일반 병합 충돌의 사람 승인 관문 화면.
+    git_review: {
+      title: '승인 대기',
+      open_review: '승인 화면 열기',
+      file_count: '변경 {n}개 파일',
+      resolved_by: '이 해결은 [{provider}]로 생성됨',
+      unknown_provider: '알 수 없음',
+      provider_badge_note: '(실행 기록의 공급자 — 이 기록은 고정, 아래 [반려]에서만 바뀜)',
+      header: {
+        pending: 'AI 해결 준비 완료 — 승인 대기',
+        re_review: '대상이 바뀌었습니다 — 다시 검토',
+        applying: '반영 중',
+        reconciling: '반영 결과 확인 중',
+      },
+      warning: {
+        pending: '아직 커밋되지 않았습니다. 아래에서 충돌 지점과 변경 내용을 확인한 뒤 승인하세요.',
+        re_review: '검토 이후 대상이나 기준점이 달라졌습니다. 아래 새 내용을 다시 확인하고 승인하세요.',
+        reconciling: '반영 결과를 확인하는 중입니다. 결론이 날 때까지 승인·반려를 잠시 이용할 수 없습니다.',
+      },
+      badge: {
+        pending: '승인 대기',
+        re_review: '재검토 필요',
+        applying: '반영 중',
+        reconciling: '반영 결과 확인 중',
+      },
+      file_list: '변경 파일 목록',
+      conflict_chunks: '충돌 청크 {n}건',
+      chunk_selection: '{selection} 선택',
+      line_suffix: '행',
+      origin_flag_title: '충돌에서 유래한 구간',
+      conversation_title: 'AI와 대화',
+      awaiting_reply: '응답 대기',
+      // 0481 T0010 rev1 — 채팅을 보낸 뒤 이 화면에서 기다리면 답이 여기로 온다는 것을
+      // 말해 주는 줄. 실행 상황을 보러 기본 AI 실행 다이얼로그로 나갈 이유를 없앤다.
+      waiting_in_place: '{provider} 이(가) 답을 만드는 중입니다 · {elapsed} 경과 — 이 화면에서 기다리면 답이 여기에 도착합니다.',
+      conversation_empty: '아직 대화가 없습니다.',
+      turn_human: '나',
+      turn_ai: 'AI',
+      // 0481 T0010 rev6 (반려 3) — accepted 가 아닌 AI 차례의 결과를 말해 주는 배지.
+      // 본문만 보여 주면 "왜 이런 답이 왔는지"가 본문 안에만 숨어 있었다.
+      turn_status_stale_run: '이전 후보 기준',
+      turn_status_run_lost: '실행 기록 없음',
+      turn_status_failed: '실패',
+      turn_status_rejected: '반려',
+      next_provider_label: '다음 지시에 쓸 공급자',
+      apply_requested_label: '수정 적용 요청',
+      held_test_operations_title: '보류된 테스트 편집',
+      held_test_operations_note: 'AI가 제안했지만 적용하지 않았습니다. 아래 [테스트 편집 포함 재지시]를 눌러야 반영됩니다.',
+      allow_test_edits: '테스트 편집 포함 재지시',
+      message_placeholder: 'AI에게 다시 물어보거나 재지시를 입력하세요.',
+      send: '전송',
+      apply_safety_note: '승인 후 소스 반영은 HiveWork apply 방식(앵커 단위 edit, 기본 propose-only, 푸시 전 실패는 전체 롤백)을 따릅니다.',
+      reject: '반려 (다시 시도 지시)',
+      approve: '승인 — 커밋 & 머지',
+      reject_reason_label: '반려 사유 및 다시 시도 지시',
+      reject_confirm: '반려하고 다시 시도',
+      approved_toast: '승인했습니다.',
+      re_review_toast: '검토 대상이 바뀌어 새 내용으로 다시 확인이 필요합니다.',
+      reconciling_toast: '반영 결과를 확인하는 중입니다.',
+      approve_failed_toast: '승인에 실패했습니다.',
+      // 0481 T0010 rev3 — [승인]이 커밋까지 가지 못한 이유를 화면에 남기는 줄들.
+      // 이 문장들이 없어서 승인 실패가 사라지는 토스트 한 줄로 끝났고,
+      // 사용자에게는 "머지는 되지도 않음"이 되었다.
+      approve_validation_failed: '승인 전 파일 검사에서 막혀 커밋하지 않았습니다. 아래 파일을 고친 뒤 다시 승인하세요.',
+      approve_commit_failed: '커밋을 만들지 못했습니다. 대상은 그대로 승인 대기로 남아 있습니다.',
+      approve_unknown_status: '서버가 이 화면이 모르는 상태({status})로 답했습니다. 화면을 새로고침해 최신 상태를 확인하세요.',
+      rejected_toast: '반려하고 리졸버로 되돌렸습니다.',
+      resolved_pending_toast: '충돌을 해결했습니다. 승인 대기 화면에서 확인 후 승인하세요.',
+      // 0481 T0010 rev5 (반려 #3) — "알아서 승인화면으로 가세요 할게 아니라 대려다줘야 할거
+      // 아냐?". 해결 제출이 승인 대기로 넘어가면 화면이 직접 그 자리로 넘어간다. 이 문장은
+      // 길 안내가 아니라 이미 일어난 이동의 보고다.
+      resolved_pending_opened: '충돌을 해결하고 승인 대기 화면을 열었습니다. 내용을 확인한 뒤 승인하세요.',
     },
     git_menu: {
       tooltip: 'Git 마무리',

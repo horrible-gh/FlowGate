@@ -219,7 +219,16 @@ describe('FileExplorer group-branch mutations (0327 T0004 / B0001)', () => {
     expect(apiGet).toHaveBeenCalledWith(
       `/api/v1/groups/${encodeURIComponent(GROUP)}/git/merge/41/conflicts`,
     )
-    expect(wrapper.find('.git-conflict-footer-actions').exists()).toBe(false)
+    // 0481 T0010 #2 — this used to assert the action bar was ABSENT, which is how the bug
+    // was written down: FileExplorer passes `providers: []` because it wires no AI half, and
+    // the whole group hung off `providers?.length`, so [중단] and [해결 제출] disappeared with
+    // the AI buttons and this dialog had no way to finish. The AI controls are what this host
+    // does not offer; the two it does wire have to be there.
+    const actions = wrapper.find('.git-conflict-footer-actions')
+    expect(actions.exists()).toBe(true)
+    expect(actions.findAll('button')).toHaveLength(2)
+    expect(wrapper.find('.git-conflict-invoke-options').exists()).toBe(false)
+    expect(wrapper.find('.git-conflict-message-bar').exists()).toBe(false)
   })
 
   it('leaves the base checkout view untouched', async () => {

@@ -133,6 +133,7 @@ from .runtime import (
     list_live_runs,
     logger,
     prompt_digest,
+    record_run_write_plan,
     restart_max_attempts_choices,
 )
 
@@ -686,6 +687,7 @@ __all__ = [
     "get_status",
     "get_store",
     "git_service",
+    "record_run_write_plan",
     "has_active_run",
     "hashlib",
     "invoke_mention_service",

@@ -821,7 +821,7 @@ def origin_repo(seed):
     _git(["init", "--bare", "-b", "main", str(bare)])
     _git(["init", "-b", "main", str(seedwt)])
     (seedwt / "README.md").write_text("hello\n", encoding="utf-8")
-    (seedwt / "shared.txt").write_text("line1\n", encoding="utf-8")
+    (seedwt / "shared.py").write_text('"line1"\n', encoding="utf-8")
     _git(["add", "-A"], cwd=seedwt)
     _git(["commit", "-m", "init"], cwd=seedwt)
     _git(["remote", "add", "origin", str(bare)], cwd=seedwt)
@@ -1069,12 +1069,12 @@ class TestGitEndToEnd:
         assert svc.ensure_worktree("gitprj", "default", group) == "ok"
         wt = src_root("GitProj", "gitprj_default_0102")
 
-        # group edits shared.txt …
-        (wt / "shared.txt").write_text("group version\n", encoding="utf-8")
+        # group edits shared.py …
+        (wt / "shared.py").write_text('"group version"\n', encoding="utf-8")
         # … while origin main moves the same line via the seed worktree
         seedwt = origin_repo["seedwt"]
         _git(["pull", "origin", "main"], cwd=seedwt)  # catch up (earlier merges landed)
-        (seedwt / "shared.txt").write_text("mainline version\n", encoding="utf-8")
+        (seedwt / "shared.py").write_text('"mainline version"\n', encoding="utf-8")
         _git(["commit", "-am", "mainline change"], cwd=seedwt)
         _git(["push", "origin", "main"], cwd=seedwt)
 
@@ -1083,7 +1083,7 @@ class TestGitEndToEnd:
         out = svc.finalize(group, "merge")
         assert out["result"]["status"] == "conflict"
         merge_id = out["result"]["merge_id"]
-        assert out["result"]["conflict_files"] == ["shared.txt"]
+        assert out["result"]["conflict_files"] == ["shared.py"]
         # 0205: conflict sessions no longer hold the project mutex; the base is
         # protected by the open-session guard instead.
         assert db_git.get_lock("gitprj") is None
@@ -1097,7 +1097,7 @@ class TestGitEndToEnd:
         assert exc.value.code == "merge_conflict_open"
 
         conflicts = svc.list_conflicts(group, merge_id)
-        assert conflicts["files"][0]["path"] == "shared.txt"
+        assert conflicts["files"][0]["path"] == "shared.py"
         content = conflicts["files"][0]["content"]
         assert "<<<<<<<" in content
         assert "|||||||" in content, "zdiff3 base marker must be present"
@@ -1110,14 +1110,14 @@ class TestGitEndToEnd:
         match = re.search(marker_pattern, content, re.MULTILINE | re.DOTALL)
         assert match, "Should parse zdiff3 conflict with base marker"
         ours_content, base_content, theirs_content = match.groups()
-        assert base_content.strip() == "line1", "Base marker should separate common ancestor content"
-        assert ours_content.strip() == "mainline version", "Merge target (main) should be ours"
-        assert theirs_content.strip() == "group version", "Merge source (group branch) should be theirs"
+        assert base_content.strip() == '"line1"', "Base marker should separate common ancestor content"
+        assert ours_content.strip() == '"mainline version"', "Merge target (main) should be ours"
+        assert theirs_content.strip() == '"group version"', "Merge source (group branch) should be theirs"
 
         # markers left in the submitted content → 422, nothing written
         with pytest.raises(svc.GitServiceError) as exc:
             svc.resolve_conflicts(group, merge_id, [{
-                "path": "shared.txt",
+                "path": "shared.py",
                 "content": conflicts["files"][0]["content"],
             }], True)
         assert exc.value.code == "conflict_markers_remain"
@@ -1129,9 +1129,15 @@ class TestGitEndToEnd:
             }], True)
         assert exc.value.status == 422
 
+        # 0481 T0008: a resolved general merge now stops at resolved_pending_review
+        # unless auto_authority was recorded (D0006 §3.2/§3.4). This test is about
+        # the merge/push mechanics, not the review gate itself (covered separately
+        # in test_git_merge_review_gate_0481.py), so it opts into the pre-existing
+        # immediate-merge behavior through the officially supported bypass.
+        svc.record_auto_authority(group, merge_id, True)
         out = svc.resolve_conflicts(group, merge_id, [{
-            "path": "shared.txt",
-            "content": "group version\nmainline version\n",
+            "path": "shared.py",
+            "content": '"group version"\n"mainline version"\n',
         }], True)
         assert out["result"]["status"] == "merged"
         assert out["result"]["pushed"] is True
@@ -1207,6 +1213,57 @@ class TestGitEndToEnd:
         # abort so this session doesn't block later tests' project-level lock
         svc.abort_merge(group, merge_id)
 
+    def test_base_dirty_belongs_to_the_merge_while_a_conflict_is_open(self, origin_repo):
+        """0481 T0010 #1 — why [AI에게 맡기기] kept answering "…시작하지 못했습니다.".
+
+        A stopped merge leaves its unmerged AND its cleanly-merged paths in the base
+        checkout's `git status --porcelain`, so `base_dirty` fills up with the merge itself
+        and the Git panel offers it as stray-edit cleanup: [AI에게 맡기기], per-file
+        [되돌리기], [커밋]. All three are wrong there, and the AI one could never start.
+        `base_dirty.merge_in_progress` is the fact the panel needs to say so instead.
+        """
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0172"
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "ownership.txt").write_text("base line\n", encoding="utf-8")
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "add ownership base"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0172")
+        (wt / "ownership.txt").write_text("group change\n", encoding="utf-8")
+
+        (seedwt / "ownership.txt").write_text("mainline change\n", encoding="utf-8")
+        _git(["commit", "-am", "mainline change to ownership"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        # No merge yet: the base checkout is clean and owns nothing.
+        assert svc.base_merge_in_progress("gitprj") is None
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        assert out["result"]["status"] == "conflict"
+        merge_id = out["result"]["merge_id"]
+
+        # The conflict really does show up as base-checkout dirt — this is the pile the
+        # panel was inviting the operator to "clean up".
+        base_dirty = svc.project_git_status("gitprj")["status"]["base_dirty"]
+        assert "ownership.txt" in base_dirty["files"]
+        assert base_dirty["merge_in_progress"] == {"merge_id": merge_id, "group_id": group}
+        assert svc.base_merge_in_progress("gitprj") == {"merge_id": merge_id, "group_id": group}
+
+        svc.abort_merge(group, merge_id)
+
+        # Once the merge is gone the same files are ordinary base dirt again (or gone).
+        assert svc.base_merge_in_progress("gitprj") is None
+        assert svc.project_git_status("gitprj")["status"]["base_dirty"]["merge_in_progress"] is None
+
     def test_resolve_conflicts_allows_both_sides_kept(self, origin_repo):
         # 0478 T0012 completion (ii): the ordinary "markers just gone" GREEN path is
         # untouched when both sides' added lines survive — exact line reproduction of
@@ -1219,16 +1276,16 @@ class TestGitEndToEnd:
         group = "gitprj.default.0111"
         seedwt = origin_repo["seedwt"]
         _git(["pull", "origin", "main"], cwd=seedwt)
-        (seedwt / "sidecheck2.txt").write_text("base line\n", encoding="utf-8")
+        (seedwt / "sidecheck2.py").write_text("base line\n", encoding="utf-8")
         _git(["add", "-A"], cwd=seedwt)
         _git(["commit", "-m", "add sidecheck2 base"], cwd=seedwt)
         _git(["push", "origin", "main"], cwd=seedwt)
 
         assert svc.ensure_worktree("gitprj", "default", group) == "ok"
         wt = src_root("GitProj", "gitprj_default_0111")
-        (wt / "sidecheck2.txt").write_text("group change\n", encoding="utf-8")
+        (wt / "sidecheck2.py").write_text('"group change"\n', encoding="utf-8")
 
-        (seedwt / "sidecheck2.txt").write_text("mainline change\n", encoding="utf-8")
+        (seedwt / "sidecheck2.py").write_text('"mainline change"\n', encoding="utf-8")
         _git(["commit", "-am", "mainline change to sidecheck2"], cwd=seedwt)
         _git(["push", "origin", "main"], cwd=seedwt)
 
@@ -1238,14 +1295,18 @@ class TestGitEndToEnd:
         assert out["result"]["status"] == "conflict"
         merge_id = out["result"]["merge_id"]
         conflicts = svc.list_conflicts(group, merge_id)
-        entry = next(f for f in conflicts["files"] if f["path"] == "sidecheck2.txt")
+        entry = next(f for f in conflicts["files"] if f["path"] == "sidecheck2.py")
         assert "|||||||" in entry["content"]
 
         # both sides' lines present, reordered and paraphrased around — not a byte-for-byte
         # reproduction of the original chunk — must still pass.
+        # 0481 T0008: opt into the pre-existing immediate-merge behavior (see the
+        # note in test_conflict_resolve_flow above) — this test is about the
+        # side-drop content check, not the review gate.
+        svc.record_auto_authority(group, merge_id, True)
         out = svc.resolve_conflicts(group, merge_id, [{
-            "path": "sidecheck2.txt",
-            "content": "combined:\nmainline change\ngroup change\n",
+            "path": "sidecheck2.py",
+            "content": '"combined:"\n"mainline change"\n"group change"\n',
         }], True)
         assert out["result"]["status"] == "merged"
         assert db_git.get_session(merge_id)["status"] == "done"
@@ -1273,11 +1334,11 @@ class TestGitEndToEnd:
         assert svc.ensure_worktree("gitprj", "default", group) == "ok"
         wt = src_root("GitProj", "gitprj_default_0112")
         # added independently on the group side — no common ancestor for this path
-        (wt / "onlynew.txt").write_text("group-only addition\n", encoding="utf-8")
+        (wt / "onlynew.py").write_text('"group-only addition"\n', encoding="utf-8")
 
-        (seedwt / "onlynew.txt").write_text("mainline-only addition\n", encoding="utf-8")
+        (seedwt / "onlynew.py").write_text('"mainline-only addition"\n', encoding="utf-8")
         _git(["add", "-A"], cwd=seedwt)
-        _git(["commit", "-m", "mainline adds onlynew.txt independently"], cwd=seedwt)
+        _git(["commit", "-m", "mainline adds onlynew.py independently"], cwd=seedwt)
         _git(["push", "origin", "main"], cwd=seedwt)
 
         _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
@@ -1286,27 +1347,31 @@ class TestGitEndToEnd:
         assert out["result"]["status"] == "conflict"
         merge_id = out["result"]["merge_id"]
         conflicts = svc.list_conflicts(group, merge_id)
-        entry = next(f for f in conflicts["files"] if f["path"] == "onlynew.txt")
+        entry = next(f for f in conflicts["files"] if f["path"] == "onlynew.py")
         assert "<<<<<<<" in entry["content"]
 
         conflict_root = svc.resolve_conflict_src_root(group, merge_id)
-        (conflict_root / "onlynew.txt").write_text(
+        (conflict_root / "onlynew.py").write_text(
             "<<<<<<< HEAD\n"
-            "mainline-only addition\n"
+            '"mainline-only addition"\n'
             "=======\n"
-            "group-only addition\n"
+            '"group-only addition"\n'
             ">>>>>>> gitprj_default_0112\n",
             encoding="utf-8",
         )
         no_base = svc.list_conflicts(group, merge_id)
-        no_base_entry = next(f for f in no_base["files"] if f["path"] == "onlynew.txt")
+        no_base_entry = next(f for f in no_base["files"] if f["path"] == "onlynew.py")
         assert "|||||||" not in no_base_entry["content"]
 
         # keeps only ONE side — no base means nothing to compare against, so this
         # must pass exactly like it did before T0012 (markers gone → done).
+        # 0481 T0008: opt into the pre-existing immediate-merge behavior (see the
+        # note in test_conflict_resolve_flow above) — this test is about the
+        # baseless-chunk skip, not the review gate.
+        svc.record_auto_authority(group, merge_id, True)
         out = svc.resolve_conflicts(group, merge_id, [{
-            "path": "onlynew.txt",
-            "content": "group-only addition\n",
+            "path": "onlynew.py",
+            "content": '"group-only addition"\n',
         }], True)
         assert out["result"]["status"] == "merged"
         assert db_git.get_session(merge_id)["status"] == "done"
@@ -1410,15 +1475,15 @@ class TestGitEndToEnd:
         group = "gitprj.default.0114"
         seedwt = origin_repo["seedwt"]
         _git(["pull", "origin", "main"], cwd=seedwt)
-        (seedwt / "sidecheck4.txt").write_text("base line\n", encoding="utf-8")
+        (seedwt / "sidecheck4.py").write_text("base line\n", encoding="utf-8")
         _git(["add", "-A"], cwd=seedwt)
         _git(["commit", "-m", "add sidecheck4 base"], cwd=seedwt)
         _git(["push", "origin", "main"], cwd=seedwt)
 
         assert svc.ensure_worktree("gitprj", "default", group) == "ok"
         wt = src_root("GitProj", "gitprj_default_0114")
-        (wt / "sidecheck4.txt").write_text("group change\n", encoding="utf-8")
-        (seedwt / "sidecheck4.txt").write_text("mainline change\n", encoding="utf-8")
+        (wt / "sidecheck4.py").write_text('"group change"\n', encoding="utf-8")
+        (seedwt / "sidecheck4.py").write_text('"mainline change"\n', encoding="utf-8")
         _git(["commit", "-am", "mainline change to sidecheck4"], cwd=seedwt)
         _git(["push", "origin", "main"], cwd=seedwt)
 
@@ -1427,6 +1492,11 @@ class TestGitEndToEnd:
         out = svc.finalize(group, "merge")
         assert out["result"]["status"] == "conflict"
         merge_id = out["result"]["merge_id"]
+        # 0481 T0008: this test is about the HTTP retry mechanic (422 → corrected
+        # resubmission → merged), not the review gate — record_auto_authority is
+        # the officially supported bypass a human's [AI 호출] would have set before
+        # this same worker token was minted (see test_conflict_resolve_flow above).
+        svc.record_auto_authority(group, merge_id, True)
 
         # real FastAPI app carrying the real resolve-token route, plus the same global
         # GitServiceError envelope handler routers.main installs in production (belt and
@@ -1488,14 +1558,14 @@ class TestGitEndToEnd:
             attempts.append(tool_name)
             if len(attempts) == 1:
                 payload = {
-                    "files": [{"path": "sidecheck4.txt", "content": "group change\n"}],
+                    "files": [{"path": "sidecheck4.py", "content": '"group change"\n'}],
                     "complete": True,
                 }
             else:
                 payload = {
                     "files": [{
-                        "path": "sidecheck4.txt",
-                        "content": "combined:\nmainline change\ngroup change\n",
+                        "path": "sidecheck4.py",
+                        "content": '"combined:"\n"mainline change"\n"group change"\n',
                     }],
                     "complete": True,
                 }
@@ -1554,10 +1624,10 @@ class TestGitEndToEnd:
         group = "gitprj.default.0104"
         assert svc.ensure_worktree("gitprj", "default", group) == "ok"
         wt = src_root("GitProj", "gitprj_default_0104")
-        (wt / "shared.txt").write_text("another group version\n", encoding="utf-8")
+        (wt / "shared.py").write_text("another group version\n", encoding="utf-8")
         seedwt = origin_repo["seedwt"]
         _git(["pull", "origin", "main"], cwd=seedwt)
-        (seedwt / "shared.txt").write_text("mainline again\n", encoding="utf-8")
+        (seedwt / "shared.py").write_text("mainline again\n", encoding="utf-8")
         _git(["commit", "-am", "mainline again"], cwd=seedwt)
         _git(["push", "origin", "main"], cwd=seedwt)
 
@@ -1574,6 +1644,2041 @@ class TestGitEndToEnd:
         # after abort the group can re-choose (wait keeps it re-selectable)
         state = svc.get_finalize_state(group)["state"]
         assert state["status"] == "waiting"
+
+    # ── review gate (flowgate.default.0481 D0006/L0007, T0008) ──────────────
+
+    def test_review_gate_blocks_commit_until_approved(self, origin_repo):
+        import uuid
+
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0120"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0120")
+        (wt / "shared.py").write_text('"gate group version"\n', encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "shared.py").write_text('"gate mainline version"\n', encoding="utf-8")
+        _git(["commit", "-am", "gate mainline change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        assert out["result"]["status"] == "conflict"
+        merge_id = out["result"]["merge_id"]
+        before_head = _git(["rev-parse", "main"], cwd=origin_repo["bare"]).strip()
+
+        # markers gone → resolved_pending_review, NOT merged: this is the whole point.
+        out = svc.resolve_conflicts(group, merge_id, [{
+            "path": "shared.py",
+            "content": '"gate group version"\n"gate mainline version"\n',
+        }], True)
+        assert out["result"]["status"] == "resolved_pending_review"
+        fingerprint = out["result"]["review_fingerprint"]
+        assert fingerprint
+        assert _git(["rev-parse", "main"], cwd=origin_repo["bare"]).strip() == before_head
+        assert db_git.get_session(merge_id)["status"] == "open"
+
+        review = svc.get_merge_review(group, merge_id)["result"]
+        assert review["review_state"] == "resolved_pending_review"
+        assert review["review_fingerprint"] == fingerprint
+        assert review["can_approve"] is True
+        assert "shared.py" in {c["path"] for c in review["changes"]}
+        # D0006 §3.3 / L0007 §2.4: which chunk resolved to which side, for the
+        # review screen to overlay on the diff — "both" here because the submitted
+        # content keeps ours followed by theirs.
+        origins = [o for o in review["conflict_origins"] if o["path"] == "shared.py"]
+        assert len(origins) == 1
+        assert origins[0]["selection"] == "both"
+        diff = svc.read_merge_review_file_diff(group, merge_id, "shared.py")["data"]
+        # normalize CRLF: Path.write_text on Windows translates "\n" -> os.linesep
+        # on write, same as every other content check in this file (E12 pattern).
+        assert diff["new"]["content"].replace("\r\n", "\n") == '"gate group version"\n"gate mainline version"\n'
+
+        # a stale/forged fingerprint is refused — nothing committed, session unchanged.
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.approve_merge_review(
+                group, merge_id, attempt_id=str(uuid.uuid4()),
+                review_fingerprint="0" * 64, authority="human",
+            )
+        assert exc.value.code == "stale_review"
+        assert _git(["rev-parse", "main"], cwd=origin_repo["bare"]).strip() == before_head
+
+        attempt_id = str(uuid.uuid4())
+        approved = svc.approve_merge_review(
+            group, merge_id, attempt_id=attempt_id,
+            review_fingerprint=fingerprint, authority="human",
+        )
+        assert approved["result"]["status"] == "merged"
+        assert approved["result"]["review_state"] == "completed"
+        assert db_git.get_session(merge_id)["status"] == "done"
+        after_head = _git(["rev-parse", "main"], cwd=origin_repo["bare"]).strip()
+        assert after_head != before_head
+
+        # idempotent re-approval with the SAME attempt_id never creates a second commit.
+        again = svc.approve_merge_review(
+            group, merge_id, attempt_id=attempt_id,
+            review_fingerprint=fingerprint, authority="human",
+        )
+        assert again["result"]["status"] == "already_applied"
+        assert _git(["rev-parse", "main"], cwd=origin_repo["bare"]).strip() == after_head
+
+    def test_review_gate_auto_authority_commits_without_a_screen(self, origin_repo):
+        # D0006 §3.2: [자동] is recorded ONLY by a human call before resolution, and
+        # then bypasses the screen for a normal completion — but the safety net
+        # (identity check, py_compile, conditional push) still runs underneath it.
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0122"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0122")
+        (wt / "shared.py").write_text('"auto group version"\n', encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "shared.py").write_text('"auto mainline version"\n', encoding="utf-8")
+        _git(["commit", "-am", "auto mainline change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        merge_id = out["result"]["merge_id"]
+
+        # the checkbox is recorded by a human call BEFORE resolution — never by a
+        # field the resolve submission itself carries.
+        svc.record_auto_authority(group, merge_id, True)
+        out = svc.resolve_conflicts(group, merge_id, [{
+            "path": "shared.py",
+            "content": '"auto group version"\n"auto mainline version"\n',
+        }], True)
+        assert out["result"]["status"] == "merged"
+        assert db_git.get_session(merge_id)["status"] == "done"
+
+    def test_review_gate_worker_token_cannot_grant_itself_auto(self):
+        # D0006 §3.2 / L0007 §2.2: the worker-token resolve body model has no `auto`
+        # field and forbids extras outright — a token cannot self-approve.
+        from pydantic import ValidationError
+
+        from modules.flow_gate.api.v1.git_routes import ResolveBody
+
+        with pytest.raises(ValidationError):
+            ResolveBody(files=[], complete=True, auto=True)
+        with pytest.raises(ValidationError):
+            ResolveBody(files=[], complete=True, approve=True)
+
+    def test_review_gate_reject_restores_conflict_markers(self, origin_repo):
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0123"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0123")
+        (wt / "shared.py").write_text('"reject group version"\n', encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "shared.py").write_text('"reject mainline version"\n', encoding="utf-8")
+        _git(["commit", "-am", "reject mainline change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        merge_id = out["result"]["merge_id"]
+        original = svc.list_conflicts(group, merge_id)
+        original_content = next(
+            f["content"] for f in original["files"] if f["path"] == "shared.py"
+        )
+        assert "<<<<<<<" in original_content
+
+        out = svc.resolve_conflicts(group, merge_id, [{
+            "path": "shared.py",
+            "content": '"reject group version"\n"reject mainline version"\n',
+        }], True)
+        assert out["result"]["status"] == "resolved_pending_review"
+
+        started: dict = {}
+
+        def _fake_start_run(first_message):
+            started["msg"] = first_message
+            return "aiv_fake_retry"
+
+        rejected = svc.reject_merge_review(
+            group, merge_id,
+            reason="다시 확인해 주세요 — 이 사유는 충분히 깁니다.",
+            provider_id="prov_test", provider_pinned=True,
+            start_run=_fake_start_run,
+        )
+        assert rejected["result"]["status"] == "returned_to_resolver"
+        assert rejected["result"]["resolver_run_id"] == "aiv_fake_retry"
+        assert started["msg"]
+
+        restored = svc.list_conflicts(group, merge_id)
+        restored_content = next(
+            f["content"] for f in restored["files"] if f["path"] == "shared.py"
+        )
+        assert restored_content == original_content
+        context = db_git.session_context(db_git.get_session(merge_id))
+        assert context.get("review_state") is None
+        assert "snapshot_tree" not in context
+        assert context.get("auto_authority") is False
+
+        svc.abort_merge(group, merge_id)
+
+    def test_review_gate_py_compile_failure_blocks_approval(self, origin_repo):
+        # D0006 §3.5 / L0007 §2.7: a Python syntax error in the frozen candidate
+        # blocks approval even though the identity/fingerprint check passed.
+        import uuid
+
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0124"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0124")
+        (wt / "bad.py").write_text("group addition\n", encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "bad.py").write_text("mainline addition\n", encoding="utf-8")
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "mainline adds bad.py independently"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        merge_id = out["result"]["merge_id"]
+
+        # keeps a trace of both sides (0478 T0012's conflict_side_dropped check
+        # would otherwise 422 on this add/add chunk before the syntax check ever
+        # runs) while still being invalid Python.
+        out = svc.resolve_conflicts(group, merge_id, [{
+            "path": "bad.py",
+            "content": "group addition\nmainline addition\ndef broken(:\n    pass\n",
+        }], True)
+        assert out["result"]["status"] == "resolved_pending_review"
+        fingerprint = out["result"]["review_fingerprint"]
+        before_head = _git(["rev-parse", "main"], cwd=origin_repo["bare"]).strip()
+
+        rejected = svc.approve_merge_review(
+            group, merge_id, attempt_id=str(uuid.uuid4()),
+            review_fingerprint=fingerprint, authority="human",
+        )
+        assert rejected["result"]["status"] == "pre_commit_validation_failed"
+        assert rejected["result"]["review_state"] == "resolved_pending_review"
+        errors = rejected["result"]["errors"]
+        assert any(e["path"] == "bad.py" for e in errors)
+        assert _git(["rev-parse", "main"], cwd=origin_repo["bare"]).strip() == before_head
+        assert db_git.get_session(merge_id)["status"] == "open"
+
+        # the human corrects it and tries again from the SAME pending session — a
+        # fresh submission through the ordinary resolve endpoint refreezes and the
+        # corrected candidate approves cleanly.
+        out2 = svc.resolve_conflicts(group, merge_id, [{
+            "path": "bad.py",
+            "content": "def fixed():\n    pass\n",
+        }], True)
+        assert out2["result"]["status"] == "resolved_pending_review"
+        approved = svc.approve_merge_review(
+            group, merge_id, attempt_id=str(uuid.uuid4()),
+            review_fingerprint=out2["result"]["review_fingerprint"], authority="human",
+        )
+        assert approved["result"]["status"] == "merged"
+        assert db_git.get_session(merge_id)["status"] == "done"
+
+    def test_review_gate_conditional_push_rejects_a_moved_remote(self, origin_repo):
+        # D0006 §3.6 / L0007 §2.8: someone else pushed to origin/main in the window
+        # between freeze and approve. The local checkout's own HEAD/MERGE_HEAD never
+        # moved (so the identity check alone would not catch this), but the
+        # conditional push's --force-with-lease is keyed on the REMOTE position
+        # recorded at freeze time and must reject, roll the local commit back, and
+        # land on a freshly re-frozen re_review rather than silently overwriting the
+        # other push.
+        import uuid
+
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0125"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0125")
+        (wt / "shared.py").write_text('"cas group version"\n', encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "shared.py").write_text('"cas mainline version"\n', encoding="utf-8")
+        _git(["commit", "-am", "cas mainline change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        merge_id = out["result"]["merge_id"]
+        out = svc.resolve_conflicts(group, merge_id, [{
+            "path": "shared.py",
+            "content": '"cas group version"\n"cas mainline version"\n',
+        }], True)
+        fingerprint = out["result"]["review_fingerprint"]
+
+        # a THIRD party pushes to origin/main without ever touching this project's
+        # base checkout — expected_remote_head (frozen above) is now stale.
+        (seedwt / "unrelated.txt").write_text("someone else\n", encoding="utf-8")
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "unrelated concurrent push"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+        moved_remote = _git(["rev-parse", "main"], cwd=origin_repo["bare"]).strip()
+
+        result = svc.approve_merge_review(
+            group, merge_id, attempt_id=str(uuid.uuid4()),
+            review_fingerprint=fingerprint, authority="human",
+        )
+        assert result["result"]["status"] == "re_review"
+        assert result["result"]["review_state"] == "re_review"
+        # the local merge commit was rolled back, not left dangling on the base
+        # checkout, and the other party's push on origin was left untouched.
+        assert _git(["rev-parse", "main"], cwd=origin_repo["bare"]).strip() == moved_remote
+        context = db_git.session_context(db_git.get_session(merge_id))
+        assert context["review_state"] == "re_review"
+        assert context["merge_commit"] is None
+        assert context["expected_remote_head"] == moved_remote
+        new_fingerprint = context["review_fingerprint"]
+        assert new_fingerprint != fingerprint
+
+        # re-approving with the STALE fingerprint is refused; the new one succeeds
+        # and now correctly targets the moved remote.
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.approve_merge_review(
+                group, merge_id, attempt_id=str(uuid.uuid4()),
+                review_fingerprint=fingerprint, authority="human",
+            )
+        assert exc.value.code == "stale_review"
+        approved = svc.approve_merge_review(
+            group, merge_id, attempt_id=str(uuid.uuid4()),
+            review_fingerprint=new_fingerprint, authority="human",
+        )
+        assert approved["result"]["status"] == "merged"
+        assert db_git.get_session(merge_id)["status"] == "done"
+
+    def test_review_gate_conversation_message_appends_ai_turn(self, origin_repo, monkeypatch):
+        # D0006 §3.7/§3.9 / L0007 §2.9: a propose-only question during pending
+        # review starts a bound run and, once it finishes, its last message is
+        # folded into the conversation on the next read — without moving the
+        # review off resolved_pending_review or touching the fingerprint.
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services.ai_invoke import diagnostics as ai_diagnostics
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0126"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0126")
+        (wt / "shared.py").write_text('"convo group version"\n', encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "shared.py").write_text('"convo mainline version"\n', encoding="utf-8")
+        _git(["commit", "-am", "convo mainline change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        merge_id = out["result"]["merge_id"]
+        out = svc.resolve_conflicts(group, merge_id, [{
+            "path": "shared.py",
+            "content": '"convo group version"\n"convo mainline version"\n',
+        }], True)
+        fingerprint = out["result"]["review_fingerprint"]
+
+        sent = svc.send_review_message(
+            group, merge_id, message="ko.ts 쪽은 왜 이렇게 바꿨어?",
+            provider_id="prov_test", provider_pinned=True, apply_requested=False,
+            start_run=lambda: "aiv_fake_convo",
+        )
+        assert sent["result"]["status"] == "accepted"
+        assert sent["result"]["run_id"] == "aiv_fake_convo"
+        # a second message while a run is still active is refused.
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.send_review_message(
+                group, merge_id, message="still waiting",
+                provider_id="prov_test", provider_pinned=True, apply_requested=False,
+                start_run=lambda: "aiv_should_not_start",
+            )
+        assert exc.value.code == "re_instruction_busy"
+
+        monkeypatch.setattr(
+            ai_diagnostics, "get_run_detail",
+            lambda run_id: {
+                "status": "finished", "succeeded": True,
+                "last_message": "새로 쓰는 라벨이라 키를 추가했습니다.",
+                "provider_id": "prov_test",
+            },
+        )
+        review = svc.get_merge_review(group, merge_id)["result"]
+        assert review["review_state"] == "resolved_pending_review"
+        assert review["review_fingerprint"] == fingerprint  # unchanged: propose-only
+        roles = [(t["role"], t["message"]) for t in review["conversation"]]
+        assert ("human", "ko.ts 쪽은 왜 이렇게 바꿨어?") in roles
+        assert ("ai", "새로 쓰는 라벨이라 키를 추가했습니다.") in roles
+
+        # the completed run's slot is cleared — a new message can start another one.
+        sent2 = svc.send_review_message(
+            group, merge_id, message="고마워요",
+            provider_id="prov_test", provider_pinned=True, apply_requested=False,
+            start_run=lambda: "aiv_fake_convo_2",
+        )
+        assert sent2["result"]["status"] == "accepted"
+        svc.abort_merge(group, merge_id)
+
+    def test_review_gate_lets_an_unvalidatable_file_type_through_the_merge(self, origin_repo):
+        # 0481 TR0010 rev3, human rejection 2026-09-08 10:33 ("머지는 되지도 않음").
+        #
+        # This test used to assert the opposite: TR0009 rev1 (AI review finding 1)
+        # read L0007 §2.7 as covering every changed path in the candidate, so an
+        # extension with no registered validator vetoed the approval. §2.7 scopes
+        # that rule to the WRITE PLAN's own targets (`syntax_validation_scope` =
+        # "변경되거나 생성된 모든 plan 대상 파일"), and applying it to a merge made any
+        # merge carrying a `.md`, `.txt`, `.lock` or `.tsbuildinfo` permanently
+        # unapprovable — [승인] could only ever answer pre_commit_validation_failed.
+        #
+        # The merge must complete. The plan-side rule is unchanged and is asserted
+        # on the very same tree at the end of this test.
+        import uuid
+
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0127"
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0127")
+        # added independently on both sides — no common ancestor for this path,
+        # so the side-drop check (unrelated to this test) is skipped.
+        (wt / "notes.rst").write_text('"group notes"\n', encoding="utf-8")
+        (seedwt / "notes.rst").write_text('"mainline notes"\n', encoding="utf-8")
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "mainline adds notes.rst independently"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        assert out["result"]["status"] == "conflict"
+        merge_id = out["result"]["merge_id"]
+        before_head = _git(["rev-parse", "main"], cwd=origin_repo["bare"]).strip()
+
+        out = svc.resolve_conflicts(group, merge_id, [{
+            "path": "notes.rst",
+            "content": '"group notes"\n"mainline notes"\n',
+        }], True)
+        assert out["result"]["status"] == "resolved_pending_review"
+        fingerprint = out["result"]["review_fingerprint"]
+
+        # The candidate the human approves, captured before the commit exists.
+        context = db_git.session_context(db_git.get_session(merge_id))
+        base_root = svc._base_root_of("gitprj")
+
+        approved = svc.approve_merge_review(
+            group, merge_id, attempt_id=str(uuid.uuid4()),
+            review_fingerprint=fingerprint, authority="human",
+        )
+        assert approved["result"]["status"] == "merged", approved
+        assert approved["result"]["review_state"] == "completed"
+        # It really merged and really pushed — the remote head moved.
+        assert _git(["rev-parse", "main"], cwd=origin_repo["bare"]).strip() != before_head
+        assert db_git.get_session(merge_id)["status"] != "open"
+
+        # The write-plan rule is untouched: the SAME path, the SAME candidate tree,
+        # asked with the plan's mode, is still refused whole.
+        plan_errors = svc._validate_review_changed_paths(
+            base_root, context, unregistered_extension="reject",
+        )
+        assert any(
+            e["path"] == "notes.rst" and e["validator"] == "unsupported"
+            for e in plan_errors
+        ), plan_errors
+
+    def test_review_gate_real_typescript_parser_blocks_approval(self, origin_repo):
+        # 0481 TR0009 rev1 (AI review finding 2): L0007 §2.7 requires the project
+        # TypeScript compiler's no-emit syntactic check for `*.ts`, not a
+        # dependency-free delimiter-balance heuristic. `const x: number = ;` has
+        # every bracket/quote/comment balanced — the old `_check_balanced_source`
+        # would have passed it — but it is not valid TypeScript.
+        import uuid
+
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0128"
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0128")
+        (wt / "bad.ts").write_text('const groupOnly = 1;\n', encoding="utf-8")
+        (seedwt / "bad.ts").write_text('const mainlineOnly = 1;\n', encoding="utf-8")
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "mainline adds bad.ts independently"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        assert out["result"]["status"] == "conflict"
+        merge_id = out["result"]["merge_id"]
+
+        # balanced brackets/quotes/comments throughout — the old check would pass this.
+        # Keeps both sides' added lines verbatim so the pre-existing side-drop guard
+        # (_conflict_side_dropped, unrelated to this review-gate work) does not fire
+        # before the resolution ever reaches the real TypeScript parser check.
+        out = svc.resolve_conflicts(group, merge_id, [{
+            "path": "bad.ts",
+            "content": "const groupOnly = 1;\nconst mainlineOnly = 1;\nconst x: number = ;\n",
+        }], True)
+        assert out["result"]["status"] == "resolved_pending_review"
+        fingerprint = out["result"]["review_fingerprint"]
+
+        rejected = svc.approve_merge_review(
+            group, merge_id, attempt_id=str(uuid.uuid4()),
+            review_fingerprint=fingerprint, authority="human",
+        )
+        assert rejected["result"]["status"] == "pre_commit_validation_failed"
+        errors = rejected["result"]["errors"]
+        assert any(e["path"] == "bad.ts" and e["validator"] == "ecmascript" for e in errors)
+
+        out2 = svc.resolve_conflicts(group, merge_id, [{
+            "path": "bad.ts",
+            "content": "const x: number = 1;\n",
+        }], True)
+        assert out2["result"]["status"] == "resolved_pending_review"
+        approved = svc.approve_merge_review(
+            group, merge_id, attempt_id=str(uuid.uuid4()),
+            review_fingerprint=out2["result"]["review_fingerprint"], authority="human",
+        )
+        assert approved["result"]["status"] == "merged"
+        assert db_git.get_session(merge_id)["status"] == "done"
+
+    def test_review_gate_vue_validates_both_script_and_script_setup_blocks(self, origin_repo):
+        # 0481 TR0009 rev2 (AI review finding 2): a valid SFC may carry BOTH a
+        # `<script setup>` and an ordinary `<script>` block — Vue's own compiler
+        # merges them at build time. `checkVue` used to pick only ONE via
+        # `descriptor.scriptSetup || descriptor.script`, so a syntax error in
+        # whichever block lost that `||` reached approval unnoticed. Here the
+        # `<script setup>` block is syntactically valid and the ordinary
+        # `<script>` block is not — the old code would have approved this.
+        import uuid
+
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0135"
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0135")
+        (wt / "bad.vue").write_text(
+            "<script setup>\nconst groupOnly = 1\n</script>\n", encoding="utf-8",
+        )
+        (seedwt / "bad.vue").write_text(
+            "<script setup>\nconst mainlineOnly = 1\n</script>\n", encoding="utf-8",
+        )
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "mainline adds bad.vue independently"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        assert out["result"]["status"] == "conflict"
+        merge_id = out["result"]["merge_id"]
+
+        # keeps both sides' added lines verbatim (the side-drop guard, unrelated
+        # to this check) while the ordinary <script> block is unclosed — invalid
+        # JS the real parser must catch even though <script setup> is fine.
+        out = svc.resolve_conflicts(group, merge_id, [{
+            "path": "bad.vue",
+            "content": (
+                "<script setup>\nconst groupOnly = 1\nconst mainlineOnly = 1\n"
+                "</script>\n<script>\nexport default {\n</script>\n"
+            ),
+        }], True)
+        assert out["result"]["status"] == "resolved_pending_review"
+        fingerprint = out["result"]["review_fingerprint"]
+
+        rejected = svc.approve_merge_review(
+            group, merge_id, attempt_id=str(uuid.uuid4()),
+            review_fingerprint=fingerprint, authority="human",
+        )
+        assert rejected["result"]["status"] == "pre_commit_validation_failed"
+        errors = rejected["result"]["errors"]
+        assert any(e["path"] == "bad.vue" and e["validator"] == "vue" for e in errors)
+
+        out2 = svc.resolve_conflicts(group, merge_id, [{
+            "path": "bad.vue",
+            "content": (
+                "<script setup>\nconst groupOnly = 1\nconst mainlineOnly = 1\n"
+                "</script>\n<script>\nexport default { inheritAttrs: false }\n</script>\n"
+            ),
+        }], True)
+        assert out2["result"]["status"] == "resolved_pending_review"
+        approved = svc.approve_merge_review(
+            group, merge_id, attempt_id=str(uuid.uuid4()),
+            review_fingerprint=out2["result"]["review_fingerprint"], authority="human",
+        )
+        assert approved["result"]["status"] == "merged"
+        assert db_git.get_session(merge_id)["status"] == "done"
+
+    def test_review_gate_explicit_apply_applies_anchored_write_plan(self, origin_repo, monkeypatch):
+        # 0481 TR0009 rev2 (AI review finding 1): T0008 item 1 and its completion
+        # criteria require a human-requested apply to consume an anchored
+        # edit/create-file plan, validate it in isolation, atomically apply it,
+        # and produce a NEW frozen candidate/fingerprint — not a 409 refusal.
+        # This exercises the whole path: [수정 적용] starts a run, the worker
+        # submits a plan through the SAME endpoint a real resolve_conflict
+        # worker token would call (svc.submit_review_write_plan — its run has no
+        # write tool at all), and once the run is observed finished the plan is
+        # applied and a NEW review_fingerprint/re_review candidate appears that
+        # approves and commits like any other.
+        import base64
+        import uuid
+
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services.ai_invoke import diagnostics as ai_diagnostics
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0129"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0129")
+        (wt / "shared.py").write_text('"apply group version"\n', encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "shared.py").write_text('"apply mainline version"\n', encoding="utf-8")
+        _git(["commit", "-am", "apply mainline change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        assert out["result"]["status"] == "conflict"
+        merge_id = out["result"]["merge_id"]
+        out = svc.resolve_conflicts(group, merge_id, [{
+            "path": "shared.py",
+            "content": '"apply group version"\n"apply mainline version"\n',
+        }], True)
+        fingerprint = out["result"]["review_fingerprint"]
+
+        sent = svc.send_review_message(
+            group, merge_id, message="이 부분 고쳐서 적용해줘",
+            provider_id="prov_test", provider_pinned=True, apply_requested=True,
+            start_run=lambda: "aiv_fake_apply",
+        )
+        assert sent["result"]["status"] == "accepted"
+        context = db_git.session_context(db_git.get_session(merge_id))
+        assert context["pending_conversation_write_requested"] is True
+        assert context["pending_conversation_run_id"] == "aiv_fake_apply"
+
+        # the worker reads the candidate's manifest for shared.py's current blob
+        # (the anchor/replacement bytes are sliced off the ACTUAL current text —
+        # this checkout's git may store LF or CRLF line endings, and an anchor
+        # must match the real bytes, never an assumed terminator), then submits
+        # an anchored edit — the ONLY channel by which this run can change
+        # anything.
+        manifest_entry = next(e for e in context["snapshot_manifest"] if e["path"] == "shared.py")
+        actual = svc.read_merge_review_file_diff(group, merge_id, "shared.py")["data"]["new"]["content"]
+        split_at = actual.index('"apply mainline')
+        anchor_text = actual[:split_at]
+        replacement_text = anchor_text.replace("apply group version", "apply group version (fixed)")
+        expected_new_content = replacement_text + actual[split_at:]
+        plan = {
+            "schema_version": "flowgate.write-plan.v1",
+            "base_fingerprint": fingerprint,
+            "operations": [{
+                "operation_id": "op1",
+                "kind": "edit",
+                "path": "shared.py",
+                "expected_before_blob": manifest_entry["oid"],
+                "anchor": {
+                    "body_base64": base64.b64encode(anchor_text.encode("utf-8")).decode("ascii"),
+                    "expected_count": 1,
+                },
+                "replacement_bytes_base64": base64.b64encode(
+                    replacement_text.encode("utf-8")
+                ).decode("ascii"),
+                "purpose": "fix the group side wording",
+            }],
+            "held_test_operations": [],
+        }
+        # 0009-TR rev3 (AI review finding 1): the submission must carry the SAME
+        # ai_run_id the worker token would have been issued for this run — a
+        # wrong/stale run's token must not be able to attach a plan here (see
+        # test_review_gate_write_plan_submission_rejects_a_mismatched_run_id).
+        submitted = svc.submit_review_write_plan(group, merge_id, plan=plan, ai_run_id="aiv_fake_apply")
+        assert submitted["result"]["status"] == "accepted"
+
+        # submitting a SECOND plan for the same run overwrites the first — only
+        # the run's own last submission is what the run's own finish attaches.
+        monkeypatch.setattr(
+            ai_diagnostics, "get_run_detail",
+            lambda run_id: {
+                "status": "finished", "succeeded": True,
+                "last_message": "수정했습니다.", "provider_id": "prov_test",
+                "write_plan": plan,
+            },
+        )
+        review = svc.get_merge_review(group, merge_id)["result"]
+        assert review["review_state"] == "re_review"
+        new_fingerprint = review["review_fingerprint"]
+        assert new_fingerprint != fingerprint
+        roles = [(t["role"], t["status"]) for t in review["conversation"]]
+        assert ("ai", "accepted") in roles
+        # the pending-turn bookkeeping is cleared, and a NEW message can start
+        # another turn afterward.
+        context = db_git.session_context(db_git.get_session(merge_id))
+        assert context.get("pending_conversation_run_id") is None
+        assert context.get("pending_conversation_write_requested") is None
+
+        new_side = svc.read_merge_review_file_diff(group, merge_id, "shared.py")["data"]["new"]
+        assert new_side["content"] == expected_new_content
+
+        approved = svc.approve_merge_review(
+            group, merge_id, attempt_id=str(uuid.uuid4()),
+            review_fingerprint=new_fingerprint, authority="human",
+        )
+        assert approved["result"]["status"] == "merged"
+        assert db_git.get_session(merge_id)["status"] == "done"
+
+    def test_review_gate_write_plan_create_file_operation(self, origin_repo, monkeypatch):
+        # 0481 TR0009 rev2: `create_file` adds a path the frozen candidate did
+        # not have, using the same isolated-build/atomic-apply engine as `edit`.
+        import base64
+        import uuid
+
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services.ai_invoke import diagnostics as ai_diagnostics
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0131"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0131")
+        (wt / "shared.py").write_text('"create group version"\n', encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "shared.py").write_text('"create mainline version"\n', encoding="utf-8")
+        _git(["commit", "-am", "create mainline change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        merge_id = out["result"]["merge_id"]
+        out = svc.resolve_conflicts(group, merge_id, [{
+            "path": "shared.py",
+            "content": '"create group version"\n"create mainline version"\n',
+        }], True)
+        fingerprint = out["result"]["review_fingerprint"]
+
+        svc.send_review_message(
+            group, merge_id, message="새 파일도 하나 추가해줘",
+            provider_id="prov_test", provider_pinned=True, apply_requested=True,
+            start_run=lambda: "aiv_fake_create",
+        )
+        plan = {
+            "schema_version": "flowgate.write-plan.v1",
+            "base_fingerprint": fingerprint,
+            "operations": [{
+                "operation_id": "op1",
+                "kind": "create_file",
+                "path": "notes_new.py",
+                "absent": True,
+                "content_bytes_base64": base64.b64encode(b'"new note"\n').decode("ascii"),
+                "mode": "100644",
+                "purpose": "add a note the human asked for",
+            }],
+            "held_test_operations": [],
+        }
+        svc.submit_review_write_plan(group, merge_id, plan=plan, ai_run_id="aiv_fake_create")
+        monkeypatch.setattr(
+            ai_diagnostics, "get_run_detail",
+            lambda run_id: {"status": "finished", "succeeded": True, "write_plan": plan},
+        )
+        review = svc.get_merge_review(group, merge_id)["result"]
+        assert review["review_state"] == "re_review"
+        assert any(c["path"] == "notes_new.py" for c in review["changes"])
+        approved = svc.approve_merge_review(
+            group, merge_id, attempt_id=str(uuid.uuid4()),
+            review_fingerprint=review["review_fingerprint"], authority="human",
+        )
+        assert approved["result"]["status"] == "merged"
+
+    def test_review_gate_write_plan_stale_fingerprint_is_rejected(self, origin_repo, monkeypatch):
+        # 0481 TR0009 rev2: apply_write_plan re-checks `base_fingerprint` against
+        # the CURRENT review_fingerprint at apply time (L0007 §2.6 `require
+        # plan.base_fingerprint == session.review_fingerprint`) — a plan built
+        # against a fingerprint that is no longer current must not silently
+        # apply, and must leave the session exactly where it was.
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services.ai_invoke import diagnostics as ai_diagnostics
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0132"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0132")
+        (wt / "shared.py").write_text('"stale group version"\n', encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "shared.py").write_text('"stale mainline version"\n', encoding="utf-8")
+        _git(["commit", "-am", "stale mainline change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        merge_id = out["result"]["merge_id"]
+        svc.resolve_conflicts(group, merge_id, [{
+            "path": "shared.py",
+            "content": '"stale group version"\n"stale mainline version"\n',
+        }], True)
+
+        svc.send_review_message(
+            group, merge_id, message="고쳐줘",
+            provider_id="prov_test", provider_pinned=True, apply_requested=True,
+            start_run=lambda: "aiv_fake_stale",
+        )
+        plan = {
+            "schema_version": "flowgate.write-plan.v1",
+            "base_fingerprint": "0" * 64,  # never the real fingerprint
+            "operations": [{
+                "operation_id": "op1", "kind": "create_file", "path": "unrelated.py",
+                "absent": True, "content_bytes_base64": "eA==", "mode": "100644",
+                "purpose": "x",
+            }],
+            "held_test_operations": [],
+        }
+        svc.submit_review_write_plan(group, merge_id, plan=plan, ai_run_id="aiv_fake_stale")
+        monkeypatch.setattr(
+            ai_diagnostics, "get_run_detail",
+            lambda run_id: {"status": "finished", "succeeded": True, "write_plan": plan},
+        )
+        context_before = db_git.session_context(db_git.get_session(merge_id))
+        review = svc.get_merge_review(group, merge_id)["result"]
+        assert review["review_state"] == "resolved_pending_review"
+        assert review["review_fingerprint"] == context_before["review_fingerprint"]
+        roles = [(t["role"], t["status"]) for t in review["conversation"]]
+        assert ("ai", "failed") in roles
+        assert not any(c["path"] == "unrelated.py" for c in review["changes"])
+
+        svc.abort_merge(group, merge_id)
+
+    def test_review_gate_write_plan_anchor_mismatch_is_rejected(self, origin_repo, monkeypatch):
+        # 0481 TR0009 rev2: an anchor that does not occur exactly
+        # `expected_count` times in the CURRENT file must fail apply — this is
+        # the whole point of anchoring instead of trusting a line number or
+        # trusting the model's own claim about the file's content.
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services.ai_invoke import diagnostics as ai_diagnostics
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0133"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0133")
+        (wt / "shared.py").write_text('"anchor group version"\n', encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "shared.py").write_text('"anchor mainline version"\n', encoding="utf-8")
+        _git(["commit", "-am", "anchor mainline change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        merge_id = out["result"]["merge_id"]
+        out = svc.resolve_conflicts(group, merge_id, [{
+            "path": "shared.py",
+            "content": '"anchor group version"\n"anchor mainline version"\n',
+        }], True)
+        fingerprint = out["result"]["review_fingerprint"]
+        context = db_git.session_context(db_git.get_session(merge_id))
+        manifest_entry = next(e for e in context["snapshot_manifest"] if e["path"] == "shared.py")
+        before_content = svc.read_merge_review_file_diff(group, merge_id, "shared.py")["data"]["new"]["content"]
+
+        import base64
+
+        svc.send_review_message(
+            group, merge_id, message="고쳐줘",
+            provider_id="prov_test", provider_pinned=True, apply_requested=True,
+            start_run=lambda: "aiv_fake_anchor",
+        )
+        plan = {
+            "schema_version": "flowgate.write-plan.v1",
+            "base_fingerprint": fingerprint,
+            "operations": [{
+                "operation_id": "op1",
+                "kind": "edit",
+                "path": "shared.py",
+                "expected_before_blob": manifest_entry["oid"],
+                "anchor": {
+                    "body_base64": base64.b64encode(b"this text does not appear in the file").decode("ascii"),
+                    "expected_count": 1,
+                },
+                "replacement_bytes_base64": base64.b64encode(b"replacement").decode("ascii"),
+                "purpose": "x",
+            }],
+            "held_test_operations": [],
+        }
+        svc.submit_review_write_plan(group, merge_id, plan=plan, ai_run_id="aiv_fake_anchor")
+        monkeypatch.setattr(
+            ai_diagnostics, "get_run_detail",
+            lambda run_id: {"status": "finished", "succeeded": True, "write_plan": plan},
+        )
+        review = svc.get_merge_review(group, merge_id)["result"]
+        assert review["review_state"] == "resolved_pending_review"
+        assert review["review_fingerprint"] == fingerprint
+        roles = [(t["role"], t["message"], t["status"]) for t in review["conversation"]]
+        assert any(role == "ai" and status == "failed" for role, _msg, status in roles)
+
+        # the real worktree file is untouched — validation failed before the one
+        # step that would have touched it.
+        new_side = svc.read_merge_review_file_diff(group, merge_id, "shared.py")["data"]["new"]
+        assert new_side["content"] == before_content
+
+        svc.abort_merge(group, merge_id)
+
+    def test_review_gate_write_plan_submission_requires_a_pending_write_turn(self, origin_repo):
+        # 0481 TR0009 rev2: the worker-token submission endpoint's server-side
+        # entry point (svc.submit_review_write_plan) must refuse a plan when no
+        # write turn is waiting for one — a propose-only conversation run (or no
+        # run at all) has no write intent recorded on the session.
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0134"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0134")
+        (wt / "shared.py").write_text('"noreq group version"\n', encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "shared.py").write_text('"noreq mainline version"\n', encoding="utf-8")
+        _git(["commit", "-am", "noreq mainline change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        merge_id = out["result"]["merge_id"]
+        svc.resolve_conflicts(group, merge_id, [{
+            "path": "shared.py",
+            "content": '"noreq group version"\n"noreq mainline version"\n',
+        }], True)
+
+        plan = {
+            "schema_version": "flowgate.write-plan.v1",
+            "base_fingerprint": "0" * 64,
+            "operations": [{
+                "operation_id": "op1", "kind": "create_file", "path": "unrelated.py",
+                "absent": True, "content_bytes_base64": "eA==", "mode": "100644", "purpose": "x",
+            }],
+        }
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.submit_review_write_plan(group, merge_id, plan=plan)
+        assert exc.value.status == 409
+        assert exc.value.code == "write_plan_not_requested"
+
+        # a propose-only conversation turn ALSO does not open the write channel.
+        svc.send_review_message(
+            group, merge_id, message="그냥 질문",
+            provider_id="prov_test", provider_pinned=True, apply_requested=False,
+            start_run=lambda: "aiv_fake_question",
+        )
+        with pytest.raises(svc.GitServiceError) as exc2:
+            svc.submit_review_write_plan(group, merge_id, plan=plan)
+        assert exc2.value.code == "write_plan_not_requested"
+
+        svc.abort_merge(group, merge_id)
+
+    def test_review_gate_write_plan_structure_validation(self, origin_repo):
+        # 0481 TR0009 rev2: structural validation (L0007 §2.5, the Q&A-bound
+        # schema) rejects a malformed plan and gates test-path operations behind
+        # allow_test_edits, independent of any live tree state.
+        from modules.flow_gate.services import git_service as svc
+
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc._validate_write_plan_structure({"schema_version": "wrong"}, allow_test_edits=False)
+        assert exc.value.code == "invalid_write_plan"
+
+        base_plan = {
+            "schema_version": "flowgate.write-plan.v1",
+            "base_fingerprint": "0" * 64,
+            "operations": [{
+                "operation_id": "op1", "kind": "create_file", "path": "server/tests/new_test.py",
+                "absent": True, "content_bytes_base64": "eA==", "mode": "100644", "purpose": "x",
+            }],
+        }
+        with pytest.raises(svc.GitServiceError) as exc2:
+            svc._validate_write_plan_structure(base_plan, allow_test_edits=False)
+        assert exc2.value.code == "invalid_write_plan"
+
+        # the SAME test-path operation in held_test_operations (with a benign
+        # non-test operation actually in operations[], which must stay
+        # non-empty) passes without allow_test_edits; so does
+        # allow_test_edits=True with the test-path operation in operations[].
+        benign_op = {
+            "operation_id": "op2", "kind": "create_file", "path": "server/app.py",
+            "absent": True, "content_bytes_base64": "eA==", "mode": "100644", "purpose": "x",
+        }
+        svc._validate_write_plan_structure(
+            {**base_plan, "operations": [benign_op], "held_test_operations": base_plan["operations"]},
+            allow_test_edits=False,
+        )
+        svc._validate_write_plan_structure(base_plan, allow_test_edits=True)
+
+        # 0009-TR rev3 (AI review finding 2): a plan whose AI proposed ONLY
+        # test-path edits is legitimate — operations[] is empty and everything
+        # lands in held_test_operations[]. That must pass structural validation
+        # (L0007 §2.7 requires the held proposals be SHOWN, not rejected), while
+        # a plan with BOTH arrays empty is still meaningless and rejected.
+        svc._validate_write_plan_structure(
+            {**base_plan, "operations": [], "held_test_operations": base_plan["operations"]},
+            allow_test_edits=False,
+        )
+        with pytest.raises(svc.GitServiceError) as exc3:
+            svc._validate_write_plan_structure(
+                {**base_plan, "operations": [], "held_test_operations": []}, allow_test_edits=False,
+            )
+        assert exc3.value.code == "invalid_write_plan"
+
+    def test_review_gate_write_plan_submission_rejects_a_mismatched_run_id(self, origin_repo):
+        # 0009-TR rev3 (AI review finding 1): action_scope/group_id/merge_id
+        # alone bind a resolve_conflict token to the MERGE, not to the specific
+        # pending write TURN — a still-valid token for a stale/different run
+        # must not be able to attach a plan to the CURRENT pending write turn.
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0135"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0135")
+        (wt / "shared.py").write_text('"mismatch group version"\n', encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "shared.py").write_text('"mismatch mainline version"\n', encoding="utf-8")
+        _git(["commit", "-am", "mismatch mainline change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        merge_id = out["result"]["merge_id"]
+        svc.resolve_conflicts(group, merge_id, [{
+            "path": "shared.py",
+            "content": '"mismatch group version"\n"mismatch mainline version"\n',
+        }], True)
+        svc.send_review_message(
+            group, merge_id, message="고쳐줘",
+            provider_id="prov_test", provider_pinned=True, apply_requested=True,
+            start_run=lambda: "aiv_real_run",
+        )
+        context_before = db_git.session_context(db_git.get_session(merge_id))
+        assert context_before["pending_conversation_run_id"] == "aiv_real_run"
+
+        plan = {
+            "schema_version": "flowgate.write-plan.v1",
+            "base_fingerprint": context_before["review_fingerprint"],
+            "operations": [{
+                "operation_id": "op1", "kind": "create_file", "path": "unrelated.py",
+                "absent": True, "content_bytes_base64": "eA==", "mode": "100644", "purpose": "x",
+            }],
+            "held_test_operations": [],
+        }
+        # a stale/different run's own token (its ai_run_id does not match the
+        # session's CURRENT pending write turn) is rejected before the plan is
+        # ever recorded.
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.submit_review_write_plan(group, merge_id, plan=plan, ai_run_id="aiv_stale_run")
+        assert exc.value.status == 403
+        assert exc.value.code == "write_plan_run_mismatch"
+
+        # a token with NO ai_run_id claim at all (should not happen for a real
+        # resolve_conflict token, but must not be treated as a wildcard match)
+        # is rejected the same way.
+        with pytest.raises(svc.GitServiceError) as exc2:
+            svc.submit_review_write_plan(group, merge_id, plan=plan, ai_run_id=None)
+        assert exc2.value.code == "write_plan_run_mismatch"
+
+        # the session's pending write turn is untouched by either rejected attempt.
+        context_after = db_git.session_context(db_git.get_session(merge_id))
+        assert context_after["pending_conversation_run_id"] == "aiv_real_run"
+
+        svc.abort_merge(group, merge_id)
+
+    def test_review_gate_write_plan_submission_overwrites_the_runs_own_prior_plan(self, origin_repo, monkeypatch):
+        # 0009-TR rev3: the run's OWN correctly-bound token may resubmit — only
+        # the run's last submission is what its finish attaches (this is the
+        # run replacing its own plan, not a different run's token overwriting
+        # someone else's — that case is the mismatch test above).
+        import uuid
+
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services.ai_invoke import diagnostics as ai_diagnostics
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0136"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0136")
+        (wt / "shared.py").write_text('"overwrite group version"\n', encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "shared.py").write_text('"overwrite mainline version"\n', encoding="utf-8")
+        _git(["commit", "-am", "overwrite mainline change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        merge_id = out["result"]["merge_id"]
+        svc.resolve_conflicts(group, merge_id, [{
+            "path": "shared.py",
+            "content": '"overwrite group version"\n"overwrite mainline version"\n',
+        }], True)
+        fingerprint = db_git.session_context(db_git.get_session(merge_id))["review_fingerprint"]
+        svc.send_review_message(
+            group, merge_id, message="고쳐줘",
+            provider_id="prov_test", provider_pinned=True, apply_requested=True,
+            start_run=lambda: "aiv_overwrite_run",
+        )
+
+        def _plan_for(path: str) -> dict:
+            return {
+                "schema_version": "flowgate.write-plan.v1",
+                "base_fingerprint": fingerprint,
+                "operations": [{
+                    "operation_id": "op1", "kind": "create_file", "path": path,
+                    "absent": True, "content_bytes_base64": "eA==", "mode": "100644", "purpose": "x",
+                }],
+                "held_test_operations": [],
+            }
+
+        plan_a = _plan_for("overwrite_a.py")
+        plan_b = _plan_for("overwrite_b.py")
+        svc.submit_review_write_plan(group, merge_id, plan=plan_a, ai_run_id="aiv_overwrite_run")
+        svc.submit_review_write_plan(group, merge_id, plan=plan_b, ai_run_id="aiv_overwrite_run")
+        # the run's finish carries whatever `write_plan` is now stored against
+        # it — the SAME field both submissions wrote to — so this mirrors what
+        # a real second submission from the same run's token overwrites.
+        monkeypatch.setattr(
+            ai_diagnostics, "get_run_detail",
+            lambda run_id: {"status": "finished", "succeeded": True, "write_plan": plan_b},
+        )
+        review = svc.get_merge_review(group, merge_id)["result"]
+        assert review["review_state"] == "re_review"
+        changed_paths = {c["path"] for c in review["changes"]}
+        assert "overwrite_b.py" in changed_paths
+        assert "overwrite_a.py" not in changed_paths
+
+        approved = svc.approve_merge_review(
+            group, merge_id, attempt_id=str(uuid.uuid4()),
+            review_fingerprint=review["review_fingerprint"], authority="human",
+        )
+        assert approved["result"]["status"] == "merged"
+
+    def test_review_gate_write_plan_held_only_plan_is_shown_not_applied(self, origin_repo, monkeypatch):
+        # 0009-TR rev3 (AI review finding 2): a plan whose AI proposed ONLY
+        # test-path edits must be SHOWN (not silently rejected, not silently
+        # discarded) and must not touch review_state/review_fingerprint since
+        # nothing was actually applied.
+        import base64
+
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services.ai_invoke import diagnostics as ai_diagnostics
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0137"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0137")
+        (wt / "shared.py").write_text('"heldonly group version"\n', encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "shared.py").write_text('"heldonly mainline version"\n', encoding="utf-8")
+        _git(["commit", "-am", "heldonly mainline change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        merge_id = out["result"]["merge_id"]
+        svc.resolve_conflicts(group, merge_id, [{
+            "path": "shared.py",
+            "content": '"heldonly group version"\n"heldonly mainline version"\n',
+        }], True)
+        fingerprint = db_git.session_context(db_git.get_session(merge_id))["review_fingerprint"]
+        svc.send_review_message(
+            group, merge_id, message="테스트도 고쳐줘",
+            provider_id="prov_test", provider_pinned=True, apply_requested=True,
+            start_run=lambda: "aiv_held_only",
+        )
+        plan = {
+            "schema_version": "flowgate.write-plan.v1",
+            "base_fingerprint": fingerprint,
+            "operations": [],
+            "held_test_operations": [{
+                "operation_id": "held1", "kind": "create_file", "path": "server/tests/held_case.py",
+                "absent": True,
+                "content_bytes_base64": base64.b64encode(b'"held test"\n').decode("ascii"),
+                "mode": "100644", "purpose": "add a regression case for the fix",
+            }],
+        }
+        svc.submit_review_write_plan(group, merge_id, plan=plan, ai_run_id="aiv_held_only")
+        monkeypatch.setattr(
+            ai_diagnostics, "get_run_detail",
+            lambda run_id: {"status": "finished", "succeeded": True, "write_plan": plan},
+        )
+        review = svc.get_merge_review(group, merge_id)["result"]
+        # nothing was applied — the pending review is exactly where it was.
+        assert review["review_state"] == "resolved_pending_review"
+        assert review["review_fingerprint"] == fingerprint
+        assert not any(c["path"] == "server/tests/held_case.py" for c in review["changes"])
+        # the held proposal is SHOWN, not discarded.
+        held = review["held_test_operations"]
+        assert len(held) == 1
+        assert held[0]["path"] == "server/tests/held_case.py"
+        assert held[0]["purpose"] == "add a regression case for the fix"
+        roles = [(t["role"], t["status"], t["message"]) for t in review["conversation"]]
+        assert any(
+            role == "ai" and status == "accepted" and "held_case.py" in message
+            for role, status, message in roles
+        )
+
+        svc.abort_merge(group, merge_id)
+
+    def test_review_gate_write_plan_mixed_plan_preserves_held_operations(self, origin_repo, monkeypatch):
+        # 0009-TR rev3 (AI review finding 2): a MIXED plan (some operations
+        # applied for real, some test-path proposals held) must not silently
+        # drop the held half when the applied half succeeds.
+        import base64
+        import uuid
+
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services.ai_invoke import diagnostics as ai_diagnostics
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0138"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0138")
+        (wt / "shared.py").write_text('"mixed group version"\n', encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "shared.py").write_text('"mixed mainline version"\n', encoding="utf-8")
+        _git(["commit", "-am", "mixed mainline change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        merge_id = out["result"]["merge_id"]
+        svc.resolve_conflicts(group, merge_id, [{
+            "path": "shared.py",
+            "content": '"mixed group version"\n"mixed mainline version"\n',
+        }], True)
+        fingerprint = db_git.session_context(db_git.get_session(merge_id))["review_fingerprint"]
+        svc.send_review_message(
+            group, merge_id, message="이건 고치고 테스트도 하나 추가해줘",
+            provider_id="prov_test", provider_pinned=True, apply_requested=True,
+            start_run=lambda: "aiv_mixed_run",
+        )
+        plan = {
+            "schema_version": "flowgate.write-plan.v1",
+            "base_fingerprint": fingerprint,
+            "operations": [{
+                "operation_id": "op1", "kind": "create_file", "path": "mixed_ok.py",
+                "absent": True,
+                "content_bytes_base64": base64.b64encode(b'"applied"\n').decode("ascii"),
+                "mode": "100644", "purpose": "product code the human asked for",
+            }],
+            "held_test_operations": [{
+                "operation_id": "held1", "kind": "create_file", "path": "server/tests/mixed_held.py",
+                "absent": True,
+                "content_bytes_base64": base64.b64encode(b'"held"\n').decode("ascii"),
+                "mode": "100644", "purpose": "regression case, held for a second authorization",
+            }],
+        }
+        svc.submit_review_write_plan(group, merge_id, plan=plan, ai_run_id="aiv_mixed_run")
+        monkeypatch.setattr(
+            ai_diagnostics, "get_run_detail",
+            lambda run_id: {"status": "finished", "succeeded": True, "write_plan": plan},
+        )
+        review = svc.get_merge_review(group, merge_id)["result"]
+        assert review["review_state"] == "re_review"
+        assert any(c["path"] == "mixed_ok.py" for c in review["changes"])
+        assert not any(c["path"] == "server/tests/mixed_held.py" for c in review["changes"])
+        held = review["held_test_operations"]
+        assert len(held) == 1
+        assert held[0]["path"] == "server/tests/mixed_held.py"
+
+        approved = svc.approve_merge_review(
+            group, merge_id, attempt_id=str(uuid.uuid4()),
+            review_fingerprint=review["review_fingerprint"], authority="human",
+        )
+        assert approved["result"]["status"] == "merged"
+
+    def test_review_gate_write_plan_allow_test_edits_second_authorization_applies_test_edit(self, origin_repo, monkeypatch):
+        # 0009-TR rev3 (AI review finding 2): the human's second explicit action
+        # (L0007 §2.7's [테스트 편집 포함 재지시]) starts a run with
+        # allow_test_edits=true, and ONLY such a run may put a test-path
+        # operation directly in operations[] — where it goes through the exact
+        # same anchored-apply/rollback engine as any product-code edit.
+        import base64
+        import uuid
+
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services.ai_invoke import diagnostics as ai_diagnostics
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0139"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0139")
+        (wt / "shared.py").write_text('"testedit group version"\n', encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "shared.py").write_text('"testedit mainline version"\n', encoding="utf-8")
+        _git(["commit", "-am", "testedit mainline change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        merge_id = out["result"]["merge_id"]
+        svc.resolve_conflicts(group, merge_id, [{
+            "path": "shared.py",
+            "content": '"testedit group version"\n"testedit mainline version"\n',
+        }], True)
+        fingerprint = db_git.session_context(db_git.get_session(merge_id))["review_fingerprint"]
+        sent = svc.send_review_message(
+            group, merge_id, message="이번엔 테스트 편집도 포함해서 다시 해줘",
+            provider_id="prov_test", provider_pinned=True,
+            apply_requested=True, allow_test_edits=True,
+            start_run=lambda: "aiv_test_edit_run",
+        )
+        assert sent["result"]["status"] == "accepted"
+        context = db_git.session_context(db_git.get_session(merge_id))
+        assert context["pending_conversation_allow_test_edits"] is True
+
+        plan = {
+            "schema_version": "flowgate.write-plan.v1",
+            "base_fingerprint": fingerprint,
+            "operations": [{
+                "operation_id": "op1", "kind": "create_file", "path": "server/tests/allowed_case.py",
+                "absent": True,
+                "content_bytes_base64": base64.b64encode(b'"now allowed"\n').decode("ascii"),
+                "mode": "100644", "purpose": "regression case for the second-authorization path",
+            }],
+            "held_test_operations": [],
+        }
+        svc.submit_review_write_plan(group, merge_id, plan=plan, ai_run_id="aiv_test_edit_run")
+        monkeypatch.setattr(
+            ai_diagnostics, "get_run_detail",
+            lambda run_id: {"status": "finished", "succeeded": True, "write_plan": plan},
+        )
+        review = svc.get_merge_review(group, merge_id)["result"]
+        assert review["review_state"] == "re_review"
+        assert any(c["path"] == "server/tests/allowed_case.py" for c in review["changes"])
+        assert not review["held_test_operations"]
+
+        approved = svc.approve_merge_review(
+            group, merge_id, attempt_id=str(uuid.uuid4()),
+            review_fingerprint=review["review_fingerprint"], authority="human",
+        )
+        assert approved["result"]["status"] == "merged"
+
+    def test_review_gate_write_plan_stale_run_discarded_when_approved_while_active(
+        self, origin_repo, monkeypatch,
+    ):
+        # 0481 TR0009 rev4 (AI review finding): L0007 §2.9 requires a
+        # re-instruction run's result to be discarded as `stale_run` when the
+        # review it was launched against is no longer the one on screen. A human
+        # can approve the CURRENTLY pending snapshot while a conversation run
+        # (started against that same snapshot) is still in flight — approval
+        # does not change review_fingerprint/instruction_generation at all, only
+        # review_state, so a guard that only compared fingerprint/generation
+        # would miss this race entirely and let the run's late write plan try to
+        # apply against an already-merged session.
+        import base64
+        import uuid
+
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services.ai_invoke import diagnostics as ai_diagnostics
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0140"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0140")
+        (wt / "shared.py").write_text('"stale approve group version"\n', encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "shared.py").write_text('"stale approve mainline version"\n', encoding="utf-8")
+        _git(["commit", "-am", "stale approve mainline change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        merge_id = out["result"]["merge_id"]
+        out = svc.resolve_conflicts(group, merge_id, [{
+            "path": "shared.py",
+            "content": '"stale approve group version"\n"stale approve mainline version"\n',
+        }], True)
+        fingerprint = out["result"]["review_fingerprint"]
+
+        sent = svc.send_review_message(
+            group, merge_id, message="이 부분 고쳐서 적용해줘",
+            provider_id="prov_test", provider_pinned=True, apply_requested=True,
+            start_run=lambda: "aiv_stale_approve_race",
+        )
+        assert sent["result"]["status"] == "accepted"
+
+        # the human approves the CURRENT (still pending) snapshot while that run
+        # is still active — approval never checks pending_conversation_run_id.
+        approved = svc.approve_merge_review(
+            group, merge_id, attempt_id=str(uuid.uuid4()),
+            review_fingerprint=fingerprint, authority="human",
+        )
+        assert approved["result"]["status"] == "merged"
+        assert db_git.get_session(merge_id)["status"] == "done"
+        merged_head = _git(["rev-parse", "main"], cwd=origin_repo["bare"]).strip()
+
+        # only now does the run finish, with a write plan that (if applied)
+        # would edit shared.py again on top of the already-merged commit.
+        manifest_entry = next(
+            e for e in db_git.session_context(db_git.get_session(merge_id))["snapshot_manifest"]
+            if e["path"] == "shared.py"
+        )
+        plan = {
+            "schema_version": "flowgate.write-plan.v1",
+            "base_fingerprint": fingerprint,
+            "operations": [{
+                "operation_id": "op1", "kind": "edit", "path": "shared.py",
+                "expected_before_blob": manifest_entry["oid"],
+                "anchor": {
+                    "body_base64": base64.b64encode(b'"stale approve group version"\n').decode("ascii"),
+                    "expected_count": 1,
+                },
+                "replacement_bytes_base64": base64.b64encode(b'"this must never land"\n').decode("ascii"),
+                "purpose": "must be discarded as stale_run, not applied",
+            }],
+            "held_test_operations": [],
+        }
+        monkeypatch.setattr(
+            ai_diagnostics, "get_run_detail",
+            lambda run_id: {
+                "status": "finished", "succeeded": True,
+                "last_message": "수정했습니다.", "provider_id": "prov_test",
+                "write_plan": plan,
+            },
+        )
+
+        review = svc.get_merge_review(group, merge_id)["result"]
+        assert review["review_state"] == "completed"
+        assert review["review_fingerprint"] == fingerprint  # untouched by the discarded run
+        roles = [(t["role"], t["status"]) for t in review["conversation"]]
+        assert ("ai", "stale_run") in roles
+        assert not any(t["role"] == "ai" and t["status"] == "accepted" for t in review["conversation"])
+        # 0481 T0010 rev6 (rejection 3): the PLAN is still discarded, but the ANSWER is
+        # kept. Before this the operator got only "the approval target changed, instruct
+        # again" -- twice in the rejected transcript -- and never saw what the run said.
+        stale = next(t for t in review["conversation"] if t["status"] == "stale_run")
+        assert "수정했습니다." in stale["message"]
+        assert "승인 대기가 끝났습니다" in stale["message"]
+        assert "수정안은 적용하지 않았습니다" in stale["message"]
+
+        # the plan never touched the tree: mainline still has exactly the commit
+        # approval created, and no new candidate/generation was minted.
+        assert _git(["rev-parse", "main"], cwd=origin_repo["bare"]).strip() == merged_head
+        context = db_git.session_context(db_git.get_session(merge_id))
+        assert context.get("pending_conversation_run_id") is None
+        assert int(context.get("instruction_generation") or 0) == 0
+
+    def test_review_gate_conversation_stale_run_discarded_when_rejected_while_active(
+        self, origin_repo, monkeypatch,
+    ):
+        # 0481 TR0009 rev4 (AI review finding): a human can [반려] (reject) the
+        # candidate a conversation run is still answering — reject_and_return_
+        # to_resolver never checks pending_conversation_run_id. Once such a run
+        # later finishes, its answer must be discarded as `stale_run`, never
+        # folded in as if it still answered a candidate the session has already
+        # abandoned (review_state moved off resolved_pending_review/re_review).
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services.ai_invoke import diagnostics as ai_diagnostics
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0141"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0141")
+        (wt / "shared.py").write_text('"stale reject group version"\n', encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "shared.py").write_text('"stale reject mainline version"\n', encoding="utf-8")
+        _git(["commit", "-am", "stale reject mainline change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        merge_id = out["result"]["merge_id"]
+        svc.resolve_conflicts(group, merge_id, [{
+            "path": "shared.py",
+            "content": '"stale reject group version"\n"stale reject mainline version"\n',
+        }], True)
+
+        sent = svc.send_review_message(
+            group, merge_id, message="이 부분 왜 이렇게 했어?",
+            provider_id="prov_test", provider_pinned=True, apply_requested=False,
+            start_run=lambda: "aiv_stale_reject_race",
+        )
+        assert sent["result"]["status"] == "accepted"
+
+        rejected = svc.reject_merge_review(
+            group, merge_id, reason="다시 확인해 주세요 — 이 사유는 충분히 깁니다.",
+            provider_id="prov_test", provider_pinned=True,
+            start_run=lambda first_message: "aiv_new_resolver_run",
+        )
+        assert rejected["result"]["status"] == "returned_to_resolver"
+
+        # only now does the OLD (pre-reject) run finish.
+        monkeypatch.setattr(
+            ai_diagnostics, "get_run_detail",
+            lambda run_id: {
+                "status": "finished", "succeeded": True,
+                "last_message": "이 답은 이미 버려진 후보에 대한 것입니다.",
+                "provider_id": "prov_test",
+            },
+        )
+        # the session is back to `open` (review_state is None), so the review
+        # screen itself is correctly unavailable — but materialization still
+        # runs as a side effect of the lookup and must discard the stale answer.
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.get_merge_review(group, merge_id)
+        assert exc.value.code == "review_not_ready"
+
+        context = db_git.session_context(db_git.get_session(merge_id))
+        roles = [(t["role"], t["status"]) for t in context["conversation"]]
+        assert ("ai", "stale_run") in roles
+        assert not any(t["role"] == "ai" and t["status"] == "accepted" for t in context["conversation"])
+        # rev6: kept, under a line that names what moved (here: the reject ended the wait
+        # and refroze nothing, so the candidate identity is gone too).
+        stale = next(t for t in context["conversation"] if t["status"] == "stale_run")
+        assert "이 답은 이미 버려진 후보에 대한 것입니다." in stale["message"]
+        assert "stale_run" in stale["message"]
+        assert context.get("pending_conversation_run_id") is None
+
+        svc.abort_merge(group, merge_id)
+
+    def test_review_gate_approval_racing_the_materialize_window_is_serialized(
+        self, origin_repo, monkeypatch,
+    ):
+        # 0481 TR0009 rev5 (AI review finding): the stale_run decision must be
+        # ATOMIC with what it authorizes. rev4 read review_state/fingerprint/
+        # generation with NO lock held and only afterwards applied the plan and
+        # appended the turn, so an approval landing in that check-to-materialize
+        # window produced exactly what L0007 §2.9 forbids — a write run's result
+        # applied/reported against a target nobody re-checked (and reported as a
+        # generic `apply_failed`, not `stale_run`). This test drives an approval
+        # INTO that window: the racing call fires from inside materialization,
+        # at the very moment the pending run is claimed, and must be serialized
+        # by the project git lock instead of interleaving.
+        import base64
+        import uuid
+
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services.ai_invoke import diagnostics as ai_diagnostics
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0142"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0142")
+        (wt / "shared.py").write_text('"race apply group version"\n', encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "shared.py").write_text('"race apply mainline version"\n', encoding="utf-8")
+        _git(["commit", "-am", "race apply mainline change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        merge_id = out["result"]["merge_id"]
+        out = svc.resolve_conflicts(group, merge_id, [{
+            "path": "shared.py",
+            "content": '"race apply group version"\n"race apply mainline version"\n',
+        }], True)
+        fingerprint = out["result"]["review_fingerprint"]
+
+        sent = svc.send_review_message(
+            group, merge_id, message="이 부분 고쳐서 적용해줘",
+            provider_id="prov_test", provider_pinned=True, apply_requested=True,
+            start_run=lambda: "aiv_materialize_race",
+        )
+        assert sent["result"]["status"] == "accepted"
+
+        actual = svc.read_merge_review_file_diff(group, merge_id, "shared.py")["data"]["new"]["content"]
+        split_at = actual.index('"race apply mainline')
+        anchor_text = actual[:split_at]
+        replacement_text = anchor_text.replace("race apply group version", "race apply group version (fixed)")
+        manifest_entry = next(
+            e for e in db_git.session_context(db_git.get_session(merge_id))["snapshot_manifest"]
+            if e["path"] == "shared.py"
+        )
+        plan = {
+            "schema_version": "flowgate.write-plan.v1",
+            "base_fingerprint": fingerprint,
+            "operations": [{
+                "operation_id": "op1", "kind": "edit", "path": "shared.py",
+                "expected_before_blob": manifest_entry["oid"],
+                "anchor": {
+                    "body_base64": base64.b64encode(anchor_text.encode("utf-8")).decode("ascii"),
+                    "expected_count": 1,
+                },
+                "replacement_bytes_base64": base64.b64encode(
+                    replacement_text.encode("utf-8")
+                ).decode("ascii"),
+                "purpose": "must apply exactly once, against the checked target",
+            }],
+            "held_test_operations": [],
+        }
+        assert svc.submit_review_write_plan(
+            group, merge_id, plan=plan, ai_run_id="aiv_materialize_race",
+        )["result"]["status"] == "accepted"
+        monkeypatch.setattr(
+            ai_diagnostics, "get_run_detail",
+            lambda run_id: {
+                "status": "finished", "succeeded": True,
+                "last_message": "수정했습니다.", "provider_id": "prov_test",
+                "write_plan": plan,
+            },
+        )
+
+        # the racer: an approval of the CURRENT (checked, still pending) snapshot
+        # fired from inside the check-to-materialize window — the first session
+        # write materialization makes is its claim on the pending run.
+        monkeypatch.setattr(svc, "LOCK_WAIT_SEC", 0)  # the racer must not block the test
+        raced: list = []
+        real_set_session_context = db_git.set_session_context
+
+        def racing_set_session_context(mid, ctx):
+            real_set_session_context(mid, ctx)
+            if raced:
+                return
+            raced.append("fired")
+            try:
+                svc.approve_merge_review(
+                    group, merge_id, attempt_id=str(uuid.uuid4()),
+                    review_fingerprint=fingerprint, authority="human",
+                )
+                raced.append("interleaved")
+            except svc.GitServiceError as exc:
+                raced.append(exc.code)
+
+        monkeypatch.setattr(db_git, "set_session_context", racing_set_session_context)
+
+        review = svc.get_merge_review(group, merge_id)["result"]
+        # the approval could not interleave: it was refused the project lock the
+        # materialization was holding across check + claim + apply + append.
+        assert raced == ["fired", "git_busy"]
+        # and the run's plan was applied exactly once, to the target the stale
+        # check actually looked at.
+        assert review["review_state"] == "re_review"
+        new_fingerprint = review["review_fingerprint"]
+        assert new_fingerprint != fingerprint
+        statuses = [(t["role"], t["status"]) for t in review["conversation"]]
+        assert statuses.count(("ai", "accepted")) == 1
+        assert ("ai", "stale_run") not in statuses
+        assert svc.read_merge_review_file_diff(
+            group, merge_id, "shared.py",
+        )["data"]["new"]["content"].startswith('"race apply group version (fixed)"')
+
+        # the human's approval of the target they had on screen is now correctly
+        # refused (it is no longer the candidate), and the new one merges.
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.approve_merge_review(
+                group, merge_id, attempt_id=str(uuid.uuid4()),
+                review_fingerprint=fingerprint, authority="human",
+            )
+        assert exc.value.code == "stale_review"
+        approved = svc.approve_merge_review(
+            group, merge_id, attempt_id=str(uuid.uuid4()),
+            review_fingerprint=new_fingerprint, authority="human",
+        )
+        assert approved["result"]["status"] == "merged"
+        assert db_git.get_session(merge_id)["status"] == "done"
+
+    def test_review_gate_rejection_racing_the_materialize_window_is_serialized(
+        self, origin_repo, monkeypatch,
+    ):
+        # 0481 TR0009 rev5 (AI review finding), propose-only half: the same
+        # window let a plain answer be appended as `accepted` to a session a
+        # rejection had already returned to the resolver. A [반려] fired from
+        # inside the window must be serialized too — the answer lands on the
+        # candidate the check saw, and the rejection is refused the lock.
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services.ai_invoke import diagnostics as ai_diagnostics
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0143"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0143")
+        (wt / "shared.py").write_text('"race ask group version"\n', encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "shared.py").write_text('"race ask mainline version"\n', encoding="utf-8")
+        _git(["commit", "-am", "race ask mainline change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        merge_id = out["result"]["merge_id"]
+        out = svc.resolve_conflicts(group, merge_id, [{
+            "path": "shared.py",
+            "content": '"race ask group version"\n"race ask mainline version"\n',
+        }], True)
+        fingerprint = out["result"]["review_fingerprint"]
+
+        sent = svc.send_review_message(
+            group, merge_id, message="이 부분 왜 이렇게 했어?",
+            provider_id="prov_test", provider_pinned=True, apply_requested=False,
+            start_run=lambda: "aiv_materialize_race_ask",
+        )
+        assert sent["result"]["status"] == "accepted"
+        monkeypatch.setattr(
+            ai_diagnostics, "get_run_detail",
+            lambda run_id: {
+                "status": "finished", "succeeded": True,
+                "last_message": "이렇게 해결했습니다.", "provider_id": "prov_test",
+            },
+        )
+
+        monkeypatch.setattr(svc, "LOCK_WAIT_SEC", 0)
+        raced: list = []
+        real_set_session_context = db_git.set_session_context
+
+        def racing_set_session_context(mid, ctx):
+            real_set_session_context(mid, ctx)
+            if raced:
+                return
+            raced.append("fired")
+            try:
+                svc.reject_merge_review(
+                    group, merge_id, reason="이 답이 오기 전에 반려합니다 — 사유는 충분히 깁니다.",
+                    provider_id="prov_test", provider_pinned=True,
+                    start_run=lambda first_message: "aiv_race_resolver_run",
+                )
+                raced.append("interleaved")
+            except svc.GitServiceError as exc:
+                raced.append(exc.code)
+
+        monkeypatch.setattr(db_git, "set_session_context", racing_set_session_context)
+
+        review = svc.get_merge_review(group, merge_id)["result"]
+        assert raced == ["fired", "git_busy"]
+        assert review["review_state"] == "resolved_pending_review"
+        assert review["review_fingerprint"] == fingerprint
+        statuses = [(t["role"], t["status"]) for t in review["conversation"]]
+        assert statuses.count(("ai", "accepted")) == 1
+        assert ("ai", "stale_run") not in statuses
+        context = db_git.session_context(db_git.get_session(merge_id))
+        assert context.get("pending_conversation_run_id") is None
+
+        # the rejection the racer could not interleave still works afterwards.
+        rejected = svc.reject_merge_review(
+            group, merge_id, reason="이제 반려합니다 — 이 사유는 충분히 깁니다.",
+            provider_id="prov_test", provider_pinned=True,
+            start_run=lambda first_message: "aiv_race_resolver_run",
+        )
+        assert rejected["result"]["status"] == "returned_to_resolver"
+        svc.abort_merge(group, merge_id)
+
+    def test_review_gate_message_does_not_overwrite_an_approval_that_won_the_race(
+        self, origin_repo,
+    ):
+        # 0481 TR0009 rev5 (AI review finding, same class): `send_review_message`
+        # validated the session, then started the AI run — a slow call — and only
+        # then wrote the pending bookkeeping back from the context it had read
+        # BEFORE the run started. An approval completing in that window was
+        # silently overwritten (review_state/merge_commit reverted to a
+        # pre-approval copy). The turn must now be refused instead, and the
+        # approval left exactly as it landed.
+        import uuid
+
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0144"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0144")
+        (wt / "shared.py").write_text('"race send group version"\n', encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "shared.py").write_text('"race send mainline version"\n', encoding="utf-8")
+        _git(["commit", "-am", "race send mainline change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        merge_id = out["result"]["merge_id"]
+        out = svc.resolve_conflicts(group, merge_id, [{
+            "path": "shared.py",
+            "content": '"race send group version"\n"race send mainline version"\n',
+        }], True)
+        fingerprint = out["result"]["review_fingerprint"]
+
+        message = "실행이 시작되는 사이에 승인이 끝나는 경우"
+
+        def start_run_while_the_human_approves():
+            approved = svc.approve_merge_review(
+                group, merge_id, attempt_id=str(uuid.uuid4()),
+                review_fingerprint=fingerprint, authority="human",
+            )
+            assert approved["result"]["status"] == "merged"
+            return "aiv_orphaned_by_approval"
+
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.send_review_message(
+                group, merge_id, message=message,
+                provider_id="prov_test", provider_pinned=True, apply_requested=True,
+                start_run=start_run_while_the_human_approves,
+            )
+        assert exc.value.code == "review_not_ready"
+
+        context = db_git.session_context(db_git.get_session(merge_id))
+        assert context["review_state"] == "completed"
+        assert context.get("merge_commit")
+        assert db_git.get_session(merge_id)["status"] == "done"
+        assert context.get("pending_conversation_run_id") is None
+        assert context.get("pending_conversation_write_requested") is None
+        assert not any(t["message"] == message for t in context.get("conversation") or [])
+
+    def test_review_gate_reject_does_not_undo_an_approval_that_won_the_race(
+        self, origin_repo, monkeypatch,
+    ):
+        # 0481 TR0009 rev5 (AI review finding, same class): `reject_merge_review`
+        # checked review_state BEFORE taking the project lock and then restored
+        # the conflict from that pre-lock context — so an approval that committed
+        # while the rejection was waiting for the lock was both undone in the
+        # checkout and overwritten in the session. The rejection must now lose
+        # the race cleanly. The racer fires from inside `_acquire_lock`, i.e.
+        # exactly in the window between the pre-check and the lock being held.
+        import uuid
+
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0145"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0145")
+        (wt / "shared.py").write_text('"race reject group version"\n', encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "shared.py").write_text('"race reject mainline version"\n', encoding="utf-8")
+        _git(["commit", "-am", "race reject mainline change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        merge_id = out["result"]["merge_id"]
+        out = svc.resolve_conflicts(group, merge_id, [{
+            "path": "shared.py",
+            "content": '"race reject group version"\n"race reject mainline version"\n',
+        }], True)
+        fingerprint = out["result"]["review_fingerprint"]
+
+        raced: list = []
+        real_acquire_lock = svc._acquire_lock
+
+        def racing_acquire_lock(project_id, holder, wait_sec=None):
+            if not raced:
+                raced.append(holder)
+                approved = svc.approve_merge_review(
+                    group, merge_id, attempt_id=str(uuid.uuid4()),
+                    review_fingerprint=fingerprint, authority="human",
+                )
+                assert approved["result"]["status"] == "merged"
+            if wait_sec is None:
+                return real_acquire_lock(project_id, holder)
+            return real_acquire_lock(project_id, holder, wait_sec=wait_sec)
+
+        monkeypatch.setattr(svc, "_acquire_lock", racing_acquire_lock)
+
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.reject_merge_review(
+                group, merge_id, reason="승인과 경쟁하는 반려 — 이 사유는 충분히 깁니다.",
+                provider_id="prov_test", provider_pinned=True,
+                start_run=lambda first_message: "aiv_race_reject_resolver",
+            )
+        assert exc.value.code == "review_not_ready"
+
+        context = db_git.session_context(db_git.get_session(merge_id))
+        assert context["review_state"] == "completed"
+        assert context.get("merge_commit")
+        assert db_git.get_session(merge_id)["status"] == "done"
+        # the approved candidate is intact: the rejection did not re-run the
+        # merge and did not put conflict markers back.
+        assert not any(
+            t["status"] == "rejected" for t in context.get("conversation") or []
+        )
+
+    def test_review_gate_write_plan_resubmitted_in_the_materialize_window_wins(
+        self, origin_repo, monkeypatch,
+    ):
+        # 0481 TR0009 rev5 (AI review finding, the plan half): the stale check is
+        # not the only input that has to be atomic with what it authorizes — so is
+        # the plan being applied. `_materialize_pending_conversation_run` reads the
+        # run detail BEFORE taking the project lock, and `submit_review_write_plan`
+        # (worker token) takes no git lock at all, so a second submission landing in
+        # that window was silently dropped: the worker was told `accepted` and the
+        # PREVIOUS plan got applied. The run's last submission must win — the same
+        # contract `..._submission_overwrites_the_runs_own_prior_plan` states for the
+        # sequential case — so the run detail is re-read under the lock too.
+        import base64
+
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import ai_invoke_service
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services.ai_invoke import diagnostics as ai_diagnostics
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0146"
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0146")
+        (wt / "shared.py").write_text('"resubmit group version"\n', encoding="utf-8")
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "shared.py").write_text('"resubmit mainline version"\n', encoding="utf-8")
+        _git(["commit", "-am", "resubmit mainline change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        merge_id = out["result"]["merge_id"]
+        out = svc.resolve_conflicts(group, merge_id, [{
+            "path": "shared.py",
+            "content": '"resubmit group version"\n"resubmit mainline version"\n',
+        }], True)
+        fingerprint = out["result"]["review_fingerprint"]
+
+        sent = svc.send_review_message(
+            group, merge_id, message="이 부분 고쳐서 적용해줘",
+            provider_id="prov_test", provider_pinned=True, apply_requested=True,
+            start_run=lambda: "aiv_resubmit_race",
+        )
+        assert sent["result"]["status"] == "accepted"
+
+        actual = svc.read_merge_review_file_diff(group, merge_id, "shared.py")["data"]["new"]["content"]
+        anchor_text = actual[:actual.index('"resubmit mainline')]
+        manifest_entry = next(
+            e for e in db_git.session_context(db_git.get_session(merge_id))["snapshot_manifest"]
+            if e["path"] == "shared.py"
+        )
+
+        def _plan(tag):
+            replacement = anchor_text.replace(
+                "resubmit group version", "resubmit group version ({})".format(tag),
+            )
+            return {
+                "schema_version": "flowgate.write-plan.v1",
+                "base_fingerprint": fingerprint,
+                "operations": [{
+                    "operation_id": "op-{}".format(tag), "kind": "edit", "path": "shared.py",
+                    "expected_before_blob": manifest_entry["oid"],
+                    "anchor": {
+                        "body_base64": base64.b64encode(anchor_text.encode("utf-8")).decode("ascii"),
+                        "expected_count": 1,
+                    },
+                    "replacement_bytes_base64": base64.b64encode(
+                        replacement.encode("utf-8")
+                    ).decode("ascii"),
+                    "purpose": "plan {}".format(tag),
+                }],
+                "held_test_operations": [],
+            }
+
+        plan_first, plan_second = _plan("first"), _plan("second")
+
+        # stands in for the runs table: submit WRITES the plan, materialize READS it.
+        recorded: dict = {}
+        monkeypatch.setattr(
+            ai_invoke_service, "record_run_write_plan",
+            lambda run_id, plan: recorded.__setitem__(run_id, plan),
+        )
+        monkeypatch.setattr(
+            ai_diagnostics, "get_run_detail",
+            lambda run_id: {
+                "status": "finished", "succeeded": True,
+                "last_message": "수정했습니다.", "provider_id": "prov_test",
+                "write_plan": recorded.get(run_id),
+            },
+        )
+        assert svc.submit_review_write_plan(
+            group, merge_id, plan=plan_first, ai_run_id="aiv_resubmit_race",
+        )["result"]["status"] == "accepted"
+
+        # the racer: the worker's SECOND submission lands after materialization has
+        # already read the run detail, but before it takes the lock and claims the run.
+        raced: list = []
+        real_acquire_lock = svc._acquire_lock
+
+        def racing_acquire_lock(project_id, holder, wait_sec=None):
+            if not raced:
+                raced.append(holder)
+                assert svc.submit_review_write_plan(
+                    group, merge_id, plan=plan_second, ai_run_id="aiv_resubmit_race",
+                )["result"]["status"] == "accepted"
+            if wait_sec is None:
+                return real_acquire_lock(project_id, holder)
+            return real_acquire_lock(project_id, holder, wait_sec=wait_sec)
+
+        monkeypatch.setattr(svc, "_acquire_lock", racing_acquire_lock)
+
+        review = svc.get_merge_review(group, merge_id)["result"]
+        assert raced, "the racing submission never fired"
+        # the plan that was applied is the one submitted LAST, not the pre-lock copy.
+        assert review["review_state"] == "re_review"
+        assert review["review_fingerprint"] != fingerprint
+        content = svc.read_merge_review_file_diff(
+            group, merge_id, "shared.py",
+        )["data"]["new"]["content"]
+        assert content.startswith('"resubmit group version (second)"')
+        assert "(first)" not in content
+        statuses = [(t["role"], t["status"]) for t in review["conversation"]]
+        assert statuses.count(("ai", "accepted")) == 1
+        assert ("ai", "stale_run") not in statuses
+        svc.abort_merge(group, merge_id)
 
 
 # ── base-slot provisioning: lossless adopt + ledger (flowgate.default.0161) ──
@@ -2022,7 +4127,10 @@ class TestBaseCommitRevert0177:
         from modules.flow_gate.services import git_service as svc
 
         out = svc.project_git_status("baseprj")["status"]
-        assert out["base_dirty"] == {"dirty": False, "files": []}
+        # rev6: ai_run rides alongside (the project AI-cleanup lease as server truth).
+        assert out["base_dirty"] == {
+            "dirty": False, "files": [], "merge_in_progress": None, "ai_run": None,
+        }
         # dirty 0개인데 base-commit → 멱등 성공 (§5 경합 케이스)
         out = svc.base_commit("baseprj", None)["result"]
         assert out["committed"] is False
@@ -2056,7 +4164,10 @@ class TestBaseCommitRevert0177:
         assert out["commit"]
         # committed but NOT pushed: base is ahead of origin by exactly 1
         st = svc.project_git_status("baseprj")["status"]
-        assert st["base_dirty"] == {"dirty": False, "files": []}
+        # rev6: ai_run rides alongside (the project AI-cleanup lease as server truth).
+        assert st["base_dirty"] == {
+            "dirty": False, "files": [], "merge_in_progress": None, "ai_run": None,
+        }
         assert st["ahead_count"] == 1 and st["behind_count"] == 0
         log = _git(["log", "-1", "--pretty=%s"], cwd=base)
         assert log.strip() == "fix: a.txt"
@@ -2237,7 +4348,11 @@ class TestResolveBaseDirtyRealRepo0482:
         committed_files = _git(["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"], cwd=base).split()
         assert committed_files == ["a.txt"]
         status_after = svc.project_git_status("rbdprj")["status"]
-        assert status_after["base_dirty"] == {"dirty": False, "files": []}
+        # rev6: ai_run rides alongside — the project AI-cleanup lease as server truth,
+        # so the panel stops latching "already running" in the browser (rejection 2).
+        assert status_after["base_dirty"] == {
+            "dirty": False, "files": [], "merge_in_progress": None, "ai_run": None,
+        }
 
     def test_resolve_base_dirty_lock_busy_when_project_already_locked(self, resolve_base_dirty_origin, monkeypatch):
         from modules.flow_gate.db import git_integration as db_git
@@ -2265,6 +4380,96 @@ class TestResolveBaseDirtyRealRepo0482:
             db_git.release_lock("rbdprj", "op:elsewhere")
         # nothing was applied while the project lock was held elsewhere
         assert svc.project_git_status("rbdprj")["status"]["base_dirty"]["files"] == ["a.txt"]
+
+
+@pytest.fixture(scope="class")
+def project_scoped_admission_origin(seed):
+    """A dedicated bare origin + enabled project for the 0481 T0010 admission tests.
+
+    Its own project id on purpose: `resolve_base_dirty_origin` above is class-scoped, so
+    sharing it would re-run `projects.create("rbdprj")` for this class and error at setup.
+    """
+    from modules.flow_gate.db import projects
+    from modules.flow_gate.services import git_service as svc
+
+    projects.create({"project_id": "psaprj", "project_name": "PsaProj"})
+    tmp = Path(tempfile.mkdtemp(prefix="fg-git-0481-t0010-"))
+    bare = tmp / "origin.git"
+    seedwt = tmp / "seedwt"
+    _git(["init", "--bare", "-b", "main", str(bare)])
+    _git(["init", "-b", "main", str(seedwt)])
+    (seedwt / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(["add", "-A"], cwd=seedwt)
+    _git(["commit", "-m", "init"], cwd=seedwt)
+    _git(["remote", "add", "origin", str(bare)], cwd=seedwt)
+    _git(["push", "origin", "main"], cwd=seedwt)
+
+    svc.save_config("psaprj", {
+        "repo_url": bare.as_uri(),
+        "provider": "generic",
+        "base_branch": "main",
+        "default_finalize_action": "merge",
+        "enabled": True,
+    })
+    assert svc.provision_base("psaprj", "manual")["status"] == "ok"
+    yield {"bare": bare, "seedwt": seedwt, "tmp": tmp}
+    svc.delete_config("psaprj")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+@needs_git
+class TestBaseDirtyDelegationAdmission0481:
+    """0481 T0010 #1 — [AI에게 맡기기] answered "기준 브랜치 AI 정리를 시작하지 못했습니다."
+    on every press, forever.
+
+    `resolve_base_dirty` is the one action_scope with NO group of its own: it works in the
+    project's BASE checkout, and `start_ai_invoke` synthesizes `<project>.none.0000` only so
+    the run/lease rows have a key. Admission then ran BOTH group-worktree gates against that
+    phantom group, which by construction can never have a worktree, so every press died with
+    409 `worktree_unavailable` before a token was ever minted. 0482's own tests all stubbed
+    the surrounding calls, so nothing exercised this pair against a real git-enabled project.
+    """
+
+    # What `start_ai_invoke` synthesizes for a group-less resolve_base_dirty press.
+    PHANTOM_GROUP = "psaprj.none.0000"
+
+    def test_group_worktree_gate_lets_a_project_scoped_run_through(self, project_scoped_admission_origin):
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services.ai_invoke import admission
+
+        # The same arguments start_run passes for a resolve_base_dirty press.
+        admission._require_group_worktree(
+            "psaprj", "none", self.PHANTOM_GROUP, "main",
+            locale="ko", action_scope="resolve_base_dirty",
+        )
+        # …and it must not have INVENTED the group on the way through. Before this fix the
+        # gate's ensure_worktree self-heal happily provisioned a real branch
+        # (`psaprj_none_0000`), a checked-out worktree and a group_git_state row for a group
+        # that does not exist — junk that outlives the press.
+        assert db_git.get_state(self.PHANTOM_GROUP) is None
+
+    def test_initial_source_sync_gate_lets_a_project_scoped_run_through(self, project_scoped_admission_origin):
+        from modules.flow_gate.services.ai_invoke import admission
+
+        admission._ensure_initial_source_sync(
+            "psaprj", "none", self.PHANTOM_GROUP, "resolve_base_dirty", "psaprj", locale="ko",
+        )
+
+    def test_an_ordinary_scope_still_goes_through_the_base_tree_guard(self, project_scoped_admission_origin):
+        # The base-tree guard itself (0299 R0001) must not be weakened for the scopes it was
+        # written for. An `edit` run on a group with no worktree still engages the gate, and
+        # the gate's self-heal provisions the group — the exact work the project-scoped skip
+        # above must NOT do for a group that does not exist.
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services.ai_invoke import admission
+
+        assert db_git.get_state("psaprj.default.0001") is None
+        admission._require_group_worktree(
+            "psaprj", "default", "psaprj.default.0001", "main",
+            locale="ko", action_scope="edit",
+        )
+        state = db_git.get_state("psaprj.default.0001")
+        assert state is not None and state["branch"] == "psaprj_default_0001"
 
 
 # ── flowgate.default.0199 B0001: no-work group auto-discard (no merge/push) ───
@@ -2715,7 +4920,10 @@ class TestBaseUntrackedCommit0296:
 
         st = svc.project_git_status("untrkprj")["status"]
         # E3 scope untouched: an uncommitted NEW file blocks nothing.
-        assert st["base_dirty"] == {"dirty": False, "files": []}
+        # rev6: ai_run rides alongside (the project AI-cleanup lease as server truth).
+        assert st["base_dirty"] == {
+            "dirty": False, "files": [], "merge_in_progress": None, "ai_run": None,
+        }
         # Directories are expanded to individual paths — a bare "sub/" entry is
         # not a `git add` target the operator can reason about.
         assert sorted(st["base_untracked"]["files"]) == ["brand_new.md", "sub/nested.txt"]

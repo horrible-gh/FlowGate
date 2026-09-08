@@ -206,8 +206,11 @@ def test_start_run_wires_continuation_locale_into_the_worktree_gate(monkeypatch)
     directly rather than trusting the two functions independently."""
     captured = {}
 
-    def _fake_require(project_id, module, group_id, branch, locale=None):
+    # 0481 T0010 #1 added `action_scope` so a project-scoped run can skip the gate; capture
+    # it here too, so this test keeps pinning the whole call and not just the locale.
+    def _fake_require(project_id, module, group_id, branch, locale=None, action_scope=None):
         captured["locale"] = locale
+        captured["action_scope"] = action_scope
         raise HTTPException(
             status_code=409,
             detail={"code": "worktree_unavailable", "message": "stub"},
@@ -232,3 +235,4 @@ def test_start_run_wires_continuation_locale_into_the_worktree_gate(monkeypatch)
         )
 
     assert captured["locale"] == "ja"
+    assert captured["action_scope"] == "new"

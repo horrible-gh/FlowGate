@@ -51,6 +51,11 @@ export interface AiInvokeRunEntry {
   runId: string
   groupId: string
   docRef: string
+  // 0481 T0010 rev3: which surface owns this run. A run started FROM a screen
+  // (`resolve_conflict` — the merge approval dialog's chat, the conflict
+  // resolver's [AI 호출]) must not make MainPanel tear that screen down; see
+  // `activeGitOwnRun` there. Null when the server did not say.
+  actionScope: string | null
   phase: AiInvokePhase
   mode: 'single' | 'continuous'
   documentReviewLoop: DocumentReviewLoopState | null
@@ -276,6 +281,7 @@ function startedEntry(
     runId,
     groupId: String(payload.group_id ?? previous?.groupId ?? ''),
     docRef: String(payload.doc_ref ?? (sameRun ? previous?.docRef : '') ?? ''),
+    actionScope: nullableString(payload.action_scope) ?? (sameRun ? previous?.actionScope ?? null : null),
     phase: payload.status === 'pause_requested' ? 'pause_requested' : 'running',
     mode: payload.mode === 'continuous' ? 'continuous' : (sameRun ? previous?.mode ?? 'single' : 'single'),
     documentReviewLoop: normalizeDocumentReviewLoop(payload.document_review_loop, sameRun ? previous?.documentReviewLoop ?? null : null),
@@ -342,6 +348,7 @@ function pausedEntry(payload: Record<string, any>, previous?: AiInvokeRunEntry):
     runId: nullableString(payload.stop_run_id) ?? previous?.runId ?? '',
     groupId: String(payload.group_id ?? previous?.groupId ?? ''),
     docRef: String(payload.doc_ref ?? previous?.docRef ?? ''),
+    actionScope: nullableString(payload.action_scope) ?? previous?.actionScope ?? null,
     phase: 'paused',
     mode: 'continuous',
     documentReviewLoop: normalizeDocumentReviewLoop(payload.document_review_loop, previous?.documentReviewLoop ?? null),
@@ -451,6 +458,29 @@ export function isContinuationHandoff(
 // surface that summarizes the registry — including the CLOSED header chip — has to count
 // these for exactly as long as the card lives, or the completion is the single state that
 // is never shown.
+/**
+ * 0481 T0010 rev3 — action scopes whose run is started from, and reported by, a
+ * screen of its own.
+ *
+ * `resolve_conflict` is the merge approval dialog's chat and the conflict
+ * resolver's [AI 호출]. Both draw the run's progress inside the dialog the
+ * operator is already looking at, so the generic "a run owns this group, cover
+ * the document column" rule must not apply: MainPanel gates `GitFinalizePanel`
+ * — which OWNS both of those dialogs — on `!aiRunDocumentLocked`, so treating
+ * this scope like any other run destroyed the very dialog that started it the
+ * instant the run registered. That is the "채팅하면 다이얼로그 밖으로 빠져나간다"
+ * rejection (2026-09-08 07:40, again 10:33): not a screen that navigates away,
+ * a screen that is unmounted from above while it waits.
+ *
+ * Same shape as the pre-existing `activeChatOwnRun` exception (0251/0386 B0001)
+ * for a CH document's own run — a run you started HERE does not cover HERE.
+ */
+export const SCREEN_OWNED_ACTION_SCOPES: readonly string[] = ['resolve_conflict']
+
+export function isScreenOwnedRun(entry: AiInvokeRunEntry | null | undefined): boolean {
+  return !!entry?.actionScope && SCREEN_OWNED_ACTION_SCOPES.includes(entry.actionScope)
+}
+
 export function isFinishedCard(entry: AiInvokeRunEntry): boolean {
   // A user_paused finish is a PAUSED card (P0008 S4) — never a decay/persist candidate.
   return (entry.phase === 'finished' || entry.phase === 'lost')
@@ -675,10 +705,16 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
   }
 
   function payloadGroupKey(payload: Record<string, any>): string {
-    if (payload?.group_id) return String(payload.group_id)
+    // 0481 T0010 #1: a resolve_base_dirty run carries BOTH identities — the synthetic
+    // `<project>.none.0000` group its lease and run rows are keyed by, and the project it
+    // actually works in. The browser files these cards under `project:<id>`, so the scope
+    // has to be read first: `group_id` is present on the SSE payloads too, and reading it
+    // first filed every live/finished event under a group nobody watches, leaving the card
+    // invisible and [AI에게 맡기기] disabled until a reload.
     if (payload?.action_scope === 'resolve_base_dirty' && payload?.project_id) {
       return `project:${String(payload.project_id)}`
     }
+    if (payload?.group_id) return String(payload.group_id)
     return ''
   }
 
@@ -779,6 +815,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       runId,
       groupId,
       docRef: String(payload.doc_ref ?? base.docRef),
+      actionScope: nullableString(payload.action_scope) ?? base.actionScope ?? null,
       phase: userPaused ? 'paused' : (handoffPending ? 'running' : 'finished'),
       documentReviewLoop: normalizeDocumentReviewLoop(payload.document_review_loop, base.documentReviewLoop),
       cancelling: false,

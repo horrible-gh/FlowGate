@@ -577,6 +577,17 @@ def _build_mention_for_token(
     # from a background thread. The only thing `request` was ever used for here is the API
     # base, so callers that already know it hand it over directly and pass no Request.
     api_base_url: Optional[str] = None,
+    # flowgate.default.0481 T0008 item 1 / L0007 §2.5-§2.9: only meaningful with
+    # action_scope="resolve_conflict" — whether this run is the merge review's
+    # explicit [수정 적용] write turn, which gets an EXTRA mention section (the
+    # bound write-plan submission endpoint) that an ordinary resolve/[반려]/
+    # propose-only run does not.
+    write_requested_by_human: bool = False,
+    allow_test_edits: bool = False,
+    # 0481 T0010 rev6 (rejection 3): only meaningful with action_scope="resolve_conflict" -
+    # whether this run is a merge-review CONVERSATION turn (a question typed at the approval
+    # screen) rather than a resolver run. It gets a different prompt entirely.
+    review_conversation: bool = False,
 ) -> Optional[str]:
     """R015 token issuance flow — R018 improved mention generation.
 
@@ -588,6 +599,16 @@ def _build_mention_for_token(
     if action_scope == "resolve_conflict":
         if not group_id or merge_id is None:
             return None
+        if review_conversation:
+            return _build_review_conversation_mention(
+                group_id=group_id,
+                project_id=project_id,
+                merge_id=merge_id,
+                raw_token=raw_token,
+                api_base_url=resolved_api_base,
+                write_requested_by_human=write_requested_by_human,
+                allow_test_edits=allow_test_edits,
+            )
         return _build_conflict_mention(
             group_id=group_id,
             project_id=project_id,
@@ -595,6 +616,8 @@ def _build_mention_for_token(
             scratch_dir=scratch_dir,
             raw_token=raw_token,
             api_base_url=resolved_api_base,
+            write_requested_by_human=write_requested_by_human,
+            allow_test_edits=allow_test_edits,
         )
 
     if not doc_ref or not group_id:
@@ -731,11 +754,30 @@ def _conflict_task_section(kind: str, tr: dict) -> str:
     commit the person just asked to cancel.
     """
     if kind not in ("tr_revert", "tr_reapply"):
+        # flowgate.default.0481 T0010 #5 (the resolution came back wrong). This branch used to say two
+        # sentences — resolve autonomously, strip the markers — which is a description of a
+        # SYNTACTICALLY finished file, not of a correct merge. It also still described the
+        # pre-T0008 world where a submission committed: since T0008 a general merge stops at
+        # `resolved_pending_review` and a person reads the whole candidate diff, exactly as
+        # the tr_* branch below has always told its worker. Both facts belong in the task.
         return (
             "## Git conflict auto-resolve task\n"
             "---\n"
-            "Resolve every conflict autonomously. Do not ask the user to choose chunks. "
-            "Produce complete file contents with all conflict markers removed, then call the bound resolve endpoint.\n\n"
+            "Two branches changed the same lines. Resolve every conflict so that BOTH sides' "
+            "intent survives — carry over each side's behaviour change, not each side's text. "
+            "Keeping both blocks verbatim is a resolution only when the two are genuinely "
+            "independent; when they are two versions of the same thing, merge them into the "
+            "one version that does what both authors wanted. The `base` block in a zdiff3 "
+            "chunk is the common ancestor: read it to see what each side actually changed.\n"
+            "Before you decide a chunk, read the whole file and the surrounding code with the "
+            "read/grep/glob/diff/log/show tools — a chunk resolved correctly in isolation can "
+            "still leave a name undefined, an import dropped or a branch unreachable.\n"
+            "Do not ask the user to choose chunks. Produce complete file contents with all "
+            "conflict markers removed, then call the bound resolve endpoint.\n"
+            "Your call ends at `resolved_pending_review`, not at a commit: a person reads the "
+            "whole candidate diff and presses the approve button. Leave the tree in the state "
+            "you would want them to read, and say in your final message which chunks you were unsure "
+            "about — an honest doubt is cheaper for them than a confident wrong merge.\n\n"
         )
     code = tr.get("doc_code") or "a TR"
     subject = tr.get("subject") or ""
@@ -765,6 +807,213 @@ def _conflict_task_section(kind: str, tr: dict) -> str:
     )
 
 
+def _build_write_plan_section(
+    *, group_id: str, merge_id: int, raw_token: str, api_base_url: str, allow_test_edits: bool,
+) -> str:
+    """flowgate.default.0481 T0008 item 1 / L0007 §2.5-§2.9, Q&A on 0009-TR: the
+    ONLY way this run's write turn can change the source tree. There is no write
+    tool in this run's read-only toolset (SCOPE_BOUND_TOOLS demotes
+    action_scope=resolve_conflict to "read") — the anchored plan below, submitted
+    to the bound endpoint, is the sole channel, and the server validates and
+    applies it in isolation (git_service's L0007 §2.6 apply engine), never trusting the
+    plan's own claims about the source tree."""
+    from modules.flow_gate.db import git_integration as db_git
+
+    session = db_git.get_session(merge_id)
+    context = db_git.session_context(session) if session is not None else {}
+    base_fingerprint = context.get("review_fingerprint") or "<unknown — the review screen was not in a pending state>"
+    write_plan_url = f"{api_base_url}/groups/{group_id}/git/merge/{merge_id}/write-plan-token"
+    test_edit_note = (
+        "테스트 경로 편집이 이번 재지시에서 허용되었습니다 (allow_test_edits=true) — "
+        "제품 코드와 같은 절차로 operations[]에 넣어도 됩니다."
+        if allow_test_edits else
+        "테스트 경로(server/tests/**, client/tests/**, 경로 세그먼트 test/tests)의 변경은 "
+        "operations[]에 넣지 마십시오 — 이유와 함께 held_test_operations[]에만 넣고, "
+        "적용되지 않은 채 사람에게 표시됩니다."
+    )
+    example = {
+        "schema_version": "flowgate.write-plan.v1",
+        "base_fingerprint": base_fingerprint,
+        "operations": [
+            {
+                "operation_id": "op1",
+                "kind": "edit",
+                "path": "server/modules/example.py",
+                "expected_before_blob": "<git blob oid of the file BEFORE this edit>",
+                "anchor": {"body_base64": "<exact non-empty preimage bytes, base64>", "expected_count": 1},
+                "replacement_bytes_base64": "<replacement bytes, base64>",
+                "purpose": "<non-empty reason>",
+            },
+            {
+                "operation_id": "op2",
+                "kind": "create_file",
+                "path": "server/modules/new_file.py",
+                "absent": True,
+                "content_bytes_base64": "<complete bytes, base64>",
+                "mode": "100644",
+                "purpose": "<non-empty reason>",
+            },
+        ],
+        "held_test_operations": [],
+    }
+    return (
+        "## Write plan submission\n"
+        "---\n"
+        "이 재지시는 [수정 적용]으로 시작되었습니다 — 질문/설명이 아니라 실제 소스 변경을 요구합니다. "
+        "직접 파일을 쓰는 도구는 이 실행에 없습니다: 아래 anchored write plan을 만들어 이 창구로 "
+        "제출하는 것이 유일한 반영 경로이며, 서버가 격리된 곳에서 검증한 뒤 원자적으로 반영하거나 "
+        "실패 시 그대로 롤백합니다.\n\n"
+        f"POST {write_plan_url}\n"
+        f"Authorization: Bearer {raw_token}\n"
+        "Content-Type: application/json\n\n"
+        "```json\n"
+        f"{json.dumps(example, ensure_ascii=False, indent=2)}\n"
+        "```\n\n"
+        "- `base_fingerprint`은 위 세션이 보여준 `review_fingerprint`와 정확히 같아야 합니다 (달라졌으면 "
+        "제출 전에 read/grep/glob/stat/diff/log/show 도구로 현재 상태를 다시 확인하십시오).\n"
+        "- `edit`의 `anchor.body_base64`는 치환 대상 자체의 정확한 바이트이며, 적용 전 파일에서 겹치지 "
+        "않는 일치 수가 `expected_count`와 정확히 같아야 합니다.\n"
+        "- `create_file`은 세션이 보여준 스냅샷에 없는 경로에만 허용됩니다 — 기존 파일을 덮어쓰는 "
+        "fallback이 아닙니다.\n"
+        "- 모든 바이트 필드는 base64입니다. 경로는 프로젝트 소스 루트 상대 경로이며 절대 경로, `..`, "
+        "`.git` 내부 경로는 거절됩니다.\n"
+        f"- {test_edit_note}\n"
+        "- 이 창구는 이 group_id와 merge_id에 바인딩된 토큰만 받습니다. 다른 git/config/finalize "
+        "엔드포인트는 이 토큰으로 접근할 수 없습니다.\n\n"
+    )
+
+
+# 0481 T0010 rev6 (rejection 3): how much of the approval screen's chat is replayed to
+# the run answering it, and how much of one turn survives the replay. Both caps exist so a
+# long review cannot push the task section out of a model's context, not for privacy.
+_REVIEW_CONVERSATION_MAX_TURNS = 20
+_REVIEW_CONVERSATION_MAX_TURN_CHARS = 1500
+_REVIEW_CONVERSATION_MAX_FILES = 80
+
+
+def _build_review_conversation_mention(
+    *,
+    group_id: str,
+    project_id: str,
+    merge_id: int,
+    raw_token: str,
+    api_base_url: str,
+    write_requested_by_human: bool = False,
+    allow_test_edits: bool = False,
+) -> Optional[str]:
+    """The prompt for a merge-review CONVERSATION turn (0481 T0010 rev6, rejection 3).
+
+    A question typed into the approval screen used to be launched with
+    `_build_conflict_mention`: "two branches changed the same lines, resolve every
+    conflict, produce complete file contents, call the bound resolve endpoint", followed
+    by a conflict-session dump that is empty by then -- the conflicts were resolved before
+    the review even opened. Nothing in it said a human was waiting for an answer, and not
+    one turn of the conversation was included. So the run did what it was told: it reported
+    "conflict_count: 0, chunks: [], there is nothing to resolve, tell me what is confusing",
+    it could not resolve "what was the problem THIS time?" to anything, and when it obeyed
+    the endpoint instruction anyway its submission re-froze the candidate -- which made its
+    own answer stale and deleted it. This mention replaces all three: the task is to answer,
+    the conversation is replayed, and there is no resolve endpoint in it (resolve_conflicts
+    refuses one from this run regardless).
+    """
+    brief = git_service.review_conversation_brief(group_id, merge_id)
+    if not brief:
+        return None
+
+    changes = brief.get("changes") or []
+    shown = changes[:_REVIEW_CONVERSATION_MAX_FILES]
+    changed_lines = "\n".join(
+        f"- {(row.get('status') or '?')} {row.get('path')}" for row in shown
+    ) or "- (no changed paths recorded)"
+    if len(changes) > len(shown):
+        changed_lines += f"\n- ... and {len(changes) - len(shown)} more"
+
+    turns = (brief.get("conversation") or [])[-_REVIEW_CONVERSATION_MAX_TURNS:]
+    lines = []
+    for index, turn in enumerate(turns, start=1):
+        who = "reviewer" if turn.get("role") == "human" else "you (AI)"
+        status = turn.get("status") or ""
+        tag = f" [{status}]" if status and status != "accepted" else ""
+        body = " ".join((turn.get("message") or "").split())
+        if len(body) > _REVIEW_CONVERSATION_MAX_TURN_CHARS:
+            body = body[:_REVIEW_CONVERSATION_MAX_TURN_CHARS] + " ...(truncated)"
+        lines.append(f"[{index}] {who}{tag}: {body}")
+    history = "\n".join(lines) or "(empty - the message above is the first turn)"
+
+    last_error = brief.get("last_error")
+    held = brief.get("held_test_operations") or []
+    extra = ""
+    if last_error:
+        extra += f"last_error: {json.dumps(last_error, ensure_ascii=False)}\n"
+    if held:
+        extra += f"held_test_operations: {len(held)} (submitted earlier, not applied)\n"
+
+    write_plan_section = (
+        _build_write_plan_section(
+            group_id=group_id, merge_id=merge_id, raw_token=raw_token,
+            api_base_url=api_base_url, allow_test_edits=allow_test_edits,
+        )
+        if write_requested_by_human else ""
+    )
+    write_note = (
+        "The reviewer asked for the change to be applied, so this turn MAY also submit one "
+        "anchored write "
+        "plan through the section below. Answer first; the plan is optional and is applied "
+        "by the server, never by you.\n"
+        if write_requested_by_human else
+        "This turn changes nothing. You have read-only source tools and no write channel: "
+        "your entire output is your final message.\n"
+    )
+
+    return (
+        "## Document information\n"
+        "---\n"
+        f"project: {project_id}\n"
+        f"group: {group_id}\n"
+        "type: merge_review_conversation\n"
+        f"merge_id: {merge_id}\n\n"
+        "## Merge review conversation - your task\n"
+        "---\n"
+        "A human reviewer is at the merge approval screen, reading a frozen commit "
+        "candidate, and has just sent you the message in the section above. Answer it.\n"
+        "This is NOT a conflict-resolution job. The conflicts were resolved before this "
+        "review opened, there is nothing left to resolve, and a resolution submitted from a "
+        "conversation turn is refused (409 review_conversation_cannot_resolve) precisely "
+        "because it would re-freeze the candidate the reviewer is reading and throw your own "
+        "answer away with it.\n"
+        "Read '## Conversation so far' BEFORE you answer. The new message is almost always a "
+        "follow-up to it - \"what was the problem this time?\" points at the turns above, not "
+        "at the current state of the working tree - and answering a question about an earlier "
+        "failure with a fresh report of `git status` is the exact behaviour this screen was "
+        "rejected for. Never ask the reviewer to repeat something that is already in that "
+        "section.\n"
+        "Use the read/grep/glob/diff/log/show tools when the answer needs evidence: the "
+        "candidate below names both commits and every path the merge would carry, so you can "
+        "read either side and say what actually changed.\n"
+        "Answer in the language the reviewer wrote in. If you do not know, say so plainly and "
+        "say what you would need to find out - that is an answer; a confident guess is not.\n"
+        + write_note
+        + "\n"
+        + write_plan_section
+        + "## Review candidate\n"
+        "---\n"
+        f"review_state: {brief.get('review_state')}\n"
+        f"base_head: {brief.get('base_head')}\n"
+        f"merge_head: {brief.get('merge_head')}\n"
+        f"resolved_by: {brief.get('resolver_provider') or '(unknown)'}\n"
+        + extra
+        + f"changed paths ({len(changes)}):\n"
+        f"{changed_lines}\n\n"
+        "## Conversation so far\n"
+        "---\n"
+        "Oldest first. 'reviewer' is the human at the approval screen; 'you (AI)' is an "
+        "earlier turn of this same conversation, possibly by another provider. A [tag] is "
+        "that turn's outcome. The reviewer's newest message is NOT repeated here - it is the "
+        "one at the top of this prompt.\n"
+        f"{history}\n"
+    )
+
+
 def _build_conflict_mention(
     *,
     group_id: str,
@@ -773,6 +1022,8 @@ def _build_conflict_mention(
     scratch_dir: str,
     raw_token: str,
     api_base_url: str,
+    write_requested_by_human: bool = False,
+    allow_test_edits: bool = False,
 ) -> Optional[str]:
     conflicts = git_service.list_conflicts(group_id, merge_id)
     files = conflicts.get("files") or []
@@ -797,6 +1048,13 @@ def _build_conflict_mention(
         "tr_conflict": conflicts.get("tr_conflict") or None,
         "files": chunks_payload,
     }
+    write_plan_section = (
+        _build_write_plan_section(
+            group_id=group_id, merge_id=merge_id, raw_token=raw_token,
+            api_base_url=api_base_url, allow_test_edits=allow_test_edits,
+        )
+        if write_requested_by_human else ""
+    )
     return (
         "## Document information\n"
         "---\n"
@@ -817,7 +1075,8 @@ def _build_conflict_mention(
         "  \"complete\": true\n"
         "}\n\n"
         "The bearer token is bound to exactly this group_id and merge_id. Other git/config/finalize endpoints are not authorized.\n\n"
-        "## Conflict session\n"
+        + write_plan_section
+        + "## Conflict session\n"
         "---\n"
         "```json\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}\n"

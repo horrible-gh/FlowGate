@@ -78,6 +78,16 @@ def get_status(run_id: str) -> dict:
         "status": status,
         "mode": run["mode"],
         "group_id": run["group_id"],
+        # 0481 T0010 rev3: the `ai_invoke_started` SSE frame already ships both of
+        # these, and the browser reads them (`payloadGroupKey` files a
+        # resolve_base_dirty card under `project:<id>`; the document column keeps
+        # a resolve_conflict run's own screen mounted instead of covering it).
+        # This endpoint is the SAME registry read on the reload/poll path — the
+        # store rebuilds every live entry from it every 5s — so leaving them out
+        # here made both facts survive exactly until the first poll and then
+        # vanish. Ship them from both places or neither.
+        "project_id": run.get("project_id"),
+        "action_scope": run.get("action_scope"),
         "docs_target": run["docs_target"],
         "docs_reached_so_far": docs_so_far,
         "chain_id": run.get("chain_id"),
@@ -215,6 +225,13 @@ def _run_detail_from_row(row: dict) -> dict:
         "tool_calls_received": row.get("tool_calls_received"),
         "tool_calls_executed": row.get("tool_calls_executed"),
         "api_turn_trace": row.get("api_turn_trace") or [],
+        # -- flowgate.default.0481 T0008 item 1: same three names `finished_payload`
+        # answers with for a live finish, read here off the already-parsed
+        # `db.ai_invoke_runs._row_to_payload` shape (`write_plan` is the decoded
+        # dict, not the raw `write_plan_json` column).
+        "write_requested_by_human": row.get("write_requested_by_human"),
+        "allow_test_edits": row.get("allow_test_edits"),
+        "write_plan": row.get("write_plan"),
         "source_dirty": row.get("source_dirty"),
         "scratch_retained": row.get("scratch_retained"),
         "duration_ms": row.get("duration_ms"),

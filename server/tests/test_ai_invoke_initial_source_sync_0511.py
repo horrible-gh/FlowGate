@@ -71,7 +71,7 @@ def test_none_kind_never_calls_the_sync(monkeypatch):
     aiv._ensure_initial_source_sync("p", "default", "g", "test_run", "d")  # no raise
 
 
-@pytest.mark.parametrize("action_scope", ["review", "resolve_base_dirty"])
+@pytest.mark.parametrize("action_scope", ["review", "edit"])
 def test_read_and_read_write_kinds_call_the_sync(monkeypatch, action_scope):
     captured = {}
 
@@ -82,6 +82,22 @@ def test_read_and_read_write_kinds_call_the_sync(monkeypatch, action_scope):
     monkeypatch.setattr(aiv.git_service, "ensure_initial_group_source_sync", _fake)
     aiv._ensure_initial_source_sync("p", "default", "g", action_scope, "d")
     assert captured["args"] == ("p", "default", "g")
+
+
+def test_a_project_scoped_scope_never_calls_the_sync(monkeypatch):
+    """flowgate.default.0481 T0010 #1 — `resolve_base_dirty` is read_write, so it used to
+    fall into this gate, but T0004's rule is about a GROUP worktree and that scope has no
+    group: the route synthesizes `<project>.none.0000` purely as a row key. Syncing that
+    phantom group could only fail, and it did — 409 `initial_source_sync_failed`
+    (reason=worktree_missing) on every [AI에게 맡기기] press."""
+    def _boom(*_a, **_k):
+        raise AssertionError("must not be called for a project-scoped run")
+
+    monkeypatch.setattr(aiv.git_service, "ensure_initial_group_source_sync", _boom)
+    assert aiv._worker_source_kind(
+        {"action_scope": "resolve_base_dirty", "doc_ref": "p"}
+    ) == "read_write"
+    aiv._ensure_initial_source_sync("p", "none", "p.none.0000", "resolve_base_dirty", "p")
 
 
 @pytest.mark.parametrize(

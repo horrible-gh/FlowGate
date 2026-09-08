@@ -95,6 +95,11 @@ def _route_edges(monkeypatch):
         routes.git_service, "project_git_status",
         lambda _pid: {"status": {"base_dirty": {"files": ["a.py"]}}},
     )
+    # 0481 D0006 §3.2 / L0007 §2.2: resolve_conflict is now a second scope that touches
+    # git_service before issue_builder is built — record_auto_authority stamps the
+    # session's [자동] choice. Stubbed non-DB like project_git_status above, for the
+    # same reason: this sweep's contract is DB-free edges for every scope.
+    monkeypatch.setattr(routes.git_service, "record_auto_authority", lambda *_a, **_k: None)
 
 
 @pytest.fixture

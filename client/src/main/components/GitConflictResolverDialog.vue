@@ -34,10 +34,18 @@
           <AppIcon name="arrows-clockwise" /> {{ t('main.git_finalize.retry') }}
         </button>
       </div>
-      <div v-else-if="!files.length" class="git-conflict-loading">
-        {{ t('main.git_finalize.no_conflicts') }}
+      <!-- 0481 T0010 #2 — "아무 액션도 못하는 다이얼로그만 계속뜨고". This branch used to be a
+           bare sentence: no retry, no [AI 호출], no [중단], nothing but the ✕. A session can
+           legitimately reach zero listed files (the resolver already staged them, or the
+           panel's list is a moment stale), and when it did the operator was cornered. The
+           list is refreshable from here, and the footer below now renders in this state too. -->
+      <div v-else-if="!files.length" class="git-conflict-loading git-conflict-empty">
+        <span>{{ t('main.git_finalize.no_conflicts') }}</span>
+        <button class="btn btn-secondary" :disabled="busy" @click="emit('retry')">
+          <AppIcon name="arrows-clockwise" /> {{ t('main.git_finalize.reload_conflicts') }}
+        </button>
       </div>
-      <template v-else>
+      <template v-if="loadStatus === 'ready' && files.length">
         <div class="git-ai-assist-strip">
           <div>
             <strong><AppIcon name="magic-wand" /> {{ t('main.git_finalize.quick_recommend_title') }}</strong>
@@ -157,8 +165,41 @@
             ></textarea>
           </section>
         </div>
+      </template>
 
-        <div class="git-conflict-message-bar">
+      <!-- 0481 T0010 rev5 (반려 #1·#2) — "AI 호출"의 상태는 이 한 줄이 전부 말한다: 호출을
+           보낸 순간부터(실행 기록이 브라우저에 등록되기 전에도), 실행이 도는 동안, 그리고
+           공급자 목록을 못 읽어 호출 자체가 막혀 있을 때까지. 액션바 안이 아니라 액션바 위의
+           제 줄에 서기 때문에 가드 문장의 폭을 빼앗지 않는다(rev3 의 세로 글자 사고).
+           시안 v13 화면 1 이 그리는 상태(공급자 정상·실행 없음)에서는 아예 없는 줄이라
+           액션바는 시안 그대로다. -->
+      <div
+        v-if="showAiActions && aiStrip"
+        class="git-conflict-ai-strip"
+        :class="'git-conflict-ai-strip--' + aiStrip.kind"
+        data-test="conflict-ai-run"
+      >
+        <AppIcon :name="aiStrip.icon" :spin="aiStrip.spin" />
+        <span class="git-conflict-ai-strip-text" :title="aiStrip.text">{{ aiStrip.text }}</span>
+        <button
+          v-if="aiStrip.retry"
+          type="button"
+          class="git-conflict-ai-strip-retry"
+          :disabled="busy || providerLoading"
+          data-test="conflict-provider-retry"
+          @click="emit('reload-providers')"
+        >
+          <AppIcon name="arrows-clockwise" /> {{ t('main.git_finalize.provider_reload') }}
+        </button>
+      </div>
+
+      <!-- 0481 T0010 #2 — the instruction box and the action bar are what the operator acts
+           WITH, so they belong to the dialog, not to the "we have files" branch. They render
+           for ready, empty and load-error alike; only the loading frame has nothing to act on
+           yet. Individual controls disable themselves (see :disabled below) — 0441 TR0005's
+           rule: a control that cannot run right now stays visible and disabled. -->
+      <template v-if="loadStatus !== 'loading'">
+        <div v-if="showAiActions" class="git-conflict-message-bar">
           <label for="git-conflict-ai-message">{{ t('main.git_finalize.conflict_ai_message_label') }}</label>
           <textarea
             id="git-conflict-ai-message"
@@ -170,34 +211,65 @@
           ></textarea>
         </div>
 
+        <!-- 0481 D0006 §6.2 v13 화면 1 그대로: 왼쪽 `.git-conflict-footer-context` 는
+             마커 가드 + 세로 구분선 + AI 호출 옵션(공급자 셀렉트·[자동])이고, 오른쪽
+             `.git-conflict-footer-actions` 는 [멘트 복사]·[AI 호출]·[중단]·[해결 제출]
+             네 버튼만 담는다. v13 이전에는 옵션 두 개가 버튼 묶음 안에 섞여 있었다. -->
         <div class="git-conflict-dialog-ft">
-          <div class="git-conflict-guard" :class="{ ok: allConflictsResolved }">
-            <AppIcon :name="allConflictsResolved ? 'check-circle' : 'warning'" />
-            <span>{{ errorMessage || markerGuardText }}</span>
+          <div class="git-conflict-footer-context">
+            <!-- 0481 T0010 rev5 (반려 #2) — 시안 y5bwr1o0 v13 화면 1 의 가드는
+                 `white-space: nowrap` 한 줄이다. 구현은 `overflow-wrap: anywhere` 였고,
+                 rev3 이 그 옆에 폭을 고정으로 먹는 실행 문구를 끼워 넣자 가드에 남은 폭이
+                 거의 0 이 되어 "README.md: 16, 28행" 이 글자마다 줄바꿈해 세로로 섰다.
+                 잘리는 문장은 title 로 그대로 읽을 수 있다. -->
+            <div class="git-conflict-guard" :class="{ ok: allConflictsResolved }" :title="guardText">
+              <AppIcon :name="guardIcon" />
+              <span>{{ guardText }}</span>
+            </div>
+            <span v-if="showAiActions" class="ft-divider" aria-hidden="true"></span>
+            <!-- 0234 B0001 RC1/RC2: confirm/change the provider that the conflict AI run
+                 uses. 0481 D0006 §6.2 v13 화면 1: [자동] 은 호출 시점에만 정하는 옵션이라
+                 공급자 셀렉트 바로 옆에 둔다. 이 세션의 해결 실행을 새로 시작하는
+                 [AI 호출]/[해결 제출] 요청에만 실려 나가고, 그 뒤 회신(재지시 대화,
+                 승인 대기 화면)에는 아예 존재하지 않는 필드다. -->
+            <div v-if="showAiActions" class="git-conflict-invoke-options" :aria-label="t('main.git_finalize.invoke_options')">
+              <AiProviderSelect
+                class="git-conflict-provider"
+                :providers="providers || []"
+                :model-value="selectedProvider"
+                :loading="providerLoading"
+                :errored="providerErrored"
+                hide-label
+                @update:model-value="(v) => emit('update:provider', v)"
+              />
+              <label class="git-conflict-auto-toggle" :class="{ disabled: busy }">
+                <input type="checkbox" v-model="autoResolve" :disabled="busy" />
+                <span>{{ t('main.git_finalize.auto_resolve_label') }}</span>
+              </label>
+            </div>
           </div>
-          <div v-if="providers?.length" class="git-conflict-footer-actions">
-            <button class="btn btn-secondary" :disabled="busy" @click="emit('copy-mention')">
+          <div class="git-conflict-footer-actions">
+            <button v-if="showAiActions" class="btn btn-secondary" :disabled="busy" @click="emit('copy-mention')">
               <AppIcon name="copy" /> {{ t('main.git_finalize.copy_conflict_mention') }}
             </button>
-            <!-- 0234 B0001 RC1/RC2: confirm/change the provider that the conflict AI run
-                 uses, right next to the invoke button. The host wires provider_id from
-                 the same global selection into /ai-invoke/start. -->
-            <AiProviderSelect
-              class="git-conflict-provider"
-              :providers="providers"
-              :model-value="selectedProvider"
-              :loading="providerLoading"
-              :errored="providerErrored"
-              hide-label
-              @update:model-value="(v) => emit('update:provider', v)"
-            />
-            <button class="btn btn-secondary" :disabled="busy" @click="emit('ai-invoke', conflictMessage.trim())">
+            <!-- 0481 T0010 #3 — "AI호출하니까 호출도 안되는거같고". This button used to
+                 disappear entirely whenever the provider list was empty (the whole action
+                 group hung off `v-if="providers?.length"`), taking [중단] and [해결 제출]
+                 with it. It stays, and says why it cannot run. -->
+            <button
+              v-if="showAiActions"
+              class="btn btn-secondary"
+              :disabled="busy || !providers?.length || !!aiRunNotice || !!aiRunPending"
+              :title="invokeBlockedReason"
+              data-test="conflict-ai-invoke"
+              @click="emit('ai-invoke', conflictMessage.trim(), autoResolve)"
+            >
               <AppIcon name="robot" /> {{ t('main.git_finalize.invoke_conflict_ai') }}
             </button>
             <button class="btn btn-secondary" :disabled="busy" @click="emit('abort')">
               <AppIcon name="prohibit" /> {{ t('main.git_finalize.abort') }}
             </button>
-            <button class="btn btn-primary" :disabled="busy || !allConflictsResolved" @click="emit('submit')">
+            <button class="btn btn-primary" :disabled="busy || !allConflictsResolved" @click="emit('submit', autoResolve)">
               <AppIcon name="check" /> {{ t('main.git_finalize.resolve_submit') }}
             </button>
           </div>
@@ -247,17 +319,53 @@ const props = defineProps<{
   selectedProvider?: string
   providerLoading?: boolean
   providerErrored?: boolean
+  // 0481 T0010 #2: does THIS host wire the AI half ([멘트 복사]/[AI 호출]/공급자/[자동])?
+  // FileExplorer's group-update conflict does not, and used to express that by passing an
+  // empty `providers` list — which, while the whole action group hung off `providers?.length`,
+  // also deleted [중단] and [해결 제출] and left that dialog with no way to finish at all.
+  // The intent is a prop now, and it only ever hides the AI controls.
+  //
+  // Phrased as an opt-OUT because a type-only `defineProps` gives every boolean prop the
+  // boolean-casting default of `false`: an `aiActions?: boolean` would arrive as `false`
+  // for every host that does not pass it, i.e. the exact bug this replaces.
+  hideAiActions?: boolean
+  // 0481 T0010 rev3: a sentence describing the group's live conflict-AI run, or
+  // null/absent when nothing is running. Until rev3 the run's progress lived
+  // ONLY on the generic AI-run surface, which replaced the document column and
+  // took this dialog down with it; now the dialog survives its own run, so it
+  // has to be the one that says the run is happening. A string (not a boolean)
+  // because the host owns i18n and the provider/elapsed values.
+  aiRunNotice?: string | null
+  // 0481 T0010 rev5 (반려 #1): [AI 호출]을 눌러 요청은 나갔지만 이 브라우저에 아직 실행
+  // 기록이 없는 구간. 그 구간이 rev3 까지는 화면에 존재하지 않아서, 누른 사람에게는
+  // "눌렀는데 아무 일도 안 일어난다"로 보였다. 호출 성공 여부와 무관하게 호스트가 켜고 끈다.
+  aiRunPending?: boolean
 }>()
-const emit = defineEmits<{ close: []; abort: []; submit: []; retry: []; 'ai-invoke': [message: string]; 'copy-mention': []; 'update:provider': [value: string] }>()
+const emit = defineEmits<{
+  close: []
+  abort: []
+  submit: [auto: boolean]
+  retry: []
+  'ai-invoke': [message: string, auto: boolean]
+  'copy-mention': []
+  'update:provider': [value: string]
+  // 0481 T0010 rev5 (반려 #4): 공급자 목록을 못 읽었을 때 이 다이얼로그 안에서 다시 읽는다.
+  'reload-providers': []
+}>()
 
 const { t } = useI18n()
 const { switchToDirectEdit, switchToChunkView } = useConflictChunks()
+const showAiActions = computed(() => !props.hideAiActions)
 
 const selectedConflictIndex = ref(0)
 const currentChunkSegment = ref(-1)
 const collapsedCommon = ref<Record<string, boolean>>({})
 const codeFontRem = ref(0.86)
 const conflictMessage = ref('')
+// 0481 D0006 §3.2 / L0007 §2.2: [자동] is a per-session UI toggle owned by this
+// dialog — it is only ever read at the moment [AI 호출]/[해결 제출] is pressed,
+// never persisted here and never sent with anything else this dialog emits.
+const autoResolve = ref(false)
 const COMMON_COLLAPSE_LINES = 12
 
 const selectedConflictFile = computed(() => props.files[selectedConflictIndex.value] || null)
@@ -277,6 +385,54 @@ const markerGuardText = computed(() => {
     })
     .filter(Boolean)
   return remaining.length ? remaining.join(' / ') : t('main.git_finalize.submit_disabled_hint')
+})
+// 0481 T0010 #2: the guard line is the footer's one sentence, so it has to be able to speak
+// for the states that have no files either — otherwise the load error and the empty list are
+// the two cases where the operator is told nothing at all.
+const guardText = computed(() => {
+  if (props.loadStatus === 'error') return props.errorMessage || t('main.git_finalize.load_failed')
+  if (!props.files.length) return t('main.git_finalize.no_conflicts_hint')
+  return props.errorMessage || markerGuardText.value
+})
+const guardIcon = computed(() =>
+  props.loadStatus !== 'error' && props.files.length && allConflictsResolved.value
+    ? 'check-circle'
+    : 'warning',
+)
+/**
+ * 0481 T0010 rev5 — the ONE line that describes the state of "AI 호출", in the order the
+ * operator meets it. A live run outranks everything; a call that has been sent but has no
+ * run entry yet is the window rev3 left blank; and when no call can be made at all, the
+ * reason is a SENTENCE on screen, not a title attribute nobody hovers (반려 #4: "어떤
+ * 조건에서 안 나오는지 모르겠다"). Absent — the deck's own state — renders nothing.
+ */
+const aiStrip = computed<{ kind: string; text: string; icon: string; spin: boolean; retry: boolean } | null>(() => {
+  if (props.aiRunNotice) {
+    return { kind: 'run', text: props.aiRunNotice, icon: 'spinner', spin: true, retry: false }
+  }
+  if (props.aiRunPending) {
+    return { kind: 'run', text: t('main.git_finalize.conflict_ai_starting'), icon: 'spinner', spin: true, retry: false }
+  }
+  if (props.providerLoading) {
+    return { kind: 'wait', text: t('main.git_finalize.provider_loading'), icon: 'spinner', spin: true, retry: false }
+  }
+  if (props.providerErrored) {
+    return { kind: 'blocked', text: t('main.git_finalize.provider_load_failed'), icon: 'warning', spin: false, retry: true }
+  }
+  if (!props.providers?.length) {
+    return { kind: 'blocked', text: t('main.git_finalize.provider_none'), icon: 'warning', spin: false, retry: true }
+  }
+  return null
+})
+// The same answer for the button that cannot be pressed. 0441 TR0005: a control that cannot
+// run right now stays visible and disabled — but it also has to say which of the reasons it is.
+const invokeBlockedReason = computed(() => {
+  if (props.aiRunNotice) return props.aiRunNotice
+  if (props.aiRunPending) return t('main.git_finalize.conflict_ai_starting')
+  if (props.providerLoading) return t('main.git_finalize.provider_loading')
+  if (props.providerErrored) return t('main.git_finalize.provider_load_failed')
+  if (!props.providers?.length) return t('main.git_finalize.provider_none')
+  return ''
 })
 const selectedChunkEntries = computed(() => {
   const file = selectedConflictFile.value
@@ -467,6 +623,7 @@ watch(
   (files) => {
     selectedConflictIndex.value = 0
     resetCommonCollapse()
+    autoResolve.value = false
     const firstFile = files[0]
     currentChunkSegment.value = firstFile ? (chunkIndexes(firstFile)[0] ?? -1) : -1
   },
@@ -594,7 +751,8 @@ watch(
   color: var(--text-m);
   font-size: 0.86rem;
 }
-.git-conflict-load-error {
+.git-conflict-load-error,
+.git-conflict-empty {
   flex-direction: column;
 }
 .git-conflict-dialog-bd {
@@ -801,19 +959,95 @@ watch(
   color: var(--text, #0f172a);
   background: #fff;
 }
+/* 0481 D0006 §6.2 v13 화면 1 `.git-conflict-footer-context`: 가드 문장 · 세로 구분선 ·
+   AI 호출 옵션이 한 덩어리로 왼쪽에 서고, 남는 폭은 가드 문장이 먹는다. */
+.git-conflict-footer-context {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.git-conflict-footer-context .ft-divider {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 20px;
+  background: var(--border, #e2e8f0);
+}
+.git-conflict-invoke-options {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+/* 0481 T0010 rev5 (반려 #2): 실행/차단 문구는 액션바 위의 제 줄이다. `.git-ai-assist-strip`
+   과 같은 전폭 띠라서 가드 문장의 폭을 한 픽셀도 빼앗지 않는다. */
+.git-conflict-ai-strip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  border-top: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 0.76rem;
+}
+.git-conflict-ai-strip-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.git-conflict-ai-strip--blocked {
+  border-top-color: #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+.git-conflict-ai-strip--wait {
+  border-top-color: var(--border, #e2e8f0);
+  background: #f8fafc;
+  color: var(--text-m, #64748b);
+}
+.git-conflict-ai-strip-retry {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 0.72rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.git-conflict-ai-strip-retry:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* 시안 v13 화면 1: `.git-conflict-guard { white-space: nowrap }`. 폭이 모자라면 줄을
+   늘리는 게 아니라 말줄임한다 — 늘리면 다이얼로그 아래가 문장에 먹힌다. */
 .git-conflict-guard {
+  flex: 1 1 auto;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
   color: #b45309;
   font-size: 0.76rem;
+  white-space: nowrap;
 }
 .git-conflict-guard.ok {
   color: #15803d;
 }
 .git-conflict-guard span {
-  overflow-wrap: anywhere;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .git-conflict-footer-actions {
   flex: 0 0 auto;
@@ -824,6 +1058,23 @@ watch(
 .git-conflict-provider {
   flex: 0 1 210px;
   max-width: 210px;
+}
+.git-conflict-auto-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+  color: var(--text-m, #475569);
+  font-size: 0.76rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.git-conflict-auto-toggle.disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.git-conflict-auto-toggle input {
+  cursor: inherit;
 }
 .git-ai-assist-strip {
   flex: 0 0 auto;

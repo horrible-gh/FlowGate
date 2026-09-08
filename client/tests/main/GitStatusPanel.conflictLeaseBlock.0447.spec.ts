@@ -43,7 +43,8 @@ async function mountOpen() {
     global: { plugins: [i18n], stubs: { AppIcon: true, GitConflictResolverDialog: true } },
   })
   await flushPromises()
-  await wrapper.find('.btn-danger-ol').trigger('click')
+  // 0481 T0010 #3: the conflict row's [충돌 해소] is a filled danger button now.
+  await wrapper.find('.git-status-row-main .btn-danger').trigger('click')
   await flushPromises()
   return wrapper
 }

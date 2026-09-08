@@ -136,6 +136,11 @@ class AiInvokeStartRequest(BaseModel):
     design_first_label: Optional[str] = None       # design_handoff single-mode type label
     work_plan_scope: Optional[dict] = None
     document_review_loop: Optional[DocumentReviewLoopRequest] = None
+    # 0481 D0006 §3.2 / L0007 §2.2: the [자동] checkbox on the resolver dialog's action
+    # bar, sent ONLY with action_scope=resolve_conflict. record_auto_authority stamps
+    # this value onto the session BEFORE the run starts — the run's own eventual
+    # /resolve or /resolve-token submission never carries or can change it.
+    auto: Optional[bool] = None
 
 
 # Wire scope → token scope. The extra invoke scopes reuse the edit/new token
@@ -435,11 +440,22 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
     # Empty work wins over admission state: there is nothing to delegate even if an
     # older run still exists. This ordering is part of the public error contract.
     if body.action_scope == "resolve_base_dirty":
-        dirty = ((git_service.project_git_status(body.project).get("status") or {})
-                 .get("base_dirty") or {}).get("files") or []
+        base_dirty = ((git_service.project_git_status(body.project).get("status") or {})
+                      .get("base_dirty") or {})
+        dirty = base_dirty.get("files") or []
         if not dirty:
             return JSONResponse(status_code=409, content={
                 "code": "base_dirty_empty", "message": "No tracked base changes to resolve."})
+        # 0481 T0010 #1: those files are a merge that is stopped on a conflict, not stray
+        # edits — committing or discarding them would destroy the merge. Say so instead of
+        # letting this fall through to a generic refusal further down.
+        merge_in_progress = base_dirty.get("merge_in_progress")
+        if merge_in_progress:
+            return JSONResponse(status_code=409, content={
+                "code": "base_dirty_merge_in_progress",
+                "message": "The base checkout is mid-merge; resolve the conflict instead.",
+                **{k: v for k, v in merge_in_progress.items() if v is not None},
+            })
 
     user_id = auth["issued_to"]
     if not (bool(auth.get("is_admin")) or has_permission(user_id, body.project, "perm_document_read")):
@@ -837,6 +853,16 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
                 "run_id": existing.get("run_id"),
             })
 
+    if body.action_scope == "resolve_conflict" and body.merge_id is not None:
+        # 0481 D0006 §3.2 / L0007 §2.2: this [AI 호출] press is one of the exactly two
+        # human-authenticated moments record_auto_authority may be called from — stamp
+        # the session's auto_authority BEFORE the run starts, so the run's own eventual
+        # resolve submission has nothing left to decide about it.
+        try:
+            git_service.record_auto_authority(group_id, int(body.merge_id), bool(body.auto))
+        except git_service.GitServiceError as exc:
+            return JSONResponse(status_code=exc.status, content={"code": exc.code, "message": exc.message})
+
     try:
         result = ai_invoke_service.start_run(
             project_id=body.project,
@@ -885,11 +911,31 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             db_project_ai_leases.release(body.project, project_lease_owner)
         return JSONResponse(status_code=409, content={
             "code": "workflow_decision_conflict", "message": str(exc)})
+    except Exception:
+        # 0481 T0010 rev6 (rejection 1-2): the three handlers above name the failures
+        # start_run is EXPECTED to raise. Anything else is a defect, and the one thing
+        # that must not outlive it is the project admission lease this request took a
+        # few lines up: a raw IntegrityError from the group-lease insert left it behind
+        # on every press, so a single 500 turned into "this project's AI cleanup is
+        # already running" for the next two minutes with nothing the operator could do
+        # about it. Release, then re-raise so the defect is still reported and logged.
+        if project_lease_owner:
+            db_project_ai_leases.release(body.project, project_lease_owner)
+        raise
     if body.action_scope == "resolve_base_dirty":
         run_id = str(result.get("run_id") or "")
-        if not run_id or db_project_ai_leases.activate(body.project, project_lease_owner, run_id) is None:
-            if run_id:
-                ai_invoke_service.cancel_run(run_id, user_id=user_id, is_admin=True)
+        if not run_id:
+            # 0481 T0010 rev6 (rejection 2): nothing to activate, so nothing stole the
+            # acquiring row either -- it is still this request's, and this request is
+            # refusing. Leaving it behind is what made one failed press read as "this
+            # project's AI cleanup is already running" until the 120s TTL expired.
+            db_project_ai_leases.release(body.project, project_lease_owner)
+            return JSONResponse(status_code=409, content={"code": "run_lease_lost", "message": "Project run lease was lost."})
+        if db_project_ai_leases.activate(body.project, project_lease_owner, run_id) is None:
+            # 0482 T0011: activate() answering None means the acquiring row is no longer
+            # this owner's -- another start replaced it. Cancel our own run and leave that
+            # row alone; releasing here would delete the lease that is guarding it.
+            ai_invoke_service.cancel_run(run_id, user_id=user_id, is_admin=True)
             return JSONResponse(status_code=409, content={"code": "run_lease_lost", "message": "Project run lease was lost."})
         result.update({"group_id": None, "doc_ref": "", "docs_target": 0})
     return JSONResponse(status_code=200, content=result)

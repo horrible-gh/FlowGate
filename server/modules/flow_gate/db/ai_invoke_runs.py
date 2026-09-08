@@ -19,7 +19,7 @@ import json
 import time
 from typing import Any, Optional
 
-from .connection import get_store, iso_days_ago
+from .connection import get_store, iso_days_ago, now_iso
 
 # DB0008 2.4 write-time caps (MySQL TEXT is 65,535 bytes; truncate rather than fail
 # outright, and mark what was dropped instead of silently shrinking the history).
@@ -37,6 +37,15 @@ _SOURCE_DIRTY_FILES_MAX_ITEMS = 20
 # _OUTPUT_TAIL_MAX_CHARS above -- that one keeps the END of a raw process tail, this one
 # keeps the FRONT of an already-short human-readable summary (do not reuse the name).
 _LAST_TOOL_ERROR_MAX_CHARS = 500
+
+# flowgate.default.0481 T0008 item 1 (migration 105): the write-plan submission
+# endpoint (git_service._submit_review_write_plan) already rejects a plan bigger
+# than this many serialized bytes with 422 before it ever reaches here -- this is
+# a second, storage-side floor (MySQL TEXT's 65,535-byte ceiling), not the primary
+# limit. A plan this function is somehow handed oversized anyway is stored as
+# NULL with a diagnostic key rather than silently truncated JSON no reader could
+# parse back.
+_WRITE_PLAN_MAX_SERIALIZED_BYTES = 65000
 
 # DB0008 3.7: no scheduler exists in this deployment, so retention is swept from the
 # write path -- at most once a day, mirroring the _cleanup_retained_scratches(project_id)
@@ -90,6 +99,13 @@ _BOUND_COLUMNS = (
     "last_tool_name", "last_tool_status", "last_tool_error",
     "api_turns_used", "model_http_calls", "model_last_http_status",
     "tool_calls_received", "tool_calls_executed", "api_turn_trace",
+    # -- flowgate.default.0481 T0008 item 1 (migration 105) -----------------
+    # The anchored write-plan engine's bound contract (L0007 §2.5-§2.6, Q&A on
+    # 0009-TR): a review-message write turn's policy (was it requested at all,
+    # was test-path editing allowed) and the plan the worker-token submission
+    # endpoint (`POST .../git/merge/{merge_id}/write-plan`) attaches before the
+    # run exits. NULL on all three for every run that is not such a turn.
+    "write_requested_by_human", "allow_test_edits", "write_plan_json",
     "created_at", "updated_at",
 )
 _STATUS_INSERT_AT = 5  # after (run_id, group_id, project_id, doc_ref, mode)
@@ -99,7 +115,7 @@ _ARRAY_FIELDS = ("reached_doc_ids", "fallback_history", "register_errors",
 _BOOL_FIELDS = ("resumable", "turn_limit_exhausted", "oracle_mismatch",
                 "continuation_instruction_mode_fallback_applied",
                 "prompt_common_default_applied", "fallback_allowed")
-_NULLABLE_BOOL_FIELDS = ("source_dirty",)
+_NULLABLE_BOOL_FIELDS = ("source_dirty", "write_requested_by_human", "allow_test_edits")
 
 _last_purge_mono: Optional[float] = None
 
@@ -170,6 +186,29 @@ def _load_array(raw: Any) -> list:
     return value if isinstance(value, list) else []
 
 
+def _dump_write_plan(value: Any) -> Optional[str]:
+    """Serialize the write-plan object field. None passes through; an
+    already-oversized plan (the submission endpoint's own cap should have
+    caught this first) is dropped rather than silently truncated -- a plan
+    missing operations mid-JSON is worse than a plan missing entirely."""
+    if value is None:
+        return None
+    encoded = json.dumps(value, ensure_ascii=False)
+    if len(encoded.encode("utf-8")) > _WRITE_PLAN_MAX_SERIALIZED_BYTES:
+        return json.dumps({"error": "write_plan_too_large_to_persist"})
+    return encoded
+
+
+def _load_write_plan(raw: Any) -> Optional[dict]:
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def _row_to_payload(row: dict) -> dict:
     payload = dict(row)
     for field in _ARRAY_FIELDS:
@@ -179,6 +218,7 @@ def _row_to_payload(row: dict) -> dict:
     for field in _NULLABLE_BOOL_FIELDS:
         raw = row.get(field)
         payload[field] = None if raw is None else bool(raw)
+    payload["write_plan"] = _load_write_plan(row.get("write_plan_json"))
     return payload
 
 
@@ -277,6 +317,16 @@ def upsert(row: dict[str, Any]) -> None:
         "tool_calls_received": row.get("tool_calls_received"),
         "tool_calls_executed": row.get("tool_calls_executed"),
         "api_turn_trace": _dump_array("api_turn_trace", row.get("api_turn_trace")),
+        # -- flowgate.default.0481 T0008 item 1 (migration 105) -------------
+        "write_requested_by_human": (
+            None if row.get("write_requested_by_human") is None
+            else (1 if row.get("write_requested_by_human") else 0)
+        ),
+        "allow_test_edits": (
+            None if row.get("allow_test_edits") is None
+            else (1 if row.get("allow_test_edits") else 0)
+        ),
+        "write_plan_json": _dump_write_plan(row.get("write_plan")),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -319,6 +369,26 @@ def max_serial_for_date(date_str: str) -> int:
         except (TypeError, ValueError):
             continue
     return highest
+
+
+def set_write_plan(run_id: str, write_plan: dict) -> bool:
+    """Attach a write plan to an ALREADY-PERSISTED row (flowgate.default.0481
+    T0008 item 1). The ordinary path is the in-memory one (the run is still
+    live when the worker submits): `ai_invoke.runtime.record_run_write_plan`
+    sets it on the live run dict, and the next `upsert()` at finalize carries it
+    over. This UPDATE-only fallback only matters for the race where the run
+    already finished and its row is written by the time the submission arrives
+    -- an `upsert()` here would be wrong (it has none of the run's other
+    columns and would blow them all away with NULL). Returns whether a row was
+    found to update."""
+    row = get_store()._fetch_one("SELECT run_id FROM ai_invoke_runs WHERE run_id = ?", [run_id])
+    if row is None:
+        return False
+    get_store()._execute(
+        "UPDATE ai_invoke_runs SET write_plan_json = ?, updated_at = ? WHERE run_id = ?",
+        [_dump_write_plan(write_plan), now_iso(), run_id],
+    )
+    return True
 
 
 def get(run_id: str) -> Optional[dict]:

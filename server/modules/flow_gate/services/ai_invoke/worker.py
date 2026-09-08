@@ -158,6 +158,12 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
         _svc()._broadcast(run, "ai_invoke_started", {
             "run_id": run["run_id"],
             "group_id": run["group_id"],
+            # 0481 T0010 #1: a project-scoped run (resolve_base_dirty) carries a synthetic
+            # `<project>.none.0000` group so its rows have a key, but the browser files its
+            # card under `project:<id>`. Ship both identities or the live card, the button's
+            # busy state and the post-finish status refresh all key on a group nobody watches.
+            "project_id": run["project_id"],
+            "action_scope": run.get("action_scope"),
             "doc_ref": run["doc_ref"],
             "mode": run["mode"],
             "started_at": run["started_at"],

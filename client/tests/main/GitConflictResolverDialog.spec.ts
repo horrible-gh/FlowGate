@@ -60,6 +60,12 @@ function mountDialog(overrides: Record<string, unknown> = {}) {
       busy: false,
       loadStatus: 'ready',
       errorMessage: '',
+      // 0234 B0001 RC1/RC2 added the footer provider select gated behind
+      // `providers?.length` — without a fixture here the footer-actions block
+      // (and everything in it: copy-mention/AI-invoke/abort/submit) never
+      // renders, which silently broke every test below that queries it.
+      providers: [{ id: 'p1', name: 'Claude Sonnet 5' }],
+      selectedProvider: 'p1',
       ...overrides,
     },
     global: {
@@ -223,9 +229,35 @@ describe('GitConflictResolverDialog (shared 0207 시안 A resolver)', () => {
     expect(invoke).toBeTruthy()
     await invoke!.trigger('click')
 
+    // 0481 D0006 §6.2 / L0007 §2.2 — [자동] rides along as the second argument,
+    // read fresh from the footer checkbox at the moment [AI 호출] is pressed.
     expect(wrapper.emitted('ai-invoke')).toEqual([
-      ['Preserve the current source and resolve only the markers.'],
+      ['Preserve the current source and resolve only the markers.', false],
     ])
+
+    wrapper.unmount()
+  })
+
+  it('checking [자동] sends auto=true with AI 호출 and 해소 제출, and resets on a fresh files load', async () => {
+    const { wrapper, files } = mountDialog()
+
+    await wrapper.find('.git-conflict-auto-toggle input').setValue(true)
+    const invoke = wrapper.findAll('.git-conflict-footer-actions .btn-secondary')
+      .find(button => button.text().includes('Call AI'))
+    await invoke!.trigger('click')
+    expect(wrapper.emitted('ai-invoke')?.[0]).toEqual(['', true])
+
+    // 0234-shared submit gate: resolve everything so the primary button is enabled.
+    await wrapper.find('.git-ai-assist-strip .btn').trigger('click')
+    const pendingChunk = wrapper.findAll('.git-conflict-chunk')[1]
+    const [, theirsBtn] = pendingChunk.findAll('.git-chunk-actions button')
+    await theirsBtn.trigger('click')
+    await wrapper.find('.git-conflict-footer-actions .btn-primary').trigger('click')
+    expect(wrapper.emitted('submit')?.[0]).toEqual([true])
+
+    // A fresh files prop (re-fetch/re-open) must not carry the checkbox forward.
+    await wrapper.setProps({ files: [...files] })
+    expect((wrapper.find('.git-conflict-auto-toggle input').element as HTMLInputElement).checked).toBe(false)
 
     wrapper.unmount()
   })
@@ -300,6 +332,97 @@ describe('GitConflictResolverDialog (shared 0207 시안 A resolver)', () => {
     const sides = wrapper.findAll('.git-conflict-side')
     expect(sides).toHaveLength(2) // ours, theirs
     expect(sides.filter((s) => s.classes().includes('base'))).toHaveLength(0)
+
+    wrapper.unmount()
+  })
+})
+
+// flowgate.default.0481 T0010 #2/#3/#4 — "아무 액션도 못하는 다이얼로그만 계속뜨고".
+describe('GitConflictResolverDialog — the action bar is never absent', () => {
+  function actionLabels(wrapper: ReturnType<typeof mountDialog>['wrapper']): string[] {
+    return wrapper
+      .findAll('.git-conflict-footer-actions button')
+      .map((b) => b.text().trim())
+  }
+
+  it('keeps every action when the conflict list comes back empty', () => {
+    // The dialog opens on a session the panel still calls `conflict`, but the list is empty
+    // (already staged, or a moment stale). This used to render one sentence and the ✕ — the
+    // operator could neither retry, nor call the AI, nor abort the merge.
+    const { wrapper } = mountDialog({ files: [] })
+
+    expect(wrapper.find('.git-conflict-empty').exists()).toBe(true)
+    // a way to re-read the list, right where the emptiness is reported
+    expect(wrapper.find('.git-conflict-empty button').exists()).toBe(true)
+    // and the whole action bar, not a subset
+    expect(actionLabels(wrapper)).toHaveLength(4)
+    const buttons = wrapper.findAll('.git-conflict-footer-actions button')
+    // [멘트 복사] / [AI 호출] / [중단] stay usable; only [해결 제출] has nothing to submit.
+    expect(buttons.slice(0, 3).every((b) => b.attributes('disabled') === undefined)).toBe(true)
+    expect(buttons[3].attributes('disabled')).toBeDefined()
+
+    wrapper.unmount()
+  })
+
+  it('emits ai-invoke and abort from the empty state', async () => {
+    const { wrapper } = mountDialog({ files: [] })
+    const buttons = wrapper.findAll('.git-conflict-footer-actions button')
+
+    await buttons[1].trigger('click')
+    await buttons[2].trigger('click')
+
+    expect(wrapper.emitted('ai-invoke')).toBeTruthy()
+    expect(wrapper.emitted('abort')).toBeTruthy()
+    wrapper.unmount()
+  })
+
+  it('keeps the action bar when the load failed', () => {
+    const { wrapper } = mountDialog({
+      files: [],
+      loadStatus: 'error',
+      errorMessage: 'boom',
+    })
+
+    expect(actionLabels(wrapper)).toHaveLength(4)
+    // the guard line is the footer's one sentence — it has to speak for this state too
+    expect(wrapper.find('.git-conflict-guard').text()).toContain('boom')
+    wrapper.unmount()
+  })
+
+  it('disables the AI call instead of deleting the whole action bar when no provider loaded', () => {
+    // The entire footer-actions group used to hang off `v-if="providers?.length"`, so a
+    // failed/empty provider list took [중단] and [해결 제출] with it — a dialog with a file
+    // list and no way to act on it.
+    const { wrapper } = mountDialog({ providers: [], selectedProvider: '' })
+
+    const buttons = wrapper.findAll('.git-conflict-footer-actions button')
+    expect(buttons).toHaveLength(4)
+    expect(buttons[1].attributes('disabled')).toBeDefined()  // [AI 호출]
+    expect(buttons[1].attributes('title')).toBeTruthy()      // …and it says why
+    expect(buttons[2].attributes('disabled')).toBeUndefined() // [중단]
+    wrapper.unmount()
+  })
+
+  it('lays the footer out the way mockup v13 화면 1 does', () => {
+    // v13: `.git-conflict-footer-context` = 마커 가드 + 세로 구분선 + AI 호출 옵션(공급자
+    // 셀렉트 · [자동]); `.git-conflict-footer-actions` = 네 버튼만.
+    const { wrapper } = mountDialog()
+
+    const context = wrapper.find('.git-conflict-dialog-ft > .git-conflict-footer-context')
+    expect(context.exists()).toBe(true)
+    expect(context.find('.git-conflict-guard').exists()).toBe(true)
+    expect(context.find('.ft-divider').exists()).toBe(true)
+
+    const options = context.find('.git-conflict-invoke-options')
+    expect(options.exists()).toBe(true)
+    expect(options.find('.git-conflict-provider').exists()).toBe(true)
+    expect(options.find('.git-conflict-auto-toggle input').exists()).toBe(true)
+
+    // the options moved OUT of the button group — the group is the four buttons, nothing else
+    const actions = wrapper.find('.git-conflict-dialog-ft > .git-conflict-footer-actions')
+    expect(actions.findAll('button')).toHaveLength(4)
+    expect(actions.find('.git-conflict-provider').exists()).toBe(false)
+    expect(actions.find('.git-conflict-auto-toggle').exists()).toBe(false)
 
     wrapper.unmount()
   })

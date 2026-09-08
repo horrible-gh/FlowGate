@@ -1368,7 +1368,7 @@ import { isFileTab, useTabsStore, type Tab } from '../stores/tabs'
 import { useProjectStore } from '../stores/project'
 import { useExplorerStore } from '../stores/explorer'
 import { useAiProviderStore } from '../stores/aiProvider'
-import { groupIdFromDocId, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
+import { groupIdFromDocId, isScreenOwnedRun, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import {
   useDashboardStore,
   type DashboardWorkflow,
@@ -1948,12 +1948,29 @@ const activeChatOwnRun = computed(() => {
   if (!tab || tab.typeCode !== 'CH') return false
   return aiInvokeRunsStore.runsByGroup[activeAiInvokeGroupId.value]?.docRef === tab.id
 })
+// 0481 T0010 rev3: the same line `activeChatOwnRun` draws, for the git panels.
+// GitFinalizePanel hosts BOTH the conflict resolver and the merge approval dialog
+// (and the approval dialog hosts the chat), and all three of its mounts below are
+// gated on `!aiRunDocumentLocked`. So a `resolve_conflict` run — which is only ever
+// started from inside one of those dialogs — used to destroy the dialog that
+// started it the moment the run registered: `reviewDialogOpen` is panel-local, so
+// it never came back, and the run could only be watched from the generic AI-run
+// surface. That is exactly what the operator rejected twice. The dialog reports
+// this run's progress in place (GitMergeReviewDialog's pending_conversation wait),
+// so the group-wide cover is both wrong and destructive here.
+const activeGitOwnRun = computed(() =>
+  isScreenOwnedRun(aiInvokeRunsStore.runsByGroup[activeAiInvokeGroupId.value]),
+)
 const activeGroupRunActive = computed(() =>
   !activeChatOwnRun.value
+  && !activeGitOwnRun.value
   && aiInvokeRunsStore.isGroupInlineVisible(activeAiInvokeGroupId.value),
 )
 const activeGroupRunInlineVisible = computed(() => {
-  if (activeChatOwnRun.value) return false
+  // Same exclusion as above: the dialog shows this run, so the inline strip must
+  // not also claim the column (and its finished/lost card must not push the git
+  // panel out of the way the moment the reply lands).
+  if (activeChatOwnRun.value || activeGitOwnRun.value) return false
   const run = aiInvokeRunsStore.runsByGroup[activeAiInvokeGroupId.value]
   return activeGroupRunActive.value
     || run?.phase === 'paused'

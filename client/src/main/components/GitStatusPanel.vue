@@ -48,12 +48,39 @@
              그 아래 작은 안내 줄, 오른쪽에 채움형 [AI에게 맡기기] 와 텍스트 링크형 펼침
              토글([파일별로 보기 ▾]). 시안에 없던 별도 안내 문장 줄은 제거하고, AI 실행
              중 사유는 같은 안내 줄이 넘겨받는다(aria-describedby 대상은 그대로). -->
-        <div class="git-v9-summary">
+        <!-- 0481 T0010 #1: same chip, but who owns these files decides what may be done to
+             them. A stopped merge owns them → one button, [충돌 해소], and no cleanup at all. -->
+        <div v-if="baseDirtyMerge" class="git-v9-summary">
+          <AppIcon name="warning" class="git-v9-chip-icon" />
+          <span class="git-v9-chip">
+            {{ t('main.git_status.base_dirty_merge_summary', { n: baseDirtyFiles.length }) }}
+            <span class="git-v9-chip-sub">{{ t('main.git_status.base_dirty_merge_guide') }}</span>
+          </span>
+          <button
+            class="btn btn-sm btn-danger"
+            type="button"
+            :disabled="busy || !baseDirtyMerge.group_id"
+            @click="openResolve(baseDirtyMerge.group_id as string)"
+          >
+            <AppIcon name="warning" />{{ t('main.git_status.resolve_inline') }}
+          </button>
+          <button class="git-v9-link-btn" type="button" :aria-expanded="baseDirtyOpen" aria-controls="git-base-dirty-files" @click="baseDirtyOpen = !baseDirtyOpen">{{ baseDirtyOpen ? t('main.git_status.collapse') : t('main.git_status.view_files') }} <span class="git-v9-caret">{{ baseDirtyOpen ? '▴' : '▾' }}</span></button>
+        </div>
+        <div v-else class="git-v9-summary">
           <AppIcon name="warning" class="git-v9-chip-icon" />
           <span class="git-v9-chip">
             {{ t('main.git_status.base_dirty_summary', { n: baseDirtyFiles.length }) }}
-            <span id="git-base-ai-reason" class="git-v9-chip-sub">{{
-              baseAiRunning ? t('main.git_status.base_ai_running') : t('main.git_status.base_dirty_guide')
+            <!-- 0481 T0010 rev6 (반려 2): 거절 사유는 토스트로 스쳐 지나가면 안 된다
+                 ("내용은 모르겠음 너무 빨리 지나가서"). 버튼이 가리키는 이 줄에
+                 남겨서 다음 시도 때까지 읽을 수 있게 한다. -->
+            <span
+              id="git-base-ai-reason"
+              class="git-v9-chip-sub"
+              :class="{ 'git-v9-chip-sub--error': !!baseAiError }"
+              data-test="base-ai-reason"
+            >{{
+              baseAiError
+                || (baseAiRunning ? t('main.git_status.base_ai_running') : t('main.git_status.base_dirty_guide'))
             }}</span>
           </span>
           <button class="btn btn-sm btn-primary" type="button" :disabled="busy || baseAiRunning" aria-describedby="git-base-ai-reason" @click="invokeBaseDirtyAi"><AppIcon name="magic-wand" />{{ t('main.git_status.ai_delegate') }}</button>
@@ -63,8 +90,8 @@
              목록보다 위에 온다(220px 스크롤 캡 안에서 늘 먼저 보이도록). 병합이 막힌 사유
              안내도 접힌 기본 화면을 어지럽히지 않게 이 안으로 들어온다. -->
         <div v-if="baseDirtyOpen" id="git-base-dirty-files" class="git-v9-scroll git-v9-scroll--220 git-v9-disclosure">
-        <div class="git-base-dirty-alert__msg">{{ t('main.git_finalize.base_dirty_alert') }}</div>
-        <div v-if="baseDirtyFiles.length" class="git-base-commit-row">
+        <div class="git-base-dirty-alert__msg">{{ baseDirtyMerge ? t('main.git_status.base_dirty_merge_alert') : t('main.git_finalize.base_dirty_alert') }}</div>
+        <div v-if="baseDirtyFiles.length && !baseDirtyMerge" class="git-base-commit-row">
           <input
             class="form-ctrl git-commit-msg-input"
             type="text"
@@ -79,17 +106,21 @@
           </button>
         </div>
         <!-- everything reverted while a merge was parked → proceed without a commit -->
-        <div v-else-if="pendingFinalize" class="git-base-commit-row">
+        <div v-else-if="pendingFinalize && !baseDirtyMerge" class="git-base-commit-row">
           <button class="btn btn-sm btn-primary" type="button" :disabled="busy" @click="resumePendingFinalize">
             <AppIcon name="play" /> {{ t('main.git_status.base_merge_now_btn') }}
           </button>
         </div>
         <div v-for="f in baseDirtyFiles" :key="f" class="git-base-dirty-filerow">
           <span class="git-base-dirty-filerow__path">{{ f }}</span>
+          <!-- 0481 T0010 #1: per-file [되돌리기] against a stopped merge would throw away one
+               side of it. Kept visible and disabled (0441 TR0005) with the reason attached,
+               so the operator sees the file list without being handed a destructive button. -->
           <button
             class="btn btn-sm btn-secondary"
             type="button"
-            :disabled="busy"
+            :disabled="busy || !!baseDirtyMerge"
+            :title="baseDirtyMerge ? t('main.git_status.base_dirty_merge_guide') : ''"
             @click="doBaseRevert(f)"
           >
             <AppIcon name="arrow-counter-clockwise" /> {{ t('main.git_status.base_revert_btn') }}
@@ -221,10 +252,25 @@
             <span class="badge" :class="statusBadgeClass(p.status)">{{ statusLabel(p.status) }}</span>
             <span class="git-status-spacer"></span>
 
-            <!-- conflict: toggle the inline resolution editor (no R document) -->
+            <!-- 0481 D0006 §6.4: a resolved general merge stops at the human
+                 approval gate, not the resolver — same row, different button. -->
             <button
-              v-if="p.status === 'conflict'"
-              class="btn btn-sm btn-danger-ol"
+              v-if="p.status === 'conflict' && isReviewPending(p)"
+              class="btn btn-sm btn-primary"
+              :disabled="busy"
+              @click="reviewDialogTarget = { group_id: p.group_id, merge_id: p.merge_id as number }"
+            >
+              <AppIcon name="eye" />
+              {{ t('main.git_review.open_review') }}
+            </button>
+            <!-- conflict: toggle the inline resolution editor (no R document).
+                 0481 T0010 #3 — "잘 보이지도 않는 충돌해소 버튼". This was `btn-danger-ol`:
+                 white fill, #fca5a5 border, sitting inside a red-tinted conflict card next
+                 to a solid [AI에게 맡기기]. The row's PRIMARY action was its faintest
+                 control. Filled danger, so the thing to press looks like the thing to press. -->
+            <button
+              v-else-if="p.status === 'conflict'"
+              class="btn btn-sm btn-danger"
               :disabled="busy"
               @click="toggleResolve(p)"
             >
@@ -256,7 +302,13 @@
                붉은 카드 안에 아이콘 + 굵은 제목 + 안내 줄, 채움형 [AI에게 맡기기] 와
                링크형 [펼쳐 보기 ▾]. 펼친 목록은 시안 `.conflict-raw-list` 처럼 파선으로
                갈라지고 줄마다 붉은 표식이 붙는다. -->
-          <div v-if="p.status === 'conflict'" class="git-v9-conflict-summary">
+          <div v-if="p.status === 'conflict' && isReviewPending(p)" class="git-v9-conflict-summary">
+            <div class="git-v9-chip-row">
+              <AppIcon name="clock" class="git-v9-chip-icon" />
+              <span class="git-v9-chip">{{ t(`main.git_review.badge.${reviewBadgeKeyOf(p)}`) }}</span>
+            </div>
+          </div>
+          <div v-else-if="p.status === 'conflict'" class="git-v9-conflict-summary">
             <div class="git-v9-chip-row">
               <AppIcon name="warning" class="git-v9-chip-icon" />
               <span class="git-v9-chip">
@@ -320,13 +372,16 @@
             :selected-provider="aiProviderStore.selectedProviderId"
             :provider-loading="aiProviderStore.loading"
             :provider-errored="!!aiProviderStore.error"
+            :ai-run-notice="conflictAiRunNotice(p.group_id)"
+            :ai-run-pending="conflictAiStarting === p.group_id"
             @close="collapseResolve"
             @abort="abortInline(p)"
-            @submit="submitResolveInline(p)"
+            @submit="(auto) => submitResolveInline(p, auto)"
             @retry="openResolve(p.group_id)"
-            @ai-invoke="invokeConflictAi(p, $event)"
+            @ai-invoke="(msg, auto) => invokeConflictAi(p, msg, auto)"
             @copy-mention="copyConflictMention(p)"
             @update:provider="aiProviderStore.selectProvider"
+            @reload-providers="reloadProviders"
           />
         </div>
       </div>
@@ -391,7 +446,7 @@
             </span>
             <button
               type="button"
-              class="btn btn-sm btn-danger-ol git-trc-conflict-btn"
+              class="btn btn-sm btn-danger git-trc-conflict-btn"
               :disabled="busy"
               @click="openResolve(s.group_id)"
             >
@@ -429,13 +484,16 @@
             :selected-provider="aiProviderStore.selectedProviderId"
             :provider-loading="aiProviderStore.loading"
             :provider-errored="!!aiProviderStore.error"
+            :ai-run-notice="conflictAiRunNotice(s.group_id)"
+            :ai-run-pending="conflictAiStarting === s.group_id"
             @close="collapseResolve"
             @abort="abortTrConflict(s)"
-            @submit="submitResolveInline(trConflictTarget(s))"
+            @submit="(auto) => submitResolveInline(trConflictTarget(s), auto)"
             @retry="openResolve(s.group_id)"
-            @ai-invoke="invokeConflictAi(trConflictTarget(s), $event)"
+            @ai-invoke="(msg, auto) => invokeConflictAi(trConflictTarget(s), msg, auto)"
             @copy-mention="copyConflictMention(trConflictTarget(s))"
             @update:provider="aiProviderStore.selectProvider"
+            @reload-providers="reloadProviders"
           />
           <div v-if="trCommitsOpen === s.group_id" class="git-trc-list">
             <div
@@ -530,6 +588,21 @@
       <div class="git-status-sect"><div class="git-ra-placeholder">{{ t('main.git_status.ra_placeholder') }}</div></div>
     </div>
   </div>
+
+  <GitMergeReviewDialog
+    v-if="reviewDialogTarget"
+    :group-id="reviewDialogTarget.group_id"
+    :merge-id="reviewDialogTarget.merge_id"
+    :branch="status?.slots.find((s) => s.group_id === reviewDialogTarget?.group_id)?.branch || null"
+    :base-branch="status?.base_branch || null"
+    :providers="aiProviderStore.providers"
+    :selected-provider="aiProviderStore.selectedProviderId"
+    :provider-loading="aiProviderStore.loading"
+    :provider-errored="!!aiProviderStore.error"
+    @close="reviewDialogTarget = null"
+    @resolved="fetchStatus"
+    @update:provider="aiProviderStore.selectProvider"
+  />
 </template>
 
 <script setup lang="ts">
@@ -539,7 +612,7 @@ import { getRequest, postRequest } from '@shared/api'
 import { useToast } from './common/useToast'
 import { useExplorerStore } from '../stores/explorer'
 import { useAiProviderStore } from '../stores/aiProvider'
-import { useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
+import { isScreenOwnedRun, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import AppIcon from '@shared/AppIcon.vue'
 // 0182 NR0003 §6: chunk-based conflict resolution shared with GitFinalizePanel
 // (parser state machine + reassembly + residual-marker guard). 0212 T0009: the
@@ -551,6 +624,7 @@ import {
   type ConflictFileState,
 } from '../composables/useConflictChunks'
 import GitConflictResolverDialog from './GitConflictResolverDialog.vue'
+import GitMergeReviewDialog from './GitMergeReviewDialog.vue'
 
 const props = defineProps<{ projectId: string }>()
 const emit = defineEmits<{ 'open-group': [groupId: string] }>()
@@ -640,6 +714,11 @@ interface Pending {
   merge_id: number | null
   // 0182 NR0003 §4: the group's final-approval doc (pending implies wf_done)
   ac_doc_id?: string | null
+  // 0481 D0006 §6.4 / L0007 §2.11 — null/absent means the conflict is still being
+  // resolved (the resolver dialog); any REVIEW_PENDING_STATES value means the
+  // human approval gate is waiting instead (the review dialog).
+  review_state?: string | null
+  reconciliation_kind?: string | null
 }
 interface GitStatus {
   enabled: boolean
@@ -648,7 +727,17 @@ interface GitStatus {
   ahead_count: number | null
   behind_count: number | null
   // 0177 L0002 §2.1: base-checkout dirty set (tracked files only)
-  base_dirty?: { dirty: boolean; files: string[] }
+  // 0481 T0010 #1: while a merge is stopped on a conflict, the base checkout's dirty set IS
+  // that merge — `merge_in_progress` names the session that owns it so this panel offers the
+  // resolver instead of a commit/revert/AI cleanup that would destroy it.
+  base_dirty?: {
+    dirty: boolean
+    files: string[]
+    merge_in_progress?: { merge_id: number | null; group_id: string | null } | null
+    // 0481 T0010 rev6 (반려 2): 이 프로젝트의 기준 브랜치 AI 정리 실행 — 서버의
+    // 관리 리스(project_ai_leases)에서 그대로 온다. 다른 세션이 잡고 있어도 보인다.
+    ai_run?: { run_id: string | null; state: string | null; acquired_at: string | null } | null
+  }
   // 0296 T0004: never-committed files. A SEPARATE field on purpose — folding it
   // into base_dirty would widen the E3 guard to build artifacts (0165.0009).
   base_untracked?: { count: number; files: string[]; truncated?: boolean }
@@ -686,7 +775,11 @@ interface UnpushedMerge {
 
 const status = ref<GitStatus | null>(null)
 const busy = ref(false)
-const baseAiRunning = ref(false)
+// 0481 T0010 rev6 (반려 2) — 누른 직후부터 다음 상태 읽기까지의 짧은 낙관적 표시.
+// 진짜 '진행 중'은 서버 리스와 이 브라우저가 추적 중인 실행이 말한다(baseAiRunning).
+const baseAiStarting = ref(false)
+// 마지막 [AI에게 맡기기] 거절 사유. 다음 시도까지 화면에 남는다.
+const baseAiError = ref<string | null>(null)
 const cleanupAttempted = new Set<string>()
 const cleanupInflight = new Set<string>()
 let statusSequence = 0
@@ -895,6 +988,25 @@ const pendingFinalize = ref<{
 } | null>(null)
 
 const baseDirtyFiles = computed(() => status.value?.base_dirty?.files ?? [])
+// 0481 T0010 #1 — the answer to "AI에게 맡기기 호출해도 …시작하지 못했습니다. 메세지만
+// 계속 뜨고". A stopped merge leaves every unmerged AND every cleanly merged path in the base
+// checkout's `git status`, so this section filled up with the merge itself and invited the
+// operator to commit it, revert it file by file, or hand it to an AI. All three are wrong for
+// a half-finished merge, and the AI one could not start at all. When the merge owns these
+// files the section says so and points at the resolver instead.
+const baseDirtyMerge = computed(() => status.value?.base_dirty?.merge_in_progress ?? null)
+// 0481 T0010 rev6 (반려 2) — "이 프로젝트의 AI 정리가 진행 중입니다." 는 rev5까지
+// 브라우저 안의 래치였다. 409(다른 세션이 실행 중)를 받으면 그 실행은 이 브라우저의
+// 등록부에 없으므로 끝나도 알 길이 없었고, 버튼은 그 탭에서 영영 잠겼다. 이제 판정의
+// 주인은 서버의 관리 리스이고, 그것이 사라지면 다음 상태 읽기에서 저절로 풀린다.
+const baseAiServerRun = computed(() => status.value?.base_dirty?.ai_run ?? null)
+const baseAiTrackedRun = computed(() => {
+  const entry = aiInvokeRunsStore.runsByGroup[`project:${props.projectId}`]
+  return !!entry && entry.phase !== 'finished' && entry.phase !== 'lost'
+})
+const baseAiRunning = computed(
+  () => baseAiStarting.value || !!baseAiServerRun.value || baseAiTrackedRun.value,
+)
 // A park from base_untracked_conflict must NOT open the tracked-dirty alert
 // below (its copy and its merge-retry button both assume a base_dirty park) —
 // the untracked section further down already carries that park's UI.
@@ -962,6 +1074,21 @@ const conflictError = ref('')
 // Load lifecycle for the shared resolver dialog (loading spinner / retry state).
 const conflictLoadStatus = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
 
+// 0481 D0006 §6.4 / L0007 §2.11 — the general-merge human approval gate's own
+// entry point, same row/slot the resolver otherwise occupies.
+const REVIEW_PENDING_STATES = new Set(['resolved_pending_review', 're_review', 'applying', 'reconciling'])
+function isReviewPending(p: Pick<Pending, 'review_state'>): boolean {
+  return !!p.review_state && REVIEW_PENDING_STATES.has(p.review_state)
+}
+function reviewBadgeKeyOf(p: Pick<Pending, 'review_state'>): string {
+  const rs = p.review_state
+  if (rs === 'reconciling') return 'reconciling'
+  if (rs === 're_review') return 're_review'
+  if (rs === 'applying') return 'applying'
+  return 'pending'
+}
+const reviewDialogTarget = ref<{ group_id: string; merge_id: number } | null>(null)
+
 // Per-group commit-subject draft (B0001 F1). Lazily hydrated from the group's
 // finalize state (state.commit_message) the first time its row shows merge/push;
 // `message` is what we POST (blank → omitted so the server auto-resolves).
@@ -980,6 +1107,13 @@ const commitDrafts = ref<Record<string, CommitDraft>>({})
 const inlineResolved = computed(
   () => conflictFiles.value.length > 0 && conflictFiles.value.every(isFileResolved),
 )
+
+// 0481 T0010 rev2: `remaining_conflicts` is a list of paths; pasting the array itself
+// into a message renders "a,b" with no spaces and "[object Object]" the day it grows.
+function remainingText(remaining: unknown): string {
+  if (Array.isArray(remaining)) return remaining.map((r: any) => (typeof r === 'string' ? r : r?.path ?? '')).filter(Boolean).join(', ')
+  return String(remaining ?? '')
+}
 
 const aheadBehindText = computed(() => {
   const s = status.value
@@ -1520,7 +1654,7 @@ async function openResolve(groupId: string) {
   }
 }
 
-async function submitResolveInline(p: ConflictTarget | null) {
+async function submitResolveInline(p: ConflictTarget | null, auto: boolean) {
   if (!p || p.merge_id == null || busy.value || !inlineResolved.value) return
   busy.value = true
   conflictError.value = ''
@@ -1530,6 +1664,9 @@ async function submitResolveInline(p: ConflictTarget | null) {
       {
         files: conflictFiles.value.map((f) => ({ path: f.path, content: currentFileContent(f) })),
         complete: true,
+        // 0481 D0006 §3.2 / L0007 §2.2 — no-op for a TR session (record_auto_authority
+        // silently ignores it there); stamps auto_authority for a general merge.
+        auto,
       },
     )
     if (data.ok === false) {
@@ -1539,10 +1676,38 @@ async function submitResolveInline(p: ConflictTarget | null) {
       showToast(t(key, { commit: data.result.merge_commit || '' }), 'success')
       collapseResolve()
     } else if (data.result?.status === 'resolved_pending_review') {
-      // 0332 TR0019 — TR 충돌은 여기서 끝나지 않는다. 표식이 사라졌다는 것과 이 되돌림이
-      // 옳다는 것은 다른 주장이라, 커밋은 사람이 눌러야 한다.
-      showToast(t('main.git_status.tr_commits.conflict_resolved_toast'), 'success')
+      // 0332 TR0019 — a TR conflict does not end here either way: the markers being
+      // gone and the revert being correct are different claims, so a person still
+      // presses the commit button. A general merge instead now stops at the human
+      // approval gate (0481 T0008) — either way this submission's own job is done.
+      const isTr = !!status.value?.slots.some((slot) => trConflictOf(slot)?.merge_id === p.merge_id)
       collapseResolve()
+      // 0481 T0010 rev5 (반려 #3) — "알아서 승인화면으로 가세요 할게 아니라 대려다줘야 할거
+      // 아냐?". A general merge's next screen is the approval gate and this component owns
+      // it, so open it here. A TR conflict has no approval gate — its next press is the
+      // commit button on the row — so that branch keeps its own sentence.
+      if (isTr) {
+        showToast(t('main.git_status.tr_commits.conflict_resolved_toast'), 'success')
+      } else {
+        reviewDialogTarget.value = { group_id: p.group_id, merge_id: p.merge_id as number }
+        showToast(t('main.git_review.resolved_pending_opened'), 'success')
+      }
+    } else if (data.result?.status === 'conflict') {
+      // 0481 T0010 rev2 — the server took the files but says the session still has
+      // unresolved ones. This used to be silence: the dialog just sat there.
+      conflictError.value = t('main.git_finalize.resolve_remaining', {
+        paths: remainingText(data.result?.remaining_conflicts),
+      })
+    } else {
+      // 0481 T0010 rev2 — and NOTHING may leave this chain without saying something.
+      // A screen older than the server lands exactly here (0481 T0008 changed a general
+      // merge's answer from `merged` to `resolved_pending_review`; the bundle that
+      // predates it knows neither branch), and the operator sees a button that does
+      // nothing at all. Name the state instead.
+      conflictError.value = t('main.git_finalize.resolve_unknown_result', {
+        status: String(data.result?.status ?? ''),
+      })
+      showToast(conflictError.value, 'danger')
     }
   } catch (e: any) {
     conflictError.value = e?.response?.data?.error?.message || t('main.git_finalize.failed')
@@ -1575,9 +1740,27 @@ async function copyToClipboard(text: string) {
 
 // 0332 + main: `p` is a ConflictTarget so the slot row's parked TR conflict can call this
 // too, and `message` stays optional because that row's dialog sends no free text.
-async function invokeConflictAi(p: ConflictTarget | null, message?: string) {
+/**
+ * 0481 T0010 rev5 (반려 #4) — the resolver's own way back from an empty provider list.
+ * `ensureLoaded` short-circuits on "already loaded for this project", which is exactly the
+ * state a FAILED load leaves behind, so the only honest retry is a forced one.
+ */
+async function reloadProviders() {
+  await aiProviderStore.loadForProject(props.projectId, true)
+}
+
+/**
+ * 0481 T0010 rev5 (반려 #1) — which group has a conflict AI call in flight but no run entry
+ * in this browser yet. The POST returns before the worker thread broadcasts
+ * `ai_invoke_started`, and before rev5 nothing at all was drawn in between: the dialog sat
+ * unchanged, so pressing [AI 호출] and not pressing it looked identical.
+ */
+const conflictAiStarting = ref<string | null>(null)
+
+async function invokeConflictAi(p: ConflictTarget | null, message?: string, auto?: boolean) {
   if (!p || p.merge_id == null || busy.value) return
   busy.value = true
+  conflictAiStarting.value = p.group_id
   try {
     // RC1: forward the header/dialog provider selection so the run honours it instead
     // of silently falling back to the server default chain (first = e.g. Fable).
@@ -1587,37 +1770,89 @@ async function invokeConflictAi(p: ConflictTarget | null, message?: string) {
       action_scope: 'resolve_conflict',
       mode: 'single',
       merge_id: p.merge_id,
+      // 0481 D0006 §3.2 / L0007 §2.2 — stamped at THIS human-authenticated [AI 호출]
+      // moment (record_auto_authority); a no-op for a TR conflict session.
+      auto: !!auto,
     }
     if (aiProviderStore.selectedProviderId) body.provider_id = aiProviderStore.selectedProviderId
     if (message) body.messages = [message]
-    await postRequest('/api/v1/ai-invoke/start', body)
+    const response = await postRequest<Record<string, unknown>>('/api/v1/ai-invoke/start', body)
+    // 0481 T0010 rev5 (반려 #1): adopt our OWN start response instead of waiting for the
+    // SSE frame the worker thread emits after it spins up. `resolve_base_dirty` next door
+    // has always done this; the conflict call did not, so the dialog that started the run
+    // could stay blank for as long as the frame took — or forever if it never arrived.
+    // action_scope/group_id are re-stamped locally so an older server (whose start payload
+    // carries neither) still produces a screen-owned entry.
+    aiInvokeRunsStore.trackStarted({
+      ...response.data,
+      group_id: p.group_id,
+      action_scope: 'resolve_conflict',
+    })
     showToast(t('main.git_finalize.conflict_ai_started'), 'success')
   } catch (e: any) {
     showToast(e?.response?.data?.message || e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')
   } finally {
     busy.value = false
+    conflictAiStarting.value = null
     await fetchStatus()
   }
 }
 
+/**
+ * 0481 T0010 rev3 — this group's own conflict AI run, as a sentence for the
+ * resolver dialog it was started from. Header-hosted resolvers were never torn
+ * down by MainPanel's document-column lock, but they showed the run nowhere
+ * either: the operator had to leave for the generic AI-run surface to learn
+ * anything, which is the habit this revision is removing everywhere.
+ */
+function conflictAiRunNotice(groupId: string): string | null {
+  const entry = aiInvokeRunsStore.runsByGroup[groupId]
+  if (!entry || !isScreenOwnedRun(entry)) return null
+  if (entry.phase !== 'running' && entry.phase !== 'pause_requested') return null
+  const total = Math.floor(aiInvokeRunsStore.elapsedMsFor(groupId) / 1000)
+  return t('main.git_finalize.conflict_ai_running', {
+    provider: entry.provider?.name || t('main.git_review.unknown_provider'),
+    elapsed: `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`,
+  })
+}
+
+// When that run ends, the resolver on screen is holding the pre-run files. Re-read
+// the status and the conflict list so the result of the call is what the operator
+// sees next -- the old "the AI-run surface covered this and its removal remounted
+// everything" refresh is gone by design.
+watch(
+  () => (expanded.value ? !!conflictAiRunNotice(expanded.value) : false),
+  async (running, wasRunning) => {
+    if (running || !wasRunning) return
+    const groupId = expanded.value
+    await fetchStatus()
+    if (!groupId || expanded.value !== groupId) return
+    // 0481 T0010 rev5 (반려 #3) — if the run RESOLVED it, the resolver's successor screen is
+    // the approval gate. Re-opening the resolver on an emptied session was the header panel's
+    // version of "알아서 승인화면으로 가세요": a dialog with nothing left in it and no way on.
+    // GitFinalizePanel already handed over here; this panel had been left out.
+    const pending = status.value?.pending.find((p) => p.group_id === groupId)
+    if (pending && pending.merge_id != null && isReviewPending(pending)) {
+      collapseResolve()
+      reviewDialogTarget.value = { group_id: groupId, merge_id: pending.merge_id }
+      return
+    }
+    await openResolve(groupId)
+  },
+)
+
 watch(
   () => aiInvokeRunsStore.runsByGroup[`project:${props.projectId}`]?.phase,
   async phase => {
-    if (phase === 'finished' || phase === 'lost') {
-      baseAiRunning.value = false
-      await fetchStatus()
-    }
+    if (phase === 'finished' || phase === 'lost') await fetchStatus()
   },
 )
 
 async function invokeBaseDirtyAi() {
   if (busy.value || baseAiRunning.value || !baseDirtyFiles.value.length) return
   busy.value = true
-  baseAiRunning.value = true
-  // A 409 run-in-progress means another session already owns the active run, so this
-  // client has no tracked store entry for it — the `finally` block's tracked-phase
-  // recompute must not be allowed to silently re-enable the button in that case.
-  let runInProgress = false
+  baseAiStarting.value = true
+  baseAiError.value = null
   try {
     await aiProviderStore.ensureLoaded(props.projectId)
     const body: Record<string, unknown> = {
@@ -1628,18 +1863,32 @@ async function invokeBaseDirtyAi() {
     aiInvokeRunsStore.trackStarted({ ...response.data, project_id: props.projectId, action_scope: 'resolve_base_dirty' })
     showToast(t('main.git_status.base_ai_started'), 'success')
   } catch (e: any) {
-    const code = e?.response?.data?.code || e?.response?.data?.error?.code
-    if (code === 'base_dirty_run_in_progress') runInProgress = true
-    else {
-      baseAiRunning.value = false
-      if (code === 'base_dirty_empty') await fetchStatus()
+    const data = e?.response?.data || {}
+    const code = data.code || data.error?.code
+    // 0481 T0010 #1 — every refusal used to collapse into one sentence,
+    // "기준 브랜치 AI 정리를 시작하지 못했습니다.", which is what the operator saw over and
+    // over with nothing to act on. Each refusal this button can actually receive now says
+    // what it is, and anything unforeseen relays the server's own message instead of hiding
+    // it behind the generic one.
+    const known: Record<string, string> = {
+      base_dirty_empty: 'base_ai_empty',
+      base_dirty_run_in_progress: 'base_ai_running',
+      base_dirty_merge_in_progress: 'base_ai_merge_in_progress',
     }
-    showToast(t(`main.git_status.${code === 'base_dirty_empty' ? 'base_ai_empty' : 'base_ai_failed'}`), 'danger')
+    const key = known[code as string]
+    const message = key
+      ? t(`main.git_status.${key}`)
+      : data.message || data.error?.message || t('main.git_status.base_ai_failed')
+    baseAiError.value = message
+    showToast(message, 'danger')
   } finally {
     busy.value = false
-    const tracked = aiInvokeRunsStore.runsByGroup[`project:${props.projectId}`]
-    baseAiRunning.value = runInProgress || (!!tracked && tracked.phase !== 'finished' && tracked.phase !== 'lost')
+    // Every exit re-reads the status, and the answer decides whether this stays disabled:
+    // the run this press started, a run another session owns, or nothing at all. Clearing
+    // the optimistic flag AFTER that read keeps the button from flickering back on in
+    // between (0481 T0010 rev6 반려 2).
     await fetchStatus()
+    baseAiStarting.value = false
   }
 }
 
@@ -2124,6 +2373,7 @@ defineExpose({ fetchStatus })
   font-weight: 400;
   color: #b91c1c;
 }
+.git-v9-chip-sub--error { color: var(--danger, #d33); font-weight: 600; }
 .git-v9-link-btn {
   border: 0;
   background: none;

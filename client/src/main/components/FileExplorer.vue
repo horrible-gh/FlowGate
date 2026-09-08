@@ -172,6 +172,7 @@
     :providers="[]"
     :provider-loading="false"
     :provider-errored="false"
+    :hide-ai-actions="true"
     @close="closeGroupUpdateDialog"
     @abort="abortGroupUpdate"
     @submit="submitGroupUpdateResolve"
@@ -415,13 +416,26 @@ async function submitGroupUpdateResolve() {
   if (!gid || updateMergeId.value == null || !conflictFiles.value.every(isFileResolved)) return
   updatePending.value = true
   try {
-    await api.post(
+    const response = await api.post(
       `/api/v1/groups/${encodeURIComponent(gid)}/git/merge/${updateMergeId.value}/resolve`,
       { files: conflictFiles.value.map((f) => ({ path: f.path, content: currentFileContent(f) })), complete: true },
     )
-    conflictDialogOpen.value = false
-    updateMergeId.value = null
-    showToast(t('main.explorer.git_updated'), 'success')
+    // 0481 T0010 rev2 — a 200 is not the same as "the update landed". If the session
+    // still has unresolved files the server answers `conflict` with the list, and
+    // closing on that told the operator the merge was done when it was not.
+    const result = (response.data as any)?.result
+    if (result?.status === 'conflict') {
+      const remaining = result?.remaining_conflicts
+      conflictError.value = t('main.git_finalize.resolve_remaining', {
+        paths: Array.isArray(remaining)
+          ? remaining.map((r: any) => (typeof r === 'string' ? r : r?.path ?? '')).filter(Boolean).join(', ')
+          : String(remaining ?? ''),
+      })
+    } else {
+      conflictDialogOpen.value = false
+      updateMergeId.value = null
+      showToast(t('main.explorer.git_updated'), 'success')
+    }
   } catch (error: any) {
     conflictError.value = error?.response?.data?.error?.message || t('main.explorer.git_update_failed')
   } finally {

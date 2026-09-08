@@ -267,7 +267,15 @@ describe('base-dirty AI button lifecycle (0482 T0011 item 8)', () => {
     expect(getRequest.mock.calls.some(([url]) => String(url).includes('/git/status'))).toBe(true)
   })
 
-  it('surfaces base_dirty_run_in_progress as a running state and base_dirty_empty as a refreshed empty state', async () => {
+  // 0481 T0010 rev6 (반려 2) — 이 시험의 계약이 바뀌었다. rev5까지 "다른 세션이 실행
+  // 중"이라는 409 는 브라우저 안의 래치를 켰고, 그 실행은 이 브라우저의 등록부에 없으니
+  // 끝나도 래치를 끌 사건이 오지 않았다("그 이후에 뭐라뭐라 하면서 안됨"). 이제 잠금의
+  // 주인은 서버가 실어 주는 관리 리스(base_dirty.ai_run)이고, 그것이 사라지면 다음 상태
+  // 읽기에서 버튼이 저절로 풀린다.
+  it('keeps the button disabled while the SERVER reports a project cleanup run, and frees it when that run ends', async () => {
+    const running = status()
+    running.base_dirty = { ...running.base_dirty, ai_run: { run_id: 'aiv_existing', state: 'active', acquired_at: null } }
+    const wrapper = await render(running)
     postRequest.mockImplementation(async (url: string) => {
       if (String(url).endsWith('/ai-invoke/start')) {
         const err: any = new Error('conflict')
@@ -276,11 +284,23 @@ describe('base-dirty AI button lifecycle (0482 T0011 item 8)', () => {
       }
       return { data: { ok: true, result: {} } }
     })
-    const wrapper = await render()
     await wrapper.find('button[aria-describedby="git-base-ai-reason"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('button[aria-describedby="git-base-ai-reason"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.text()).toContain(i18n.global.t('main.git_status.base_ai_running'))
+    // 거절 사유는 토스트로 스쳐 지나가지 않고 버튼이 가리키는 줄에 남는다.
+    expect(wrapper.find('[data-test="base-ai-reason"]').text()).toBe(i18n.global.t('main.git_status.base_ai_running'))
+
+    // 그 실행이 끝나면 서버가 ai_run: null 을 싣고, 버튼은 이 탭에서 다시 눌린다.
+    const idle = status()
+    idle.base_dirty = { ...idle.base_dirty, ai_run: null }
+    getRequest.mockImplementation((url: string) => {
+      if (url.endsWith('/conflicts')) return Promise.resolve({ data: { ok: true, files: [] } })
+      if (url.endsWith('/git/finalize')) return Promise.resolve({ data: { state: { commit_message: { suggested: 'm', source: 'auto_title' } } } })
+      return Promise.resolve({ data: { ok: true, status: idle } })
+    })
+    await (wrapper.vm as any).fetchStatus()
+    await flushPromises()
+    expect(wrapper.find('button[aria-describedby="git-base-ai-reason"]').attributes('disabled')).toBeUndefined()
   })
 })
 
