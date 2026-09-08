@@ -53,7 +53,9 @@ const TR_TAB = {
 const DocHeaderStub = defineComponent({
   name: 'DocHeader',
   setup(_props, { expose }) {
-    expose({ groupId: ref(GROUP_ID), canEditDocument: ref(true) })
+    // docProjectId is read by onConversationCopyMention (group 0515 T0011 §8 test below) --
+    // exposing it here keeps that seam real instead of adding a second, narrower stub.
+    expose({ groupId: ref(GROUP_ID), canEditDocument: ref(true), docProjectId: ref('flowgate') })
     return () => h('div', { class: 'doc-header-stub' })
   },
 })
@@ -361,5 +363,66 @@ describe('MainPanel CH full view', () => {
     tabs.activeTabId = CH_TAB.id
     await flushPromises()
     expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(false)
+  })
+})
+
+// Group 0515 T0011 §8/§15.5: after /token/issue responds successfully for the chat
+// copy-mention path, MainPanel must ask the same tab's ConversationView to re-pull
+// /me/chat-settings -- an edit_once one-shot may have just been consumed server-side,
+// and this is the only signal this tab gets of that outside the next unrelated GET/PATCH.
+describe('MainPanel CH copy-mention refresh (group 0515 T0011 §8)', () => {
+  function chatSettingsCallCount(): number {
+    return getRequest.mock.calls.filter((c) => c[0] === '/api/v1/me/chat-settings').length
+  }
+
+  it('refreshes chat settings after a successful token/issue, regardless of clipboard outcome', async () => {
+    postRequest.mockReset().mockImplementation((path: unknown) => {
+      if (typeof path === 'string' && path.includes('/token/issue')) {
+        return Promise.resolve({
+          data: {
+            raw_token: 'tok-abc',
+            token_id: 'tid-1',
+            expires_at: '2026-09-08T20:00:00+09:00',
+            scratch_dir: '/scratch/tid-1',
+            action_scope: 'edit',
+            doc_ref: CH_TAB.id,
+            mention: 'mention text',
+          },
+        })
+      }
+      return Promise.resolve({ data: {} })
+    })
+    const wrapper = mountPanelWithRealChat()
+    await flushPromises()
+
+    const before = chatSettingsCallCount()
+    await wrapper.find('.conv-assist-btn').trigger('click')
+    await flushPromises()
+
+    expect(postRequest).toHaveBeenCalledWith(
+      '/api/v1/token/issue',
+      expect.objectContaining({ action_scope: 'chat', doc_ref: CH_TAB.id }),
+    )
+    // jsdom has neither the async Clipboard API nor a working execCommand('copy'), so
+    // this write fails every time here -- which is exactly the case §8 says must still
+    // refresh, since the server's one-shot consumption already happened before this point.
+    expect(chatSettingsCallCount()).toBeGreaterThan(before)
+  })
+
+  it('does not refresh chat settings when token/issue itself fails', async () => {
+    postRequest.mockReset().mockImplementation((path: unknown) => {
+      if (typeof path === 'string' && path.includes('/token/issue')) {
+        return Promise.reject({ response: { status: 500, data: { detail: 'server exploded' } } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+    const wrapper = mountPanelWithRealChat()
+    await flushPromises()
+
+    const before = chatSettingsCallCount()
+    await wrapper.find('.conv-assist-btn').trigger('click')
+    await flushPromises()
+
+    expect(chatSettingsCallCount()).toBe(before)
   })
 })

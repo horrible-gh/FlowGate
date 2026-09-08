@@ -4554,6 +4554,11 @@ async function onConversationCopyMention(tabId: string, opts?: { auto?: boolean 
     return token.mention
   })
   if (token == null) return
+  // T0011 §8: /token/issue responded successfully (a CH token was minted and, for
+  // edit_once, may have just consumed the user's one-shot). Refresh this tab's chat
+  // settings from the server regardless of what the clipboard write itself does below --
+  // the one-shot consumption already happened server-side by this point.
+  void convViewRefs[tabId]?.refreshChatSettings?.()
   if (ok) {
     // 0085: an auto-copy (fired by every send when the toggle is on) stays silent so it
     // doesn't spam a success toast each turn; the manual button still confirms with one.

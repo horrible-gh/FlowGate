@@ -454,6 +454,97 @@ _auto_resume: dict[str, dict] = {}
 _auto_resume_lock = threading.Lock()
 
 
+# ── edit_once handoff gate (0515 T0009 §10) ─────────────────────────────────────────
+# Every /ai-invoke/start run gets exactly one of these. The worker thread body must
+# never touch the token/prompt admission handed it until the gate is OPEN (T0009 §10
+# "worker는 OPEN 전 token/prompt 사용 금지") -- concretely, the `ai_invoke_started`
+# broadcast at the top of worker._worker() must never fire before OPEN (T0009 §11).
+#
+# Two shapes, chosen by admission solely from `issue.one_shot_claimed` (T0009 §10
+# "claim 유무는 issue.one_shot_claimed 하나로만 분기한다 -- 워커를 두 벌 만들지 않는다"):
+#   claim-less run (the overwhelming majority -- non-chat, or chat read_only/edit):
+#       PENDING -> OPEN directly. There is no one-shot commit to guard.
+#   one-shot run (chat edit_once, this call won the claim):
+#       PENDING -> SEALED -> [commit the claim] -> OPEN.
+#
+# Both sides can independently try to move the gate to ABORT (the worker's own
+# PENDING/SEALED wait timing out, or admission hitting a commit failure) -- only the
+# caller whose CAS actually lands runs cleanup (T0009 §10.1 "CAS 승자만 admission
+# 대신 cleanup(abort_handoff)한다"); everyone else just sees the state already ABORT
+# and stops without repeating it.
+PENDING = "PENDING"
+SEALED = "SEALED"
+OPEN = "OPEN"
+ABORT = "ABORT"
+
+# T0009 §10 상한.
+HANDOFF_PENDING_WAIT_SEC = 30
+HANDOFF_SEALED_WAIT_SEC = 120
+
+_HANDOFF_ALLOWED_FROM = {
+    PENDING: {SEALED, OPEN, ABORT},
+    SEALED: {OPEN, ABORT},
+}
+
+
+class HandoffGate:
+    """One run's PENDING/SEALED/OPEN/ABORT marker (T0009 §10)."""
+
+    __slots__ = ("_lock", "_cond", "_state")
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._cond = threading.Condition(self._lock)
+        self._state = PENDING
+
+    @property
+    def state(self) -> str:
+        with self._lock:
+            return self._state
+
+    def _cas(self, expected: str, target: str) -> bool:
+        with self._lock:
+            if self._state != expected or target not in _HANDOFF_ALLOWED_FROM.get(expected, ()):
+                return False
+            self._state = target
+            self._cond.notify_all()
+            return True
+
+    def seal(self) -> bool:
+        """PENDING -> SEALED, before the one-shot commit (T0009 §10)."""
+        return self._cas(PENDING, SEALED)
+
+    def open_direct(self) -> bool:
+        """PENDING -> OPEN. Claim-less run: no seal/commit step to guard (T0009 §10)."""
+        return self._cas(PENDING, OPEN)
+
+    def open_after_seal(self) -> bool:
+        """SEALED -> OPEN, after the one-shot commit succeeded (T0009 §10)."""
+        return self._cas(SEALED, OPEN)
+
+    def abort(self) -> bool:
+        """PENDING|SEALED -> ABORT. True only for the caller whose CAS actually won
+        (T0009 §10.1) -- that caller, and only that caller, runs abort_handoff."""
+        with self._lock:
+            if self._state not in (PENDING, SEALED):
+                return False
+            self._state = ABORT
+            self._cond.notify_all()
+            return True
+
+    def wait_pending(self, timeout: float = HANDOFF_PENDING_WAIT_SEC) -> str:
+        """Block until the state leaves PENDING or *timeout* elapses; return the state seen."""
+        with self._lock:
+            self._cond.wait_for(lambda: self._state != PENDING, timeout=timeout)
+            return self._state
+
+    def wait_sealed(self, timeout: float = HANDOFF_SEALED_WAIT_SEC) -> str:
+        """Block until the state leaves SEALED or *timeout* elapses; return the state seen."""
+        with self._lock:
+            self._cond.wait_for(lambda: self._state != SEALED, timeout=timeout)
+            return self._state
+
+
 def _http_error(status_code: int, code: str, message: str, **payload) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"code": code, "message": message, **payload})
 

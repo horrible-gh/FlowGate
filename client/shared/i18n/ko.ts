@@ -1889,6 +1889,13 @@ export default {
       context_range_custom: '직접 입력',
       context_range_hint: 'AI를 부를 때 최근 이만큼의 대화부터 읽게 합니다. 앞부분은 지워지지 않고 접히며, AI가 필요하면 직접 열어 봅니다.',
       context_range_invalid: '대화 제공 범위 숫자를 확인하세요.',
+      // Group 0515 (T0009 서버 계약 / T0011 클라이언트 UI): CH 토큰이 소스에 쓰기 권한을
+      // 갖는지 서버가 사용자별로 판정하는 세 값(read_only/edit/edit_once)의 라벨.
+      source_access_label: 'AI 소스 권한',
+      source_access_read_only: '읽기 전용',
+      source_access_edit: '편집 허용',
+      source_access_edit_once: '다음 1회만 편집 허용',
+      source_access_hint: '읽기 전용: AI가 소스를 읽기만 할 수 있음 · 편집 허용: AI가 계속 소스를 편집할 수 있음 · 다음 1회만 편집 허용: 다음 성공한 CH token handoff 1회만 편집 허용 후 읽기 전용으로 돌아감',
       chat_settings_save_failed: '설정을 저장하지 못했습니다.',
       invoke_ai_running: 'AI 호출 중…',
       invoke_ai_failed: 'AI 호출에 실패했습니다: {detail}',

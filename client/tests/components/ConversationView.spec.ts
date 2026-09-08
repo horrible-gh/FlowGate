@@ -96,8 +96,15 @@ const CHAT_SETTINGS_DOMAIN = {
   context_turns_presets: [5, 10, 15, 20, 30],
   context_turns_min: 1,
   context_turns_max: 200,
+  // Group 0515 (T0009 server contract / T0011 client UI).
+  source_access_mode: ['read_only', 'edit', 'edit_once'],
 }
-const CHAT_SETTINGS_DEFAULTS = { send_action: 'none', context_mode: 'recent', context_turns: 20 }
+const CHAT_SETTINGS_DEFAULTS = {
+  send_action: 'none',
+  context_mode: 'recent',
+  context_turns: 20,
+  source_access_mode: 'read_only',
+}
 
 // P0009 시나리오 1: a user who has never saved settings — is_default: true.
 function defaultChatSettingsResponse() {
@@ -637,6 +644,89 @@ describe('ConversationView context range', () => {
   })
 })
 
+// Group 0515 T0011 §2/§6/§7/§13/§15.1-15.4: the AI source access radio group (server
+// contract from a prior T, this T just wires the client dialog + same-tab refresh).
+describe('ConversationView AI source access (group 0515 T0011)', () => {
+  it('renders the three known radios with the authoritative value selected', async () => {
+    getRequest.mockImplementation((url: unknown) => {
+      if (typeof url === 'string' && url.includes('ai-invoke/providers')) return Promise.resolve(PROVIDERS_RESPONSE)
+      if (typeof url === 'string' && url.includes('/me/chat-settings')) {
+        return Promise.resolve(savedChatSettingsResponse({ source_access_mode: 'edit' }))
+      }
+      return Promise.resolve(turnsPage())
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await openChatSettings(wrapper)
+    expect(wrapper.find('input[type="radio"][value="read_only"]').exists()).toBe(true)
+    expect(wrapper.find('input[type="radio"][value="edit"]').exists()).toBe(true)
+    expect(wrapper.find('input[type="radio"][value="edit_once"]').exists()).toBe(true)
+    expect((wrapper.find('input[type="radio"][value="edit"]').element as HTMLInputElement).checked).toBe(true)
+    expect((wrapper.find('input[type="radio"][value="read_only"]').element as HTMLInputElement).checked).toBe(false)
+  })
+
+  it('does not PATCH source_access_mode when the radio was left untouched', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await openChatSettings(wrapper)
+    await wrapper.find('.conv-settings-select').setValue('10') // touch an unrelated field only
+    await saveChatSettings(wrapper)
+    const call = patchRequest.mock.calls.find((c) => c[0] === '/api/v1/me/chat-settings')
+    expect(call?.[1]).not.toHaveProperty('source_access_mode')
+  })
+
+  it('PATCHes source_access_mode when the user actually changes the radio', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await openChatSettings(wrapper)
+    await wrapper.find('input[type="radio"][value="edit"]').setValue()
+    await saveChatSettings(wrapper)
+    expect(patchRequest).toHaveBeenCalledWith(
+      '/api/v1/me/chat-settings',
+      expect.objectContaining({ source_access_mode: 'edit' }),
+    )
+  })
+
+  it('follows the server value on refresh when the draft was left untouched (§13 scenario A)', async () => {
+    getRequest.mockImplementation((url: unknown) => {
+      if (typeof url === 'string' && url.includes('ai-invoke/providers')) return Promise.resolve(PROVIDERS_RESPONSE)
+      if (typeof url === 'string' && url.includes('/me/chat-settings')) {
+        return Promise.resolve(savedChatSettingsResponse({ source_access_mode: 'edit_once' }))
+      }
+      return Promise.resolve(turnsPage())
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await openChatSettings(wrapper) // baseline=draft=edit_once
+    expect((wrapper.find('input[type="radio"][value="edit_once"]').element as HTMLInputElement).checked).toBe(true)
+
+    // The server consumed the one-shot while the dialog sat open.
+    getRequest.mockImplementation((url: unknown) => {
+      if (typeof url === 'string' && url.includes('ai-invoke/providers')) return Promise.resolve(PROVIDERS_RESPONSE)
+      if (typeof url === 'string' && url.includes('/me/chat-settings')) {
+        return Promise.resolve(savedChatSettingsResponse({ source_access_mode: 'read_only' }))
+      }
+      return Promise.resolve(turnsPage())
+    })
+    await (wrapper.vm as any).refreshChatSettings()
+    await flushPromises()
+    expect((wrapper.find('input[type="radio"][value="read_only"]').element as HTMLInputElement).checked).toBe(true)
+    expect((wrapper.find('input[type="radio"][value="edit_once"]').element as HTMLInputElement).checked).toBe(false)
+  })
+
+  it('keeps a changed-but-unsaved draft on refresh (§13 scenario B)', async () => {
+    const wrapper = mountView() // default: read_only
+    await flushPromises()
+    await openChatSettings(wrapper) // baseline=read_only
+    await wrapper.find('input[type="radio"][value="edit_once"]').setValue() // draft=edit_once, not saved
+
+    // Server is unchanged (still read_only) when refresh runs.
+    await (wrapper.vm as any).refreshChatSettings()
+    await flushPromises()
+    expect((wrapper.find('input[type="radio"][value="edit_once"]').element as HTMLInputElement).checked).toBe(true)
+  })
+})
+
 // Group 0235 — the chat AI invoke path (D0005 §3-1, L0008 §2-3 / §3 / §5). Covers the
 // provider gating derived from the doc id (the reported "provider is registered but
 // [Call AI] doesn't show" regression) and the start-time 409 / failure contract, which
@@ -684,6 +774,60 @@ describe('ConversationView chat AI invoke', () => {
     await btns[btns.length - 1].trigger('click') // manual [Call AI]
     await flushPromises()
     expect(showToast).toHaveBeenCalledWith('AI call failed: server exploded', 'danger')
+  })
+
+  // Group 0515 T0011 §9/§15.6: a fresh run_id means /ai-invoke/start actually minted (and,
+  // for edit_once, may have consumed) a chat capability -- refresh so this tab's cached
+  // source_access_mode cannot go stale until the next unrelated GET/PATCH.
+  it('refreshes chat settings after a fresh run_id (§15.6)', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    const before = getRequest.mock.calls.filter((c) => c[0] === '/api/v1/me/chat-settings').length
+    postRequest.mockReset()
+    postRequest.mockResolvedValueOnce({ data: { ok: true, run_id: 'r1' } })
+    const btns = wrapper.findAll('.conv-assist-btn')
+    await btns[btns.length - 1].trigger('click')
+    await flushPromises()
+    const after = getRequest.mock.calls.filter((c) => c[0] === '/api/v1/me/chat-settings').length
+    expect(after).toBeGreaterThan(before)
+  })
+
+  // §9: adopting an existing run via 409 run_in_progress minted nothing new, so it must
+  // NOT refresh (§15.7).
+  it('does not refresh chat settings on a 409 run_in_progress adoption (§15.7)', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    const before = getRequest.mock.calls.filter((c) => c[0] === '/api/v1/me/chat-settings').length
+    postRequest.mockReset()
+    postRequest.mockRejectedValueOnce({ response: { data: { code: 'run_in_progress', run_id: 'r9' } } })
+    const btns = wrapper.findAll('.conv-assist-btn')
+    await btns[btns.length - 1].trigger('click')
+    await flushPromises()
+    const after = getRequest.mock.calls.filter((c) => c[0] === '/api/v1/me/chat-settings').length
+    expect(after).toBe(before)
+  })
+
+  // §10/§15.8: each of these four codes means a one-shot claim or token was already
+  // resolved server-side by the time this call's failure is known -- refresh alongside
+  // (not instead of) the existing failure toast.
+  it.each([
+    'chat_one_shot_claim_superseded',
+    'chat_token_revoked_before_handoff',
+    'chat_one_shot_commit_failed',
+    'ai_invoke_worker_gate_lost',
+  ])('refreshes chat settings on handoff-abort code %s (§15.8)', async (code) => {
+    const wrapper = mountView()
+    await flushPromises()
+    const before = getRequest.mock.calls.filter((c) => c[0] === '/api/v1/me/chat-settings').length
+    postRequest.mockReset()
+    postRequest.mockRejectedValueOnce({ response: { data: { code, message: 'aborted' } } })
+    const btns = wrapper.findAll('.conv-assist-btn')
+    await btns[btns.length - 1].trigger('click')
+    await flushPromises()
+    const after = getRequest.mock.calls.filter((c) => c[0] === '/api/v1/me/chat-settings').length
+    expect(after).toBeGreaterThan(before)
+    // The failure is still shown -- refresh happens ALONGSIDE it, not instead of it.
+    expect(showToast).toHaveBeenCalledWith('AI call failed: aborted', 'danger')
   })
 
   // 0264 R0001: chat AI progress must show on the SEND button (no dialog), and it must be

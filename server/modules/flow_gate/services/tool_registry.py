@@ -750,8 +750,20 @@ def kind_for_step(
 
 
 def kind_for_token(token_rec: dict) -> tuple[str, Optional[str]]:
-    """``kind_for_step`` for a caller that holds a token but not its step type."""
+    """``kind_for_step`` for a caller that holds a token but not its step type.
+
+    0515 T0009 §7: a chat (CH) token's kind is decided from its own fixed
+    ``source_access`` column (D0006 §2.3) when that column is set to a real value --
+    never from ``kind_for_step``'s scope/step-type table, which has no notion of a
+    per-user source-access setting. ``None``/legacy/damaged falls through to the
+    existing ``kind_for_step`` fallback below, which already answers ``read`` for
+    ``action_scope == "chat"``. This never widens a non-chat token: the extra branch
+    only matches when action_scope is exactly "chat".
+    """
     action_scope = token_rec.get("action_scope")
+    source_access = token_rec.get("source_access")
+    if action_scope == "chat" and source_access in ("read", "read_write"):
+        return source_access, None
     step_type: Optional[str] = None
     lookup_failed = False
     if action_scope in {"new", "edit"}:

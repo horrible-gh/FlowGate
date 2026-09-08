@@ -1890,6 +1890,14 @@ export default {
       context_range_custom: 'Custom',
       context_range_hint: 'When calling AI, only this many of the most recent turns are provided. Earlier turns are not deleted, just folded -- the AI can open them itself if needed.',
       context_range_invalid: 'Check the conversation context range number.',
+      // Group 0515 (T0009 server contract / T0011 client UI): labels for the three
+      // server-determined per-user values (read_only/edit/edit_once) that decide whether
+      // a CH token may write to source.
+      source_access_label: 'AI source access',
+      source_access_read_only: 'Read only',
+      source_access_edit: 'Allow edit',
+      source_access_edit_once: 'Allow edit for next turn only',
+      source_access_hint: 'Read only: the AI may only read source. Allow edit: the AI may keep editing source. Allow edit for next turn only: edit is allowed for exactly the next successful CH token handoff, then it reverts to read only.',
       chat_settings_save_failed: 'Failed to save settings.',
       invoke_ai_running: 'Calling AI…',
       invoke_ai_failed: 'AI call failed: {detail}',

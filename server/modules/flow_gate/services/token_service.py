@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import os
 import re
 import secrets
@@ -19,12 +20,14 @@ from fastapi import HTTPException
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.db import workflow_events as db_events
-from modules.flow_gate.db.connection import now_iso
+from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.storage.paths import (
     get_storage_root,
     to_storage_relative,
     resolve_storage_dir,
 )
+
+_log = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────────────
 
@@ -127,7 +130,31 @@ def scratch_dir_path(project_id: str, token_id: str) -> str:
     return str(_scratch_dir(project_id, token_id))
 
 
-# ── Public API ─────────────────────────────────────────────────────────────────
+def _resolve_chat_source_access(issued_to: str, token_id: str, created_at_str: str) -> tuple[Optional[str], bool]:
+    """Decide a chat (CH) token's capability (D0006 §2.3, L0007 §2.3, DB0008 §4.6).
+
+    Returns ``(source_access, claim_deferred)``. ``claim_deferred`` is True only for
+    ``edit_once``: the actual CAS claim has to run inside the same transaction as the
+    token INSERT (T0009 §6), so this function only runs the pre-claim stale-recovery
+    sweep (T0009 §5.1) and resolves the *stored* mode — the caller performs the claim
+    itself once inside that transaction.
+
+    0515 T0009 §7 "절대 하지 말 것": the caller never supplies capability — only this
+    function, reading the user's own stored setting, decides it.
+    """
+    from modules.flow_gate.db import user_chat_source_access as db_source_access
+    from modules.flow_gate.services import chat_settings_service
+
+    # T0009 §5.1: run stale-claim recovery before judging eligibility so a
+    # crashed/abandoned edit_once claim never blocks a fresh one.
+    chat_settings_service.recover_stale_claim(issued_to)
+    mode = db_source_access.resolve_source_access_mode(issued_to)
+    if mode == "edit":
+        return "read_write", False
+    if mode == "edit_once":
+        return None, True
+    return "read", False
+
 
 def issue(
     project: str,
@@ -153,15 +180,23 @@ def issue(
 
     1. Generate raw_token
     2. Compute hash
-    3. INSERT into tokens
-    4. Create scratch directory
-    5. Record workflow_events.token_issued
+    3. (chat only) resolve capability / run the edit_once claim CAS
+    4. INSERT into tokens
+    5. Create scratch directory
+    6. Record workflow_events.token_issued
 
     Continuous work (group 0051 R0001 / NR0003 option B): when continuation_target_seq is
     given, the token carries the unmanned-chain stop point (target item_seq) and the
     AI-review-mode flag (T0004/CH0006). Both persist on the token so the inbox self-chain
     (inbox_routes._handle_new) can read them off the just-consumed token and mint the
     next step's token without a human re-issuing it. NULL/False ⇒ ordinary token.
+
+    0515 T0009 §6: for ``action_scope == "chat"`` the token's ``source_access``
+    capability (``read``/``read_write``) is decided here from the issuing user's own
+    stored setting — never accepted from a caller. When that setting is ``edit_once``,
+    the claim CAS + the token INSERT + the ``token_issued`` event are one atomic
+    ``store.transaction()`` (T0009 §6): a claim that "won" must never be visible unless
+    its token row also landed, and vice versa.
     """
     raw_token = secrets.token_urlsafe(32)
     pepper_id, pepper = _active_pepper()
@@ -176,7 +211,15 @@ def issue(
     scratch_path = _scratch_dir(project, token_id)
     scratch_path.mkdir(parents=True, exist_ok=True)
 
-    db_tokens.create({
+    source_access: Optional[str] = None
+    one_shot_claimed = False
+    claim_deferred = False
+    if action_scope == "chat":
+        source_access, claim_deferred = _resolve_chat_source_access(
+            issued_to, token_id, created_at_str
+        )
+
+    data = {
         "token_id": token_id,
         "hash": token_hash,
         "pepper_id": pepper_id,
@@ -202,22 +245,52 @@ def issue(
         "continuation_auto_approve_item_seqs": continuation_auto_approve_item_seqs,
         "failure_origin_target_run_id": failure_origin_target_run_id,
         "failure_origin_before_marker": failure_origin_before_marker,
-    })
+        # 0515 T0009 §6 / DB0008 §2.2: fixed at issue time, never changed afterwards.
+        "source_access": source_access,
+    }
 
-    db_events.create({
-        "event_type": "token_issued",
-        "project_id": project,
-        "group_id": group_id,
-        "document_id": None,
-        "actor_user_id": issued_to,
-        "from_state": None,
-        "to_state": None,
-        "metadata": (
-            f'{{"token_id":"{token_id}",'
-            f'"action_scope":"{action_scope}",'
-            f'"doc_ref":"{doc_ref}"}}'
-        ),
-    })
+    def _create_and_log() -> None:
+        db_tokens.create(data)
+        db_events.create({
+            "event_type": "token_issued",
+            "project_id": project,
+            "group_id": group_id,
+            "document_id": None,
+            "actor_user_id": issued_to,
+            "from_state": None,
+            "to_state": None,
+            "metadata": (
+                f'{{"token_id":"{token_id}",'
+                f'"action_scope":"{action_scope}",'
+                f'"doc_ref":"{doc_ref}"}}'
+            ),
+        })
+
+    if action_scope == "chat":
+        from modules.flow_gate.db import user_chat_source_access as db_source_access
+
+        with get_store().transaction():
+            if claim_deferred:
+                # The claim CAS's one_shot_token_id has an FK to tokens(token_id)
+                # (DB0008 §2.1), so the token row must already exist before the claim
+                # can reference it -- insert first with the conservative "read"
+                # placeholder, then fix the column up to "read_write" if the claim
+                # actually won, before this same transaction commits (db_tokens.
+                # set_source_access's docstring works through why that still satisfies
+                # "fixed at issue time", T0009 §6).
+                data["source_access"] = "read"
+                _create_and_log()
+                claim_result = db_source_access.claim(
+                    issued_to, token_id, created_at_str, created_at_str
+                )
+                source_access = claim_result["source_access"]
+                one_shot_claimed = claim_result["one_shot_claimed"]
+                if one_shot_claimed:
+                    db_tokens.set_source_access(token_id, source_access)
+            else:
+                _create_and_log()
+    else:
+        _create_and_log()
 
     return {
         "raw_token": raw_token,
@@ -235,6 +308,9 @@ def issue(
         "continuation_auto_approve_item_seqs": continuation_auto_approve_item_seqs,
         "failure_origin_target_run_id": failure_origin_target_run_id,
         "failure_origin_before_marker": failure_origin_before_marker,
+        # 0515 T0009 §6: None for every non-chat token (unchanged wire shape otherwise).
+        "source_access": source_access,
+        "one_shot_claimed": one_shot_claimed,
     }
 
 
@@ -413,7 +489,7 @@ def revoke(token_id: str, reason: str = "user_cancel") -> None:
     db_tokens.revoke()'s own guarded UPDATE, which stamps a fresh per-call
     claim marker into ``revoke_claim`` atomically alongside ``revoked_at`` in
     the same statement -- a single UPDATE is atomic against every other writer
-    regardless of process boundary, so at most one caller's claim can ever
+    regardless of process boundary -- so at most one caller's claim can ever
     land. Only the caller whose claim actually landed writes the event; a
     caller that raced and lost (whether against a concurrent call or a token
     that was already revoked beforehand) sees its own claim absent from the
@@ -429,6 +505,13 @@ def revoke(token_id: str, reason: str = "user_cancel") -> None:
     race the same way an already-revoked token does: the claim doesn't land,
     this function returns silently, and no token_revoked event is written for
     what is actually a consumed token.
+
+    0515 T0009 §4.4: once this call's claim actually wins the revoke CAS, an
+    edit_once rollback is attempted for ``token_id`` regardless of the
+    ``token_revoked`` event's own outcome (``try`` the event, ``finally``
+    attempt the rollback) -- and regardless of token kind: for a non-chat
+    token the rollback CAS's ``WHERE`` simply matches 0 rows (DB0008 §4.4). A
+    caller that raced and lost this revoke never reaches the rollback attempt.
     """
     token_rec = db_tokens.get_by_id(token_id)
     if token_rec is None:
@@ -439,13 +522,25 @@ def revoke(token_id: str, reason: str = "user_cancel") -> None:
     if updated is None or updated.get("revoke_claim") != claim:
         return
 
-    db_events.create({
-        "event_type": "token_revoked",
-        "project_id": token_rec["project"],
-        "group_id": token_rec.get("group_id"),
-        "document_id": None,
-        "actor_user_id": token_rec["issued_to"],
-        "from_state": None,
-        "to_state": None,
-        "metadata": f'{{"token_id":"{token_id}","reason":"{reason}"}}',
-    })
+    try:
+        db_events.create({
+            "event_type": "token_revoked",
+            "project_id": token_rec["project"],
+            "group_id": token_rec.get("group_id"),
+            "document_id": None,
+            "actor_user_id": token_rec["issued_to"],
+            "from_state": None,
+            "to_state": None,
+            "metadata": f'{{"token_id":"{token_id}","reason":"{reason}"}}',
+        })
+    finally:
+        try:
+            from modules.flow_gate.db import user_chat_source_access as db_source_access
+            db_source_access.rollback(token_id, now_iso())
+        except Exception:
+            # T0009 §4.4: a rollback failure must not mask the token_revoked outcome
+            # above (which has already happened, or whose own exception is already
+            # propagating past this finally block) -- log and move on.
+            _log.warning(
+                "edit_once rollback failed after revoke for token %s", token_id, exc_info=True
+            )

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import inspect
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -77,10 +78,41 @@ class _MemoryStore:
         self.row = base
 
 
+class _MemorySourceAccessStore:
+    """0515 T0009: a one-row source-access store standing in for
+    db.user_chat_source_access -- the second, independent storage
+    resolve_chat_settings/save_chat_settings now always consults."""
+
+    def __init__(self, row=None):
+        self.row = row
+        self.writes: list[dict] = []
+
+    def get(self, user_id):
+        return self.row
+
+    def resolve_source_access_mode(self, user_id):
+        return self.row["source_access_mode"] if self.row else "read_only"
+
+    def upsert(self, user_id, mode, updated_at):
+        self.writes.append({"source_access_mode": mode})
+        self.row = {"user_id": user_id, "source_access_mode": mode, "updated_at": updated_at}
+
+
+class _FakeTransactionStore:
+    """Just enough of FlowGateStore for save_chat_settings' ``with get_store().transaction():``
+    (T0009 §3.3) -- a real connection is not needed to prove the split-write logic itself."""
+
+    @contextmanager
+    def transaction(self):
+        yield self
+
+
 @pytest.fixture
 def memory_store(monkeypatch):
     mem = _MemoryStore()
     monkeypatch.setattr(css, "chat_settings_store", mem)
+    monkeypatch.setattr(css, "source_access_store", _MemorySourceAccessStore())
+    monkeypatch.setattr(css, "get_store", lambda: _FakeTransactionStore())
     return mem
 
 
@@ -266,10 +298,17 @@ class TestResolveSettings:
         assert settings == {
             "send_action": "none", "context_mode": "recent",
             "context_turns": 20, "updated_at": None,
+            # 0515 T0009 §3.2: merged in from the separate source-access storage,
+            # defaulting to read_only regardless of this (never-saved) legacy row.
+            "source_access_mode": "read_only",
         }
 
     def test_unknown_user_is_treated_like_someone_who_never_saved(self, memory_store):
-        assert css.resolve_chat_settings(None) == (css.defaults(), True)
+        settings, is_default = css.resolve_chat_settings(None)
+        assert is_default is True
+        expected = css.defaults()
+        expected["source_access_mode"] = css.SOURCE_ACCESS_DEFAULT
+        assert settings == expected
 
     def test_a_saved_row_comes_back_as_saved(self, memory_store):
         memory_store.row = {
@@ -329,8 +368,12 @@ class TestResolveSettings:
             "context_turns_presets": [5, 10, 15, 20, 30],
             "context_turns_min": 1,
             "context_turns_max": css.CONTEXT_TURNS_MAX,
+            # 0515 T0009 §3.2/D0006 §2.2.
+            "source_access_mode": ["read_only", "edit", "edit_once"],
         }
         assert "updated_at" not in body["defaults"]
+        # 0515 T0009 §3.2: the defaults envelope carries the source-access default too.
+        assert body["defaults"]["source_access_mode"] == "read_only"
 
 
 # ── 4. saving the settings ────────────────────────────────────────────────────
