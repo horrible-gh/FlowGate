@@ -24,6 +24,7 @@ const fileNode = {
 }
 
 const fileTreeOk = { data: { data: { nodes: [fileNode] } } }
+const fileTreePartial = { data: { data: { nodes: [], complete: false, scan_failures: [{ path: 'docs', reason: 'scan_failed' }] } } }
 const groupTreeOk = { data: { data: { nodes: [{ id: '1', parent_id: null, node_type: 'group' }] } } }
 const branchTreeOk = {
   data: { data: { branch: 'main', commit: 'abc1234', nodes: [fileNode] } },
@@ -87,6 +88,68 @@ describe('explorer store — transient tree failures self-heal', () => {
     expect(getRequest).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps a completed cache when a forced refresh is explicitly incomplete', async () => {
+    vi.useFakeTimers()
+    try {
+      getRequest.mockResolvedValueOnce(fileTreeOk)
+        .mockResolvedValueOnce(fileTreePartial)
+        .mockResolvedValueOnce(fileTreePartial)
+      const store = useExplorerStore()
+
+      const completeNodes = await store.fetchFileTree('p1')
+      const displayedNodes = await store.fetchFileTree('p1', true)
+      await vi.advanceTimersByTimeAsync(1500)
+
+      expect(displayedNodes).toEqual(completeNodes)
+      expect(store.fileTreeCache['p1:main']).toEqual(completeNodes)
+      expect(store.isFileTreeDegraded('p1')).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows an initial incomplete tree without caching it, then recovers in background', async () => {
+    vi.useFakeTimers()
+    try {
+      getRequest.mockResolvedValueOnce(fileTreePartial).mockResolvedValueOnce(fileTreeOk)
+      const store = useExplorerStore()
+
+      const visible = await store.fetchFileTree('p1')
+      expect(visible).toEqual([])
+      expect(store.fileTreeCache['p1:main']).toBeUndefined()
+      expect(store.isFileTreeDegraded('p1')).toBe(true)
+
+      await vi.advanceTimersByTimeAsync(1500)
+      expect(visible).toEqual([fileNode])
+      expect(getRequest).toHaveBeenCalledTimes(2)
+      expect(store.isFileTreeDegraded('p1')).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps degraded state scoped to the cached project tree', async () => {
+    vi.useFakeTimers()
+    try {
+      getRequest.mockResolvedValueOnce(fileTreeOk)
+        .mockResolvedValueOnce(fileTreePartial)
+        .mockResolvedValueOnce(fileTreePartial)
+      const store = useExplorerStore()
+
+      await store.fetchFileTree('p2')
+      await store.fetchFileTree('p1')
+      expect(store.isFileTreeDegraded('p1')).toBe(true)
+
+      await store.fetchFileTree('p2')
+      await vi.advanceTimersByTimeAsync(1500)
+      expect(getRequest).toHaveBeenCalledTimes(3)
+      expect(store.isFileTreeDegraded('p1')).toBe(true)
+      expect(store.isFileTreeDegraded('p2')).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('still surfaces tree_load_failed when both attempts fail', async () => {
     getRequest.mockRejectedValue(timeout())
     const store = useExplorerStore()
@@ -118,5 +181,100 @@ describe('explorer store — transient tree failures self-heal', () => {
     getRequest.mockResolvedValueOnce(fileTreeOk)
     expect(await store.fetchFileTree('p1')).toHaveLength(1)
     expect(getRequest).toHaveBeenCalledTimes(1)
+  })
+
+  it('recovers a partial refresh once and updates the visible tree and cache', async () => {
+    vi.useFakeTimers()
+    try {
+      getRequest.mockResolvedValueOnce(fileTreePartial).mockResolvedValueOnce(fileTreeOk)
+      const store = useExplorerStore()
+      const visible = await store.fetchFileTree('p1')
+
+      expect(store.isFileTreeDegraded('p1')).toBe(true)
+      await vi.advanceTimersByTimeAsync(1500)
+
+      expect(getRequest).toHaveBeenCalledTimes(2)
+      expect(visible).toEqual([fileNode])
+      expect(store.fileTreeCache['p1:main']).toEqual([fileNode])
+      expect(store.isFileTreeDegraded('p1')).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops after one partial recovery response and preserves the complete cache', async () => {
+    vi.useFakeTimers()
+    try {
+      getRequest.mockResolvedValueOnce(fileTreeOk)
+        .mockResolvedValueOnce(fileTreePartial)
+        .mockResolvedValueOnce(fileTreePartial)
+      const store = useExplorerStore()
+      const complete = await store.fetchFileTree('p1')
+      const visible = await store.fetchFileTree('p1', true)
+      await vi.advanceTimersByTimeAsync(10000)
+
+      expect(getRequest).toHaveBeenCalledTimes(3)
+      expect(visible).toEqual(complete)
+      expect(store.fileTreeCache['p1:main']).toEqual(complete)
+      expect(store.isFileTreeDegraded('p1')).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the partial view degraded when the single recovery request throws', async () => {
+    vi.useFakeTimers()
+    try {
+      getRequest.mockResolvedValueOnce(fileTreePartial).mockRejectedValueOnce(timeout())
+      const store = useExplorerStore()
+      const visible = await store.fetchFileTree('p1')
+      await vi.advanceTimersByTimeAsync(10000)
+
+      expect(getRequest).toHaveBeenCalledTimes(2)
+      expect(visible).toEqual([])
+      expect(store.fileTreeCache['p1:main']).toBeUndefined()
+      expect(store.isFileTreeDegraded('p1')).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('coalesces a scheduled recovery behind a newer manual complete refresh', async () => {
+    vi.useFakeTimers()
+    try {
+      getRequest.mockResolvedValueOnce(fileTreePartial).mockResolvedValueOnce(fileTreeOk)
+      const store = useExplorerStore()
+      const visible = await store.fetchFileTree('p1')
+      await store.fetchFileTree('p1', true)
+      await vi.advanceTimersByTimeAsync(10000)
+
+      expect(getRequest).toHaveBeenCalledTimes(2)
+      expect(visible).toEqual([fileNode])
+      expect(store.isFileTreeDegraded('p1')).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('isolates scheduled recovery by project key and applies authoritative deletion', async () => {
+    vi.useFakeTimers()
+    try {
+      const deletedTree = { data: { data: { nodes: [], complete: true } } }
+      getRequest.mockResolvedValueOnce(fileTreePartial)
+        .mockResolvedValueOnce(fileTreeOk)
+        .mockResolvedValueOnce(deletedTree)
+      const store = useExplorerStore()
+      const aVisible = await store.fetchFileTree('p1')
+      await store.fetchFileTree('p2')
+      await vi.advanceTimersByTimeAsync(1500)
+
+      expect(aVisible).toEqual([])
+      expect(store.fileTreeCache['p1:main']).toEqual([])
+      expect(store.fileTreeCache['p2:main']).toEqual([fileNode])
+      expect(store.isFileTreeDegraded('p1')).toBe(false)
+      expect(store.isFileTreeDegraded('p2')).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

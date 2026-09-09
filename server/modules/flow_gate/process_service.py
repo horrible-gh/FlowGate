@@ -5144,7 +5144,7 @@ def get_file_tree(project_id: str) -> dict:
     branch = (settings.get("branch") or "main").strip() if settings else "main"
 
     if not project_name:
-        return {"nodes": []}
+        return {"nodes": [], "complete": True, "scan_failures": []}
 
     # 0319 B0001: a git-integrated project's base checkout lives under the git
     # base_branch, not project_settings.branch (which stays "main"); resolve it so
@@ -5152,12 +5152,15 @@ def get_file_tree(project_id: str) -> dict:
     # disabled project keeps the settings-branch folder — behaviour unchanged.
     docs_root = str(git_service.base_src_root(project_id, project_name, branch))
     if not os.path.isdir(docs_root):
-        return {"nodes": []}
+        return {"nodes": [], "complete": True, "scan_failures": []}
 
     nodes: list[dict] = []
     node_id = 0
+    scan_failures: list[str] = []
 
-    def _list_dir_with_retry(path: str, retries: int = 3, delay: float = 0.3) -> list:
+    def _list_dir_with_retry(
+        path: str, retries: int = 3, delay: float = 0.3, failure_paths: list[str] | None = None,
+    ) -> list:
         # 0283 T0004 (NR0003 causes 2 and 3): remote/UNC storage can raise a transient
         # OSError/PermissionError mid-walk — a network hiccup, or a worker writing the
         # same directory (Windows sharing violation). The write path already defends
@@ -5178,13 +5181,15 @@ def get_file_tree(project_id: str) -> dict:
             "get_file_tree: could not list %s after %d attempts: %s",
             path, retries, last_exc,
         )
+        if failure_paths is not None:
+            failure_paths.append(path)
         return []
 
     def walk_directory(path: str, parent_id: str | None = None) -> None:
         nonlocal node_id
 
         visible: list[tuple[str, str, bool]] = []
-        for entry in _list_dir_with_retry(path):
+        for entry in _list_dir_with_retry(path, failure_paths=scan_failures):
             name = entry.name
             # Do not expose DB files or hidden items in the tree
             if name.startswith(".") or name.lower().endswith(".db"):
@@ -5238,7 +5243,17 @@ def get_file_tree(project_id: str) -> dict:
                 })
 
     walk_directory(docs_root)
-    return {"nodes": nodes}
+    # 0525 T0004: keep 0283's HTTP-200 partial-success behaviour, but make a
+    # retry-exhausted subtree explicit so consumers never mistake this for an
+    # authoritative complete snapshot.
+    return {
+        "nodes": nodes,
+        "complete": not scan_failures,
+        "scan_failures": [
+            {"path": os.path.relpath(path, docs_root), "reason": "scan_failed"}
+            for path in scan_failures
+        ],
+    }
 
 
 def _storage_create_target(

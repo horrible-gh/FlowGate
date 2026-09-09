@@ -144,10 +144,12 @@ class ListDirWithRetryTest(unittest.TestCase):
         flaky = _FlakyScandir(OSError("gone"), failures=99)
         real_scandir, os.scandir = os.scandir, flaky
         self.addCleanup(lambda: setattr(os, "scandir", real_scandir))
+        failures: list[str] = []
         with self.assertLogs("flowgate.test.tree_walk_0283", level="WARNING") as captured:
-            result = self.list_dir(self.root, retries=3)
+            result = self.list_dir(self.root, retries=3, failure_paths=failures)
         # Degrades this subtree only — it must not raise and 500 the whole tree request.
         self.assertEqual([], result)
+        self.assertEqual([self.root], failures)
         self.assertEqual(3, flaky.calls)
         self.assertEqual(1, len(captured.records))
         message = captured.records[0].getMessage()
@@ -217,7 +219,12 @@ class WalkDirectoryStructureTest(unittest.TestCase):
     def test_retry_helper_defaults_are_bounded(self):
         fn = _find_function(self.get_file_tree, "_list_dir_with_retry")
         defaults = [ast.literal_eval(d) for d in fn.args.defaults]
-        self.assertEqual([3, 0.3], defaults)  # bounded — never an unbounded retry loop
+        self.assertEqual([3, 0.3, None], defaults)  # bounded — never an unbounded retry loop
+
+    def test_tree_response_declares_completeness_and_failed_subtrees(self):
+        source = ast.get_source_segment(SOURCE.read_text(encoding="utf-8"), self.get_file_tree) or ""
+        self.assertIn('"complete": not scan_failures', source)
+        self.assertIn('"scan_failures": [', source)
 
 
 class ModuleWiringTest(unittest.TestCase):
