@@ -7,14 +7,13 @@
 -- (D0004 §1: 배정은 프로젝트 단위). One row = one (project, doc_type) assignment.
 --
 -- Scope mirrors ai_providers/document_types: project_id is the owning project. The assigned
--- provider_id references an ai_providers row (which may itself be a global/inherited row —
--- provider_id is the PK regardless of scope). FKs cascade so a discarded project or a
--- provider removed from the routing chain can never leave a dangling assignment; the service
--- resolver additionally ignores any assignment whose provider is not in the project's
--- effective ENABLED chain, so a disabled/foreign provider silently falls back to the default.
+-- provider_id references an ai_providers row (which may itself be a global/inherited row).
+-- FKs cascade so a discarded project or a provider removed from the routing chain can never
+-- leave a dangling assignment; the service resolver additionally ignores any assignment whose
+-- provider is not in the project's effective ENABLED chain, so a disabled/foreign provider
+-- silently falls back to the default.
 --
--- Additive only — no existing table is touched, and an empty table reproduces today's
--- single-provider behavior (every doc type resolves to the default provider).
+-- Additive only — an empty table reproduces today's single-provider behavior.
 
 CREATE TABLE IF NOT EXISTS ai_provider_doctype_map (
     id          SERIAL PRIMARY KEY,
@@ -25,4 +24,5 @@ CREATE TABLE IF NOT EXISTS ai_provider_doctype_map (
     updated_at  TEXT NOT NULL,
     UNIQUE (project_id, doc_type)
 );
+
 CREATE INDEX IF NOT EXISTS idx_aipdm_project ON ai_provider_doctype_map(project_id);

@@ -9,8 +9,8 @@
 -- comparison_result  -- 'match' / 'mismatch', or NULL under the same conditions as actual.
 --
 -- All three are nullable and additive: every row predating this migration keeps assert_mode/
--- actual/comparison_result NULL and renders exactly as before. No CHECK, no index -- read
--- per-case by primary key alongside the rest of the row, never filtered on.
+-- actual/comparison_result NULL and renders exactly as before.
+-- No index, no CHECK (aligned with the SQLite authoring source).
 
 ALTER TABLE test_run_cases ADD COLUMN assert_mode TEXT;
 ALTER TABLE test_run_cases ADD COLUMN actual TEXT;

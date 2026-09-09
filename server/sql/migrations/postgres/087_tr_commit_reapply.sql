@@ -8,9 +8,7 @@
 -- One nullable column, and deliberately NOT a new `state` value. A reapply is a NEW `live` row
 -- (record_reapply), never a mutation of the canceled row it restores: that row's whole content
 -- is "this commit existed and was reverted", and rewriting it is the history edit D0005 K5
--- refuses. Widening the `state` CHECK would also mean a full table rewrite on SQLite, and a
--- rewrite of a table with children is the 042/052 accident (see [[sqlite-rename-rewrites-child-
--- references]] — tr_commit_ledger has no children, but the rule is not worth testing here).
+-- refuses.
 --
 -- `restored_from_id` points at the canceled row this live row put back, so the Git status panel
 -- can label it as a restored commit instead of showing two indistinguishable live rows for one step. No FK:
@@ -24,6 +22,13 @@
 -- 086_tr_commit_reapply.sql -> 087_tr_commit_reapply.sql for databases that already applied
 -- the old name.
 --
+-- `IF NOT EXISTS` follows 086's postgres-only deviation: postgres has supported it on ADD COLUMN
+-- since 9.6, so the file is strictly safer with it.
+--
 -- Additive only. Rollback is `ALTER TABLE tr_commit_ledger DROP COLUMN restored_from_id`.
 
-ALTER TABLE tr_commit_ledger ADD COLUMN restored_from_id INTEGER;
+BEGIN;
+
+ALTER TABLE tr_commit_ledger ADD COLUMN IF NOT EXISTS restored_from_id INTEGER;
+
+COMMIT;

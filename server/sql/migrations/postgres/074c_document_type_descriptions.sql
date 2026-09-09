@@ -5,6 +5,7 @@
 -- (025/026) pattern: one row per (document_type_id, locale), ko/ja/en fallback
 -- order resolved by the caller (db/templates.list_document_types).
 
+
 CREATE TABLE IF NOT EXISTS document_type_descriptions (
     document_type_id INTEGER NOT NULL
         REFERENCES document_types(id) ON DELETE CASCADE,
@@ -13,6 +14,7 @@ CREATE TABLE IF NOT EXISTS document_type_descriptions (
     PRIMARY KEY (document_type_id, locale)
 );
 CREATE INDEX IF NOT EXISTS idx_dtd_locale ON document_type_descriptions(locale);
+
 -- ── 1. Carry over the existing ko text from document_types.description ─────
 DO $fg_or_ignore$
 BEGIN
@@ -23,6 +25,7 @@ WHERE  description IS NOT NULL AND project_id IS NULL ON CONFLICT DO NOTHING;
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+
 -- ── 2. ko/ja/en seed per system type (general series: R, M, Q, A, L, B, CH) ─
 DO $fg_or_ignore$
 BEGIN
@@ -48,6 +51,7 @@ FROM   document_types WHERE series = 'general' AND type_code = 'R' AND project_i
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+
 DO $fg_or_ignore$
 BEGIN
 INSERT INTO document_type_descriptions (document_type_id, locale, description)
@@ -72,6 +76,7 @@ FROM   document_types WHERE series = 'general' AND type_code = 'M' AND project_i
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+
 DO $fg_or_ignore$
 BEGIN
 INSERT INTO document_type_descriptions (document_type_id, locale, description)
@@ -96,6 +101,7 @@ FROM   document_types WHERE series = 'general' AND type_code = 'Q' AND project_i
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+
 DO $fg_or_ignore$
 BEGIN
 INSERT INTO document_type_descriptions (document_type_id, locale, description)
@@ -120,6 +126,7 @@ FROM   document_types WHERE series = 'general' AND type_code = 'A' AND project_i
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+
 DO $fg_or_ignore$
 BEGIN
 INSERT INTO document_type_descriptions (document_type_id, locale, description)
@@ -144,6 +151,7 @@ FROM   document_types WHERE series = 'general' AND type_code = 'L' AND project_i
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+
 DO $fg_or_ignore$
 BEGIN
 INSERT INTO document_type_descriptions (document_type_id, locale, description)
@@ -168,6 +176,7 @@ FROM   document_types WHERE series = 'general' AND type_code = 'B' AND project_i
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+
 -- CH (Conversation) — never had a document_types.description value (added by 047 after 022)
 DO $fg_or_ignore$
 BEGIN
@@ -193,6 +202,7 @@ FROM   document_types WHERE series = 'general' AND type_code = 'CH' AND project_
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+
 -- ── 3. instruction series (DS, N, T, TS) ─────────────────────────────────────
 DO $fg_or_ignore$
 BEGIN
@@ -210,6 +220,7 @@ FROM   document_types WHERE series = 'instruction' AND type_code = 'DS' AND proj
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+
 DO $fg_or_ignore$
 BEGIN
 INSERT INTO document_type_descriptions (document_type_id, locale, description)
@@ -226,6 +237,7 @@ FROM   document_types WHERE series = 'instruction' AND type_code = 'N' AND proje
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+
 DO $fg_or_ignore$
 BEGIN
 INSERT INTO document_type_descriptions (document_type_id, locale, description)
@@ -242,6 +254,7 @@ FROM   document_types WHERE series = 'instruction' AND type_code = 'T' AND proje
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+
 DO $fg_or_ignore$
 BEGIN
 INSERT INTO document_type_descriptions (document_type_id, locale, description)
@@ -258,6 +271,7 @@ FROM   document_types WHERE series = 'instruction' AND type_code = 'TS' AND proj
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+
 -- ── 4. design series (D, P, L, DB) ───────────────────────────────────────────
 DO $fg_or_ignore$
 BEGIN
@@ -275,6 +289,7 @@ FROM   document_types WHERE series = 'design' AND type_code = 'D' AND project_id
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+
 DO $fg_or_ignore$
 BEGIN
 INSERT INTO document_type_descriptions (document_type_id, locale, description)
@@ -291,6 +306,7 @@ FROM   document_types WHERE series = 'design' AND type_code = 'P' AND project_id
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+
 DO $fg_or_ignore$
 BEGIN
 INSERT INTO document_type_descriptions (document_type_id, locale, description)
@@ -307,6 +323,7 @@ FROM   document_types WHERE series = 'design' AND type_code = 'L' AND project_id
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+
 DO $fg_or_ignore$
 BEGIN
 INSERT INTO document_type_descriptions (document_type_id, locale, description)
@@ -323,6 +340,7 @@ FROM   document_types WHERE series = 'design' AND type_code = 'DB' AND project_i
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+
 -- ── 5. work series (NR, TR, TSR, V, C) ───────────────────────────────────────
 DO $fg_or_ignore$
 BEGIN
@@ -340,6 +358,7 @@ FROM   document_types WHERE series = 'work' AND type_code = 'NR' AND project_id 
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+
 DO $fg_or_ignore$
 BEGIN
 INSERT INTO document_type_descriptions (document_type_id, locale, description)
@@ -356,6 +375,7 @@ FROM   document_types WHERE series = 'work' AND type_code = 'TR' AND project_id 
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+
 DO $fg_or_ignore$
 BEGIN
 INSERT INTO document_type_descriptions (document_type_id, locale, description)
@@ -372,6 +392,7 @@ FROM   document_types WHERE series = 'work' AND type_code = 'TSR' AND project_id
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+
 DO $fg_or_ignore$
 BEGIN
 INSERT INTO document_type_descriptions (document_type_id, locale, description)
@@ -388,6 +409,7 @@ FROM   document_types WHERE series = 'work' AND type_code = 'V' AND project_id I
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+
 DO $fg_or_ignore$
 BEGIN
 INSERT INTO document_type_descriptions (document_type_id, locale, description)
@@ -404,6 +426,7 @@ FROM   document_types WHERE series = 'work' AND type_code = 'C' AND project_id I
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+
 -- ── 6. action series (AC, RJ) ────────────────────────────────────────────────
 DO $fg_or_ignore$
 BEGIN
@@ -421,6 +444,7 @@ FROM   document_types WHERE series = 'action' AND type_code = 'AC' AND project_i
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+
 DO $fg_or_ignore$
 BEGIN
 INSERT INTO document_type_descriptions (document_type_id, locale, description)
@@ -437,3 +461,4 @@ FROM   document_types WHERE series = 'action' AND type_code = 'RJ' AND project_i
 EXCEPTION WHEN check_violation OR not_null_violation OR foreign_key_violation THEN
     NULL;  -- OR IGNORE: drop the violating row(s), like SQLite/MySQL
 END $fg_or_ignore$;
+

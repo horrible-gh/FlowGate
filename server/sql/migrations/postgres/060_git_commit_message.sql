@@ -6,8 +6,7 @@
 --   project_git_config.translate_url — LibreTranslate base URL used to translate a
 --                                      non-ASCII group title into an English subject
 --                                      ("" normalized to NULL = disabled by the app layer).
--- Additive only, no index (the resolver filters by group_id + type_code, a few dozen
--- rows per group — existing access paths suffice; L0004 §6). No CHECK.
+-- Additive only, no index, no CHECK (aligned with the SQLite authoring source).
 
 ALTER TABLE documents          ADD COLUMN commit_message TEXT;
 ALTER TABLE project_git_config ADD COLUMN translate_url  TEXT;

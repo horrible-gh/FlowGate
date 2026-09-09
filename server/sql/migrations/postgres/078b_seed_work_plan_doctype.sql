@@ -11,8 +11,7 @@
 -- through the ordinary review pipeline, so it must not be added to AUTO_COMPLETE_TYPES.
 --
 -- This is a DATA insert (a global system type row), not a schema change
--- (NR0005 §6.1: DB design is 0 pages). Idempotent via INSERT, so rerunning
--- is safe. The same row is seeded for all three dialects under the same number.
+-- (NR0005 §6.1: DB design is 0 pages). Idempotent via INSERT, so rerunning is safe.
 
 -- Global system type row (project_id=NULL, is_system=1). general series, like M/CH.
 -- sort_order 30 places it right after CH (25) within the general series.

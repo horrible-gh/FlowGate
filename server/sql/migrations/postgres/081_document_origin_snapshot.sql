@@ -6,6 +6,7 @@
 -- time the document was created). Old rows stay NULL/NULL and are rendered as unknown.
 
 ALTER TABLE documents
-    ADD COLUMN origin_provider_name TEXT DEFAULT NULL;
+    ADD COLUMN origin_provider_name VARCHAR(191) DEFAULT NULL;
+
 ALTER TABLE documents
     ADD COLUMN origin_ai_run_id TEXT DEFAULT NULL;

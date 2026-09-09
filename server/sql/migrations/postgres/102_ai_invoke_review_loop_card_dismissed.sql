@@ -14,6 +14,9 @@
 -- NULL = never removed (every row that predates this migration), which is why the
 -- column is additive, nullable and carries no default: an existing card must keep
 -- showing until its owner actually removes it.
--- SQLite ADD COLUMN cannot carry a CHECK, same as 095/101.
 
-ALTER TABLE ai_invoke_document_review_loops ADD COLUMN card_dismissed_at TEXT;
+BEGIN;
+
+ALTER TABLE ai_invoke_document_review_loops ADD COLUMN IF NOT EXISTS card_dismissed_at TEXT;
+
+COMMIT;

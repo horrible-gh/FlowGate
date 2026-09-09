@@ -1,31 +1,8 @@
 -- 073 — remote_tool_op_log.op CHECK expansion for patch/stat (group 0347: P0004 §12.2 / L0005 DEFERRED / DB0006).
--- SQLite cannot ALTER a CHECK constraint; the table must be recreated (cf. 027, 042).
+-- No inbound FK references remote_tool_op_log, so the pg-fk-rebuild dance (cf. 042) is not needed.
 
--- [pg-fk-rebuild] preserve inbound FOREIGN KEYs across the drop+recreate of "remote_tool_op_log"
-DO $$
-DECLARE _stmt text;
-BEGIN
-    CREATE TEMP TABLE _fk_rb_remote_tool_op_log ON COMMIT DROP AS
-            SELECT 'ALTER TABLE ' || quote_ident(n.nspname) || '.' || quote_ident(c.relname)
-                   || ' ADD CONSTRAINT ' || quote_ident(con.conname) || ' ' || pg_get_constraintdef(con.oid) AS stmt
-            FROM pg_constraint con
-            JOIN pg_class c ON c.oid = con.conrelid
-            JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE con.contype = 'f' AND con.confrelid = to_regclass('remote_tool_op_log')
-              AND con.conrelid <> con.confrelid;
-    FOR _stmt IN
-        SELECT 'ALTER TABLE ' || quote_ident(n.nspname) || '.' || quote_ident(c.relname)
-               || ' DROP CONSTRAINT ' || quote_ident(con.conname)
-        FROM pg_constraint con
-        JOIN pg_class c ON c.oid = con.conrelid
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE con.contype = 'f' AND con.confrelid = to_regclass('remote_tool_op_log')
-          AND con.conrelid <> con.confrelid
-    LOOP
-        EXECUTE _stmt;
-    END LOOP;
-END $$;
 ALTER TABLE remote_tool_op_log RENAME TO remote_tool_op_log_before_patch_stat;
+
 CREATE TABLE remote_tool_op_log (
   log_id          SERIAL PRIMARY KEY,
   grant_id        TEXT NOT NULL
@@ -54,6 +31,7 @@ CREATE TABLE remote_tool_op_log (
          OR (result = 'too_large'   AND error_code = 'too_large')
          OR (result = 'unavailable' AND error_code = 'unavailable'))
 );
+
 INSERT INTO remote_tool_op_log
     (log_id, grant_id, op, target_path, target_pattern, result, error_code,
      bytes_processed, occurred_at, created_at)
@@ -61,18 +39,9 @@ SELECT
     log_id, grant_id, op, target_path, target_pattern, result, error_code,
     bytes_processed, occurred_at, created_at
 FROM remote_tool_op_log_before_patch_stat;
-DROP TABLE remote_tool_op_log_before_patch_stat;
-CREATE INDEX IF NOT EXISTS idx_oplog_grant_time ON remote_tool_op_log (grant_id, occurred_at);
-CREATE INDEX IF NOT EXISTS idx_oplog_time       ON remote_tool_op_log (occurred_at);
-CREATE INDEX IF NOT EXISTS idx_oplog_result     ON remote_tool_op_log (result);
 
--- [pg-fk-rebuild] restore inbound FOREIGN KEYs for "remote_tool_op_log"
-DO $$
-DECLARE _stmt text;
-BEGIN
-    IF to_regclass('pg_temp._fk_rb_remote_tool_op_log') IS NOT NULL THEN
-        FOR _stmt IN SELECT stmt FROM _fk_rb_remote_tool_op_log LOOP
-            EXECUTE _stmt;
-        END LOOP;
-    END IF;
-END $$;
+DROP TABLE remote_tool_op_log_before_patch_stat;
+
+CREATE INDEX idx_oplog_grant_time ON remote_tool_op_log (grant_id, occurred_at);
+CREATE INDEX idx_oplog_time       ON remote_tool_op_log (occurred_at);
+CREATE INDEX idx_oplog_result     ON remote_tool_op_log (result);

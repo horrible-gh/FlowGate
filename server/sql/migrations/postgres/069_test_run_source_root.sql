@@ -19,8 +19,8 @@
 --                    'worktree_unregistered' is the post-merge re-run case (NR0003 §4-B).
 --
 -- Both are nullable and additive: every row predating this migration has no evidence and
--- is rendered as "기록 없음" rather than being back-labelled with a guess. No index — these
--- are read per-run by primary key, never filtered on.
+-- is rendered as "기록 없음" rather than being back-labelled with a guess.
+-- No index, no CHECK (aligned with the SQLite authoring source).
 
 ALTER TABLE test_runs ADD COLUMN source_root TEXT;
 ALTER TABLE test_runs ADD COLUMN source_root_kind TEXT;

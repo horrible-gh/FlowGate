@@ -6,9 +6,10 @@
 -- (inherit/disabled/custom) is a new project_settings column where NULL = unset = inherit,
 -- so existing rows need no backfill. The global default selection is a system_settings
 -- K/V row ('ai_default_provider_id') written on first save — no seed here.
--- Additive only. ai_mode carries NO CHECK in any dialect (SQLite cannot ADD COLUMN with a
--- CHECK); the service layer validates values (DB0005 §3). api_key stores the raw secret
--- (same trust boundary as env-vars values); at-rest encryption is DEFERRED (L0004 §2.3).
+-- Additive only. ai_mode carries NO CHECK in any dialect (kept aligned with SQLite, which
+-- cannot ADD COLUMN with a CHECK); the service layer validates values (DB0005 §3).
+-- api_key stores the raw secret (same trust boundary as env-vars values); at-rest
+-- encryption is DEFERRED (L0004 §2.3).
 
 CREATE TABLE IF NOT EXISTS ai_providers (
     provider_id  TEXT PRIMARY KEY,
@@ -25,6 +26,7 @@ CREATE TABLE IF NOT EXISTS ai_providers (
     created_at   TEXT    NOT NULL,
     updated_at   TEXT    NOT NULL
 );
+
 CREATE INDEX IF NOT EXISTS idx_ai_providers_project ON ai_providers(project_id);
 -- Display-name uniqueness per scope (ux_doc_types_global/project precedent).
 CREATE UNIQUE INDEX IF NOT EXISTS ux_ai_providers_global_name
@@ -33,5 +35,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_ai_providers_global_name
 CREATE UNIQUE INDEX IF NOT EXISTS ux_ai_providers_project_name
     ON ai_providers(project_id, name)
     WHERE project_id IS NOT NULL;
+
 ALTER TABLE project_settings ADD COLUMN ai_mode TEXT;
 ALTER TABLE project_settings ADD COLUMN ai_default_provider_id TEXT;

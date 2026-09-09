@@ -25,10 +25,12 @@
 -- 가산 전용: 기존 열을 지우거나 이름을 바꾸지 않고, 백필도 하지 않는다. 이 마이그레이션
 -- 이전에 끝난 실행은 NULL 로 읽히고, 그것이 "그때는 기록하지 않았다"는 사실이다.
 
--- SQLite 는 ADD COLUMN 에 CHECK 를 붙일 수 없다(076b·080 과 같은 판단). timeout_kind 의
--- 어휘(no_progress / absolute_cap / NULL)는 서비스 계층이 지킨다.
-ALTER TABLE ai_invoke_runs ADD COLUMN timeout_kind TEXT;
-ALTER TABLE ai_invoke_runs ADD COLUMN timeout_diagnosis TEXT;
-ALTER TABLE ai_invoke_runs ADD COLUMN stdout_tail TEXT;
-ALTER TABLE ai_invoke_runs ADD COLUMN stderr_tail TEXT;
-ALTER TABLE ai_invoke_runs ADD COLUMN source_dirty_files TEXT;
+BEGIN;
+
+ALTER TABLE ai_invoke_runs ADD COLUMN IF NOT EXISTS timeout_kind TEXT;
+ALTER TABLE ai_invoke_runs ADD COLUMN IF NOT EXISTS timeout_diagnosis TEXT;
+ALTER TABLE ai_invoke_runs ADD COLUMN IF NOT EXISTS stdout_tail TEXT;
+ALTER TABLE ai_invoke_runs ADD COLUMN IF NOT EXISTS stderr_tail TEXT;
+ALTER TABLE ai_invoke_runs ADD COLUMN IF NOT EXISTS source_dirty_files TEXT;
+
+COMMIT;

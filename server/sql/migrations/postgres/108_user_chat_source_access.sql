@@ -1,6 +1,5 @@
 -- 108_user_chat_source_access.sql
 -- flowgate.default.0515: per-user source-access mode + edit_once one-shot claim marker.
--- D0006 §2.1 (분리 저장소), L0007 §2.4.5 (claim 마커 요구).
 
 CREATE TABLE IF NOT EXISTS user_chat_source_access (
     user_id             TEXT NOT NULL PRIMARY KEY
@@ -14,5 +13,6 @@ CREATE TABLE IF NOT EXISTS user_chat_source_access (
     updated_at          TEXT NOT NULL,
     CHECK ((one_shot_token_id IS NULL) = (one_shot_claimed_at IS NULL))
 );
+
 CREATE INDEX IF NOT EXISTS idx_ucsa_one_shot_token_id
     ON user_chat_source_access(one_shot_token_id);

@@ -16,7 +16,11 @@
 --   itself failed to parse, or -- reachable only when the operator origin carries no
 --   explicit port either -- the trusted local FLOWGATE_PORT is not a usable port
 --   number), so the operator base was returned unchanged -- the unsafe branch.
--- Additive only, NULL-allowed with no default and no CHECK (SQLite ADD COLUMN cannot
--- carry one, same as 095's ten columns).
+-- Additive only, NULL-allowed with no default and no CHECK (same convention as 095's
+-- ten columns).
 
-ALTER TABLE ai_invoke_runs ADD COLUMN transport_fallback_kind TEXT;
+BEGIN;
+
+ALTER TABLE ai_invoke_runs ADD COLUMN IF NOT EXISTS transport_fallback_kind TEXT;
+
+COMMIT;

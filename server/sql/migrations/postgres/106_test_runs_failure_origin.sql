@@ -6,4 +6,4 @@ ALTER TABLE test_runs ADD COLUMN failure_origin TEXT;
 ALTER TABLE test_runs ADD COLUMN failure_origin_reviewer_id TEXT;
 ALTER TABLE test_runs ADD COLUMN failure_origin_findings TEXT;
 ALTER TABLE test_runs ADD COLUMN failure_origin_comment TEXT;
-ALTER TABLE test_runs ADD COLUMN failure_origin_reviewed_at TEXT;
+ALTER TABLE test_runs ADD COLUMN failure_origin_reviewed_at TIMESTAMP;

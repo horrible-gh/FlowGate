@@ -20,30 +20,6 @@ ALTER TABLE ai_invoke_paused_chains ADD COLUMN continuation_restart_max_attempts
 -- "no pick was made" on read-back. ai_invoke_runs is a leaf table (nothing references it),
 -- so this is the same rewrite shape as 039/042a's tokens rebuild. SQLite cannot ALTER a
 -- CHECK constraint in place, so the table is recreated.
--- [pg-fk-rebuild] preserve inbound FOREIGN KEYs across the drop+recreate of "ai_invoke_runs"
-DO $$
-DECLARE _stmt text;
-BEGIN
-    CREATE TEMP TABLE _fk_rb_ai_invoke_runs ON COMMIT DROP AS
-            SELECT 'ALTER TABLE ' || quote_ident(n.nspname) || '.' || quote_ident(c.relname)
-                   || ' ADD CONSTRAINT ' || quote_ident(con.conname) || ' ' || pg_get_constraintdef(con.oid) AS stmt
-            FROM pg_constraint con
-            JOIN pg_class c ON c.oid = con.conrelid
-            JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE con.contype = 'f' AND con.confrelid = to_regclass('ai_invoke_runs')
-              AND con.conrelid <> con.confrelid;
-    FOR _stmt IN
-        SELECT 'ALTER TABLE ' || quote_ident(n.nspname) || '.' || quote_ident(c.relname)
-               || ' DROP CONSTRAINT ' || quote_ident(con.conname)
-        FROM pg_constraint con
-        JOIN pg_class c ON c.oid = con.conrelid
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE con.contype = 'f' AND con.confrelid = to_regclass('ai_invoke_runs')
-          AND con.conrelid <> con.confrelid
-    LOOP
-        EXECUTE _stmt;
-    END LOOP;
-END $$;
 ALTER TABLE ai_invoke_runs RENAME TO ai_invoke_runs_before_unlimited_attempts;
 CREATE TABLE ai_invoke_runs (
     run_id               TEXT    PRIMARY KEY,
@@ -121,6 +97,30 @@ SELECT
     prompt_common_default_applied, prompt_user_message_length, prompt_user_message_sha256,
     prompt_final_length, prompt_final_sha256, created_at, updated_at
 FROM ai_invoke_runs_before_unlimited_attempts;
+-- [pg-fk-rebuild] preserve inbound FOREIGN KEYs across the drop+recreate of "ai_invoke_runs_before_unlimited_attempts"
+DO $$
+DECLARE _stmt text;
+BEGIN
+    CREATE TEMP TABLE _fk_rb_ai_invoke_runs_before_unlimited_attempts ON COMMIT DROP AS
+            SELECT 'ALTER TABLE ' || quote_ident(n.nspname) || '.' || quote_ident(c.relname)
+                   || ' ADD CONSTRAINT ' || quote_ident(con.conname) || ' ' || pg_get_constraintdef(con.oid) AS stmt
+            FROM pg_constraint con
+            JOIN pg_class c ON c.oid = con.conrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE con.contype = 'f' AND con.confrelid = to_regclass('ai_invoke_runs_before_unlimited_attempts')
+              AND con.conrelid <> con.confrelid;
+    FOR _stmt IN
+        SELECT 'ALTER TABLE ' || quote_ident(n.nspname) || '.' || quote_ident(c.relname)
+               || ' DROP CONSTRAINT ' || quote_ident(con.conname)
+        FROM pg_constraint con
+        JOIN pg_class c ON c.oid = con.conrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE con.contype = 'f' AND con.confrelid = to_regclass('ai_invoke_runs_before_unlimited_attempts')
+          AND con.conrelid <> con.confrelid
+    LOOP
+        EXECUTE _stmt;
+    END LOOP;
+END $$;
 DROP TABLE ai_invoke_runs_before_unlimited_attempts;
 CREATE INDEX IF NOT EXISTS idx_air_group_started
     ON ai_invoke_runs(group_id, started_at DESC, run_id DESC);
@@ -129,12 +129,12 @@ CREATE INDEX IF NOT EXISTS idx_air_project_started
 CREATE INDEX IF NOT EXISTS idx_air_finished_at
     ON ai_invoke_runs(finished_at);
 
--- [pg-fk-rebuild] restore inbound FOREIGN KEYs for "ai_invoke_runs"
+-- [pg-fk-rebuild] restore inbound FOREIGN KEYs for "ai_invoke_runs_before_unlimited_attempts"
 DO $$
 DECLARE _stmt text;
 BEGIN
-    IF to_regclass('pg_temp._fk_rb_ai_invoke_runs') IS NOT NULL THEN
-        FOR _stmt IN SELECT stmt FROM _fk_rb_ai_invoke_runs LOOP
+    IF to_regclass('pg_temp._fk_rb_ai_invoke_runs_before_unlimited_attempts') IS NOT NULL THEN
+        FOR _stmt IN SELECT stmt FROM _fk_rb_ai_invoke_runs_before_unlimited_attempts LOOP
             EXECUTE _stmt;
         END LOOP;
     END IF;

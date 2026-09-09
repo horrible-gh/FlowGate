@@ -31,6 +31,14 @@ real INSERT, so deleting the PRAGMA line removes only the duplicate.
 Usage (run from server/):
     python tools/regen_dialect_migrations.py            # regenerate in place
     python tools/regen_dialect_migrations.py --verify   # regenerate to temp + diff, no write
+
+``--verify`` and historical migrations (T0006 §7, group 0542): an unchanged dialect file from
+current ``HEAD`` is an already-applied, immutable historical migration -- the top-level invariant
+(T0006 §1) forbids rewriting it just to match a later generator change. Its byte-mismatch is an
+informational DIFF. The exemption requires both that the path exist in ``HEAD`` and that current
+worktree text exactly equal the ``HEAD`` blob: a new/untracked dialect file, or a historical file
+regenerated or edited in place and left uncommitted, is a currently regenerated target, so a
+mismatch still fails ``--verify``. See ``_is_immutable_historical``.
 """
 from __future__ import annotations
 
@@ -44,6 +52,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SERVER = os.path.dirname(HERE)
+REPO_ROOT = os.path.dirname(SERVER)
 MIG = os.path.join(SERVER, "sql", "migrations")
 SRC = os.path.join(MIG, "sqlite")
 
@@ -65,9 +74,21 @@ _CODE_HANDLED_IDS = {"037"}
 # 0539 T0004's fix for a schema-drift bug; 075 documents why 074a's PostgreSQL file never renames
 # anything). A generic regen from the SQLite source would silently replace the deliberate, already
 # -fixed file with the generic (heavier, and in 107's case, previously *broken*) rebuild — exactly
-# what group 0542 caught happening to itself. Regen skips these ids entirely on the postgres
-# target: it neither overwrites nor diffs them, leaving the committed file exactly as authored.
-_PG_HAND_AUTHORED_IDS = {"064", "074a", "075", "092", "107"}
+# what group 0542 caught happening to itself. Regen skips these exact files entirely on the
+# postgres target: it neither overwrites nor diffs them, leaving the committed file exactly as
+# authored.
+#
+# Keyed by exact filename, not migration id prefix: FlowGate has repeatedly reused a numeric id
+# across unrelated files (094, 103, 105, 108, ... each have two files in this very directory), so
+# an id-keyed exception would silently also skip regeneration/--verify for any future *normal*
+# generated migration that happens to share one of these five ids.
+_PG_HAND_AUTHORED_FILES = {
+    "064_tokens_resolve_conflict_scope.sql",
+    "074a_test_run_cancel_status.sql",
+    "075_test_run_cases_fk_repair.sql",
+    "092_ai_invoke_document_review_loop_live_run.sql",
+    "107_tokens_failure_origin_review_scope.sql",
+}
 
 # SQLite-only JSON DML the converter cannot translate (table-valued json_each and
 # the aggregate json_group_array / json_array_length). If any file NOT in
@@ -97,6 +118,64 @@ _PG_SQLITE_JSON_CTOR = re.compile(r"(?i)\bjson_(?:array|object)\s*\(")
 #   * a GROUP BY on a non-PK column (a bare `<alias>.doc_id`) that PostgreSQL rejects unless the
 #     grouping key is the table's PRIMARY KEY (fix_pg_groupby_pk rewrites doc_id -> id)
 _PG_GROUPBY_NONPK = re.compile(r"(?i)\bGROUP\s+BY\s+\w+\.doc_id\b")
+
+# T0006 §7: --verify must not fail solely because an already-committed, already-applied
+# migration is not byte-identical to *today's* generator output. §1's top-level invariant
+# forbids rewriting/regenerating such a file to match, so a content mismatch on it can never be
+# fixed by "run the tool again" -- treating it as an error would make --verify permanently red
+# for reasons this project explicitly disallows resolving. What --verify must still catch is the
+# other half of §7: a "new/currently regenerated target", i.e. a dialect file that has never
+# been generated/committed at all yet (added a SQLite migration but forgot to run the generator),
+# OR one that exists on disk but was never actually committed for this dialect (a brand-new
+# untracked file, or an already-historical file regenerated in place and left uncommitted).
+#
+# rev3 (R9): HEAD path presence alone still leaves a hole. A path can exist in HEAD yet have been
+# regenerated or edited in the worktree without being committed. Such content is a current target,
+# not the immutable committed baseline, and must fail when it differs from the generator. Thus
+# `historical` means both "the path exists in HEAD" and "the worktree text equals that HEAD blob".
+def _verify_status(cur: str | None, final: str, historical: bool = True) -> tuple[int, str]:
+    """Return (rc_contribution, label) for one file's --verify comparison. See module note above.
+
+    `historical` must be computed with `_is_immutable_historical`, never from only
+    `os.path.exists` or `_committed_in_head`: it protects precisely an unchanged committed
+    baseline, not a path whose current worktree content has been modified after that commit.
+    """
+    if cur is None:
+        return 1, "MISSING"
+    if cur == final:
+        return 0, "OK"
+    if historical:
+        return 0, "DIFF"
+    return 1, "MISMATCH"
+
+
+def _committed_in_head(relpath: str) -> bool:
+    """True iff <relpath> (POSIX-style, relative to the repo root) exists in HEAD."""
+    result = subprocess.run(
+        ["git", "cat-file", "-e", f"HEAD:{relpath}"],
+        cwd=REPO_ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0
+
+
+def _worktree_matches_head(relpath: str, cur: str) -> bool:
+    """True iff current text equals the immutable blob at HEAD:<relpath> exactly.
+
+    A path's history and its current state are deliberately separate checks: an edited or
+    regenerated-in-place historical migration still exists in HEAD, but is not eligible for
+    the T0006 §7 historical exemption until its worktree content again equals that baseline.
+    """
+    result = subprocess.run(
+        ["git", "show", f"HEAD:{relpath}"],
+        cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0 and result.stdout.decode("utf-8") == cur
+
+
+def _is_immutable_historical(relpath: str, cur: str | None) -> bool:
+    """Whether ``cur`` is the unchanged committed baseline protected by T0006 §7."""
+    return cur is not None and _committed_in_head(relpath) and _worktree_matches_head(relpath, cur)
+
 
 # Cross-dialect no-op: a comment-only file can trip "can't execute an empty query".
 _NOOP_STUB = (
@@ -472,7 +551,7 @@ def fix_pg_groupby_pk(text: str) -> str:
 #     _pg_rebuild_backup_renames() detects this idiom generically (no hardcoded backup-name
 #     strings) by matching any ``ALTER TABLE <x> RENAME TO <backup>`` that precedes a
 #     ``DROP TABLE <backup>`` in the same file. Of that list, 064 and 107's *postgres* files are
-#     hand-authored exceptions (see _PG_HAND_AUTHORED_IDS below) that never reach this idiom at
+#     hand-authored exceptions (see _PG_HAND_AUTHORED_FILES below) that never reach this idiom at
 #     all on postgres — only their SQLite source uses it.
 #
 # Implementation notes that keep this invisible to the other passes:
@@ -850,7 +929,7 @@ def regenerate(verify_only: bool) -> int:
                     staged[fname] = fix_mysql_drop_index(staged[fname], imap)
 
             for fname in fnames:
-                if out_name == "postgres" and _migration_id(fname) in _PG_HAND_AUTHORED_IDS:
+                if out_name == "postgres" and fname in _PG_HAND_AUTHORED_FILES:
                     print(f"-- hand-authored, skipped {out_name}/{fname}")
                     continue
 
@@ -930,9 +1009,27 @@ def regenerate(verify_only: bool) -> int:
                 dpath = os.path.join(dest, fname)
                 if verify_only:
                     cur = open(dpath, encoding="utf-8").read() if os.path.exists(dpath) else None
-                    if cur != final:
-                        rc = 1
-                        print(f"~~ DIFF {out_name}/{fname} (committed != regenerated)")
+                    relpath = os.path.relpath(dpath, REPO_ROOT).replace(os.sep, "/")
+                    historical = _is_immutable_historical(relpath, cur)
+                    status_rc, label = _verify_status(cur, final, historical)
+                    rc = rc or status_rc
+                    if label == "MISSING":
+                        print(f"!! MISSING {out_name}/{fname}: no committed file yet for this "
+                              f"dialect; this is a new generator target (T0006 §7) and must be "
+                              f"generated -- run without --verify to write it.")
+                    elif label == "MISMATCH":
+                        print(f"!! MISMATCH {out_name}/{fname}: its current worktree content is "
+                              f"not the unchanged committed baseline (untracked/new, or an "
+                              f"already-historical file regenerated or edited in place) and "
+                              f"differs from today's generator output -- T0006 §7's historical-"
+                              f"immutability exemption does not apply; regenerate correctly or "
+                              f"commit the intended content.")
+                    elif label == "DIFF":
+                        # Historical, already-committed migration: report the drift for
+                        # visibility but do not fail -- T0006 §1/§7 forbid rewriting an
+                        # immutable historical file just to match today's generator output.
+                        print(f"~~ DIFF {out_name}/{fname} (committed != regenerated; historical, "
+                              f"not failing per T0006 §7)")
                 else:
                     # newline="\n": write exact LF bytes on every platform. Without it, a
                     # text-mode write on Windows translates every "\n" to os.linesep ("\r\n"),

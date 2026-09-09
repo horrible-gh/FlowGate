@@ -43,11 +43,14 @@ import regen_dialect_migrations as R  # noqa: E402
 PG_DIR = _SERVER_DIR / "sql" / "migrations" / "postgres"
 
 # (migration filename, original table name, backup table name) for every migration in the set
-# that (a) uses the rename-to-backup idiom on its postgres file and (b) is regenerated
-# generically from the SQLite source -- i.e. excluding R.regen_dialect_migrations._PG_HAND_AUTHORED_IDS
-# (064, 074a, 075, 092, 107), which rewrite the CHECK/FK in place by hand instead and are never
-# regenerated. Not just 108 -- T0004 requires the generator fix (and its regression coverage) to
-# cover every sibling, since the bug is in shared generator code.
+# that (a) uses the rename-to-backup idiom on its postgres file and (b) would be regenerated
+# generically from the SQLite source -- i.e. excluding R._PG_HAND_AUTHORED_FILES (064, 074a, 075,
+# 092, 107's exact postgres filenames), which rewrite the CHECK/FK in place by hand instead and
+# are never regenerated. Not just 108 -- T0004/T0006 require the generator fix (and its regression
+# coverage) to cover every sibling, since the bug is in shared generator code. Per T0006 SS6, only
+# 108 (the actually-failing, in-scope migration) may be rewritten on disk; the other 7 committed
+# postgres siblings stay untouched and are proven purely as read-only SQLite-source fixtures fed
+# through the generator in memory (see test_generator_fences_every_sibling_migration_before_the_rename).
 RENAME_TO_BACKUP_MIGRATIONS = [
     ("036_tokens_workflow_decide_scope.sql", "tokens", "tokens_before_workflow_decide_scope"),
     ("042a_tokens_review_scope.sql", "tokens", "tokens_before_review_scope"),
@@ -63,11 +66,113 @@ RENAME_TO_BACKUP_MIGRATIONS = [
 ]
 
 
-def test_hand_authored_ids_are_excluded_from_the_generic_idiom_list():
+def test_hand_authored_files_are_excluded_from_the_generic_idiom_list():
     """064/107 (and siblings) must never appear above -- they use a structurally different,
-    hand-authored fix and are excluded from generic regen by R._PG_HAND_AUTHORED_IDS."""
-    listed_ids = {R._migration_id(fname) for fname, _, _ in RENAME_TO_BACKUP_MIGRATIONS}
-    assert not (listed_ids & R._PG_HAND_AUTHORED_IDS)
+    hand-authored fix and are excluded from generic regen by R._PG_HAND_AUTHORED_FILES."""
+    listed_files = {fname for fname, _, _ in RENAME_TO_BACKUP_MIGRATIONS}
+    assert not (listed_files & R._PG_HAND_AUTHORED_FILES)
+
+
+def test_hand_authored_exception_is_keyed_by_exact_filename_not_id_prefix():
+    """R4 (T0006 rejection of the prior _PG_HAND_AUTHORED_IDS design): the exception set must be
+    exact filenames, not migration id prefixes. FlowGate has repeatedly reused a numeric id across
+    unrelated files in this very directory (094, 103, 105, 108 each already have two), so an
+    id-keyed exception would silently also exclude a future normal generated migration sharing one
+    of these five ids from regeneration/--verify. A same-prefix, different-filename migration must
+    never be treated as hand-authored."""
+    assert "107_tokens_failure_origin_review_scope.sql" in R._PG_HAND_AUTHORED_FILES
+    assert "107_other_generated_migration.sql" not in R._PG_HAND_AUTHORED_FILES
+    for hand_authored in R._PG_HAND_AUTHORED_FILES:
+        sibling = R._migration_id(hand_authored) + "_some_other_generated_migration.sql"
+        assert sibling not in R._PG_HAND_AUTHORED_FILES, (
+            f"a file merely sharing {hand_authored}'s id prefix must not be excluded"
+        )
+
+# ── offline: --verify policy for immutable historical migrations (T0006 SS7) ───────
+
+
+def test_verify_does_not_fail_a_historical_committed_migration_that_drifted():
+    """T0006 SS7: a dialect file that has already been committed at least once is an
+    already-applied, immutable historical migration (SS1). A later generator improvement making
+    its output diverge from that committed text must be reported for visibility but must not fail
+    --verify -- SS1 forbids rewriting the committed file to chase the new output."""
+    rc, label = R._verify_status("-- old committed migration text\n", "-- new generator output\n")
+    assert rc == 0
+    assert label == "DIFF"
+
+
+def test_verify_fails_when_a_dialect_file_was_never_generated():
+    """The other half of T0006 SS7 ('new/currently regenerated target'): nothing has ever been
+    committed for this migration+dialect pair, so there is no historical file to protect -- this
+    is exactly the case --verify must still catch (a SQLite migration added but never regenerated)."""
+    rc, label = R._verify_status(None, "-- brand new generator output\n")
+    assert rc == 1
+    assert label == "MISSING"
+
+
+def test_verify_reports_ok_when_committed_matches_generated():
+    rc, label = R._verify_status("-- same text\n", "-- same text\n")
+    assert rc == 0
+    assert label == "OK"
+
+
+def test_verify_fails_an_uncommitted_existing_file_that_mismatches_the_generator_output():
+    """TR0007 rev2 (R8): file-existence is not a valid proxy for committed-historical status.
+    A dialect file that exists on disk (os.path.exists would be True) but has never been
+    committed for this dialect -- a brand-new untracked file, or an already-historical file
+    that was regenerated in place and left uncommitted -- is not yet the "already-applied,
+    immutable" artifact SS7 protects, so a content mismatch on it must still fail --verify,
+    same as MISSING, not be waved through as an informational DIFF."""
+    rc, label = R._verify_status(
+        "-- stray uncommitted regen output\n", "-- current generator output\n", historical=False
+    )
+    assert rc == 1
+    assert label == "MISMATCH"
+
+
+def test_verify_still_reports_ok_for_an_uncommitted_file_that_happens_to_match():
+    """Not-yet-committed is only a problem when the content is wrong; matching content must
+    never be flagged regardless of committed-historical status."""
+    rc, label = R._verify_status("-- same text\n", "-- same text\n", historical=False)
+    assert rc == 0
+    assert label == "OK"
+
+
+def test_committed_in_head_distinguishes_a_tracked_migration_from_an_untracked_probe_file():
+    """A path's HEAD history is still separately observable from worktree state."""
+    tracked_relpath = "server/sql/migrations/postgres/036_tokens_workflow_decide_scope.sql"
+    assert R._committed_in_head(tracked_relpath) is True
+
+    probe_path = PG_DIR / "_tr0007_rev2_untracked_probe.sql"
+    assert not probe_path.exists(), "stale probe file from a prior failed run -- remove it"
+    probe_path.write_text("-- never committed, must not read as historical\n", encoding="utf-8")
+    try:
+        untracked_relpath = f"server/sql/migrations/postgres/{probe_path.name}"
+        assert R._committed_in_head(untracked_relpath) is False
+    finally:
+        probe_path.unlink()
+
+
+def test_verify_fails_when_a_head_historical_file_is_edited_or_regenerated_in_place():
+    """TR0007 rev3 (latest rejection): HEAD path presence is insufficient. The unchanged
+    committed blob is historical, but a simulated worktree edit of that same already-historical
+    file is a current target and a generator mismatch must fail, never become DIFF/rc=0."""
+    relpath = "server/sql/migrations/postgres/036_tokens_workflow_decide_scope.sql"
+    committed_text = R.subprocess.check_output(
+        ["git", "show", f"HEAD:{relpath}"], cwd=R.REPO_ROOT, text=True
+    )
+    assert R._committed_in_head(relpath) is True
+    assert R._is_immutable_historical(relpath, committed_text) is True
+
+    regenerated_in_place = committed_text + "-- uncommitted regeneration/edit\n"
+    assert R._is_immutable_historical(relpath, regenerated_in_place) is False
+    rc, label = R._verify_status(
+        regenerated_in_place, "-- current generator output\n",
+        historical=R._is_immutable_historical(relpath, regenerated_in_place),
+    )
+    assert rc == 1
+    assert label == "MISMATCH"
+
 
 DSN_ENV = "FLOWGATE_PG_TEST_DSN"
 DSN = os.environ.get(DSN_ENV)
@@ -172,24 +277,38 @@ def test_no_committed_migration_references_a_dropped_backup_table():
 
 
 @pytest.mark.parametrize("fname,original,backup", RENAME_TO_BACKUP_MIGRATIONS)
-def test_committed_rename_idiom_migrations_fence_before_the_rename(fname, original, backup):
-    """Every migration using the rename-to-backup idiom (not just 108) must have its
-    [pg-fk-rebuild] snapshot positioned before the RENAME and keyed on the original name."""
-    text = (PG_DIR / fname).read_text(encoding="utf-8")
+def test_generator_fences_every_sibling_migration_before_the_rename(fname, original, backup):
+    """Every migration using the rename-to-backup idiom (not just 108) must be fenced correctly
+    by the generator -- proven generically, per T0006 SS6, by feeding the *SQLite source* (the
+    dialect-neutral input the pipeline actually regenerates from, carrying no [pg-fk-rebuild] tag
+    yet) through R.fix_pg_table_rebuild() and inspecting the result in memory.
+
+    T0006's top-level invariant forbids rewriting the already-committed, already-applied
+    ``server/sql/migrations/postgres/<fname>`` files to match current generator output (only 108,
+    the actual failing migration, may change) -- so this deliberately never reads or asserts on
+    PG_DIR for these siblings; it only reads the read-only SQLite fixture and checks the
+    generator's in-memory output.
+    """
+    sqlite_text = (_SERVER_DIR / "sql" / "migrations" / "sqlite" / fname).read_text(encoding="utf-8")
+    assert R._PG_FK_REBUILD_TAG not in sqlite_text, (
+        f"{fname}: SQLite source unexpectedly carries a postgres fence tag already"
+    )
 
     rename_stmt = f"ALTER TABLE {original} RENAME TO {backup};"
-    assert rename_stmt in text, f"{fname}: expected rename statement not found"
+    assert rename_stmt in sqlite_text, f"{fname}: expected rename statement not found in SQLite source"
+
+    out = R.fix_pg_table_rebuild(sqlite_text)
 
     snapshot_marker = f'preserve inbound FOREIGN KEYs across the drop+recreate of "{original}"'
     restore_marker = f'restore inbound FOREIGN KEYs for "{original}"'
-    assert snapshot_marker in text, f"{fname}: missing snapshot fence keyed on '{original}'"
-    assert restore_marker in text, f"{fname}: missing restore fence keyed on '{original}'"
+    assert snapshot_marker in out, f"{fname}: missing snapshot fence keyed on '{original}'"
+    assert restore_marker in out, f"{fname}: missing restore fence keyed on '{original}'"
 
-    assert text.index(snapshot_marker) < text.index(rename_stmt), (
+    assert out.index(snapshot_marker) < out.index(rename_stmt), (
         f"{fname}: the snapshot fence must run before the RENAME, else pg_get_constraintdef "
         f"renders the soon-to-be-dropped backup name '{backup}'"
     )
-    assert f"to_regclass('{backup}')" not in text, (
+    assert f"to_regclass('{backup}')" not in out, (
         f"{fname}: snapshot/restore must never key on the backup name '{backup}'"
     )
 

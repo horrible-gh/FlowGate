@@ -12,5 +12,9 @@
 -- NULL/NULL = not yet synced. Additive only, no index, no CHECK — same
 -- protocol as author_name/author_email (migration 065).
 
+BEGIN;
+
 ALTER TABLE group_git_state ADD COLUMN initial_source_sync_at  TEXT;
 ALTER TABLE group_git_state ADD COLUMN initial_source_sync_sha TEXT;
+
+COMMIT;

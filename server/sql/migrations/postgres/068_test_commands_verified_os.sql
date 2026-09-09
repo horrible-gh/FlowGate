@@ -13,6 +13,6 @@
 --                    (including auto rows from the old Linux host, which we cannot honestly
 --                    relabel — the service layer renders these as "OS unverified" instead).
 -- Only auto-reflection from a passed run sets this column; manual CRUD leaves it NULL.
--- No index: the existing (project, status) lookup already narrows to a few dozen rows.
+-- No index, no CHECK (aligned with the SQLite authoring source).
 
 ALTER TABLE project_test_commands ADD COLUMN verified_os TEXT;

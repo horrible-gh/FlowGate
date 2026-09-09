@@ -17,7 +17,7 @@
 -- No BEGIN/COMMIT: the migration runner owns the transaction, so this file can also be
 -- applied and rolled back inside a caller-owned transaction (T0018 measurement step 5).
 CREATE TABLE IF NOT EXISTS register_context_failures (
-    id                    SERIAL PRIMARY KEY,
+    id                    BIGSERIAL PRIMARY KEY,
     recorded_at           TEXT    NOT NULL,
     run_id                TEXT    NOT NULL REFERENCES ai_invoke_runs(run_id) ON DELETE CASCADE,
     correlation_id        TEXT    NOT NULL,
@@ -43,6 +43,10 @@ CREATE TABLE IF NOT EXISTS register_context_failures (
     token_id_hash         TEXT,
     expected_fingerprint  TEXT,
     actual_fingerprint    TEXT,
+    -- INTEGER 0/1, not BOOLEAN: every hand-written CRUD in db/ binds these flags as 0/1
+    -- (one statement, three dialects), and PostgreSQL will not coerce an integer into a
+    -- boolean column. ai_invoke_runs.resumable / turn_limit_exhausted / oracle_mismatch are
+    -- INTEGER on the live PostgreSQL for exactly this reason; this column follows them.
     binding_relaxed       INTEGER NOT NULL DEFAULT 0 CHECK (binding_relaxed IN (0, 1)),
     relaxed_axis          TEXT,
     status                INTEGER,

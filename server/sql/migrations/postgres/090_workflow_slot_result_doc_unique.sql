@@ -91,7 +91,9 @@ WHERE id = 5674
       WHERE d.doc_id = 'flowgate.default.0454.0007-TR'
         AND d.type_code = 'TR'
   );
+
 DROP INDEX IF EXISTS idx_wfseq_items_result_doc;
+
 CREATE UNIQUE INDEX IF NOT EXISTS uq_wfseq_items_result_doc
     ON workflow_sequence_items (result_doc_id)
     WHERE result_doc_id IS NOT NULL;

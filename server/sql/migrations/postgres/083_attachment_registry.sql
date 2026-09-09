@@ -9,25 +9,23 @@
 -- and nothing yet references `attachments`, so `DROP TABLE attachments` is a complete
 -- rollback (DB0013 §3-3).
 --
--- Numbering: this branch was cut at e272b11, where 080 was the next free ordinal. main has
--- since taken 080 twice (080a_ai_invoke_prompt_audit / 080b_workflow_sequence_provider) and
--- 081/082 as well, so this file sits at 083 — the first ordinal no dialect directory on main
--- uses. Everything is `IF NOT EXISTS`, which makes re-application on an already-migrated DB
--- a no-op no matter where the file lands in the order (DB0013 §3-1 warning).
+-- Numbering: main has taken 080 twice (080a_ai_invoke_prompt_audit /
+-- 080b_workflow_sequence_provider) and 081/082 as well since this branch was cut, so this file
+-- sits at 083 — the first free ordinal. Everything is `IF NOT EXISTS`, which makes
+-- re-application a no-op no matter where the file lands in the order (DB0013 §3-1 warning).
 --
--- The table is NOT back-filled here. Legacy files under
--- `projects/{project_dir}/attachments/{doc_id}/` can only be found by directory listing,
--- which pure SQL cannot express, and the copy is heavy I/O that must not block server
--- start-up. The back-fill is the separate operational procedure
--- `migrate_legacy_attachments` (DB0013 §3-4, L0012 §2-11).
+-- No back-fill here — the legacy tree can only be found by directory listing and the copy
+-- is heavy I/O that must not block start-up (DB0013 §3-4, L0012 §2-11).
+
+BEGIN;
 
 CREATE TABLE IF NOT EXISTS attachments (
-    id                  SERIAL PRIMARY KEY,
+    id                  SERIAL  PRIMARY KEY,
     doc_id              TEXT    NOT NULL REFERENCES documents(doc_id) ON DELETE CASCADE,
     original_filename   TEXT    NOT NULL,
     filename            TEXT    NOT NULL,
     file_path           TEXT    NOT NULL,
-    size                INTEGER NOT NULL CHECK (size >= 0),
+    size                BIGINT  NOT NULL CHECK (size >= 0),
     content_type        TEXT    NOT NULL DEFAULT 'application/octet-stream',
     content_sha256      TEXT    NOT NULL CHECK (length(content_sha256) = 64),
     uploaded_by         TEXT    REFERENCES users(user_id),
@@ -36,8 +34,11 @@ CREATE TABLE IF NOT EXISTS attachments (
     created_at          TEXT    NOT NULL,
     CHECK (file_path NOT LIKE '/%')
 );
+
 CREATE UNIQUE INDEX IF NOT EXISTS ux_attachments_doc_filename  ON attachments(doc_id, filename);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_attachments_file_path     ON attachments(file_path);
 CREATE INDEX        IF NOT EXISTS idx_attachments_doc_uploaded ON attachments(doc_id, uploaded_at, filename);
 CREATE INDEX        IF NOT EXISTS idx_attachments_doc_sha      ON attachments(doc_id, content_sha256);
 CREATE INDEX        IF NOT EXISTS idx_attachments_uploaded_by  ON attachments(uploaded_by);
+
+COMMIT;

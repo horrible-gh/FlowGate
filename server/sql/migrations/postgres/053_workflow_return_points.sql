@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS workflow_return_points (
     created_at TEXT    NOT NULL,
     updated_at TEXT    NOT NULL
 );
+
 CREATE TABLE IF NOT EXISTS workflow_return_point_docs (
     return_point_id INTEGER NOT NULL REFERENCES workflow_return_points(id) ON DELETE CASCADE,
     doc_id          TEXT    NOT NULL REFERENCES documents(doc_id) ON DELETE CASCADE,
@@ -16,5 +17,6 @@ CREATE TABLE IF NOT EXISTS workflow_return_point_docs (
     fingerprint     TEXT    NOT NULL,
     PRIMARY KEY (return_point_id, doc_id)
 );
+
 CREATE INDEX IF NOT EXISTS idx_wrpd_rp_seq
     ON workflow_return_point_docs(return_point_id, seq);

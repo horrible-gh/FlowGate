@@ -1,3 +1,3 @@
 -- Persist the provider-resolution tier and whether startup fallback was possible.
-ALTER TABLE ai_invoke_runs ADD COLUMN selected_provider_source TEXT NULL;
-ALTER TABLE ai_invoke_runs ADD COLUMN fallback_allowed INTEGER NULL DEFAULT 0;
+ALTER TABLE ai_invoke_runs ADD COLUMN IF NOT EXISTS selected_provider_source TEXT;
+ALTER TABLE ai_invoke_runs ADD COLUMN IF NOT EXISTS fallback_allowed SMALLINT NULL DEFAULT 0;
