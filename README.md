@@ -200,9 +200,18 @@ FlowGate/
 
 FlowGate is **built as a working system**, not a throwaway prototype — it runs the document pipeline that drives its own development, including this README's own update. What started as a document-approval pipeline is now an actively evolving orchestration workspace, with several fronts moving at once: **workflow orchestration** (Work Plans, sequence editing, per-step provider/review configuration), the **AI execution lifecycle** (direct invocation, continuous chains, pause/resume, provider pin, step timeouts, run diagnostics, prompt audit), **review/rework automation** (reviewer selection, AI-assisted correction, rework loops), **Git/worktree operation** (branch explorer, diff, update-from-base, conflict resolution, finalize), **multi-dialect database support** (SQLite / MySQL / PostgreSQL), and **conversation-based source access control** (read-only / persistent edit / one-time edit).
 
+## v0.2 — future workspace roadmap mockup
+
+> **Future roadmap mockup — not a current product screen.** This visual describes a possible v0.2 presentation of FlowGate's existing direction; it does not represent implemented features, UI, data, or availability.
+
+![FlowGate v0.2 future workspace roadmap mockup](assets/images/flowgate-v0.2-roadmap-mockup.svg)
+
+*The current-state dashboard image near the top of this README is labelled v0.1. This distinct v0.2 visual is a conceptual roadmap view only.*
+
 **Roadmap:**
 
 - **Workspace evolution** — sharpen the existing SPA's operator UX and orchestration visibility (clearer AI/group execution management, run diagnostics surfaced more directly) rather than a ground-up GUI rebuild — FlowGate's primary surface is already this SPA, not a CLI.
+- **AI group orchestration** — evolve the presentation of coordinated execution, review/rework, and handoffs so operators can understand group-level work more readily; this describes a v0.2 UX direction, not newly implemented runtime behavior.
 - **Deeper Git / hosting integration** — build on the existing branch/worktree, diff, merge, and finalize support with pull-request hosting integrations and configurable transition policies.
 - **Agent protocol / integration evolution** — more provider-aware orchestration and broader external agent interoperability beyond the current CLI/API invocation surface.
 

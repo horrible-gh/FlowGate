@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">FlowGate v0.2 future roadmap mockup</title>
+  <desc id="desc">A conceptual future workspace visual, not a current product screen.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#081329"/><stop offset=".55" stop-color="#112b4c"/><stop offset="1" stop-color="#17113d"/></linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#152d4e"/><stop offset="1" stop-color="#0c1b33"/></linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#5eead4"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient>
+    <filter id="shadow"><feDropShadow dx="0" dy="16" stdDeviation="20" flood-color="#020617" flood-opacity=".5"/></filter>
+    <style>
+      .ui {font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif}
+      .eyebrow {font-size:18px;font-weight:800;letter-spacing:3px;fill:#9ee7dc}
+      .title {font-size:42px;font-weight:800;fill:#f8fafc}
+      .label {font-size:16px;font-weight:700;fill:#cbd5e1}
+      .small {font-size:14px;fill:#94a3b8}
+      .value {font-size:20px;font-weight:750;fill:#f8fafc}
+      .pill {font-size:13px;font-weight:800;fill:#c4b5fd;letter-spacing:1px}
+    </style>
+  </defs>
+  <rect width="1600" height="900" rx="32" fill="url(#bg)"/>
+  <circle cx="1380" cy="80" r="250" fill="#7c3aed" opacity=".13"/><circle cx="180" cy="800" r="280" fill="#14b8a6" opacity=".1"/>
+  <g class="ui">
+    <text x="80" y="82" class="eyebrow">FLOWGATE v0.2 · FUTURE ROADMAP MOCKUP</text>
+    <text x="80" y="132" class="title">A calmer workspace for evidence-led AI work</text>
+    <text x="80" y="166" class="small">Concept only — not a current product screen or a promise of implemented functionality.</text>
+    <rect x="80" y="208" width="1440" height="610" rx="24" fill="#081426" stroke="#355070" stroke-width="2" filter="url(#shadow)"/>
+    <rect x="80" y="208" width="1440" height="64" rx="24" fill="#10233d"/>
+    <circle cx="120" cy="240" r="8" fill="#5eead4"/><text x="144" y="246" class="label">Workspace concept</text>
+    <rect x="1240" y="225" width="226" height="31" rx="15" fill="#25204e"/><text x="1262" y="246" class="pill">FUTURE / v0.2</text>
+    <rect x="104" y="300" width="265" height="486" rx="16" fill="#0d2038"/>
+    <text x="132" y="342" class="label">WORKSTREAMS</text>
+    <rect x="124" y="366" width="225" height="74" rx="12" fill="#173656"/><rect x="124" y="366" width="5" height="74" rx="2" fill="#5eead4"/>
+    <text x="148" y="396" class="value">Release readiness</text><text x="148" y="420" class="small">Evidence &amp; review focus</text>
+    <rect x="124" y="454" width="225" height="74" rx="12" fill="#112944"/><text x="148" y="484" class="value">Agent execution</text><text x="148" y="508" class="small">Run context at a glance</text>
+    <rect x="124" y="542" width="225" height="74" rx="12" fill="#112944"/><text x="148" y="572" class="value">Source changes</text><text x="148" y="596" class="small">Git state alongside work</text>
+    <text x="132" y="736" class="small">Conceptual navigation</text>
+    <rect x="401" y="300" width="672" height="274" rx="16" fill="url(#card)"/>
+    <text x="433" y="342" class="label">ORCHESTRATION TIMELINE</text>
+    <text x="433" y="382" class="value">One sequence, visible gates, readable context</text>
+    <line x1="465" y1="471" x2="1000" y2="471" stroke="#47627e" stroke-width="4"/>
+    <circle cx="485" cy="471" r="18" fill="#5eead4"/><circle cx="670" cy="471" r="18" fill="#5eead4"/><circle cx="850" cy="471" r="18" fill="#a78bfa"/><circle cx="1000" cy="471" r="18" fill="#355070"/>
+    <text x="438" y="520" class="label">Plan</text><text x="620" y="520" class="label">Execute</text><text x="806" y="520" class="label">Review</text><text x="952" y="520" class="label">Finalize</text>
+    <rect x="401" y="598" width="325" height="188" rx="16" fill="url(#card)"/>
+    <text x="433" y="638" class="label">RUN SIGNALS</text>
+    <text x="433" y="680" class="value">Diagnostics, decisions, handoffs</text>
+    <text x="433" y="718" class="small">A future layout for surfacing context</text><text x="433" y="742" class="small">without claiming new runtime behavior.</text>
+    <rect x="748" y="598" width="325" height="188" rx="16" fill="url(#card)"/>
+    <text x="780" y="638" class="label">EVIDENCE FIRST</text>
+    <text x="780" y="680" class="value">Changes linked to review</text>
+    <text x="780" y="718" class="small">A future presentation of existing</text><text x="780" y="742" class="small">work, review, and Git concepts.</text>
+    <rect x="1105" y="300" width="391" height="486" rx="16" fill="#0d2038"/>
+    <text x="1137" y="342" class="label">FUTURE FOCUS</text>
+    <rect x="1137" y="370" width="327" height="4" rx="2" fill="url(#accent)"/>
+    <text x="1137" y="422" class="value">Workspace evolution</text>
+    <text x="1137" y="450" class="small">Clearer operator UX and execution visibility</text>
+    <text x="1137" y="516" class="value">AI group orchestration</text>
+    <text x="1137" y="544" class="small">Coordination, review, and handoffs in view</text>
+    <text x="1137" y="610" class="value">Git / agent integration</text>
+    <text x="1137" y="638" class="small">Deeper hosting and provider-aware workflows</text>
+    <rect x="1137" y="694" width="282" height="48" rx="12" fill="#182d4b" stroke="#496686"/>
+    <text x="1159" y="725" class="pill">CONCEPTUAL · NOT SHIPPED</text>
+  </g>
+</svg>
