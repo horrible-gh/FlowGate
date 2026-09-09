@@ -32,6 +32,23 @@ def checkpoint(run_id: str, *, expected_round_no: int, expected_stage: str, expe
         latest = store._fetch_one("SELECT * FROM ai_invoke_document_review_loops WHERE run_id = ?", [run_id])
         return affected == 1, latest
 
+def stop_for_restart_orphan(run_id: str, *, at: Optional[str] = None) -> bool:
+    """Terminally stop an active loop whose worker disappeared during restart recovery.
+
+    The stage/reason guards make this a one-way compare-and-swap: a competing recovery
+    can win only once, and an already-terminal human or normal outcome is never relabelled.
+    Round, hop history fields, and the original timestamps are deliberately untouched.
+    """
+    stamp = at or now_iso()
+    return get_store()._execute_affected(
+        "UPDATE ai_invoke_document_review_loops "
+        "SET current_stage = ?, stop_reason = ?, stop_detail = ?, updated_at = ? "
+        "WHERE run_id = ? AND current_stage IN (?, ?) AND stop_reason IS NULL",
+        ["stopped", "restart_orphaned", "worker lease orphaned by server restart",
+         stamp, run_id, "review", "rework"],
+    ) == 1
+
+
 def dismiss_card(run_id: str, *, at: Optional[str] = None) -> bool:
     """Mark this loop's MONITOR CARD as removed by its owner (0529 B0001).
 

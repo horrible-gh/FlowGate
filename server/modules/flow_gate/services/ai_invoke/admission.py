@@ -271,18 +271,33 @@ def _record_orphaned_lease_run(lease_row: dict, end_reason: str) -> None:
     the token up. Best-effort: a run this cannot explain still gets its lease
     cleared by the caller either way, it just won't carry the extra explanation.
     """
+    from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
     from modules.flow_gate.db import ai_invoke_runs as db_runs
 
     run_id = str(lease_row.get("run_id") or "")
-    if not run_id or db_runs.get(run_id) is not None:
+    if not run_id:
         return
-    doc_ref, mode = "", "single"
+    existing = db_runs.get(run_id)
+    if existing is not None:
+        # A replay may follow a partial recovery that persisted the orphan run before
+        # its loop UPDATE. Retry only that same restart outcome; never reinterpret a
+        # normally finished or manually released run as a restart-orphaned loop.
+        if end_reason == "orphaned_by_restart" and existing.get("end_reason") == end_reason:
+            try:
+                db_loops.stop_for_restart_orphan(run_id)
+            except Exception:
+                logger.warning(
+                    "orphaned-lease review-loop stop failed for run %s", run_id, exc_info=True
+                )
+        return
+    doc_ref, mode, issued_to = "", "single", None
     token_id = lease_row.get("token_id")
     if token_id:
         token = db_tokens.get_by_id(token_id)
         if token:
             doc_ref = token.get("doc_ref") or ""
             mode = "continuous" if token.get("continuation_target_seq") is not None else "single"
+            issued_to = token.get("issued_to")
     stamp = now_iso()
     started = lease_row.get("acquired_at") or stamp
     db_runs.upsert({
@@ -296,9 +311,18 @@ def _record_orphaned_lease_run(lease_row: dict, end_reason: str) -> None:
         "resumable": False,
         "started_at": started,
         "finished_at": stamp,
+        "token_id": token_id,
+        "issued_to": issued_to,
         "created_at": started,
         "updated_at": stamp,
     })
+    if end_reason == "orphaned_by_restart":
+        try:
+            db_loops.stop_for_restart_orphan(run_id, at=stamp)
+        except Exception:
+            logger.warning(
+                "orphaned-lease review-loop stop failed for run %s", run_id, exc_info=True
+            )
 
 
 def _reclaim_orphan_lease_token(lease_row: dict, reason: str) -> None:
