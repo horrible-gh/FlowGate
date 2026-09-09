@@ -642,3 +642,47 @@ describe('WorkPlanEditor', () => {
       .toBe('Provider is neither a candidate nor a registered provider.')
   })
 })
+
+describe('approval presave surface', () => {
+  function markDirty(wrapper: ReturnType<typeof mountEditor>) {
+    return wrapper.findAll('.wp-step-msg')[1].setValue('approval must save this first')
+  }
+
+  it('returns clean without a PUT and leaves the one header save button as the only save action', async () => {
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    await expect((wrapper.vm as any).ensureSaved()).resolves.toBe('clean')
+    expect(putRequest).not.toHaveBeenCalled()
+    expect(wrapper.findAll('.card-actions button').filter((b) => b.text().includes('저장'))).toHaveLength(1)
+  })
+
+  it('shares one in-flight PUT between concurrent approval presave requests', async () => {
+    const wrapper = mountEditor()
+    await flushPromises()
+    await markDirty(wrapper)
+    putRequest.mockResolvedValue({
+      data: { revision_no: 4, totals: READ_RESPONSE.totals, assignment_summary: [], unassigned_step_count: 0 },
+    })
+
+    const first = (wrapper.vm as any).ensureSaved()
+    const second = (wrapper.vm as any).ensureSaved()
+    await expect(Promise.all([first, second])).resolves.toEqual(['saved', 'saved'])
+    expect(putRequest).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    [{ status: 422, data: { message: 'invalid', errors: [{ key: 'T#1', msg: 'invalid step' }] } }],
+    [{ status: 409, data: { code: 'wp_revision_conflict' } }],
+    [{ status: 500, data: { message: 'server error' } }],
+  ])('returns failed and keeps the editor dirty when saving before approval fails', async (response) => {
+    const wrapper = mountEditor()
+    await flushPromises()
+    await markDirty(wrapper)
+    putRequest.mockRejectedValue({ response })
+
+    await expect((wrapper.vm as any).ensureSaved()).resolves.toBe('failed')
+    expect(putRequest).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('.wp-dirty-banner').exists()).toBe(true)
+  })
+})

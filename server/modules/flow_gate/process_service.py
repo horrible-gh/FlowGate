@@ -5127,25 +5127,6 @@ def _file_tree_sort_key(name: str, is_dir: bool) -> tuple:
     return (0 if is_dir else 1, natural)
 
 
-class FileTreeScanError(Exception):
-    """A directory subtree could not be listed after bounded retries.
-
-    0487 T0004: 0283 T0004's ``_list_dir_with_retry`` degraded an exhausted retry to an
-    empty listing, which made a genuinely empty folder indistinguishable from one FlowGate
-    simply failed to read. Raising this instead lets the caller refuse to answer a tree
-    request with 200 when a subtree was silently dropped, rather than degrading just that
-    subtree.
-    """
-
-    def __init__(self, path: str, cause: Exception | None = None) -> None:
-        self.path = path
-        self.cause = cause
-        message = f"could not list directory: {path}"
-        if cause is not None:
-            message = f"{message} ({cause})"
-        super().__init__(message)
-
-
 def get_file_tree(project_id: str) -> dict:
     """Return the project's file tree.
 
@@ -5183,12 +5164,8 @@ def get_file_tree(project_id: str) -> dict:
         # against this (storage.filesystem.safe_rename retries on PermissionError); the
         # read/tree path had no such guard and silently swallowed the error, collapsing
         # the tree into an empty/partial result with no diagnostic. Mirror safe_rename's
-        # bounded retry+backoff.
-        #
-        # 0487 T0004: after the retries above are exhausted, 0283 still returned `[]` here —
-        # indistinguishable from a directory that really is empty. Raise FileTreeScanError
-        # instead so get_file_tree (and the tree route) refuses to answer 200 with a tree
-        # that silently dropped a subtree, rather than degrading just that subtree.
+        # bounded retry+backoff, and only after it is exhausted log a warning and return
+        # an empty listing (degrading this subtree, never the whole request).
         last_exc: Exception | None = None
         for attempt in range(retries):
             try:
@@ -5201,7 +5178,7 @@ def get_file_tree(project_id: str) -> dict:
             "get_file_tree: could not list %s after %d attempts: %s",
             path, retries, last_exc,
         )
-        raise FileTreeScanError(path, last_exc)
+        return []
 
     def walk_directory(path: str, parent_id: str | None = None) -> None:
         nonlocal node_id

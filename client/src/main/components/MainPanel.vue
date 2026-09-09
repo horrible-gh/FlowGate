@@ -882,6 +882,7 @@
       :head-doc-label="exposedValue(docHeaderRefs[activeTabId]?.workflowHeadType) ?? getWorkflowViewState(activeTabId).headDocLabel"
       :head-doc-title="exposedValue(docHeaderRefs[activeTabId]?.headDocTitle) ?? null"
       :viewed-doc-id="activeTabId"
+      :before-approve="ensureWorkPlanSavedBeforeApproval"
       @approve="onReviewApproved(activeTabId, $event)"
       @reject="onReviewRejected(activeTabId)"
       @revision-complete="onReviewApproved(activeTabId, $event)"
@@ -1620,6 +1621,16 @@ const textViewerRefs = reactive<Record<string, any>>({})
 const stepVerificationCardRefs = reactive<Record<string, any>>({})
 const convViewRefs = reactive<Record<string, any>>({})
 const workPlanEditorRefs = reactive<Record<string, any>>({})
+
+// Only WP approval needs to coordinate with its table editor. A failed save leaves the
+// editor's existing validation/conflict/error UI in place and prevents the approval POST.
+async function ensureWorkPlanSavedBeforeApproval(): Promise<boolean> {
+  const tabId = activeTabId.value
+  if (!tabId || getTabTypeCode(tabId) !== 'WP') return true
+  const outcome = await workPlanEditorRefs[tabId]?.ensureSaved?.()
+  return outcome === 'clean' || outcome === 'saved'
+}
+
 const qStatuses = reactive<Record<string, string>>({})
 const headerRevision = ref(0)
 

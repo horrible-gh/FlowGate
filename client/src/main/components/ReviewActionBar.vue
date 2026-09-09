@@ -510,6 +510,8 @@ const props = defineProps<{
   docRef: string
   docTitle?: string
   reviewStatus: string | null
+  /** Optional caller gate; WP uses it to finish a dirty save before approval. */
+  beforeApprove?: () => Promise<boolean> | boolean
   /** Variant C: whether AI review feedback exists; shows an "AI review arrived" pill in the pending-review footer. */
   aiReviewArrived?: boolean
   /** Whether the active document's project has at least one resolved runtime AI provider. */
@@ -1006,6 +1008,7 @@ async function doApprove() {
   if (!canApprove.value) return
   approving.value = true
   try {
+    if (props.beforeApprove && !(await props.beforeApprove())) return
     // §3.1: the git finalize choice rides on the approve request only when the
     // choice block is showing (AC + git-active + finalizable). The server pre-checks
     // it before approving and runs the finalize after — a git failure surfaces as

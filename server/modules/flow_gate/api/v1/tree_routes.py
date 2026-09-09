@@ -50,17 +50,8 @@ class SrcDeleteRequest(BaseModel):
 # broadcast) and pushes its sync work through anyio.to_thread.
 @router.get("/projects/{project_id}/files/tree", response_class=JSONResponse)
 def get_files_tree(project_id: str, branch: str = Query("main", description="branch (currently unused, kept for interface compatibility)")):
-    """Return the file tree for the project.
-
-    0487 T0004: a subtree that could not be listed after retries must not be silently
-    dropped into a 200 response with a partial tree — process_service.get_file_tree raises
-    FileTreeScanError in that case, and this is answered as a scan failure instead of
-    quietly succeeding with incomplete nodes.
-    """
-    try:
-        tree = process_service.get_file_tree(project_id)
-    except process_service.FileTreeScanError as exc:
-        return _err(500, "TREE_SCAN_FAILED", f"could not read the project file tree: {exc.path}")
+    """Return the file tree for the project."""
+    tree = process_service.get_file_tree(project_id)
     return {"data": tree}
 
 

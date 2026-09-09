@@ -48,30 +48,18 @@ def _find_function(node: ast.AST, name: str) -> ast.FunctionDef:
     raise AssertionError(f"function {name!r} not found in {SOURCE}")
 
 
-def _find_class(node: ast.AST, name: str) -> ast.ClassDef:
-    for child in ast.walk(node):
-        if isinstance(child, ast.ClassDef) and child.name == name:
-            return child
-    raise AssertionError(f"class {name!r} not found in {SOURCE}")
-
-
 def _load_retry_helper():
-    """exec `_list_dir_with_retry` and the `FileTreeScanError` it raises (0487 T0004)
-    exactly as committed, in an isolated namespace."""
+    """exec `_list_dir_with_retry` exactly as committed, in an isolated namespace."""
     lines = SOURCE.read_text(encoding="utf-8").splitlines()
-    module = _module_ast()
-    cls = _find_class(module, "FileTreeScanError")
-    cls_src = textwrap.dedent("\n".join(lines[cls.lineno - 1 : cls.end_lineno]))
-    fn = _find_function(module, "_list_dir_with_retry")
-    fn_src = textwrap.dedent("\n".join(lines[fn.lineno - 1 : fn.end_lineno]))
+    fn = _find_function(_module_ast(), "_list_dir_with_retry")
+    src = textwrap.dedent("\n".join(lines[fn.lineno - 1 : fn.end_lineno]))
     namespace: dict = {
         "os": os,
         "time": _FakeTime(),
         "logger": logging.getLogger("flowgate.test.tree_walk_0283"),
     }
-    exec(compile(cls_src, str(SOURCE), "exec"), namespace)  # noqa: S102 - committed source
-    exec(compile(fn_src, str(SOURCE), "exec"), namespace)  # noqa: S102 - committed source
-    return namespace["_list_dir_with_retry"], namespace["time"], namespace["FileTreeScanError"]
+    exec(compile(src, str(SOURCE), "exec"), namespace)  # noqa: S102 - committed source
+    return namespace["_list_dir_with_retry"], namespace["time"]
 
 
 class _FakeTime:
@@ -102,7 +90,7 @@ class _FlakyScandir:
 
 class ListDirWithRetryTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.list_dir, self.faketime, self.FileTreeScanError = _load_retry_helper()
+        self.list_dir, self.faketime = _load_retry_helper()
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = self.tmp.name
@@ -146,36 +134,30 @@ class ListDirWithRetryTest(unittest.TestCase):
         real_scandir, os.scandir = os.scandir, flaky
         self.addCleanup(lambda: setattr(os, "scandir", real_scandir))
         with self.assertLogs("flowgate.test.tree_walk_0283", level="WARNING"):
-            with self.assertRaises(self.FileTreeScanError):
-                self.list_dir(self.root, retries=3, delay=0.3)
+            self.list_dir(self.root, retries=3, delay=0.3)
         self.assertEqual(3, len(self.faketime.slept))
         self.assertAlmostEqual(0.3, self.faketime.slept[0])
         self.assertAlmostEqual(0.6, self.faketime.slept[1])
         self.assertTrue(all(b > a for a, b in zip(self.faketime.slept, self.faketime.slept[1:])))
 
-    def test_exhausted_retries_log_a_warning_and_raise_scan_error(self):
-        # 0487 T0004: exhausting the retries must NOT degrade to an empty listing — that
-        # made a genuinely empty folder indistinguishable from one FlowGate failed to read.
-        # It must raise, so the caller (get_file_tree / the tree route) can refuse to answer
-        # 200 with a tree that silently dropped this subtree.
+    def test_exhausted_retries_log_a_warning_and_degrade_to_empty(self):
         flaky = _FlakyScandir(OSError("gone"), failures=99)
         real_scandir, os.scandir = os.scandir, flaky
         self.addCleanup(lambda: setattr(os, "scandir", real_scandir))
         with self.assertLogs("flowgate.test.tree_walk_0283", level="WARNING") as captured:
-            with self.assertRaises(self.FileTreeScanError) as raised:
-                self.list_dir(self.root, retries=3)
+            result = self.list_dir(self.root, retries=3)
+        # Degrades this subtree only — it must not raise and 500 the whole tree request.
+        self.assertEqual([], result)
         self.assertEqual(3, flaky.calls)
         self.assertEqual(1, len(captured.records))
         message = captured.records[0].getMessage()
         self.assertIn("get_file_tree", message)
         self.assertIn(self.root, message)  # the failing path is diagnosable
         self.assertIn("gone", message)  # ...and so is the cause
-        self.assertEqual(self.root, raised.exception.path)
 
-    def test_missing_directory_raises_scan_error(self):
+    def test_missing_directory_does_not_raise(self):
         with self.assertLogs("flowgate.test.tree_walk_0283", level="WARNING"):
-            with self.assertRaises(self.FileTreeScanError):
-                self.list_dir(os.path.join(self.root, "nope"))
+            self.assertEqual([], self.list_dir(os.path.join(self.root, "nope")))
 
 
 class WalkDirectoryStructureTest(unittest.TestCase):

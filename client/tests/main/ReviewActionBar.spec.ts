@@ -1353,3 +1353,35 @@ describe('review request caret regression (0417 T0013)', () => {
   })
 })
 
+
+describe('approval presave gate', () => {
+  const reviewProps = {
+    docId: 'flowgate.default.0487.0006-WP', projectId: 'flowgate', groupId: 'flowgate.default.0487',
+    docRef: 'flowgate.default.0487.0006-WP', reviewStatus: 'pending_review' as const, mode: 'review' as const,
+  }
+
+  it('does not POST approval when the caller reports a failed WP presave', async () => {
+    const beforeApprove = vi.fn().mockResolvedValue(false)
+    const wrapper = mount(ReviewActionBar, { props: { ...reviewProps, beforeApprove }, global: { plugins: [i18n] } })
+
+    await (wrapper.vm as any).doApprove()
+    expect(beforeApprove).toHaveBeenCalledTimes(1)
+    expect(postRequest).not.toHaveBeenCalled()
+    expect(wrapper.emitted('approve')).toBeUndefined()
+  })
+
+  it('waits for one presave gate before sending exactly one approval request', async () => {
+    let release!: (ok: boolean) => void
+    const beforeApprove = vi.fn(() => new Promise<boolean>((resolve) => { release = resolve }))
+    const wrapper = mount(ReviewActionBar, { props: { ...reviewProps, beforeApprove }, global: { plugins: [i18n] } })
+
+    const first = (wrapper.vm as any).doApprove()
+    const second = (wrapper.vm as any).doApprove()
+    expect(beforeApprove).toHaveBeenCalledTimes(1)
+    release(true)
+    await Promise.all([first, second])
+
+    expect(postRequest).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('approve')?.[0]).toEqual(['approved'])
+  })
+})
