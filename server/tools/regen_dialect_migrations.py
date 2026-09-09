@@ -31,6 +31,14 @@ real INSERT, so deleting the PRAGMA line removes only the duplicate.
 Usage (run from server/):
     python tools/regen_dialect_migrations.py            # regenerate in place
     python tools/regen_dialect_migrations.py --verify   # regenerate to temp + diff, no write
+
+``--verify`` and historical migrations (T0006 §7, group 0542): an unchanged dialect file from
+current ``HEAD`` is an already-applied, immutable historical migration -- the top-level invariant
+(T0006 §1) forbids rewriting it just to match a later generator change. Its byte-mismatch is an
+informational DIFF. The exemption requires both that the path exist in ``HEAD`` and that current
+worktree text exactly equal the ``HEAD`` blob: a new/untracked dialect file, or a historical file
+regenerated or edited in place and left uncommitted, is a currently regenerated target, so a
+mismatch still fails ``--verify``. See ``_is_immutable_historical``.
 """
 from __future__ import annotations
 
@@ -44,6 +52,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SERVER = os.path.dirname(HERE)
+REPO_ROOT = os.path.dirname(SERVER)
 MIG = os.path.join(SERVER, "sql", "migrations")
 SRC = os.path.join(MIG, "sqlite")
 
@@ -56,6 +65,30 @@ TARGETS = [("mysql", "mysql"), ("postgres", "postgresql")]
 # non-SQLite target we emit a documented no-op stub in place of the converter's
 # (broken) output. The sqlite source is left untouched.
 _CODE_HANDLED_IDS = {"037"}
+
+# PostgreSQL-only hand-authored migrations (found during group 0542's audit of the full regen).
+# Each of these rewrites a CHECK constraint or FK in place (ALTER TABLE ... DROP/ADD CONSTRAINT)
+# instead of the SQLite source's rename+recreate+drop table-rebuild idiom, because PostgreSQL can
+# ALTER a CHECK/FK directly and does not need the rebuild dance the SQLite dialect requires. Every
+# one of these has its own NR/T history fixing a real boot failure (e.g. 107 is flowgate.default.
+# 0539 T0004's fix for a schema-drift bug; 075 documents why 074a's PostgreSQL file never renames
+# anything). A generic regen from the SQLite source would silently replace the deliberate, already
+# -fixed file with the generic (heavier, and in 107's case, previously *broken*) rebuild — exactly
+# what group 0542 caught happening to itself. Regen skips these exact files entirely on the
+# postgres target: it neither overwrites nor diffs them, leaving the committed file exactly as
+# authored.
+#
+# Keyed by exact filename, not migration id prefix: FlowGate has repeatedly reused a numeric id
+# across unrelated files (094, 103, 105, 108, ... each have two files in this very directory), so
+# an id-keyed exception would silently also skip regeneration/--verify for any future *normal*
+# generated migration that happens to share one of these five ids.
+_PG_HAND_AUTHORED_FILES = {
+    "064_tokens_resolve_conflict_scope.sql",
+    "074a_test_run_cancel_status.sql",
+    "075_test_run_cases_fk_repair.sql",
+    "092_ai_invoke_document_review_loop_live_run.sql",
+    "107_tokens_failure_origin_review_scope.sql",
+}
 
 # SQLite-only JSON DML the converter cannot translate (table-valued json_each and
 # the aggregate json_group_array / json_array_length). If any file NOT in
@@ -85,6 +118,64 @@ _PG_SQLITE_JSON_CTOR = re.compile(r"(?i)\bjson_(?:array|object)\s*\(")
 #   * a GROUP BY on a non-PK column (a bare `<alias>.doc_id`) that PostgreSQL rejects unless the
 #     grouping key is the table's PRIMARY KEY (fix_pg_groupby_pk rewrites doc_id -> id)
 _PG_GROUPBY_NONPK = re.compile(r"(?i)\bGROUP\s+BY\s+\w+\.doc_id\b")
+
+# T0006 §7: --verify must not fail solely because an already-committed, already-applied
+# migration is not byte-identical to *today's* generator output. §1's top-level invariant
+# forbids rewriting/regenerating such a file to match, so a content mismatch on it can never be
+# fixed by "run the tool again" -- treating it as an error would make --verify permanently red
+# for reasons this project explicitly disallows resolving. What --verify must still catch is the
+# other half of §7: a "new/currently regenerated target", i.e. a dialect file that has never
+# been generated/committed at all yet (added a SQLite migration but forgot to run the generator),
+# OR one that exists on disk but was never actually committed for this dialect (a brand-new
+# untracked file, or an already-historical file regenerated in place and left uncommitted).
+#
+# rev3 (R9): HEAD path presence alone still leaves a hole. A path can exist in HEAD yet have been
+# regenerated or edited in the worktree without being committed. Such content is a current target,
+# not the immutable committed baseline, and must fail when it differs from the generator. Thus
+# `historical` means both "the path exists in HEAD" and "the worktree text equals that HEAD blob".
+def _verify_status(cur: str | None, final: str, historical: bool = True) -> tuple[int, str]:
+    """Return (rc_contribution, label) for one file's --verify comparison. See module note above.
+
+    `historical` must be computed with `_is_immutable_historical`, never from only
+    `os.path.exists` or `_committed_in_head`: it protects precisely an unchanged committed
+    baseline, not a path whose current worktree content has been modified after that commit.
+    """
+    if cur is None:
+        return 1, "MISSING"
+    if cur == final:
+        return 0, "OK"
+    if historical:
+        return 0, "DIFF"
+    return 1, "MISMATCH"
+
+
+def _committed_in_head(relpath: str) -> bool:
+    """True iff <relpath> (POSIX-style, relative to the repo root) exists in HEAD."""
+    result = subprocess.run(
+        ["git", "cat-file", "-e", f"HEAD:{relpath}"],
+        cwd=REPO_ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0
+
+
+def _worktree_matches_head(relpath: str, cur: str) -> bool:
+    """True iff current text equals the immutable blob at HEAD:<relpath> exactly.
+
+    A path's history and its current state are deliberately separate checks: an edited or
+    regenerated-in-place historical migration still exists in HEAD, but is not eligible for
+    the T0006 §7 historical exemption until its worktree content again equals that baseline.
+    """
+    result = subprocess.run(
+        ["git", "show", f"HEAD:{relpath}"],
+        cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0 and result.stdout.decode("utf-8") == cur
+
+
+def _is_immutable_historical(relpath: str, cur: str | None) -> bool:
+    """Whether ``cur`` is the unchanged committed baseline protected by T0006 §7."""
+    return cur is not None and _committed_in_head(relpath) and _worktree_matches_head(relpath, cur)
+
 
 # Cross-dialect no-op: a comment-only file can trip "can't execute an empty query".
 _NOOP_STUB = (
@@ -429,19 +520,39 @@ def fix_pg_groupby_pk(text: str) -> str:
     return _PG_GROUPBY_DOC_ID.sub(lambda m: f"GROUP BY {m.group(1)}.id", text)
 
 
-# The SQLite "drop & recreate a table to alter it" idiom (003 groups, plus the _new+RENAME
-# variant used by 023/024/025/027/033/039/044) does a bare ``DROP TABLE x``. SQLite allows it
-# with foreign_keys OFF; MySQL is fenced by fix_mysql_fk_during_recreate. PostgreSQL refuses to
-# drop a table still referenced by a FOREIGN KEY ("cannot drop table x because other objects
-# depend on it … Use DROP … CASCADE", B0095, migration 003 — surfaces once the ->>/GROUP BY view
-# fixes let the chain reach 003). DROP … CASCADE is wrong here: it would silently drop the
-# dependents' FK constraints and never restore them, leaving the recreated table with weaker
-# integrity than the SQLite/MySQL targets. Instead, fence each non-temp DROP TABLE with a pair of
-# DO blocks that snapshot the inbound FKs from the catalog, drop them so the rebuild can proceed,
-# and re-add them verbatim (original name + full pg_get_constraintdef, incl. ON DELETE / composite
-# keys) after every table has been recreated. The recreated table keeps its original name in both
-# idioms, so the saved "REFERENCES <name>" statements re-resolve. Views that depend on the table
-# are dropped/recreated by the migration itself (e.g. 027), so only FKs are at stake here.
+# The SQLite "drop & recreate a table to alter it" idiom does a bare ``DROP TABLE x``. SQLite
+# allows it with foreign_keys OFF; MySQL is fenced by fix_mysql_fk_during_recreate. PostgreSQL
+# refuses to drop a table still referenced by a FOREIGN KEY ("cannot drop table x because other
+# objects depend on it … Use DROP … CASCADE", B0095, migration 003). DROP … CASCADE is wrong here:
+# it would silently drop the dependents' FK constraints and never restore them, leaving the
+# recreated table with weaker integrity than the SQLite/MySQL targets. Instead, fence each
+# non-temp DROP TABLE with a pair of DO blocks that snapshot the inbound FKs from the catalog,
+# drop them so the rebuild can proceed, and re-add them verbatim (original name + full
+# pg_get_constraintdef, incl. ON DELETE / composite keys) after every table has been recreated.
+# Views that depend on the table are dropped/recreated by the migration itself (e.g. 027), so
+# only FKs are at stake here.
+#
+# The source set uses two different rebuild idioms, and they need the fence at *different*
+# points relative to the DROP:
+#   * _new+RENAME idiom (003 groups, 023/024/025/027/033/039/044): ``DROP TABLE x; CREATE TABLE
+#     x_new (...); ...; ALTER TABLE x_new RENAME TO x;``. The DROP targets the still-original-
+#     named table, so a snapshot taken immediately *before* that DROP sees "REFERENCES x" and
+#     restoring it after the rename re-resolves against the freshly renamed x. This is the
+#     classic case: table key == the DROP's own target, fence goes right before the DROP.
+#   * rename-to-backup idiom (the SQLite source of 036, 042a, 052, 062a, 064, 075a, 086b, 107,
+#     108, ...): ``ALTER TABLE x RENAME TO x_before_...; CREATE TABLE x (...); ...; DROP TABLE
+#     x_before_...;``. Here the DROP targets the *backup* name, and by the time it runs, a
+#     brand-new `x` already exists. A snapshot taken at the DROP site (the bug this fences: group
+#     0542) would read the catalog *after* the rename, so pg_get_constraintdef renders
+#     "REFERENCES x_before_...(...)" — a name that no longer exists once the DROP below it
+#     executes ("relation ... does not exist"). The fence must instead run *before* the RENAME,
+#     keyed on the original name `x`: at that point pg_get_constraintdef still renders
+#     "REFERENCES x(...)", and replaying it after the rebuild binds to the new `x`.
+#     _pg_rebuild_backup_renames() detects this idiom generically (no hardcoded backup-name
+#     strings) by matching any ``ALTER TABLE <x> RENAME TO <backup>`` that precedes a
+#     ``DROP TABLE <backup>`` in the same file. Of that list, 064 and 107's *postgres* files are
+#     hand-authored exceptions (see _PG_HAND_AUTHORED_FILES below) that never reach this idiom at
+#     all on postgres — only their SQLite source uses it.
 #
 # Implementation notes that keep this invisible to the other passes:
 #   * Temp tables are named `_fk_rb_<table>` (leading underscore) so _PG_DROP_TABLE_STMT — which
@@ -451,12 +562,40 @@ def fix_pg_groupby_pk(text: str) -> str:
 #   * ON COMMIT DROP cleans the temp table at the migrator's per-file transaction boundary.
 #   * Self-referential FKs (conrelid = confrelid) are excluded: the recreate body re-declares them
 #     inline, so re-adding the saved copy would duplicate them.
-# A table with no inbound FK (id_counter / answers / the tokens_before_* backups) snapshots zero
-# rows and the fence is a harmless no-op, so the rule "fence every non-temp DROP TABLE" is uniform.
+# A table with no inbound FK (id_counter / answers) snapshots zero rows and the fence is a
+# harmless no-op, so the rule "fence every non-temp DROP TABLE" is uniform.
 _PG_DROP_TABLE_STMT = re.compile(
     r"(?im)^[ \t]*DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([A-Za-z]\w*)\s*;[ \t]*$"
 )
+_PG_RENAME_TO_STMT = re.compile(
+    r"(?im)^[ \t]*ALTER\s+TABLE\s+([A-Za-z]\w*)\s+RENAME\s+TO\s+([A-Za-z]\w*)\s*;[ \t]*$"
+)
 _PG_FK_REBUILD_TAG = "[pg-fk-rebuild]"
+
+
+def _pg_rebuild_backup_renames(text: str) -> dict[str, tuple[str, int]]:
+    """Map a RENAME TO target ("backup" name) -> (original name, position of the RENAME stmt).
+
+    Detects the "ALTER TABLE x RENAME TO x_before_...; ...; DROP TABLE x_before_...;" idiom
+    generically, with no hardcoded backup-name string: any RENAME TO target that is later
+    DROP TABLE'd in the same file qualifies, whatever suffix the backup name carries.
+    """
+    return {m.group(2): (m.group(1), m.start()) for m in _PG_RENAME_TO_STMT.finditer(text)}
+
+
+def _pg_rebuild_fence_key(dropped: str, drop_pos: int,
+                           renames: dict[str, tuple[str, int]]) -> tuple[str, int]:
+    """Return (table, insert_pos) for the FK fence of a ``DROP TABLE <dropped>`` at drop_pos.
+
+    If <dropped> is a backup created by an earlier RENAME in this file (the rename-to-backup
+    idiom), the fence must be keyed on the *original* name and inserted before that RENAME
+    (see the module note above); otherwise it is keyed on <dropped> itself, inserted right
+    before the DROP (the classic _new+RENAME idiom).
+    """
+    rename = renames.get(dropped)
+    if rename is not None and rename[1] < drop_pos:
+        return rename[0], rename[1]
+    return dropped, drop_pos
 
 
 def _pg_fk_snapshot_block(table: str) -> str:
@@ -516,33 +655,42 @@ def fix_pg_table_rebuild(text: str) -> str:
     """Fence every non-temp DROP TABLE so PostgreSQL can drop & recreate FK-referenced tables.
 
     Snapshots and re-adds the inbound foreign keys around the drop (see the module-level note).
+    For the rename-to-backup idiom the snapshot is inserted before the RENAME, keyed on the
+    original table name, not at the DROP site — see _pg_rebuild_fence_key.
     Idempotent: a file already carrying the fence tag is returned unchanged.
     """
     if _PG_FK_REBUILD_TAG in text:
         return text
+    renames = _pg_rebuild_backup_renames(text)
+
     tables: list[str] = []
+    inserts: list[tuple[int, str]] = []
+    for m in _PG_DROP_TABLE_STMT.finditer(text):
+        table, insert_pos = _pg_rebuild_fence_key(m.group(1), m.start(), renames)
+        if table in tables:
+            continue
+        tables.append(table)
+        inserts.append((insert_pos, _pg_fk_snapshot_block(table)))
 
-    def repl(m: "re.Match") -> str:
-        table = m.group(1)
-        if table not in tables:
-            tables.append(table)
-        return _pg_fk_snapshot_block(table) + m.group(0)
-
-    rewritten = _PG_DROP_TABLE_STMT.sub(repl, text)
     if not tables:
         return text
-    if not rewritten.endswith("\n"):
-        rewritten += "\n"
+
+    for pos, block in sorted(inserts, key=lambda item: item[0], reverse=True):
+        text = text[:pos] + block + text[pos:]
+    if not text.endswith("\n"):
+        text += "\n"
     restore = "\n".join(_pg_fk_restore_block(t) for t in tables)
-    return rewritten + "\n" + restore
+    return text + "\n" + restore
 
 
 def pg_unfenced_drop_table(text: str) -> str | None:
     """Return the first non-temp table dropped without an FK fence above it, else None."""
+    renames = _pg_rebuild_backup_renames(text)
     for m in _PG_DROP_TABLE_STMT.finditer(text):
+        table, _ = _pg_rebuild_fence_key(m.group(1), m.start(), renames)
         sentinel = (
             f'{_PG_FK_REBUILD_TAG} preserve inbound FOREIGN KEYs across '
-            f'the drop+recreate of "{m.group(1)}"'
+            f'the drop+recreate of "{table}"'
         )
         if sentinel not in text[: m.start()]:
             return m.group(1)
@@ -781,6 +929,10 @@ def regenerate(verify_only: bool) -> int:
                     staged[fname] = fix_mysql_drop_index(staged[fname], imap)
 
             for fname in fnames:
+                if out_name == "postgres" and fname in _PG_HAND_AUTHORED_FILES:
+                    print(f"-- hand-authored, skipped {out_name}/{fname}")
+                    continue
+
                 src_text = open(os.path.join(SRC, fname), encoding="utf-8").read()
                 final = staged[fname]
 
@@ -857,11 +1009,33 @@ def regenerate(verify_only: bool) -> int:
                 dpath = os.path.join(dest, fname)
                 if verify_only:
                     cur = open(dpath, encoding="utf-8").read() if os.path.exists(dpath) else None
-                    if cur != final:
-                        rc = 1
-                        print(f"~~ DIFF {out_name}/{fname} (committed != regenerated)")
+                    relpath = os.path.relpath(dpath, REPO_ROOT).replace(os.sep, "/")
+                    historical = _is_immutable_historical(relpath, cur)
+                    status_rc, label = _verify_status(cur, final, historical)
+                    rc = rc or status_rc
+                    if label == "MISSING":
+                        print(f"!! MISSING {out_name}/{fname}: no committed file yet for this "
+                              f"dialect; this is a new generator target (T0006 §7) and must be "
+                              f"generated -- run without --verify to write it.")
+                    elif label == "MISMATCH":
+                        print(f"!! MISMATCH {out_name}/{fname}: its current worktree content is "
+                              f"not the unchanged committed baseline (untracked/new, or an "
+                              f"already-historical file regenerated or edited in place) and "
+                              f"differs from today's generator output -- T0006 §7's historical-"
+                              f"immutability exemption does not apply; regenerate correctly or "
+                              f"commit the intended content.")
+                    elif label == "DIFF":
+                        # Historical, already-committed migration: report the drift for
+                        # visibility but do not fail -- T0006 §1/§7 forbid rewriting an
+                        # immutable historical file just to match today's generator output.
+                        print(f"~~ DIFF {out_name}/{fname} (committed != regenerated; historical, "
+                              f"not failing per T0006 §7)")
                 else:
-                    with open(dpath, "w", encoding="utf-8") as f:
+                    # newline="\n": write exact LF bytes on every platform. Without it, a
+                    # text-mode write on Windows translates every "\n" to os.linesep ("\r\n"),
+                    # corrupting the repo's LF-only migration files (git core.autocrlf is off
+                    # here, so nothing normalizes it back on commit).
+                    with open(dpath, "w", encoding="utf-8", newline="\n") as f:
                         f.write(final)
 
             print(f"{'verified' if verify_only else 'wrote'} {out_name}: "

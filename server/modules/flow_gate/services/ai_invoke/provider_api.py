@@ -8,7 +8,9 @@ agent loop that calls these and decides what the answers mean.
 
 from __future__ import annotations
 
+import errno
 import json
+import socket
 import urllib.error
 import urllib.request
 from typing import Optional
@@ -252,6 +254,38 @@ def _is_glm_openai_provider(provider: dict) -> bool:
         or "bigmodel.cn" in base_url
         or "z.ai" in base_url
     )
+
+
+def _is_transient_startup_transport_error(exc: BaseException) -> bool:
+    """Return whether a pre-response failure is safe to retry on the same provider.
+
+    HTTP errors, TLS/certificate failures, parsing/validation errors, and configuration
+    errors intentionally stay outside this predicate. ``URLError`` is only transient
+    when its wrapped reason is one of the socket conditions below.
+    """
+    transient_errnos = {
+        errno.EAGAIN, errno.ECONNABORTED, errno.ECONNREFUSED, errno.ECONNRESET,
+        errno.EHOSTUNREACH, errno.ENETDOWN, errno.ENETUNREACH, errno.ETIMEDOUT,
+        # Windows resolver/socket codes are not consistently exposed through errno.
+        10035, 10051, 10053, 10054, 10060, 10061, 11001, 11002,
+    }
+    seen: set[int] = set()
+    current: object = exc
+    while isinstance(current, BaseException) and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, urllib.error.HTTPError):
+            return False
+        if isinstance(current, (TimeoutError, socket.timeout, ConnectionError)):
+            return True
+        if isinstance(current, socket.gaierror):
+            return True
+        if isinstance(current, OSError) and current.errno in transient_errnos:
+            return True
+        if isinstance(current, urllib.error.URLError):
+            current = current.reason
+            continue
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def _http_post_json(url: str, headers: dict, body: dict, timeout: float) -> dict:

@@ -73,6 +73,12 @@ SOURCE_DIRTY_FILES_LIMIT = 20
 
 API_MAX_TURNS_PER_DOC = 4        # API agent loop cap = docs_target × 4
 
+# A model API may hit a resolver/socket blip before its first usable response. Keep
+# retries inside that provider invocation so they neither consume provider-fallback
+# attempts nor alter pin/sequence selection. Two retries means three calls maximum.
+API_STARTUP_TRANSPORT_MAX_RETRIES = 2
+API_STARTUP_TRANSPORT_BACKOFF_SEC = 0.1
+
 API_MAX_TOOL_NUDGES = 2          # retry when the model claims completion without using the tool
 
 ORACLE_SETTLE_SEC = 3            # wait before judging (late-commit slack)
