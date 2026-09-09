@@ -1033,20 +1033,67 @@ def resolve_loop_provider(bundle: dict, stage: str) -> str:
     raise ValueError(f"unknown document review-loop stage: {stage}")
 
 
+def _document_loop_review_view(bundle: dict, reviews: list[dict]) -> tuple[list[dict], dict | None]:
+    """Return this loop's review history and the verdict owned by the current review hop.
+
+    New loops always provide both durable identities. In that mode provenance is strict:
+    rows with missing provenance, another run id, or another attempt can never stand in for
+    the current hop. The baseline-only branch is deliberately limited to cold restores of
+    legacy loop rows/bundles that predate review provenance; it preserves their old meaning
+    without weakening ownership for a provenance-aware active hop.
+    """
+    baseline = int(bundle.get("review_baseline_id") or 0)
+    after_baseline = [
+        review for review in reviews if int(review.get("id") or 0) > baseline
+    ]
+    run_id = bundle.get("review_run_id")
+    attempt_no = int(bundle.get("review_attempt_no") or 0)
+    legacy_shape = bool(after_baseline) and all(
+        "review_run_id" not in review and "attempt_no" not in review
+        for review in after_baseline
+    )
+    if not run_id or attempt_no <= 0 or legacy_shape:
+        history = sorted(after_baseline, key=lambda item: int(item.get("id") or 0), reverse=True)
+        return history, (history[0] if history else None)
+
+    owned = [
+        review for review in after_baseline
+        if review.get("review_run_id") == run_id
+        and int(review.get("attempt_no") or 0) <= attempt_no
+    ]
+    # Attempt order, not arrival/id order, prevents a late old-attempt verdict becoming
+    # latest. Keep one row per attempt defensively; registration normally creates one.
+    owned.sort(
+        key=lambda item: (int(item.get("attempt_no") or 0), int(item.get("id") or 0)),
+        reverse=True,
+    )
+    history = []
+    seen_attempts = set()
+    for review in owned:
+        review_attempt = int(review.get("attempt_no") or 0)
+        if review_attempt in seen_attempts:
+            continue
+        seen_attempts.add(review_attempt)
+        history.append(review)
+    latest = next(
+        (review for review in history if int(review.get("attempt_no") or 0) == attempt_no),
+        None,
+    )
+    return history, latest
+
+
 def check_expected_progress(bundle: dict, doc: dict, reviews: list[dict]) -> bool:
     """Verify the just-finished hop, never progress left by an earlier round."""
     kind = bundle.get("last_hop_kind")
-    baseline = int(bundle.get("review_baseline_id") or 0)
-    current = [
-        review for review in reviews
-        if int(review.get("id") or 0) > baseline
-    ]
+    current, latest = _document_loop_review_view(bundle, reviews)
     if kind == REVIEW_HOP_KIND:
-        # round_no is the 1-based review ordinal for this run.  Requiring that
-        # many post-baseline rows prevents round N from reusing round N-1's verdict.
+        # A provenance-aware hop must own an exact run/attempt verdict. Legacy bundles
+        # retain the historical round-count check through _document_loop_review_view.
+        if bundle.get("review_run_id") and int(bundle.get("review_attempt_no") or 0) > 0:
+            return latest is not None
         return len(current) >= max(1, int(bundle.get("round_no") or 1))
     if kind == REWORK_HOP_KIND:
-        latest = max(current, key=lambda review: int(review.get("id") or 0), default={})
+        latest = latest or (current[0] if current else {})
         expected_revision = int(
             latest.get("revision_no") or bundle.get("baseline_revision_no") or 0
         )
@@ -1058,9 +1105,9 @@ def resolve_document_review_loop_gate(bundle: dict) -> dict:
     """Return the next persisted stage, or a terminal stopped state (L0009 §2/§4)."""
     now = bundle.get("now")
     reviews = list(bundle.get("reviews") or [])
-    baseline = int(bundle.get("review_baseline_id") or 0)
-    current = [r for r in reviews if int(r.get("id") or 0) > baseline]
-    latest = max(current, key=lambda r: int(r.get("id") or 0), default={})
+    current, owned_latest = _document_loop_review_view(bundle, reviews)
+    latest = owned_latest or {}
+    history_latest = current[0] if current else {}
     common = {"round_no": max(1, int(bundle.get("round_no") or 1)), "stop_reason": None, "stop_detail": None}
     if latest.get("verdict") == "pass":
         return {**common, "current_stage": "stopped", "stop_reason": "review_passed"}
@@ -1070,6 +1117,20 @@ def resolve_document_review_loop_gate(bundle: dict) -> dict:
     # verdict, so `doc.revision_no` cannot have moved because of it either.
     if latest.get("verdict") == "hold":
         return {**common, "current_stage": "stopped", "stop_reason": REVIEW_VERDICT_HOLD_STOP_CODE, "stop_detail": "reviewer returned hold"}
+    if (
+        latest
+        and len(current) >= REVIEW_STALL_ROUNDS
+        and (current[0].get("verdict") or "").lower() == "issues"
+        and (current[1].get("verdict") or "").lower() == "issues"
+        and (_loop_finding_count(current[0]) or 0) > 0
+        and (_loop_finding_count(current[1]) or 0) > 0
+        and oracle.review_finding_digest(current[0]) == oracle.review_finding_digest(current[1])
+    ):
+        return {
+            **common, "current_stage": "stopped",
+            "stop_reason": REVIEW_STALLED_STOP_CODE,
+            "stop_detail": "consecutive review rounds returned the same findings",
+        }
     if bundle.get("document_missing"):
         return {**common, "current_stage": "stopped", "stop_reason": "retry_exhausted", "stop_detail": "target document no longer exists"}
     if bundle.get("last_hop_outcome") == "failed" or bundle.get("history_lookup_failed") or bundle.get("transition_failed"):
@@ -1092,7 +1153,7 @@ def resolve_document_review_loop_gate(bundle: dict) -> dict:
     if (
         bundle.get("last_hop_kind") == REWORK_HOP_KIND
         and bundle.get("last_hop_outcome") == "succeeded"
-        and int(doc.get("revision_no") or 0) > int(latest.get("revision_no") or bundle.get("baseline_revision_no") or 0)
+        and int(doc.get("revision_no") or 0) > int(history_latest.get("revision_no") or bundle.get("baseline_revision_no") or 0)
     ):
         if limit != REVIEW_ROUNDS_NO_LIMIT and rounds_used >= limit:
             return {**common, "current_stage": "stopped", "stop_reason": "review_count_exhausted", "stop_detail": f"review count {limit} exhausted"}
@@ -1104,7 +1165,7 @@ def resolve_document_review_loop_gate(bundle: dict) -> dict:
     # and 'hold' returned just below it.
     if latest.get("verdict") == "issues":
         return {**common, "current_stage": REWORK_HOP_KIND, "round_no": rounds_used + 1, "attempts_used": 0}
-    if int(doc.get("revision_no") or 0) > int(latest.get("revision_no") or bundle.get("baseline_revision_no") or 0):
+    if int(doc.get("revision_no") or 0) > int(history_latest.get("revision_no") or bundle.get("baseline_revision_no") or 0):
         return {**common, "current_stage": REVIEW_HOP_KIND, "round_no": rounds_used + 1, "attempts_used": 0}
     return {**common, "current_stage": bundle.get("current_stage") or REVIEW_HOP_KIND, "attempts_used": int(bundle.get("attempts_used") or 0)}
 
@@ -1207,6 +1268,10 @@ def _checkpoint_document_review_loop_tx(run: dict) -> dict | None:
         "failure_detail": run.get("last_message") or run.get("end_reason"),
         "now": datetime.now(timezone.utc),
         "deadline_at": _loop_deadline(persisted.get("deadline_at")),
+        # The review registration snapshots these exact values into document_reviews.
+        # Carry them from the completed run so every checkpoint consumer sees one universe.
+        "review_run_id": run["run_id"],
+        "review_attempt_no": int(run.get("attempt_no") or 0),
     }
     if succeeded and not check_expected_progress(bundle, doc or {}, reviews):
         bundle["last_hop_outcome"] = "failed"
@@ -1215,13 +1280,7 @@ def _checkpoint_document_review_loop_tx(run: dict) -> dict | None:
     # A successful review with a new non-pass verdict must become a real document
     # rejection before the rework stage is made visible. Both writes share the outer
     # transaction, so a checkpoint failure rolls the rejection back as well.
-    current_reviews = [
-        item for item in reviews
-        if int(item.get("id") or 0) > int(persisted.get("review_baseline_id") or 0)
-    ]
-    latest_review = max(
-        current_reviews, key=lambda item: int(item.get("id") or 0), default=None
-    )
+    current_reviews, latest_review = _document_loop_review_view(bundle, reviews)
     # T0011 §3: only 'issues' is a real rejection. 'hold' must never reach _auto_reject --
     # it is a durable human stop, and rejecting the document out from under it would make
     # the next hop a rework nobody asked for (0486 NR0010 Finding 2).
