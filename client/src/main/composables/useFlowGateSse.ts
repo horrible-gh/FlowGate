@@ -206,16 +206,19 @@ export function useFlowGateSse(refreshAll: () => void) {
     }
   }
 
-  function emitScreenRefresh(pid: string | null) {
+  function emitScreenRefresh(pid: string | null, docId: string | null = null) {
     refreshAll()
     // refreshAll() only invalidates the explorer tree. Open document tabs derive
     // their action-bar / workflow-head state from a one-shot fetch on mount, so a
     // sibling doc created or changed out-of-band (e.g. an AI worker via the inbox
     // API) leaves them stale. Signal open tabs to refetch their head state so the
     // action bar stays live (navigate-to-existing instead of stale "proceed/create").
+    // `doc_id` (T0004 §3) narrows this to one tab when every coalesced event named
+    // the same document (e.g. an AI review arriving for it); null means "no such
+    // narrowing" and every open tab in the project refetches as before.
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
-        new CustomEvent('fg:open_docs_refresh', { detail: { project: pid } }),
+        new CustomEvent('fg:open_docs_refresh', { detail: { project: pid, doc_id: docId } }),
       )
       // Signal the 🔔 notification center to refetch its persistent inflow feed + unread badge,
       // so document inflow is visible without entering the dashboard (R0001 group 0045 / NR0003
@@ -246,11 +249,20 @@ export function useFlowGateSse(refreshAll: () => void) {
   const REFRESH_COALESCE_MS = 250
   let coalesceTimer: ReturnType<typeof setTimeout> | null = null
   let pendingRefreshProject: string | null = null
+  // Doc-scoped refresh target (T0004 §3/§5). `undefined` = no event has joined the
+  // current coalescing window yet; `null` = the window must widen to a full project
+  // refresh (either an event with no specific doc joined it, or two different docs
+  // did); a string = every event in the window so far names this same document, so
+  // the emitted `fg:open_docs_refresh` can be scoped to it instead of nudging every
+  // open tab in the project.
+  let pendingRefreshDocId: string | null | undefined = undefined
 
   function flushScreenRefresh() {
     const pid = pendingRefreshProject
+    const docId = pendingRefreshDocId ?? null
     pendingRefreshProject = null
-    emitScreenRefresh(pid)
+    pendingRefreshDocId = undefined
+    emitScreenRefresh(pid, docId)
   }
 
   function cancelCoalescedRefresh() {
@@ -259,10 +271,16 @@ export function useFlowGateSse(refreshAll: () => void) {
       coalesceTimer = null
     }
     pendingRefreshProject = null
+    pendingRefreshDocId = undefined
   }
 
-  function scheduleScreenRefresh(pid: string | null, immediate: boolean) {
+  function scheduleScreenRefresh(pid: string | null, immediate: boolean, docId?: string | null) {
     pendingRefreshProject = pid
+    if (pendingRefreshDocId === undefined) {
+      pendingRefreshDocId = docId ?? null
+    } else if (pendingRefreshDocId !== (docId ?? null)) {
+      pendingRefreshDocId = null
+    }
     if (immediate) {
       // Reconnect resync (§3-3) and manual-equivalent paths must not be deferred:
       // this re-read is the safety net for events missed while disconnected.
@@ -280,7 +298,7 @@ export function useFlowGateSse(refreshAll: () => void) {
     }, REFRESH_COALESCE_MS)
   }
 
-  function invalidateAndRefresh(project?: string | null, immediate = false) {
+  function invalidateAndRefresh(project?: string | null, immediate = false, docId?: string | null) {
     const pid = project ?? projectStore.currentProjectId
     if (pid) explorerStore.invalidateProject(pid)
     if (pid && pid !== projectStore.currentProjectId) {
@@ -294,7 +312,7 @@ export function useFlowGateSse(refreshAll: () => void) {
       return
     }
     if (pid) dashboardStore.invalidate(pid, immediate)
-    scheduleScreenRefresh(pid ?? null, immediate)
+    scheduleScreenRefresh(pid ?? null, immediate, docId)
   }
 
   function onProjectChanged(next: string | null) {
@@ -461,12 +479,21 @@ export function useFlowGateSse(refreshAll: () => void) {
     source.addEventListener('group_view_refresh', (e: Event) => {
       try {
         const data = JSON.parse((e as MessageEvent).data)
-        invalidateAndRefresh(data.project)
+        const p = data.payload ?? {}
+        // The AI-review-arrival's paired group_view_refresh (reason: review_added,
+        // broadcast alongside ai_review_arrived by the same inbox handler) targets the
+        // very document whose review just landed — narrow it the same way (T0004 §3/§5)
+        // so the two coalesce into one doc-scoped refetch instead of nudging every open
+        // tab in the group. Every other reason (workflow decisions, sibling doc
+        // creation, git archive, …) keeps the broad project-wide refresh: those events'
+        // doc_id often names a DIFFERENT document than the one that needs re-reading
+        // (e.g. a newly created sibling), so narrowing there would miss real updates.
+        const docId = p.reason === 'review_added' ? (data.doc_id ?? null) : undefined
+        invalidateAndRefresh(data.project, false, docId)
         // R0001 group 0381: a CODE RED sends the failing TS back through the time machine to
         // the pre-approval step. The refresh above re-renders the (now pending) status badge,
         // but a silent badge flip reads as "nothing happened" right after a failure toast —
         // so name the state change once, from the locale bundle.
-        const p = data.payload ?? {}
         if (p.reason === 'test_run_code_failure_auto_reopen') {
           showToast(
             t('main.notifications.test_run_auto_reopened', {
@@ -698,7 +725,9 @@ export function useFlowGateSse(refreshAll: () => void) {
         if (title) showToast(t('main.notifications.ai_review_arrived', { title }), 'info')
         // invalidateAndRefresh → fg:open_docs_refresh → open tab refetches → the
         // "AI review arrived" pill surfaces (aiReview is populated from the doc detail).
-        invalidateAndRefresh(data.project)
+        // Scoped to the reviewed document (T0004 §3): a same-project sibling doc's
+        // arrival must not force this tab to re-read review/history it does not own.
+        invalidateAndRefresh(data.project, false, data.doc_id ?? p.doc_id ?? null)
       } catch { /* ignore parse errors */ }
     })
   }

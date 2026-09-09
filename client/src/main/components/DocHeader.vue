@@ -1184,8 +1184,15 @@ function _onOpenDocsRefresh(e: Event) {
   // it live. Stamp lastPullAt so a focus pull landing right after doesn't double-fetch.
   const current = doc.value
   if (!current) return
-  const payload = (e as CustomEvent).detail as { project?: string | null } | undefined
+  const payload = (e as CustomEvent).detail as { project?: string | null; doc_id?: string | null } | undefined
   if (payload?.project && current.project_id && payload.project !== current.project_id) return
+  // T0004 §3: when the coalesced refresh names one specific document (e.g. an AI
+  // review arriving for it), skip tabs that are not that document instead of forcing
+  // every open tab in the project to re-read review/history it does not own. A null
+  // doc_id (the common case — sibling creation, workflow decisions, …) keeps the
+  // existing project-wide behavior, since those events legitimately need every open
+  // tab to refresh regardless of which document they name.
+  if (payload?.doc_id && payload.doc_id !== current.doc_id) return
   lastPullAt = Date.now()
   void silentRefetchWithRetry()
 }
