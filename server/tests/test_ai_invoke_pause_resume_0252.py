@@ -41,6 +41,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from modules.flow_gate.api.v1 import ai_invoke_routes as routes  # noqa: E402
 from modules.flow_gate.db import ai_invoke_paused_chains as db_paused  # noqa: E402
 from modules.flow_gate.services import ai_invoke_service as svc  # noqa: E402
+from modules.flow_gate.services.ai_invoke import admission  # noqa: E402
 from modules.flow_gate.services import workflow_decision_service as wds  # noqa: E402
 
 PY = sys.executable
@@ -413,7 +414,14 @@ class TestPauseRun:
         assert run["resumable"] is False
         assert GROUP not in fake_env["paused"].rows
 
-    def test_pause_persists_provider_and_note_selections(self, fake_env):
+    def test_pause_persists_provider_and_note_selections(self, fake_env, monkeypatch):
+        # The override is bound through the authoritative sequence head. Keep this focused
+        # pause fixture explicit about the current hop instead of falling through to the
+        # unconfigured process-global DB store.
+        monkeypatch.setattr(
+            admission.db_wfseq, "get_effective_head",
+            lambda _sequence_id: {"item_seq": 3, "type": "T"},
+        )
         # 0365 B0001/DB0004 §5-3 case 1/4: the values chosen when the run was started
         # must be the values written into the paused row, not lost between memory
         # and storage.
