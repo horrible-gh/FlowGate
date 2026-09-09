@@ -46,6 +46,8 @@ from . import provider_api
 from . import review
 from .runtime import (
     API_CALL_MAX_TIMEOUT_SEC,
+    API_STARTUP_TRANSPORT_BACKOFF_SEC,
+    API_STARTUP_TRANSPORT_MAX_RETRIES,
     HOP_HANDOFF_FAILED_STOP_CODE,
     HOP_HANDOFF_STOP_CODE,
     NO_OUTPUT_MAX_ATTEMPTS,
@@ -985,7 +987,6 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         if remaining <= 0:
             run["timed_out"] = True
             break
-        call_timeout = min(remaining, API_CALL_MAX_TIMEOUT_SEC)
         tool_specs = None
         if workflow_pending:
             tool_name, tool_desc, tool_schema = _DECIDE_TOOL_NAME, _DECIDE_TOOL_DESC, _DECIDE_TOOL_SCHEMA
@@ -1015,43 +1016,92 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         # _call_openai/_call_anthropic and monkeypatched directly by existing tests as a
         # dict-returning function) -- OpenAI/Anthropic-compatible chat completions are
         # 200 on any non-raising return, so that is what a success is recorded as.
-        run["model_http_calls"] = run.get("model_http_calls", 0) + 1
-        try:
-            if kind == "claude":
-                reply_text, tool_call, assistant_msg = _svc()._call_anthropic(
-                    base_url, model, key, conversation, call_timeout,
-                    tool_name, tool_desc, tool_schema, True,
+        startup_attempt = 0
+        while True:
+            attempt_remaining = _svc()._remaining_sec(run)
+            if attempt_remaining <= 0:
+                run["timed_out"] = True
+                break
+            call_timeout = min(attempt_remaining, API_CALL_MAX_TIMEOUT_SEC)
+            startup_attempt += 1
+            run["model_http_calls"] = run.get("model_http_calls", 0) + 1
+            try:
+                if kind == "claude":
+                    reply_text, tool_call, assistant_msg = _svc()._call_anthropic(
+                        base_url, model, key, conversation, call_timeout,
+                        tool_name, tool_desc, tool_schema, True,
+                    )
+                else:
+                    reply_text, tool_call, assistant_msg = _svc()._call_openai(
+                        base_url, model, key, conversation, call_timeout,
+                        tool_name, tool_desc, tool_schema, True,
+                    )
+                model_call_failed = False
+                run["model_last_http_status"] = 200
+                trace = _api_trace_turn(
+                    run, turn, model_status=200, response_text=bool(reply_text),
                 )
-            else:
-                reply_text, tool_call, assistant_msg = _svc()._call_openai(
-                    base_url, model, key, conversation, call_timeout,
-                    tool_name, tool_desc, tool_schema, True,
+                if turn == 1 and startup_attempt > 1:
+                    trace["startup_attempt"] = startup_attempt
+                    trace["startup_result"] = "started"
+                break
+            except urllib.error.HTTPError as exc:
+                model_call_failed = True
+                run["model_last_http_status"] = exc.code
+                trace = _api_trace_turn(run, turn, model_status=exc.code)
+                trace["disposition"] = "model_http_error"
+                if turn == 1:
+                    trace["startup_attempt"] = startup_attempt
+                    trace["startup_result"] = "failed"
+                    run["api_turns_used"] = turn
+                    return "api_error", f"{exc.code} {exc.reason}"
+                logger.warning("ai-invoke %s: api error after first turn: %s", run["run_id"], exc)
+                break
+            except Exception as exc:
+                model_call_failed = True
+                run["model_last_http_status"] = 0
+                trace = _api_trace_turn(run, turn, model_status=0)
+                trace["disposition"] = "model_transport_error"
+                detail = str(exc)[:500]
+                if turn == 1:
+                    trace["startup_attempt"] = startup_attempt
+                    trace["startup_result"] = "failed"
+                    trace["detail"] = detail
+                    retryable = provider_api._is_transient_startup_transport_error(exc)
+                    retries_used = startup_attempt - 1
+                    if retryable and retries_used < API_STARTUP_TRANSPORT_MAX_RETRIES:
+                        run["startup_retry_count"] = retries_used + 1
+                        run.setdefault("startup_retry_history", []).append({
+                            "provider_id": provider.get("id"),
+                            "retry_no": retries_used + 1,
+                            "detail": detail,
+                        })
+                        trace["startup_result"] = "retrying"
+                        remaining = _svc()._remaining_sec(run)
+                        delay = min(
+                            API_STARTUP_TRANSPORT_BACKOFF_SEC * startup_attempt,
+                            max(0.0, remaining),
+                        )
+                        logger.warning(
+                            "ai-invoke %s: transient startup transport failure for %s; "
+                            "same-provider retry %d/%d: %s",
+                            run["run_id"], provider.get("id"), retries_used + 1,
+                            API_STARTUP_TRANSPORT_MAX_RETRIES, exc,
+                        )
+                        if delay > 0 and run["cancel_event"].wait(delay):
+                            run["api_turns_used"] = turn
+                            return "spawn_failed", detail
+                        continue
+                    run["api_turns_used"] = turn
+                    return "spawn_failed", detail
+                logger.warning(
+                    "ai-invoke %s: api transport error after first turn: %s",
+                    run["run_id"], exc,
                 )
-            run["model_last_http_status"] = 200
-            trace = _api_trace_turn(run, turn, model_status=200, response_text=bool(reply_text))
-        except urllib.error.HTTPError as exc:
-            model_call_failed = True
-            run["model_last_http_status"] = exc.code
-            _api_trace_turn(run, turn, model_status=exc.code)["disposition"] = "model_http_error"
-            # An attempted first request is still a consumed turn.  Record it before
-            # returning because the shared post-loop finalizer is intentionally skipped
-            # for the immediate API-error contract.
-            if turn == 1:
-                run["api_turns_used"] = turn
-                return "api_error", f"{exc.code} {exc.reason}"
-            logger.warning("ai-invoke %s: api error after first turn: %s", run["run_id"], exc)
-            break
-        except Exception as exc:
-            model_call_failed = True
-            run["model_last_http_status"] = 0
-            _api_trace_turn(run, turn, model_status=0)["disposition"] = "model_transport_error"
-            # Keep the same attempted-turn accounting for a first transport/parse error.
-            if turn == 1:
-                run["api_turns_used"] = turn
-                return "spawn_failed", str(exc)[:500]
-            logger.warning("ai-invoke %s: api transport error after first turn: %s", run["run_id"], exc)
-            break
+                break
 
+        if model_call_failed:
+            break
         conversation.append(assistant_msg)
         if reply_text:
             last_text = reply_text
