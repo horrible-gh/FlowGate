@@ -153,6 +153,20 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
                 run["provider_id"] = selected_id
                 run["attempt_no"] = int(run.get("attempt_no") or 0) + 1
                 run["document_review_loop_checkpointed"] = False
+                # T0011 §4 / 0486 NR0010 Finding 3: a stage switch is a new HOP, so its
+                # execution budget is recomputed here from the loop's own contract
+                # (rework_timeout_sec, clamped to the loop's total_timeout_sec deadline)
+                # instead of staying pinned to whatever the FIRST hop of this run
+                # happened to start with. `stall_anchor_mono` -- what the no-progress
+                # watchdog actually measures `timeout_sec` against -- is re-anchored to
+                # "now" per attempt by `_start_progress_watchdog`, so updating
+                # `timeout_sec` here is enough for the new stage's budget to take effect
+                # from its first attempt onward.
+                stage_started_at = admission.now_iso()
+                run["timeout_sec"] = review.loop_stage_timeout_sec(
+                    loop, loop["current_stage"], datetime.fromisoformat(stage_started_at)
+                )
+                run["deadline_at"] = admission._deadline_iso(stage_started_at, run["timeout_sec"])
                 current_chain = [selected]
                 stage_message = (
                     loop.get("rework_message") if loop["current_stage"] == REWORK_HOP_KIND

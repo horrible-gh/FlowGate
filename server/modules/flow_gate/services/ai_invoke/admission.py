@@ -1127,9 +1127,6 @@ def start_run(
     )
 
     started_at = now_iso()
-    timeout_sec = _resolve_timeout_sec(
-        mode, docs_target, target_to_end, continuation_step_timeout_sec, hop_kind
-    )
     # 0414 P0007: what THIS hop's review selection resolves to, answered in the start
     # response rather than after the fact — "I picked a reviewer, did it take?" has to be
     # answerable while the run is going, not once it is over (0406 T0022 작업 3's reasoning
@@ -1163,6 +1160,18 @@ def start_run(
             "started_at": started_at,
             "deadline_at": _deadline_iso(started_at, int(document_review_loop["total_timeout_sec"])),
         })
+        # T0011 §4 / 0486 NR0010 Finding 3: the loop's own per-stage budget (rework's
+        # user-picked `rework_timeout_sec`, clamped to the loop's total deadline) replaces
+        # the generic per-hop formula for this run's FIRST hop. The in-process stage
+        # switch inside worker._worker applies the same formula on every later hop of this
+        # single audited chain.
+        timeout_sec = review.loop_stage_timeout_sec(
+            document_review_loop, document_review_loop["current_stage"], datetime.fromisoformat(started_at)
+        )
+    else:
+        timeout_sec = _resolve_timeout_sec(
+            mode, docs_target, target_to_end, continuation_step_timeout_sec, hop_kind
+        )
     run = {
         "run_id": run_id,
         "status": "running",
