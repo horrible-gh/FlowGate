@@ -33,6 +33,12 @@ export interface FileNode {
   permissions: string[]
 }
 
+interface FileTreePayload {
+  nodes: FileNode[]
+  complete?: boolean
+  scan_failures?: Array<{ path: string; reason: string }>
+}
+
 // 0186 P0005 §3 — group-branch blob read (checkout-free). Mirrors read_group_blob.
 export interface GroupChangeData {
   path: string
@@ -293,6 +299,15 @@ export const useExplorerStore = defineStore('explorer', () => {
   const loadingFile = ref(false)
   const loadingGroup = ref(false)
   const fileError = ref<string | null>(null)
+  // 0525 T0004: incomplete HTTP-200 trees never replace a completed snapshot.
+  // This state uses the same project+branch key as fileTreeCache so a cached tree
+  // opened after another project's partial refresh cannot inherit its warning.
+  const fileTreeDegradedByKey = ref<Record<string, boolean>>({})
+  const isFileTreeDegraded = (pid: string, branch = currentBranch.value) =>
+    fileTreeDegradedByKey.value[cacheKey(pid, branch)] ?? false
+  const setFileTreeDegraded = (key: string, degraded: boolean) => {
+    fileTreeDegradedByKey.value[key] = degraded
+  }
   const groupError = ref<string | null>(null)
   // 0245 R0001 / NR0003 §1 — tree expansion state for both explorers. It lives here
   // rather than in the recursive node components because a node's children are only
@@ -306,19 +321,34 @@ export const useExplorerStore = defineStore('explorer', () => {
 
   async function fetchFileTree(pid: string, force = false): Promise<FileNode[]> {
     const key = cacheKey(pid)
-    if (!force && fileTreeCache.value[key]) return fileTreeCache.value[key]
+    if (!force && fileTreeCache.value[key]) {
+      setFileTreeDegraded(key, fileTreeDegradedByKey.value[key] ?? false)
+      return fileTreeCache.value[key]
+    }
     if (isMockMode()) {
       await new Promise((r) => setTimeout(r, 100))
       fileTreeCache.value[key] = MOCK_FILE_NODES
+      setFileTreeDegraded(key, false)
       return MOCK_FILE_NODES
     }
     loadingFile.value = true
     fileError.value = null
+    setFileTreeDegraded(key, false)
     try {
-      const res = await getTreeWithRetry<{ nodes: FileNode[] }>(`/api/v1/projects/${pid}/files/tree?branch=${encodeURIComponent(currentBranch.value)}`)
-      const nodes = (res.data as any).data.nodes as FileNode[]
-      fileTreeCache.value[key] = nodes.filter((n) => n.permissions.includes('read'))
-      return fileTreeCache.value[key]
+      const res = await getTreeWithRetry<FileTreePayload>(`/api/v1/projects/${pid}/files/tree?branch=${encodeURIComponent(currentBranch.value)}`)
+      const payload = (res.data as any).data as FileTreePayload
+      const nodes = payload.nodes.filter((n) => n.permissions.includes('read'))
+      // Older servers omit `complete`; treat those responses as the historical,
+      // complete snapshot contract. Only an explicit false is non-authoritative.
+      if (payload.complete !== false) {
+        fileTreeCache.value[key] = nodes
+        setFileTreeDegraded(key, false)
+        return nodes
+      }
+      setFileTreeDegraded(key, true)
+      // A known-complete cache wins over a partial refresh. Do not merge: that
+      // would preserve files actually deleted elsewhere in the successful scan.
+      return fileTreeCache.value[key] ?? nodes
     } catch (e) {
       fileError.value = 'tree_load_failed'
       throw e
@@ -929,7 +959,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     currentBranch,
     fileTreeCache, groupTreeCache, workflowNodeStates,
     selectedFileNodeId, selectedGroupNodeId, pendingSelectFilePath,
-    loadingFile, loadingGroup, fileError, groupError,
+    loadingFile, loadingGroup, fileError, isFileTreeDegraded, groupError,
     baseDirtyFiles, setBaseDirtyFiles, isBaseDirtyPath, isBaseDirtyDir,
     baseUntrackedFiles, setBaseUntrackedFiles, isBaseUntrackedPath, isBaseUntrackedDir,
     gitStatus, fetchGitStatus,

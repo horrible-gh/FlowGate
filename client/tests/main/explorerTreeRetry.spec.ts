@@ -24,6 +24,7 @@ const fileNode = {
 }
 
 const fileTreeOk = { data: { data: { nodes: [fileNode] } } }
+const fileTreePartial = { data: { data: { nodes: [], complete: false, scan_failures: [{ path: 'docs', reason: 'scan_failed' }] } } }
 const groupTreeOk = { data: { data: { nodes: [{ id: '1', parent_id: null, node_type: 'group' }] } } }
 const branchTreeOk = {
   data: { data: { branch: 'main', commit: 'abc1234', nodes: [fileNode] } },
@@ -85,6 +86,44 @@ describe('explorer store — transient tree failures self-heal', () => {
     await store.fetchFileTree('p1')
 
     expect(getRequest).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a completed cache when a forced refresh is explicitly incomplete', async () => {
+    getRequest.mockResolvedValueOnce(fileTreeOk).mockResolvedValueOnce(fileTreePartial)
+    const store = useExplorerStore()
+
+    const completeNodes = await store.fetchFileTree('p1')
+    const displayedNodes = await store.fetchFileTree('p1', true)
+
+    expect(displayedNodes).toEqual(completeNodes)
+    expect(store.fileTreeCache['p1:main']).toEqual(completeNodes)
+    expect(store.isFileTreeDegraded('p1')).toBe(true)
+  })
+
+  it('shows an initial incomplete tree without caching it, then recovers on a complete response', async () => {
+    getRequest.mockResolvedValueOnce(fileTreePartial).mockResolvedValueOnce(fileTreeOk)
+    const store = useExplorerStore()
+
+    expect(await store.fetchFileTree('p1')).toEqual([])
+    expect(store.fileTreeCache['p1:main']).toBeUndefined()
+    expect(store.isFileTreeDegraded('p1')).toBe(true)
+
+    expect(await store.fetchFileTree('p1')).toHaveLength(1)
+    expect(getRequest).toHaveBeenCalledTimes(2)
+    expect(store.isFileTreeDegraded('p1')).toBe(false)
+  })
+
+  it('keeps degraded state scoped to the cached project tree', async () => {
+    getRequest.mockResolvedValueOnce(fileTreeOk).mockResolvedValueOnce(fileTreePartial)
+    const store = useExplorerStore()
+
+    await store.fetchFileTree('p2')
+    await store.fetchFileTree('p1')
+    expect(store.isFileTreeDegraded('p1')).toBe(true)
+
+    await store.fetchFileTree('p2')
+    expect(getRequest).toHaveBeenCalledTimes(2)
+    expect(store.isFileTreeDegraded('p2')).toBe(false)
   })
 
   it('still surfaces tree_load_failed when both attempts fail', async () => {

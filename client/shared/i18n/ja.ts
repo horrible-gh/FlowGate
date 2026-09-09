@@ -764,6 +764,7 @@ export default {
       files: 'ファイルエクスプローラー',
       groups: 'ドキュメントエクスプローラー',
       retry: '再試行',
+      tree_degraded: '一部のフォルダーを読み取れませんでした。最後に正常に読み取れた一覧を表示しています。',
       expand: 'パネルを展開',
       collapse: 'パネルを折りたたむ',
       expand_all: 'すべて展開',

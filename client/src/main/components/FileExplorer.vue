@@ -101,6 +101,9 @@
           <span>{{ t('main.error.tree_refresh_failed') }}</span>
           <button data-test="file-explorer-refresh-retry" @click="reload">{{ t('main.explorer.retry') }}</button>
         </div>
+        <div v-if="fileTreeDegraded" class="sdb-state sdb-state--refresh-error" data-test="file-explorer-tree-degraded">
+          {{ t('main.explorer.tree_degraded') }}
+        </div>
         <ul class="tree-ul">
           <li
             class="tree-node"
@@ -254,6 +257,9 @@ const groupSlots = ref<Array<{ group_id: string; branch: string; status: string;
 // tree in view instead of silently reverting to base (L0006 §2.4, 0186 finding 3).
 // A genuine project switch clears it (watch guard + loadGroupSlots safety net).
 const selectedGroup = ref<string | null>(explorerStore.activeGroupBranch)
+const fileTreeDegraded = computed(() => !selectedGroup.value
+  && !!props.projectId
+  && explorerStore.isFileTreeDegraded(props.projectId))
 const groupCommit = ref<string | null>(null)
 // P0005 §9 — group Git status badge (reuses the finalize GET, no new field).
 type GroupGitState = {
