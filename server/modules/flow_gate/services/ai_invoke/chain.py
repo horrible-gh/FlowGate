@@ -15,7 +15,7 @@ trigger), which is also where the existing tests patch them.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import HTTPException
 from modules.flow_gate.db import documents as db_docs
@@ -759,13 +759,22 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
 
 
 def _resolve_continuation_target(
-    doc_ref: str, target_seq: Optional[int], *, to_end: bool = False,
+    doc_ref: str,
+    target_seq: Optional[int],
+    *,
+    to_end: bool = False,
+    _sequence: Optional[dict] = None,
+    _items: Optional[list[dict]] = None,
 ) -> int:
     """Resolve run-to-end against the sequence at the hop boundary."""
     if not to_end and target_seq is not None:
         return int(target_seq)
-    sequence = db_wfseq.get_sequence_for_member_doc(doc_ref)
-    items = db_wfseq.get_sequence_items(sequence["id"]) if sequence is not None else []
+    sequence = _sequence if _sequence is not None else db_wfseq.get_sequence_for_member_doc(doc_ref)
+    items = (
+        _items
+        if _items is not None
+        else (db_wfseq.get_sequence_items(sequence["id"]) if sequence is not None else [])
+    )
     resolved = max(
         (item["item_seq"] for item in items or [] if item.get("item_seq") is not None),
         default=None,
@@ -775,7 +784,15 @@ def _resolve_continuation_target(
             "code": "sequence_changed",
             "message": "The workflow sequence has no continuation target.",
         })
-    head = _next_incomplete_item_seq(doc_ref)
+    if _items is None:
+        head = _next_incomplete_item_seq(doc_ref)
+    else:
+        head = next((
+            item.get("item_seq")
+            for item in sorted(items, key=lambda candidate: candidate.get("item_seq") or 0)
+            if item.get("result_doc_id") is None
+            or item.get("result_doc_review_status") != "approved"
+        ), None)
     if head is not None and resolved < head:
         raise HTTPException(status_code=409, detail={
             "code": "sequence_changed",
@@ -818,7 +835,14 @@ def rebase_active_to_end(group_id: Optional[str], doc_ref: str) -> Optional[int]
     return resolved
 
 
-def _sequence_completion_state(doc_ref: Optional[str]) -> tuple[bool, Optional[int]]:
+_NO_SEQUENCE_SNAPSHOT = object()  # "no snapshot given" -- distinct from a read (None, [])
+
+
+def _sequence_completion_state(
+    doc_ref: Optional[str],
+    *,
+    _snapshot: Any = _NO_SEQUENCE_SNAPSHOT,
+) -> tuple[bool, Optional[int]]:
     """``(a sequence was read, first incomplete item_seq)`` — 0459 T0005 §2-3.
 
     ``_next_incomplete_item_seq`` collapses two very different facts into one ``None``:
@@ -827,15 +851,24 @@ def _sequence_completion_state(doc_ref: Optional[str]) -> tuple[bool, Optional[i
     unreadable sequence is no evidence at all. So the two facts are separated here and the
     old name keeps its single-value contract on top.
 
+    ``_snapshot``, when given, is a caller's already-read ``(sequence, items)`` pair —
+    e.g. active_all()'s ``get_sequence_snapshots_for_member_docs`` batch — and is used
+    instead of a fresh DB read (0385 TR0010 rework: the system-stop staleness check used
+    to re-read the same sequence active_all() had already batched).
+
     Raises whatever the DB layer raises; callers that must not fail decide what an
     unreadable sequence means to them.
     """
     if not doc_ref:
         return False, None
-    seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+    if _snapshot is not _NO_SEQUENCE_SNAPSHOT:
+        seq, items = _snapshot
+    else:
+        seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+        items = db_wfseq.get_sequence_items(seq["id"]) if seq is not None else None
     if seq is None:
         return False, None
-    items = db_wfseq.get_sequence_items(seq["id"]) or []
+    items = items or []
     if not items:
         return False, None          # a sequence with no slots proves nothing was finished
     for item in sorted(items, key=lambda i: i.get("item_seq") or 0):
@@ -868,8 +901,12 @@ def _group_workflow_finished(group_id: Optional[str]) -> bool:
         return False
 
 
-def _system_pause_row_is_stale(row: dict) -> bool:
+def _system_pause_row_is_stale(row: dict, *, _read_context: Optional[dict] = None) -> bool:
     """Whether a system stop still describes work this group actually owes.
+
+    ``_read_context``, when given, is active_all()'s ``doc_ref -> (sequence, items)``
+    batch snapshot (0385 TR0010 rework) — step 2 below reuses it instead of re-reading
+    the same sequence/items ``get_sequence_snapshots_for_member_docs`` already fetched.
 
     Judged in this order, most conclusive first (0459 T0005 §2):
 
@@ -900,8 +937,14 @@ def _system_pause_row_is_stale(row: dict) -> bool:
         return True
 
     # 2 — the stored scope is finished.
+    doc_ref = row.get("doc_ref")
     try:
-        sequence_read, next_seq = _sequence_completion_state(row.get("doc_ref"))
+        if _read_context is not None and doc_ref in _read_context:
+            sequence_read, next_seq = _sequence_completion_state(
+                doc_ref, _snapshot=_read_context[doc_ref],
+            )
+        else:
+            sequence_read, next_seq = _sequence_completion_state(doc_ref)
     except Exception:  # noqa: BLE001
         logger.warning(
             "system paused-row sequence lookup failed for %s",
@@ -977,7 +1020,11 @@ def _resumable_base_provider(project_id: str, provider_id: Optional[str]) -> Opt
 
 
 def _paused_row_resume_state(
-    project_id: str, row: dict, *, include_target: bool = False,
+    project_id: str,
+    row: dict,
+    *,
+    include_target: bool = False,
+    _read_context: Optional[dict] = None,
 ) -> dict:
     """Evaluate deterministic pause->resume admission without changing state.
 
@@ -1006,8 +1053,18 @@ def _paused_row_resume_state(
         return result
 
     try:
-        sequence = db_wfseq.get_sequence_for_member_doc(row["doc_ref"])
-        items = db_wfseq.get_sequence_items(sequence["id"]) if sequence is not None else []
+        snapshot = (
+            _read_context.get(row["doc_ref"])
+            if _read_context is not None
+            else None
+        )
+        if snapshot is None:
+            sequence = db_wfseq.get_sequence_for_member_doc(row["doc_ref"])
+            items = db_wfseq.get_sequence_items(sequence["id"]) if sequence is not None else []
+            if _read_context is not None:
+                _read_context[row["doc_ref"]] = (sequence, items)
+        else:
+            sequence, items = snapshot
     except Exception:  # noqa: BLE001 — active-all stays available on transient lookup failure
         logger.warning("resume-state sequence check failed for %s", row.get("group_id"), exc_info=True)
         if include_target:
@@ -1027,7 +1084,11 @@ def _paused_row_resume_state(
     stored_target_seq = row.get("continuation_target_seq")
     try:
         target_seq = _resolve_continuation_target(
-            row["doc_ref"], stored_target_seq, to_end=stored_target_seq is None,
+            row["doc_ref"],
+            stored_target_seq,
+            to_end=stored_target_seq is None,
+            _sequence=sequence,
+            _items=items,
         )
     except HTTPException:
         return _state(
@@ -1044,6 +1105,8 @@ def _paused_row_resume_state(
             continuation_auto_approve_item_seqs=db_paused.load_json_list(
                 row.get("continuation_auto_approve_item_seqs")
             ),
+            _sequence=sequence,
+            _items=items,
         )
     except Exception:  # noqa: BLE001 — same fail-open preview / fail-safe resume split
         logger.warning("resume-state worker-step check failed for %s", row.get("group_id"), exc_info=True)
@@ -1779,6 +1842,14 @@ def active_all(user_id: str) -> dict:
         runs.append(restored)
 
     paused = []
+    paused_doc_refs = list(dict.fromkeys(row["doc_ref"] for row in rows))
+    try:
+        sequence_read_context = db_wfseq.get_sequence_snapshots_for_member_docs(
+            paused_doc_refs
+        )
+    except Exception:  # noqa: BLE001 — preserve per-row fail-open behavior
+        logger.warning("paused sequence batch lookup failed", exc_info=True)
+        sequence_read_context = {}
     for row in rows:
         if _handoff_row_in_flight(row):
             # 0406 T0022 item 4: a normal handoff takes seconds. Drawing a "stopped" card
@@ -1787,7 +1858,7 @@ def active_all(user_id: str) -> dict:
             # are hidden; a row past the grace really did break and falls through to a card.
             continue
         try:
-            stale = _system_pause_row_is_stale(row)
+            stale = _system_pause_row_is_stale(row, _read_context=sequence_read_context)
         except Exception:  # noqa: BLE001 — one unreadable row must not blank the widget
             logger.warning(
                 "system paused-row staleness check failed for %s",
@@ -1809,7 +1880,11 @@ def active_all(user_id: str) -> dict:
                 # The delete failed, but the row IS stale: keeping it out of the response
                 # is still right, and the next active-all retries the delete.
             continue
-        resume_state = _svc()._paused_row_resume_state(row["group_id"].split(".")[0], row)
+        resume_state = _svc()._paused_row_resume_state(
+            row["group_id"].split(".")[0],
+            row,
+            _read_context=sequence_read_context,
+        )
         paused.append({
             "group_id": row["group_id"],
             "doc_ref": row["doc_ref"],

@@ -210,6 +210,17 @@ def fake_env(monkeypatch, tmp_path):
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", wfseq.get_sequence_for_member_doc)
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_by_doc_id", wfseq.get_sequence_by_doc_id)
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_items", wfseq.get_sequence_items)
+    monkeypatch.setattr(
+        svc.db_wfseq,
+        "get_sequence_snapshots_for_member_docs",
+        lambda doc_ids: {
+            doc_id: (
+                wfseq.get_sequence_for_member_doc(doc_id),
+                wfseq.get_sequence_items(wfseq.sequence["id"]) if wfseq.sequence else [],
+            )
+            for doc_id in dict.fromkeys(doc_ids)
+        },
+    )
     monkeypatch.setattr(svc.db_projects, "get_by_id", lambda pid: {"project_name": "testproj"})
     monkeypatch.setattr(svc.ai_settings_service, "resolve_effective",
                         lambda pid: {"ok": True, **chain_holder})
@@ -1105,6 +1116,105 @@ class TestActiveAll:
         finally:
             svc.cancel_run(res["run_id"])
             _wait_finished(res["run_id"])
+
+    def test_sequence_snapshot_reused_per_request_and_refreshed_next_request(
+            self, fake_env, monkeypatch):
+        fake_env["chain"]["providers"] = [_provider("unused")]
+        fake_env["paused"].upsert(
+            group_id=GROUP, doc_ref=DOC_REF, paused_by="usr_admin",
+            paused_at="2026-09-09T00:00:00+09:00",
+            continuation_target_seq=None, docs_target=2, docs_reached=0,
+        )
+        calls = {"sequence": 0, "items": 0}
+        wfseq = fake_env["wfseq"]
+
+        def get_sequence(doc_ref):
+            calls["sequence"] += 1
+            return wfseq.get_sequence_for_member_doc(doc_ref)
+
+        def get_items(sequence_id):
+            calls["items"] += 1
+            return wfseq.get_sequence_items(sequence_id)
+
+        def get_batch(doc_ids):
+            calls["batch"] = calls.get("batch", 0) + 1
+            return {
+                doc_id: (get_sequence(doc_id), get_items(wfseq.sequence["id"]))
+                for doc_id in dict.fromkeys(doc_ids)
+            }
+
+        monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", get_sequence)
+        monkeypatch.setattr(svc.db_wfseq, "get_sequence_items", get_items)
+        monkeypatch.setattr(
+            svc.db_wfseq, "get_sequence_snapshots_for_member_docs", get_batch,
+        )
+
+        first = svc.active_all("usr_admin")["paused"][0]
+        assert first["resume_available"] is True
+        assert calls == {"sequence": 1, "items": 1, "batch": 1}
+
+        for item in wfseq.items:
+            item["result_doc_id"] = item.get("result_doc_id") or f"done-{item['item_seq']}"
+            item["result_doc_review_status"] = "approved"
+
+        second = svc.active_all("usr_admin")["paused"][0]
+        assert second["resume_available"] is False
+        assert second["resume_block_code"] == "no_pending_worker_steps"
+        assert calls == {"sequence": 2, "items": 2, "batch": 2}
+
+    def test_system_stop_staleness_check_reuses_batch_sequence_snapshot(
+            self, fake_env, monkeypatch):
+        """0385 TR0010 rework: a stop_kind='system' row is judged for staleness
+        BEFORE resume-state (chain.py active_all()'s paused loop), and that
+        staleness check must reuse the same get_sequence_snapshots_for_member_docs
+        batch read active_all() already made -- not re-read the sequence/items for
+        this doc_ref a second time through _sequence_completion_state."""
+        from modules.flow_gate.db import ai_invoke_runs as db_runs
+
+        fake_env["chain"]["providers"] = [_provider("unused")]
+        fake_env["paused"].upsert(
+            group_id=GROUP, doc_ref=DOC_REF, paused_by="usr_admin",
+            paused_at="2026-09-09T00:00:00+09:00",
+            continuation_target_seq=3, docs_target=2, docs_reached=0,
+            stop_kind="system", stop_code="no_output_exhausted",
+            stop_run_id="aiv_old_chain",
+        )
+        # Default items: 1 (approved), 2 (pending), 3 (pending) -> next incomplete is 2,
+        # which is <= the stored continuation_target_seq (3), so step 2 does not mark the
+        # row stale; step 3's hop_item_seq (also 2) agrees, so the row survives and its
+        # resume-state is evaluated too -- exercising both context consumers in one request.
+        monkeypatch.setattr(db_runs, "get", lambda _run_id: {"hop_item_seq": 2})
+
+        calls = {"sequence": 0, "items": 0, "batch": 0}
+        wfseq = fake_env["wfseq"]
+
+        def get_sequence(doc_ref):
+            calls["sequence"] += 1
+            return wfseq.get_sequence_for_member_doc(doc_ref)
+
+        def get_items(sequence_id):
+            calls["items"] += 1
+            return wfseq.get_sequence_items(sequence_id)
+
+        def get_batch(doc_ids):
+            calls["batch"] += 1
+            return {
+                doc_id: (get_sequence(doc_id), get_items(wfseq.sequence["id"]))
+                for doc_id in dict.fromkeys(doc_ids)
+            }
+
+        monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", get_sequence)
+        monkeypatch.setattr(svc.db_wfseq, "get_sequence_items", get_items)
+        monkeypatch.setattr(
+            svc.db_wfseq, "get_sequence_snapshots_for_member_docs", get_batch,
+        )
+
+        result = svc.active_all("usr_admin")["paused"][0]
+
+        assert result["resume_available"] is True
+        assert GROUP in fake_env["paused"].rows  # not deleted as stale
+        assert calls == {"sequence": 1, "items": 1, "batch": 1}
+
 
     @staticmethod
     def _assert_hint_matches_resume(fake_env, expected_code):

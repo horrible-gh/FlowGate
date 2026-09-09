@@ -180,6 +180,32 @@ def test_work_state_summary_counts_status(store):
     assert summary["done"] == 1
 
 
+def test_work_state_query_budget_scales_and_refreshes_after_mutation(store):
+    selects = []
+    store.conn.set_trace_callback(
+        lambda sql: selects.append(sql) if sql.lstrip().upper().startswith("SELECT") else None
+    )
+
+    before = dashboard_service.get_work_state_summary("flowgate")
+    first_selects = list(selects)
+    assert before["in_progress"] == 1
+    assert len(first_selects) == 3
+    assert sum("FROM documents WHERE project_id" in sql for sql in first_selects) == 1
+
+    store.conn.executemany(
+        "INSERT INTO documents "
+        "(doc_id, project_id, group_id, type_code, title, doc_review_status, updated_at) "
+        "VALUES (?, 'flowgate', 'flowgate.default.0125', 'D', 'scaled', 'wf_in_progress', 'now')",
+        [(f"scaled-{index}",) for index in range(50)],
+    )
+    selects.clear()
+    after = dashboard_service.get_work_state_summary("flowgate")
+
+    assert after["in_progress"] == 51
+    assert len(selects) == 3
+    assert sum("FROM documents WHERE project_id" in sql for sql in selects) == 1
+
+
 def test_work_state_summary_unifies_copied_sources(store):
     # NR0003 권고 3: a doc copied via the per-user state table AND a doc copied via the
     # prompt_copied event both count, deduped to distinct documents.

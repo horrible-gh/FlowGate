@@ -489,6 +489,8 @@ def _continuation_docs_target(
     # auto-handling are excluded from the worker's document count — an unselected ai_direct
     # N/T is still a real worker document and must stay counted.
     continuation_auto_approve_item_seqs: Optional[list] = None,
+    _sequence: Optional[dict] = None,
+    _items: Optional[list[dict]] = None,
 ) -> Optional[int]:
     """docs_target in the workflow item_seq coordinate system (0226 B0001 / NR0003 §5-1).
 
@@ -510,11 +512,15 @@ def _continuation_docs_target(
     """
     from modules.flow_gate.services.workflow_decision_service import is_auto_handled_step
 
-    seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+    # Internal request-scope callers may pass the sequence snapshot they already
+    # read. None remains the default sentinel, so ordinary calls always read
+    # current DB truth and no state crosses a request boundary.
+    seq = _sequence if _sequence is not None else db_wfseq.get_sequence_for_member_doc(doc_ref)
     if seq is None:
         return None
+    items = _items if _items is not None else db_wfseq.get_sequence_items(seq["id"]) or []
     count = 0
-    for item in db_wfseq.get_sequence_items(seq["id"]) or []:
+    for item in items:
         item_seq = item.get("item_seq")
         if (
             target_item_seq is not None
