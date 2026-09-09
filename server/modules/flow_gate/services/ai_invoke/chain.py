@@ -20,7 +20,6 @@ from typing import Optional
 from fastapi import HTTPException
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
-from modules.flow_gate.db import question_items as db_question_items
 from modules.flow_gate.db import questions as db_questions
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import now_iso
@@ -1641,21 +1640,19 @@ def dismiss_review_loop_card(*, run_id: str, user_id: str, is_admin: bool = Fals
             "dismissed": True, "already_dismissed": False}
 
 
+def _open_q_doc_ids_by_groups(group_ids: list[str]) -> dict[str, list[str]]:
+    """Batch unanswered-container lookup with the status fail-soft contract."""
+    unique_group_ids = list(dict.fromkeys(group_ids))
+    try:
+        return db_questions.list_open_doc_ids_by_groups(unique_group_ids)
+    except Exception:
+        logger.warning("open-Q batch lookup failed for %s", unique_group_ids, exc_info=True)
+        return {group_id: [] for group_id in unique_group_ids}
+
+
 def _open_q_doc_ids(group_id: str) -> list[str]:
     """Group documents that still have at least one unanswered container item."""
-    try:
-        pending: set[str] = set()
-        for doc in db_docs.get_documents_by_group_id(group_id):
-            doc_id = doc.get("doc_id")
-            if not doc_id:
-                continue
-            container = db_questions.get_container_by_doc(doc_id)
-            if container and db_question_items.list_unanswered(container["id"]):
-                pending.add(doc_id)
-        return sorted(pending)
-    except Exception:
-        logger.warning("open-Q lookup failed for %s", group_id, exc_info=True)
-        return []
+    return _open_q_doc_ids_by_groups([group_id]).get(group_id, [])
 
 
 def _handoff_row_in_flight(row: dict) -> bool:
@@ -1722,10 +1719,24 @@ def active_all(user_id: str) -> dict:
             run for run in _svc()._runs.values()
             if run.get("issued_to") == user_id and run["status"] != "finished"
         ]
+    try:
+        rows = db_paused.list_by_user(user_id)
+    except Exception:
+        logger.warning("paused-chain list failed for %s", user_id, exc_info=True)
+        rows = []
+    group_ids = list(dict.fromkeys(
+        [run["group_id"] for run in candidates]
+        + [row["group_id"] for row in rows]
+    ))
+    pending_q_by_group = _svc()._open_q_doc_ids_by_groups(group_ids)
+
     runs = []
     for run in candidates:
         try:
-            status = diagnostics.get_status(run["run_id"])
+            status = diagnostics.get_status(
+                run["run_id"],
+                pending_q_doc_ids=pending_q_by_group.get(run["group_id"], []),
+            )
         except HTTPException:
             continue  # finished/expired between the snapshot and the status read
         status["doc_ref"] = run["doc_ref"]
@@ -1768,11 +1779,6 @@ def active_all(user_id: str) -> dict:
         runs.append(restored)
 
     paused = []
-    try:
-        rows = db_paused.list_by_user(user_id)
-    except Exception:
-        logger.warning("paused-chain list failed for %s", user_id, exc_info=True)
-        rows = []
     for row in rows:
         if _handoff_row_in_flight(row):
             # 0406 T0022 item 4: a normal handoff takes seconds. Drawing a "stopped" card
@@ -1818,7 +1824,7 @@ def active_all(user_id: str) -> dict:
             "chain_id": row.get("chain_id"),
             "chain_docs_target": row.get("chain_docs_target"),
             "chain_docs_reached": int(row.get("chain_docs_reached") or 0),
-            "pending_q_doc_ids": _svc()._open_q_doc_ids(row["group_id"]),
+            "pending_q_doc_ids": pending_q_by_group.get(row["group_id"], []),
             # 0359 P0006 [handover]: a chain the SYSTEM parked looks like one a person parked,
             # so the existing card and its [resume] button work unchanged — these four
             # fields only say which it was and why. A legacy row has no stop_kind: it predates

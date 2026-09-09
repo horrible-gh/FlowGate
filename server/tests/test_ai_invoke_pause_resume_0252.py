@@ -1076,13 +1076,19 @@ class TestActiveAll:
             monkeypatch.setattr(
                 svc.db_questions, "get_container_by_doc", containers.get,
             )
-            monkeypatch.setattr(
-                svc.db_question_items,
-                "list_unanswered",
-                lambda container_id: [{"id": 50}] if container_id == 5 else [],
-            )
+            batch_calls = []
+
+            def open_q_batch(group_ids):
+                batch_calls.append(list(group_ids))
+                return {
+                    group_id: ([pending_doc] if group_id == other_group else [])
+                    for group_id in group_ids
+                }
+
+            monkeypatch.setattr(svc, "_open_q_doc_ids_by_groups", open_q_batch)
 
             mine = svc.active_all("usr_admin")
+            assert batch_calls == [[GROUP, other_group]]
             assert [r["run_id"] for r in mine["runs"]] == [res["run_id"]]
             assert mine["runs"][0]["doc_ref"] == DOC_REF
             assert "pending_q_doc_ids" in mine["runs"][0]
