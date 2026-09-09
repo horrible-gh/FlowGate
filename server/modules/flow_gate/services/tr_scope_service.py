@@ -122,6 +122,7 @@ FINALIZE_UNREPORTED_LIST_MAX = _MAX_LISTED
 # the spellings grow; the canonical name (SECTION_HEADING, used in resubmit guidance) stays Korean.
 _HEADING_RE = re.compile(r"^\s{0,3}#{2,6}\s*(변경\s*파일|Changed\s+Files)\s*$", re.IGNORECASE)
 _NEXT_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s")
+_HORIZONTAL_RULE_RE = re.compile(r"^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$")
 _ITEM_RE = re.compile(r"^\s*[-*]\s+(.+?)\s*$")
 _NONE_VARIANTS = frozenset({
     NONE_MARKER, f"- {NONE_MARKER}",
@@ -220,7 +221,7 @@ def parse_reported_files(body: str, locale: str = "ko") -> ReportedFiles:
 
     body_lines: list[str] = []
     for line in lines[start:]:
-        if _NEXT_HEADING_RE.match(line):
+        if _NEXT_HEADING_RE.match(line) or _HORIZONTAL_RULE_RE.match(line):
             break
         body_lines.append(line)
 

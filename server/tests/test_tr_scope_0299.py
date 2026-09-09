@@ -32,6 +32,88 @@ def test_section_stops_at_next_heading():
     assert parsed.format_errors == []
 
 
+# ── T0004: Markdown horizontal rule as a Changed Files section boundary ─────
+
+def test_horizontal_rule_ends_section_before_verification_footer():
+    """R1 -- the real-world symptom: a '---' separated verification footer must not be
+    read as part of the changed-files list."""
+    parsed = trs.parse_reported_files(
+        "## Changed Files\n- server/a.py\n\n---\n"
+        "**Verification Status:** \u2713 Complete\n"
+        "**Verification Date:** 2026-09-04\n"
+        "**System:** Automated Update Verification\n"
+        "**Result:** All verification steps passed successfully\n"
+    )
+    assert parsed.paths == ["server/a.py"]
+    assert parsed.format_errors == []
+
+
+def test_horizontal_rule_ends_section_with_korean_heading():
+    """R2"""
+    parsed = trs.parse_reported_files("## 변경 파일\n- server/a.py\n\n---\nfooter\n")
+    assert parsed.paths == ["server/a.py"]
+    assert parsed.format_errors == []
+
+
+def test_horizontal_rule_variant_asterisks():
+    """R3"""
+    parsed = trs.parse_reported_files("## Changed Files\n- server/a.py\n\n***\nfooter\n")
+    assert parsed.paths == ["server/a.py"]
+    assert parsed.format_errors == []
+
+
+def test_horizontal_rule_variant_underscores():
+    """R4"""
+    parsed = trs.parse_reported_files("## Changed Files\n- server/a.py\n\n___\nfooter\n")
+    assert parsed.paths == ["server/a.py"]
+    assert parsed.format_errors == []
+
+
+def test_next_heading_still_ends_section_as_before():
+    """R5 -- unchanged behavior."""
+    parsed = trs.parse_reported_files(
+        "## Changed Files\n- server/a.py\n\n## Step Verification\n- not a changed file\n"
+    )
+    assert parsed.paths == ["server/a.py"]
+    assert parsed.format_errors == []
+
+
+def test_prose_without_separator_still_a_format_error():
+    """R6 -- strict list validation is not weakened."""
+    parsed = trs.parse_reported_files("## Changed Files\n- server/a.py\n작업 완료\n")
+    assert any("작업 완료" in e for e in parsed.format_errors)
+
+
+def test_files_hidden_after_separator_are_not_declared_but_still_reach_trv004(monkeypatch):
+    """R7 -- a path written after the separator is outside the declared list, so it must
+    still surface as TRV-004 (unreported) when the worktree comparison finds it."""
+    monkeypatch.setattr(trs, "resolve_stage", lambda project_id: trs.STAGE_ENFORCE)
+    monkeypatch.setattr(
+        trs.git_service, "collect_scope_changes",
+        lambda project_id, group_id: {
+            "available": True, "reason": "worktree", "worktree": "C:/wt", "branch": "work",
+            "paths": ["server/a.py", "server/b.py"],
+        },
+    )
+    body = "## Changed Files\n- server/a.py\n---\n- server/b.py\n"
+    parsed = trs.parse_reported_files(body)
+    assert parsed.paths == ["server/a.py"]
+
+    result = trs.evaluate("p", "g", body)
+    assert result["unreported"] == ["server/b.py"]
+    assert trs.TRV_UNREPORTED in result["codes"]
+
+
+def test_none_marker_before_horizontal_rule_footer():
+    """R8 -- an existing declared-none variant must keep working when followed by a
+    horizontal-rule-separated footer."""
+    parsed = trs.parse_reported_files("## Changed Files\nNone\n---\nfooter\n")
+    assert parsed.found is True
+    assert parsed.declared_none is True
+    assert parsed.paths == []
+    assert parsed.format_errors == []
+
+
 def test_none_marker_is_an_empty_but_present_report():
     parsed = trs.parse_reported_files("## 변경 파일\n\n없음\n")
     assert parsed.found is True
