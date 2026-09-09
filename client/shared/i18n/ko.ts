@@ -764,7 +764,7 @@ export default {
       files: '파일 익스플로러',
       groups: '문서 익스플로러',
       retry: '재시도',
-      tree_degraded: '일부 폴더를 읽지 못했습니다. 마지막 정상 목록을 표시합니다.',
+      tree_degraded: '일부 폴더를 읽지 못했습니다. 현재 확인 가능한 목록을 표시합니다.',
       expand: '패널 펼치기',
       collapse: '패널 접기',
       expand_all: '전체 펼치기',

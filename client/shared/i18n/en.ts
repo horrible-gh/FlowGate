@@ -764,7 +764,7 @@ export default {
       files: 'File Explorer',
       groups: 'Document Explorer',
       retry: 'Retry',
-      tree_degraded: 'Some folders could not be read. Showing the last complete list.',
+      tree_degraded: 'Some folders could not be read. Showing the available list.',
       expand: 'Expand panel',
       collapse: 'Collapse panel',
       expand_all: 'Expand all',
