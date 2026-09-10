@@ -101,7 +101,7 @@
             :can-next-action="getWorkflowViewState(tab.id).canNextAction"
             :return-targets="getReturnTargets(tab.id)"
             :slot-commits="getSlotCommits(tab.id)"
-            @sequence-updated="() => { docHeaderRefs[tab.id]?.fetchDoc?.(tab.id); workPlanEditorRefs[tab.id]?.fetchPlan?.() }"
+            @sequence-updated="() => { docHeaderRefs[tab.id]?.fetchDoc?.(tab.id); workPlanEditorRefs[tab.id]?.fetchPlan?.(); void refreshReturnPoint(tab.id, { force: true }) }"
             @decide-workflow="openWorkflowDecisionForActive"
             @next-action="onProceedNextStep(tab.id)"
             @time-machine="onWorkflowStepTimeMachine(tab.id, $event)"

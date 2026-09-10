@@ -274,6 +274,30 @@ describe('0552 T0006 — 문서 context read 소유권', () => {
     expect(slotCommits(wrapper)[0]).toMatchObject({ commit: 'BBBBBBB' })
   })
 
+  // 0552 T0009 — pouring/saving a work plan changes sequence rows and commit markers without
+  // necessarily moving the workflow head. That mutation signal must therefore bypass the
+  // unchanged workflow signature and retire any pre-mutation round via force.
+  it('붓기 sequence-updated 이후 서명이 같아도 return-point와 sequence를 강제 재조회한다', async () => {
+    const wrapper = await openTrTab()
+    await landDetail(wrapper)
+    expect(countOf('/return-point')).toBe(1)
+    expect(countOf('/sequence')).toBe(1)
+    expect(slotCommits(wrapper)[0]).toMatchObject({ commit: 'AAAAAAA' })
+
+    sequenceBody = sequenceWithCommit('POURED1')
+    wrapper.findComponent({ name: 'DocWorkflow' }).vm.$emit('sequence-updated')
+    await flushPromises()
+
+    // The real handler also refreshes detail. Its ensuing doc-updated has the same signature,
+    // so it must dedup against the just-completed forced round instead of adding a third GET.
+    await announceDocUpdated(wrapper)
+
+    expect(fetchDocSpy).toHaveBeenCalledWith(TR_TAB)
+    expect(countOf('/return-point')).toBe(2)
+    expect(countOf('/sequence')).toBe(2)
+    expect(slotCommits(wrapper)[0]).toMatchObject({ commit: 'POURED1' })
+  })
+
   it('왕복이 아직 끝나지 않았으면 재진입은 그 왕복에 합류한다 (in-flight join)', async () => {
     deferReturnPoint = true
     const wrapper = await openTrTab()
