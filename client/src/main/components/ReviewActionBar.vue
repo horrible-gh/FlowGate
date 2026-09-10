@@ -681,8 +681,12 @@ function gitActionDesc(c: string): string {
 function dispatchGitStatusEvent(git: any) {
   if (!git || typeof window === 'undefined') return
   const status = git?.result?.status ?? null
+  // T0004 §3 (0548): `quiet` is the server's own "this group had nothing to
+  // merge" verdict. It still gets the silent background refresh — the header
+  // badge has to drop the group — but never the panel auto-open, which is what
+  // put a Git dialog in front of an operator who did no work at all.
   const eventName =
-    git.ok === false || status === 'conflict' || status === 'waiting'
+    !git.quiet && (git.ok === false || status === 'conflict' || status === 'waiting')
       ? 'fg:git_status_open'
       : 'fg:git_status_refresh'
   window.dispatchEvent(new CustomEvent(eventName, {
@@ -1021,7 +1025,12 @@ async function doApprove() {
     }
     const res = await postApproveWithGitRetry(body)
     const git = (res.data as any)?.git
-    if (git && git.ok === false) {
+    if (git?.quiet) {
+      // T0004 §3 (0548) — the server proved this group had nothing to merge or
+      // push, so the ride-along action was a no-op. Silence, not a toast: the
+      // whole point of this change is that a group with no work never sees a Git
+      // message it cannot act on. The status refresh below still runs.
+    } else if (git && git.ok === false) {
       // Approval stood; only the git post-step failed — say so, don't block.
       // base_dirty (E3) is actionable: name the guidance and let dispatchGitStatusEvent
       // open the header Git panel where the files are listed (T0010 §b).
@@ -1059,9 +1068,10 @@ async function doApprove() {
     if (trCommit) {
       if (trCommit.committed) {
         showToast(t('main.review_action_bar.tr_commit_toast', { commit: trCommit.commit || '' }), 'success')
-      } else if (trCommit.skipped_reason === 'no_changes' || trCommit.skipped_reason === 'artifacts_only') {
-        showToast(t('main.review_action_bar.tr_commit_none_toast'), 'success')
-      } else {
+      } else if (!trCommit.quiet) {
+        // T0004 §5/§8 — the server already decided quiet vs warning (tr_commit.quiet);
+        // a quiet no-op (no work, or git could not even be asked while none was declared)
+        // ends with no toast at all, not a re-derived success toast.
         showToast(
           t('main.review_action_bar.tr_commit_failed_toast', {
             reason: t(`main.git_status.tr_commits.reason_${trCommit.skipped_reason || 'commit_failed'}`),

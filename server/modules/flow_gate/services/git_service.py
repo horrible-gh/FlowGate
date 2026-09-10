@@ -160,6 +160,15 @@ SESSION_ACTION_DEFAULT = "merge"
 UNMERGE_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
 # flowgate.default.0162 L §1 — group git status subsets.
 PENDING_STATUSES = ("awaiting_choice", "waiting", "conflict")  # "finalize pending"
+# 0548 T0004 §3 — the pending status that is nothing but "the system opened the
+# finalize gate", so a group proven to have nothing to merge can be converged back
+# out of it. Deliberately just the one:
+#   * `conflict` owns a live merge session.
+#   * `waiting` is an OPERATOR decision to keep the slot parked ("나중에"), and
+#     0115 (TestGitActions0162) pins that a waiting slot stays a slot. After the
+#     preview fix below a no-work group is never offered the choice that could put
+#     it there in the first place, so nothing has to be taken away from a human.
+NOOP_CONVERGEABLE_STATUSES = ("awaiting_choice",)
 SLOT_STATUSES = ("none", "awaiting_choice", "merging", "conflict", "waiting")  # not terminal
 # "merging" is a transient state: recorded, but its transition is not broadcast
 # (it would flicker the badge n→n-1→n before the terminal event lands, L §2.3).
@@ -2295,28 +2304,49 @@ def _group_has_changes(
     True  — commits ahead of the base branch, OR any uncommitted / untracked edit
             in the worktree (finalize's `add -A` absorb would turn these into a
             commit, so they count as work).
-    False — branch at the base tip AND a pristine worktree: nothing to merge/push.
-    None  — divergence cannot be measured (git off, or the branch/worktree/base
-            checkout is missing). The caller must then keep the conservative
-            awaiting_choice gate — never discard on doubt.
+    False — nothing to merge/push. Either measured (branch at the base tip with a
+            pristine worktree) or proven by ABSENCE: no branch was ever assigned,
+            or a healthy base checkout cannot even name the branch AND no worktree
+            directory exists — leaving nowhere a source change could be hiding.
+    None  — divergence genuinely cannot be measured: git is off, the project's own
+            base checkout is missing/broken, or the branch is uncountable while a
+            worktree directory that could still be holding work is on disk. The
+            caller must then keep the conservative awaiting_choice gate — never
+            discard on doubt.
+
+    flowgate.default.0548 T0004 §2 (revision 3 rejection): "Git으로 변경 유무를
+    확인할 수 없음"을 "변경이 있음"으로 취급하지 말라. Absence used to fold into the
+    blanket ``None``, which parked phantom slots — no branch at all, or a ledger
+    row naming a branch whose ref and worktree are both already gone — in the
+    finalize gate with nothing to finalize. Those two are now answers. Everything
+    that is merely *unreadable* still answers ``None``.
     """
     if not project_name or not git_available():
         return None
     branch = (state.get("branch") or "").strip()
     if not branch:
-        return None
+        # No branch was ever assigned: a source change has no branch to live on
+        # and no worktree to live in. Proven empty, not unknown.
+        return False
+    wt_path = src_root(project_name, branch)
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
     base_root = src_root(project_name, base_branch)
     if not (base_root / ".git").exists():
+        # The project's own checkout is missing: git cannot be consulted about
+        # ANYTHING here, not even whether the branch exists. Still unknown.
         return None
     ahead = _ahead_of_base(base_root, base_branch, branch)
     if ahead is None:
-        return None
+        # A working base checkout that still cannot count this branch means the
+        # ref is absent or unreadable. With no worktree directory either, the
+        # group has nowhere left to hold work — that is "nothing", not "unknown"
+        # (the shape flowgate.default.0548's reviewer actually hit: a ledger row
+        # naming a branch whose ref and directory were both already gone).
+        return None if wt_path.is_dir() else False
     if ahead > 0:
         return True
     # ahead == 0: no committed work. Uncommitted/untracked worktree edits still
     # count (a merge/push would absorb them), so inspect the worktree too.
-    wt_path = src_root(project_name, branch)
     if wt_path.is_dir():
         return bool(_dirty(wt_path))
     return False
@@ -2371,6 +2401,82 @@ def _decide_pending_transition(
     return "awaiting_choice"
 
 
+def _resolve_pending_noop(
+    project_id: str, cfg: dict, state: dict, group_id: str, status: str
+) -> str:
+    """Converge an ALREADY-pending slot that turns out to have nothing to merge.
+
+    flowgate.default.0548 T0004 §2/§3 — `_decide_pending_transition` only guards the
+    none→awaiting_choice *transition*, so a slot that entered the gate before that
+    guard existed (or entered it while divergence was briefly unmeasurable) keeps
+    showing a finalize gate forever with nothing to finalize: the reviewer's
+    "머지할게 없는데 … 문서에 머지 섹션이 그대로 뜬다". The emptiness proof and the
+    teardown are exactly the ones 0199 B0001 already blessed for the transition —
+    this only widens *when* they are applied, from "on entry" to "whenever the gate
+    would be shown".
+
+    Only `awaiting_choice` is eligible — see NOOP_CONVERGEABLE_STATUSES for why
+    `waiting`, `conflict` and the terminal statuses are not.
+
+    Returns the status the caller should treat the slot as having: the original
+    `status` when it has (or might have) work, DISCARDED_STATUS after teardown, or
+    "none" when the emptiness was proven but the discard lock was busy (the panel
+    hides either way; the next query retries the teardown).
+    """
+    if status not in NOOP_CONVERGEABLE_STATUSES:
+        return status
+    if _group_has_changes(cfg, state, _project_name(project_id)) is not False:
+        return status
+    return _auto_discard_group(project_id, group_id)
+
+
+def group_finalize_is_noop(group_id: str) -> bool:
+    """True when this group provably has NOTHING to merge or push.
+
+    flowgate.default.0548 T0004 §3/§4 — one server-side answer to "머지할게 없다"
+    that every finalize surface reads, so the approval toast, the Git panel
+    auto-open, the AC approval dialog's choice block and the document's Git card
+    can never disagree with each other (T0004 §8 forbids the client re-deriving it).
+
+    Conservative by construction: anything that might still carry work — a live
+    conflict/merge session, a terminal slot that really did merge, an unmeasurable
+    divergence with a worktree still on disk, or an unexpected failure — answers
+    False, which preserves the existing actionable warning.
+
+    A project with git off (or no project at all) also answers False, keeping the
+    0162 D §3.1 contract that such a ride-along reports ``{ok: false}`` intact: a
+    git_action cannot reach a git-inactive group in the first place
+    (``precheck_approve_git_action`` refuses it with 422 before the approval runs),
+    so quieting it here would only weaken a guard nothing legitimate depends on.
+    """
+    try:
+        project_id = _project_of_group(group_id)
+        if not project_id:
+            return False
+        cfg = db_git.get_config(project_id)
+        if cfg is None or not cfg.get("enabled"):
+            return False
+        state = db_git.get_state(group_id)
+        if state is None:
+            return True
+        status = (state.get("status") or "none")
+        if status in ("conflict", "merging", "merged", "pushed"):
+            # A real git operation is live or already ran — never quiet.
+            return False
+        # `worktree_registered=0` is NOT proof the slot is empty (this document's
+        # revision 5 rejection): db_git.unregister_worktree() only flips the flag —
+        # it never clears `branch` — so a slot torn down by the no-work auto-discard
+        # race (or by cleanup running ahead of a stale caller) can still name a
+        # branch whose on-disk worktree carries real, undeclared edits. Probe
+        # `_group_has_changes` exactly as the registered path does instead of
+        # trusting the flag alone; only a proven-empty (or never-assigned) branch
+        # answers quiet, and an unmeasurable divergence still keeps the warning.
+        return _group_has_changes(cfg, state, _project_name(project_id)) is False
+    except Exception:
+        _log.warning("finalize no-op probe failed for %s", group_id, exc_info=True)
+        return False
+
+
 def realize_wf_done_transition(group_id: str) -> None:
     """Eagerly realize the lazy none→awaiting_choice transition at final-approval
     time (0177 NR0016 §3). The lazy design (L0006 §3) only realizes on the NEXT
@@ -2423,6 +2529,12 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
             return {"ok": True, "state": {
                 "group_id": group_id, **_NONE_STATE, "base_remote_behind_count": None,
             }}
+    # 0548 T0004 §3 — an ALREADY-pending slot with nothing to merge must lose the
+    # gate too, not just a slot entering it now ("문서에 머지 섹션이 그대로 뜬다").
+    elif _resolve_pending_noop(project_id, cfg, state, group_id, status) != status:
+        return {"ok": True, "state": {
+            "group_id": group_id, **_NONE_STATE, "base_remote_behind_count": None,
+        }}
 
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
     branch = state.get("branch")
@@ -2449,7 +2561,16 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
     # (0197 T0004 §B) for the AC approval dialog.
     display_status = status
     if status == "none" and preview_ac:
-        display_status = "awaiting_choice"
+        # 0548 T0004 §3 — but only when the group actually has something to
+        # finalize. Faking the gate unconditionally is what put a merge/push
+        # choice block into the AC approval dialog of a group with no work at all
+        # ("머지할게 없는데 … 머지 다이얼로그가 그대로 뜬다"), and then rode that stale
+        # choice into an approval whose finalize could only fail: by the time it
+        # ran, the approval's own no-work auto-discard had already unregistered
+        # the slot, so the operator got "Git integration is not active" as a
+        # warning toast plus an auto-opened Git panel.
+        if _group_has_changes(cfg, state, project_name) is not False:
+            display_status = "awaiting_choice"
 
     # Suggested commit message (flowgate.default.0173 P0003 §2): only meaningful
     # while the group awaits a commit-producing choice; null otherwise.
@@ -3654,6 +3775,39 @@ def _artifact_payload(
         "excluded_artifacts": list(artifacts[:FINALIZE_ARTIFACT_LIST_MAX]),
         "staged_new_file_count": staged_new_file_count,
     }
+
+
+def probe_worktree_pending_changes(wt_path: Path) -> Optional[bool]:
+    """Read-only, lock-free: does this worktree carry any change that is not tool
+    debris, tracked or not — regardless of whether the project's git INTEGRATION is
+    on (flowgate.default.0548 T0004 §4/R6).
+
+    Unlike :func:`_stage_worker_edits` this never runs ``git add``: it exists only for
+    the case where the real commit gate (config off, no registered group git state)
+    is what stops :func:`create_tr_commit` from ever asking the worktree itself, so a
+    TR that (wrongly, or by omission) declared "no changes" would otherwise be taken
+    at its word. No lock is taken because nothing here can race a concurrent commit —
+    a plain status read changes nothing.
+
+    Returns ``None`` when git genuinely cannot answer (no git binary, the path is not
+    a real repo, a timeout) — the caller then has nothing but whatever other signal it
+    already had, exactly as before this existed.
+    """
+    try:
+        proc = _run_git(
+            ["status", "--porcelain", "-z", "--untracked-files=all"],
+            cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
+        )
+    except GitServiceError:
+        return None
+    if proc.returncode != 0:
+        return None
+    for entry in (proc.stdout or "").split("\0"):
+        if len(entry) < 4:
+            continue
+        if not path_exclusion_rules.is_excluded_path(entry[3:]):
+            return True
+    return False
 
 
 # ── TR commit point (flowgate.default.0332 D0005 §3.1 / L0007 §1·§2.6) ────────
@@ -8245,6 +8399,19 @@ def project_git_status(project_id: str) -> dict:
                 _log.warning(
                     "stale git pending recovery failed for %s", group_id, exc_info=True
                 )
+        elif status in NOOP_CONVERGEABLE_STATUSES:
+            try:
+                # 0548 T0004 §3: the root is still wf_done, but the slot may hold
+                # nothing to merge — converge it the same way the finalize panel
+                # does, so the header's pending badge and the document's Git card
+                # never disagree about whether this group has work.
+                row["status"] = _resolve_pending_noop(
+                    project_id, cfg, row, group_id, status
+                )
+            except Exception:
+                _log.warning(
+                    "no-work pending convergence failed for %s", group_id, exc_info=True
+                )
         elif status == "none" and group_id in wf_done_groups:
             try:
                 # 0199 B0001: proven no-work groups are discarded (torn down, no
@@ -9047,7 +9214,15 @@ def precheck_approve_git_action(doc: Optional[dict], git_action: str) -> str:
 def run_approve_git_action(group_id: str, git_action: str) -> dict:
     """Post-approval git finalize (L §2.1 step 3). NEVER raises — a git failure
     is reported as {ok: false, error} while the approval itself stands (D §3.1).
-    A merge conflict is a successful {ok: true, result: {status: "conflict"}}."""
+    A merge conflict is a successful {ok: true, result: {status: "conflict"}}.
+
+    0548 T0004 §3/§4: when the failure is only that there was nothing to finalize
+    in the first place, the SAME ``{ok: false, error}`` additionally carries
+    ``quiet: true``. ``ok`` keeps telling the truth (the action did not run), and
+    ``quiet`` is the display verdict the client obeys — no toast, no Git panel
+    auto-open — exactly as ``tr_commit.quiet`` sits beside ``committed`` on the TR
+    side (§5). A real failure (conflict, dirty base, busy lock, a group that
+    genuinely carries work) never gets the flag and is untouched."""
     try:
         outcome = finalize(group_id, git_action)
         return {"ok": True, "result": outcome["result"]}
@@ -9057,6 +9232,17 @@ def run_approve_git_action(group_id: str, git_action: str) -> dict:
         error = {"code": exc.code, "message": exc.message}
         if getattr(exc, "details", None):
             error["details"] = exc.details
+        if group_finalize_is_noop(group_id):
+            # The approval's own no-work auto-discard (0199 B0001) can tear the
+            # slot down between the AC dialog's preview and this call, so the
+            # ride-along action arrives with nothing left to act on. That is the
+            # normal end of a group with no work, not something to put in front of
+            # an operator who never touched a source file.
+            _log.info(
+                "approve git_action %r on %s is a no-op (%s) — reported quietly",
+                git_action, group_id, exc.code,
+            )
+            return {"ok": False, "quiet": True, "error": error}
         return {"ok": False, "error": error}
 
 

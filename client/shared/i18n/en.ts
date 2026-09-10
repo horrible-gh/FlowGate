@@ -1758,9 +1758,8 @@ export default {
       mark_revised_confirm_message: 'Move this document back to pending review. Continue?',
       error_approve_failed_log: '[ReviewActionBar] Approval failed',
       toast_approve_failed: 'Approval failed: {detail}',
-      // 0332 D0005 §6.5 — TR approval notices. All three start from "approved".
+      // 0332 D0005 §6.5 — TR approval notices. Both start from "approved".
       tr_commit_toast: 'Approved — commit {commit} recorded',
-      tr_commit_none_toast: 'Approved — no source change, so nothing was committed',
       tr_commit_failed_toast: 'Approved — could not commit ({reason})',
       toast_mark_revised_success: 'Moved back to pending review.',
       toast_mark_revised_failed: 'Failed to complete revision: {detail}',

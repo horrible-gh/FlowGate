@@ -1755,9 +1755,8 @@ export default {
       mark_revised_confirm_message: '검수 대기 상태로 전환합니다. 진행하시겠습니까?',
       error_approve_failed_log: '[ReviewActionBar] 승인 처리 실패',
       toast_approve_failed: '승인 처리 실패: {detail}',
-      // 0332 D0005 §6.5 — TR 승인 알림. 셋 다 승인은 성공했다는 말로 시작한다.
+      // 0332 D0005 §6.5 — TR 승인 알림. 둘 다 승인은 성공했다는 말로 시작한다.
       tr_commit_toast: '승인했습니다 — 커밋 {commit} 을 남겼습니다',
-      tr_commit_none_toast: '승인했습니다 — 소스 변경이 없어 커밋하지 않았습니다',
       tr_commit_failed_toast: '승인했습니다 — 커밋하지 못했습니다 ({reason})',
       toast_mark_revised_success: '검수 대기 상태로 전환되었습니다.',
       toast_mark_revised_failed: '수정 완료 처리 실패: {detail}',
