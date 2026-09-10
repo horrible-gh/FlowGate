@@ -1012,3 +1012,261 @@ def test_worker_stage_switch_applies_rework_timeout_sec_to_the_new_hop(monkeypat
     assert run["hop_kind"] == "rework"
     assert run["timeout_sec"] == 1800
     assert captured_timeout["timeout_sec"] == 1800
+
+
+def test_unlimited_direct_gate_keeps_review_rework_rounds_unbounded():
+    bundle = {
+        **BASE,
+        "review_count": -1,
+        "review_run_id": "unlimited-run",
+        "review_attempt_no": 1,
+        "reviews": [{
+            "id": 11, "verdict": "issues", "revision_no": 3,
+            "review_run_id": "unlimited-run", "attempt_no": 1,
+        }],
+    }
+
+    rework = service.resolve_document_review_loop_gate(bundle)
+    assert (rework["round_no"], rework["current_stage"]) == (2, "rework")
+    assert rework["stop_reason"] is None
+
+    next_review = service.resolve_document_review_loop_gate({
+        **bundle,
+        **rework,
+        "last_hop_kind": "rework",
+        "last_hop_outcome": "succeeded",
+        "doc": {"revision_no": 4},
+        "review_attempt_no": 2,
+    })
+    assert (next_review["round_no"], next_review["current_stage"]) == (2, "review")
+    assert next_review["stop_reason"] is None
+
+    third_round = service.resolve_document_review_loop_gate({
+        **bundle,
+        **next_review,
+        "review_attempt_no": 2,
+        "reviews": [
+            *bundle["reviews"],
+            {
+                "id": 12, "verdict": "issues", "revision_no": 4,
+                "review_run_id": "unlimited-run", "attempt_no": 2,
+            },
+        ],
+    })
+    assert (third_round["round_no"], third_round["current_stage"]) == (3, "rework")
+    assert third_round["stop_reason"] != "review_count_exhausted"
+
+
+def test_retry_respawn_replay_checkpoints_and_rejects_once(monkeypatch):
+    from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
+    from modules.flow_gate.db import document_reviews as db_reviews
+
+    durable = {
+        **BASE,
+        "review_count": -1,
+        "failure_restart_max_attempts": 2,
+        "run_id": "retry-run",
+        "group_id": "flowgate.default.0486",
+        "doc_ref": "flowgate.default.0486.0025-T",
+        "updated_at": "v1",
+        "deadline_at": None,
+    }
+    doc = {"revision_no": 3, "doc_review_status": "pending_review"}
+    rows = [{
+        "id": 11, "verdict": "issues", "revision_no": 3,
+        "review_run_id": "retry-run", "attempt_no": 1,
+    }]
+    monkeypatch.setattr(db_loops, "get", lambda _run_id: dict(durable))
+    monkeypatch.setattr(
+        service, "get_store",
+        lambda: type("Store", (), {"transaction": lambda self: nullcontext(self)})(),
+    )
+    monkeypatch.setattr(service.db_docs, "get_by_id", lambda _doc_id: dict(doc))
+    monkeypatch.setattr(db_reviews, "list_by_doc", lambda _doc_id: list(rows))
+    rejects = []
+    monkeypatch.setattr(
+        service, "_auto_reject",
+        lambda _slot, row, _bundle: (
+            rejects.append(row["id"])
+            or doc.update(doc_review_status="rejected")
+            or {"ok": True}
+        ),
+    )
+    checkpoints = []
+
+    def checkpoint(_run_id, **updates):
+        checkpoints.append(dict(updates))
+        durable.update({k: v for k, v in updates.items() if not k.startswith("expected_")})
+        durable["updated_at"] = f"v{len(checkpoints) + 1}"
+        return True, dict(durable)
+
+    monkeypatch.setattr(db_loops, "checkpoint", checkpoint)
+    first = {
+        "run_id": "retry-run", "attempt_no": 1, "outcome": "complete",
+        "document_review_loop": dict(durable),
+    }
+    first_latest = service._checkpoint_document_review_loop(first)
+    respawn = {
+        "run_id": "retry-run", "attempt_no": 2, "outcome": "complete",
+        "document_review_loop": dict(first_latest),
+    }
+    second_latest = service._checkpoint_document_review_loop(respawn)
+
+    assert rejects == [11]
+    assert len(rows) == 1
+    assert len(checkpoints) == 2
+    assert (first_latest["round_no"], first_latest["current_stage"]) == (2, "rework")
+    assert (second_latest["round_no"], second_latest["current_stage"]) == (2, "rework")
+
+
+def test_checkpoint_ignores_late_previous_and_foreign_verdicts(monkeypatch):
+    from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
+    from modules.flow_gate.db import document_reviews as db_reviews
+
+    persisted = {
+        **BASE,
+        "review_count": -1,
+        "run_id": "owned-run",
+        "group_id": "flowgate.default.0486",
+        "doc_ref": "flowgate.default.0486.0025-T",
+        "updated_at": "v1",
+        "deadline_at": None,
+    }
+    authoritative = {
+        "id": 11, "verdict": "issues", "revision_no": 3,
+        "review_run_id": "owned-run", "attempt_no": 3,
+    }
+    stale = [
+        {"id": 100, "verdict": "pass", "revision_no": 3,
+         "review_run_id": "owned-run", "attempt_no": 2},
+        {"id": 101, "verdict": "hold", "revision_no": 3,
+         "review_run_id": "foreign-run", "attempt_no": 9},
+    ]
+    monkeypatch.setattr(db_loops, "get", lambda _run_id: dict(persisted))
+    monkeypatch.setattr(
+        service, "get_store",
+        lambda: type("Store", (), {"transaction": lambda self: nullcontext(self)})(),
+    )
+    monkeypatch.setattr(service.db_docs, "get_by_id", lambda _doc_id: {
+        "revision_no": 3, "doc_review_status": "pending_review",
+    })
+    monkeypatch.setattr(
+        db_reviews, "list_by_doc", lambda _doc_id: [*stale, authoritative],
+    )
+    rejected = []
+    monkeypatch.setattr(
+        service, "_auto_reject",
+        lambda _slot, row, _bundle: rejected.append(row["id"]) or {"ok": True},
+    )
+    monkeypatch.setattr(
+        db_loops,
+        "checkpoint",
+        lambda _run_id, **updates: (
+            True,
+            {**persisted, **{k: v for k, v in updates.items() if not k.startswith("expected_")}},
+        ),
+    )
+
+    latest = service._checkpoint_document_review_loop({
+        "run_id": "owned-run", "attempt_no": 3, "outcome": "complete",
+        "document_review_loop": dict(persisted),
+    })
+
+    assert rejected == [11]
+    # Attempt 2 remains a real historical round, but its pass cannot override attempt 3.
+    assert (latest["round_no"], latest["current_stage"]) == (3, "rework")
+    assert latest["stop_reason"] is None
+
+
+def test_duplicate_verdict_delivery_is_one_logical_round_but_distinct_attempts_survive():
+    duplicate_attempt = [
+        {
+            "id": 11, "verdict": "issues", "revision_no": 3,
+            "review_run_id": "dedupe-run", "attempt_no": 1,
+        },
+        {
+            "id": 12, "verdict": "issues", "revision_no": 3,
+            "review_run_id": "dedupe-run", "attempt_no": 1,
+        },
+    ]
+    one_round = service.resolve_document_review_loop_gate({
+        **BASE,
+        "review_count": -1,
+        "review_run_id": "dedupe-run",
+        "review_attempt_no": 1,
+        "reviews": duplicate_attempt,
+    })
+    replay = service.resolve_document_review_loop_gate({
+        **BASE,
+        "review_count": -1,
+        "review_run_id": "dedupe-run",
+        "review_attempt_no": 1,
+        "reviews": [duplicate_attempt[1], duplicate_attempt[1]],
+    })
+    distinct = service.resolve_document_review_loop_gate({
+        **BASE,
+        "review_count": -1,
+        "review_run_id": "dedupe-run",
+        "review_attempt_no": 2,
+        "reviews": [
+            duplicate_attempt[0],
+            {
+                "id": 13, "verdict": "issues", "revision_no": 4,
+                "review_run_id": "dedupe-run", "attempt_no": 2,
+            },
+        ],
+    })
+
+    assert (one_round["round_no"], one_round["current_stage"]) == (2, "rework")
+    assert (replay["round_no"], replay["current_stage"]) == (2, "rework")
+    assert (distinct["round_no"], distinct["current_stage"]) == (3, "rework")
+
+
+def test_exhausted_terminal_loop_cold_restore_never_restarts(monkeypatch):
+    from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
+
+    exhausted = {
+        **BASE,
+        "review_count": 1,
+        "run_id": "exhausted-run",
+        "group_id": "flowgate.default.0486",
+        "doc_ref": "flowgate.default.0486.0025-T",
+        "round_no": 1,
+        "current_stage": "stopped",
+        "stop_reason": "review_count_exhausted",
+        "stop_detail": "review count 1 exhausted",
+        "updated_at": "terminal-v1",
+        "deadline_at": None,
+    }
+    calls = []
+    monkeypatch.setattr(
+        service, "get_store",
+        lambda: type("Store", (), {"transaction": lambda self: nullcontext(self)})(),
+    )
+    monkeypatch.setattr(
+        db_loops, "get", lambda run_id: calls.append(("get", run_id)) or dict(exhausted),
+    )
+    monkeypatch.setattr(
+        service.db_reviews, "list_by_doc",
+        lambda _doc_id: (_ for _ in ()).throw(AssertionError("must not create/read a review hop")),
+    )
+    monkeypatch.setattr(
+        service, "_auto_reject",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not reject")),
+    )
+
+    restored = service._restore_document_review_loop("exhausted-run")
+    cold_run = {
+        "run_id": "exhausted-run",
+        "attempt_no": 99,
+        "outcome": "complete",
+        "document_review_loop": restored,
+    }
+    latest = service._checkpoint_document_review_loop(cold_run)
+
+    assert calls == [("get", "exhausted-run")]
+    assert latest == exhausted
+    assert cold_run["document_review_loop"] == exhausted
+    assert (latest["round_no"], latest["current_stage"], latest["stop_reason"]) == (
+        1, "stopped", "review_count_exhausted",
+    )
