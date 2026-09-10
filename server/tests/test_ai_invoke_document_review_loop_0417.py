@@ -284,6 +284,49 @@ def test_loop_contract_conflicts_return_422_before_database(monkeypatch, overrid
     assert json.loads(response.body)["code"] == "validation_failed"
 
 
+def _loop_scope_error(response) -> dict | None:
+    errors = json.loads(response.body)["errors"]
+    return next(
+        (e for e in errors if e["loc"] == "document_review_loop" and "action_scope" in e["msg"]),
+        None,
+    )
+
+
+@pytest.mark.parametrize("scope", ["review", "rework"])
+def test_loop_admission_no_longer_rejects_review_or_rework_scope(monkeypatch, scope):
+    """flowgate.default.0553 T0004 §3: the rejected-state rework entry (action_scope='rework')
+    may request document_review_loop exactly like 'review' already could. mode='continuous'
+    is used here only to force a guaranteed, DB-free 422 (document_review_loop requires
+    mode=single) so the scope-specific error can be inspected in isolation."""
+    body = {
+        "project": "flowgate", "module": "default", "group": "0417",
+        "doc_ref": "flowgate.default.0417.0011-T", "action_scope": scope, "mode": "continuous",
+        "document_review_loop": {key: value for key, value in BASE.items() if key in {
+            "review_count", "reviewer_provider_id", "review_criteria", "rework_provider_id",
+            "rework_timeout_sec", "rework_message", "failure_restart_max_attempts", "total_timeout_sec"
+        }},
+    }
+    monkeypatch.setattr(routes, "_require_user", lambda request: {"issued_to": "u", "_is_user_jwt": True})
+    response = routes.start_ai_invoke(routes.AiInvokeStartRequest(**body), object())
+    assert response.status_code == 422
+    assert _loop_scope_error(response) is None
+
+
+def test_loop_admission_still_rejects_unrelated_scopes(monkeypatch):
+    body = {
+        "project": "flowgate", "module": "default", "group": "0417",
+        "doc_ref": "flowgate.default.0417.0011-T", "action_scope": "chat", "mode": "single",
+        "document_review_loop": {key: value for key, value in BASE.items() if key in {
+            "review_count", "reviewer_provider_id", "review_criteria", "rework_provider_id",
+            "rework_timeout_sec", "rework_message", "failure_restart_max_attempts", "total_timeout_sec"
+        }},
+    }
+    monkeypatch.setattr(routes, "_require_user", lambda request: {"issued_to": "u", "_is_user_jwt": True})
+    response = routes.start_ai_invoke(routes.AiInvokeStartRequest(**body), object())
+    assert response.status_code == 422
+    assert _loop_scope_error(response) is not None
+
+
 @pytest.mark.parametrize("field,value", [
     ("review_count", 0), ("review_criteria", "anything"), ("rework_timeout_sec", 1),
     # flowgate.default.0490 T0005 §5: the ceiling is now a setting (default max=3), not the
