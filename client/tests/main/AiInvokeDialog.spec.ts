@@ -1000,6 +1000,84 @@ describe('AiInvokeDialog document review loop behavior (0417 T0013)', () => {
   })
 })
 
+// flowgate.default.0553 T0004: the rejected-state rework entry (both the reject dialog's
+// [AI 호출] and the rejected action bar route through action_scope='rework') may now start
+// the SAME document review/rework loop the 'review' scope already offers — chosen instead
+// of, not in addition to, the existing one-shot rework. `canContinuous` (0223's chainable
+// scope list) stays untouched: 'rework' still never gets a [연속 실행] option.
+describe('AiInvokeDialog rejected-state rework entry offers the review/rework loop (0553 T0004)', () => {
+  beforeEach(() => {
+    getRequest.mockResolvedValue({
+      data: {
+        ok: true,
+        project: 'flowgate',
+        default_provider_id: 'reviewer',
+        providers: [
+          { id: 'reviewer', name: 'Reviewer AI', exec_type: 'cli', kind: 'codex', enabled: true },
+          { id: 'reworker', name: 'Reworker AI', exec_type: 'cli', kind: 'codex', enabled: true },
+        ],
+      },
+    })
+  })
+
+  it('offers single AND loop on rework, but never a continuous option', async () => {
+    const wrapper = mountDialog({ actionScope: 'rework' })
+    await flushPromises()
+    expect(document.querySelector('input[value="single"]')).not.toBeNull()
+    expect(document.querySelector('[data-test="review-loop-settings"]')).not.toBeNull()
+    expect(document.querySelector('input[value="continuous"]')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('loop on rework posts action_scope=rework + document_review_loop and drops the one-shot timeout field', async () => {
+    const wrapper = mountDialog({ actionScope: 'rework' })
+    await flushPromises()
+
+    // The one-shot rework's own run-duration picker (0446 T0010) is visible until the loop
+    // is picked — it must not ride along inside a document_review_loop request.
+    expect(document.querySelector('[data-test="ai-invoke-step-timeout"]')).not.toBeNull()
+
+    const loopRadio = document.querySelector('input[value="loop"]') as HTMLInputElement
+    loopRadio.checked = true
+    loopRadio.dispatchEvent(new Event('change'))
+    await flushPromises()
+    expect(document.querySelector('[data-test="ai-invoke-step-timeout"]')).toBeNull()
+
+    ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
+    await flushPromises()
+
+    const body = startBody()
+    expect(body).toMatchObject({
+      action_scope: 'rework',
+      mode: 'single',
+      provider_id: null,
+      provider_pinned: false,
+      document_review_loop: {
+        review_count: 3,
+        reviewer_provider_id: 'reviewer',
+        review_criteria: 'document_type_default',
+        rework_provider_id: 'reviewer',
+      },
+    })
+    expect(body).not.toHaveProperty('continuation_step_timeout_sec')
+
+    wrapper.unmount()
+  })
+
+  it('an ordinary (non-loop) rework on this scope still sends no document_review_loop key', async () => {
+    const wrapper = mountDialog({ actionScope: 'rework' })
+    await flushPromises()
+    ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
+    await flushPromises()
+
+    const body = startBody()
+    expect(body).toMatchObject({ action_scope: 'rework', mode: 'single' })
+    expect(body).not.toHaveProperty('document_review_loop')
+
+    wrapper.unmount()
+  })
+})
+
 // 0417 T0017 (반려: "시안과 실제 개발해놓은 AI 호출 다이얼로그가 완전 다르잖아") — the approved
 // deck MirageGlass u3digra2 v6 화면 2~5 의 요소를 하나씩 대조한다. 빠진 것뿐 아니라
 // 시안에 없는 중복 컨트롤도 여기서 잡는다.

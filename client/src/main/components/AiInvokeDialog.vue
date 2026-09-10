@@ -481,7 +481,13 @@ function restartOptionLabel(n: number): string {
   if (n === -1) return t('main.ai_invoke_dialog.review_loop_restart_forever')
   return t('main.ai_invoke_dialog.review_loop_count_times', { n })
 }
-const reviewLoopAvailable = computed(() => props.actionScope === 'review' && mode.value === 'single')
+// flowgate.default.0553 T0004 §1: rejected-state rework entry (action_scope='rework') may
+// also start the document review/rework loop now — it is a second scope with the same
+// contract as 'review', not a widening of `canContinuous` (that stays 0223's chainable-scope
+// list, untouched below). Unrelated scopes still see no loop option.
+const reviewLoopAvailable = computed(() =>
+  (props.actionScope === 'review' || props.actionScope === 'rework') && mode.value === 'single',
+)
 const reviewLoopActive = computed(() => reviewLoopAvailable.value && reviewInvocation.value === 'loop')
 const enabledProviders = computed(() => aiProviderStore.providers.filter((provider: any) => provider.enabled !== false))
 const reviewerProviderName = computed(() => enabledProviders.value.find((provider: any) => provider.id === reviewerProviderId.value)?.name ?? '')
@@ -584,8 +590,12 @@ const singleStepNoteActive = computed(() =>
 // rejection dialog's [AI 호출] (MainPanel.onRejectDialogInvokeAi) and the rejected-state
 // action bar (ReviewActionBar → MainPanel.onReviewReworkInvokeAi). Widening it to
 // `mode === 'single'` alone would bolt an unjustified control onto seven other screens.
+// flowgate.default.0553 T0004 §1: excluded once the loop is picked — a loop run carries its
+// OWN rework_timeout_sec (document_review_loop tab) and the server refuses a top-level
+// provider pick alongside document_review_loop (ai_invoke_routes.py) for the same reason a
+// second, unrelated timeout field must not ride along either.
 const stepTimeoutActive = computed(() =>
-  mode.value === 'single' && props.actionScope === 'rework',
+  mode.value === 'single' && props.actionScope === 'rework' && !reviewLoopActive.value,
 )
 // Its OWN storage key, never ContinuousWorkDialog's (T0010 §3-5): an unmanned chain's per-hop
 // budget and a one-shot rework's budget are different decisions, and one must not silently
