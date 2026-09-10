@@ -512,6 +512,8 @@ const props = defineProps<{
   reviewStatus: string | null
   /** Optional caller gate; WP uses it to finish a dirty save before approval. */
   beforeApprove?: () => Promise<boolean> | boolean
+  /** Runs only after approval is durable; WP uses the server post-step outcome. */
+  afterApprove?: (document: Record<string, any>) => Promise<void> | void
   /** Variant C: whether AI review feedback exists; shows an "AI review arrived" pill in the pending-review footer. */
   aiReviewArrived?: boolean
   /** Whether the active document's project has at least one resolved runtime AI provider. */
@@ -1100,6 +1102,9 @@ async function doApprove() {
     const updated = (res.data as any)?.document ?? (res.data as any)?.data ?? res.data
     approvedDocId.value = props.docId
     emit('approve', updated?.doc_review_status ?? 'approved')
+    if (props.afterApprove) {
+      try { await props.afterApprove(updated ?? {}) } catch { /* approval is already durable */ }
+    }
   } catch (e: any) {
     const detail = e?.response?.data?.detail ?? e
     // 0257 NR0003 §3: the server refusing approve on an already-approved doc is correct and

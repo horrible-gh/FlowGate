@@ -529,6 +529,26 @@ function onSequenceSaved() {
   emit('sequence-updated')
 }
 
+async function handleApprovalExpansion(outcome?: { status?: string; reason?: string }): Promise<void> {
+  if (!isWorkPlan.value || !outcome) return
+  const alreadyApplied = outcome.status === 'skipped' && outcome.reason === 'already_applied'
+  if (outcome.status === 'expanded' || alreadyApplied) {
+    onSequenceSaved()
+    return
+  }
+  if (outcome.status === 'needs_selection') {
+    await fetchCandidates(true)
+    applyMenuOpen.value = true
+    return
+  }
+  if (outcome.status === 'failed') {
+    await fetchCandidates(true)
+    applyMenuOpen.value = true
+  }
+}
+
+defineExpose({ fetchCandidates, handleApprovalExpansion })
+
 function onDocumentClick() {
   if (applyMenuOpen.value) applyMenuOpen.value = false
 }

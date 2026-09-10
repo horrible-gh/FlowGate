@@ -92,6 +92,7 @@
           />
           <DocWorkflow
             v-if="tab.typeCode && tab.typeCode !== 'DC'"
+            :ref="(el) => bindActiveRef(docWorkflowRefs, tab.id, el)"
             :tab="tab"
             :read-only="aiRunDocumentLocked"
             :workflow-decided="getWorkflowViewState(tab.id).mode !== 'workflow'"
@@ -883,6 +884,7 @@
       :head-doc-title="exposedValue(docHeaderRefs[activeTabId]?.headDocTitle) ?? null"
       :viewed-doc-id="activeTabId"
       :before-approve="ensureWorkPlanSavedBeforeApproval"
+      :after-approve="onWorkPlanApprovedPostStep"
       @approve="onReviewApproved(activeTabId, $event)"
       @reject="onReviewRejected(activeTabId)"
       @revision-complete="onReviewApproved(activeTabId, $event)"
@@ -1616,6 +1618,7 @@ const activeTab = computed(() => tabsStore.activeTab)
 
 // Template refs for DocHeader instances (keyed by tab id).
 const docHeaderRefs = reactive<Record<string, any>>({})
+const docWorkflowRefs = reactive<Record<string, any>>({})
 const mdViewerRefs = reactive<Record<string, any>>({})
 const textViewerRefs = reactive<Record<string, any>>({})
 const stepVerificationCardRefs = reactive<Record<string, any>>({})
@@ -1629,6 +1632,12 @@ async function ensureWorkPlanSavedBeforeApproval(): Promise<boolean> {
   if (!tabId || getTabTypeCode(tabId) !== 'WP') return true
   const outcome = await workPlanEditorRefs[tabId]?.ensureSaved?.()
   return outcome === 'clean' || outcome === 'saved'
+}
+
+async function onWorkPlanApprovedPostStep(document: Record<string, any>): Promise<void> {
+  const tabId = activeTabId.value
+  if (!tabId || getTabTypeCode(tabId) !== 'WP') return
+  await docWorkflowRefs[tabId]?.handleApprovalExpansion?.(document.work_plan_expansion)
 }
 
 const qStatuses = reactive<Record<string, string>>({})
