@@ -1338,6 +1338,10 @@ export default {
       review_loop_stop_review_count_exhausted: 'Rejected · review count exhausted',
       review_loop_stop_retry_exhausted: 'Failed · retries exhausted',
       review_loop_stop_total_timeout: 'Stopped · total time limit exceeded',
+    review_loop_stop_review_verdict_hold: 'Stopped · the reviewer returned hold',
+    review_loop_stop_restart_orphaned: 'Stopped · cut off by a server restart',
+    review_loop_stop_review_stalled: 'Stopped · the same findings kept coming back',
+    review_loop_stop_unknown: 'Stopped · reason not recognised',
       // 0446 T0010 §3-6: the rejection rework's run-duration picker. Not shared with
       // main.continuous_work.step_timeout_*, whose wording is about ONE STEP of a chain and
       // would be wrong on a single-run screen.

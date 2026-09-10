@@ -43,7 +43,18 @@ export interface AiInvokeRegisterError {
 export interface DocumentReviewLoopState {
   roundNo: number
   currentStage: 'review' | 'rework' | 'stopped'
-  stopReason: 'review_passed' | 'review_count_exhausted' | 'retry_exhausted' | 'total_timeout' | null
+  // Every value ai_invoke_document_review_loops.stop_reason's CHECK allows, in the order the
+  // migrations added them (091, 105, 106, 107). A value missing from this union reached the
+  // card as an unlabelled reason (0486 NR0028 F4).
+  stopReason:
+    | 'review_passed'
+    | 'review_count_exhausted'
+    | 'retry_exhausted'
+    | 'total_timeout'
+    | 'review_verdict_hold'
+    | 'restart_orphaned'
+    | 'review_stalled'
+    | null
   stopDetail: string | null
   history: Array<Record<string, unknown>>
 }
