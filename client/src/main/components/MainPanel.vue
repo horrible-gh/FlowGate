@@ -83,7 +83,7 @@
                only the extra churn from the in-modal toggle is removed. -->
           <DocHeader
             v-if="tab.typeCode && editTab?.id !== tab.id"
-            :ref="(el) => bindActiveRef(docHeaderRefs, tab.id, el)"
+            :ref="(el) => bindDocHeaderRef(tab.id, el)"
             :tab="tab"
             :read-only="aiRunDocumentLocked"
             @related-doc-created="emit('related-doc-created', $event)"
@@ -1686,6 +1686,28 @@ function bindActiveRef(registry: Record<string, any>, tabId: string, el: any) {
   else if (tabId in registry) delete registry[tabId]
 }
 
+// 0552 T0006 rev1 (rejection): `returnPointResultKeys` (below) is a last-*result* cache,
+// not a permanent one — but nothing ever emptied it, so it silently outlived the DocHeader
+// instance whose read produced it. Unmount (tab switched away/closed, or the same-tab
+// unmount→remount noted above) is the one moment a fresh open is guaranteed on return —
+// the next non-silent fetchDoc() rebuilds `doc` from scratch. Drop the cached result for
+// whatever root this instance resolved to right there, using the outgoing instance (still
+// readable — `bindActiveRef` has not deleted it yet), so a re-open that happens to land on
+// an identical workflowContextSignature still asks the server instead of reusing a
+// snapshot from a session the user already left.
+//
+// 0552 T0008 rev2 (rejection): clearing only the result key was not enough — a round still
+// in flight for this root at the moment of unmount is neither part of `returnPointResultKeys`
+// (it hasn't written its result yet) nor stopped by anything else, so it kept living past the
+// instance that started it. `invalidateReturnPointRoot` below retires that round too.
+function bindDocHeaderRef(tabId: string, el: any) {
+  if (!resolveTemplateRef(el)) {
+    const rootDocId = resolvedWorkflowRootDocId(tabId)
+    if (rootDocId) invalidateReturnPointRoot(rootDocId)
+  }
+  bindActiveRef(docHeaderRefs, tabId, el)
+}
+
 // Single source of truth: the write path (workflow-decision click) reads the
 // SAME registry the action bar reads, so a decision applied to the live
 // instance is always reflected by the action bar (NR0003 §6.2).
@@ -2108,6 +2130,8 @@ const timeMachineCancelDocId = ref('')
 // The rewound step to open once the dialog actually closes. The success path closes
 // immediately; the result-screen path opens it when the user presses [닫기] (D0005 §6.4).
 const timeMachinePendingStep = ref<TimeMachineStep | null>(null)
+// A workflow sequence hangs off its root document, and only R/B documents are roots.
+const WORKFLOW_ROOT_TYPE_CODES = ['R', 'B']
 const returnPoints = reactive<Record<string, ReturnPointInfo>>({})
 // 0142 R0001 — cached workflow sequence per return-point root, used to map a rewound step's
 // strip cell to its seq for the reverse time-machine highlight/click (getReturnTargets).
@@ -2513,8 +2537,43 @@ function getTabTypeCode(tabId: string | null | undefined): string | null {
   return tab?.typeCode ?? exposedValue<string | null>(docHeaderRefs[tabId]?.docTypeCode)
 }
 
-function returnPointDocId(tabId: string): string {
-  return exposedValue<string>(docHeaderRefs[tabId]?.parentRDocId) ?? tabId
+// 0552 T0006 §1 — the workflow root id has a single owner: DocHeader, which is the
+// component that reads `documents/detail`. MainPanel consumes the resolved value; it never
+// derives one. `null` means the owner has not answered yet.
+function resolvedWorkflowRootDocId(tabId: string): string | null {
+  return exposedValue<string | null>(docHeaderRefs[tabId]?.workflowRootDocId) ?? null
+}
+
+// The same id for the paths a user drives (strip click, post-mutation refresh). An R/B tab
+// is its own root by the type code the tab itself carries, so those paths do not have to
+// wait for detail. A member tab (T/TR/N/…) has no such shortcut: before detail lands its
+// root is unknown and this returns null instead of the old `?? tabId` guess, which sent
+// `return-point`/`sequence` at a child document whose answer is thrown away
+// (0552.0005-NR §2.2-4 / T0006 §3).
+function returnPointDocId(tabId: string): string | null {
+  const resolved = resolvedWorkflowRootDocId(tabId)
+  if (resolved) return resolved
+  const typeCode = (getTabTypeCode(tabId) ?? '').toUpperCase()
+  return WORKFLOW_ROOT_TYPE_CODES.includes(typeCode) ? tabId : null
+}
+
+// What the two workflow reads actually depend on: which root, and the state that root's
+// workflow is in. Every other thing DocHeader repaints (orphan flag, owner name, group
+// label, mention badge) leaves both responses identical, so it must not re-enter the read.
+// Keeping the *state* in the key — instead of the root id alone — is what keeps this a
+// dedup and not a cache: any real workflow transition changes the key and re-reads
+// (T0006 "중복 제거 ≠ 영구 캐시").
+function workflowContextSignature(tabId: string): string {
+  const h = docHeaderRefs[tabId]
+  return [
+    exposedValue<string | null>(h?.docReviewStatus) ?? '',
+    exposedValue<string | null>(h?.workflowHeadType) ?? '',
+    String(exposedValue<number | null>(h?.workflowHeadIndex) ?? ''),
+    exposedValue<string | null>(h?.headDocId) ?? '',
+    exposedValue<string | null>(h?.headDocReviewStatus) ?? '',
+    exposedValue<string | null>(h?.headStatus) ?? '',
+    (exposedValue<string[] | null>(h?.workflowSteps) ?? []).join(','),
+  ].join('\u0001')
 }
 
 function hasReturnRegion(rp: ReturnPointInfo | undefined): rp is ReturnPointInfo {
@@ -2530,6 +2589,7 @@ function hasReturnRegion(rp: ReturnPointInfo | undefined): rp is ReturnPointInfo
 // return targets, reusing the cached sequence so the highlight matches what a click restores.
 function getReturnTargets(tabId: string): number[] {
   const docId = returnPointDocId(tabId)
+  if (!docId) return []
   const rp = returnPoints[docId]
   if (!hasReturnRegion(rp)) return []
   const items = returnSequences[docId]
@@ -2542,18 +2602,95 @@ function getReturnTargets(tabId: string): number[] {
 // 쓰므로(slotCommitMarks → resolveClickedSlot) 타입이 반복되는 시퀀스에서도 표식과 클릭이
 // 서로 다른 칸을 가리킬 수 없다. 시퀀스를 아직 못 받았으면 빈 배열 = 표식 없음.
 function getSlotCommits(tabId: string): (SlotCommitMark | null)[] {
-  const items = returnSequences[returnPointDocId(tabId)]
+  const docId = returnPointDocId(tabId)
+  const items = docId ? returnSequences[docId] : undefined
   if (!items || items.length === 0) return []
   return slotCommitMarks(getWorkflowViewState(tabId).stepStates, items)
 }
 
-async function refreshReturnPoint(tabId: string) {
+// 0552 T0006 §2 — in-flight join + last-result key + generation guard for the
+// return-point/sequence pair, mirroring the pattern DocHeader already runs on its own
+// detail read (fetchDoc / fetchDocOnce). Before this, `headerRevision` re-entered the read
+// on every DocHeader repaint — up to three per document open — with no dedup of any kind,
+// so the same root was asked twice (0552.0005-NR §2.2-3).
+//
+//   join      the same root is already in flight → share that round trip, no second GET
+//   key       same root AND same workflow state as the last completed read → nothing to read
+//   trailing  a joiner that arrived under a DIFFERENT key gets one refresh once the
+//             in-flight round finishes, so a state change landing mid-flight is not lost
+//   force     explicit post-mutation refresh: never joins, never reuses, always re-reads
+//
+// The key carries the workflow *state*, not just the root id — that is what keeps this a
+// dedup rather than a snapshot cache (T0006 "중복 제거 ≠ 영구 캐시"): any real transition
+// changes the key and the pair is read again. But a signature match is only trustworthy
+// while the DocHeader instance that produced it is still the one alive — `bindDocHeaderRef`
+// calls `invalidateReturnPointRoot` the moment that instance unmounts (tab switched
+// away/closed, or the same-tab unmount→remount above), so a later re-open that happens to
+// land on an identical signature still re-reads instead of reusing a result left over from
+// the session the user already left (rev1 rejection).
+interface ReturnPointRequest {
+  promise: Promise<void>
+  key: string
+}
+const returnPointRequests = new Map<string, ReturnPointRequest>()
+const returnPointTrailing = new Set<string>()
+const returnPointResultKeys = new Map<string, string>()
+let returnPointGeneration = 0
+
+// 0552 T0008 rev2 (rejection): the result-key delete alone left a race — a round already in
+// flight for this root at unmount time is tracked by neither `returnPointResultKeys` (it
+// hasn't written yet) nor anything else, so it kept running after the viewer that started it
+// was gone. Two things can go wrong from that surviving round, both traced to a same-key
+// re-open landing before or after it settles:
+//   (a) settles AFTER re-open — `refreshReturnPoint` finds the outgoing request still in
+//       `returnPointRequests` under the identical key and joins it instead of asking again;
+//   (b) settles BEFORE re-open — `runReturnPointFetch` still writes `returnPointResultKeys`
+//       post-unmount, so the re-open's own key check finds a "fresh" result that is actually
+//       the abandoned session's snapshot.
+// Bumping the generation (global, same as DocHeader's own) retires the round outright — its
+// `generation !== returnPointGeneration` guards start failing right here, before it can write
+// anything — and dropping the pending request/trailing entries means the next
+// `refreshReturnPoint` call for this root has nothing to join and must start a fresh round.
+function invalidateReturnPointRoot(rootDocId: string) {
+  returnPointResultKeys.delete(rootDocId)
+  returnPointRequests.delete(rootDocId)
+  returnPointTrailing.delete(rootDocId)
+  returnPointGeneration += 1
+}
+
+function refreshReturnPoint(tabId: string, opts?: { force?: boolean }): Promise<void> {
   const docId = returnPointDocId(tabId)
-  if (!docId || !getTabTypeCode(tabId)) return
+  if (!docId || !getTabTypeCode(tabId)) return Promise.resolve()
+  const key = `${docId}\u0000${workflowContextSignature(tabId)}`
+  if (!opts?.force) {
+    const existing = returnPointRequests.get(docId)
+    if (existing) {
+      if (existing.key !== key) returnPointTrailing.add(docId)
+      return existing.promise
+    }
+    if (returnPointResultKeys.get(docId) === key) return Promise.resolve()
+  }
+  const request = runReturnPointFetch(docId, key)
+  returnPointRequests.set(docId, { promise: request, key })
+  void request.finally(() => {
+    if (returnPointRequests.get(docId)?.promise === request) returnPointRequests.delete(docId)
+    if (returnPointTrailing.delete(docId) && activeTabId.value === tabId) {
+      void refreshReturnPoint(tabId, { force: true })
+    }
+  })
+  return request
+}
+
+async function runReturnPointFetch(docId: string, key: string): Promise<void> {
+  // A stale response must never overwrite the newer root/state. The generation is global
+  // (as DocHeader's own is): starting any newer round — including a forced post-mutation
+  // one — retires every response still in the air.
+  const generation = ++returnPointGeneration
   try {
     const res = await getRequest<{ return_point?: ReturnPointInfo }>(
       `/api/v1/documents/workflow/${encodeURIComponent(docId)}/return-point`,
     )
+    if (generation !== returnPointGeneration) return
     const rp = res.data?.return_point ?? {
       exists: false,
       front_seq: null,
@@ -2571,20 +2708,30 @@ async function refreshReturnPoint(tabId: string) {
     // already checks hasReturnRegion first) and the rewind behaviour is unchanged.
     try {
       const seqRes = await getRequest<any>(`/api/v1/workflow/${encodeURIComponent(docId)}/sequence`)
+      if (generation !== returnPointGeneration) return
       returnSequences[docId] = Array.isArray(seqRes.data?.sequence) ? seqRes.data.sequence : []
     } catch {
+      if (generation !== returnPointGeneration) return
       delete returnSequences[docId]
     }
+    returnPointResultKeys.set(docId, key)
   } catch {
+    if (generation !== returnPointGeneration) return
     delete returnPoints[docId]
     delete returnSequences[docId]
+    returnPointResultKeys.delete(docId)
   }
 }
 
 watch(
   () => [activeTabId.value, headerRevision.value] as const,
   ([tabId]) => {
-    if (tabId) void refreshReturnPoint(tabId)
+    // Root-only (T0006 §3): the automatic read runs only once the owner of
+    // `documents/detail` has published a workflow root id. Until then a member document's
+    // root is a guess, and that guess costs a round trip whose answer is discarded. The
+    // user-driven paths keep the R/B tab-id shortcut — there the tab's own type code
+    // already IS the root, so nothing has to be guessed.
+    if (tabId && resolvedWorkflowRootDocId(tabId)) void refreshReturnPoint(tabId)
   },
   { immediate: true },
 )
@@ -2712,7 +2859,8 @@ async function onOpenFinalApproval(tabId: string) {
       showToast(t('main.main_panel.error_info_unavailable'), 'danger')
       return
     }
-    docHeaderRefs[tabId]?.fetchDoc?.(tabId)
+    // 0552 T0006 §4 — openFinalApprovalTab switches to the AC document, so this header
+    // unmounts; its re-read would land after that and be discarded.
     openFinalApprovalTab(acId)
   } catch (e: any) {
     const detail = e?.response?.data?.detail ?? String(e)
@@ -3006,10 +3154,11 @@ async function openTimeMachine(acTabId: string) {
 // resolved by slot identity (index, then type-occurrence fallback) so repeated types
 // (e.g. a design series appearing twice) roll back the correct cell — NR0003 §3/§5.2.
 async function onWorkflowStepTimeMachine(tabId: string, payload: { index: number; code: string }) {
-  const h = docHeaderRefs[tabId]
-  // The sequence lives on the root workflow doc (R/B). Child docs expose it via parentRDocId;
-  // an R/B tab is its own root.
-  const rootDocId = exposedValue<string>(h?.parentRDocId) ?? tabId
+  // The sequence lives on the root workflow doc (R/B). A member doc gets its root from
+  // the detail owner (DocHeader); an R/B tab is its own root. Same resolution the
+  // return-point read uses, so the dialog can never target a different document than the
+  // strip it was opened from (0552 T0006 §1).
+  const rootDocId = returnPointDocId(tabId)
   if (!rootDocId) {
     showToast(t('main.main_panel.error_info_unavailable'), 'danger')
     return
@@ -3093,7 +3242,12 @@ function finishTimeMachine(acDocId: string, step: TimeMachineStep) {
   // strip-triggered reopen originates from the root R (or a child), which reopen keeps,
   // so its tab must NOT be closed (0018 R0001).
   if (getTabTypeCode(acDocId) === 'AC') tabsStore.closeTab(acDocId)
-  for (const tid of Object.keys(docHeaderRefs)) docHeaderRefs[tid]?.fetchDoc?.(tid)
+  // Only the ACTIVE tab has a mounted DocHeader (the panel is behind `v-if` at the top of
+  // this file), so the old loop over every registered ref was a refresh of exactly one
+  // header — the one we are about to navigate away from. The landing tab opened below
+  // mounts and reads its own detail, so re-reading the outgoing document only produces a
+  // response nobody consumes (0552.0005-NR §3.4). Refresh in place only when we stay put.
+  if (step.docId === activeTabId.value) void docHeaderRefs[step.docId]?.fetchDoc?.(step.docId)
   tabsStore.openTab({
     id: step.docId,
     title: step.title ? `${step.docId} — ${step.title}` : step.docId,
@@ -3152,7 +3306,9 @@ function refreshAfterCancel() {
       detail: { project: projectStore.currentProjectId ?? null },
     }))
   }
-  if (activeTabId.value) void refreshReturnPoint(activeTabId.value)
+  // force: the rewind/cancel just changed the very state the key is built from, and this
+  // refresh must not join or reuse a round that was started before it.
+  if (activeTabId.value) void refreshReturnPoint(activeTabId.value, { force: true })
 }
 
 // [다시 시도] — re-runs ONLY the cancel (P0006 §4). The rewind is already committed, so
@@ -3301,8 +3457,14 @@ async function doWorkflowStepReturn() {
       destination_seq: destinationSeq,
     })
     const data = res.data ?? {}
-    for (const tid of Object.keys(docHeaderRefs)) docHeaderRefs[tid]?.fetchDoc?.(tid)
-    await refreshReturnPoint(tabId)
+    // Same single-mounted-header reasoning as finishTimeMachine: refresh this document only
+    // when the restore leaves us on it. When it lands us elsewhere (below), that tab's own
+    // DocHeader mounts and reads detail itself.
+    const landingDocId: string = data.stopped_doc_id ?? destinationDocId ?? ''
+    if (!landingDocId || landingDocId === tabId) {
+      void docHeaderRefs[tabId]?.fetchDoc?.(tabId)
+    }
+    await refreshReturnPoint(tabId, { force: true })
     // 0332 T0018 K11 — the restore may have put source commits back, so the workflow
     // markers and the Git status panel are stale from here on. Same refresh the rewind
     // side runs, for the same reason: without it the screen keeps showing the canceled
@@ -3326,7 +3488,7 @@ async function doWorkflowStepReturn() {
       say(t('main.time_machine.restore_noop'), 'warning')
     }
     // "그쪽으로 갈수 있게" — land the user on the step they returned to.
-    const landing = data.stopped_doc_id ?? destinationDocId
+    const landing = landingDocId
     if (landing) {
       tabsStore.openTab({
         id: landing,
@@ -3997,8 +4159,15 @@ function onNextActionCreateEmpty(_selectedDocs?: string[]) {
 
 function onNextEmptyDocCreated(payload: { docId: string; openAfter: boolean; projectId: string }) {
   showToast(t('main.main_panel.toast_empty_doc_created'), 'success')
-  const header = docHeaderRefs[nextActionModalTabId.value]
-  header?.fetchDoc?.(nextActionModalTabId.value)
+  // 0552 T0006 §4 — only when we STAY on this document. `openAfter` decides that: with it
+  // set, the tab switches and this header unmounts before its bundle comes back; without
+  // it, the user keeps looking at this document and its action bar must pick up the new
+  // head. The distinction is the whole point — the refresh is not removed, it is confined
+  // to the path that still has a viewer.
+  if (!payload.openAfter) {
+    const header = docHeaderRefs[nextActionModalTabId.value]
+    header?.fetchDoc?.(nextActionModalTabId.value)
+  }
   emit('related-doc-created', payload)
 }
 
@@ -4481,7 +4650,10 @@ async function doCreateApprovedDocument() {
     })
     const docId: string = (res.data as any)?.doc_id ?? ''
     showToast(t('main.review_action_bar.toast_create_approved_success'), 'success')
-    h?.fetchDoc?.(tabId)
+    // 0552 T0006 §4 — no re-read of the document we are leaving. `openAfter: true` below
+    // switches tabs, which unmounts this DocHeader; its detail/relations/users/groups/
+    // mention-copy bundle would land after the unmount and be discarded
+    // (0552.0005-NR §3.4). Coming back to this tab remounts and reads it fresh.
     // r2: open the newly created approved doc after creation. Previously openAfter
     // was false, so the doc was created server-side but the FE never navigated to it
     // → "created but nothing moved, looks like it wasn't created". Matches every other
@@ -4529,7 +4701,8 @@ async function onActionBarCreateConversation(tabId: string) {
     })
     const docId: string = (res.data as any)?.doc_id ?? ''
     showToast(t('main.review_action_bar.toast_conversation_created'), 'success')
-    h?.fetchDoc?.(tabId)
+    // 0552 T0006 §4 — the transition to the new CH doc is decided, so this DocHeader is
+    // about to unmount; re-reading its bundle here only produces discarded responses.
     emit('related-doc-created', { docId, openAfter: true, projectId: project })
   } catch (e: any) {
     const detail = e?.response?.data?.detail

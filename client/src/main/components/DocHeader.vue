@@ -1311,6 +1311,22 @@ const docClass = computed((): string => {
 })
 
 const parentRDocId = computed(() => doc.value?.parent_r_doc_id ?? null)
+// 0552 T0006 §1 — DocHeader is the component that reads `documents/detail`, so it is also
+// the owner of the id that read resolves: the workflow root. A root document (R/B) is its
+// own root; a member document's root is `parent_r_doc_id`, which does not exist until the
+// detail response has landed. `null` therefore means "not known yet" — and MainPanel must
+// not guess a root while it is null, because a guessed (child) id makes the
+// return-point/sequence round trip answer about a document that has no sequence
+// (0552.0005-NR §2.2-4). An orphan member with no R/B root in its group stays null: there
+// is no workflow to read.
+const WORKFLOW_ROOT_TYPE_CODES = ['R', 'B']
+const workflowRootDocId = computed<string | null>(() => {
+  const d = doc.value
+  if (!d) return null
+  const typeCode = d.type_code ?? props.tab.typeCode ?? null
+  if (typeCode && WORKFLOW_ROOT_TYPE_CODES.includes(typeCode)) return d.doc_id ?? props.tab.id
+  return d.parent_r_doc_id ?? null
+})
 const workflowRootType = computed(() => doc.value?.workflow_root_type ?? null)
 const docTypeCode = computed(() => doc.value?.type_code ?? null)
 const workflowHeadType = computed(() => doc.value?.workflow_head_type ?? null)
@@ -1374,6 +1390,7 @@ defineExpose({
   openWorkflowDecisionModal,
   mentionText,
   parentRDocId,
+  workflowRootDocId,
   workflowRootType,
   docTypeCode,
   workflowHeadType,
