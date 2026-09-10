@@ -95,6 +95,23 @@ def test_tc_9_tc_10_reentry_skips_an_already_applied_revision(monkeypatch):
     }
 
 
+def test_tail_requires_mode_selection_and_never_saves(monkeypatch):
+    tail_candidate = {
+        **CANDIDATE,
+        "mode": "replace_after",
+        "row_count_change": {"before": 3, "after": 3, "deleted": 1, "added": 1},
+    }
+    _wire_expansion(monkeypatch, candidate=tail_candidate)
+    monkeypatch.setattr(
+        wds, "edit_workflow_pending", lambda *_args, **_kwargs: pytest.fail("tail auto-save")
+    )
+    assert wpseq.expand_final_work_plan(doc=DOC, plan={}) == {
+        "status": "needs_selection",
+        "reason": "editable_tail_exists",
+        "revision_no": 2,
+    }
+
+
 def test_tc_11_placeable_policy_does_not_create_wp_child_rows():
     rows, _dropped, _uid = wpseq.plan_to_rows(
         {"steps": [{"key": "WP#1", "type": "WP", "note": "nested"}]}, WP_ID, 2
@@ -149,4 +166,7 @@ def test_approval_hook_returns_success_when_final_expansion_fails(monkeypatch):
 
     assert calls == [{"doc": stored, "plan": plan_body, "locale": "ko"}]
     assert result["doc_review_status"] == "approved"
+    assert result["work_plan_expansion"] == {
+        "status": "failed", "reason": "SequenceChanged",
+    }
     assert stored["doc_review_status"] == "approved"

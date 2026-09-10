@@ -75,14 +75,7 @@
         <div v-if="dirty" class="wp-dirty-banner">
           <AppIcon name="warning-circle" />
           <span>{{ t('main.work_plan.unsaved_changes') }}</span>
-          <button
-            type="button"
-            class="btn btn-outline btn-sm"
-            :disabled="saving || isLocked"
-            @click="save"
-          >
-            {{ saving ? t('main.work_plan.saving') : t('main.work_plan.save') }}
-          </button>
+
         </div>
 
         <div v-if="conflict" class="wp-conflict-banner">
@@ -587,7 +580,7 @@ async function refreshAfterSequenceChange() {
   await fetchPlan()
 }
 
-defineExpose({ fetchPlan: refreshAfterSequenceChange })
+defineExpose({ fetchPlan: refreshAfterSequenceChange, ensureSaved })
 
 // ── Quantity editing ─────────────────────────────────────────────────────
 
@@ -910,8 +903,31 @@ async function copyRaw() {
   showToast(ok ? t('main.work_plan.copy_done') : t('main.work_plan.copy_failed'), ok ? 'success' : 'danger')
 }
 
+let saveInFlight: Promise<'saved' | 'failed'> | null = null
+
+async function ensureSaved(): Promise<'clean' | 'saved' | 'failed'> {
+  if (!dirty.value) return 'clean'
+  if (saveInFlight) return saveInFlight
+  if (!plan.value || isLocked.value) return 'failed'
+
+  saveInFlight = saveDirtyPlan()
+  try {
+    return await saveInFlight
+  } finally {
+    saveInFlight = null
+  }
+}
+
 async function save() {
   if (!plan.value || saving.value || isLocked.value) return
+  if (dirty.value) {
+    await ensureSaved()
+    return
+  }
+  await saveDirtyPlan()
+}
+
+async function saveDirtyPlan(): Promise<'saved' | 'failed'> {
   saving.value = true
   conflict.value = null
   topLevelErrors.value = []
@@ -930,6 +946,7 @@ async function save() {
     showToast(t('main.work_plan.save_success'), 'success')
     const unassigned = res.data.unassigned_step_count ?? 0
     if (unassigned > 0) showToast(t('main.work_plan.unassigned_warning', { n: unassigned }), 'warning', 5000)
+    return 'saved'
   } catch (e: any) {
     const status = e?.response?.status
     const data = e?.response?.data
@@ -952,6 +969,7 @@ async function save() {
     } else {
       showToast(data?.message || data?.detail || String(e), 'danger')
     }
+    return 'failed'
   } finally {
     saving.value = false
   }
@@ -984,7 +1002,6 @@ watch(() => props.docId, () => { void fetchPlan() })
   display: flex; align-items: center; gap: 8px; font-size: .8rem; padding: 8px 12px;
   border-radius: var(--r, 6px); background: var(--warning-l, #fef3c7); color: var(--warning, #b45309);
 }
-.wp-dirty-banner button { margin-left: auto; }
 .wp-error-banner { background: var(--danger-l, #fee2e2); color: var(--danger, #dc2626); }
 .wp-section { display: flex; flex-direction: column; gap: 10px; }
 .wp-section-hd { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

@@ -289,6 +289,34 @@ describe('작업계획 문서의 [작업계획 적용] 버튼', () => {
   })
 })
 
+describe('approval expansion outcome', () => {
+  it('refreshes the existing sequence-updated path after an automatic save', async () => {
+    const wrapper = mountStrip()
+    await flushPromises()
+    await (wrapper.vm as any).handleApprovalExpansion({ status: 'expanded' })
+    expect(wrapper.emitted('sequence-updated')).toHaveLength(1)
+  })
+
+  it('refreshes from the server skipped/already_applied reentry outcome', async () => {
+    const wrapper = mountStrip()
+    await flushPromises()
+    await (wrapper.vm as any).handleApprovalExpansion({
+      status: 'skipped', reason: 'already_applied', revision_no: 2,
+    })
+    expect(wrapper.emitted('sequence-updated')).toHaveLength(1)
+  })
+
+  it('keeps the mode picker when the authoritative sequence has a tail', async () => {
+    const wrapper = mountStrip()
+    await flushPromises()
+    await (wrapper.vm as any).handleApprovalExpansion({ status: 'needs_selection' })
+    await flushPromises()
+    expect(wrapper.find('.wf-apply-menu').exists()).toBe(true)
+    expect(wrapper.findAll('.wf-apply-item')).toHaveLength(2)
+    expect(patchRequest).not.toHaveBeenCalled()
+  })
+})
+
 // ── 시퀀스 수정 창이 계획 줄로 채워진 상태 ──────────────────────────────────
 
 function pourPayload(over: Partial<PourPayload> = {}): PourPayload {

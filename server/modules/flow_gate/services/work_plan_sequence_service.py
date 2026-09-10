@@ -780,7 +780,20 @@ def expand_final_work_plan(*, doc: dict, plan: dict, locale: str = "ko") -> dict
     existing = list(db_wfseq.get_sequence_items(sequence["id"]) or []) if sequence else []
     if any(str(row.get("source_doc_id") or "") == wp_doc_id and _int(row.get("source_revision_no"), -1) == revision_no for row in existing):
         return {"status": "skipped", "reason": "already_applied", "revision_no": revision_no}
-    candidate = build_candidates(doc=doc, plan=plan, mode="append", locale=locale)
+    # Build both views from the same authoritative sequence snapshot contract used by the
+    # editor.  A non-zero replace_after deletion means editable rows already follow this WP;
+    # append and replacement are then materially different choices, so approval must not
+    # choose either one on the operator's behalf.
+    replace_candidate = build_candidates(doc=doc, plan=plan, mode="replace_after", locale=locale)
+    if replace_candidate.get("row_count_change", {}).get("deleted", 0) > 0:
+        return {
+            "status": "needs_selection",
+            "reason": "editable_tail_exists",
+            "revision_no": revision_no,
+        }
+    # With no tail the two modes produce the same rows. Reuse this exact snapshot so a
+    # second read cannot race a newly-added tail; the workflow tag remains the save CAS.
+    candidate = replace_candidate
     if not candidate.get("plan_step_count"):
         return {"status": "skipped", "reason": "no_placeable_steps", "revision_no": revision_no}
     pending_rows = [{key: row.get(key) for key in ("type", "label", "note", "source_doc_id", "source_revision_no", "provider_id", "provider_display_name")} for row in candidate["rows"] if row.get("status") == "pending"]

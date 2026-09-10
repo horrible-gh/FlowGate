@@ -767,6 +767,10 @@ def transition_document_review(
                 expansion = _wpseq.expand_final_work_plan(
                     doc=fresh_plan_doc, plan=plan_body, locale=locale,
                 )
+                # The review transition remains the authority for approval, but the client
+                # needs this post-step outcome to refresh an automatic save, preserve the
+                # mode picker when a tail exists, or offer a retry after a failed save.
+                updated["work_plan_expansion"] = expansion
                 if expansion.get("status") == "expanded":
                     # Eagerly refresh the live target. Durable paused/handoff rows retain
                     # None, their existing run-to-end marker, and resolve the same latest
@@ -779,6 +783,11 @@ def transition_document_review(
                         or fresh_plan_doc.get("triggered_by"),
                     )
         except Exception as exc:  # final expansion follows a durable approval
+            if "work_plan_expansion" not in updated:
+                updated["work_plan_expansion"] = {
+                    "status": "failed",
+                    "reason": type(exc).__name__,
+                }
             _log.warning(
                 "[work plan] final expansion after approving %s failed: %s", doc_id, exc, exc_info=True
             )

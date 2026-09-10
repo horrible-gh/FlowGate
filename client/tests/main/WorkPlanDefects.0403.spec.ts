@@ -172,7 +172,7 @@ describe('저장하지 않은 편집과 AI 채우기 (NR0004 F5)', () => {
 
     await wrapper.findAll('.wp-step-msg')[1].setValue('사람이 방금 적은 멘트')
     await flushPromises()
-    await wrapper.get('.wp-dirty-banner button').trigger('click')
+    await wrapper.findAll('button').find(b => b.text().includes('저장'))!.trigger('click')
     await flushPromises()
 
     expect(putRequest).toHaveBeenCalledTimes(1)
