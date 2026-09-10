@@ -937,16 +937,20 @@ def get_work_state_summary(project_id: str) -> dict:
     per-user document_mention_copies state table AND the prompt_copied workflow event, deduped to
     a distinct-document count so "which documents had their mention copied" is finally scannable in one place.
     """
-    in_progress = _scalar_count(
-        "SELECT COUNT(*) FROM documents "
-        "WHERE project_id = ? AND doc_review_status = 'wf_in_progress'",
-        [project_id],
-    )
-    done = _scalar_count(
-        "SELECT COUNT(*) FROM documents "
-        "WHERE project_id = ? AND doc_review_status = 'wf_done'",
-        [project_id],
-    )
+    # The two document-state selectors are the same read family. Conditional
+    # aggregation removes their duplicate round-trip while optional tables below
+    # retain independent degradation. Every call still reads current DB truth.
+    try:
+        document_states = get_store()._fetch_one(
+            "SELECT"
+            " SUM(CASE WHEN doc_review_status = 'wf_in_progress' THEN 1 ELSE 0 END) AS in_progress,"
+            " SUM(CASE WHEN doc_review_status = 'wf_done' THEN 1 ELSE 0 END) AS done"
+            " FROM documents WHERE project_id = ?",
+            [project_id],
+        ) or {}
+    except Exception:  # noqa: BLE001 — optional/lightweight deployment tolerance
+        _log.warning("document work-state count failed project=%s", project_id, exc_info=True)
+        document_states = {}
     copied = _scalar_count(
         "SELECT COUNT(*) AS c FROM ("
         "  SELECT d.doc_id AS doc_id"
@@ -967,8 +971,8 @@ def get_work_state_summary(project_id: str) -> dict:
         [project_id],
     )
     return {
-        "in_progress": in_progress,
-        "done": done,
+        "in_progress": int(document_states.get("in_progress") or 0),
+        "done": int(document_states.get("done") or 0),
         "copied": copied,
         "continuous_ended": continuous_ended,
     }

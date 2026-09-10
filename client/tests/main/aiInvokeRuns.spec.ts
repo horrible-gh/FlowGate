@@ -1039,6 +1039,39 @@ describe('aiInvokeRuns store', () => {
     expect(isFinishedCard(store.runsByGroup[groupId])).toBe(true)
   })
 
+  // TR0012 rev2: bootstrap() and the user-pause triggered refreshPausedState() (fired from
+  // trackFinished's `void refreshPausedState(groupId)` on end_reason: 'user_paused') both
+  // read through fetchActiveAll()'s shared in-flight Promise. Neither call in this test is
+  // awaited before the other starts, so this reproduces the two real, unrelated consumers
+  // overlapping instead of exercising them sequentially like every other store.bootstrap()
+  // call in this file does.
+  it('joins bootstrap() and a user-pause refresh into one active-all HTTP call, then reads fresh next time', async () => {
+    const groupId = 'flowgate.default.join.paused'
+    store.trackStarted({ run_id: 'run-join', group_id: groupId, mode: 'continuous' })
+
+    let resolveActiveAll!: (value: unknown) => void
+    vi.mocked(getRequest).mockReturnValueOnce(new Promise((resolve) => { resolveActiveAll = resolve }))
+
+    const bootstrapPromise = store.bootstrap()
+    // Fires refreshPausedState(groupId) internally, before the mocked GET above resolves.
+    store.trackFinished({ run_id: 'run-join', group_id: groupId, end_reason: 'user_paused' })
+
+    expect(vi.mocked(getRequest)).toHaveBeenCalledTimes(1)
+
+    resolveActiveAll({ data: { runs: [], paused: [] } })
+    await bootstrapPromise
+    // Let refreshPausedState's own `await fetchActiveAll()` continuation settle too.
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(vi.mocked(getRequest)).toHaveBeenCalledTimes(1)
+
+    vi.mocked(getRequest).mockResolvedValueOnce({ data: { runs: [], paused: [] } } as any)
+    await store.bootstrap()
+
+    expect(vi.mocked(getRequest)).toHaveBeenCalledTimes(2)
+  })
+
 })
 
 describe('aiInvokeRuns store — bounded handoff adoption', () => {

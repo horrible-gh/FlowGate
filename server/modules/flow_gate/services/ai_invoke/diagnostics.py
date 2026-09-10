@@ -49,7 +49,7 @@ def ai_run_succeeded(row: dict) -> bool:
     }
 
 
-def get_status(run_id: str) -> dict:
+def get_status(run_id: str, *, pending_q_doc_ids: Optional[list[str]] = None) -> dict:
     run = _svc().get_run_record(run_id)
     if run is None:
         raise _http_error(404, "run_not_found", "Unknown or expired run id.")
@@ -122,7 +122,10 @@ def get_status(run_id: str) -> dict:
         "last_progress_signal": run.get("last_progress_signal"),
         "progress_observations": int(run.get("progress_observations") or 0),
         # Server truth: an explicit empty array clears stale client state on the next poll.
-        "pending_q_doc_ids": _svc()._open_q_doc_ids(run["group_id"]),
+        "pending_q_doc_ids": (
+            _svc()._open_q_doc_ids(run["group_id"])
+            if pending_q_doc_ids is None else pending_q_doc_ids
+        ),
         "document_review_loop": _svc().document_review_loop_payload(run),
     }
 

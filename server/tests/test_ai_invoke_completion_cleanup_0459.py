@@ -135,16 +135,31 @@ class Sequence:
         self.items = items if items is not None else []
         self.present = present
         self.explode = explode
+        self.sequence_calls = 0
+        self.item_calls = 0
+        self.batch_calls: list[list[str]] = []
 
     def get_sequence_for_member_doc(self, doc_ref):
+        self.sequence_calls += 1
         if self.explode:
             raise RuntimeError("workflow sequence read failed")
         return {"id": 1} if self.present else None
 
     def get_sequence_items(self, seq_id):
+        self.item_calls += 1
         if self.explode:
             raise RuntimeError("workflow sequence read failed")
         return [dict(i) for i in self.items]
+
+    def get_sequence_snapshots_for_member_docs(self, doc_refs):
+        self.batch_calls.append(list(doc_refs))
+        return {
+            doc_ref: (
+                self.get_sequence_for_member_doc(doc_ref),
+                self.get_sequence_items(1) if self.present else [],
+            )
+            for doc_ref in doc_refs
+        }
 
 
 def _slot(item_seq, *, doc_id=None, status=None, type_code="TR"):
@@ -166,11 +181,14 @@ def cleanup_env(monkeypatch):
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc",
                         seq.get_sequence_for_member_doc)
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_items", seq.get_sequence_items)
+    monkeypatch.setattr(svc.db_wfseq, "get_sequence_snapshots_for_member_docs",
+                        seq.get_sequence_snapshots_for_member_docs)
     monkeypatch.setattr(svc.db_docs, "group_root_wf_done", lambda gid: gid in wf_done)
     monkeypatch.setattr(db_runs, "get", lambda run_id: runs.get(run_id))
     monkeypatch.setattr(svc, "_runs", {})
     monkeypatch.setattr(svc, "_open_q_doc_ids", lambda group_id: [])
-    monkeypatch.setattr(svc, "_paused_row_resume_state", lambda project_id, row: {
+    monkeypatch.setattr(svc, "_paused_row_resume_state", lambda project_id, row, *,
+                        _read_context=None: {
         "resume_available": True, "resume_block_code": None,
         "resume_block_reason": None, "resume_provider_name": None,
     })
@@ -809,4 +827,55 @@ class TestNr5ItemSeqJudgementUnchanged:
 
         assert result["ok"] is True
         assert [r["group_id"] for r in result["paused"]] == [GROUP]
+        assert store.deleted_system == []
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# 0385 T3 — active-all batch snapshot reuse and failure fallback
+# ══════════════════════════════════════════════════════════════════════════════════════
+
+class TestActiveAllBatchSnapshotContract:
+    def test_batch_snapshot_is_reused_by_staleness_and_resume_state(self, cleanup_env,
+                                                                     monkeypatch):
+        """A successful batch read supplies one shared snapshot: neither consumer may
+        issue another per-row sequence/items query, and resume receives that same context."""
+        store, runs, seq = cleanup_env["store"], cleanup_env["runs"], cleanup_env["seq"]
+        store.put(continuation_target_seq=2, stop_code="approve_denied")
+        runs[REVIEW_RUN] = _single_review_run()
+        seq.items = [_slot(1, doc_id="d-1", status="approved"), _slot(2)]
+        observed_contexts = []
+
+        def _resume(project_id, row, *, _read_context=None):
+            observed_contexts.append(_read_context)
+            return {"resume_available": True, "resume_block_code": None,
+                    "resume_block_reason": None, "resume_provider_name": None}
+
+        monkeypatch.setattr(svc, "_paused_row_resume_state", _resume)
+        result = svc.active_all(USER)
+
+        assert [r["group_id"] for r in result["paused"]] == [GROUP]
+        assert seq.batch_calls == [[SPINE]]
+        assert (seq.sequence_calls, seq.item_calls) == (1, 1), (
+            "the batch supplied both staleness and resume; no individual reread occurred")
+        assert observed_contexts == [{SPINE: ({"id": 1}, seq.items)}]
+
+    def test_batch_lookup_failure_falls_back_to_individual_read_and_keeps_card(
+            self, cleanup_env, monkeypatch):
+        """Batch failure is fail-open: active-all remains available and the established
+        per-row lookup decides the card instead of treating the read error as completion."""
+        store, runs, seq = cleanup_env["store"], cleanup_env["runs"], cleanup_env["seq"]
+        store.put(continuation_target_seq=2, stop_code="approve_denied")
+        runs[REVIEW_RUN] = _single_review_run()
+        seq.items = [_slot(1, doc_id="d-1", status="approved"), _slot(2)]
+
+        def _batch_boom(doc_refs):
+            raise RuntimeError("batch snapshot unavailable")
+
+        monkeypatch.setattr(svc.db_wfseq, "get_sequence_snapshots_for_member_docs", _batch_boom)
+        result = svc.active_all(USER)
+
+        assert result["ok"] is True
+        assert [r["group_id"] for r in result["paused"]] == [GROUP]
+        assert (seq.sequence_calls, seq.item_calls) == (1, 1), (
+            "the original per-row lookup is used after batch failure")
         assert store.deleted_system == []

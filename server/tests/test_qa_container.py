@@ -206,6 +206,102 @@ def test_open_q_doc_ids_uses_real_unanswered_container_items(store):
     assert ai_invoke_service._open_q_doc_ids("p.none.0001") == []
 
 
+def test_open_q_doc_ids_batch_preserves_groups_documents_and_answer_state(store):
+    from modules.flow_gate.db import connection as conn_mod
+    from modules.flow_gate.db import documents as db_docs, groups
+    from modules.flow_gate.services import ai_invoke_service, q_service
+
+    groups.create({"group_id": "p.none.0002", "project_id": "p", "module": "none", "title": "G2"})
+
+    def create_doc(group_id, seq):
+        doc_id = f"{group_id}.{seq:04d}-D"
+        db_docs.create({
+            "doc_id": doc_id, "project_id": "p", "type_code": "D", "seq": seq,
+            "title": doc_id, "group_id": group_id, "module": "none",
+            "owner_id": "u1", "file_path": f"{doc_id}.md", "status": "open",
+        })
+        return doc_id
+
+    pending = create_doc("p.none.0001", 2)
+    answered = create_doc("p.none.0001", 3)
+    mixed = create_doc("p.none.0002", 1)
+    duplicate_source = create_doc("p.none.0002", 2)
+    no_questions = create_doc("p.none.0002", 3)
+
+    q_service.add_questions(pending, [{"body": "open"}], asker_kind="human", created_by="u1")
+    answered_item = q_service.add_questions(
+        answered, [{"body": "closed"}], asker_kind="human", created_by="u1",
+    )["added_item_ids"][0]
+    q_service.register_answer(answered, answered_item, "done", author_kind="human", author_id="u1")
+    mixed_items = q_service.add_questions(
+        mixed, [{"body": "done"}, {"body": "open"}], asker_kind="human", created_by="u1",
+    )["added_item_ids"]
+    q_service.register_answer(mixed, mixed_items[0], "done", author_kind="human", author_id="u1")
+    q_service.add_questions(
+        duplicate_source, [{"body": "open 1"}, {"body": "open 2"}],
+        asker_kind="human", created_by="u1",
+    )
+
+    original_fetch_all = conn_mod.STORE._fetch_all
+    pending_reads = []
+
+    def counted_fetch_all(sql, params=None):
+        if "JOIN question_items qi" in sql and "d.group_id IN" in sql:
+            pending_reads.append((sql, list(params or [])))
+        return original_fetch_all(sql, params)
+
+    conn_mod.STORE._fetch_all = counted_fetch_all
+    try:
+        result = ai_invoke_service._open_q_doc_ids_by_groups(
+            ["p.none.0001", "p.none.0002", "p.none.0001"],
+        )
+    finally:
+        conn_mod.STORE._fetch_all = original_fetch_all
+
+    assert result == {
+        "p.none.0001": [pending],
+        "p.none.0002": [mixed, duplicate_source],
+    }
+    assert no_questions not in result["p.none.0002"]
+    assert len(pending_reads) == 1
+    assert pending_reads[0][1] == ["p.none.0001", "p.none.0002"]
+
+
+def test_open_q_doc_ids_batch_query_count_is_constant_as_documents_grow(store):
+    from modules.flow_gate.db import connection as conn_mod
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.services import ai_invoke_service, q_service
+
+    original_fetch_all = conn_mod.STORE._fetch_all
+    pending_reads = []
+
+    def counted_fetch_all(sql, params=None):
+        if "JOIN question_items qi" in sql and "d.group_id IN" in sql:
+            pending_reads.append(1)
+        return original_fetch_all(sql, params)
+
+    conn_mod.STORE._fetch_all = counted_fetch_all
+    try:
+        assert ai_invoke_service._open_q_doc_ids("p.none.0001") == []
+        assert len(pending_reads) == 1
+        for seq in range(2, 52):
+            doc_id = f"p.none.0001.{seq:04d}-D"
+            db_docs.create({
+                "doc_id": doc_id, "project_id": "p", "type_code": "D", "seq": seq,
+                "title": doc_id, "group_id": "p.none.0001", "module": "none",
+                "owner_id": "u1", "file_path": f"{doc_id}.md", "status": "open",
+            })
+        q_service.add_questions(
+            "p.none.0001.0051-D", [{"body": "open"}],
+            asker_kind="human", created_by="u1",
+        )
+        before = len(pending_reads)
+        assert ai_invoke_service._open_q_doc_ids("p.none.0001") == ["p.none.0001.0051-D"]
+        assert len(pending_reads) - before == 1
+    finally:
+        conn_mod.STORE._fetch_all = original_fetch_all
+
+
 def test_requestion_reopens_done_container(store):
     from modules.flow_gate.services import q_service
     r1 = q_service.add_questions(DOC, [{"body": "q1"}], asker_kind="human", created_by="u1")
