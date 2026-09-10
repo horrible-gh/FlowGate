@@ -365,6 +365,294 @@ def test_the_reported_list_is_compared_never_used_as_a_filter(real_store, monkey
     assert payload["committed"] is True
 
 
+# ── 3a. 승인 훅의 quiet 판정 (flowgate.default.0548 T0004) ─────────────────────
+
+def _tr_body_doc(tmp_path, real_store, monkeypatch, body_text):
+    """The seed TR's file_path pointed at a real temp file carrying body_text."""
+    body = tmp_path / "0009-TR_document.md"
+    body.write_text(body_text, encoding="utf-8")
+    monkeypatch.setattr(
+        trc.storage_paths, "resolve_storage_path", lambda *a, **k: body,
+    )
+    real_store._execute(
+        "UPDATE documents SET file_path = ? WHERE doc_id = ?",
+        ["documents/x/0009-TR_document.md", _TR_DOC],
+    )
+    return body
+
+
+def test_no_changes_skip_is_always_quiet_even_with_no_declaration(real_store, monkeypatch):
+    """git_service already proved this from the real worktree diff - no doc to consult."""
+    monkeypatch.setattr(svc, "create_tr_commit", lambda group_id, subject: {
+        "committed": False, "commit": None, "commit_sha": None, "subject": None,
+        "skipped_reason": "no_changes", "excluded_artifacts": [], "committed_paths": [],
+    })
+
+    payload = trc.on_document_approved(_TR_DOC)
+
+    assert payload["skipped_reason"] == "no_changes"
+    assert payload["quiet"] is True
+
+
+def test_artifacts_only_skip_is_always_quiet(real_store, monkeypatch):
+    monkeypatch.setattr(svc, "create_tr_commit", lambda group_id, subject: {
+        "committed": False, "commit": None, "commit_sha": None, "subject": None,
+        "skipped_reason": "artifacts_only", "excluded_artifacts": ["server/.tmp/x"],
+        "committed_paths": [],
+    })
+
+    payload = trc.on_document_approved(_TR_DOC)
+
+    assert payload["skipped_reason"] == "artifacts_only"
+    assert payload["quiet"] is True
+
+
+def test_git_inactive_skip_is_quiet_when_the_tr_declared_no_changes(
+    real_store, monkeypatch, tmp_path,
+):
+    """T0004 2/3 R1 - a no-work group's git_inactive ends quiet, not a warning."""
+    _tr_body_doc(tmp_path, real_store, monkeypatch, "# 작업레포트\n\n## 변경 파일\n\n- 없음\n")
+    monkeypatch.setattr(svc, "create_tr_commit", lambda group_id, subject: {
+        "committed": False, "commit": None, "commit_sha": None, "subject": None,
+        "skipped_reason": "git_inactive", "excluded_artifacts": [], "committed_paths": [],
+    })
+
+    payload = trc.on_document_approved(_TR_DOC)
+
+    assert payload["skipped_reason"] == "git_inactive"
+    assert payload["quiet"] is True
+
+
+def test_no_worktree_skip_is_quiet_when_the_tr_declared_no_changes(
+    real_store, monkeypatch, tmp_path,
+):
+    """T0004 2/3 R2 - same rule, the other git-could-not-be-asked reason."""
+    _tr_body_doc(tmp_path, real_store, monkeypatch, "# 작업레포트\n\n## Changed Files\n\n- none\n")
+    monkeypatch.setattr(svc, "create_tr_commit", lambda group_id, subject: {
+        "committed": False, "commit": None, "commit_sha": None, "subject": None,
+        "skipped_reason": "no_worktree", "excluded_artifacts": [], "committed_paths": [],
+    })
+
+    payload = trc.on_document_approved(_TR_DOC)
+
+    assert payload["skipped_reason"] == "no_worktree"
+    assert payload["quiet"] is True
+
+
+def test_no_worktree_skip_still_warns_when_worktree_registered_is_off_but_the_stale_dir_disagrees(
+    real_store, monkeypatch, tmp_path,
+):
+    """Automated review rejection of TR0005 rev 1 (flowgate.default.0548) - `no_worktree`
+    fires both when `worktree_registered` is off and when the directory is simply gone;
+    `unregister_worktree` clears only the flag, never `branch`, so a slot whose flag was
+    dropped but whose branch worktree directory is still on disk with real, undeclared
+    edits must not have that probe skipped just because the flag reads 0."""
+    _tr_body_doc(tmp_path, real_store, monkeypatch, "# 작업레포트\n\n## 변경 파일\n\n- 없음\n")
+    monkeypatch.setattr(svc, "create_tr_commit", lambda group_id, subject: {
+        "committed": False, "commit": None, "commit_sha": None, "subject": None,
+        "skipped_reason": "no_worktree", "excluded_artifacts": [], "committed_paths": [],
+    })
+    monkeypatch.setattr(svc.db_git, "get_state", lambda group_id: {
+        "worktree_registered": 0, "branch": "work",
+    })
+    monkeypatch.setattr(svc, "_project_name", lambda project_id: "flowgate")
+    monkeypatch.setattr(svc, "src_root", lambda project_name, branch: tmp_path)
+    monkeypatch.setattr(svc, "probe_worktree_pending_changes", lambda wt_path: True)
+
+    payload = trc.on_document_approved(_TR_DOC)
+
+    assert payload["skipped_reason"] == "no_worktree"
+    assert payload["quiet"] is False
+
+
+def test_no_worktree_skip_stays_quiet_when_worktree_registered_is_off_and_no_dir_remains(
+    real_store, monkeypatch, tmp_path,
+):
+    """The other side of the same fix - `worktree_registered` off AND the directory truly
+    gone still falls through to None (nothing to probe), so the declaration alone governs,
+    exactly as the plain no_worktree quiet case behaved before this probe existed."""
+    _tr_body_doc(tmp_path, real_store, monkeypatch, "# 작업레포트\n\n## 변경 파일\n\n- 없음\n")
+    monkeypatch.setattr(svc, "create_tr_commit", lambda group_id, subject: {
+        "committed": False, "commit": None, "commit_sha": None, "subject": None,
+        "skipped_reason": "no_worktree", "excluded_artifacts": [], "committed_paths": [],
+    })
+    monkeypatch.setattr(svc.db_git, "get_state", lambda group_id: {
+        "worktree_registered": 0, "branch": "work",
+    })
+    monkeypatch.setattr(svc, "_project_name", lambda project_id: "flowgate")
+    monkeypatch.setattr(svc, "src_root", lambda project_name, branch: tmp_path / "gone")
+
+    payload = trc.on_document_approved(_TR_DOC)
+
+    assert payload["skipped_reason"] == "no_worktree"
+    assert payload["quiet"] is True
+
+
+def test_git_inactive_skip_is_quiet_when_no_worktree_ever_existed_even_if_the_tr_declared_real_changes(
+    real_store, monkeypatch, tmp_path,
+):
+    """Automated review rejection of TR0005 rev 3 (flowgate.default.0548) - a TR's
+    prose declaration of a real change is not, on its own, a confirmed source change:
+    a worktree is the only place an edit can physically exist, so a group whose git
+    state was never registered at all (nothing for ``_worktree_shows_pending_changes``
+    to even resolve) has no possible commit target regardless of what the TR body
+    claims. Only an on-disk worktree that a probe actually confirms as dirty may keep
+    the warning (see the sibling test below, which mocks a real, resolvable worktree
+    and gets exactly that)."""
+    _tr_body_doc(tmp_path, real_store, monkeypatch, "# 작업레포트\n\n## 변경 파일\n\n- server/real.py\n")
+    monkeypatch.setattr(svc, "create_tr_commit", lambda group_id, subject: {
+        "committed": False, "commit": None, "commit_sha": None, "subject": None,
+        "skipped_reason": "git_inactive", "excluded_artifacts": [], "committed_paths": [],
+    })
+
+    payload = trc.on_document_approved(_TR_DOC)
+
+    assert payload["skipped_reason"] == "git_inactive"
+    assert payload["quiet"] is True
+
+
+def test_git_inactive_skip_still_warns_when_the_worktree_disagrees_with_the_declaration(
+    real_store, monkeypatch, tmp_path,
+):
+    """Automated review rejection of TR0005 rev 0 (flowgate.default.0548) - the TR's own
+    "없음" declaration is not the only word: when git_inactive means the project's git
+    INTEGRATION is off rather than the worktree being gone, the worktree itself is asked
+    directly, and a real (undeclared) edit there must keep the warning."""
+    _tr_body_doc(tmp_path, real_store, monkeypatch, "# 작업레포트\n\n## 변경 파일\n\n- 없음\n")
+    monkeypatch.setattr(svc, "create_tr_commit", lambda group_id, subject: {
+        "committed": False, "commit": None, "commit_sha": None, "subject": None,
+        "skipped_reason": "git_inactive", "excluded_artifacts": [], "committed_paths": [],
+    })
+    monkeypatch.setattr(svc.db_git, "get_state", lambda group_id: {
+        "worktree_registered": 1, "branch": "work",
+    })
+    monkeypatch.setattr(svc, "_project_name", lambda project_id: "flowgate")
+    monkeypatch.setattr(svc, "src_root", lambda project_name, branch: tmp_path)
+    monkeypatch.setattr(svc, "probe_worktree_pending_changes", lambda wt_path: True)
+
+    payload = trc.on_document_approved(_TR_DOC)
+
+    assert payload["skipped_reason"] == "git_inactive"
+    assert payload["quiet"] is False
+
+
+def test_git_inactive_skip_stays_quiet_when_the_worktree_probe_agrees(
+    real_store, monkeypatch, tmp_path,
+):
+    """The other side of the same probe - a clean worktree corroborating the declaration
+    changes nothing about the existing quiet outcome."""
+    _tr_body_doc(tmp_path, real_store, monkeypatch, "# 작업레포트\n\n## 변경 파일\n\n- 없음\n")
+    monkeypatch.setattr(svc, "create_tr_commit", lambda group_id, subject: {
+        "committed": False, "commit": None, "commit_sha": None, "subject": None,
+        "skipped_reason": "git_inactive", "excluded_artifacts": [], "committed_paths": [],
+    })
+    monkeypatch.setattr(svc.db_git, "get_state", lambda group_id: {
+        "worktree_registered": 1, "branch": "work",
+    })
+    monkeypatch.setattr(svc, "_project_name", lambda project_id: "flowgate")
+    monkeypatch.setattr(svc, "src_root", lambda project_name, branch: tmp_path)
+    monkeypatch.setattr(svc, "probe_worktree_pending_changes", lambda wt_path: False)
+
+    payload = trc.on_document_approved(_TR_DOC)
+
+    assert payload["skipped_reason"] == "git_inactive"
+    assert payload["quiet"] is True
+
+
+def test_git_inactive_skip_is_quiet_when_no_registered_state_exists_regardless_of_the_declaration(
+    real_store, monkeypatch, tmp_path,
+):
+    """No registered worktree state to resolve a path from - there is provably no
+    worktree for this group, so ``_worktree_shows_pending_changes`` now answers
+    ``False`` outright instead of ``None``; the declaration is consulted only when a
+    worktree directory exists but git itself cannot answer for it."""
+    _tr_body_doc(tmp_path, real_store, monkeypatch, "# 작업레포트\n\n## 변경 파일\n\n- 없음\n")
+    monkeypatch.setattr(svc, "create_tr_commit", lambda group_id, subject: {
+        "committed": False, "commit": None, "commit_sha": None, "subject": None,
+        "skipped_reason": "git_inactive", "excluded_artifacts": [], "committed_paths": [],
+    })
+    monkeypatch.setattr(svc.db_git, "get_state", lambda group_id: None)
+
+    payload = trc.on_document_approved(_TR_DOC)
+
+    assert payload["skipped_reason"] == "git_inactive"
+    assert payload["quiet"] is True
+
+
+def test_git_inactive_skip_is_quiet_when_the_section_is_missing_and_no_worktree_exists(
+    real_store, monkeypatch,
+):
+    """Automated review rejection of TR0005 rev 3 (flowgate.default.0548) - a normal
+    no-work group (no git state row registered at all, no ``## 변경 파일`` section to
+    even parse) must not be turned into a warning just because the TR's own prose has
+    nothing to say. "Git cannot say whether there is a change" is not the same claim
+    as "there is a change": with no worktree state to resolve, there is no possible
+    commit target, so this converges to quiet exactly like the explicit "없음"
+    declaration case above it. A warning is reserved for a directory that a probe can
+    actually confirm is dirty (see the ``..._registered_is_off_but_the_stale_dir_disagrees``
+    and ``..._worktree_disagrees_with_the_declaration`` tests)."""
+    monkeypatch.setattr(svc, "create_tr_commit", lambda group_id, subject: {
+        "committed": False, "commit": None, "commit_sha": None, "subject": None,
+        "skipped_reason": "git_inactive", "excluded_artifacts": [], "committed_paths": [],
+    })
+
+    payload = trc.on_document_approved(_TR_DOC)
+
+    assert payload["skipped_reason"] == "git_inactive"
+    assert payload["quiet"] is True
+
+
+def test_git_busy_skip_is_never_quiet_even_when_the_tr_declared_no_changes(
+    real_store, monkeypatch, tmp_path,
+):
+    """T0004 4/7 R7 - a real commit failure keeps its warning regardless of the doc."""
+    _tr_body_doc(tmp_path, real_store, monkeypatch, "# 작업레포트\n\n## 변경 파일\n\n- 없음\n")
+    monkeypatch.setattr(svc, "create_tr_commit", lambda group_id, subject: {
+        "committed": False, "commit": None, "commit_sha": None, "subject": None,
+        "skipped_reason": "git_busy", "excluded_artifacts": [], "committed_paths": [],
+    })
+
+    payload = trc.on_document_approved(_TR_DOC)
+
+    assert payload["skipped_reason"] == "git_busy"
+    assert payload["quiet"] is False
+
+
+def test_missing_group_id_is_quiet_when_the_tr_declared_no_changes(
+    real_store, monkeypatch, tmp_path,
+):
+    """The early no-group branch follows the same rule as create_tr_commit's
+    own git_inactive (T0004 2)."""
+    body = _tr_body_doc(tmp_path, real_store, monkeypatch, "# 작업레포트\n\n## 변경 파일\n\n- 없음\n")
+    monkeypatch.setattr(
+        trc.storage_paths, "resolve_storage_path", lambda *a, **k: body,
+    )
+    partial = {
+        "doc_id": _TR_DOC, "type_code": "TR", "group_id": None,
+        "title": "커밋 포인트 생성 작업레포트", "seq": 9, "commit_message": None,
+        "file_path": "documents/x/0009-TR_document.md", "project_id": _PROJECT,
+        "branch": "main",
+    }
+
+    payload = trc.on_document_approved(_TR_DOC, partial)
+
+    assert payload["skipped_reason"] == "git_inactive"
+    assert payload["quiet"] is True
+
+
+def test_a_committed_approval_is_never_marked_quiet(real_store, monkeypatch):
+    monkeypatch.setattr(svc, "create_tr_commit", lambda group_id, subject: {
+        "committed": True, "commit": "a1b2c3d", "commit_sha": "a1b2c3d" + "0" * 33,
+        "subject": subject, "skipped_reason": None,
+        "excluded_artifacts": [], "committed_paths": ["server/x.py"],
+    })
+
+    payload = trc.on_document_approved(_TR_DOC)
+
+    assert payload["committed"] is True
+    assert payload["quiet"] is False
+
+
 # ── 3b. 승인 커밋 제목 규칙 (flowgate.default.0462 T0005) ─────────────────────
 
 def _draft_doc(commit_message=None, seq=9, title="커밋 포인트 생성 작업레포트"):
@@ -590,6 +878,36 @@ def test_a_group_without_a_worktree_reports_no_worktree(git_active, monkeypatch)
 
 
 @needs_git
+def test_probe_worktree_pending_changes_sees_an_untracked_edit_without_staging(repo):
+    """flowgate.default.0548 T0004 §4/R6 - the read-only probe behind
+    ``_worktree_shows_pending_changes`` must find a real edit without ``git add``ing it
+    (unlike ``_stage_worker_edits``, which this must not reuse or trigger)."""
+    (repo / "server").mkdir()
+    (repo / "server" / "untracked.py").write_text("z = 1\n", encoding="utf-8")
+
+    assert svc.probe_worktree_pending_changes(repo) is True
+    # Read-only: nothing got staged, the file is still plainly untracked.
+    status = _git(["status", "--porcelain", "--untracked-files=all"], repo).strip()
+    assert status == "?? server/untracked.py"
+
+
+@needs_git
+def test_probe_worktree_pending_changes_is_false_on_a_clean_tree(repo):
+    assert svc.probe_worktree_pending_changes(repo) is False
+
+
+@needs_git
+def test_probe_worktree_pending_changes_ignores_tool_debris(repo):
+    """Same exclusion rule as the real commit path (0382) - debris alone must not read
+    as a real pending change."""
+    debris = repo / "server" / ".test-tmp-0548"
+    debris.mkdir(parents=True)
+    (debris / "junk.txt").write_text("junk\n", encoding="utf-8")
+
+    assert svc.probe_worktree_pending_changes(repo) is False
+
+
+@needs_git
 def test_git_disabled_project_is_reported_not_raised(git_active, monkeypatch):
     monkeypatch.setattr(svc.db_git, "get_config", lambda project_id: {"enabled": 0})
 
@@ -597,6 +915,69 @@ def test_git_disabled_project_is_reported_not_raised(git_active, monkeypatch):
 
     assert result["committed"] is False
     assert result["skipped_reason"] == "git_inactive"
+
+
+@needs_git
+@pytest.mark.parametrize("with_pending_change, expected_quiet", [
+    (False, True),
+    (True, False),
+])
+def test_real_git_inactive_approval_uses_the_worktree_as_quiet_ssot(
+    real_store, repo, monkeypatch, with_pending_change, expected_quiet,
+):
+    """The production git-inactive gate and a real worktree cover both sides of T0004 R6.
+
+    No document-body declaration is installed: a clean tree must still be quiet, while
+    an undeclared source edit must retain the actionable warning.
+    """
+    svc.db_git.upsert_config(_PROJECT, {
+        "repo_url": "https://example.invalid/flowgate.git",
+        "provider": "generic", "secret_enc": None, "base_branch": "main",
+        "default_finalize_action": "wait", "enabled": False,
+        "translate_url": None, "author_name": None, "author_email": None,
+        "tr_scope_stage": "observe",
+    })
+    svc.db_git.register_worktree(_GROUP, _PROJECT, "work")
+    monkeypatch.setattr(svc, "_project_name", lambda project_id: "flowgate")
+    monkeypatch.setattr(svc, "src_root", lambda project_name, branch: repo)
+    if with_pending_change:
+        (repo / "server").mkdir()
+        (repo / "server" / "undeclared.py").write_text("changed = True\n", encoding="utf-8")
+
+    payload = trc.on_document_approved(_TR_DOC)
+
+    assert payload["skipped_reason"] == "git_inactive"
+    assert payload["quiet"] is expected_quiet
+
+
+def test_real_no_worktree_ever_registered_stays_quiet_even_with_no_declaration(
+    real_store,
+):
+    """Automated review rejection of TR0005 rev 3 (flowgate.default.0548) - the exact
+    scenario the rejection describes: a group whose git worktree state was never
+    registered at all (``db_git.get_state`` genuinely returns no row - nothing here is
+    mocked), and a TR body with no ``## 변경 파일`` section to parse either. Fired
+    through the unmocked, real approval hook (``on_document_approved``) end to end -
+    real sqlite project/group/document rows, a real (disabled) git config row, real
+    ``create_tr_commit`` - to prove the "Git is not active" warning this rejection
+    reported in the dev server is actually gone for a genuine no-work group, not just
+    for one that remembered to write "없음"."""
+    svc.db_git.upsert_config(_PROJECT, {
+        "repo_url": "https://example.invalid/flowgate.git",
+        "provider": "generic", "secret_enc": None, "base_branch": "main",
+        "default_finalize_action": "wait", "enabled": False,
+        "translate_url": None, "author_name": None, "author_email": None,
+        "tr_scope_stage": "observe",
+    })
+    # No register_worktree call - this group's git state row never existed, and the
+    # seeded TR document's file_path is NULL, so there is no Changed Files section.
+    assert svc.db_git.get_state(_GROUP) is None
+
+    payload = trc.on_document_approved(_TR_DOC)
+
+    assert payload["committed"] is False
+    assert payload["skipped_reason"] == "git_inactive"
+    assert payload["quiet"] is True
 
 
 @needs_git

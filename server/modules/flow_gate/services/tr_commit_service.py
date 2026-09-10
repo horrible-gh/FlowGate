@@ -116,11 +116,12 @@ def commit_subject(doc: dict) -> str:
     return subject[:git_service.COMMIT_SUBJECT_MAX]
 
 
-def _reported_paths(doc: dict) -> Optional[list[str]]:
-    """The TR's ``## 변경 파일`` list, or None when the body cannot be read.
+def _parse_reported(doc: dict) -> Optional[Any]:
+    """The TR body's ``## 변경 파일`` section, parsed once. None when it cannot be read.
 
-    None and [] are different: an unreadable body must not be reported as "the TR
-    declared nothing", which would mark every committed file as unreported.
+    Shared by :func:`_reported_paths` (the commit-scope comparison, D0005 K2) and
+    :func:`_declared_no_source_changes` (T0004 §2's quiet/warning call) so both read
+    the same parse of the same body instead of two file reads disagreeing.
     """
     try:
         raw_path = (doc.get("file_path") or "").strip()
@@ -135,10 +136,126 @@ def _reported_paths(doc: dict) -> Optional[list[str]]:
     except Exception:
         _log.warning("tr commit: reading %s failed", doc.get("doc_id"), exc_info=True)
         return None
-    parsed = tr_scope_service.parse_reported_files(body)
-    if not parsed.found:
+    return tr_scope_service.parse_reported_files(body)
+
+
+def _reported_paths(doc: dict) -> Optional[list[str]]:
+    """The TR's ``## 변경 파일`` list, or None when the body cannot be read.
+
+    None and [] are different: an unreadable body must not be reported as "the TR
+    declared nothing", which would mark every committed file as unreported.
+    """
+    parsed = _parse_reported(doc)
+    if parsed is None or not parsed.found:
         return None
     return list(parsed.paths)
+
+
+# T0004 §2/§5 — skip reasons that mean "git could not even be asked" (project git off,
+# no worktree). They stay ``git_inactive``/``no_worktree`` on the wire (P0006 §5-2's
+# closed set is unchanged); only whether the toast is quiet depends on the TR's own
+# declaration, since git itself has nothing to say when it never ran.
+_CONDITIONALLY_QUIET_SKIP_REASONS = frozenset({"git_inactive", "no_worktree"})
+# ``git_service.create_tr_commit`` already proved these two from the real worktree
+# diff (no_changes: nothing staged at all; artifacts_only: only tool debris) — no
+# document to consult, always quiet (T0004 §3).
+_ALWAYS_QUIET_SKIP_REASONS = frozenset({"no_changes", "artifacts_only"})
+
+
+def _declared_no_source_changes(doc: dict) -> bool:
+    """True when the TR's own ``## 변경 파일`` section explicitly says nothing changed.
+
+    Doc-level, so it still answers when git cannot be asked at all (T0004 §2's "git
+    gate보다 먼저" case). Used only to demote a git_inactive/no_worktree skip from an
+    actionable warning to a quiet one — it never decides what git_service actually
+    commits, so module rule 2 (the reported list is never a filter) still holds.
+    """
+    parsed = _parse_reported(doc)
+    return bool(parsed and parsed.found and parsed.declared_none and not parsed.paths)
+
+
+def _worktree_shows_pending_changes(doc: dict) -> Optional[bool]:
+    """A second, git-independent-of-config opinion for the git_inactive/no_worktree
+    quiet call (rejection on revision 0 of this TR): the TR's own "없음" declaration
+    can be wrong or incomplete, and git_inactive in particular can mean the project's
+    git INTEGRATION is off while the group's worktree directory is still sitting on
+    disk with real, undeclared edits (T0004 §4/R6 — that case must stay a warning).
+
+    Resolves the same worktree path :func:`git_service.create_tr_commit` would have
+    used and asks it directly with :func:`git_service.probe_worktree_pending_changes`
+    — read-only, no lock, so it cannot race the real commit path.
+
+    Returns ``False`` — not ``None`` — the moment resolution proves no worktree was
+    ever assigned to this group at all (no group, no project, no state row, no branch
+    on the row, no directory on disk): a worktree is the only place a source edit can
+    exist, so a group that never had one, or whose assigned branch has no directory on
+    disk, could not possibly be carrying an undeclared change (rejection on revision 3
+    of this TR — "실제 commit 대상이 존재하지 않는 no-work/no-worktree 상태 자체를 quiet
+    no-op으로 수렴시켜라"). ``None`` is now reserved for the one case that is genuinely
+    unknowable: a directory that *does* exist but git itself cannot answer for it (no
+    git binary, not a real repo, a timeout) or an unexpected setup failure — there, and
+    only there, the caller still has nothing but the TR's own declaration to fall back
+    on, same as before this function existed.
+
+    Deliberately does NOT gate on ``state.worktree_registered`` (rejection on revision
+    1 of this TR): ``create_tr_commit`` itself returns ``no_worktree`` both when that
+    flag is off AND when it is on but the directory is simply gone, and slot cleanup's
+    :func:`~modules.flow_gate.db.git_integration.unregister_worktree` clears only the
+    flag, never ``branch`` — so a stale on-disk worktree for that branch, still full of
+    real, undeclared edits, is exactly the case a ``worktree_registered`` gate here
+    would hide. Requiring only ``branch`` plus an on-disk directory answers instead of
+    trusting the flag: an unregistered slot whose directory is truly gone still resolves
+    to ``wt_path.is_dir()`` being False, which is now itself the "no changes" answer.
+    """
+    group_id = doc.get("group_id")
+    if not group_id:
+        return False
+    try:
+        project_id = git_service._project_of_group(group_id)
+        if not project_id:
+            return False
+        state = db_git.get_state(group_id)
+        if not state or not state.get("branch"):
+            return False
+        project_name = git_service._project_name(project_id)
+        if not project_name:
+            return False
+        wt_path = git_service.src_root(project_name, state["branch"])
+        if not wt_path.is_dir():
+            return False
+    except Exception:
+        _log.warning(
+            "tr commit: worktree pending-changes probe setup failed for %s",
+            group_id, exc_info=True,
+        )
+        return None
+    return git_service.probe_worktree_pending_changes(wt_path)
+
+
+def _is_quiet_skip(skipped_reason: str, doc: dict) -> bool:
+    """T0004 §5 — the single place ReviewActionBar's toast severity is decided.
+
+    Kept server-side on purpose: a client that string-matched ``skipped_reason``
+    itself would be exactly the "클라이언트에서만 문자열 기준으로 억지 suppression" T0004 §8
+    forbids.
+    """
+    if skipped_reason in _ALWAYS_QUIET_SKIP_REASONS:
+        return True
+    if skipped_reason in _CONDITIONALLY_QUIET_SKIP_REASONS:
+        # The worktree is the authoritative signal whenever it can answer, and "no
+        # worktree was ever assigned to this group" is itself an answer (False, not
+        # unknown) — rejection on revision 3 of this TR: "Git으로 변경 유무를 확인할 수
+        # 없음"을 "변경이 있음"으로 취급하지 말라, no-work/no-worktree 상태 자체가 quiet.
+        # A clean or nonexistent tree is quiet even when the TR omitted or malformed
+        # Changed Files; pending source changes keep the warning even when the TR
+        # incorrectly says "none". Only the genuinely unknowable case — a directory
+        # that exists but that git itself cannot answer for — falls back to the
+        # declaration, since only there could an unreported real change be hiding.
+        pending = _worktree_shows_pending_changes(doc)
+        if pending is not None:
+            return not pending
+        return _declared_no_source_changes(doc)
+    return False
 
 
 def _reported_diff(doc: dict, committed_paths: list[str]) -> dict[str, list[str]]:
@@ -166,8 +283,14 @@ def _payload(
     skipped_reason: Optional[str],
     artifacts: list[str],
     reported_diff: dict[str, list[str]],
+    quiet: bool = False,
 ) -> dict[str, Any]:
-    """The P0006 §1 ``tr_commit`` object — one shape for all three entry points."""
+    """The P0006 §1 ``tr_commit`` object — one shape for all three entry points.
+
+    ``quiet`` (T0004 §5) is the client's whole toast decision: ``committed`` still
+    means success, and ``quiet`` true on a non-commit means "no toast at all", so
+    ReviewActionBar never has to re-derive severity from ``skipped_reason`` itself.
+    """
     return {
         "committed": committed,
         "commit": commit,
@@ -176,6 +299,7 @@ def _payload(
         "excluded_artifact_count": len(artifacts),
         "excluded_artifacts": list(artifacts[:ARTIFACT_LIST_MAX]),
         "reported_diff": reported_diff,
+        "quiet": quiet,
     }
 
 
@@ -214,6 +338,7 @@ def on_document_approved(doc_id: str, document: Optional[dict] = None) -> Option
                 committed=False, commit=None, subject=None,
                 skipped_reason="git_inactive", artifacts=[],
                 reported_diff={"unreported": [], "missing": []},
+                quiet=_is_quiet_skip("git_inactive", doc),
             )
 
         # A Time Machine reopen preserves the original logical TR message as durable
@@ -242,10 +367,12 @@ def on_document_approved(doc_id: str, document: Optional[dict] = None) -> Option
             )
 
         _record(group_id=group_id, doc_id=doc["doc_id"], outcome=outcome, subject=subject)
+        skipped_reason = outcome.get("skipped_reason") or "commit_failed"
         return _payload(
             committed=False, commit=None, subject=None,
-            skipped_reason=outcome.get("skipped_reason") or "commit_failed",
+            skipped_reason=skipped_reason,
             artifacts=artifacts, reported_diff={"unreported": [], "missing": []},
+            quiet=_is_quiet_skip(skipped_reason, doc),
         )
     except Exception:
         # DB0008 §4-7: the ledger write lives outside the approval transaction and its

@@ -4758,6 +4758,139 @@ class TestNoWorkAutoDiscard0199:
         assert db_git.get_state(group)["worktree_registered"] == 0
 
 
+@pytest.fixture(scope="class")
+def nowork_surface_origin(seed):
+    """A dedicated bare origin + enabled project for the 0548 no-work SURFACE tests.
+
+    Deliberately not shared with `noop_origin`: these tests provision and tear down
+    their own slots, and a class-scoped git origin fixture belongs to exactly one
+    class (a second consumer re-runs it and collides on the project row)."""
+    from modules.flow_gate.db import projects
+    from modules.flow_gate.services import git_service as svc
+
+    projects.create({"project_id": "gitnowork", "project_name": "GitNoWork"})
+    tmp = Path(tempfile.mkdtemp(prefix="fg-git-0548-"))
+    bare = tmp / "origin.git"
+    seedwt = tmp / "seedwt"
+    _git(["init", "--bare", "-b", "main", str(bare)])
+    _git(["init", "-b", "main", str(seedwt)])
+    (seedwt / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(["add", "-A"], cwd=seedwt)
+    _git(["commit", "-m", "init"], cwd=seedwt)
+    _git(["remote", "add", "origin", str(bare)], cwd=seedwt)
+    _git(["push", "origin", "main"], cwd=seedwt)
+
+    svc.save_config("gitnowork", {
+        "repo_url": bare.as_uri(),
+        "provider": "generic",
+        "base_branch": "main",
+        "default_finalize_action": "merge",
+        "enabled": True,
+    })
+    yield {"bare": bare, "seedwt": seedwt, "tmp": tmp}
+    svc.delete_config("gitnowork")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+@needs_git
+class TestNoWorkFinalizeSurfaces0548:
+    """flowgate.default.0548 T0004 — 0199 stopped the no-work group from being MERGED;
+    this stops it from being SHOWN anything about merging.
+
+    The reviewer's rejection of TR0005 rev4 walked the real product path on a group
+    where they did no work at all (R → T → TR → AC in half a minute):
+
+        머지할게 없는데... 경고 토스트가 그대로 뜬다 / 깃 다이얼로그도 그대로 뜬다
+        머지 다이얼로그가 그대로 뜬다 / 문서에 머지 섹션이 그대로 뜬다
+
+    All four fall out of one chain, reproduced here on a real origin + real worktree
+    + the real DB: the AC approval dialog faked a finalize gate for a slot with
+    nothing in it, that stale choice rode along into the approval, and by the time
+    it ran, the approval's own 0199 auto-discard had already unregistered the slot —
+    so finalize could only fail with "Git integration is not active for group …",
+    which the client turned into a warning toast AND an auto-opened Git panel."""
+
+    def _origin_main_commits(self, origin) -> int:
+        out = _git(["log", "--oneline", "main"], cwd=origin["bare"])
+        return len([l for l in out.splitlines() if l.strip()])
+
+    def test_the_whole_no_work_approval_says_nothing_about_git(self, nowork_surface_origin):
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+
+        group = "gitnowork.default.0013"
+        assert svc.ensure_worktree("gitnowork", "default", group) == "ok"
+        # …and then nobody touches a single source file.
+
+        # 1) 머지 다이얼로그 — the AC confirm dialog asks with context=approval while
+        #    the root is still wf_in_progress. No work ⇒ no choice block.
+        preview = svc.get_finalize_state(group, preview_ac=True)["state"]
+        assert preview["status"] == "none"
+        assert preview["choices"] == []
+        assert preview["action_axes"] is None
+
+        # 2) the approval itself: the root flips to wf_done and the approve path
+        #    realizes the git transition, which discards the empty slot (0199).
+        _seed_wf_done_root(group, project_id="gitnowork")
+        svc.realize_wf_done_transition(group)
+        assert db_git.get_state(group)["worktree_registered"] == 0
+
+        # 3) 경고 토스트 / 깃 다이얼로그 — even if a ride-along action still arrives
+        #    (another tab, or a dialog opened before the discard), the failure it
+        #    hits is only "there was nothing to finalize", so it is reported quiet.
+        out = svc.run_approve_git_action(group, "merge")
+        assert out["ok"] is False           # honest: nothing was finalized
+        assert out["quiet"] is True         # …and nothing is shown for it
+        assert out["error"]["code"] == "invalid_state"
+
+        # 4) 문서에 머지 섹션 — GitFinalizePanel renders only on status != 'none'.
+        assert svc.get_finalize_state(group)["state"]["status"] == "none"
+
+        # And none of this quiet ever became a silent merge/push.
+        assert self._origin_main_commits(nowork_surface_origin) == 1
+        assert "gitnowork_default_0013" not in _git(
+            ["ls-remote", "--heads", str(nowork_surface_origin["bare"])]
+        )
+
+    def test_a_group_that_really_worked_keeps_every_git_surface(self, nowork_surface_origin):
+        """T0004 §4 — the other half of the contract, on the same real repo."""
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitnowork.default.0014"
+        assert svc.ensure_worktree("gitnowork", "default", group) == "ok"
+        wt = src_root("GitNoWork", "gitnowork_default_0014")
+        (wt / "work.txt").write_text("real work\n", encoding="utf-8")
+
+        preview = svc.get_finalize_state(group, preview_ac=True)["state"]
+        assert preview["status"] == "awaiting_choice"
+        assert preview["choices"]
+
+        _seed_wf_done_root(group, project_id="gitnowork")
+        svc.realize_wf_done_transition(group)
+        assert svc.get_finalize_state(group)["state"]["status"] == "awaiting_choice"
+
+    def test_a_stale_pending_slot_with_nothing_in_it_loses_the_gate(
+        self, nowork_surface_origin,
+    ):
+        """The durable form of 문서에 머지 섹션: a slot that entered the gate before
+        0199's entry guard existed (or while divergence was briefly unmeasurable)
+        used to sit in `awaiting_choice` forever with nothing to finalize."""
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+
+        group = "gitnowork.default.0015"
+        assert svc.ensure_worktree("gitnowork", "default", group) == "ok"
+        _seed_wf_done_root(group, project_id="gitnowork")
+        db_git.set_status(group, "awaiting_choice")
+
+        assert svc.get_finalize_state(group)["state"]["status"] == "none"
+        assert db_git.get_state(group)["worktree_registered"] == 0
+        # The header's pending list drops it in the same breath.
+        out = svc.project_git_status("gitnowork")["status"]
+        assert group not in {p["group_id"] for p in out["pending"]}
+
+
 @pytest.mark.skipif(not _GIT, reason="git binary unavailable")
 class TestFirstPushBootstrap0297:
     """0297 B0001 / NR0003 — a freshly created (empty) remote has no
