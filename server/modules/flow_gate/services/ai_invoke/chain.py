@@ -565,6 +565,22 @@ def pop_auto_resume(group_id: Optional[str]) -> Optional[dict]:
         return _svc()._auto_resume.pop(group_id, None)
 
 
+def _pop_auto_resume_if_same(group_id: Optional[str], expected: dict) -> bool:
+    """Consume only the exact queue entry previously peeked.
+
+    DB I/O happens between peek and consume. A producer may replace the entry during that
+    window, so equality is deliberately insufficient: an identical new dict is still a new
+    intent and must remain queued.
+    """
+    if not group_id:
+        return False
+    with _auto_resume_lock:
+        if _svc()._auto_resume.get(group_id) is not expected:
+            return False
+        _svc()._auto_resume.pop(group_id, None)
+        return True
+
+
 def clear_auto_resume(group_id: Optional[str]) -> None:
     if not group_id:
         return
@@ -579,20 +595,10 @@ def _maybe_auto_resume_hop(run: dict) -> None:
     Any real stop (cancel / timeout / provider exhaustion / crash) drops the queued hop rather
     than continuing past it."""
     group_id = run.get("group_id")
-    pending = pop_auto_resume(group_id)
-    if pending is None:
+    queued = peek_auto_resume(group_id)
+    if queued is None:
         return
-    # 0406 T0022 item 4: the two branches below used to pop the queue and throw it away.
-    # The queue is still dropped — a hop that ended abnormally must not auto-continue —
-    # but the **intent** is kept as a durable row, and the releasing lease is released.
-    cancel_event = run.get("cancel_event")
-    cancelled = cancel_event is not None and cancel_event.is_set()
-    if run.get("end_reason") != "exited" or cancelled:
-        parked_code = run.get("stop_code")
-        if not parked_code or parked_code == HOP_HANDOFF_STOP_CODE:
-            parked_code = "cancelled" if cancelled else HOP_HANDOFF_FAILED_STOP_CODE
-        _svc()._park_handoff(run, pending, parked_code)
-        return
+    pending = queued
     # Carry the session override map AND the header default pin forward so the re-spawned hop
     # applies them too (neither is persisted on a token — both ride the run, hop to hop). The
     # base pin is what an override-less step resolves to (0317 T0013 결함 ③).
@@ -645,7 +651,24 @@ def _maybe_auto_resume_hop(run: dict) -> None:
     # Rewrite the durable row as a complete set as of now. At request_auto_resume time only
     # inbox's half was there (document, target, mode); the provider pin, handoff note and
     # hop budget ride the run, so only here is the set complete — invariant I3.
-    _svc()._write_handoff_row(group_id, pending, run)
+    cancel_event = run.get("cancel_event")
+    cancelled = cancel_event is not None and cancel_event.is_set()
+    parked_code = run.get("stop_code")
+    if not parked_code or parked_code == HOP_HANDOFF_STOP_CODE:
+        parked_code = "cancelled" if cancelled else HOP_HANDOFF_FAILED_STOP_CODE
+
+    # Persist the complete intent before consuming volatile state. No lock is held during
+    # DB I/O. The identity CAS below refuses to remove a replacement enqueued meanwhile.
+    if run.get("end_reason") != "exited" or cancelled:
+        _svc()._write_handoff_row(group_id, pending, run, stop_code=parked_code)
+    else:
+        _svc()._write_handoff_row(group_id, pending, run)
+    if not _svc()._pop_auto_resume_if_same(group_id, queued):
+        logger.info("ai-invoke auto-resume queue changed before consume for %s", group_id)
+        return
+    if run.get("end_reason") != "exited" or cancelled:
+        _svc()._park_handoff(run, pending, parked_code)
+        return
     try:
         # 0414 L0008 §2.1 진입점 2: the gate decides what the next hop IS — review, rework,
         # approve-and-continue, or stop. With no review selection it resolves to "work" and

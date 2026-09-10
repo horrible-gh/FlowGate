@@ -1318,14 +1318,33 @@ def _checkpoint_document_review_loop_tx(run: dict) -> dict | None:
         "last_hop_outcome": bundle["last_hop_outcome"],
         "attempts_used": int(resolved.get("attempts_used") or 0),
     }
+    expected_round_no = int(persisted["round_no"])
+    expected_updated_at = persisted["updated_at"]
     changed, latest = db_loops.checkpoint(
         run["run_id"],
-        expected_round_no=int(persisted["round_no"]),
+        expected_round_no=expected_round_no,
         expected_stage=stage,
-        expected_updated_at=persisted["updated_at"],
+        expected_updated_at=expected_updated_at,
         **updates,
     )
-    run["document_review_loop"] = latest
+    log_fields = {
+        "run_id": run["run_id"],
+        "expected_round_no": expected_round_no,
+        "expected_stage": stage,
+        "expected_updated_at": expected_updated_at,
+        "latest_round_no": (latest or {}).get("round_no"),
+        "latest_stage": (latest or {}).get("current_stage"),
+        "latest_updated_at": (latest or {}).get("updated_at"),
+    }
+    if changed:
+        logger.info("document review-loop checkpoint CAS hit", extra=log_fields)
+    else:
+        logger.warning("document review-loop checkpoint CAS miss", extra=log_fields)
+    # On a miss, resolved belongs to the stale snapshot and is not authoritative.
+    # Publish only the row returned by the CAS helper; if it vanished, preserve the
+    # caller's existing observable state and the helper's established None return.
+    if latest is not None:
+        run["document_review_loop"] = latest
     return latest
 
 
