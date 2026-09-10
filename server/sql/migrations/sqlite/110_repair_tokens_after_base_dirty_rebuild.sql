@@ -1,4 +1,17 @@
 -- 110_repair_tokens_after_base_dirty_rebuild.sql
+-- 0533 TR0005 rev1: the copy step must not name `source_access` alongside
+-- `failure_origin_target_run_id`/`failure_origin_before_marker`. All three are
+-- "maybe missing" on the pre-repair table -- on a DB where 108 (numbered
+-- before 109) was actually *applied* after 109 already added the column
+-- (parallel branches merged out of chronological order; sqloader tracks only
+-- filename, not merge time), 108's rebuild already dropped `source_access`
+-- along with the failure_origin columns, and SELECTing it here fails with
+-- "no such column: source_access". Tokens are short-lived, so resetting it
+-- to NULL for pre-existing rows (same as the two failure_origin columns
+-- already do) is an acceptable one-time reset, not a real capability
+-- downgrade -- callers already treat a missing/deferred source_access as
+-- "resolve it again" rather than as an implicit grant (token_service.py
+-- `_resolve_chat_source_access`, tool_registry.py `resolve_source_access`).
 PRAGMA foreign_keys=OFF;
 BEGIN;
 ALTER TABLE tokens RENAME TO tokens_before_110_repair;
@@ -14,8 +27,8 @@ CREATE TABLE tokens (
  failure_origin_target_run_id TEXT, failure_origin_before_marker TEXT,
  source_access TEXT CHECK (source_access IN ('read','read_write'))
 );
-INSERT INTO tokens (token_id,hash,pepper_id,project,group_id,doc_ref,action_scope,issued_to,created_at,expires_at,consumed_at,revoked_at,scratch_dir,dry_run_count,continuation_target_seq,continuation_review_mode,continuation_locale,merge_id,continuation_instruction_mode,provider_id,ai_run_id,continuation_auto_approve_item_seqs,revoke_claim,source_access)
-SELECT token_id,hash,pepper_id,project,group_id,doc_ref,action_scope,issued_to,created_at,expires_at,consumed_at,revoked_at,scratch_dir,dry_run_count,continuation_target_seq,continuation_review_mode,continuation_locale,merge_id,continuation_instruction_mode,provider_id,ai_run_id,continuation_auto_approve_item_seqs,revoke_claim,source_access FROM tokens_before_110_repair;
+INSERT INTO tokens (token_id,hash,pepper_id,project,group_id,doc_ref,action_scope,issued_to,created_at,expires_at,consumed_at,revoked_at,scratch_dir,dry_run_count,continuation_target_seq,continuation_review_mode,continuation_locale,merge_id,continuation_instruction_mode,provider_id,ai_run_id,continuation_auto_approve_item_seqs,revoke_claim)
+SELECT token_id,hash,pepper_id,project,group_id,doc_ref,action_scope,issued_to,created_at,expires_at,consumed_at,revoked_at,scratch_dir,dry_run_count,continuation_target_seq,continuation_review_mode,continuation_locale,merge_id,continuation_instruction_mode,provider_id,ai_run_id,continuation_auto_approve_item_seqs,revoke_claim FROM tokens_before_110_repair;
 DROP TABLE tokens_before_110_repair;
 CREATE UNIQUE INDEX ux_tokens_hash ON tokens(hash);
 CREATE INDEX idx_tokens_expires_at ON tokens(expires_at);
