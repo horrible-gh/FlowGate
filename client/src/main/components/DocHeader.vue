@@ -567,6 +567,8 @@ function _isDecided(d: any): boolean {
 // may commit state; confirmed local/SSE transitions also advance the generation so a GET
 // that started before the transition cannot overwrite the newer state when it arrives.
 let docFetchGeneration = 0
+const docFetchRequests = new Map<string, Promise<boolean>>()
+const trailingDocRefreshes = new Set<string>()
 
 function invalidatePendingDocFetches(): void {
   docFetchGeneration += 1
@@ -592,7 +594,28 @@ async function fetchWorkflowOrphan(id: string, generation: number): Promise<void
   emit('doc-updated', { docId: id })
 }
 
-async function fetchDoc(id: string, opts?: { silent?: boolean }): Promise<boolean> {
+function fetchDoc(
+  id: string,
+  opts?: { silent?: boolean; trailingIfJoined?: boolean },
+): Promise<boolean> {
+  const existing = docFetchRequests.get(id)
+  if (existing) {
+    if (!opts?.trailingIfJoined) return existing
+    trailingDocRefreshes.add(id)
+    return existing.then(async (result) => {
+      if (!trailingDocRefreshes.delete(id) || props.tab.id !== id) return result
+      return fetchDoc(id, { silent: true })
+    })
+  }
+  const request = fetchDocOnce(id, opts)
+  docFetchRequests.set(id, request)
+  void request.finally(() => {
+    if (docFetchRequests.get(id) === request) docFetchRequests.delete(id)
+  })
+  return request
+}
+
+async function fetchDocOnce(id: string, opts?: { silent?: boolean }): Promise<boolean> {
   const fetchGeneration = ++docFetchGeneration
   const silent = opts?.silent === true
   if (!silent) {
@@ -1116,8 +1139,8 @@ const PULL_RETRY_DELAY_MS = 500
 
 // fetchDoc(silent) + one retry for transient transport/auth failures. Silent throughout
 // so a failed refresh never blanks an already-decided header.
-async function silentRefetchWithRetry(): Promise<boolean> {
-  if (await fetchDoc(props.tab.id, { silent: true })) return true
+async function silentRefetchWithRetry(trailingIfJoined = false): Promise<boolean> {
+  if (await fetchDoc(props.tab.id, { silent: true, trailingIfJoined })) return true
   await new Promise((resolve) => setTimeout(resolve, PULL_RETRY_DELAY_MS))
   return fetchDoc(props.tab.id, { silent: true })
 }
@@ -1187,7 +1210,7 @@ function _onOpenDocsRefresh(e: Event) {
   const payload = (e as CustomEvent).detail as { project?: string | null } | undefined
   if (payload?.project && current.project_id && payload.project !== current.project_id) return
   lastPullAt = Date.now()
-  void silentRefetchWithRetry()
+  void silentRefetchWithRetry(true)
 }
 
 function _onReviewStatusChanged(e: Event) {

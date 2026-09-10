@@ -88,10 +88,22 @@ export const useNotificationsStore = defineStore('notifications', () => {
   const loadedProjectId = ref<string | null>(null)
 
   let requestVersion = 0
+  const feedRequests = new Map<string, Promise<void>>()
 
-  async function fetchFeed(projectId: string): Promise<void> {
-    if (!projectId) return
+  function fetchFeed(projectId: string): Promise<void> {
+    if (!projectId) return Promise.resolve()
+    const existing = feedRequests.get(projectId)
+    if (existing) return existing
     const version = ++requestVersion
+    const request = fetchFeedOnce(projectId, version)
+    feedRequests.set(projectId, request)
+    void request.finally(() => {
+      if (feedRequests.get(projectId) === request) feedRequests.delete(projectId)
+    })
+    return request
+  }
+
+  async function fetchFeedOnce(projectId: string, version: number): Promise<void> {
     loading.value = true
     error.value = null
     try {

@@ -142,6 +142,26 @@ describe('notifications store', () => {
     expect(store.isUnread(activity(2, '2026-06-12T00:01:00Z'))).toBe(false)
   })
 
+  it('joins concurrent reads for the same project but keeps projects isolated', async () => {
+    const store = useNotificationsStore()
+    let resolveAlpha!: (value: unknown) => void
+    getRequest
+      .mockReturnValueOnce(new Promise((resolve) => { resolveAlpha = resolve }))
+      .mockResolvedValueOnce({ data: feed(2, null, []) })
+
+    const first = store.fetchFeed('alpha')
+    const joined = store.fetchFeed('alpha')
+    const beta = store.fetchFeed('beta')
+
+    // Pinia wraps every action call in its own `ret.then(...)`, so `first` and `joined` are
+    // distinct wrapper promises even though the store shares one in-flight `alpha` GET —
+    // assert the coalescing through the actual HTTP call count, not wrapper promise identity.
+    expect(getRequest).toHaveBeenCalledTimes(2)
+    resolveAlpha({ data: feed(1, null, []) })
+    await Promise.all([first, joined, beta])
+    expect(getRequest).toHaveBeenCalledTimes(2)
+  })
+
   it('ignores a superseded fetch response (project switch race)', async () => {
     const store = useNotificationsStore()
     const staleFeed = feed(1, null, [activity(1, '2026-06-12T00:01:00Z')])

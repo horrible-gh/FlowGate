@@ -621,7 +621,19 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
   const pauseRefreshInFlight = new Set<string>()
   let lastPollAt = 0
   let bootstrapInFlight = false
+  let activeAllInFlight: Promise<any> | null = null
   const bootstrapPending = ref(true)
+
+  function fetchActiveAll(): Promise<any> {
+    if (activeAllInFlight) return activeAllInFlight
+    const request = getRequest<any>('/api/v1/ai-invoke/active-all')
+    activeAllInFlight = request
+    const clear = () => {
+      if (activeAllInFlight === request) activeAllInFlight = null
+    }
+    void request.then(clear, clear)
+    return request
+  }
   let persistDirty = false
 
   // 0401 NR0003 SS3 cause 3 / T0004 task 5: the server's lease can outlive this process's
@@ -766,7 +778,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     if (pauseRefreshInFlight.has(groupId)) return
     pauseRefreshInFlight.add(groupId)
     try {
-      const response = await getRequest<any>('/api/v1/ai-invoke/active-all')
+      const response = await fetchActiveAll()
       const paused = Array.isArray(response.data?.paused) ? response.data.paused : []
       const row = paused.find((item: any) => String(item?.group_id ?? '') === groupId)
       const existing = runsByGroup[groupId]
@@ -1003,7 +1015,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
         .map(([groupId]) => groupId),
     )
     try {
-      const response = await getRequest<any>('/api/v1/ai-invoke/active-all')
+      const response = await fetchActiveAll()
       const payload = response.data ?? {}
       const runs: Record<string, any>[] = Array.isArray(payload.runs) ? payload.runs : []
       const paused: Record<string, any>[] = Array.isArray(payload.paused) ? payload.paused : []
