@@ -1814,7 +1814,10 @@ def capability_warning_findings(body: dict, project_id: str) -> list[dict]:
         providers = {}
     raw: list[dict] = []
     for step in body.get("steps") or []:
-        finding = capability_finding(step.get("key"), step.get("type"), providers.get(step.get("provider_id")))
+        provider_id = step.get("provider_id")
+        if not provider_id:
+            continue
+        finding = capability_finding(step.get("key"), step.get("type"), providers.get(provider_id))
         if finding:
             finding["pair_key"] = step.get("pair_key")
             raw.append(finding)
@@ -1824,12 +1827,15 @@ def capability_warning_findings(body: dict, project_id: str) -> list[dict]:
     seen: set[tuple] = set()
     for finding in raw:
         pair = finding.get("pair_key")
-        signature = (pair, finding["provider_id"], tuple(finding["missing_capabilities"]))
+        # pair_key points at the *sibling's* key, so T#1 and TR#1 disagree on it; a
+        # symmetric identity is needed or the two sides of one pair never collide.
+        pair_identity = frozenset((finding["step_key"], pair)) if pair else None
+        signature = (pair_identity, finding["provider_id"], tuple(finding["missing_capabilities"]))
         if pair and signature in seen:
             continue
         seen.add(signature)
         if pair:
-            representative = next((f for f in raw if f.get("pair_key") == pair and f["step_type"] == "T" and (f["provider_id"], tuple(f["missing_capabilities"])) == signature[1:]), finding)
+            representative = next((f for f in raw if f.get("pair_key") and frozenset((f["step_key"], f["pair_key"])) == pair_identity and f["step_type"] == "T" and (f["provider_id"], tuple(f["missing_capabilities"])) == signature[1:]), finding)
             finding = dict(representative)
         finding.pop("pair_key", None)
         result.append(finding)
