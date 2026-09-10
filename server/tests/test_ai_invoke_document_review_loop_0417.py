@@ -1173,8 +1173,11 @@ def test_checkpoint_ignores_late_previous_and_foreign_verdicts(monkeypatch):
     })
 
     assert rejected == [11]
-    # Attempt 2 remains a real historical round, but its pass cannot override attempt 3.
-    assert (latest["round_no"], latest["current_stage"]) == (3, "rework")
+    # Both owned rows reviewed revision 3, so they are ONE round that was retried, not two
+    # rounds -- the next round is 2. The earlier attempt's pass still cannot override the
+    # later attempt's issues (0486 NR0028 F1: attempt_no orders retries inside a round, it
+    # never counts rounds; before the fix this read 3 because every retry inflated the tally).
+    assert (latest["round_no"], latest["current_stage"]) == (2, "rework")
     assert latest["stop_reason"] is None
 
 

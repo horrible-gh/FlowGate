@@ -1034,52 +1034,57 @@ def resolve_loop_provider(bundle: dict, stage: str) -> str:
 
 
 def _document_loop_review_view(bundle: dict, reviews: list[dict]) -> tuple[list[dict], dict | None]:
-    """Return this loop's review history and the verdict owned by the current review hop.
+    """Return this loop's review ROUNDS (newest first) and the newest verdict it owns.
 
-    New loops always provide both durable identities. In that mode provenance is strict:
-    rows with missing provenance, another run id, or another attempt can never stand in for
-    the current hop. The baseline-only branch is deliberately limited to cold restores of
-    legacy loop rows/bundles that predate review provenance; it preserves their old meaning
-    without weakening ownership for a provenance-aware active hop.
+    Ownership is the run id: a verdict written by another run -- a restart orphan's zombie
+    worker, a human-triggered review -- never stands in for this loop's own round, however
+    new it is. The baseline-only branch stays limited to cold restores of legacy loop
+    rows/bundles that predate review provenance.
+
+    The ROUND key is `revision_no`, never `attempt_no` (0486 NR0028 F1). `attempt_no` cannot
+    be a round key: `_execute_provider_chain` recomputes it as `len(fallback_history) + 1` on
+    every provider launch, so a run whose provider starts normally snapshots the SAME
+    `attempt_no = 1` onto every review row it ever writes. Collapsing by it folded every
+    round into one, `rounds_used` was pinned at 1, and `review_count` 2/3 could never be
+    reached -- the loop ran until the total timeout. `revision_no` IS the round: the gate
+    only leaves a rework hop once `doc.revision_no` has moved past the last review's, so two
+    review rows share a revision exactly when they belong to the same round (a duplicate
+    delivery, or a retried hop) and differ whenever a real round boundary was crossed.
     """
     baseline = int(bundle.get("review_baseline_id") or 0)
     after_baseline = [
         review for review in reviews if int(review.get("id") or 0) > baseline
     ]
     run_id = bundle.get("review_run_id")
-    attempt_no = int(bundle.get("review_attempt_no") or 0)
     legacy_shape = bool(after_baseline) and all(
         "review_run_id" not in review and "attempt_no" not in review
         for review in after_baseline
     )
-    if not run_id or attempt_no <= 0 or legacy_shape:
+    if not run_id or legacy_shape:
         history = sorted(after_baseline, key=lambda item: int(item.get("id") or 0), reverse=True)
         return history, (history[0] if history else None)
 
-    owned = [
-        review for review in after_baseline
-        if review.get("review_run_id") == run_id
-        and int(review.get("attempt_no") or 0) <= attempt_no
-    ]
-    # Attempt order, not arrival/id order, prevents a late old-attempt verdict becoming
-    # latest. Keep one row per attempt defensively; registration normally creates one.
+    owned = [review for review in after_baseline if review.get("review_run_id") == run_id]
+    # Newest round first. Inside one round the highest attempt (then the newest row) is the
+    # verdict that round ended on, so a late verdict from an earlier attempt of the SAME
+    # round can never displace it.
     owned.sort(
-        key=lambda item: (int(item.get("attempt_no") or 0), int(item.get("id") or 0)),
+        key=lambda item: (
+            int(item.get("revision_no") or 0),
+            int(item.get("attempt_no") or 0),
+            int(item.get("id") or 0),
+        ),
         reverse=True,
     )
     history = []
-    seen_attempts = set()
+    seen_revisions = set()
     for review in owned:
-        review_attempt = int(review.get("attempt_no") or 0)
-        if review_attempt in seen_attempts:
+        revision = int(review.get("revision_no") or 0)
+        if revision in seen_revisions:
             continue
-        seen_attempts.add(review_attempt)
+        seen_revisions.add(revision)
         history.append(review)
-    latest = next(
-        (review for review in history if int(review.get("attempt_no") or 0) == attempt_no),
-        None,
-    )
-    return history, latest
+    return history, (history[0] if history else None)
 
 
 def check_expected_progress(bundle: dict, doc: dict, reviews: list[dict]) -> bool:
@@ -1087,10 +1092,10 @@ def check_expected_progress(bundle: dict, doc: dict, reviews: list[dict]) -> boo
     kind = bundle.get("last_hop_kind")
     current, latest = _document_loop_review_view(bundle, reviews)
     if kind == REVIEW_HOP_KIND:
-        # A provenance-aware hop must own an exact run/attempt verdict. Legacy bundles
-        # retain the historical round-count check through _document_loop_review_view.
-        if bundle.get("review_run_id") and int(bundle.get("review_attempt_no") or 0) > 0:
-            return latest is not None
+        # This round's verdict must EXIST, and the rounds are counted rather than guessed.
+        # `latest is not None` was satisfied by ANY earlier round's leftover row, so a review
+        # hop that produced nothing at all still read as progress (0486 NR0028 F1, side
+        # effect 1). One owned round per completed review round is the whole invariant.
         return len(current) >= max(1, int(bundle.get("round_no") or 1))
     if kind == REWORK_HOP_KIND:
         latest = latest or (current[0] if current else {})
@@ -1241,6 +1246,52 @@ def _checkpoint_document_review_loop(run: dict) -> dict | None:
         return _checkpoint_document_review_loop_tx(run)
 
 
+CHECKPOINT_FAILURE_STOP_DETAIL = "loop checkpoint could not be written"
+
+
+def force_stop_loop_after_checkpoint_failure(run: dict, error: BaseException | None = None) -> bool:
+    """Close an active loop whose checkpoint refuses to be written (0486 T0029 item 3).
+
+    The worker calls the checkpoint without exception protection and `_finalize_run` retries
+    it once; when BOTH fail, the loop row keeps `current_stage='review'` with no stop_reason
+    while the group lease is released a few lines later. After that release the restart
+    recovery path (`startup_recover_leases` -> `_record_orphaned_lease_run` ->
+    `stop_for_restart_orphan`) has no lease to find, so the row is unreachable forever and
+    only a human dismissing the card hides it -- the exact zombie NR0014 §1 called a FAIL,
+    reappearing where the T0019 recovery cannot reach it (0486 NR0028 F3).
+
+    So the loop is brought to a terminal state HERE, before the release, with the existing
+    `retry_exhausted` reason and a stop_detail naming the cause. Whatever unexpected value a
+    future gate returns, the loop still ends; the write is a compare-and-swap, so a loop that
+    quietly succeeded elsewhere is never relabelled, and every failure is swallowed -- this
+    is a safety net, never a new way for finalize to raise.
+    """
+    loop = run.get("document_review_loop")
+    if not loop or loop.get("current_stage") == "stopped":
+        return False
+    try:
+        from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
+
+        detail = CHECKPOINT_FAILURE_STOP_DETAIL
+        if error is not None:
+            detail = f"{detail}: {error}"[:480]
+        stopped = db_loops.stop_for_checkpoint_failure(run["run_id"], detail=detail)
+        if stopped:
+            logger.warning(
+                "document review-loop closed as retry_exhausted after checkpoint failure for %s",
+                run["run_id"],
+            )
+            latest = db_loops.get(run["run_id"])
+            if latest is not None:
+                run["document_review_loop"] = latest
+        return stopped
+    except Exception:  # noqa: BLE001 — the last line of defence never raises
+        logger.exception(
+            "document review-loop force stop failed for %s", run.get("run_id")
+        )
+        return False
+
+
 def _checkpoint_document_review_loop_tx(run: dict) -> dict | None:
     """Transaction body for one completed document-review-loop hop."""
     loop = run.get("document_review_loop")
@@ -1268,10 +1319,11 @@ def _checkpoint_document_review_loop_tx(run: dict) -> dict | None:
         "failure_detail": run.get("last_message") or run.get("end_reason"),
         "now": datetime.now(timezone.utc),
         "deadline_at": _loop_deadline(persisted.get("deadline_at")),
-        # The review registration snapshots these exact values into document_reviews.
-        # Carry them from the completed run so every checkpoint consumer sees one universe.
+        # The review registration snapshots this exact run id into document_reviews, so
+        # carrying it here makes "the rows this loop owns" the same set on both sides.
+        # `attempt_no` is deliberately NOT carried any more: it never changes inside a run,
+        # so it can neither name a round nor a hop (0486 NR0028 F1).
         "review_run_id": run["run_id"],
-        "review_attempt_no": int(run.get("attempt_no") or 0),
     }
     if succeeded and not check_expected_progress(bundle, doc or {}, reviews):
         bundle["last_hop_outcome"] = "failed"
@@ -1281,6 +1333,17 @@ def _checkpoint_document_review_loop_tx(run: dict) -> dict | None:
     # rejection before the rework stage is made visible. Both writes share the outer
     # transaction, so a checkpoint failure rolls the rejection back as well.
     current_reviews, latest_review = _document_loop_review_view(bundle, reviews)
+    slot = {
+        "doc_id": persisted["doc_ref"],
+        "revision_no": int((doc or {}).get("revision_no") or 0),
+        "review_status": (doc or {}).get("doc_review_status") or "",
+        # 0486 NR0028 F5 / NR0014 §8-5: the sibling gate `resolve_review_gate` has always
+        # ANDed the document's momentary status with THIS review row's identity, because
+        # `('rejected','submit') -> 'revised'` erases the status a landed rework leaves
+        # behind. The document-review loop read the status alone, so once the status had
+        # moved on, the same review row was a rejection candidate all over again.
+        "rejection_history": _parse_rejection_history((doc or {}).get("rejection_history")),
+    }
     # T0011 §3: only 'issues' is a real rejection. 'hold' must never reach _auto_reject --
     # it is a durable human stop, and rejecting the document out from under it would make
     # the next hop a rework nobody asked for (0486 NR0010 Finding 2).
@@ -1289,13 +1352,9 @@ def _checkpoint_document_review_loop_tx(run: dict) -> dict | None:
         and bundle["last_hop_outcome"] == "succeeded"
         and latest_review is not None
         and (latest_review.get("verdict") or "").lower() == "issues"
-        and (doc or {}).get("doc_review_status") != "rejected"
+        and slot["review_status"] != "rejected"
+        and not _review_already_rejected(latest_review, slot, run.get("api_base_url"))
     ):
-        slot = {
-            "doc_id": persisted["doc_ref"],
-            "revision_no": int((doc or {}).get("revision_no") or 0),
-            "review_status": (doc or {}).get("doc_review_status") or "",
-        }
         rejection = _svc()._auto_reject(slot, latest_review, {
             "issued_to": run.get("issued_to"),
             "api_base_url": run.get("api_base_url"),

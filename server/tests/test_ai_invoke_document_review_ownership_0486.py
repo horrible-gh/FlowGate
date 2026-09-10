@@ -32,11 +32,14 @@ BASE = {
 }
 
 
-def review(rid, verdict, run_id="current-run", attempt=3, findings=None):
+def review(rid, verdict, run_id="current-run", attempt=3, findings=None, revision=3):
+    # `revision_no` is what tells one ROUND from the next: a rework hop only hands the loop
+    # back to review after the document's revision has moved, so rows sharing a revision are
+    # the same round and rows with different revisions are different rounds (0486 NR0028 F1).
     return {
         "id": rid,
         "verdict": verdict,
-        "revision_no": 3,
+        "revision_no": revision,
         "review_run_id": run_id,
         "attempt_no": attempt,
         "findings": findings or [],
@@ -69,15 +72,36 @@ def test_late_foreign_issues_never_overrides_owned_terminal_verdict(owned, stop_
     assert state["stop_reason"] == stop_reason
 
 
-def test_previous_attempt_is_not_reused_but_current_attempt_is_progress():
-    rows = [review(99, "pass", attempt=2)]
-    bundle = {**BASE, "last_hop_kind": "review"}
-    assert service.check_expected_progress(bundle, BASE["doc"], rows) is False
+def test_previous_round_verdict_is_not_this_round_progress():
+    # 0486 NR0028 F1 side effect 1: progress is "this ROUND left a verdict", counted against
+    # round_no. The provenance shortcut this replaces asked only "does the loop own any
+    # verdict at all", so round 2's review hop could produce nothing and still be read as
+    # progress because round 1's row was still sitting there.
+    doc = {"revision_no": 4, "doc_review_status": "pending_review"}
+    rows = [review(99, "issues", revision=3)]
+    bundle = {**BASE, "round_no": 2, "doc": doc, "last_hop_kind": "review"}
+    assert service.check_expected_progress(bundle, doc, rows) is False
     state = service.resolve_document_review_loop_gate({**bundle, "reviews": rows})
-    assert state["current_stage"] == "review"
-    rows.append(review(11, "pass", attempt=3))
+    assert state["current_stage"] != "stopped"
+
+    rows.append(review(11, "pass", revision=4))
+    assert service.check_expected_progress(bundle, doc, rows) is True
+    assert service.resolve_document_review_loop_gate(
+        {**bundle, "reviews": rows}
+    )["stop_reason"] == "review_passed"
+
+
+def test_replayed_verdict_of_the_same_round_is_still_one_round():
+    # The same round delivering its verdict twice (a retried hop, a duplicated POST) shares
+    # the document revision it reviewed, so it stays ONE round and the higher attempt wins.
+    rows = [
+        review(11, "pass", attempt=1, revision=3),
+        review(12, "issues", attempt=2, revision=3),
+    ]
+    bundle = {**BASE, "round_no": 1, "last_hop_kind": "review"}
     assert service.check_expected_progress(bundle, BASE["doc"], rows) is True
-    assert service.resolve_document_review_loop_gate({**bundle, "reviews": rows})["stop_reason"] == "review_passed"
+    state = service.resolve_document_review_loop_gate({**bundle, "reviews": rows})
+    assert (state["current_stage"], state["round_no"]) == ("rework", 2)
 
 
 def _same_findings(spaced=False):
@@ -87,11 +111,15 @@ def _same_findings(spaced=False):
 
 
 def test_same_owned_findings_stop_despite_json_order_and_whitespace():
+    # Two CONSECUTIVE ROUNDS -- so two different revisions, because a rework landed between
+    # them -- that came back with the same findings. The rework changed nothing the reviewer
+    # cares about, and the loop stops instead of burning the rest of its total timeout.
     state = service.resolve_document_review_loop_gate({
         **BASE,
+        "doc": {"revision_no": 4, "doc_review_status": "pending_review"},
         "reviews": [
-            review(11, "issues", attempt=1, findings=_same_findings()),
-            review(12, "issues", attempt=3, findings=_same_findings(True)),
+            review(11, "issues", revision=3, findings=_same_findings()),
+            review(12, "issues", revision=4, findings=_same_findings(True)),
         ],
     })
     assert state["current_stage"] == "stopped"
@@ -100,12 +128,15 @@ def test_same_owned_findings_stop_despite_json_order_and_whitespace():
 
 @pytest.mark.parametrize("rows", [
     [review(12, "issues")],
-    [review(11, "issues", attempt=1, findings='[{"locus":"x","note":"one"}]'),
-     review(12, "issues", attempt=3, findings='[{"locus":"x","note":"two"}]')],
-    [review(11, "issues", attempt=1, findings=_same_findings()),
-     review(12, "pass", attempt=3, findings=_same_findings())],
-    [review(11, "issues", run_id="zombie-run", attempt=2, findings=_same_findings()),
-     review(12, "issues", attempt=3, findings=_same_findings())],
+    [review(11, "issues", revision=3, findings='[{"locus":"x","note":"one"}]'),
+     review(12, "issues", revision=4, findings='[{"locus":"x","note":"two"}]')],
+    [review(11, "issues", revision=3, findings=_same_findings()),
+     review(12, "pass", revision=4, findings=_same_findings())],
+    [review(11, "issues", run_id="zombie-run", revision=3, findings=_same_findings()),
+     review(12, "issues", revision=4, findings=_same_findings())],
+    # One round that delivered the same verdict twice is not two rounds of no progress.
+    [review(11, "issues", attempt=1, revision=3, findings=_same_findings()),
+     review(12, "issues", attempt=2, revision=3, findings=_same_findings())],
 ])
 def test_non_consecutive_or_non_owned_findings_do_not_stall(rows):
     state = service.resolve_document_review_loop_gate({**BASE, "reviews": rows})

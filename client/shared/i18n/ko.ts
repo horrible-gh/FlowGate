@@ -1338,6 +1338,10 @@ export default {
       review_loop_stop_review_count_exhausted: '반려 · 검수 횟수 소진',
       review_loop_stop_retry_exhausted: '실패 · 재시도 소진',
       review_loop_stop_total_timeout: '정지 · 총 시간 제한 초과',
+    review_loop_stop_review_verdict_hold: '정지 · 검수자 보류',
+    review_loop_stop_restart_orphaned: '정지 · 서버 재기동으로 끊김',
+    review_loop_stop_review_stalled: '정지 · 같은 지적이 반복됨',
+    review_loop_stop_unknown: '정지 · 알 수 없는 이유',
       // 0446 T0010 §3-6: 반려 재작업 실행 시간 선택. main.continuous_work.step_timeout_* 는
       // "단계별 제한 시간 / 한 단계가 이 시간을 넘기면 중단됩니다" 라서 1회 실행 화면에서는
       // 틀린 말이 되므로 재사용하지 않고 이 블록에 따로 둔다.

@@ -49,6 +49,26 @@ def stop_for_restart_orphan(run_id: str, *, at: Optional[str] = None) -> bool:
     ) == 1
 
 
+def stop_for_checkpoint_failure(run_id: str, *, detail: str, at: Optional[str] = None) -> bool:
+    """Terminally stop a loop whose hop checkpoint could not be written (0486 T0029 item 3).
+
+    Same one-way compare-and-swap as stop_for_restart_orphan: only a still-active loop with
+    no terminal reason can be closed here, so a human hold or a normal outcome is never
+    relabelled and a replay answers False. The reason is the existing `retry_exhausted` --
+    the hop really did run out of ways to record itself -- and `stop_detail` carries what
+    went wrong, so this needs no new stop_reason value and no new CHECK migration.
+    Round, hop history fields and created_at are deliberately untouched.
+    """
+    stamp = at or now_iso()
+    return get_store()._execute_affected(
+        "UPDATE ai_invoke_document_review_loops "
+        "SET current_stage = ?, stop_reason = ?, stop_detail = ?, updated_at = ? "
+        "WHERE run_id = ? AND current_stage IN (?, ?) AND stop_reason IS NULL",
+        ["stopped", "retry_exhausted", detail or "loop checkpoint could not be written",
+         stamp, run_id, "review", "rework"],
+    ) == 1
+
+
 def dismiss_card(run_id: str, *, at: Optional[str] = None) -> bool:
     """Mark this loop's MONITOR CARD as removed by its owner (0529 B0001).
 

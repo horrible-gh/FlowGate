@@ -287,11 +287,17 @@ describe('AiInvokeInline document review loop cards (0417 T0013)', () => {
     i18n.global.locale.value = previousLocale
   })
 
+  // Every value ai_invoke_document_review_loops.stop_reason can hold. The three 0486 added
+  // (review_verdict_hold, restart_orphaned, review_stalled) all fell through to the
+  // total_timeout fallback and were drawn as "total time limit exceeded" (0486 NR0028 F4).
   it.each([
     'review_passed',
     'review_count_exhausted',
     'retry_exhausted',
     'total_timeout',
+    'review_verdict_hold',
+    'restart_orphaned',
+    'review_stalled',
   ] as const)('renders accumulated rounds, %s, and stop detail without duplicate history', async (reason) => {
     const groupId = 'flowgate.default.0417.' + reason
     localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
@@ -334,6 +340,51 @@ describe('AiInvokeInline document review loop cards (0417 T0013)', () => {
       reason === 'review_passed' ? 'rlr-badge--pass' : 'rlr-badge--rej',
     )
     wrapper.unmount()
+  })
+
+  it('labels an unmapped stop reason as unknown rather than as the total time limit', async () => {
+    const groupId = 'flowgate.default.0486.unknown-stop'
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    setActivePinia(createPinia())
+    const wrapper = mount(AiInvokeInline, {
+      props: { groupId },
+      global: { plugins: [i18n] },
+    })
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'loop-unknown', group_id: groupId, status: 'running',
+      document_review_loop: { round_no: 1, current_stage: 'review', history: [] },
+    })
+    store.trackFinished({
+      run_id: 'loop-unknown', group_id: groupId, status: 'finished', outcome: 'complete',
+      document_review_loop: {
+        round_no: 1, current_stage: 'stopped',
+        stop_reason: 'a_reason_this_build_does_not_know',
+        stop_detail: 'server detail', history: [],
+      },
+    })
+    await nextTick()
+
+    const card = wrapper.find('[data-test="review-loop-card"]')
+    expect(card.text()).toContain(i18n.global.t('main.ai_invoke_dialog.review_loop_stop_unknown'))
+    expect(card.text()).not.toContain(i18n.global.t('main.ai_invoke_dialog.review_loop_stop_total_timeout'))
+    wrapper.unmount()
+  })
+
+  it('gives every durable stop reason its own label in every locale', () => {
+    const reasons = [
+      'review_passed', 'review_count_exhausted', 'retry_exhausted', 'total_timeout',
+      'review_verdict_hold', 'restart_orphaned', 'review_stalled', 'unknown',
+    ] as const
+    const labels = reasons.map((reason) =>
+      i18n.global.t(`main.ai_invoke_dialog.review_loop_stop_${reason}`))
+    expect(new Set(labels).size).toBe(reasons.length)
+    for (const locale of ['ko', 'en', 'ja'] as const) {
+      const messages = i18n.global.getLocaleMessage(locale) as Record<string, any>
+      for (const reason of reasons) {
+        expect(typeof messages.main.ai_invoke_dialog[`review_loop_stop_${reason}`]).toBe('string')
+      }
+    }
   })
 
   // 0417 T0013 items 7-8 and the TR0018 rejection: the round table is server truth

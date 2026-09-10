@@ -1337,6 +1337,10 @@ export default {
       review_loop_stop_review_count_exhausted: '差し戻し · レビュー回数上限',
       review_loop_stop_retry_exhausted: '失敗 · 再試行上限',
       review_loop_stop_total_timeout: '停止 · 合計時間超過',
+    review_loop_stop_review_verdict_hold: '停止 · レビューが保留',
+    review_loop_stop_restart_orphaned: '停止 · サーバー再起動で中断',
+    review_loop_stop_review_stalled: '停止 · 同じ指摘の繰り返し',
+    review_loop_stop_unknown: '停止 · 理由不明',
       // 0446 T0010 §3-6: the rejection rework's run-duration picker. Not shared with
       // main.continuous_work.step_timeout_*, whose wording is about ONE STEP of a chain.
       step_timeout_title: '実行の制限時間',
