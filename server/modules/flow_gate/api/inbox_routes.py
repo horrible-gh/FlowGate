@@ -1788,6 +1788,66 @@ def _encoding_guard(
     return None
 
 
+def _encoding_validation_result(
+    *,
+    fields: dict[str, Optional[str]],
+    fingerprint_field: Optional[str],
+    body_sha256: Optional[str],
+    body_chars,
+    force_encoding_reason: Optional[str],
+    fingerprint_bypasses_corruption: bool = True,
+) -> dict:
+    """Structured provenance for a dry-run that _encoding_guard already passed.
+
+    0545 T0014: worker/receipt/response all need the SAME corruption/fingerprint/force
+    facts _encoding_guard already decided, not a second recomputation of them. This
+    mirrors the guard's field selection and fingerprint math exactly, but (unlike the
+    guard) never short-circuits on a valid force reason -- it always evaluates the
+    fingerprint and corruption facts so force_used can report whether force was
+    actually needed to bypass a real corruption signal, per T0014 §7.
+    """
+    from modules.flow_gate.services import workflow_decision_service as _wf_decision
+
+    check_fields = dict(fields)
+    fingerprint_supplied = bool(fingerprint_field and (body_sha256 or body_chars is not None))
+    fingerprint_matched = False
+    if fingerprint_supplied:
+        if fingerprint_bypasses_corruption:
+            text = check_fields.pop(fingerprint_field, None) or ""
+        else:
+            text = check_fields.get(fingerprint_field) or ""
+        actual_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        actual_chars = len(text)
+        matched = True
+        if body_sha256 and str(body_sha256).strip().lower() != actual_sha256:
+            matched = False
+        if body_chars is not None:
+            try:
+                if int(body_chars) != actual_chars:
+                    matched = False
+            except (TypeError, ValueError):
+                matched = False
+        fingerprint_matched = matched
+
+    corruption_detected = any(
+        _wf_decision._text_is_corrupted(value) for value in check_fields.values()
+    )
+
+    reason = (force_encoding_reason or "").strip()
+    force_reason_valid = len(reason.replace(" ", "")) >= 10
+    force_used = corruption_detected and force_reason_valid
+
+    return {
+        "validated_at": now_iso(),
+        "corruption_detected": corruption_detected,
+        "fingerprint_supplied": fingerprint_supplied,
+        "fingerprint_matched": fingerprint_matched,
+        "force_used": force_used,
+        "body_sha256_present": body_sha256 is not None,
+        "body_chars_present": body_chars is not None,
+    }
+
+
 # T0004 task 4-5 / NR0003 finding 4-5: the unbranched-Korean workflow-head-type-mismatch
 # 409 and the TR scope rejection notice's empty-value fallback.
 _WORKFLOW_HEAD_MISMATCH_COPY = {
@@ -2767,9 +2827,18 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
                 "error_message": copy["limit"].format(limit=limit),
                 "help_url": _help_url(), "dry_run_count": cnt, "dry_run_remaining": 0,
             })
+        _review_validation = _encoding_validation_result(
+            fields=_review_encoding_fields,
+            fingerprint_field="comment",
+            body_sha256=body.get("body_sha256"),
+            body_chars=body.get("body_chars"),
+            force_encoding_reason=body.get("force_encoding_reason"),
+            fingerprint_bypasses_corruption=False,
+        )
         issued = review_receipt_service.issue(
             token_rec=token_rec, project_id=project, group_id=token_rec.get("group_id"),
-            doc_id=doc_id, revision_no=revision_no, identity=receipt_identity, body=body,
+            doc_id=doc_id, revision_no=revision_no, identity=receipt_identity,
+            validation=_review_validation,
         )
         return JSONResponse(status_code=200, content={
             "ok": True, "dry_run": True,

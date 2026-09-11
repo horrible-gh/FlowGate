@@ -32,17 +32,28 @@ def payload_identity(*, doc_id: str, revision_no: int, verdict: Any, findings: A
     return hashlib.sha256(canonical).hexdigest()
 
 
-def encoding_provenance(body: dict) -> str:
+def encoding_provenance(validation: dict) -> str:
+    """Serialize the same validation result the dry-run response carries.
+
+    0545 T0014: this is the durable audit side of the single validation result the
+    route computes once (_encoding_validation_result) -- it must not recompute
+    corruption/fingerprint/force facts from the raw body, only record the ones already
+    decided, so response and receipt audit cannot drift apart (T0014 AC-6).
+    """
     data = {
-        "body_sha256_present": body.get("body_sha256") is not None,
-        "body_chars_present": body.get("body_chars") is not None,
-        "force_encoding_reason_present": body.get("force_encoding_reason") is not None,
+        "validated_at": validation.get("validated_at"),
+        "corruption_detected": validation.get("corruption_detected"),
+        "fingerprint_supplied": validation.get("fingerprint_supplied"),
+        "fingerprint_matched": validation.get("fingerprint_matched"),
+        "force_used": validation.get("force_used"),
+        "body_sha256_present": validation.get("body_sha256_present"),
+        "body_chars_present": validation.get("body_chars_present"),
     }
     return json.dumps(data, sort_keys=True, separators=(",", ":"))
 
 
 def issue(*, token_rec: dict, project_id: str, group_id: Optional[str], doc_id: str,
-          revision_no: int, identity: str, body: dict) -> dict:
+          revision_no: int, identity: str, validation: dict) -> dict:
     issued_at = now_iso()
     receipt_id = secrets.token_urlsafe(32)
     # A receipt can never outlive its bearer token.
@@ -55,9 +66,18 @@ def issue(*, token_rec: dict, project_id: str, group_id: Optional[str], doc_id: 
             project_id=project_id, group_id=group_id, doc_id=doc_id,
             revision_no=revision_no, payload_identity=identity,
             issued_at=issued_at, expires_at=expires_at,
-            encoding_provenance=encoding_provenance(body),
+            encoding_provenance=encoding_provenance(validation),
         )
-    return {"receipt": receipt_id, "payload_identity": identity, "expires_at": expires_at}
+    return {
+        "receipt": receipt_id, "payload_identity": identity, "expires_at": expires_at,
+        "validated_at": validation.get("validated_at"),
+        "validation": {
+            "corruption_detected": validation.get("corruption_detected"),
+            "fingerprint_supplied": validation.get("fingerprint_supplied"),
+            "fingerprint_matched": validation.get("fingerprint_matched"),
+            "force_used": validation.get("force_used"),
+        },
+    }
 
 
 def classify(receipt_id: Any, *, token_rec: dict, project_id: str,
