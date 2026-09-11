@@ -968,7 +968,13 @@ def _content_submit(ctx: dict) -> dict:
                 "issues": "defects found; list each one in findings (locus + note)",
                 "hold": "cannot decide yet (missing context / blocked)",
             },
-            "dry_run": dry_run,
+            "dry_run": (
+                "Review submission requires two steps: POST the final semantic payload with "
+                "`dry_run: true`, receive a receipt, then POST the identical payload with "
+                "that `receipt` and without `dry_run`. Do not rebuild or normalize verdict, "
+                "findings, comment, fingerprints, or force reason between requests. Encoding "
+                "failure stops submission; do not add force automatically."
+            ),
             "encoding_guard": encoding_guard,
         }
 
