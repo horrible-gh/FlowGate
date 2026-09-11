@@ -2094,7 +2094,9 @@ SRC_ROOT_ERROR = "resolution_error"
 
 
 def effective_src_root_ex(
-    project_id: Optional[str], group_id: Optional[str]
+    project_id: Optional[str],
+    group_id: Optional[str],
+    state: Optional[dict] = None,
 ) -> tuple[Optional[Path], str]:
     """``effective_src_root`` plus the reason, and a log line on every fallback.
 
@@ -2106,6 +2108,16 @@ def effective_src_root_ex(
     is not there — notably ``worktree_unregistered``, which is what a post-merge
     re-run hits (CLEANUP_STATUSES clears the flag) — so they log at warning.
     Never raises.
+
+    0552 T0013 (0005-NR Set D): ``state`` lets a caller that ALREADY holds this
+    group's ``group_git_state`` row hand it in instead of paying another
+    ``SELECT * FROM group_git_state WHERE group_id = ?``. It is a pure read here —
+    only ``worktree_registered`` / ``branch`` decide anything, and ``status`` is
+    used solely in a fallback log line — so a supplied row cannot change the
+    verdict, only who paid for the read. ``None`` means "not supplied" and keeps
+    the original lookup verbatim, so every existing two-argument caller (and every
+    test that patches this function with a two-parameter stub) is untouched.
+    Reuse is the caller's own request/response assembly; nothing is cached here.
     """
     if not project_id or not group_id:
         return None, SRC_ROOT_NO_GROUP
@@ -2118,7 +2130,8 @@ def effective_src_root_ex(
                 SRC_ROOT_INTEGRATION_OFF,
             )
             return None, SRC_ROOT_INTEGRATION_OFF
-        state = db_git.get_state(group_id)
+        if state is None:
+            state = db_git.get_state(group_id)
         if state is None:
             _log.warning(
                 "effective_src_root: base tree for %s (%s) — git integration is on "
@@ -2183,7 +2196,11 @@ def effective_src_root_ex(
         return None, SRC_ROOT_ERROR
 
 
-def group_worktree_writable(project_id: Optional[str], group_id: Optional[str]) -> bool:
+def group_worktree_writable(
+    project_id: Optional[str],
+    group_id: Optional[str],
+    state: Optional[dict] = None,
+) -> bool:
     """True when *group_id* has a live worktree that may be written to.
 
     0327 T0004 (B0001 / NR0003 recommendation 1): the explorer used to treat "a group is
@@ -2192,8 +2209,12 @@ def group_worktree_writable(project_id: Optional[str], group_id: Optional[str]) 
     apart. This is that answer, in the one shape the client needs, so the UI stops
     guessing. Groups with no worktree (finalized, disposed, never provisioned)
     remain fully read-only, exactly as before (recommendation 5).
+
+    0552 T0013: ``state`` is passed straight through to ``effective_src_root_ex``
+    — see its docstring for what an already-read ledger row does and does not
+    change. Positional so a stub of the shape ``lambda *args: True`` keeps working.
     """
-    return effective_src_root_ex(project_id, group_id)[0] is not None
+    return effective_src_root_ex(project_id, group_id, state)[0] is not None
 
 
 def effective_src_root(project_id: Optional[str], group_id: Optional[str]) -> Optional[Path]:
@@ -8433,10 +8454,21 @@ def project_git_status(project_id: str) -> dict:
     # of the blanket read-only it applied to every selected group. `rows` is already
     # filtered to worktree_registered=1, so this only re-checks the on-disk side
     # (directory present, .git link intact) — a handful of stats per status call.
+    # 0552 T0013 (0005-NR Set D): `r` IS this group's group_git_state row, already
+    # read by the one project-wide ledger scan above, so it is handed to the
+    # writable probe instead of letting it run `SELECT * FROM group_git_state
+    # WHERE group_id = ?` once per slot — the last group_git_state read that still
+    # grew with slot count (8 slots = 8 queries in the R0001 screen-load log).
+    # Same row, same request: `list_states_of_project_any` and `db_git.get_state`
+    # are both `SELECT *` on that one table, and the only fields the probe reads —
+    # worktree_registered and branch — are never written by the transition loop
+    # above (`_set_status` writes status only; an auto-discard that DOES unregister
+    # a slot returns DISCARDED_STATUS, which SLOT_STATUSES already excludes here).
+    # Nothing is cached beyond this response; the on-disk check is untouched.
     slots = [
         {"group_id": r["group_id"], "branch": r.get("branch"),
          "status": r.get("status"), "merge_id": r.get("merge_id"),
-         "writable": group_worktree_writable(project_id, r["group_id"])}
+         "writable": group_worktree_writable(project_id, r["group_id"], r)}
         for r in rows if r.get("status") in SLOT_STATUSES
     ]
     # 0332 D0005 §6.2: a group's commits are no longer one absorb commit, so each slot
