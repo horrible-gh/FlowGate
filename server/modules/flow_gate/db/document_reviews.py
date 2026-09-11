@@ -114,6 +114,19 @@ def list_by_doc(doc_id: str) -> list[dict]:
     )
 
 
+def get_latest_for_revision(doc_id: str, revision_no: int) -> Optional[dict]:
+    """Return the newest completed review for exactly one document revision.
+
+    Review rows are immutable history.  Admission callers must use this revision-bound
+    lookup instead of ``get_latest_by_doc`` so an older revision never blocks a new one.
+    """
+    return get_store()._fetch_one(
+        "SELECT * FROM document_reviews WHERE doc_id = ? AND revision_no = ? "
+        "ORDER BY created_at DESC, id DESC LIMIT 1",
+        [doc_id, revision_no],
+    )
+
+
 def get_latest_by_doc(doc_id: str) -> Optional[dict]:
     """Return the document's latest review."""
     return get_store()._fetch_one(

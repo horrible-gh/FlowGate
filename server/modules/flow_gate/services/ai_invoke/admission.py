@@ -24,6 +24,7 @@ from fastapi import HTTPException
 from modules.flow_gate import template_provision
 from modules.flow_gate.db import connection as db_connection
 from modules.flow_gate.db import documents as db_docs
+from modules.flow_gate.db import document_reviews as db_document_reviews
 from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
 from modules.flow_gate.db import tokens as db_tokens
@@ -793,6 +794,9 @@ def start_run(
     continuation_review_count_overrides: Optional[dict] = None,
     continuation_reviewer_overrides: Optional[dict] = None,
     document_review_loop: Optional[dict] = None,
+    # Present only for a fresh top-level review route request. Internal review-loop hops
+    # omit it, which keeps their REVIEW<->REWORK handoff semantics outside this gate.
+    review_intent: Optional[str] = None,
     # A single-request acknowledgement. It is intentionally never persisted or forwarded.
     capability_warning_ack: Optional[bool] = None,
     # flowgate.default.0481 T0008 item 1 / L0007 §2.5-§2.9: only meaningful for
@@ -1151,6 +1155,34 @@ def start_run(
             raise _http_error(409, "run_in_progress", "An AI run is already in progress for this group.",
                               run_id=active.get("run_id"))
 
+    # The group lease is the serialization point: this check runs only after this request
+    # owns it and before token issuance. Thus two concurrent normal starts cannot both
+    # observe NONE, while reruns remain possible without a UNIQUE(doc_id, revision_no).
+    if action_scope == "review" and review_intent is not None:
+        doc = db_docs.get_by_id(doc_ref) or {}
+        revision_no = int(doc.get("revision_no") or 0)
+        completed = db_document_reviews.get_latest_for_revision(doc_ref, revision_no)
+        if completed is not None and review_intent == "normal":
+            if not project_scoped:
+                db_group_ai_leases.release(
+                    group_id, run_id, reason="review_admission_completed"
+                )
+            raise _http_error(
+                409, "review_already_completed",
+                "This document revision has already been reviewed; use rerun to review it again.",
+                review_id=completed.get("id"), revision_no=revision_no,
+            )
+        if completed is None and review_intent == "rerun":
+            if not project_scoped:
+                db_group_ai_leases.release(
+                    group_id, run_id, reason="review_admission_no_completed_review"
+                )
+            raise _http_error(
+                409, "review_rerun_not_available",
+                "This document revision has no completed review to rerun.",
+                revision_no=revision_no,
+            )
+
     if document_review_loop is not None and issue_builder is not None:
         # 0417 T0013: tell the (possibly stage-aware) issue_builder which stage this hop is —
         # a loop that starts_with_rework must mint an edit-scoped token on its very first hop,
@@ -1420,6 +1452,9 @@ def start_run(
         "selected_provider_source": selected_provider_source,
         "fallback_allowed": selected_provider_source == "project_default",
         "action_scope": action_scope,
+        # Top-level review provenance while the run is live. Finished review provenance
+        # remains append-only in document_reviews via review_run_id and row ordering.
+        "review_intent": review_intent,
         # 0446 T0008 §3-1: did the ENGINE plant this run's completion oracle, or did the
         # caller hand one in? Computed at the top of start_run and, until now, discarded —
         # which left `completion_oracle is not None` an unconditional retry block for every
