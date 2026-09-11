@@ -275,6 +275,7 @@ def _patch_edit_validation(monkeypatch):
         "get_by_id",
         lambda doc_id: {
             "doc_id": doc_id, "type_code": "NR", "status": "open",
+            "group_id": "flowgate.default.0391",
             "doc_review_status": "pending_review",
         },
     )
@@ -427,6 +428,74 @@ def test_review_clean_comment_passes(monkeypatch):
     assert response.status_code == 201
     mocks["insert_review"].assert_called_once()
     mocks["consume"].assert_called_once()
+
+
+@pytest.mark.parametrize("comment", [
+    "검수 결과 이상 없습니다.",
+    "검수 완료・レビュー完了・review complete ✅",
+    "이게 맞나요?",
+    "왜 실패했지???",
+])
+def test_review_normal_unicode_and_question_sentences_pass(monkeypatch, comment):
+    mocks = _patch_review_validation(monkeypatch)
+
+    response = post_inbox(_review_body(comment=comment))
+
+    assert response.status_code == 201
+    mocks["insert_review"].assert_called_once()
+    mocks["consume"].assert_called_once()
+
+
+def test_review_exact_fingerprint_does_not_bypass_corruption(monkeypatch):
+    import hashlib
+
+    mocks = _patch_review_validation(monkeypatch)
+    response = post_inbox(_review_body(
+        comment=CORRUPT,
+        body_sha256=hashlib.sha256(CORRUPT.encode("utf-8")).hexdigest(),
+        body_chars=len(CORRUPT),
+    ))
+
+    assert response.status_code == 422
+    assert "force_encoding_reason" in response.json()["error_message"]
+    mocks["insert_review"].assert_not_called()
+    mocks["consume"].assert_not_called()
+
+
+def test_review_exact_fingerprint_with_valid_force_passes(monkeypatch):
+    import hashlib
+
+    mocks = _patch_review_validation(monkeypatch)
+    response = post_inbox(_review_body(
+        comment=CORRUPT,
+        body_sha256=hashlib.sha256(CORRUPT.encode("utf-8")).hexdigest(),
+        body_chars=len(CORRUPT),
+        force_encoding_reason="검토자가 원문의 물음표 표현을 확인했습니다",
+    ))
+
+    assert response.status_code == 201
+    mocks["insert_review"].assert_called_once()
+    mocks["consume"].assert_called_once()
+
+
+def test_review_short_force_does_not_bypass_corruption(monkeypatch):
+    mocks = _patch_review_validation(monkeypatch)
+
+    response = post_inbox(_review_body(comment=CORRUPT, force_encoding_reason="short"))
+
+    assert response.status_code == 422
+    mocks["insert_review"].assert_not_called()
+    mocks["consume"].assert_not_called()
+
+
+def test_review_corrupted_finding_locus_rejected(monkeypatch):
+    mocks = _patch_review_validation(monkeypatch)
+
+    response = post_inbox(_review_body(findings=[{"locus": CORRUPT, "note": "clear note"}]))
+
+    assert response.status_code == 422
+    mocks["insert_review"].assert_not_called()
+    mocks["consume"].assert_not_called()
 
 
 # ── workflow step labels: reject instead of silently swapping (T0005 §5-5/§5-6) ────
@@ -793,6 +862,7 @@ def test_edit_tr_scope_empty_notice_fallback_locale_has_no_korean(monkeypatch, l
         inbox_routes.db_docs, "get_by_id",
         lambda doc_id: {
             "doc_id": doc_id, "type_code": "TR", "status": "open",
+            "group_id": "flowgate.default.0391",
             "doc_review_status": "pending_review",
         },
     )
@@ -820,6 +890,7 @@ def test_edit_tr_scope_notice_from_the_service_still_wins(monkeypatch):
         inbox_routes.db_docs, "get_by_id",
         lambda doc_id: {
             "doc_id": doc_id, "type_code": "TR", "status": "open",
+            "group_id": "flowgate.default.0391",
             "doc_review_status": "pending_review",
         },
     )
@@ -847,6 +918,7 @@ def test_edit_tr_scope_empty_notice_fallback_ko_default_preserves_meaning(monkey
         inbox_routes.db_docs, "get_by_id",
         lambda doc_id: {
             "doc_id": doc_id, "type_code": "TR", "status": "open",
+            "group_id": "flowgate.default.0391",
             "doc_review_status": "pending_review",
         },
     )

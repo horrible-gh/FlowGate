@@ -1749,6 +1749,7 @@ def _encoding_guard(
     body_chars,
     force_encoding_reason: Optional[str],
     locale: str = "ko",
+    fingerprint_bypasses_corruption: bool = True,
 ) -> Optional[JSONResponse]:
     reason = (force_encoding_reason or "").strip()
     if len(reason.replace(" ", "")) >= 10:
@@ -1762,7 +1763,10 @@ def _encoding_guard(
 
     check_fields = dict(fields)
     if fingerprint_field and (body_sha256 or body_chars is not None):
-        text = check_fields.pop(fingerprint_field, None) or ""
+        if fingerprint_bypasses_corruption:
+            text = check_fields.pop(fingerprint_field, None) or ""
+        else:
+            text = check_fields.get(fingerprint_field) or ""
         actual_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
         actual_chars = len(text)
         mismatches = []
@@ -2678,6 +2682,7 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
         body_chars=body.get("body_chars"),
         force_encoding_reason=body.get("force_encoding_reason"),
         locale=_locale,
+        fingerprint_bypasses_corruption=False,
     )
     if _review_encoding_fail is not None:
         return _review_encoding_fail
