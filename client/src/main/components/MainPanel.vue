@@ -1219,6 +1219,7 @@
       :doc-ref="aiInvokeDocRef"
       :sequence-doc-ref="aiInvokeSequenceDocRef"
       :action-scope="aiInvokeActionScope"
+      :doc-review-status="aiInvokeDocReviewStatus"
       :initial-mode="aiInvokeInitialMode"
       :initial-target-seq="aiInvokeInitialTargetSeq"
       :continuation-review-mode="aiInvokeContinuationReviewMode"
@@ -1887,6 +1888,7 @@ const aiInvokeGroup = ref('')
 const aiInvokeDocRef = ref('')
 const aiInvokeSequenceDocRef = ref('')
 const aiInvokeActionScope = ref<AiInvokeScope>('new')
+const aiInvokeDocReviewStatus = ref<string | null>(null)
 const aiInvokeInitialMode = ref<'single' | 'continuous'>('single')
 const aiInvokeInitialTargetSeq = ref<number | null>(null)
 const aiInvokeContinuationReviewMode = ref(false)
@@ -2370,6 +2372,9 @@ function openAiInvokeDialog(
   aiInvokeDocRef.value = docRef
   aiInvokeSequenceDocRef.value = preset?.sequenceDocRef ?? docRef
   aiInvokeActionScope.value = actionScope
+  aiInvokeDocReviewStatus.value = exposedValue<string | null>(
+    docHeaderRefs[docRef]?.docReviewStatus,
+  ) ?? null
   aiInvokeInitialMode.value = preset?.mode ?? 'single'
   aiInvokeInitialTargetSeq.value = preset?.targetSeq ?? null
   aiInvokeContinuationReviewMode.value = !!preset?.reviewMode

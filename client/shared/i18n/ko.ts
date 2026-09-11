@@ -1392,6 +1392,11 @@ export default {
       error_run_lost: '실행 기록이 소실되었습니다(서버 재기동). 그룹 문서를 직접 확인하세요.',
       error_cancel_failed: '실행 취소에 실패했습니다.',
       error_run_in_progress_orphaned: '이전 실행이 비정상 종료되어 잠금이 남아 있습니다. 아래 [잠금 해제]를 눌러 주세요.',
+      review_rerun_button: '재검수',
+      review_rerun_confirm: '기존 완료 검수는 보존되고 새 검수 이력이 추가됩니다. 재검수를 확정해 주세요.',
+      review_rerun_confirm_button: '재검수 확정',
+      error_review_already_completed: '이미 완료된 검수입니다. 다시 검수하려면 [재검수] 버튼을 사용하세요.',
+      error_review_rerun_not_available: '현재 revision에는 재검수할 완료 검수가 없습니다. 문서를 새로고침해 주세요.',
       error_release_lease_failed: '잠금 해제에 실패했습니다.',
     },
     ai_miniplayer: {
@@ -2512,6 +2517,9 @@ export default {
       empty: '이력이 없습니다.',
       ai_response: 'AI 응답',
       actual_provider: '검수 AI',
+      provenance_normal: '최초 검수',
+      provenance_rerun: '명시적 재검수',
+      supersedes_review: '대체 대상: {reference}',
       requested_provider: '요청된 검수 AI',
     },
     doc_workflow: {

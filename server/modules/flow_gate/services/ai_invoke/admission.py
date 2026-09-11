@@ -1158,6 +1158,7 @@ def start_run(
     # The group lease is the serialization point: this check runs only after this request
     # owns it and before token issuance. Thus two concurrent normal starts cannot both
     # observe NONE, while reruns remain possible without a UNIQUE(doc_id, revision_no).
+    review_admission_superseded_review_id: Optional[int] = None
     if action_scope == "review" and review_intent is not None:
         doc = db_docs.get_by_id(doc_ref) or {}
         revision_no = int(doc.get("revision_no") or 0)
@@ -1172,6 +1173,10 @@ def start_run(
                 "This document revision has already been reviewed; use rerun to review it again.",
                 review_id=completed.get("id"), revision_no=revision_no,
             )
+        if completed is not None and review_intent == "rerun":
+            # Reuse the row observed while holding the admission lease. Re-querying at
+            # registration time would let a concurrent append change what this rerun means.
+            review_admission_superseded_review_id = int(completed["id"])
         if completed is None and review_intent == "rerun":
             if not project_scoped:
                 db_group_ai_leases.release(
@@ -1455,6 +1460,7 @@ def start_run(
         # Top-level review provenance while the run is live. Finished review provenance
         # remains append-only in document_reviews via review_run_id and row ordering.
         "review_intent": review_intent,
+        "review_admission_superseded_review_id": review_admission_superseded_review_id,
         # 0446 T0008 §3-1: did the ENGINE plant this run's completion oracle, or did the
         # caller hand one in? Computed at the top of start_run and, until now, discarded —
         # which left `completion_oracle is not None` an unconditional retry block for every

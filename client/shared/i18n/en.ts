@@ -1392,6 +1392,11 @@ export default {
       error_run_lost: 'The run record was lost (server restarted). Check the group documents directly.',
       error_cancel_failed: 'Failed to cancel the run.',
       error_run_in_progress_orphaned: 'The previous run ended abnormally and left its lock behind. Click [Release Lock] below.',
+      review_rerun_button: 'Review again',
+      review_rerun_confirm: 'The completed review will be preserved and a new history row added. Confirm the review rerun.',
+      review_rerun_confirm_button: 'Confirm review rerun',
+      error_review_already_completed: 'This review is already complete. Use [Review again] to run it again.',
+      error_review_rerun_not_available: 'There is no completed review to rerun for the current revision. Refresh the document.',
       error_release_lease_failed: 'Failed to release the lock.',
     },
     ai_miniplayer: {
@@ -2514,6 +2519,9 @@ export default {
       empty: 'No history.',
       ai_response: 'AI Response',
       actual_provider: 'Review AI',
+      provenance_normal: 'Initial review',
+      provenance_rerun: 'Explicit rerun',
+      supersedes_review: 'Replaces: {reference}',
       requested_provider: 'Requested review AI',
     },
     doc_workflow: {

@@ -18,7 +18,7 @@ from fastapi import HTTPException
 
 from modules.flow_gate.api.v1 import ai_invoke_routes as routes
 from modules.flow_gate.db import document_reviews
-from modules.flow_gate.services.ai_invoke import admission
+from modules.flow_gate.services.ai_invoke import admission, review as review_loop
 
 
 def test_review_intent_defaults_to_normal_and_accepts_explicit_rerun():
@@ -85,7 +85,7 @@ def test_admission_does_not_mutate_review_history():
 # case is observed by the real 409 HTTPException the gate itself raises.
 
 
-class _ReachedIssueBuilder(Exception):
+class _ReachedIssueBuilder(ValueError):
     """Raised by the stub issue_builder: proof start_run passed the review-intent gate."""
 
 
@@ -191,4 +191,34 @@ def test_start_run_admits_normal_review_when_no_completed_review_exists(monkeypa
     with pytest.raises(_ReachedIssueBuilder):
         admission.start_run(**_start_run_kwargs("normal"))
     assert lookups == [("flowgate.default.0544.0006-TR", 3)]
+    assert released == []
+
+
+def test_internal_rework_to_review_hop_bypasses_top_level_completed_gate(monkeypatch):
+    """The real loop REVIEW entry starts even when this revision already has a review."""
+    from modules.flow_gate.services import workflow_decision_service
+
+    released, lookups = _stub_admission_prelude(
+        monkeypatch, run_id="aiv_20260911_000004", latest_review={"id": 42},
+    )
+    monkeypatch.setattr(review_loop, "resolve_reviewer", lambda *_a, **_kw: "prov-1")
+
+    def _request_review(**_kwargs):
+        raise _ReachedIssueBuilder()
+
+    monkeypatch.setattr(workflow_decision_service, "request_review", _request_review)
+    bundle = {
+        "locale": "ko", "api_base_url": "http://localhost/api/v1",
+        "issued_to": "reviewer", "chain_id": "chain-1",
+        "chain_docs_target": 1, "chain_docs_reached": 0,
+        "instruction_mode": "ai_direct",
+    }
+    gate = {"slot": {"doc_id": "flowgate.default.0544.0006-TR", "item_seq": 1}}
+
+    with pytest.raises(_ReachedIssueBuilder):
+        review_loop._spawn_review_hop("p1.default.0544", bundle, gate)
+
+    # The actual hop omitted review_intent, so admission never queried/refused the
+    # completed row; reaching token issuance proves the REVIEW hop was admitted.
+    assert lookups == []
     assert released == []

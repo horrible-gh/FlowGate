@@ -335,10 +335,26 @@
             </div>
         </div>
 
+        <p v-if="rerunConfirming" class="aiv-rerun-confirm" data-test="review-rerun-confirm">
+          {{ t('main.ai_invoke_dialog.review_rerun_confirm') }}
+        </p>
         <!-- ── Footer ── -->
         <div class="modal-ft">
             <button type="button" class="btn btn-ghost" @click="close">{{ t('common.cancel') }}</button>
-            <button type="button" class="btn btn-primary" :disabled="starting || !canStart" @click="start">
+            <button
+              v-if="completedReviewAvailable"
+              type="button"
+              class="btn btn-warning"
+              data-test="review-rerun"
+              :disabled="starting"
+              @click="rerunConfirming ? start('rerun') : (rerunConfirming = true)"
+            >
+              <AppIcon name="arrows-clockwise" />
+              {{ rerunConfirming
+                ? t('main.ai_invoke_dialog.review_rerun_confirm_button')
+                : t('main.ai_invoke_dialog.review_rerun_button') }}
+            </button>
+            <button type="button" class="btn btn-primary" :disabled="starting || !canStart" @click="start()">
               <AppIcon name="lightning" /> {{ t('main.ai_invoke_dialog.btn_start') }}
             </button>
         </div>
@@ -379,6 +395,7 @@ const props = defineProps<{
    */
   sequenceDocRef?: string
   actionScope: 'new' | 'edit' | 'workflow_decide' | 'chat' | 'rework' | 'review' | 'vr_correction' | 'next_step_message' | 'design_handoff'
+  docReviewStatus?: string | null
   initialMode?: 'single' | 'continuous'
   initialTargetSeq?: number | null
   continuationReviewMode?: boolean
@@ -549,6 +566,7 @@ watch(enabledProviders, (providers) => {
 })
 const starting = ref(false)
 const startError = ref('')
+const rerunConfirming = ref(false)
 const singleStepNote = ref('')
 const singleStepNoteLoading = ref(false)
 // 0401 NR0003 §3 cause 4 / T0004 task 6: a group whose 409 named a dead run_id -- the lease's
@@ -715,6 +733,17 @@ const resolvedTarget = computed<{ seq: number; fromDecision: boolean } | null>((
 })
 
 const canStart = computed(() => reviewLoopActive.value ? !!reviewerProviderId.value && !!reworkProviderId.value : mode.value === 'single' || resolvedTarget.value != null)
+const reviewRunInProgress = computed(() => {
+  const groupId = aiInvokeGroupId(props.project, props.module, props.group)
+  const phase = aiInvokeStore.runsByGroup[groupId]?.phase
+  return phase === 'running' || phase === 'pause_requested'
+})
+const completedReviewAvailable = computed(() =>
+  props.actionScope === 'review'
+  && !!props.docReviewStatus
+  && !['pending', 'pending_review', 'in_progress', 'wf_in_progress'].includes(props.docReviewStatus)
+  && !reviewRunInProgress.value,
+)
 const capabilityWarningAck = ref(false)
 const capabilityWarning = ref<{ step_key?: string; step_type?: string; provider_name?: string; missing_capabilities?: string[] } | null>(null)
 
@@ -746,6 +775,7 @@ function resetState() {
   reworkProviderId.value = reviewerProviderId.value
   starting.value = false
   startError.value = ''
+  rerunConfirming.value = false
   lockedGroupId.value = null
 }
 
@@ -778,7 +808,7 @@ async function onReleaseLeaseClick(): Promise<void> {
   }
 }
 
-async function start() {
+async function start(reviewIntent?: 'rerun') {
   if (starting.value || !canStart.value) return
   starting.value = true
   startError.value = ''
@@ -798,6 +828,9 @@ async function start() {
       action_scope: scope,
       mode: mode.value,
     }
+    // The normal review path deliberately omits this field. Only the explicit,
+    // second-click confirmation below is allowed to request a rerun.
+    if (scope === 'review' && reviewIntent === 'rerun') body.review_intent = 'rerun'
     // 0448 T0005 §5-1. Two independent request states, never one:
     //   provider_id            — the ordinary selection (aiProviderStore.selectProvider), i.e.
     //                            the default for hops that stored no provider of their own.
@@ -915,6 +948,12 @@ async function start() {
         lockedGroupId.value = groupId
         startError.value = t('main.ai_invoke_dialog.error_run_in_progress_orphaned')
       }
+    } else if (status === 409 && data.code === 'review_already_completed') {
+      startError.value = t('main.ai_invoke_dialog.error_review_already_completed')
+      rerunConfirming.value = false
+    } else if (status === 409 && data.code === 'review_rerun_not_available') {
+      startError.value = t('main.ai_invoke_dialog.error_review_rerun_not_available')
+      rerunConfirming.value = false
     } else if (status === 409 && data.code === 'no_provider_registered') {
       // 0292 T0003: distinct from no_enabled_provider — there is nothing in AI settings
       // to switch on, so point at the seed script instead of at a toggle.

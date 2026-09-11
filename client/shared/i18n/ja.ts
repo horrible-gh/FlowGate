@@ -1390,6 +1390,11 @@ export default {
       error_run_lost: '実行記録が失われました（サーバー再起動）。グループのドキュメントを直接確認してください。',
       error_cancel_failed: '実行の取消に失敗しました。',
       error_run_in_progress_orphaned: '前回の実行が異常終了し、ロックが残っています。下の[ロック解除]を押してください。',
+      review_rerun_button: '再検収',
+      review_rerun_confirm: '完了済みの検収は保持され、新しい履歴が追加されます。再検収を確定してください。',
+      review_rerun_confirm_button: '再検収を確定',
+      error_review_already_completed: '検収はすでに完了しています。再実行するには[再検収]を使用してください。',
+      error_review_rerun_not_available: '現在のrevisionには再検収できる完了済み検収がありません。文書を更新してください。',
       error_release_lease_failed: 'ロック解除に失敗しました。',
     },
     ai_miniplayer: {
@@ -2509,6 +2514,9 @@ export default {
       empty: '履歴がありません。',
       ai_response: 'AI応答',
       actual_provider: '検収AI',
+      provenance_normal: '初回検収',
+      provenance_rerun: '明示的な再検収',
+      supersedes_review: '置換対象: {reference}',
       requested_provider: 'リクエストされた検収AI',
     },
     doc_workflow: {
