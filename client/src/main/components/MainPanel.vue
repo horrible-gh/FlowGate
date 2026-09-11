@@ -2482,12 +2482,17 @@ async function fetchQList() {
   qListLoading.value = true
   qListError.value = ''
   try {
-    const res = await getRequest<any>('/api/v1/q', { project_id: projectId })
-    qList.value = (res.data as any)?.items ?? []
+    await dashboardStore.fetchSummary(projectId)
+    if (projectStore.currentProjectId !== projectId) return
+    const entry = dashboardStore.entryFor(projectId)
+    qList.value = entry.data?.open_queries?.items ?? []
+    if (entry.error) qListError.value = entry.error
   } catch (e: any) {
-    qListError.value = e?.response?.data?.error_message ?? t('main.main_panel.error_q_list_failed')
+    if (projectStore.currentProjectId === projectId) {
+      qListError.value = e?.response?.data?.error_message ?? t('main.main_panel.error_q_list_failed')
+    }
   } finally {
-    qListLoading.value = false
+    if (projectStore.currentProjectId === projectId) qListLoading.value = false
   }
 }
 
@@ -5245,10 +5250,9 @@ function reopenGuide() {
   guideDismissed.value = false
 }
 
-watch(() => projectStore.currentProjectId, (projectId) => {
+watch(() => projectStore.currentProjectId, () => {
   updateGuideDismissedState()
   fetchQList()
-  if (projectId) void dashboardStore.fetchSummary(projectId)
 }, { immediate: true })
 
 // 0454 T0007 — the overview cards below (총 문서 수 / 진행 중 / 타입 분포) read

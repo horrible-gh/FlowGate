@@ -186,7 +186,7 @@ describe('notifications store', () => {
 
     // The later (beta) response wins; the stale alpha response — including its Q&A page — is discarded.
     expect(store.loadedProjectId).toBe('beta')
-    expect(store.unreadCount).toBe(5)
+    expect(store.unreadCount).toBe(7) // 5 unread activities + 2 open-question documents
     expect(store.aiItems).toEqual([])
     expect(store.degradedSections).toEqual([])
     expect(store.qaTotal).toBe(2)

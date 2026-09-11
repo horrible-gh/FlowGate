@@ -289,17 +289,11 @@ def test_feed_open_questions_collapses_sorts_limits_and_uses_document_titles(fee
         dashboard_service.db_questions,
         "list_open_items",
         lambda _project_id: [
-            {"doc_id": "flowgate.default.0045.0008-T", "title": "question title", "type_code": "T"},
-            {"doc_id": "flowgate.default.0045.0007-P", "title": "other question", "type_code": "P"},
+            {"doc_id": "flowgate.default.0045.0008-T", "title": "question title", "type_code": "T", "document_title": "Task title"},
+            {"doc_id": "flowgate.default.0045.0007-P", "title": "other question", "type_code": "P", "document_title": "Plan title"},
             {"doc_id": "flowgate.default.0045.0008-T", "title": "duplicate item", "type_code": "T"},
         ],
     )
-    docs = {
-        "flowgate.default.0045.0007-P": {"title": "Plan title"},
-        "flowgate.default.0045.0008-T": {"title": "Task title"},
-    }
-    monkeypatch.setattr(dashboard_service.db_documents, "get_by_id", docs.get)
-
     result = dashboard_service.get_notification_feed("flowgate", None, 1)
 
     assert result["open_questions"] == {
@@ -321,12 +315,6 @@ def test_feed_open_question_title_failure_keeps_row(feed_store, monkeypatch):
         "list_open_items",
         lambda _project_id: [{"doc_id": "deleted-doc", "title": "question", "type_code": "T"}],
     )
-    monkeypatch.setattr(
-        dashboard_service.db_documents,
-        "get_by_id",
-        lambda _doc_id: (_ for _ in ()).throw(RuntimeError("documents unavailable")),
-    )
-
     result = dashboard_service.get_notification_feed("flowgate", None, 50)
 
     assert result["open_questions"]["items"] == [
@@ -389,12 +377,8 @@ def test_feed_badge_count_after_seen_still_includes_open_questions(feed_store, m
     monkeypatch.setattr(
         dashboard_service.db_questions,
         "list_open_items",
-        lambda _project_id: [{"doc_id": "flowgate.default.0045.0008-T", "title": "question", "type_code": "T"}],
+        lambda _project_id: [{"doc_id": "flowgate.default.0045.0008-T", "title": "question", "type_code": "T", "document_title": "Task title"}],
     )
-    monkeypatch.setattr(
-        dashboard_service.db_documents, "get_by_id", lambda _doc_id: {"title": "Task title"}
-    )
-
     result = dashboard_service.get_notification_feed("flowgate", "2026-06-12T23:59:00Z", 50)
 
     assert result["unread_count"] == 0
@@ -411,7 +395,6 @@ def test_feed_open_questions_real_sql_enforces_pending_status_and_group_exclusio
     store = feed_store
     monkeypatch.setattr(dashboard_service.db_questions, "list_open_items", _REAL_LIST_OPEN_ITEMS)
     monkeypatch.setattr(dashboard_service.db_questions, "get_store", lambda: store)
-    monkeypatch.setattr(dashboard_service.db_documents, "get_store", lambda: store)
 
     store.conn.executescript(
         """

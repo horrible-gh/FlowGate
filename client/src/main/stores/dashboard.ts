@@ -2,6 +2,7 @@ import { computed, reactive } from 'vue'
 import { defineStore } from 'pinia'
 import { getRequest } from '@shared/api'
 import { useProjectStore } from './project'
+import { useNotificationsStore, type NotificationFeed } from './notifications'
 
 export type DashboardActivityType =
   | 'document_created'
@@ -72,6 +73,15 @@ export interface DashboardSummary {
   generated_at: string
   recent_activities: DashboardList<DashboardActivity>
   active_workflows: DashboardList<DashboardWorkflow>
+  open_queries: { items: Array<{ doc_id: string; seq: number; title: string | null; type_code: string | null }> }
+  notification_open_questions: {
+    limit: number
+    total: number
+    has_more: boolean
+    items: Array<{ doc_id: string; title: string | null; type_code: string | null }>
+  }
+  notification_feed: NotificationFeed
+  degraded_sections: string[]
 }
 
 export interface DashboardSummaryEntry {
@@ -102,6 +112,7 @@ function newEntry(): DashboardSummaryEntry {
 
 export const useDashboardStore = defineStore('dashboard', () => {
   const projectStore = useProjectStore()
+  const notificationsStore = useNotificationsStore()
   const entries = reactive<Record<string, DashboardSummaryEntry>>({})
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   const requests = new Map<string, Promise<void>>()
@@ -148,6 +159,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
         ) {
           entry.data = summary
           entry.appliedGeneratedAt = generatedAt
+          notificationsStore.hydrateFeed(projectId, summary.notification_feed)
         }
       } catch (error: any) {
         if (entry.requestVersion === version) {

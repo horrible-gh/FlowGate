@@ -88,7 +88,26 @@ export const useNotificationsStore = defineStore('notifications', () => {
   const loadedProjectId = ref<string | null>(null)
 
   let requestVersion = 0
+  let qaAppliedAt = 0
   const feedRequests = new Map<string, Promise<void>>()
+
+
+  function hydrateFeed(projectId: string, data: NotificationFeed): void {
+    const generatedAt = Date.parse(data.generated_at)
+    if (!projectId || data.project_id !== projectId || !Number.isFinite(generatedAt)) return
+    requestVersion++
+    items.value = data.recent_activities?.items ?? []
+    aiItems.value = data.ai_invoke_runs?.items ?? []
+    qaItems.value = data.open_questions?.items ?? []
+    qaTotal.value = data.open_questions?.total ?? 0
+    qaAppliedAt = generatedAt
+    degradedSections.value = data.degraded_sections ?? []
+    unreadCount.value = (data.unread_count ?? 0) + qaTotal.value
+    lastSeenAt.value = data.last_seen_at ?? null
+    loadedProjectId.value = projectId
+    loading.value = false
+    error.value = null
+  }
 
   function fetchFeed(projectId: string): Promise<void> {
     if (!projectId) return Promise.resolve()
@@ -116,10 +135,14 @@ export const useNotificationsStore = defineStore('notifications', () => {
       const data = response.data
       items.value = data.recent_activities?.items ?? []
       aiItems.value = data.ai_invoke_runs?.items ?? []
-      qaItems.value = data.open_questions?.items ?? []
-      qaTotal.value = data.open_questions?.total ?? 0
+      const feedTime = Date.parse(data.generated_at)
+      if (!Number.isFinite(feedTime) || feedTime >= qaAppliedAt) {
+        qaAppliedAt = Number.isFinite(feedTime) ? feedTime : qaAppliedAt
+        qaItems.value = data.open_questions?.items ?? []
+        qaTotal.value = data.open_questions?.total ?? 0
+      }
       degradedSections.value = data.degraded_sections ?? []
-      unreadCount.value = data.badge_count ?? data.unread_count ?? 0
+      unreadCount.value = (data.unread_count ?? 0) + qaTotal.value
       lastSeenAt.value = data.last_seen_at ?? null
       loadedProjectId.value = projectId
     } catch (err: any) {
@@ -160,6 +183,7 @@ export const useNotificationsStore = defineStore('notifications', () => {
 
   function reset(): void {
     requestVersion++
+    qaAppliedAt = 0
     items.value = []
     aiItems.value = []
     qaItems.value = []
@@ -173,7 +197,7 @@ export const useNotificationsStore = defineStore('notifications', () => {
 
   return {
     items, aiItems, qaItems, qaTotal, degradedSections, unreadCount, lastSeenAt, loading, error,
-    loadedProjectId, fetchFeed, markSeen, isUnread, reset,
+    loadedProjectId, hydrateFeed, fetchFeed, markSeen, isUnread, reset,
   }
 })
 
