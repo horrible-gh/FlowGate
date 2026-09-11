@@ -241,6 +241,7 @@ import { copyToClipboard } from '../utils/clipboard'
 import type { Tab } from '../stores/tabs'
 import { useTabsStore } from '../stores/tabs'
 import { useExplorerStore } from '../stores/explorer'
+import { useDocumentContextStore } from '../stores/documentContext'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import type { AiReview } from '../types/aiReview'
 import type { TestRun } from '../types/testRun'
@@ -269,6 +270,7 @@ const { t } = useI18n()
 const { showToast } = useToast()
 const tabsStore = useTabsStore()
 const explorerStore = useExplorerStore()
+const documentContextStore = useDocumentContextStore()
 interface DocDetail {
   doc_id: string
   title: string
@@ -520,13 +522,9 @@ const docFullPath = computed(() => {
 })
 
 async function fetchOwner(ownerId: string) {
-  try {
-    const res = await getRequest<any>(`/api/v1/users/${encodeURIComponent(ownerId)}`)
-    const user = (res.data as any)?.data ?? res.data
-    ownerName.value = user?.username ?? user?.display_name ?? null
-  } catch {
-    ownerName.value = null
-  }
+  const name = await documentContextStore.resolveOwnerName(ownerId)
+  // A tab switch may complete while the shared request is in flight.
+  if (doc.value?.owner_id === ownerId) ownerName.value = name
 }
 
 function shortGroupId(groupId: string | null | undefined): string {
@@ -535,22 +533,19 @@ function shortGroupId(groupId: string | null | undefined): string {
   return segs[segs.length - 1] || groupId
 }
 
-async function fetchGroup(projectId: string, groupId: string) {
-  try {
-    const res = await getRequest<any>('/api/v1/groups', { project_id: projectId })
-    const groups: any[] = (res.data as any)?.groups ?? []
-    const found = groups.find((g: any) => g.group_id === groupId)
-    if (found) {
-      const groupNum = shortGroupId(found.group_id)
-      groupLabel.value = groupNum && found.title
-        ? `(#${groupNum}) ${found.title}`
-        : found.title ?? groupNum ?? null
-      groupTitle.value = found.title ?? ''
-    }
-  } catch {
+async function fetchGroup(projectId: string, groupId: string, force = false) {
+  const found = await documentContextStore.resolveGroup(projectId, groupId, force)
+  if (doc.value?.project_id !== projectId || doc.value?.group_id !== groupId) return
+  if (!found) {
     groupLabel.value = null
     groupTitle.value = ''
+    return
   }
+  const groupNum = shortGroupId(found.group_id)
+  groupLabel.value = groupNum && found.title
+    ? `(#${groupNum}) ${found.title}`
+    : found.title ?? groupNum ?? null
+  groupTitle.value = found.title ?? ''
 }
 
 // A doc counts as "workflow-decided" by the SAME two-signal test the action-bar
@@ -1098,7 +1093,7 @@ function onGroupRenamed() {
   void loadGroupContext()
   // Re-resolve the header's own group label (the "(#num) title" badge in the meta grid).
   if (doc.value?.project_id && doc.value?.group_id) {
-    fetchGroup(doc.value.project_id, doc.value.group_id)
+    fetchGroup(doc.value.project_id, doc.value.group_id, true)
   }
 }
 
