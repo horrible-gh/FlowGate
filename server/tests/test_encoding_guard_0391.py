@@ -355,6 +355,7 @@ def _review_body(*, comment=None, findings=None, dry_run=False, **extra):
         "verdict": "issues",
         "findings": findings or [],
         "dry_run": dry_run,
+        "receipt": "encoding-test-receipt",
     }
     if comment is not None:
         body["comment"] = comment
@@ -365,6 +366,7 @@ def _review_body(*, comment=None, findings=None, dry_run=False, **extra):
 def _patch_review_validation(monkeypatch):
     from modules.flow_gate.api import inbox_routes
     from modules.flow_gate.db import document_reviews as db_reviews
+    from modules.flow_gate.services import review_receipt_service
 
     token = {
         "token_id": "tok-0391-review",
@@ -386,6 +388,8 @@ def _patch_review_validation(monkeypatch):
     consume = MagicMock()
     monkeypatch.setattr(db_reviews, "insert_review", insert_review)
     monkeypatch.setattr(inbox_routes.token_service, "consume", consume)
+    monkeypatch.setattr(review_receipt_service, "classify", lambda *_a, **_k: "ok")
+    monkeypatch.setattr(review_receipt_service.db_receipts, "claim", lambda **_k: True)
     # 0535 T0007 §3: review registration now runs inside one store.transaction().
     install_null_transaction_store(monkeypatch)
     return {"insert_review": insert_review, "consume": consume}

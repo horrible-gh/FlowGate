@@ -296,6 +296,13 @@ def test_review_dry_run_success(monkeypatch):
     monkeypatch.setattr(db_reviews, "insert_review", insert)
     monkeypatch.setattr(inbox_routes.token_service, "consume", consume)
     inc = _patch_increment(monkeypatch)
+    from modules.flow_gate.services import review_receipt_service
+    monkeypatch.setattr(review_receipt_service, "issue", lambda **_k: (
+        inc("tok-1") or {
+            "receipt": "receipt-r0001", "payload_identity": "a" * 64,
+            "expires_at": "2030-01-01T00:00:00+09:00",
+        }
+    ))
 
     resp = post_inbox(
         _review_body(dry_run=True, findings=[{"locus": "a", "note": "b"}])

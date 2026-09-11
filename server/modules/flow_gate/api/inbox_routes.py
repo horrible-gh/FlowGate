@@ -2474,6 +2474,56 @@ class _ReviewTokenAlreadyClaimed(Exception):
     """Raised inside the review transaction when the token was consumed elsewhere."""
 
 
+class _ReviewReceiptClaimFailed(Exception):
+    """Raised when a validated receipt loses its single-use CAS race."""
+
+
+_REVIEW_RECEIPT_MESSAGES = {
+    "ko": {
+        "receipt_missing": "review receipt가 필요합니다.",
+        "receipt_invalid": "review receipt가 유효하지 않습니다.",
+        "receipt_expired": "review receipt가 만료되었습니다.",
+        "receipt_superseded": "review receipt가 새 dry-run으로 대체되었습니다.",
+        "receipt_used": "review receipt가 이미 사용되었습니다.",
+        "receipt_binding_mismatch": "review receipt가 현재 token/context/target에 바인딩되지 않았습니다.",
+        "receipt_stale_revision": "review receipt의 대상 revision이 더 이상 현재 revision이 아닙니다.",
+        "receipt_payload_mismatch": "review receipt의 검증 payload와 제출 payload가 다릅니다.",
+    },
+    "en": {
+        "receipt_missing": "A review receipt is required.",
+        "receipt_invalid": "The review receipt is invalid.",
+        "receipt_expired": "The review receipt has expired.",
+        "receipt_superseded": "The review receipt was superseded by a newer dry-run.",
+        "receipt_used": "The review receipt has already been used.",
+        "receipt_binding_mismatch": "The review receipt is not bound to this token/context/target.",
+        "receipt_stale_revision": "The review receipt targets a stale document revision.",
+        "receipt_payload_mismatch": "The submitted review payload does not match the receipt.",
+    },
+    "ja": {
+        "receipt_missing": "review receiptが必要です。",
+        "receipt_invalid": "review receiptが無効です。",
+        "receipt_expired": "review receiptの有効期限が切れています。",
+        "receipt_superseded": "review receiptは新しいdry-runに置き換えられました。",
+        "receipt_used": "review receiptは使用済みです。",
+        "receipt_binding_mismatch": "review receiptが現在のtoken/context/targetに紐付いていません。",
+        "receipt_stale_revision": "review receiptの対象revisionは現在のrevisionではありません。",
+        "receipt_payload_mismatch": "提出payloadがreview receiptの検証内容と一致しません。",
+    },
+}
+
+
+def _review_receipt_failure(reason: str, locale: str) -> JSONResponse:
+    messages = _REVIEW_RECEIPT_MESSAGES.get(locale) or _REVIEW_RECEIPT_MESSAGES["ko"]
+    return JSONResponse(status_code=409 if reason != "receipt_missing" else 400, content={
+        "ok": False,
+        "http_status": 409 if reason != "receipt_missing" else 400,
+        "code": "review_receipt_rejected",
+        "reason": reason,
+        "error_message": messages[reason],
+        "help_url": _help_url(),
+    })
+
+
 def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
     """Server-owned provider evidence for one review submission (0535 T0007 §2).
 
@@ -2695,19 +2745,52 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
     # and cannot fail the request (see _review_provenance).
     review_provider = _review_provenance(token_rec, doc_id)
 
-    # ── Dry-run short-circuit (R0001 dry-run, L0007 §3/§4.3) ──
-    # All validation has passed; bail out before any side effect (insert_review/consume/SSE).
-    dry_resp = _maybe_dry_run(body, token_rec, {
-        "action": "review",
-        "doc_id": doc_id,
-        "verdict": verdict,
-        "finding_count": len(findings),
-        "checks_passed": ["auth", "context_binding", "permission", "referential_integrity"],
-    })
-    if dry_resp is not None:
-        return dry_resp
+    # The identity is computed only after external JSON has been merged and every current
+    # validation has passed. Key order/whitespace are immaterial; findings order and all
+    # semantically relevant review/encoding values remain significant.
+    from modules.flow_gate.services import review_receipt_service
+    revision_no = int(doc.get("revision_no") or 0)
+    receipt_identity = review_receipt_service.payload_identity(
+        doc_id=doc_id, revision_no=revision_no, verdict=verdict, findings=findings,
+        comment=comment, body_sha256=body.get("body_sha256"),
+        body_chars=body.get("body_chars"),
+        force_encoding_reason=body.get("force_encoding_reason"),
+    )
 
-    # ── Step 6+7: claim the token and store the review, atomically (0535 T0007 §3) ──
+    if _truthy(body.get("dry_run")):
+        limit = _dryrun_max()
+        cnt = int(token_rec.get("dry_run_count") or 0)
+        copy = _DRY_RUN_COPY.get(_locale) or _DRY_RUN_COPY["ko"]
+        if cnt >= limit:
+            return JSONResponse(status_code=429, content={
+                "ok": False, "http_status": 429,
+                "error_message": copy["limit"].format(limit=limit),
+                "help_url": _help_url(), "dry_run_count": cnt, "dry_run_remaining": 0,
+            })
+        issued = review_receipt_service.issue(
+            token_rec=token_rec, project_id=project, group_id=token_rec.get("group_id"),
+            doc_id=doc_id, revision_no=revision_no, identity=receipt_identity, body=body,
+        )
+        return JSONResponse(status_code=200, content={
+            "ok": True, "dry_run": True,
+            "would_register": {
+                "action": "review", "doc_id": doc_id, "verdict": verdict,
+                "finding_count": len(findings),
+                "checks_passed": ["auth", "context_binding", "permission", "referential_integrity"],
+            },
+            "dry_run_count": cnt + 1, "dry_run_remaining": limit - (cnt + 1),
+            "message": copy["ok"], **issued,
+        })
+
+    receipt_reason = review_receipt_service.classify(
+        body.get("receipt"), token_rec=token_rec, project_id=project,
+        group_id=token_rec.get("group_id"), doc_id=doc_id, revision_no=revision_no,
+        identity=receipt_identity,
+    )
+    if receipt_reason != "ok":
+        return _review_receipt_failure(receipt_reason, _locale)
+
+    # ── Step 6+7: claim receipt + token and store review atomically ──
     # One transaction covers the token claim, the review row, its readback and the
     # token_consumed event, so a submission is all of it or none of it:
     #
@@ -2720,10 +2803,16 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
     #
     # The claim goes first on purpose: it is the cheap statement that decides who owns
     # this submission, and every writer after it is inside the same rollback boundary.
-    revision_no = int(doc.get("revision_no") or 0)
     findings_json = json.dumps(findings, ensure_ascii=False)
     try:
         with get_store().transaction():
+            if not review_receipt_service.db_receipts.claim(
+                receipt_id=body["receipt"], token_id=token_rec["token_id"],
+                project_id=project, group_id=token_rec.get("group_id"), doc_id=doc_id,
+                revision_no=revision_no, payload_identity=receipt_identity,
+                claimed_at=now_iso(),
+            ):
+                raise _ReviewReceiptClaimFailed()
             if not token_service.consume(
                 token_id=token_rec["token_id"],
                 project_id=project,
@@ -2741,6 +2830,17 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
                 reviewed_at=now_iso(),
                 **review_provider,
             )
+    except _ReviewReceiptClaimFailed:
+        # Re-read only after rollback to classify a concurrent winner without exposing the
+        # opaque credential. No business write made by this request survives.
+        reason = review_receipt_service.classify(
+            body.get("receipt"), token_rec=token_rec, project_id=project,
+            group_id=token_rec.get("group_id"), doc_id=doc_id, revision_no=revision_no,
+            identity=receipt_identity,
+        )
+        return _review_receipt_failure(
+            reason if reason != "ok" else "receipt_invalid", _locale
+        )
     except _ReviewTokenAlreadyClaimed:
         return _fail(409, "This review token has already been consumed; no review was added.")
     except Exception as exc:

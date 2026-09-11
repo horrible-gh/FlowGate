@@ -1,0 +1,26 @@
+-- Durable preflight receipts for mandatory AI review admission.
+CREATE TABLE IF NOT EXISTS review_dry_run_receipts (
+ receipt_id VARCHAR(96) PRIMARY KEY,
+ token_id VARCHAR(255) NOT NULL,
+ project_id VARCHAR(255) NOT NULL,
+ group_id VARCHAR(255) NULL,
+ doc_id VARCHAR(255) NOT NULL,
+ revision_no INTEGER NOT NULL,
+ action_scope VARCHAR(32) NOT NULL,
+ payload_identity VARCHAR(64) NOT NULL,
+ issued_at VARCHAR(64) NOT NULL,
+ expires_at VARCHAR(64) NOT NULL,
+ used_at VARCHAR(64) NULL,
+ superseded_at VARCHAR(64) NULL,
+ encoding_provenance TEXT NULL,
+ created_at VARCHAR(64) NOT NULL,
+ updated_at VARCHAR(64) NOT NULL,
+ CONSTRAINT fk_review_receipts_token FOREIGN KEY (token_id) REFERENCES tokens(token_id) ON DELETE CASCADE,
+ CONSTRAINT fk_review_receipts_project FOREIGN KEY (project_id) REFERENCES projects(project_id),
+ CONSTRAINT fk_review_receipts_group FOREIGN KEY (group_id) REFERENCES groups(group_id),
+ CONSTRAINT fk_review_receipts_doc FOREIGN KEY (doc_id) REFERENCES documents(doc_id) ON DELETE CASCADE,
+ CONSTRAINT chk_review_receipts_scope CHECK (action_scope = 'review'),
+ INDEX idx_review_receipts_token (token_id),
+ INDEX idx_review_receipts_target (doc_id, revision_no),
+ INDEX idx_review_receipts_expiry (expires_at)
+);
