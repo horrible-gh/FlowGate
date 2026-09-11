@@ -7596,10 +7596,15 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
         db_git.release_lock(project_id, holder)
 
 
-def reconcile_due_merge_review_sessions(trigger: str) -> None:
-    """Scan every open general-merge session for a due reconciliation, called from
-    the existing sweep daemon and from startup recovery (§2.8.1 lifecycle)."""
-    for session in db_git.list_open_sessions():
+def reconcile_due_merge_review_sessions(
+    trigger: str, sessions: Optional[list[dict]] = None
+) -> None:
+    """Scan open general-merge sessions for a due reconciliation.
+
+    A caller may pass an already-read open-session list; without one this reads
+    its own list (the periodic sweep-daemon path).
+    """
+    for session in (sessions if sessions is not None else db_git.list_open_sessions()):
         if db_git.session_kind(session) != db_git.SESSION_KIND_MERGE:
             continue
         context = db_git.session_context(session)
@@ -8056,18 +8061,22 @@ def _sweep_group_update_session(session: dict, project_id: str) -> None:
         _emit_auto_aborted(project_id, group_id, merge_id, "ttl_expired")
 
 
-def merge_session_sweep() -> None:
+def merge_session_sweep(sessions: Optional[list[dict]] = None) -> None:
     """Auto-recover abandoned / orphaned conflict sessions (0205 L §2.5).
 
-    For each open session: skip if the base checkout is gone (never guess);
-    close it as an orphan if the merge left no MERGE_HEAD on disk; auto-abort it
-    if it has been quiet past the TTL; otherwise leave it. Best-effort and fully
-    isolated per session so one bad row cannot sink the pass."""
-    try:
-        sessions = db_git.list_open_sessions()
-    except Exception:
-        _log.info("merge session sweep skipped (session table unavailable)", exc_info=True)
-        return
+    A caller may pass an already-read open-session list; without one this reads
+    its own list (the periodic sweep-daemon path). For each open session: skip
+    if the base checkout is gone (never guess); close it as an orphan if the
+    merge left no MERGE_HEAD on disk; auto-abort it if it has been quiet past
+    the TTL; otherwise leave it. Best-effort and fully isolated per session so
+    one bad row cannot sink the pass.
+    """
+    if sessions is None:
+        try:
+            sessions = db_git.list_open_sessions()
+        except Exception:
+            _log.info("merge session sweep skipped (session table unavailable)", exc_info=True)
+            return
     for session in sessions:
         try:
             group_id = session["group_id"]
@@ -8139,6 +8148,26 @@ def _start_sweep_daemon() -> None:
 
 # ── Boot recovery (flowgate.default.0205 P scenario 7 / L §2.6) ───────────────
 
+def _open_sessions_after(sessions: list[dict], touched: set[int]) -> list[dict]:
+    """Refresh only rows this startup path may have changed, retaining open ones."""
+    if not touched:
+        return sessions
+    result: list[dict] = []
+    for session in sessions:
+        merge_id = int(session["merge_id"])
+        if merge_id not in touched:
+            result.append(session)
+            continue
+        try:
+            fresh = db_git.get_session(merge_id)
+        except Exception:
+            # A failed refresh must not risk a duplicate orphan abort/event.
+            continue
+        if fresh and (fresh.get("status") or "") == "open":
+            result.append(fresh)
+    return result
+
+
 def startup_recovery() -> None:
     """Heal conflict sessions, drop every stale lock, then sweep + start the
     daemon at boot (0205 L §2.6).
@@ -8150,7 +8179,9 @@ def startup_recovery() -> None:
     restart) — op:/sweep:/merge:/dispose: locks are all force-released. Finally a
     sweep reclaims TTL-expired sessions and the daemon repeats it periodically."""
     try:
-        for session in db_git.list_open_sessions():
+        sessions = db_git.list_open_sessions()
+        touched: set[int] = set()
+        for session in sessions:
             merge_id = session["merge_id"]
             group_id = session["group_id"]
             try:
@@ -8173,6 +8204,7 @@ def startup_recovery() -> None:
                     # push-unknown/post-push-cleanup sessions without waiting a full
                     # PUSH_RECONCILE_RETRY_INTERVAL_SEC.
                     _set_status(group_id, "conflict", merge_id=merge_id)
+                    touched.add(int(merge_id))
                     continue
                 base_root = _base_root_of(project_id)
                 merge_head_exists = bool(
@@ -8183,6 +8215,7 @@ def startup_recovery() -> None:
                     _set_status(group_id, "conflict", merge_id=merge_id)
                 else:
                     _close_orphan(session, project_id)
+                    touched.add(int(merge_id))
             except Exception:
                 _log.warning("git session recovery failed for merge %s", merge_id, exc_info=True)
         # One-time lock cleanup: no lock legitimately survives a restart. This
@@ -8191,8 +8224,11 @@ def startup_recovery() -> None:
             holder = str(lock.get("holder") or "")
             if holder.startswith(("op:", "sweep:", "merge:", "dispose:")):
                 db_git.force_release_lock(lock["project_id"])
-        reconcile_due_merge_review_sessions("server_startup")   # L0007 §2.8.1 item 1
-        merge_session_sweep()   # reclaim anything already past TTL
+        # The original snapshot is only a candidate-id list here; reconcile_push_session
+        # re-reads each row and re-checks its guard before changing it.
+        reconcile_due_merge_review_sessions("server_startup", sessions=sessions)
+        # Sweep consumes context/timestamps, so refresh rows startup/reconcile could change.
+        merge_session_sweep(sessions=_open_sessions_after(sessions, touched))
         _start_sweep_daemon()
     except Exception:
         # Table may not exist yet (pre-migration boot) — recovery is best-effort.
