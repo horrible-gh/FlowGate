@@ -346,7 +346,7 @@
               type="button"
               class="btn btn-warning"
               data-test="review-rerun"
-              :disabled="starting"
+              :disabled="starting || !canStart"
               @click="rerunConfirming ? start('rerun') : (rerunConfirming = true)"
             >
               <AppIcon name="arrows-clockwise" />

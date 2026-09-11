@@ -918,6 +918,73 @@ describe('AiInvokeDialog 검수 전달 (0414 T0012)', () => {
 })
 
 
+// flowgate.default.0544 T0011 / NR0003 Finding 1: the [재검수] button used to check only
+// `starting`, never `canStart` — the same admission `start('rerun')` itself enforces. A user
+// could see the button enabled, confirm, and get silent nothing back (`!canStart` returns
+// before any request). The fix shares canStart between the normal [시작] button and [재검수];
+// these specs pin the parity so it cannot regress unnoticed.
+describe('AiInvokeDialog 재검수 admission parity (0544 T0011)', () => {
+  it('AC-1/AC-5: canStart=true 이면 재검수가 활성화되고, 2차 클릭에서 review_intent=rerun 요청을 보낸다', async () => {
+    const wrapper = mountDialog({ actionScope: 'review', docReviewStatus: 'approved' })
+    await flushPromises()
+
+    const rerun = document.querySelector('[data-test="review-rerun"]') as HTMLButtonElement
+    expect(rerun.disabled).toBe(false)
+
+    // 1st click only asks for confirmation — no request yet.
+    rerun.click()
+    await flushPromises()
+    expect(postRequest).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-test="review-rerun-confirm"]')).not.toBeNull()
+
+    // 2nd click actually fires start('rerun').
+    rerun.click()
+    await flushPromises()
+    expect(startBody()).toMatchObject({ action_scope: 'review', review_intent: 'rerun' })
+
+    wrapper.unmount()
+  })
+
+  it('AC-2/AC-3/AC-7: 리뷰 루프 provider 미선택(canStart=false)이면 재검수가 disabled이고 클릭해도 요청이 없다', async () => {
+    // beforeEach's default getRequest mock already answers providers: [] — reviewer/rework
+    // provider ids resolve to '' — canStart is false for the loop mode this test picks.
+    const wrapper = mountDialog({ actionScope: 'review', docReviewStatus: 'approved' })
+    await flushPromises()
+
+    const loopRadio = document.querySelector('input[type="radio"][value="loop"]') as HTMLInputElement
+    loopRadio.checked = true
+    loopRadio.dispatchEvent(new Event('change'))
+    await flushPromises()
+
+    const rerun = document.querySelector('[data-test="review-rerun"]') as HTMLButtonElement
+    expect(rerun.disabled).toBe(true)
+
+    rerun.click()
+    await flushPromises()
+    expect(postRequest).not.toHaveBeenCalled()
+
+    wrapper.unmount()
+  })
+
+  it('AC-4: 동일 provider 조건에서 일반 시작과 재검수가 같은 disabled 상태를 갖는다 (모순 없음)', async () => {
+    const wrapper = mountDialog({ actionScope: 'review', docReviewStatus: 'approved' })
+    await flushPromises()
+
+    const loopRadio = document.querySelector('input[type="radio"][value="loop"]') as HTMLInputElement
+    loopRadio.checked = true
+    loopRadio.dispatchEvent(new Event('change'))
+    await flushPromises()
+
+    const start = document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement
+    const rerun = document.querySelector('[data-test="review-rerun"]') as HTMLButtonElement
+    // Both share canStart now: neither can be enabled while the other is disabled.
+    expect(start.disabled).toBe(rerun.disabled)
+    expect(start.disabled).toBe(true)
+
+    wrapper.unmount()
+  })
+})
+
 describe('AiInvokeDialog document review loop behavior (0417 T0013)', () => {
   it('mounts the review-only three-tab flow, resets it, and posts independent stage providers', async () => {
     getRequest.mockResolvedValue({
