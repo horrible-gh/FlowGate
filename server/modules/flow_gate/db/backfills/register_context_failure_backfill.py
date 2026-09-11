@@ -48,6 +48,12 @@ _SELECT_RUNS = (
     "WHERE register_errors IS NOT NULL AND register_errors <> '' AND register_errors <> '[]'"
 )
 _SELECT_EXISTING = "SELECT correlation_id, boundary FROM register_context_failures"
+_SELECT_EXISTING_FOR_IDS = (
+    "SELECT correlation_id, boundary FROM register_context_failures "
+    "WHERE correlation_id IN ({placeholders})"
+)
+_EXISTING_CHUNK_SIZE = 500
+_EXISTING_FULL_SCAN_THRESHOLD = 5000
 
 _LIVE_BOUNDARIES = ("register_dispatch", "inbox")
 
@@ -202,12 +208,31 @@ def run_register_context_failure_backfill(db_instance) -> int:
     run_rows = [dict(row) for row in (db_instance.fetch_all(q(_SELECT_RUNS), []) or [])]
     if not run_rows:
         return 0
+    # First build and de-duplicate candidates locally. plan_all's mutable set keeps
+    # the historical first-element-wins order within this pass.
+    candidates = plan_all(run_rows, set())
+    if not candidates:
+        return 0
+
+    correlation_ids = list(dict.fromkeys(str(values[2]) for values in candidates))
+    existing_rows = []
+    if len(correlation_ids) > _EXISTING_FULL_SCAN_THRESHOLD:
+        existing_rows = db_instance.fetch_all(q(_SELECT_EXISTING), []) or []
+    else:
+        for offset in range(0, len(correlation_ids), _EXISTING_CHUNK_SIZE):
+            chunk = correlation_ids[offset:offset + _EXISTING_CHUNK_SIZE]
+            sql = _SELECT_EXISTING_FOR_IDS.format(
+                placeholders=", ".join("?" for _ in chunk)
+            )
+            existing_rows.extend(db_instance.fetch_all(q(sql), chunk) or [])
     existing = {
         (str(dict(row)["correlation_id"]), str(dict(row)["boundary"]))
-        for row in (db_instance.fetch_all(q(_SELECT_EXISTING), []) or [])
+        for row in existing_rows
     }
-
-    bound = plan_all(run_rows, existing)
+    bound = [
+        values for values in candidates
+        if (str(values[2]), str(values[3])) not in existing
+    ]
     if not bound:
         return 0
     statement = q(INSERT_SQL)

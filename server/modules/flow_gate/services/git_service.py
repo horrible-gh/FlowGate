@@ -2094,7 +2094,9 @@ SRC_ROOT_ERROR = "resolution_error"
 
 
 def effective_src_root_ex(
-    project_id: Optional[str], group_id: Optional[str]
+    project_id: Optional[str],
+    group_id: Optional[str],
+    state: Optional[dict] = None,
 ) -> tuple[Optional[Path], str]:
     """``effective_src_root`` plus the reason, and a log line on every fallback.
 
@@ -2106,6 +2108,16 @@ def effective_src_root_ex(
     is not there — notably ``worktree_unregistered``, which is what a post-merge
     re-run hits (CLEANUP_STATUSES clears the flag) — so they log at warning.
     Never raises.
+
+    0552 T0013 (0005-NR Set D): ``state`` lets a caller that ALREADY holds this
+    group's ``group_git_state`` row hand it in instead of paying another
+    ``SELECT * FROM group_git_state WHERE group_id = ?``. It is a pure read here —
+    only ``worktree_registered`` / ``branch`` decide anything, and ``status`` is
+    used solely in a fallback log line — so a supplied row cannot change the
+    verdict, only who paid for the read. ``None`` means "not supplied" and keeps
+    the original lookup verbatim, so every existing two-argument caller (and every
+    test that patches this function with a two-parameter stub) is untouched.
+    Reuse is the caller's own request/response assembly; nothing is cached here.
     """
     if not project_id or not group_id:
         return None, SRC_ROOT_NO_GROUP
@@ -2118,7 +2130,8 @@ def effective_src_root_ex(
                 SRC_ROOT_INTEGRATION_OFF,
             )
             return None, SRC_ROOT_INTEGRATION_OFF
-        state = db_git.get_state(group_id)
+        if state is None:
+            state = db_git.get_state(group_id)
         if state is None:
             _log.warning(
                 "effective_src_root: base tree for %s (%s) — git integration is on "
@@ -2183,7 +2196,11 @@ def effective_src_root_ex(
         return None, SRC_ROOT_ERROR
 
 
-def group_worktree_writable(project_id: Optional[str], group_id: Optional[str]) -> bool:
+def group_worktree_writable(
+    project_id: Optional[str],
+    group_id: Optional[str],
+    state: Optional[dict] = None,
+) -> bool:
     """True when *group_id* has a live worktree that may be written to.
 
     0327 T0004 (B0001 / NR0003 recommendation 1): the explorer used to treat "a group is
@@ -2192,8 +2209,12 @@ def group_worktree_writable(project_id: Optional[str], group_id: Optional[str]) 
     apart. This is that answer, in the one shape the client needs, so the UI stops
     guessing. Groups with no worktree (finalized, disposed, never provisioned)
     remain fully read-only, exactly as before (recommendation 5).
+
+    0552 T0013: ``state`` is passed straight through to ``effective_src_root_ex``
+    — see its docstring for what an already-read ledger row does and does not
+    change. Positional so a stub of the shape ``lambda *args: True`` keeps working.
     """
-    return effective_src_root_ex(project_id, group_id)[0] is not None
+    return effective_src_root_ex(project_id, group_id, state)[0] is not None
 
 
 def effective_src_root(project_id: Optional[str], group_id: Optional[str]) -> Optional[Path]:
@@ -7575,10 +7596,15 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
         db_git.release_lock(project_id, holder)
 
 
-def reconcile_due_merge_review_sessions(trigger: str) -> None:
-    """Scan every open general-merge session for a due reconciliation, called from
-    the existing sweep daemon and from startup recovery (§2.8.1 lifecycle)."""
-    for session in db_git.list_open_sessions():
+def reconcile_due_merge_review_sessions(
+    trigger: str, sessions: Optional[list[dict]] = None
+) -> None:
+    """Scan open general-merge sessions for a due reconciliation.
+
+    A caller may pass an already-read open-session list; without one this reads
+    its own list (the periodic sweep-daemon path).
+    """
+    for session in (sessions if sessions is not None else db_git.list_open_sessions()):
         if db_git.session_kind(session) != db_git.SESSION_KIND_MERGE:
             continue
         context = db_git.session_context(session)
@@ -8035,18 +8061,22 @@ def _sweep_group_update_session(session: dict, project_id: str) -> None:
         _emit_auto_aborted(project_id, group_id, merge_id, "ttl_expired")
 
 
-def merge_session_sweep() -> None:
+def merge_session_sweep(sessions: Optional[list[dict]] = None) -> None:
     """Auto-recover abandoned / orphaned conflict sessions (0205 L §2.5).
 
-    For each open session: skip if the base checkout is gone (never guess);
-    close it as an orphan if the merge left no MERGE_HEAD on disk; auto-abort it
-    if it has been quiet past the TTL; otherwise leave it. Best-effort and fully
-    isolated per session so one bad row cannot sink the pass."""
-    try:
-        sessions = db_git.list_open_sessions()
-    except Exception:
-        _log.info("merge session sweep skipped (session table unavailable)", exc_info=True)
-        return
+    A caller may pass an already-read open-session list; without one this reads
+    its own list (the periodic sweep-daemon path). For each open session: skip
+    if the base checkout is gone (never guess); close it as an orphan if the
+    merge left no MERGE_HEAD on disk; auto-abort it if it has been quiet past
+    the TTL; otherwise leave it. Best-effort and fully isolated per session so
+    one bad row cannot sink the pass.
+    """
+    if sessions is None:
+        try:
+            sessions = db_git.list_open_sessions()
+        except Exception:
+            _log.info("merge session sweep skipped (session table unavailable)", exc_info=True)
+            return
     for session in sessions:
         try:
             group_id = session["group_id"]
@@ -8118,6 +8148,26 @@ def _start_sweep_daemon() -> None:
 
 # ── Boot recovery (flowgate.default.0205 P scenario 7 / L §2.6) ───────────────
 
+def _open_sessions_after(sessions: list[dict], touched: set[int]) -> list[dict]:
+    """Refresh only rows this startup path may have changed, retaining open ones."""
+    if not touched:
+        return sessions
+    result: list[dict] = []
+    for session in sessions:
+        merge_id = int(session["merge_id"])
+        if merge_id not in touched:
+            result.append(session)
+            continue
+        try:
+            fresh = db_git.get_session(merge_id)
+        except Exception:
+            # A failed refresh must not risk a duplicate orphan abort/event.
+            continue
+        if fresh and (fresh.get("status") or "") == "open":
+            result.append(fresh)
+    return result
+
+
 def startup_recovery() -> None:
     """Heal conflict sessions, drop every stale lock, then sweep + start the
     daemon at boot (0205 L §2.6).
@@ -8129,7 +8179,9 @@ def startup_recovery() -> None:
     restart) — op:/sweep:/merge:/dispose: locks are all force-released. Finally a
     sweep reclaims TTL-expired sessions and the daemon repeats it periodically."""
     try:
-        for session in db_git.list_open_sessions():
+        sessions = db_git.list_open_sessions()
+        touched: set[int] = set()
+        for session in sessions:
             merge_id = session["merge_id"]
             group_id = session["group_id"]
             try:
@@ -8152,6 +8204,7 @@ def startup_recovery() -> None:
                     # push-unknown/post-push-cleanup sessions without waiting a full
                     # PUSH_RECONCILE_RETRY_INTERVAL_SEC.
                     _set_status(group_id, "conflict", merge_id=merge_id)
+                    touched.add(int(merge_id))
                     continue
                 base_root = _base_root_of(project_id)
                 merge_head_exists = bool(
@@ -8162,6 +8215,7 @@ def startup_recovery() -> None:
                     _set_status(group_id, "conflict", merge_id=merge_id)
                 else:
                     _close_orphan(session, project_id)
+                    touched.add(int(merge_id))
             except Exception:
                 _log.warning("git session recovery failed for merge %s", merge_id, exc_info=True)
         # One-time lock cleanup: no lock legitimately survives a restart. This
@@ -8170,8 +8224,11 @@ def startup_recovery() -> None:
             holder = str(lock.get("holder") or "")
             if holder.startswith(("op:", "sweep:", "merge:", "dispose:")):
                 db_git.force_release_lock(lock["project_id"])
-        reconcile_due_merge_review_sessions("server_startup")   # L0007 §2.8.1 item 1
-        merge_session_sweep()   # reclaim anything already past TTL
+        # The original snapshot is only a candidate-id list here; reconcile_push_session
+        # re-reads each row and re-checks its guard before changing it.
+        reconcile_due_merge_review_sessions("server_startup", sessions=sessions)
+        # Sweep consumes context/timestamps, so refresh rows startup/reconcile could change.
+        merge_session_sweep(sessions=_open_sessions_after(sessions, touched))
         _start_sweep_daemon()
     except Exception:
         # Table may not exist yet (pre-migration boot) — recovery is best-effort.
@@ -8433,10 +8490,21 @@ def project_git_status(project_id: str) -> dict:
     # of the blanket read-only it applied to every selected group. `rows` is already
     # filtered to worktree_registered=1, so this only re-checks the on-disk side
     # (directory present, .git link intact) — a handful of stats per status call.
+    # 0552 T0013 (0005-NR Set D): `r` IS this group's group_git_state row, already
+    # read by the one project-wide ledger scan above, so it is handed to the
+    # writable probe instead of letting it run `SELECT * FROM group_git_state
+    # WHERE group_id = ?` once per slot — the last group_git_state read that still
+    # grew with slot count (8 slots = 8 queries in the R0001 screen-load log).
+    # Same row, same request: `list_states_of_project_any` and `db_git.get_state`
+    # are both `SELECT *` on that one table, and the only fields the probe reads —
+    # worktree_registered and branch — are never written by the transition loop
+    # above (`_set_status` writes status only; an auto-discard that DOES unregister
+    # a slot returns DISCARDED_STATUS, which SLOT_STATUSES already excludes here).
+    # Nothing is cached beyond this response; the on-disk check is untouched.
     slots = [
         {"group_id": r["group_id"], "branch": r.get("branch"),
          "status": r.get("status"), "merge_id": r.get("merge_id"),
-         "writable": group_worktree_writable(project_id, r["group_id"])}
+         "writable": group_worktree_writable(project_id, r["group_id"], r)}
         for r in rows if r.get("status") in SLOT_STATUSES
     ]
     # 0332 D0005 §6.2: a group's commits are no longer one absorb commit, so each slot

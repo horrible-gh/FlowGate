@@ -241,6 +241,7 @@ import { copyToClipboard } from '../utils/clipboard'
 import type { Tab } from '../stores/tabs'
 import { useTabsStore } from '../stores/tabs'
 import { useExplorerStore } from '../stores/explorer'
+import { useDocumentContextStore } from '../stores/documentContext'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import type { AiReview } from '../types/aiReview'
 import type { TestRun } from '../types/testRun'
@@ -269,6 +270,7 @@ const { t } = useI18n()
 const { showToast } = useToast()
 const tabsStore = useTabsStore()
 const explorerStore = useExplorerStore()
+const documentContextStore = useDocumentContextStore()
 interface DocDetail {
   doc_id: string
   title: string
@@ -520,13 +522,9 @@ const docFullPath = computed(() => {
 })
 
 async function fetchOwner(ownerId: string) {
-  try {
-    const res = await getRequest<any>(`/api/v1/users/${encodeURIComponent(ownerId)}`)
-    const user = (res.data as any)?.data ?? res.data
-    ownerName.value = user?.username ?? user?.display_name ?? null
-  } catch {
-    ownerName.value = null
-  }
+  const name = await documentContextStore.resolveOwnerName(ownerId)
+  // A tab switch may complete while the shared request is in flight.
+  if (doc.value?.owner_id === ownerId) ownerName.value = name
 }
 
 function shortGroupId(groupId: string | null | undefined): string {
@@ -535,22 +533,19 @@ function shortGroupId(groupId: string | null | undefined): string {
   return segs[segs.length - 1] || groupId
 }
 
-async function fetchGroup(projectId: string, groupId: string) {
-  try {
-    const res = await getRequest<any>('/api/v1/groups', { project_id: projectId })
-    const groups: any[] = (res.data as any)?.groups ?? []
-    const found = groups.find((g: any) => g.group_id === groupId)
-    if (found) {
-      const groupNum = shortGroupId(found.group_id)
-      groupLabel.value = groupNum && found.title
-        ? `(#${groupNum}) ${found.title}`
-        : found.title ?? groupNum ?? null
-      groupTitle.value = found.title ?? ''
-    }
-  } catch {
+async function fetchGroup(projectId: string, groupId: string, force = false) {
+  const found = await documentContextStore.resolveGroup(projectId, groupId, force)
+  if (doc.value?.project_id !== projectId || doc.value?.group_id !== groupId) return
+  if (!found) {
     groupLabel.value = null
     groupTitle.value = ''
+    return
   }
+  const groupNum = shortGroupId(found.group_id)
+  groupLabel.value = groupNum && found.title
+    ? `(#${groupNum}) ${found.title}`
+    : found.title ?? groupNum ?? null
+  groupTitle.value = found.title ?? ''
 }
 
 // A doc counts as "workflow-decided" by the SAME two-signal test the action-bar
@@ -1098,7 +1093,7 @@ function onGroupRenamed() {
   void loadGroupContext()
   // Re-resolve the header's own group label (the "(#num) title" badge in the meta grid).
   if (doc.value?.project_id && doc.value?.group_id) {
-    fetchGroup(doc.value.project_id, doc.value.group_id)
+    fetchGroup(doc.value.project_id, doc.value.group_id, true)
   }
 }
 
@@ -1311,6 +1306,22 @@ const docClass = computed((): string => {
 })
 
 const parentRDocId = computed(() => doc.value?.parent_r_doc_id ?? null)
+// 0552 T0006 §1 — DocHeader is the component that reads `documents/detail`, so it is also
+// the owner of the id that read resolves: the workflow root. A root document (R/B) is its
+// own root; a member document's root is `parent_r_doc_id`, which does not exist until the
+// detail response has landed. `null` therefore means "not known yet" — and MainPanel must
+// not guess a root while it is null, because a guessed (child) id makes the
+// return-point/sequence round trip answer about a document that has no sequence
+// (0552.0005-NR §2.2-4). An orphan member with no R/B root in its group stays null: there
+// is no workflow to read.
+const WORKFLOW_ROOT_TYPE_CODES = ['R', 'B']
+const workflowRootDocId = computed<string | null>(() => {
+  const d = doc.value
+  if (!d) return null
+  const typeCode = d.type_code ?? props.tab.typeCode ?? null
+  if (typeCode && WORKFLOW_ROOT_TYPE_CODES.includes(typeCode)) return d.doc_id ?? props.tab.id
+  return d.parent_r_doc_id ?? null
+})
 const workflowRootType = computed(() => doc.value?.workflow_root_type ?? null)
 const docTypeCode = computed(() => doc.value?.type_code ?? null)
 const workflowHeadType = computed(() => doc.value?.workflow_head_type ?? null)
@@ -1374,6 +1385,7 @@ defineExpose({
   openWorkflowDecisionModal,
   mentionText,
   parentRDocId,
+  workflowRootDocId,
   workflowRootType,
   docTypeCode,
   workflowHeadType,

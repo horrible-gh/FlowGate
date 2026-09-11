@@ -338,6 +338,10 @@ function dotColor(item: DashboardActivity): string {
   return activityColor(item.activity_type)
 }
 
+function isOverviewRoute(): boolean {
+  return router?.currentRoute?.value?.path === '/'
+}
+
 function refresh() {
   const pid = projectStore.currentProjectId
   if (pid) void store.fetchFeed(pid)
@@ -361,7 +365,7 @@ async function markAllRead() {
 async function openQaDocument(docId: string) {
   requestQaOpen(docId)
   open.value = false
-  if (router.currentRoute.value.path !== '/') await router.push('/')
+  if (!isOverviewRoute()) await router.push('/')
   await openDashboardTarget({ kind: 'document', doc_id: docId })
 }
 
@@ -393,7 +397,9 @@ function onInflow() {
   if (refetchTimer !== null) clearTimeout(refetchTimer)
   refetchTimer = setTimeout(() => {
     refetchTimer = null
-    if (projectStore.currentProjectId) void store.fetchFeed(projectStore.currentProjectId)
+    if (projectStore.currentProjectId && !isOverviewRoute()) {
+      void store.fetchFeed(projectStore.currentProjectId)
+    }
   }, 300)
 }
 
@@ -402,11 +408,11 @@ watch(() => projectStore.currentProjectId, (pid) => {
   activeSection.value = 'general'
   activeFilter.value = 'all'
   store.reset()
-  if (pid) void store.fetchFeed(pid)
+  if (pid && !isOverviewRoute()) void store.fetchFeed(pid)
 })
 
 onMounted(() => {
-  refresh()
+  if (!isOverviewRoute()) refresh()
   window.addEventListener('fg:notification', onInflow)
   window.addEventListener('click', onClickOutside, true)
   window.addEventListener('keydown', onKeyDown)

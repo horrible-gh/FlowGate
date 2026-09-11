@@ -1432,6 +1432,11 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     }
   }
 
+  // 0552 T0019 C1: document mutations invalidate run state, not account configuration.
+  function onOpenDocsRefresh(): void {
+    void refreshAllRunning()
+  }
+
   function onRecoverySignal(): void {
     void refreshAllRunning()
     // Coming back online or back to the tab is also when a setting saved elsewhere (a tab
@@ -1458,7 +1463,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     window.addEventListener('fg:ai_invoke', onInvokeEvent)
     window.addEventListener('fg:q_registered', onQRegistered)
     window.addEventListener('fg:q_answered', onQAnswered)
-    window.addEventListener('fg:open_docs_refresh', onRecoverySignal)
+    window.addEventListener('fg:open_docs_refresh', onOpenDocsRefresh)
     window.addEventListener('online', onRecoverySignal)
     window.addEventListener('storage', onRetentionStorage)
     document.addEventListener('visibilitychange', onVisibilityChange)
@@ -1470,7 +1475,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       window.removeEventListener('fg:ai_invoke', onInvokeEvent)
       window.removeEventListener('fg:q_registered', onQRegistered)
       window.removeEventListener('fg:q_answered', onQAnswered)
-      window.removeEventListener('fg:open_docs_refresh', onRecoverySignal)
+      window.removeEventListener('fg:open_docs_refresh', onOpenDocsRefresh)
       window.removeEventListener('online', onRecoverySignal)
       window.removeEventListener('storage', onRetentionStorage)
       document.removeEventListener('visibilitychange', onVisibilityChange)

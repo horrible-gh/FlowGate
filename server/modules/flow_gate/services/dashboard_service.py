@@ -9,7 +9,7 @@ from typing import Any
 from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.db import ai_invoke_runs as db_ai_invoke_runs
 from modules.flow_gate.db import questions as db_questions
-from modules.flow_gate.db import documents as db_documents
+from modules.flow_gate.services import q_service
 
 _log = logging.getLogger(__name__)
 
@@ -580,22 +580,17 @@ def _ai_run_item(row: dict) -> dict:
     }
 
 
-def _open_question_page(project_id: str, limit: int) -> dict:
-    """Collapse unanswered question items to one stable row per document."""
+def _open_question_page(project_id: str, limit: int, rows: list[dict] | None = None) -> dict:
+    """Collapse one open-item snapshot to stable document rows without title N+1."""
     rows_by_doc: dict[str, dict] = {}
-    for row in db_questions.list_open_items(project_id):
+    source_rows = q_service.open_item_snapshot(project_id) if rows is None else rows
+    for row in source_rows:
         doc_id = str(row.get("doc_id") or "").strip()
         if not doc_id or doc_id in rows_by_doc:
             continue
-        title = None
-        try:
-            document = db_documents.get_by_id(doc_id)
-            title = document.get("title") if document else None
-        except Exception:  # title enrichment is deliberately best-effort
-            _log.warning("notification Q&A title degraded doc=%s", doc_id, exc_info=True)
         rows_by_doc[doc_id] = {
             "doc_id": doc_id,
-            "title": title,
+            "title": row.get("document_title"),
             "type_code": row.get("type_code"),
         }
     rows = [rows_by_doc[key] for key in sorted(rows_by_doc)]
@@ -604,7 +599,12 @@ def _open_question_page(project_id: str, limit: int) -> dict:
     return {"limit": limit, "total": total, "has_more": total > len(items), "items": items}
 
 
-def get_notification_feed(project_id: str, last_seen_at: Any, limit: int) -> dict:
+def get_notification_feed(
+    project_id: str,
+    last_seen_at: Any,
+    limit: int,
+    open_rows: list[dict] | None = None,
+) -> dict:
     """Assemble the 🔔 notification center payload for a project (R0001 group 0045, NR0003 option A).
 
     Returns the persistent document-inflow feed (newest first) plus the unread count derived from
@@ -631,7 +631,7 @@ def get_notification_feed(project_id: str, last_seen_at: Any, limit: int) -> dic
         degraded_sections.append("ai_runs")
         ai_runs = {"limit": limit, "total": 0, "has_more": False, "items": []}
     try:
-        open_questions = _open_question_page(project_id, limit)
+        open_questions = _open_question_page(project_id, limit, open_rows)
     except Exception:  # noqa: BLE001 -- additive section must not break the other feeds
         _log.exception("notification open questions degraded project=%s", project_id)
         degraded_sections.append("open_questions")
@@ -982,9 +982,25 @@ def get_dashboard_summary(
     project_id: str,
     activity_limit: int,
     workflow_limit: int,
+    last_seen_at: Any = None,
 ) -> dict:
+    degraded_sections: list[str] = []
     with get_store().transaction():
         recent_activities = list_recent_activities(project_id, activity_limit)
+        open_snapshot: list[dict] = []
+        try:
+            open_snapshot = q_service.open_item_snapshot(project_id)
+            open_queries = {"items": q_service.project_open_items(open_snapshot)}
+            notification_open_questions = _open_question_page(
+                project_id, activity_limit, open_snapshot
+            )
+        except Exception:  # noqa: BLE001 -- additive overview hydration is isolated
+            _log.exception("dashboard: open questions degraded project=%s", project_id)
+            degraded_sections.append("open_questions")
+            open_queries = {"items": []}
+            notification_open_questions = {
+                "limit": activity_limit, "total": 0, "has_more": False, "items": []
+            }
         try:
             active_workflows = list_active_workflows(project_id, workflow_limit)
         except DashboardDataError as exc:
@@ -1016,6 +1032,15 @@ def get_dashboard_summary(
                 "continuous_ended": 0,
                 "degraded": True,
             }
+    notification_feed = get_notification_feed(
+        project_id, last_seen_at, activity_limit, open_snapshot
+    )
+    if "open_questions" in degraded_sections:
+        notification_feed["open_questions"] = notification_open_questions
+        notification_feed["badge_count"] = notification_feed["unread_count"]
+        notification_feed["degraded_sections"] = list(dict.fromkeys([
+            *notification_feed["degraded_sections"], "open_questions"
+        ]))
     return {
         "ok": True,
         "project_id": project_id,
@@ -1025,4 +1050,8 @@ def get_dashboard_summary(
         "recent_activities": recent_activities,
         "active_workflows": active_workflows,
         "work_states": work_states,
+        "open_queries": open_queries,
+        "notification_open_questions": notification_open_questions,
+        "notification_feed": notification_feed,
+        "degraded_sections": degraded_sections,
     }
