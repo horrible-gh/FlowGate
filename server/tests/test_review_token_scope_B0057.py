@@ -16,8 +16,8 @@ from __future__ import annotations
 import os
 from unittest.mock import MagicMock
 
-from inbox_client import post_inbox
-from store_transaction_support import install_null_transaction_store
+from inbox_client import post_inbox as _raw_post_inbox
+from store_transaction_support import build_live_sqlite_db, install_live_sqlite_store
 
 os.environ.setdefault("TESTING", "1")
 
@@ -27,6 +27,17 @@ os.environ.setdefault("TESTING", "1")
 # plain `def`s dispatched onto a worker thread — while the 403s they guard never moved.
 # Posting to /api/v1/inbox checks the same refusals at the boundary an attacker actually
 # reaches, and the `action` key each body now carries is what routes it there.
+
+
+def post_inbox(body: dict):
+    """Submit legacy review cases through the mandatory dry-run preflight."""
+    if body.get("action") == "review" and not body.get("dry_run") and not body.get("receipt"):
+        candidate = dict(body, dry_run=True)
+        dry = _raw_post_inbox(candidate)
+        if dry.status_code != 200:
+            return dry
+        body = dict(body, receipt=dry.json()["receipt"])
+    return _raw_post_inbox(body)
 
 
 # ── Invariant 1: request_review issues a review-scoped token ───────────────────────────
@@ -94,7 +105,7 @@ def test_handle_review_rejects_non_review_scope_token(monkeypatch):
     assert resp.json()["error_message"] == "Context binding mismatch. Use the correct token."
 
 
-def test_handle_review_accepts_review_scope_token(monkeypatch):
+def test_handle_review_accepts_review_scope_token(monkeypatch, tmp_path):
     """The normal review path still works with a review-scoped token (no regression)."""
     from modules.flow_gate.api import inbox_routes
 
@@ -117,8 +128,40 @@ def test_handle_review_accepts_review_scope_token(monkeypatch):
     insert = MagicMock()
     monkeypatch.setattr(db_reviews, "insert_review", insert)
     monkeypatch.setattr(inbox_routes.token_service, "consume", MagicMock())
-    # 0535 T0007 §3: review registration now runs inside one store.transaction().
-    install_null_transaction_store(monkeypatch)
+    # The receipt row is durable and FK-bound, so preflight needs a migrated store
+    # containing the token, project and document named by this regression case.
+    db = build_live_sqlite_db(tmp_path / "flowgate.db")
+    now = "2026-09-12T00:00:00+09:00"
+    db.conn.execute(
+        "INSERT INTO projects (project_id, project_name, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?)",
+        ("flowgate", "FlowGate", now, now),
+    )
+    db.conn.execute(
+        "INSERT INTO groups (group_id, project_id, module, title, status, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("flowgate.default.0057", "flowgate", "default", "Review group",
+         "in_progress", now, now),
+    )
+    db.conn.execute(
+        "INSERT INTO documents (doc_id, project_id, group_id, type_code, seq, title, "
+        "revision_no, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("flowgate.default.0057.0001-B", "flowgate", "flowgate.default.0057",
+         "B", 1, "Bug", 0, now, now),
+    )
+    db.conn.execute(
+        "INSERT INTO users (user_id, username, email, password, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("user-1", "reviewer-0057", "reviewer-0057@example.com", "hashed", now, now),
+    )
+    db.conn.execute(
+        "INSERT INTO tokens (token_id, hash, pepper_id, project, doc_ref, action_scope, "
+        "issued_to, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("tok-1", "hash-0057", "p1", "flowgate", "flowgate.default.0057.0001-B",
+         "review", "user-1", now, "2036-09-12T00:00:00+09:00"),
+    )
+    db.conn.commit()
+    install_live_sqlite_store(monkeypatch, db)
 
     resp = post_inbox(_review_body())
     assert resp.status_code == 201
