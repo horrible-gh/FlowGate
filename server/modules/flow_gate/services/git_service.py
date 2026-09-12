@@ -62,7 +62,6 @@ GIT_NET_TIMEOUT_SEC = 120
 # was killed MID-DELETE, leaving a half-erased tree whose `.git` file was already
 # gone — the state that then failed every retry forever. Deletion gets its own,
 # far larger budget; it is a local filesystem walk, not a network call.
-GIT_WORKTREE_RM_TIMEOUT_SEC = 300
 # Group branch file explorer — checkout-free ref/tree/blob reads (0186 L0006 §1).
 GIT_READ_TIMEOUT_SEC = 15          # local ls-tree / cat-file timeout (no network)
 BLOB_MAX_RETURN_BYTES = 1048576    # 1 MiB blob content cap; over → truncated=true
@@ -72,9 +71,6 @@ LOCK_WAIT_SEC = 5
 # A conflict wait no longer holds the project lock; abandoned sessions are
 # reclaimed by a sweep so one stalled merge can never silently disable every
 # later group's git management (0203 root cause).
-MERGE_SESSION_TTL_HOURS = 24   # L0004 §1 — quiet-for-this-long conflict → auto-abort
-SWEEP_INTERVAL_MIN = 30        # L0004 §1 — auto-recovery sweep period
-BRANCH_MAX_LEN = 100
 
 from .git.commit import (
     COMMIT_SUBJECT_MAX,
@@ -116,18 +112,12 @@ from .git.commit import (
 # ── Base-checkout explicit commit / revert (flowgate.default.0177 — L0002) ────
 # Default subject for an explicit base-checkout commit: "fix: a.py, b.py", or the
 # abbreviated "fix: a.py and N more" when the joined list overflows COMMIT_SUBJECT_MAX.
-BASE_COMMIT_MSG_PREFIX = "fix: "
-BASE_COMMIT_MSG_JOINER = ", "
-ADOPT_SNAPSHOT_MSG = "flowgate: adopt snapshot of {base_branch} ({project_id})"
 # Subject for the seed commit that BORNs the base branch when a brand-new EMPTY
 # remote is connected (0313 B0001): `git clone --branch <base>` cannot create it,
 # so provisioning initializes the slot with this one README.md commit instead.
-BOOTSTRAP_SEED_MSG = "flowgate: initialize {base_branch} ({project_id})"
 # Present while an adopt is unfinished — the slot never reports "checkout"
 # until the marker is removed (L0005 §2.1·§2.3, 0161).
-ADOPT_PENDING_MARKER = ".git/flowgate_adopt_pending"
 # Per-project last-attempt ledger in the generic system_settings KV (no DDL).
-ATTEMPT_RECORD_KEY = "git.provision.last_attempt.{project_id}"
 ACTION_VALUES = ("merge", "merge_only", "push", "commit_push", "commit_only", "wait")
 FINALIZE_MAIN_CHOICES = ("merge", "merge_only", "wait")
 FINALIZE_AUX_CHOICES = ("push",)
@@ -152,7 +142,6 @@ SESSION_ACTION_DEFAULT = "merge"
 UNMERGE_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
 # flowgate.default.0162 L §1 — group git status subsets.
 PENDING_STATUSES = ("awaiting_choice", "waiting", "conflict")  # "finalize pending"
-SLOT_STATUSES = ("none", "awaiting_choice", "merging", "conflict", "waiting")  # not terminal
 # "merging" is a transient state: recorded, but its transition is not broadcast
 # (it would flicker the badge n→n-1→n before the terminal event lands, L §2.3).
 TRANSIENT_STATUSES = ("merging",)
@@ -195,20 +184,8 @@ from .git.credentials import (
 
 # ── Branch naming (L0006 §2.1) ────────────────────────────────────────────────
 
-def sanitize_branch(raw: str) -> str:
-    s = (raw or "").lower()
-    s = re.sub(r"[^a-z0-9._-]", "-", s)
-    s = re.sub(r"-{2,}", "-", s)
-    s = s.strip("-.")
-    s = s[:BRANCH_MAX_LEN]
-    if not s or ".." in s or "@{" in s:
-        raise GitServiceError(422, "invalid_branch_name", f"cannot derive a branch name from {raw!r}")
-    return s
 
 
-def worktree_branch_name(project_id: str, module: str, group_id: str) -> str:
-    group_no = (group_id or "").rsplit(".", 1)[-1]
-    return sanitize_branch(f"{project_id}_{module}_{group_no}")
 
 
 def _module_of(group_id: str) -> str:
@@ -406,87 +383,8 @@ from .git.config import (
 
 # ── Connection test (P0005 §3 / L0006 §2.5) ──────────────────────────────────
 
-_AUTH_FAIL_PATTERNS = (
-    "authentication failed", "invalid username", "401", "403",
-    "could not read username", "permission denied (publickey",
-)
-_UNREACHABLE_PATTERNS = (
-    "could not resolve host", "connection refused", "connection timed out",
-    "unable to access", "timeout_expired", "network is unreachable",
-)
 
 
-def test_connection(project_id: str, override: Optional[dict] = None) -> dict:
-    override = override or {}
-    stored = db_git.get_config(project_id)
-    cfg = dict(stored) if stored else {}
-    for k in ("repo_url", "username", "base_branch", "provider"):
-        if override.get(k) is not None:
-            cfg[k] = override[k]
-    if not (cfg.get("repo_url") or "").strip():
-        raise GitServiceError(
-            409, "not_configured",
-            f"Git integration is not configured for project '{project_id}'",
-        )
-    if not git_available():
-        raise GitServiceError(
-            500, "git_unavailable",
-            "git binary not found on server (install git in the runtime image)",
-        )
-    if override.get("secret") is not None and override.get("secret") != "":
-        secret: Optional[str] = str(override["secret"])
-    elif stored and stored.get("secret_enc"):
-        secret = decrypt_secret(stored["secret_enc"])
-    else:
-        secret = None
-
-    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-    repo_url = (cfg.get("repo_url") or "").strip()
-    t0 = time.monotonic()
-    proc = _run_git(
-        ["ls-remote", "--symref", repo_url, "HEAD", f"refs/heads/{base_branch}"],
-        timeout=GIT_TEST_TIMEOUT_SEC,
-        username=cfg.get("username"),
-        secret=secret if secret is not None else "",
-    )
-    elapsed_ms = int((time.monotonic() - t0) * 1000)
-
-    if proc.returncode == 0:
-        default_branch = None
-        base_exists = False
-        for line in (proc.stdout or "").splitlines():
-            line = line.strip()
-            if line.startswith("ref:") and line.endswith("HEAD"):
-                m = re.match(r"ref:\s+refs/heads/(\S+)\s+HEAD", line)
-                if m:
-                    default_branch = m.group(1)
-            if line.endswith(f"refs/heads/{base_branch}"):
-                base_exists = True
-        return {
-            "reachable": True,
-            "authenticated": True,
-            "remote_default_branch": default_branch,
-            "base_branch_exists": base_exists,
-            "elapsed_ms": elapsed_ms,
-        }
-
-    err = (proc.stderr or "").strip()
-    low = err.lower()
-    if any(p in low for p in _AUTH_FAIL_PATTERNS):
-        code, reachable, authenticated = "auth_failed", True, False
-    elif any(p in low for p in _UNREACHABLE_PATTERNS):
-        code, reachable, authenticated = "unreachable", False, None
-    else:
-        code, reachable, authenticated = "git_error", True, None
-    last_line = err.splitlines()[-1] if err else "git command failed"
-    return {
-        "reachable": reachable,
-        "authenticated": authenticated,
-        "remote_default_branch": None,
-        "base_branch_exists": None,
-        "elapsed_ms": elapsed_ms,
-        "failure": {"code": code, "message": last_line},
-    }
 
 
 # ── Worktree provisioning (L0006 §2.4 — hooks H1/H2) ─────────────────────────
@@ -585,751 +483,90 @@ def _classify_worktree_dir(base_root: Path, wt_path: Path) -> str:
     return "live" if resolved in live else "orphan"
 
 
-def _force_rmtree(path: Path) -> bool:
-    """Delete a directory tree that git could not, best-effort. True when gone.
-
-    Used for orphan slots only (a path git refuses to own). Read-only files are a
-    normal Windows leftover — clear the attribute and retry rather than aborting
-    the whole sweep on one file, which is exactly how the corpse trees were born."""
-
-    def _retry(func, target, _exc):
-        try:
-            os.chmod(target, stat.S_IWRITE)
-            func(target)
-        except Exception:
-            _log.debug("rmtree could not remove %s", target, exc_info=True)
-
-    try:
-        # `onerror` is deprecated since 3.12 in favour of `onexc`; the runtime is
-        # already on 3.14, so prefer the supported hook and keep the old one as a
-        # fallback rather than letting a removed kwarg fail the whole teardown.
-        if sys.version_info >= (3, 12):
-            shutil.rmtree(path, onexc=_retry)
-        else:
-            shutil.rmtree(path, onerror=_retry)
-    except Exception:
-        _log.warning("rmtree failed for %s", path, exc_info=True)
-    return not path.exists()
 
 
 # ── Base-slot provisioning: lossless adopt + attempt ledger (0161 L0005) ─────
 
-def _judge_base_slot(base_root: Path, base_branch: str) -> str:
-    """'empty' | 'occupied' | 'checkout' — L0005 §2.1.
-
-    Completion criterion: refs/heads/{base_branch} exists AND no pending-adopt
-    marker. Partial debris (.git without the branch, or a leftover marker)
-    reports 'occupied' so a re-run resumes the adopt sequence.
-    """
-    try:
-        if not base_root.exists() or not any(base_root.iterdir()):
-            return "empty"
-    except OSError:
-        return "empty"
-    if (base_root / ADOPT_PENDING_MARKER).exists():
-        return "occupied"
-    if (base_root / ".git").exists():
-        if not git_available():
-            return "checkout"  # informational approximation; execution paths fail precisely
-        proc = _run_git(
-            ["rev-parse", "--verify", "--quiet", f"refs/heads/{base_branch}"],
-            cwd=base_root,
-        )
-        if proc.returncode == 0:
-            return "checkout"
-    return "occupied"
-
-
-def _record_attempt(
-    project_id: str,
-    result: str,
-    reason: Optional[str],
-    trigger: str,
-    mode: str,
-    *,
-    snapshot_commit: Optional[str] = None,
-    snapshot_at: Optional[str] = None,
-) -> None:
-    """Best-effort per-project last-attempt ledger (L0005 §2.5 — KV, no DDL).
-
-    Reasons derived from git stderr arrive here already _scrub-masked (the
-    runner scrubs before returning) — the plaintext secret never lands in the DB.
-    """
-    record = {
-        "result": result,
-        "reason": reason,
-        "trigger": trigger,
-        "at": now_iso(),
-        "mode": mode,
-        "snapshot_commit": snapshot_commit,
-        "snapshot_at": snapshot_at,
-    }
-    try:
-        db_settings.set_value(
-            ATTEMPT_RECORD_KEY.format(project_id=project_id),
-            json.dumps(record, ensure_ascii=False),
-            value_type="json",
-            description="git provision last attempt",
-        )
-    except Exception:
-        _log.warning("git provision attempt record failed for %s", project_id, exc_info=True)
-
-
-def _load_attempt_record(project_id: str) -> Optional[dict]:
-    try:
-        row = db_settings.get(ATTEMPT_RECORD_KEY.format(project_id=project_id))
-        if row is None or not row.get("setting_value"):
-            return None
-        record = json.loads(row["setting_value"])
-        return record if isinstance(record, dict) else None
-    except Exception:
-        # Broken JSON behaves like "no record" (DB0006 §5); next attempt overwrites.
-        _log.warning("git provision attempt record unreadable for %s", project_id, exc_info=True)
-        return None
-
-
-def _provision_failed(proc: subprocess.CompletedProcess) -> dict:
-    return {
-        "status": "failed", "reason": _last_line(proc.stderr),
-        "snapshot_commit": None, "snapshot_at": None,
-    }
-
-
-def _adopt(
-    base_root: Path,
-    base_branch: str,
-    repo_url: str,
-    username: Optional[str],
-    secret: str,
-    project_id: str,
-) -> dict:
-    """Turn an occupied slot into a repository WITHOUT touching any existing
-    file (L0005 §2.3). Every step is check-then-act, so a run interrupted at
-    any point (auth failure, timeout) resumes to completion on the next call.
-    Forced-checkout class commands (checkout -f / reset --hard / clean / stash)
-    are banned on this path by design (DS0002).
-    """
-    # 1. repository skeleton — working files untouched
-    if not (base_root / ".git").exists():
-        proc = _run_git(["init"], cwd=base_root)
-        if proc.returncode != 0:
-            return _provision_failed(proc)
-    marker = base_root / ADOPT_PENDING_MARKER
-    try:
-        marker.touch()
-    except OSError as exc:
-        return {"status": "failed", "reason": f"adopt marker unwritable: {exc}",
-                "snapshot_commit": None, "snapshot_at": None}
-
-    # 2. remote wiring (re-entry: sync the URL only)
-    proc = _run_git(["remote", "get-url", "origin"], cwd=base_root)
-    if proc.returncode != 0:
-        proc = _run_git(["remote", "add", "origin", repo_url], cwd=base_root)
-    elif (proc.stdout or "").strip() != repo_url:
-        proc = _run_git(["remote", "set-url", "origin", repo_url], cwd=base_root)
-    if proc.returncode != 0:
-        return _provision_failed(proc)
-
-    # 3. fetch — the most likely failure point; debris stays for re-entry
-    proc = _run_git(
-        ["fetch", "origin"],
-        cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
-    )
-    if proc.returncode != 0:
-        return _provision_failed(proc)
-
-    # 4. establish the base branch without a checkout (working tree untouched)
-    proc = _run_git(["symbolic-ref", "HEAD", f"refs/heads/{base_branch}"], cwd=base_root)
-    if proc.returncode != 0:
-        return _provision_failed(proc)
-    if _ref_exists(base_root, f"refs/remotes/origin/{base_branch}"):
-        # --mixed moves the branch ref and index only; files stay byte-identical
-        proc = _run_git(
-            ["reset", "--mixed", f"refs/remotes/origin/{base_branch}"], cwd=base_root
-        )
-        if proc.returncode != 0:
-            return _provision_failed(proc)
-    # else: remote has no base branch (empty repository) — the branch stays
-    # unborn and the snapshot below becomes its first commit.
-
-    # 5. absorb the local↔remote difference
-    return _absorb_snapshot(base_root, base_branch, project_id)
-
-
-def _absorb_snapshot(base_root: Path, base_branch: str, project_id: str) -> dict:
-    """Commit the local↔remote difference on the base branch (L0005 §2.4).
-
-    After the mixed reset the working tree is the local original and the index
-    is the remote tree. Remote-only files show as worktree deletions and MUST
-    be restored first — otherwise the snapshot would record them as deletions
-    and a later finalize push would erase them remotely.
-    """
-    proc = _run_git(["status", "--porcelain", "-z"], cwd=base_root)
-    if proc.returncode != 0:
-        return _provision_failed(proc)
-    for entry in (proc.stdout or "").split("\0"):
-        if len(entry) >= 4 and entry[1] == "D" and entry[2] == " ":
-            restore = _run_git(["checkout", "--", entry[3:]], cwd=base_root)
-            if restore.returncode != 0:
-                # e.g. path-type conflict — stop with all data intact (no auto-fix)
-                return _provision_failed(restore)
-
-    snapshot_commit: Optional[str] = None
-    snapshot_at: Optional[str] = None
-    proc = _run_git(["status", "--porcelain"], cwd=base_root)
-    if proc.returncode != 0:
-        return _provision_failed(proc)
-    if (proc.stdout or "").strip():
-        proc = _run_git(["add", "-A"], cwd=base_root)  # .gitignore is honored
-        if proc.returncode != 0:
-            return _provision_failed(proc)
-        msg = ADOPT_SNAPSHOT_MSG.format(base_branch=base_branch, project_id=project_id)
-        proc = _run_git(
-            [*_GIT_IDENT, "commit", "-m", msg], cwd=base_root,
-            author_env=_author_env_for(project_id),
-        )
-        if proc.returncode != 0:
-            return _provision_failed(proc)
-        head = _run_git(["rev-parse", "--short", "HEAD"], cwd=base_root)
-        snapshot_commit = (head.stdout or "").strip() or None
-        snapshot_at = now_iso()
-
-    # completion — removing the marker must be the LAST step
-    try:
-        (base_root / ADOPT_PENDING_MARKER).unlink(missing_ok=True)
-    except OSError as exc:
-        return {"status": "failed", "reason": f"adopt marker not removable: {exc}",
-                "snapshot_commit": snapshot_commit, "snapshot_at": snapshot_at}
-    return {"status": "ok", "reason": None,
-            "snapshot_commit": snapshot_commit, "snapshot_at": snapshot_at}
-
-
-def _remote_is_empty(repo_url: str, username: Optional[str], secret: str) -> bool:
-    """True only when the remote is reachable AND advertises no refs at all — a
-    brand-new, never-pushed repository (0313 B0001).
-
-    Deliberately narrow: any error, timeout, or non-empty ref advertisement reads
-    False, so a genuine fetch/auth failure still flows through the normal clone
-    path and surfaces its true reason instead of being masked as "empty".
-    """
-    proc = _run_git(
-        ["ls-remote", repo_url],
-        timeout=GIT_TEST_TIMEOUT_SEC,
-        username=username,
-        secret=secret if secret is not None else "",
-    )
-    return proc.returncode == 0 and not (proc.stdout or "").strip()
-
-
-def _remote_lacks_base_branch(
-    repo_url: str, username: Optional[str], secret: str, base_branch: str
-) -> bool:
-    """True when the remote is reachable AND advertises no ``refs/heads/<base>`` —
-    a superset of `_remote_is_empty` (0318 B0001).
-
-    A fully bare remote is only one way `git clone --branch <base>` can fatal with
-    "Remote branch <base> not found in upstream origin". The other — common — way is
-    a remote that DOES have refs but not the configured base branch: a default-branch
-    name mismatch (remote `master` vs base `main`, or the reverse), or a brand-new
-    repository initialized on some other branch. Both leave the base checkout
-    uncreated, so both must route to `_bootstrap_empty_remote` instead of a clone
-    that can never succeed.
-
-    Deliberately narrow like `_remote_is_empty`: any error or timeout reads False so
-    a genuine fetch/auth failure still flows through the normal clone path and
-    surfaces its true reason instead of being masked as "needs bootstrap". The
-    fully-qualified `refs/heads/<base>` pattern matches the base head exactly, so an
-    unrelated branch whose tail happens to be <base> (e.g. `dev/main`) is not a
-    false positive.
-    """
-    proc = _run_git(
-        ["ls-remote", repo_url, f"refs/heads/{base_branch}"],
-        timeout=GIT_TEST_TIMEOUT_SEC,
-        username=username,
-        secret=secret if secret is not None else "",
-    )
-    return proc.returncode == 0 and not (proc.stdout or "").strip()
-
-
-def _bootstrap_empty_remote(
-    base_root: Path,
-    base_branch: str,
-    repo_url: str,
-    username: Optional[str],
-    secret: str,
-    project_id: str,
-) -> dict:
-    """Establish the base checkout for a brand-new EMPTY remote (0313 B0001).
-
-    `git clone --branch <base>` cannot succeed against a repository with no commits
-    and no <base> branch, so a freshly-connected empty remote used to fail
-    provisioning outright — no base checkout, hence no worktrees, no base-commit,
-    no first-push affordance (the whole "can't do anything" report). Here we init
-    the slot, wire origin, and seed a single README.md commit so the base branch is
-    BORN: worktrees get a commit to fork from and status gets a commit to offer as
-    the first push. Nothing is pushed — the seed rides the next finalize's base
-    push, exactly like adopt's snapshot. The `secret` is unused (every step is
-    local); it is accepted only to mirror the adopt/clone signatures.
-    """
-    try:
-        base_root.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        return {"status": "failed", "reason": f"base dir uncreatable: {exc}",
-                "snapshot_commit": None, "snapshot_at": None}
-
-    proc = _run_git(["init", "-b", base_branch, str(base_root)])
-    if proc.returncode != 0:
-        # git < 2.28 has no `init -b`: init, then point the unborn HEAD at the base.
-        proc = _run_git(["init"], cwd=base_root)
-        if proc.returncode != 0:
-            return _provision_failed(proc)
-        proc = _run_git(["symbolic-ref", "HEAD", f"refs/heads/{base_branch}"], cwd=base_root)
-        if proc.returncode != 0:
-            return _provision_failed(proc)
-
-    proc = _run_git(["remote", "add", "origin", repo_url], cwd=base_root)
-    if proc.returncode != 0:
-        return _provision_failed(proc)
-
-    readme = base_root / "README.md"
-    if not readme.exists():
-        try:
-            readme.write_text(f"# {project_id}\n", encoding="utf-8")
-        except OSError as exc:
-            return {"status": "failed", "reason": f"seed file unwritable: {exc}",
-                    "snapshot_commit": None, "snapshot_at": None}
-    proc = _run_git(["add", "--", "README.md"], cwd=base_root)
-    if proc.returncode != 0:
-        return _provision_failed(proc)
-    msg = BOOTSTRAP_SEED_MSG.format(base_branch=base_branch, project_id=project_id)
-    proc = _run_git(
-        [*_GIT_IDENT, "commit", "-m", msg], cwd=base_root,
-        author_env=_author_env_for(project_id),
-    )
-    if proc.returncode != 0:
-        return _provision_failed(proc)
-    head = _run_git(["rev-parse", "--short", "HEAD"], cwd=base_root)
-    return {"status": "ok", "reason": None,
-            "snapshot_commit": (head.stdout or "").strip() or None,
-            "snapshot_at": now_iso()}
-
-
-def _provision_base_locked(cfg: dict, project_id: str, project_name: str, trigger: str) -> dict:
-    """Judge the base slot and establish it (none / clone / adopt) — L0005 §2.2.
-
-    The caller must hold the project git mutex (hook path already does; the
-    manual path acquires it in provision_base).
-    """
-    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-    base_root = src_root(project_name, base_branch)
-    state = _judge_base_slot(base_root, base_branch)
-    if state == "checkout":
-        # idempotent pass-through — the ledger is NOT updated (P0004 scenario 4)
-        return {"status": "ok", "mode": "none", "reason": None,
-                "snapshot_commit": None, "snapshot_at": None}
-
-    mode = "clone" if state == "empty" else "adopt"
-    try:
-        secret = _load_secret_for(cfg) or ""
-    except GitServiceError as exc:
-        result = {"status": "failed", "mode": mode, "reason": exc.code,
-                  "snapshot_commit": None, "snapshot_at": None}
-        _record_attempt(project_id, "failed", exc.code, trigger, mode)
-        return result
-    username = cfg.get("username")
-    repo_url = (cfg.get("repo_url") or "").strip()
-
-    if state == "empty":
-        base_root.parent.mkdir(parents=True, exist_ok=True)
-        if _remote_lacks_base_branch(repo_url, username, secret, base_branch):
-            # 0313/0318 B0001: a remote WITHOUT the base branch cannot be cloned with
-            # `--branch <base>` — the clone dies with "Remote branch <base> not found
-            # in upstream origin", leaving the base checkout uncreated and every
-            # downstream op (worktree/base-commit/first push) blocked. This covers a
-            # fully bare remote (0313) AND one that advertises other refs but no
-            # <base> — e.g. a default-branch name mismatch or a repo initialized on
-            # another branch (0318). Initialize the slot with a seed commit so the
-            # base branch is born, instead of a clone that can never succeed.
-            result = _bootstrap_empty_remote(
-                base_root, base_branch, repo_url, username, secret, project_id
-            )
-        else:
-            proc = _run_git(
-                ["clone", "--branch", base_branch, repo_url, str(base_root)],
-                timeout=GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
-            )
-            if proc.returncode == 0:
-                result = {"status": "ok", "reason": None,
-                          "snapshot_commit": None, "snapshot_at": None}
-            else:
-                result = _provision_failed(proc)
-    else:  # occupied — pre-existing files or partial debris: lossless adopt
-        result = _adopt(base_root, base_branch, repo_url, username, secret, project_id)
-
-    result["mode"] = mode
-    _record_attempt(
-        project_id, result["status"], result["reason"], trigger, mode,
-        snapshot_commit=result["snapshot_commit"], snapshot_at=result["snapshot_at"],
-    )
-    return result
-
-
-def provision_base(project_id: str, trigger: str) -> dict:
-    """Single provisioning entry shared by hooks and the manual API (L0005 §2.2).
-
-    Returns {status, mode, reason, snapshot_commit, snapshot_at}. Provisioning
-    failures are reported results, not exceptions (never-raises contract).
-    """
-    def _blocked(reason: str) -> dict:
-        _record_attempt(project_id, "failed", reason, trigger, "none")
-        return {"status": "failed", "mode": "none", "reason": reason,
-                "snapshot_commit": None, "snapshot_at": None}
-
-    cfg = db_git.get_config(project_id)
-    if cfg is None or not cfg.get("enabled"):
-        # not recorded; the manual route pre-blocks with 409 not_enabled
-        return {"status": "skipped", "mode": "none", "reason": None,
-                "snapshot_commit": None, "snapshot_at": None}
-    project_name = _project_name(project_id)
-    if not project_name:
-        return _blocked("project_name missing")
-    if not git_available():
-        return _blocked("git_unavailable")
-
-    holder = f"op:{uuid.uuid4()}"
-    if not _acquire_lock(project_id, holder):
-        return _blocked("git_busy")
-    try:
-        return _provision_base_locked(cfg, project_id, project_name, trigger)
-    finally:
-        db_git.release_lock(project_id, holder)
-
-
-def provision_view(project_id: str) -> dict:
-    """Status object for GET …/git/provision (P0004) — read-only, no network git."""
-    if db_projects.get_by_id(project_id) is None:
-        raise GitServiceError(404, "not_found", f"project '{project_id}' not found")
-    cfg = db_git.get_config(project_id)
-    if cfg is None or not cfg.get("enabled"):
-        return {"configured": False, "enabled": False, "base_branch": None,
-                "base_path_state": "empty", "base_checkout_exists": False,
-                "adopt_snapshot": None, "last_attempt": None}
-
-    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-    project_name = _project_name(project_id)
-    base_root = src_root(project_name, base_branch) if project_name else None
-    state = _judge_base_slot(base_root, base_branch) if base_root else "occupied"
-
-    record = _load_attempt_record(project_id)
-    snapshot = None
-    if record and record.get("snapshot_commit"):
-        snapshot = {"commit": record["snapshot_commit"],
-                    "committed_at": record.get("snapshot_at")}
-        if base_root and (base_root / ".git").exists() and git_available():
-            proc = _run_git(
-                ["merge-base", "--is-ancestor", record["snapshot_commit"],
-                 f"refs/remotes/origin/{base_branch}"],
-                cwd=base_root,
-            )
-            if proc.returncode == 0:
-                snapshot = None  # already reached the remote — hide it
-            # exit 1 (not yet pushed) or indeterminate: keep the recorded value
-
-    last_attempt = None
-    if record is not None:
-        last_attempt = {"result": record.get("result"), "reason": record.get("reason"),
-                        "trigger": record.get("trigger"), "at": record.get("at")}
-    return {"configured": True, "enabled": True, "base_branch": base_branch,
-            "base_path_state": state, "base_checkout_exists": state == "checkout",
-            "adopt_snapshot": snapshot, "last_attempt": last_attempt}
-
-
-def provision_manual(project_id: str) -> dict:
-    """POST …/git/provision — synchronous manual run (P0004 scenarios 2~8)."""
-    if db_projects.get_by_id(project_id) is None:
-        raise GitServiceError(404, "not_found", f"project '{project_id}' not found")
-    cfg = db_git.get_config(project_id)
-    if cfg is None or not cfg.get("enabled"):
-        raise GitServiceError(
-            409, "not_enabled",
-            f"git integration is not enabled for project '{project_id}'",
-        )
-    result = provision_base(project_id, "manual")
-    return {"ok": True, "result": {
-        "status": result["status"],
-        "mode": result["mode"],
-        "reason": result["reason"],
-        "provision": provision_view(project_id),
-    }}
-
-
-def ensure_worktree(
-    project_id: str, module: str, group_id: str, trigger: str = "remote_access",
-    start_point: Optional[str] = None,
-) -> str:
-    """Create/guarantee the group's branch + worktree. Idempotent; never raises.
-
-    Returns 'skipped' | 'ok' | 'failed'. A failure only emits git_worktree_failed —
-    the workflow itself proceeds on the fallback source path (P0005 §4-2).
-    """
-    try:
-        cfg = db_git.get_config(project_id)
-        if cfg is None or not cfg.get("enabled"):
-            return "skipped"  # non-integrated project: strictly no-op
-        project_name = _project_name(project_id)
-        if not project_name:
-            _record_attempt(project_id, "failed", "project_name missing", trigger, "none")
-            _fail_worktree(project_id, group_id, None, "project_name missing")
-            return "failed"
-        try:
-            branch = worktree_branch_name(project_id, module or _module_of(group_id), group_id)
-        except GitServiceError as exc:
-            _fail_worktree(project_id, group_id, None, exc.code)  # E9
-            return "failed"
-        if not git_available():
-            _record_attempt(project_id, "failed", "git_unavailable", trigger, "none")
-            _fail_worktree(project_id, group_id, branch, "git_unavailable")  # E1
-            return "failed"
-
-        holder = f"op:{uuid.uuid4()}"
-        if not _acquire_lock(project_id, holder):
-            _record_attempt(project_id, "failed", "git_busy", trigger, "none")
-            _fail_worktree(project_id, group_id, branch, "git_busy")  # E11
-            return "failed"
-        try:
-            return _ensure_worktree_locked(
-                cfg, project_id, project_name, group_id, branch, trigger, start_point,
-            )
-        finally:
-            db_git.release_lock(project_id, holder)
-    except Exception as exc:  # noqa: BLE001 — the hook must never break its caller
-        _log.warning("ensure_worktree failed for %s", group_id, exc_info=True)
-        try:
-            _fail_worktree(project_id, group_id, None, _scrub(str(exc)))
-        except Exception:
-            pass
-        return "failed"
-
-
-def _ensure_worktree_locked(
-    cfg: dict, project_id: str, project_name: str, group_id: str, branch: str,
-    trigger: str = "remote_access", start_point: Optional[str] = None,
-) -> str:
-    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-    base_root = src_root(project_name, base_branch)
-    wt_path = src_root(project_name, branch)
-    username = cfg.get("username")
-    secret = _load_secret_for(cfg) or ""
-
-    # Base checkout: clone (empty slot) or lossless adopt (occupied slot) —
-    # 0161 replaces the old clone-only path that died with E7 base_path_occupied.
-    provision = _provision_base_locked(cfg, project_id, project_name, trigger)
-    if provision["status"] == "failed":
-        _fail_worktree(project_id, group_id, branch, provision["reason"] or "git_error")
-        return "failed"
-
-    # Idempotence: ledger says the worktree exists and the directory is present.
-    state = db_git.get_state(group_id)
-    if (
-        state is not None
-        and state.get("worktree_registered")
-        and state.get("branch") == branch
-        and wt_path.is_dir()
-        # 0287 NR0004 §5.1: `is_dir()` alone declared a half-deleted corpse "ready"
-        # and returned ok — no re-provisioning, and a git_worktree_ready event for
-        # a tree that no longer holds the source.
-        and _worktree_link_ok(wt_path)
-    ):
-        if start_point and not _commits_present(wt_path, [start_point]):
-            _fail_worktree(project_id, group_id, branch, "terminal_commit_absent")
-            return "failed"
-        db_git.clear_provision_failure(group_id)   # a stale marker must not linger (L §2.4)
-        _emit_worktree_ready(
-            project_id, group_id, branch, base_branch, wt_path,
-            created=False, base_root=base_root,
-        )
-        return "ok"
-
-    if wt_path.exists():
-        # Unregistered directory squatting on the slot (E7): never delete automatically.
-        _fail_worktree(project_id, group_id, branch, "worktree_path_occupied")
-        return "failed"
-
-    proc = _run_git(
-        ["fetch", "origin"],
-        cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
-    )
-    if proc.returncode != 0:
-        _fail_worktree(project_id, group_id, branch, proc.stderr.strip())
-        return "failed"
-
-    # Terminal reopen supplies C1 explicitly.  Never silently fall back to base HEAD:
-    # pushed-but-unmerged content normally is not in the configured base yet.
-    if start_point:
-        present = _run_git(["cat-file", "-e", f"{start_point}^{{commit}}"], cwd=base_root)
-        if present.returncode != 0:
-            _fail_worktree(project_id, group_id, branch, "terminal_commit_absent")
-            return "failed"
-        if _ref_exists(base_root, f"refs/heads/{branch}"):
-            contains = _run_git(["merge-base", "--is-ancestor", start_point, branch], cwd=base_root)
-            if contains.returncode != 0:
-                _fail_worktree(project_id, group_id, branch, "terminal_branch_mismatch")
-                return "failed"
-            proc = _run_git(["worktree", "add", str(wt_path), branch], cwd=base_root)
-        elif _ref_exists(base_root, f"refs/remotes/origin/{branch}"):
-            contains = _run_git(
-                ["merge-base", "--is-ancestor", start_point, f"origin/{branch}"], cwd=base_root,
-            )
-            if contains.returncode != 0:
-                _fail_worktree(project_id, group_id, branch, "terminal_branch_mismatch")
-                return "failed"
-            proc = _run_git(
-                ["worktree", "add", "--track", "-b", branch, str(wt_path), f"origin/{branch}"],
-                cwd=base_root,
-            )
-        else:
-            # T0007 §4 condition 1 — re-provisioning from bare C1 would silently
-            # drop any base commit made after C1 was merged (base B1 = B0+C1 may
-            # already have moved on to B2). C1 is an ancestor of the current base
-            # tip whenever the merge that terminalized it actually landed, so fork
-            # from that tip instead — C1's content stays in history either way.
-            # If the tip does NOT contain C1, this base/history relationship
-            # cannot be trusted; fail closed rather than guess (T0007 §11).
-            base_tip = _worktree_start_point(base_root, base_branch)
-            contains_c1 = _run_git(
-                ["merge-base", "--is-ancestor", start_point, base_tip], cwd=base_root,
-            )
-            if contains_c1.returncode != 0:
-                _fail_worktree(project_id, group_id, branch, "terminal_base_diverged")
-                return "failed"
-            proc = _run_git(["worktree", "add", "-b", branch, str(wt_path), base_tip], cwd=base_root)
-    elif _ref_exists(base_root, f"refs/heads/{branch}"):
-        proc = _run_git(["worktree", "add", str(wt_path), branch], cwd=base_root)
-    elif _ref_exists(base_root, f"refs/remotes/origin/{branch}"):
-        # Reconnect to the group's existing remote branch (restart survival).
-        proc = _run_git(
-            ["worktree", "add", "--track", "-b", branch, str(wt_path), f"origin/{branch}"],
-            cwd=base_root,
-        )
-    else:
-        proc = _run_git(
-            ["worktree", "add", "-b", branch, str(wt_path),
-             _worktree_start_point(base_root, base_branch)],
-            cwd=base_root,
-        )
-    if proc.returncode != 0:
-        _fail_worktree(project_id, group_id, branch, proc.stderr.strip())
-        return "failed"
-
-    db_git.register_worktree(group_id, project_id, branch)
-    db_git.clear_provision_failure(group_id)   # success clears the failure marker (L §2.4)
-    _emit_worktree_ready(
-        project_id, group_id, branch, base_branch, wt_path,
-        created=True, base_root=base_root,
-    )
-    return "ok"
-
-
-def _worktree_start_point(base_root: Path, base_branch: str) -> str:
-    """Where a brand-new group branch forks from.
-
-    Historically always `origin/<base>` when that ref existed, so a group always
-    started from the newest published state. But `base_commit` deliberately does
-    NOT push (its commit rides along on the next finalize's base push), so a
-    locally committed file stayed absent from every worktree created afterwards —
-    i.e. "commit it and the agent can see it" was still false even *after* 0296
-    T0004 gave the operator a way to commit untracked files. The whole fix would
-    have stopped one step short.
-
-    So: prefer the LOCAL base branch whenever it already contains everything
-    origin has (fast-forward-ahead or equal) — it is then strictly the newer of
-    the two and loses nothing. Only when origin is ahead or the two have
-    diverged does `origin/<base>` win, preserving the original intent; a genuine
-    divergence is the E4 `base_diverged` condition and stays finalize's problem,
-    not this function's.
-    """
-    remote = f"origin/{base_branch}"
-    if not _ref_exists(base_root, f"refs/remotes/{remote}"):
-        return base_branch
-    if not _ref_exists(base_root, f"refs/heads/{base_branch}"):
-        return remote
-    contains = _run_git(["merge-base", "--is-ancestor", remote, base_branch], cwd=base_root)
-    return base_branch if contains.returncode == 0 else remote
-
-
-def _emit_worktree_ready(
-    project_id: str, group_id: str, branch: str, base_branch: str, wt_path: Path, *,
-    created: bool, base_root: Optional[Path] = None,
-) -> None:
-    try:
-        rel = wt_path.relative_to(get_storage_root()).as_posix()
-    except Exception:
-        rel = str(wt_path)
-    payload = {
-        "project": project_id,
-        "group_id": group_id,
-        "branch": branch,
-        "base_branch": base_branch,
-        "worktree_path": rel,
-        "created": created,
-    }
-    # 0296 T0004 (NR0003 R3): `worktree add` checks out a COMMIT, so whatever is
-    # sitting uncommitted in the base checkout does not exist in the tree the
-    # workers read (NR §C1). That isolation is correct and stays — but the
-    # operator learns about it, today, only by watching an agent claim a file is
-    # missing. Ship the count at the moment the worktree appears so the UI can
-    # warn up front. Advisory only: never let it fail the provisioning.
-    try:
-        if base_root is not None:
-            untracked = _untracked_files(base_root)
-            if untracked:
-                payload["base_untracked_count"] = len(untracked)
-                payload["base_untracked"] = untracked[:20]
-    except Exception:
-        _log.warning("worktree-ready untracked probe failed for %s", group_id, exc_info=True)
-    _emit("git_worktree_ready", project_id, group_id, payload)
-
-
-def _emit_worktree_failed(
-    project_id: str, group_id: str, branch: Optional[str], error: str
-) -> None:
-    _emit("git_worktree_failed", project_id, group_id, {
-        "project": project_id,
-        "group_id": group_id,
-        "branch": branch,
-        "error": error,
-    })
-
-
-def _fail_worktree(
-    project_id: str, group_id: str, branch: Optional[str], error: str
-) -> None:
-    """Persist the provisioning failure (0205 L §2.4) then emit the live SSE.
-
-    The persistent record lets the status query resurface the failure long after
-    the one-shot SSE is gone (P scenario 4) — a worker without a slot no longer
-    fails silently. Persistence is best-effort so a bookkeeping error never
-    swallows the operator-facing SSE."""
-    try:
-        db_git.upsert_provision_failure(group_id, project_id, branch or "", error)
-    except Exception:
-        _log.warning("record provision failure failed for %s", group_id, exc_info=True)
-    _emit_worktree_failed(project_id, group_id, branch, error)
-
-
-def ensure_worktree_async(project_id: str, module: str, group_id: str) -> None:
-    """H1 wrapper: run provisioning off the request thread (clone can be slow).
-
-    The decide response must not wait on network git; H2 (worker-token grant
-    creation) re-guarantees the worktree before any source access anyway.
-    """
-    import threading
-
-    threading.Thread(
-        target=ensure_worktree,
-        args=(project_id, module, group_id, "workflow_decide"),
-        daemon=True,
-    ).start()
+from .git.base_slot import (
+    _judge_base_slot,
+    _record_attempt,
+    _load_attempt_record,
+    _provision_failed,
+    _adopt,
+    _absorb_snapshot,
+    _remote_is_empty,
+    _remote_lacks_base_branch,
+    _bootstrap_empty_remote,
+    _provision_base_locked,
+    provision_base,
+    provision_view,
+    provision_manual,
+    manual_fetch,
+    default_base_commit_message,
+    _require_base_checkout,
+    _base_commit_locked,
+    base_commit,
+    _base_revert_locked,
+    base_revert,
+    base_remove,
+)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+from .git.worktree import (
+    BRANCH_MAX_LEN,
+    GIT_WORKTREE_RM_TIMEOUT_SEC,
+    sanitize_branch,
+    worktree_branch_name,
+    _force_rmtree,
+    ensure_worktree,
+    _ensure_worktree_locked,
+    _worktree_start_point,
+    _emit_worktree_ready,
+    _emit_worktree_failed,
+    _fail_worktree,
+    ensure_worktree_async,
+    _has_legacy_source_history,
+    ensure_initial_group_source_sync,
+    _is_group_disposed,
+    _abort_disposed_merge_session,
+    _cleanup_group_slot,
+)
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # ── Initial group source sync (flowgate.default.0511 T0004 / NR0003 v5) ──────
@@ -1346,137 +583,8 @@ def ensure_worktree_async(project_id: str, module: str, group_id: str) -> None:
 # permission (kind_for_step's own docstring: "Source mode gates advertising
 # only, never permission").
 
-def _has_legacy_source_history(group_id: str) -> bool:
-    """Trustworthy evidence this group already did real source work before this
-    marker existed (T0004 SS16-19/SS24-25: a false-positive SKIP is preferable to
-    destroying prior work). A tr_commit_ledger row -- live OR canceled -- proves a
-    TR actually committed source under this group at some point; canceled still
-    counts because the commit genuinely happened (FlowGate never erases
-    history -- a cancel only records a revert on top of it, D0005).
-
-    A lookup failure is itself ambiguous evidence and is read the same way
-    (T0004 SS19: safety first, never destructively reset on an unclear signal).
-    """
-    try:
-        return bool(db_tr_ledger.commit_rows_by_group(group_id))
-    except Exception:
-        _log.warning("legacy source history probe failed for %s", group_id, exc_info=True)
-        return True
 
 
-def ensure_initial_group_source_sync(project_id: str, module: str, group_id: str) -> dict:
-    """One-time, forced reset --hard + clean -fd of the group worktree to
-    the current configured base-branch HEAD (flowgate.default.0511 T0004).
-
-    module is accepted only for call-site symmetry with ensure_worktree()
-    -- the branch this function acts on always comes from db_git.get_state().
-
-    Never raises (same contract as ensure_worktree): every failure mode
-    comes back as performed=False with a reason, and the caller decides
-    which reasons are a safe no-op (git disabled, already synced, legacy
-    history) versus which must block the run (T0004 SS26-28/SS34 -- a verify
-    failure or a marker-write failure must never let the worker launch against
-    an unconfirmed tree).
-
-    Returns {"performed": bool, "reason": str, "sha": Optional[str]}.
-    """
-    # A config lookup failure must not block a run (same contract as
-    # _require_group_worktree's own get_config try/except above): an unreadable
-    # config reads as "not integrated", never as license to hold the AI run hostage.
-    try:
-        cfg = db_git.get_config(project_id)
-    except Exception:
-        _log.warning("initial source sync: config lookup failed for %s", group_id, exc_info=True)
-        return {"performed": False, "reason": "config_lookup_failed", "sha": None}
-    if cfg is None or not cfg.get("enabled"):
-        return {"performed": False, "reason": "git_disabled", "sha": None}
-
-    try:
-        # Precheck OUTSIDE the lock (T0004 SS23/SS25.12): the common case -- a group
-        # long past its first sync -- never waits on the mutex at all.
-        state = db_git.get_state(group_id)
-        if state is not None and state.get("initial_source_sync_at"):
-            return {"performed": False, "reason": "already_synced", "sha": None}
-
-        project_name = _project_name(project_id)
-        if not project_name:
-            return {"performed": False, "reason": "project_name_missing", "sha": None}
-
-        holder = f"initial_sync:{uuid.uuid4()}"
-        if not _acquire_lock(project_id, holder):
-            return {"performed": False, "reason": "git_busy", "sha": None}
-        try:
-            # Marker recheck INSIDE the lock -- the second half of the race guard a
-            # concurrent first-read pair needs to land exactly one destructive sync.
-            state = db_git.get_state(group_id)
-            if state is not None and state.get("initial_source_sync_at"):
-                return {"performed": False, "reason": "already_synced", "sha": None}
-            if state is None or not state.get("worktree_registered"):
-                return {"performed": False, "reason": "worktree_missing", "sha": None}
-            branch = (state.get("branch") or "").strip()
-            if not branch:
-                return {"performed": False, "reason": "worktree_missing", "sha": None}
-            wt_path = src_root(project_name, branch)
-            if not wt_path.is_dir():
-                return {"performed": False, "reason": "worktree_missing", "sha": None}
-
-            if _has_legacy_source_history(group_id):
-                # T0004 SS18: safe backfill, never a destructive reset -- the group
-                # already has real source work; this only stops future invocations
-                # from re-running this same legacy check.
-                head_proc = _run_git(["rev-parse", "HEAD"], cwd=wt_path)
-                legacy_sha = head_proc.stdout.strip() if head_proc.returncode == 0 else None
-                try:
-                    db_git.set_initial_source_sync(group_id, legacy_sha)
-                except Exception:
-                    _log.warning(
-                        "legacy source sync backfill failed for %s", group_id, exc_info=True,
-                    )
-                    return {"performed": False, "reason": "marker_persist_failed", "sha": None}
-                return {"performed": False, "reason": "legacy_source_history", "sha": legacy_sha}
-
-            base_branch = base_branch_for(project_id) or "main"
-            base_root = src_root(project_name, base_branch)
-            head_proc = _run_git(["rev-parse", "HEAD"], cwd=base_root)
-            if head_proc.returncode != 0:
-                return {"performed": False, "reason": "reset_failed", "sha": None}
-            base_sha = head_proc.stdout.strip()
-
-            reset_proc = _run_git(
-                ["reset", "--hard", base_sha], cwd=wt_path, timeout=GIT_LOCAL_TIMEOUT_SEC,
-            )
-            if reset_proc.returncode != 0:
-                return {"performed": False, "reason": "reset_failed", "sha": None}
-            # T0004 SS25: -fd only, never -x -- ignored files are not this
-            # feature's business, the same restraint the existing worktree-clean
-            # paths use.
-            clean_proc = _run_git(
-                ["clean", "-fd"], cwd=wt_path, timeout=GIT_LOCAL_TIMEOUT_SEC,
-            )
-            if clean_proc.returncode != 0:
-                return {"performed": False, "reason": "reset_failed", "sha": None}
-
-            verify_proc = _run_git(["rev-parse", "HEAD"], cwd=wt_path)
-            if verify_proc.returncode != 0 or verify_proc.stdout.strip() != base_sha:
-                return {"performed": False, "reason": "head_mismatch", "sha": None}
-
-            try:
-                db_git.set_initial_source_sync(group_id, base_sha)
-            except Exception:
-                _log.warning(
-                    "initial source sync marker persist failed for %s", group_id, exc_info=True,
-                )
-                return {"performed": False, "reason": "marker_persist_failed", "sha": None}
-
-            _emit("git_initial_source_sync", project_id, group_id, {
-                "project": project_id, "group_id": group_id, "branch": branch, "sha": base_sha,
-            })
-            return {"performed": True, "reason": "ok", "sha": base_sha}
-        finally:
-            db_git.release_lock(project_id, holder)
-    except Exception:
-        _log.warning("ensure_initial_group_source_sync failed for %s", group_id, exc_info=True)
-        return {"performed": False, "reason": "error", "sha": None}
 
 
 # ── Effective source-root resolution (L0006 §2.2·§4.1) ───────────────────────
@@ -3019,45 +2127,6 @@ def abort_tr_conflict(group_id: str, merge_id: int) -> dict:
     }
 
 
-def base_checkout_dirty_status(project_id: str) -> dict:
-    """Lightweight base-checkout dirty status for the file-editor save response
-    (flowgate.default.0176 T0010 §a).
-
-    A src-content save writes straight into the base checkout by design (an admin
-    edit), which leaves the base dirty and — via the E3 guard — blocks merge
-    finalize for EVERY group of the project. The editor calls this right after a
-    save so the contamination is visible immediately instead of surfacing later as
-    a bare finalize 500. `dirty`/`files` scope matches the guard exactly:
-    tracked-file changes only (`include_untracked=False`).
-
-    `untracked` is a SEPARATE field (0296 T0004 / NR0003 R1) and is NOT reflected
-    in `dirty`: a brand-new file blocks nothing, but it is invisible to every
-    worker until committed (the group worktree is built from a commit — NR §C1),
-    so the editor needs to name it without the guard treating it as contamination.
-
-    Never raises: the file write already succeeded, so a git-disabled project, a
-    missing base checkout, or any git failure all yield a benign
-    {"enabled": ..., "dirty": False, "files": [], "untracked": []} — status is
-    advisory and must not turn a saved file into an error.
-    """
-    empty = {"enabled": False, "dirty": False, "files": [], "untracked": []}
-    try:
-        cfg = db_git.get_config(project_id)
-        if cfg is None or not cfg.get("enabled"):
-            return dict(empty)
-        base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-        project_name = _project_name(project_id)
-        base_root = src_root(project_name, base_branch) if project_name else None
-        if base_root is None or not Path(base_root).is_dir():
-            return {**empty, "enabled": True}
-        files = _dirty_files(base_root, include_untracked=False)
-        return {
-            "enabled": True, "dirty": bool(files), "files": files,
-            "untracked": _untracked_files(base_root),
-        }
-    except Exception:
-        _log.warning("base_checkout_dirty_status failed for %s", project_id, exc_info=True)
-        return dict(empty)
 
 
 def update_from_base(group_id: str) -> dict:
@@ -5917,286 +4986,14 @@ def reconcile_due_merge_review_sessions(trigger: str) -> None:
 # now runs best-effort right after a finalize reaches merged/pushed, plus a
 # manual backlog sweep for everything that piled up before this landed.
 
-def _is_group_disposed(group_id: str) -> bool:
-    """Whether the group has been disposed (terminal DC discard). Lazy import to
-    avoid a process_service ↔ git_service import cycle; fail-closed on error so a
-    lookup failure never force-deletes a live group's branch."""
-    try:
-        from modules.flow_gate import process_service
-        return bool(process_service.is_group_disposed(group_id))
-    except Exception:
-        return False
 
 
-def _abort_disposed_merge_session(project_id: str, group_id: str, base_root: Path) -> None:
-    """Abort an in-progress merge for a disposed group and release its merge lock.
-
-    A group discarded mid-conflict still owns an open git_merge_session and holds
-    the project lock as ``merge:{merge_id}``. Abort the merge (clears the base
-    checkout's MERGE_HEAD/index), close the session, and release that lock so slot
-    teardown can proceed. Best-effort; idempotent (no open session → no-op)."""
-    try:
-        session = db_git.get_open_session_by_group(group_id)
-        if session is None:
-            return
-        if (base_root / ".git" / "MERGE_HEAD").exists():
-            _run_git(["merge", "--abort"], cwd=base_root)
-        merge_id = session.get("merge_id")
-        if merge_id is not None:
-            db_git.close_session(int(merge_id), "aborted")
-            db_git.release_lock(project_id, f"merge:{merge_id}")
-    except Exception:
-        _log.warning("disposed merge-session abort failed for %s", group_id, exc_info=True)
 
 
-def cleanup_disposed_group(project_id: str, group_id: str) -> dict:
-    """Tear down a DISPOSED group's git leftovers (worktree dir + local work branch
-    + ledger registration). Called right after dispose_group succeeds.
-
-    dispose_group itself never touches git, so without this the discarded group's
-    entire source-tree worktree copy, its unmerged local branch, and its ledger row
-    all survived — the ledger row also kept the group in the §2 status dropdown as
-    an unselectable ghost. Disposal has ALREADY succeeded when we run, so a git
-    failure must never surface as an error: everything here is best-effort and
-    swallowed. No-op when git integration is off or the group holds no slot."""
-    try:
-        cfg = db_git.get_config(project_id)
-        if cfg is None or not cfg.get("enabled"):
-            return {"ok": True, "cleaned": False, "reason": "git_disabled"}
-        state = db_git.get_state(group_id)
-        if state is None or not state.get("worktree_registered"):
-            return {"ok": True, "cleaned": False, "reason": "no_slot"}
-        if not git_available():
-            return {"ok": True, "cleaned": False, "reason": "git_unavailable"}
-        # A conflict/merging slot holds the project lock as merge:{id}; abort +
-        # release it BEFORE acquiring our own lock (else _acquire_lock times out).
-        project_name = _project_name(project_id)
-        if project_name and (state.get("status") or "none") in ("conflict", "merging"):
-            base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-            _abort_disposed_merge_session(project_id, group_id, src_root(project_name, base_branch))
-        holder = f"dispose:{uuid.uuid4()}"
-        if not _acquire_lock(project_id, holder):
-            return {"ok": False, "cleaned": False, "reason": "git_busy"}
-        try:
-            cleaned = _cleanup_group_slot(project_id, group_id)
-        finally:
-            db_git.release_lock(project_id, holder)
-        # The slot just left the ledger; nudge clients to re-fetch the group
-        # dropdown (the explorer subscribes to git_pending_changed → reload slots).
-        if cleaned:
-            _emit_pending_changed(project_id, group_id, "none")
-        return {"ok": True, "cleaned": cleaned}
-    except Exception:
-        _log.warning("disposed group cleanup failed for %s", group_id, exc_info=True)
-        return {"ok": False, "cleaned": False, "reason": "error"}
 
 
-def _cleanup_group_slot(
-    project_id: str, group_id: str, *, force_discard: bool = False
-) -> bool:
-    """Best-effort removal of one terminal slot's leftovers. Never raises.
-
-    Removes, in order: the worktree directory (`git worktree remove --force` —
-    merged/pushed content already lives in base/origin, and stray build
-    artifacts must not park the leftovers forever), the local work branch, a
-    pre-0172 leftover origin work branch (merged groups only — a PUSHED branch
-    on origin is the user's chosen outcome and is never touched), and finally
-    the ledger registration (status/merge_commit stay as history).
-
-    Scope guard, consistent with E7: only a ledger-registered slot that is in a
-    terminal status (merged/pushed), belongs to a disposed group, OR is being
-    force-discarded (0199 B0001: a no-work group, branch at base) is touched — an
-    unregistered directory is never deleted. A disposed or force-discarded work
-    branch is force-deleted; for a disposed group its unmerged content is
-    intentionally thrown away, and for a no-work group the branch holds no unique
-    commit so nothing is lost, and origin was never pushed. The caller must hold
-    the project git lock. Returns True when the slot ended up unregistered.
-
-    0287 NR0004: the worktree step is three-way, not two-way. A slot whose
-    directory git no longer owns (registration pruned, or the `.git` link
-    destroyed by a delete that was interrupted mid-run) is an ORPHAN: `worktree
-    remove` rejects it on every attempt, so it is pruned + deleted directly and
-    the teardown continues to the branch and the ledger. That does not widen the
-    E7 scope — we are past the gates above, so the ledger itself says this path is
-    THIS group's slot and the group is terminal/disposed/no-work. An undeterminable
-    registration (git unavailable/timed out) still defers rather than deleting.
-    """
-    try:
-        cfg = db_git.get_config(project_id)
-        project_name = _project_name(project_id)
-        if cfg is None or not cfg.get("enabled") or not project_name:
-            return False
-        state = db_git.get_state(group_id)
-        if state is None or not state.get("worktree_registered"):
-            return False
-        status = (state.get("status") or "none")
-        # 0192 T0005 §3: a DISPOSED group's slot is a cleanup target regardless of
-        # status. dispose_group never touched git, and the ledger gate below was
-        # merged/pushed-only, so a discarded group's worktree dir + local work
-        # branch + ledger row survived forever (and the stale row kept polluting
-        # the §2 dropdown). Its work branch is UNMERGED, so it is force-deleted
-        # (-D) — the discarded work is intentionally lost, matching the meaning of
-        # disposal.
-        disposed = _is_group_disposed(group_id)
-        # 0199 B0001: a force-discarded no-work slot is cleaned up exactly like a
-        # disposed one — worktree torn down and the (base-tip, no-unique-commit)
-        # local work branch force-deleted, with NO merge and NO push.
-        if status not in CLEANUP_STATUSES and not disposed and not force_discard:
-            return False
-        branch = (state.get("branch") or "").strip()
-        if not branch:
-            return False
-        base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-        base_root = src_root(project_name, base_branch)
-        if not (base_root / ".git").exists() or not git_available():
-            return False
-        # A disposed group may still hold an in-progress merge session (conflict/
-        # merging): abort it so base checkout's MERGE_HEAD/index are clean before
-        # the worktree teardown, and close the ledger session. Idempotent — a no-op
-        # once the session is already closed (e.g. cleanup_disposed_group aborted it
-        # before taking the lock).
-        if disposed and status in ("conflict", "merging"):
-            _abort_disposed_merge_session(project_id, group_id, base_root)
-        wt_path = src_root(project_name, branch)
-
-        if wt_path.is_dir():
-            # 0287 NR0004 §4: this used to be a two-state branch — directory present
-            # meant "healthy worktree, call remove". The third state (directory
-            # present, git registration missing or destroyed) fell into the remove
-            # path, where git rejects it every single time ("is not a working tree"
-            # / "validation failed … '.git' does not exist"), and the bare
-            # `return False` below then skipped the branch delete AND the ledger
-            # unregister — so the slot could never leave this state. Classify first.
-            kind = _classify_worktree_dir(base_root, wt_path)
-            if kind == "live":
-                proc = _run_git(
-                    ["worktree", "remove", "--force", str(wt_path)],
-                    cwd=base_root, timeout=GIT_WORKTREE_RM_TIMEOUT_SEC,
-                )
-                if proc.returncode != 0 or wt_path.exists():
-                    # A remove that fails HALFWAY leaves an orphan behind (that is
-                    # how B/C above are created), so re-classify instead of giving
-                    # up: if git no longer owns the path, finish the job ourselves.
-                    kind = _classify_worktree_dir(base_root, wt_path)
-                    if kind == "live":
-                        # Still a genuine registered worktree — something outside
-                        # our control blocked it (file lock, permissions). Preserve
-                        # the ledger row so a later sweep retries, as before.
-                        _log.warning(
-                            "worktree remove failed for %s (rc=%s, still registered): %s",
-                            group_id, proc.returncode, _last_line(proc.stderr),
-                        )
-                        return False
-                    _log.warning(
-                        "worktree remove for %s left an orphan directory (rc=%s: %s) — "
-                        "reclaiming it directly",
-                        group_id, proc.returncode, _last_line(proc.stderr),
-                    )
-            if kind == "unknown":
-                # git could not tell us whether the path is registered. Deleting a
-                # possibly-live worktree is the one irreversible mistake here, so
-                # stay conservative and let the next sweep retry.
-                _log.warning(
-                    "worktree registration for %s is undeterminable — cleanup deferred",
-                    group_id,
-                )
-                return False
-            if kind == "orphan" and wt_path.exists():
-                # Orphan: git refuses to own this path, so `worktree remove` can
-                # never clear it. Drop the stale bookkeeping, then delete the
-                # directory ourselves and CONTINUE to the branch/ledger teardown.
-                _run_git(["worktree", "prune"], cwd=base_root)
-                if not _force_rmtree(wt_path):
-                    _log.warning(
-                        "orphan worktree directory for %s could not be removed: %s",
-                        group_id, wt_path,
-                    )
-                    return False
-                _log.info("orphan worktree directory reclaimed for %s: %s", group_id, wt_path)
-        else:
-            # Directory already gone (manual removal) — just drop the stale
-            # worktree bookkeeping so the branch delete below can proceed.
-            _run_git(["worktree", "prune"], cwd=base_root)
-
-        if _ref_exists(base_root, f"refs/heads/{branch}"):
-            if disposed or force_discard:
-                # disposed: unmerged work intentionally thrown away.
-                # force_discard (0199): branch sits at base tip with no unique
-                # commit, so -D loses nothing; origin was never pushed, so no
-                # origin ref to retro-delete below. Force-delete (`-d` refuses).
-                proc = _run_git(["branch", "-D", branch], cwd=base_root)
-            elif status == "merged":
-                proc = _run_git(["branch", "-d", branch], cwd=base_root)
-            elif _ref_exists(base_root, f"refs/remotes/origin/{branch}"):
-                # pushed: origin retains the content, the local ref is disposable.
-                proc = _run_git(["branch", "-D", branch], cwd=base_root)
-            else:
-                proc = None  # pushed but no origin ref visible — keep the local ref
-            if proc is not None and proc.returncode != 0:
-                _log.warning(
-                    "branch delete failed for %s: %s", group_id, _last_line(proc.stderr)
-                )
-
-        if status == "merged" and _ref_exists(base_root, f"refs/remotes/origin/{branch}"):
-            # Work branches pushed before the 0172 fix were never meant to be
-            # published; retro-delete best-effort (failure is not a cleanup failure).
-            _run_git(
-                ["push", "origin", "--delete", branch],
-                cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC,
-                username=cfg.get("username"), secret=_load_secret_for(cfg) or "",
-            )
-
-        db_git.unregister_worktree(group_id)
-        return True
-    except Exception:
-        _log.warning("slot cleanup failed for %s", group_id, exc_info=True)
-        return False
 
 
-def cleanup_terminal_slots(project_id: str) -> dict:
-    """POST …/projects/{id}/git/cleanup — backlog sweep of every registered
-    slot already finalized (merged/pushed) OR belonging to a disposed group.
-    Covers groups finalized/discarded before the per-finalize / per-dispose
-    cleanup existed, and any slot whose immediate cleanup failed. (0192 T0005 §3
-    adds the disposed backlog: one sweep clears every ghost slot left by a group
-    that was discarded before dispose learned to touch git.)"""
-    _require_enabled_config(project_id)
-    if not git_available():
-        raise GitServiceError(
-            500, "git_unavailable",
-            "git binary not found on server (install git in the runtime image)",
-        )
-    holder = f"op:{uuid.uuid4()}"
-    if not _acquire_lock(project_id, holder):
-        raise GitServiceError(
-            409, "git_busy",
-            f"Another git operation is in progress for project '{project_id}' (try again shortly)",
-        )
-    cleaned: list[str] = []
-    failed: list[str] = []
-    pending: list[dict] = []
-    try:
-        for row in db_git.list_states_of_project(project_id):
-            gid = row["group_id"]
-            terminal = (row.get("status") or "none") in CLEANUP_STATUSES
-            if not terminal and not _is_group_disposed(gid):
-                continue
-            # An open TR revert/reapply conflict owns files in this worktree. Cleanup
-            # must not destroy the session; it remains a separately actionable row.
-            if tr_conflict_session(gid) is not None:
-                pending.append({"group_id": gid, "reason": "revert_conflict"})
-                continue
-            if _cleanup_group_slot(project_id, gid):
-                cleaned.append(gid)
-            else:
-                failed.append(gid)
-                pending.append({"group_id": gid, "reason": "teardown_failed"})
-    finally:
-        db_git.release_lock(project_id, holder)
-    status = "ok" if not failed else ("partial" if cleaned else "failed")
-    snapshot = db_terminal_cleanup.put(project_id, status, len(cleaned), pending)
-    return {"ok": True, "result": {"cleaned": cleaned, "failed": failed},
-            "terminal_cleanup": snapshot}
 
 
 def abort_merge(group_id: str, merge_id: int) -> dict:
@@ -6227,620 +5024,56 @@ def abort_merge(group_id: str, merge_id: int) -> dict:
 
 # ── Auto-recovery sweep (flowgate.default.0205 P scenario 6 / L §2.5) ─────────
 
-def _ttl_expired(last: Optional[str]) -> bool:
-    """Whether an activity timestamp is older than MERGE_SESSION_TTL_HOURS."""
-    if not last:
-        return False   # unknown activity → never auto-abort on this basis
-    try:
-        from datetime import datetime, timedelta, timezone
-
-        dt = datetime.fromisoformat(last)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return datetime.now(timezone.utc) - dt >= timedelta(hours=MERGE_SESSION_TTL_HOURS)
-    except Exception:
-        return False
-
-
-def _emit_auto_aborted(project_id: str, group_id: str, merge_id: int, reason: str) -> None:
-    state = db_git.get_state(group_id) or {}
-    _emit("git_merge_auto_aborted", project_id, group_id, {
-        "project": project_id, "group_id": group_id, "merge_id": merge_id,
-        "reason": reason, "branch": state.get("branch"), "branch_preserved": True,
-    })
+from .git.cleanup import (
+    cleanup_disposed_group,
+    cleanup_terminal_slots,
+    _ttl_expired,
+    _emit_auto_aborted,
+    _close_orphan,
+    _auto_abort_session,
+    _sweep_tr_session,
+    _sweep_group_update_session,
+    merge_session_sweep,
+    _start_sweep_daemon,
+    startup_recovery,
+)
 
 
-def _close_orphan(session: dict, project_id: str) -> None:
-    """A session whose base checkout has no MERGE_HEAD — the merge is gone from
-    disk (manual cleanup / crash). Close it and return the group to 'waiting'
-    (0205 L §2.5). branch_preserved: the work branch is untouched."""
-    merge_id = int(session["merge_id"])
-    group_id = session["group_id"]
-    db_git.close_session(merge_id, "aborted")
-    _set_status(group_id, "waiting")
-    db_git.release_lock(project_id, f"merge:{merge_id}")   # legacy leftover, best-effort
-    _emit_auto_aborted(project_id, group_id, merge_id, "orphan_recovered")
 
 
-def _auto_abort_session(
-    session: dict, project_id: str, base_root: Path, reason: str
-) -> None:
-    """Reclaim an abandoned conflict session: git merge --abort (work branch
-    preserved), close it, return the group to 'waiting' (0205 L §2.5).
-
-    Takes a short sweep lock; if the project is busy it simply retries next cycle.
-    If merge --abort fails (e.g. it collides with unrelated local base changes)
-    the session is LEFT intact — a forced reset is never issued, protecting a base
-    checkout that has other groups' work mixed in (the exact 0203 accident)."""
-    merge_id = int(session["merge_id"])
-    group_id = session["group_id"]
-    holder = f"sweep:{uuid.uuid4()}"
-    if not _acquire_lock(project_id, holder):
-        return   # another git op in progress — try again next cycle
-    try:
-        if (base_root / ".git" / "MERGE_HEAD").exists():
-            proc = _run_git(["merge", "--abort"], cwd=base_root)
-            if proc.returncode != 0:
-                _log.warning(
-                    "sweep merge --abort failed for %s (%s) — left intact",
-                    group_id, _last_line(proc.stderr),
-                )
-                return   # never force-reset (L §5)
-        db_git.close_session(merge_id, "aborted")
-        _set_status(group_id, "waiting")
-        db_git.release_lock(project_id, f"merge:{merge_id}")   # legacy leftover, best-effort
-        _emit_auto_aborted(project_id, group_id, merge_id, reason)
-    finally:
-        db_git.release_lock(project_id, holder)
 
 
-def _sweep_tr_session(session: dict, project_id: str) -> None:
-    """The sweep's TR branch (088) — the same two outcomes, read off the group worktree.
-
-    Orphan: the revert is no longer in flight, so somebody finished or unwound it outside
-    FlowGate; close the row and put the group status back where the session found it, or
-    the group would claim a conflict forever. TTL: hand it to the ordinary abort, which is
-    the same restore a person's [give up] press performs.
-    """
-    merge_id = int(session["merge_id"])
-    group_id = session["group_id"]
-    context = db_git.session_context(session)
-    state = db_git.get_state(group_id) or {}
-    project_name = _project_name(project_id)
-    branch = state.get("branch") or context.get("branch")
-    wt_path = src_root(project_name, branch) if (project_name and branch) else None
-    if wt_path is None or not wt_path.is_dir():
-        return   # slot gone — never guess, same rule as the base-checkout branch
-    if not _revert_in_flight(wt_path):
-        db_git.close_session(merge_id, "aborted")
-        _set_status(group_id, context.get("prev_status") or "waiting")
-        _emit_auto_aborted(project_id, group_id, merge_id, "orphan_recovered")
-        return
-    if not _ttl_expired(session.get("touched_at") or session.get("created_at")):
-        return
-    try:
-        abort_tr_conflict(group_id, merge_id)
-    except Exception:
-        _log.warning(
-            "tr conflict session auto-abort failed for merge %s", merge_id, exc_info=True
-        )
-        return
-    _emit_auto_aborted(project_id, group_id, merge_id, "ttl_expired")
 
 
-def _sweep_group_update_session(session: dict, project_id: str) -> None:
-    """Recover a group update against the group worktree without changing its state."""
-    merge_id = int(session["merge_id"])
-    group_id = session["group_id"]
-    context = db_git.session_context(session)
-    state = db_git.get_state(group_id) or {}
-    project_name = _project_name(project_id)
-    branch = state.get("branch") or context.get("branch")
-    root = src_root(project_name, branch) if (project_name and branch) else None
-    if root is None or not root.is_dir():
-        return
-    merge_head = _run_git(["rev-parse", "--verify", "MERGE_HEAD"], cwd=root)
-    if merge_head.returncode != 0:
-        db_git.close_session(merge_id, "aborted")
-        return
-    if not _ttl_expired(session.get("touched_at") or session.get("created_at")):
-        return
-    proc = _run_git(["merge", "--abort"], cwd=root)
-    if proc.returncode == 0:
-        db_git.close_session(merge_id, "aborted")
-        _emit_auto_aborted(project_id, group_id, merge_id, "ttl_expired")
 
 
-def merge_session_sweep() -> None:
-    """Auto-recover abandoned / orphaned conflict sessions (0205 L §2.5).
-
-    For each open session: skip if the base checkout is gone (never guess);
-    close it as an orphan if the merge left no MERGE_HEAD on disk; auto-abort it
-    if it has been quiet past the TTL; otherwise leave it. Best-effort and fully
-    isolated per session so one bad row cannot sink the pass."""
-    try:
-        sessions = db_git.list_open_sessions()
-    except Exception:
-        _log.info("merge session sweep skipped (session table unavailable)", exc_info=True)
-        return
-    for session in sessions:
-        try:
-            group_id = session["group_id"]
-            project_id = _project_of_group(group_id)
-            kind = db_git.session_kind(session)
-            if kind == db_git.SESSION_KIND_GROUP_UPDATE:
-                _sweep_group_update_session(session, project_id)
-                continue
-            if kind in db_git.TR_SESSION_KINDS:
-                # 088 — a TR conflict has no MERGE_HEAD anywhere and does not live in the
-                # base checkout, so every branch below would call it an orphan and close it
-                # while the conflicted revert sat on disk with nothing pointing at it.
-                _sweep_tr_session(session, project_id)
-                continue
-            review_state = db_git.session_context(session).get("review_state")
-            if review_state in (REVIEW_STATE_APPLYING, REVIEW_STATE_RECONCILING):
-                # 0481 T0008: `approve_merge_review` already committed by this point, so
-                # MERGE_HEAD is gone from disk exactly like a normal successful merge —
-                # every branch below would misread that as an orphan and abort a session
-                # that is mid-push or already pushed. This state belongs to
-                # reconcile_push_session, not the orphan/TTL sweep.
-                if review_state == REVIEW_STATE_RECONCILING:
-                    try:
-                        reconcile_push_session(int(session["merge_id"]), trigger="periodic")
-                    except Exception:
-                        _log.warning(
-                            "merge review reconciliation failed for merge_id=%s",
-                            session.get("merge_id"), exc_info=True,
-                        )
-                continue
-            base_root = _base_root_of(project_id)
-            if base_root is None or not (base_root / ".git").exists():
-                continue   # checkout gone — do not touch (log only)
-            if not (base_root / ".git" / "MERGE_HEAD").exists():
-                _close_orphan(session, project_id)
-                continue
-            last = session.get("touched_at") or session.get("created_at")
-            if not _ttl_expired(last):
-                continue
-            _auto_abort_session(session, project_id, base_root, "ttl_expired")
-        except Exception:
-            _log.warning(
-                "merge session sweep failed for merge %s", session.get("merge_id"),
-                exc_info=True,
-            )
 
 
-_sweep_daemon_started = False
 
 
-def _start_sweep_daemon() -> None:
-    """Launch the periodic sweep loop once (0205 L §2.6). Idempotent."""
-    global _sweep_daemon_started
-    if _sweep_daemon_started:
-        return
-    _sweep_daemon_started = True
-    import threading
 
-    def _loop() -> None:
-        while True:
-            time.sleep(SWEEP_INTERVAL_MIN * 60)
-            try:
-                merge_session_sweep()
-            except Exception:
-                _log.warning("periodic merge session sweep failed", exc_info=True)
 
-    threading.Thread(target=_loop, name="git-merge-sweep", daemon=True).start()
 
 
 # ── Boot recovery (flowgate.default.0205 P scenario 7 / L §2.6) ───────────────
 
-def startup_recovery() -> None:
-    """Heal conflict sessions, drop every stale lock, then sweep + start the
-    daemon at boot (0205 L §2.6).
-
-    A live MERGE_HEAD session is left in 'conflict' (state re-affirmed) but its
-    lock is NOT re-acquired — the base is protected by the state gate, not a mutex
-    (0205 §2.1). Sessions with no MERGE_HEAD are auto-aborted (orphan recovery).
-    Any surviving lock is stale by definition (nothing legitimately outlives a
-    restart) — op:/sweep:/merge:/dispose: locks are all force-released. Finally a
-    sweep reclaims TTL-expired sessions and the daemon repeats it periodically."""
-    try:
-        for session in db_git.list_open_sessions():
-            merge_id = session["merge_id"]
-            group_id = session["group_id"]
-            try:
-                project_id = _project_of_group(group_id)
-                kind = db_git.session_kind(session)
-                if kind == db_git.SESSION_KIND_GROUP_UPDATE:
-                    # Its MERGE_HEAD lives in the group worktree; never rewrite group status.
-                    continue
-                if kind in db_git.TR_SESSION_KINDS:
-                    # 088 — re-affirm the status and leave the on-disk question to the
-                    # sweep at the end of this function, which knows where to look.
-                    _set_status(group_id, "conflict", merge_id=merge_id)
-                    continue
-                review_state = db_git.session_context(session).get("review_state")
-                if review_state in (REVIEW_STATE_APPLYING, REVIEW_STATE_RECONCILING):
-                    # 0481 T0008 / L0007 §2.8.1 item 1: the commit already landed by this
-                    # point, so MERGE_HEAD is gone exactly like an ordinary successful
-                    # merge — re-affirm 'conflict' (still not merged from the group's
-                    # point of view) and let the immediate reconcile scan below settle
-                    # push-unknown/post-push-cleanup sessions without waiting a full
-                    # PUSH_RECONCILE_RETRY_INTERVAL_SEC.
-                    _set_status(group_id, "conflict", merge_id=merge_id)
-                    continue
-                base_root = _base_root_of(project_id)
-                merge_head_exists = bool(
-                    base_root and (base_root / ".git" / "MERGE_HEAD").exists()
-                )
-                if merge_head_exists:
-                    # Re-affirm the status; do NOT reclaim a merge:{id} lock (§2.6).
-                    _set_status(group_id, "conflict", merge_id=merge_id)
-                else:
-                    _close_orphan(session, project_id)
-            except Exception:
-                _log.warning("git session recovery failed for merge %s", merge_id, exc_info=True)
-        # One-time lock cleanup: no lock legitimately survives a restart. This
-        # includes the legacy merge:{id} inheritance lock (§2.6).
-        for lock in db_git.list_locks():
-            holder = str(lock.get("holder") or "")
-            if holder.startswith(("op:", "sweep:", "merge:", "dispose:")):
-                db_git.force_release_lock(lock["project_id"])
-        reconcile_due_merge_review_sessions("server_startup")   # L0007 §2.8.1 item 1
-        merge_session_sweep()   # reclaim anything already past TTL
-        _start_sweep_daemon()
-    except Exception:
-        # Table may not exist yet (pre-migration boot) — recovery is best-effort.
-        _log.info("git startup recovery skipped", exc_info=True)
 
 
 # ── Project git status aggregation (flowgate.default.0162 P §2 / L §2.2) ──────
 
 
-def _build_unpushed(
-    project_id: str,
-    base_root: Optional[Path],
-    base_branch: str,
-    commit_count: Optional[int] = None,
-) -> dict:
-    commits = _unpushed_commits(base_root, base_branch)
-    if commits is None:
-        # 0297 B0001: an unmeasured result used to be indistinguishable from "in
-        # sync" downstream (commit_count 0), which hid the ONLY push entry point
-        # while the remote was still empty. These two fields carry the bootstrap
-        # case explicitly so the client decides instead of guessing.
-        return {
-            "count": 0, "commit_count": 0, "merges": [], "measured": False,
-            "remote_branch_missing": _remote_base_missing(base_root, base_branch),
-            "local_commit_count": _local_commit_count(base_root),
-        }
-    merge_commits = [c for c in commits if len(c["parents"]) >= 2]
-    merges: list[dict] = []
-    top_sha = commits[0]["full_sha"] if commits else None
-    for c in merge_commits:
-        group_id = _ledger_group_by_merge_sha(project_id, c["full_sha"])
-        is_top = bool(top_sha and c["full_sha"] == top_sha)
-        can_unmerge = is_top and group_id is not None
-        if can_unmerge:
-            blocked_reason = None
-        elif group_id is None:
-            blocked_reason = "unmapped"
-        else:
-            blocked_reason = "not_top"
-        merges.append({
-            "merge_commit": c["full_sha"][:7],
-            "group_id": group_id,
-            "subject": c["subject"],
-            "merged_at": c["committed_at"],
-            "can_unmerge": can_unmerge,
-            "blocked_reason": blocked_reason,
-        })
-    return {
-        "count": len(merges),
-        "commit_count": commit_count if commit_count is not None else len(commits),
-        "merges": merges,
-        "measured": True,
-        # Measured implies origin/{base} exists; keep the shape stable so the
-        # client can read both fields unconditionally.
-        "remote_branch_missing": False,
-        "local_commit_count": None,
-    }
+from .git.status import (
+    test_connection,
+    base_checkout_dirty_status,
+    _build_unpushed,
+    project_git_status,
+)
 
 
-def project_git_status(project_id: str) -> dict:
-    """GET …/projects/{id}/git/status — status + finalize-pending list + count.
-
-    Local repository only (no network git). Realizes the lazy none→
-    awaiting_choice transition for wf_done groups at aggregation time (L §2.2).
-    """
-    if db_projects.get_by_id(project_id) is None:
-        raise GitServiceError(404, "not_found", f"project '{project_id}' not found")
-    cfg = db_git.get_config(project_id)
-    if cfg is None or not cfg.get("enabled"):
-        return {"ok": True, "status": {
-            "enabled": False, "base_branch": None, "base_path_state": "empty",
-            "ahead_count": None, "behind_count": None,
-            "slots": [], "pending": [], "pending_count": 0, "cleanable_count": 0,
-            "terminal_cleanup": db_terminal_cleanup.get(project_id),
-        }}
-
-    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-    default_action = cfg.get("default_finalize_action") or "wait"
-    project_name = _project_name(project_id)
-    base_root = src_root(project_name, base_branch) if project_name else None
-
-    # 0282 NR0003 finding 1: one ledger scan serves both the registered-slot
-    # aggregation and the provision-failure surface below (previously two
-    # near-identical project scans), and the per-slot wf_done probe is batched
-    # into a single IN query so the loop only does set membership.
-    all_rows = db_git.list_states_of_project_any(project_id)
-    rows = [r for r in all_rows if r.get("worktree_registered")]
-    # T0009: one batched root lookup serves both the existing lazy transition
-    # and stale-pending recovery. A pending ledger row is displayable only while
-    # its workflow root remains wf_done; interrupted/rework paths can otherwise
-    # leave awaiting_choice/waiting visible after approval was withdrawn.
-    root_candidate_statuses = ("none", "awaiting_choice", "waiting")
-    wf_done_groups = _groups_root_wf_done(
-        [
-            r["group_id"] for r in rows
-            if (r.get("status") or "none") in root_candidate_statuses
-        ]
-    )
-    for row in rows:
-        status = row.get("status") or "none"
-        group_id = row["group_id"]
-        if status in ("awaiting_choice", "waiting") and group_id not in wf_done_groups:
-            try:
-                # Status-only repair: preserve the branch, registered worktree, and
-                # any merge ledger fields. conflict remains an active-session state
-                # and is deliberately excluded from this recovery. The row's status
-                # is now "none", which SLOT_STATUSES already keeps in `slots` below
-                # and PENDING_STATUSES already keeps out of `pending` — no separate
-                # exclusion list is needed.
-                _set_status(group_id, "none")
-                row["status"] = "none"
-            except Exception:
-                # Keep the row visible when persistence fails; hiding it without
-                # repairing the ledger would make the UI disagree with the SSOT.
-                _log.warning(
-                    "stale git pending recovery failed for %s", group_id, exc_info=True
-                )
-        elif status == "none" and group_id in wf_done_groups:
-            try:
-                # 0199 B0001: proven no-work groups are discarded (torn down, no
-                # merge/push) here; real groups still transition to awaiting_choice.
-                # A discarded group's slot is unregistered by the cleanup, so it
-                # drops out of every list below (SLOT/PENDING/CLEANUP filters).
-                row["status"] = _decide_pending_transition(
-                    project_id, cfg, row, group_id
-                )
-            except Exception:
-                # One broken group must not sink the whole aggregation
-                # (0115 batch-fetch exception-isolation lesson, L §5).
-                _log.warning(
-                    "lazy git transition failed for %s", group_id, exc_info=True
-                )
-
-    # 0327 T0004 (B0001): `writable` tells the file explorer whether this slot's
-    # worktree is really there, so a working group can offer create/upload instead
-    # of the blanket read-only it applied to every selected group. `rows` is already
-    # filtered to worktree_registered=1, so this only re-checks the on-disk side
-    # (directory present, .git link intact) — a handful of stats per status call.
-    slots = [
-        {"group_id": r["group_id"], "branch": r.get("branch"),
-         "status": r.get("status"), "merge_id": r.get("merge_id"),
-         "writable": group_worktree_writable(project_id, r["group_id"])}
-        for r in rows if r.get("status") in SLOT_STATUSES
-    ]
-    # 0332 D0005 §6.2: a group's commits are no longer one absorb commit, so each slot
-    # row carries its TR commit ledger — counts always, the newest rows for the folded
-    # list. One query for every slot (the N+1 this function paid off in 0282), and a
-    # lazy import because tr_commit_service imports this module.
-    try:
-        from modules.flow_gate.services import tr_commit_service
-        summaries = tr_commit_service.group_commit_summaries(
-            [s["group_id"] for s in slots]
-        )
-        for slot in slots:
-            slot["tr_commits"] = summaries.get(
-                slot["group_id"], dict(tr_commit_service.EMPTY_SUMMARY)
-            )
-    except Exception:
-        # Advisory display state: a ledger that cannot be read leaves the panel looking
-        # exactly as it did before this feature, never breaks the status call.
-        _log.warning("tr commit slot summaries failed for %s", project_id, exc_info=True)
-    pending_rows = [r for r in rows if r.get("status") in PENDING_STATUSES]
-    # 0282 NR0003 finding 1: the AC lookup was the next N+1 in line — batched
-    # before pending grows with adoption.
-    ac_doc_ids = _group_ac_doc_ids([r["group_id"] for r in pending_rows])
-    pending = [
-        {"group_id": r["group_id"], "branch": r.get("branch"),
-         "status": r.get("status"), "default_action": default_action,
-         # 0165 T0004: merge_id lets the header panel resolve conflicts inline
-         # (no need to open the group's R document / GitFinalizePanel).
-         "merge_id": r.get("merge_id"),
-         # 0182 NR0003 §4: pending implies the workflow root is wf_done, so the
-         # header [open] button targets the AC document (which hosts the git
-         # finalize UI since §3) instead of detouring through the R root.
-         "ac_doc_id": ac_doc_ids.get(r["group_id"])}
-        for r in pending_rows
-    ]
-    # 0205 P scenario 8: annotate conflict pending rows with how long they have
-    # been unresolved (elapsed = now − conflict_since), so the panel can surface
-    # the wait time and offer [resume resolution]/[hold]. Other rows carry no field.
-    for row in pending:
-        if row.get("status") == "conflict" and row.get("merge_id") is not None:
-            try:
-                s = db_git.get_session(int(row["merge_id"]))
-                row["conflict_since"] = s.get("created_at") if s else None
-                # 0481 D0006 §6.4: the same badge slot doubles as the general-merge
-                # review gate's entry point — None/absent means "still resolving"
-                # (the resolver dialog), any REVIEW_PENDING_STATES value means
-                # "승인 대기" (the review dialog instead).
-                if s is not None and db_git.session_kind(s) == db_git.SESSION_KIND_MERGE:
-                    ctx = db_git.session_context(s)
-                    row["review_state"] = ctx.get("review_state")
-                    row["reconciliation_kind"] = ctx.get("reconciliation_kind")
-                else:
-                    row["review_state"] = None
-                    row["reconciliation_kind"] = None
-            except Exception:
-                row["conflict_since"] = None
-                row["review_state"] = None
-                row["reconciliation_kind"] = None
-    # 0205 P scenario 8: persisted worktree provisioning failures (unregistered
-    # rows with a provision_error) so a slot-less group's "not tracked by git" warning
-    # survives the one-shot SSE. Disposed groups are excluded. Newest first.
-    provision_failures: list[dict] = []
-    try:
-        for r in all_rows:
-            if (
-                r.get("provision_error")
-                and not r.get("worktree_registered")
-                and not _is_group_disposed(r["group_id"])
-            ):
-                provision_failures.append({
-                    "group_id": r["group_id"],
-                    "error": r.get("provision_error"),
-                    "failed_at": r.get("provision_failed_at"),
-                })
-        provision_failures.sort(key=lambda x: x.get("failed_at") or "", reverse=True)
-    except Exception:
-        _log.warning("provision_failures aggregation failed for %s", project_id, exc_info=True)
-        provision_failures = []
-    # 0182 NR0003 §5: registered slots already finalized (merged/pushed) are
-    # cleanup backlog — surfaced so the panel can offer the [clean up] action.
-    cleanable_count = sum(1 for r in rows if r.get("status") in CLEANUP_STATUSES)
-    ahead, behind = _base_ahead_behind(base_root, base_branch)
-    base_path_state = _judge_base_slot(base_root, base_branch) if base_root else "occupied"
-    # 0177 L0002 §2.1: base-checkout dirty set (tracked files only) so the header
-    # panel can offer commit/revert BEFORE a merge bounces off the E3 guard.
-    # Never-raise, matching base_checkout_dirty_status: a missing checkout or any
-    # git failure reads as clean — the field is advisory display state.
-    # 0296 T0004 (NR0003 R1): the untracked set rides alongside in its OWN field.
-    # It must never fold into base_dirty — that would widen the E3 guard to build
-    # artifacts, the exact regression 0165.0009 fixed. It exists so the panel can
-    # say "N new files are not in any group worktree yet" and offer the commit.
-    base_readable = (
-        base_root is not None and (base_root / ".git").exists() and git_available()
-    )
-    try:
-        base_dirty_files = _dirty_files(base_root, include_untracked=False) if base_readable else []
-    except Exception:
-        _log.warning("base_dirty aggregation failed for %s", project_id, exc_info=True)
-        base_dirty_files = []
-    # 0481 T0010 #1: whose changes are these? While a merge is stopped on a conflict the
-    # base checkout's dirty set IS the merge, and the panel must offer the resolver instead
-    # of the commit / revert / AI-delegation cleanup it offers for stray edits.
-    try:
-        base_dirty_merge = base_merge_in_progress(project_id) if base_readable else None
-    except Exception:
-        _log.warning("base merge-in-progress lookup failed for %s", project_id, exc_info=True)
-        base_dirty_merge = None
-    # 0481 T0010 rev6 (rejection 2): whether a base-branch AI cleanup run owns this
-    # project RIGHT NOW, straight from the durable admission lease the start route
-    # takes. Before this the panel only had its own in-browser latch, so a 409
-    # "already running" refusal disabled [AI에게 맡기기] for good in that tab: the
-    # blocking run belongs to another session, so no SSE frame for it ever arrives
-    # and nothing could clear the latch. Advisory display state, never-raise, exactly
-    # like the two lookups above.
-    try:
-        base_ai_lease = db_project_ai_leases.get_active(project_id)
-    except Exception:
-        _log.warning("base AI cleanup lease lookup failed for %s", project_id, exc_info=True)
-        base_ai_lease = None
-    try:
-        base_untracked_files = _untracked_files(base_root) if base_readable else []
-    except Exception:
-        _log.warning("base_untracked aggregation failed for %s", project_id, exc_info=True)
-        base_untracked_files = []
-    unpushed = _build_unpushed(project_id, base_root, base_branch, ahead)
-    return {"ok": True, "status": {
-        "enabled": True, "base_branch": base_branch,
-        "base_path_state": base_path_state,
-        "ahead_count": ahead, "behind_count": behind,
-        "base_dirty": {
-            "dirty": bool(base_dirty_files), "files": base_dirty_files,
-            "merge_in_progress": base_dirty_merge,
-            "ai_run": (
-                {
-                    "run_id": base_ai_lease.get("run_id"),
-                    "state": base_ai_lease.get("state"),
-                    "acquired_at": base_ai_lease.get("acquired_at"),
-                }
-                if base_ai_lease else None
-            ),
-        },
-        "base_untracked": {
-            "count": len(base_untracked_files),
-            "files": base_untracked_files,
-            "truncated": len(base_untracked_files) >= UNTRACKED_LIST_MAX,
-        },
-        "slots": slots, "pending": pending, "pending_count": len(pending),
-        "cleanable_count": cleanable_count,
-        "terminal_cleanup": db_terminal_cleanup.get(project_id),
-        "provision_failures": provision_failures,
-        "unpushed": unpushed,
-    }}
 
 
 # ── Manual recovery operations (flowgate.default.0162 P §3 / L §2.4) ──────────
 
-def manual_fetch(project_id: str) -> dict:
-    """POST …/projects/{id}/git/fetch — recovery fetch of the base checkout."""
-    cfg = _require_enabled_config(project_id)
-    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-    project_name = _project_name(project_id)
-    base_root = src_root(project_name, base_branch) if project_name else None
-    if base_root is None or _judge_base_slot(base_root, base_branch) != "checkout":
-        raise GitServiceError(
-            409, "invalid_state", "base checkout is not available for fetch"
-        )
-    if not git_available():
-        raise GitServiceError(
-            500, "git_unavailable",
-            "git binary not found on server (install git in the runtime image)",
-        )
-    holder = f"op:{uuid.uuid4()}"
-    if not _acquire_lock(project_id, holder):
-        raise GitServiceError(
-            409, "git_busy",
-            f"Another git operation is in progress for project '{project_id}' (try again shortly)",
-        )
-    try:
-        proc = _run_git(
-            ["fetch", "origin"],
-            cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC,
-            username=cfg.get("username"), secret=_load_secret_for(cfg) or "",
-        )
-        if proc.returncode != 0:
-            raise GitServiceError(500, "git_error", _last_line(proc.stderr))
-        # 0320 B0001: a bare `fetch` only moved refs/remotes/origin/{base} and then
-        # *reported* behind_count — the local base branch never advanced, so the
-        # base checkout stayed behind upstream forever and the operator-facing
-        # "Fetch" action was a no-op recovery ("are you never going to fetch it?"). Finalize was
-        # the ONLY path that ran `merge --ff-only origin/{base}` (see finalize). Do
-        # the same fast-forward here whenever it is safe: base is clean and can be
-        # fast-forwarded. A dirty base is left untouched (never force the server's
-        # own checkout), and a genuine divergence (local-only commits) simply fails
-        # the ff-only and is reported as behind/ahead — that stays the E4
-        # base_diverged condition finalize already owns, not this recovery's job.
-        advanced = False
-        if (
-            _ref_exists(base_root, f"refs/remotes/origin/{base_branch}")
-            and not _dirty(base_root, include_untracked=False)
-        ):
-            ff = _run_git(
-                ["merge", "--ff-only", f"origin/{base_branch}"], cwd=base_root
-            )
-            advanced = ff.returncode == 0
-        ahead, behind = _base_ahead_behind(base_root, base_branch)
-        return {"ok": True, "result": {
-            "fetched": True, "advanced": advanced, "base_branch": base_branch,
-            "ahead_count": ahead, "behind_count": behind,
-        }}
-    finally:
-        db_git.release_lock(project_id, holder)
 
 
 def manual_push(project_id: str, branch: Optional[str]) -> dict:
@@ -7021,343 +5254,18 @@ def unmerge(group_id: str, merge_commit: str) -> dict:
 # finalize carries it), or a per-file restore to HEAD. Scope always matches the
 # E3 guard exactly: tracked-file changes only.
 
-def default_base_commit_message(files: list[str]) -> str:
-    """Deterministic default subject for a base-checkout commit (L0002 §2.2).
-
-    "fix: a.py, b.py"; when the joined list overflows COMMIT_SUBJECT_MAX the
-    abbreviated "fix: a.py and N more" is used (hard-cut as a last resort so the
-    result is always a valid subject). The FE seeds its input with the same
-    rule, so either side may materialize the message with identical output.
-    """
-    subject = BASE_COMMIT_MSG_PREFIX + BASE_COMMIT_MSG_JOINER.join(files)
-    if len(subject) <= COMMIT_SUBJECT_MAX:
-        return subject
-    subject = f"{BASE_COMMIT_MSG_PREFIX}{files[0]} and {len(files) - 1} more"
-    return subject[:COMMIT_SUBJECT_MAX]
 
 
-def _require_base_checkout(project_id: str) -> tuple[dict, Path]:
-    """(cfg, base_root) for base-commit/-revert, or 404/409 per the shared rules."""
-    cfg = _require_enabled_config(project_id)
-    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-    project_name = _project_name(project_id)
-    base_root = src_root(project_name, base_branch) if project_name else None
-    if base_root is None or _judge_base_slot(base_root, base_branch) != "checkout":
-        raise GitServiceError(
-            409, "invalid_state", "base checkout is not available"
-        )
-    return cfg, base_root
 
 
-def _base_commit_locked(
-    project_id: str, base_root: Path, subject: str, selected: list[str]
-) -> dict:
-    """Body of `base_commit` that runs under an already-held project git lock.
-
-    Split out so `resolve_base_dirty` (0482 T0011) can acquire the project lock
-    once and hold it across baseline capture, discard, and commit — see the
-    `_holder` parameter on `base_commit` below."""
-    guard_base_free(project_id)   # 0205 §2.2 — 2nd gate (race close, after lock)
-    if _merge_in_progress(base_root):
-        raise GitServiceError(
-            409, "invalid_state", "a merge is in progress; resolve or abort it first"
-        )
-    tracked = _dirty_files(base_root, include_untracked=False)
-    if selected:
-        # Explicit selection: accept anything git currently reports as a
-        # pending change — tracked edits/deletions AND untracked new files.
-        # An unbounded scan here (limit=0) is right: this is a one-shot
-        # user-initiated commit, not a status poll, and silently refusing a
-        # file only because it fell past the display cap would be a bug.
-        untracked = set(_untracked_files(base_root, limit=0))
-        allowed = set(tracked) | untracked
-        unknown = [p for p in selected if p not in allowed]
-        if unknown:
-            # `.gitignore` first: "not a pending change" would be a lie for an
-            # ignored file that plainly exists on disk. It cannot be committed
-            # at all (NR §C4) — say so, and never force with `add -f`.
-            ignored = _ignored_paths(base_root, unknown)
-            if ignored:
-                raise GitServiceError(
-                    422, "path_ignored",
-                    "these paths are excluded by .gitignore and cannot be committed",
-                    details={"files": ignored},
-                )
-            raise GitServiceError(
-                422, "invalid_request",
-                "these paths have no pending change to commit",
-                details={"files": unknown},
-            )
-        files = selected
-    else:
-        files = tracked
-    if not files:
-        return {"ok": True, "result": {
-            "committed": False, "commit": None, "subject": None,
-            "files": [], "remaining": [],
-            "remaining_untracked": _untracked_files(base_root),
-        }}
-    if not subject:
-        subject = default_base_commit_message(files)
-    if selected:
-        # Literal argv pathspecs (no shell, no globbing) matching the unquoted
-        # porcelain form the two listers produced — same contract as
-        # base_revert's `checkout HEAD -- <path>`.
-        proc = _run_git(["add", "--", *files], cwd=base_root)
-    else:
-        # `add -u` = stage tracked changes only (mod/delete), never untracked
-        # build artifacts — the exact E3/_dirty_files scope.
-        proc = _run_git(["add", "-u"], cwd=base_root)
-    if proc.returncode == 0:
-        proc = _run_git(
-            [*_GIT_IDENT, "commit", "-m", subject], cwd=base_root,
-            author_env=_author_env_for(project_id),
-        )
-    if proc.returncode != 0:
-        # The checkout stays dirty (staged-but-uncommitted is still porcelain
-        # output), so the E3 guard keeps holding and a retry re-stages.
-        raise GitServiceError(500, "git_error", _last_line(proc.stderr))
-    head = _run_git(["rev-parse", "--short", "HEAD"], cwd=base_root)
-    return {"ok": True, "result": {
-        "committed": True,
-        "commit": (head.stdout or "").strip() or None,
-        "subject": subject,
-        "files": files,
-        "remaining": _dirty_files(base_root, include_untracked=False),
-        # Kept separate from `remaining` so the FE's "base is clean → resume
-        # the parked merge" test stays the guard's test. Leftover untracked
-        # files never blocked the merge and must not block the resume.
-        "remaining_untracked": _untracked_files(base_root),
-    }}
 
 
-def base_commit(
-    project_id: str, message: Optional[str], paths: Optional[list[str]] = None,
-    _holder: Optional[str] = None,
-) -> dict:
-    """POST …/projects/{id}/git/base-commit — commit the base checkout (L0002 §2.3).
-
-    Two modes, and the distinction is the whole point of 0296 T0004:
-
-    * `paths` omitted — unchanged legacy behaviour: commit ALL dirty **tracked**
-      files via `add -u`. Untracked build artifacts are never swept in; this is
-      the E3/_dirty_files scope and 0165.0009 depends on it staying that way.
-    * `paths` given — commit exactly those paths via `add -- <paths>`, and they
-      MAY be untracked. This is the missing exit hatch from NR
-      flowgate.default.0296.0003 §C3: a group worktree is checked out from a
-      commit (§C1), so a file that was never committed is invisible to every
-      worker — yet the only in-app commit affordance refused to stage it, leaving
-      "commit it and it appears" true but impossible without a terminal.
-
-    `add -A` is deliberately NOT an option in either mode: it would drag
-    `__pycache__`/`.pytest_cache` into base history and undo the 0165.0009 scope
-    decision. Only paths the operator explicitly picked are staged.
-
-    No push: the local commit rides on the next merge finalize's base push
-    (ff-only against origin stays a no-op while origin/base remains an ancestor).
-    An empty dirty set is an idempotent success so the FE's commit-then-merge
-    retry never turns a lost race into an error.
-
-    `_holder` (internal): when the caller already holds the project git lock
-    under this holder id, reuse it instead of acquiring a fresh one — lets
-    `resolve_base_dirty` (0482 T0011) keep baseline capture, discard, and
-    commit atomic under a single lock instead of three independently-locked
-    calls that leave a race window between them.
-    """
-    _, base_root = _require_base_checkout(project_id)
-    subject = normalize_subject(message)
-    if len(subject) > COMMIT_SUBJECT_MAX:
-        raise GitServiceError(
-            422, "invalid_request",
-            "message must be a single line of at most 200 characters.",
-        )
-    # Normalize + validate BEFORE the lock (a 422 must have no side effects),
-    # mirroring base_revert: nothing may reach outside the base checkout.
-    selected: list[str] = []
-    for raw in (paths or []):
-        p = str(raw or "").strip().replace("\\", "/")
-        if not p:
-            continue
-        if p.startswith("/") or re.match(r"^[A-Za-z]:", p) or ".." in p.split("/"):
-            raise GitServiceError(422, "invalid_request", f"invalid path: {raw!r}")
-        if p not in selected:
-            selected.append(p)
-    guard_base_free(project_id)   # 0205 §2.2 — 1st gate (before lock)
-    if not git_available():
-        raise GitServiceError(
-            500, "git_unavailable",
-            "git binary not found on server (install git in the runtime image)",
-        )
-    if _holder is not None:
-        return _base_commit_locked(project_id, base_root, subject, selected)
-    holder = f"op:{uuid.uuid4()}"
-    if not _acquire_lock(project_id, holder):
-        raise GitServiceError(
-            409, "git_busy",
-            f"Another git operation is in progress for project '{project_id}' (try again shortly)",
-        )
-    try:
-        return _base_commit_locked(project_id, base_root, subject, selected)
-    finally:
-        db_git.release_lock(project_id, holder)
 
 
-def _base_revert_locked(project_id: str, base_root: Path, cleaned: list[str]) -> dict:
-    """Body of `base_revert` that runs under an already-held project git lock.
-
-    Split out so `resolve_base_dirty` (0482 T0011) can acquire the project lock
-    once and hold it across baseline capture, discard, and commit — see the
-    `_holder` parameter on `base_revert` below."""
-    guard_base_free(project_id)   # 0205 §2.2 — 2nd gate (race close, after lock)
-    if _merge_in_progress(base_root):
-        raise GitServiceError(
-            409, "invalid_state", "a merge is in progress; resolve or abort it first"
-        )
-    dirty = set(_dirty_files(base_root, include_untracked=False))
-    results: list[dict] = []
-    for f in cleaned:
-        if f not in dirty:
-            results.append({"path": f, "result": "not_dirty"})
-            continue
-        # checkout HEAD -- <path> restores worktree AND index from HEAD; the
-        # path travels as a literal argv element (no shell), matching the
-        # unquoted porcelain form _dirty_files produced.
-        proc = _run_git(["checkout", "HEAD", "--", f], cwd=base_root)
-        results.append({"path": f, "result": "reverted" if proc.returncode == 0 else "error"})
-    remaining = _dirty_files(base_root, include_untracked=False)
-    return {
-        "ok": all(r["result"] != "error" for r in results),
-        "result": {"results": results, "remaining": remaining},
-    }
 
 
-def base_revert(project_id: str, files: list[str], _holder: Optional[str] = None) -> dict:
-    """POST …/projects/{id}/git/base-revert — restore the named files of the
-    base checkout to HEAD (worktree + index; undoes edits and deletions alike,
-    L0002 §2.4). Per-file results; a file that is not dirty reports "not_dirty"
-    and counts as success (idempotent against races and double clicks).
-
-    `_holder` (internal): when the caller already holds the project git lock
-    under this holder id, reuse it instead of acquiring a fresh one — see
-    `base_commit`'s `_holder` docstring for why.
-    """
-    _, base_root = _require_base_checkout(project_id)
-    cleaned = [str(f or "").strip() for f in (files or [])]
-    cleaned = [f for f in cleaned if f]
-    if not cleaned:
-        raise GitServiceError(422, "invalid_request", "files must name at least one path")
-    for f in cleaned:
-        # Reject absolute paths and parent traversal BEFORE the lock — the
-        # operation must never reach outside the base checkout.
-        norm = f.replace("\\", "/")
-        if norm.startswith("/") or re.match(r"^[A-Za-z]:", norm) or ".." in norm.split("/"):
-            raise GitServiceError(422, "invalid_request", f"invalid path: {f!r}")
-    guard_base_free(project_id)   # 0205 §2.2 — 1st gate (before lock)
-    if not git_available():
-        raise GitServiceError(
-            500, "git_unavailable",
-            "git binary not found on server (install git in the runtime image)",
-        )
-    if _holder is not None:
-        return _base_revert_locked(project_id, base_root, cleaned)
-    holder = f"op:{uuid.uuid4()}"
-    if not _acquire_lock(project_id, holder):
-        raise GitServiceError(
-            409, "git_busy",
-            f"Another git operation is in progress for project '{project_id}' (try again shortly)",
-        )
-    try:
-        return _base_revert_locked(project_id, base_root, cleaned)
-    finally:
-        db_git.release_lock(project_id, holder)
 
 
-def base_remove(project_id: str, files: list[str]) -> dict:
-    """POST …/projects/{id}/git/base-remove — delete untracked files from the base
-    checkout (0350 T0004 / NR0003 §8 R4).
-
-    The `base_untracked_conflict` 409 has always told the operator to "commit or
-    remove them", but only the commit half (`base_commit(..., paths=...)`) ever
-    shipped. This is the missing remove: for a base-checkout file that was never
-    meant to be kept (a stray local experiment, a build artifact that slipped past
-    .gitignore), deleting it is the only way to clear a merge that wants to create
-    the same path — committing it would just relocate the conflict into base's own
-    history.
-
-    Deliberately its own function/route, never folded into `base_revert` (which
-    restores TRACKED content to HEAD): revert is non-destructive by construction
-    (the content survives in HEAD), while this discards the only copy of a file
-    that was never committed anywhere. Kept behind the same base-root
-    containment/lock/merge-in-progress gates as base_commit/base_revert, and
-    revalidates every path as untracked-and-not-ignored right before deleting —
-    never trusts a caller-supplied list on its own.
-    """
-    _, base_root = _require_base_checkout(project_id)
-    cleaned = [str(f or "").strip() for f in (files or [])]
-    cleaned = [f for f in cleaned if f]
-    if not cleaned:
-        raise GitServiceError(422, "invalid_request", "files must name at least one path")
-    for f in cleaned:
-        # Reject absolute paths and parent traversal BEFORE the lock — the
-        # operation must never reach outside the base checkout.
-        norm = f.replace("\\", "/")
-        if norm.startswith("/") or re.match(r"^[A-Za-z]:", norm) or ".." in norm.split("/"):
-            raise GitServiceError(422, "invalid_request", f"invalid path: {f!r}")
-    guard_base_free(project_id)   # 0205 §2.2 — 1st gate (before lock)
-    if not git_available():
-        raise GitServiceError(
-            500, "git_unavailable",
-            "git binary not found on server (install git in the runtime image)",
-        )
-    holder = f"op:{uuid.uuid4()}"
-    if not _acquire_lock(project_id, holder):
-        raise GitServiceError(
-            409, "git_busy",
-            f"Another git operation is in progress for project '{project_id}' (try again shortly)",
-        )
-    try:
-        guard_base_free(project_id)   # 0205 §2.2 — 2nd gate (race close, after lock)
-        if _merge_in_progress(base_root):
-            raise GitServiceError(
-                409, "invalid_state", "a merge is in progress; resolve or abort it first"
-            )
-        # Re-derive "untracked" right now (not from what the caller remembers) —
-        # the same freshness discipline as base_commit's `paths` mode. A path that
-        # is tracked or already gone is never a valid delete target.
-        untracked = set(_untracked_files(base_root, limit=0))
-        unknown = [p for p in cleaned if p not in untracked]
-        if unknown:
-            # `.gitignore` first, same as base_commit: an ignored file needs its own
-            # honest error, never a silent `clean -f -x`.
-            ignored = _ignored_paths(base_root, unknown)
-            if ignored:
-                raise GitServiceError(
-                    422, "path_ignored",
-                    "these paths are excluded by .gitignore and cannot be removed",
-                    details={"files": ignored},
-                )
-            raise GitServiceError(
-                422, "invalid_request",
-                "these paths are not untracked files in the base checkout",
-                details={"files": unknown},
-            )
-        results: list[dict] = []
-        for f in cleaned:
-            # `git clean -f` is a second, git-enforced guard on top of the
-            # revalidation above (it refuses tracked/ignored paths on its own) and
-            # runs as a literal argv pathspec — no shell, no globbing — matching
-            # base_commit's `add -- <files>` / base_revert's `checkout HEAD -- <path>`.
-            proc = _run_git(["clean", "-f", "-q", "--", f], cwd=base_root)
-            results.append({"path": f, "result": "removed" if proc.returncode == 0 else "error"})
-        return {
-            "ok": all(r["result"] != "error" for r in results),
-            "result": {
-                "results": results,
-                "remaining_untracked": _untracked_files(base_root),
-            },
-        }
-    finally:
-        db_git.release_lock(project_id, holder)
 
 
 # ── Approval-ride-along git action (flowgate.default.0162 P §1 / L §2.1) ──────
