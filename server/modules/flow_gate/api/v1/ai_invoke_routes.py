@@ -84,6 +84,9 @@ class AiInvokeStartRequest(BaseModel):
     group: Optional[str] = None
     doc_ref: Optional[str] = None
     action_scope: str = "new"
+    # Top-level review admission intent. Internal REVIEW<->REWORK loop hops do not use
+    # this route contract and therefore never pass this gate.
+    review_intent: str = "normal"
     mode: str = "single"
     continuation_target_seq: Optional[int] = None
     continuation_review_mode: bool = False
@@ -345,6 +348,10 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         errors.append({"loc": "mode", "msg": "must be single or continuous"})
     if body.action_scope not in _ALLOWED_SCOPES:
         errors.append({"loc": "action_scope", "msg": f"must be one of {', '.join(_ALLOWED_SCOPES)}"})
+    if body.review_intent not in ("normal", "rerun"):
+        errors.append({"loc": "review_intent", "msg": "must be normal or rerun"})
+    if body.action_scope != "review" and body.review_intent != "normal":
+        errors.append({"loc": "review_intent", "msg": "rerun is only available for review"})
     # 0405 P0004: "mode is always single; this dialog never starts a continuous work chain."
     if body.action_scope == "work_plan_proposal" and body.mode != "single":
         errors.append({"loc": "mode", "msg": "work_plan_proposal must be single"})
@@ -907,6 +914,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             continuation_review_count_overrides=continuation_review_count_overrides,
             continuation_reviewer_overrides=continuation_reviewer_overrides,
             document_review_loop=(body.document_review_loop.dict() if body.document_review_loop else None),
+            review_intent=(body.review_intent if body.action_scope == "review" else None),
             capability_warning_ack=body.capability_warning_ack,
         )
     except HTTPException as exc:

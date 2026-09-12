@@ -1,9 +1,11 @@
 import { flushPromises, mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import AiInvokeDialog from '@main/components/AiInvokeDialog.vue'
 import { useAiProviderStore } from '@main/stores/aiProvider'
+import { aiInvokeGroupId, useAiInvokeRunsStore } from '@main/stores/aiInvokeRuns'
 
 // 0242 NR0003: the AI-invoke dialog's continuous mode used to ask for a raw `목표 seq`
 // (`item_seq`) in a <input type="number"> — a DB column name the user must guess a value for,
@@ -917,6 +919,246 @@ describe('AiInvokeDialog 검수 전달 (0414 T0012)', () => {
   })
 })
 
+
+// flowgate.default.0544 T0011 / NR0003 Finding 1: the [재검수] button used to check only
+// `starting`, never `canStart` — the same admission `start('rerun')` itself enforces. A user
+// could see the button enabled, confirm, and get silent nothing back (`!canStart` returns
+// before any request). The fix shares canStart between the normal [시작] action and [재검수];
+// these specs pin the parity so it cannot regress unnoticed. T0013 later merged the two buttons
+// into one (see the describe block below), so "재검수" here is now reached through the single
+// merged button's rerun state rather than a second element next to a separate [시작] button.
+describe('AiInvokeDialog 재검수 admission parity (0544 T0011)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('canStart=true 이면 재검수가 활성화되고 한 번의 클릭으로 즉시 review_intent=rerun 요청을 보낸다', async () => {
+    const wrapper = mountDialog({ actionScope: 'review', hasCompletedReview: true })
+    await flushPromises()
+
+    const rerun = document.querySelector('[data-test="review-rerun"]') as HTMLButtonElement
+    expect(rerun.disabled).toBe(false)
+
+    rerun.click()
+    await flushPromises()
+    expect(startBody()).toMatchObject({ action_scope: 'review', review_intent: 'rerun' })
+
+    wrapper.unmount()
+  })
+
+
+  it('리뷰 루프 provider 미선택(canStart=false)이면 재검수가 disabled이고 클릭해도 요청이 없다', async () => {
+    // beforeEach's default getRequest mock already answers providers: [] — reviewer/rework
+    // provider ids resolve to '' — canStart is false for the loop mode this test picks.
+    const wrapper = mountDialog({ actionScope: 'review', hasCompletedReview: true })
+    await flushPromises()
+
+    const loopRadio = document.querySelector('input[type="radio"][value="loop"]') as HTMLInputElement
+    loopRadio.checked = true
+    loopRadio.dispatchEvent(new Event('change'))
+    await flushPromises()
+
+    const rerun = document.querySelector('[data-test="review-rerun"]') as HTMLButtonElement
+    expect(rerun.disabled).toBe(true)
+
+    rerun.click()
+    await flushPromises()
+    expect(postRequest).not.toHaveBeenCalled()
+
+    wrapper.unmount()
+  })
+})
+
+// flowgate.default.0544 T0013: the review footer used to show a plain [검수 시작] button next to
+// a separate [재검수] button once a review was completed — a user could still click the plain
+// one, get bounced off the server's review_already_completed 409, and be told to use a button
+// they were already looking at. Completion status now flips ONE primary button between the two
+// meanings (isCompletedReview / effectiveReviewIntent / primaryReviewLabel in the component).
+describe('AiInvokeDialog 검수/재검수 단일 버튼 통합 (0544 T0013)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('AC-1: 미검수 상태에서는 [검수 시작] 단일 버튼만 노출되고 normal intent로 시작한다', async () => {
+    const wrapper = mountDialog({ actionScope: 'review', hasCompletedReview: false })
+    await flushPromises()
+
+    expect(document.querySelector('[data-test="review-rerun"]')).toBeNull()
+    expect(document.querySelectorAll('.modal-ft button')).toHaveLength(2)
+    const start = document.querySelector('[data-test="review-start"]') as HTMLButtonElement
+    expect(start).not.toBeNull()
+    expect(start.classList.contains('btn-primary')).toBe(true)
+
+    start.click()
+    await flushPromises()
+    const body = startBody()
+    expect(body).toMatchObject({ action_scope: 'review' })
+    expect(body).not.toHaveProperty('review_intent')
+
+    wrapper.unmount()
+  })
+
+  it('AC-2/AC-6: 완료 상태에서는 별도의 일반 [검수 시작] 버튼이 노출되지 않는다', async () => {
+    const wrapper = mountDialog({ actionScope: 'review', hasCompletedReview: true })
+    await flushPromises()
+
+    expect(document.querySelector('[data-test="review-start"]')).toBeNull()
+    expect(document.querySelectorAll('.modal-ft button')).toHaveLength(2)
+    const rerun = document.querySelector('[data-test="review-rerun"]') as HTMLButtonElement
+    expect(rerun).not.toBeNull()
+    expect(rerun.classList.contains('btn-primary')).toBe(false)
+
+    wrapper.unmount()
+  })
+
+  // flowgate.default.0544 TR0014 rev2 (rejection): rev1 still derived "completed" from
+  // docReviewStatus, which stays 'pending_review' from first submission until a HUMAN decides —
+  // an AI review finishing underneath it never moves that status. A document that is still
+  // pending_review but already carries a completed review for its CURRENT revision (the most
+  // common moment someone re-clicks the button) kept showing the plain [검수 시작] button and
+  // bounced off review_already_completed exactly like the original bug. hasCompletedReview is
+  // sourced independently of the overall approval status, so this must show [재검수] regardless.
+  it('TR0014 rev2: pending_review 상태에서도 hasCompletedReview 만으로 [재검수]가 노출된다', async () => {
+    const wrapper = mountDialog({ actionScope: 'review', hasCompletedReview: true })
+    await flushPromises()
+
+    expect(document.querySelector('[data-test="review-start"]')).toBeNull()
+    const rerun = document.querySelector('[data-test="review-rerun"]') as HTMLButtonElement
+    expect(rerun).not.toBeNull()
+
+    rerun.click()
+    await flushPromises()
+
+    expect(startBody()).toMatchObject({ action_scope: 'review', review_intent: 'rerun' })
+
+    wrapper.unmount()
+  })
+
+  // flowgate.default.0544 TR0014 rev4 (rejection): [재검수] already expresses explicit rerun
+  // intent, so clicking it must start immediately without opening any confirmation dialog.
+  it('AC-3/AC-4: [재검수] 클릭 시 confirm 없이 즉시 rerun 요청을 전송한다', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    const wrapper = mountDialog({ actionScope: 'review', hasCompletedReview: true })
+    await flushPromises()
+
+    const rerun = document.querySelector('[data-test="review-rerun"]') as HTMLButtonElement
+    rerun.click()
+    await flushPromises()
+
+    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(startBody()).toMatchObject({ action_scope: 'review', review_intent: 'rerun' })
+
+    wrapper.unmount()
+  })
+
+  it('AC-4: 완료 상태의 정상 UI 조작으로는 review_intent=normal 이 전송되지 않는다', async () => {
+    const wrapper = mountDialog({ actionScope: 'review', hasCompletedReview: true })
+    await flushPromises()
+
+    const rerun = document.querySelector('[data-test="review-rerun"]') as HTMLButtonElement
+    // Only path available on this button is confirm -> rerun; there is no click sequence that
+    // reaches start() with no intent while completed.
+    rerun.click()
+    await flushPromises()
+
+    const body = startBody()
+    expect(body.review_intent).toBe('rerun')
+
+    wrapper.unmount()
+  })
+
+  // flowgate.default.0544 T0014 rejection: the capability-warning "Continue once" retry used
+  // to call bare start(), which carries no reviewIntent. A completed review's explicit rerun
+  // that hit provider_capability_confirmation_required would then retry as a NORMAL request
+  // and typically bounce off review_already_completed instead of running the requested rerun.
+  it('AC-4 확장: capability-warning Continue once 재시도가 재검수 intent 를 그대로 유지한다', async () => {
+    const wrapper = mountDialog({ actionScope: 'review', hasCompletedReview: true })
+    await flushPromises()
+
+    postRequest.mockRejectedValueOnce({
+      response: {
+        status: 422,
+        data: {
+          code: 'provider_capability_confirmation_required',
+          step_key: 'step1',
+          step_type: 'T',
+          provider_name: 'Some Provider',
+          missing_capabilities: ['edit_source'],
+          message: 'cannot modify source',
+        },
+      },
+    })
+
+    const rerun = document.querySelector('[data-test="review-rerun"]') as HTMLButtonElement
+    rerun.click()
+    await flushPromises()
+
+    // The first request already carried review_intent=rerun and failed with the capability
+    // warning; the ack UI is now showing.
+    expect(postRequest).toHaveBeenCalledTimes(1)
+    expect(startBody()).toMatchObject({ action_scope: 'review', review_intent: 'rerun' })
+    const continueOnce = document.querySelector('[data-test="capability-warning"] .btn-warning') as HTMLButtonElement
+    expect(continueOnce).not.toBeNull()
+
+    continueOnce.click()
+    await flushPromises()
+
+    // The retry must replay the SAME rerun intent, not drop it back to a normal request.
+    expect(postRequest).toHaveBeenCalledTimes(2)
+    const retryBody = postRequest.mock.calls[1][1] as Record<string, unknown>
+    expect(retryBody).toMatchObject({
+      action_scope: 'review',
+      review_intent: 'rerun',
+      capability_warning_ack: true,
+    })
+
+    wrapper.unmount()
+  })
+
+  it('AC-5/AC-6: canStart 조건은 미검수/완료 상태 모두 동일하게 disabled 를 결정한다', async () => {
+    const wrapper = mountDialog({ actionScope: 'review', hasCompletedReview: true })
+    await flushPromises()
+
+    const loopRadio = document.querySelector('input[type="radio"][value="loop"]') as HTMLInputElement
+    loopRadio.checked = true
+    loopRadio.dispatchEvent(new Event('change'))
+    await flushPromises()
+
+    // canStart is false here (no reviewer/rework provider resolved) — the single merged button
+    // must stay disabled exactly as the old separate [재검수] button did.
+    const rerun = document.querySelector('[data-test="review-rerun"]') as HTMLButtonElement
+    expect(rerun.disabled).toBe(true)
+
+    wrapper.unmount()
+  })
+
+  // Automated review (rev2 -> rev3): isCompletedReview used to fold reviewRunInProgress into
+  // its own truth, so a run starting underneath an already-open dialog (a store update, not a
+  // user action) flipped a completed revision's button back to a plain, intent-less
+  // [검수 시작] that onPrimaryStartClick's normal branch would fire with no guard at all.
+  // reviewRunInProgress must only disable the button now — the rerun label/intent stays put.
+  it('완료 상태에서 그룹 실행이 진행 중이면 재검수 버튼은 [재검수]로 남고 disabled 된다', async () => {
+    const wrapper = mountDialog({ actionScope: 'review', hasCompletedReview: true })
+    await flushPromises()
+
+    const runsStore = useAiInvokeRunsStore()
+    const groupId = aiInvokeGroupId('flowgate', 'default', '0242')
+    runsStore.trackStarted({ run_id: 'aiv_running', group_id: groupId, doc_ref: MEMBER })
+    await nextTick()
+
+    const rerun = document.querySelector('[data-test="review-rerun"]') as HTMLButtonElement
+    expect(rerun).not.toBeNull()
+    expect(document.querySelector('[data-test="review-start"]')).toBeNull()
+    expect(rerun.classList.contains('btn-primary')).toBe(false)
+    expect(rerun.disabled).toBe(true)
+
+    rerun.click()
+    await flushPromises()
+    expect(postRequest).not.toHaveBeenCalled()
+
+    wrapper.unmount()
+  })
+})
 
 describe('AiInvokeDialog document review loop behavior (0417 T0013)', () => {
   it('mounts the review-only three-tab flow, resets it, and posts independent stage providers', async () => {

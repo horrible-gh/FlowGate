@@ -22,6 +22,8 @@ export interface AiReview {
   reviewer_id?: string | null
   reviewer_name?: string | null
   review_provider?: AiReviewProvider | null
+  review_intent?: 'normal' | 'rerun' | string | null
+  superseded_review_id?: number | null
   verdict?: 'pass' | 'issues' | 'hold' | string | null
   finding_count?: number | null
   findings?: AiReviewFinding[]

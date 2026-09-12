@@ -321,8 +321,8 @@
               <div v-if="capabilityWarning" class="aiv-capability-warning" data-test="capability-warning">
                 <strong>{{ capabilityWarning.step_key }} · {{ capabilityWarning.step_type }}</strong> — {{ capabilityWarning.provider_name }}
                 <span>{{ (capabilityWarning.missing_capabilities || []).join(', ') }}</span>
-                <button type="button" class="btn btn-warning" @click="capabilityWarningAck = true; capabilityWarning = null; start()">Continue once</button>
-                <button type="button" class="btn btn-ghost" @click="capabilityWarning = null; capabilityWarningAck = false">Cancel</button>
+                <button type="button" class="btn btn-warning" @click="onCapabilityWarningAck">Continue once</button>
+                <button type="button" class="btn btn-ghost" @click="capabilityWarning = null; capabilityWarningAck = false; capabilityWarningReviewIntent = undefined">Cancel</button>
               </div>
               <button
                 v-if="lockedGroupId"
@@ -335,11 +335,27 @@
             </div>
         </div>
 
-        <!-- ── Footer ── -->
+        <!-- ── Footer ──
+             T0013: one primary review action, not two buttons side by side. Completion status
+             flips the same button between normal start and rerun (isCompletedReview /
+             effectiveReviewIntent / primaryReviewLabel below), so a completed review can no
+             longer be reached through a plain [검수 시작] click that just bounces off the
+             server's review_already_completed 409 (§6). Non-review scopes are untouched:
+             effectiveReviewIntent is always 'normal' there. Clicking [재검수] is itself the
+             user's explicit rerun intent, so the request starts immediately without another
+             confirmation dialog. -->
         <div class="modal-ft">
             <button type="button" class="btn btn-ghost" @click="close">{{ t('common.cancel') }}</button>
-            <button type="button" class="btn btn-primary" :disabled="starting || !canStart" @click="start">
-              <AppIcon name="lightning" /> {{ t('main.ai_invoke_dialog.btn_start') }}
+            <button
+              type="button"
+              class="btn"
+              :class="effectiveReviewIntent === 'rerun' ? 'btn-warning' : 'btn-primary'"
+              :data-test="effectiveReviewIntent === 'rerun' ? 'review-rerun' : 'review-start'"
+              :disabled="starting || !canStart || (effectiveReviewIntent === 'rerun' && reviewRunInProgress)"
+              @click="onPrimaryStartClick"
+            >
+              <AppIcon :name="effectiveReviewIntent === 'rerun' ? 'arrows-clockwise' : 'lightning'" />
+              {{ primaryReviewLabel }}
             </button>
         </div>
       </div>
@@ -379,6 +395,15 @@ const props = defineProps<{
    */
   sequenceDocRef?: string
   actionScope: 'new' | 'edit' | 'workflow_decide' | 'chat' | 'rework' | 'review' | 'vr_correction' | 'next_step_message' | 'design_handoff'
+  // flowgate.default.0544 TR0014 rev2 (rejection): a document normally sits in
+  // doc_review_status='pending_review' from its first submission until a HUMAN decides —
+  // an AI review completing underneath it never moves that status. Using docReviewStatus to
+  // infer "a review is already recorded for this revision" (the old approach) therefore stayed
+  // false through the one window this button actually matters in, and a plain click there
+  // still bounced off the server's review_already_completed 409. The caller now derives this
+  // straight from the same fact admission.py checks — a document_reviews row exists for the
+  // CURRENT revision_no — via DocHeader's hasCompletedReviewForRevision.
+  hasCompletedReview?: boolean
   initialMode?: 'single' | 'continuous'
   initialTargetSeq?: number | null
   continuationReviewMode?: boolean
@@ -715,8 +740,56 @@ const resolvedTarget = computed<{ seq: number; fromDecision: boolean } | null>((
 })
 
 const canStart = computed(() => reviewLoopActive.value ? !!reviewerProviderId.value && !!reworkProviderId.value : mode.value === 'single' || resolvedTarget.value != null)
+const reviewRunInProgress = computed(() => {
+  const groupId = aiInvokeGroupId(props.project, props.module, props.group)
+  const phase = aiInvokeStore.runsByGroup[groupId]?.phase
+  return phase === 'running' || phase === 'pause_requested'
+})
+// Automated review (rev2 -> rev3): completion is a property of the revision's review
+// history, not of whether a run happens to be in flight right now. Folding
+// reviewRunInProgress into this computed used to flip a completed revision's button back to
+// plain [검수 시작] the moment a run started underneath an already-open dialog (a store update
+// arriving async, not a user action) -- and that relabeled button had no intent guard of its
+// own, so it could fire a bare normal request. reviewRunInProgress now only disables the
+// button (see the template); it never changes what the button means.
+const isCompletedReview = computed(() =>
+  props.actionScope === 'review'
+  && !!props.hasCompletedReview,
+)
+// T0013 §2/§3: the completed status is the only thing that decides which meaning the single
+// primary review button carries. A user who clicks the button that literally says [재검수]
+// counts as an explicit rerun request (§3) — the server contract (review_intent field,
+// same-revision duplicate 409) is unchanged, only this one client-side branch point is new.
+const effectiveReviewIntent = computed<'normal' | 'rerun'>(() =>
+  isCompletedReview.value ? 'rerun' : 'normal',
+)
+const primaryReviewLabel = computed(() => {
+  if (props.actionScope !== 'review') return t('main.ai_invoke_dialog.btn_start')
+  if (effectiveReviewIntent.value === 'rerun') return t('main.ai_invoke_dialog.review_rerun_button')
+  return t('main.ai_invoke_dialog.review_start_button')
+})
+// §3/§6: clicking the button labelled [재검수] is already an explicit rerun request. Start it
+// immediately; completed state has no branch that can reach start() without the rerun intent.
+function onPrimaryStartClick() {
+  if (effectiveReviewIntent.value === 'rerun') {
+    start('rerun')
+    return
+  }
+  start()
+}
 const capabilityWarningAck = ref(false)
 const capabilityWarning = ref<{ step_key?: string; step_type?: string; provider_name?: string; missing_capabilities?: string[] } | null>(null)
+// The 422 that raises this warning carries whatever `reviewIntent` the in-flight start()
+// call used. The "Continue once" retry must replay that SAME intent — otherwise a completed
+// review's explicit rerun silently downgrades to a normal request on the second click and
+// the server answers review_already_completed instead of doing the rerun (TR0014 rejection).
+const capabilityWarningReviewIntent = ref<'rerun' | undefined>(undefined)
+function onCapabilityWarningAck() {
+  const reviewIntent = capabilityWarningReviewIntent.value
+  capabilityWarningAck.value = true
+  capabilityWarning.value = null
+  start(reviewIntent)
+}
 
 const pickerSummary = computed(() => {
   if (picker.value.loading || picker.value.errorKey) return ''
@@ -747,6 +820,9 @@ function resetState() {
   starting.value = false
   startError.value = ''
   lockedGroupId.value = null
+  capabilityWarning.value = null
+  capabilityWarningAck.value = false
+  capabilityWarningReviewIntent.value = undefined
 }
 
 // 0401 NR0003 §3 cause 4: the 409 body always names a run_id, whether or not it is still
@@ -778,7 +854,7 @@ async function onReleaseLeaseClick(): Promise<void> {
   }
 }
 
-async function start() {
+async function start(reviewIntent?: 'rerun') {
   if (starting.value || !canStart.value) return
   starting.value = true
   startError.value = ''
@@ -798,6 +874,9 @@ async function start() {
       action_scope: scope,
       mode: mode.value,
     }
+    // The normal review path deliberately omits this field. Clicking the explicitly labelled
+    // [재검수] button is the only completed-state path that supplies rerun.
+    if (scope === 'review' && reviewIntent === 'rerun') body.review_intent = 'rerun'
     // 0448 T0005 §5-1. Two independent request states, never one:
     //   provider_id            — the ordinary selection (aiProviderStore.selectProvider), i.e.
     //                            the default for hops that stored no provider of their own.
@@ -915,6 +994,10 @@ async function start() {
         lockedGroupId.value = groupId
         startError.value = t('main.ai_invoke_dialog.error_run_in_progress_orphaned')
       }
+    } else if (status === 409 && data.code === 'review_already_completed') {
+      startError.value = t('main.ai_invoke_dialog.error_review_already_completed')
+    } else if (status === 409 && data.code === 'review_rerun_not_available') {
+      startError.value = t('main.ai_invoke_dialog.error_review_rerun_not_available')
     } else if (status === 409 && data.code === 'no_provider_registered') {
       // 0292 T0003: distinct from no_enabled_provider — there is nothing in AI settings
       // to switch on, so point at the seed script instead of at a toggle.
@@ -923,8 +1006,10 @@ async function start() {
       startError.value = t('main.ai_invoke_dialog.error_no_provider')
     } else if (status === 422 && data.code === 'provider_capability_confirmation_required' && mode.value === 'single') {
       // The first request only displays the server-authoritative warning. A second explicit
-      // click is the sole path that carries the ephemeral acknowledgement.
+      // click is the sole path that carries the ephemeral acknowledgement — and it must retry
+      // with the SAME reviewIntent this failed request used, not a bare start().
       capabilityWarning.value = data
+      capabilityWarningReviewIntent.value = reviewIntent
       startError.value = data.message || 'This provider cannot modify source or run tests.'
     } else if (status === 422) {
       const msgs = (data.errors ?? []).map((er: any) => `${er.loc}: ${er.msg}`).join(' / ')

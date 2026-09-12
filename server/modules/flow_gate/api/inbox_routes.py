@@ -2512,12 +2512,20 @@ def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
             or review_run.get("doc_ref") != doc_id
         ):
             return {}
+        provenance: dict[str, Any] = {}
+        review_intent = review_run.get("review_intent")
+        if review_intent in ("normal", "rerun"):
+            provenance["review_intent"] = review_intent
+            superseded_id = review_run.get("review_admission_superseded_review_id")
+            if review_intent == "rerun" and superseded_id is not None:
+                provenance["superseded_review_id"] = int(superseded_id)
+
         requested_id = review_run.get("requested_provider_id")
         actual_id = review_run.get("provider_id")
         if not requested_id or not actual_id:
-            return {}
+            return provenance
         fallback_used = requested_id != actual_id
-        return {
+        provenance.update({
             "review_run_id": run_id,
             "requested_provider_id": requested_id,
             "actual_provider_id": actual_id,
@@ -2527,7 +2535,8 @@ def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
             ),
             "attempt_no": int(review_run.get("attempt_no") or 0) or None,
             "fallback_used": fallback_used,
-        }
+        })
+        return provenance
     except Exception:
         return {}
 
