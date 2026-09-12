@@ -40,7 +40,8 @@ class Settings(BaseSettings):
     DB_PASSWORD: str = ""
     DB_DATABASE: str = ""
     DB_SCHEMA: str = ""
-    DB_LOG: bool = True
+    # Default off to match .env.sample:25-29's direction.
+    DB_LOG: bool = False
     DB_PATH: str = ""
 
     # 0288 NR0003 발견 4 / 권고 2 — connection-pool sizing for the MySQL and
@@ -294,7 +295,6 @@ class DatabaseSetting:
                     **_pool_settings(pooled=False),
                 },
                 "service": {
-                    "log": True,
                     "sqloder": SERVICE_SQLOADER
                 },
                 "migration": {
@@ -317,7 +317,6 @@ class DatabaseSetting:
                     "log": settings.DB_LOG,
                 },
                 "service": {
-                    "log": True,
                     "sqloder": SERVICE_SQLOADER
                 },
                 "migration": {
@@ -347,7 +346,6 @@ class DatabaseSetting:
                     **_pool_settings(pooled=True),
                 },
                 "service": {
-                    "log": True,
                     "sqloder": SERVICE_SQLOADER
                 },
                 "migration": {
