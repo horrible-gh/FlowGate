@@ -19,6 +19,7 @@ import os
 import sqlite3
 import sys
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 os.environ.setdefault("TESTING", "1")
@@ -35,6 +36,9 @@ from inbox_client import post_inbox  # noqa: E402
 
 from modules.flow_gate.api import inbox_routes  # noqa: E402
 from modules.flow_gate.db import connection as db_connection  # noqa: E402
+from modules.flow_gate.db import review_receipts as db_receipts  # noqa: E402
+from modules.flow_gate.db.connection import to_now_iso_tz  # noqa: E402
+from modules.flow_gate.services import review_receipt_service  # noqa: E402
 from modules.flow_gate.services.ai_invoke import worker  # noqa: E402
 
 _MIGRATIONS_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
@@ -135,7 +139,7 @@ def _build_db(path: str) -> LiveSqliteDB:
         "issued_to, created_at, expires_at, ai_run_id) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (TOKEN_ID, "hash-0545-prov", "p1", PROJECT, DOC_ID, "review", USER,
-         now, "2036-09-11T00:00:00+09:00", None),
+         now, "2036-09-11T00:00:00+00:00", None),
     )
     db.conn.commit()
     return db
@@ -150,20 +154,19 @@ def _token_rec(**overrides) -> dict:
         "doc_ref": DOC_ID,
         "ai_run_id": None,
         "dry_run_count": 0,
-        "expires_at": "2036-09-11T00:00:00+09:00",
+        "expires_at": "2036-09-11T00:00:00+00:00",
     }
     rec.update(overrides)
     return rec
 
 
-@pytest.fixture
-def env(monkeypatch, tmp_path):
+def _setup_env(monkeypatch, tmp_path, **token_overrides) -> dict:
     db = _build_db(str(tmp_path / "flowgate.db"))
     store = db_connection.FlowGateStore.__new__(db_connection.FlowGateStore)
     store._db, store._sq = db, None
     monkeypatch.setattr(db_connection, "STORE", store)
 
-    token_rec = _token_rec()
+    token_rec = _token_rec(**token_overrides)
     monkeypatch.setattr(inbox_routes.token_service, "verify", lambda _raw: dict(token_rec))
     monkeypatch.setattr(inbox_routes, "has_permission", lambda *_a, **_k: True)
     monkeypatch.setattr(inbox_routes.db_docs, "get_by_id", lambda _id: {
@@ -171,6 +174,11 @@ def env(monkeypatch, tmp_path):
     })
     monkeypatch.setattr(inbox_routes.process_service, "is_group_disposed", lambda _gid: False)
     return {"db": db, "token_rec": token_rec}
+
+
+@pytest.fixture
+def env(monkeypatch, tmp_path):
+    return _setup_env(monkeypatch, tmp_path)
 
 
 def _dry_run_body(**overrides) -> dict:
@@ -300,3 +308,71 @@ def test_ac7_worker_diagnostic_reads_real_provenance_from_the_real_response(env)
     assert submission["fingerprint_supplied"] is False
     assert submission["fingerprint_matched"] is False
     assert submission["force_used"] is False
+
+
+# ── T0019 (NR0017 §2): receipt expiry timezone normalization ────────────────────────
+
+def _real_submit_body(**overrides) -> dict:
+    body = {
+        "action": "review", "project": PROJECT, "doc_id": DOC_ID,
+        "verdict": "pass", "findings": [], "comment": CLEAN,
+    }
+    body.update(overrides)
+    return body
+
+
+def test_t0019_token_with_two_hours_left_utc_format_dry_run_then_real_submit_is_201(
+    monkeypatch, tmp_path,
+):
+    """NR0017 §2 reproduction: a token with two real hours left, stored the way
+    token_service.issue() actually writes it (UTC, +00:00), must let its dry-run
+    receipt carry through to a real submit -- not be judged already expired just
+    because classify() compares it against now_iso()'s JST string."""
+    expires_at = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(timespec="seconds")
+    _setup_env(monkeypatch, tmp_path, expires_at=expires_at)
+
+    dry = post_inbox(_dry_run_body())
+    assert dry.status_code == 200, dry.text
+    receipt = dry.json()["receipt"]
+
+    real = post_inbox(_real_submit_body(receipt=receipt))
+    assert real.status_code == 201, real.text
+
+
+def test_t0019_actually_expired_receipt_is_still_rejected(env):
+    """The fix normalizes tz/format only -- an actually expired receipt must still be
+    rejected. Exercises classify() directly (0545 T0019 §4): a token that is itself
+    already expired is turned away by token_service.verify() (401) before classify()
+    ever runs, so the "issued while valid, receipt now expired" path is fixed here at
+    the receipt row instead."""
+    past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(timespec="seconds")
+    receipt_id = "receipt-t0019-expired"
+    # token_rec here (like every other token_rec in this file) carries no group_id, so
+    # the receipt's own group_id is NULL -- matching review_receipt_service.issue(),
+    # which reads it from the token, not from the mocked document's group_id.
+    row = db_receipts.create(
+        receipt_id=receipt_id, token_id=TOKEN_ID, project_id=PROJECT, group_id=None,
+        doc_id=DOC_ID, revision_no=0, payload_identity="irrelevant-identity",
+        issued_at=to_now_iso_tz(past), expires_at=to_now_iso_tz(past),
+        encoding_provenance=None,
+    )
+    assert row["expires_at"] is not None
+
+    reason = review_receipt_service.classify(
+        receipt_id, token_rec=env["token_rec"], project_id=PROJECT, group_id=None,
+        doc_id=DOC_ID, revision_no=0, identity="irrelevant-identity",
+    )
+    assert reason == "receipt_expired"
+
+
+# ── T0019: to_now_iso_tz unit tests ──────────────────────────────────────────────────
+
+def test_to_now_iso_tz_treats_tz_naive_input_as_utc():
+    naive = "2026-09-12T00:00:00"
+    utc_form = "2026-09-12T00:00:00+00:00"
+    assert to_now_iso_tz(naive) == to_now_iso_tz(utc_form)
+
+
+def test_to_now_iso_tz_is_identity_on_already_normalized_jst_input():
+    already_jst = "2026-09-12T09:00:00+09:00"
+    assert to_now_iso_tz(already_jst) == already_jst

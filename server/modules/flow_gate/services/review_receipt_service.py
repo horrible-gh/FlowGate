@@ -7,7 +7,7 @@ import secrets
 from typing import Any, Optional
 
 from modules.flow_gate.db import review_receipts as db_receipts
-from modules.flow_gate.db.connection import get_store, now_iso
+from modules.flow_gate.db.connection import get_store, now_iso, to_now_iso_tz
 from modules.flow_gate.services import token_service
 
 
@@ -56,8 +56,12 @@ def issue(*, token_rec: dict, project_id: str, group_id: Optional[str], doc_id: 
           revision_no: int, identity: str, validation: dict) -> dict:
     issued_at = now_iso()
     receipt_id = secrets.token_urlsafe(32)
-    # A receipt can never outlive its bearer token.
-    expires_at = str(token_rec.get("expires_at") or issued_at)
+    # A receipt can never outlive its bearer token. Normalized to now_iso()'s tz/format
+    # (0545 T0019, NR0017 Sec.2): token_service.issue() stores expires_at as UTC, and
+    # copying that string verbatim made classify()'s lexicographic comparison against
+    # now_iso()'s JST string misjudge a still-live token's receipt as already expired.
+    token_expires_at = token_rec.get("expires_at")
+    expires_at = to_now_iso_tz(token_expires_at) if token_expires_at else issued_at
     with get_store().transaction():
         token_service.increment_dry_run(token_rec["token_id"])
         db_receipts.supersede_active(token_rec["token_id"], issued_at)

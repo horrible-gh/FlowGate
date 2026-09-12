@@ -169,7 +169,7 @@ def _build_db(path: str) -> LiveSqliteDB:
         "issued_to, created_at, expires_at, ai_run_id) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (TOKEN_ID, "hash-0535", "p1", PROJECT, DOC_ID, "review", USER,
-         "2026-09-06T00:00:00+09:00", "2036-09-06T00:00:00+09:00", RUN_ID),
+         "2026-09-06T00:00:00+09:00", "2036-09-06T00:00:00+00:00", RUN_ID),
     )
     db.conn.commit()
     return db
@@ -184,7 +184,7 @@ def _token_rec(**overrides) -> dict:
         "doc_ref": DOC_ID,
         "ai_run_id": RUN_ID,
         "dry_run_count": 0,
-        "expires_at": "2036-09-06T00:00:00+09:00",
+        "expires_at": "2036-09-06T00:00:00+00:00",
     }
     rec.update(overrides)
     return rec
