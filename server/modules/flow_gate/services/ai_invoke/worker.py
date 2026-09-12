@@ -1839,7 +1839,8 @@ _REGISTER_MODEL_FIELDS = {
     "new": ("doc_type", "title", "content"),
     "edit": ("content", "edit_reason", "rejection_response", "rejection_id",
              "rejection_review_id"),
-    "review": ("verdict", "findings", "comment"),
+    "review": ("verdict", "findings", "comment", "body_sha256", "body_chars",
+               "force_encoding_reason"),
     "test_run": (),
 }
 
@@ -1989,43 +1990,85 @@ def _register_envelope(context: dict, run: dict, tool_input: Optional[dict]) -> 
     return body
 
 
-def _inbox_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
-    """Server-side proxy registration for API providers: POST the server-assembled
-    body to our own /inbox with the run token, exactly as an external worker
-    would — every inbox validation and the chain self-advance stay in force."""
-    try:
-        context, _token_rec = _bind_register_context(run, raw_token)
-    except _RegisterBindingRejected as rejected:
-        if rejected.record is not None:
-            run.setdefault("register_errors", []).append(rejected.record)
-        return int(rejected.response.get("http_status") or 403), rejected.response
-    # 0505 T0006 (DB0005 3.3): whichever of the six mediated self-HTTP calls opens
-    # FIRST in this hop wins transport_api_base; already-set stays untouched. Placed
-    # after the binding check above, not at function entry -- a binding rejection
-    # never opens a socket, so it must not claim the transport base either.
-    if run.get("transport_api_base") is None:
-        run["transport_api_base"] = provider_api._sanitize_diagnostic_base(provider_api._resolve_transport_api_base(run))
-        run["transport_fallback_kind"] = run.get("_transport_fallback_kind_resolved")
-    body = _svc()._register_envelope(context, run, tool_input)
+def _post_inbox_json(run: dict, raw_token: str, body: dict) -> tuple[int, dict]:
+    """Send one strict UTF-8 JSON request to the local inbox boundary."""
     req = urllib.request.Request(
         f"{provider_api._resolve_transport_api_base(run)}/inbox",
-        data=json.dumps(body).encode("utf-8"),
+        data=json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
         headers={
-            "Content-Type": "application/json",
+            "Content-Type": "application/json; charset=utf-8",
             "Authorization": f"Bearer {raw_token}",
         },
         method="POST",
     )
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
-            return resp.status, json.loads(resp.read().decode("utf-8"))
+            return resp.status, json.loads(resp.read().decode("utf-8", errors="strict"))
     except urllib.error.HTTPError as exc:
         try:
-            return exc.code, json.loads(exc.read().decode("utf-8"))
-        except Exception:
-            return exc.code, {"error": str(exc)}
+            return exc.code, json.loads(exc.read().decode("utf-8", errors="strict"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return exc.code, {"error": "inbox returned a non-UTF-8 or invalid JSON response"}
+    except (UnicodeEncodeError, UnicodeDecodeError) as exc:
+        return 0, {"error": f"invalid UTF-8 transport payload: {exc}"}
     except Exception as exc:
         return 0, {"error": str(exc)}
+
+
+def _review_submission_diagnostic(run: dict, response: dict, *, submitted: bool) -> None:
+    """Keep bounded validation provenance without duplicating review text."""
+    validation = response.get("validation") if isinstance(response.get("validation"), dict) else {}
+    run["review_submission"] = {
+        "doc_id": run.get("doc_ref"),
+        "revision_no": response.get("revision_no"),
+        "run_id": run.get("run_id"),
+        "provider": run.get("provider_id") or run.get("provider"),
+        "locale": run.get("locale"),
+        "receipt": response.get("receipt"),
+        "payload_identity": response.get("payload_identity"),
+        "corruption_detected": validation.get("corruption_detected"),
+        "fingerprint_supplied": validation.get("fingerprint_supplied"),
+        "fingerprint_matched": validation.get("fingerprint_matched"),
+        "force_used": validation.get("force_used"),
+        "validated_at": response.get("validated_at"),
+        "submitted": submitted,
+    }
+
+
+def _inbox_register(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
+    """Register through the inbox; review scope first obtains a mandatory receipt."""
+    try:
+        context, _token_rec = _bind_register_context(run, raw_token)
+    except _RegisterBindingRejected as rejected:
+        if rejected.record is not None:
+            run.setdefault("register_errors", []).append(rejected.record)
+        return int(rejected.response.get("http_status") or 403), rejected.response
+    if run.get("transport_api_base") is None:
+        run["transport_api_base"] = provider_api._sanitize_diagnostic_base(provider_api._resolve_transport_api_base(run))
+        run["transport_fallback_kind"] = run.get("_transport_fallback_kind_resolved")
+
+    # Assemble review meaning once. The two requests only add transport fields.
+    body = _svc()._register_envelope(context, run, tool_input)
+    if context["action"] != "review":
+        return _post_inbox_json(run, raw_token, body)
+
+    dry_body = dict(body)
+    dry_body["dry_run"] = True
+    status, preflight = _post_inbox_json(run, raw_token, dry_body)
+    _review_submission_diagnostic(run, preflight, submitted=False)
+    receipt = preflight.get("receipt") if isinstance(preflight, dict) else None
+    if status < 200 or status >= 300 or not isinstance(receipt, str) or not receipt:
+        return status, preflight
+
+    real_body = dict(body)
+    real_body["receipt"] = receipt
+    status, result = _post_inbox_json(run, raw_token, real_body)
+    diagnostic = dict(preflight)
+    if isinstance(result, dict):
+        diagnostic.update(result)
+    diagnostic["receipt"] = receipt
+    _review_submission_diagnostic(run, diagnostic, submitted=200 <= status < 300)
+    return status, result
 
 
 # ── Judge / finish (L0006 §2.6–2.8) ──────────────────────────────────────────

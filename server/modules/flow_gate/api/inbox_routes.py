@@ -1672,8 +1672,10 @@ def _fail(
 #      workflow_decision_service._text_is_corrupted() — kept in that module only, per
 #      test_conversation_dry_run_0360.py:196-204's single-definition constraint.
 #
-# force_encoding_reason is the one escape hatch shared by every path: any non-trivial
-# reason (>=10 non-whitespace chars) bypasses both layers unconditionally.
+# force_encoding_reason only bypasses layer 2 (the corruption heuristic). A layer-1
+# fingerprint mismatch is rejected regardless of force -- the fingerprint comparison
+# always runs first, so force is only ever consulted for text whose fingerprint (if
+# any was supplied) already matched.
 # T0004 task 1-3 / NR0003 finding 2-3: the two notices that used to always go out in
 # Korean regardless of locale branch, and the Korean field names (see
 # _ENCODING_FIELD_LABELS["ko"] below: body/title-line) inserted verbatim into the
@@ -1683,8 +1685,7 @@ _ENCODING_GUARD_COPY = {
     "ko": {
         "fingerprint_mismatch": (
             "본문 지문이 어긋납니다: {mismatches}. 본문을 UTF-8 파일로 먼저 쓰고 그 "
-            "파일에서 글자 수와 해시를 구해 다시 보내세요. 정말 이대로 보내야 하면 "
-            "force_encoding_reason에 사유(공백 제외 10자 이상)를 적어 다시 보내세요."
+            "파일에서 글자 수와 해시를 구해 다시 보내세요."
         ),
         "sha256_mismatch": "sha256 기대={expected} 실제={actual}",
         "chars_mismatch": "글자수 기대={expected} 실제={actual}",
@@ -1700,8 +1701,7 @@ _ENCODING_GUARD_COPY = {
         "fingerprint_mismatch": (
             "The body fingerprint does not match: {mismatches}. Write the body to a "
             "UTF-8 file first and compute the character count and hash from that file, "
-            "then resend. If you must send it as-is, add a reason (at least 10 "
-            "non-whitespace characters) in force_encoding_reason and resend."
+            "then resend."
         ),
         "sha256_mismatch": "sha256 expected={expected} actual={actual}",
         "chars_mismatch": "char count expected={expected} actual={actual}",
@@ -1717,9 +1717,7 @@ _ENCODING_GUARD_COPY = {
     "ja": {
         "fingerprint_mismatch": (
             "本文の指紋が一致しません: {mismatches}。本文を先にUTF-8ファイルとして書き出"
-            "し、そのファイルから文字数とハッシュを求めて再送してください。どうしても"
-            "このまま送る必要がある場合は、force_encoding_reasonに理由(空白を除いて10"
-            "文字以上)を記入して再送してください。"
+            "し、そのファイルから文字数とハッシュを求めて再送してください。"
         ),
         "sha256_mismatch": "sha256 期待値={expected} 実際値={actual}",
         "chars_mismatch": "文字数 期待値={expected} 実際値={actual}",
@@ -1749,11 +1747,8 @@ def _encoding_guard(
     body_chars,
     force_encoding_reason: Optional[str],
     locale: str = "ko",
+    fingerprint_bypasses_corruption: bool = True,
 ) -> Optional[JSONResponse]:
-    reason = (force_encoding_reason or "").strip()
-    if len(reason.replace(" ", "")) >= 10:
-        return None
-
     from modules.flow_gate.services import workflow_decision_service as _wf_decision
 
     normalized_locale = template_provision.normalize_locale(locale)
@@ -1762,7 +1757,10 @@ def _encoding_guard(
 
     check_fields = dict(fields)
     if fingerprint_field and (body_sha256 or body_chars is not None):
-        text = check_fields.pop(fingerprint_field, None) or ""
+        if fingerprint_bypasses_corruption:
+            text = check_fields.pop(fingerprint_field, None) or ""
+        else:
+            text = check_fields.get(fingerprint_field) or ""
         actual_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
         actual_chars = len(text)
         mismatches = []
@@ -1777,11 +1775,77 @@ def _encoding_guard(
         if mismatches:
             return _fail(422, copy["fingerprint_mismatch"].format(mismatches="; ".join(mismatches)))
 
+    # Fingerprint mismatches are rejected above unconditionally -- force only ever
+    # reaches a corruption signal on text whose fingerprint (if any) already matched.
+    reason = (force_encoding_reason or "").strip()
+    if len(reason.replace(" ", "")) >= 10:
+        return None
+
     for name, value in check_fields.items():
         if _wf_decision._text_is_corrupted(value):
             display_name = labels.get(name, name)
             return _fail(422, copy["corrupted"].format(field=display_name))
     return None
+
+
+def _encoding_validation_result(
+    *,
+    fields: dict[str, Optional[str]],
+    fingerprint_field: Optional[str],
+    body_sha256: Optional[str],
+    body_chars,
+    force_encoding_reason: Optional[str],
+    fingerprint_bypasses_corruption: bool = True,
+) -> dict:
+    """Structured provenance for a dry-run that _encoding_guard already passed.
+
+    0545 T0014: worker/receipt/response all need the SAME corruption/fingerprint/force
+    facts _encoding_guard already decided, not a second recomputation of them. This
+    mirrors the guard's field selection and fingerprint math exactly, but (unlike the
+    guard) never short-circuits on a valid force reason -- it always evaluates the
+    fingerprint and corruption facts so force_used can report whether force was
+    actually needed to bypass a real corruption signal, per T0014 §7.
+    """
+    from modules.flow_gate.services import workflow_decision_service as _wf_decision
+
+    check_fields = dict(fields)
+    fingerprint_supplied = bool(fingerprint_field and (body_sha256 or body_chars is not None))
+    fingerprint_matched = False
+    if fingerprint_supplied:
+        if fingerprint_bypasses_corruption:
+            text = check_fields.pop(fingerprint_field, None) or ""
+        else:
+            text = check_fields.get(fingerprint_field) or ""
+        actual_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        actual_chars = len(text)
+        matched = True
+        if body_sha256 and str(body_sha256).strip().lower() != actual_sha256:
+            matched = False
+        if body_chars is not None:
+            try:
+                if int(body_chars) != actual_chars:
+                    matched = False
+            except (TypeError, ValueError):
+                matched = False
+        fingerprint_matched = matched
+
+    corruption_detected = any(
+        _wf_decision._text_is_corrupted(value) for value in check_fields.values()
+    )
+
+    reason = (force_encoding_reason or "").strip()
+    force_reason_valid = len(reason.replace(" ", "")) >= 10
+    force_used = corruption_detected and force_reason_valid
+
+    return {
+        "validated_at": now_iso(),
+        "corruption_detected": corruption_detected,
+        "fingerprint_supplied": fingerprint_supplied,
+        "fingerprint_matched": fingerprint_matched,
+        "force_used": force_used,
+        "body_sha256_present": body_sha256 is not None,
+        "body_chars_present": body_chars is not None,
+    }
 
 
 # T0004 task 4-5 / NR0003 finding 4-5: the unbranched-Korean workflow-head-type-mismatch
@@ -2470,6 +2534,56 @@ class _ReviewTokenAlreadyClaimed(Exception):
     """Raised inside the review transaction when the token was consumed elsewhere."""
 
 
+class _ReviewReceiptClaimFailed(Exception):
+    """Raised when a validated receipt loses its single-use CAS race."""
+
+
+_REVIEW_RECEIPT_MESSAGES = {
+    "ko": {
+        "receipt_missing": "review receipt가 필요합니다.",
+        "receipt_invalid": "review receipt가 유효하지 않습니다.",
+        "receipt_expired": "review receipt가 만료되었습니다.",
+        "receipt_superseded": "review receipt가 새 dry-run으로 대체되었습니다.",
+        "receipt_used": "review receipt가 이미 사용되었습니다.",
+        "receipt_binding_mismatch": "review receipt가 현재 token/context/target에 바인딩되지 않았습니다.",
+        "receipt_stale_revision": "review receipt의 대상 revision이 더 이상 현재 revision이 아닙니다.",
+        "receipt_payload_mismatch": "review receipt의 검증 payload와 제출 payload가 다릅니다.",
+    },
+    "en": {
+        "receipt_missing": "A review receipt is required.",
+        "receipt_invalid": "The review receipt is invalid.",
+        "receipt_expired": "The review receipt has expired.",
+        "receipt_superseded": "The review receipt was superseded by a newer dry-run.",
+        "receipt_used": "The review receipt has already been used.",
+        "receipt_binding_mismatch": "The review receipt is not bound to this token/context/target.",
+        "receipt_stale_revision": "The review receipt targets a stale document revision.",
+        "receipt_payload_mismatch": "The submitted review payload does not match the receipt.",
+    },
+    "ja": {
+        "receipt_missing": "review receiptが必要です。",
+        "receipt_invalid": "review receiptが無効です。",
+        "receipt_expired": "review receiptの有効期限が切れています。",
+        "receipt_superseded": "review receiptは新しいdry-runに置き換えられました。",
+        "receipt_used": "review receiptは使用済みです。",
+        "receipt_binding_mismatch": "review receiptが現在のtoken/context/targetに紐付いていません。",
+        "receipt_stale_revision": "review receiptの対象revisionは現在のrevisionではありません。",
+        "receipt_payload_mismatch": "提出payloadがreview receiptの検証内容と一致しません。",
+    },
+}
+
+
+def _review_receipt_failure(reason: str, locale: str) -> JSONResponse:
+    messages = _REVIEW_RECEIPT_MESSAGES.get(locale) or _REVIEW_RECEIPT_MESSAGES["ko"]
+    return JSONResponse(status_code=409 if reason != "receipt_missing" else 400, content={
+        "ok": False,
+        "http_status": 409 if reason != "receipt_missing" else 400,
+        "code": "review_receipt_rejected",
+        "reason": reason,
+        "error_message": messages[reason],
+        "help_url": _help_url(),
+    })
+
+
 def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
     """Server-owned provider evidence for one review submission (0535 T0007 §2).
 
@@ -2687,6 +2801,7 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
         body_chars=body.get("body_chars"),
         force_encoding_reason=body.get("force_encoding_reason"),
         locale=_locale,
+        fingerprint_bypasses_corruption=False,
     )
     if _review_encoding_fail is not None:
         return _review_encoding_fail
@@ -2699,19 +2814,61 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
     # and cannot fail the request (see _review_provenance).
     review_provider = _review_provenance(token_rec, doc_id)
 
-    # ── Dry-run short-circuit (R0001 dry-run, L0007 §3/§4.3) ──
-    # All validation has passed; bail out before any side effect (insert_review/consume/SSE).
-    dry_resp = _maybe_dry_run(body, token_rec, {
-        "action": "review",
-        "doc_id": doc_id,
-        "verdict": verdict,
-        "finding_count": len(findings),
-        "checks_passed": ["auth", "context_binding", "permission", "referential_integrity"],
-    })
-    if dry_resp is not None:
-        return dry_resp
+    # The identity is computed only after external JSON has been merged and every current
+    # validation has passed. Key order/whitespace are immaterial; findings order and all
+    # semantically relevant review/encoding values remain significant.
+    from modules.flow_gate.services import review_receipt_service
+    revision_no = int(doc.get("revision_no") or 0)
+    receipt_identity = review_receipt_service.payload_identity(
+        doc_id=doc_id, revision_no=revision_no, verdict=verdict, findings=findings,
+        comment=comment, body_sha256=body.get("body_sha256"),
+        body_chars=body.get("body_chars"),
+        force_encoding_reason=body.get("force_encoding_reason"),
+    )
 
-    # ── Step 6+7: claim the token and store the review, atomically (0535 T0007 §3) ──
+    if _truthy(body.get("dry_run")):
+        limit = _dryrun_max()
+        cnt = int(token_rec.get("dry_run_count") or 0)
+        copy = _DRY_RUN_COPY.get(_locale) or _DRY_RUN_COPY["ko"]
+        if cnt >= limit:
+            return JSONResponse(status_code=429, content={
+                "ok": False, "http_status": 429,
+                "error_message": copy["limit"].format(limit=limit),
+                "help_url": _help_url(), "dry_run_count": cnt, "dry_run_remaining": 0,
+            })
+        _review_validation = _encoding_validation_result(
+            fields=_review_encoding_fields,
+            fingerprint_field="comment",
+            body_sha256=body.get("body_sha256"),
+            body_chars=body.get("body_chars"),
+            force_encoding_reason=body.get("force_encoding_reason"),
+            fingerprint_bypasses_corruption=False,
+        )
+        issued = review_receipt_service.issue(
+            token_rec=token_rec, project_id=project, group_id=token_rec.get("group_id"),
+            doc_id=doc_id, revision_no=revision_no, identity=receipt_identity,
+            validation=_review_validation,
+        )
+        return JSONResponse(status_code=200, content={
+            "ok": True, "dry_run": True,
+            "would_register": {
+                "action": "review", "doc_id": doc_id, "verdict": verdict,
+                "finding_count": len(findings),
+                "checks_passed": ["auth", "context_binding", "permission", "referential_integrity"],
+            },
+            "dry_run_count": cnt + 1, "dry_run_remaining": limit - (cnt + 1),
+            "message": copy["ok"], **issued,
+        })
+
+    receipt_reason = review_receipt_service.classify(
+        body.get("receipt"), token_rec=token_rec, project_id=project,
+        group_id=token_rec.get("group_id"), doc_id=doc_id, revision_no=revision_no,
+        identity=receipt_identity,
+    )
+    if receipt_reason != "ok":
+        return _review_receipt_failure(receipt_reason, _locale)
+
+    # ── Step 6+7: claim receipt + token and store review atomically ──
     # One transaction covers the token claim, the review row, its readback and the
     # token_consumed event, so a submission is all of it or none of it:
     #
@@ -2724,10 +2881,16 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
     #
     # The claim goes first on purpose: it is the cheap statement that decides who owns
     # this submission, and every writer after it is inside the same rollback boundary.
-    revision_no = int(doc.get("revision_no") or 0)
     findings_json = json.dumps(findings, ensure_ascii=False)
     try:
         with get_store().transaction():
+            if not review_receipt_service.db_receipts.claim(
+                receipt_id=body["receipt"], token_id=token_rec["token_id"],
+                project_id=project, group_id=token_rec.get("group_id"), doc_id=doc_id,
+                revision_no=revision_no, payload_identity=receipt_identity,
+                claimed_at=now_iso(),
+            ):
+                raise _ReviewReceiptClaimFailed()
             if not token_service.consume(
                 token_id=token_rec["token_id"],
                 project_id=project,
@@ -2745,6 +2908,17 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
                 reviewed_at=now_iso(),
                 **review_provider,
             )
+    except _ReviewReceiptClaimFailed:
+        # Re-read only after rollback to classify a concurrent winner without exposing the
+        # opaque credential. No business write made by this request survives.
+        reason = review_receipt_service.classify(
+            body.get("receipt"), token_rec=token_rec, project_id=project,
+            group_id=token_rec.get("group_id"), doc_id=doc_id, revision_no=revision_no,
+            identity=receipt_identity,
+        )
+        return _review_receipt_failure(
+            reason if reason != "ok" else "receipt_invalid", _locale
+        )
     except _ReviewTokenAlreadyClaimed:
         return _fail(409, "This review token has already been consumed; no review was added.")
     except Exception as exc:

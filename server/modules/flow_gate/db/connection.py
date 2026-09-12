@@ -31,6 +31,23 @@ def now_iso() -> str:
     return datetime.now(_JST).isoformat(timespec="seconds")
 
 
+def to_now_iso_tz(value: str) -> str:
+    """Normalize an ISO 8601 timestamp string to now_iso()'s tz/format (JST, seconds).
+
+    0545 T0019 (NR0017 Sec.2): classify()/db_receipts.claim() compare stored ISO
+    strings against now_iso() lexicographically, so both sides must share the same
+    offset and precision or the comparison silently drifts by the offset difference.
+    A tz-naive value is treated as UTC -- the exact rule token_service.verify() and
+    inspect_for_replay() already apply to stored expires_at values -- so a value this
+    function already normalized (or one already in JST/seconds form) round-trips
+    unchanged.
+    """
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(_JST).isoformat(timespec="seconds")
+
+
 def iso_days_ago(days: int) -> str:
     """Return the JST ISO 8601 string for `days` days before now.
 

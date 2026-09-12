@@ -520,6 +520,32 @@ def test_identifiers_never_translate(monkeypatch):
     assert set(_hidden(body)) == {"design_template", "test_commands"}
 
 
+@pytest.mark.parametrize("locale", ["ko", "ja", "en"])
+def test_review_submit_dry_run_copy_uses_the_requested_locale(monkeypatch, locale):
+    client = _client(monkeypatch, _token("review"), step_type="D")
+    body = client.get(f"/api/v1/help/items/submit?locale={locale}").json()
+
+    assert body["locale"] == locale
+    assert body["content"]["dry_run"] == help_catalog._ITEM_NOTES[locale][
+        "submit_review_dry_run"
+    ]
+
+
+def test_review_submit_dry_run_copy_is_not_fixed_to_english(monkeypatch):
+    client = _client(monkeypatch, _token("review"), step_type="D")
+    copies = {
+        locale: client.get(f"/api/v1/help/items/submit?locale={locale}").json()["content"]["dry_run"]
+        for locale in ("ko", "ja", "en")
+    }
+
+    assert copies == {
+        locale: help_catalog._ITEM_NOTES[locale]["submit_review_dry_run"]
+        for locale in copies
+    }
+    assert copies["ko"] != copies["en"]
+    assert copies["ja"] != copies["en"]
+
+
 # ── unauthenticated + audit ──────────────────────────────────────────────────
 
 def test_bare_help_without_a_token_is_still_the_public_endpoint_catalog():

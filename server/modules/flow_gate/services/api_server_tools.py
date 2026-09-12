@@ -97,7 +97,7 @@ SCHEMAS = {
 REGISTER_SCHEMAS = {
     "new": _obj({"title": {"type": "string"}, "content": {"type": "string", "minLength": 1}, "doc_type": {"type": "string"}}, ["content", "doc_type"]),
     "edit": _obj({"content": {"type": "string", "minLength": 1}, "edit_reason": {"type": "string", "enum": ["rejected", "qna_followup", "user_comment", "worker_self"]}, "rejection_response": {"type": "string"}, "rejection_id": {"type": "string"}, "rejection_review_id": {"type": "integer"}}, ["content", "edit_reason"]),
-    "review": _obj({"verdict": {"type": "string", "enum": ["pass", "issues", "hold"]}, "findings": {"type": "array", "items": _obj({"locus": {"type": "string"}, "note": {"type": "string"}})}, "comment": {"type": "string"}}, ["verdict"]),
+    "review": _obj({"verdict": {"type": "string", "enum": ["pass", "issues", "hold"]}, "findings": {"type": "array", "items": _obj({"locus": {"type": "string"}, "note": {"type": "string"}})}, "comment": {"type": "string"}, "body_sha256": {"type": "string"}, "body_chars": {"type": "integer"}, "force_encoding_reason": {"type": "string"}}, ["verdict"]),
     "test_run": _obj({}),
 }
 

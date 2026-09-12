@@ -59,6 +59,7 @@ from modules.flow_gate.db import connection as db_connection  # noqa: E402
 from modules.flow_gate.db import dialect as _dialect  # noqa: E402
 from modules.flow_gate.db import document_reviews as db_reviews  # noqa: E402
 from modules.flow_gate.services.ai_invoke import runtime as ai_runtime  # noqa: E402
+from modules.flow_gate.services import review_receipt_service  # noqa: E402
 
 DOC_ID = "flowgate.default.0535.0001-T"
 GROUP_ID = "flowgate.default.0535"
@@ -429,12 +430,14 @@ def review_env(monkeypatch, tmp_path, pg_store):
     # test_review_atomicity_0535.py; here the subject is the dialect-shaped write.
     consume = MagicMock(return_value=True)
     monkeypatch.setattr(inbox_routes.token_service, "consume", consume)
+    monkeypatch.setattr(review_receipt_service, "classify", lambda *_a, **_k: "ok")
+    monkeypatch.setattr(review_receipt_service.db_receipts, "claim", lambda **_k: True)
     return {"db": pg_store, "consume": consume}
 
 
 def _body(**overrides) -> dict:
     body = {"action": "review", "project": PROJECT, "doc_id": DOC_ID,
-            "verdict": "pass", "findings": [], "comment": "ok"}
+            "verdict": "pass", "findings": [], "comment": "ok", "receipt": "tested-receipt"}
     body.update(overrides)
     return body
 
