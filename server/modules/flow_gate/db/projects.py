@@ -52,44 +52,91 @@ def _project_modules_table_exists(store) -> bool:
     return _PM_TABLE_SEEN
 
 
+def list_modules_bulk(project_ids: list[str]) -> dict[str, list[dict]]:
+    """Batch counterpart of list_modules() (0559 NR0003 §7 권고1, B0001).
+
+    ``_attach_project_modules()`` called list_modules() once per project, so
+    ``GET /projects?status=active`` cost 1 + 2N queries (operations measurement:
+    N=13 → 27 queries / 84.5ms). One IN-query pair per chunk replaces that loop,
+    which makes the endpoint's query count independent of the project count.
+
+    Chunked at 900 ids like documents.get_documents_by_ids(), to stay under
+    SQLite's historical 999 bind-variable limit. PostgreSQL-only ``= ANY(%s)``
+    is deliberately not used: SQLite and MySQL deployments run this same code.
+
+    Returns ``{project_id: [{name, title}]}`` with a key for every requested id
+    (an empty list when the project has no modules), applying exactly the
+    ordering and title rules of list_modules().
+    """
+    result: dict[str, list[dict]] = {}
+    if not project_ids:
+        return result
+    ids = list(dict.fromkeys(project_ids))
+    store = get_store()
+    # Same guard as the single-id path: a DB predating migration 028 has no
+    # project_modules table, and labels then come from groups alone.
+    has_pm = _project_modules_table_exists(store)
+    # project_modules titles (first-class; authoritative title when present)
+    pm_titles: dict[str, dict[str, str]] = {pid: {} for pid in ids}
+    # union of module labels from both sources, per project
+    labels: dict[str, list[str]] = {pid: [] for pid in ids}
+    seen: dict[str, set[str]] = {pid: set() for pid in ids}
+
+    def _add(pid: str, raw) -> None:
+        label = (raw or "").strip() or "none"
+        if label not in seen[pid]:
+            seen[pid].add(label)
+            labels[pid].append(label)
+
+    chunk_size = 900
+    for i in range(0, len(ids), chunk_size):
+        chunk = ids[i:i + chunk_size]
+        placeholders = ",".join(["?"] * len(chunk))
+        if has_pm:
+            for r in store._fetch_all(
+                f"SELECT project_id, name, title FROM project_modules"
+                f" WHERE project_id IN ({placeholders})",
+                chunk,
+            ):
+                pid = r.get("project_id")
+                if pid not in pm_titles:
+                    continue
+                name = (r.get("name") or "").strip() or "none"
+                pm_titles[pid][name] = (r.get("title") or "").strip() or name
+        for r in store._fetch_all(
+            f"SELECT DISTINCT project_id, module FROM groups"
+            f" WHERE project_id IN ({placeholders})",
+            chunk,
+        ):
+            pid = r.get("project_id")
+            if pid in seen:
+                _add(pid, r.get("module"))
+
+    for pid in ids:
+        titles = pm_titles[pid]
+        for name in titles:
+            _add(pid, name)
+        # 'none'/All first, then the rest alphabetically
+        ordered = sorted(labels[pid], key=lambda l: (l != "none", l))
+        result[pid] = [
+            {
+                "name": label,
+                "title": "All" if label == "none" else (titles.get(label) or label),
+            }
+            for label in ordered
+        ]
+    return result
+
+
 def list_modules(project_id: str) -> list[dict]:
     """Modules for a project = union of groups.module and project_modules,
     mirroring get_group_tree (process_service). The 'none' bucket is titled
     "All" (TR556 convention). Returns [{name, title}] with 'none'/All first. (M036)
+
+    Single-id wrapper over list_modules_bulk(): the union/sort/title rules live
+    in one place, so the batch and single-call paths cannot drift apart.
     """
-    store = get_store()
-    # project_modules titles (first-class; authoritative title when present)
-    pm_titles: dict[str, str] = {}
-    has_pm = _project_modules_table_exists(store)
-    if has_pm:
-        for r in store._fetch_all(
-            "SELECT name, title FROM project_modules WHERE project_id = ?", [project_id]
-        ):
-            name = (r.get("name") or "").strip() or "none"
-            pm_titles[name] = (r.get("title") or "").strip() or name
-    # union of module labels from both sources
-    labels: list[str] = []
-    seen: set[str] = set()
-
-    def _add(raw) -> None:
-        label = (raw or "").strip() or "none"
-        if label not in seen:
-            seen.add(label)
-            labels.append(label)
-
-    for r in store._fetch_all(
-        "SELECT DISTINCT module FROM groups WHERE project_id = ?", [project_id]
-    ):
-        _add(r.get("module"))
-    for name in pm_titles:
-        _add(name)
-    # 'none'/All first, then the rest alphabetically
-    labels.sort(key=lambda l: (l != "none", l))
-
-    def _title(label: str) -> str:
-        return "All" if label == "none" else (pm_titles.get(label) or label)
-
-    return [{"name": label, "title": _title(label)} for label in labels]
+    return list_modules_bulk([project_id]).get(project_id, [])
 
 
 def create(data: dict[str, Any]) -> dict:
