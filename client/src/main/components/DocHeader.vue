@@ -274,6 +274,7 @@ interface DocDetail {
   title: string
   status: string
   doc_review_status?: string | null
+  revision_no?: number | null
   is_final_approved?: boolean
   // TR0079.0003: true when this doc's group has been discarded (a file-less DC doc
   // exists). Drives the action-bar gate so a disposed group exposes no actions.
@@ -1283,6 +1284,20 @@ const rejectionBannerText = computed(() => {
 })
 const aiReview = computed(() => doc.value?.ai_review ?? null)
 const aiReviewHistory = computed(() => doc.value?.ai_review_history ?? [])
+// flowgate.default.0544 TR0014 rev2 (rejection: a still-pending_review document that already
+// has a completed AI review for its current revision showed the AiInvokeDialog's plain
+// [검수 시작] button, not [재검수] — doc_review_status stays 'pending_review' until a HUMAN
+// decides, regardless of how many AI reviews already ran underneath it, so it can never signal
+// "a review is already recorded for this revision" the way admission.py's own
+// db_document_reviews.get_latest_for_revision(doc_ref, revision_no) check does. This mirrors
+// that check on the client: aiReview is the doc's LATEST review overall (server _load_ai_reviews
+// does not filter by revision), so it must be compared against THIS document's own revision_no,
+// not against doc_review_status.
+const hasCompletedReviewForRevision = computed(() => {
+  const rev = doc.value?.revision_no
+  const reviewedRev = aiReview.value?.revision_no
+  return rev != null && reviewedRev != null && reviewedRev === rev
+})
 // 0155: latest test run (with failing-case detail) for the design-B fail strip. null on
 // every non-failing doc, since the embed only binds to a doc that has a bound run.
 const testRun = computed(() => doc.value?.test_run ?? null)
@@ -1355,6 +1370,7 @@ defineExpose({
   rejectionHistory,
   aiReview,
   aiReviewHistory,
+  hasCompletedReviewForRevision,
   testRun,
   groupTestRunActive,
   trScope,

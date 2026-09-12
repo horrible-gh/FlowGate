@@ -1219,7 +1219,7 @@
       :doc-ref="aiInvokeDocRef"
       :sequence-doc-ref="aiInvokeSequenceDocRef"
       :action-scope="aiInvokeActionScope"
-      :doc-review-status="aiInvokeDocReviewStatus"
+      :has-completed-review="aiInvokeHasCompletedReview"
       :initial-mode="aiInvokeInitialMode"
       :initial-target-seq="aiInvokeInitialTargetSeq"
       :continuation-review-mode="aiInvokeContinuationReviewMode"
@@ -1888,7 +1888,10 @@ const aiInvokeGroup = ref('')
 const aiInvokeDocRef = ref('')
 const aiInvokeSequenceDocRef = ref('')
 const aiInvokeActionScope = ref<AiInvokeScope>('new')
-const aiInvokeDocReviewStatus = ref<string | null>(null)
+// flowgate.default.0544 TR0014 rev2: whether a completed review already exists for THIS
+// document's current revision (DocHeader.hasCompletedReviewForRevision) — doc_review_status
+// alone cannot answer that; see the matching comment on AiInvokeDialog's hasCompletedReview prop.
+const aiInvokeHasCompletedReview = ref(false)
 const aiInvokeInitialMode = ref<'single' | 'continuous'>('single')
 const aiInvokeInitialTargetSeq = ref<number | null>(null)
 const aiInvokeContinuationReviewMode = ref(false)
@@ -2372,9 +2375,9 @@ function openAiInvokeDialog(
   aiInvokeDocRef.value = docRef
   aiInvokeSequenceDocRef.value = preset?.sequenceDocRef ?? docRef
   aiInvokeActionScope.value = actionScope
-  aiInvokeDocReviewStatus.value = exposedValue<string | null>(
-    docHeaderRefs[docRef]?.docReviewStatus,
-  ) ?? null
+  aiInvokeHasCompletedReview.value = exposedValue<boolean>(
+    docHeaderRefs[docRef]?.hasCompletedReviewForRevision,
+  ) ?? false
   aiInvokeInitialMode.value = preset?.mode ?? 'single'
   aiInvokeInitialTargetSeq.value = preset?.targetSeq ?? null
   aiInvokeContinuationReviewMode.value = !!preset?.reviewMode
