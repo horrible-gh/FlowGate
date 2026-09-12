@@ -202,6 +202,214 @@ def test_hold_verdict_never_reaches_auto_reject_in_the_checkpoint_transaction(mo
     assert latest["stop_reason"] == "review_verdict_hold"
 
 
+def test_real_worker_standalone_loop_broadcasts_reject_and_response_across_two_reviews(
+    monkeypatch, tmp_path,
+):
+    """flowgate.default.0561 T0004 AC-1/AC-2, human rejection rej_01M2AF5NW2D9KNSM.
+
+    The prior version of this test replaced `_auto_reject` with a mock that always
+    returned `{"ok": True}` and injected `rejection_history` through a fake
+    `db_docs.get_by_id`, so it proved nothing about whether the real
+    review -> auto-reject -> rework -> next-review sequence a live run actually goes
+    through ever reaches the broadcast. This test instead drives the SAME real worker
+    loop as `test_real_worker_standalone_loop_restart_restore_and_never_approves`
+    (real `transition_document_review`, real `record_rejection_response`, one sqlite
+    connection backing every read/write `_checkpoint_document_review_loop_tx` makes)
+    but captures `_broadcast` instead of silencing it, and pins the exact sequence the
+    rejection demanded:
+
+        review rev3 issues -> rejection_history created -> rejected
+        -> rework -> revision 4 + ai_response recorded
+        -> review rev4 (passed) -> stop
+    """
+    from contextlib import contextmanager
+    from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
+    from modules.flow_gate.db import document_reviews as db_reviews
+    from modules.flow_gate.db import users as db_users
+    from modules.flow_gate.workflow import pipeline_service
+    from modules.flow_gate.workflow.routers import workflow as workflow_router
+
+    conn = sqlite3.connect(tmp_path / "worker-loop-broadcast.db")
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.executescript("""
+        CREATE TABLE ai_invoke_runs(run_id TEXT PRIMARY KEY);
+        CREATE TABLE groups(group_id TEXT PRIMARY KEY);
+        CREATE TABLE documents(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            doc_id TEXT UNIQUE NOT NULL,
+            project_id TEXT,
+            group_id TEXT,
+            revision_no INTEGER NOT NULL,
+            doc_review_status TEXT NOT NULL,
+            meta TEXT,
+            rejection_reason TEXT,
+            rejection_history TEXT,
+            updated_at TEXT
+        );
+        CREATE TABLE ai_providers(provider_id TEXT PRIMARY KEY);
+        CREATE TABLE document_reviews(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            doc_id TEXT NOT NULL,
+            revision_no INTEGER NOT NULL,
+            reviewer_id TEXT NOT NULL,
+            verdict TEXT NOT NULL,
+            findings TEXT NOT NULL,
+            comment TEXT,
+            reviewed_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+    """)
+    migrations = Path(__file__).resolve().parents[1] / "sql/migrations/sqlite"
+    for name in ("091_ai_invoke_document_review_loops.sql",
+                 "092_ai_invoke_document_review_loop_live_run.sql"):
+        conn.executescript((migrations / name).read_text(encoding="utf-8"))
+    conn.execute("INSERT INTO groups VALUES ('flowgate.default.0561')")
+    conn.execute(
+        "INSERT INTO documents(doc_id,project_id,group_id,revision_no,doc_review_status,updated_at) "
+        "VALUES (?, 'flowgate', 'flowgate.default.0561', 3, 'pending_review', ?)",
+        ("standalone2", "2026-09-12T00:00:00+00:00"),
+    )
+    conn.executemany("INSERT INTO ai_providers VALUES (?)", [("reviewer",), ("reworker",)])
+    conn.commit()
+
+    class Store:
+        def _execute(self, sql, values=()):
+            cursor = conn.execute(sql, values)
+            conn.commit()
+            return cursor
+        def _execute_affected(self, sql, values=()):
+            cursor = conn.execute(sql, values)
+            return cursor.rowcount
+        def _fetch_one(self, sql, values=()):
+            row = conn.execute(sql, values).fetchone()
+            return dict(row) if row else None
+        def _fetch_all(self, sql, values=()):
+            return [dict(row) for row in conn.execute(sql, values).fetchall()]
+        @contextmanager
+        def transaction(self):
+            try:
+                yield self
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+    store = Store()
+    monkeypatch.setattr(db_loops, "get_store", lambda: store)
+    monkeypatch.setattr(service, "get_store", lambda: store)
+    monkeypatch.setattr(service.db_docs, "get_store", lambda: store)
+    monkeypatch.setattr(db_reviews, "get_store", lambda: store)
+    monkeypatch.setattr(db_users, "get_by_id", lambda user_id: {
+        "user_id": user_id, "is_admin": 1,
+    })
+    monkeypatch.setattr(
+        workflow_router, "_get_user_permissions",
+        lambda actor: {"document.reject", "document.update"},
+    )
+    monkeypatch.setattr(pipeline_service, "log_state_changed", lambda **kwargs: None)
+
+    started = datetime.now(timezone.utc)
+    loop = {
+        **BASE, "review_baseline_id": 0, "run_id": "aiv_e2e_bcast",
+        "group_id": "flowgate.default.0561",
+        "doc_ref": "standalone2", "rework_message": "fix it",
+        "started_at": started.isoformat(),
+        "deadline_at": (started + timedelta(hours=1)).isoformat(),
+        "stop_reason": None, "stop_detail": None,
+    }
+    persisted = db_loops.insert(loop)
+    run = {
+        "run_id": "aiv_e2e_bcast", "project_id": "flowgate", "issued_to": "review-owner",
+        "api_base_url": "http://127.0.0.1:8089/flowgate/api/v1",
+        "group_id": "flowgate.default.0561", "doc_ref": "standalone2",
+        "mode": "single", "document_review_loop": persisted,
+        "started_at": loop["started_at"], "docs_target": 0,
+        "chain_id": "loop", "chain_docs_target": 0, "chain_docs_reached": 0,
+        "attempts_used": 0, "fallback_history": [],
+    }
+    hops = []
+    def execute(_run, _chain, _prompt):
+        stage = db_loops.get("aiv_e2e_bcast")["current_stage"]
+        hops.append(stage)
+        stamp = f"2026-09-12T00:00:0{len(hops)}+00:00"
+        if stage == "rework":
+            rejected = service.db_docs.get_by_id("standalone2")
+            assert rejected["doc_review_status"] == "rejected"
+            assert "first finding" in rejected["rejection_reason"]
+            pipeline_service.transition_document_review(
+                doc_id="standalone2", action="mark_revised", actor_user_id="review-owner",
+                user_permissions={"document.update"},
+            )
+            conn.execute("UPDATE documents SET revision_no = 4 WHERE doc_id = 'standalone2'")
+            pipeline_service.record_rejection_response(
+                doc_id="standalone2", response_text="Addressed first finding.",
+                recorded_by="review-owner", revision_no=4,
+            )
+        else:
+            verdict = "issues" if len(hops) == 1 else "pass"
+            conn.execute(
+                "INSERT INTO document_reviews(doc_id,revision_no,reviewer_id,verdict,findings,comment,reviewed_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                ("standalone2", 3 if verdict == "issues" else 4, "reviewer", verdict,
+                 json.dumps([{"locus": "body", "note": "first finding"}])
+                 if verdict == "issues" else "[]", None, stamp, stamp, stamp),
+            )
+        conn.commit()
+        return True
+
+    broadcasts = []
+    monkeypatch.setattr(service, "_execute_provider_chain", execute)
+    monkeypatch.setattr(service, "_classify_end_reason", lambda item, ok: item.update(outcome="complete"))
+    monkeypatch.setattr(service, "_judge_hop", lambda item: None)
+    monkeypatch.setattr(service, "_prepare_retry_token", lambda item: {"mention": "token"})
+    monkeypatch.setattr(service, "_reset_attempt_state", lambda item: None)
+    monkeypatch.setattr(
+        service, "_broadcast",
+        lambda run, event_type, payload: broadcasts.append((event_type, dict(payload))),
+    )
+    monkeypatch.setattr(service, "_finalize_run", lambda item: item.update(status="finished"))
+    monkeypatch.setattr(service.ai_settings_service, "resolve_effective", lambda project: {
+        "providers": [{"id": "reviewer", "name": "Reviewer"},
+                      {"id": "reworker", "name": "Reworker"}]
+    })
+
+    service._worker(run, [{"id": "reviewer", "name": "Reviewer"}], "review")
+
+    # The real gate actually walked review -> rework -> review, not a mocked shortcut.
+    assert hops == ["review", "rework", "review"]
+    assert db_loops.get("aiv_e2e_bcast")["stop_reason"] == "review_passed"
+
+    # AC-1/AC-2: exactly the auto-reject transition broadcasts, carrying the SAME
+    # canonical rejection_history row transition_document_review actually wrote to
+    # documents.rejection_history -- nothing here is injected by the test.
+    status_events = [payload for (event_type, payload) in broadcasts
+                      if event_type == "doc_review_status_changed"]
+    assert len(status_events) == 1
+    payload = status_events[0]
+    assert payload["doc_id"] == "standalone2"
+    assert payload["prev_status"] == "pending_review"
+    assert payload["next_status"] == "rejected"
+    assert "first finding" in (payload["rejection_reason"] or "")
+    assert len(payload["rejection_history"]) == 1
+    assert payload["rejection_history"][0]["reason"] == payload["rejection_reason"]
+    # Not yet answered at the moment this fired -- the rework hop runs afterwards.
+    assert payload["rejection_history"][0]["ai_response"] is None
+
+    # AC-3: the rework hop's response landed on that SAME rejection item in the real
+    # row, proving the loop moved the document from rev3 to rev4 with a real answer.
+    doc = conn.execute(
+        "SELECT revision_no, doc_review_status, rejection_history FROM documents "
+        "WHERE doc_id = 'standalone2'"
+    ).fetchone()
+    assert doc["revision_no"] == 4
+    history = json.loads(doc["rejection_history"])
+    assert len(history) == 1
+    assert history[0]["ai_response"] == "Addressed first finding."
+    assert history[0]["response_revision_no"] == 4
+    conn.close()
+
+
 @pytest.mark.parametrize("rework_timeout_sec", [1800, 3600, 7200])
 def test_loop_stage_timeout_sec_applies_the_picked_rework_budget(rework_timeout_sec):
     # 0486 NR0010 Finding 3 / T0011 section 4: each of the three UI picks must reach the

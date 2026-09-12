@@ -5148,6 +5148,15 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 edited_doc = db_docs.get_by_id(doc_id)
                 if edited_doc and edited_doc.get("doc_review_status") == "revised":
                     from modules.flow_gate.api.v1.events.publisher import broadcast_event_threadsafe
+                    from modules.flow_gate.workflow.pipeline_service import parse_rejection_history
+                    # flowgate.default.0561 T0004: the rework response (ai_response /
+                    # responded_at / response_revision_no) is already written into
+                    # rejection_history atomically with the revision CAS above (T0007),
+                    # but this payload used to carry only the status flip. DocHeader's
+                    # fg:doc_review_status_changed listener only overwrites
+                    # doc.rejection_history when the key is PRESENT on the payload, so
+                    # omitting it here left the sidebar's AI response thread blank until
+                    # a manual reload/reopen even though the row was already saved.
                     broadcast_event_threadsafe(FlowEvent(
                         event_type=EventType.DOC_REVIEW_STATUS_CHANGED,
                         payload={
@@ -5155,6 +5164,9 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
                             "prev_status": "rejected",
                             "next_status": "revised",
                             "rejection_reason": None,
+                            "rejection_history": parse_rejection_history(
+                                edited_doc.get("rejection_history")
+                            ),
                         },
                         audience="*",
                         doc_id=doc_id,

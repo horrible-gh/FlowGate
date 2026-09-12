@@ -1366,6 +1366,32 @@ def _checkpoint_document_review_loop_tx(run: dict) -> dict | None:
         else:
             doc = db_docs.get_by_id(persisted["doc_ref"])
             bundle["doc"] = doc or {}
+            # flowgate.default.0561 T0004: the continuous-review auto-reject above writes
+            # straight into documents.rejection_history via transition_document_review,
+            # the SAME canonical writer the human [반려] button uses, but (unlike that
+            # button's own route handler) never told any open tab. DocHeader's
+            # fg:doc_review_status_changed listener is what applies a fresh
+            # rejection_history onto the open document reactively (MainPanel/DocInfoPanel
+            # read off that same doc object), so without this broadcast the sidebar's
+            # AI 검수·반려 feed stayed exactly as it was until a manual refresh/reopen.
+            # Queued through after_commit — this whole function runs inside the caller's
+            # transaction() frame, and broadcasting before it actually commits would tell
+            # an open tab about a rejection that a later failure in this same transaction
+            # could still roll back.
+            from modules.flow_gate.db import connection as db_connection
+            _reject_broadcast_payload = {
+                "doc_id": persisted["doc_ref"],
+                "prev_status": slot["review_status"],
+                "next_status": (doc or {}).get("doc_review_status"),
+                "rejection_reason": (doc or {}).get("rejection_reason"),
+                "rejection_history": _parse_rejection_history((doc or {}).get("rejection_history")),
+            }
+
+            def _broadcast_reject() -> None:
+                _svc()._broadcast(run, "doc_review_status_changed", _reject_broadcast_payload)
+
+            if not db_connection.after_commit(_broadcast_reject):
+                _broadcast_reject()
 
     resolved = resolve_document_review_loop_gate(bundle)
     updates = {
