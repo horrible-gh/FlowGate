@@ -271,7 +271,26 @@ class DatabaseSetting:
         self.tfa = None
         self.config = {}
 
-        logger.debug("settings", settings)
+        # 0559 NR0010 §5 / T0011: this used to dump the whole Settings
+        # object (str(settings)), which put SECRET_KEY, DB_PASSWORD and the
+        # FLOWGATE_*_ENCRYPT_KEY values into logs/default.log in plain text on
+        # every boot, independent of DB_LOG. Allow-list only the fields this
+        # line exists to show (which DB, which pool/migration knobs).
+        logger.debug(
+            "settings",
+            {
+                "DB_TYPE": settings.DB_TYPE.value,
+                "DB_HOST": settings.DB_HOST,
+                "DB_PORT": settings.DB_PORT,
+                "DB_DATABASE": settings.DB_DATABASE,
+                "DB_SCHEMA": settings.DB_SCHEMA,
+                "DB_LOG": settings.DB_LOG,
+                "DB_POOL_MIN": settings.DB_POOL_MIN,
+                "DB_POOL_MAX": settings.DB_POOL_MAX,
+                "DB_MAX_PARALLEL_QUERIES": settings.DB_MAX_PARALLEL_QUERIES,
+                "AUTO_MIGRATION": settings.AUTO_MIGRATION,
+            },
+        )
 
         if settings.DB_TYPE.value == DBType.MYSQL:
             self.config = {
