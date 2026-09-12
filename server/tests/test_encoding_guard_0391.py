@@ -203,7 +203,9 @@ def test_new_fingerprint_mismatch_rejects_even_clean_looking_body(monkeypatch):
     payload = response.json()
     assert response.status_code == 422
     assert "지문" in payload["error_message"]
-    assert "force_encoding_reason" in payload["error_message"]
+    # 0545 T0021: force 우회 안내는 지문 불일치 메시지에서 제거했다 -- force는
+    # corruption heuristic만 우회하고 지문 불일치는 force와 무관하게 거부된다.
+    assert "force_encoding_reason" not in payload["error_message"]
 
 
 def test_new_fingerprint_match_passes_even_when_body_looks_corrupted(monkeypatch):
@@ -232,6 +234,28 @@ def test_new_char_count_mismatch_rejects(monkeypatch):
         _new_body(content=CLEAN_KO, dry_run=True, body_chars=999999),
     )
     assert response.status_code == 422
+
+
+def test_new_fingerprint_full_mismatch_with_valid_force_still_rejects(monkeypatch):
+    """0545 T0021 (NR0017 §3 Finding 2): force_encoding_reason must not rescue a
+    fingerprint mismatch -- only the corruption heuristic is a force-bypassable layer.
+    Before the fix, the force early-return in _encoding_guard() ran before the
+    fingerprint block ever executed, so this exact combination (corrupted content +
+    completely wrong sha256/chars + a valid force reason) passed straight through."""
+    _patch_new_validation(monkeypatch)
+    response = post_inbox(
+        _new_body(
+            content=CORRUPT,
+            dry_run=True,
+            body_sha256="0" * 64,
+            body_chars=99999,
+            force_encoding_reason="worker confirms intentional and reviewed",
+        ),
+    )
+    payload = response.json()
+    assert response.status_code == 422
+    assert "지문" in payload["error_message"]
+    assert "force_encoding_reason" not in payload["error_message"]
 
 
 # ── inbox_routes._handle_edit (Step 5.9) ─────────────────────────────────────────
@@ -343,6 +367,25 @@ def test_edit_force_encoding_reason_bypasses(monkeypatch):
         _edit_body(content=CORRUPT, dry_run=True, force_encoding_reason="worker confirms intentional"),
     )
     assert response.status_code == 200
+
+
+def test_edit_fingerprint_full_mismatch_with_valid_force_still_rejects(monkeypatch):
+    """0545 T0021: same NR0017 §3 Finding 2 combination as the new-path regression test,
+    exercised through _handle_edit -- both share _encoding_guard() so both must reject."""
+    _patch_edit_validation(monkeypatch)
+    response = post_inbox(
+        _edit_body(
+            content=CORRUPT,
+            dry_run=True,
+            body_sha256="0" * 64,
+            body_chars=99999,
+            force_encoding_reason="worker confirms intentional and reviewed",
+        ),
+    )
+    payload = response.json()
+    assert response.status_code == 422
+    assert "지문" in payload["error_message"]
+    assert "force_encoding_reason" not in payload["error_message"]
 
 
 # ── inbox_routes._handle_review (Step 5.9) ───────────────────────────────────────
@@ -492,6 +535,30 @@ def test_review_short_force_does_not_bypass_corruption(monkeypatch):
     mocks["consume"].assert_not_called()
 
 
+def test_review_fingerprint_full_mismatch_with_valid_force_still_rejects(monkeypatch):
+    """0545 T0021 -- NR0017 §3 exact reproduction. Before the fix: force_encoding_reason
+    short-circuited _encoding_guard() before the fingerprint block ever ran, so a
+    completely fabricated body_sha256/body_chars (here "0"*64 / 99999, matching neither
+    the real hash nor length of CORRUPT) plus a valid force reason passed straight
+    through -- corruption_detected=false, fingerprint_matched=false, force_used=false
+    was recorded while the request still got a 200/201. After the fix the fingerprint
+    mismatch is checked first and rejects unconditionally; force is never consulted."""
+    mocks = _patch_review_validation(monkeypatch)
+    response = post_inbox(_review_body(
+        comment=CORRUPT,
+        body_sha256="0" * 64,
+        body_chars=99999,
+        force_encoding_reason="검토자가 확인했습니다 이대로 등록해야 합니다",
+    ))
+
+    payload = response.json()
+    assert response.status_code == 422
+    assert "지문" in payload["error_message"]
+    assert "force_encoding_reason" not in payload["error_message"]
+    mocks["insert_review"].assert_not_called()
+    mocks["consume"].assert_not_called()
+
+
 def test_review_corrupted_finding_locus_rejected(monkeypatch):
     mocks = _patch_review_validation(monkeypatch)
 
@@ -500,6 +567,60 @@ def test_review_corrupted_finding_locus_rejected(monkeypatch):
     assert response.status_code == 422
     mocks["insert_review"].assert_not_called()
     mocks["consume"].assert_not_called()
+
+
+# ── inbox_routes._encoding_validation_result: force_used after the reorder (0545 T0021
+# 작업 항목 4) ──────────────────────────────────────────────────────────────────────
+# The premise the reorder establishes: by the time _encoding_validation_result runs,
+# _encoding_guard() has already passed, so a fingerprint (if supplied) is guaranteed to
+# have matched -- a mismatch would already have returned 422 before dry-run/real-submit
+# code is ever reached. force_used = corruption_detected and force_reason_valid does not
+# read fingerprint state at all, so it needs no change; these pin the one previously
+# untested combination (fingerprint supplied AND matched, on top of corruption+force)
+# against a clean control.
+
+def test_encoding_validation_result_force_used_true_when_fingerprint_matched_and_corrupted():
+    """fingerprint_bypasses_corruption=False (the review path's setting) is required to
+    exercise this combination: with the default True, a matched fingerprint field is
+    popped out of check_fields before the corruption loop runs, so that field alone can
+    never show corruption_detected=True at the same time as fingerprint_matched=True."""
+    import hashlib
+
+    from modules.flow_gate.api import inbox_routes
+
+    digest = hashlib.sha256(CORRUPT.encode("utf-8")).hexdigest()
+    result = inbox_routes._encoding_validation_result(
+        fields={"comment": CORRUPT},
+        fingerprint_field="comment",
+        body_sha256=digest,
+        body_chars=len(CORRUPT),
+        force_encoding_reason="worker confirms intentional and reviewed",
+        fingerprint_bypasses_corruption=False,
+    )
+    assert result["fingerprint_supplied"] is True
+    assert result["fingerprint_matched"] is True
+    assert result["corruption_detected"] is True
+    assert result["force_used"] is True
+
+
+def test_encoding_validation_result_force_used_false_when_fingerprint_matched_and_clean():
+    import hashlib
+
+    from modules.flow_gate.api import inbox_routes
+
+    digest = hashlib.sha256(CLEAN_KO.encode("utf-8")).hexdigest()
+    result = inbox_routes._encoding_validation_result(
+        fields={"comment": CLEAN_KO},
+        fingerprint_field="comment",
+        body_sha256=digest,
+        body_chars=len(CLEAN_KO),
+        force_encoding_reason="worker confirms intentional and reviewed",
+        fingerprint_bypasses_corruption=False,
+    )
+    assert result["fingerprint_supplied"] is True
+    assert result["fingerprint_matched"] is True
+    assert result["corruption_detected"] is False
+    assert result["force_used"] is False
 
 
 # ── workflow step labels: reject instead of silently swapping (T0005 §5-5/§5-6) ────
@@ -775,10 +896,11 @@ def test_new_ko_response_preserves_existing_meaning(monkeypatch):
     payload = response.json()
     assert response.status_code == 422
     assert "지문" in payload["error_message"]
-    # 지문 세부(기대/실제 sha256)와 강제 우회 안내가 ko 에서도 그대로 남는다.
+    # 지문 세부(기대/실제 sha256)는 ko 에서도 그대로 남는다. 0545 T0021: force 우회 안내는
+    # 지문 불일치 메시지에서 뺐다 -- force는 corruption heuristic만 우회한다.
     assert "sha256" in payload["error_message"]
     assert "0" * 64 in payload["error_message"]
-    assert "force_encoding_reason" in payload["error_message"]
+    assert "force_encoding_reason" not in payload["error_message"]
     assert "UTF-8" in payload["error_message"]
 
 

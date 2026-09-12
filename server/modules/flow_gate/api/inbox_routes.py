@@ -1672,8 +1672,10 @@ def _fail(
 #      workflow_decision_service._text_is_corrupted() — kept in that module only, per
 #      test_conversation_dry_run_0360.py:196-204's single-definition constraint.
 #
-# force_encoding_reason is the one escape hatch shared by every path: any non-trivial
-# reason (>=10 non-whitespace chars) bypasses both layers unconditionally.
+# force_encoding_reason only bypasses layer 2 (the corruption heuristic). A layer-1
+# fingerprint mismatch is rejected regardless of force -- the fingerprint comparison
+# always runs first, so force is only ever consulted for text whose fingerprint (if
+# any was supplied) already matched.
 # T0004 task 1-3 / NR0003 finding 2-3: the two notices that used to always go out in
 # Korean regardless of locale branch, and the Korean field names (see
 # _ENCODING_FIELD_LABELS["ko"] below: body/title-line) inserted verbatim into the
@@ -1683,8 +1685,7 @@ _ENCODING_GUARD_COPY = {
     "ko": {
         "fingerprint_mismatch": (
             "본문 지문이 어긋납니다: {mismatches}. 본문을 UTF-8 파일로 먼저 쓰고 그 "
-            "파일에서 글자 수와 해시를 구해 다시 보내세요. 정말 이대로 보내야 하면 "
-            "force_encoding_reason에 사유(공백 제외 10자 이상)를 적어 다시 보내세요."
+            "파일에서 글자 수와 해시를 구해 다시 보내세요."
         ),
         "sha256_mismatch": "sha256 기대={expected} 실제={actual}",
         "chars_mismatch": "글자수 기대={expected} 실제={actual}",
@@ -1700,8 +1701,7 @@ _ENCODING_GUARD_COPY = {
         "fingerprint_mismatch": (
             "The body fingerprint does not match: {mismatches}. Write the body to a "
             "UTF-8 file first and compute the character count and hash from that file, "
-            "then resend. If you must send it as-is, add a reason (at least 10 "
-            "non-whitespace characters) in force_encoding_reason and resend."
+            "then resend."
         ),
         "sha256_mismatch": "sha256 expected={expected} actual={actual}",
         "chars_mismatch": "char count expected={expected} actual={actual}",
@@ -1717,9 +1717,7 @@ _ENCODING_GUARD_COPY = {
     "ja": {
         "fingerprint_mismatch": (
             "本文の指紋が一致しません: {mismatches}。本文を先にUTF-8ファイルとして書き出"
-            "し、そのファイルから文字数とハッシュを求めて再送してください。どうしても"
-            "このまま送る必要がある場合は、force_encoding_reasonに理由(空白を除いて10"
-            "文字以上)を記入して再送してください。"
+            "し、そのファイルから文字数とハッシュを求めて再送してください。"
         ),
         "sha256_mismatch": "sha256 期待値={expected} 実際値={actual}",
         "chars_mismatch": "文字数 期待値={expected} 実際値={actual}",
@@ -1751,10 +1749,6 @@ def _encoding_guard(
     locale: str = "ko",
     fingerprint_bypasses_corruption: bool = True,
 ) -> Optional[JSONResponse]:
-    reason = (force_encoding_reason or "").strip()
-    if len(reason.replace(" ", "")) >= 10:
-        return None
-
     from modules.flow_gate.services import workflow_decision_service as _wf_decision
 
     normalized_locale = template_provision.normalize_locale(locale)
@@ -1780,6 +1774,12 @@ def _encoding_guard(
                 mismatches.append(copy["chars_invalid"].format(value=repr(body_chars)))
         if mismatches:
             return _fail(422, copy["fingerprint_mismatch"].format(mismatches="; ".join(mismatches)))
+
+    # Fingerprint mismatches are rejected above unconditionally -- force only ever
+    # reaches a corruption signal on text whose fingerprint (if any) already matched.
+    reason = (force_encoding_reason or "").strip()
+    if len(reason.replace(" ", "")) >= 10:
+        return None
 
     for name, value in check_fields.items():
         if _wf_decision._text_is_corrupted(value):
