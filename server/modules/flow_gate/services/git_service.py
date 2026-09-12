@@ -76,11 +76,6 @@ LOCK_WAIT_SEC = 5
 MERGE_SESSION_TTL_HOURS = 24   # L0004 §1 — quiet-for-this-long conflict → auto-abort
 SWEEP_INTERVAL_MIN = 30        # L0004 §1 — auto-recovery sweep period
 BRANCH_MAX_LEN = 100
-MASK_KEEP_PREFIX = 4
-MASK_KEEP_SUFFIX = 4
-MASK_MIN_LEN = 9
-SECRET_ENV_KEY = "FLOWGATE_GIT_ENCRYPT_KEY"
-SECRET_ENV_KEY_PREV = "FLOWGATE_GIT_ENCRYPT_KEY_PREV"
 AUTO_COMMIT_MSG = "chore: finalize workflow changes"
 AUTO_COMMIT_DESIGN_TYPES = ("D", "DB", "P", "L")
 # ── Commit message pipeline (flowgate.default.0173 — D0002/P0003/L0004) ────────
@@ -134,9 +129,7 @@ BOOTSTRAP_SEED_MSG = "flowgate: initialize {base_branch} ({project_id})"
 ADOPT_PENDING_MARKER = ".git/flowgate_adopt_pending"
 # Per-project last-attempt ledger in the generic system_settings KV (no DDL).
 ATTEMPT_RECORD_KEY = "git.provision.last_attempt.{project_id}"
-PROVIDER_VALUES = ("github", "gitlab", "gitea", "gitbucket", "generic")
 ACTION_VALUES = ("merge", "merge_only", "push", "commit_push", "commit_only", "wait")
-DEFAULT_FINALIZE_ACTION_VALUES = ("merge", "push", "wait")
 FINALIZE_MAIN_CHOICES = ("merge", "merge_only", "wait")
 FINALIZE_AUX_CHOICES = ("push",)
 # NR flowgate.default.0331.0005 §8 — the approved v4 mockup drives the finalize
@@ -184,166 +177,21 @@ DISCARDED_STATUS = "discarded"
 # This is the COMMITTER (and the author fallback) — it stays "FlowGate" because the
 # server really is what ran the commit.
 _GIT_IDENT = ["-c", "user.name=FlowGate", "-c", "user.email=flowgate@localhost"]
-# ── Configurable author (flowgate.default.0237 — R0001/NR0003) ────────────────
-# A project may override the AUTHOR of server-made commits so work does not land
-# under the FlowGate name (R0001). Only the author moves; the committer above stays
-# FlowGate, which is the GitHub-App convention and keeps the history honest —
-# contribution graphs key off the author, so this is what R0001 actually needs.
-# The override travels in GIT_AUTHOR_NAME/GIT_AUTHOR_EMAIL rather than `-c user.*`
-# (which would move the committer too) or `--author` (which `git merge` rejects —
-# NR0003 §4). Both fields are stored together or not at all; an empty ident makes
-# `git commit` fail with "Author identity unknown", so "" is normalized to NULL.
-GIT_AUTHOR_NAME_MAX = 100
-GIT_AUTHOR_EMAIL_MAX = 200
 
 
-def _author_env_for(project_id: Optional[str]) -> Optional[dict]:
-    """GIT_AUTHOR_* env for a project's configured author, or None to use the default.
-
-    Best-effort: a missing/partial config or an unreadable row simply falls back to
-    the FlowGate identity — an author override must never break a commit.
-    """
-    if not project_id:
-        return None
-    try:
-        cfg = db_git.get_config(project_id)
-    except Exception:
-        _log.warning("git author lookup failed for %s", project_id, exc_info=True)
-        return None
-    return _author_env_from_cfg(cfg)
-
-
-def _author_env_from_cfg(cfg: Optional[dict]) -> Optional[dict]:
-    """Same as _author_env_for but for an already-loaded config row."""
-    if not cfg:
-        return None
-    name = (cfg.get("author_name") or "").strip()
-    email = (cfg.get("author_email") or "").strip()
-    if not name or not email:   # partial rows are impossible via save_config (E-author)
-        return None             # but a hand-edited DB must still commit, not crash
-    return {"GIT_AUTHOR_NAME": name, "GIT_AUTHOR_EMAIL": email}
-
-
-class GitServiceError(Exception):
-    """Carries (http_status, error_code, message) to the router envelope."""
-
-    def __init__(self, status: int, code: str, message: str, details: Optional[dict] = None):
-        super().__init__(f"{code}: {message}")
-        self.status = status
-        self.code = code
-        self.message = message
-        # Optional structured payload surfaced verbatim in the router envelope
-        # (e.g. the base_dirty file list — flowgate.default.0176 T0010 §b).
-        self.details = details or {}
-
-
-# ── Master key / encryption / masking (L0006 §2.3 — TOTP precedent) ─────────
-
-def _key_file_path() -> Path:
-    return get_storage_root(create=True) / ".flowgate-git-key"
-
-
-def _load_key_material(env_name: str) -> Optional[bytes]:
-    val = os.environ.get(env_name)
-    if not val:
-        try:
-            from config import settings as _settings  # lazy — import cycle safety
-            val = getattr(_settings, env_name, None)
-        except Exception:
-            val = None
-    if not val:
-        return None
-    raw = base64.b64decode(val)
-    if len(raw) != 32:
-        raise ValueError(f"{env_name} must be a base64-encoded 32-byte key.")
-    return raw
-
-
-def _get_current_key(create: bool = False) -> bytes:
-    """Resolve the master key: env/.env → persisted storage file (→ generate).
-
-    Boot-time provisioning (L0006 E5): the docker entrypoint persists the key
-    into the container env; host installs without one fall back to a key file
-    under the storage root, generated once and chmod 600 — same pattern as the
-    entrypoint's .flowgate-secrets.env.
-    """
-    key = _load_key_material(SECRET_ENV_KEY)
-    if key is not None:
-        return key
-    kf = _key_file_path()
-    try:
-        if kf.is_file():
-            raw = base64.b64decode(kf.read_text(encoding="ascii").strip())
-            if len(raw) == 32:
-                return raw
-        if create:
-            raw = os.urandom(32)
-            kf.write_text(base64.b64encode(raw).decode("ascii"), encoding="ascii")
-            try:
-                os.chmod(kf, stat.S_IRUSR | stat.S_IWUSR)
-            except OSError:
-                pass
-            return raw
-    except Exception:
-        pass
-    raise GitServiceError(
-        500, "git_encrypt_key_missing",
-        f"{SECRET_ENV_KEY} is not configured and no persisted key is available.",
-    )
-
-
-def encrypt_secret(plain: str) -> str:
-    """AES-256-GCM → base64(12-byte nonce + ciphertext + 16-byte tag)."""
-    key = _get_current_key(create=True)
-    nonce = os.urandom(12)
-    cipher = _AES.new(key, _AES.MODE_GCM, nonce=nonce)
-    ciphertext, tag = cipher.encrypt_and_digest(plain.encode("utf-8"))
-    return base64.b64encode(nonce + ciphertext + tag).decode("ascii")
-
-
-def decrypt_secret(encrypted: str) -> str:
-    """Decrypt; retries with the previous key during rotation (TOTP precedent)."""
-    data = base64.b64decode(encrypted)
-    nonce, tag, ciphertext = data[:12], data[-16:], data[12:-16]
-    candidates: list[bytes] = []
-    try:
-        candidates.append(_get_current_key())
-    except GitServiceError:
-        pass
-    try:
-        prev = _load_key_material(SECRET_ENV_KEY_PREV)
-        if prev is not None:
-            candidates.append(prev)
-    except ValueError:
-        pass
-    for key in candidates:
-        try:
-            cipher = _AES.new(key, _AES.MODE_GCM, nonce=nonce)
-            return cipher.decrypt_and_verify(ciphertext, tag).decode("utf-8")
-        except Exception:
-            continue
-    raise GitServiceError(
-        500, "git_secret_unreadable",
-        "Stored git credential cannot be decrypted (master key changed?). "
-        "Re-enter the token in the project's Git settings.",
-    )
-
-
-def mask_secret(plain: Optional[str]) -> Optional[str]:
-    if plain is None:
-        return None
-    if len(plain) < MASK_MIN_LEN:
-        return "********"
-    return plain[:MASK_KEEP_PREFIX] + "*" * 12 + plain[-MASK_KEEP_SUFFIX:]
-
-
-def _scrub(text: Optional[str], *secrets: Optional[str]) -> str:
-    """Remove any secret occurrences from git output before storing/returning."""
-    out = text or ""
-    for s in secrets:
-        if s:
-            out = out.replace(s, "***")
-    return out
+from .git.credentials import (
+    GitServiceError,
+    _author_env_for,
+    _author_env_from_cfg,
+    _get_current_key,
+    _key_file_path,
+    _load_key_material,
+    _load_secret_for,
+    _scrub,
+    decrypt_secret,
+    encrypt_secret,
+    mask_secret,
+)
 
 
 # ── Branch naming (L0006 §2.1) ────────────────────────────────────────────────
@@ -783,197 +631,22 @@ def guard_base_free(project_id: str) -> None:
     )
 
 
-def _base_root_of(project_id: str) -> Optional[Path]:
-    """The project's base-checkout path, or None when unresolvable (0205 §2.5)."""
-    cfg = db_git.get_config(project_id)
-    project_name = _project_name(project_id)
-    if not cfg or not project_name:
-        return None
-    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-    return src_root(project_name, base_branch)
 
 
-# ── Config CRUD (P0005 §1·§2) ────────────────────────────────────────────────
-
-_URL_HTTP_RE = re.compile(r"^https?://\S+$")
-_URL_SSH_RE = re.compile(r"^(ssh://\S+|[\w.-]+@[\w.-]+:\S+)$")
-# file:// mirrors are accepted for same-host repositories (and the test harness).
-_URL_FILE_RE = re.compile(r"^file:///\S+$")
-
-
-def _validate_repo_url(repo_url: str) -> None:
-    url = (repo_url or "").strip()
-    if not url or not (
-        _URL_HTTP_RE.match(url) or _URL_SSH_RE.match(url) or _URL_FILE_RE.match(url)
-    ):
-        raise GitServiceError(
-            422, "invalid_request",
-            f"repo_url must be an http(s):// or ssh (git@host:path) URL: {repo_url!r}",
-        )
-    if "@" in url and _URL_HTTP_RE.match(url):
-        # http(s) URLs must not smuggle credentials in userinfo (L0006 §2.3 invariant d).
-        raise GitServiceError(
-            422, "invalid_request",
-            "repo_url must not embed credentials; store the token separately",
-        )
-
-
-def _resolve_author(
-    body: dict, existing: Optional[dict]
-) -> tuple[Optional[str], Optional[str]]:
-    """Resolve the commit-author override to store (0237 — R0001/NR0003 §5.3).
-
-    Same exclude_unset protocol as secret/translate_url: field omitted → keep the
-    stored value; sent → trim, "" → NULL (= revert to the FlowGate default).
-
-    Validated as a PAIR: a half-set identity would splice a configured name onto the
-    default email (or vice versa), and an empty ident makes every commit for the
-    project fail with "Author identity unknown" — so a bad value is rejected at the
-    door (422) rather than at finalize time, where it would strand the workflow.
-    """
-    def _field(key: str) -> Optional[str]:
-        if key in body:
-            return (body.get(key) or "").strip() or None
-        return (existing.get(key) or None) if existing else None
-
-    name = _field("author_name")
-    email = _field("author_email")
-
-    if (name is None) != (email is None):
-        raise GitServiceError(
-            422, "invalid_request",
-            "author_name and author_email must be set together (send both, or "
-            "clear both with \"\" to commit as the default FlowGate identity)",
-        )
-    if name is None:
-        return None, None
-    if len(name) > GIT_AUTHOR_NAME_MAX:
-        raise GitServiceError(
-            422, "invalid_request",
-            f"author_name must be at most {GIT_AUTHOR_NAME_MAX} characters",
-        )
-    if len(email) > GIT_AUTHOR_EMAIL_MAX:
-        raise GitServiceError(
-            422, "invalid_request",
-            f"author_email must be at most {GIT_AUTHOR_EMAIL_MAX} characters",
-        )
-    # git strips "<", ">" and newlines out of an ident itself (so this can never be
-    # an argv/config injection — NR0003 §4); reject them anyway so the operator gets
-    # the identity they typed instead of a silently mangled one.
-    if any(ch in name for ch in "<>\n\r"):
-        raise GitServiceError(
-            422, "invalid_request", "author_name must not contain '<', '>' or newlines",
-        )
-    if any(ch in email for ch in "<>\n\r ") or "@" not in email:
-        raise GitServiceError(
-            422, "invalid_request",
-            f"author_email must be an email address without spaces: {email!r}",
-        )
-    return name, email
-
-
-def _config_view(row: dict) -> dict:
-    """Row → response config object (P0005 §1-1) with the secret masked."""
-    has_secret = bool(row.get("secret_enc"))
-    masked: Optional[str] = None
-    if has_secret:
-        try:
-            masked = mask_secret(decrypt_secret(row["secret_enc"]))
-        except GitServiceError:
-            masked = "********"  # unreadable (E2) — keep has_secret=true
-    return {
-        "project_id": row["project_id"],
-        "repo_url": row["repo_url"],
-        "provider": row.get("provider") or "generic",
-        "username": row.get("username"),
-        "secret_masked": masked,
-        "has_secret": has_secret,
-        "base_branch": row.get("base_branch") or "main",
-        "default_finalize_action": row.get("default_finalize_action") or "wait",
-        "enabled": bool(row.get("enabled")),
-        "translate_url": row.get("translate_url") or None,
-        # null = not overridden → server commits as the FlowGate default (0237).
-        "author_name": row.get("author_name") or None,
-        "author_email": row.get("author_email") or None,
-        # TR work-scope check enforcement stage (0299 D0004 §3.6). An existing row with a NULL
-        # column predates migration 071, so it is read with the default 'observe'.
-        "tr_scope_stage": row.get("tr_scope_stage") or "observe",
-        "updated_at": row.get("updated_at"),
-    }
-
-
-def get_config_view(project_id: str) -> dict:
-    row = db_git.get_config(project_id)
-    if row is None:
-        return {"ok": True, "configured": False, "config": None}
-    return {"ok": True, "configured": True, "config": _config_view(row)}
-
-
-def save_config(project_id: str, body: dict) -> dict:
-    if db_projects.get_by_id(project_id) is None:
-        raise GitServiceError(404, "not_found", f"project '{project_id}' not found")
-    _validate_repo_url(body.get("repo_url") or "")
-    provider = body.get("provider") or "generic"
-    if provider not in PROVIDER_VALUES:
-        raise GitServiceError(422, "invalid_request", f"invalid provider: {provider!r}")
-    action = body.get("default_finalize_action") or "wait"
-    if action not in DEFAULT_FINALIZE_ACTION_VALUES:
-        raise GitServiceError(
-            422, "invalid_request", f"invalid default_finalize_action: {action!r}"
-        )
-
-    existing = db_git.get_config(project_id)
-    secret = body.get("secret", None)
-    if secret is None:
-        secret_enc = existing.get("secret_enc") if existing else None  # keep (P0005 §2-1)
-    elif secret == "":
-        secret_enc = None  # clear
-    else:
-        secret_enc = encrypt_secret(str(secret))
-
-    # translate_url (P0003 §4-1): field omitted → keep stored value; sent → trim,
-    # empty string stored as NULL (= disabled). Same exclude_unset "keep" protocol
-    # as secret above.
-    if "translate_url" in body:
-        translate_url = (body.get("translate_url") or "").strip() or None
-    else:
-        translate_url = existing.get("translate_url") if existing else None
-
-    author_name, author_email = _resolve_author(body, existing)
-
-    # tr_scope_stage (0299 D0004 §3.6): omitted → keep stored (or 'observe' on a new
-    # row). Same exclude_unset "keep" protocol as translate_url/secret above, so an
-    # older client that does not know the field cannot silently reset the stage.
-    if "tr_scope_stage" in body:
-        tr_scope_stage = (body.get("tr_scope_stage") or "observe").strip() or "observe"
-        if tr_scope_stage not in db_git.TR_SCOPE_STAGE_VALUES:
-            raise GitServiceError(
-                422, "invalid_request", f"invalid tr_scope_stage: {tr_scope_stage!r}"
-            )
-    else:
-        tr_scope_stage = (existing.get("tr_scope_stage") if existing else None) or "observe"
-
-    row = db_git.upsert_config(project_id, {
-        "repo_url": (body.get("repo_url") or "").strip(),
-        "provider": provider,
-        "username": (body.get("username") or None),
-        "secret_enc": secret_enc,
-        "base_branch": (body.get("base_branch") or "main").strip() or "main",
-        "default_finalize_action": action,
-        "enabled": bool(body.get("enabled")),
-        "translate_url": translate_url,
-        "author_name": author_name,
-        "author_email": author_email,
-        "tr_scope_stage": tr_scope_stage,
-    })
-    return {"ok": True, "configured": True, "config": _config_view(row)}
-
-
-def delete_config(project_id: str) -> dict:
-    deleted = db_git.delete_config(project_id)
-    # Existing worktrees are intentionally left untouched (P0005 §2-3);
-    # source resolution falls back immediately via the enabled/config check (E13).
-    return {"ok": True, "deleted": deleted}
+from .git.config import (
+    PROVIDER_VALUES,
+    DEFAULT_FINALIZE_ACTION_VALUES,
+    _base_root_of,
+    _config_view,
+    _require_enabled_config,
+    _resolve_author,
+    _validate_repo_url,
+    base_branch_for,
+    base_src_root,
+    delete_config,
+    get_config_view,
+    save_config,
+)
 
 
 # ── Connection test (P0005 §3 / L0006 §2.5) ──────────────────────────────────
@@ -1069,9 +742,6 @@ def _project_name(project_id: str) -> Optional[str]:
     return name or None
 
 
-def _load_secret_for(cfg: dict) -> Optional[str]:
-    enc = cfg.get("secret_enc")
-    return decrypt_secret(enc) if enc else None
 
 
 def _ref_exists(repo: Path, ref: str) -> bool:
@@ -8426,17 +8096,6 @@ def project_git_status(project_id: str) -> dict:
 
 # ── Manual recovery operations (flowgate.default.0162 P §3 / L §2.4) ──────────
 
-def _require_enabled_config(project_id: str) -> dict:
-    if db_projects.get_by_id(project_id) is None:
-        raise GitServiceError(404, "not_found", f"project '{project_id}' not found")
-    cfg = db_git.get_config(project_id)
-    if cfg is None or not cfg.get("enabled"):
-        raise GitServiceError(
-            409, "invalid_state", f"git integration is not enabled for project '{project_id}'"
-        )
-    return cfg
-
-
 def manual_fetch(project_id: str) -> dict:
     """POST …/projects/{id}/git/fetch — recovery fetch of the base checkout."""
     cfg = _require_enabled_config(project_id)
@@ -9197,50 +8856,3 @@ def raise_if_git_session_blocks_reopen(project_id: str, group_id: str) -> Option
             409, "git_busy",
             f"Another git operation is in progress for project '{project_id}' (try again shortly)",
         )
-
-
-# ── Base source-root resolution for the file explorer (0319 B0001) ────────────
-# The base file explorer and the editable base-checkout APIs resolved their source
-# directory from project_settings.branch (default "main"), while Git provisioning
-# clones/adopts the connected repo into src/{project}/{base_branch} (the git
-# integration config). When a connected repo's base branch is not "main" these two
-# paths diverge: provisioning lands the existing source under base_branch, but the
-# explorer walks an empty src/{project}/main and shows nothing — the B0001 report
-# ("the branch name is even the same, yet the file explorer is empty"). The source
-# is never actually "not fetched"; the read layer just looks at the wrong branch
-# folder. Resolve the base tree from the Git base_branch whenever integration is
-# ENABLED (mirroring the effective_src_root gate); a non-integrated or disabled
-# project keeps its project_settings.branch folder, so its behaviour never changes
-# (fallback-first, L0006 §2.2).
-def base_branch_for(project_id: Optional[str]) -> Optional[str]:
-    """Git base_branch when integration is enabled for the project, else None.
-
-    Never raises: any lookup failure reads as "not integrated", so the caller
-    falls back to the ordinary project-settings branch.
-    """
-    if not project_id:
-        return None
-    try:
-        cfg = db_git.get_config(project_id)
-    except Exception:
-        _log.warning("base_branch_for lookup failed for %s", project_id, exc_info=True)
-        return None
-    if cfg is None or not cfg.get("enabled"):
-        return None
-    return (cfg.get("base_branch") or "main").strip() or "main"
-
-
-def base_src_root(
-    project_id: Optional[str], project_name: str, fallback_branch: str = "main"
-) -> Path:
-    """Base source-checkout root for base file-explorer reads/edits (0319 B0001).
-
-    Git-integrated (enabled) → ``src_root(project_name, base_branch)``; otherwise
-    ``src_root(project_name, fallback_branch)``. ``fallback_branch`` is the value
-    the caller already derived from project_settings, so a non-integrated project
-    resolves byte-for-byte the same path as before. The returned Path is NOT
-    ``.resolve()``-d — callers that need a resolved path do so themselves, exactly
-    as they did with the raw ``src_root`` call this replaces.
-    """
-    branch = base_branch_for(project_id) or (fallback_branch or "main").strip() or "main"
-    return src_root(project_name, branch)
