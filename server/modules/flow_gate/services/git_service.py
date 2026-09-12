@@ -75,42 +75,42 @@ LOCK_WAIT_SEC = 5
 MERGE_SESSION_TTL_HOURS = 24   # L0004 §1 — quiet-for-this-long conflict → auto-abort
 SWEEP_INTERVAL_MIN = 30        # L0004 §1 — auto-recovery sweep period
 BRANCH_MAX_LEN = 100
-AUTO_COMMIT_MSG = "chore: finalize workflow changes"
-AUTO_COMMIT_DESIGN_TYPES = ("D", "DB", "P", "L")
-# ── Commit message pipeline (flowgate.default.0173 — D0002/P0003/L0004) ────────
-# Finalize-generated commit subjects are resolved through a fallback chain:
-# approved-TR draft → ASCII group title → translated title → fixed English phrase.
-COMMIT_SUBJECT_MAX = 200               # normalized subject max length (L0004 §1)
-TRANSLATE_TIMEOUT_SEC = 3              # translate HTTP timeout (connect+read)
-TRANSLATE_SOURCE = "auto"              # auto-detect source language (CH 0168.0008)
-TRANSLATE_TARGET = "en"
-# TR doc_review_status set whose commit_message draft is accepted (L0004 §1).
-DRAFT_ACCEPT_STATUSES = ("approved", "wf_done")
-FIXED_FALLBACK_SUBJECT = "{commit_type}: finalize workflow changes"   # L0004 §1 (D0002 §3-4)
-# Known machine-translation hallucinations / web boilerplate (lowercased, punctuation
-# stripped, exact match) that must never become a commit subject (CH 0168.0008).
-BOILERPLATE_BLACKLIST = frozenset({
-    "log in", "login", "sign in", "sign up", "sign out", "skip to content",
-    "home", "menu", "search", "about", "contact", "register", "submit",
-    "copyright", "all rights reserved", "read more", "learn more",
-})
-# flowgate.default.0462 T0005 — the TR commit point's ASCII fail-closed fallback. The
-# TR's own draft failed every check (missing / non-ASCII / oversized); this keeps the
-# document identifiable without a translate round-trip.
-TR_FALLBACK_SUBJECT = "chore: approve {doc_code}"
-# flowgate.default.0462 T0005 — a conventional-commit type prefix, e.g. "fix(git): " or
-# "feat: ". Matched so an already-conventional TR draft is not double-wrapped with a
-# second type (`conventional_subject("chore", "fix(git): x")` would read as noise).
-_CONVENTIONAL_SUBJECT_RE = re.compile(r"^[a-z][a-z0-9]*(\([^()\r\n]+\))?!?: \S")
 
-
-def is_conventional_subject(text: str) -> bool:
-    """flowgate.default.0462 T0005 §4-1 — is ``text`` already ``type(scope): summary``?
-
-    A capital type or a colon with no following space is not conventional and is passed
-    through to be wrapped, not mistaken for one already in the right shape.
-    """
-    return bool(_CONVENTIONAL_SUBJECT_RE.match(text or ""))
+from .git.commit import (
+    COMMIT_SUBJECT_MAX,
+    FINALIZE_ARTIFACT_LIST_MAX,
+    FIXED_FALLBACK_SUBJECT,
+    TR_FALLBACK_SUBJECT,
+    _absorb_worker_edits,
+    _artifact_payload,
+    _cancel_prelock_gate,
+    _ledger_group_by_merge_sha,
+    _merge_commit_subject,
+    _release_cancel_lock,
+    _revert_one,
+    _stage_worker_edits,
+    _translate_guard,
+    _try_translate,
+    build_auto_commit_message,
+    cancel_blocking_dirty,
+    cancel_body,
+    cancel_group_status,
+    cancel_subject,
+    close_cancel_session,
+    conventional_subject,
+    create_tr_commit,
+    derive_commit_type,
+    is_conventional_subject,
+    open_cancel_session,
+    open_terminal_reopen_session,
+    reapply_body,
+    reapply_subject,
+    reapply_tr_commit,
+    resolve_commit_message,
+    restore_after_failed_revert,
+    revert_tr_commit,
+    uncommit_tr_suffix,
+)
 
 
 # ── Base-checkout explicit commit / revert (flowgate.default.0177 — L0002) ────
@@ -231,152 +231,6 @@ normalize_subject = _one_line_subject
 
 def _is_ascii(text: str) -> bool:
     return all(ord(ch) < 128 for ch in text)
-
-
-def derive_commit_type(group_id: str) -> Optional[str]:
-    """Conventional-commit type for a group (L0004 §2.3), or None when undecidable.
-
-    B-rooted → fix; R-rooted → feat when a design doc exists else chore.
-    """
-    try:
-        docs = db_documents.get_documents_by_group_id(group_id)
-    except Exception:
-        return None
-    root_type: Optional[str] = None
-    has_design_doc = False
-    for doc in docs:
-        doc_type = (doc.get("type_code") or doc.get("type") or "").upper()
-        if doc_type in AUTO_COMMIT_DESIGN_TYPES:
-            has_design_doc = True
-        if root_type is None and doc_type in ("B", "R"):
-            root_type = doc_type
-    if root_type == "B":
-        return "fix"
-    if root_type == "R":
-        return "feat" if has_design_doc else "chore"
-    return None
-
-
-def conventional_subject(commit_type: str, summary: str) -> str:
-    """``"{commit_type}: {summary}"`` — the one place every conventional-commit subject
-    is assembled. Public since flowgate.default.0462 T0005 §4-1: tr_commit_service uses
-    it too, so a TR draft and a finalize auto-title are typed the same way."""
-    return f"{commit_type}: {summary}"
-
-
-def build_auto_commit_message(group_id: str) -> str:
-    """Generate the finalize auto-commit subject from group metadata.
-
-    Falls back to a conventional chore subject whenever metadata is incomplete or
-    cannot be read, so finalize never fails because of commit-message generation.
-    """
-    fallback = AUTO_COMMIT_MSG.format(group_id=group_id)
-    try:
-        group = db_groups.get_group(group_id)
-        title = _one_line_subject(group.get("title") if group else None)
-        if not title:
-            return fallback
-        commit_type = derive_commit_type(group_id) or "chore"
-        return conventional_subject(commit_type, title)
-    except Exception:
-        _log.warning("auto commit message generation failed for %s", group_id, exc_info=True)
-        return fallback
-
-
-def _translate_guard(text: str, source_title: str) -> bool:
-    """Reject empty / non-English / echoed / boilerplate translations (L0004 §2.5).
-
-    A blacklist, not a whitelist — full hallucination detection is impossible; the
-    user confirmation step is the final defense.
-    """
-    if not text:
-        return False
-    if not _is_ascii(text):
-        return False
-    if not any(ch.isalpha() for ch in text):
-        return False
-    if text.lower() == (source_title or "").lower():
-        return False
-    stripped = text.strip(" .,!?:;\"'").strip()
-    if stripped.lower() in BOILERPLATE_BLACKLIST:
-        return False
-    return True
-
-
-def _try_translate(project_id: str, title: str) -> Optional[str]:
-    """Translate a group title to an English subject fragment, or None on any failure.
-
-    Never raises: translation is best-effort and must not fail finalize (L0004 §5).
-    """
-    try:
-        cfg = db_git.get_config(project_id)
-        url = ((cfg or {}).get("translate_url") or "").strip()
-        if not url:
-            return None                       # unset = disabled (normal path, no log)
-        import requests  # lazy: keeps the module import light
-        resp = requests.post(
-            url.rstrip("/") + "/translate",
-            json={
-                "q": title, "source": TRANSLATE_SOURCE,
-                "target": TRANSLATE_TARGET, "format": "text",
-            },
-            timeout=TRANSLATE_TIMEOUT_SEC,
-        )
-        if resp.status_code != 200:
-            _log.warning("translate server returned %s for %s", resp.status_code, project_id)
-            return None
-        translated = normalize_subject(resp.json().get("translatedText"))
-        if _translate_guard(translated, title):
-            return translated
-        _log.info("translate result rejected by guard: %r", translated)
-        return None
-    except Exception:
-        _log.warning("translate call failed for %s", project_id, exc_info=True)
-        return None
-
-
-def resolve_commit_message(group_id: str) -> tuple[str, str]:
-    """Resolve the suggested finalize commit subject and its source (L0004 §2.4).
-
-    Fallback chain: approved-TR draft (tr_draft) → ASCII title (auto_title) →
-    translated title (translated) → fixed English phrase (fallback). Side-effect
-    free; called by both the GET state query and POST finalize. Wrapped so an
-    unexpected error still yields a conventional fallback (finalize never breaks).
-    """
-    fallback = (AUTO_COMMIT_MSG.format(group_id=group_id), "fallback")
-    try:
-        # 1) latest approved-TR commit-message draft
-        draft = db_documents.get_latest_tr_commit_message(group_id, DRAFT_ACCEPT_STATUSES)
-        if draft:
-            subject = normalize_subject(draft)
-            if 0 < len(subject) <= COMMIT_SUBJECT_MAX:
-                return (subject, "tr_draft")
-            # abnormal stored value (empty / oversized) → silently fall through
-
-        project_id = _project_of_group(group_id)
-        group = db_groups.get_group(group_id)
-        title = normalize_subject(group.get("title") if group else None)
-        ctype = derive_commit_type(group_id) or "chore"
-
-        if title:
-            # 2) ASCII title → existing auto-generation rule
-            if _is_ascii(title):
-                subject = conventional_subject(ctype, title)
-                if len(subject) <= COMMIT_SUBJECT_MAX:
-                    return (subject, "auto_title")
-            else:
-                # 3) non-ASCII title → translate
-                translated = _try_translate(project_id, title)
-                if translated:
-                    subject = conventional_subject(ctype, translated)
-                    if len(subject) <= COMMIT_SUBJECT_MAX:
-                        return (subject, "translated")
-
-        # 4) fixed English phrase
-        return (FIXED_FALLBACK_SUBJECT.format(commit_type=ctype), "fallback")
-    except Exception:
-        _log.warning("commit message resolution failed for %s", group_id, exc_info=True)
-        return fallback
 
 
 from .git.command import (
@@ -534,8 +388,6 @@ def guard_base_free(project_id: str) -> None:
     )
 
 
-
-
 from .git.config import (
     PROVIDER_VALUES,
     DEFAULT_FINALIZE_ACTION_VALUES,
@@ -643,13 +495,6 @@ def _project_name(project_id: str) -> Optional[str]:
     row = db_projects.get_by_id(project_id)
     name = (row.get("project_name") or "").strip() if row else ""
     return name or None
-
-
-
-
-def _ref_exists(repo: Path, ref: str) -> bool:
-    proc = _run_git(["show-ref", "--verify", "--quiet", ref], cwd=repo)
-    return proc.returncode == 0
 
 
 # ── Worktree liveness: is that directory a REAL worktree? (0287 NR0004) ──────
@@ -1848,17 +1693,6 @@ def _group_ac_doc_ids(group_ids: list[str]) -> dict[str, str]:
 # transition site prove emptiness first and, when proven, auto-discard the slot
 # with no merge and no push instead.
 
-def _ahead_of_base(base_root: Path, base_branch: str, branch: str) -> Optional[int]:
-    """Number of commits on `branch` not yet on `base_branch` (local rev-list, no
-    network). None when it cannot be counted (missing ref / git failure)."""
-    proc = _run_git(["rev-list", "--count", f"{base_branch}..{branch}"], cwd=base_root)
-    if proc.returncode != 0:
-        return None
-    try:
-        return int((proc.stdout or "").strip())
-    except (TypeError, ValueError):
-        return None
-
 
 def _group_has_changes(
     cfg: dict, state: dict, project_name: Optional[str]
@@ -2611,157 +2445,36 @@ def collect_scope_changes(project_id: str, group_id: str) -> dict:
         result["reason"] = SRC_ROOT_ERROR
         return result
 
-
-def _parse_name_status_z(stdout: str) -> list[str]:
-    """``git diff --name-status -M -z`` → changed paths (renames → new path only).
-
-    The -z record shape differs per status: ``M\\0path\\0`` but ``R100\\0old\\0new\\0``.
-    A fixed 2-field stride (what read_group_changes can afford with --no-renames)
-    desynchronizes the whole stream on the first rename, so this walks the fields.
-    """
-    fields = (stdout or "").split("\0")
-    paths: list[str] = []
-    index = 0
-    while index < len(fields):
-        status = fields[index]
-        index += 1
-        if not status:
-            continue
-        take_second = status[:1] in ("R", "C")
-        if index >= len(fields):
-            break
-        first = fields[index]
-        index += 1
-        if take_second:
-            if index >= len(fields):
-                break
-            second = fields[index]
-            index += 1
-            if second:
-                paths.append(second)
-        elif first:
-            paths.append(first)
-    return paths
-
-
-def _normalize_git_status(code: str) -> str:
-    """A raw ``git diff --name-status`` letter (possibly with a similarity suffix, e.g.
-    ``R100``) → one of ``A``/``M``/``D``/``R``. Anything else git might emit (``T``
-    type-change, ``U`` unmerged, ...) falls back to ``M``: the path did change and is
-    never dropped, it is just not classified more precisely (0493 T0005)."""
-    letter = (code or "")[:1].upper()
-    if letter in ("A", "M", "D"):
-        return letter
-    if letter in ("R", "C"):
-        return "R"
-    return "M"
-
-
-def _parse_name_status_manifest(stdout: str) -> list[dict]:
-    """Same ``-M -z`` stream as ``_parse_name_status_z``, but keeps status and the
-    rename's old path instead of collapsing to a bare path list (0493 T0005 —
-    reviewers need per-file actual status, not just a path).
-
-    Returns one entry per changed path: ``{"path", "status", "old_path"}``. ``old_path``
-    is set only for a rename/copy record (``take_second``); every other status carries
-    it as ``None``. Field-walking logic mirrors ``_parse_name_status_z`` — see its
-    docstring for why a fixed stride desyncs on the first rename.
-    """
-    fields = (stdout or "").split("\0")
-    entries: list[dict] = []
-    index = 0
-    while index < len(fields):
-        status = fields[index]
-        index += 1
-        if not status:
-            continue
-        take_second = status[:1] in ("R", "C")
-        if index >= len(fields):
-            break
-        first = fields[index]
-        index += 1
-        if take_second:
-            if index >= len(fields):
-                break
-            second = fields[index]
-            index += 1
-            if second:
-                entries.append({
-                    "path": second, "status": _normalize_git_status(status),
-                    "old_path": first or None,
-                })
-        elif first:
-            entries.append({
-                "path": first, "status": _normalize_git_status(status), "old_path": None,
-            })
-    return entries
-
-
-def _validate_blob_path(path: str) -> None:
-    """Reject empty / absolute / drive-prefixed / '..' paths (P0005 §7)."""
-    if not path:
-        raise GitServiceError(400, "invalid_path", "path parameter is required")
-    normalized = path.replace("\\", "/")
-    if normalized.startswith("/"):
-        raise GitServiceError(400, "invalid_path", "absolute paths are not allowed")
-    if len(normalized) >= 2 and normalized[1] == ":":
-        raise GitServiceError(400, "invalid_path", "drive prefix is not allowed")
-    if ".." in normalized.split("/"):
-        raise GitServiceError(400, "invalid_path", "'..' path segments are not allowed")
-
-
-def _ls_tree_entry(base_root: Path, commit: str, path: str) -> Optional[tuple[str, str]]:
-    """(object_type, sha) of a single path in a commit tree, or None if absent."""
-    proc = _run_git(
-        ["ls-tree", "-z", commit, "--", path], cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC
-    )
-    if proc.returncode != 0:
-        raise GitServiceError(500, "git_error", _one_line_subject(proc.stderr) or "ls-tree failed")
-    for record in (proc.stdout or "").split("\0"):
-        if not record:
-            continue
-        meta, _, entry_path = record.partition("\t")
-        if entry_path != path:
-            continue
-        parts = meta.split()
-        if len(parts) >= 3:
-            return parts[1], parts[2]
-    return None
-
-
-def _cat_file_size(base_root: Path, sha: str) -> int:
-    proc = _run_git(["cat-file", "-s", sha], cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC)
-    if proc.returncode != 0:
-        raise GitServiceError(500, "git_error", _one_line_subject(proc.stderr) or "cat-file failed")
-    try:
-        return int((proc.stdout or "0").strip())
-    except ValueError:
-        return 0
-
-
-def _cat_file_blob_head(base_root: Path, sha: str, limit: int) -> bytes:
-    """Read up to ``limit`` raw bytes of a blob (bounded so a huge object is never
-    slurped whole just to sniff/truncate it)."""
-    env = os.environ.copy()
-    env["GIT_TERMINAL_PROMPT"] = "0"
-    try:
-        proc = subprocess.Popen(
-            ["git", "cat-file", "blob", sha], cwd=str(base_root),
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env,
-        )
-    except FileNotFoundError:
-        raise GitServiceError(500, "git_unavailable", "git binary not found on server")
-    try:
-        data = proc.stdout.read(limit) if proc.stdout else b""
-    finally:
-        if proc.stdout:
-            proc.stdout.close()
-        proc.kill()
-        try:
-            proc.wait(timeout=GIT_READ_TIMEOUT_SEC)
-        except subprocess.TimeoutExpired:
-            pass
-    return data
+from .git.refs import (
+    UNTRACKED_LIST_MAX,
+    _ahead_of_base,
+    _base_ahead_behind,
+    _cat_file_blob_head,
+    _cat_file_size,
+    _commits_present,
+    _dirty,
+    _dirty_files,
+    _full_sha_matches,
+    _ignored_paths,
+    _local_commit_count,
+    _ls_tree_entry,
+    _merge_in_progress,
+    _normalize_git_status,
+    _parse_name_status_manifest,
+    _parse_name_status_z,
+    _query_remote_ref,
+    _ref_exists,
+    _remote_base_missing,
+    _rev_parse,
+    _short_head,
+    _unmerged_paths,
+    _unpushed_commits,
+    _untracked_files,
+    _validate_blob_path,
+    _worktree_untracked_paths,
+    _worktree_untracked_summary_for_path,
+    worktree_untracked_summary,
+)
 
 
 def _read_group_untracked_blob(
@@ -3045,301 +2758,6 @@ def _finalize_context(group_id: str) -> tuple[dict, dict, str, Path, Path]:
     return cfg, state, project_id, base_root, wt_path
 
 
-def _dirty(repo: Path, include_untracked: bool = True) -> bool:
-    args = ["status", "--porcelain"]
-    if not include_untracked:
-        # E3 guard scope: untracked build artifacts (e.g. __pycache__/*.pyc,
-        # .pytest_cache) in the server's base checkout are NOT "local
-        # modifications" — only changes to tracked files require operator
-        # intervention. See NR flowgate.default.0165.0009.
-        args.append("--untracked-files=no")
-    proc = _run_git(args, cwd=repo)
-    return bool((proc.stdout or "").strip()) if proc.returncode == 0 else False
-
-
-def _dirty_files(repo: Path, include_untracked: bool = True) -> list[str]:
-    """The changed paths behind `_dirty()` — same scope, but the actual file list.
-
-    Used to tell the operator *which* files leave the base checkout dirty so the
-    E3 finalize block and the file-editor save warning name them instead of a bare
-    500 (flowgate.default.0176 T0010). Parses `git status --porcelain` v1: the
-    2-char status code occupies cols 0-1, the path starts at col 3; a rename is
-    rendered `old -> new`, so keep the destination.
-    """
-    args = ["status", "--porcelain"]
-    if not include_untracked:
-        args.append("--untracked-files=no")
-    proc = _run_git(args, cwd=repo)
-    if proc.returncode != 0:
-        return []
-    files: list[str] = []
-    for line in (proc.stdout or "").splitlines():
-        entry = line[3:].strip() if len(line) > 3 else line.strip()
-        if not entry:
-            continue
-        if " -> " in entry:
-            entry = entry.split(" -> ", 1)[1].strip()
-        # porcelain may quote paths with unusual chars; strip surrounding quotes.
-        if len(entry) >= 2 and entry[0] == '"' and entry[-1] == '"':
-            entry = entry[1:-1]
-        files.append(entry)
-    return files
-
-
-# Not a cap on how many new files the finalize commit stages, but on how many paths ride one
-# command line. The 0382 incident brought 261 at once, and hitting the Windows command-line
-# length limit would fail the finalize itself. It is split across several calls.
-_ADD_PATHSPEC_CHUNK = 50
-
-# Cap on how much excluded debris rides the result and the event. The screen announces the
-# count first, so the total count is always exact and only the list is truncated.
-FINALIZE_ARTIFACT_LIST_MAX = 200
-
-
-def _worktree_untracked_paths(wt_path: Path) -> list[str]:
-    """Untracked, non-gitignored paths in a worktree ('/'-separated, sorted)."""
-    proc = _run_git(
-        ["ls-files", "--others", "--exclude-standard", "-z"],
-        cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
-    )
-    if proc.returncode != 0:
-        return []
-    return sorted(p for p in (proc.stdout or "").split("\0") if p)
-
-
-def _worktree_untracked_summary_for_path(wt_path: Path) -> dict:
-    """Classify raw untracked paths with the exact rule used by staging."""
-    raw = _worktree_untracked_paths(wt_path)
-    kept, artifacts = path_exclusion_rules.partition_paths(raw)
-    return {
-        "total_count": len(raw),
-        "excluded_artifact_count": len(artifacts),
-        "staged_new_file_count": len(kept),
-    }
-
-
-def worktree_untracked_summary(project_id: str, group_id: str) -> Optional[dict]:
-    """Best-effort submission-time view of a live git worktree's untracked files."""
-    try:
-        cfg = db_git.get_config(project_id)
-        state = db_git.get_state(group_id)
-        if not cfg or not cfg.get("enabled") or not state:
-            return None
-        if not state.get("worktree_registered") or not state.get("branch"):
-            return None
-        wt_path = _group_worktree_path(project_id, group_id, state["branch"])
-        if wt_path is None:
-            return None
-        return _worktree_untracked_summary_for_path(wt_path)
-    except Exception:
-        _log.warning("worktree untracked summary failed for %s", group_id, exc_info=True)
-        return None
-
-
-def _stage_worker_edits(wt_path: Path) -> tuple[list[str], bool]:
-    """Stage a worktree's leftover edits under the tool-debris rule — the shared half.
-
-    Returns ``(excluded_artifacts, has_staged)``. Two callers use it and they must not
-    drift apart: the finalize absorb commit below, and the TR commit point
-    (``create_tr_commit``, 0332 D0005 K2). 0382 happened because one rule lived in two
-    places — the screen hid what the check caught — so the exclusion decision is made
-    exactly once, here, and both commits inherit it.
-
-    * ``git add -u`` stages every tracked change, **including deletions**. That matters:
-      the cleanup of already-committed debris has to be committable through this same
-      path, and a filter that also dropped deletions would make those files unremovable.
-    * new files are added by explicit pathspec, so a rule-matching one is never staged in
-      the first place (no ``reset`` dance, nothing half-staged on failure).
-
-    ``has_staged`` is false when the index came out empty — a worktree dirty ONLY because
-    of debris. That is the gate doing its job, not a failure, and each caller decides what
-    to do with it (finalize skips the commit; the TR path reports ``artifacts_only``).
-    """
-    kept, artifacts = path_exclusion_rules.partition_paths(
-        _worktree_untracked_paths(wt_path)
-    )
-    proc = _run_git(["add", "-u"], cwd=wt_path)
-    if proc.returncode != 0:
-        raise GitServiceError(500, "git_error", _last_line(proc.stderr))
-    for index in range(0, len(kept), _ADD_PATHSPEC_CHUNK):
-        chunk = kept[index:index + _ADD_PATHSPEC_CHUNK]
-        proc = _run_git(["add", "--", *chunk], cwd=wt_path)
-        if proc.returncode != 0:
-            raise GitServiceError(500, "git_error", _last_line(proc.stderr))
-    staged = _run_git(["diff", "--cached", "--quiet"], cwd=wt_path)
-    return artifacts, staged.returncode != 0
-
-
-def _absorb_worker_edits(
-    wt_path: Path, subject: str, author_env: Optional[dict]
-) -> list[str]:
-    """Commit the worker's leftover edits — WITHOUT swallowing tool debris.
-
-    0382 B0001 (NR0003 §2-4 / proposal 1). This used to be a bare ``git add -A``. It has
-    no filter, so whatever sat in the worktree went in: commit ``0f502ce`` carries 5
-    real files and 261 ``server/.test-tmp-*`` leftovers, and nobody could have caught
-    it because the explorer hides exactly those paths (§2-3). One unfiltered line
-    turned a local mess into permanent repository state on 11 branches.
-
-    The gate is deliberately narrow — it only refuses to *add new untracked debris*:
-
-    * ``git add -u`` stages every tracked change, **including deletions**. That
-      matters: the follow-up cleanup of the already-committed 261 files has to be
-      committable through this same path, and a filter that also dropped deletions
-      would make those files unremovable.
-    * new files are added by explicit pathspec, so a rule-matching one is never
-      staged in the first place (no ``reset`` dance, nothing half-staged on failure).
-
-    Excluded paths are RETURNED, never silently dropped — the caller puts them in the
-    finalize result and the SSE event so the screen can say "N temporary artifacts excluded
-    from the commit". Silently correct is how this bug survived; visible is the fix.
-
-    Returns the excluded paths (sorted). Raises GitServiceError on a git failure.
-    """
-    artifacts, has_staged = _stage_worker_edits(wt_path)
-    if artifacts:
-        _log.info(
-            "finalize: excluding %d tool artifact(s) from the absorb commit in %s",
-            len(artifacts), wt_path,
-        )
-
-    # A worktree dirty ONLY because of debris now has an empty index, and
-    # `git commit` on an empty index exits non-zero ("nothing to commit"). That is
-    # not a failure — it is the gate doing its job — so skip the commit instead of
-    # turning a clean finalize into a 500.
-    if not has_staged:
-        return artifacts
-
-    proc = _run_git(
-        [*_GIT_IDENT, "commit", "-m", subject], cwd=wt_path, author_env=author_env
-    )
-    if proc.returncode != 0:
-        raise GitServiceError(500, "git_error", _last_line(proc.stderr))
-    return artifacts
-
-
-def _artifact_payload(
-    artifacts: Sequence[str], staged_new_file_count: int = 0,
-) -> dict:
-    """Finalize visibility for both excluded and accepted untracked files."""
-    return {
-        "excluded_artifact_count": len(artifacts),
-        "excluded_artifacts": list(artifacts[:FINALIZE_ARTIFACT_LIST_MAX]),
-        "staged_new_file_count": staged_new_file_count,
-    }
-
-
-# ── TR commit point (flowgate.default.0332 D0005 §3.1 / L0007 §1·§2.6) ────────
-
-# L0007 §1 tr_commit_lock_wait_sec = 0. The approval does NOT queue behind a
-# finalize: approvals happen many times an hour and a 5-second lock wait would make
-# one finalize stall every approval in the project. Giving up costs nothing — the
-# changes stay in the worktree for the next TR commit or the absorb commit, and the
-# ledger records that this round was skipped for `git_busy` (D0005 §4).
-TR_COMMIT_LOCK_WAIT_SEC = 0
-
-
-def create_tr_commit(group_id: str, subject: str) -> dict:
-    """Commit the group worktree's pending work as one TR's commit point.
-
-    Called right after a TR approval has committed (D0005 K1), so it must **never
-    raise and never block**: every refusal is a ``skipped_reason`` from the closed set
-    P0006 §5-2 fixed, and the approval stands either way. Returns::
-
-        {committed, commit (7-char), commit_sha (40-char), subject,
-         skipped_reason, excluded_artifacts, committed_paths}
-
-    The scope is the worktree, not the document's reported file list — see
-    tr_commit_service for why trusting that list would let one TR's commit carry (and
-    a later rewind revert) another TR's work.
-
-    The gates mirror the cancel side's G2~G9 (L0007 §4.1) in the same order, so the
-    two halves of this feature never disagree about what "this group has git" means.
-    """
-    blank = {
-        "committed": False, "commit": None, "commit_sha": None, "subject": None,
-        "skipped_reason": "commit_failed", "excluded_artifacts": [],
-        "committed_paths": [],
-    }
-
-    def skip(reason: str, artifacts: Optional[Sequence[str]] = None) -> dict:
-        return {**blank, "skipped_reason": reason,
-                "excluded_artifacts": list(artifacts or [])}
-
-    project_id = _project_of_group(group_id)
-    if not project_id:
-        return skip("git_inactive")
-    try:
-        cfg = db_git.get_config(project_id)
-        if cfg is None or not cfg.get("enabled"):
-            return skip("git_inactive")
-        if not git_available():
-            return skip("git_inactive")
-        state = db_git.get_state(group_id)
-        if state is None:
-            return skip("git_inactive")
-        if not state.get("worktree_registered") or not state.get("branch"):
-            return skip("no_worktree")
-        project_name = _project_name(project_id)
-        if not project_name:
-            return skip("no_worktree")
-    except Exception:
-        _log.warning("tr commit precheck failed for %s", group_id, exc_info=True)
-        return skip("commit_failed")
-
-    holder = f"trcommit:{uuid.uuid4()}"
-    if not _acquire_lock(project_id, holder, wait_sec=TR_COMMIT_LOCK_WAIT_SEC):
-        return skip("git_busy")
-    try:
-        wt_path = src_root(project_name, state["branch"])
-        if not wt_path.is_dir():
-            return skip("no_worktree")
-
-        artifacts, has_staged = _stage_worker_edits(wt_path)
-        if not has_staged:
-            # D0005 K3 / P0006 §1-5: "changed nothing" and "changed only debris" are
-            # two different sentences on screen, so they stay two different codes.
-            return skip("artifacts_only" if artifacts else "no_changes", artifacts)
-
-        # -z keeps paths raw: git quotes non-ASCII names in the plain form, and a
-        # quoted path would never match the document's reported list.
-        listing = _run_git(
-            ["diff", "--cached", "--name-only", "-z"], cwd=wt_path,
-            timeout=GIT_READ_TIMEOUT_SEC,
-        )
-        committed_paths = sorted(p for p in (listing.stdout or "").split("\0") if p)
-
-        proc = _run_git(
-            [*_GIT_IDENT, "commit", "-m", subject], cwd=wt_path,
-            author_env=_author_env_from_cfg(cfg),
-        )
-        if proc.returncode != 0:
-            _log.warning(
-                "tr commit failed for %s: %s", group_id, _last_line(proc.stderr)
-            )
-            return skip("commit_failed", artifacts)
-
-        head = _run_git(["rev-parse", "HEAD"], cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC)
-        full = (head.stdout or "").strip() or None
-        return {
-            "committed": True,
-            "commit": full[:7] if full else None,
-            "commit_sha": full,
-            "subject": subject,
-            "skipped_reason": None,
-            "excluded_artifacts": list(artifacts),
-            "committed_paths": committed_paths,
-        }
-    except Exception:
-        _log.warning("tr commit point failed for group %s", group_id, exc_info=True)
-        return skip("commit_failed")
-    finally:
-        try:
-            db_git.release_lock(project_id, holder)
-        except Exception:
-            _log.warning("tr commit lock release failed for %s", project_id, exc_info=True)
-
-
 # ── TR commit cancel (flowgate.default.0332 D0005 §3.2 / L0007 §2.2~§2.6) ─────
 
 # L0007 §1 cancel_lock_wait_sec = 5, deliberately NOT the approval side's 0. An
@@ -3348,421 +2766,6 @@ def create_tr_commit(group_id: str, subject: str) -> dict:
 # point of that press. Giving up because a finalize held the lock for two seconds
 # would hand them a [다시 시도] button that does nothing new.
 CANCEL_LOCK_WAIT_SEC = LOCK_WAIT_SEC
-
-# L0007 §2.6 — the cancel commit's body always names the reverted commit in full, so
-# `git log --grep` finds the pair from either side.
-_CANCEL_TRAILER = "FlowGate: TR commit cancel for {code} (group {group_id})."
-
-# T0018 K11 — the same idea for the other direction. A distinct wording, because a reader
-# grepping the log has to be able to tell a cancel from the restore that undid it.
-_REAPPLY_TRAILER = "FlowGate: TR commit reapply for {code} (group {group_id})."
-
-
-def cancel_subject(commit_subject: Optional[str]) -> str:
-    """``Revert "<original subject>"`` clipped to the shared subject cap (L0007 §2.6).
-
-    Clipping puts the ellipsis INSIDE the quotes so the result still reads as one
-    quoted title rather than a truncated sentence.
-    """
-    original = _one_line_subject(commit_subject or "")
-    quoted = f'Revert "{original}"'
-    if len(quoted) <= COMMIT_SUBJECT_MAX:
-        return quoted
-    keep = COMMIT_SUBJECT_MAX - len('Revert ""') - 1
-    return f'Revert "{original[:max(keep, 0)]}…"'
-
-
-def cancel_body(commit_sha: str, doc_code: str, group_id: str) -> str:
-    return (
-        f"This reverts commit {commit_sha}.\n\n"
-        + _CANCEL_TRAILER.format(code=doc_code, group_id=group_id)
-    )
-
-
-def reapply_subject(commit_subject: Optional[str]) -> str:
-    """``Reapply "<original subject>"`` — the forward restore's commit (T0018 K11).
-
-    Same clipping rule as :func:`cancel_subject`, ellipsis inside the quotes, so a step
-    that went commit → revert → restore reads as three lines of one sentence in the log.
-    Named after the ORIGINAL TR, not after the cancel commit it technically reverts:
-    "Revert \"Revert \"0009-TR: ...\"\"" is what git would have written by itself and it
-    tells a reader nothing.
-    """
-    original = _one_line_subject(commit_subject or "")
-    quoted = f'Reapply "{original}"'
-    if len(quoted) <= COMMIT_SUBJECT_MAX:
-        return quoted
-    keep = COMMIT_SUBJECT_MAX - len('Reapply ""') - 1
-    return f'Reapply "{original[:max(keep, 0)]}…"'
-
-
-def reapply_body(
-    cancel_sha: str, original_sha: str, doc_code: str, group_id: str
-) -> str:
-    """The reapply commit's body — it names BOTH ends of the round trip.
-
-    The first line is the one git's own tooling looks for, and it has to name the commit
-    actually being reverted (the cancel). The original TR commit is named on its own line
-    underneath, so one ``git log --grep`` on either sha pulls the whole triple — the TR
-    commit, the cancel that undid it, the reapply that put it back.
-    """
-    lines = [f"This reverts commit {cancel_sha}.", ""]
-    if original_sha:
-        lines.append(f"Restores the TR commit {original_sha}.")
-        lines.append("")
-    lines.append(_REAPPLY_TRAILER.format(code=doc_code, group_id=group_id))
-    return "\n".join(lines)
-
-
-def cancel_blocking_dirty(wt_path: Path) -> bool:
-    """Does this worktree hold changes a revert would get mixed up with? (L0007 §2.5)
-
-    NOT the finalize ``_dirty()``: that one calls any untracked file dirty, and the TR
-    commit path *deliberately leaves tool debris behind* (0382), so every group would
-    permanently look dirty and no cancel would ever run. What actually mixes with a
-    revert is a tracked-file edit or a new file the exclusion rules would have kept —
-    and the exclusion rule used here is the same function the commit side uses, so a
-    path can never be "not committed but still blocking".
-    """
-    proc = _run_git(
-        ["status", "--porcelain", "--untracked-files=no"],
-        cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
-    )
-    if proc.returncode != 0 or (proc.stdout or "").strip():
-        return True
-    kept, _artifacts = path_exclusion_rules.partition_paths(
-        _worktree_untracked_paths(wt_path)
-    )
-    return bool(kept)
-
-
-def _commits_present(wt_path: Path, shas: Sequence[str]) -> bool:
-    """Is every target commit an ancestor of this worktree's HEAD? (L0007 §4.1 G11)
-
-    Fail-closed on purpose: if the branch was re-provisioned from base HEAD, or moved
-    by hand, the commits the ledger names are not in this tree and reverting "what is
-    still here" would peel off somebody else's work. No cancel beats a partial one.
-    """
-    for sha in shas:
-        if not sha:
-            return False
-        proc = _run_git(
-            ["merge-base", "--is-ancestor", sha, "HEAD"],
-            cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
-        )
-        if proc.returncode != 0:
-            return False
-    return True
-
-
-def _cancel_prelock_gate(group_id: str) -> dict:
-    """L0007 §4.1 G2~G7 — everything that can be judged from the DB alone.
-
-    Split out of :func:`open_cancel_session` because the rewind dialog's preview must
-    answer with the SAME reading in the SAME order (L0007 §3 그룹 관측 상태); two copies
-    of this ladder is exactly how a dialog ends up saying "2 commits will be reverted"
-    about a group whose cancel then refuses.
-    """
-    out = {
-        "blocked_reason": None, "block_sub": None,
-        "project_id": None, "cfg": None, "state": None,
-    }
-
-    def blocked(reason: str, sub: str) -> dict:
-        return {**out, "blocked_reason": reason, "block_sub": sub}
-
-    project_id = _project_of_group(group_id)
-    if not project_id:
-        return blocked("git_inactive", "integration_disabled")
-    out["project_id"] = project_id
-    cfg = db_git.get_config(project_id)                                    # G2
-    if cfg is None or not cfg.get("enabled"):
-        return blocked("git_inactive", "integration_disabled")
-    out["cfg"] = cfg
-    state = db_git.get_state(group_id)                                     # G3
-    if state is None:
-        return blocked("git_inactive", "no_group_git_state")
-    out["state"] = state
-    if not git_available():                                                # G4
-        return blocked("git_inactive", "git_unavailable")
-    status = state.get("status") or "none"
-    if status in ("merged", "pushed"):                                     # G5
-        return blocked("already_merged", "already_merged")
-    if status in ("merging", "conflict"):                                  # G6
-        return blocked("git_busy", "merge_in_flight")
-    if not state.get("worktree_registered") or not state.get("branch"):    # G7
-        return blocked("no_worktree", "worktree_unregistered")
-    return out
-
-
-# L0007 §3 — the preview's group-level status. `git_busy`/`dirty_worktree` are NOT in
-# it: both are true only at the instant a revert is being laid down, and a dialog that
-# opened ten seconds ago would be stating them as facts (P0006 §2 서두). A merge in
-# flight therefore previews as "active" and the confirm press answers `git_busy` — with
-# a [다시 시도] button, which is the honest sequence.
-_PREVIEW_STATUS_OF_BLOCK = {
-    "git_inactive": "git_inactive",
-    "already_merged": "already_merged",
-    "no_worktree": "no_worktree",
-    "git_busy": "active",
-}
-
-
-def cancel_group_status(group_id: str) -> str:
-    """``active`` | ``already_merged`` | ``no_worktree`` | ``git_inactive`` (P0006 §2)."""
-    gate = _cancel_prelock_gate(group_id)
-    reason = gate["blocked_reason"]
-    if not reason:
-        return "active"
-    return _PREVIEW_STATUS_OF_BLOCK.get(reason, "active")
-
-
-def open_cancel_session(group_id: str, target_shas: Sequence[str]) -> dict:
-    """Evaluate L0007 §4.1 G2~G11 and, if all pass, hold the project git lock.
-
-    Returns ``{"ok": True, "session": {...}}`` or
-    ``{"ok": False, "blocked_reason": <P0006 §5-3 code>, "block_sub": <L0007 detail>}``.
-
-    The gate ORDER is the part that carries meaning, and it is the same order the
-    preview reads (L0007 §3 그룹 관측 상태) so the dialog never promises something the
-    press of the button then refuses:
-
-    * ``already_merged`` is checked BEFORE ``worktree_registered`` — cleanup unregisters
-      a merged slot's worktree, so the other order would report every merged group as
-      ``no_worktree`` and the screen would lose its one useful sentence ("use [병합
-      되돌리기]").
-    * the lock is taken BEFORE the disk is read — "clean" decided outside the lock is
-      already stale by the time the first revert lands.
-
-    The caller MUST call :func:`close_cancel_session` in a ``finally``; the re-arm that
-    follows a rewind takes the same lock and it is not re-entrant (L0007 §2.1 ③).
-
-    T0018 K11: the forward restore opens this SAME session, deliberately un-renamed. Every
-    gate above applies to a reapply word for word — a merged group, a missing worktree, a
-    busy lock and a dirty tree block putting source back for exactly the reasons they block
-    taking it away — and G11 keeps its meaning because the restore passes the CANCEL
-    commits as ``target_shas``: "are the commits I am about to peel off still in this tree".
-    """
-    def block(reason: str, sub: str) -> dict:
-        return {"ok": False, "blocked_reason": reason, "block_sub": sub, "session": None}
-
-    gate = _cancel_prelock_gate(group_id)                                 # G2~G7
-    if gate["blocked_reason"]:
-        return block(gate["blocked_reason"], gate["block_sub"])
-    project_id, cfg, state = gate["project_id"], gate["cfg"], gate["state"]
-
-    holder = f"cancel:{uuid.uuid4()}"
-    if not _acquire_lock(project_id, holder, wait_sec=CANCEL_LOCK_WAIT_SEC):  # G8
-        return block("git_busy", "lock_timeout")
-    try:
-        project_name = _project_name(project_id)
-        wt_path = src_root(project_name, state["branch"]) if project_name else None
-        if wt_path is None or not wt_path.is_dir():                       # G9
-            raise _CancelGateFailed("no_worktree", "worktree_missing")
-        if cancel_blocking_dirty(wt_path):                                # G10
-            raise _CancelGateFailed("dirty_worktree", "dirty_worktree")
-        if not _commits_present(wt_path, target_shas):                    # G11
-            raise _CancelGateFailed("no_worktree", "commits_absent")
-    except _CancelGateFailed as gate:
-        _release_cancel_lock(project_id, holder)
-        return block(gate.reason, gate.sub)
-    except Exception:
-        # A gate that blew up must not leave the project lock behind — the re-arm
-        # right after this would then wait five seconds and fail silently.
-        _release_cancel_lock(project_id, holder)
-        raise
-    return {
-        "ok": True, "blocked_reason": None, "block_sub": None,
-        "session": {
-            "project_id": project_id, "group_id": group_id, "holder": holder,
-            "wt_path": wt_path, "author_env": _author_env_from_cfg(cfg),
-        },
-    }
-
-
-def open_terminal_reopen_session(group_id: str) -> dict:
-    """Lock and check a terminal reopen before it can re-provision a worktree.
-
-    The ordinary cancel gate returns ``already_merged`` before G8--G10 because a
-    merged slot may legitimately be unregistered. Terminal reopen does not reset or
-    revert, but its following re-arm can recreate the slot; therefore any existing
-    worktree must still be checked under the project lock so unrelated edits cannot
-    be overwritten. A missing terminal worktree is valid and needs no cleanliness
-    check.
-    """
-    def block(reason: str, sub: str) -> dict:
-        return {"ok": False, "blocked_reason": reason, "block_sub": sub, "session": None}
-
-    gate = _cancel_prelock_gate(group_id)
-    if gate["blocked_reason"] != "already_merged":
-        return block(gate["blocked_reason"] or "git_inactive", gate["block_sub"] or "terminal_status_changed")
-    project_id, cfg, state = gate["project_id"], gate["cfg"], gate["state"]
-    holder = f"terminal-reopen:{uuid.uuid4()}"
-    if not _acquire_lock(project_id, holder, wait_sec=CANCEL_LOCK_WAIT_SEC):
-        return block("git_busy", "lock_timeout")
-    try:
-        project_name = _project_name(project_id)
-        wt_path = src_root(project_name, state["branch"]) if project_name else None
-        if wt_path is not None and wt_path.is_dir() and cancel_blocking_dirty(wt_path):
-            raise _CancelGateFailed("dirty_worktree", "dirty_worktree")
-    except _CancelGateFailed as gate_error:
-        _release_cancel_lock(project_id, holder)
-        return block(gate_error.reason, gate_error.sub)
-    except Exception:
-        _release_cancel_lock(project_id, holder)
-        raise
-    return {
-        "ok": True, "blocked_reason": None, "block_sub": None,
-        "session": {
-            "project_id": project_id, "group_id": group_id, "holder": holder,
-            "wt_path": wt_path, "author_env": _author_env_from_cfg(cfg),
-        },
-    }
-
-
-class _CancelGateFailed(Exception):
-    """Internal: a post-lock gate refused. Carries the pair the caller reports."""
-
-    def __init__(self, reason: str, sub: str) -> None:
-        super().__init__(f"{reason}:{sub}")
-        self.reason = reason
-        self.sub = sub
-
-
-def _release_cancel_lock(project_id: str, holder: str) -> None:
-    try:
-        db_git.release_lock(project_id, holder)
-    except Exception:
-        _log.warning("tr cancel lock release failed for %s", project_id, exc_info=True)
-
-
-def close_cancel_session(session: Optional[dict]) -> None:
-    if not session:
-        return
-    _release_cancel_lock(session["project_id"], session["holder"])
-
-
-def uncommit_tr_suffix(session: dict, target_shas: Sequence[str]) -> dict:
-    """Remove an exact TR-only HEAD suffix while preserving its tree delta unstaged.
-
-    The validation and reset run under the cancel session's project lock.  Every target
-    must equal the current first-parent suffix in the supplied newest-first order; an
-    unknown/manual or non-target commit therefore fails closed before history moves.
-    """
-    wt_path = session["wt_path"]
-    expected = [str(sha or "").strip() for sha in target_shas]
-    if not expected or any(not sha for sha in expected):
-        return {"kind": "blocked", "sub": "unsafe_suffix", "before": None}
-
-    head_proc = _run_git(
-        ["rev-parse", "HEAD"], cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
-    )
-    before = (head_proc.stdout or "").strip()
-    if head_proc.returncode != 0 or not before:
-        return {"kind": "blocked", "sub": "unsafe_suffix", "before": before or None}
-
-    cursor = before
-    for sha in expected:
-        if cursor != sha:
-            return {"kind": "blocked", "sub": "unsafe_suffix", "before": before}
-        parent_proc = _run_git(
-            ["rev-parse", f"{cursor}^"], cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
-        )
-        cursor = (parent_proc.stdout or "").strip()
-        if parent_proc.returncode != 0 or not cursor:
-            return {"kind": "blocked", "sub": "unsafe_suffix", "before": before}
-
-    reset = _run_git(["reset", "--mixed", cursor], cwd=wt_path)
-    if reset.returncode != 0:
-        return {"kind": "blocked", "sub": "reset_failed", "before": before}
-
-    after_proc = _run_git(
-        ["rev-parse", "HEAD"], cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
-    )
-    after = (after_proc.stdout or "").strip()
-    if after_proc.returncode != 0 or after != cursor:
-        return {"kind": "blocked", "sub": "reset_failed", "before": before}
-    return {"kind": "ok", "before": before, "head": after}
-
-
-def revert_tr_commit(session: dict, *, commit_sha: str, subject: str, body: str) -> dict:
-    """Lay one revert commit on top of the worktree (L0007 §2.3). One TR, one commit.
-
-    Returns ``{"kind": "ok"|"empty"|"blocked", "commit": <full 40-char sha>|None,
-    "sub": str|None}``. The ledger stores the full hash (DB0008 §4-3); the 7-character
-    form is cut where a screen reads it, never on the way in.
-
-    ``--no-commit`` then our own ``commit``: the subject, the body trailer and the
-    commit identity have to match the rest of FlowGate's commits, and ``git revert``'s
-    self-generated message follows none of those rules. Reverts are never batched — one
-    revert commit per TR is what lets the ledger point at them one to one (D0005 K6).
-    """
-    return _revert_one(session, commit_sha=commit_sha, subject=subject, body=body)
-
-
-def reapply_tr_commit(session: dict, *, cancel_commit: str, subject: str, body: str) -> dict:
-    """Peel one cancel commit back off — the forward restore's git step (T0018 K11).
-
-    A reapply IS a revert: reverting the revert is what puts the original TR's source
-    back, and it is the only form that keeps the rewind itself visible in the log
-    (D0005 K5). So this is deliberately a two-line wrapper over the same helper
-    :func:`revert_tr_commit` uses rather than a second copy of the procedure —
-    ``--no-commit``, the empty check, our own message, the same three ``kind`` values.
-    A copy would drift the moment one of the two learns something, and a clean automatic
-    merge is perfectly happy to keep both (see [[clean-automerge-can-shadow-duplicate-defs]]).
-
-    ``cancel_commit`` is the cancel commit's sha, not the original TR commit's: what is
-    being undone here is the cancel.
-    """
-    return _revert_one(session, commit_sha=cancel_commit, subject=subject, body=body)
-
-
-def _revert_one(session: dict, *, commit_sha: str, subject: str, body: str) -> dict:
-    """The shared body of :func:`revert_tr_commit` and :func:`reapply_tr_commit`."""
-    wt_path: Path = session["wt_path"]
-    proc = _run_git(
-        ["revert", "--no-commit", "--no-edit", commit_sha],
-        cwd=wt_path, timeout=GIT_LOCAL_TIMEOUT_SEC,
-    )
-    if proc.returncode != 0:
-        # Conflict, failed application and timeout are one outcome here on purpose:
-        # the person's next move is identical in all three (P0006 §5-4 closed the set),
-        # and the difference is kept in the ledger's attempt log, not in the response.
-        sub = "timeout" if "timeout_expired" in (proc.stderr or "") else "revert_conflict"
-        return {"kind": "blocked", "commit": None, "sub": sub}
-    staged = _run_git(["diff", "--cached", "--quiet"], cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC)
-    if staged.returncode == 0:
-        # Nothing to undo — the same content was already reverted by another route.
-        # An empty commit would be noise in the history for a no-op (D0005 K3).
-        return {"kind": "empty", "commit": None, "sub": "empty_revert"}
-    proc = _run_git(
-        [*_GIT_IDENT, "commit", "-m", subject, "-m", body],
-        cwd=wt_path, author_env=session.get("author_env"), timeout=GIT_LOCAL_TIMEOUT_SEC,
-    )
-    if proc.returncode != 0:
-        return {"kind": "blocked", "commit": None, "sub": "commit_failed"}
-    head = _run_git(["rev-parse", "HEAD"], cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC)
-    full = (head.stdout or "").strip() or None
-    return {"kind": "ok", "commit": full, "sub": None}
-
-
-def restore_after_failed_revert(session: dict) -> None:
-    """Put the worktree back the way the failed revert found it (L0007 §2.3).
-
-    ``git clean`` is NOT called and never will be on this path — 0382 is what happens
-    when a git command that deletes untracked files sits in an automatic flow. Return
-    codes are ignored: the outcome is already ``blocked`` and the loop stops here.
-
-    TR0019: this is no longer what a CONFLICT does. A conflict now becomes a session
-    (:func:`open_tr_conflict_session`) so a person or an AI can still see it; this
-    stays as the fallback for the failures nobody can resolve by editing a file — a
-    timeout, a commit that would not run, a session row that could not be written —
-    and as the body of the explicit [give up] press (:func:`abort_tr_conflict`).
-    Destroying the evidence was never wrong; being the only option was.
-    """
-    wt_path: Path = session["wt_path"]
-    _run_git(["revert", "--quit"], cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC)
-    _run_git(["reset", "--hard", "HEAD"], cwd=wt_path, timeout=GIT_LOCAL_TIMEOUT_SEC)
 
 
 # ── TR revert/reapply conflict session (TR0019, migration 088) ───────────────
@@ -3778,17 +2781,6 @@ def restore_after_failed_revert(session: dict) -> None:
 # that has been resolved is NOT a TR conflict that has been committed.
 TR_CONFLICT_REVIEW_OPEN = "open"
 TR_CONFLICT_REVIEW_RESOLVED = "resolved"
-
-
-def _unmerged_paths(wt_path: Path) -> list[str]:
-    """The conflicted paths of an in-flight revert, worktree-relative and sorted."""
-    proc = _run_git(
-        ["diff", "--name-only", "--diff-filter=U"],
-        cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
-    )
-    if proc.returncode != 0:
-        return []
-    return sorted({line.strip() for line in (proc.stdout or "").splitlines() if line.strip()})
 
 
 def _revert_in_flight(wt_path: Path) -> bool:
@@ -4027,63 +3019,6 @@ def abort_tr_conflict(group_id: str, merge_id: int) -> dict:
     }
 
 
-# Cap on the untracked list carried in advisory payloads (status / worktree-ready
-# event). A base checkout that accumulated a build tree can hold thousands of
-# untracked paths; the operator only needs to see that they exist and act on the
-# first screenful, and an unbounded list would bloat every status poll.
-UNTRACKED_LIST_MAX = 200
-
-
-def _untracked_files(repo: Path, limit: int = UNTRACKED_LIST_MAX) -> list[str]:
-    """The base checkout's untracked — i.e. never-committed — files.
-
-    Deliberately the COMPLEMENT of `_dirty_files(include_untracked=False)`, and
-    deliberately carried in a SEPARATE field everywhere it surfaces. NR
-    flowgate.default.0296.0003 §C3: `include_untracked=False` was one flag doing
-    two jobs — bounding the E3 guard (correct, NR flowgate.default.0165.0009) and
-    bounding what the operator is *able* to commit (wrong: it left untracked files
-    with no in-app commit path, so they never reached a group worktree). Splitting
-    the list splits the concerns; the guard scope below is untouched.
-
-    `--untracked-files=all` expands directories into individual paths — a bare
-    `?? newdir/` entry is not something the operator can reason about or hand to
-    `git add` file-by-file. `.gitignore` is honoured by git itself, so ignored
-    files (NR §C4) never appear here: they cannot be committed, hence cannot be
-    offered. `limit` (0 = unbounded) caps the scan for display payloads.
-    """
-    proc = _run_git(["status", "--porcelain", "--untracked-files=all"], cwd=repo)
-    if proc.returncode != 0:
-        return []
-    files: list[str] = []
-    for line in (proc.stdout or "").splitlines():
-        if not line.startswith("??"):
-            continue
-        entry = line[3:].strip()
-        # porcelain may quote paths with unusual chars; strip surrounding quotes.
-        if len(entry) >= 2 and entry[0] == '"' and entry[-1] == '"':
-            entry = entry[1:-1]
-        if not entry:
-            continue
-        files.append(entry)
-        if limit and len(files) >= limit:
-            break
-    return files
-
-
-def _ignored_paths(repo: Path, paths: list[str]) -> list[str]:
-    """Which of `paths` `.gitignore` excludes — used to turn an impossible commit
-    into an explanation instead of a bare git failure (NR §C4). `git add -- <p>`
-    on an ignored path fails with "use -f if you really want to add them"; forcing
-    is NOT the answer (an ignored file is ignored on purpose), so the caller
-    rejects with a code the FE can phrase as "this file is git-ignored — a worker
-    can never see it"."""
-    if not paths:
-        return []
-    proc = _run_git(["check-ignore", "--", *paths], cwd=repo)
-    # exit 1 = nothing ignored (empty stdout); 128 = failure → treat as none.
-    return [l.strip() for l in (proc.stdout or "").splitlines() if l.strip()]
-
-
 def base_checkout_dirty_status(project_id: str) -> dict:
     """Lightweight base-checkout dirty status for the file-editor save response
     (flowgate.default.0176 T0010 §a).
@@ -4123,25 +3058,6 @@ def base_checkout_dirty_status(project_id: str) -> dict:
     except Exception:
         _log.warning("base_checkout_dirty_status failed for %s", project_id, exc_info=True)
         return dict(empty)
-
-
-def _merge_commit_subject(branch: str, base_branch: str) -> str:
-    """flowgate.default.0232 B0001 — the `--no-ff` merge commit must NOT reuse the
-    work subject. Back when a work branch held exactly ONE absorb commit carrying
-    finalize_subject(), wrapping that single commit in a merge commit of the SAME
-    memoized subject made origin show identical title+diff twice ("same code committed
-    twice"). A conventional Merge subject makes the pair read as a normal work-commit +
-    merge-commit instead of a duplicate.
-
-    That "exactly one commit" premise is gone: since flowgate.default.0332 every TR
-    approval leaves its own commit point on the branch and the absorb commit only
-    picks up what is left over (D0005 K4). The rule above still stands — with several
-    commits on the branch the duplicate-title collision is even less likely — but the
-    old sentence stated a fact that no longer holds, and leaving it would have the next
-    reader reason from a premise the code abandoned. `--no-ff` (the two-parent
-    topology) is deliberately kept so unmerge's `^2` restore (flowgate.default.0202)
-    still resolves the merged work branch."""
-    return f"Merge branch '{branch}' into '{base_branch}'"
 
 
 def update_from_base(group_id: str) -> dict:
@@ -4894,7 +3810,6 @@ def _session_context(group_id: str, merge_id: int) -> tuple[dict, dict, str, Pat
     cfg, _state, project_id, base_root, wt_path = _finalize_context(group_id)
     is_worktree_session = db_git.session_kind(session) in db_git.WORKTREE_SESSION_KINDS
     return session, cfg, project_id, (wt_path if is_worktree_session else base_root)
-
 
 
 def resolve_conflict_src_root(group_id: str, merge_id: int) -> Path:
@@ -6232,24 +5147,6 @@ def _iso_is_due(value: Optional[str]) -> bool:
         return datetime.now(timezone.utc) >= dt
     except Exception:
         return False
-
-
-def _query_remote_ref(base_root: Path, cfg: dict, base_branch: str) -> Optional[str]:
-    """Best-effort, network ``ls-remote`` read of the real current position of the
-    remote base ref (D0006 §3.6 / L0007 §2.8.1) — ``None`` when the query itself
-    fails (unreachable/timeout), which the caller must NOT treat as "not found"."""
-    proc = _run_git(
-        ["ls-remote", "origin", f"refs/heads/{base_branch}"],
-        cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC,
-        username=cfg.get("username"), secret=_load_secret_for(cfg) or "",
-    )
-    if proc.returncode != 0:
-        return None
-    line = (proc.stdout or "").strip().splitlines()[:1]
-    if not line:
-        return None
-    sha = line[0].split("\t", 1)[0].strip()
-    return sha or None
 
 
 def _conditionally_push_or_reconcile(
@@ -7599,116 +6496,6 @@ def startup_recovery() -> None:
 
 # ── Project git status aggregation (flowgate.default.0162 P §2 / L §2.2) ──────
 
-def _base_ahead_behind(
-    base_root: Optional[Path], base_branch: str
-) -> tuple[Optional[int], Optional[int]]:
-    """(ahead, behind) of the base checkout vs origin/{base}, from the last
-    fetch — no network git (P §2-1). Both None when origin/{base} is absent
-    (never fetched), git is unavailable, or the base checkout is missing:
-    "unmeasured" is distinct from "in sync" (L §5)."""
-    if base_root is None or not git_available():
-        return None, None
-    if not (base_root / ".git").exists():
-        return None, None
-    if not _ref_exists(base_root, f"refs/remotes/origin/{base_branch}"):
-        return None, None
-    proc = _run_git(
-        ["rev-list", "--left-right", "--count", f"origin/{base_branch}...{base_branch}"],
-        cwd=base_root,
-    )
-    if proc.returncode != 0:
-        return None, None
-    m = re.match(r"^\s*(\d+)\s+(\d+)\s*$", proc.stdout or "")
-    if not m:
-        return None, None
-    behind, ahead = int(m.group(1)), int(m.group(2))
-    return ahead, behind
-
-
-def _short_head(repo: Path) -> Optional[str]:
-    proc = _run_git(["rev-parse", "--short", "HEAD"], cwd=repo)
-    return (proc.stdout or "").strip() or None if proc.returncode == 0 else None
-
-
-def _rev_parse(repo: Path, rev: str, *, short: bool = False) -> Optional[str]:
-    args = ["rev-parse"]
-    if short:
-        args.append("--short")
-    args.append(rev)
-    proc = _run_git(args, cwd=repo)
-    return (proc.stdout or "").strip() or None if proc.returncode == 0 else None
-
-
-def _full_sha_matches(full_sha: str, candidate: str) -> bool:
-    full = (full_sha or "").lower()
-    cand = (candidate or "").lower()
-    return bool(full and cand and (full.startswith(cand) or cand.startswith(full)))
-
-
-def _unpushed_commits(base_root: Optional[Path], base_branch: str) -> Optional[list[dict]]:
-    if base_root is None or not git_available() or not (base_root / ".git").exists():
-        return None
-    if not _ref_exists(base_root, f"refs/remotes/origin/{base_branch}"):
-        return None
-    proc = _run_git(
-        [
-            "log", "--first-parent", f"origin/{base_branch}..{base_branch}",
-            "--format=%H%x1f%P%x1f%cI%x1f%s",
-        ],
-        cwd=base_root,
-    )
-    if proc.returncode != 0:
-        return None
-    commits: list[dict] = []
-    for line in (proc.stdout or "").splitlines():
-        parts = line.split("\x1f", 3)
-        if len(parts) != 4:
-            continue
-        full_sha, parents, committed_at, subject = parts
-        parent_list = [p for p in parents.split() if p]
-        commits.append({
-            "full_sha": full_sha,
-            "parents": parent_list,
-            "committed_at": committed_at,
-            "subject": subject,
-        })
-    return commits
-
-
-def _remote_base_missing(base_root: Optional[Path], base_branch: str) -> bool:
-    """True only when the base checkout is healthy and refs/remotes/origin/{base}
-    is absent — the remote has no base branch yet (0297 B0001 bootstrap).
-
-    Deliberately narrower than "unmeasured": git being unavailable or the checkout
-    missing reads False, so a consumer can never mistake those for "the remote is
-    empty, offer the first push"."""
-    if base_root is None or not git_available() or not (base_root / ".git").exists():
-        return False
-    return not _ref_exists(base_root, f"refs/remotes/origin/{base_branch}")
-
-
-def _local_commit_count(base_root: Optional[Path]) -> Optional[int]:
-    """Commits reachable from the base checkout's HEAD, or None when it cannot be
-    counted (git off, no checkout, unborn HEAD). Lets the client tell "nothing to
-    push yet" apart from "one snapshot commit waiting for its first push"."""
-    if base_root is None or not git_available() or not (base_root / ".git").exists():
-        return None
-    proc = _run_git(["rev-list", "--count", "HEAD"], cwd=base_root)
-    if proc.returncode != 0:
-        return None
-    txt = (proc.stdout or "").strip()
-    return int(txt) if txt.isdigit() else None
-
-
-def _ledger_group_by_merge_sha(project_id: str, full_sha: str) -> Optional[str]:
-    matches: list[str] = []
-    for row in db_git.list_states_of_project_any(project_id):
-        if row.get("status") != "merged" or not row.get("merge_commit"):
-            continue
-        if full_sha.lower().startswith(str(row["merge_commit"]).lower()):
-            matches.append(row["group_id"])
-    return matches[0] if len(matches) == 1 else None
-
 
 def _build_unpushed(
     project_id: str,
@@ -8247,12 +7034,6 @@ def default_base_commit_message(files: list[str]) -> str:
         return subject
     subject = f"{BASE_COMMIT_MSG_PREFIX}{files[0]} and {len(files) - 1} more"
     return subject[:COMMIT_SUBJECT_MAX]
-
-
-def _merge_in_progress(base_root: Path) -> bool:
-    """True while a conflict session holds the base checkout mid-merge — commit
-    and revert must not touch that intermediate state (resolve/abort only)."""
-    return (base_root / ".git" / "MERGE_HEAD").exists()
 
 
 def _require_base_checkout(project_id: str) -> tuple[dict, Path]:
