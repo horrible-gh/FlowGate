@@ -81,6 +81,7 @@ import { formatErrors } from '../../components/aiProviderLimits';
 import AppIcon from '@shared/AppIcon.vue';
 import { useSettingsStore } from '../../stores/settings.js';
 import { useToast } from '../../../main/components/common/useToast';
+import { confirm } from '../../../main/composables/useDialogStack';
 
 const { t, te } = useI18n();
 const settings = useSettingsStore();
@@ -193,8 +194,11 @@ async function save() {
   }
 }
 
-onBeforeRouteLeave(() => {
-  if (dirty.value && !window.confirm(t('settings.ai.unsaved_confirm'))) return false;
+onBeforeRouteLeave(async () => {
+  if (dirty.value) {
+    const ok = await confirm({ title: t('settings.ai.unsaved_confirm') });
+    if (!ok) return false;
+  }
   return true;
 });
 

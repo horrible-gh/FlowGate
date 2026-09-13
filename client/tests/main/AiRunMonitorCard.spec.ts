@@ -17,7 +17,10 @@ vi.mock('@shared/api', () => ({
   patchRequest: vi.fn(),
   deleteRequest,
 }))
-
+const { dialogConfirm } = vi.hoisted(() => ({
+  dialogConfirm: vi.fn((options: { title: string }) => Promise.resolve(window.confirm(options.title))),
+}))
+vi.mock('@main/composables/useDialogStack', () => ({ confirm: dialogConfirm }))
 const t = (key: string, args?: Record<string, unknown>) => i18n.global.t(key, args ?? {})
 
 function mountCard() {

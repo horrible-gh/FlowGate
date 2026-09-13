@@ -27,6 +27,10 @@ vi.mock('@shared/api', () => ({
 vi.mock('@main/components/common/useToast', () => ({
   useToast: () => ({ showToast: vi.fn() }),
 }))
+const { dialogConfirm } = vi.hoisted(() => ({
+  dialogConfirm: vi.fn((options: { title: string }) => Promise.resolve(window.confirm(options.title))),
+}))
+vi.mock('@main/composables/useDialogStack', () => ({ confirm: dialogConfirm }))
 
 function baseStatus() {
   return {

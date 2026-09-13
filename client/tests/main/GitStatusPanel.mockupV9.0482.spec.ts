@@ -10,6 +10,10 @@ vi.mock('@shared/api', () => ({
   default: { head: vi.fn(), get: vi.fn(), post: vi.fn(), patch: vi.fn() }, getRequest, postRequest,
 }))
 vi.mock('@main/components/common/useToast', () => ({ useToast: () => ({ showToast: vi.fn() }) }))
+const { dialogConfirm } = vi.hoisted(() => ({
+  dialogConfirm: vi.fn((options: { title: string }) => Promise.resolve(window.confirm(options.title))),
+}))
+vi.mock('@main/composables/useDialogStack', () => ({ confirm: dialogConfirm }))
 
 const GROUP = 'flowgate.default.0482'
 const conflictPaths = Array.from({ length: 12 }, (_, i) => `conflict/file-${i + 1}.ts`)

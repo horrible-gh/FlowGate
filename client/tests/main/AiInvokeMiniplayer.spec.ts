@@ -20,6 +20,10 @@ const { getRequest, postRequest, deleteRequest } = vi.hoisted(() => (
   { getRequest: vi.fn(), postRequest: vi.fn(), deleteRequest: vi.fn() }
 ))
 vi.mock('@shared/api', () => ({ getRequest, postRequest, deleteRequest }))
+const { dialogConfirm } = vi.hoisted(() => ({
+  dialogConfirm: vi.fn((options: { title: string }) => Promise.resolve(window.confirm(options.title))),
+}))
+vi.mock('@main/composables/useDialogStack', () => ({ confirm: dialogConfirm }))
 
 const t = (key: string, args?: Record<string, unknown>) => i18n.global.t(key, args ?? {})
 

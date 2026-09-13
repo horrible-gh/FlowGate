@@ -610,6 +610,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import { useToast } from './common/useToast'
+import { confirm } from '../composables/useDialogStack'
 import { useExplorerStore } from '../stores/explorer'
 import { useAiProviderStore } from '../stores/aiProvider'
 import { isScreenOwnedRun, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
@@ -1530,9 +1531,10 @@ async function doCommitUntracked() {
 async function doRemoveUntracked() {
   if (busy.value || !props.projectId || !untrackedPicked.value.length) return
   const targets = [...untrackedPicked.value]
-  const ok = window.confirm(
-    t('main.git_status.base_untracked_remove_confirm', { n: targets.length, files: targets.join(', ') }),
-  )
+  const ok = await confirm({
+    title: t('main.git_status.base_untracked_remove_confirm', { n: targets.length, files: targets.join(', ') }),
+    danger: true,
+  })
   if (!ok) return
   busy.value = true
   try {
@@ -2002,10 +2004,10 @@ async function doPush(branch: string | null) {
 
 async function doUnmerge(m: UnpushedMerge) {
   if (busy.value || !m.group_id || !m.merge_commit) return
-  const ok = window.confirm(t('main.git_status.unmerge_confirm', {
+  const ok = await confirm({ title: t('main.git_status.unmerge_confirm', {
     gid: m.group_id,
     commit: m.merge_commit,
-  }))
+  }) })
   if (!ok) return
   busy.value = true
   try {

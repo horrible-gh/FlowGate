@@ -209,6 +209,7 @@ import { useI18n } from 'vue-i18n';
 import { deleteRequest, getRequest, postRequest, putRequest } from '@shared/api';
 import { useSettingsStore } from '../../stores/settings.js';
 import { useToast } from '../../../main/components/common/useToast';
+import { confirm } from '../../../main/composables/useDialogStack';
 import AppIcon from '@shared/AppIcon.vue';
 
 const { t } = useI18n();
@@ -449,7 +450,7 @@ async function testConnection() {
 
 async function disconnect() {
   if (!projectId.value) return;
-  if (!window.confirm(t('settings.project.git.disconnect_confirm'))) return;
+  if (!await confirm({ title: t('settings.project.git.disconnect_confirm') })) return;
   busy.value = true;
   try {
     await deleteRequest(`/api/v1/projects/${projectId.value}/git/config`);

@@ -1,6 +1,8 @@
 <template>
   <RouterView />
   <ToastContainer />
+  <ConfirmDialog host />
+  <AlertDialog host />
   <!-- Manual-copy fallback for failed clipboard writes (B0001 / group 0221): mounted once at
        the app root because copy failures surface from many components. -->
   <ClipboardFallbackModal />
@@ -11,6 +13,8 @@ import { onMounted, watch } from 'vue'
 import { RouterView } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ToastContainer } from './components/common'
+import AlertDialog from './components/dialogs/AlertDialog.vue'
+import ConfirmDialog from './components/dialogs/ConfirmDialog.vue'
 import ClipboardFallbackModal from './components/ClipboardFallbackModal.vue'
 import { useDocTypeStore } from './stores/docTypeStore'
 import { useProjectStore } from './stores/project'

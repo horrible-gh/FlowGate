@@ -363,6 +363,7 @@ import {
   loadStoredStepTimeoutMin,
   storeStepTimeoutMin,
 } from '../composables/useStepTimeout'
+import { confirm } from '../composables/useDialogStack'
 
 const props = defineProps<{
   visible: boolean
@@ -750,8 +751,8 @@ function applyPlanFill() {
   overrides.value = nextProviders
 }
 
-function revertSequenceNotes() {
-  if (!window.confirm(t('main.continuous_work.preset_revert_confirm'))) return
+async function revertSequenceNotes() {
+  if (!await confirm({ title: t('main.continuous_work.preset_revert_confirm') })) return
   applySequenceNotePrefill(picker.value.steps ?? [])
 }
 
@@ -1063,8 +1064,8 @@ async function refreshPresetForMode() {
   }
 }
 
-function revertPreset() {
-  if (!window.confirm(t('main.continuous_work.preset_revert_confirm'))) return
+async function revertPreset() {
+  if (!await confirm({ title: t('main.continuous_work.preset_revert_confirm') })) return
   installPreset(null)
 }
 

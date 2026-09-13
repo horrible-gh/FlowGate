@@ -23,7 +23,10 @@ vi.mock('@shared/api', () => ({
   putRequest,
   patchRequest: vi.fn(),
 }))
-
+const { dialogConfirm } = vi.hoisted(() => ({
+  dialogConfirm: vi.fn((options: { title: string }) => Promise.resolve(window.confirm(options.title))),
+}))
+vi.mock('@main/composables/useDialogStack', () => ({ confirm: dialogConfirm }))
 const DOC_ID = 'flowgate.default.0395.0091-WP'
 const ROOT_ID = 'flowgate.default.0395.0001-R'
 const TYPES = [
