@@ -713,8 +713,6 @@ from .git.finalize import (
 
 
 
-
-
 # ── Group branch file explorer: checkout-free ref/tree/blob (0186 L0006 §2) ──
 #
 # Pure read layer. The group worktree shares base_root/.git with the base
