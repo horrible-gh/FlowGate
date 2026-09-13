@@ -4809,7 +4809,7 @@ def update_from_base(group_id: str) -> dict:
                         "tracked_files": tracked_blockers or [],
                     },
                 )
-            conflicts = _conflict_files(wt_path)
+            conflicts = _unmerged_paths(wt_path)
             if conflicts:
                 merge_id = db_git.create_session(
                     group_id, conflicts, kind=db_git.SESSION_KIND_GROUP_UPDATE,
