@@ -1,20 +1,31 @@
 <template>
-  <teleport to="body">
-    <div v-if="visible" class="modal-bg">
-      <div class="modal-box wdm-box">
+  <!-- flowgate.default.0560 T0016 §2.2 (2단계) — migrated onto the common dialog layer.
+       D0008 "기존 instance 이관 목적지" maps this instance to `workflow-large`: a sheet
+       surface whose body stays feature-owned (D0008 §6) while the frame, the header and
+       the footer ORDER come from the common layer. -->
+  <DialogShell
+    ref="shellRef"
+    :open="visible"
+    variant="workflow-large"
+    @request-close="close"
+  >
+    <template #header>
+      <DialogHeader
+        :title="mode === 'edit' ? t('main.workflow_edit_modal.title') : t('main.workflow_decision_modal.title')"
+        @close="onHeaderClose"
+      >
+        <template #icon>
+          <AppIcon name="flow-arrow" style="color:#7c3aed;" />
+        </template>
+        <template #title>
+          {{ mode === 'edit' ? t('main.workflow_edit_modal.title') : t('main.workflow_decision_modal.title') }}
+          <span v-if="mode !== 'edit'" class="wdm-doc-class-badge">{{ docClass }}</span>
+        </template>
+      </DialogHeader>
+    </template>
 
-        <!-- ── Header ── -->
-        <div class="modal-hd">
-          <span class="modal-title">
-            <AppIcon name="flow-arrow" style="color:#7c3aed; margin-right:6px;" />
-            {{ mode === 'edit' ? t('main.workflow_edit_modal.title') : t('main.workflow_decision_modal.title') }}
-            <span v-if="mode !== 'edit'" class="wdm-doc-class-badge">{{ docClass }}</span>
-          </span>
-          <button class="modal-close" type="button" @click="close">
-            <AppIcon name="x" />
-          </button>
-        </div>
-
+    <template #default>
+      <div class="wdm-frame">
         <!-- ── 0399 D0010 §3.3 / §6.2 — what was poured, and that it is not saved yet ──
              The whole point of this strip: pressing a mode in [Apply Work Plan] changed
              nothing. It says so, and it offers the one-step way back (L0011 §3.3). -->
@@ -60,7 +71,7 @@
         </div>
 
         <!-- ── Body ── -->
-        <div class="modal-bd wdm-body">
+        <div class="wdm-body">
 
           <!-- Loading (edit mode) -->
           <div v-if="mode === 'edit' && loading" class="wem-loading">
@@ -371,10 +382,16 @@
           </div><!-- /wdm-layout -->
 
           </template>
-        </div><!-- /modal-bd -->
+        </div><!-- /wdm-body -->
+      </div><!-- /wdm-frame -->
+    </template>
 
-        <!-- ── Footer ── -->
-        <div class="modal-ft">
+    <template #footer>
+      <!-- One footer row. The provider picker is not an action — it is a `<select>` and
+           DialogFooter renders `<button>`s — so it lives in DialogShell's free-form footer
+           slot beside the ordered actions, keeping 0268 TR0005 rev1's "far left of the
+           footer" placement. -->
+      <div class="wdm-ft-row">
           <!-- 0268 TR0005 rev1: the provider picker sits at the far left of the footer, ahead of
                the note and every button, so the run target is read before any action is chosen. -->
           <!-- 0399 D0010 §3.7 / L0011 §4.4 — when this project has no usable provider the
@@ -394,68 +411,27 @@
             @update:model-value="(v: string) => providerStore.selectProvider(v)"
           />
 
-          <button v-if="mode !== 'edit'" type="button" class="btn btn-secondary" @click="close">{{ t('common.cancel') }}</button>
-          <button
-            v-if="mode !== 'edit'"
-            type="button"
-            class="btn btn-primary"
-            :disabled="sequence.length === 0 || submitting"
-            @click="confirm"
-          >
+        <DialogFooter :actions="footerActions">
+          <template #action-confirm>
             <AppIcon name="check" />
             {{ t('main.workflow_decision_modal.confirm') }}
-          </button>
-          <!-- 0268 B0001: mention-copy and AI invoke are not either/or, they run in parallel.
-               This button used to be labelled "AI에게 수정 요청" with a robot icon while only
-               writing the clipboard,
-               which is exactly what hid the missing invoke path — it is now named for what it
-               does, and the real in-app call sits beside it. -->
-          <button
-            v-if="mode === 'edit' && !loading && !loadError"
-            type="button"
-            class="btn btn-secondary"
-            :disabled="requestingAiEdit || invokingAi || issuing"
-            @click="requestAiSequenceEdit"
-          >
+          </template>
+          <template #action-mention-copy>
             <AppIcon name="copy" />
             {{ t('main.workflow_edit_modal.mention_copy') }}
-          </button>
-          <button
-            v-if="mode === 'edit' && !loading && !loadError"
-            type="button"
-            class="btn btn-secondary"
-            :disabled="requestingAiEdit || invokingAi || issuing"
-            @click="invokeAiSequenceEdit"
-          >
+          </template>
+          <template #action-invoke-ai>
             <AppIcon :name="invokingAi ? 'spinner' : 'robot'" :spin="invokingAi" />
             {{ t('main.workflow_edit_modal.invoke_ai') }}
-          </button>
-          <button
-            v-if="mode === 'edit' && !loading && !loadError"
-            type="button"
-            class="btn btn-secondary wdm-cancel-btn"
-            @click="close"
-          >
-            {{ t('common.cancel') }}
-          </button>
-          <button
-            v-if="mode === 'edit' && !loading && !loadError"
-            type="button"
-            class="btn btn-primary"
-            :disabled="saving || wouldEmptyDecided || metaContractMissing"
-            :title="metaContractMissing
-              ? t('main.workflow_edit_modal.cannot_save_missing_meta')
-              : wouldEmptyDecided ? t('main.workflow_edit_modal.cannot_empty') : ''"
-            @click="save"
-          >
+          </template>
+          <template #action-save>
             <AppIcon name="floppy-disk" />
             {{ t('main.workflow_edit_modal.save') }}
-          </button>
-        </div>
-
+          </template>
+        </DialogFooter>
       </div>
-    </div>
-  </teleport>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
@@ -469,6 +445,10 @@ import { useDocTypeStore } from '../stores/docTypeStore'
 import { useAiProviderStore } from '../stores/aiProvider'
 import { useFlowGateToken, type IssuedToken } from '../composables/useFlowGateToken'
 import { copyToClipboardDeferred, ClipboardAbort } from '../utils/clipboard'
+import DialogFooter from './dialogs/DialogFooter.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogShell from './dialogs/DialogShell.vue'
+import type { DialogAction } from './dialogs/dialogTypes'
 
 export interface SequenceItem {
   id: number
@@ -574,6 +554,8 @@ const requestingAiEdit = ref(false)
 // workflow_sequence_edit token and mention server-side — only the delivery differs.
 const providerStore = useAiProviderStore()
 const invokingAi = ref(false)
+
+const shellRef = ref<InstanceType<typeof DialogShell> | null>(null)
 
 // ── Static config ──────────────────────────────────────────────────────────────
 
@@ -1045,6 +1027,69 @@ function close() {
   emit('update:visible', false)
 }
 
+function onHeaderClose() {
+  shellRef.value?.requestClose('header')
+}
+
+/**
+ * The two modes' footers as semantic actions (T0016 §2.2).
+ *
+ * Both end in `[취소] [주버튼]`, which is what this dialog already rendered — what the
+ * migration removes is the ability of either mode to place them differently:
+ * `footerRolePriority` now sorts aux(10) → cancel(30) → primary(40), so edit mode's two
+ * helper buttons stay left of 취소 and 취소 stays immediately left of 저장 no matter what
+ * order this array is written in. `order` pins 멘트복사 ahead of AI호출 inside the shared
+ * aux weight (0268 B0001 put them side by side in that sequence).
+ *
+ * The `title` attribute the old save button carried for its two disabled reasons is not
+ * expressible as a DialogAction field; both reasons are already stated in the body —
+ * `metaContractMissing` renders the `wem-meta-contract-warning` strip and
+ * `wouldEmptyDecided` is what the all-locked notice describes — so nothing that was only
+ * reachable through that tooltip is lost.
+ */
+const footerActions = computed<DialogAction[]>(() => {
+  if (props.mode !== 'edit') {
+    return [
+      { id: 'cancel', label: t('common.cancel'), role: 'cancel', onSelect: close },
+      {
+        id: 'confirm',
+        label: t('main.workflow_decision_modal.confirm'),
+        role: 'primary',
+        disabled: sequence.value.length === 0 || props.submitting === true,
+        onSelect: confirm,
+      },
+    ]
+  }
+  if (loading.value || loadError.value) return []
+  const aiBusy = requestingAiEdit.value || invokingAi.value || issuing.value
+  return [
+    {
+      id: 'mention-copy',
+      label: t('main.workflow_edit_modal.mention_copy'),
+      role: 'aux',
+      order: 0,
+      disabled: aiBusy,
+      onSelect: requestAiSequenceEdit,
+    },
+    {
+      id: 'invoke-ai',
+      label: t('main.workflow_edit_modal.invoke_ai'),
+      role: 'aux',
+      order: 1,
+      disabled: aiBusy,
+      onSelect: invokeAiSequenceEdit,
+    },
+    { id: 'cancel', label: t('common.cancel'), role: 'cancel', onSelect: close },
+    {
+      id: 'save',
+      label: t('main.workflow_edit_modal.save'),
+      role: 'primary',
+      disabled: saving.value || wouldEmptyDecided.value || metaContractMissing.value,
+      onSelect: save,
+    },
+  ]
+})
+
 function confirm() {
   if (sequence.value.length === 0 || props.submitting) return
   emit('confirmed', { sequence: [...sequence.value], docClass: props.docClass ?? 'R' })
@@ -1358,17 +1403,32 @@ watch(
 </script>
 
 <style scoped>
-/* ── Viewport-constrained modal (small screen scroll) ── */
-.wdm-box {
-  width: 880px;
-  max-width: 96vw;
-  height: 85vh;
-  max-height: 85vh;
+/* ── Sheet body: banners stacked above the two-column working area ──
+   The `workflow-large` surface hands its body's padding and scrolling to the feature
+   (D0008 §6), so this frame is what turns it into the column layout the dialog had when
+   it owned `.modal-box` itself. */
+.wdm-frame {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.wdm-box .modal-hd,
-.wdm-box .modal-ft {
+/* ── One footer band: provider picker at the far left, ordered actions filling the rest ── */
+.wdm-ft-row {
+  display: flex;
+  align-items: center;
   flex-shrink: 0;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+}
+
+.wdm-ft-row :deep(.fg-dialog-footer) {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border-top: none;
 }
 
 .wdm-body {
@@ -1910,16 +1970,6 @@ watch(
 .wdm-provider {
   flex-shrink: 0;
   margin-right: 10px;
-}
-
-.wdm-cancel-btn {
-  color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
-  background: color-mix(in srgb, var(--danger) 7%, var(--surface));
-}
-
-.wdm-cancel-btn:hover {
-  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
 }
 
 /* ── Edit mode: Loading / error ── */

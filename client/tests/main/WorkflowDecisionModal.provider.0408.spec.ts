@@ -46,7 +46,7 @@ function mountModal() {
   })
 }
 function saveButton(wrapper: ReturnType<typeof mountModal>) {
-  return wrapper.findAll('.modal-ft button').find(button =>
+  return wrapper.findAll('.fg-dialog-footer button').find(button =>
     button.text().includes(i18n.global.t('main.workflow_edit_modal.save')),
   )!
 }

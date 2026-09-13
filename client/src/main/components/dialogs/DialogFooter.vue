@@ -4,28 +4,36 @@
          action"): the feature's own error surface, if it has one, is additional. -->
     <p v-if="lastError" class="fg-dialog-footer__error" role="alert">{{ lastError.message }}</p>
     <div class="fg-dialog-footer__actions">
-      <button
-        v-for="action in orderedActions"
-        :key="action.id"
-        type="button"
-        class="fg-dialog-btn"
-        :class="[
-          `fg-dialog-btn--${action.role}`,
-          `fg-dialog-btn--tone-${action.tone ?? 'default'}`,
-          { 'is-loading': isActionLoading(action) },
-        ]"
-        :data-dialog-action-role="action.role"
-        :data-dialog-action-id="action.id"
-        :disabled="isActionDisabled(action)"
-        @click="onFooterClick(action)"
-      >
-        <!-- The slot swaps what a button shows, never where it sits: position belongs
-             to the ordering contract below (D0008 §5 "DialogFooter"). -->
-        <slot :name="`action-${action.id}`" :action="action" :loading="isActionLoading(action)">
-          <AppIcon v-if="isActionLoading(action)" name="spinner" spin />
-          {{ action.label }}
-        </slot>
-      </button>
+      <div v-for="action in orderedActions" :key="action.id" class="fg-dialog-footer__action">
+        <button
+          type="button"
+          class="fg-dialog-btn"
+          :class="[
+            `fg-dialog-btn--${action.role}`,
+            `fg-dialog-btn--tone-${action.tone ?? 'default'}`,
+            { 'is-loading': isActionLoading(action) },
+          ]"
+          :data-dialog-action-role="action.role"
+          :data-dialog-action-id="action.id"
+          :disabled="isActionDisabled(action)"
+          @click="onFooterClick(action)"
+        >
+          <!-- The slot swaps what a button shows, never where it sits: position belongs
+               to the ordering contract below (D0008 §5 "DialogFooter"). -->
+          <slot :name="`action-${action.id}`" :action="action" :loading="isActionLoading(action)">
+            <AppIcon v-if="isActionLoading(action)" name="spinner" spin />
+            {{ action.label }}
+          </slot>
+        </button>
+        <!-- Anchored popup slot (T0016 §2.2 rework): a compound control (e.g. a split
+             dropdown) cannot nest its panel inside the `<button>` above without nesting
+             interactive elements, but its trigger must still be a real `DialogAction` so
+             ordering/dedup/disabled/busy and the single execution path all apply to it.
+             This slot renders the panel as this action's sibling instead, anchored by
+             `.fg-dialog-footer__action { position: relative }` — the caller positions its
+             own panel with `position: absolute` inside that box. -->
+        <slot :name="`popover-${action.id}`" :action="action" />
+      </div>
     </div>
   </div>
 </template>

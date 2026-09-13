@@ -87,7 +87,7 @@ type Wrapper = ReturnType<typeof mountModal>
 
 function footerButton(wrapper: Wrapper, key: string) {
   const label = i18n.global.t(key)
-  const button = wrapper.findAll('.modal-ft button').find(candidate => candidate.text().includes(label))
+  const button = wrapper.findAll('.fg-dialog-footer button').find(candidate => candidate.text().includes(label))
   expect(button, `missing footer button for ${key} (${label})`).toBeTruthy()
   return button!
 }

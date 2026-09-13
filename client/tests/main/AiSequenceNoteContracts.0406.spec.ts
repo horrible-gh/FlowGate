@@ -127,7 +127,7 @@ describe('continuous tombstone and sequence-edit identity (0406 T0011)', () => {
     await flushPromises()
     const label = i18n.global.t('main.workflow_edit_modal.invoke_ai')
     expect(label).toContain('시퀀스 수정')
-    const button = wrapper.findAll('.modal-ft button').find(candidate => candidate.text().trim() === label)
+    const button = wrapper.findAll('.fg-dialog-footer button').find(candidate => candidate.text().trim() === label)
     expect(button).toBeTruthy()
     await button!.trigger('click')
     await flushPromises()

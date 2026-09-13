@@ -177,6 +177,27 @@
   padding: 18px 20px;
 }
 
+/*
+ * flowgate.default.0560 T0016 §2.3 — the one change the 3순위 migration needed in this
+ * layer, kept as narrow as the reason for it.
+ *
+ * D0008 §6 already says the large sheet dialogs keep their bodies feature-owned and hand
+ * only the frame to the common layer. `WorkflowDecisionModal.vue` is the first instance
+ * to actually land on `workflow-large`, and its body is a full-bleed column — edge-to-edge
+ * notice strips and a two-column grid whose two panes scroll independently. A padded,
+ * `overflow:auto` block cannot host that: the strips would be inset from the surface edge
+ * and the panes would have no bounded height to scroll inside of.
+ *
+ * So `sheet` — and only `sheet` — gives its body away as a bare flex column. `panel`, which
+ * is every confirm/form dialog, is untouched and keeps the padding above.
+ */
+.fg-dialog-surface--sheet .fg-dialog-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
 .fg-dialog-message {
   margin: 0;
   font-size: .9rem;
@@ -203,6 +224,14 @@
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* Anchor box for one action's button + its optional popover slot (T0016 §2.2 rework).
+   `position: relative` only — it carries no size/spacing of its own, so wrapping a
+   button in it does not change the row's geometry. */
+.fg-dialog-footer__action {
+  position: relative;
+  display: inline-flex;
 }
 
 .fg-dialog-footer__error {
@@ -265,9 +294,11 @@
 
 /*
  * cancel — Type A form cancel. DS0007 fixed the visual reference as
- * `WorkflowDecisionModal.vue`'s `.wdm-cancel-btn` (L1915): an outline button tinted with
- * the danger hue rather than a filled destructive button. Copied here by value, not by
- * importing that component's scoped class.
+ * `WorkflowDecisionModal.vue`'s `.wdm-cancel-btn`: an outline button tinted with the
+ * danger hue rather than a filled destructive button. It was copied here by value, not by
+ * importing that component's scoped class — which is why T0016 §2.1 #4 could delete
+ * `.wdm-cancel-btn` itself (it was repainting only ONE of that file's two cancel buttons)
+ * without changing what a cancel button looks like. This rule is now the only definition.
  */
 .fg-dialog-btn--cancel {
   color: var(--danger);

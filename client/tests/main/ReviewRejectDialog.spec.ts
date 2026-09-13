@@ -58,20 +58,20 @@ describe('ReviewRejectDialog editMode', () => {
 
   it('hides the reject dropdown when editMode is true', () => {
     const wrapper = mountDialog(true)
-    expect(wrapper.find('.rrd-split-wrap').exists()).toBe(false)
+    expect(wrapper.find('[data-dialog-action-id="reject-menu"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
   it('keeps the reject dropdown for the ordinary (non-edit) reject flow', () => {
     const wrapper = mountDialog(false)
-    expect(wrapper.find('.rrd-split-wrap').exists()).toBe(true)
+    expect(wrapper.find('[data-dialog-action-id="reject-menu"]').exists()).toBe(true)
     wrapper.unmount()
   })
 
   it('still emits save-reason in editMode (parent decides which endpoint to call)', async () => {
     const wrapper = mountDialog(true)
     await wrapper.find('.rrd-textarea').setValue('수정된 반려 사유')
-    await wrapper.find('.rrd-footer > .btn.btn-danger').trigger('click')
+    await wrapper.find('[data-dialog-action-id="save"]').trigger('click')
     expect(wrapper.emitted('save-reason')).toEqual([['수정된 반려 사유']])
     wrapper.unmount()
   })

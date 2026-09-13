@@ -67,7 +67,7 @@ type Wrapper = ReturnType<typeof mountModal>
 
 function saveButton(wrapper: Wrapper) {
   const label = i18n.global.t('main.workflow_edit_modal.save')
-  const button = wrapper.findAll('.modal-ft button').find(candidate => candidate.text().includes(label))
+  const button = wrapper.findAll('.fg-dialog-footer button').find(candidate => candidate.text().includes(label))
   expect(button).toBeTruthy()
   return button!
 }

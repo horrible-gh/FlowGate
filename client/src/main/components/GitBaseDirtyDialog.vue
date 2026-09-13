@@ -3,65 +3,72 @@
        be auto-resolved. Committing (keep the edits) and reverting (discard them)
        are opposite outcomes, so the operator always chooses. A merge that bounces
        off the guard opens this dialog; picking commit-then-merge or revert-then-
-       merge clears the base and the caller retries the original finalize once. -->
-  <teleport to="body">
-    <div v-if="open" class="modal-bg">
-      <div class="modal-box gbd-box">
-        <div class="modal-hd">
-          <span class="modal-title">
-            <AppIcon name="warning" style="color:var(--danger);" />
-            {{ t('main.git_finalize.base_dirty_dialog_title') }}
-          </span>
-          <button class="modal-close" type="button" :disabled="busy" @click="cancel">
-            <AppIcon name="x" />
-          </button>
-        </div>
-        <div class="modal-bd">
-          <p class="gbd-body">{{ context === 'update' ? t('main.explorer.git_update_base_dirty') : t('main.git_finalize.base_dirty_dialog_body') }}</p>
-          <ul v-if="files.length" class="gbd-files">
-            <li v-for="f in files" :key="f">{{ f }}</li>
-          </ul>
-          <div class="gbd-commit">
-            <label class="gbd-commit-label" for="gbd-commit-subject">
-              {{ t('main.git_finalize.commit_message_label') }}
-            </label>
-            <input
-              id="gbd-commit-subject"
-              class="form-ctrl gbd-commit-input"
-              type="text"
-              maxlength="200"
-              :value="commitMsg"
-              :placeholder="suggested"
-              :disabled="busy"
-              @input="commitMsg = ($event.target as HTMLInputElement).value"
-            />
-            <p class="gbd-hint">{{ t('main.git_finalize.commit_message_hint') }}</p>
-          </div>
-          <p v-if="files.length" class="gbd-revert-note">
-            <AppIcon name="warning" />
-            {{ t('main.git_finalize.base_dirty_revert_note') }}
-          </p>
-          <p v-if="errorMsg" class="gbd-error">{{ errorMsg }}</p>
-        </div>
-        <div class="modal-ft gbd-ft">
-          <button class="btn btn-secondary" type="button" :disabled="busy" @click="cancel">
-            {{ t('common.cancel') }}
-          </button>
-          <button
-            class="btn gbd-revert-btn"
-            type="button"
-            :disabled="busy || !files.length"
-            @click="choose('revert')"
-          >
-            <AppIcon name="arrow-counter-clockwise" /> {{ t('main.git_finalize.base_dirty_revert_merge') }}
-          </button>
-          <button class="btn btn-primary" type="button" :disabled="busy" @click="choose('commit')">
-            <AppIcon name="check" /> {{ t('main.git_finalize.base_dirty_commit_merge') }}
-          </button>
-        </div>
+       merge clears the base and the caller retries the original finalize once.
+
+       flowgate.default.0560 T0016 §2.2 (2단계) — migrated onto the common dialog layer;
+       D0008 "기존 instance 이관 목적지" maps this instance to `form-actions` (a commit
+       message field plus three footer actions). The imperative `resolve()` contract is
+       untouched: `open` is still this component's own ref, the shell never flips it. -->
+  <DialogShell
+    ref="shellRef"
+    :open="open"
+    variant="form-actions"
+    :closeable="!busy"
+    :busy="busy"
+    @request-close="cancel"
+  >
+    <template #header>
+      <DialogHeader
+        :title="t('main.git_finalize.base_dirty_dialog_title')"
+        :closeable="!busy"
+        @close="onHeaderClose"
+      >
+        <template #icon>
+          <AppIcon name="warning" style="color:var(--danger);" />
+        </template>
+      </DialogHeader>
+    </template>
+
+    <template #default="{ descriptionId }">
+      <p :id="descriptionId" class="gbd-body">{{ context === 'update' ? t('main.explorer.git_update_base_dirty') : t('main.git_finalize.base_dirty_dialog_body') }}</p>
+      <ul v-if="files.length" class="gbd-files">
+        <li v-for="f in files" :key="f">{{ f }}</li>
+      </ul>
+      <div class="gbd-commit">
+        <label class="gbd-commit-label" for="gbd-commit-subject">
+          {{ t('main.git_finalize.commit_message_label') }}
+        </label>
+        <input
+          id="gbd-commit-subject"
+          class="form-ctrl gbd-commit-input"
+          type="text"
+          maxlength="200"
+          data-dialog-autofocus
+          :value="commitMsg"
+          :placeholder="suggested"
+          :disabled="busy"
+          @input="commitMsg = ($event.target as HTMLInputElement).value"
+        />
+        <p class="gbd-hint">{{ t('main.git_finalize.commit_message_hint') }}</p>
       </div>
-    </div>
-  </teleport>
+      <p v-if="files.length" class="gbd-revert-note">
+        <AppIcon name="warning" />
+        {{ t('main.git_finalize.base_dirty_revert_note') }}
+      </p>
+      <p v-if="errorMsg" class="gbd-error">{{ errorMsg }}</p>
+    </template>
+
+    <template #footer>
+      <DialogFooter :actions="actions" :busy="busy">
+        <template #action-revert>
+          <AppIcon name="arrow-counter-clockwise" /> {{ t('main.git_finalize.base_dirty_revert_merge') }}
+        </template>
+        <template #action-commit>
+          <AppIcon name="check" /> {{ t('main.git_finalize.base_dirty_commit_merge') }}
+        </template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
@@ -70,6 +77,11 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
 import { useExplorerStore } from '../stores/explorer'
+
+import DialogFooter from './dialogs/DialogFooter.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogShell from './dialogs/DialogShell.vue'
+import type { DialogAction } from './dialogs/dialogTypes'
 
 defineProps<{ context?: 'finalize' | 'update' }>()
 const { t } = useI18n()
@@ -92,9 +104,49 @@ const busy = ref(false)
 const files = ref<string[]>([])
 const commitMsg = ref('')
 const errorMsg = ref('')
+const shellRef = ref<InstanceType<typeof DialogShell> | null>(null)
 
 let projectId = ''
 let resolver: ((v: 'proceed' | 'cancel') => void) | null = null
+
+/**
+ * T0016 §2.1 #3 found this footer in the order `[취소] [되돌리기] [커밋]` — the cancel
+ * button separated from the primary by a destructive action, the exact inversion of the
+ * contract. The 1단계 markup fix put it right, and these roles now make the order a
+ * property of `footerRolePriority`: danger(20) → cancel(30) → primary(40), i.e.
+ * `[되돌리기] [취소] [커밋]`.
+ *
+ * T0016 §3 asked whether `tone: 'danger'` restores the old `.gbd-revert-btn` look. It
+ * does not, and it is not meant to: `fg-dialog-btn--tone-danger` carries visuals only in
+ * combination with `--primary` (dialog.css), so a `danger` role renders as the common
+ * filled-red danger button rather than this component's private red-outline variant.
+ * That is the normalisation 3순위 exists for, and the tone is kept explicit so the
+ * intent of the action is readable from the action object alone.
+ */
+const actions = computed<DialogAction[]>(() => [
+  {
+    id: 'revert',
+    label: t('main.git_finalize.base_dirty_revert_merge'),
+    role: 'danger',
+    tone: 'danger',
+    disabled: busy.value || files.value.length === 0,
+    onSelect: () => choose('revert'),
+  },
+  {
+    id: 'cancel',
+    label: t('common.cancel'),
+    role: 'cancel',
+    disabled: busy.value,
+    onSelect: cancel,
+  },
+  {
+    id: 'commit',
+    label: t('main.git_finalize.base_dirty_commit_merge'),
+    role: 'primary',
+    disabled: busy.value,
+    onSelect: () => choose('commit'),
+  },
+])
 
 // Mirrors git_service.default_base_commit_message (L0002 §2.2): the seeded
 // placeholder is exactly what a blank commit derives on the server.
@@ -147,6 +199,10 @@ function cancel() {
   if (busy.value) return
   settle('cancel')
 }
+
+function onHeaderClose() {
+  shellRef.value?.requestClose('header')
+}
 async function choose(mode: 'commit' | 'revert') {
   if (busy.value || !projectId) return
   if (mode === 'revert' && !files.value.length) return
@@ -194,10 +250,6 @@ defineExpose({ resolve })
 </script>
 
 <style scoped>
-.gbd-box {
-  max-width: 480px;
-  width: 100%;
-}
 .gbd-body {
   font-size: 0.85rem;
   line-height: 1.5;
@@ -255,19 +307,5 @@ defineExpose({ resolve })
   font-size: 0.78rem;
   color: #b91c1c;
   margin: 6px 0 0;
-}
-.gbd-ft {
-  flex-wrap: wrap;
-  gap: 8px;
-}
-/* Revert discards edits — a distinct danger-outline treatment so it is never
-   mistaken for the primary commit action. */
-.gbd-revert-btn {
-  background: #fff;
-  color: #b91c1c;
-  border: 1px solid #fca5a5;
-}
-.gbd-revert-btn:hover:not(:disabled) {
-  background: #fef2f2;
 }
 </style>
