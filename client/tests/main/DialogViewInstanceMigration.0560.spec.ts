@@ -74,6 +74,15 @@ const MIGRATED_FILES = [
  * failing the check that no element carries it. `\b…\b` also keeps `document-modal__body`
  * (still a live class, the Teleport target of the chat full view) from reading as `modal-bd`.
  */
+/**
+ * The two instances 0560 T0020 (4.5순위) lifted out of their host file into a dialog component
+ * of their own: host -> [NR0011 id, the new component].
+ */
+const EXTRACTED = new Map<string, [number, string]>([
+  ['src/main/components/GitActionMenu.vue', [39, 'src/main/components/GitStatusPanelDialog.vue']],
+  ['src/main/components/NotificationCenter.vue', [44, 'src/main/components/NotificationAiDetailDialog.vue']],
+])
+
 const LEGACY_CLASS = new RegExp(
   'class="[^"]*\\b('
   + 'modal-bg|modal-box|modal-hd|modal-bd|modal-ft|modal-close|modal-title|modal-overlay|modal'
@@ -90,10 +99,30 @@ describe('4순위 — the inline overlay markup is gone from its host file (T001
     expect(text, `${file} still teleports by hand`).not.toMatch(/<[Tt]eleport to="body">/)
   })
 
-  it.each(MIGRATED_FILES)('%s (NR0011 #%i) builds on the common shell', (file) => {
-    const text = source(file)
-    expect(text, `${file} is missing <DialogShell`).toContain('<DialogShell')
-    expect(text, `${file} is missing <DialogHeader`).toContain('<DialogHeader')
+  /** Where the shell lives moved for two of these in 0560 T0020 (4.5순위) - see EXTRACTED. */
+  it.each(MIGRATED_FILES.filter(([file]) => !EXTRACTED.has(file)))(
+    '%s (NR0011 #%i) builds on the common shell',
+    (file) => {
+      const text = source(file)
+      expect(text, `${file} is missing <DialogShell`).toContain('<DialogShell')
+      expect(text, `${file} is missing <DialogHeader`).toContain('<DialogHeader')
+    },
+  )
+
+  /**
+   * 0560 T0020 (4.5순위) finished D0008 4's other half for these two: T0018 put them on the
+   * common layer but left the shell block inside the host component. The host now holds open
+   * state and data only, and the shell moved to a dialog component of its own.
+   */
+  it.each([...EXTRACTED.keys()])('%s hands its dialog to an extracted component', (file) => {
+    const host = source(file)
+    expect(host, `${file} still renders the shell itself`).not.toContain('<DialogShell')
+    const child = EXTRACTED.get(file)![1]
+    const tag = child.split('/').pop()!.replace('.vue', '')
+    expect(host, `${file} no longer mounts its dialog`).toContain(`<${tag}`)
+    const text = source(child)
+    expect(text, `${child} is missing <DialogShell`).toContain('<DialogShell')
+    expect(text, `${child} is missing <DialogHeader`).toContain('<DialogHeader')
   })
 
   /**
@@ -151,11 +180,13 @@ describe('the dead main-side ProjectsView is deleted (T0018 §4-2)', () => {
  */
 const BACKDROP_OVERRIDE_FILES = [
   ['src/main/components/WorkPlanAiScopeDialog.vue', 32],
-  ['src/main/components/GitActionMenu.vue', 39],
+  // 0560 T0020 moved 39 and 44 into components of their own; the override travelled with the
+  // shell, so the contract is read off the file that renders it now.
+  ['src/main/components/GitStatusPanelDialog.vue', 39],
   ['src/main/components/DocumentFullViewDialog.vue', 40],
   ['src/main/components/GitArchiveCatalogDialog.vue', 42],
   ['src/main/components/QuickOpenDialog.vue', 43],
-  ['src/main/components/NotificationCenter.vue', 44],
+  ['src/main/components/NotificationAiDetailDialog.vue', 44],
   ['src/main/components/WorkPlanEditor.vue', 45],
 ] as const
 
@@ -537,9 +568,13 @@ describe('NotificationCenter AI detail (NR0011 #44, §2.3-6)', () => {
 
   /** Focus return is the layer's now — the hand-rolled `nextTick(() => …focus())` is gone. */
   it('hands focus return to the shell instead of restoring it by hand', () => {
+    // The host still owns the trigger element and passes it down; the extracted dialog is what
+    // hands it to the shell (0560 T0020).
     const text = source('src/main/components/NotificationCenter.vue')
     expect(text).toContain(':return-focus-to="detailReturnFocus"')
     expect(text).not.toContain('nextTick(() => detailReturnFocus')
+    expect(source('src/main/components/NotificationAiDetailDialog.vue'))
+      .toContain(':return-focus-to="returnFocusTo"')
   })
 
   /**
@@ -559,7 +594,8 @@ describe('NotificationCenter AI detail (NR0011 #44, §2.3-6)', () => {
    * the `btn-primary` 닫기 NR0005 §4.1 flagged has no primary position to inherit.
    */
   it('assigns aux/dismiss and keeps 닫기 out of the primary position', () => {
-    const text = source('src/main/components/NotificationCenter.vue')
+    // The footer moved into the extracted dialog with the markup that renders it (0560 T0020).
+    const text = source('src/main/components/NotificationAiDetailDialog.vue')
     expect(text).toMatch(/id: 'open-document',[\s\S]*?role: 'aux',/)
     expect(text).toMatch(/id: 'close',[\s\S]*?role: 'dismiss',/)
     expect(text).not.toMatch(/id: 'close',[\s\S]*?role: 'primary',/)

@@ -3011,6 +3011,11 @@ export default {
       approve: '승인 — 커밋 & 머지',
       reject_reason_label: '반려 사유 및 다시 시도 지시',
       reject_confirm: '반려하고 다시 시도',
+      // 0560 T0020 §2.2 (a): 반려 창은 공통 계층으로 오면서 ESC로도 닫힐 수 있게 됐다.
+      // 적던 사유가 있으면 어느 경로로 닫든 먼저 묻는다.
+      discard_confirm_title: '작성 중인 반려 사유를 버릴까요?',
+      discard_confirm_message: '이 창을 닫으면 적어 둔 반려 사유는 사라집니다.',
+      discard_confirm_ok: '버리고 닫기',
       approved_toast: '승인했습니다.',
       re_review_toast: '검토 대상이 바뀌어 새 내용으로 다시 확인이 필요합니다.',
       reconciling_toast: '반영 결과를 확인하는 중입니다.',

@@ -7,9 +7,15 @@
 // 0469 T4: key state is no longer shown inline on the row (§3 bans always-on connection/key
 // text in the list) — it moved into the command/info-view dialog opened via the row's
 // "view command" button, so these tests open that dialog before asserting on the text.
+//
+// 0560 T0020 (4.5순위): the command/info dialog is `AiProviderCommandInfoDialog.vue`
+// now and DialogShell teleports it out of the editor's subtree, so `wrapper.text()` no
+// longer contains it. Reading the document keeps the `not.toContain` assertions honest -
+// against the wrapper they would have passed on text that was simply elsewhere.
 import { mount } from '@vue/test-utils'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
+import { resetDialogSystem } from '@main/composables/useDialogStack'
 import AiProviderListEditor from '@/settings/components/AiProviderListEditor.vue'
 
 vi.mock('@shared/api', () => ({ getRequest: vi.fn(), putRequest: vi.fn() }))
@@ -33,11 +39,38 @@ function apiProvider(extra = {}) {
   }
 }
 
+const wrappers = []
+
+function track(wrapper) {
+  wrappers.push(wrapper)
+  return wrapper
+}
+
+afterEach(() => {
+  while (wrappers.length > 0) {
+    try {
+      wrappers.pop().unmount()
+    } catch {
+      // already unmounted
+    }
+  }
+  resetDialogSystem()
+  document.body.innerHTML = ''
+})
+
 function mountEditor(providers) {
-  return mount(AiProviderListEditor, {
+  return track(mount(AiProviderListEditor, {
     props: { providers, defaultIndex: 0, catalog: CATALOG },
     global: { plugins: [i18n] },
-  })
+    attachTo: document.body,
+  }))
+}
+
+/** The open command/info dialog's text. It is teleported out of the wrapper's subtree. */
+function dialogText() {
+  const el = document.body.querySelector('.fg-dialog-surface')
+  if (el == null) throw new Error('the command dialog is not open')
+  return el.textContent
 }
 
 async function openCommandView(wrapper) {
@@ -48,7 +81,7 @@ describe('AI provider key state', () => {
   it('still shows the last-4 hint for a readable key', async () => {
     const wrapper = mountEditor([apiProvider()])
     await openCommandView(wrapper)
-    const text = wrapper.text()
+    const text = dialogText()
     expect(text).toContain('J3zQ')
     expect(text).not.toContain(i18n.global.t('settings.ai.key_unreadable'))
   })
@@ -58,7 +91,7 @@ describe('AI provider key state', () => {
       apiProvider({ api_key_hint: null, api_key_unreadable: true }),
     ])
     await openCommandView(wrapper)
-    const text = wrapper.text()
+    const text = dialogText()
     expect(text).toContain(i18n.global.t('settings.ai.key_unreadable'))
     expect(text).not.toContain(i18n.global.t('settings.ai.key_set_hint', { hint: '' }))
   })
@@ -68,6 +101,6 @@ describe('AI provider key state', () => {
       apiProvider({ api_key_set: false, api_key_hint: null }),
     ])
     await openCommandView(wrapper)
-    expect(wrapper.text()).toContain(i18n.global.t('settings.ai.key_none'))
+    expect(dialogText()).toContain(i18n.global.t('settings.ai.key_none'))
   })
 })

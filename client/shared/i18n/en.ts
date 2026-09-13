@@ -3006,6 +3006,11 @@ export default {
       approve: 'Approve — commit & merge',
       reject_reason_label: 'Rejection reason and retry instruction',
       reject_confirm: 'Reject and retry',
+      // 0560 T0020 §2.2 (a): joining the common layer gave this box an ESC it never had,
+      // so a reason that has been typed is confirmed before any close path throws it away.
+      discard_confirm_title: 'Discard the rejection reason?',
+      discard_confirm_message: 'Closing this dialog throws away the reason you have typed.',
+      discard_confirm_ok: 'Discard and close',
       approved_toast: 'Approved.',
       re_review_toast: 'The reviewed target changed — review the new content again.',
       reconciling_toast: 'Confirming the outcome of the push.',

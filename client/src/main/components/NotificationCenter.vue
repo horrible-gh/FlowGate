@@ -183,41 +183,19 @@
         </article>
       </div>
     </div>
-    <!-- AI 호출 상세 — flowgate.default.0560 T0018 (4순위, NR0011 원장 ID 44) on the common
-         dialog layer; D0008 maps it to `readonly`. This is the one instance in the batch
-         whose ESC/focus-return already worked, through a bespoke `window` keydown listener
-         and a saved trigger element. Both are now the layer's: the single document keydown
-         listener of L0009 §2 closes it, and `return-focus-to` hands the trigger back. The
-         old listener branch is removed rather than left alongside — two handlers for one
-         ESC is a double close (T0018 §2.3-6).
-         `:close-on-backdrop="false"` is explicit (T0018 §2.2-3): `readonly` defaults to
-         `true`, but this backdrop never closed the dialog (`@click.stop`, NR0011 BD=X). -->
-    <DialogShell
+    <!-- AI 호출 상세 (NR0011 원장 ID 44). T0018 put it on the common dialog layer; 0560
+         T0020 (4.5순위) moved the shell block into its own component — D0008 §4's other
+         half. This file keeps the open flag, the fetched detail and the trigger element,
+         and nothing about the dialog's own contract moved with it. -->
+    <NotificationAiDetailDialog
       :open="detailOpen"
-      variant="readonly"
-      :close-on-backdrop="false"
+      :detail="detail"
+      :loading="detailLoading"
+      :errored="detailError"
       :return-focus-to="detailReturnFocus"
-      surface-class="notif-detail-dialog"
-      @request-close="closeAiDetail"
-    >
-      <template #header>
-        <DialogHeader :title="t('main.notif_center.ai_detail_title')" @close="closeAiDetail">
-          <template #actions>
-            <span v-if="detail" :class="detail.succeeded ? 'detail-success' : 'detail-failure'">{{ detail.succeeded ? t('main.notif_center.ai_success') : t('main.notif_center.ai_failure') }}</span>
-          </template>
-        </DialogHeader>
-      </template>
-      <template #default>
-        <div class="notif-detail-meta">
-          <p v-if="detail?.doc_ref"><strong>{{ detail.doc_ref }}</strong><template v-if="detail.doc_title"> · {{ detail.doc_title }}</template></p>
-          <p v-if="detail">{{ [detail.stop_code || detail.end_reason, detail.finished_at ? formatDashboardTime(detail.finished_at) : null, detail.provider_name].filter(Boolean).join(' · ') }}</p>
-        </div>
-        <pre class="notif-detail-message">{{ detailMessage }}</pre>
-      </template>
-      <template #footer>
-        <DialogFooter :actions="detailActions" />
-      </template>
-    </DialogShell>
+      @close="closeAiDetail"
+      @open-document="openDetailDocument"
+    />
   </div>
 </template>
 
@@ -232,10 +210,7 @@ import { useQaOpenIntent } from '../composables/useQaOpenIntent'
 import { useActivityFormat } from '../composables/useActivityFormat'
 import type { DashboardActivity } from '../stores/dashboard'; import type { AiInvokeDetail, AiInvokeNotification } from '../stores/notifications'; import { getRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
-import DialogFooter from './dialogs/DialogFooter.vue'
-import DialogHeader from './dialogs/DialogHeader.vue'
-import DialogShell from './dialogs/DialogShell.vue'
-import type { DialogAction } from './dialogs/dialogTypes'
+import NotificationAiDetailDialog from './NotificationAiDetailDialog.vue'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -253,19 +228,10 @@ const detail = ref<AiInvokeDetail | null>(null)
 const detailLoading = ref(false)
 const detailError = ref(false)
 let detailVersion = 0
-// A ref, not a plain `let`: DialogShell reads it as a prop at open time and hands focus
-// back to it from the common teardown path (T0018 §2.3-6), so the value has to be
+// A ref, not a plain `let`: the dialog reads it as a prop at open time and the shell hands
+// focus back to it from the common teardown path (T0018 §2.3-6), so the value has to be
 // reactive rather than read once by a hand-written `nextTick` after close.
 const detailReturnFocus = ref<HTMLElement | null>(null)
-
-const detailMessage = computed(() => {
-  if (detailLoading.value) return t('main.notif_center.ai_detail_loading')
-  if (detailError.value) return t('main.notif_center.ai_detail_failed')
-  const message = detail.value?.last_message?.trim()
-  if (message) return detail.value!.last_message!
-  const reason = detail.value?.stop_reason?.trim()
-  return reason || t('main.notif_center.ai_no_message')
-})
 
 function aiSummary(item: AiInvokeNotification): string {
   const parts: string[] = []
@@ -277,38 +243,6 @@ function aiSummary(item: AiInvokeNotification): string {
   if (excerpt) parts.push(excerpt.length > 240 ? excerpt.slice(0, 240) + '…' : excerpt)
   return parts.filter(Boolean).join(' · ')
 }
-
-/**
- * `[문서 열기] [닫기]` (T0018 §2.3-6 role 배정).
- *
- * `문서 열기` navigates somewhere else while leaving this overlay's job unfinished — a
- * secondary helper, so `aux`. `닫기` is D0008 §3's third cancel meaning: this is a
- * read-only detail overlay with nothing to commit and nothing running, so dismissing it
- * is neither a form cancel nor a stop — `dismiss`. That also retires the "닫기 painted as
- * btn-primary" pattern NR0005 §4.1 named: a read-only overlay has no action that
- * completes it, so it gets no primary button at all (D0008 §3-7).
- *
- * Both roles share weight 10, so the painted order is still [문서 열기] [닫기] — settled by
- * the caller index, exactly as it reads today.
- */
-const detailActions = computed<DialogAction[]>(() => {
-  const actions: DialogAction[] = []
-  if (detail.value?.doc_ref) {
-    actions.push({
-      id: 'open-document',
-      label: t('main.notif_center.open_document'),
-      role: 'aux',
-      onSelect: openDetailDocument,
-    })
-  }
-  actions.push({
-    id: 'close',
-    label: t('main.notif_center.close'),
-    role: 'dismiss',
-    onSelect: closeAiDetail,
-  })
-  return actions
-})
 
 async function openAiDetail(runId: string, event: Event) {
   detailReturnFocus.value = event.currentTarget as HTMLElement
@@ -717,17 +651,13 @@ defineExpose({ open })
 .notif-ai-row--success { border-left-color: #22c55e; }
 .notif-ai-row--failure { border-left-color: #ef4444; background: rgba(239, 68, 68, .04); }
 .notif-ai-status-icon { margin-top: 2px; }
-.notif-ai-row--success .notif-ai-status-icon, .detail-success { color: #15803d; }
-.notif-ai-row--failure .notif-ai-status-icon, .detail-failure { color: #b91c1c; }
+/* The `.detail-*` half of these two rules left with the dialog (T0020) — a scoped rule
+   here could not reach markup this component no longer renders. */
+.notif-ai-row--success .notif-ai-status-icon { color: #15803d; }
+.notif-ai-row--failure .notif-ai-status-icon { color: #b91c1c; }
 .notif-ai-content { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 4px; }
 .notif-ai-status { font-size: .78rem; }
 .notif-ai-detail-btn { align-self: center; color: var(--primary, #2563eb); font-size: .72rem; font-weight: 700; white-space: nowrap; }
-/* The overlay, the surface box and the header/footer rows are the common layer's now
-   (T0018). What is left here is the body content this dialog owns: the meta line and the
-   message block. */
-.notif-detail-meta { padding: 0 0 12px; color: var(--text-secondary, #475569); font-size: .78rem; }
-.notif-detail-message { min-height: 180px; margin: 0; padding: 14px; overflow: auto; border: 1px solid var(--border, #e2e8f0); border-radius: 8px; background: #f8fafc; color: var(--text, #0f172a); font: .8rem/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
-
 /* Newly arrived (unread) rows slide in — the mockup's "완료가 리스트로 흘러 들어온다". */
 .notif-item--fresh { animation: notifFreshIn .45s ease-out; }
 @keyframes notifFreshIn {
@@ -745,15 +675,4 @@ defineExpose({ open })
 .notif-qa-target { min-width: 0; flex: 1; }
 .notif-qa-open { flex: none; color: var(--primary, #2563eb); font-size: .72rem; font-weight: 700; }
 .notif-qa-open:hover { text-decoration: underline; }
-</style>
-
-<!--
-  Unscoped: `surface-class` lands on the dialog surface, which DialogShell renders and
-  teleports out of this component's subtree, so a scoped rule can never reach it. The
-  width is the same `min(640px, …)` track `.notif-dialog` measured before the migration.
--->
-<style>
-.fg-dialog-surface.notif-detail-dialog {
-  width: 640px;
-}
 </style>

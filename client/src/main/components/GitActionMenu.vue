@@ -81,37 +81,17 @@
       </button>
     </div>
 
-    <!-- "관제소" — the project Git status panel, reached from the safety-net menu.
-         flowgate.default.0560 T0018 (4순위, NR0011 원장 ID 39) on the common dialog layer:
-         D0008 maps it to `readonly`. It has no footer and never had one — the X is the only
-         way out — so T0018 §2.2-2 leaves it that way instead of inventing footer actions.
-         `:close-on-backdrop="false"` is explicit (T0018 §2.2-3): `readonly`'s variant
-         default is `true`, but 0412 T0004 fixed backdrop-no-close for this overlay and
-         NR0011's BD column records it as `X` today. The own Teleport is gone — DialogShell
-         teleports every common dialog to the one host. -->
-    <DialogShell
+    <!-- "관제소" — the project Git status panel, reached from the safety-net menu
+         (NR0011 원장 ID 39). T0018 put it on the common dialog layer; 0560 T0020 (4.5순위)
+         took the common-shell block out of this file into its own component, which is the
+         half of D0008 §4 the 4순위 step left undone. What stays here is exactly what D0008 §4
+         leaves with the parent: the open flag and the project id handed down. -->
+    <GitStatusPanelDialog
       :open="panelOpen"
-      variant="readonly"
-      size="lg"
-      :close-on-backdrop="false"
-      surface-class="git-panel-dialog"
-      @request-close="panelOpen = false"
-    >
-      <template #header>
-        <DialogHeader
-          :title="t('main.git_status.title')"
-          icon="tree-structure"
-          @close="panelOpen = false"
-        />
-      </template>
-      <template #default>
-        <GitStatusPanel
-          v-if="projectId"
-          :project-id="projectId || ''"
-          @open-group="openGroup"
-        />
-      </template>
-    </DialogShell>
+      :project-id="projectId"
+      @close="panelOpen = false"
+      @open-group="openGroup"
+    />
 
     <!-- 0177 0007-CH: base_dirty 409 → operator chooses commit / revert / cancel
          (no silent auto-commit) before the finalize retries. -->
@@ -132,9 +112,7 @@ import { useProjectStore } from '../stores/project'
 import { useTabsStore } from '../stores/tabs'
 import { useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import { useToast } from './common/useToast'
-import GitStatusPanel from './GitStatusPanel.vue'
-import DialogHeader from './dialogs/DialogHeader.vue'
-import DialogShell from './dialogs/DialogShell.vue'
+import GitStatusPanelDialog from './GitStatusPanelDialog.vue'
 import GitBaseDirtyDialog from './GitBaseDirtyDialog.vue'
 import GitUntrackedConflictDialog from './GitUntrackedConflictDialog.vue'
 
@@ -496,18 +474,5 @@ watch(projectId, fetchStatus)
 .badge-red {
   background: #fef2f2;
   color: #b91c1c;
-}
-</style>
-
-<!--
-  Unscoped on purpose: `surface-class` lands on the dialog SURFACE, which DialogShell
-  renders and teleports out of this component's subtree, so a scoped rule could never
-  reach it. The width is the same 620px track `.git-panel-modal` measured; the body's
-  own scroll cap is `.fg-dialog-body`'s (`overflow: auto` + the panel max-height), which
-  is what `.git-panel-modal-bd { max-height: 70vh }` used to do by hand.
--->
-<style>
-.fg-dialog-surface.git-panel-dialog {
-  width: 620px;
 }
 </style>

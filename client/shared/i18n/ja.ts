@@ -2992,6 +2992,10 @@ export default {
       approve: '承認 — コミット & マージ',
       reject_reason_label: '却下理由と再試行の指示',
       reject_confirm: '却下して再試行',
+      // 0560 T0020 §2.2 (a)
+      discard_confirm_title: '入力中の却下理由を破棄しますか？',
+      discard_confirm_message: 'この画面を閉じると、入力した却下理由は失われます。',
+      discard_confirm_ok: '破棄して閉じる',
       approved_toast: '承認しました。',
       re_review_toast: 'レビュー対象が変わったため、新しい内容の再確認が必要です。',
       reconciling_toast: '反映結果を確認しています。',

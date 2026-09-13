@@ -25,7 +25,8 @@
             </p>
           </div>
           <div class="modal-hd-actions">
-            <button class="modal-close" type="button" :title="t('common.close')" :aria-label="t('common.close')" @click="emit('close')">
+            <!-- Disabled while the reject sub-dialog is up — see the footer's note (T0020 §2.2). -->
+            <button class="modal-close" type="button" :disabled="rejectPromptOpen" :title="t('common.close')" :aria-label="t('common.close')" @click="emit('close')">
               <AppIcon name="x" />
             </button>
           </div>
@@ -231,46 +232,41 @@
               </ul>
             </div>
             <p class="gmr-ft-note">{{ t('main.git_review.apply_safety_note') }}</p>
+            <!-- 0560 T0020 §2.2: while the reject sub-dialog is up, the parent's own actions
+                 are disabled. L0009 §2 "Nested dialog" would do this for a parent that is a
+                 stack member, but this dialog's shell is 5순위's job — so the intent (부모
+                 조작 불가) is approximated by hand here until then. -->
             <div class="gmr-ft-actions">
-              <button type="button" class="btn btn-danger-ol" :disabled="busy || !canReject" @click="openRejectPrompt">
+              <button type="button" class="btn btn-danger-ol" :disabled="busy || !canReject || rejectPromptOpen" @click="openRejectPrompt">
                 <AppIcon name="prohibit" /> {{ t('main.git_review.reject') }}
               </button>
-              <button type="button" class="btn btn-primary" :disabled="busy || !canApprove" @click="approve">
+              <button type="button" class="btn btn-primary" :disabled="busy || !canApprove || rejectPromptOpen" @click="approve">
                 <AppIcon name="check" /> {{ t('main.git_review.approve') }}
               </button>
             </div>
           </div>
 
-          <div v-if="rejectPromptOpen" class="gmr-reject-overlay">
-            <div class="gmr-reject-box">
-              <h3>{{ t('main.git_review.reject') }}</h3>
-              <label>
-                {{ t('main.git_review.reject_reason_label') }}
-                <textarea v-model="rejectReason" rows="3" maxlength="4000"></textarea>
-              </label>
-              <label>
-                {{ t('main.git_review.next_provider_label') }}
-                <AiProviderSelect
-                  :providers="providers"
-                  :model-value="selectedProvider"
-                  :loading="providerLoading"
-                  :errored="providerErrored"
-                  hide-label
-                  @update:model-value="(v) => emit('update:provider', v)"
-                />
-              </label>
-              <div class="gmr-reject-actions">
-                <button type="button" class="btn btn-secondary" @click="rejectPromptOpen = false">{{ t('common.cancel') }}</button>
-                <button type="button" class="btn btn-danger-ol" :disabled="busy || !rejectReason.trim() || !selectedProvider" @click="reject">
-                  {{ t('main.git_review.reject_confirm') }}
-                </button>
-              </div>
-            </div>
-          </div>
         </template>
       </div>
     </div>
   </teleport>
+
+  <!-- 0560 T0020 (4.5순위, NR0005 §13 "메인 dialog와 reject sub-dialog의 관계 재설계"):
+       the reject prompt is its own dialog on the common layer now, and it sits OUTSIDE this
+       component's `<teleport>` because DialogShell teleports to the common host itself. The
+       reason text belongs to it; the POST below stays here (D0008 §1). -->
+  <GitMergeRejectDialog
+    :open="rejectPromptOpen"
+    :busy="busy"
+    :providers="providers"
+    :selected-provider="selectedProvider"
+    :provider-loading="providerLoading"
+    :provider-errored="providerErrored"
+    :return-focus-to="rejectTrigger"
+    @update:provider="(v) => emit('update:provider', v)"
+    @close="rejectPromptOpen = false"
+    @reject="reject"
+  />
 </template>
 
 <script setup lang="ts">
@@ -280,6 +276,7 @@ import AppIcon from '@shared/AppIcon.vue'
 import { getRequest, postRequest } from '@shared/api'
 import { randomUuid } from '@shared/utils/uuid'
 import AiProviderSelect from './AiProviderSelect.vue'
+import GitMergeRejectDialog from './GitMergeRejectDialog.vue'
 import { useToast } from './common/useToast'
 import {
   buildDiffRows,
@@ -398,7 +395,10 @@ const diffError = ref(false)
 const messageDraft = ref('')
 const applyRequested = ref(false)
 const rejectPromptOpen = ref(false)
-const rejectReason = ref('')
+// The [반려] button that opened the sub-dialog, handed to it as `return-focus-to` so the
+// common teardown puts focus back where it came from (L0009 §4). The reason text itself is the
+// sub-dialog's own state now (T0020 §2.2).
+const rejectTrigger = ref<HTMLElement | null>(null)
 const attemptId = ref('')
 // Why the last [승인] did not merge. Cleared only when the next attempt starts.
 const approveOutcome = ref<{ status: string; errors: ApproveError[]; message?: string } | null>(null)
@@ -777,13 +777,13 @@ async function approve() {
   }
 }
 
-function openRejectPrompt() {
-  rejectReason.value = ''
+function openRejectPrompt(event: MouseEvent) {
+  rejectTrigger.value = (event.currentTarget as HTMLElement) ?? null
   rejectPromptOpen.value = true
 }
 
-async function reject() {
-  const reason = rejectReason.value.trim()
+async function reject(rawReason: string) {
+  const reason = rawReason.trim()
   if (!reason || !props.selectedProvider || busy.value) return
   busy.value = true
   try {
@@ -941,19 +941,7 @@ onBeforeUnmount(stopPolling)
 .gmr-approve-outcome-hd { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 0.78rem; font-weight: 600; }
 .gmr-approve-outcome-list { margin: 6px 0 0; padding-left: 18px; font-size: 0.72rem; line-height: 1.55; }
 .gmr-ft-actions { display: flex; justify-content: flex-end; gap: 10px; }
-.gmr-reject-overlay {
-  position: fixed; inset: 0; z-index: 1500; display: flex; align-items: center; justify-content: center;
-  background: rgba(15, 23, 42, 0.46);
-}
-.gmr-reject-box {
-  width: min(480px, calc(100vw - 48px)); display: flex; flex-direction: column; gap: 10px;
-  padding: 18px; border-radius: 8px; background: var(--bg, #fff); color: var(--text);
-  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.3);
-}
-.gmr-reject-box h3 { margin: 0; font-size: 1rem; }
-.gmr-reject-box label { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; }
-.gmr-reject-box textarea {
-  padding: 8px; border: 1px solid var(--border, #cbd5e1); border-radius: 6px; font: inherit; font-size: 0.8rem;
-}
-.gmr-reject-actions { display: flex; justify-content: flex-end; gap: 8px; }
+/* 0560 T0020: the reject sub-dialog's own overlay/box/actions rules left with it — the
+   common layer paints all four now (`form-actions`, `md` surface), and its two fields are
+   styled in `GitMergeRejectDialog.vue`. */
 </style>
