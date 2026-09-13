@@ -45,6 +45,7 @@ def _patch_recovery(monkeypatch, repo: Path) -> None:
         ),
     )
     monkeypatch.setattr(git_service, "git_available", lambda: True)
+    monkeypatch.setattr(git_service, "guard_base_free", lambda _project: None)
     monkeypatch.setattr(git_service, "_acquire_lock", lambda _project, _holder: True)
     monkeypatch.setattr(git_service.db_git, "release_lock", lambda _project, _holder: None)
     monkeypatch.setattr(git_service.db_git, "get_open_session_by_group", lambda _gid: None)
@@ -145,3 +146,58 @@ def test_tracked_merge_blockers_parsing():
     stderr = """error: Your local changes to the following files would be overwritten by merge:\n\tblocked.txt\nPlease commit your changes or stash them before you merge.\nAborting\n"""
     assert git_service._tracked_merge_blockers(stderr) == ["blocked.txt"]
     assert git_service._tracked_merge_blockers("fatal: unrelated") is None
+
+
+def test_update_from_base_creates_session_for_real_content_conflict(tmp_path, monkeypatch):
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+    base = tmp_path / "base"
+    subprocess.run(["git", "clone", str(remote), str(base)], check=True, capture_output=True)
+    _git(base, "config", "user.name", "FlowGate Test")
+    _git(base, "config", "user.email", "flowgate@example.invalid")
+    _git(base, "checkout", "-b", "main")
+    (base / "conflict.txt").write_text("seed\n", encoding="utf-8")
+    _git(base, "add", "conflict.txt")
+    _git(base, "commit", "-m", "seed")
+    _git(base, "push", "-u", "origin", "main")
+    group = tmp_path / "group"
+    _git(base, "worktree", "add", "-b", "group/test", str(group), "main")
+    _git(group, "config", "user.name", "FlowGate Test")
+    _git(group, "config", "user.email", "flowgate@example.invalid")
+    (group / "conflict.txt").write_text("group\n", encoding="utf-8")
+    _git(group, "commit", "-am", "group change")
+    (base / "conflict.txt").write_text("base\n", encoding="utf-8")
+    _git(base, "commit", "-am", "base change")
+    _git(base, "push")
+
+    group_id = "demo.default.0001"
+    monkeypatch.setattr(
+        git_service, "_finalize_context",
+        lambda _gid: (
+            {"base_branch": "main"},
+            {"branch": "group/test", "status": "waiting"},
+            "demo", base, group,
+        ),
+    )
+    monkeypatch.setattr(git_service, "git_available", lambda: True)
+    monkeypatch.setattr(git_service, "guard_base_free", lambda _project: None)
+    monkeypatch.setattr(git_service, "_acquire_lock", lambda _project, _holder: True)
+    monkeypatch.setattr(git_service.db_git, "release_lock", lambda _project, _holder: None)
+    monkeypatch.setattr(git_service.db_git, "get_open_session_by_group", lambda _gid: None)
+    created = {}
+
+    def create_session(gid, files, *, kind, context):
+        created.update(group_id=gid, files=files, kind=kind, context=context)
+        return 73
+
+    monkeypatch.setattr(git_service.db_git, "create_session", create_session)
+
+    result = git_service.update_from_base(group_id)
+
+    assert result["result"] == {
+        "status": "conflict", "merge_id": 73,
+        "conflict_files": ["conflict.txt"],
+    }
+    assert created["group_id"] == group_id
+    assert created["files"] == result["result"]["conflict_files"]
+    assert created["kind"] == git_service.db_git.SESSION_KIND_GROUP_UPDATE
