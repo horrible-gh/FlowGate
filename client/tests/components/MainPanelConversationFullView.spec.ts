@@ -75,7 +75,20 @@ function mountPanel(stubs: Record<string, unknown> = {}) {
     shallow: true,
     global: {
       plugins: [i18n],
-      stubs: { teleport: false, DocHeader: DocHeaderStub, AiInvokeInline: false, ...stubs },
+      // flowgate.default.0560 T0018 (4순위): the full view is its own dialog component now
+      // (D0008 §4), so `shallow: true` would stub away the very dialog these tests open — and
+      // with it the teleport target the chat moves into. The three components that make up
+      // that surface are therefore excluded from the shallow stub, exactly as AiInvokeInline
+      // already is; their own children (TextViewer/MdViewer) stay stubbed.
+      stubs: {
+        teleport: false,
+        DocHeader: DocHeaderStub,
+        AiInvokeInline: false,
+        DocumentFullViewDialog: false,
+        DialogShell: false,
+        DialogHeader: false,
+        ...stubs,
+      },
     },
   })
 }
@@ -145,7 +158,7 @@ describe('MainPanel CH full view', () => {
     await wrapper.find('.conv-card .card-actions button').trigger('click')
     await flushPromises()
 
-    expect(document.body.querySelector('.document-modal')).not.toBeNull()
+    expect(document.body.querySelector('.document-full-view-dialog')).not.toBeNull()
     const mounted = document.body.querySelectorAll('conversation-view-stub')
     expect(mounted).toHaveLength(1)
     expect(mounted[0]).toBe(chatEl)
@@ -163,10 +176,10 @@ describe('MainPanel CH full view', () => {
     await flushPromises()
     expect(chatEl.parentElement!.className).toContain('document-modal__body--conversation')
 
-    ;(document.body.querySelector('.document-modal .modal-close') as HTMLElement).click()
+    ;(document.body.querySelector('.document-full-view-dialog .fg-dialog-header__close') as HTMLElement).click()
     await flushPromises()
 
-    expect(document.body.querySelector('.document-modal')).toBeNull()
+    expect(document.body.querySelector('.document-full-view-dialog')).toBeNull()
     const mounted = document.body.querySelectorAll('conversation-view-stub')
     expect(mounted).toHaveLength(1)
     expect(mounted[0]).toBe(chatEl)
@@ -212,7 +225,7 @@ describe('MainPanel CH full view', () => {
     await wrapper.find('.conv-card .card-actions button').trigger('click')
     await flushPromises()
 
-    const buttons = [...document.body.querySelectorAll('.document-modal .modal-hd-actions button')]
+    const buttons = [...document.body.querySelectorAll('.document-full-view-dialog .fg-dialog-header__actions button')]
     expect(buttons.some((b) => b.textContent!.includes('Edit'))).toBe(false)
   })
 
@@ -226,7 +239,7 @@ describe('MainPanel CH full view', () => {
     await wrapper.find('.md-preview-card .card-actions .btn-secondary').trigger('click')
     await flushPromises()
 
-    const buttons = [...document.body.querySelectorAll('.document-modal .modal-hd-actions button')]
+    const buttons = [...document.body.querySelectorAll('.document-full-view-dialog .fg-dialog-header__actions button')]
     expect(buttons.some((b) => b.textContent!.includes('Edit'))).toBe(true)
   })
 
@@ -279,7 +292,7 @@ describe('MainPanel CH full view', () => {
     startRun(NEXT_DOC_ID, 'run-full-view')
     await flushPromises()
 
-    expect(document.body.querySelector('.document-modal')).toBeNull()
+    expect(document.body.querySelector('.document-full-view-dialog')).toBeNull()
     expect(wrapper.findComponent(ConversationView).element).toBe(chatElement)
     expect(chatElement.parentElement!.className).toContain('conv-card-bd')
     expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(true)

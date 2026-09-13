@@ -1951,6 +1951,9 @@ export default {
       save_failed: 'ドキュメントの保存に失敗しました。',
       save_error_details: '{summary} 詳細は編集画面で確認してください。',
       save_success: 'ドキュメントを保存しました。',
+      discard_confirm_title: '保存していない編集を破棄しますか？',
+      discard_confirm_message: '編集画面を閉じると、保存していない内容は失われます。',
+      discard_confirm_ok: '破棄して閉じる',
     },
     workflow_decision_modal: {
       title: 'ワークフロー決定',

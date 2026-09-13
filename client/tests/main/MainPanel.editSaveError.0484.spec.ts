@@ -107,7 +107,7 @@ describe('MainPanel edit save failure recovery (0484 T0005)', () => {
     expect(document.querySelector<HTMLTextAreaElement>('.document-editor__textarea')!.value)
       .toBe('# user changed text')
     expect(document.querySelector('.document-editor__save-error')!.textContent).toContain(detail)
-    expect(document.querySelector<HTMLButtonElement>('.document-modal--edit .btn-primary')!.disabled)
+    expect(document.querySelector<HTMLButtonElement>('.document-edit-dialog [data-dialog-action-id="save"]')!.disabled)
       .toBe(false)
     expect(showToast).toHaveBeenLastCalledWith(
       'Modification not allowed after final approval. See the edit window for details.',
@@ -118,7 +118,7 @@ describe('MainPanel edit save failure recovery (0484 T0005)', () => {
     await vm.saveEditContent()
     await flushPromises()
 
-    expect(document.querySelector('.document-modal--edit')).toBeNull()
+    expect(document.querySelector('.document-edit-dialog')).toBeNull()
     expect(showToast).toHaveBeenLastCalledWith('Document saved.', 'success')
     wrapper.unmount()
   })
@@ -133,7 +133,7 @@ describe('MainPanel edit save failure recovery (0484 T0005)', () => {
 
     expect(document.querySelector('.document-editor__textarea')).toBeNull()
     expect(document.querySelector('.document-editor__state--error')!.textContent).toContain('load failed')
-    expect(document.querySelector<HTMLButtonElement>('.document-modal--edit .btn-primary')!.disabled)
+    expect(document.querySelector<HTMLButtonElement>('.document-edit-dialog [data-dialog-action-id="save"]')!.disabled)
       .toBe(true)
     wrapper.unmount()
   })
@@ -163,7 +163,7 @@ describe('MainPanel edit save failure recovery (0484 T0005)', () => {
     await flushPromises()
 
     expect(document.querySelector('.document-editor__textarea')).not.toBeNull()
-    expect(document.querySelector<HTMLButtonElement>('.document-modal--edit .btn-primary')!.disabled)
+    expect(document.querySelector<HTMLButtonElement>('.document-edit-dialog [data-dialog-action-id="save"]')!.disabled)
       .toBe(false)
     expect(document.querySelector('.document-editor__save-error')!.textContent).toContain(detail)
     if (kind === 'source') expect(apiPatch).toHaveBeenCalled()

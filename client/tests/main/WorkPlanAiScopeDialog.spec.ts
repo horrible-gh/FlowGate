@@ -1,7 +1,8 @@
-import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import { afterEach, describe, expect, it } from 'vitest'
 import i18n from '@shared/i18n'
 import WorkPlanAiScopeDialog from '@main/components/WorkPlanAiScopeDialog.vue'
+import { resetDialogSystem } from '@main/composables/useDialogStack'
 
 const props = {
   visible: true,
@@ -17,38 +18,99 @@ const props = {
   ],
 }
 
+// flowgate.default.0560 T0018 (4순위, NR0011 원장 ID 32): this dialog is on the common layer now
+// and DialogShell teleports it out of the wrapper, so every probe below reads the real document.
+// The footer is DialogFooter's, so the buttons are addressed by their semantic action id rather
+// than by position — which is the point of the migration: the ORDER is the layer's to decide
+// (`aux → cancel → primary`), and a positional selector would have re-encoded the old sequence.
+const wrappers: { unmount: () => void }[] = []
+
 function mountDialog() {
-  return mount(WorkPlanAiScopeDialog, { props, global: { plugins: [i18n] } })
+  const wrapper = mount(WorkPlanAiScopeDialog, { props, global: { plugins: [i18n] } })
+  wrappers.push(wrapper)
+  return wrapper
 }
+
+function section(index: number): HTMLElement {
+  const sections = document.body.querySelectorAll<HTMLElement>('.fg-dialog-body section')
+  const found = sections[index]
+  if (found == null) throw new Error(`scope section ${index} is not rendered`)
+  return found
+}
+
+function checkedValues(root: ParentNode): string[] {
+  return [...root.querySelectorAll<HTMLInputElement>('input:checked')].map((el) => el.value)
+}
+
+function action(id: string): HTMLButtonElement {
+  const button = document.body.querySelector<HTMLButtonElement>(`[data-dialog-action-id="${id}"]`)
+  if (button == null) throw new Error(`footer action "${id}" is not rendered`)
+  return button
+}
+
+async function setChecked(value: string, checked: boolean): Promise<void> {
+  const input = document.body.querySelector<HTMLInputElement>(`input[value="${value}"]`)
+  if (input == null) throw new Error(`checkbox ${value} is not rendered`)
+  input.checked = checked
+  input.dispatchEvent(new Event('change'))
+  await flushPromises()
+}
+
+afterEach(() => {
+  while (wrappers.length > 0) {
+    try {
+      wrappers.pop()!.unmount()
+    } catch {
+      // already unmounted
+    }
+  }
+  resetDialogSystem()
+  document.body.innerHTML = ''
+})
 
 describe('WorkPlanAiScopeDialog', () => {
   it('defaults to no quantities, only unassigned unlocked steps, and all providers', () => {
-    const wrapper = mountDialog()
-    const sections = wrapper.findAll('section')
-    expect(sections[0].findAll('input:checked')).toHaveLength(0)
-    expect(sections[1].findAll('input:checked').map((input) => input.attributes('value'))).toEqual(['T#1'])
-    expect(sections[1].find('input[value="TSR#1"]').attributes('disabled')).toBeDefined()
-    expect(sections[2].findAll('input:checked')).toHaveLength(2)
+    mountDialog()
+    expect(checkedValues(section(0))).toHaveLength(0)
+    expect(checkedValues(section(1))).toEqual(['T#1'])
+    expect(section(1).querySelector('input[value="TSR#1"]')!.hasAttribute('disabled')).toBe(true)
+    expect(checkedValues(section(2))).toHaveLength(2)
   })
 
   it('disables both submit choices when no provider remains', async () => {
-    const wrapper = mountDialog()
-    await wrapper.findAll('section')[2].findAll('button')[1].trigger('click')
-    const actions = wrapper.findAll('footer button')
-    expect(actions[1].attributes('disabled')).toBeDefined()
-    expect(actions[2].attributes('disabled')).toBeDefined()
+    mountDialog()
+    // The providers section's [clear].
+    section(2).querySelectorAll('button')[1].click()
+    await flushPromises()
+    expect(action('project-map').disabled).toBe(true)
+    expect(action('delegate').disabled).toBe(true)
   })
 
   it('emits the exact three-list scope', async () => {
     const wrapper = mountDialog()
-    await wrapper.find('input[value="D"]').setValue(true)
-    await wrapper.find('input[value="D#1"]').setValue(true)
-    await wrapper.find('input[value="prov-b"]').setValue(false)
-    await wrapper.findAll('footer button')[1].trigger('click')
+    await setChecked('D', true)
+    await setChecked('D#1', true)
+    await setChecked('prov-b', false)
+    action('project-map').click()
+    await flushPromises()
     expect(wrapper.emitted('project-map')?.[0][0]).toEqual({
       quantity_type_codes: ['D'],
       step_keys: ['T#1', 'D#1'],
       provider_ids: ['prov-a'],
     })
+  })
+
+  // R0001 is "취소 버튼이 제각각". This footer used to paint `[취소] [프로젝트맵] [위임]`, with the
+  // cancel button stranded away from the primary action. DialogFooter sorts by semantic role
+  // before rendering, so it now reads `[프로젝트맵] [취소] [AI 위임]` — and no edit to this
+  // component's actions array can move 취소 off the primary button's left again.
+  it('paints the footer in the layer-owned order with cancel beside the primary action', () => {
+    mountDialog()
+    const roles = [...document.body.querySelectorAll('[data-dialog-action-role]')]
+      .map((el) => el.getAttribute('data-dialog-action-role'))
+    expect(roles).toEqual(['aux', 'cancel', 'primary'])
+    const ids = [...document.body.querySelectorAll('[data-dialog-action-id]')]
+      .map((el) => el.getAttribute('data-dialog-action-id'))
+    expect(ids).toEqual(['project-map', 'cancel', 'delegate'])
   })
 })

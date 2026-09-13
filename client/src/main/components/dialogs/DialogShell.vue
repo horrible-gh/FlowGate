@@ -7,7 +7,10 @@
       v-if="open"
       ref="overlayRef"
       class="fg-dialog-overlay"
-      :class="{ 'fg-dialog-overlay--inactive': !isActive }"
+      :class="{
+        'fg-dialog-overlay--inactive': !isActive,
+        'fg-dialog-overlay--below-header': belowHeader,
+      }"
       :style="{ zIndex: overlayZIndex }"
       @mousedown="onOverlayMouseDown"
       @mouseup="onOverlayMouseUp"
@@ -19,6 +22,7 @@
           `fg-dialog-surface--${resolvedSurface}`,
           `fg-dialog-surface--${resolvedSize}`,
           `fg-dialog-surface--variant-${variant}`,
+          surfaceClass,
           { 'is-busy': busy, 'is-blocking': resolvedBlocking },
         ]"
         :style="{ zIndex: surfaceZIndex }"
@@ -104,6 +108,31 @@ export interface DialogShellProps {
   descriptionId?: string
   ariaLabel?: string
   returnFocusTo?: HTMLElement | null
+  /**
+   * flowgate.default.0560 T0018 §2.4 — one of the two additions the 4순위 migration
+   * needed in this layer, kept as narrow as the reason for it.
+   *
+   * `MainPanel.vue`'s Document Full View is the reading surface 0269 D0002 deliberately
+   * dims BELOW the app header, so the run monitor chip stays reachable while a document
+   * is being read (`app.css .modal-bg--below-header`). The common overlay is `inset: 0`,
+   * so migrating that instance as-is would have covered the header and undone that
+   * decision. The behaviour itself — including the container-relative height caps this
+   * shorter track requires — lives in `dialog.css`, which already warned that a
+   * below-header variant must not measure heights in `vh`.
+   */
+  belowHeader?: boolean
+  /**
+   * Extra class(es) for the dialog SURFACE (T0018 §2.4).
+   *
+   * A feature dialog's scoped CSS cannot reach the surface — it is rendered by this
+   * component and teleported out of the feature's subtree — so instances that carry a
+   * measured width or a `:has()` layout rule of their own (the document full view's
+   * narrow-window chat rule, the edit surface's 1120px track) had nowhere to put it.
+   * This hands them a hook and nothing else: it appends to the class list AFTER the
+   * variant/size/surface classes, so it can never remove one. Ordering, close policy and
+   * the footer contract stay where they are; this is layout only.
+   */
+  surfaceClass?: string
 }
 
 /**
@@ -125,6 +154,8 @@ const props = withDefaults(defineProps<DialogShellProps>(), {
   descriptionId: undefined,
   ariaLabel: undefined,
   returnFocusTo: null,
+  belowHeader: false,
+  surfaceClass: undefined,
 })
 
 const emit = defineEmits<{

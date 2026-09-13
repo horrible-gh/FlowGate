@@ -23,7 +23,14 @@ vi.mock('@shared/api', () => ({ getRequest, postRequest, deleteRequest }))
 const { dialogConfirm } = vi.hoisted(() => ({
   dialogConfirm: vi.fn((options: { title: string }) => Promise.resolve(window.confirm(options.title))),
 }))
-vi.mock('@main/composables/useDialogStack', () => ({ confirm: dialogConfirm }))
+// flowgate.default.0560 T0018 (4순위): a whole-module replacement used to be harmless here —
+// only `confirm()` was reached for. Now that screens in these trees render a real DialogShell,
+// the module also has to keep supplying the stack itself (`nextDialogInstanceId`,
+// `registerDialog`, …), so only `confirm` is swapped and the rest stays real.
+vi.mock('@main/composables/useDialogStack', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  confirm: dialogConfirm,
+}))
 
 const t = (key: string, args?: Record<string, unknown>) => i18n.global.t(key, args ?? {})
 
@@ -755,17 +762,24 @@ describe('AiInvokeMiniplayer', () => {
   // jsdom does not apply SFC <style> blocks nor render AppHeader's layout here, so these
   // two contracts are pinned at the source level instead.
 
-  // The document full view dims the screen with the shared .modal-bg layer. The monitor
-  // now lives in the header, so that dim has to start below the header or the chip is
-  // unreachable while a document is being read (0269 D0002 / NR0011 §3).
+  // The document full view dims the screen. The monitor now lives in the header, so that dim
+  // has to start below the header or the chip is unreachable while a document is being read
+  // (0269 D0002 / NR0011 §3).
+  //
+  // flowgate.default.0560 T0018 (4순위) moved this instance onto the common dialog layer, so
+  // the contract moved with it: `DocumentFullViewDialog.vue` opts in with `below-header` and
+  // `dialog.css` is what starts the overlay at the header height. The old
+  // `.modal-bg--below-header` rule is still in app.css — deduplicating the two stylesheets is
+  // 6순위 — but it is no longer what this screen uses, so asserting on it would have gone
+  // vacuous the moment the migration landed.
   it('keeps the header reachable under the document full view overlay', () => {
-    const mainPanel = read('../../src/main/components/MainPanel.vue')
-    const appCss = read('../../shared/app.css')
+    const fullView = read('../../src/main/components/DocumentFullViewDialog.vue')
+    const dialogCss = read('../../src/main/components/dialogs/dialog.css')
 
-    // The full view uses the below-header variant, not the bare full-screen dim.
-    expect(mainPanel).toMatch(/class="modal-bg modal-bg--below-header"/)
+    // The full view opts into the below-header overlay, not the bare full-screen dim.
+    expect(fullView).toMatch(/\n\s*below-header\n/)
     // ...and that variant actually starts at the header height.
-    const variant = /\.modal-bg--below-header\s*\{([^}]*)\}/s.exec(appCss)?.[1] ?? ''
+    const variant = /\.fg-dialog-overlay--below-header\s*\{([^}]*)\}/s.exec(dialogCss)?.[1] ?? ''
     expect(variant).toContain('top: var(--hdr-h)')
   })
 

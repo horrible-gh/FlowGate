@@ -932,147 +932,39 @@
       @created="onWorkPlanCreated"
     />
 
-    <!-- Document Full View Modal -->
-    <teleport to="body">
-      <!-- `modal-bg--below-header`: the full view is a reading surface, not an alert, and
-           the run monitor now lives in the header. Starting the dim below the header keeps
-           the monitor reachable while a document is being read (0269 D0002 "화면 어디에서든
-           항상"), which the full-screen dim would otherwise cover. -->
-      <div
-        v-if="fullViewVisible && fullViewTab"
-        class="modal-bg modal-bg--below-header"
-        @keydown.escape="closeFullView"
-      >
-        <div class="modal-box document-modal">
-          <div class="modal-hd">
-            <span class="modal-title">
-              <AppIcon :name="fullViewIcon" style="color:var(--text-m);" />
-              {{ fullViewTab.title }}
-            </span>
-            <div class="modal-hd-actions">
-              <!-- CH has no [edit]: a chat is written through its composer, not by hand-editing
-                   the transcript, and its card offers no [edit] either.
-                   0344 TR0008 후속: 위 문장은 쓰여 있었지만 조건에 CH 검사가 없어 실제로는
-                   여기 [편집]이 노출돼 있었다. 이제 canEditTab() 이 한 곳에서 막는다
-                   (0432.0003-NR §7-2). -->
-              <button
-                v-if="canEditTab(fullViewTab)"
-                class="btn btn-outline btn-sm"
-                type="button"
-                @click="editFromFullView(fullViewTab)"
-              >
-                <AppIcon name="pencil-simple" /> {{ t('main.document_preview.edit') }}
-              </button>
-              <button class="modal-close" type="button" @click="closeFullView">
-                <AppIcon name="x" />
-              </button>
-            </div>
-          </div>
-          <!-- CH mounts no viewer of its own here. This body is the teleport target: the chat
-               card moves its live ConversationView in, so the dialog shows the same instance the
-               card held — running spinner and unsent draft included. -->
-          <div
-            class="modal-bd document-modal__body"
-            :class="{ 'document-modal__body--conversation': fullViewTab.typeCode === 'CH' }"
-          >
-            <template v-if="fullViewTab.typeCode !== 'CH'">
-              <TextViewer
-                v-if="fullViewTab.type === 'text'"
-                :path="fullViewTab.path"
-                :project-id="fullViewTab.projectId ?? null"
-                :wrap-lines="textWrapEnabled"
-                :git-group-id="fullViewTab.gitGroupId ?? null"
-                :git-commit="fullViewTab.gitCommit ?? null"
-              />
-              <!-- 0310 TR: not-a-file-tab → load by doc-id (mirrors the preview-card MdViewer);
-                   see the comment there and flowgate.default.0310.0003-NR. -->
-              <MdViewer
-                v-else
-                :path="fullViewTab.mdPath ?? fullViewTab.path"
-                :doc-id="isFileTab(fullViewTab) ? null : fullViewTab.id"
-                :project-id="fullViewTab.projectId ?? null"
-                :git-group-id="fullViewTab.gitGroupId ?? null"
-                :git-commit="fullViewTab.gitCommit ?? null"
-              />
-            </template>
-          </div>
-        </div>
-      </div>
-    </teleport>
+    <!-- Document Full View / Document Edit — flowgate.default.0560 T0018 (4순위).
+         D0008 §4: each of this file's four dialog instances is its own dialog component now
+         and MainPanel keeps only the open state and the data it hands down. The Teleport
+         each one used to open by hand is gone — DialogShell teleports every common dialog to
+         the single host (L0009 §2). -->
+    <DocumentFullViewDialog
+      :visible="fullViewVisible"
+      :tab="fullViewTab"
+      :icon="fullViewIcon"
+      :can-edit="fullViewTab != null && canEditTab(fullViewTab)"
+      :wrap-lines="textWrapEnabled"
+      @close="closeFullView"
+      @edit="fullViewTab && editFromFullView(fullViewTab)"
+    />
 
-    <!-- Document Edit Modal -->
-    <teleport to="body">
-      <div v-if="editVisible && editTab" class="modal-bg" @keydown.escape="closeEditModal">
-        <div class="modal-box document-modal document-modal--edit">
-          <div class="modal-hd">
-            <span class="modal-title">
-              <AppIcon name="pencil-simple" style="color:var(--primary);" />
-              {{ t('main.document_preview.edit_title', { title: editTab.title }) }}
-            </span>
-            <div class="modal-hd-actions">
-              <button
-                class="btn btn-outline btn-sm"
-                type="button"
-                :disabled="editSaving"
-                @click="toggleHeaderEditMode"
-                :title="headerEditModeVisible ? t('main.main_panel.header_hide') : t('main.main_panel.header_show')"
-              >
-                <AppIcon :name="headerEditModeVisible ? 'eye' : 'eye-slash'" />
-                {{ headerEditModeVisible ? t('main.main_panel.header_hide') : t('main.main_panel.header_edit') }}
-              </button>
-              <button class="modal-close" type="button" :disabled="editSaving" @click="closeEditModal">
-                <AppIcon name="x" />
-              </button>
-            </div>
-          </div>
-          <div class="modal-bd document-editor">
-            <div v-if="editLoading" class="document-editor__state">
-              {{ t('common.loading') }}
-            </div>
-            <div v-else-if="editError" class="document-editor__state document-editor__state--error">
-              {{ editError }}
-            </div>
-            <template v-else>
-              <div
-                v-if="editSaveError"
-                class="document-editor__save-error"
-                role="alert"
-              >
-                {{ editSaveError }}
-              </div>
-              <textarea
-                v-if="headerEditModeVisible"
-                v-model="editFullContent"
-                class="document-editor__textarea"
-                spellcheck="false"
-                @input="editSaveError = ''"
-              />
-              <textarea
-                v-else
-                v-model="editBody"
-                class="document-editor__textarea"
-                spellcheck="false"
-                @input="editSaveError = ''"
-              />
-            </template>
-          </div>
-          <div class="modal-ft">
-            <button type="button" class="btn btn-secondary" :disabled="editSaving" @click="closeEditModal">
-              {{ t('common.cancel') }}
-            </button>
-            <button
-              type="button"
-              class="btn btn-primary"
-              :disabled="editLoading || editSaving || !!editError"
-              @click="saveEditContent"
-            >
-              <AppIcon name="floppy-disk" />
-              {{ editSaving ? t('main.document_preview.saving') : t('common.save') }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </teleport>
+    <DocumentEditDialog
+      :visible="editVisible"
+      :tab="editTab"
+      :body="editBody"
+      :full-content="editFullContent"
+      :loaded-body="editLoadedBody"
+      :loaded-full-content="editLoadedFullContent"
+      :header-visible="headerEditModeVisible"
+      :loading="editLoading"
+      :saving="editSaving"
+      :load-error="editError"
+      :save-error="editSaveError"
+      @update:body="onEditBodyInput"
+      @update:full-content="onEditFullContentInput"
+      @toggle-header="toggleHeaderEditMode"
+      @close="closeEditModal"
+      @save="saveEditContent"
+    />
 
     <!-- Next Action Modal -->
     <NextActionModal
@@ -1242,124 +1134,35 @@
     />
 
     <!-- 0339 R0001: reversible Git archive catalogue. Permanent deletion is
-         intentionally reachable only from this second-stage screen. -->
-    <Teleport to="body">
-      <div
-        v-if="gitArchiveVisible"
-        class="modal-bg git-archive-overlay"
-      >
-        <div class="modal-box modal-lg git-archive-modal" role="dialog" aria-modal="true">
-          <div class="modal-hd">
-            <span class="modal-title">
-              <AppIcon name="archive" /> {{ t('main.git_archive_panel.title') }}
-              <span class="badge badge-yellow">{{ gitArchives.length }}</span>
-            </span>
-            <button class="modal-close" type="button" :disabled="gitArchiveBusy" @click="closeGitArchive">
-              <AppIcon name="x" />
-            </button>
-          </div>
-          <div class="modal-bd git-archive-body">
-            <div class="git-archive-intro">
-              <AppIcon name="arrow-counter-clockwise" />
-              <span>{{ t('main.git_archive_panel.intro') }}</span>
-            </div>
-            <div v-if="gitArchiveLoading" class="git-archive-state">
-              <AppIcon name="spinner" spin /> {{ t('main.git_archive_panel.loading') }}
-            </div>
-            <div v-else-if="gitArchiveError" class="git-archive-state git-archive-state--error">
-              {{ gitArchiveError }}
-              <button class="btn btn-secondary btn-sm" type="button" @click="fetchGitArchives">
-                {{ t('main.git_archive_panel.retry') }}
-              </button>
-            </div>
-            <div v-else-if="gitArchives.length === 0" class="git-archive-state">
-              {{ t('main.git_archive_panel.empty') }}
-            </div>
-            <div v-else class="git-archive-list">
-              <article v-for="item in gitArchives" :key="item.group_id" class="git-archive-row">
-                <input
-                  v-model="gitArchivePicked"
-                  type="checkbox"
-                  :value="item.group_id"
-                  :disabled="gitArchiveBusy || item.status !== 'archived'"
-                  :title="t('main.git_archive_panel.pick')"
-                />
-                <div class="git-archive-row__body">
-                  <strong>
-                    {{ item.group_id }}: {{ item.title }}
-                    <span class="badge badge-gray">{{ t('main.git_archive_panel.archived') }}</span>
-                  </strong>
-                  <span class="git-archive-branch">{{ item.branch }}</span>
-                  <span>
-                    {{ formatGitArchiveTime(item.archived_at) }} ·
-                    {{ t('main.git_archive_panel.commits') }} {{ item.commit_count ?? 0 }} ·
-                    {{ t('main.git_archive_panel.files') }} {{ item.changed_file_count ?? 0 }} ·
-                    {{ t('main.git_archive_panel.base') }} <code class="git-archive-sha">{{ shortGitSha(item.base_sha) }}</code>
-                  </span>
-                  <span v-if="item.reason" class="git-archive-reason">{{ t('main.git_archive_panel.reason') }}: {{ item.reason }}</span>
-                  <code class="git-archive-refs">
-                    {{ item.head_ref }} → {{ shortGitSha(item.head_sha) }}
-                    <template v-if="item.stash_ref"><br />{{ item.stash_ref }} → {{ shortGitSha(item.stash_sha) }}</template>
-                  </code>
-                </div>
-                <button
-                  class="btn btn-primary btn-sm"
-                  type="button"
-                  :disabled="gitArchiveBusy || item.status !== 'archived'"
-                  @click="restoreGitArchive(item)"
-                >
-                  <AppIcon name="arrow-counter-clockwise" /> {{ t('main.git_archive_panel.restore') }}
-                </button>
-              </article>
-            </div>
-            <div v-if="gitArchives.length" class="git-archive-purge">
-              <strong><AppIcon name="warning" /> {{ t('main.git_archive_panel.purge_title') }}</strong>
-              <p>{{ t('main.git_archive_panel.purge_desc') }}</p>
-              <label>
-                <input v-model="gitArchivePurgeConfirmed" type="checkbox" :disabled="gitArchiveBusy" />
-                {{ t('main.git_archive_panel.purge_confirm') }}
-              </label>
-              <button
-                class="btn btn-danger btn-sm"
-                type="button"
-                :disabled="gitArchiveBusy || !gitArchivePurgeConfirmed || gitArchivePicked.length === 0"
-                @click="purgeGitArchives"
-              >
-                <AppIcon name="trash" /> {{ t('main.git_archive_panel.purge') }} ({{ gitArchivePicked.length }})
-              </button>
-            </div>
-          </div>
-          <div class="modal-ft">
-            <button class="btn btn-ghost btn-sm" type="button" :disabled="gitArchiveBusy" @click="closeGitArchive">
-              {{ t('main.git_archive_panel.close') }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-    <!-- Quick Open Dialog -->
-    <div v-if="showQuickOpen" class="modal-overlay">
-      <div class="modal" style="max-width:480px;">
-        <div class="modal-hd">
-          <span>{{ t('main.quick_open.placeholder') }}</span>
-          <button class="modal-close" @click="showQuickOpen = false"><AppIcon name="x" /></button>
-        </div>
-        <div class="modal-body">
-          <input
-            ref="quickInputRef"
-            v-model="quickQuery"
-            class="form-ctrl"
-            :placeholder="t('main.quick_open.placeholder')"
-            autofocus
-            disabled
-            @keydown.escape="showQuickOpen = false"
-          />
-          <div class="empty" style="margin-top:16px;">
-            <p>{{ t('main.main_panel.description_187') }}</p>
-          </div>
-        </div>
-      </div>
-    </div>
+         intentionally reachable only from this second-stage screen.
+         T0018 (4순위): now its own dialog component; see GitArchiveCatalogDialog.vue for why
+         `readonly` does NOT mean the body is harmless (§2.3-5). -->
+    <GitArchiveCatalogDialog
+      :visible="gitArchiveVisible"
+      :items="gitArchives"
+      :picked="gitArchivePicked"
+      :purge-confirmed="gitArchivePurgeConfirmed"
+      :loading="gitArchiveLoading"
+      :busy="gitArchiveBusy"
+      :error-message="gitArchiveError"
+      :format-time="formatGitArchiveTime"
+      :short-sha="shortGitSha"
+      @update:picked="gitArchivePicked = $event"
+      @update:purge-confirmed="gitArchivePurgeConfirmed = $event"
+      @close="closeGitArchive"
+      @retry="fetchGitArchives"
+      @restore="restoreGitArchive"
+      @purge="purgeGitArchives"
+    />
+
+    <!-- Quick Open — T0018 (4순위, §2.3-4): the disabled input and the notice are frozen as
+         they are; only the frame moved onto the common layer. -->
+    <QuickOpenDialog
+      :visible="showQuickOpen"
+      :query="quickQuery"
+      @update:query="quickQuery = $event"
+      @close="showQuickOpen = false"
+    />
   </main>
 </template>
 
@@ -1369,6 +1172,12 @@ import { useI18n } from 'vue-i18n'
 import api, { getRequest, patchRequest, postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import { isFileTab, useTabsStore, type Tab } from '../stores/tabs'
+// flowgate.default.0560 T0018 (4순위) / D0008 §4: this file's four dialog instances are four
+// independent dialog components now; what stays here is their open state and their data.
+import DocumentEditDialog from './DocumentEditDialog.vue'
+import DocumentFullViewDialog from './DocumentFullViewDialog.vue'
+import GitArchiveCatalogDialog, { type GitArchiveItem } from './GitArchiveCatalogDialog.vue'
+import QuickOpenDialog from './QuickOpenDialog.vue'
 import { useProjectStore } from '../stores/project'
 import { useExplorerStore } from '../stores/explorer'
 import { useAiProviderStore } from '../stores/aiProvider'
@@ -1431,23 +1240,6 @@ import DocInfoPanel from './DocInfoPanel.vue'
 import ConversationView from './ConversationView.vue'
 
 const { t, locale } = useI18n()
-
-interface GitArchiveItem {
-  status: 'archiving' | 'archived'
-  project_id: string
-  group_id: string
-  title: string
-  branch: string
-  archived_at: string | null
-  reason: string | null
-  base_sha: string | null
-  head_sha: string
-  head_ref: string
-  stash_sha: string | null
-  stash_ref: string | null
-  commit_count: number
-  changed_file_count: number
-}
 
 const gitArchiveVisible = ref(false)
 const gitArchiveLoading = ref(false)
@@ -1783,6 +1575,9 @@ const fullViewTab = ref<Tab | null>(null)
 // into the dialog body below. The target only exists while the dialog is open, so the flag is
 // raised a tick after opening (target rendered) and lowered a tick before closing (so the node
 // is back in its card before the dialog's DOM — and anything still inside it — is removed).
+// The class lives in `DocumentFullViewDialog.vue` now; the selector is global
+// (`document.querySelector`), so the split changes nothing about the lookup — but it is a
+// contract between the two files and neither side may rename it alone (T0018 §2.3-2).
 const CONV_FULL_VIEW_HOST = '.document-modal__body--conversation'
 const convFullViewActive = ref(false)
 // Teleport resolves `to` when it mounts and then reuses that result; it only re-resolves when
@@ -1810,6 +1605,11 @@ const editSaveError = ref('')
 const editSourceEtag = ref('')
 const headerEditModeVisible = ref(false)
 const editFullContent = ref('')
+// T0018 §2.3-3: the dirty baseline. `DocumentEditDialog` gates every close path (X, ESC,
+// backdrop, 취소) on "does the visible textarea still hold what the load put there?", so the
+// two loaded values have to survive the edits rather than be recomputed from them.
+const editLoadedBody = ref('')
+const editLoadedFullContent = ref('')
 const nextActionModalVisible = ref(false)
 const nextActionModalStep = ref('')
 const nextActionModalTabId = ref('')
@@ -3360,10 +3160,11 @@ async function onTimeMachineRetryCancel() {
 
 // [Git 상태 패널 열기] — the merged-group case's only real next action. Reuses the event
 // the approval flow already opens that panel with; no second opener (0405 T0011).
-// 0332 TR0014 검토 — 이 창(scoped .modal-bg, z-index 1200)을 먼저 닫아야 한다. 관제소
-// 모달(GitActionMenu.vue, 공용 .modal-bg, z-index 1000)은 같은 body 직속 fixed 레이어를
-// 쓰므로, 이 창이 떠 있는 채로 열리면 그 아래 깔려 클릭도 못 받는다. 닫기는 [닫기]와
-// 같은 정리(onTimeMachineVisibleChange)를 거쳐야 되감긴 단계로의 이동도 그대로 산다.
+// 0332 TR0014 검토 — 이 창(TimeMachineDialog, scoped .modal-bg, z-index 1200)을 먼저 닫아야
+// 한다. 관제소 모달(GitActionMenu.vue)은 0560 T0018 로 공통 dialog 계층(z-index 1600대)으로
+// 옮겨졌지만, 두 창이 같은 body 직속 fixed 레이어를 쓴다는 사정은 그대로다 — 이 창이 떠
+// 있는 채로 열리면 겹쳐 뜬다. 닫기는 [닫기]와 같은 정리(onTimeMachineVisibleChange)를 거쳐야
+// 되감긴 단계로의 이동도 그대로 산다.
 function onTimeMachineOpenGitPanel() {
   onTimeMachineVisibleChange(false)
   if (typeof window === 'undefined') return
@@ -4925,11 +4726,27 @@ async function openEditModal(tab: Tab) {
     const parsed = parseFrontmatter(raw)
     editFrontmatter.value = parsed.frontmatter
     editBody.value = parsed.body
+    // Same join `saveEditContent` uses, so "unchanged" means the same thing on both sides.
+    editLoadedBody.value = parsed.body
+    editLoadedFullContent.value = parsed.frontmatter
+      ? parsed.frontmatter + '\n' + parsed.body
+      : parsed.body
   } catch (e: any) {
     editError.value = e?.response?.data?.detail ?? e?.message ?? t('main.document_preview.load_failed')
   } finally {
     editLoading.value = false
   }
+}
+// The two textareas are the dialog's, but their values are this file's — `saveEditContent`
+// composes the payload out of them and `toggleHeaderEditMode` re-joins them. Typing also
+// clears the save error, which is what the inline `@input` used to do (0484).
+function onEditBodyInput(value: string) {
+  editBody.value = value
+  editSaveError.value = ''
+}
+function onEditFullContentInput(value: string) {
+  editFullContent.value = value
+  editSaveError.value = ''
 }
 function closeEditModal() {
   if (editSaving.value) return
@@ -4938,6 +4755,8 @@ function closeEditModal() {
   editContent.value = ''
   editFrontmatter.value = ''
   editBody.value = ''
+  editLoadedBody.value = ''
+  editLoadedFullContent.value = ''
   editError.value = ''
   editSaveError.value = ''
   editSourceEtag.value = ''
@@ -5233,7 +5052,6 @@ const docInfoCollapsed = ref(false)
 const guideDismissed = ref(false)
 const showQuickOpen = ref(false)
 const quickQuery = ref('')
-const quickInputRef = ref<HTMLInputElement | null>(null)
 
 function getDismissKey(): string {
   const projectId = projectStore.currentProjectId
@@ -5296,12 +5114,12 @@ watch(() => props.overviewRefreshToken, () => {
   void aiInvokeRunsStore.refreshAllRunning()
 })
 
-watch(showQuickOpen, async (val) => {
-  if (val) {
-    quickQuery.value = ''
-    await nextTick()
-    quickInputRef.value?.focus()
-  }
+// T0018 §2.3-4: the `quickInputRef.focus()` half of this watcher is gone with the markup it
+// reached into. It never did anything — the input it pointed at is `disabled` (NR0011 §9-4)
+// — and the common layer's initial-focus tree skips disabled elements anyway. Clearing the
+// query on open is real behaviour and stays.
+watch(showQuickOpen, (val) => {
+  if (val) quickQuery.value = ''
 })
 
 const { register, unregister } = useShortcuts(
@@ -5744,38 +5562,6 @@ watch(textWrapEnabled, (enabled) => {
   flex-direction: column;
 }
 
-.document-modal__body :deep(.text-viewer) {
-  height: 100%;
-}
-
-/* CH full view keeps the same single-scroll flex chain as the inline card. */
-.document-modal__body--conversation {
-  display: flex;
-  min-height: 0;
-  padding: 0;
-  overflow: hidden;
-}
-
-.document-modal__body--conversation :deep(.conv-view) {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-}
-
-/* Narrow windows give the chat the whole overlay instead of the centred 1180px box. The
-   height is taken from the overlay (`%`), never from the viewport: `100dvh - 16px` is
-   taller than the below-header container at *every* window height, so it clipped the
-   composer by a constant 18px on every screen under 820px wide. The container cap from
-   `.modal-bg--below-header > .modal-box` is left in place — `max-height: none` here is
-   what let the box outgrow its track in the first place. */
-@media (max-width: 820px) {
-  .document-modal:has(.document-modal__body--conversation) {
-    width: calc(100vw - 16px);
-    height: calc(100% - 16px);
-    max-width: none;
-  }
-}
-
 .card-actions {
   display: flex;
   align-items: center;
@@ -5795,75 +5581,6 @@ watch(textWrapEnabled, (enabled) => {
 .text-wrap-toggle input {
   margin: 0;
   accent-color: var(--primary);
-}
-
-.document-modal__body {
-  padding: 0;
-}
-
-.document-modal__body :deep(.md-viewer) {
-  height: 100%;
-}
-
-.document-editor {
-  padding: 0;
-  /* The comfortable editor height comes from `.document-modal`'s own height, not
-     from a minimum here. A vh minimum is a flex *shrink floor* decoupled from the
-     px-capped box track, so past ~1187px viewport height it pushes `.modal-ft`
-     out of `.modal-box { overflow: hidden }` and the save button is unreachable. */
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  /* Override the shared `.modal-bd { overflow-y: auto }` for the edit modal so
-     the inner textarea is the *sole* scroll container. With a height pinned on
-     the textarea AND this body scrollable, both scrolled at once →
-     the reported double scrollbar. Clipping here leaves only the textarea. */
-  overflow: hidden;
-}
-
-.document-editor__textarea {
-  width: 100%;
-  /* Fill the editor track instead of pinning height to a viewport unit. A vh
-     pin is decoupled from the body track (bounded by `.modal-box max-height:
-     88vh` minus header/footer); when the two mismatch both scroll. min-height:0
-     + stretch makes the textarea exactly fill the body and be the only scroller. */
-  flex: 1 1 auto;
-  min-height: 0;
-  resize: none;
-  border: 0;
-  outline: none;
-  padding: 18px 20px;
-  background: #0f172a;
-  color: #e2e8f0;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: .8125rem;
-  line-height: 1.7;
-}
-
-.document-editor__textarea--frontmatter {
-  border-bottom: 1px solid var(--border);
-}
-
-.document-editor__state {
-  width: 100%;
-  padding: 40px 24px;
-  text-align: center;
-  color: var(--text-m);
-}
-
-.document-editor__state--error {
-  color: var(--danger);
-}
-
-.document-editor__save-error {
-  flex: 0 1 auto;
-  max-height: 32%;
-  overflow-y: auto;
-  padding: 12px 20px;
-  border-bottom: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
-  background: color-mix(in srgb, var(--danger) 12%, #0f172a);
-  color: var(--danger);
-  white-space: pre-wrap;
 }
 
 .edit-dropdown-wrap {
@@ -5926,149 +5643,7 @@ watch(textWrapEnabled, (enabled) => {
   position: relative;
 }
 
-/* 0339: archive stays amber/reversible; only purge uses the destructive red. */
-
-.git-archive-overlay {
-  z-index: 1200;
-}
-.git-archive-modal {
-  width: min(920px, calc(100vw - 32px));
-  max-height: min(820px, calc(100dvh - 32px));
-}
-.git-archive-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  overflow-y: auto;
-}
-.git-archive-intro {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  background: var(--surface-h);
-  color: var(--text-s);
-  font-size: .78rem;
-  line-height: 1.6;
-}
-.git-archive-intro :deep(svg) {
-  flex: 0 0 auto;
-  margin-top: 2px;
-  color: #d97706;
-}
-.git-archive-state {
-  display: flex;
-  min-height: 120px;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  color: var(--text-m);
-}
-.git-archive-state--error {
-  color: var(--danger);
-}
-.git-archive-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.git-archive-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  background: var(--surface);
-}
-.git-archive-row__body {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 4px;
-  color: var(--text-m);
-  font-size: .73rem;
-}
-.git-archive-row__body strong {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  overflow-wrap: anywhere;
-  color: var(--text);
-  font-size: .8rem;
-}
-.git-archive-row__body code {
-  font-family: 'JetBrains Mono', monospace;
-}
-.git-archive-row__body .git-archive-sha {
-  padding: 0;
-  background: none;
-  color: var(--text-s);
-}
-.git-archive-row__body .git-archive-refs {
-  overflow-wrap: anywhere;
-  padding: 5px 7px;
-  border-radius: 5px;
-  background: var(--surface-h);
-  color: var(--text-s);
-  line-height: 1.55;
-  white-space: normal;
-}
-.git-archive-reason {
-  color: var(--text-s);
-}
-.git-archive-branch {
-  color: var(--primary);
-  font-family: 'JetBrains Mono', monospace;
-}
-.git-archive-purge {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px 16px;
-  margin-top: 4px;
-  padding: 12px;
-  border: 1px dashed rgba(220, 38, 38, .45);
-  border-radius: var(--r);
-  background: rgba(254, 242, 242, .45);
-  color: var(--text-s);
-  font-size: .76rem;
-}
-.git-archive-purge strong,
-.git-archive-purge p {
-  grid-column: 1 / -1;
-  margin: 0;
-}
-.git-archive-purge strong {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--danger);
-}
-.git-archive-purge label {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-@media (max-width: 680px) {
-  .git-archive-row {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-  .git-archive-row > .btn {
-    grid-column: 2;
-    justify-self: start;
-  }
-  .git-archive-purge {
-    grid-template-columns: 1fr;
-  }
-  .git-archive-purge .btn {
-    justify-self: start;
-  }
-}.ro-badge {
+.ro-badge {
   display: inline-flex;
   align-items: center;
   gap: 4px;

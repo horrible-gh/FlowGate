@@ -1,6 +1,13 @@
 // (A) 유지 — 0394 T0016 / NR0003 §6.3. 아래 주석대로 CSS 선언을 지키는 가드이며,
 // 검사 범위는 T0004에서 이미 "이 오버레이를 스타일링하는 모든 시트"로 넓혀 두었다
 // (NR0003 §5.3 "규칙이 전역이면 검사도 전역이어야 한다").
+//
+// flowgate.default.0560 T0018 (4순위): the full view moved onto the common dialog layer, so
+// the sheets that style this overlay are now `dialogs/dialog.css` (the below-header overlay
+// and the sheet surface's container-relative caps) and `DocumentFullViewDialog.vue` (the
+// narrow-window chat rule). `shared/app.css` still carries the legacy `.modal-bg--below-header`
+// pair for `GroupChangesDialog`, which is outside this T's scope, so it stays in the search
+// list and its rule keeps being checked — a rule that exists in NO sheet is still an error.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -14,10 +21,11 @@ function read(relative: string): string {
   return readFileSync(join(process.cwd(), relative), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
 }
 
-const MAIN_PANEL = 'src/main/components/MainPanel.vue'
 const APP_CSS = 'shared/app.css'
+const DIALOG_CSS = 'src/main/components/dialogs/dialog.css'
+const FULL_VIEW = 'src/main/components/DocumentFullViewDialog.vue'
 
-const mainPanel = read(MAIN_PANEL)
+const fullViewSource = read(FULL_VIEW)
 
 // 0394 T0004 (NR0003 §9.2-나): the rule being checked is "no viewport height unit on a
 // box inside the below-header overlay". That is a property of the stylesheet, not of a
@@ -28,7 +36,8 @@ const mainPanel = read(MAIN_PANEL)
 // failure; a rule that exists in NO sheet is still an error.
 const STYLESHEETS: ReadonlyArray<readonly [string, string]> = [
   [APP_CSS, read(APP_CSS)],
-  [MAIN_PANEL, mainPanel],
+  [DIALOG_CSS, read(DIALOG_CSS)],
+  [FULL_VIEW, fullViewSource],
 ]
 
 function cssRule(selector: string): string {
@@ -45,8 +54,8 @@ function cssRule(selector: string): string {
   return bodies.map((match) => match![1]).join('\n')
 }
 
-// Every height limit on a box centred in `.modal-bg--below-header` must be measured
-// against that container, whose height is `100vh - var(--hdr-h)`. A raw viewport unit
+// Every height limit on a box centred in the below-header overlay must be measured against
+// that container, whose height is `100vh - var(--hdr-h)`. A raw viewport unit
 // makes the box taller than its track; `align-items: center` splits the excess evenly,
 // so half of it lands below the viewport on a `position: fixed` layer that nothing
 // scrolls. In the CH full view that unreachable strip holds the composer — the send and
@@ -55,25 +64,34 @@ const VIEWPORT_HEIGHT_UNIT = /(max-)?height:[^;]*\b[\d.]+(dvh|svh|lvh|vh|vmin|vm
 
 describe('document full view layout', () => {
   it('caps the full view box against the overlay, not the viewport', () => {
-    const rule = cssRule('.modal-bg--below-header > .modal-box')
+    const rule = cssRule('.fg-dialog-overlay--below-header .fg-dialog-surface--sheet')
 
     expect(rule).toMatch(/max-height:\s*calc\(100%/)
     expect(rule).not.toMatch(VIEWPORT_HEIGHT_UNIT)
+
+    // The legacy shell GroupChangesDialog still uses keeps the same guarantee.
+    const legacy = cssRule('.modal-bg--below-header > .modal-box')
+    expect(legacy).toMatch(/max-height:\s*calc\(100%/)
+    expect(legacy).not.toMatch(VIEWPORT_HEIGHT_UNIT)
   })
 
   it('still starts the overlay below the header', () => {
     // The cap above is only correct while the container really is the shorter track;
     // going back to a full-screen dim would also re-cover the run monitor (0269 D0002).
-    expect(cssRule('.modal-bg--below-header')).toContain('top: var(--hdr-h)')
-    expect(mainPanel).toMatch(/class="modal-bg modal-bg--below-header"/)
+    expect(cssRule('.fg-dialog-overlay--below-header')).toContain('top: var(--hdr-h)')
+    // ...and the full view is the instance that opts in.
+    expect(fullViewSource).toMatch(/\n\s*below-header\n/)
   })
 
   it('sizes the full view box in container units', () => {
-    expect(cssRule('.document-modal')).not.toMatch(VIEWPORT_HEIGHT_UNIT)
+    // The panel cap under the same overlay is container-relative too, so a variant switch
+    // cannot smuggle a viewport unit back in.
+    expect(cssRule('.fg-dialog-overlay--below-header .fg-dialog-surface--panel'))
+      .not.toMatch(VIEWPORT_HEIGHT_UNIT)
   })
 
   it('keeps the narrow-window chat rule inside the overlay', () => {
-    const rule = cssRule('.document-modal:has(.document-modal__body--conversation)')
+    const rule = cssRule('.fg-dialog-surface.document-full-view-dialog:has(.document-modal__body--conversation)')
 
     // `100dvh - 16px` here overflowed the container by a constant 36px at every viewport
     // height, clipping 18px off the composer on any window narrower than 820px.

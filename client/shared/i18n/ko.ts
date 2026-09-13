@@ -1954,6 +1954,9 @@ export default {
       save_failed: '문서 저장에 실패했습니다.',
       save_error_details: '{summary} 상세 내용은 편집 창에서 확인하세요.',
       save_success: '문서가 저장되었습니다.',
+      discard_confirm_title: '저장하지 않은 편집을 버릴까요?',
+      discard_confirm_message: '편집 창을 닫으면 저장하지 않은 내용은 사라집니다.',
+      discard_confirm_ok: '버리고 닫기',
     },
     workflow_decision_modal: {
       title: '워크플로 결정',

@@ -1956,6 +1956,9 @@ export default {
       save_failed: 'Failed to save document.',
       save_error_details: '{summary} See the edit window for details.',
       save_success: 'Document saved.',
+      discard_confirm_title: 'Discard unsaved edits?',
+      discard_confirm_message: 'Closing the editor throws away everything you have not saved.',
+      discard_confirm_ok: 'Discard and close',
     },
     workflow_decision_modal: {
       title: 'Workflow Decision',
