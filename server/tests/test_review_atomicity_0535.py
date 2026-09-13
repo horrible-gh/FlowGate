@@ -32,7 +32,7 @@ os.environ.setdefault("DB_TYPE", "sqlite")
 _SERVER_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_SERVER_DIR))
 
-from inbox_client import post_inbox  # noqa: E402
+from inbox_client import post_inbox as _raw_post_inbox  # noqa: E402
 
 from modules.flow_gate.api import inbox_routes  # noqa: E402
 from modules.flow_gate.api.v1.events import publisher as sse_publisher  # noqa: E402
@@ -169,7 +169,7 @@ def _build_db(path: str) -> LiveSqliteDB:
         "issued_to, created_at, expires_at, ai_run_id) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (TOKEN_ID, "hash-0535", "p1", PROJECT, DOC_ID, "review", USER,
-         "2026-09-06T00:00:00+09:00", "2036-09-06T00:00:00+09:00", RUN_ID),
+         "2026-09-06T00:00:00+09:00", "2036-09-06T00:00:00+00:00", RUN_ID),
     )
     db.conn.commit()
     return db
@@ -184,6 +184,7 @@ def _token_rec(**overrides) -> dict:
         "doc_ref": DOC_ID,
         "ai_run_id": RUN_ID,
         "dry_run_count": 0,
+        "expires_at": "2036-09-06T00:00:00+00:00",
     }
     rec.update(overrides)
     return rec
@@ -241,6 +242,22 @@ def _body(**overrides) -> dict:
             "verdict": "pass", "findings": [], "comment": "ok"}
     body.update(overrides)
     return body
+
+
+def post_inbox(body: dict):
+    """Legacy 0535 cases submit through the now-mandatory preflight automatically."""
+    if body.get("action") == "review" and not body.get("dry_run") and not body.get("receipt"):
+        candidate = dict(body)
+        candidate["dry_run"] = True
+        dry = _raw_post_inbox(candidate)
+        if dry.status_code != 200:
+            return dry
+        body = dict(body, receipt=dry.json()["receipt"])
+        # These older assertions inspect ordering of the real transaction only.
+        backend = getattr(getattr(db_connection, "STORE", None), "_db", None)
+        if hasattr(backend, "log"):
+            backend.log.clear()
+    return _raw_post_inbox(body)
 
 
 def _index_of(log: list[str], needle: str) -> int:
@@ -614,3 +631,96 @@ def test_a_submitted_payload_cannot_forge_the_provenance(env, monkeypatch):
     row = env["db"].reviews()[0]
     for column in _PROVENANCE_COLUMNS:
         assert row[column] is None, column
+
+
+# ── 7. mandatory durable receipt admission (0545 T0008) ─────────────────────────
+
+def _preflight(body=None):
+    candidate = dict(body or _body())
+    candidate["dry_run"] = True
+    response = post_inbox(candidate)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_real_review_requires_a_receipt_before_any_business_side_effect(env):
+    response = _raw_post_inbox(_body())
+    assert response.status_code == 400
+    assert response.json()["reason"] == "receipt_missing"
+    assert env["db"].reviews() == []
+    assert env["db"].token()["consumed_at"] is None
+    assert env["db"].consumed_events() == []
+    assert env["sse"].events == []
+
+
+def test_matching_receipt_is_used_with_review_and_token_in_one_commit(env):
+    dry = _preflight()
+    response = post_inbox(_body(receipt=dry["receipt"]))
+    assert response.status_code == 201, response.text
+    receipt = env["db"].rows(
+        "SELECT * FROM review_dry_run_receipts WHERE receipt_id = ?", (dry["receipt"],)
+    )[0]
+    assert receipt["used_at"] is not None
+    assert len(env["db"].reviews()) == 1
+    assert env["db"].token()["consumed_at"] is not None
+    assert len(env["db"].consumed_events()) == 1
+
+
+@pytest.mark.parametrize("changed", [
+    {"verdict": "issues"},
+    {"findings": [{"locus": "line 1", "note": "changed"}]},
+    {"comment": "changed"},
+    {"force_encoding_reason": "an intentionally changed reason"},
+])
+def test_receipt_rejects_any_semantic_payload_change(env, changed):
+    dry = _preflight()
+    response = post_inbox(_body(receipt=dry["receipt"], **changed))
+    assert response.status_code == 409
+    assert response.json()["reason"] == "receipt_payload_mismatch"
+    assert env["db"].reviews() == []
+    assert env["db"].token()["consumed_at"] is None
+
+
+def test_second_successful_dry_run_supersedes_the_first(env):
+    first = _preflight()
+    second = _preflight()
+    stale = post_inbox(_body(receipt=first["receipt"]))
+    assert stale.status_code == 409
+    assert stale.json()["reason"] == "receipt_superseded"
+    good = post_inbox(_body(receipt=second["receipt"]))
+    assert good.status_code == 201
+
+
+def test_used_receipt_cannot_be_replayed(env):
+    dry = _preflight()
+    assert post_inbox(_body(receipt=dry["receipt"])).status_code == 201
+    replay = post_inbox(_body(receipt=dry["receipt"]))
+    assert replay.status_code == 409
+    assert replay.json()["reason"] == "receipt_used"
+    assert len(env["db"].reviews()) == 1
+
+
+def test_revision_change_makes_receipt_stale_without_consuming_token(env, monkeypatch):
+    dry = _preflight()
+    monkeypatch.setattr(inbox_routes.db_docs, "get_by_id", lambda _id: {
+        "doc_id": DOC_ID, "group_id": GROUP_ID, "revision_no": 1, "title": "changed",
+    })
+    response = post_inbox(_body(receipt=dry["receipt"]))
+    assert response.status_code == 409
+    assert response.json()["reason"] == "receipt_stale_revision"
+    assert env["db"].reviews() == []
+    assert env["db"].token()["consumed_at"] is None
+
+
+def test_receipt_claim_rolls_back_with_review_failure_and_can_retry(env):
+    dry = _preflight()
+    env["db"].fail_on = "INSERT INTO document_reviews"
+    failed = post_inbox(_body(receipt=dry["receipt"]))
+    assert failed.status_code == 500
+    row = env["db"].rows(
+        "SELECT * FROM review_dry_run_receipts WHERE receipt_id = ?", (dry["receipt"],)
+    )[0]
+    assert row["used_at"] is None
+    assert env["db"].token()["consumed_at"] is None
+    env["db"].fail_on = None
+    assert post_inbox(_body(receipt=dry["receipt"])).status_code == 201

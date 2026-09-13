@@ -381,6 +381,38 @@ def test_summary_degrades_workflow_card_on_unexpected_aggregation_failure(
     assert result["active_workflows"]["items"] == []
 
 
+def test_summary_reads_open_question_snapshot_once_for_both_projections(dashboard_store, monkeypatch):
+    _seed_base(dashboard_store)
+    calls = 0
+
+    def snapshot(_project_id):
+        nonlocal calls
+        calls += 1
+        return [
+            {"doc_id": "doc-b", "seq": 2, "title": "item two", "type_code": "T", "document_title": "Document B"},
+            {"doc_id": "doc-a", "seq": 1, "title": "item one", "type_code": "P", "document_title": "Document A"},
+            {"doc_id": "doc-a", "seq": 3, "title": "item three", "type_code": "P", "document_title": "Document A"},
+        ]
+
+    monkeypatch.setattr(dashboard_service.db_questions, "list_open_items", snapshot)
+    result = dashboard_service.get_dashboard_summary("flowgate", 50, 50)
+
+    assert calls == 1
+    assert result["open_queries"]["items"] == [
+        {"doc_id": "doc-b", "seq": 2, "title": "item two", "type_code": "T"},
+        {"doc_id": "doc-a", "seq": 1, "title": "item one", "type_code": "P"},
+        {"doc_id": "doc-a", "seq": 3, "title": "item three", "type_code": "P"},
+    ]
+    assert result["notification_open_questions"] == {
+        "limit": 50,
+        "total": 2,
+        "has_more": False,
+        "items": [
+            {"doc_id": "doc-a", "title": "Document A", "type_code": "P"},
+            {"doc_id": "doc-b", "title": "Document B", "type_code": "T"},
+        ],
+    }
+
 def _client(monkeypatch, service_result=None):
     app = FastAPI()
     app.include_router(dashboard_routes.router)
@@ -393,6 +425,7 @@ def _client(monkeypatch, service_result=None):
         lambda project_id: {"project_id": project_id} if project_id == "flowgate" else None,
     )
     monkeypatch.setattr(dashboard_routes, "has_permission", lambda *_args: True)
+    monkeypatch.setattr(dashboard_routes.db_notification_seen, "get_last_seen", lambda *_args: None)
     if service_result is not None:
         monkeypatch.setattr(
             dashboard_routes,

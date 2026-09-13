@@ -500,9 +500,20 @@ def get_answers_for_document(doc_id: str) -> list[dict]:
     return [{"Q": r["Q"], "A": r["A"]} for r in result]
 
 
+def open_item_snapshot(project_id: Optional[str] = None) -> list[dict]:
+    """Read the shared open-question row snapshot, including document title enrichment."""
+    return db_questions.list_open_items(project_id)
+
+
+def project_open_items(rows: list[dict]) -> list[dict]:
+    """Project a snapshot to the stable public /q item shape."""
+    keys = ("doc_id", "seq", "title", "type_code")
+    return [{key: row.get(key) for key in keys} for row in rows]
+
+
 def list_open_items(project_id: Optional[str] = None) -> list[dict]:
     """Aggregate of 'open queries' (items being answered, D0005 §3.7). project_id=None → all."""
-    return db_questions.list_open_items(project_id)
+    return project_open_items(open_item_snapshot(project_id))
 
 
 def qa_bundle_by_doc(doc_id: str) -> list[dict]:

@@ -1339,6 +1339,10 @@ export default {
       review_loop_stop_review_count_exhausted: '반려 · 검수 횟수 소진',
       review_loop_stop_retry_exhausted: '실패 · 재시도 소진',
       review_loop_stop_total_timeout: '정지 · 총 시간 제한 초과',
+    review_loop_stop_review_verdict_hold: '정지 · 검수자 보류',
+    review_loop_stop_restart_orphaned: '정지 · 서버 재기동으로 끊김',
+    review_loop_stop_review_stalled: '정지 · 같은 지적이 반복됨',
+    review_loop_stop_unknown: '정지 · 알 수 없는 이유',
       // 0446 T0010 §3-6: 반려 재작업 실행 시간 선택. main.continuous_work.step_timeout_* 는
       // "단계별 제한 시간 / 한 단계가 이 시간을 넘기면 중단됩니다" 라서 1회 실행 화면에서는
       // 틀린 말이 되므로 재사용하지 않고 이 블록에 따로 둔다.
@@ -1388,6 +1392,10 @@ export default {
       error_run_lost: '실행 기록이 소실되었습니다(서버 재기동). 그룹 문서를 직접 확인하세요.',
       error_cancel_failed: '실행 취소에 실패했습니다.',
       error_run_in_progress_orphaned: '이전 실행이 비정상 종료되어 잠금이 남아 있습니다. 아래 [잠금 해제]를 눌러 주세요.',
+      review_start_button: '검수 시작',
+      review_rerun_button: '재검수',
+      error_review_already_completed: '이미 완료된 검수입니다. 다시 검수하려면 [재검수] 버튼을 사용하세요.',
+      error_review_rerun_not_available: '현재 revision에는 재검수할 완료 검수가 없습니다. 문서를 새로고침해 주세요.',
       error_release_lease_failed: '잠금 해제에 실패했습니다.',
     },
     ai_miniplayer: {
@@ -1755,9 +1763,8 @@ export default {
       mark_revised_confirm_message: '검수 대기 상태로 전환합니다. 진행하시겠습니까?',
       error_approve_failed_log: '[ReviewActionBar] 승인 처리 실패',
       toast_approve_failed: '승인 처리 실패: {detail}',
-      // 0332 D0005 §6.5 — TR 승인 알림. 셋 다 승인은 성공했다는 말로 시작한다.
+      // 0332 D0005 §6.5 — TR 승인 알림. 둘 다 승인은 성공했다는 말로 시작한다.
       tr_commit_toast: '승인했습니다 — 커밋 {commit} 을 남겼습니다',
-      tr_commit_none_toast: '승인했습니다 — 소스 변경이 없어 커밋하지 않았습니다',
       tr_commit_failed_toast: '승인했습니다 — 커밋하지 못했습니다 ({reason})',
       toast_mark_revised_success: '검수 대기 상태로 전환되었습니다.',
       toast_mark_revised_failed: '수정 완료 처리 실패: {detail}',
@@ -2509,6 +2516,9 @@ export default {
       empty: '이력이 없습니다.',
       ai_response: 'AI 응답',
       actual_provider: '검수 AI',
+      provenance_normal: '최초 검수',
+      provenance_rerun: '명시적 재검수',
+      supersedes_review: '대체 대상: {reference}',
       requested_provider: '요청된 검수 AI',
     },
     doc_workflow: {

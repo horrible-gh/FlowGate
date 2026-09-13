@@ -760,16 +760,52 @@ def test_backfill_skips_a_run_whose_json_is_unparsable(store):
     assert backfill.run_register_context_failure_backfill(store) == 0
 
 
-def test_backfill_keeps_an_element_that_already_carried_its_axis(store):
+def test_backfill_does_not_treat_top_level_only_binding_fields_as_live(store):
     _seed_run(store, register_errors=[{
         "status": 403, "code": "forbidden", "reason": "context_binding_mismatch", "turn": 1,
         "boundary": "inbox", "axis": "action", "axes": ["action"],
-        "correlation_id": "corr-live",
+        "correlation_id": "corr-old-shape",
         "action_scope_run": "new", "action_scope_token": "edit",
         "project_token": PROJECT, "group_token_resolved": GROUP, "doc_ref_token": DOC,
     }])
     assert backfill.run_register_context_failure_backfill(store) == 1
     row = db_failures.list_by_run("aiv_test_000001")[0]
-    assert row["boundary"] == "inbox"
-    assert row["axis_first_mismatch"] == "action"
-    assert row["correlation_id"] == "corr-live"
+    assert row["boundary"] == "legacy_unclassified"
+    assert row["axis_first_mismatch"] is None
+    assert row["action_scope_run"] is None
+
+
+@pytest.mark.parametrize("boundary", ["inbox", "register_dispatch"])
+def test_failure_record_round_trips_through_backfill(store, caplog, boundary):
+    record = binding.failure_record(
+        boundary=boundary, axes=["action", "project"],
+        run_context=binding.canonical_context("new", PROJECT, GROUP, DOC),
+        token_context=binding.canonical_context("edit", "other-project", GROUP, DOC),
+        correlation_id=f"corr-{boundary}", run_id="aiv_test_000001",
+        ai_run_id="aiv_test_000001", action_scope_request="new",
+        prev_doc_id_request=DOC, token_id="tok-live", turn=2,
+    )
+    original = json.loads(json.dumps([record]))
+    _seed_run(store, register_errors=original)
+
+    with caplog.at_level("WARNING", logger=backfill.__name__):
+        assert backfill.run_register_context_failure_backfill(store) == 1
+        assert backfill.run_register_context_failure_backfill(store) == 0
+
+    assert "register backfill: row refused" not in caplog.text
+    row = db_failures.list_by_run("aiv_test_000001")[0]
+    telemetry = record["telemetry"]
+    assert row["boundary"] == boundary
+    assert row["axis_first_mismatch"] == record["axis"]
+    assert row["axes_all_mismatches"] == record["axes"]
+    for field in (
+        "action_scope_run", "action_scope_token", "action_scope_request",
+        "project_run", "project_token", "group_run", "group_token_resolved",
+        "doc_ref_run", "doc_ref_token", "prev_doc_id_request", "ai_run_id",
+        "token_id_hash", "expected_fingerprint", "actual_fingerprint",
+    ):
+        assert row[field] == telemetry[field]
+    assert db_failures.bind_row(row)
+    source = store.fetch_one("SELECT register_errors FROM ai_invoke_runs WHERE run_id = ?",
+                             ["aiv_test_000001"])
+    assert json.loads(source["register_errors"]) == original

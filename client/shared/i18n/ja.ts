@@ -1338,6 +1338,10 @@ export default {
       review_loop_stop_review_count_exhausted: '差し戻し · レビュー回数上限',
       review_loop_stop_retry_exhausted: '失敗 · 再試行上限',
       review_loop_stop_total_timeout: '停止 · 合計時間超過',
+    review_loop_stop_review_verdict_hold: '停止 · レビューが保留',
+    review_loop_stop_restart_orphaned: '停止 · サーバー再起動で中断',
+    review_loop_stop_review_stalled: '停止 · 同じ指摘の繰り返し',
+    review_loop_stop_unknown: '停止 · 理由不明',
       // 0446 T0010 §3-6: the rejection rework's run-duration picker. Not shared with
       // main.continuous_work.step_timeout_*, whose wording is about ONE STEP of a chain.
       step_timeout_title: '実行の制限時間',
@@ -1386,6 +1390,10 @@ export default {
       error_run_lost: '実行記録が失われました（サーバー再起動）。グループのドキュメントを直接確認してください。',
       error_cancel_failed: '実行の取消に失敗しました。',
       error_run_in_progress_orphaned: '前回の実行が異常終了し、ロックが残っています。下の[ロック解除]を押してください。',
+      review_start_button: '検収開始',
+      review_rerun_button: '再検収',
+      error_review_already_completed: '検収はすでに完了しています。再実行するには[再検収]を使用してください。',
+      error_review_rerun_not_available: '現在のrevisionには再検収できる完了済み検収がありません。文書を更新してください。',
       error_release_lease_failed: 'ロック解除に失敗しました。',
     },
     ai_miniplayer: {
@@ -1745,9 +1753,8 @@ export default {
       mark_revised_confirm_message: 'レビュー待ち状態に戻します。続行しますか？',
       error_approve_failed_log: '[ReviewActionBar] 承認処理失敗',
       toast_approve_failed: '承認処理失敗: {detail}',
-      // 0332 D0005 §6.5 — TR 承認の通知。三つとも承認は成功したという文で始まる。
+      // 0332 D0005 §6.5 — TR 承認の通知。二つとも承認は成功したという文で始まる。
       tr_commit_toast: '承認しました — コミット {commit} を残しました',
-      tr_commit_none_toast: '承認しました — ソース変更がないためコミットしていません',
       tr_commit_failed_toast: '承認しました — コミットできませんでした（{reason}）',
       toast_mark_revised_success: 'レビュー待ち状態に戻しました。',
       toast_mark_revised_failed: '修正完了処理失敗: {detail}',
@@ -2506,6 +2513,9 @@ export default {
       empty: '履歴がありません。',
       ai_response: 'AI応答',
       actual_provider: '検収AI',
+      provenance_normal: '初回検収',
+      provenance_rerun: '明示的な再検収',
+      supersedes_review: '置換対象: {reference}',
       requested_provider: 'リクエストされた検収AI',
     },
     doc_workflow: {

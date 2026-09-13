@@ -1199,6 +1199,38 @@ class TestRejectionResponseThroughRealInboxEdit:
         updated = json.loads(db_docs.get_by_id(doc_id)["rejection_history"])
         assert updated[0]["ai_response"] == "addressed the review comments"
 
+    def test_revised_transition_broadcasts_the_response_in_rejection_history(self, tmp_path):
+        """flowgate.default.0561 T0004 AC-3/AC-4: the rejected->revised Step 9 SSE used to
+        carry only the bare status flip, no rejection_history key at all. DocHeader's
+        fg:doc_review_status_changed listener only overwrites doc.rejection_history when the
+        event payload carries that key, so a rework answer that record_rejection_response had
+        already written atomically with the revision CAS never reached the open tab's sidebar
+        until a manual refresh/reopen. The broadcast must now carry the just-recorded
+        ai_response.
+        """
+        doc_id = f"{_E2E_GROUP_ID}-N0004"
+        stored = tmp_path / "docs" / f"{doc_id}_document.md"
+        history = [
+            {"rejection_id": "rej_z", "reason": "needs a fix", "review_id": 90,
+             "rejected_at": "2026-08-01T00:00:00", "ai_response": None},
+        ]
+        _e2e_create_rejected_doc(doc_id, 4, stored, history)
+        raw = _e2e_make_edit_token(tmp_path, doc_id)
+
+        captured = []
+        with patch(
+            "modules.flow_gate.api.v1.events.publisher.broadcast_event_threadsafe",
+            side_effect=lambda event: captured.append(event),
+        ):
+            resp = _e2e_post_edit(raw, doc_id, review_id=90)
+        assert resp.status_code == 200, resp.text
+
+        status_events = [e for e in captured if e.event_type == "doc_review_status_changed"]
+        assert len(status_events) == 1
+        payload = status_events[0].payload
+        assert payload["next_status"] == "revised"
+        assert payload["rejection_history"][0]["ai_response"] == "addressed the review comments"
+
 
 # ══════════════════════════════════════════════════════════════════════════════════════
 # 0458 T0007 §3.2 — the response lands on the rejection it answers, not on the last one

@@ -15,6 +15,7 @@ from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import terminal_cleanup_snapshots as db_terminal_cleanup
 
 from .commit import _ledger_group_by_merge_sha
+from .finalize import NOOP_CONVERGEABLE_STATUSES
 from .credentials import GitServiceError, decrypt_secret
 from .refs import (
     UNTRACKED_LIST_MAX,
@@ -265,6 +266,19 @@ def project_git_status(project_id: str) -> dict:
                 _log.warning(
                     "stale git pending recovery failed for %s", group_id, exc_info=True
                 )
+        elif status in NOOP_CONVERGEABLE_STATUSES:
+            try:
+                # 0548 T0004 §3: the root is still wf_done, but the slot may hold
+                # nothing to merge — converge it the same way the finalize panel
+                # does, so the header's pending badge and the document's Git card
+                # never disagree about whether this group has work.
+                row["status"] = _gs._resolve_pending_noop(
+                    project_id, cfg, row, group_id, status
+                )
+            except Exception:
+                _log.warning(
+                    "no-work pending convergence failed for %s", group_id, exc_info=True
+                )
         elif status == "none" and group_id in wf_done_groups:
             try:
                 # 0199 B0001: proven no-work groups are discarded (torn down, no
@@ -286,10 +300,21 @@ def project_git_status(project_id: str) -> dict:
     # of the blanket read-only it applied to every selected group. `rows` is already
     # filtered to worktree_registered=1, so this only re-checks the on-disk side
     # (directory present, .git link intact) — a handful of stats per status call.
+    # 0552 T0013 (0005-NR Set D): `r` IS this group's group_git_state row, already
+    # read by the one project-wide ledger scan above, so it is handed to the
+    # writable probe instead of letting it run `SELECT * FROM group_git_state
+    # WHERE group_id = ?` once per slot — the last group_git_state read that still
+    # grew with slot count (8 slots = 8 queries in the R0001 screen-load log).
+    # Same row, same request: `list_states_of_project_any` and `db_git.get_state`
+    # are both `SELECT *` on that one table, and the only fields the probe reads —
+    # worktree_registered and branch — are never written by the transition loop
+    # above (`_set_status` writes status only; an auto-discard that DOES unregister
+    # a slot returns DISCARDED_STATUS, which SLOT_STATUSES already excludes here).
+    # Nothing is cached beyond this response; the on-disk check is untouched.
     slots = [
         {"group_id": r["group_id"], "branch": r.get("branch"),
          "status": r.get("status"), "merge_id": r.get("merge_id"),
-         "writable": _gs.group_worktree_writable(project_id, r["group_id"])}
+         "writable": _gs.group_worktree_writable(project_id, r["group_id"], r)}
         for r in rows if r.get("status") in SLOT_STATUSES
     ]
     # 0332 D0005 §6.2: a group's commits are no longer one absorb commit, so each slot

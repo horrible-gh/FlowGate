@@ -74,8 +74,9 @@ const explorerRefreshToken = ref(0)
 const overviewRefreshToken = ref(0)
 
 function refreshAll() {
-  const pid = projectStore.currentProjectId
-  if (pid) explorerStore.invalidateProject(pid)
+  // Cache invalidation belongs to useFlowGateSse.invalidateAndRefresh and has already run for
+  // every event before the coalesced callback reaches this view. This callback only advances
+  // the view tokens once per fixed refresh window.
   explorerRefreshToken.value += 1
   // 0454 T0007 — an SSE refresh used to leave the MainPanel overview cards stale (rev1 review
   // finding): explorerRefreshToken only reaches GroupExplorer/FileExplorer, and
@@ -88,10 +89,8 @@ function refreshAll() {
   overviewRefreshToken.value += 1
 }
 
-// Manual overview refresh (button in the overview header). Unlike refreshAll(),
-// which only invalidates the explorer tree, this also forces an immediate
-// dashboard-card refetch — refreshAll() alone would leave the recent-activity
-// and workflow cards stale (see NR0003 §3).
+// Manual overview refresh (button in the overview header). This direct, non-SSE path owns
+// its cache invalidation and also forces an immediate dashboard-card refetch.
 function manualRefresh() {
   const pid = projectStore.currentProjectId
   if (!pid) return

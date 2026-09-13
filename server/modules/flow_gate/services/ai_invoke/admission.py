@@ -24,6 +24,7 @@ from fastapi import HTTPException
 from modules.flow_gate import template_provision
 from modules.flow_gate.db import connection as db_connection
 from modules.flow_gate.db import documents as db_docs
+from modules.flow_gate.db import document_reviews as db_document_reviews
 from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
 from modules.flow_gate.db import tokens as db_tokens
@@ -356,18 +357,33 @@ def _record_orphaned_lease_run(lease_row: dict, end_reason: str) -> None:
     the token up. Best-effort: a run this cannot explain still gets its lease
     cleared by the caller either way, it just won't carry the extra explanation.
     """
+    from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
     from modules.flow_gate.db import ai_invoke_runs as db_runs
 
     run_id = str(lease_row.get("run_id") or "")
-    if not run_id or db_runs.get(run_id) is not None:
+    if not run_id:
         return
-    doc_ref, mode = "", "single"
+    existing = db_runs.get(run_id)
+    if existing is not None:
+        # A replay may follow a partial recovery that persisted the orphan run before
+        # its loop UPDATE. Retry only that same restart outcome; never reinterpret a
+        # normally finished or manually released run as a restart-orphaned loop.
+        if end_reason == "orphaned_by_restart" and existing.get("end_reason") == end_reason:
+            try:
+                db_loops.stop_for_restart_orphan(run_id)
+            except Exception:
+                logger.warning(
+                    "orphaned-lease review-loop stop failed for run %s", run_id, exc_info=True
+                )
+        return
+    doc_ref, mode, issued_to = "", "single", None
     token_id = lease_row.get("token_id")
     if token_id:
         token = db_tokens.get_by_id(token_id)
         if token:
             doc_ref = token.get("doc_ref") or ""
             mode = "continuous" if token.get("continuation_target_seq") is not None else "single"
+            issued_to = token.get("issued_to")
     stamp = now_iso()
     started = lease_row.get("acquired_at") or stamp
     db_runs.upsert({
@@ -381,9 +397,18 @@ def _record_orphaned_lease_run(lease_row: dict, end_reason: str) -> None:
         "resumable": False,
         "started_at": started,
         "finished_at": stamp,
+        "token_id": token_id,
+        "issued_to": issued_to,
         "created_at": started,
         "updated_at": stamp,
     })
+    if end_reason == "orphaned_by_restart":
+        try:
+            db_loops.stop_for_restart_orphan(run_id, at=stamp)
+        except Exception:
+            logger.warning(
+                "orphaned-lease review-loop stop failed for run %s", run_id, exc_info=True
+            )
 
 
 def _reclaim_orphan_lease_token(lease_row: dict, reason: str) -> None:
@@ -489,6 +514,8 @@ def _continuation_docs_target(
     # auto-handling are excluded from the worker's document count — an unselected ai_direct
     # N/T is still a real worker document and must stay counted.
     continuation_auto_approve_item_seqs: Optional[list] = None,
+    _sequence: Optional[dict] = None,
+    _items: Optional[list[dict]] = None,
 ) -> Optional[int]:
     """docs_target in the workflow item_seq coordinate system (0226 B0001 / NR0003 §5-1).
 
@@ -510,11 +537,15 @@ def _continuation_docs_target(
     """
     from modules.flow_gate.services.workflow_decision_service import is_auto_handled_step
 
-    seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+    # Internal request-scope callers may pass the sequence snapshot they already
+    # read. None remains the default sentinel, so ordinary calls always read
+    # current DB truth and no state crosses a request boundary.
+    seq = _sequence if _sequence is not None else db_wfseq.get_sequence_for_member_doc(doc_ref)
     if seq is None:
         return None
+    items = _items if _items is not None else db_wfseq.get_sequence_items(seq["id"]) or []
     count = 0
-    for item in db_wfseq.get_sequence_items(seq["id"]) or []:
+    for item in items:
         item_seq = item.get("item_seq")
         if (
             target_item_seq is not None
@@ -763,6 +794,9 @@ def start_run(
     continuation_review_count_overrides: Optional[dict] = None,
     continuation_reviewer_overrides: Optional[dict] = None,
     document_review_loop: Optional[dict] = None,
+    # Present only for a fresh top-level review route request. Internal review-loop hops
+    # omit it, which keeps their REVIEW<->REWORK handoff semantics outside this gate.
+    review_intent: Optional[str] = None,
     # A single-request acknowledgement. It is intentionally never persisted or forwarded.
     capability_warning_ack: Optional[bool] = None,
     # flowgate.default.0481 T0008 item 1 / L0007 §2.5-§2.9: only meaningful for
@@ -1121,6 +1155,39 @@ def start_run(
             raise _http_error(409, "run_in_progress", "An AI run is already in progress for this group.",
                               run_id=active.get("run_id"))
 
+    # The group lease is the serialization point: this check runs only after this request
+    # owns it and before token issuance. Thus two concurrent normal starts cannot both
+    # observe NONE, while reruns remain possible without a UNIQUE(doc_id, revision_no).
+    review_admission_superseded_review_id: Optional[int] = None
+    if action_scope == "review" and review_intent is not None:
+        doc = db_docs.get_by_id(doc_ref) or {}
+        revision_no = int(doc.get("revision_no") or 0)
+        completed = db_document_reviews.get_latest_for_revision(doc_ref, revision_no)
+        if completed is not None and review_intent == "normal":
+            if not project_scoped:
+                db_group_ai_leases.release(
+                    group_id, run_id, reason="review_admission_completed"
+                )
+            raise _http_error(
+                409, "review_already_completed",
+                "This document revision has already been reviewed; use rerun to review it again.",
+                review_id=completed.get("id"), revision_no=revision_no,
+            )
+        if completed is not None and review_intent == "rerun":
+            # Reuse the row observed while holding the admission lease. Re-querying at
+            # registration time would let a concurrent append change what this rerun means.
+            review_admission_superseded_review_id = int(completed["id"])
+        if completed is None and review_intent == "rerun":
+            if not project_scoped:
+                db_group_ai_leases.release(
+                    group_id, run_id, reason="review_admission_no_completed_review"
+                )
+            raise _http_error(
+                409, "review_rerun_not_available",
+                "This document revision has no completed review to rerun.",
+                revision_no=revision_no,
+            )
+
     if document_review_loop is not None and issue_builder is not None:
         # 0417 T0013: tell the (possibly stage-aware) issue_builder which stage this hop is —
         # a loop that starts_with_rework must mint an edit-scoped token on its very first hop,
@@ -1249,9 +1316,6 @@ def start_run(
     )
 
     started_at = now_iso()
-    timeout_sec = _resolve_timeout_sec(
-        mode, docs_target, target_to_end, continuation_step_timeout_sec, hop_kind
-    )
     # 0414 P0007: what THIS hop's review selection resolves to, answered in the start
     # response rather than after the fact — "I picked a reviewer, did it take?" has to be
     # answerable while the run is going, not once it is over (0406 T0022 작업 3's reasoning
@@ -1285,6 +1349,18 @@ def start_run(
             "started_at": started_at,
             "deadline_at": _deadline_iso(started_at, int(document_review_loop["total_timeout_sec"])),
         })
+        # T0011 §4 / 0486 NR0010 Finding 3: the loop's own per-stage budget (rework's
+        # user-picked `rework_timeout_sec`, clamped to the loop's total deadline) replaces
+        # the generic per-hop formula for this run's FIRST hop. The in-process stage
+        # switch inside worker._worker applies the same formula on every later hop of this
+        # single audited chain.
+        timeout_sec = review.loop_stage_timeout_sec(
+            document_review_loop, document_review_loop["current_stage"], datetime.fromisoformat(started_at)
+        )
+    else:
+        timeout_sec = _resolve_timeout_sec(
+            mode, docs_target, target_to_end, continuation_step_timeout_sec, hop_kind
+        )
     run = {
         "run_id": run_id,
         "status": "running",
@@ -1381,6 +1457,10 @@ def start_run(
         "selected_provider_source": selected_provider_source,
         "fallback_allowed": selected_provider_source == "project_default",
         "action_scope": action_scope,
+        # Top-level review provenance while the run is live. Finished review provenance
+        # remains append-only in document_reviews via review_run_id and row ordering.
+        "review_intent": review_intent,
+        "review_admission_superseded_review_id": review_admission_superseded_review_id,
         # 0446 T0008 §3-1: did the ENGINE plant this run's completion oracle, or did the
         # caller hand one in? Computed at the top of start_run and, until now, discarded —
         # which left `completion_oracle is not None` an unconditional retry block for every

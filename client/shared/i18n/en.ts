@@ -1338,6 +1338,10 @@ export default {
       review_loop_stop_review_count_exhausted: 'Rejected · review count exhausted',
       review_loop_stop_retry_exhausted: 'Failed · retries exhausted',
       review_loop_stop_total_timeout: 'Stopped · total time limit exceeded',
+    review_loop_stop_review_verdict_hold: 'Stopped · the reviewer returned hold',
+    review_loop_stop_restart_orphaned: 'Stopped · cut off by a server restart',
+    review_loop_stop_review_stalled: 'Stopped · the same findings kept coming back',
+    review_loop_stop_unknown: 'Stopped · reason not recognised',
       // 0446 T0010 §3-6: the rejection rework's run-duration picker. Not shared with
       // main.continuous_work.step_timeout_*, whose wording is about ONE STEP of a chain and
       // would be wrong on a single-run screen.
@@ -1388,6 +1392,10 @@ export default {
       error_run_lost: 'The run record was lost (server restarted). Check the group documents directly.',
       error_cancel_failed: 'Failed to cancel the run.',
       error_run_in_progress_orphaned: 'The previous run ended abnormally and left its lock behind. Click [Release Lock] below.',
+      review_start_button: 'Start review',
+      review_rerun_button: 'Review again',
+      error_review_already_completed: 'This review is already complete. Use [Review again] to run it again.',
+      error_review_rerun_not_available: 'There is no completed review to rerun for the current revision. Refresh the document.',
       error_release_lease_failed: 'Failed to release the lock.',
     },
     ai_miniplayer: {
@@ -1758,9 +1766,8 @@ export default {
       mark_revised_confirm_message: 'Move this document back to pending review. Continue?',
       error_approve_failed_log: '[ReviewActionBar] Approval failed',
       toast_approve_failed: 'Approval failed: {detail}',
-      // 0332 D0005 §6.5 — TR approval notices. All three start from "approved".
+      // 0332 D0005 §6.5 — TR approval notices. Both start from "approved".
       tr_commit_toast: 'Approved — commit {commit} recorded',
-      tr_commit_none_toast: 'Approved — no source change, so nothing was committed',
       tr_commit_failed_toast: 'Approved — could not commit ({reason})',
       toast_mark_revised_success: 'Moved back to pending review.',
       toast_mark_revised_failed: 'Failed to complete revision: {detail}',
@@ -2511,6 +2518,9 @@ export default {
       empty: 'No history.',
       ai_response: 'AI Response',
       actual_provider: 'Review AI',
+      provenance_normal: 'Initial review',
+      provenance_rerun: 'Explicit rerun',
+      supersedes_review: 'Replaces: {reference}',
       requested_provider: 'Requested review AI',
     },
     doc_workflow: {

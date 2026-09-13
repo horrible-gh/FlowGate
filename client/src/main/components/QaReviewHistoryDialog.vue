@@ -66,6 +66,13 @@
                   <span v-if="entry.kind === 'reject'" class="rhd-who">
                     {{ rejectedByDisplay?.(entry.reject.rejected_by) || t('main.doc_info_panel.rejection_review_author') }}
                   </span>
+                  <span
+                    v-if="entry.kind === 'ai_review' && entry.review.review_intent"
+                    class="rhd-provenance"
+                    :class="`rhd-provenance--${entry.review.review_intent}`"
+                  >
+                    {{ provenanceLabel(entry.review) }}
+                  </span>
                   <span v-if="entry.kind === 'ai_review' && entry.review.revision_no != null" class="rhd-rev">rev {{ entry.review.revision_no }}</span>
                   <span class="rhd-when">{{ formatWhen(entry.at) }}</span>
                   <!-- TR0005 rev6 rejection §2 ("AI 검수는 왜 접는거 없냐?"): the AI-review card
@@ -92,6 +99,9 @@
                       {{ t('main.qa_review_history.requested_provider') }}: {{ entry.review.review_provider?.requested_provider_id }}
                     </span>
                   </div>
+                  <p v-if="entry.review.superseded_review_id != null" class="rhd-superseded">
+                    {{ supersededLabel(entry.review) }}
+                  </p>
                   <p v-if="entry.review.comment" class="rhd-comment" :class="{ collapsed: collapsed.reason[entry.key] }">{{ entry.review.comment }}</p>
                   <ul v-if="entry.review.findings && entry.review.findings.length" class="rhd-findings">
                     <li v-for="(f, fi) in entry.review.findings" :key="fi">
@@ -231,6 +241,17 @@ function actualProviderLabel(review: AiReview): string {
     || review.review_provider?.actual_provider_id
     || ''
 }
+function provenanceLabel(review: AiReview): string {
+  return review.review_intent === 'rerun'
+    ? t('main.qa_review_history.provenance_rerun')
+    : t('main.qa_review_history.provenance_normal')
+}
+function supersededLabel(review: AiReview): string {
+  const previous = (props.reviews ?? []).find((candidate) => candidate.id === review.superseded_review_id)
+  const reviewedAt = previous?.reviewed_at ?? previous?.created_at
+  const reference = reviewedAt ? formatWhen(reviewedAt) : `#${review.superseded_review_id}`
+  return t('main.qa_review_history.supersedes_review', { reference })
+}
 function verdictClass(verdict?: string | null): string {
   return verdict === 'pass' ? 'pass' : 'warn'
 }
@@ -290,6 +311,9 @@ function onClose() {
    to show onto this card's header row (the pre-merge ReviewHistoryDialog never received
    rejected_by, so it could not show it). */
 .rhd-who { font-size: .66rem; color: var(--text-s); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rhd-provenance { font-size: .62rem; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--surface-h); color: var(--text-s); }
+.rhd-provenance--rerun { background: #ffedd5; color: #9a3412; }
+.rhd-superseded { margin: 0 0 7px; font-size: .68rem; color: var(--text-s); }
 .rhd-rev { font-size: .62rem; font-weight: 600; color: var(--text-s); background: var(--surface-h); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; }
 .rhd-when { margin-left: auto; font-size: .65rem; color: var(--text-m); }
 /* R0001 (full-content view): the review comment took its full height like the

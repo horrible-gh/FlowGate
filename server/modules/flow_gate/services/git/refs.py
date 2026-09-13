@@ -276,6 +276,40 @@ def worktree_untracked_summary(project_id: str, group_id: str) -> Optional[dict]
         return None
 
 
+def probe_worktree_pending_changes(wt_path: Path) -> Optional[bool]:
+    """Read-only, lock-free: does this worktree carry any change that is not tool
+    debris, tracked or not — regardless of whether the project's git INTEGRATION is
+    on (flowgate.default.0548 T0004 §4/R6).
+
+    Unlike :func:`_stage_worker_edits` this never runs ``git add``: it exists only for
+    the case where the real commit gate (config off, no registered group git state)
+    is what stops :func:`create_tr_commit` from ever asking the worktree itself, so a
+    TR that (wrongly, or by omission) declared "no changes" would otherwise be taken
+    at its word. No lock is taken because nothing here can race a concurrent commit —
+    a plain status read changes nothing.
+
+    Returns ``None`` when git genuinely cannot answer (no git binary, the path is not
+    a real repo, a timeout) — the caller then has nothing but whatever other signal it
+    already had, exactly as before this existed.
+    """
+    from modules.flow_gate.services import git_service as _gs
+    try:
+        proc = _run_git(
+            ["status", "--porcelain", "-z", "--untracked-files=all"],
+            cwd=wt_path, timeout=_gs.GIT_READ_TIMEOUT_SEC,
+        )
+    except GitServiceError:
+        return None
+    if proc.returncode != 0:
+        return None
+    for entry in (proc.stdout or "").split("\0"):
+        if len(entry) < 4:
+            continue
+        if not path_exclusion_rules.is_excluded_path(entry[3:]):
+            return True
+    return False
+
+
 def _commits_present(wt_path: Path, shas: Sequence[str]) -> bool:
     """Is every target commit an ancestor of this worktree's HEAD? (L0007 §4.1 G11)
 

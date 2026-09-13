@@ -43,7 +43,18 @@ export interface AiInvokeRegisterError {
 export interface DocumentReviewLoopState {
   roundNo: number
   currentStage: 'review' | 'rework' | 'stopped'
-  stopReason: 'review_passed' | 'review_count_exhausted' | 'retry_exhausted' | 'total_timeout' | null
+  // Every value ai_invoke_document_review_loops.stop_reason's CHECK allows, in the order the
+  // migrations added them (091, 105, 106, 107). A value missing from this union reached the
+  // card as an unlabelled reason (0486 NR0028 F4).
+  stopReason:
+    | 'review_passed'
+    | 'review_count_exhausted'
+    | 'retry_exhausted'
+    | 'total_timeout'
+    | 'review_verdict_hold'
+    | 'restart_orphaned'
+    | 'review_stalled'
+    | null
   stopDetail: string | null
   history: Array<Record<string, unknown>>
 }
@@ -621,7 +632,19 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
   const pauseRefreshInFlight = new Set<string>()
   let lastPollAt = 0
   let bootstrapInFlight = false
+  let activeAllInFlight: Promise<any> | null = null
   const bootstrapPending = ref(true)
+
+  function fetchActiveAll(): Promise<any> {
+    if (activeAllInFlight) return activeAllInFlight
+    const request = getRequest<any>('/api/v1/ai-invoke/active-all')
+    activeAllInFlight = request
+    const clear = () => {
+      if (activeAllInFlight === request) activeAllInFlight = null
+    }
+    void request.then(clear, clear)
+    return request
+  }
   let persistDirty = false
 
   // 0401 NR0003 SS3 cause 3 / T0004 task 5: the server's lease can outlive this process's
@@ -766,7 +789,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     if (pauseRefreshInFlight.has(groupId)) return
     pauseRefreshInFlight.add(groupId)
     try {
-      const response = await getRequest<any>('/api/v1/ai-invoke/active-all')
+      const response = await fetchActiveAll()
       const paused = Array.isArray(response.data?.paused) ? response.data.paused : []
       const row = paused.find((item: any) => String(item?.group_id ?? '') === groupId)
       const existing = runsByGroup[groupId]
@@ -1003,7 +1026,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
         .map(([groupId]) => groupId),
     )
     try {
-      const response = await getRequest<any>('/api/v1/ai-invoke/active-all')
+      const response = await fetchActiveAll()
       const payload = response.data ?? {}
       const runs: Record<string, any>[] = Array.isArray(payload.runs) ? payload.runs : []
       const paused: Record<string, any>[] = Array.isArray(payload.paused) ? payload.paused : []
@@ -1409,6 +1432,11 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     }
   }
 
+  // 0552 T0019 C1: document mutations invalidate run state, not account configuration.
+  function onOpenDocsRefresh(): void {
+    void refreshAllRunning()
+  }
+
   function onRecoverySignal(): void {
     void refreshAllRunning()
     // Coming back online or back to the tab is also when a setting saved elsewhere (a tab
@@ -1435,7 +1463,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     window.addEventListener('fg:ai_invoke', onInvokeEvent)
     window.addEventListener('fg:q_registered', onQRegistered)
     window.addEventListener('fg:q_answered', onQAnswered)
-    window.addEventListener('fg:open_docs_refresh', onRecoverySignal)
+    window.addEventListener('fg:open_docs_refresh', onOpenDocsRefresh)
     window.addEventListener('online', onRecoverySignal)
     window.addEventListener('storage', onRetentionStorage)
     document.addEventListener('visibilitychange', onVisibilityChange)
@@ -1447,7 +1475,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       window.removeEventListener('fg:ai_invoke', onInvokeEvent)
       window.removeEventListener('fg:q_registered', onQRegistered)
       window.removeEventListener('fg:q_answered', onQAnswered)
-      window.removeEventListener('fg:open_docs_refresh', onRecoverySignal)
+      window.removeEventListener('fg:open_docs_refresh', onOpenDocsRefresh)
       window.removeEventListener('online', onRecoverySignal)
       window.removeEventListener('storage', onRetentionStorage)
       document.removeEventListener('visibilitychange', onVisibilityChange)

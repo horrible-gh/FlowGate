@@ -99,10 +99,12 @@ def dashboard_summary(
         return _fail(400, str(exc))
 
     try:
+        last_seen_at = db_notification_seen.get_last_seen(user_id, project_id)
         result = get_dashboard_summary(
             project_id,
             parsed_activity_limit,
             parsed_workflow_limit,
+            last_seen_at,
         )
     except DashboardDataError as exc:
         _log.error("Dashboard data integrity failure project=%s error=%s", project_id, exc)

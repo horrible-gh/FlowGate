@@ -72,6 +72,27 @@ def get_container_by_doc(doc_id: str) -> Optional[dict]:
     return store._fetch_one(store._sql("questions.get_container_by_doc"), [doc_id])
 
 
+def list_open_doc_ids_by_groups(group_ids: list[str]) -> dict[str, list[str]]:
+    """Return unanswered container document ids for every requested group in one read."""
+    unique_group_ids = list(dict.fromkeys(group_ids))
+    result = {group_id: [] for group_id in unique_group_ids}
+    if not unique_group_ids:
+        return result
+    placeholders = ", ".join("?" for _ in unique_group_ids)
+    sql = get_store()._sql("questions.list_open_doc_ids_by_groups").format(
+        group_ids=placeholders,
+    )
+    rows = get_store()._fetch_all(sql, unique_group_ids)
+    for row in rows:
+        result[row["group_id"]].append(row["doc_id"])
+    return result
+
+
+def list_open_doc_ids_by_group(group_id: str) -> list[str]:
+    """Single-group compatibility adapter over the batch unanswered-Q read."""
+    return list_open_doc_ids_by_groups([group_id]).get(group_id, [])
+
+
 def insert_container_for_doc(
     doc_id: str,
     project_id: Optional[str],

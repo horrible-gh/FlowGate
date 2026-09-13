@@ -79,6 +79,47 @@ describe('DocHeader fg:doc_review_status_changed', () => {
     wrapper.unmount()
   })
 
+  it('applies rejection_history from the payload without a refetch (flowgate.default.0561 T0004 AC-2/AC-4)', async () => {
+    // Regression: the auto-reject and rejected->revised broadcasts used to omit
+    // rejection_history entirely, so this handler's existing `payload.rejection_history
+    // !== undefined` branch never ran for either transition and the sidebar's AI
+    // 검수·반려 feed stayed on stale data until a manual refresh/reopen. This pins that,
+    // once the server DOES send the key (both fixed broadcast sites now do), the open
+    // tab's rejectionHistory updates immediately from the event alone.
+    const wrapper = mountHeader()
+    await flushPromises()
+    expect((wrapper.vm as any).rejectionHistory).toEqual([])
+
+    const rejectedHistory = [{
+      rejection_id: 'rej_1', reason: 'issues found', rejected_at: '2026-09-12T00:00:01+00:00',
+      rejected_by: 'u1', ai_response: null, responded_at: null,
+    }]
+    window.dispatchEvent(new CustomEvent('fg:doc_review_status_changed', {
+      detail: {
+        doc_id: 'test.none.0002.0001-R', next_status: 'rejected',
+        rejection_reason: 'issues found', rejection_history: rejectedHistory,
+      },
+    }))
+    await flushPromises()
+
+    expect((wrapper.vm as any).docReviewStatus).toBe('rejected')
+    expect((wrapper.vm as any).rejectionHistory).toEqual(rejectedHistory)
+
+    const respondedHistory = [{ ...rejectedHistory[0], ai_response: 'addressed it', responded_at: '2026-09-12T00:05:00+00:00' }]
+    window.dispatchEvent(new CustomEvent('fg:doc_review_status_changed', {
+      detail: {
+        doc_id: 'test.none.0002.0001-R', next_status: 'revised',
+        rejection_reason: null, rejection_history: respondedHistory,
+      },
+    }))
+    await flushPromises()
+
+    expect((wrapper.vm as any).docReviewStatus).toBe('revised')
+    expect((wrapper.vm as any).rejectionHistory).toEqual(respondedHistory)
+
+    wrapper.unmount()
+  })
+
   it('ignores events for a different document', async () => {
     const wrapper = mountHeader()
     await flushPromises()

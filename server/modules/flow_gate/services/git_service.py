@@ -512,7 +512,9 @@ SRC_ROOT_ERROR = "resolution_error"
 
 
 def effective_src_root_ex(
-    project_id: Optional[str], group_id: Optional[str]
+    project_id: Optional[str],
+    group_id: Optional[str],
+    state: Optional[dict] = None,
 ) -> tuple[Optional[Path], str]:
     """``effective_src_root`` plus the reason, and a log line on every fallback.
 
@@ -524,6 +526,16 @@ def effective_src_root_ex(
     is not there — notably ``worktree_unregistered``, which is what a post-merge
     re-run hits (CLEANUP_STATUSES clears the flag) — so they log at warning.
     Never raises.
+
+    0552 T0013 (0005-NR Set D): ``state`` lets a caller that ALREADY holds this
+    group's ``group_git_state`` row hand it in instead of paying another
+    ``SELECT * FROM group_git_state WHERE group_id = ?``. It is a pure read here —
+    only ``worktree_registered`` / ``branch`` decide anything, and ``status`` is
+    used solely in a fallback log line — so a supplied row cannot change the
+    verdict, only who paid for the read. ``None`` means "not supplied" and keeps
+    the original lookup verbatim, so every existing two-argument caller (and every
+    test that patches this function with a two-parameter stub) is untouched.
+    Reuse is the caller's own request/response assembly; nothing is cached here.
     """
     if not project_id or not group_id:
         return None, SRC_ROOT_NO_GROUP
@@ -536,7 +548,8 @@ def effective_src_root_ex(
                 SRC_ROOT_INTEGRATION_OFF,
             )
             return None, SRC_ROOT_INTEGRATION_OFF
-        state = db_git.get_state(group_id)
+        if state is None:
+            state = db_git.get_state(group_id)
         if state is None:
             _log.warning(
                 "effective_src_root: base tree for %s (%s) — git integration is on "
@@ -601,7 +614,11 @@ def effective_src_root_ex(
         return None, SRC_ROOT_ERROR
 
 
-def group_worktree_writable(project_id: Optional[str], group_id: Optional[str]) -> bool:
+def group_worktree_writable(
+    project_id: Optional[str],
+    group_id: Optional[str],
+    state: Optional[dict] = None,
+) -> bool:
     """True when *group_id* has a live worktree that may be written to.
 
     0327 T0004 (B0001 / NR0003 recommendation 1): the explorer used to treat "a group is
@@ -610,8 +627,12 @@ def group_worktree_writable(project_id: Optional[str], group_id: Optional[str]) 
     apart. This is that answer, in the one shape the client needs, so the UI stops
     guessing. Groups with no worktree (finalized, disposed, never provisioned)
     remain fully read-only, exactly as before (recommendation 5).
+
+    0552 T0013: ``state`` is passed straight through to ``effective_src_root_ex``
+    — see its docstring for what an already-read ledger row does and does not
+    change. Positional so a stub of the shape ``lambda *args: True`` keeps working.
     """
-    return effective_src_root_ex(project_id, group_id)[0] is not None
+    return effective_src_root_ex(project_id, group_id, state)[0] is not None
 
 
 def effective_src_root(project_id: Optional[str], group_id: Optional[str]) -> Optional[Path]:
@@ -630,6 +651,7 @@ def effective_src_root(project_id: Optional[str], group_id: Optional[str]) -> Op
 
 from .git.finalize import (
     ACTION_VALUES,
+    DISCARDED_STATUS,
     FINALIZE_AUX_CHOICES,
     FINALIZE_MAIN_CHOICES,
     _auto_discard_group,
@@ -639,6 +661,9 @@ from .git.finalize import (
     _group_ac_doc_id,
     _group_ac_doc_ids,
     _group_has_changes,
+    _resolve_pending_noop,
+    group_finalize_is_noop,
+    NOOP_CONVERGEABLE_STATUSES,
     _group_root_wf_done,
     _groups_root_wf_done,
     _tracked_merge_blockers,
@@ -1240,6 +1265,7 @@ from .git.refs import (
     _untracked_files,
     _validate_blob_path,
     _worktree_untracked_paths,
+    probe_worktree_pending_changes,
     _worktree_untracked_summary_for_path,
     worktree_untracked_summary,
 )
@@ -3458,10 +3484,15 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
         db_git.release_lock(project_id, holder)
 
 
-def reconcile_due_merge_review_sessions(trigger: str) -> None:
-    """Scan every open general-merge session for a due reconciliation, called from
-    the existing sweep daemon and from startup recovery (§2.8.1 lifecycle)."""
-    for session in db_git.list_open_sessions():
+def reconcile_due_merge_review_sessions(
+    trigger: str, sessions: Optional[list[dict]] = None
+) -> None:
+    """Scan open general-merge sessions for a due reconciliation.
+
+    A caller may pass an already-read open-session list; without one this reads
+    its own list (the periodic sweep-daemon path).
+    """
+    for session in (sessions if sessions is not None else db_git.list_open_sessions()):
         if db_git.session_kind(session) != db_git.SESSION_KIND_MERGE:
             continue
         context = db_git.session_context(session)
@@ -3508,6 +3539,7 @@ from .git.cleanup import (
     _sweep_tr_session,
     _sweep_group_update_session,
     merge_session_sweep,
+    _open_sessions_after,
     _start_sweep_daemon,
     startup_recovery,
 )

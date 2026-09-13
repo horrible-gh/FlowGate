@@ -297,11 +297,21 @@ function historyTime(at: unknown): string {
   return `${String(stamp.getHours()).padStart(2, '0')}:${String(stamp.getMinutes()).padStart(2, '0')}`
 }
 
+// Every durable stop_reason the loop table can hold gets its own badge. The old shape ended
+// in an unconditional `total_timeout` fallback, so all three reasons 0486 introduced
+// (review_verdict_hold, restart_orphaned, review_stalled) were drawn as "total time limit
+// exceeded" while stopDetail beside them said something else entirely (0486 NR0028 F4).
+// A reason this build does not know is now labelled as unknown rather than mislabelled, so
+// the next value added on the server can never be silently absorbed into an existing one.
 function reviewLoopStopLabel(reason: string | null): string {
   if (reason === 'review_passed') return t('main.ai_invoke_dialog.review_loop_stop_review_passed')
   if (reason === 'review_count_exhausted') return t('main.ai_invoke_dialog.review_loop_stop_review_count_exhausted')
   if (reason === 'retry_exhausted') return t('main.ai_invoke_dialog.review_loop_stop_retry_exhausted')
-  return t('main.ai_invoke_dialog.review_loop_stop_total_timeout')
+  if (reason === 'total_timeout') return t('main.ai_invoke_dialog.review_loop_stop_total_timeout')
+  if (reason === 'review_verdict_hold') return t('main.ai_invoke_dialog.review_loop_stop_review_verdict_hold')
+  if (reason === 'restart_orphaned') return t('main.ai_invoke_dialog.review_loop_stop_restart_orphaned')
+  if (reason === 'review_stalled') return t('main.ai_invoke_dialog.review_loop_stop_review_stalled')
+  return t('main.ai_invoke_dialog.review_loop_stop_unknown')
 }
 
 function fallbackReason(reason: string): string {

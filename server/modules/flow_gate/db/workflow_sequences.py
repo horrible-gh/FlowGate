@@ -195,6 +195,37 @@ def find_duplicate_result_doc_slots() -> list[dict]:
     return store._fetch_all(sql, [])
 
 
+def get_sequence_snapshots_for_member_docs(
+    doc_ids: list[str],
+) -> dict[str, tuple[Optional[dict], list[dict]]]:
+    """Resolve sequence headers and items for member documents in one DB read."""
+    unique_doc_ids = list(dict.fromkeys(doc_ids))
+    result = {doc_id: (None, []) for doc_id in unique_doc_ids}
+    if not unique_doc_ids:
+        return result
+    placeholders = ", ".join("?" for _ in unique_doc_ids)
+    store = get_store()
+    sql = _sql(store, "workflow_sequences.get_sequence_snapshots_for_member_docs").format(
+        doc_ids=placeholders,
+    )
+    rows = store._fetch_all(sql, unique_doc_ids + unique_doc_ids)
+    for row in rows:
+        doc_id = row["requested_doc_id"]
+        sequence, items = result[doc_id]
+        if sequence is None:
+            sequence = {
+                "id": row["sequence_id"],
+                "doc_id": row["sequence_doc_id"],
+            }
+        if row.get("id") is not None:
+            item = dict(row)
+            item.pop("requested_doc_id", None)
+            item.pop("sequence_doc_id", None)
+            items.append(item)
+        result[doc_id] = (sequence, items)
+    return result
+
+
 def get_sequence_for_member_doc(doc_id: str) -> Optional[dict]:
     """Resolve the workflow sequence a document belongs to (root *or* produced child).
 

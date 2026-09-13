@@ -177,13 +177,11 @@ def test_feed_three_sections_page_independently(empty_store, monkeypatch):
         dashboard_service.db_questions,
         "list_open_items",
         lambda _project_id: [
-            {"doc_id": "flowgate.default.0471.0002-T", "title": "q", "type_code": "T"},
-            {"doc_id": "flowgate.default.0471.0003-T", "title": "q", "type_code": "T"},
-            {"doc_id": "flowgate.default.0471.0004-T", "title": "q", "type_code": "T"},
+            {"doc_id": "flowgate.default.0471.0002-T", "title": "q", "type_code": "T", "document_title": "q"},
+            {"doc_id": "flowgate.default.0471.0003-T", "title": "q", "type_code": "T", "document_title": "q"},
+            {"doc_id": "flowgate.default.0471.0004-T", "title": "q", "type_code": "T", "document_title": "q"},
         ],
     )
-    monkeypatch.setattr(dashboard_service.db_documents, "get_by_id", lambda _doc_id: {"title": "q"})
-
     result = dashboard_service.get_notification_feed("flowgate", None, 2)
 
     assert result["recent_activities"]["limit"] == 2

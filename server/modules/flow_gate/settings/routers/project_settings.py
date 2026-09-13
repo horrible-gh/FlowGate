@@ -65,8 +65,19 @@ def _status_to_is_active(status: str) -> int | None:
 
 
 def _attach_project_modules(projects: list[dict]) -> list[dict]:
+    """Attach each project's module list with one batch read (0559 B0001).
+
+    The per-project list_modules() loop here was what made GET /projects cost
+    1 + 2N queries. list_modules_bulk() answers the whole page in one chunked
+    query pair, so both callers — the N-project list endpoint and
+    _project_state_response()'s single-project list — read the same rows they
+    read before, at a query count that no longer follows the project count.
+    """
+    modules_by_project = projects_db.list_modules_bulk(
+        [p["project_id"] for p in projects]
+    )
     for p in projects:
-        modules = projects_db.list_modules(p["project_id"])
+        modules = modules_by_project.get(p["project_id"], [])
         p["modules"] = [
             {"name": m["name"], "title": m.get("title") or m["name"]}
             for m in modules

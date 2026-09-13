@@ -25,6 +25,8 @@ def insert_review(
     provider_source: Optional[str] = None,
     attempt_no: Optional[int] = None,
     fallback_used: Optional[bool] = None,
+    review_intent: Optional[str] = None,
+    superseded_review_id: Optional[int] = None,
 ) -> dict:
     """Insert one review result and return the inserted row.
 
@@ -42,8 +44,8 @@ def insert_review(
             "INSERT INTO document_reviews "
             "(doc_id, revision_no, reviewer_id, verdict, findings, comment, reviewed_at, created_at, updated_at, "
             "review_run_id, requested_provider_id, actual_provider_id, actual_provider_name, "
-            "provider_source, attempt_no, fallback_used) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "provider_source, attempt_no, fallback_used, review_intent, superseded_review_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 doc_id, revision_no, reviewer_id, verdict, findings_json, comment, reviewed_at, now, now,
                 review_run_id, requested_provider_id, actual_provider_id, actual_provider_name,
@@ -55,7 +57,7 @@ def insert_review(
                 # sqlite3/psycopg2/pymysql each bind a native Python bool correctly for
                 # their own column type (SQLite INTEGER CHECK(0,1), PostgreSQL/MySQL
                 # BOOLEAN), so passing it straight through is the dialect-portable form.
-                fallback_used,
+                fallback_used, review_intent, superseded_review_id,
             ],
         )
         # Identify the row THIS statement inserted instead of re-reading "the newest
@@ -111,6 +113,19 @@ def list_by_doc(doc_id: str) -> list[dict]:
     return get_store()._fetch_all(
         "SELECT * FROM document_reviews WHERE doc_id = ? ORDER BY created_at DESC, id DESC",
         [doc_id],
+    )
+
+
+def get_latest_for_revision(doc_id: str, revision_no: int) -> Optional[dict]:
+    """Return the newest completed review for exactly one document revision.
+
+    Review rows are immutable history.  Admission callers must use this revision-bound
+    lookup instead of ``get_latest_by_doc`` so an older revision never blocks a new one.
+    """
+    return get_store()._fetch_one(
+        "SELECT * FROM document_reviews WHERE doc_id = ? AND revision_no = ? "
+        "ORDER BY created_at DESC, id DESC LIMIT 1",
+        [doc_id, revision_no],
     )
 
 

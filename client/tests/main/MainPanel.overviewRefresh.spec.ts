@@ -93,7 +93,27 @@ describe('MainPanel overview refresh button', () => {
     expect(btn.attributes('disabled')).toBeDefined()
   })
 
-  it('refetches open queries when the overview refresh token changes', async () => {
+  it('requests the dashboard summary exactly once on initial project load', async () => {
+    vi.useFakeTimers()
+    try {
+      const projectStore = useProjectStore()
+      projectStore.currentProjectId = 'proj-1'
+
+      mountPanel()
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(300)
+      await flushPromises()
+
+      const summaryRequests = getRequest.mock.calls.filter(
+        ([url]) => url === '/api/v1/projects/proj-1/dashboard/summary',
+      )
+      expect(summaryRequests).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('hydrates open queries from summary without a separate /q request', async () => {
     const projectStore = useProjectStore()
     projectStore.currentProjectId = 'proj-1'
 
@@ -104,6 +124,10 @@ describe('MainPanel overview refresh button', () => {
     await wrapper.setProps({ overviewRefreshToken: 1 })
     await flushPromises()
 
-    expect(getRequest).toHaveBeenCalledWith('/api/v1/q', { project_id: 'proj-1' })
+    expect(getRequest).toHaveBeenCalledWith(
+      '/api/v1/projects/proj-1/dashboard/summary',
+      { activity_limit: 50, workflow_limit: 50 },
+    )
+    expect(getRequest.mock.calls.some(([url]) => url === '/api/v1/q')).toBe(false)
   })
 })

@@ -691,16 +691,11 @@ def test_human_create_read_save_roundtrip(seed, storage_root):
     body = view["body"]
     body["steps"][0]["provider_id"] = "aip_opus"
     body["steps"][0]["provider_display_name"] = "Claude Opus"
-    # 0492 T0014 added a server-authoritative capability confirmation gate for T/TR
-    # steps with no capable provider assigned; T#1/TR#1 stay unassigned here, so this
-    # roundtrip must acknowledge them explicitly to reach the revision-conflict checks.
+    # flowgate.default.0533 T0004: T#1/TR#1 stay unassigned here. provider_id=null is a
+    # normal, unassigned WP state and must not trigger the capability confirmation gate
+    # (that gate is only for a provider that is actually specified but incapable), so
+    # this save succeeds directly without any capability_warning_acks.
     save_payload = {"base_revision_no": 0, "body": body}
-    unacked = client.put(f"/api/v1/documents/{doc_id}/work-plan", json=save_payload)
-    assert unacked.status_code == 422, unacked.text
-    assert unacked.json()["code"] == "provider_capability_confirmation_required"
-    capability_acks = [finding["step_key"] for finding in unacked.json()["findings"]]
-    assert set(capability_acks) == {"T#1", "TR#1"}
-    save_payload["capability_warning_acks"] = capability_acks
     saved = client.put(f"/api/v1/documents/{doc_id}/work-plan", json=save_payload)
     assert saved.status_code == 200, saved.text
     assert saved.json()["revision_no"] == 1
@@ -713,8 +708,7 @@ def test_human_create_read_save_roundtrip(seed, storage_root):
     # §4.8: a stale base revision is refused, and nothing is overwritten.
     body["steps"][0]["note"] = "덮어쓰기 시도"
     conflict = client.put(f"/api/v1/documents/{doc_id}/work-plan",
-                          json={"base_revision_no": 0, "body": body,
-                                "capability_warning_acks": capability_acks})
+                          json={"base_revision_no": 0, "body": body})
     assert conflict.status_code == 409
     assert conflict.json()["code"] == "wp_revision_conflict"
     assert conflict.json()["current_revision_no"] == 1
@@ -732,6 +726,66 @@ def test_human_create_read_save_roundtrip(seed, storage_root):
     assert rejected.json()["code"] == "wp_validation_failed"
     assert rejected.json()["errors"][0]["code"] == "provider_not_allowed"
     assert rejected.json()["errors"][0]["key"] == "TSR#1"
+
+
+def test_capability_warning_findings_distinguishes_unassigned_from_incapable():
+    """flowgate.default.0533 T0004: provider_id=None is a normal unassigned WP state and
+    must not be treated like a specified-but-incapable/unknown/disabled provider by the
+    0492 T0014 capability confirmation gate."""
+    from modules.flow_gate.services import work_plan_service as wp
+
+    effective = {
+        "providers": [
+            {"id": "aip_weak_a", "name": "Weak A", "exec_type": "", "enabled": True},
+            {"id": "aip_weak_b", "name": "Weak B", "exec_type": "", "enabled": True},
+            {"id": "aip_disabled", "name": "Disabled", "exec_type": "cli", "enabled": False},
+        ],
+    }
+
+    def _pair(t_provider, tr_provider):
+        t = wp.make_step("T", 1, "TR#1", "instruction")
+        t["provider_id"] = t_provider
+        tr = wp.make_step("TR", 1, "T#1", "result")
+        tr["provider_id"] = tr_provider
+        return [t, tr]
+
+    with patch(
+        "modules.flow_gate.settings.ai_settings_service.resolve_effective",
+        return_value=effective,
+    ):
+        # 1. Both unassigned: no findings at all, so no ack is required to save.
+        assert wp.capability_warning_findings({"steps": _pair(None, None)}, PROJECT) == []
+
+        # 2. Only T is assigned an incapable provider: only T warns, TR stays unassigned.
+        findings = wp.capability_warning_findings({"steps": _pair("aip_weak_a", None)}, PROJECT)
+        assert [f["step_key"] for f in findings] == ["T#1"]
+
+        # 3. T/TR share the same incapable provider: existing pair dedup keeps one
+        #    representative warning (through the T side), not two.
+        findings = wp.capability_warning_findings(
+            {"steps": _pair("aip_weak_a", "aip_weak_a")}, PROJECT
+        )
+        assert [f["step_key"] for f in findings] == ["T#1"]
+
+        # 4. T/TR assigned different incapable providers: each keeps its own warning.
+        findings = wp.capability_warning_findings(
+            {"steps": _pair("aip_weak_a", "aip_weak_b")}, PROJECT
+        )
+        assert {f["step_key"] for f in findings} == {"T#1", "TR#1"}
+
+        # 5. An actually-specified unknown/disabled provider id keeps the existing
+        #    fail-closed gate — this is not the same as "no provider chosen".
+        findings = wp.capability_warning_findings(
+            {"steps": _pair("aip_never_registered", "aip_disabled")}, PROJECT
+        )
+        assert {f["step_key"] for f in findings} == {"T#1", "TR#1"}
+
+        # 6. The capability gate only ever applies to T/TR; other counted types never
+        #    warn regardless of assignment.
+        d_step = wp.make_step("D", 1, None, "single")
+        p_step = wp.make_step("P", 1, None, "single")
+        p_step["provider_id"] = "aip_weak_a"
+        assert wp.capability_warning_findings({"steps": [d_step, p_step]}, PROJECT) == []
 
 
 def test_human_create_applies_quantities_defaults_and_type_providers(seed):

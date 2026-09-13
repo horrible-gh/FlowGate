@@ -241,6 +241,7 @@ import { copyToClipboard } from '../utils/clipboard'
 import type { Tab } from '../stores/tabs'
 import { useTabsStore } from '../stores/tabs'
 import { useExplorerStore } from '../stores/explorer'
+import { useDocumentContextStore } from '../stores/documentContext'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import type { AiReview } from '../types/aiReview'
 import type { TestRun } from '../types/testRun'
@@ -269,11 +270,13 @@ const { t } = useI18n()
 const { showToast } = useToast()
 const tabsStore = useTabsStore()
 const explorerStore = useExplorerStore()
+const documentContextStore = useDocumentContextStore()
 interface DocDetail {
   doc_id: string
   title: string
   status: string
   doc_review_status?: string | null
+  revision_no?: number | null
   is_final_approved?: boolean
   // TR0079.0003: true when this doc's group has been discarded (a file-less DC doc
   // exists). Drives the action-bar gate so a disposed group exposes no actions.
@@ -520,13 +523,9 @@ const docFullPath = computed(() => {
 })
 
 async function fetchOwner(ownerId: string) {
-  try {
-    const res = await getRequest<any>(`/api/v1/users/${encodeURIComponent(ownerId)}`)
-    const user = (res.data as any)?.data ?? res.data
-    ownerName.value = user?.username ?? user?.display_name ?? null
-  } catch {
-    ownerName.value = null
-  }
+  const name = await documentContextStore.resolveOwnerName(ownerId)
+  // A tab switch may complete while the shared request is in flight.
+  if (doc.value?.owner_id === ownerId) ownerName.value = name
 }
 
 function shortGroupId(groupId: string | null | undefined): string {
@@ -535,22 +534,19 @@ function shortGroupId(groupId: string | null | undefined): string {
   return segs[segs.length - 1] || groupId
 }
 
-async function fetchGroup(projectId: string, groupId: string) {
-  try {
-    const res = await getRequest<any>('/api/v1/groups', { project_id: projectId })
-    const groups: any[] = (res.data as any)?.groups ?? []
-    const found = groups.find((g: any) => g.group_id === groupId)
-    if (found) {
-      const groupNum = shortGroupId(found.group_id)
-      groupLabel.value = groupNum && found.title
-        ? `(#${groupNum}) ${found.title}`
-        : found.title ?? groupNum ?? null
-      groupTitle.value = found.title ?? ''
-    }
-  } catch {
+async function fetchGroup(projectId: string, groupId: string, force = false) {
+  const found = await documentContextStore.resolveGroup(projectId, groupId, force)
+  if (doc.value?.project_id !== projectId || doc.value?.group_id !== groupId) return
+  if (!found) {
     groupLabel.value = null
     groupTitle.value = ''
+    return
   }
+  const groupNum = shortGroupId(found.group_id)
+  groupLabel.value = groupNum && found.title
+    ? `(#${groupNum}) ${found.title}`
+    : found.title ?? groupNum ?? null
+  groupTitle.value = found.title ?? ''
 }
 
 // A doc counts as "workflow-decided" by the SAME two-signal test the action-bar
@@ -567,6 +563,8 @@ function _isDecided(d: any): boolean {
 // may commit state; confirmed local/SSE transitions also advance the generation so a GET
 // that started before the transition cannot overwrite the newer state when it arrives.
 let docFetchGeneration = 0
+const docFetchRequests = new Map<string, Promise<boolean>>()
+const trailingDocRefreshes = new Set<string>()
 
 function invalidatePendingDocFetches(): void {
   docFetchGeneration += 1
@@ -592,7 +590,28 @@ async function fetchWorkflowOrphan(id: string, generation: number): Promise<void
   emit('doc-updated', { docId: id })
 }
 
-async function fetchDoc(id: string, opts?: { silent?: boolean }): Promise<boolean> {
+function fetchDoc(
+  id: string,
+  opts?: { silent?: boolean; trailingIfJoined?: boolean },
+): Promise<boolean> {
+  const existing = docFetchRequests.get(id)
+  if (existing) {
+    if (!opts?.trailingIfJoined) return existing
+    trailingDocRefreshes.add(id)
+    return existing.then(async (result) => {
+      if (!trailingDocRefreshes.delete(id) || props.tab.id !== id) return result
+      return fetchDoc(id, { silent: true })
+    })
+  }
+  const request = fetchDocOnce(id, opts)
+  docFetchRequests.set(id, request)
+  void request.finally(() => {
+    if (docFetchRequests.get(id) === request) docFetchRequests.delete(id)
+  })
+  return request
+}
+
+async function fetchDocOnce(id: string, opts?: { silent?: boolean }): Promise<boolean> {
   const fetchGeneration = ++docFetchGeneration
   const silent = opts?.silent === true
   if (!silent) {
@@ -1075,7 +1094,7 @@ function onGroupRenamed() {
   void loadGroupContext()
   // Re-resolve the header's own group label (the "(#num) title" badge in the meta grid).
   if (doc.value?.project_id && doc.value?.group_id) {
-    fetchGroup(doc.value.project_id, doc.value.group_id)
+    fetchGroup(doc.value.project_id, doc.value.group_id, true)
   }
 }
 
@@ -1116,8 +1135,8 @@ const PULL_RETRY_DELAY_MS = 500
 
 // fetchDoc(silent) + one retry for transient transport/auth failures. Silent throughout
 // so a failed refresh never blanks an already-decided header.
-async function silentRefetchWithRetry(): Promise<boolean> {
-  if (await fetchDoc(props.tab.id, { silent: true })) return true
+async function silentRefetchWithRetry(trailingIfJoined = false): Promise<boolean> {
+  if (await fetchDoc(props.tab.id, { silent: true, trailingIfJoined })) return true
   await new Promise((resolve) => setTimeout(resolve, PULL_RETRY_DELAY_MS))
   return fetchDoc(props.tab.id, { silent: true })
 }
@@ -1194,7 +1213,7 @@ function _onOpenDocsRefresh(e: Event) {
   // tab to refresh regardless of which document they name.
   if (payload?.doc_id && payload.doc_id !== current.doc_id) return
   lastPullAt = Date.now()
-  void silentRefetchWithRetry()
+  void silentRefetchWithRetry(true)
 }
 
 function _onReviewStatusChanged(e: Event) {
@@ -1260,6 +1279,20 @@ const rejectionBannerText = computed(() => {
 })
 const aiReview = computed(() => doc.value?.ai_review ?? null)
 const aiReviewHistory = computed(() => doc.value?.ai_review_history ?? [])
+// flowgate.default.0544 TR0014 rev2 (rejection: a still-pending_review document that already
+// has a completed AI review for its current revision showed the AiInvokeDialog's plain
+// [검수 시작] button, not [재검수] — doc_review_status stays 'pending_review' until a HUMAN
+// decides, regardless of how many AI reviews already ran underneath it, so it can never signal
+// "a review is already recorded for this revision" the way admission.py's own
+// db_document_reviews.get_latest_for_revision(doc_ref, revision_no) check does. This mirrors
+// that check on the client: aiReview is the doc's LATEST review overall (server _load_ai_reviews
+// does not filter by revision), so it must be compared against THIS document's own revision_no,
+// not against doc_review_status.
+const hasCompletedReviewForRevision = computed(() => {
+  const rev = doc.value?.revision_no
+  const reviewedRev = aiReview.value?.revision_no
+  return rev != null && reviewedRev != null && reviewedRev === rev
+})
 // 0155: latest test run (with failing-case detail) for the design-B fail strip. null on
 // every non-failing doc, since the embed only binds to a doc that has a bound run.
 const testRun = computed(() => doc.value?.test_run ?? null)
@@ -1288,6 +1321,22 @@ const docClass = computed((): string => {
 })
 
 const parentRDocId = computed(() => doc.value?.parent_r_doc_id ?? null)
+// 0552 T0006 §1 — DocHeader is the component that reads `documents/detail`, so it is also
+// the owner of the id that read resolves: the workflow root. A root document (R/B) is its
+// own root; a member document's root is `parent_r_doc_id`, which does not exist until the
+// detail response has landed. `null` therefore means "not known yet" — and MainPanel must
+// not guess a root while it is null, because a guessed (child) id makes the
+// return-point/sequence round trip answer about a document that has no sequence
+// (0552.0005-NR §2.2-4). An orphan member with no R/B root in its group stays null: there
+// is no workflow to read.
+const WORKFLOW_ROOT_TYPE_CODES = ['R', 'B']
+const workflowRootDocId = computed<string | null>(() => {
+  const d = doc.value
+  if (!d) return null
+  const typeCode = d.type_code ?? props.tab.typeCode ?? null
+  if (typeCode && WORKFLOW_ROOT_TYPE_CODES.includes(typeCode)) return d.doc_id ?? props.tab.id
+  return d.parent_r_doc_id ?? null
+})
 const workflowRootType = computed(() => doc.value?.workflow_root_type ?? null)
 const docTypeCode = computed(() => doc.value?.type_code ?? null)
 const workflowHeadType = computed(() => doc.value?.workflow_head_type ?? null)
@@ -1332,6 +1381,7 @@ defineExpose({
   rejectionHistory,
   aiReview,
   aiReviewHistory,
+  hasCompletedReviewForRevision,
   testRun,
   groupTestRunActive,
   trScope,
@@ -1351,6 +1401,7 @@ defineExpose({
   openWorkflowDecisionModal,
   mentionText,
   parentRDocId,
+  workflowRootDocId,
   workflowRootType,
   docTypeCode,
   workflowHeadType,

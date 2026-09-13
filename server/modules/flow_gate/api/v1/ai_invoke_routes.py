@@ -84,6 +84,9 @@ class AiInvokeStartRequest(BaseModel):
     group: Optional[str] = None
     doc_ref: Optional[str] = None
     action_scope: str = "new"
+    # Top-level review admission intent. Internal REVIEW<->REWORK loop hops do not use
+    # this route contract and therefore never pass this gate.
+    review_intent: str = "normal"
     mode: str = "single"
     continuation_target_seq: Optional[int] = None
     continuation_review_mode: bool = False
@@ -308,8 +311,13 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
     errors: list[dict] = []
     loop = body.document_review_loop
     if loop is not None:
-        if body.action_scope != "review":
-            errors.append({"loc": "document_review_loop", "msg": "requires action_scope=review"})
+        # flowgate.default.0553 T0004 §3: 'rework' is the rejected-state entry's scope (both
+        # entry points open with action_scope='rework' — see AiInvokeDialog.vue's
+        # reviewLoopAvailable comment). compute_review_baseline() (admission.py) still decides
+        # the first hop from the document's own status, unchanged — this only widens WHICH
+        # entry scopes may request the loop at all.
+        if body.action_scope not in ("review", "rework"):
+            errors.append({"loc": "document_review_loop", "msg": "requires action_scope=review or rework"})
         if body.mode != "single":
             errors.append({"loc": "document_review_loop", "msg": "requires mode=single"})
         if not body.doc_ref:
@@ -340,6 +348,10 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         errors.append({"loc": "mode", "msg": "must be single or continuous"})
     if body.action_scope not in _ALLOWED_SCOPES:
         errors.append({"loc": "action_scope", "msg": f"must be one of {', '.join(_ALLOWED_SCOPES)}"})
+    if body.review_intent not in ("normal", "rerun"):
+        errors.append({"loc": "review_intent", "msg": "must be normal or rerun"})
+    if body.action_scope != "review" and body.review_intent != "normal":
+        errors.append({"loc": "review_intent", "msg": "rerun is only available for review"})
     # 0405 P0004: "mode is always single; this dialog never starts a continuous work chain."
     if body.action_scope == "work_plan_proposal" and body.mode != "single":
         errors.append({"loc": "mode", "msg": "work_plan_proposal must be single"})
@@ -640,7 +652,14 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         return _standard_mention(raw_token, scratch_dir)
 
     issue_builder = None
-    if body.action_scope == "review":
+    # flowgate.default.0553 T0004 §3/§4: the rejected-state rework entry may now also carry
+    # document_review_loop. It must reuse this SAME stage-aware issuer, not a second copy —
+    # `loop_stage` (set below by admission.py from compute_review_baseline()) is what actually
+    # decides review-scoped vs rework-scoped issuance, so the loop's first hop comes out
+    # identical whether the dialog was opened on 'review' or on 'rework'. An ordinary
+    # one-shot rework (no loop) must NOT take this path — it stays on _build_mention's
+    # 'rework' branch below, unchanged.
+    if body.action_scope == "review" or (body.action_scope == "rework" and loop is not None):
         # 0393 B0001 / NR0003 §4-2: the keyword MUST be declared here. _call_issue_builder
         # inspects this signature and only hands the run id to a builder that names it, so a
         # bare `def _issue_review():` minted a review token with ai_run_id NULL — and the
@@ -895,6 +914,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             continuation_review_count_overrides=continuation_review_count_overrides,
             continuation_reviewer_overrides=continuation_reviewer_overrides,
             document_review_loop=(body.document_review_loop.dict() if body.document_review_loop else None),
+            review_intent=(body.review_intent if body.action_scope == "review" else None),
             capability_warning_ack=body.capability_warning_ack,
         )
     except HTTPException as exc:

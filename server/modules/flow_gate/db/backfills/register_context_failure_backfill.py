@@ -48,6 +48,12 @@ _SELECT_RUNS = (
     "WHERE register_errors IS NOT NULL AND register_errors <> '' AND register_errors <> '[]'"
 )
 _SELECT_EXISTING = "SELECT correlation_id, boundary FROM register_context_failures"
+_SELECT_EXISTING_FOR_IDS = (
+    "SELECT correlation_id, boundary FROM register_context_failures "
+    "WHERE correlation_id IN ({placeholders})"
+)
+_EXISTING_CHUNK_SIZE = 500
+_EXISTING_FULL_SCAN_THRESHOLD = 5000
 
 _LIVE_BOUNDARIES = ("register_dispatch", "inbox")
 
@@ -120,6 +126,10 @@ def plan_rows(run_row: dict, existing: set[tuple[str, str]]) -> list[dict]:
         if element.get("reason") == "truncated" and "dropped" in element:
             continue
 
+        telemetry = element.get("telemetry")
+        has_live_telemetry = isinstance(telemetry, dict)
+        telemetry = telemetry if has_live_telemetry else {}
+
         axis = element.get("axis") if element.get("axis") in AXES else None
         axes = element.get("axes")
         axes = list(axes) if isinstance(axes, list) and axes and all(a in AXES for a in axes) else None
@@ -127,47 +137,49 @@ def plan_rows(run_row: dict, existing: set[tuple[str, str]]) -> list[dict]:
             axis, axes = None, None
 
         boundary = element.get("boundary")
-        if axis is None or boundary not in _LIVE_BOUNDARIES:
-            # No axis, or no boundary we can trust: the honest label, not a fabricated one.
+        if not has_live_telemetry or axis is None or boundary not in _LIVE_BOUNDARIES:
+            # Only writer-shaped telemetry can support a classified live row. Older
+            # top-level-only elements remain honest legacy evidence.
             boundary, axis, axes = BOUNDARY_LEGACY, None, None
 
-        correlation_id = _text(element.get("correlation_id")) or legacy_correlation_id(
-            run_id, index, element
-        )
+        correlation_id = _text(element.get("correlation_id")) or _text(
+            telemetry.get("correlation_id")
+        ) or legacy_correlation_id(run_id, index, element)
         if (correlation_id, boundary) in existing:
             continue
         existing.add((correlation_id, boundary))
 
         rows.append({
-            "recorded_at": _text(element.get("recorded_at")) or recorded_at,
+            "recorded_at": _text(telemetry.get("recorded_at")) or
+                           _text(element.get("recorded_at")) or recorded_at,
             "run_id": run_id,
             "correlation_id": correlation_id,
             "boundary": boundary,
-            "action_scope_run": _text(element.get("action_scope_run")),
-            "action_scope_token": _text(element.get("action_scope_token")),
-            "action_scope_request": _text(element.get("action_scope_request")),
-            "project_run": project_run,
-            "project_token": _text(element.get("project_token")),
-            "group_run": group_run,
-            "group_token_db": _text(element.get("group_token_db")),
-            "group_token_resolved": _text(element.get("group_token_resolved")),
-            "doc_ref_run": doc_ref_run,
-            "doc_ref_token": _text(element.get("doc_ref_token")),
-            "prev_doc_id_request": _text(element.get("prev_doc_id_request")),
-            "target_doc_id_request": _text(element.get("target_doc_id_request")),
-            "ai_run_id": run_id,
+            "action_scope_run": _text(telemetry.get("action_scope_run")),
+            "action_scope_token": _text(telemetry.get("action_scope_token")),
+            "action_scope_request": _text(telemetry.get("action_scope_request")),
+            "project_run": _text(telemetry.get("project_run")) or project_run,
+            "project_token": _text(telemetry.get("project_token")),
+            "group_run": _text(telemetry.get("group_run")) or group_run,
+            "group_token_db": _text(telemetry.get("group_token_db")),
+            "group_token_resolved": _text(telemetry.get("group_token_resolved")),
+            "doc_ref_run": _text(telemetry.get("doc_ref_run")) or doc_ref_run,
+            "doc_ref_token": _text(telemetry.get("doc_ref_token")),
+            "prev_doc_id_request": _text(telemetry.get("prev_doc_id_request")),
+            "target_doc_id_request": _text(telemetry.get("target_doc_id_request")),
+            "ai_run_id": _text(telemetry.get("ai_run_id")),
             "axis_first_mismatch": axis,
             "axes_all_mismatches": axes,
-            "token_id_hash": _text(element.get("token_id_hash")),
-            "expected_fingerprint": _text(element.get("expected_fingerprint")),
-            "actual_fingerprint": _text(element.get("actual_fingerprint")),
-            "binding_relaxed": False,
-            "relaxed_axis": None,
+            "token_id_hash": _text(telemetry.get("token_id_hash")),
+            "expected_fingerprint": _text(telemetry.get("expected_fingerprint")),
+            "actual_fingerprint": _text(telemetry.get("actual_fingerprint")),
+            "binding_relaxed": bool(telemetry.get("binding_relaxed")),
+            "relaxed_axis": _text(telemetry.get("relaxed_axis")),
             "status": _int(element.get("status")),
             "code": _text(element.get("code")),
             "reason": _text(element.get("reason")),
             "turn": _int(element.get("turn")),
-            "notes": _legacy_notes(element),
+            "notes": _text(telemetry.get("notes")) if has_live_telemetry else _legacy_notes(element),
         })
     return rows
 
@@ -202,12 +214,31 @@ def run_register_context_failure_backfill(db_instance) -> int:
     run_rows = [dict(row) for row in (db_instance.fetch_all(q(_SELECT_RUNS), []) or [])]
     if not run_rows:
         return 0
+    # First build and de-duplicate candidates locally. plan_all's mutable set keeps
+    # the historical first-element-wins order within this pass.
+    candidates = plan_all(run_rows, set())
+    if not candidates:
+        return 0
+
+    correlation_ids = list(dict.fromkeys(str(values[2]) for values in candidates))
+    existing_rows = []
+    if len(correlation_ids) > _EXISTING_FULL_SCAN_THRESHOLD:
+        existing_rows = db_instance.fetch_all(q(_SELECT_EXISTING), []) or []
+    else:
+        for offset in range(0, len(correlation_ids), _EXISTING_CHUNK_SIZE):
+            chunk = correlation_ids[offset:offset + _EXISTING_CHUNK_SIZE]
+            sql = _SELECT_EXISTING_FOR_IDS.format(
+                placeholders=", ".join("?" for _ in chunk)
+            )
+            existing_rows.extend(db_instance.fetch_all(q(sql), chunk) or [])
     existing = {
         (str(dict(row)["correlation_id"]), str(dict(row)["boundary"]))
-        for row in (db_instance.fetch_all(q(_SELECT_EXISTING), []) or [])
+        for row in existing_rows
     }
-
-    bound = plan_all(run_rows, existing)
+    bound = [
+        values for values in candidates
+        if (str(values[2]), str(values[3])) not in existing
+    ]
     if not bound:
         return 0
     statement = q(INSERT_SQL)

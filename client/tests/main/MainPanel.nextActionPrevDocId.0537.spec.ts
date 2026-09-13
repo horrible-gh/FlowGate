@@ -109,7 +109,7 @@ describe('0537 MainPanel direct actions use the canonical workflow root as prev_
   })
 
   for (const entry of cases) {
-    it(entry.label + ': next-approved sends the canonical root and refreshes the viewed tab', async () => {
+    it(entry.label + ': next-approved sends the canonical root and leaves the outgoing tab unread', async () => {
       const wrapper = mountPanel()
       const vm = wrapper.vm as any
       const fetchDoc = seedTab(vm, entry.tabId, entry.typeCode, entry.rootId, 'N')
@@ -124,7 +124,11 @@ describe('0537 MainPanel direct actions use the canonical workflow root as prev_
           type_code: 'N',
         }),
       )
-      expect(fetchDoc).toHaveBeenCalledWith(entry.tabId)
+      // 0552 T0006 §4 — the switch to the new document is decided right here
+      // (`openAfter: true` below), which unmounts this DocHeader. Re-reading the outgoing
+      // document only produces a bundle that lands after the unmount and is discarded
+      // (0552.0005-NR §3.4). This spec's subject, prev_doc_id, is asserted above.
+      expect(fetchDoc).not.toHaveBeenCalled()
       expect(wrapper.emitted('related-doc-created')?.at(-1)?.[0]).toEqual({
         docId: GROUP + '.0099-N',
         openAfter: true,
@@ -134,7 +138,7 @@ describe('0537 MainPanel direct actions use the canonical workflow root as prev_
       wrapper.unmount()
     })
 
-    it(entry.label + ': next-empty CH sends the canonical root and refreshes the viewed tab', async () => {
+    it(entry.label + ': next-empty CH sends the canonical root and leaves the outgoing tab unread', async () => {
       const wrapper = mountPanel()
       const vm = wrapper.vm as any
       const fetchDoc = seedTab(vm, entry.tabId, entry.typeCode, entry.rootId, 'CH')
@@ -149,7 +153,11 @@ describe('0537 MainPanel direct actions use the canonical workflow root as prev_
           type_code: 'CH',
         }),
       )
-      expect(fetchDoc).toHaveBeenCalledWith(entry.tabId)
+      // 0552 T0006 §4 — the switch to the new document is decided right here
+      // (`openAfter: true` below), which unmounts this DocHeader. Re-reading the outgoing
+      // document only produces a bundle that lands after the unmount and is discarded
+      // (0552.0005-NR §3.4). This spec's subject, prev_doc_id, is asserted above.
+      expect(fetchDoc).not.toHaveBeenCalled()
       expect(wrapper.emitted('related-doc-created')?.at(-1)?.[0]).toEqual({
         docId: GROUP + '.0099-CH',
         openAfter: true,

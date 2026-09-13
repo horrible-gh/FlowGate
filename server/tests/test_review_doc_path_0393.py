@@ -29,7 +29,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from inbox_client import post_inbox
+from inbox_client import post_inbox as _raw_post_inbox
 
 os.environ.setdefault("TESTING", "1")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
@@ -44,7 +44,10 @@ from modules.flow_gate.db import document_reviews as db_reviews  # noqa: E402
 from modules.flow_gate.services import help_catalog  # noqa: E402
 from modules.flow_gate.services import mention_service  # noqa: E402
 from modules.flow_gate.services.ai_invoke import runtime as ai_runtime  # noqa: E402
-from store_transaction_support import install_null_transaction_store  # noqa: E402
+from store_transaction_support import (  # noqa: E402
+    build_live_sqlite_db,
+    install_live_sqlite_store,
+)
 
 DOC_ID = "flowgate.v02.0003.0005-NR"
 GROUP_ID = "flowgate.v02.0003"
@@ -53,6 +56,17 @@ USER = "user-1"
 
 # The shape NR0003 recovered from the dead runs' scratch folders: a long Korean overall
 # comment plus per-finding notes. This is the payload that could not be typed inline.
+def post_inbox(body: dict):
+    """Submit legacy review cases through the mandatory dry-run preflight."""
+    if body.get("action") == "review" and not body.get("dry_run") and not body.get("receipt"):
+        candidate = dict(body, dry_run=True)
+        dry = _raw_post_inbox(candidate)
+        if dry.status_code != 200:
+            return dry
+        body = dict(body, receipt=dry.json()["receipt"])
+    return _raw_post_inbox(body)
+
+
 VERDICT_PAYLOAD = {
     "verdict": "issues",
     "findings": [
@@ -90,7 +104,36 @@ def review_env(monkeypatch, tmp_path):
     # 0535 T0007 §3: the review path claims its token and stores the review inside one
     # store.transaction(). Both writes are mocked here (this file is about doc_path),
     # but the transaction itself is real, so the store has to be able to open one.
-    install_null_transaction_store(monkeypatch)
+    db = build_live_sqlite_db(tmp_path / "flowgate.db")
+    now = "2026-09-12T00:00:00+09:00"
+    db.conn.execute(
+        "INSERT INTO projects (project_id, project_name, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?)",
+        (PROJECT, "FlowGate", now, now),
+    )
+    db.conn.execute(
+        "INSERT INTO groups (group_id, project_id, module, title, status, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (GROUP_ID, PROJECT, "v02", "Review group", "in_progress", now, now),
+    )
+    db.conn.execute(
+        "INSERT INTO documents (doc_id, project_id, group_id, type_code, seq, title, "
+        "revision_no, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (DOC_ID, PROJECT, GROUP_ID, "NR", 5, "GUI mode targets", 2, now, now),
+    )
+    db.conn.execute(
+        "INSERT INTO users (user_id, username, email, password, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (USER, "reviewer-0393", "reviewer-0393@example.com", "hashed", now, now),
+    )
+    db.conn.execute(
+        "INSERT INTO tokens (token_id, hash, pepper_id, project, doc_ref, action_scope, "
+        "issued_to, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("tok-review-0393", "hash-0393", "p1", PROJECT, DOC_ID, "review", USER,
+         now, "2036-09-12T00:00:00+09:00"),
+    )
+    db.conn.commit()
+    install_live_sqlite_store(monkeypatch, db)
     return {"scratch": scratch, "insert": insert, "outside": tmp_path / "outside"}
 
 

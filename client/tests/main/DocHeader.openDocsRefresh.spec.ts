@@ -109,6 +109,26 @@ describe('DocHeader fg:open_docs_refresh', () => {
     wrapper.unmount()
   })
 
+  it('bounds an in-flight refresh burst to one request plus one freshness tail', async () => {
+    const wrapper = mountHeader()
+    await flushPromises()
+    let resolveBurst!: (value: unknown) => void
+    getRequest.mockImplementationOnce(() => new Promise((resolve) => { resolveBurst = resolve }))
+
+    window.dispatchEvent(new CustomEvent('fg:open_docs_refresh', { detail: { project: 'test' } }))
+    window.dispatchEvent(new CustomEvent('fg:open_docs_refresh', { detail: { project: 'test' } }))
+    window.dispatchEvent(new CustomEvent('fg:open_docs_refresh', { detail: { project: 'test' } }))
+    expect(detailCallCount()).toBe(2)
+
+    headDocId = 'test.none.0002.0003-DS'
+    resolveBurst(detailResponse())
+    await flushPromises()
+
+    expect(detailCallCount()).toBe(3)
+    expect((wrapper.vm as any).headDocId).toBe('test.none.0002.0003-DS')
+    wrapper.unmount()
+  })
+
   it('ignores refresh events scoped to a different project', async () => {
     const wrapper = mountHeader()
     await flushPromises()

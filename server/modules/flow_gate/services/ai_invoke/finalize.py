@@ -384,8 +384,13 @@ def _finalize_run(run: dict) -> None:
     if run.get("document_review_loop") and not run.get("document_review_loop_checkpointed"):
         try:
             review._checkpoint_document_review_loop(run)
-        except Exception:
+        except Exception as exc:
             logger.exception("document review-loop checkpoint failed for %s", run["run_id"])
+            # 0486 T0029 item 3 (NR0028 F3): the group lease is released at the bottom of
+            # this function, and once it is gone no restart recovery can ever reach this
+            # loop again. A loop nobody could checkpoint is closed HERE, before that
+            # release, instead of sitting in `review` forever with no owner.
+            review.force_stop_loop_after_checkpoint_failure(run, exc)
     _svc()._persist_run_record(run)
     _notify_chain_failure_if_needed(run)
 
