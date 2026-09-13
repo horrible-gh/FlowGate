@@ -9,7 +9,6 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.db import projects as db_projects
 
 from .credentials import (
@@ -29,10 +28,11 @@ DEFAULT_FINALIZE_ACTION_VALUES = ("merge", "push", "wait")
 
 def _base_root_of(project_id: str) -> Optional[Path]:
     """The project's base-checkout path, or None when unresolvable (0205 §2.5)."""
-    cfg = db_git.get_config(project_id)
-    # lazy — import cycle safety; also keeps `src_root` reachable as git_service.src_root,
-    # which existing tests monkeypatch (e.g. test_base_file_explorer_branch_0319.py).
+    # lazy — import cycle safety; also keeps `src_root`/`db_git` reachable through the
+    # git_service facade, which existing tests monkeypatch (e.g.
+    # test_base_file_explorer_branch_0319.py) and which must reach this call.
     from modules.flow_gate.services import git_service as _gs
+    cfg = _gs.db_git.get_config(project_id)
     project_name = _gs._project_name(project_id)
     if not cfg or not project_name:
         return None
@@ -150,13 +150,15 @@ def _config_view(row: dict) -> dict:
 
 
 def get_config_view(project_id: str) -> dict:
-    row = db_git.get_config(project_id)
+    from modules.flow_gate.services import git_service as _gs
+    row = _gs.db_git.get_config(project_id)
     if row is None:
         return {"ok": True, "configured": False, "config": None}
     return {"ok": True, "configured": True, "config": _config_view(row)}
 
 
 def save_config(project_id: str, body: dict) -> dict:
+    from modules.flow_gate.services import git_service as _gs
     if db_projects.get_by_id(project_id) is None:
         raise GitServiceError(404, "not_found", f"project '{project_id}' not found")
     _validate_repo_url(body.get("repo_url") or "")
@@ -169,7 +171,7 @@ def save_config(project_id: str, body: dict) -> dict:
             422, "invalid_request", f"invalid default_finalize_action: {action!r}"
         )
 
-    existing = db_git.get_config(project_id)
+    existing = _gs.db_git.get_config(project_id)
     secret = body.get("secret", None)
     if secret is None:
         secret_enc = existing.get("secret_enc") if existing else None  # keep (P0005 §2-1)
@@ -193,14 +195,14 @@ def save_config(project_id: str, body: dict) -> dict:
     # older client that does not know the field cannot silently reset the stage.
     if "tr_scope_stage" in body:
         tr_scope_stage = (body.get("tr_scope_stage") or "observe").strip() or "observe"
-        if tr_scope_stage not in db_git.TR_SCOPE_STAGE_VALUES:
+        if tr_scope_stage not in _gs.db_git.TR_SCOPE_STAGE_VALUES:
             raise GitServiceError(
                 422, "invalid_request", f"invalid tr_scope_stage: {tr_scope_stage!r}"
             )
     else:
         tr_scope_stage = (existing.get("tr_scope_stage") if existing else None) or "observe"
 
-    row = db_git.upsert_config(project_id, {
+    row = _gs.db_git.upsert_config(project_id, {
         "repo_url": (body.get("repo_url") or "").strip(),
         "provider": provider,
         "username": (body.get("username") or None),
@@ -217,16 +219,18 @@ def save_config(project_id: str, body: dict) -> dict:
 
 
 def delete_config(project_id: str) -> dict:
-    deleted = db_git.delete_config(project_id)
+    from modules.flow_gate.services import git_service as _gs
+    deleted = _gs.db_git.delete_config(project_id)
     # Existing worktrees are intentionally left untouched (P0005 §2-3);
     # source resolution falls back immediately via the enabled/config check (E13).
     return {"ok": True, "deleted": deleted}
 
 
 def _require_enabled_config(project_id: str) -> dict:
+    from modules.flow_gate.services import git_service as _gs
     if db_projects.get_by_id(project_id) is None:
         raise GitServiceError(404, "not_found", f"project '{project_id}' not found")
-    cfg = db_git.get_config(project_id)
+    cfg = _gs.db_git.get_config(project_id)
     if cfg is None or not cfg.get("enabled"):
         raise GitServiceError(
             409, "invalid_state", f"git integration is not enabled for project '{project_id}'"
@@ -256,7 +260,8 @@ def base_branch_for(project_id: Optional[str]) -> Optional[str]:
     if not project_id:
         return None
     try:
-        cfg = db_git.get_config(project_id)
+        from modules.flow_gate.services import git_service as _gs
+        cfg = _gs.db_git.get_config(project_id)
     except Exception:
         _log.warning("base_branch_for lookup failed for %s", project_id, exc_info=True)
         return None

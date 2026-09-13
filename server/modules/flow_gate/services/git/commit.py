@@ -11,11 +11,10 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from modules.flow_gate.db import documents as db_documents
-from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.services import path_exclusion_rules
 
-from .command import GIT_LOCAL_TIMEOUT_SEC, _run_git, git_available
+from .command import GIT_LOCAL_TIMEOUT_SEC
 from .credentials import GitServiceError, _author_env_from_cfg
 from .refs import _commits_present, _worktree_untracked_paths
 
@@ -159,7 +158,7 @@ def _try_translate(project_id: str, title: str) -> Optional[str]:
     """
     from modules.flow_gate.services import git_service as _gs
     try:
-        cfg = db_git.get_config(project_id)
+        cfg = _gs.db_git.get_config(project_id)
         url = ((cfg or {}).get("translate_url") or "").strip()
         if not url:
             return None                       # unset = disabled (normal path, no log)
@@ -264,15 +263,15 @@ def _stage_worker_edits(wt_path: Path) -> tuple[list[str], bool]:
     kept, artifacts = path_exclusion_rules.partition_paths(
         _worktree_untracked_paths(wt_path)
     )
-    proc = _run_git(["add", "-u"], cwd=wt_path)
+    proc = _gs._run_git(["add", "-u"], cwd=wt_path)
     if proc.returncode != 0:
         raise GitServiceError(500, "git_error", _gs._last_line(proc.stderr))
     for index in range(0, len(kept), _ADD_PATHSPEC_CHUNK):
         chunk = kept[index:index + _ADD_PATHSPEC_CHUNK]
-        proc = _run_git(["add", "--", *chunk], cwd=wt_path)
+        proc = _gs._run_git(["add", "--", *chunk], cwd=wt_path)
         if proc.returncode != 0:
             raise GitServiceError(500, "git_error", _gs._last_line(proc.stderr))
-    staged = _run_git(["diff", "--cached", "--quiet"], cwd=wt_path)
+    staged = _gs._run_git(["diff", "--cached", "--quiet"], cwd=wt_path)
     return artifacts, staged.returncode != 0
 
 
@@ -317,7 +316,7 @@ def _absorb_worker_edits(
     if not has_staged:
         return artifacts
 
-    proc = _run_git(
+    proc = _gs._run_git(
         [*_gs._GIT_IDENT, "commit", "-m", subject], cwd=wt_path, author_env=author_env
     )
     if proc.returncode != 0:
@@ -378,12 +377,12 @@ def create_tr_commit(group_id: str, subject: str) -> dict:
     if not project_id:
         return skip("git_inactive")
     try:
-        cfg = db_git.get_config(project_id)
+        cfg = _gs.db_git.get_config(project_id)
         if cfg is None or not cfg.get("enabled"):
             return skip("git_inactive")
-        if not git_available():
+        if not _gs.git_available():
             return skip("git_inactive")
-        state = db_git.get_state(group_id)
+        state = _gs.db_git.get_state(group_id)
         if state is None:
             return skip("git_inactive")
         if not state.get("worktree_registered") or not state.get("branch"):
@@ -411,13 +410,13 @@ def create_tr_commit(group_id: str, subject: str) -> dict:
 
         # -z keeps paths raw: git quotes non-ASCII names in the plain form, and a
         # quoted path would never match the document's reported list.
-        listing = _run_git(
+        listing = _gs._run_git(
             ["diff", "--cached", "--name-only", "-z"], cwd=wt_path,
             timeout=_gs.GIT_READ_TIMEOUT_SEC,
         )
         committed_paths = sorted(p for p in (listing.stdout or "").split("\0") if p)
 
-        proc = _run_git(
+        proc = _gs._run_git(
             [*_gs._GIT_IDENT, "commit", "-m", subject], cwd=wt_path,
             author_env=_author_env_from_cfg(cfg),
         )
@@ -427,7 +426,7 @@ def create_tr_commit(group_id: str, subject: str) -> dict:
             )
             return skip("commit_failed", artifacts)
 
-        head = _run_git(["rev-parse", "HEAD"], cwd=wt_path, timeout=_gs.GIT_READ_TIMEOUT_SEC)
+        head = _gs._run_git(["rev-parse", "HEAD"], cwd=wt_path, timeout=_gs.GIT_READ_TIMEOUT_SEC)
         full = (head.stdout or "").strip() or None
         return {
             "committed": True,
@@ -443,7 +442,7 @@ def create_tr_commit(group_id: str, subject: str) -> dict:
         return skip("commit_failed")
     finally:
         try:
-            db_git.release_lock(project_id, holder)
+            _gs.db_git.release_lock(project_id, holder)
         except Exception:
             _log.warning("tr commit lock release failed for %s", project_id, exc_info=True)
 
@@ -527,7 +526,7 @@ def cancel_blocking_dirty(wt_path: Path) -> bool:
     path can never be "not committed but still blocking".
     """
     from modules.flow_gate.services import git_service as _gs
-    proc = _run_git(
+    proc = _gs._run_git(
         ["status", "--porcelain", "--untracked-files=no"],
         cwd=wt_path, timeout=_gs.GIT_READ_TIMEOUT_SEC,
     )
@@ -560,15 +559,15 @@ def _cancel_prelock_gate(group_id: str) -> dict:
     if not project_id:
         return blocked("git_inactive", "integration_disabled")
     out["project_id"] = project_id
-    cfg = db_git.get_config(project_id)                                    # G2
+    cfg = _gs.db_git.get_config(project_id)                                # G2
     if cfg is None or not cfg.get("enabled"):
         return blocked("git_inactive", "integration_disabled")
     out["cfg"] = cfg
-    state = db_git.get_state(group_id)                                     # G3
+    state = _gs.db_git.get_state(group_id)                                 # G3
     if state is None:
         return blocked("git_inactive", "no_group_git_state")
     out["state"] = state
-    if not git_available():                                                # G4
+    if not _gs.git_available():                                           # G4
         return blocked("git_inactive", "git_unavailable")
     status = state.get("status") or "none"
     if status in ("merged", "pushed"):                                     # G5
@@ -717,8 +716,9 @@ class _CancelGateFailed(Exception):
 
 
 def _release_cancel_lock(project_id: str, holder: str) -> None:
+    from modules.flow_gate.services import git_service as _gs
     try:
-        db_git.release_lock(project_id, holder)
+        _gs.db_git.release_lock(project_id, holder)
     except Exception:
         _log.warning("tr cancel lock release failed for %s", project_id, exc_info=True)
 
@@ -742,7 +742,7 @@ def uncommit_tr_suffix(session: dict, target_shas: Sequence[str]) -> dict:
     if not expected or any(not sha for sha in expected):
         return {"kind": "blocked", "sub": "unsafe_suffix", "before": None}
 
-    head_proc = _run_git(
+    head_proc = _gs._run_git(
         ["rev-parse", "HEAD"], cwd=wt_path, timeout=_gs.GIT_READ_TIMEOUT_SEC,
     )
     before = (head_proc.stdout or "").strip()
@@ -753,18 +753,18 @@ def uncommit_tr_suffix(session: dict, target_shas: Sequence[str]) -> dict:
     for sha in expected:
         if cursor != sha:
             return {"kind": "blocked", "sub": "unsafe_suffix", "before": before}
-        parent_proc = _run_git(
+        parent_proc = _gs._run_git(
             ["rev-parse", f"{cursor}^"], cwd=wt_path, timeout=_gs.GIT_READ_TIMEOUT_SEC,
         )
         cursor = (parent_proc.stdout or "").strip()
         if parent_proc.returncode != 0 or not cursor:
             return {"kind": "blocked", "sub": "unsafe_suffix", "before": before}
 
-    reset = _run_git(["reset", "--mixed", cursor], cwd=wt_path)
+    reset = _gs._run_git(["reset", "--mixed", cursor], cwd=wt_path)
     if reset.returncode != 0:
         return {"kind": "blocked", "sub": "reset_failed", "before": before}
 
-    after_proc = _run_git(
+    after_proc = _gs._run_git(
         ["rev-parse", "HEAD"], cwd=wt_path, timeout=_gs.GIT_READ_TIMEOUT_SEC,
     )
     after = (after_proc.stdout or "").strip()
@@ -809,7 +809,7 @@ def _revert_one(session: dict, *, commit_sha: str, subject: str, body: str) -> d
     """The shared body of :func:`revert_tr_commit` and :func:`reapply_tr_commit`."""
     from modules.flow_gate.services import git_service as _gs
     wt_path: Path = session["wt_path"]
-    proc = _run_git(
+    proc = _gs._run_git(
         ["revert", "--no-commit", "--no-edit", commit_sha],
         cwd=wt_path, timeout=GIT_LOCAL_TIMEOUT_SEC,
     )
@@ -819,18 +819,18 @@ def _revert_one(session: dict, *, commit_sha: str, subject: str, body: str) -> d
         # and the difference is kept in the ledger's attempt log, not in the response.
         sub = "timeout" if "timeout_expired" in (proc.stderr or "") else "revert_conflict"
         return {"kind": "blocked", "commit": None, "sub": sub}
-    staged = _run_git(["diff", "--cached", "--quiet"], cwd=wt_path, timeout=_gs.GIT_READ_TIMEOUT_SEC)
+    staged = _gs._run_git(["diff", "--cached", "--quiet"], cwd=wt_path, timeout=_gs.GIT_READ_TIMEOUT_SEC)
     if staged.returncode == 0:
         # Nothing to undo — the same content was already reverted by another route.
         # An empty commit would be noise in the history for a no-op (D0005 K3).
         return {"kind": "empty", "commit": None, "sub": "empty_revert"}
-    proc = _run_git(
+    proc = _gs._run_git(
         [*_gs._GIT_IDENT, "commit", "-m", subject, "-m", body],
         cwd=wt_path, author_env=session.get("author_env"), timeout=GIT_LOCAL_TIMEOUT_SEC,
     )
     if proc.returncode != 0:
         return {"kind": "blocked", "commit": None, "sub": "commit_failed"}
-    head = _run_git(["rev-parse", "HEAD"], cwd=wt_path, timeout=_gs.GIT_READ_TIMEOUT_SEC)
+    head = _gs._run_git(["rev-parse", "HEAD"], cwd=wt_path, timeout=_gs.GIT_READ_TIMEOUT_SEC)
     full = (head.stdout or "").strip() or None
     return {"kind": "ok", "commit": full, "sub": None}
 
@@ -851,8 +851,8 @@ def restore_after_failed_revert(session: dict) -> None:
     """
     from modules.flow_gate.services import git_service as _gs
     wt_path: Path = session["wt_path"]
-    _run_git(["revert", "--quit"], cwd=wt_path, timeout=_gs.GIT_READ_TIMEOUT_SEC)
-    _run_git(["reset", "--hard", "HEAD"], cwd=wt_path, timeout=GIT_LOCAL_TIMEOUT_SEC)
+    _gs._run_git(["revert", "--quit"], cwd=wt_path, timeout=_gs.GIT_READ_TIMEOUT_SEC)
+    _gs._run_git(["reset", "--hard", "HEAD"], cwd=wt_path, timeout=GIT_LOCAL_TIMEOUT_SEC)
 
 
 def _merge_commit_subject(branch: str, base_branch: str) -> str:
@@ -875,8 +875,9 @@ def _merge_commit_subject(branch: str, base_branch: str) -> str:
 
 
 def _ledger_group_by_merge_sha(project_id: str, full_sha: str) -> Optional[str]:
+    from modules.flow_gate.services import git_service as _gs
     matches: list[str] = []
-    for row in db_git.list_states_of_project_any(project_id):
+    for row in _gs.db_git.list_states_of_project_any(project_id):
         if row.get("status") != "merged" or not row.get("merge_commit"):
             continue
         if full_sha.lower().startswith(str(row["merge_commit"]).lower()):

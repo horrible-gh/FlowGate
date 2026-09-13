@@ -14,7 +14,6 @@ from typing import Optional
 
 from Crypto.Cipher import AES as _AES
 
-from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.storage.paths import get_storage_root
 
 _log = logging.getLogger(__name__)
@@ -46,7 +45,8 @@ def _author_env_for(project_id: Optional[str]) -> Optional[dict]:
     if not project_id:
         return None
     try:
-        cfg = db_git.get_config(project_id)
+        from modules.flow_gate.services import git_service as _gs
+        cfg = _gs.db_git.get_config(project_id)
     except Exception:
         _log.warning("git author lookup failed for %s", project_id, exc_info=True)
         return None

@@ -12,24 +12,24 @@ import subprocess
 from pathlib import Path
 from typing import Optional, Sequence
 
-from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.services import path_exclusion_rules
 
-from .command import _run_git, git_available
 from .credentials import GitServiceError, _load_secret_for
 
 _log = logging.getLogger(__name__)
 
 
 def _ref_exists(repo: Path, ref: str) -> bool:
-    proc = _run_git(["show-ref", "--verify", "--quiet", ref], cwd=repo)
+    from modules.flow_gate.services import git_service as _gs
+    proc = _gs._run_git(["show-ref", "--verify", "--quiet", ref], cwd=repo)
     return proc.returncode == 0
 
 
 def _ahead_of_base(base_root: Path, base_branch: str, branch: str) -> Optional[int]:
     """Number of commits on `branch` not yet on `base_branch` (local rev-list, no
     network). None when it cannot be counted (missing ref / git failure)."""
-    proc = _run_git(["rev-list", "--count", f"{base_branch}..{branch}"], cwd=base_root)
+    from modules.flow_gate.services import git_service as _gs
+    proc = _gs._run_git(["rev-list", "--count", f"{base_branch}..{branch}"], cwd=base_root)
     if proc.returncode != 0:
         return None
     try:
@@ -139,7 +139,7 @@ def _validate_blob_path(path: str) -> None:
 def _ls_tree_entry(base_root: Path, commit: str, path: str) -> Optional[tuple[str, str]]:
     """(object_type, sha) of a single path in a commit tree, or None if absent."""
     from modules.flow_gate.services import git_service as _gs
-    proc = _run_git(
+    proc = _gs._run_git(
         ["ls-tree", "-z", commit, "--", path], cwd=base_root, timeout=_gs.GIT_READ_TIMEOUT_SEC
     )
     if proc.returncode != 0:
@@ -158,7 +158,7 @@ def _ls_tree_entry(base_root: Path, commit: str, path: str) -> Optional[tuple[st
 
 def _cat_file_size(base_root: Path, sha: str) -> int:
     from modules.flow_gate.services import git_service as _gs
-    proc = _run_git(["cat-file", "-s", sha], cwd=base_root, timeout=_gs.GIT_READ_TIMEOUT_SEC)
+    proc = _gs._run_git(["cat-file", "-s", sha], cwd=base_root, timeout=_gs.GIT_READ_TIMEOUT_SEC)
     if proc.returncode != 0:
         raise GitServiceError(500, "git_error", _gs._one_line_subject(proc.stderr) or "cat-file failed")
     try:
@@ -201,7 +201,8 @@ def _dirty(repo: Path, include_untracked: bool = True) -> bool:
         # modifications" — only changes to tracked files require operator
         # intervention. See NR flowgate.default.0165.0009.
         args.append("--untracked-files=no")
-    proc = _run_git(args, cwd=repo)
+    from modules.flow_gate.services import git_service as _gs
+    proc = _gs._run_git(args, cwd=repo)
     return bool((proc.stdout or "").strip()) if proc.returncode == 0 else False
 
 
@@ -217,7 +218,8 @@ def _dirty_files(repo: Path, include_untracked: bool = True) -> list[str]:
     args = ["status", "--porcelain"]
     if not include_untracked:
         args.append("--untracked-files=no")
-    proc = _run_git(args, cwd=repo)
+    from modules.flow_gate.services import git_service as _gs
+    proc = _gs._run_git(args, cwd=repo)
     if proc.returncode != 0:
         return []
     files: list[str] = []
@@ -237,7 +239,7 @@ def _dirty_files(repo: Path, include_untracked: bool = True) -> list[str]:
 def _worktree_untracked_paths(wt_path: Path) -> list[str]:
     """Untracked, non-gitignored paths in a worktree ('/'-separated, sorted)."""
     from modules.flow_gate.services import git_service as _gs
-    proc = _run_git(
+    proc = _gs._run_git(
         ["ls-files", "--others", "--exclude-standard", "-z"],
         cwd=wt_path, timeout=_gs.GIT_READ_TIMEOUT_SEC,
     )
@@ -261,8 +263,8 @@ def worktree_untracked_summary(project_id: str, group_id: str) -> Optional[dict]
     """Best-effort submission-time view of a live git worktree's untracked files."""
     from modules.flow_gate.services import git_service as _gs
     try:
-        cfg = db_git.get_config(project_id)
-        state = db_git.get_state(group_id)
+        cfg = _gs.db_git.get_config(project_id)
+        state = _gs.db_git.get_state(group_id)
         if not cfg or not cfg.get("enabled") or not state:
             return None
         if not state.get("worktree_registered") or not state.get("branch"):
@@ -294,7 +296,7 @@ def probe_worktree_pending_changes(wt_path: Path) -> Optional[bool]:
     """
     from modules.flow_gate.services import git_service as _gs
     try:
-        proc = _run_git(
+        proc = _gs._run_git(
             ["status", "--porcelain", "-z", "--untracked-files=all"],
             cwd=wt_path, timeout=_gs.GIT_READ_TIMEOUT_SEC,
         )
@@ -321,7 +323,7 @@ def _commits_present(wt_path: Path, shas: Sequence[str]) -> bool:
     for sha in shas:
         if not sha:
             return False
-        proc = _run_git(
+        proc = _gs._run_git(
             ["merge-base", "--is-ancestor", sha, "HEAD"],
             cwd=wt_path, timeout=_gs.GIT_READ_TIMEOUT_SEC,
         )
@@ -333,7 +335,7 @@ def _commits_present(wt_path: Path, shas: Sequence[str]) -> bool:
 def _unmerged_paths(wt_path: Path) -> list[str]:
     """The conflicted paths of an in-flight revert, worktree-relative and sorted."""
     from modules.flow_gate.services import git_service as _gs
-    proc = _run_git(
+    proc = _gs._run_git(
         ["diff", "--name-only", "--diff-filter=U"],
         cwd=wt_path, timeout=_gs.GIT_READ_TIMEOUT_SEC,
     )
@@ -366,7 +368,8 @@ def _untracked_files(repo: Path, limit: int = UNTRACKED_LIST_MAX) -> list[str]:
     files (NR §C4) never appear here: they cannot be committed, hence cannot be
     offered. `limit` (0 = unbounded) caps the scan for display payloads.
     """
-    proc = _run_git(["status", "--porcelain", "--untracked-files=all"], cwd=repo)
+    from modules.flow_gate.services import git_service as _gs
+    proc = _gs._run_git(["status", "--porcelain", "--untracked-files=all"], cwd=repo)
     if proc.returncode != 0:
         return []
     files: list[str] = []
@@ -394,7 +397,8 @@ def _ignored_paths(repo: Path, paths: list[str]) -> list[str]:
     can never see it"."""
     if not paths:
         return []
-    proc = _run_git(["check-ignore", "--", *paths], cwd=repo)
+    from modules.flow_gate.services import git_service as _gs
+    proc = _gs._run_git(["check-ignore", "--", *paths], cwd=repo)
     # exit 1 = nothing ignored (empty stdout); 128 = failure → treat as none.
     return [l.strip() for l in (proc.stdout or "").splitlines() if l.strip()]
 
@@ -404,7 +408,7 @@ def _query_remote_ref(base_root: Path, cfg: dict, base_branch: str) -> Optional[
     remote base ref (D0006 §3.6 / L0007 §2.8.1) — ``None`` when the query itself
     fails (unreachable/timeout), which the caller must NOT treat as "not found"."""
     from modules.flow_gate.services import git_service as _gs
-    proc = _run_git(
+    proc = _gs._run_git(
         ["ls-remote", "origin", f"refs/heads/{base_branch}"],
         cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC,
         username=cfg.get("username"), secret=_load_secret_for(cfg) or "",
@@ -425,13 +429,14 @@ def _base_ahead_behind(
     fetch — no network git (P §2-1). Both None when origin/{base} is absent
     (never fetched), git is unavailable, or the base checkout is missing:
     "unmeasured" is distinct from "in sync" (L §5)."""
-    if base_root is None or not git_available():
+    from modules.flow_gate.services import git_service as _gs
+    if base_root is None or not _gs.git_available():
         return None, None
     if not (base_root / ".git").exists():
         return None, None
     if not _ref_exists(base_root, f"refs/remotes/origin/{base_branch}"):
         return None, None
-    proc = _run_git(
+    proc = _gs._run_git(
         ["rev-list", "--left-right", "--count", f"origin/{base_branch}...{base_branch}"],
         cwd=base_root,
     )
@@ -445,16 +450,18 @@ def _base_ahead_behind(
 
 
 def _short_head(repo: Path) -> Optional[str]:
-    proc = _run_git(["rev-parse", "--short", "HEAD"], cwd=repo)
+    from modules.flow_gate.services import git_service as _gs
+    proc = _gs._run_git(["rev-parse", "--short", "HEAD"], cwd=repo)
     return (proc.stdout or "").strip() or None if proc.returncode == 0 else None
 
 
 def _rev_parse(repo: Path, rev: str, *, short: bool = False) -> Optional[str]:
+    from modules.flow_gate.services import git_service as _gs
     args = ["rev-parse"]
     if short:
         args.append("--short")
     args.append(rev)
-    proc = _run_git(args, cwd=repo)
+    proc = _gs._run_git(args, cwd=repo)
     return (proc.stdout or "").strip() or None if proc.returncode == 0 else None
 
 
@@ -465,11 +472,12 @@ def _full_sha_matches(full_sha: str, candidate: str) -> bool:
 
 
 def _unpushed_commits(base_root: Optional[Path], base_branch: str) -> Optional[list[dict]]:
-    if base_root is None or not git_available() or not (base_root / ".git").exists():
+    from modules.flow_gate.services import git_service as _gs
+    if base_root is None or not _gs.git_available() or not (base_root / ".git").exists():
         return None
     if not _ref_exists(base_root, f"refs/remotes/origin/{base_branch}"):
         return None
-    proc = _run_git(
+    proc = _gs._run_git(
         [
             "log", "--first-parent", f"origin/{base_branch}..{base_branch}",
             "--format=%H%x1f%P%x1f%cI%x1f%s",
@@ -501,7 +509,8 @@ def _remote_base_missing(base_root: Optional[Path], base_branch: str) -> bool:
     Deliberately narrower than "unmeasured": git being unavailable or the checkout
     missing reads False, so a consumer can never mistake those for "the remote is
     empty, offer the first push"."""
-    if base_root is None or not git_available() or not (base_root / ".git").exists():
+    from modules.flow_gate.services import git_service as _gs
+    if base_root is None or not _gs.git_available() or not (base_root / ".git").exists():
         return False
     return not _ref_exists(base_root, f"refs/remotes/origin/{base_branch}")
 
@@ -510,9 +519,10 @@ def _local_commit_count(base_root: Optional[Path]) -> Optional[int]:
     """Commits reachable from the base checkout's HEAD, or None when it cannot be
     counted (git off, no checkout, unborn HEAD). Lets the client tell "nothing to
     push yet" apart from "one snapshot commit waiting for its first push"."""
-    if base_root is None or not git_available() or not (base_root / ".git").exists():
+    from modules.flow_gate.services import git_service as _gs
+    if base_root is None or not _gs.git_available() or not (base_root / ".git").exists():
         return None
-    proc = _run_git(["rev-list", "--count", "HEAD"], cwd=base_root)
+    proc = _gs._run_git(["rev-list", "--count", "HEAD"], cwd=base_root)
     if proc.returncode != 0:
         return None
     txt = (proc.stdout or "").strip()
