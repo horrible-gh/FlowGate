@@ -47,6 +47,8 @@ import ReviewActionBar from '@main/components/ReviewActionBar.vue'
 import WorkPlanEditor from '@main/components/WorkPlanEditor.vue'
 import ConversationDocumentView from '@main/components/documents/ConversationDocumentView.vue'
 import DocumentBodyRouter from '@main/components/documents/DocumentBodyRouter.vue'
+import GenericDocumentBody from '@main/components/documents/GenericDocumentBody.vue'
+import StepVerificationCard from '@main/components/StepVerificationCard.vue'
 import { useAiInvokeRunsStore } from '@main/stores/aiInvokeRuns'
 import { mountMainPanel } from '../helpers/mountMainPanel'
 
@@ -553,5 +555,44 @@ describe('MainPanel template owns no document body (T0007 §5-6)', () => {
   it('passes no body slot to the router', () => {
     expect(source).not.toMatch(/<template #(conversation|work-plan|question)>/)
     expect(source).not.toContain('</DocumentBodyRouter>')
+  })
+})
+
+describe('TR keeps its shell extension outside the generic body router (T0009 §3)', () => {
+  const TR_TAB = {
+    id: `${GROUP_ID}.0010-TR`,
+    title: 'report',
+    path: 'documents/flowgate/main/default/0566/0010-TR_document.md',
+    type: 'md' as const,
+    typeCode: 'TR',
+    projectId: 'flowgate',
+  }
+  const T_TAB = { ...TR_TAB, id: `${GROUP_ID}.0009-T`, title: 'task', typeCode: 'T' }
+
+  async function mountGeneric(tab: typeof TR_TAB) {
+    seedTabs([tab])
+    const wrapper = mountPanel({ GenericDocumentBody: false })
+    await flushPromises()
+    return wrapper
+  }
+
+  it('renders the TR verification card immediately before the ordinary markdown body', async () => {
+    const wrapper = await mountGeneric(TR_TAB)
+    const verification = wrapper.findComponent(StepVerificationCard)
+    const router = wrapper.findComponent(DocumentBodyRouter)
+
+    expect(verification.exists()).toBe(true)
+    expect(router.findComponent(GenericDocumentBody).exists()).toBe(true)
+    expect(
+      verification.element.compareDocumentPosition(router.element)
+        & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+
+  it('does not widen the verification condition to another markdown document type', async () => {
+    const wrapper = await mountGeneric(T_TAB)
+
+    expect(wrapper.findComponent(StepVerificationCard).exists()).toBe(false)
+    expect(wrapper.findComponent(DocumentBodyRouter).findComponent(GenericDocumentBody).exists()).toBe(true)
   })
 })

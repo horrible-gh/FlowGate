@@ -5381,18 +5381,6 @@ watch(textWrapEnabled, (enabled) => {
   color: #fff;
 }
 
-.text-preview-card {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-}
-
-.text-preview-body {
-  flex: 1;
-  min-height: 0;
-  padding: 0;
-}
 
 .content-wrap--text-preview {
   overflow: hidden;
@@ -5480,19 +5468,6 @@ watch(textWrapEnabled, (enabled) => {
   }
 }
 
-.text-wrap-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: .76rem;
-  color: var(--text-m);
-  user-select: none;
-}
-
-.text-wrap-toggle input {
-  margin: 0;
-  accent-color: var(--primary);
-}
 
 .document-modal__body {
   padding: 0;
