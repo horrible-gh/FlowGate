@@ -5,20 +5,35 @@
        the file) and delete (discard it) are opposite, irreversible-in-different-
        ways outcomes, so — same as base_dirty — the operator always chooses; the
        caller retries the original finalize once the blocked paths are gone. -->
-  <teleport to="body">
-    <div v-if="open" class="modal-bg">
-      <div class="modal-box guc-box">
-        <div class="modal-hd">
-          <span class="modal-title">
-            <AppIcon name="warning" style="color:var(--danger);" />
-            {{ t('main.git_finalize.untracked_conflict_dialog_title') }}
-          </span>
-          <button class="modal-close" type="button" :disabled="busy" @click="cancel">
-            <AppIcon name="x" />
-          </button>
-        </div>
-        <div class="modal-bd">
-          <p class="guc-body">{{ t('main.git_finalize.untracked_conflict_dialog_body') }}</p>
+  <!-- flowgate.default.0560 T0022 2.6 (5순위) - migrated onto the common dialog layer.
+       D0008 §6 maps this instance to `form-actions`, the same target its sibling
+       `GitBaseDirtyDialog.vue` already reached in 3순위, so this follows that file line for
+       line: the overlay, the box, the title row and the button row belong to the common layer
+       now, and only the commit field, the blocked-file list and the notes stay here
+       (D0008 §1 "body는 feature 소유"). `closeOnBackdrop` is NOT overridden - `form-actions`
+       already defaults to `false`, and the old `.modal-bg` had no backdrop handler either. -->
+  <DialogShell
+    ref="shellRef"
+    :open="open"
+    variant="form-actions"
+    :closeable="!busy"
+    :busy="busy"
+    @request-close="cancel"
+  >
+    <template #header>
+      <DialogHeader
+        :title="t('main.git_finalize.untracked_conflict_dialog_title')"
+        :closeable="!busy"
+        @close="onHeaderClose"
+      >
+        <template #icon>
+          <AppIcon name="warning" style="color:var(--danger);" />
+        </template>
+      </DialogHeader>
+    </template>
+
+    <template #default="{ descriptionId }">
+          <p :id="descriptionId" class="guc-body">{{ t('main.git_finalize.untracked_conflict_dialog_body') }}</p>
           <ul v-if="files.length" class="guc-files">
             <li v-for="f in files" :key="f">{{ f }}</li>
           </ul>
@@ -31,6 +46,7 @@
               class="form-ctrl guc-commit-input"
               type="text"
               maxlength="200"
+              data-dialog-autofocus
               :value="commitMsg"
               :placeholder="suggested"
               :disabled="busy"
@@ -43,40 +59,22 @@
             {{ t('main.git_finalize.untracked_conflict_remove_note') }}
           </p>
           <p v-if="errorMsg" class="guc-error">{{ errorMsg }}</p>
-        </div>
-        <div class="modal-ft guc-ft">
-          <button class="btn btn-secondary" type="button" :disabled="busy" @click="cancel">
-            {{ t('common.cancel') }}
-          </button>
-          <button
-            class="btn guc-remove-btn"
-            type="button"
-            :disabled="busy || !(scope === 'group' ? untrackedFiles.length : files.length)"
-            @click="choose('remove')"
-          >
-            <AppIcon name="trash" /> {{ t('main.git_finalize.untracked_conflict_remove') }}
-          </button>
-          <button
-            v-if="scope === 'group'"
-            class="btn btn-secondary"
-            type="button"
-            :disabled="busy || !trackedFiles.length"
-            @click="choose('revert')"
-          >
-            <AppIcon name="arrow-counter-clockwise" /> {{ t('main.git_finalize.base_dirty_revert_merge') }}
-          </button>
-          <button
-            class="btn btn-primary"
-            type="button"
-            :disabled="busy || !(scope === 'group' ? untrackedFiles.length : files.length)"
-            @click="choose('commit')"
-          >
-            <AppIcon name="check" /> {{ t('main.git_finalize.untracked_conflict_commit') }}
-          </button>
-        </div>
-      </div>
-    </div>
-  </teleport>
+    </template>
+
+    <template #footer>
+      <DialogFooter :actions="actions" :busy="busy">
+        <template #action-revert>
+          <AppIcon name="arrow-counter-clockwise" /> {{ t('main.git_finalize.base_dirty_revert_merge') }}
+        </template>
+        <template #action-remove>
+          <AppIcon name="trash" /> {{ t('main.git_finalize.untracked_conflict_remove') }}
+        </template>
+        <template #action-commit>
+          <AppIcon name="check" /> {{ t('main.git_finalize.untracked_conflict_commit') }}
+        </template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
@@ -84,6 +82,11 @@ import AppIcon from '@shared/AppIcon.vue'
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
+
+import DialogFooter from './dialogs/DialogFooter.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogShell from './dialogs/DialogShell.vue'
+import type { DialogAction } from './dialogs/dialogTypes'
 
 const { t } = useI18n()
 
@@ -108,9 +111,65 @@ const trackedFiles = ref<string[]>([])
 const commitMsg = ref('')
 const errorMsg = ref('')
 
+const shellRef = ref<InstanceType<typeof DialogShell> | null>(null)
+
 let targetId = ''
 const scope = ref<'base' | 'group'>('base')
 let resolver: ((v: 'proceed' | 'cancel') => void) | null = null
+
+// Commit and delete act on the SAME set, so one expression answers both disabled conditions
+// exactly as the two inline `:disabled` expressions did.
+const actionableFiles = computed(() =>
+  scope.value === 'group' ? untrackedFiles.value : files.value,
+)
+
+/**
+ * T0022 2.6 - four semantic actions, one more than `GitBaseDirtyDialog`'s three.
+ *
+ * Roles, and what decides them: [삭제] discards the only copy of a never-committed file, so it
+ * is the `danger` role with `tone: 'danger'` - the same answer T0016 3 gave for this file's
+ * sibling, and the reason the private `.guc-remove-btn` outline is gone: a destructive action
+ * that is NOT the primary is painted once, by `dialog.css`, for every dialog. [되돌리기] only
+ * exists in group scope, so it is pushed into the array conditionally instead of carrying a
+ * `v-if`. `footerRolePriority` then renders
+ * [되돌리기](aux) [삭제](danger) [취소](cancel) [커밋](primary); the old hand-placed row put
+ * cancel first, separated from the primary by two other buttons.
+ */
+const actions = computed<DialogAction[]>(() => {
+  const list: DialogAction[] = []
+  if (scope.value === 'group') {
+    list.push({
+      id: 'revert',
+      label: t('main.git_finalize.base_dirty_revert_merge'),
+      role: 'aux',
+      disabled: busy.value || !trackedFiles.value.length,
+      onSelect: () => choose('revert'),
+    })
+  }
+  list.push({
+    id: 'remove',
+    label: t('main.git_finalize.untracked_conflict_remove'),
+    role: 'danger',
+    tone: 'danger',
+    disabled: busy.value || !actionableFiles.value.length,
+    onSelect: () => choose('remove'),
+  })
+  list.push({
+    id: 'cancel',
+    label: t('common.cancel'),
+    role: 'cancel',
+    disabled: busy.value,
+    onSelect: cancel,
+  })
+  list.push({
+    id: 'commit',
+    label: t('main.git_finalize.untracked_conflict_commit'),
+    role: 'primary',
+    disabled: busy.value || !actionableFiles.value.length,
+    onSelect: () => choose('commit'),
+  })
+  return list
+})
 
 // Mirrors git_service.default_base_commit_message — the seeded placeholder is
 // exactly what a blank commit derives on the server.
@@ -160,6 +219,11 @@ function cancel() {
   if (busy.value) return
   settle('cancel')
 }
+
+function onHeaderClose() {
+  shellRef.value?.requestClose('header')
+}
+
 async function choose(mode: 'commit' | 'revert' | 'remove') {
   const actionFiles = scope.value === 'group'
     ? (mode === 'revert' ? trackedFiles.value : untrackedFiles.value)
@@ -234,10 +298,10 @@ defineExpose({ resolve })
 </script>
 
 <style scoped>
-.guc-box {
-  max-width: 480px;
-  width: 100%;
-}
+/* `.guc-box` (the 480px box) and `.guc-ft` (the wrapping button row) left with the markup:
+   the common `form-actions` surface is the `md` 520px track - the same 480 -> 520 step its
+   sibling `GitBaseDirtyDialog` took in 3순위 - and `.fg-dialog-footer__actions` already wraps
+   with the same 8px gap. */
 .guc-body {
   font-size: 0.85rem;
   line-height: 1.5;
@@ -296,18 +360,6 @@ defineExpose({ resolve })
   color: #b91c1c;
   margin: 6px 0 0;
 }
-.guc-ft {
-  flex-wrap: wrap;
-  gap: 8px;
-}
-/* Delete discards the only copy — a distinct danger-outline treatment so it is
-   never mistaken for the primary commit action. */
-.guc-remove-btn {
-  background: #fff;
-  color: #b91c1c;
-  border: 1px solid #fca5a5;
-}
-.guc-remove-btn:hover:not(:disabled) {
-  background: #fef2f2;
-}
+/* Delete discards the only copy, and that is said by the `danger` role + `danger` tone in
+   `actions` above now, not by a private outline class here (dialog.css paints it). */
 </style>

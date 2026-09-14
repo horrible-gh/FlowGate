@@ -1,26 +1,34 @@
 <template>
-  <teleport to="body">
-    <div v-if="visible" class="modal-bg">
-      <div class="modal-box modal-nad">
+  <!-- flowgate.default.0560 T0022 §2.5 (5순위) - migrated onto the common dialog layer.
+       D0008 §6 maps this instance to `workflow-large`. Unlike the other four in this group
+       this one keeps the variant's own `sheet` surface: `.modal-nad` was already a fixed
+       `height: 85vh` working surface whose body clipped and whose sections scrolled on their
+       own, which is exactly what `sheet` (`min(860px, 88vh)`, padding-0 body) is. `size="lg"`
+       (720) is the nearest track to the 680px it had; `xl` would widen a single-column list by
+       half again.
 
-        <!-- ── Header ── -->
-        <div class="modal-hd">
-          <div>
-            <div class="modal-title">
-              <AppIcon name="arrow-right" style="color:var(--primary); margin-right:6px;" />
-              {{ t('main.next_action_modal.title') }}
-            </div>
-            <div class="nad-subtitle">
-              {{ t('main.next_action_modal.subtitle', { code: nextTypeCode || '—', label: nextTypeLabel }) }}
-            </div>
-          </div>
-          <button class="modal-close" type="button" @click="close">
-            <AppIcon name="x" />
-          </button>
-        </div>
+       The subtitle line moves to `DialogHeader`'s `subtitle` prop - it is one secondary line
+       under the title, which is what that element is. `closeOnBackdrop` is not overridden:
+       `workflow-large` defaults to `false`, and the old `.modal-bg` had no backdrop handler. -->
+  <DialogShell
+    ref="shellRef"
+    :open="visible"
+    variant="workflow-large"
+    size="lg"
+    @request-close="close"
+  >
+    <template #header>
+      <DialogHeader
+        :title="t('main.next_action_modal.title')"
+        icon="arrow-right"
+        :subtitle="t('main.next_action_modal.subtitle', { code: nextTypeCode || '—', label: nextTypeLabel })"
+        @close="onHeaderClose"
+      />
+    </template>
 
-        <!-- ── Body ── -->
-        <div class="modal-bd nad-body">
+    <!-- ── Body ── -->
+    <template #default>
+        <div class="nad-body">
 
           <!-- Section 1: Issue info card -->
           <div>
@@ -189,12 +197,33 @@
             </div>
           </div>
 
-        </div><!-- /modal-bd -->
+        </div><!-- /nad-body -->
+    </template>
 
-        <!-- ── Footer ── -->
-        <div class="modal-ft">
-          <button type="button" class="btn btn-ghost" @click="close">{{ t('common.cancel') }}</button>
-          <div class="nad-proceed-wrap">
+    <!-- ── Footer ──
+         T0022 §2.5: [진행] is a split trigger, not a plain button - the same shape
+         `ReviewRejectDialog.vue` solved in 3순위. The TRIGGER is an ordinary `DialogAction`
+         (`id: 'proceed'`, `role: 'primary'`), so ordering, the duplicate-role check,
+         disabled/busy and the single execution path apply to it like any other footer button;
+         only the PANEL is special-cased, through `DialogFooter`'s `popover-{id}` slot. It has
+         to be: `action-{id}` renders INSIDE the `<button>`, and five interactive items cannot
+         be nested in one. `popover-proceed` renders the panel as that action's sibling inside
+         `.fg-dialog-footer__action`, which is `position: relative` - which is also why
+         `.nad-proceed-wrap` is gone, the anchor box is the common layer's now.
+
+         Opening/closing stays exactly as it was: the trigger toggles (`onSelect: toggleProceed`,
+         where the old `@click.stop` called `toggleProceed`), and each item still closes the
+         panel itself inside `onProceedAction`. -->
+    <template #footer>
+      <DialogFooter :actions="actions">
+        <template #action-proceed>
+          <AppIcon name="lightning" /> {{ t('main.next_action_modal.title') }}
+          <AppIcon
+            :name="proceedOpen ? 'caret-down' : 'caret-up'"
+            style="font-size:.6rem; margin-left:4px;"
+          />
+        </template>
+        <template #popover-proceed>
             <div class="nad-proceed-dropdown" :class="{ open: proceedOpen }">
               <!-- TR0005 rev3: reviewer asked why [Create empty doc] was missing here. It had been
                    removed (R0001 #1 / 0048) in favor of the action-bar split button, but the
@@ -217,19 +246,10 @@
                 <AppIcon name="robot" style="width:1.2em;" /> {{ t('main.next_action_modal.btn_invoke_ai') }}
               </div>
             </div>
-            <button class="btn btn-primary" type="button" @click.stop="toggleProceed">
-              <AppIcon name="lightning" /> {{ t('main.next_action_modal.title') }}
-              <AppIcon
-                :name="proceedOpen ? 'caret-down' : 'caret-up'"
-                style="font-size:.6rem; margin-left:4px;"
-              />
-            </button>
-          </div>
-        </div>
-
-      </div>
-    </div>
-  </teleport>
+        </template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
@@ -239,6 +259,10 @@ import { getRequest } from '@shared/api'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import { formatDocId } from '@shared/utils/docIdFormatter'
 import AppIcon from '@shared/AppIcon.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogShell from './dialogs/DialogShell.vue'
+import type { DialogAction } from './dialogs/dialogTypes'
 
 interface ModuleItem { module_id: string; title: string }
 interface GroupItem  { group_id: string; title?: string }
@@ -655,9 +679,31 @@ async function autoCheckPredecessors() {
   extraSelectedDocs.value = set
 }
 
+const shellRef = ref<InstanceType<typeof DialogShell> | null>(null)
+
+function onHeaderClose() {
+  shellRef.value?.requestClose('header')
+}
+
 function toggleProceed() {
   proceedOpen.value = !proceedOpen.value
 }
+
+/** T0022 §2.5 - `[취소](cancel)` and the `[진행](primary)` split trigger. */
+const actions = computed<DialogAction[]>(() => [
+  {
+    id: 'cancel',
+    label: t('common.cancel'),
+    role: 'cancel',
+    onSelect: close,
+  },
+  {
+    id: 'proceed',
+    label: t('main.next_action_modal.title'),
+    role: 'primary',
+    onSelect: toggleProceed,
+  },
+])
 
 function getAllSelectedDocs(): string[] {
   const head = normalizedDocRef.value || lockedDocPath.value
@@ -719,35 +765,16 @@ watch(
 </script>
 
 <style scoped>
-/* ── Modal dimensions ── */
-.modal-nad {
-  width: 680px;
-  max-width: 96vw;
-  height: 85vh;
-  max-height: 85vh;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-.modal-nad .modal-bd {
-  flex: 1;
-  overflow: hidden;
-  min-height: 0;
-}
-.modal-nad .modal-hd,
-.modal-nad .modal-ft {
-  flex-shrink: 0;
-}
-
-.nad-subtitle {
-  font-size: .8rem;
-  color: var(--text-s);
-  margin-top: 2px;
-  font-weight: 400;
-}
-
-/* ── Body layout ── */
+/* ── Body layout ──
+   `.modal-nad` (680×85vh), its `.modal-bd`/`.modal-hd`/`.modal-ft` overrides and `.nad-subtitle`
+   all left with the old markup: the size is the shell's `size="lg"` on the `sheet` surface,
+   header/footer are fixed bands in `dialog.css` by construction, and the subtitle is
+   `DialogHeader`'s own element. What `.modal-bd` gave this box - filling the track, clipping,
+   `min-height: 0` - it now states itself, because a `sheet` body is a bare padding-0 column. */
 .nad-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
   padding: 18px 20px;
   display: flex;
   flex-direction: column;
@@ -1177,10 +1204,9 @@ watch(
   font-style: italic;
 }
 
-/* ── Proceed dropdown ── */
-.nad-proceed-wrap {
-  position: relative;
-}
+/* ── Proceed dropdown ──
+   `.nad-proceed-wrap` is gone: `DialogFooter` renders the panel inside
+   `.fg-dialog-footer__action`, which is already `position: relative` for exactly this. */
 .nad-proceed-dropdown {
   position: absolute;
   bottom: calc(100% + 6px);

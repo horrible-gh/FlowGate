@@ -3,9 +3,10 @@
  * harness can measure them under the PRODUCTION stylesheet.
  *
  * Two things jsdom cannot answer, and both are in this T's title:
- *   - the nested pair's z-ORDER. `GitMergeReviewDialog`'s own shell stays legacy until 5순위,
- *     so the child joins the common stack while its parent is a plain `.modal-bg` — whether
- *     the child still paints above it is a question about two stylesheets, not about the DOM.
+ *   - the nested pair's z-ORDER. 0560 T0022 §2.8 moved the parent onto the stack too, so the
+ *     pair is now two common overlays one step apart — whether the child still paints above
+ *     the parent, and whether the parent is really out of reach, are questions about the
+ *     built stylesheet, not about the DOM.
  *   - the widths. Every one of these instances carried a measured width before the split, and
  *     the common size scale would otherwise quietly resize them.
  *
@@ -168,8 +169,8 @@ it('exports the six split-out dialogs for built-CSS geometry', async () => {
     await flushPromises()
   })
 
-  // The nested pair, captured whole: the legacy parent teleports to <body> and the child
-  // teleports to the common host, so only the whole body holds both layers at once.
+  // The nested pair, captured whole: both dialogs teleport to the common host now (0560
+  // T0022 §2.8), and the whole body is still what holds both layers at once.
   await capture('merge-reject-nested', async () => {
     const wrapper = mountLive(GitMergeReviewDialog, mountOptions({
       groupId: 'flowgate.default.0481',
@@ -180,13 +181,13 @@ it('exports the six split-out dialogs for built-CSS geometry', async () => {
       selectedProvider: 'p1',
     }))
     await flushPromises()
-    // The review dialog teleports to <body>, so its own footer is not inside `wrapper`.
-    document.querySelector<HTMLButtonElement>('.gmr-ft-actions .btn-danger-ol')!.click()
+    // The review dialog teleports out of `wrapper`, so its own footer is looked up in the host.
+    document.querySelector<HTMLButtonElement>('[data-dialog-action-id="reject"]')!.click()
     await flushPromises()
     expect(document.querySelector('[data-dialog-variant="form-actions"]')).toBeTruthy()
   }, true)
 
-  // Three layers: legacy parent -> reject sub-dialog -> the discard confirm T0020 §2.2 (a)
+  // Three layers: review dialog -> reject sub-dialog -> the discard confirm T0020 §2.2 (a)
   // puts in front of a typed reason.
   await capture('merge-reject-discard-confirm', async () => {
     mountLive(ConfirmDialog as never, mountOptions({ host: true }))
@@ -199,7 +200,7 @@ it('exports the six split-out dialogs for built-CSS geometry', async () => {
       selectedProvider: 'p1',
     }))
     await flushPromises()
-    document.querySelector<HTMLButtonElement>('.gmr-ft-actions .btn-danger-ol')!.click()
+    document.querySelector<HTMLButtonElement>('[data-dialog-action-id="reject"]')!.click()
     await flushPromises()
     const box = document.querySelector('[data-dialog-variant="form-actions"] textarea') as HTMLTextAreaElement
     box.value = '다시 해 주세요'

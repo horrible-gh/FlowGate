@@ -5,33 +5,38 @@
        adds the review-gate-specific parts mockup v13 화면 2 asks for: a read-only
        resolver-provider badge, a conflict-origin overlay on the real diff, and the
        conversation/approve/reject footer. -->
-  <teleport to="body">
-    <div class="modal-bg">
-      <div
-        class="modal-box document-modal document-modal--edit gmr-modal"
-        role="dialog"
-        aria-modal="true"
-        :aria-label="t('main.git_review.title')"
-      >
-        <div class="modal-hd">
-          <div class="gmr-hd-text">
-            <h2 class="modal-title"><AppIcon name="clock" /> {{ headerTitle }}</h2>
-            <p>
-              <span class="gcd-mono">{{ branch || '-' }}</span>
-              →
-              <span class="gcd-mono">{{ baseBranch || 'main' }}</span>
-              <span class="gcd-dot">·</span>
-              {{ t('main.git_review.file_count', { n: changes.length }) }}
-            </p>
-          </div>
-          <div class="modal-hd-actions">
-            <!-- Disabled while the reject sub-dialog is up — see the footer's note (T0020 §2.2). -->
-            <button class="modal-close" type="button" :disabled="rejectPromptOpen" :title="t('common.close')" :aria-label="t('common.close')" @click="emit('close')">
-              <AppIcon name="x" />
-            </button>
-          </div>
-        </div>
+  <!-- flowgate.default.0560 T0022 §2.8 (5순위) - the MAIN dialog joins the common layer.
+       D0008 §6 maps it to `workflow-large`; its reject sub-dialog already moved out in 4.5순위
+       (`GitMergeRejectDialog.vue`, `form-actions`), so with this change the pair is a real
+       parent/child on one stack and L0009 §2's nested-dialog contract applies by itself - the
+       three hand-written `rejectPromptOpen` guards TR0021 §2.2 called an approximation are
+       gone (see the footer note below).
 
+       `:open="true"` is a literal for the same reason as `GroupChangesDialog`: this component
+       has never had a visible/open prop. `GitFinalizePanel.vue` and `GitStatusPanel.vue` both
+       mount it behind a `v-if`, so mounted IS open, and `DialogShell`'s `onBeforeUnmount` runs
+       `force_cleanup` when the parent takes it away. `closeOnBackdrop` is not overridden -
+       `workflow-large` defaults to `false`, as the old `.modal-bg` (no handler) was. -->
+  <DialogShell
+    ref="shellRef"
+    :open="true"
+    variant="workflow-large"
+    surface-class="gmr-review-dialog"
+    @request-close="emit('close')"
+  >
+    <template #header>
+      <DialogHeader :title="headerTitle" icon="clock" @close="onHeaderClose">
+        <template #subtitle>
+          <span class="gcd-mono">{{ branch || '-' }}</span>
+          →
+          <span class="gcd-mono">{{ baseBranch || 'main' }}</span>
+          <span class="gcd-dot">·</span>
+          {{ t('main.git_review.file_count', { n: changes.length }) }}
+        </template>
+      </DialogHeader>
+    </template>
+
+    <template #default>
         <div v-if="loading" class="gmr-state">
           <AppIcon name="spinner" spin /> {{ t('common.loading') }}
         </div>
@@ -57,7 +62,7 @@
             <span>{{ warningText }}</span>
           </p>
 
-          <div class="modal-bd gmr-modal-body">
+          <div class="gmr-modal-body">
             <div class="gcd-bd gmr-bd">
               <aside class="gcd-filelist" :aria-label="t('main.git_review.file_list')">
                 <p v-if="!changes.length" class="gcd-nomatch">{{ t('main.group_changes.no_match') }}</p>
@@ -204,7 +209,19 @@
             </div>
           </div>
 
-          <div class="modal-ft gmr-ft">
+        </template>
+    </template>
+
+    <template #footer>
+      <!-- The whole band is drawn only once the review has loaded, exactly as the old
+           `.modal-ft` (inside `<template v-else>`) was. -->
+      <template v-if="!loading && !loadError">
+          <!-- The outcome box and the safety note are feature content that used to sit INSIDE
+               `.modal-ft`. `DialogFooter` owns the button row only, so they render as its
+               sibling here and `.gmr-ft-extras` carries the band's top border and padding
+               (dialog.css's own border is dropped for this surface in the unscoped block at
+               the bottom of this file, so the band still shows exactly one rule). -->
+          <div class="gmr-ft-extras">
             <!-- 0481 T0010 rev3: [승인]이 왜 안 됐는지를 여기서 말한다. 전에는
                  성공/재검토/정합화 셋만 문장이 있었고 나머지는 사라지는 위험
                  토스트 한 줄이라, "머지는 되지도 않음"이 되었다. 파일별 진단이
@@ -232,24 +249,24 @@
               </ul>
             </div>
             <p class="gmr-ft-note">{{ t('main.git_review.apply_safety_note') }}</p>
-            <!-- 0560 T0020 §2.2: while the reject sub-dialog is up, the parent's own actions
-                 are disabled. L0009 §2 "Nested dialog" would do this for a parent that is a
-                 stack member, but this dialog's shell is 5순위's job — so the intent (부모
-                 조작 불가) is approximated by hand here until then. -->
-            <div class="gmr-ft-actions">
-              <button type="button" class="btn btn-danger-ol" :disabled="busy || !canReject || rejectPromptOpen" @click="openRejectPrompt">
-                <AppIcon name="prohibit" /> {{ t('main.git_review.reject') }}
-              </button>
-              <button type="button" class="btn btn-primary" :disabled="busy || !canApprove || rejectPromptOpen" @click="approve">
-                <AppIcon name="check" /> {{ t('main.git_review.approve') }}
-              </button>
-            </div>
           </div>
-
-        </template>
-      </div>
-    </div>
-  </teleport>
+          <!-- 0560 T0022 §2.8: the extra disabled term these two buttons (and
+               the header X) used to carry is GONE. It existed because TR0021 could only
+               approximate L0009 §2 "child active 중 parent: interaction 비활성" while this dialog
+               was still a legacy `.modal-bg`. Now that both are stack members the contract does
+               it for real: the child is `stack.top()`, so this whole surface renders `inert`
+               and neither button can be reached while the reject prompt is up. -->
+          <DialogFooter :actions="actions">
+            <template #action-reject>
+              <AppIcon name="prohibit" /> {{ t('main.git_review.reject') }}
+            </template>
+            <template #action-approve>
+              <AppIcon name="check" /> {{ t('main.git_review.approve') }}
+            </template>
+          </DialogFooter>
+      </template>
+    </template>
+  </DialogShell>
 
   <!-- 0560 T0020 (4.5순위, NR0005 §13 "메인 dialog와 reject sub-dialog의 관계 재설계"):
        the reject prompt is its own dialog on the common layer now, and it sits OUTSIDE this
@@ -277,6 +294,10 @@ import { getRequest, postRequest } from '@shared/api'
 import { randomUuid } from '@shared/utils/uuid'
 import AiProviderSelect from './AiProviderSelect.vue'
 import GitMergeRejectDialog from './GitMergeRejectDialog.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogShell from './dialogs/DialogShell.vue'
+import type { DialogAction } from './dialogs/dialogTypes'
 import { useToast } from './common/useToast'
 import {
   buildDiffRows,
@@ -473,6 +494,38 @@ const heldTestOperations = computed(() => review.value?.held_test_operations ?? 
 const canApprove = computed(() => !!review.value?.can_approve)
 const canReject = computed(() => !!review.value?.can_reject)
 const canSend = computed(() => !!review.value?.can_send)
+
+const shellRef = ref<InstanceType<typeof DialogShell> | null>(null)
+
+function onHeaderClose() {
+  shellRef.value?.requestClose('header')
+}
+
+/**
+ * T0022 §2.8 - this dialog completes with one of two actions and has no cancel: the way out
+ * is the header X (and, new on the common layer, ESC), never a footer button. [반려] takes the
+ * `danger` role - a destructive action that is NOT what completes the review - and [승인] is
+ * `primary`, so `footerRolePriority` keeps the left-to-right order they already had. The
+ * `disabled` conditions are the originals MINUS `rejectPromptOpen`, which the nested dialog
+ * contract now enforces for the whole surface instead.
+ */
+const actions = computed<DialogAction[]>(() => [
+  {
+    id: 'reject',
+    label: t('main.git_review.reject'),
+    role: 'danger',
+    tone: 'danger',
+    disabled: busy.value || !canReject.value,
+    onSelect: openRejectPrompt,
+  },
+  {
+    id: 'approve',
+    label: t('main.git_review.approve'),
+    role: 'primary',
+    disabled: busy.value || !canApprove.value,
+    onSelect: approve,
+  },
+])
 
 const REVIEW_STATE_LABELS: Record<string, string> = {
   resolved_pending_review: 'pending',
@@ -777,10 +830,40 @@ async function approve() {
   }
 }
 
-function openRejectPrompt(event: MouseEvent) {
-  rejectTrigger.value = (event.currentTarget as HTMLElement) ?? null
+/**
+ * The trigger is a `DialogFooter` button now, so there is no `MouseEvent` whose
+ * `currentTarget` can be read. `DialogFooter` stamps `data-dialog-action-id` on every button
+ * it renders, and that is the same element the old `currentTarget` was - so the focus-return
+ * target is found by that attribute instead (L0009 §4 "focus 복귀").
+ */
+function openRejectPrompt() {
+  rejectTrigger.value = document.querySelector<HTMLElement>('[data-dialog-action-id="reject"]')
   rejectPromptOpen.value = true
 }
+
+/**
+ * Focus return, re-asserted one tick later.
+ *
+ * The common teardown restores focus synchronously inside `finalize_dialog_once`, at a moment
+ * when this surface is still carrying `inert`: the stack entry has already been removed, but
+ * the attribute is a rendered binding and Vue has not flushed that render yet. An element
+ * inside an inert subtree cannot take focus in a real browser, so the restore would land
+ * nowhere. Asking again after `nextTick` - when the attribute is gone - is idempotent: if the
+ * first attempt worked, this focuses the very same element, and if the dialog closed for good
+ * the trigger is detached and `focus()` is a no-op.
+ */
+watch(rejectPromptOpen, async (open) => {
+  if (open) return
+  const trigger = rejectTrigger.value
+  if (trigger == null) return
+  await nextTick()
+  if (document.activeElement === trigger) return
+  try {
+    trigger.focus()
+  } catch {
+    // Best effort; a focus failure must never break closing the reject prompt.
+  }
+})
 
 async function reject(rawReason: string) {
   const reason = rawReason.trim()
@@ -871,7 +954,9 @@ onBeforeUnmount(stopPolling)
 .gcd-line-add, .gcd-text.gcd-line-add { background: #ecfdf5; }
 .gcd-line-del, .gcd-text.gcd-line-del { background: #fef2f2; }
 
-.gmr-hd-text p { margin: 3px 0 0; font-size: 0.78rem; color: var(--text-m); display: flex; align-items: center; gap: 6px; }
+/* `.gmr-hd-text` left with the old header markup: the title and the branch summary are
+   `DialogHeader`'s `title` and `subtitle` elements now (T0022 §2.7 made the same move in
+   `GroupChangesDialog.vue`). */
 .gmr-state { flex: 1; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 40px; color: var(--text-m); }
 .gmr-state-error { flex-direction: column; }
 .gmr-provider-badge {
@@ -932,7 +1017,18 @@ onBeforeUnmount(stopPolling)
 .gmr-held-tests strong { display: block; margin-bottom: 3px; }
 .gmr-held-note { margin: 0 0 6px; color: #92400e; }
 .gmr-held-tests ul { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 2px; }
-.gmr-ft { flex-direction: column; align-items: stretch; gap: 8px; }
+/* The feature half of the old `.modal-ft` band. `DialogFooter` draws the button row directly
+   under this box and its own `border-top` is suppressed for this surface (unscoped block at
+   the bottom of the file), so the band still shows exactly one rule above it. */
+.gmr-ft-extras {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 12px 20px 0;
+  border-top: 1px solid var(--border);
+}
 .gmr-ft-note { margin: 0; font-size: 0.72rem; color: var(--text-m); }
 .gmr-approve-outcome {
   border: 1px solid var(--danger, #dc2626); border-radius: 8px;
@@ -940,8 +1036,27 @@ onBeforeUnmount(stopPolling)
 }
 .gmr-approve-outcome-hd { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 0.78rem; font-weight: 600; }
 .gmr-approve-outcome-list { margin: 6px 0 0; padding-left: 18px; font-size: 0.72rem; line-height: 1.55; }
-.gmr-ft-actions { display: flex; justify-content: flex-end; gap: 10px; }
 /* 0560 T0020: the reject sub-dialog's own overlay/box/actions rules left with it — the
    common layer paints all four now (`form-actions`, `md` surface), and its two fields are
-   styled in `GitMergeRejectDialog.vue`. */
+   styled in `GitMergeRejectDialog.vue`.
+   0560 T0022 §2.8: `.gmr-ft-actions` left too - the button row is `DialogFooter`'s. */
+</style>
+
+<!--
+  Unscoped: `surface-class` lands on the dialog surface, which `DialogShell` renders and
+  teleports out of this component's subtree, so a scoped rule could never reach it. The only
+  thing it does is hand the footer band's single top border to `.gmr-ft-extras`, which sits
+  above the button row and used to be inside the same `.modal-ft` box.
+-->
+<style>
+/* The width `.document-modal--edit` measured, kept rather than widened to the `xl` 1180px the
+   variant would otherwise give (T0018 made the same choice for `DocumentEditDialog`). */
+.fg-dialog-surface.gmr-review-dialog {
+  width: min(1120px, 94vw);
+}
+
+.fg-dialog-surface.gmr-review-dialog .fg-dialog-footer {
+  border-top: none;
+  padding-top: 8px;
+}
 </style>

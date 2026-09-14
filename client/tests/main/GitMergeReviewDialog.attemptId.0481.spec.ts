@@ -73,7 +73,7 @@ function mountDialog() {
 }
 
 async function approve(wrapper: ReturnType<typeof mountDialog>) {
-  await wrapper.findAll('.gmr-ft-actions button').at(1)!.trigger('click')
+  await wrapper.find('[data-dialog-action-id="approve"]').trigger('click')
   await flushPromises()
 }
 

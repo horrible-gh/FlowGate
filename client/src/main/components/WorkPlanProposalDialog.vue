@@ -1,45 +1,53 @@
 <template>
-  <teleport to="body">
-    <div
-      v-if="visible"
-      ref="overlayRef"
-      class="modal-bg"
-      tabindex="-1"
-      @keydown.escape.prevent="onClose"
-    >
-      <div
-        class="modal-box modal-wpp"
-        :class="{ 'modal-wpp--solo': noProviders }"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="wpp-title"
-      >
-        <div class="modal-hd">
-          <div class="modal-title" id="wpp-title">
-            <AppIcon name="clipboard-text" class="wpp-title-ico" />
-            {{ t('main.work_plan_proposal_dialog.title') }}
-            <!-- 0405 T0011: This dialog's main subject is not [AI Invoke] but creating a
-                 work plan. The badge next to the title states that fact plainly. -->
-            <span class="wpp-main-task" data-test="wpp-main-task">
-              {{ t('main.work_plan_proposal_dialog.main_task') }}
-            </span>
-          </div>
-          <button type="button" class="modal-close" data-test="wpp-close" @click="onClose">
-            <AppIcon name="x" />
-          </button>
-        </div>
+  <!-- flowgate.default.0560 T0022 §2.4 (5순위) - migrated onto the common dialog layer.
+       D0008 §6 maps this instance to `workflow-large`. `surface="panel"` is an explicit caller
+       value (a content-height picker, not a fixed `min(860px, 88vh)` sheet), and `size` follows
+       the two widths this dialog already had: 1040px with both sections -> `xl` (1180), and
+       `.modal-wpp--solo`'s 620px when there is no provider section -> `lg` (720).
 
+       ESC and initial focus are the stack's now - the focusable overlay, its escape-keydown
+       binding and the delayed focus call that existed only to feed them
+       are all gone (identical to §2.3; see `WorkPlanCreateDialog.vue` for why). The generated
+       `aria-labelledby` replaces the hand-written `id="wpp-title"`.
+
+       `closeOnBackdrop` is not overridden: `workflow-large` defaults to `false`, and the old
+       `.modal-bg` had no self-click handler either. -->
+  <DialogShell
+    ref="shellRef"
+    :open="visible"
+    variant="workflow-large"
+    surface="panel"
+    :size="noProviders ? 'lg' : 'xl'"
+    @request-close="onClose"
+  >
+    <template #header>
+      <DialogHeader :title="t('main.work_plan_proposal_dialog.title')" @close="onHeaderClose">
+        <template #icon>
+          <AppIcon name="clipboard-text" class="wpp-title-ico" />
+        </template>
+        <template #title>
+          {{ t('main.work_plan_proposal_dialog.title') }}
+          <!-- 0405 T0011: This dialog's main subject is not [AI Invoke] but creating a
+               work plan. The badge next to the title states that fact plainly. -->
+          <span class="wpp-main-task" data-test="wpp-main-task">
+            {{ t('main.work_plan_proposal_dialog.main_task') }}
+          </span>
+        </template>
+      </DialogHeader>
+    </template>
+
+    <template #default>
         <!-- 0405 T0011 rev2 — Until the provider list arrives, this dialog's shape isn't
              decided yet. Whether there's one section or two, and whether the rightmost
              primary button is [AI Invoke] or [+ Create Document], both depend on that
              answer. So nothing to pick or press is drawn before the answer comes — it's
              drawn once after the answer arrives, and never moves again after that, no
              matter the state. -->
-        <div v-if="!providersSettled" class="modal-bd wpp-body wpp-loading" data-test="wpp-loading">
+        <div v-if="!providersSettled" class="wpp-body wpp-loading" data-test="wpp-loading">
           {{ t('main.work_plan_proposal_dialog.loading') }}
         </div>
 
-        <div v-else class="modal-bd wpp-body">
+        <div v-else class="wpp-body">
           <p class="wpp-intro" data-test="wpp-intro">
             {{ noProviders
               ? t('main.work_plan_proposal_dialog.intro_no_providers')
@@ -56,7 +64,18 @@
                   {{ selectedTypes.size }} / {{ countableTypes.length }}
                 </span>
                 <div class="wpp-sec-acts">
-                  <button type="button" class="wpp-mini-btn" data-test="wpp-select-all-types" @click="selectAllTypes">
+                  <!-- flowgate.default.0560 TR0023 rejection rework: same reason as
+                       `WorkPlanCreateDialog.vue` — the primary/[AI 호출] action is disabled
+                       until a type is picked, so `DialogShell`'s tree would otherwise nominate
+                       that disabled button and leave focus outside the dialog on a cold open.
+                       [전체선택] is the first always-enabled control in reading order. -->
+                  <button
+                    type="button"
+                    class="wpp-mini-btn"
+                    data-test="wpp-select-all-types"
+                    data-dialog-autofocus
+                    @click="selectAllTypes"
+                  >
                     {{ t('main.work_plan_proposal_dialog.select_all') }}
                   </button>
                   <button type="button" class="wpp-mini-btn" data-test="wpp-clear-all-types" @click="clearAllTypes">
@@ -213,66 +232,30 @@
           </div>
         </div>
 
-        <div class="modal-ft wpp-ft">
-          <button
-            type="button"
-            class="btn btn-ghost"
-            data-test="wpp-cancel"
-            @click="onClose"
-          >{{ t('common.cancel') }}</button>
-          <template v-if="providersSettled">
-            <!-- 0405 T0011 rev2 (rejection 3: "AI공급자 선택할게 없으면 [AI호출이 의미
-                 없잖아] [+ 문서생성] 이 맨 우측으로 오게하고 이걸 강조해야지"): when there's
-                 no provider, this button becomes the blue primary button and the
-                 wpp-ft-last rule pushes it to the rightmost position. When a provider
-                 exists, it stays the white secondary button in the second slot as
-                 before. -->
-            <button
-              type="button"
-              class="btn"
-              :class="noProviders ? 'btn-primary wpp-main-btn wpp-ft-last' : 'btn-secondary'"
-              data-test="wpp-create-empty"
-              :disabled="!canRun || creating"
-              @click="onCreateEmpty"
-            >
-              <AppIcon name="plus" />
-              {{ creating
-                ? t('main.work_plan_proposal_dialog.btn_create_busy')
-                : t('main.work_plan_proposal_dialog.btn_create') }}
-            </button>
-            <button
-              type="button"
-              class="btn btn-secondary"
-              data-test="wpp-copy-mention"
-              :disabled="!canRun || busyAction === 'copy'"
-              @click="onCopyMention"
-            >
-              <AppIcon name="copy" />
-              {{ busyAction === 'copy'
-                ? t('main.work_plan_proposal_dialog.btn_copy_busy')
-                : t('main.work_plan_proposal_dialog.btn_copy') }}
-            </button>
-            <!-- When there is no provider to pick, this button would be clickable but
-                 have nothing to do. Rather than leave it disabled, it's not drawn at
-                 all. -->
-            <button
-              v-if="!noProviders"
-              type="button"
-              class="btn btn-primary wpp-main-btn"
-              data-test="wpp-invoke-ai"
-              :disabled="!canRun || busyAction === 'ai' || aiActive"
-              @click="onInvokeAi"
-            >
-              <AppIcon name="robot" />
-              {{ busyAction === 'ai'
-                ? t('main.work_plan_proposal_dialog.btn_ai_busy')
-                : t('main.work_plan_proposal_dialog.btn_ai') }}
-            </button>
-          </template>
-        </div>
-      </div>
-    </div>
-  </teleport>
+    </template>
+
+    <template #footer>
+      <!-- T0022 §2.4 - the conditional footer, expressed as roles instead of classes and an
+           `order` hack. [+ 문서생성] still changes MEANING with `noProviders` (0405 T0011
+           rev2: with nothing to invoke, creating the document IS the main action), and that is
+           now said by its role - `primary` when there is no provider, `aux` otherwise - so
+           `footerRolePriority` puts it in the rightmost slot by itself and `.wpp-ft-last`'s
+           `order: 9` is no longer needed. [AI 호출] is simply absent in that state, so the
+           one-primary-per-footer rule is never broken. While `providersSettled` is false the
+           array holds [취소] alone, exactly as the old `v-if="providersSettled"` group did. -->
+      <DialogFooter :actions="actions">
+        <template #action-wpp-create-empty>
+          <AppIcon name="plus" /> {{ createLabel }}
+        </template>
+        <template #action-wpp-copy-mention>
+          <AppIcon name="copy" /> {{ copyLabel }}
+        </template>
+        <template #action-wpp-invoke-ai>
+          <AppIcon name="robot" /> {{ aiLabel }}
+        </template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
@@ -319,6 +302,10 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { extractApiErrorMessage, getRequest, postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogShell from './dialogs/DialogShell.vue'
+import type { DialogAction } from './dialogs/dialogTypes'
 import AiProviderSelect from './AiProviderSelect.vue'
 import { useDocTypeStore, type WorkPlanCountableType } from '../stores/docTypeStore'
 import { useAiProviderStore } from '../stores/aiProvider'
@@ -367,7 +354,7 @@ const { t, locale } = useI18n()
 const docTypeStore = useDocTypeStore()
 const aiProviderStore = useAiProviderStore()
 
-const overlayRef = ref<HTMLElement | null>(null)
+const shellRef = ref<InstanceType<typeof DialogShell> | null>(null)
 const typesError = ref(false)
 const providersError = ref(false)
 /** Whether the answer for the provider list has arrived. This dialog's shape
@@ -599,7 +586,9 @@ watch(
     void loadTypes()
     void loadProviders()
     void loadNoteLimit()
-    setTimeout(() => overlayRef.value?.focus(), 50)
+    // T0022 §2.4: the 50ms `overlayRef.focus()` is gone with the element-bound ESC handler it
+    // served; L0009 §4's decision tree focuses a control inside the surface on the nextTick
+    // after open.
   },
   { immediate: true },
 )
@@ -607,6 +596,63 @@ watch(
 function onClose() {
   emit('update:visible', false)
 }
+
+function onHeaderClose() {
+  shellRef.value?.requestClose('header')
+}
+
+const createLabel = computed(() =>
+  creating.value
+    ? t('main.work_plan_proposal_dialog.btn_create_busy')
+    : t('main.work_plan_proposal_dialog.btn_create'),
+)
+const copyLabel = computed(() =>
+  props.busyAction === 'copy'
+    ? t('main.work_plan_proposal_dialog.btn_copy_busy')
+    : t('main.work_plan_proposal_dialog.btn_copy'),
+)
+const aiLabel = computed(() =>
+  props.busyAction === 'ai'
+    ? t('main.work_plan_proposal_dialog.btn_ai_busy')
+    : t('main.work_plan_proposal_dialog.btn_ai'),
+)
+
+/** T0022 §2.4 - see the footer comment in the template for why the roles are what they are. */
+const actions = computed<DialogAction[]>(() => {
+  const list: DialogAction[] = [
+    {
+      id: 'wpp-cancel',
+      label: t('common.cancel'),
+      role: 'cancel',
+      onSelect: onClose,
+    },
+  ]
+  if (!providersSettled.value) return list
+  list.push({
+    id: 'wpp-create-empty',
+    label: createLabel.value,
+    role: noProviders.value ? 'primary' : 'aux',
+    disabled: !canRun.value || creating.value,
+    onSelect: onCreateEmpty,
+  })
+  list.push({
+    id: 'wpp-copy-mention',
+    label: copyLabel.value,
+    role: 'aux',
+    disabled: !canRun.value || props.busyAction === 'copy',
+    onSelect: onCopyMention,
+  })
+  if (!noProviders.value) {
+    list.push({
+      id: 'wpp-invoke-ai',
+      label: aiLabel.value,
+      role: 'primary',
+      disabled: !canRun.value || props.busyAction === 'ai' || props.aiActive,
+      onSelect: onInvokeAi,
+    })
+  }
+  return list
+})
 
 /**
  * [Create Document] — reuses the existing creation path as-is. The scope's type
@@ -681,11 +727,10 @@ function onInvokeAi() {
 <style scoped>
 /* Sections + button row. The button row never changes its count or positions in
    any state after the dialog is rendered (P0004). */
-.modal-wpp { width: 1040px; max-width: 96vw; }
-/* 0405 T0011 rev2 — a dialog with no section ② has just one section. Keep the
-   remaining single section from having all of 1040px to itself. */
-.modal-wpp--solo { width: 620px; }
-.wpp-title-ico { color: var(--primary, #4f46e5); margin-right: 6px; }
+/* `.modal-wpp` / `.modal-wpp--solo` left with the markup: the two widths are the shell's
+   `size` now (`xl` with both sections, `lg` when section ② is absent - 0405 T0011 rev2 kept
+   the single-section dialog from having 1040px to itself, and `lg` keeps that intent). */
+.wpp-title-ico { color: var(--primary, #4f46e5); }
 /* 0405 T0011 — the badge marking this dialog's main task. Pins down visually that
    the title is [Create Work Plan]. */
 .wpp-main-task {
@@ -694,7 +739,9 @@ function onInvokeAi() {
   color: var(--primary, #2563eb); background: var(--primary-l, #eff6ff);
   border: 1px solid var(--primary-b, #bfdbfe);
 }
-.wpp-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+/* `panel`'s body rule already pads 18px 20px and scrolls, so `.wpp-body` keeps only its
+   own column layout. */
+.wpp-body { display: flex; flex-direction: column; gap: 12px; }
 .wpp-loading {
   align-items: center; justify-content: center; min-height: 120px;
   font-size: .82rem; color: var(--text-m, #64748b);
@@ -787,14 +834,11 @@ function onInvokeAi() {
   color: var(--warning, #b45309); background: var(--warning-l, #fef3c7);
   border-color: #fde68a; border-left-color: var(--warning, #b45309);
 }
-/* 0405 T0011 rev1 — when a provider exists, the dialog's blue primary button is
-   [AI Invoke], and only that.
-   rev2 — when no provider exists, [AI Invoke] is gone, and [+ Create Document]
-   takes over the primary-button slot and moves to the far right. The DOM order
-   stays the same; a single `order` line moves its position. */
-.wpp-ft { display: flex; gap: 8px; justify-content: flex-end; }
-.wpp-main-btn { font-weight: 700; }
-.wpp-ft-last { order: 9; }
+/* 0405 T0011 rev1/rev2 said the same thing these three rules used to: with a provider the
+   blue primary button is [AI Invoke]; without one, [+ Create Document] takes the primary slot
+   and moves to the far right. T0022 §2.4 moved that decision into `DialogAction.role`, so
+   `.wpp-ft` (the row), `.wpp-main-btn` (the primary weight) and `.wpp-ft-last` (`order: 9`)
+   are all gone - `dialog.css` paints the primary and `footerRolePriority` places it. */
 
 @media (max-width: 1000px) {
   .wpp-cols { grid-template-columns: 1fr; }

@@ -73,12 +73,14 @@ describe('document edit modal layout', () => {
   it('bounds the dialog height so the box itself defines the track', () => {
     // The editor is a `sheet` surface; the sheet's own height cap is what bounds the track.
     expect(cssRule(dialogCssSource, '.fg-dialog-surface--sheet')).toMatch(/height:\s*min\(860px,/)
-    // The legacy shell still serves GroupChangesDialog and keeps its container-relative cap:
-    // `100%`, not a vh cap, because that shell is also centred inside `.modal-bg--below-header`.
+    // `.document-modal` in app.css keeps its container-relative cap (`100%`, not a vh cap,
+    // because that shell is centred inside `.modal-bg--below-header`). 0560 T0022 §2.7/§2.8
+    // moved its last two users onto the common layer; deleting the now-unused rule is 6·순위's
+    // job (NR0005 §13 "중복 scoped CSS 제거"), so the single-definition check below still runs.
     expect(cssRule(sharedCssSource, '.document-modal')).toMatch(/height:\s*min\(860px,\s*100%\)/)
   })
 
-  it('keeps the editor on the common shell and the legacy shell defined exactly once', () => {
+  it('keeps the editor and the changes viewer on the common shell, defined exactly once', () => {
     // The editor is a common dialog now: no hand-built modal box, and its measured width is
     // carried by `surface-class` rather than by a second `.document-modal` variant.
     expect(editDialogSource).toMatch(/<DialogShell/)
@@ -87,11 +89,14 @@ describe('document edit modal layout', () => {
     expect(cssRule(editDialogSource, '.fg-dialog-surface.document-edit-dialog'))
       .toMatch(/width:\s*min\(1120px,\s*94vw\)/)
 
-    // GroupChangesDialog is outside T0018's scope and still uses the legacy shell. The
-    // single-definition invariant is what keeps that shell from quietly forking.
-    expect(groupChangesSource).toMatch(/class="modal-box document-modal document-modal--edit"/)
-    expect(groupChangesSource).toMatch(/<teleport to="body">/)
-    expect(groupChangesSource).not.toMatch(/gcd-(overlay|dialog)/)
+    // 0560 T0022 §2.7: GroupChangesDialog was T0018's one remaining legacy user of this shell
+    // and is now a common dialog too - same `surface-class` route for the measured width, no
+    // hand-built box, no `<teleport>` of its own, and still no backdrop-close binding.
+    expect(groupChangesSource).not.toMatch(/class="modal-box document-modal document-modal--edit"/)
+    expect(groupChangesSource).not.toMatch(/<teleport to="body">/)
+    expect(groupChangesSource).toMatch(/surface-class="gcd-changes-dialog"/)
+    expect(cssRule(groupChangesSource, '.fg-dialog-surface.gcd-changes-dialog'))
+      .toMatch(/width:\s*min\(1120px,\s*94vw\)/)
     expect(groupChangesSource).not.toMatch(/@click\.self/)
 
     const modalRuleCount = [mainPanelSource, sharedCssSource, groupChangesSource, editDialogSource]

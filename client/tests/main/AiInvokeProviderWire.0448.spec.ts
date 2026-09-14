@@ -114,7 +114,7 @@ async function confirmPayloadForPlan(fill: Record<number, string>) {
     global: { plugins: [i18n] },
   })
   await flushPromises()
-  ;([...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement).click()
+  ;([...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement).click()
   await flushPromises()
   const payload = wrapper.emitted('confirm')![0][0] as any
   wrapper.unmount()

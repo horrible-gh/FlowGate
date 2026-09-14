@@ -142,25 +142,39 @@ describe('GitMergeReviewDialog keeps only the parent half (T0020 §4-5)', () => 
   })
 
   /**
-   * The parent's own shell is NOT this T's business — NR0005 §13 5순위 moves it together with
-   * `GroupChangesDialog`. Asserted here so "while I was in the file" cannot quietly take it.
+   * T0020 left the parent's own shell for NR0005 §13 5순위, which moved it together with
+   * `GroupChangesDialog` (0560 T0022 §2.8). This assertion is the successor of T0020's "still
+   * opens its own teleport and legacy modal box, untouched": the parent is a `workflow-large`
+   * dialog now, with no hand-built box and no `<teleport>` of its own.
    */
-  it('still opens its own teleport and legacy modal box, untouched', () => {
-    expect(review).toContain('<teleport to="body">')
-    expect(review).toContain('class="modal-bg"')
-    expect(review).toContain('document-modal document-modal--edit gmr-modal')
+  it('is on the common layer too, so the pair is a real parent/child', () => {
+    expect(review).not.toContain('<teleport to="body">')
+    // The feature classes that survive (`gmr-modal-body`) are body markup D0008 §1 leaves with
+    // the feature; what must be gone is the hand-built shell itself.
+    // Class ATTRIBUTES only, like LEGACY_CLASS above: prose in a comment must stay free to
+    // name the markup it replaced.
+    for (const legacy of [/class="modal-bg"/, /class="modal-hd"/, /class="modal-close"/, /class="modal-ft/, /class="[^"]*document-modal/]) {
+      expect(review, `the parent still carries ${legacy}`).not.toMatch(legacy)
+    }
+    expect(review).toContain('variant="workflow-large"')
+    expect(review).toContain('<GitMergeRejectDialog')
   })
 
   /**
-   * T0020 §2.2 / §4-6: the approximation of L0009's "child active 중 parent: interaction
-   * 비활성". The real contract needs the parent on the stack, which 5순위 does; until then the
-   * three controls that act on the review are disabled by hand while the child is up. The
-   * rendered behaviour is exercised in tests/main/GitMergeReviewDialog.spec.ts.
+   * T0020 §2.2 / §4-6 approximated L0009's "child active 중 parent: interaction 비활성" by
+   * hand, because the real contract needs the parent on the stack. 0560 T0022 §2.8 put it
+   * there, so the three hand-written guards are gone; the rendered behaviour that replaces them
+   * is exercised below and in tests/main/GitMergeReviewDialog.spec.ts.
    */
-  it('disables approve, reject and the header X while the sub-dialog is open', () => {
-    expect(review).toContain('"busy || !canApprove || rejectPromptOpen"')
-    expect(review).toContain('"busy || !canReject || rejectPromptOpen"')
-    expect(review).toMatch(/class="modal-close"[^>]*:disabled="rejectPromptOpen"/)
+  it('no longer disables approve, reject and the header X by hand', () => {
+    // `:open="rejectPromptOpen"` on the child stays — that is what OPENS it. What is gone is the
+    // three places the parent used the same flag to switch its own controls off.
+    expect(review).not.toMatch(/:disabled="[^"]*\|\| rejectPromptOpen/)
+    expect(review).not.toMatch(/:disabled="rejectPromptOpen"/)
+    // The two conditions live in the `actions` array now, and they are the originals minus
+    // that one term.
+    expect(review).toContain('disabled: busy.value || !canApprove.value,')
+    expect(review).toContain('disabled: busy.value || !canReject.value,')
   })
 })
 
@@ -554,8 +568,14 @@ describe('the nested pair, mounted for real (T0020 §4-6 · §4-8)', () => {
     return el
   }
 
-  const rejectTrigger = () => parentButton('.gmr-ft-actions .btn-danger-ol')
-  const reasonBox = () => document.body.querySelector<HTMLTextAreaElement>('.fg-dialog-body textarea')!
+  const rejectTrigger = () => parentButton('[data-dialog-action-id="reject"]')
+  const approveButton = () => parentButton('[data-dialog-action-id="approve"]')
+  const parentSurface = () =>
+    document.body.querySelector<HTMLElement>('[data-dialog-variant="workflow-large"]')!
+  // The parent is a common dialog now and has a textarea of its own (the conversation
+  // composer), so the reason box has to be looked up inside the CHILD's surface.
+  const reasonBox = () =>
+    document.body.querySelector<HTMLTextAreaElement>('[data-dialog-variant="form-actions"] textarea')!
 
   async function openChild() {
     const trigger = rejectTrigger()
@@ -573,10 +593,17 @@ describe('the nested pair, mounted for real (T0020 §4-6 · §4-8)', () => {
     await openChild()
 
     // The parent is still there, DOM and state intact (L0009 §2 "child active 중 parent").
-    expect(document.body.querySelector('.modal-bg .gmr-modal')).not.toBeNull()
+    expect(parentSurface()).not.toBeNull()
 
-    const child = document.body.querySelector<HTMLElement>('.fg-dialog-overlay')!
-    expect(Number(child.style.zIndex)).toBe(1600)
+    // 0560 T0022 §2.8: both are stack members, so the ladder is the layer's own - the parent
+    // takes the base 1600 and the child the next step. Before, the parent sat on app.css's
+    // `.modal-bg` (1000) and the child was the only entry at 1600.
+    const parentOverlay = parentSurface().closest<HTMLElement>('.fg-dialog-overlay')!
+    const child = document.body
+      .querySelector<HTMLElement>('[data-dialog-variant="form-actions"]')!
+      .closest<HTMLElement>('.fg-dialog-overlay')!
+    expect(Number(parentOverlay.style.zIndex)).toBe(1600)
+    expect(Number(child.style.zIndex)).toBe(1610)
 
     // A third layer on top: the discard confirm of §2.2 (a). One step further up, not level
     // with the dialog it is asking about.
@@ -590,33 +617,36 @@ describe('the nested pair, mounted for real (T0020 §4-6 · §4-8)', () => {
     const confirmOverlay = document.body
       .querySelector<HTMLElement>('[data-dialog-variant="confirm-danger"]')!
       .closest<HTMLElement>('.fg-dialog-overlay')!
-    expect(Number(confirmOverlay.style.zIndex)).toBe(1610)
+    expect(Number(confirmOverlay.style.zIndex)).toBe(1620)
     expect(Number(confirmOverlay.style.zIndex)).toBeGreaterThan(Number(child.style.zIndex))
   })
 
   it('makes the parent inert while the child is up, and live again after it closes', async () => {
     await mountReview()
-    expect(parentButton('.gmr-ft-actions .btn-primary').disabled).toBe(false)
-    expect(parentButton('.modal-close').disabled).toBe(false)
+    expect(parentSurface().hasAttribute('inert')).toBe(false)
+    expect(approveButton().disabled).toBe(false)
 
     await openChild()
-    expect(parentButton('.gmr-ft-actions .btn-primary').disabled).toBe(true)
-    expect(rejectTrigger().disabled).toBe(true)
-    expect(parentButton('.modal-close').disabled).toBe(true)
+    // 0560 T0022 §2.8: this is the contract doing the work, not three `:disabled` bindings.
+    // The buttons themselves stay enabled; the SURFACE they live on is inert.
+    expect(parentSurface().hasAttribute('inert')).toBe(true)
+    expect(approveButton().disabled).toBe(false)
+    expect(rejectTrigger().disabled).toBe(false)
 
     action('cancel').click()
     await flushPromises()
-    expect(parentButton('.gmr-ft-actions .btn-primary').disabled).toBe(false)
-    expect(parentButton('.modal-close').disabled).toBe(false)
+    expect(parentSurface().hasAttribute('inert')).toBe(false)
+    expect(approveButton().disabled).toBe(false)
   })
 
   /**
    * T0020 §4-8. The initial focus is new (nothing in the old hand-rolled box was focused), and
-   * the return is the reason `openRejectPrompt` now records the trigger element at all.
+   * the return is the reason `openRejectPrompt` records the trigger element at all.
    *
-   * The trigger is disabled while the child is up — that is §4-6's guard — so focus return had
-   * to survive a target that is unfocusable at close time and focusable again one tick later.
-   * That is exactly what this asserts, for the confirm path as well as the cancel path.
+   * 0560 T0022 §2.8 changed what makes the return hard: the trigger is no longer `disabled`
+   * while the child is up, but the surface it sits on is `inert` until the stack recomputes.
+   * `GitMergeReviewDialog` re-asserts the focus once that has happened, which is what these two
+   * cases measure - for the confirm path as well as the cancel path.
    */
   it('starts focus in the reason field and returns it to [반려] on cancel', async () => {
     await mountReview()

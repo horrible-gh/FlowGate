@@ -238,33 +238,35 @@ describe('③ 공급자가 있는 창의 주버튼은 [AI 호출]이다', () => 
 
   it('제목이 [작업계획 생성]이고 [메인작업] 표가 붙는다', async () => {
     const wrapper = await mountDialog()
-    expect(wrapper.get('#wpp-title').text()).toContain('작업계획 생성')
+    expect(wrapper.get('.fg-dialog-header__title').text()).toContain('작업계획 생성')
     expect(wrapper.get('[data-test="wpp-main-task"]').text()).toBe('메인작업')
     wrapper.unmount()
   })
 
   it('파란 주버튼은 [AI 호출] 하나뿐이고 [문서생성]은 보조 버튼이다', async () => {
     const wrapper = await mountDialog()
-    const create = wrapper.get('[data-test="wpp-create-empty"]')
-    const copy = wrapper.get('[data-test="wpp-copy-mention"]')
-    const ai = wrapper.get('[data-test="wpp-invoke-ai"]')
+    const create = wrapper.get('[data-dialog-action-id="wpp-create-empty"]')
+    const copy = wrapper.get('[data-dialog-action-id="wpp-copy-mention"]')
+    const ai = wrapper.get('[data-dialog-action-id="wpp-invoke-ai"]')
 
     expect(ai.text()).toContain('AI 호출')
-    expect(ai.classes()).toContain('btn-primary')
-    expect(ai.classes()).toContain('wpp-main-btn')
+    // 0560 T0022 §2.4: the blue primary is `role="primary"` painted by dialog.css, and the two
+    // helpers are `aux` — `btn-primary`/`btn-secondary`/`wpp-main-btn` left with the markup.
+    expect(ai.classes()).toContain('fg-dialog-btn--primary')
     expect(create.text()).toContain('문서생성')
-    expect(create.classes()).toContain('btn-secondary')
-    expect(create.classes()).not.toContain('btn-primary')
-    expect(create.classes()).not.toContain('wpp-ft-last')
-    expect(copy.classes()).toContain('btn-secondary')
+    expect(create.classes()).toContain('fg-dialog-btn--aux')
+    expect(create.classes()).not.toContain('fg-dialog-btn--primary')
+    expect(copy.classes()).toContain('fg-dialog-btn--aux')
 
     // 창 전체에 파란 주버튼은 하나다.
-    expect(wrapper.findAll('.modal-ft .btn-primary').length).toBe(1)
-    // 버튼 개수·순서는 예전 그대로다 — 취소 / 문서생성 / 멘트복사 / AI 호출.
-    const labels = wrapper.findAll('.modal-ft .btn').map((n) => n.text().trim())
-    expect(labels.length).toBe(4)
-    expect(labels[1]).toContain('문서생성')
-    expect(labels[2]).toContain('멘트복사')
+    expect(wrapper.findAll('[data-dialog-action-role="primary"]').length).toBe(1)
+    // 네 버튼 그대로이고, 순서만 DS0007 규칙으로 정렬된다:
+    // 보조(문서생성·멘트복사) → 취소 → 주버튼(AI 호출). 이전엔 취소가 맨 앞이었다.
+    const ids = wrapper.findAll('.fg-dialog-btn').map((n) => n.attributes('data-dialog-action-id'))
+    expect(ids).toEqual(['wpp-create-empty', 'wpp-copy-mention', 'wpp-cancel', 'wpp-invoke-ai'])
+    const labels = wrapper.findAll('.fg-dialog-btn').map((n) => n.text().trim())
+    expect(labels[0]).toContain('문서생성')
+    expect(labels[1]).toContain('멘트복사')
     expect(labels[3]).toContain('AI 호출')
     wrapper.unmount()
   })
@@ -284,9 +286,10 @@ describe('③ 공급자가 있는 창의 주버튼은 [AI 호출]이다', () => 
     ] as const) {
       i18n.global.locale.value = locale
       const wrapper = await mountDialog()
-      expect(wrapper.get('#wpp-title').text()).toContain(title)
-      expect(wrapper.get('[data-test="wpp-invoke-ai"]').text()).toContain(ai)
-      expect(wrapper.get('[data-test="wpp-invoke-ai"]').classes()).toContain('btn-primary')
+      expect(wrapper.get('.fg-dialog-header__title').text()).toContain(title)
+      expect(wrapper.get('[data-dialog-action-id="wpp-invoke-ai"]').text()).toContain(ai)
+      expect(wrapper.get('[data-dialog-action-id="wpp-invoke-ai"]').classes())
+        .toContain('fg-dialog-btn--primary')
       wrapper.unmount()
     }
     i18n.global.locale.value = 'ko'
@@ -312,15 +315,15 @@ describe('④ 고를 공급자가 없으면 그 칸도 [AI 호출]도 나오지 
 
   it('[AI 호출]은 그리지 않고 [문서생성]이 맨 오른쪽 파란 주버튼이 된다', async () => {
     const wrapper = await mountDialog([])
-    expect(wrapper.find('[data-test="wpp-invoke-ai"]').exists()).toBe(false)
+    expect(wrapper.find('[data-dialog-action-id="wpp-invoke-ai"]').exists()).toBe(false)
 
-    const create = wrapper.get('[data-test="wpp-create-empty"]')
-    expect(create.classes()).toContain('btn-primary')
-    expect(create.classes()).toContain('wpp-main-btn')
-    // 맨 오른쪽으로 보내는 규칙(.wpp-ft-last { order: 9 })을 이 버튼만 단다.
-    expect(create.classes()).toContain('wpp-ft-last')
-    expect(wrapper.findAll('.modal-ft .btn').length).toBe(3)
-    expect(wrapper.findAll('.modal-ft .btn-primary').length).toBe(1)
+    const create = wrapper.get('[data-dialog-action-id="wpp-create-empty"]')
+    expect(create.classes()).toContain('fg-dialog-btn--primary')
+    // 0560 T0022 §2.4: 맨 오른쪽으로 보내는 일은 `.wpp-ft-last { order: 9 }`가 아니라
+    // `role="primary"`가 한다 — 그래서 이 버튼이 실제로 마지막으로 그려지는지를 묻는다.
+    const ids = wrapper.findAll('.fg-dialog-btn').map((n) => n.attributes('data-dialog-action-id'))
+    expect(ids).toEqual(['wpp-copy-mention', 'wpp-cancel', 'wpp-create-empty'])
+    expect(wrapper.findAll('[data-dialog-action-role="primary"]').length).toBe(1)
     wrapper.unmount()
   })
 
@@ -329,13 +332,13 @@ describe('④ 고를 공급자가 없으면 그 칸도 [AI 호출]도 나오지 
       data: { ok: true, doc_id: 'flowgate.default.0405.0009-WP', title: '작업계획', body: {} },
     })
     const wrapper = await mountDialog([])
-    expect(wrapper.get('[data-test="wpp-create-empty"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-dialog-action-id="wpp-create-empty"]').attributes('disabled')).toBeDefined()
 
     await wrapper.findAll('[data-test="wpp-type"]')[0].trigger('click')
-    expect(wrapper.get('[data-test="wpp-create-empty"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[data-dialog-action-id="wpp-create-empty"]').attributes('disabled')).toBeUndefined()
     expect(wrapper.get('[data-test="wpp-notice"]').text()).toContain('등록된 AI 공급자 없음')
 
-    await wrapper.get('[data-test="wpp-create-empty"]').trigger('click')
+    await wrapper.get('[data-dialog-action-id="wpp-create-empty"]').trigger('click')
     await flushPromises()
     const [url, body] = postRequest.mock.calls[0]
     expect(url).toBe('/api/v1/documents/work-plan')
@@ -349,7 +352,7 @@ describe('④ 고를 공급자가 없으면 그 칸도 [AI 호출]도 나오지 
   it('[멘트복사]는 남아 있고 빈 공급자 목록을 실어 보낸다', async () => {
     const wrapper = await mountDialog([])
     await wrapper.findAll('[data-test="wpp-type"]')[0].trigger('click')
-    await wrapper.get('[data-test="wpp-copy-mention"]').trigger('click')
+    await wrapper.get('[data-dialog-action-id="wpp-copy-mention"]').trigger('click')
 
     const scope = wrapper.emitted('copy-mention')![0][0] as any
     expect(scope.quantity_type_codes).toEqual(['DS'])
@@ -365,10 +368,10 @@ describe('④ 고를 공급자가 없으면 그 칸도 [AI 호출]도 나오지 
     ] as const) {
       i18n.global.locale.value = locale
       const wrapper = await mountDialog([])
-      expect(wrapper.find('[data-test="wpp-invoke-ai"]').exists()).toBe(false)
-      const btn = wrapper.get('[data-test="wpp-create-empty"]')
+      expect(wrapper.find('[data-dialog-action-id="wpp-invoke-ai"]').exists()).toBe(false)
+      const btn = wrapper.get('[data-dialog-action-id="wpp-create-empty"]')
       expect(btn.text()).toContain(create)
-      expect(btn.classes()).toContain('btn-primary')
+      expect(btn.classes()).toContain('fg-dialog-btn--primary')
       wrapper.unmount()
     }
     i18n.global.locale.value = 'ko'

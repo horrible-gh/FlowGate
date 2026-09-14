@@ -11,13 +11,12 @@
  * Why a browser at all. Two of T0020's claims are painted-pixel claims that jsdom cannot
  * reach, and both are load-bearing:
  *
- *   1. Z-ORDER OF THE NESTED PAIR. §2.2 argues the reject sub-dialog still paints above its
- *      parent after joining the common stack, because `dialogZOrder.base` is 1600 while the
- *      parent's `.modal-bg` is `z-index: 1000` in `shared/app.css` — a comparison between an
- *      inline style and a stylesheet rule that is never loaded in jsdom. Here the stylesheet
- *      is the real one, and the question is asked the way a user asks it: what does the
- *      pointer hit at that coordinate. It is asked three layers deep too, because §2.2 (a)'s
- *      discard confirm opens on top of the sub-dialog.
+ *   1. Z-ORDER OF THE NESTED PAIR. When T0020 wrote this, the reject sub-dialog had joined
+ *      the common stack while its parent was still a `.modal-bg` at `z-index: 1000`. 0560
+ *      T0022 §2.8 moved the parent onto the stack too, so the comparison is now between two
+ *      overlays one `dialogZOrder.step` apart — and the question is still asked the way a user
+ *      asks it: what does the pointer hit at that coordinate. It is asked three layers deep
+ *      too, because §2.2 (a)'s discard confirm opens on top of the sub-dialog.
  *   2. WIDTH PARITY. Every one of the six instances carried a measured width before the
  *      split. The common `size` scale (sm 400 / md 520 / lg 720) covers two of them exactly;
  *      the other four needed a `surface-class` override, and an override that silently fails
@@ -56,7 +55,7 @@ async function bundle(prefix) {
 }
 /*
  * AppIcon-*       — `shared/app.css` and every design token. `.modal-bg { z-index: 1000 }`,
- *                   the number the whole z-order argument is against, is in here.
+ *                   the app-wide tokens every surface colour comes from, are in here.
  * ConfirmDialog-* — the common dialog layer (`dialog.css`), including the size tracks.
  * main-*          — the main bundle's styles: `gmr-reject-dialog`, `git-panel-dialog`,
  *                   `notif-detail-dialog`.
@@ -161,7 +160,7 @@ try {
         className: typeof el.className === 'string' ? el.className : '',
         variant: (el.closest('[data-dialog-variant]') || {}).getAttribute
           ? el.closest('[data-dialog-variant]').getAttribute('data-dialog-variant') : null,
-        inLegacyParent: !!el.closest('.gmr-modal'),
+        inReviewDialog: !!el.closest('[data-dialog-variant="workflow-large"]'),
         inCommonOverlay: !!el.closest('.fg-dialog-overlay'),
       };
       const hit = (x, y) => describe(document.elementFromPoint(Math.round(x), Math.round(y)));
@@ -183,11 +182,11 @@ try {
         rect: rect(el),
       }));
 
-      const legacyBg = document.querySelector('.modal-bg');
-      const legacyBox = document.querySelector('.gmr-modal');
-      // The parent controls T0020 §2.2 disables by hand; their painted state is what a user
-      // meets, so the hit test over one of them is the real "부모 조작 불가" check.
-      const parentApprove = document.querySelector('.gmr-ft-actions .btn-primary');
+      const reviewSurface = document.querySelector('[data-dialog-variant="workflow-large"]');
+      // 0560 T0022 §2.8: the parent's [승인] is no longer disabled by hand. What makes it
+      // unreachable is the contract - the surface goes inert and the child's dim covers it -
+      // so the hit test over the button is the whole of the "부모 조작 불가" check now.
+      const parentApprove = document.querySelector('[data-dialog-action-id="approve"]');
 
       const out = {
         viewport: {
@@ -196,12 +195,11 @@ try {
         },
         overlays: overlays,
         surfaces: surfaces,
-        legacy: legacyBg ? {
-          bgZIndex: getComputedStyle(legacyBg).zIndex,
-          bgPosition: getComputedStyle(legacyBg).position,
-          bgRect: rect(legacyBg),
-          boxRect: legacyBox ? rect(legacyBox) : null,
-          boxBackground: legacyBox ? getComputedStyle(legacyBox).backgroundColor : null,
+        parent: reviewSurface ? {
+          zIndex: getComputedStyle(reviewSurface).zIndex,
+          inert: reviewSurface.hasAttribute('inert'),
+          rect: rect(reviewSurface),
+          background: getComputedStyle(reviewSurface).backgroundColor,
         } : null,
         hits: {},
       };
@@ -218,9 +216,9 @@ try {
         const under = surfaces[surfaces.length - 2];
         out.hits.underSurfaceCentre = hit((under.rect.left + under.rect.right) / 2, (under.rect.top + under.rect.bottom) / 2);
       }
-      if (legacyBox) {
-        // Top-left corner of the legacy parent box, well away from any common surface.
-        out.hits.legacyBoxCorner = hit(legacyBox.getBoundingClientRect().left + 8, legacyBox.getBoundingClientRect().top + 8);
+      if (reviewSurface) {
+        // Top-left corner of the review dialog's own box, well away from the child surface.
+        out.hits.parentBoxCorner = hit(reviewSurface.getBoundingClientRect().left + 8, reviewSurface.getBoundingClientRect().top + 8);
       }
       if (parentApprove) {
         const r = parentApprove.getBoundingClientRect();
@@ -272,28 +270,29 @@ try {
     }
 
     /* ── Z-ORDER, the nested pair ── */
-    if (m.legacy != null) {
-      if (m.legacy.bgZIndex !== '1000') {
-        failures.push(`${name}: the legacy parent's .modal-bg is z-index ${m.legacy.bgZIndex}, expected 1000 (app.css) — the premise of §2.2 does not hold`)
-      }
-      if (m.legacy.boxRect == null || m.legacy.boxRect.width <= 0) {
-        failures.push(`${name}: the legacy parent box did not render, so there is nothing to stack above`)
+    if (m.parent != null) {
+      if (m.parent.rect.width <= 0) {
+        failures.push(`${name}: the review dialog did not render, so there is nothing to stack above`)
       }
       // The child really is the layer a pointer meets over its own surface...
       const top = m.hits.topSurfaceCentre
-      if (top == null || !top.inCommonOverlay || top.inLegacyParent) {
+      if (top == null || !top.inCommonOverlay || top.inReviewDialog) {
         failures.push(`${name}: the top common surface is not what the pointer hits at its centre — got ${JSON.stringify(top)}`)
       }
-      // ...and its dim covers the parent, which is what makes the parent unreachable.
-      const overParent = m.hits.legacyBoxCorner
-      if (overParent == null || !overParent.inCommonOverlay) {
-        failures.push(`${name}: a click on the legacy parent box reaches the parent — the child's dim is not above it (got ${JSON.stringify(overParent)})`)
+      // ...and the child's dim covers the parent, which is what makes the parent unreachable.
+      const overParent = m.hits.parentBoxCorner
+      if (overParent == null || overParent.inReviewDialog) {
+        failures.push(`${name}: a click on the review dialog's own box still reaches it — the child's dim is not above it (got ${JSON.stringify(overParent)})`)
       }
-      // §2.2's hand-written guard, in its painted state.
-      if (m.parentApproveDisabled !== true) {
-        failures.push(`${name}: the parent's [승인] is not disabled while the child is open`)
+      // 0560 T0022 §2.8: not a hand-written `disabled` any more. The parent is inert and the
+      // pointer lands on the dim instead of on the button.
+      if (m.parent.inert !== true) {
+        failures.push(`${name}: the review dialog is not inert while the child is open`)
       }
-      if (m.hits.parentApprove != null && !m.hits.parentApprove.inCommonOverlay) {
+      if (m.parentApproveDisabled !== false) {
+        failures.push(`${name}: the parent's [승인] is still disabled by hand — T0022 §2.8 removed that guard`)
+      }
+      if (m.hits.parentApprove != null && m.hits.parentApprove.inReviewDialog) {
         failures.push(`${name}: the parent's [승인] is reachable by pointer while the child is open`)
       }
     }
@@ -328,9 +327,9 @@ try {
       width: m.surfaces.map((s) => `${s.variant}=${s.rect.width}px`),
       expectedWidth: EXPECTED_WIDTH[name] ?? null,
       overlayZ: m.overlays.map((o) => `${o.variant ?? '?'}@${o.zIndex}`),
-      legacyParentZ: m.legacy?.bgZIndex ?? null,
+      reviewDialogZ: m.parent?.zIndex ?? null,
       hitAtTopSurface: m.hits.topSurfaceCentre?.variant ?? null,
-      hitOverLegacyParent: m.hits.legacyBoxCorner?.inCommonOverlay ?? null,
+      hitOverParentIsParent: m.hits.parentBoxCorner?.inReviewDialog ?? null,
       parentApproveDisabled: m.parentApproveDisabled ?? null,
       inert: m.surfaces.map((s) => `${s.variant}=${s.inert}`),
     }])),
@@ -346,6 +345,7 @@ if (failures.length > 0) {
 }
 console.log(
   'OK — all six split-out dialogs keep their pre-split width, the reject sub-dialog paints and '
-  + 'takes the pointer above its legacy parent (1600 vs app.css 1000), and the discard confirm '
-  + 'stacks one step above the sub-dialog, which goes inert underneath it.',
+  + 'takes the pointer above its parent (1610 vs 1600 — 0560 T0022 §2.8 put the parent on the '
+  + 'stack too, so the parent goes inert instead of being disabled by hand), and the discard '
+  + 'confirm stacks one step above the sub-dialog, which goes inert underneath it.',
 )

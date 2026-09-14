@@ -1,20 +1,37 @@
 <template>
-  <teleport to="body">
-    <div v-if="visible" class="modal-bg">
-      <div class="modal-box modal-aiv" :class="{ 'modal-aiv--loop': reviewLoopActive }">
-        <!-- ── Header ── -->
-        <div class="modal-hd">
-          <span class="modal-title">
-            <AppIcon name="robot" style="color:var(--primary); margin-right:6px;" />
-            {{ t('main.ai_invoke_dialog.title') }}
-          </span>
-          <button class="modal-close" type="button" @click="close">
-            <AppIcon name="x" />
-          </button>
-        </div>
+  <!-- flowgate.default.0560 T0022 §2.1 (5순위) - migrated onto the common dialog layer.
+       D0008 §6 maps this instance to `workflow-large`, which is the variant it carries.
+       `surface="panel"` is an explicit caller value (DialogShell's `surface` prop; "a caller's
+       explicit value always wins over the variant default"): `sheet` is a fixed
+       `min(860px, 88vh)` working surface with a padding-0 body, and this dialog is a
+       content-height settings panel with one scrolling body - the shape `.modal-aiv`
+       (`max-height: 88vh`) + `.modal-aiv .modal-bd` (`flex: 1; overflow-y: auto`) had. The
+       variant is unchanged; only the surface track is stated.
 
-        <!-- ── Body ── -->
-        <div class="modal-bd aiv-body">
+       `size` follows the two widths this dialog already had: 520px normally = the `md` track
+       exactly, and `.modal-aiv--loop`'s 620px when the review loop is on -> `lg` (720), the
+       nearest size the contract offers (T0016 answered the same way for `ReviewRejectDialog`).
+       `closeOnBackdrop` is not overridden: `workflow-large` defaults to `false` and the old
+       `.modal-bg` had no backdrop handler. -->
+  <DialogShell
+    ref="shellRef"
+    :open="visible"
+    variant="workflow-large"
+    surface="panel"
+    :size="reviewLoopActive ? 'lg' : 'md'"
+    @request-close="close"
+  >
+    <template #header>
+      <DialogHeader
+        :title="t('main.ai_invoke_dialog.title')"
+        icon="robot"
+        @close="onHeaderClose"
+      />
+    </template>
+
+    <!-- ── Body ── -->
+    <template #default>
+        <div class="aiv-body">
           <!-- Invoke setup only; admitted runs move to the group-scoped inline strip. -->
             <div class="aiv-target-row">
               <span class="aiv-target-label">{{ t('main.ai_invoke_dialog.target_doc') }}</span>
@@ -334,33 +351,33 @@
               >{{ t('main.review_action_bar.btn_release_lease') }}</button>
             </div>
         </div>
+    </template>
 
-        <!-- ── Footer ──
-             T0013: one primary review action, not two buttons side by side. Completion status
-             flips the same button between normal start and rerun (isCompletedReview /
-             effectiveReviewIntent / primaryReviewLabel below), so a completed review can no
-             longer be reached through a plain [검수 시작] click that just bounces off the
-             server's review_already_completed 409 (§6). Non-review scopes are untouched:
-             effectiveReviewIntent is always 'normal' there. Clicking [재검수] is itself the
-             user's explicit rerun intent, so the request starts immediately without another
-             confirmation dialog. -->
-        <div class="modal-ft">
-            <button type="button" class="btn btn-ghost" @click="close">{{ t('common.cancel') }}</button>
-            <button
-              type="button"
-              class="btn"
-              :class="effectiveReviewIntent === 'rerun' ? 'btn-warning' : 'btn-primary'"
-              :data-test="effectiveReviewIntent === 'rerun' ? 'review-rerun' : 'review-start'"
-              :disabled="starting || !canStart || (effectiveReviewIntent === 'rerun' && reviewRunInProgress)"
-              @click="onPrimaryStartClick"
-            >
-              <AppIcon :name="effectiveReviewIntent === 'rerun' ? 'arrows-clockwise' : 'lightning'" />
-              {{ primaryReviewLabel }}
-            </button>
-        </div>
-      </div>
-    </div>
-  </teleport>
+    <!-- ── Footer ──
+         T0013: one primary review action, not two buttons side by side. Completion status
+         flips the same button between normal start and rerun (isCompletedReview /
+         effectiveReviewIntent / primaryReviewLabel below), so a completed review can no
+         longer be reached through a plain [검수 시작] click that just bounces off the
+         server's review_already_completed 409 (§6). Non-review scopes are untouched:
+         effectiveReviewIntent is always 'normal' there. Clicking [재검수] is itself the
+         user's explicit rerun intent, so the request starts immediately without another
+         confirmation dialog.
+
+         T0022 §2.1: the two states keep being two different buttons in the DOM - the action
+         `id` still flips between `review-start` and `review-rerun`, so `data-dialog-action-id`
+         says which one is on screen exactly as the old `data-test` did, and only one of the
+         two `action-*` slots below is ever rendered. -->
+    <template #footer>
+      <DialogFooter :actions="actions">
+        <template #action-review-start>
+          <AppIcon name="lightning" /> {{ primaryReviewLabel }}
+        </template>
+        <template #action-review-rerun>
+          <AppIcon name="arrows-clockwise" /> {{ primaryReviewLabel }}
+        </template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
@@ -368,6 +385,10 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogShell from './dialogs/DialogShell.vue'
+import type { DialogAction } from './dialogs/dialogTypes'
 import AiProviderSelect from './AiProviderSelect.vue'
 import WorkflowStepPicker from './WorkflowStepPicker.vue'
 import { repeatCountChoices, useAiProviderStore } from '../stores/aiProvider'
@@ -768,6 +789,43 @@ const primaryReviewLabel = computed(() => {
   if (effectiveReviewIntent.value === 'rerun') return t('main.ai_invoke_dialog.review_rerun_button')
   return t('main.ai_invoke_dialog.review_start_button')
 })
+
+const shellRef = ref<InstanceType<typeof DialogShell> | null>(null)
+
+function onHeaderClose() {
+  shellRef.value?.requestClose('header')
+}
+
+/**
+ * T0022 §2.1 - two semantic actions, `[취소](cancel)` and the single review action
+ * (`primary`).
+ *
+ * The one judgement this migration had to make: the rerun state used to be painted
+ * `btn-warning` (amber), and `DialogActionTone` has exactly two values, `'default'` and
+ * `'danger'` (dialogTypes.ts). Adding a third is a D correction, not something this T may do -
+ * `dialogTypes.ts` says as much about variants and a tone is the same kind of contract value -
+ * so the rerun action stays `role: 'primary'` with the default tone and is distinguished by
+ * its icon (`arrows-clockwise` vs `lightning`) and its label (`primaryReviewLabel`). The
+ * visible change is that the rerun button is blue instead of amber; nothing about which action
+ * runs, or when it is disabled, changes with it.
+ */
+const actions = computed<DialogAction[]>(() => [
+  {
+    id: 'cancel',
+    label: t('common.cancel'),
+    role: 'cancel',
+    onSelect: close,
+  },
+  {
+    id: effectiveReviewIntent.value === 'rerun' ? 'review-rerun' : 'review-start',
+    label: primaryReviewLabel.value,
+    role: 'primary',
+    disabled:
+      starting.value || !canStart.value
+      || (effectiveReviewIntent.value === 'rerun' && reviewRunInProgress.value),
+    onSelect: onPrimaryStartClick,
+  },
+])
 // §3/§6: clicking the button labelled [재검수] is already an explicit rerun request. Start it
 // immediately; completed state has no branch that can reach start() without the rerun intent.
 function onPrimaryStartClick() {
@@ -1069,20 +1127,11 @@ watch(
 </script>
 
 <style scoped>
-.modal-aiv {
-  width: 520px;
-  max-width: 96vw;
-  display: flex;
-  flex-direction: column;
-  max-height: 88vh;
-}
-.modal-aiv .modal-bd {
-  flex: 1;
-  overflow-y: auto;
-  min-height: 0;
-}
+/* `.modal-aiv` / `.modal-aiv .modal-bd` left with the markup: the width is the shell's `size`
+   (`md`, or `lg` while the review loop is on), and `panel`'s own body rule already is
+   `flex: 1 1 auto; min-height: 0; overflow: auto` with 18px 20px of padding - which is where
+   `.aiv-body`'s padding went too. */
 .aiv-body {
-  padding: 18px 20px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1128,7 +1177,7 @@ watch(
    live behind that component's own scope id and would never reach this markup (same reason
    the 0446 timeout block above owns `.aiv-timeout-*`), so the equivalents are re-declared
    here under `.aiv-loop-*`. `.rlp*` keeps the deck's own names — the deck introduced them. ── */
-.modal-aiv--loop { width: 620px; }
+/* `.modal-aiv--loop` left too - the loop state widens the surface through `size="lg"` now. */
 .aiv-mode-new-tag {
   margin-left: 4px;
   padding: 1px 7px;

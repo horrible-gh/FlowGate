@@ -60,7 +60,7 @@ describe('single stored handoff display (0406 T0011)', () => {
     const box = document.querySelector('[data-test="single-step-note"]')!
     expect(box.textContent).toContain('이번 단계 저장 전달멘트')
     expect(box.textContent).toContain(i18n.global.t('main.ai_invoke_dialog.step_note_auto'))
-    ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
+    ;(document.querySelector('[data-dialog-action-role="primary"]') as HTMLButtonElement).click()
     await flushPromises()
     const body = postRequest.mock.calls[0][1] as Record<string, unknown>
     expect(body).toMatchObject({ mode: 'single', action_scope: 'new' })
@@ -110,7 +110,7 @@ describe('continuous tombstone and sequence-edit identity (0406 T0011)', () => {
     inputs[0].value = ''
     inputs[0].dispatchEvent(new Event('input'))
     await flushPromises()
-    ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
+    ;(document.querySelector('[data-dialog-action-role="primary"]') as HTMLButtonElement).click()
     await flushPromises()
     const payload = wrapper.emitted('confirm')![0][0] as any
     expect(payload.messageOverrides).toEqual({ 2: '' })

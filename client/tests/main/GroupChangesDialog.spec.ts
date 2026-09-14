@@ -111,8 +111,11 @@ describe('GroupChangesDialog (0325 TR0007 rev1 — 변경사항 열기)', () => 
 
     // Header totals mirror the sidebar summary: 60+120+90+0, 4+3+0+40.
     expect(wrapper.find('.gcd-hd-lines').text().replace(/\s+/g, '')).toBe('+270−47')
-    expect(wrapper.find('.modal-hd').text()).toContain('flowgate_default_0325')
-    expect(wrapper.find('.modal-hd').text()).toContain('main')
+    // 0560 T0022 §2.7: the title row is `DialogHeader`'s now, and the branch summary sits in
+    // its `subtitle` slot rather than in a hand-written `<p>` under `.modal-title`.
+    expect(wrapper.find('.fg-dialog-header').text()).toContain('flowgate_default_0325')
+    expect(wrapper.find('.fg-dialog-header').text()).toContain('main')
+    expect(wrapper.find('.fg-dialog-header__subtitle').text()).toContain('flowgate_default_0325')
   })
 
   it('opens the first file and renders its unified diff', async () => {
@@ -227,13 +230,16 @@ describe('GroupChangesDialog (0325 TR0007 rev1 — 변경사항 열기)', () => 
     const wrapper = mountDialog()
     await flushPromises()
 
-    await wrapper.find('.gcd-back').trigger('click')
+    // 0560 T0022 §2.7: the three ways out are one `DialogAction`, `DialogHeader`'s X and the
+    // stack's single document-level ESC listener. All three still answer `close` exactly once.
+    await wrapper.find('[data-dialog-action-id="back"]').trigger('click')
     expect(wrapper.emitted('close')).toHaveLength(1)
 
-    await wrapper.find('.modal-close').trigger('click')
+    await wrapper.find('.fg-dialog-header__close').trigger('click')
     expect(wrapper.emitted('close')).toHaveLength(2)
 
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
     expect(wrapper.emitted('close')).toHaveLength(3)
   })
 

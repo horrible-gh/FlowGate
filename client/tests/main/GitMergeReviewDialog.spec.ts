@@ -115,7 +115,7 @@ describe('GitMergeReviewDialog', () => {
     const wrapper = mountDialog()
     await flushPromises()
 
-    await wrapper.find('.gmr-ft-actions .btn-primary').trigger('click')
+    await wrapper.find('[data-dialog-action-id="approve"]').trigger('click')
     await flushPromises()
 
     expect(postRequest).toHaveBeenCalledWith(
@@ -136,7 +136,7 @@ describe('GitMergeReviewDialog', () => {
     const wrapper = mountDialog()
     await flushPromises()
 
-    await wrapper.find('.gmr-ft-actions .btn-primary').trigger('click')
+    await wrapper.find('[data-dialog-action-id="approve"]').trigger('click')
     await flushPromises()
 
     expect(wrapper.emitted('close')).toBeUndefined()
@@ -153,13 +153,17 @@ describe('GitMergeReviewDialog', () => {
     // 0560 T0020: the reject prompt is `GitMergeRejectDialog.vue` on the common layer now
     // (`form-actions`), so the probes are the layer's selectors. `teleport: true` above keeps
     // the shell's content inside this wrapper.
-    await wrapper.find('.gmr-ft-actions .btn-danger-ol').trigger('click')
+    await wrapper.find('[data-dialog-action-id="reject"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('[data-dialog-variant="form-actions"]').exists()).toBe(true)
     expect(wrapper.find('[data-dialog-action-id="reject-confirm"]').attributes('disabled')).toBeDefined()
-    // §2.2's parent guard: the review dialog's own actions are inert while this child is up.
-    expect(wrapper.find('.gmr-ft-actions .btn-primary').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('.modal-close').attributes('disabled')).toBeDefined()
+    // 0560 T0022 §2.8: TR0021's hand-written `:disabled="rejectPromptOpen"` is gone. Both
+    // dialogs are stack members now, so L0009 §2's "child active 중 parent: interaction 비활성"
+    // applies by itself - the PARENT SURFACE goes `inert`, which is why [승인] is no longer
+    // marked disabled and is still unreachable.
+    const parentSurface = wrapper.find('[data-dialog-variant="workflow-large"]')
+    expect(parentSurface.attributes('inert')).toBeDefined()
+    expect(wrapper.find('[data-dialog-action-id="approve"]').attributes('disabled')).toBeUndefined()
 
     await wrapper.find('[data-dialog-variant="form-actions"] textarea').setValue('please redo the yaml side')
     expect(wrapper.find('[data-dialog-action-id="reject-confirm"]').attributes('disabled')).toBeUndefined()
@@ -259,8 +263,8 @@ describe('GitMergeReviewDialog', () => {
     const wrapper = mountDialog()
     await flushPromises()
 
-    expect(wrapper.find('.gmr-ft-actions .btn-primary').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('.gmr-ft-actions .btn-danger-ol').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-dialog-action-id="approve"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-dialog-action-id="reject"]').attributes('disabled')).toBeDefined()
     expect(wrapper.text()).toContain('Confirming the outcome')
 
     wrapper.unmount()
