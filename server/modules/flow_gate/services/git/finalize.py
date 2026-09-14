@@ -573,7 +573,8 @@ def update_from_base(group_id: str) -> dict:
                         "tracked_files": tracked_blockers or [],
                     },
                 )
-            conflicts = _conflict_files(wt_path)
+            # NR0025 §8: the old undefined probe name is gone; refs._unmerged_paths is the same probe.
+            conflicts = _gs._unmerged_paths(wt_path)
             if conflicts:
                 merge_id = _gs.db_git.create_session(
                     group_id, conflicts, kind=_gs.db_git.SESSION_KIND_GROUP_UPDATE,

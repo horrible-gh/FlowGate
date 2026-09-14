@@ -333,7 +333,7 @@ def _commits_present(wt_path: Path, shas: Sequence[str]) -> bool:
 
 
 def _unmerged_paths(wt_path: Path) -> list[str]:
-    """The conflicted paths of an in-flight revert, worktree-relative and sorted."""
+    """The conflicted paths of an in-flight merge or revert, worktree-relative and sorted."""
     from modules.flow_gate.services import git_service as _gs
     proc = _gs._run_git(
         ["diff", "--name-only", "--diff-filter=U"],
