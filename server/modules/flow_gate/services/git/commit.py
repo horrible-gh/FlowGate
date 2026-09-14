@@ -644,7 +644,7 @@ def open_cancel_session(group_id: str, target_shas: Sequence[str]) -> dict:
         wt_path = _gs.src_root(project_name, state["branch"]) if project_name else None
         if wt_path is None or not wt_path.is_dir():                       # G9
             raise _CancelGateFailed("no_worktree", "worktree_missing")
-        if cancel_blocking_dirty(wt_path):                                # G10
+        if _gs.cancel_blocking_dirty(wt_path):                                # G10
             raise _CancelGateFailed("dirty_worktree", "dirty_worktree")
         if not _commits_present(wt_path, target_shas):                    # G11
             raise _CancelGateFailed("no_worktree", "commits_absent")
@@ -689,7 +689,7 @@ def open_terminal_reopen_session(group_id: str) -> dict:
     try:
         project_name = _gs._project_name(project_id)
         wt_path = _gs.src_root(project_name, state["branch"]) if project_name else None
-        if wt_path is not None and wt_path.is_dir() and cancel_blocking_dirty(wt_path):
+        if wt_path is not None and wt_path.is_dir() and _gs.cancel_blocking_dirty(wt_path):
             raise _CancelGateFailed("dirty_worktree", "dirty_worktree")
     except _CancelGateFailed as gate_error:
         _release_cancel_lock(project_id, holder)

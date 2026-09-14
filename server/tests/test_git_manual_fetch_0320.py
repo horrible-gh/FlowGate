@@ -145,3 +145,28 @@ def test_diverged_base_reports_without_destructive_reset(monkeypatch):
     assert all(
         c[:1] == ["fetch"] or c[:2] == ["merge", "--ff-only"] for c in calls
     ), f"unexpected destructive git op in {calls}"
+
+
+def test_query_remote_ref_reads_secret_through_the_facade_seam(monkeypatch):
+    # NR0025 T0030 §3.7(a): _query_remote_ref must resolve `_load_secret_for` through
+    # `_gs.` at call time, not an early-bound copy imported at refs.py's top. Before
+    # §3.1 the early binding made the real (unpatched) function run and `secret` come
+    # back "" regardless of what the facade attribute was set to.
+    calls: list[dict] = []
+    monkeypatch.setattr(svc, "_load_secret_for", lambda cfg: "PATCHED-SENTINEL")
+
+    def fake_run_git(args, cwd=None, timeout=None, username=None, secret=None):
+        calls.append({"args": list(args), "username": username, "secret": secret})
+        return _Proc(returncode=1)
+
+    monkeypatch.setattr(svc, "_run_git", fake_run_git)
+
+    result = svc._query_remote_ref(Path("/base"), {"username": None}, "main")
+
+    assert result is None
+    assert len(calls) == 1
+    assert calls[0]["secret"] == "PATCHED-SENTINEL", (
+        f"expected the facade-patched secret to reach _run_git, got {calls[0]!r} -- "
+        "this means _query_remote_ref is reading an early-bound _load_secret_for "
+        "instead of _gs._load_secret_for"
+    )

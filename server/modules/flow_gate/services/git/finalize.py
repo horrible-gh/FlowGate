@@ -245,7 +245,7 @@ def _decide_pending_transition(
     from modules.flow_gate.services import git_service as _gs
     project_name = _gs._project_name(project_id)
     if _group_has_changes(cfg, state, project_name) is False:
-        return _auto_discard_group(project_id, group_id)
+        return _gs._auto_discard_group(project_id, group_id)
     # Had changes, or divergence unmeasurable → preserve the original safe gate.
     _gs._set_status(group_id, "awaiting_choice")
     return "awaiting_choice"

@@ -579,3 +579,51 @@ def test_the_ai_mention_tells_a_revert_apart_from_a_merge():
         assert "resolved_pending_review" in text
     assert "UNDOING" in revert
     assert "PUTTING BACK" in reapply
+
+
+# ── 6. NR0025 T0030 §3.7(b) — 권고2-B의 seam 실행 증거 ─────────────────────────
+
+def test_open_tr_conflict_session_reads_unmerged_paths_through_the_facade_seam(
+    monkeypatch, tmp_path
+):
+    """`_unmerged_paths` must resolve through `_gs.` at call time, not an early-bound
+    copy imported at conflict.py's top (removed in §3.2). The sentinel here is "no
+    conflict files" ([]) -- before the fix the bare name ran the REAL `_unmerged_paths`,
+    which calls `_run_git` once (``diff --name-only --diff-filter=U``); the return value
+    alone cannot tell the two states apart (both are None), so this test asserts the
+    `_run_git` call log instead.
+    """
+    calls: list[list[str]] = []
+
+    class _FakeProc:
+        def __init__(self):
+            self.returncode = 0
+            self.stdout = ""
+
+    def fake_run_git(args, cwd=None, timeout=None):
+        calls.append(list(args))
+        return _FakeProc()
+
+    monkeypatch.setattr(svc, "_unmerged_paths", lambda _p: [])
+    monkeypatch.setattr(svc, "_run_git", fake_run_git)
+
+    result = svc.open_tr_conflict_session(
+        {"wt_path": tmp_path},
+        kind="tr_revert",
+        group_id="flowgate.default.0332",
+        ledger_row_id=1,
+        doc_id="flowgate.default.0332.0009-TR",
+        doc_code="0009-TR",
+        target_sha="a" * 40,
+        original_sha=None,
+        subject="dummy",
+        body="dummy",
+    )
+
+    assert result is None
+    assert calls == [], (
+        f"expected the facade-patched empty _unmerged_paths to short-circuit before any "
+        f"git call, but _run_git was invoked: {calls!r} -- this means "
+        "open_tr_conflict_session is reading an early-bound _unmerged_paths instead of "
+        "_gs._unmerged_paths"
+    )

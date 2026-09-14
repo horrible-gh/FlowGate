@@ -104,6 +104,50 @@ def test_explicit_empty_lists_never_trigger_a_hidden_rescan(monkeypatch):
     listed.assert_not_called()
 
 
+# NR0025 T0030 §3.6 (권고4) -- the facade owns `_sweep_daemon_started`; reading it
+# through `svc.` sees the real state, and resetting it through `svc.` re-arms the
+# daemon (0550 §3.5). Never let a real thread run: `_start_sweep_daemon` does
+# `import threading` inside its own body, so patching the real `threading` module's
+# `Thread` attribute here reaches it regardless of where it is imported.
+def test_sweep_daemon_flag_is_readable_and_resettable_through_the_facade(monkeypatch):
+    import threading
+
+    started_names = []
+
+    class _FakeThread:
+        def __init__(self, target=None, name=None, daemon=None):
+            self.target = target
+            self.name = name
+            self.daemon = daemon
+            started_names.append(name)
+
+        def start(self):
+            pass  # a real _loop would block on time.sleep(1800) -- never run it
+
+    monkeypatch.setattr(threading, "Thread", _FakeThread)
+    monkeypatch.setattr(svc, "_sweep_daemon_started", False)
+
+    # 1. First call launches one thread and the facade attribute is now True --
+    #    reading it through `svc.` sees the real state the daemon flipped.
+    svc._start_sweep_daemon()
+    assert started_names == ["git-merge-sweep"]
+    assert svc._sweep_daemon_started is True
+
+    # 2. Idempotent: a second call while the flag is still True launches nothing more.
+    svc._start_sweep_daemon()
+    assert started_names == ["git-merge-sweep"]
+
+    # 3. Resetting the flag from OUTSIDE the facade (exactly the shape NR0025 §9
+    #    describes: `git_service._sweep_daemon_started = False`) re-arms the daemon --
+    #    a second, distinct thread gets started.
+    svc._sweep_daemon_started = False
+    svc._start_sweep_daemon()
+    assert started_names == ["git-merge-sweep", "git-merge-sweep"]
+
+    # 4. And the flag reads True again afterward.
+    assert svc._sweep_daemon_started is True
+
+
 # Backfill scan-scope regression: candidate discovery must precede any existing-row read.
 import json
 from contextlib import contextmanager

@@ -14,7 +14,6 @@ from typing import Optional
 from .command import GIT_LOCAL_TIMEOUT_SEC
 from .commit import _release_cancel_lock
 from .credentials import GitServiceError, _author_env_from_cfg
-from .refs import _unmerged_paths
 
 _log = logging.getLogger(__name__)
 
@@ -86,7 +85,7 @@ def open_tr_conflict_session(
     """
     from modules.flow_gate.services import git_service as _gs
     wt_path: Path = cancel_session["wt_path"]
-    paths = _unmerged_paths(wt_path)
+    paths = _gs._unmerged_paths(wt_path)
     if not paths:
         return None
     state = _gs.db_git.get_state(group_id) or {}
@@ -184,7 +183,7 @@ def commit_tr_conflict(group_id: str, merge_id: int) -> dict:
         )
     # Asked of git, not just of our own bookkeeping: the resolve endpoint marks a row
     # resolved, and between then and now somebody could have touched the worktree.
-    unmerged = _unmerged_paths(root)
+    unmerged = _gs._unmerged_paths(root)
     if unmerged:
         raise GitServiceError(
             409, "conflict_markers_remain",

@@ -21,8 +21,6 @@ MERGE_SESSION_TTL_HOURS = 24   # L0004 §1 — quiet-for-this-long conflict → 
 
 SWEEP_INTERVAL_MIN = 30        # L0004 §1 — auto-recovery sweep period
 
-_sweep_daemon_started = False
-
 
 def cleanup_disposed_group(project_id: str, group_id: str) -> dict:
     """Tear down a DISPOSED group's git leftovers (worktree dir + local work branch
@@ -294,7 +292,7 @@ def merge_session_sweep(sessions: Optional[list[dict]] = None) -> None:
             if base_root is None or not (base_root / ".git").exists():
                 continue   # checkout gone — do not touch (log only)
             if not (base_root / ".git" / "MERGE_HEAD").exists():
-                _close_orphan(session, project_id)
+                _gs._close_orphan(session, project_id)
                 continue
             last = session.get("touched_at") or session.get("created_at")
             if not _ttl_expired(last):
@@ -309,17 +307,18 @@ def merge_session_sweep(sessions: Optional[list[dict]] = None) -> None:
 
 def _start_sweep_daemon() -> None:
     """Launch the periodic sweep loop once (0205 L §2.6). Idempotent."""
-    global _sweep_daemon_started
-    if _sweep_daemon_started:
+    from modules.flow_gate.services import git_service as _gs
+    if _gs._sweep_daemon_started:
         return
-    _sweep_daemon_started = True
+    _gs._sweep_daemon_started = True
     import threading
 
     def _loop() -> None:
+        from modules.flow_gate.services import git_service as _gs
         while True:
             time.sleep(SWEEP_INTERVAL_MIN * 60)
             try:
-                merge_session_sweep()
+                _gs.merge_session_sweep()
             except Exception:
                 _log.warning("periodic merge session sweep failed", exc_info=True)
 

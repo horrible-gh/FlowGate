@@ -3527,6 +3527,12 @@ def reconcile_due_merge_review_sessions(
 
 # ── Auto-recovery sweep (flowgate.default.0205 P scenario 6 / L §2.5) ─────────
 
+# 0550 NR0025 §9/권고4 — 스윕 데몬 기동 플래그. 분해 전 이 칸은 git_service 의 전역이었고
+# 밖에서 `git_service._sweep_daemon_started = False` 로 되돌려 데몬을 다시 무장시킬 수 있었다.
+# 재노출(import)은 import 시점 값의 스냅샷이라 그 계약을 되살리지 못한다 — 칸을 여기 두고
+# git/cleanup.py 가 `_gs.` 로 읽고 쓴다.
+_sweep_daemon_started = False
+
 from .git.cleanup import (
     cleanup_disposed_group,
     cleanup_terminal_slots,

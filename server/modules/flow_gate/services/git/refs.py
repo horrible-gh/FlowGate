@@ -14,7 +14,7 @@ from typing import Optional, Sequence
 
 from modules.flow_gate.services import path_exclusion_rules
 
-from .credentials import GitServiceError, _load_secret_for
+from .credentials import GitServiceError
 
 _log = logging.getLogger(__name__)
 
@@ -411,7 +411,7 @@ def _query_remote_ref(base_root: Path, cfg: dict, base_branch: str) -> Optional[
     proc = _gs._run_git(
         ["ls-remote", "origin", f"refs/heads/{base_branch}"],
         cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC,
-        username=cfg.get("username"), secret=_load_secret_for(cfg) or "",
+        username=cfg.get("username"), secret=_gs._load_secret_for(cfg) or "",
     )
     if proc.returncode != 0:
         return None
@@ -434,7 +434,7 @@ def _base_ahead_behind(
         return None, None
     if not (base_root / ".git").exists():
         return None, None
-    if not _ref_exists(base_root, f"refs/remotes/origin/{base_branch}"):
+    if not _gs._ref_exists(base_root, f"refs/remotes/origin/{base_branch}"):
         return None, None
     proc = _gs._run_git(
         ["rev-list", "--left-right", "--count", f"origin/{base_branch}...{base_branch}"],
@@ -475,7 +475,7 @@ def _unpushed_commits(base_root: Optional[Path], base_branch: str) -> Optional[l
     from modules.flow_gate.services import git_service as _gs
     if base_root is None or not _gs.git_available() or not (base_root / ".git").exists():
         return None
-    if not _ref_exists(base_root, f"refs/remotes/origin/{base_branch}"):
+    if not _gs._ref_exists(base_root, f"refs/remotes/origin/{base_branch}"):
         return None
     proc = _gs._run_git(
         [
@@ -512,7 +512,7 @@ def _remote_base_missing(base_root: Optional[Path], base_branch: str) -> bool:
     from modules.flow_gate.services import git_service as _gs
     if base_root is None or not _gs.git_available() or not (base_root / ".git").exists():
         return False
-    return not _ref_exists(base_root, f"refs/remotes/origin/{base_branch}")
+    return not _gs._ref_exists(base_root, f"refs/remotes/origin/{base_branch}")
 
 
 def _local_commit_count(base_root: Optional[Path]) -> Optional[int]:
