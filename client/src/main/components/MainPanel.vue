@@ -142,290 +142,82 @@
             :doc-id="tab.id"
             :ref="(el) => bindActiveRef(stepVerificationCardRefs, tab.id, el)"
           />
-          <!-- AC (final approval): file-less workflow step — no body file, so it
-               must render by typeCode regardless of tab.type. When reopened from
-               the tree the tab type resolves to 'unsupported' (no md), which would
-               otherwise fall through to the unsupported-view. -->
-          <template v-if="tab.typeCode === 'AC'">
-            <!-- 0265 R0001: once the document is finally approved, the [Git Integration]
-                 finalize panel rises ABOVE the [Final Approval] card — after approval
-                 the merge/push is the remaining action, so it leads. Before
-                 approval the approval card stays on top (approving is the primary
-                 action) and the panel mounts below, as before. isCompletedDoc
-                 (approved | wf_done) is the same signal the card body uses for its
-                 done state, so the reorder tracks it exactly. The two mounts are
-                 mutually exclusive (v-if / !v-if): only one panel exists at a time. -->
-            <GitFinalizePanel
-              v-if="!aiRunDocumentLocked && isCompletedDoc(tab.id)"
-              :group-id="exposedValue(docHeaderRefs[tab.id]?.groupId) ?? ''"
-              @open-archive="openGitArchive"
-              @archived="onGitArchived"
-            />
-            <div class="card md-preview-card">
-              <div class="card-hd">
-                <span class="card-title">
-                  <AppIcon name="clipboard-text" style="color:var(--text-m);" />
-                  {{ t('main.review_action_bar.final_approval') }}
-                </span>
-              </div>
-              <div class="card-bd ac-final-approval-body">
-                <template v-if="isCompletedDoc(tab.id)">
-                  <AppIcon name="check-circle" class="ac-fa-icon ac-fa-icon-done" />
-                  <p class="ac-fa-title">{{ t('main.final_approval.panel_title_done') }}</p>
-                  <p class="ac-fa-desc">{{ t('main.final_approval.panel_desc_done') }}</p>
-                </template>
-                <template v-else>
-                  <AppIcon name="seal" class="ac-fa-icon" />
-                  <p class="ac-fa-title">{{ t('main.final_approval.panel_title') }}</p>
-                  <p class="ac-fa-desc">{{ t('main.final_approval.panel_desc') }}</p>
-                </template>
-              </div>
-            </div>
-            <!-- 0182 NR0003 §3: the git finalize UI used to live on the R/B root
-                 only, forcing a detour back to the R document after final
-                 approval. Mount the same self-hiding panel under the AC card so
-                 merge/push happens right where the approval ended. group-id
-                 resolves exactly like the R/B mount above.
-                 0206 B0001: dropped the inline-conflicts prop — conflict
-                 resolution no longer force-renders cramped inside the document
-                 column. The panel now shows the status summary + a [conflict
-                 resolve] button that opens the shared 1180×820 overlay resolver,
-                 identical to the R/B root path.
-                 0265 R0001: this below-the-card mount is now the PRE-approval
-                 position only; the post-approval mount above leads instead. -->
-            <GitFinalizePanel
-              v-if="!aiRunDocumentLocked && !isCompletedDoc(tab.id)"
-              :group-id="exposedValue(docHeaderRefs[tab.id]?.groupId) ?? ''"
-              @open-archive="openGitArchive"
-              @archived="onGitArchived"
-            />
-          </template>
-          <!-- DC (group discard): file-less terminal record. Like AC it has no .md
-               body, so it must render by typeCode (otherwise the tab type resolves to
-               'unsupported' and shows the bogus "preview not supported" error —
-               TR0029.0008 review r2 #2). It is terminal, not a review step: no action
-               bar, no workflow strip, no info panel (review r2 #3, #4). -->
-          <div v-else-if="tab.typeCode === 'DC'" class="card md-preview-card">
-            <div class="card-hd">
-              <span class="card-title">
-                <AppIcon name="prohibit" style="color:var(--danger, #dc2626);" />
-                {{ t('main.group_discard.panel_title') }}
-              </span>
-            </div>
-            <div class="card-bd ac-final-approval-body">
-              <AppIcon name="x-circle" class="ac-fa-icon" style="color:var(--danger, #dc2626);" />
-              <p class="ac-fa-title">{{ t('main.group_discard.panel_title_done') }}</p>
-              <p class="ac-fa-desc">{{ t('main.group_discard.panel_desc_done') }}</p>
-            </div>
-          </div>
-          <!-- CH (conversation/chat): the body IS a chat log, so it renders as a
-               conversation (bubbles + composer) instead of the plain MdViewer +
-               workflow action bar. This is the TR0044.0010 rev2 fix — selecting CH
-               now yields an actual conversation, not a generic document with
-               [Proceed to next step]/[Create empty doc] buttons. -->
-          <div v-else-if="tab.typeCode === 'CH'" class="card md-preview-card conv-card">
-            <div class="card-hd">
-              <span class="card-title">
-                <span class="doc-tag c-CH" style="font-size:.68rem; padding:2px 5px; margin-right:4px;">CH</span>
-                {{ t('main.conversation_view.title') }}
-              </span>
-              <div class="card-actions">
-                <button class="btn btn-secondary btn-sm" type="button" @click="openFullView(tab)">
-                  <AppIcon name="corners-out" /> {{ t('main.document_preview.full_view') }}
-                </button>
-              </div>
-            </div>
-            <div class="card-bd conv-card-bd">
-              <!-- 0263 R0001: [full view] hands this very instance to the dialog through a
-                   Teleport rather than mounting a second ConversationView there. A chat holds
-                   live state the markup cannot re-create — an in-flight AI call's poll loop and
-                   spinner, plus the unsent draft — so unmounting it to re-mount elsewhere is
-                   exactly what dropped the progress in 0251 NR0003 §4. Moving the node keeps one
-                   instance, and with it one source of truth, on both sides of the transition.
-                   0251 B0001 still holds either way: nothing covers the chat while its own AI
-                   call runs (AiInvokeInline suppresses this doc's run) — progress is the send
-                   button. -->
-              <Teleport :to="convFullViewHost" :disabled="!convFullViewOn">
-                <ConversationView
-                  :ref="(el) => bindActiveRef(convViewRefs, tab.id, el)"
-                  :doc-id="tab.id"
-                  :project-id="tab.projectId ?? null"
-                  :manual-copy-text="convManualCopy[tab.id] ?? null"
-                  :read-only="aiRunDocumentLocked && !activeChatOwnRun"
-                  @copy-mention="(opts) => onConversationCopyMention(tab.id, opts)"
-                  @manual-copy-dismiss="setConvManualCopy(tab.id, null)"
-                />
-              </Teleport>
-            </div>
-          </div>
-          <!-- WP (work plan): the body is JSON, not Markdown — a dedicated table editor
-               replaces MdViewer for this typeCode, the same way CH replaces it with a
-               conversation view. flowgate.default.0395 D0007 §6.4. -->
-          <WorkPlanEditor
-            v-else-if="tab.typeCode === 'WP'"
-            :ref="(el) => bindActiveRef(workPlanEditorRefs, tab.id, el)"
-            :doc-id="tab.id"
-            :project-id="tab.projectId ?? null"
+          <!-- Body selection lives in the documents router. CH/WP/Q remain slots in this
+               first extraction step so their stateful orchestration seams stay in MainPanel. -->
+          <DocumentBodyRouter
+            :tab="tab"
             :read-only="aiRunDocumentLocked"
-          />
-          <div v-else-if="tab.type === 'qtui'" class="card md-preview-card">
-            <div class="card-hd">
-              <span class="card-title">
-                <span class="doc-tag c-Q" style="font-size:.68rem; padding:2px 5px; margin-right:4px;">Q</span>
-                {{ tab.title }}
-              </span>
-            </div>
-            <div class="card-bd" style="padding:16px;">
-              <QTDetailViewer :q-id="tab.id" :read-only="aiRunDocumentLocked" @status-changed="onQStatusChanged" />
-            </div>
-          </div>
-          <div v-else-if="tab.type === 'md'" class="card md-preview-card">
-            <!-- Q document: question item accordion -->
-            <template v-if="tab.typeCode === 'Q'">
-              <div class="card-hd">
-                <span class="card-title">
-                  <span class="doc-tag c-Q" style="font-size:.68rem; padding:2px 5px; margin-right:4px;">Q</span>
-                  {{ tab.title }}
-                </span>
-              </div>
-              <div class="card-bd" style="padding:16px;">
-                <QTDetailViewer :q-id="tab.id" :read-only="aiRunDocumentLocked" @status-changed="onQStatusChanged" />
+            :completed="isCompletedDoc(tab.id)"
+            :group-id="exposedValue(docHeaderRefs[tab.id]?.groupId) ?? ''"
+            :can-edit="canEditTab(tab)"
+            :edit-dropdown-open="editDropdownTabId === tab.id"
+            :text-wrap-enabled="textWrapEnabled"
+            :download-available="exposedValue(docHeaderRefs[tab.id]?.downloadAvailable) === true"
+            :download-busy="exposedValue(docHeaderRefs[tab.id]?.markdownDownloadBusy) === true"
+            @close="tabsStore.closeTab(tab.id)"
+            @edit-direct="onEditDirect(tab)"
+            @edit-mention="onEditMentCopy(tab)"
+            @invoke-command="onEditInvokeCommand(tab)"
+            @invoke-ai="onEditInvokeAi(tab)"
+            @open-full-view="openFullView(tab)"
+            @toggle-edit-dropdown="toggleEditDropdown(tab.id)"
+            @download-markdown="docHeaderRefs[tab.id]?.downloadMarkdown?.()"
+            @update:text-wrap-enabled="textWrapEnabled = $event"
+            @bind-md-viewer="bindActiveRef(mdViewerRefs, tab.id, $event)"
+            @bind-text-viewer="bindActiveRef(textViewerRefs, tab.id, $event)"
+            @open-archive="openGitArchive"
+            @archived="onGitArchived"
+          >
+            <template #conversation>
+              <div class="card md-preview-card conv-card">
+                <div class="card-hd">
+                  <span class="card-title">
+                    <span class="doc-tag c-CH" style="font-size:.68rem; padding:2px 5px; margin-right:4px;">CH</span>
+                    {{ t('main.conversation_view.title') }}
+                  </span>
+                  <div class="card-actions">
+                    <button class="btn btn-secondary btn-sm" type="button" @click="openFullView(tab)">
+                      <AppIcon name="corners-out" /> {{ t('main.document_preview.full_view') }}
+                    </button>
+                  </div>
+                </div>
+                <div class="card-bd conv-card-bd">
+                  <Teleport :to="convFullViewHost" :disabled="!convFullViewOn">
+                    <ConversationView
+                      :ref="(el) => bindActiveRef(convViewRefs, tab.id, el)"
+                      :doc-id="tab.id"
+                      :project-id="tab.projectId ?? null"
+                      :manual-copy-text="convManualCopy[tab.id] ?? null"
+                      :read-only="aiRunDocumentLocked && !activeChatOwnRun"
+                      @copy-mention="(opts) => onConversationCopyMention(tab.id, opts)"
+                      @manual-copy-dismiss="setConvManualCopy(tab.id, null)"
+                    />
+                  </Teleport>
+                </div>
               </div>
             </template>
-
-            <!-- Regular document: MDViewer -->
-            <template v-else>
-            <div class="card-hd">
-              <span class="card-title">
-                <AppIcon name="markdown-logo" style="color:var(--text-m);" />
-                {{ t('main.document_preview.title') }}
-              </span>
-              <div class="card-actions">
-                <div v-if="!aiRunDocumentLocked && canEditTab(tab)" class="edit-dropdown-wrap">
-                  <button
-                    class="btn btn-outline btn-sm"
-                    type="button"
-                    @click.stop="toggleEditDropdown(tab.id)"
-                  >
-                    <AppIcon name="pencil-simple" /> {{ t('main.document_preview.edit') }}
-                    <AppIcon name="caret-down" class="edit-caret" />
-                  </button>
-                  <transition name="edit-dropdown">
-                    <div v-if="editDropdownTabId === tab.id" class="edit-dropdown-menu" @click.stop>
-                      <button class="edit-dropdown-item" type="button" @click="onEditDirect(tab)">
-                        <AppIcon name="note-pencil" /> {{ t('main.main_panel.edit_direct') }}
-                      </button>
-                      <button v-if="tab.typeCode" class="edit-dropdown-item" type="button" @click="onEditMentCopy(tab)">
-                        <AppIcon name="copy" /> {{ t('main.main_panel.copy_mention') }}
-                      </button>
-                      <button v-if="tab.typeCode" class="edit-dropdown-item" type="button" @click="onEditInvokeCommand(tab)">
-                        <AppIcon name="terminal" /> {{ t('main.main_panel.invoke_command') }}
-                      </button>
-                      <button v-if="tab.typeCode" class="edit-dropdown-item" type="button" @click="onEditInvokeAi(tab)">
-                        <AppIcon name="robot" /> {{ t('main.main_panel.invoke_ai') }}
-                      </button>
-                    </div>
-                  </transition>
-                </div>
-                <button v-if="!aiRunDocumentLocked" class="btn btn-secondary btn-sm" type="button" @click="openFullView(tab)">
-                  <AppIcon name="corners-out" /> {{ t('main.document_preview.full_view') }}
-                </button>
-                <span v-else class="ro-badge ro-badge-sm">
-                  <AppIcon name="lock-simple" /> {{ t('main.document_preview.edit_locked') }}
-                </span>
-                <button
-                  v-if="exposedValue(docHeaderRefs[tab.id]?.downloadAvailable)"
-                  class="btn btn-secondary btn-sm doc-markdown-download"
-                  type="button"
-                  :disabled="exposedValue(docHeaderRefs[tab.id]?.markdownDownloadBusy)"
-                  :title="t('main.doc_info_panel.markdown_download')"
-                  @click="docHeaderRefs[tab.id]?.downloadMarkdown?.()"
-                >
-                  <AppIcon name="download-simple" /> {{ t('main.doc_info_panel.markdown_download') }}
-                </button>
-              </div>
-            </div>
-            <div class="card-bd">
-              <!-- 0310 TR: load by doc-id whenever this is NOT a file tab, instead of keying on
-                   typeCode. A DB-document tab opened via any entry point that omitted typeCode
-                   (e.g. the head-move button pre-0310.0005-TR) still loaded null → "연결된 MD
-                   파일이 없습니다". isFileTab (projectId && no typeCode) is the single, entry-point-
-                   agnostic signal for path-backed tabs, so new navigation entries can never
-                   reintroduce the typeCode-loss regression. See flowgate.default.0310.0003-NR. -->
-              <MdViewer
-                :ref="(el) => bindActiveRef(mdViewerRefs, tab.id, el)"
-                :path="tab.mdPath ?? tab.path"
-                :doc-id="isFileTab(tab) ? null : tab.id"
+            <template #work-plan>
+              <WorkPlanEditor
+                :ref="(el) => bindActiveRef(workPlanEditorRefs, tab.id, el)"
+                :doc-id="tab.id"
                 :project-id="tab.projectId ?? null"
-                :git-group-id="tab.gitGroupId ?? null"
-                :git-commit="tab.gitCommit ?? null"
                 :read-only="aiRunDocumentLocked"
               />
-            </div>
             </template>
-          </div>
-          <div v-else-if="tab.type === 'text'" class="card text-preview-card">
-            <div class="card-hd">
-              <span class="card-title">
-                <AppIcon name="file-text" style="color:var(--text-m);" />
-                {{ t('main.document_preview.text_title') }}
-              </span>
-              <div class="card-actions">
-                <label class="text-wrap-toggle">
-                  <input v-model="textWrapEnabled" type="checkbox" />
-                  <span>{{ t('main.document_preview.wrap_lines') }}</span>
-                </label>
-                <button
-                  v-if="!aiRunDocumentLocked && canEditTab(tab)"
-                  class="btn btn-outline btn-sm"
-                  type="button"
-                  @click="onEditDirect(tab)"
-                >
-                  <AppIcon name="pencil-simple" /> {{ t('main.document_preview.edit') }}
-                </button>
-                <button class="btn btn-secondary btn-sm" type="button" @click="openFullView(tab)">
-                  <AppIcon name="corners-out" /> {{ t('main.document_preview.full_view') }}
-                </button>
+            <template #question>
+              <div class="card md-preview-card">
+                <div class="card-hd">
+                  <span class="card-title">
+                    <span class="doc-tag c-Q" style="font-size:.68rem; padding:2px 5px; margin-right:4px;">Q</span>
+                    {{ tab.title }}
+                  </span>
+                </div>
+                <div class="card-bd" style="padding:16px;">
+                  <QTDetailViewer :q-id="tab.id" :read-only="aiRunDocumentLocked" @status-changed="onQStatusChanged" />
+                </div>
               </div>
-            </div>
-            <div class="card-bd text-preview-body">
-              <TextViewer
-                :ref="(el) => bindActiveRef(textViewerRefs, tab.id, el)"
-                :path="tab.path"
-                :project-id="tab.projectId ?? null"
-                :wrap-lines="textWrapEnabled"
-                :git-group-id="tab.gitGroupId ?? null"
-                :git-commit="tab.gitCommit ?? null"
-              />
-            </div>
-          </div>
-          <!-- 0326 R0001 — change view for one file, opened from the tree's
-               "변경 내용 보기". A read-only sibling of the editor tab for the same
-               path (ids differ by the `diff:` prefix), so both can stay open. -->
-          <div v-else-if="tab.type === 'diff'" class="card text-preview-card">
-            <div class="card-hd">
-              <span class="card-title">
-                <AppIcon name="git-diff" style="color:var(--text-m);" />
-                {{ t('main.file_diff.title') }}
-              </span>
-            </div>
-            <div class="card-bd text-preview-body">
-              <FileDiffViewer
-                :path="tab.path"
-                :project-id="tab.projectId ?? null"
-                :git-group-id="tab.gitGroupId ?? null"
-                :git-commit="tab.gitCommit ?? null"
-              />
-            </div>
-          </div>
-          <div v-else-if="tab.type === 'too_large'" class="unsupported-view">
-            <span>⚠️ {{ t('main.error.file_too_large') }}</span>
-            <button @click="tabsStore.closeTab(tab.id)">{{ t('common.close') }}</button>
-          </div>
-          <div v-else class="unsupported-view">
-            <span>⚠️ {{ t('main.main_panel.text_22') }}</span>
-            <button @click="tabsStore.closeTab(tab.id)">{{ t('common.close') }}</button>
-          </div>
+            </template>
+          </DocumentBodyRouter>
           </template>
           </div><!-- doc-main -->
           <DocInfoPanel
@@ -1393,8 +1185,8 @@ import { useMentionCopy, type MentionKind } from '../composables/useMentionCopy'
 import TabBar from './TabBar.vue'
 import AiRunMonitorCard from './AiRunMonitorCard.vue'
 import TextViewer from './TextViewer.vue'
-import FileDiffViewer from './FileDiffViewer.vue'
 import MdViewer from './MdViewer.vue'
+import DocumentBodyRouter from './documents/DocumentBodyRouter.vue'
 import DocHeader from './DocHeader.vue'
 import TestFailStrip from './TestFailStrip.vue'
 import TestRunStrip from './TestRunStrip.vue'
@@ -5648,37 +5440,6 @@ watch(textWrapEnabled, (enabled) => {
 .doc-tag.c-CH {
   background: #06b6d4;
   color: #fff;
-}
-
-/* AC (final approval) guidance panel — file-less step, no body preview. */
-.ac-final-approval-body {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  gap: 10px;
-  padding: 48px 24px;
-}
-.ac-fa-icon {
-  font-size: 2.5rem;
-  color: var(--primary, #2563eb);
-  opacity: 0.85;
-}
-.ac-fa-icon-done {
-  color: var(--success, #16a34a);
-}
-.ac-fa-title {
-  font-size: 1.05rem;
-  font-weight: 600;
-  color: var(--text, #1e293b);
-  margin: 6px 0 0;
-}
-.ac-fa-desc {
-  font-size: 0.875rem;
-  color: var(--text-m, #64748b);
-  max-width: 420px;
-  line-height: 1.5;
-  margin: 0;
 }
 
 .text-preview-card {

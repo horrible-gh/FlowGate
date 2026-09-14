@@ -81,6 +81,8 @@ describe('MainPanel AI-run rendered presentation (0398)', () => {
           teleport: false,
           AiInvokeInline: false,
           DocHeader: false,
+          DocumentBodyRouter: false,
+          GenericDocumentBody: false,
           MdViewer: false,
         },
       },
