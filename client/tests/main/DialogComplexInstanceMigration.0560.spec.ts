@@ -1,11 +1,12 @@
 /**
- * flowgate.default.0560 T0022 (5순위) — the eight complex instances this step moved onto the
- * common dialog layer, and the three it was told to leave alone.
+ * flowgate.default.0560 T0022 (5순위) — the complex instances this step moved onto the
+ * common dialog layer, and the two it was told to leave alone.
  *
  * NR0005 §13's 5순위 is "AI/workflow 계열" + "Git review/conflict 계열". Four of the eleven
  * candidates were already done (T0016 took `WorkflowDecisionModal` and `GitBaseDirtyDialog`,
- * T0020 took the reject sub-dialog) and one — `GitConflictResolverDialog` — is explicitly
- * carved out by NR0005 §13 itself. What is left is the eight instances asserted below.
+ * T0020 took the reject sub-dialog) and one — `GitConflictResolverDialog` — was carved out by
+ * NR0005 §13 itself as "별도 하위 작업" and moved in T0024 instead. All nine are asserted below
+ * against the same contract; only the step that performed each one differs.
  *
  * Where a behaviour already has a home, this spec does not duplicate it and says where to look:
  *   - the review/rerun single button and the loop panels → `tests/main/AiInvokeDialog.spec.ts`
@@ -63,6 +64,10 @@ const MIGRATED = [
   ['src/main/components/GitUntrackedConflictDialog.vue', 'form-actions'],
   ['src/main/components/GroupChangesDialog.vue', 'workflow-large'],
   ['src/main/components/GitMergeReviewDialog.vue', 'workflow-large'],
+  // 0560 T0024 (NR0005 §11.1 의 별도 하위 작업): the exception T0022 §3 listed here as
+  // untouched. D0008 §6 had already assigned it `conflict-large`; the same three assertions
+  // apply to it as to the other eight.
+  ['src/main/components/GitConflictResolverDialog.vue', 'conflict-large'],
 ] as const
 
 /**
@@ -73,7 +78,7 @@ const LEGACY_CLASS = new RegExp(
   'class="[^"]*\\b(modal-bg|modal-box|modal-hd|modal-bd|modal-ft|modal-close|modal-title)\\b',
 )
 
-describe('T0022 §4-1 — the eight instances are on the common layer', () => {
+describe('T0022 §4-1 / T0024 §4-1 — the nine instances are on the common layer', () => {
   for (const [file, variant] of MIGRATED) {
     it(`${file.split('/').pop()} renders ${variant} with no hand-built shell left`, () => {
       const text = source(file)
@@ -91,7 +96,7 @@ describe('T0022 §4-1 — the eight instances are on the common layer', () => {
    * `false`. An override here would be the default written twice — and, worse, the place a
    * later edit could quietly flip it.
    */
-  it('§4-2 — not one of the eight overrides closeOnBackdrop', () => {
+  it('§4-2 — not one of the nine overrides closeOnBackdrop', () => {
     for (const [file] of MIGRATED) {
       expect(source(file), `${file} overrides closeOnBackdrop`).not.toMatch(/:?close-on-backdrop=/)
     }
@@ -134,10 +139,26 @@ describe('T0022 §4-1 — the eight instances are on the common layer', () => {
 /* ──────────────────── 2. what this step was told NOT to touch (§3) ──────────────────── */
 
 describe('T0022 §3 — the explicit exclusions', () => {
-  it('GitConflictResolverDialog keeps its own shell — NR0005 §13 carved it out', () => {
+  /**
+   * 0560 T0024 §2.8-1: this case used to assert the opposite — `git-conflict-overlay` present,
+   * no `<DialogShell>` — because NR0005 §13 carved the resolver out of 5순위. It was carved out
+   * to be its own sub-task, not to stay behind, and T0024 performed it: the file is in
+   * `MIGRATED` above now. What survives here is the part of the exclusion that is still true —
+   * the dialog's own body markup is NOT common (D0008 §6), so the classes T0022 would have had
+   * to delete for a full migration are all still in the file.
+   */
+  it('GitConflictResolverDialog kept its body when it moved (D0008 §6)', () => {
     const text = source('src/main/components/GitConflictResolverDialog.vue')
-    expect(text).toContain('git-conflict-overlay')
-    expect(text).not.toContain('<DialogShell')
+    for (const owned of [
+      'git-conflict-body',
+      'git-conflict-dialog-bd',
+      'git-ai-assist-strip',
+      'git-conflict-ai-strip',
+      'git-conflict-message-bar',
+      'git-conflict-footer-context',
+    ]) {
+      expect(text, `${owned} is no longer feature-owned`).toContain(`class="${owned}`)
+    }
   })
 
   it('WorkflowDecisionModal and GitBaseDirtyDialog were already done in 3순위', () => {

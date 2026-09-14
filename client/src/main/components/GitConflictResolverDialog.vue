@@ -6,282 +6,311 @@
        recommendation, common-block folding and font-size controls. The host
        component owns fetching, submission and abort; this dialog owns only
        view-state and in-place chunk choices on the shared file objects. -->
-  <div class="git-conflict-overlay" @keydown="onResolverKeydown">
-    <div class="git-conflict-dialog" role="dialog" aria-modal="true">
-      <div class="git-conflict-dialog-hd">
-        <div>
-          <h2>{{ t('main.git_finalize.dialog_title', { branch: branch || '-', base: baseBranch || '-' }) }}</h2>
-          <p>{{ t('main.git_finalize.dialog_subtitle', { n: files.length }) }}</p>
-        </div>
-        <div v-if="totalChunkCount > 0" class="git-conflict-progress">
-          <span>{{ t('main.git_finalize.resolve_progress', { done: resolvedChunkTotal, total: totalChunkCount }) }}</span>
-          <div class="git-conflict-progress-bar">
-            <div class="git-conflict-progress-fill" :style="{ width: progressPercent }"></div>
-          </div>
-        </div>
-        <button class="git-dialog-close" :title="t('main.git_finalize.close_dialog')" @click="emit('close')">
-          <AppIcon name="x" />
-        </button>
-      </div>
+  <!-- flowgate.default.0560 T0024 (NR0005 §11.1 / D0008 §6 / L0009 §1) — the resolver joins
+       the common dialog layer. D0008 §6 maps it to `conflict-large` and says the large
+       Workflow/Conflict dialogs hand over Shell/Header/Footer ONLY: everything between the
+       header and the footer below is the same markup it was, moved one level and nothing
+       else (§2.3).
 
-      <div v-if="loadStatus === 'loading'" class="git-conflict-loading">
-        <AppIcon name="spinner" spin />
-        {{ t('main.git_finalize.loading_conflicts') }}
-      </div>
-      <div v-else-if="loadStatus === 'error'" class="git-conflict-loading git-conflict-load-error">
-        <span>{{ errorMessage || t('main.git_finalize.load_failed') }}</span>
-        <button class="btn btn-secondary" :disabled="busy" @click="emit('retry')">
-          <AppIcon name="arrows-clockwise" /> {{ t('main.git_finalize.retry') }}
-        </button>
-      </div>
-      <!-- 0481 T0010 #2 — "아무 액션도 못하는 다이얼로그만 계속뜨고". This branch used to be a
-           bare sentence: no retry, no [AI 호출], no [중단], nothing but the ✕. A session can
-           legitimately reach zero listed files (the resolver already staged them, or the
-           panel's list is a moment stale), and when it did the operator was cornered. The
-           list is refreshable from here, and the footer below now renders in this state too. -->
-      <div v-else-if="!files.length" class="git-conflict-loading git-conflict-empty">
-        <span>{{ t('main.git_finalize.no_conflicts') }}</span>
-        <button class="btn btn-secondary" :disabled="busy" @click="emit('retry')">
-          <AppIcon name="arrows-clockwise" /> {{ t('main.git_finalize.reload_conflicts') }}
-        </button>
-      </div>
-      <template v-if="loadStatus === 'ready' && files.length">
-        <div class="git-ai-assist-strip">
-          <div>
-            <strong><AppIcon name="magic-wand" /> {{ t('main.git_finalize.quick_recommend_title') }}</strong>
-            <span>{{ t('main.git_finalize.quick_recommend_summary', { ready: aiSuggestionTotal, total: totalChunkCount }) }}</span>
+       `:open="true"` is a literal for the same reason as `GroupChangesDialog` and
+       `GitMergeReviewDialog`: this component has never had a visible/open prop. All four
+       hosts (`FileExplorer`, `GitFinalizePanel`, `GitStatusPanel` ×2) mount it behind a
+       `v-if`, so mounted IS open, and `DialogShell`'s `onBeforeUnmount` runs `force_cleanup`
+       when the parent takes it away. `closeOnBackdrop` is not overridden — `conflict-large`
+       defaults to `false`, exactly as the old `.git-conflict-overlay` was — 0412 T0004 took
+       the backdrop-close binding off every dialog and this file has carried none since
+       (`tests/main/DialogOverlayNoClickSelf.0412.spec.ts` still names this file). -->
+  <DialogShell
+    ref="shellRef"
+    :open="true"
+    variant="conflict-large"
+    surface-class="git-conflict-resolver-dialog"
+    @request-close="emit('close')"
+  >
+    <template #header>
+      <DialogHeader
+        :title="t('main.git_finalize.dialog_title', { branch: branch || '-', base: baseBranch || '-' })"
+        :subtitle="t('main.git_finalize.dialog_subtitle', { n: files.length })"
+        @close="onHeaderClose"
+      >
+        <!-- The progress bar kept its place: it sat between the title block and the ✕ with
+             `margin-left: auto`, and `DialogHeader`'s `actions` slot renders in exactly that
+             gap. The old `.git-dialog-close` button is gone — `headerCloseable` defaults to
+             true and the header's own ✕ takes its place. -->
+        <template #actions>
+          <div v-if="totalChunkCount > 0" class="git-conflict-progress">
+            <span>{{ t('main.git_finalize.resolve_progress', { done: resolvedChunkTotal, total: totalChunkCount }) }}</span>
+            <div class="git-conflict-progress-bar">
+              <div class="git-conflict-progress-fill" :style="{ width: progressPercent }"></div>
+            </div>
           </div>
-          <button class="btn btn-secondary btn-sm" :disabled="busy || aiSuggestionRemaining === 0" @click="applyAllSuggestions">
-            <AppIcon name="magic-wand" /> {{ t('main.git_finalize.quick_apply_all') }}
+        </template>
+      </DialogHeader>
+    </template>
+
+    <template #default>
+      <!-- §2.4 — Shift+↑/Shift+↓ chunk navigation used to hang off the deleted
+           `.git-conflict-overlay`. `DialogShell`'s surface has a `keydown` handler of its own
+           (Tab, the focus trap) and cannot carry this one, so the listener moves to a wrapper
+           around the body. That is the wrapper's only job: it adds no state and no condition,
+           and its CSS is the flex column the surface body used to be. -->
+      <div class="git-conflict-body" @keydown="onResolverKeydown">
+        <div v-if="loadStatus === 'loading'" class="git-conflict-loading">
+          <AppIcon name="spinner" spin />
+          {{ t('main.git_finalize.loading_conflicts') }}
+        </div>
+        <div v-else-if="loadStatus === 'error'" class="git-conflict-loading git-conflict-load-error">
+          <span>{{ errorMessage || t('main.git_finalize.load_failed') }}</span>
+          <button class="btn btn-secondary" :disabled="busy" @click="emit('retry')">
+            <AppIcon name="arrows-clockwise" /> {{ t('main.git_finalize.retry') }}
           </button>
         </div>
-        <div class="git-conflict-dialog-bd">
-          <aside class="git-conflict-sidebar" :aria-label="t('main.git_finalize.file_list')">
-            <button
-              v-for="(f, idx) in files"
-              :key="f.path"
-              class="git-conflict-file-tab"
-              :class="{ active: idx === selectedConflictIndex, resolved: isFileResolved(f) }"
-              @click="selectConflictFile(idx)"
-            >
-              <span class="git-conflict-file-path">{{ f.path }}</span>
-              <span class="git-conflict-file-meta">
-                <span>{{ t('main.git_finalize.conflict_count', { n: f.conflict_count }) }}</span>
-                <strong>{{ isFileResolved(f) ? t('main.git_finalize.resolved') : t('main.git_finalize.unresolved') }}</strong>
-              </span>
+        <!-- 0481 T0010 #2 — "아무 액션도 못하는 다이얼로그만 계속뜨고". This branch used to be a
+             bare sentence: no retry, no [AI 호출], no [중단], nothing but the ✕. A session can
+             legitimately reach zero listed files (the resolver already staged them, or the
+             panel's list is a moment stale), and when it did the operator was cornered. The
+             list is refreshable from here, and the footer below now renders in this state too. -->
+        <div v-else-if="!files.length" class="git-conflict-loading git-conflict-empty">
+          <span>{{ t('main.git_finalize.no_conflicts') }}</span>
+          <button class="btn btn-secondary" :disabled="busy" @click="emit('retry')">
+            <AppIcon name="arrows-clockwise" /> {{ t('main.git_finalize.reload_conflicts') }}
+          </button>
+        </div>
+        <template v-if="loadStatus === 'ready' && files.length">
+          <div class="git-ai-assist-strip">
+            <div>
+              <strong><AppIcon name="magic-wand" /> {{ t('main.git_finalize.quick_recommend_title') }}</strong>
+              <span>{{ t('main.git_finalize.quick_recommend_summary', { ready: aiSuggestionTotal, total: totalChunkCount }) }}</span>
+            </div>
+            <button class="btn btn-secondary btn-sm" :disabled="busy || aiSuggestionRemaining === 0" @click="applyAllSuggestions">
+              <AppIcon name="magic-wand" /> {{ t('main.git_finalize.quick_apply_all') }}
             </button>
-          </aside>
+          </div>
+          <div class="git-conflict-dialog-bd">
+            <aside class="git-conflict-sidebar" :aria-label="t('main.git_finalize.file_list')">
+              <button
+                v-for="(f, idx) in files"
+                :key="f.path"
+                class="git-conflict-file-tab"
+                :class="{ active: idx === selectedConflictIndex, resolved: isFileResolved(f) }"
+                @click="selectConflictFile(idx)"
+              >
+                <span class="git-conflict-file-path">{{ f.path }}</span>
+                <span class="git-conflict-file-meta">
+                  <span>{{ t('main.git_finalize.conflict_count', { n: f.conflict_count }) }}</span>
+                  <strong>{{ isFileResolved(f) ? t('main.git_finalize.resolved') : t('main.git_finalize.unresolved') }}</strong>
+                </span>
+              </button>
+            </aside>
 
-          <section v-if="selectedConflictFile" class="git-conflict-workspace">
-            <div class="git-conflict-workspace-hd">
-              <div class="git-conflict-selected-path">
-                <AppIcon name="file-code" />
-                <span>{{ selectedConflictFile.path }}</span>
-              </div>
-              <div class="git-conflict-mode-tabs" v-if="selectedConflictFile.mode !== 'direct_only'">
-                <button :class="{ active: selectedConflictFile.mode === 'chunk' }" @click="switchToChunkView(selectedConflictFile)">
-                  <AppIcon name="git-diff" /> {{ t('main.git_finalize.chunk_view') }}
-                </button>
-                <button :class="{ active: selectedConflictFile.mode === 'direct' }" @click="switchToDirectEdit(selectedConflictFile)">
-                  <AppIcon name="note-pencil" /> {{ t('main.git_finalize.direct_edit') }}
-                </button>
-              </div>
-              <span v-else class="git-direct-only-badge">
-                <AppIcon name="note-pencil" /> {{ t('main.git_finalize.direct_only') }}
-              </span>
-            </div>
-
-            <div v-if="selectedConflictFile.mode === 'chunk'" class="git-conflict-navigator">
-              <div class="git-conflict-nav-summary">
-                <strong>{{ t('main.git_finalize.remaining_chunks', { remaining: selectedRemainingCount, total: selectedChunkEntries.length }) }}</strong>
-                <span>{{ t('main.git_finalize.nav_shortcut') }}</span>
-              </div>
-              <div class="git-conflict-nav-actions">
-                <button type="button" :disabled="selectedChunkEntries.length === 0" @click="moveChunk(-1)" :title="t('main.git_finalize.previous_conflict')"><AppIcon name="caret-up" /></button>
-                <button v-for="entry in selectedChunkEntries" :key="entry.segmentIndex" type="button" class="git-conflict-chip" :class="{ active: currentChunkSegment === entry.segmentIndex, resolved: !!entry.chunk.resolution }" @click="focusChunk(entry.segmentIndex)">{{ entry.number }}</button>
-                <button type="button" :disabled="selectedChunkEntries.length === 0" @click="moveChunk(1)" :title="t('main.git_finalize.next_conflict')"><AppIcon name="caret-down" /></button>
-              </div>
-              <div class="git-code-size-controls" :aria-label="t('main.git_finalize.code_font_size')">
-                <button type="button" :disabled="codeFontRem <= 0.72" @click="adjustCodeFont(-0.08)">A−</button>
-                <span>{{ Math.round(codeFontRem * 100) }}%</span>
-                <button type="button" :disabled="codeFontRem >= 1.18" @click="adjustCodeFont(0.08)">A＋</button>
-              </div>
-            </div>
-
-            <p v-if="selectedConflictFile.notice" class="git-conflict-notice">{{ selectedConflictFile.notice }}</p>
-
-            <div v-if="selectedConflictFile.mode === 'chunk'" class="git-chunk-scroll" :style="{ '--conflict-code-size': codeFontRem + 'rem' }">
-              <template v-for="(seg, idx) in selectedConflictFile.segments" :key="idx">
-                <div v-if="seg.kind === 'common' && seg.lines.length" class="git-common-shell">
-                  <button v-if="seg.lines.length > COMMON_COLLAPSE_LINES && isCommonCollapsed(idx)" type="button" class="git-common-toggle" @click="toggleCommon(idx)">
-                    <AppIcon name="caret-right" /> {{ t('main.git_finalize.common_collapsed', { n: seg.lines.length }) }}
-                  </button>
-                  <template v-else>
-                    <button v-if="seg.lines.length > COMMON_COLLAPSE_LINES" type="button" class="git-common-toggle git-common-toggle--open" @click="toggleCommon(idx)">
-                      <AppIcon name="caret-down" /> {{ t('main.git_finalize.common_collapse', { n: seg.lines.length }) }}
-                    </button>
-                    <pre class="git-common-block"><span v-for="(line, lineIdx) in seg.lines" :key="lineIdx" class="git-code-line"><span class="git-line-number">{{ commonLineNumber(selectedConflictFile, idx, lineIdx) }}</span><span class="git-code-line-text">{{ stripLineEnding(line) }}</span></span></pre>
-                  </template>
+            <section v-if="selectedConflictFile" class="git-conflict-workspace">
+              <div class="git-conflict-workspace-hd">
+                <div class="git-conflict-selected-path">
+                  <AppIcon name="file-code" />
+                  <span>{{ selectedConflictFile.path }}</span>
                 </div>
-                <article v-else-if="seg.kind === 'chunk'" :id="chunkDomId(idx)" class="git-conflict-chunk" :class="{ resolved: !!seg.resolution, focused: currentChunkSegment === idx }">
-                  <div class="git-conflict-chunk-hd">
-                    <span>{{ t('main.git_finalize.conflict_chunk', { n: chunkNumber(selectedConflictFile, idx) }) }} <strong v-if="seg.resolution" class="git-resolved-badge">{{ t('main.git_finalize.resolved') }}</strong></span>
-                    <button v-if="seg.resolution" type="button" class="git-chunk-undo" @click="undoChunk(seg)"><AppIcon name="arrow-counter-clockwise" /> {{ t('main.git_finalize.undo_choice') }}</button>
-                    <div v-else class="git-chunk-actions">
-                      <button :class="{ suggested: recommendedChoice(seg) === 'ours' }" @click="chooseChunk(seg, 'ours')">{{ t('main.git_finalize.current') }}</button>
-                      <button :class="{ suggested: recommendedChoice(seg) === 'theirs' }" @click="chooseChunk(seg, 'theirs')">{{ t('main.git_finalize.incoming') }}</button>
-                      <button :class="{ suggested: recommendedChoice(seg) === 'both' }" @click="chooseChunk(seg, 'both')">{{ t('main.git_finalize.both') }}</button>
-                      <button @click="switchToDirectEdit(selectedConflictFile)">{{ t('main.git_finalize.direct_edit') }}</button>
-                      <button v-if="recommendedChoice(seg)" class="git-ai-apply" @click="applySuggestion(seg)"><AppIcon name="magic-wand" /> {{ t('main.git_finalize.quick_apply_one') }}</button>
-                      <span v-else class="git-ai-hold">{{ t('main.git_finalize.quick_hold') }}</span>
-                    </div>
-                  </div>
-                  <div v-if="seg.resolution" class="git-chunk-resolved">
-                    <div><strong>{{ t('main.git_finalize.selected_choice', { choice: choiceLabel(seg.choice) }) }}</strong><span>{{ t('main.git_finalize.resolved_preview') }}</span></div>
-                    <pre>{{ joinLines(seg.resolution).trim() || t('main.git_finalize.empty_choice') }}</pre>
-                  </div>
-                  <div v-else class="git-conflict-sides">
-                    <div class="git-conflict-side ours">
-                      <div class="git-conflict-side-label">{{ chunkLabel(seg.oursLabel, t('main.git_finalize.current')) }} <span v-if="recommendedChoice(seg) === 'ours'" class="git-ai-recommended">{{ t('main.git_finalize.quick_recommended') }}</span></div>
-                      <pre><span v-for="line in chunkDiff(seg).ours" :key="line.sourceIndex" class="git-code-line" :class="'diff-' + line.status"><span class="git-line-number">{{ sideLineNumber(selectedConflictFile, idx, 'ours', line.sourceIndex) }}</span><span class="git-code-line-text"><span v-for="(token, tokenIdx) in line.tokens" :key="tokenIdx" class="git-code-token" :class="'diff-token-' + token.status">{{ token.text }}</span></span></span><span v-if="!seg.ours.length" class="git-empty-side">{{ t('main.git_finalize.empty_side') }}</span></pre>
-                    </div>
-                    <div v-if="seg.baseLine" class="git-conflict-side base">
-                      <div class="git-conflict-side-label">{{ t('main.git_finalize.common_base') }}</div>
-                      <pre><span v-for="line in baseDiff(seg)" :key="line.sourceIndex" class="git-code-line" :class="'diff-' + line.status"><span class="git-line-number">{{ sideLineNumber(selectedConflictFile, idx, 'base', line.sourceIndex) }}</span><span class="git-code-line-text"><span v-for="(token, tokenIdx) in line.tokens" :key="tokenIdx" class="git-code-token" :class="'diff-token-' + token.status">{{ token.text }}</span></span></span><span v-if="!seg.base.length" class="git-empty-side">{{ t('main.git_finalize.empty_side') }}</span></pre>
-                    </div>
-                    <div class="git-conflict-side theirs">
-                      <div class="git-conflict-side-label">{{ chunkLabel(seg.theirsLabel, t('main.git_finalize.incoming')) }} <span v-if="recommendedChoice(seg) === 'theirs'" class="git-ai-recommended">{{ t('main.git_finalize.quick_recommended') }}</span></div>
-                      <pre><span v-for="line in chunkDiff(seg).theirs" :key="line.sourceIndex" class="git-code-line" :class="'diff-' + line.status"><span class="git-line-number">{{ sideLineNumber(selectedConflictFile, idx, 'theirs', line.sourceIndex) }}</span><span class="git-code-line-text"><span v-for="(token, tokenIdx) in line.tokens" :key="tokenIdx" class="git-code-token" :class="'diff-token-' + token.status">{{ token.text }}</span></span></span><span v-if="!seg.theirs.length" class="git-empty-side">{{ t('main.git_finalize.empty_side') }}</span></pre>
-                    </div>
-                  </div>
-                </article>
-              </template>
-            </div>
-            <textarea
-              v-else
-              v-model="selectedConflictFile.directText"
-              class="git-conflict-direct-editor"
-              spellcheck="false"
-            ></textarea>
-          </section>
-        </div>
-      </template>
+                <div class="git-conflict-mode-tabs" v-if="selectedConflictFile.mode !== 'direct_only'">
+                  <button :class="{ active: selectedConflictFile.mode === 'chunk' }" @click="switchToChunkView(selectedConflictFile)">
+                    <AppIcon name="git-diff" /> {{ t('main.git_finalize.chunk_view') }}
+                  </button>
+                  <button :class="{ active: selectedConflictFile.mode === 'direct' }" @click="switchToDirectEdit(selectedConflictFile)">
+                    <AppIcon name="note-pencil" /> {{ t('main.git_finalize.direct_edit') }}
+                  </button>
+                </div>
+                <span v-else class="git-direct-only-badge">
+                  <AppIcon name="note-pencil" /> {{ t('main.git_finalize.direct_only') }}
+                </span>
+              </div>
 
-      <!-- 0481 T0010 rev5 (반려 #1·#2) — "AI 호출"의 상태는 이 한 줄이 전부 말한다: 호출을
-           보낸 순간부터(실행 기록이 브라우저에 등록되기 전에도), 실행이 도는 동안, 그리고
-           공급자 목록을 못 읽어 호출 자체가 막혀 있을 때까지. 액션바 안이 아니라 액션바 위의
-           제 줄에 서기 때문에 가드 문장의 폭을 빼앗지 않는다(rev3 의 세로 글자 사고).
-           시안 v13 화면 1 이 그리는 상태(공급자 정상·실행 없음)에서는 아예 없는 줄이라
-           액션바는 시안 그대로다. -->
-      <div
-        v-if="showAiActions && aiStrip"
-        class="git-conflict-ai-strip"
-        :class="'git-conflict-ai-strip--' + aiStrip.kind"
-        data-test="conflict-ai-run"
-      >
-        <AppIcon :name="aiStrip.icon" :spin="aiStrip.spin" />
-        <span class="git-conflict-ai-strip-text" :title="aiStrip.text">{{ aiStrip.text }}</span>
-        <button
-          v-if="aiStrip.retry"
-          type="button"
-          class="git-conflict-ai-strip-retry"
-          :disabled="busy || providerLoading"
-          data-test="conflict-provider-retry"
-          @click="emit('reload-providers')"
+              <div v-if="selectedConflictFile.mode === 'chunk'" class="git-conflict-navigator">
+                <div class="git-conflict-nav-summary">
+                  <strong>{{ t('main.git_finalize.remaining_chunks', { remaining: selectedRemainingCount, total: selectedChunkEntries.length }) }}</strong>
+                  <span>{{ t('main.git_finalize.nav_shortcut') }}</span>
+                </div>
+                <div class="git-conflict-nav-actions">
+                  <button type="button" :disabled="selectedChunkEntries.length === 0" @click="moveChunk(-1)" :title="t('main.git_finalize.previous_conflict')"><AppIcon name="caret-up" /></button>
+                  <button v-for="entry in selectedChunkEntries" :key="entry.segmentIndex" type="button" class="git-conflict-chip" :class="{ active: currentChunkSegment === entry.segmentIndex, resolved: !!entry.chunk.resolution }" @click="focusChunk(entry.segmentIndex)">{{ entry.number }}</button>
+                  <button type="button" :disabled="selectedChunkEntries.length === 0" @click="moveChunk(1)" :title="t('main.git_finalize.next_conflict')"><AppIcon name="caret-down" /></button>
+                </div>
+                <div class="git-code-size-controls" :aria-label="t('main.git_finalize.code_font_size')">
+                  <button type="button" :disabled="codeFontRem <= 0.72" @click="adjustCodeFont(-0.08)">A−</button>
+                  <span>{{ Math.round(codeFontRem * 100) }}%</span>
+                  <button type="button" :disabled="codeFontRem >= 1.18" @click="adjustCodeFont(0.08)">A＋</button>
+                </div>
+              </div>
+
+              <p v-if="selectedConflictFile.notice" class="git-conflict-notice">{{ selectedConflictFile.notice }}</p>
+
+              <div v-if="selectedConflictFile.mode === 'chunk'" class="git-chunk-scroll" :style="{ '--conflict-code-size': codeFontRem + 'rem' }">
+                <template v-for="(seg, idx) in selectedConflictFile.segments" :key="idx">
+                  <div v-if="seg.kind === 'common' && seg.lines.length" class="git-common-shell">
+                    <button v-if="seg.lines.length > COMMON_COLLAPSE_LINES && isCommonCollapsed(idx)" type="button" class="git-common-toggle" @click="toggleCommon(idx)">
+                      <AppIcon name="caret-right" /> {{ t('main.git_finalize.common_collapsed', { n: seg.lines.length }) }}
+                    </button>
+                    <template v-else>
+                      <button v-if="seg.lines.length > COMMON_COLLAPSE_LINES" type="button" class="git-common-toggle git-common-toggle--open" @click="toggleCommon(idx)">
+                        <AppIcon name="caret-down" /> {{ t('main.git_finalize.common_collapse', { n: seg.lines.length }) }}
+                      </button>
+                      <pre class="git-common-block"><span v-for="(line, lineIdx) in seg.lines" :key="lineIdx" class="git-code-line"><span class="git-line-number">{{ commonLineNumber(selectedConflictFile, idx, lineIdx) }}</span><span class="git-code-line-text">{{ stripLineEnding(line) }}</span></span></pre>
+                    </template>
+                  </div>
+                  <article v-else-if="seg.kind === 'chunk'" :id="chunkDomId(idx)" class="git-conflict-chunk" :class="{ resolved: !!seg.resolution, focused: currentChunkSegment === idx }">
+                    <div class="git-conflict-chunk-hd">
+                      <span>{{ t('main.git_finalize.conflict_chunk', { n: chunkNumber(selectedConflictFile, idx) }) }} <strong v-if="seg.resolution" class="git-resolved-badge">{{ t('main.git_finalize.resolved') }}</strong></span>
+                      <button v-if="seg.resolution" type="button" class="git-chunk-undo" @click="undoChunk(seg)"><AppIcon name="arrow-counter-clockwise" /> {{ t('main.git_finalize.undo_choice') }}</button>
+                      <div v-else class="git-chunk-actions">
+                        <button :class="{ suggested: recommendedChoice(seg) === 'ours' }" @click="chooseChunk(seg, 'ours')">{{ t('main.git_finalize.current') }}</button>
+                        <button :class="{ suggested: recommendedChoice(seg) === 'theirs' }" @click="chooseChunk(seg, 'theirs')">{{ t('main.git_finalize.incoming') }}</button>
+                        <button :class="{ suggested: recommendedChoice(seg) === 'both' }" @click="chooseChunk(seg, 'both')">{{ t('main.git_finalize.both') }}</button>
+                        <button @click="switchToDirectEdit(selectedConflictFile)">{{ t('main.git_finalize.direct_edit') }}</button>
+                        <button v-if="recommendedChoice(seg)" class="git-ai-apply" @click="applySuggestion(seg)"><AppIcon name="magic-wand" /> {{ t('main.git_finalize.quick_apply_one') }}</button>
+                        <span v-else class="git-ai-hold">{{ t('main.git_finalize.quick_hold') }}</span>
+                      </div>
+                    </div>
+                    <div v-if="seg.resolution" class="git-chunk-resolved">
+                      <div><strong>{{ t('main.git_finalize.selected_choice', { choice: choiceLabel(seg.choice) }) }}</strong><span>{{ t('main.git_finalize.resolved_preview') }}</span></div>
+                      <pre>{{ joinLines(seg.resolution).trim() || t('main.git_finalize.empty_choice') }}</pre>
+                    </div>
+                    <div v-else class="git-conflict-sides">
+                      <div class="git-conflict-side ours">
+                        <div class="git-conflict-side-label">{{ chunkLabel(seg.oursLabel, t('main.git_finalize.current')) }} <span v-if="recommendedChoice(seg) === 'ours'" class="git-ai-recommended">{{ t('main.git_finalize.quick_recommended') }}</span></div>
+                        <pre><span v-for="line in chunkDiff(seg).ours" :key="line.sourceIndex" class="git-code-line" :class="'diff-' + line.status"><span class="git-line-number">{{ sideLineNumber(selectedConflictFile, idx, 'ours', line.sourceIndex) }}</span><span class="git-code-line-text"><span v-for="(token, tokenIdx) in line.tokens" :key="tokenIdx" class="git-code-token" :class="'diff-token-' + token.status">{{ token.text }}</span></span></span><span v-if="!seg.ours.length" class="git-empty-side">{{ t('main.git_finalize.empty_side') }}</span></pre>
+                      </div>
+                      <div v-if="seg.baseLine" class="git-conflict-side base">
+                        <div class="git-conflict-side-label">{{ t('main.git_finalize.common_base') }}</div>
+                        <pre><span v-for="line in baseDiff(seg)" :key="line.sourceIndex" class="git-code-line" :class="'diff-' + line.status"><span class="git-line-number">{{ sideLineNumber(selectedConflictFile, idx, 'base', line.sourceIndex) }}</span><span class="git-code-line-text"><span v-for="(token, tokenIdx) in line.tokens" :key="tokenIdx" class="git-code-token" :class="'diff-token-' + token.status">{{ token.text }}</span></span></span><span v-if="!seg.base.length" class="git-empty-side">{{ t('main.git_finalize.empty_side') }}</span></pre>
+                      </div>
+                      <div class="git-conflict-side theirs">
+                        <div class="git-conflict-side-label">{{ chunkLabel(seg.theirsLabel, t('main.git_finalize.incoming')) }} <span v-if="recommendedChoice(seg) === 'theirs'" class="git-ai-recommended">{{ t('main.git_finalize.quick_recommended') }}</span></div>
+                        <pre><span v-for="line in chunkDiff(seg).theirs" :key="line.sourceIndex" class="git-code-line" :class="'diff-' + line.status"><span class="git-line-number">{{ sideLineNumber(selectedConflictFile, idx, 'theirs', line.sourceIndex) }}</span><span class="git-code-line-text"><span v-for="(token, tokenIdx) in line.tokens" :key="tokenIdx" class="git-code-token" :class="'diff-token-' + token.status">{{ token.text }}</span></span></span><span v-if="!seg.theirs.length" class="git-empty-side">{{ t('main.git_finalize.empty_side') }}</span></pre>
+                      </div>
+                    </div>
+                  </article>
+                </template>
+              </div>
+              <textarea
+                v-else
+                v-model="selectedConflictFile.directText"
+                class="git-conflict-direct-editor"
+                spellcheck="false"
+              ></textarea>
+            </section>
+          </div>
+        </template>
+
+        <!-- 0481 T0010 rev5 (반려 #1·#2) — "AI 호출"의 상태는 이 한 줄이 전부 말한다: 호출을
+             보낸 순간부터(실행 기록이 브라우저에 등록되기 전에도), 실행이 도는 동안, 그리고
+             공급자 목록을 못 읽어 호출 자체가 막혀 있을 때까지. 액션바 안이 아니라 액션바 위의
+             제 줄에 서기 때문에 가드 문장의 폭을 빼앗지 않는다(rev3 의 세로 글자 사고).
+             시안 v13 화면 1 이 그리는 상태(공급자 정상·실행 없음)에서는 아예 없는 줄이라
+             액션바는 시안 그대로다. -->
+        <div
+          v-if="showAiActions && aiStrip"
+          class="git-conflict-ai-strip"
+          :class="'git-conflict-ai-strip--' + aiStrip.kind"
+          data-test="conflict-ai-run"
         >
-          <AppIcon name="arrows-clockwise" /> {{ t('main.git_finalize.provider_reload') }}
-        </button>
+          <AppIcon :name="aiStrip.icon" :spin="aiStrip.spin" />
+          <span class="git-conflict-ai-strip-text" :title="aiStrip.text">{{ aiStrip.text }}</span>
+          <button
+            v-if="aiStrip.retry"
+            type="button"
+            class="git-conflict-ai-strip-retry"
+            :disabled="busy || providerLoading"
+            data-test="conflict-provider-retry"
+            @click="emit('reload-providers')"
+          >
+            <AppIcon name="arrows-clockwise" /> {{ t('main.git_finalize.provider_reload') }}
+          </button>
+        </div>
+
+        <!-- 0481 T0010 #2 — the instruction box and the action bar are what the operator acts
+             WITH, so they belong to the dialog, not to the "we have files" branch. They render
+             for ready, empty and load-error alike; only the loading frame has nothing to act on
+             yet. Individual controls disable themselves (see :disabled below) — 0441 TR0005's
+             rule: a control that cannot run right now stays visible and disabled. -->
+        <template v-if="loadStatus !== 'loading'">
+          <div v-if="showAiActions" class="git-conflict-message-bar">
+            <label for="git-conflict-ai-message">{{ t('main.git_finalize.conflict_ai_message_label') }}</label>
+            <textarea
+              id="git-conflict-ai-message"
+              v-model="conflictMessage"
+              rows="2"
+              :disabled="busy"
+              :placeholder="t('main.git_finalize.conflict_ai_message_placeholder')"
+              data-test="conflict-ai-message"
+            ></textarea>
+          </div>
+        </template>
       </div>
+    </template>
 
-      <!-- 0481 T0010 #2 — the instruction box and the action bar are what the operator acts
-           WITH, so they belong to the dialog, not to the "we have files" branch. They render
-           for ready, empty and load-error alike; only the loading frame has nothing to act on
-           yet. Individual controls disable themselves (see :disabled below) — 0441 TR0005's
-           rule: a control that cannot run right now stays visible and disabled. -->
+    <template #footer>
+      <!-- The band is drawn for every state but `loading`, exactly as it was. -->
       <template v-if="loadStatus !== 'loading'">
-        <div v-if="showAiActions" class="git-conflict-message-bar">
-          <label for="git-conflict-ai-message">{{ t('main.git_finalize.conflict_ai_message_label') }}</label>
-          <textarea
-            id="git-conflict-ai-message"
-            v-model="conflictMessage"
-            rows="2"
-            :disabled="busy"
-            :placeholder="t('main.git_finalize.conflict_ai_message_placeholder')"
-            data-test="conflict-ai-message"
-          ></textarea>
-        </div>
-
-        <!-- 0481 D0006 §6.2 v13 화면 1 그대로: 왼쪽 `.git-conflict-footer-context` 는
-             마커 가드 + 세로 구분선 + AI 호출 옵션(공급자 셀렉트·[자동])이고, 오른쪽
-             `.git-conflict-footer-actions` 는 [멘트 복사]·[AI 호출]·[중단]·[해결 제출]
-             네 버튼만 담는다. v13 이전에는 옵션 두 개가 버튼 묶음 안에 섞여 있었다. -->
-        <div class="git-conflict-dialog-ft">
-          <div class="git-conflict-footer-context">
-            <!-- 0481 T0010 rev5 (반려 #2) — 시안 y5bwr1o0 v13 화면 1 의 가드는
-                 `white-space: nowrap` 한 줄이다. 구현은 `overflow-wrap: anywhere` 였고,
-                 rev3 이 그 옆에 폭을 고정으로 먹는 실행 문구를 끼워 넣자 가드에 남은 폭이
-                 거의 0 이 되어 "README.md: 16, 28행" 이 글자마다 줄바꿈해 세로로 섰다.
-                 잘리는 문장은 title 로 그대로 읽을 수 있다. -->
-            <div class="git-conflict-guard" :class="{ ok: allConflictsResolved }" :title="guardText">
-              <AppIcon :name="guardIcon" />
-              <span>{{ guardText }}</span>
-            </div>
-            <span v-if="showAiActions" class="ft-divider" aria-hidden="true"></span>
-            <!-- 0234 B0001 RC1/RC2: confirm/change the provider that the conflict AI run
-                 uses. 0481 D0006 §6.2 v13 화면 1: [자동] 은 호출 시점에만 정하는 옵션이라
-                 공급자 셀렉트 바로 옆에 둔다. 이 세션의 해결 실행을 새로 시작하는
-                 [AI 호출]/[해결 제출] 요청에만 실려 나가고, 그 뒤 회신(재지시 대화,
-                 승인 대기 화면)에는 아예 존재하지 않는 필드다. -->
-            <div v-if="showAiActions" class="git-conflict-invoke-options" :aria-label="t('main.git_finalize.invoke_options')">
-              <AiProviderSelect
-                class="git-conflict-provider"
-                :providers="providers || []"
-                :model-value="selectedProvider"
-                :loading="providerLoading"
-                :errored="providerErrored"
-                hide-label
-                @update:model-value="(v) => emit('update:provider', v)"
-              />
-              <label class="git-conflict-auto-toggle" :class="{ disabled: busy }">
-                <input type="checkbox" v-model="autoResolve" :disabled="busy" />
-                <span>{{ t('main.git_finalize.auto_resolve_label') }}</span>
-              </label>
-            </div>
+        <!-- 0560 T0024 §2.5 — `.git-conflict-dialog-ft` is gone. `DialogFooter` owns the button
+             row and has no slot beside it, so the left half renders as its SIBLING here (the
+             `GitMergeReviewDialog.vue` `.gmr-ft-extras` precedent) and carries the band's single
+             top border; `dialog.css`'s own border is dropped for this surface in the unscoped
+             block at the bottom of this file. The classes and the `v-if` are untouched — 0481
+             D0006 §6.2 v13 화면 1 still owns what is IN the band, this owns where the band sits. -->
+        <div class="git-conflict-footer-context">
+          <!-- 0481 T0010 rev5 (반려 #2) — 시안 y5bwr1o0 v13 화면 1 의 가드는
+               `white-space: nowrap` 한 줄이다. 구현은 `overflow-wrap: anywhere` 였고,
+               rev3 이 그 옆에 폭을 고정으로 먹는 실행 문구를 끼워 넣자 가드에 남은 폭이
+               거의 0 이 되어 "README.md: 16, 28행" 이 글자마다 줄바꿈해 세로로 섰다.
+               잘리는 문장은 title 로 그대로 읽을 수 있다. -->
+          <div class="git-conflict-guard" :class="{ ok: allConflictsResolved }" :title="guardText">
+            <AppIcon :name="guardIcon" />
+            <span>{{ guardText }}</span>
           </div>
-          <div class="git-conflict-footer-actions">
-            <button v-if="showAiActions" class="btn btn-secondary" :disabled="busy" @click="emit('copy-mention')">
-              <AppIcon name="copy" /> {{ t('main.git_finalize.copy_conflict_mention') }}
-            </button>
-            <!-- 0481 T0010 #3 — "AI호출하니까 호출도 안되는거같고". This button used to
-                 disappear entirely whenever the provider list was empty (the whole action
-                 group hung off `v-if="providers?.length"`), taking [중단] and [해결 제출]
-                 with it. It stays, and says why it cannot run. -->
-            <button
-              v-if="showAiActions"
-              class="btn btn-secondary"
-              :disabled="busy || !providers?.length || !!aiRunNotice || !!aiRunPending"
-              :title="invokeBlockedReason"
-              data-test="conflict-ai-invoke"
-              @click="emit('ai-invoke', conflictMessage.trim(), autoResolve)"
-            >
-              <AppIcon name="robot" /> {{ t('main.git_finalize.invoke_conflict_ai') }}
-            </button>
-            <button class="btn btn-secondary" :disabled="busy" @click="emit('abort')">
-              <AppIcon name="prohibit" /> {{ t('main.git_finalize.abort') }}
-            </button>
-            <button class="btn btn-primary" :disabled="busy || !allConflictsResolved" @click="emit('submit', autoResolve)">
-              <AppIcon name="check" /> {{ t('main.git_finalize.resolve_submit') }}
-            </button>
+          <span v-if="showAiActions" class="ft-divider" aria-hidden="true"></span>
+          <!-- 0234 B0001 RC1/RC2: confirm/change the provider that the conflict AI run
+               uses. 0481 D0006 §6.2 v13 화면 1: [자동] 은 호출 시점에만 정하는 옵션이라
+               공급자 셀렉트 바로 옆에 둔다. 이 세션의 해결 실행을 새로 시작하는
+               [AI 호출]/[해결 제출] 요청에만 실려 나가고, 그 뒤 회신(재지시 대화,
+               승인 대기 화면)에는 아예 존재하지 않는 필드다. -->
+          <div v-if="showAiActions" class="git-conflict-invoke-options" :aria-label="t('main.git_finalize.invoke_options')">
+            <AiProviderSelect
+              class="git-conflict-provider"
+              :providers="providers || []"
+              :model-value="selectedProvider"
+              :loading="providerLoading"
+              :errored="providerErrored"
+              hide-label
+              @update:model-value="(v) => emit('update:provider', v)"
+            />
+            <label class="git-conflict-auto-toggle" :class="{ disabled: busy }">
+              <input type="checkbox" v-model="autoResolve" :disabled="busy" />
+              <span>{{ t('main.git_finalize.auto_resolve_label') }}</span>
+            </label>
           </div>
         </div>
+        <DialogFooter :actions="footerActions">
+          <template #action-copy-mention>
+            <AppIcon name="copy" /> {{ t('main.git_finalize.copy_conflict_mention') }}
+          </template>
+          <template #action-ai-invoke>
+            <AppIcon name="robot" /> {{ t('main.git_finalize.invoke_conflict_ai') }}
+          </template>
+          <template #action-abort>
+            <AppIcon name="prohibit" /> {{ t('main.git_finalize.abort') }}
+          </template>
+          <template #action-submit>
+            <AppIcon name="check" /> {{ t('main.git_finalize.resolve_submit') }}
+          </template>
+        </DialogFooter>
       </template>
-    </div>
-  </div>
+    </template>
+  </DialogShell>
 </template>
-
 <script setup lang="ts">
 import AppIcon from '@shared/AppIcon.vue'
 import AiProviderSelect from './AiProviderSelect.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogShell from './dialogs/DialogShell.vue'
+import type { DialogAction } from './dialogs/dialogTypes'
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
@@ -357,6 +386,14 @@ const { t } = useI18n()
 const { switchToDirectEdit, switchToChunkView } = useConflictChunks()
 const showAiActions = computed(() => !props.hideAiActions)
 
+// The header ✕ is a close REQUEST like ESC and the backdrop, so it goes through the shell
+// rather than emitting `close` directly (`GitMergeReviewDialog.vue`'s `onHeaderClose`).
+const shellRef = ref<InstanceType<typeof DialogShell> | null>(null)
+
+function onHeaderClose() {
+  shellRef.value?.requestClose('header')
+}
+
 const selectedConflictIndex = ref(0)
 const currentChunkSegment = ref(-1)
 const collapsedCommon = ref<Record<string, boolean>>({})
@@ -424,15 +461,64 @@ const aiStrip = computed<{ kind: string; text: string; icon: string; spin: boole
   }
   return null
 })
-// The same answer for the button that cannot be pressed. 0441 TR0005: a control that cannot
-// run right now stays visible and disabled — but it also has to say which of the reasons it is.
-const invokeBlockedReason = computed(() => {
-  if (props.aiRunNotice) return props.aiRunNotice
-  if (props.aiRunPending) return t('main.git_finalize.conflict_ai_starting')
-  if (props.providerLoading) return t('main.git_finalize.provider_loading')
-  if (props.providerErrored) return t('main.git_finalize.provider_load_failed')
-  if (!props.providers?.length) return t('main.git_finalize.provider_none')
-  return ''
+/**
+ * 0560 T0024 §2.5 — the four buttons, as semantic actions.
+ *
+ * The painted order is the one the screen already had, and it is now produced by
+ * `footerRolePriority` instead of by DOM order: `aux`(10) [멘트 복사] · `aux`(10) [AI 호출] ·
+ * `stop`(25) [중단] · `primary`(40) [해결 제출]. The two `aux` entries tie on role, so the
+ * array position below is what separates them — hence they are pushed in that order.
+ *
+ * `stop` is the role L0009 §1 created for "Type B 실행 중단". `DialogFooter.busyDisables()`
+ * leaves a `stop` action live while the FOOTER is busy, but this dialog's `busy` is a prop,
+ * not the footer's own in-flight flag, and the original button carried `:disabled="busy"` —
+ * so it is passed explicitly here. Composition is OR and an explicit `disabled` is read
+ * first, so the button disables exactly when it used to.
+ *
+ * [AI 호출] used to carry a hover tooltip bound to an `invokeBlockedReason` computed, saying
+ * which condition was holding it. That does NOT come along: a `DialogAction` has no free-form
+ * attribute channel, and adding a `title` field to the contract is a D correction, not this
+ * T's business (§3). Nothing is lost — the same reason, as a full sentence, is already on
+ * screen above these buttons in `.git-conflict-ai-strip` for every condition that blocks the
+ * call (0481 T0010 rev5 put it there precisely because a title attribute "nobody hovers" was
+ * not an answer, 반려 #4). So this is a de-duplication, not a regression — and the computed
+ * itself is deleted rather than left dangling, since `aiStrip` already derives the same five
+ * sentences from the same five props and `noUnusedLocals` would reject a second copy with no
+ * reader.
+ */
+const footerActions = computed<DialogAction[]>(() => {
+  const actions: DialogAction[] = []
+  if (showAiActions.value) {
+    actions.push({
+      id: 'copy-mention',
+      label: t('main.git_finalize.copy_conflict_mention'),
+      role: 'aux',
+      disabled: props.busy,
+      onSelect: () => emit('copy-mention'),
+    })
+    actions.push({
+      id: 'ai-invoke',
+      label: t('main.git_finalize.invoke_conflict_ai'),
+      role: 'aux',
+      disabled: props.busy || !props.providers?.length || !!props.aiRunNotice || !!props.aiRunPending,
+      onSelect: () => emit('ai-invoke', conflictMessage.value.trim(), autoResolve.value),
+    })
+  }
+  actions.push({
+    id: 'abort',
+    label: t('main.git_finalize.abort'),
+    role: 'stop',
+    disabled: props.busy,
+    onSelect: () => emit('abort'),
+  })
+  actions.push({
+    id: 'submit',
+    label: t('main.git_finalize.resolve_submit'),
+    role: 'primary',
+    disabled: props.busy || !allConflictsResolved.value,
+    onSelect: () => emit('submit', autoResolve.value),
+  })
+  return actions
 })
 const selectedChunkEntries = computed(() => {
   const file = selectedConflictFile.value
@@ -533,8 +619,9 @@ function focusChunk(segmentIndex: number) {
     if (typeof document === 'undefined') return
     // 0207 CH0005: jump to a numbered chunk by scrolling ONLY the code area
     // (.git-chunk-scroll). scrollIntoView() walks up and scrolls EVERY scrollable
-    // ancestor — including the overflow:hidden .git-conflict-dialog shell — which
-    // pushed the fixed header/footer out of the clipped dialog. Confine the
+    // ancestor — including the overflow:hidden dialog surface (`.fg-dialog-surface`,
+    // `.git-conflict-dialog` before 0560 T0024) — which pushed the fixed header/footer
+    // out of the clipped dialog. Confine the
     // scroll to the code container and center the chunk.
     const el = document.getElementById(chunkDomId(segmentIndex))
     const scroller = el?.closest('.git-chunk-scroll') as HTMLElement | null
@@ -632,40 +719,17 @@ watch(
 </script>
 
 <style scoped>
-.git-conflict-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1400;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(15, 23, 42, 0.46);
-}
-.git-conflict-dialog {
+/* 0560 T0024 §2.4 — what is left of the old `.git-conflict-dialog` column. The overlay, the
+   surface, its size/shadow/radius and the header/footer bands are `DialogShell`'s
+   (`conflict-large` = sheet + xl) as of this step; this wrapper exists so the Shift+↑/↓
+   listener has an element and so the five body blocks keep the flex column they were laid
+   out in. `.fg-dialog-surface--sheet .fg-dialog-body` is already padding-free. */
+.git-conflict-body {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  width: min(1180px, calc(100vw - 48px));
-  height: min(820px, calc(100vh - 48px));
-  background: var(--bg, #fff);
-  color: var(--text, #0f172a);
-  border-radius: 8px;
-  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.3);
   overflow: hidden;
-}
-.git-conflict-dialog-hd,
-.git-conflict-dialog-ft {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--border, #e2e8f0);
-}
-.git-conflict-dialog-ft {
-  border-top: 1px solid var(--border, #e2e8f0);
-  border-bottom: none;
 }
 .git-conflict-message-bar {
   flex: 0 0 auto;
@@ -703,16 +767,9 @@ watch(
 .git-conflict-message-bar textarea:disabled {
   opacity: 0.65;
 }
-.git-conflict-dialog-hd h2 {
-  margin: 0;
-  font-size: 1rem;
-  line-height: 1.3;
-}
-.git-conflict-dialog-hd p {
-  margin: 3px 0 0;
-  font-size: 0.76rem;
-  color: var(--text-m);
-}
+/* The title/subtitle rules left with `.git-conflict-dialog-hd`: `DialogHeader` paints both
+   (`.fg-dialog-header__title` / `__subtitle`). Only the progress readout is still this
+   component's, and it keeps the geometry it had in the same slot of the same row. */
 .git-conflict-progress {
   margin-left: auto;
   display: flex;
@@ -733,14 +790,6 @@ watch(
   height: 100%;
   background: #16a34a;
   transition: width 0.25s ease;
-}
-.git-dialog-close {
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--border, #e2e8f0);
-  border-radius: 8px;
-  background: var(--bg, #fff);
-  cursor: pointer;
 }
 .git-conflict-loading {
   flex: 1;
@@ -962,11 +1011,18 @@ watch(
 /* 0481 D0006 §6.2 v13 화면 1 `.git-conflict-footer-context`: 가드 문장 · 세로 구분선 ·
    AI 호출 옵션이 한 덩어리로 왼쪽에 서고, 남는 폭은 가드 문장이 먹는다. */
 .git-conflict-footer-context {
-  flex: 1 1 auto;
+  /* 0560 T0024 §2.5: a fixed band directly under the body now, not the left half of a row —
+     so it never grows into the body's track (`flex: 1 1 auto` was safe only inside the old
+     `.git-conflict-dialog-ft`). It carries the band's single top border and the padding the
+     footer row used to supply; `DialogFooter`'s own border is suppressed for this surface in
+     the unscoped block at the bottom of this file. */
+  flex: 0 0 auto;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 12px;
+  padding: 12px 20px 0;
+  border-top: 1px solid var(--border, #e2e8f0);
 }
 .git-conflict-footer-context .ft-divider {
   flex: 0 0 auto;
@@ -1049,12 +1105,8 @@ watch(
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.git-conflict-footer-actions {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
+/* 0560 T0024 §2.5: `.git-conflict-footer-actions` left with the hand-built row — the four
+   buttons are `DialogFooter`'s `.fg-dialog-footer__actions` now. */
 .git-conflict-provider {
   flex: 0 1 210px;
   max-width: 210px;
@@ -1249,14 +1301,6 @@ watch(
   background: #fed7aa;
 }
 @media (max-width: 760px) {
-  .git-conflict-overlay {
-    padding: 0;
-  }
-  .git-conflict-dialog {
-    width: 100vw;
-    height: 100vh;
-    border-radius: 0;
-  }
   .git-conflict-dialog-bd {
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr);
@@ -1279,7 +1323,7 @@ watch(
     border-left: none;
     border-top: 1px solid #e2e8f0;
   }
-  .git-conflict-dialog-ft,
+  .git-conflict-footer-context,
   .git-conflict-workspace-hd {
     align-items: stretch;
     flex-direction: column;
@@ -1288,8 +1332,36 @@ watch(
     grid-template-columns: 1fr;
     gap: 6px;
   }
-  .git-conflict-footer-actions {
-    justify-content: flex-end;
+}
+</style>
+
+<!--
+  Unscoped, for the same reason as `GitMergeReviewDialog.vue`: `surface-class` lands on the
+  dialog surface, which `DialogShell` renders and teleports out of this component's subtree,
+  so a scoped rule could never reach it. The band above the button row (the marker guard, the
+  provider select and [자동]) carries the one top border, so `.fg-dialog-footer` must not draw
+  a second one directly under it.
+-->
+<style>
+.fg-dialog-surface.git-conflict-resolver-dialog .fg-dialog-footer {
+  border-top: none;
+  padding-top: 8px;
+}
+
+/* The full-bleed narrow-window rule the deleted `.git-conflict-overlay` / `.git-conflict-dialog`
+   carried. Both elements are `DialogShell`'s now, so it can only be written here, keyed by the
+   same `surface-class` (the `DocumentFullViewDialog.vue` narrow-window precedent). */
+@media (max-width: 760px) {
+  .fg-dialog-overlay:has(> .git-conflict-resolver-dialog) {
+    padding: 0;
+  }
+
+  .fg-dialog-surface.git-conflict-resolver-dialog {
+    width: 100vw;
+    height: 100vh;
+    max-width: none;
+    max-height: none;
+    border-radius: 0;
   }
 }
 </style>

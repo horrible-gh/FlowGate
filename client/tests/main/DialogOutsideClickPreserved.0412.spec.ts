@@ -154,18 +154,28 @@ describe('GitConflictResolverDialog — overlay click no longer emits close (041
     })
   }
 
+  // 0560 T0024: the hand-built `.git-conflict-overlay` / `.git-dialog-close` are gone — the
+  // frame is `DialogShell`'s `conflict-large` surface. The 0412 contract is unchanged and is
+  // now enforced by the variant default (`closeOnBackdrop: false`) instead of by the absence
+  // of a per-file binding, so this drives the shell's real backdrop path (mousedown + mouseup
+  // on the overlay, which is how `DialogShell` distinguishes a backdrop click from a drag that
+  // started inside the box) rather than a bare `click`.
   it('keeps the current chunk selection and does not emit close on an overlay click', async () => {
     ;(Element.prototype as any).scrollTo = vi.fn()
     const wrapper = mountDialog()
     await flushPromises()
 
-    const activeBefore = wrapper.find('.git-conflict-chip.active').text()
+    const chip = () => document.querySelector('.git-conflict-chip.active') as HTMLElement
+    const activeBefore = chip().textContent
 
-    await wrapper.find('.git-conflict-overlay').trigger('click')
+    const overlay = document.querySelector('.fg-dialog-overlay') as HTMLElement
+    expect(overlay).toBeTruthy()
+    overlay.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    overlay.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
     await flushPromises()
 
     expect(wrapper.emitted('close')).toBeFalsy()
-    expect(wrapper.find('.git-conflict-chip.active').text()).toBe(activeBefore)
+    expect(chip().textContent).toBe(activeBefore)
 
     wrapper.unmount()
   })
@@ -175,7 +185,8 @@ describe('GitConflictResolverDialog — overlay click no longer emits close (041
     const wrapper = mountDialog()
     await flushPromises()
 
-    await wrapper.find('.git-dialog-close').trigger('click')
+    ;(document.querySelector('.fg-dialog-header__close') as HTMLButtonElement).click()
+    await flushPromises()
     expect(wrapper.emitted('close')).toBeTruthy()
 
     wrapper.unmount()

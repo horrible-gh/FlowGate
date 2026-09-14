@@ -24,9 +24,21 @@ const fixture = spawnSync(process.execPath, [
 ], { stdio: 'inherit', env: process.env })
 if (fixture.status !== 0) throw new Error(`component fixture failed: ${fixture.status}`)
 
-const cssName = (await readdir(resolve('dist/assets'))).find((n) => n.startsWith('main-') && n.endsWith('.css'))
+/*
+ * 0560 T0024 — 프로덕션 CSS 는 한 파일이 아니다. 디자인 토큰(`--border`, `--surface` …)은
+ * `AppIcon-*.css`, 공통 dialog 계층(`dialog.css`: overlay/surface/header/footer/버튼)은
+ * `ConfirmDialog-*.css`, 이 컴포넌트의 scoped 규칙과 surface 훅은 `main-*.css` 에 있다.
+ * 이관 전에는 다이얼로그가 제 shell 을 직접 칠했으므로 `main-*.css` 하나로 충분했지만 이제는
+ * 아니다 — 빠진 청크는 "전부 0px / 투명" 으로 조용히 통과하는 실패다. 전부 싣되 `main-*.css`
+ * 를 마지막에 둬서 동점 규칙에서 이 파일 쪽이 이기게 한다(실제 페이지와 같은 순서다).
+ */
+const cssFiles = (await readdir(resolve('dist/assets'))).filter((n) => n.endsWith('.css')).sort()
+const cssName = cssFiles.find((n) => n.startsWith('main-'))
 if (!cssName) throw new Error('production CSS bundle is missing — run `npm run build` first')
-const builtCss = await readFile(resolve('dist/assets', cssName), 'utf8')
+const cssOrder = [...cssFiles.filter((n) => n !== cssName), cssName]
+const builtCss = (
+  await Promise.all(cssOrder.map((n) => readFile(resolve('dist/assets', n), 'utf8')))
+).join('\n')
 const builtScope = builtCss.match(/git-conflict-guard\[data-v-([a-f0-9]+)\]/)?.[1]
 if (!builtScope) throw new Error('GitConflictResolverDialog scoped CSS identity is missing from the bundle')
 
@@ -34,25 +46,39 @@ const STATES = ['running', 'starting', 'noprovider', 'providerloading', 'provide
 const states = {}
 for (const name of STATES) {
   const raw = await readFile(resolve(scratch, `conflict-resolver-running.${name}.html`), 'utf8')
-  const fixtureScope = raw.match(/data-v-([a-f0-9]+)/)?.[1]
+  // 8 hex digits exactly: a loose `[a-f0-9]+` also matches Vue's own `data-v-app` marker.
+  const fixtureScope = raw.match(/data-v-([a-f0-9]{8})="/)?.[1]
   if (!fixtureScope) throw new Error(`fixture ${name} carries no scoped attribute`)
   states[name] = raw.replaceAll('data-v-' + fixtureScope, 'data-v-' + builtScope)
 }
 
 const PROBE = String.raw`(() => {
   const box = (el) => { if (!el) return null; const r = el.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; };
-  const dialog = document.querySelector('.git-conflict-dialog');
+  // 0560 T0024: the real dialog is the common layer's surface. The "footer band" is no longer
+  // one element but two - the feature-owned guard band plus DialogFooter's button row - so its
+  // thickness is measured as the sum of the two. (No backticks in here: this whole block is a
+  // String.raw template literal.)
+  const dialog = document.querySelector('.git-conflict-dialog, .fg-dialog-surface');
   if (!dialog) return { error: 'no dialog' };
-  const ft = dialog.querySelector('.git-conflict-dialog-ft');
+  const ftParts = [
+    dialog.querySelector('.git-conflict-dialog-ft'),
+    dialog.querySelector('.git-conflict-footer-context'),
+    dialog.querySelector('.fg-dialog-footer'),
+  ].filter((el, i, all) => el && all.indexOf(el) === i && !(i > 0 && all[0] && all[0].contains(el)));
+  const ft = ftParts.length
+    ? { w: Math.max(...ftParts.map((el) => Math.round(el.getBoundingClientRect().width))),
+        h: ftParts.reduce((sum, el) => sum + Math.round(el.getBoundingClientRect().height), 0) }
+    : null;
   const guard = dialog.querySelector('.git-conflict-guard');
   const guardText = guard && guard.querySelector('span');
   const strip = dialog.querySelector('.git-conflict-ai-strip');
-  const context = ft && ft.querySelector(':scope > .git-conflict-footer-context');
+  const context = dialog.querySelector('.git-conflict-footer-context');
   // line-height 가 'normal' 이면 parseFloat 은 NaN 이다 — 그때는 폰트 크기로 한 줄 높이를 잡는다.
   const guardStyle = guardText ? getComputedStyle(guardText) : null;
   const lineHeight = guardStyle ? (parseFloat(guardStyle.lineHeight) || parseFloat(guardStyle.fontSize) * 1.5) : 0;
+  const invoke = dialog.querySelector('[data-test="conflict-ai-invoke"], [data-dialog-action-id="ai-invoke"]');
   return {
-    footer: box(ft),
+    footer: ft,
     guard: box(guard),
     guardText: box(guardText),
     guardWhiteSpace: guardText ? getComputedStyle(guardText).whiteSpace : null,
@@ -65,18 +91,20 @@ const PROBE = String.raw`(() => {
     stripIsFullWidth: !!(strip && Math.abs(strip.getBoundingClientRect().width - dialog.getBoundingClientRect().width) < 2),
     stripText: strip ? strip.textContent.replace(/\s+/g, ' ').trim() : null,
     stripRetry: !!(strip && strip.querySelector('[data-test="conflict-provider-retry"]')),
-    invokeDisabled: (() => { const b = dialog.querySelector('[data-test="conflict-ai-invoke"]'); return b ? b.disabled : null; })(),
-    invokeTitle: (() => { const b = dialog.querySelector('[data-test="conflict-ai-invoke"]'); return b ? b.getAttribute('title') : null; })(),
+    invokeDisabled: invoke ? invoke.disabled : null,
+    invokeTitle: invoke ? invoke.getAttribute('title') : null,
   };
 })()`
 
 // rev4 를 되살리는 조작: 실행 문구를 가드와 같은 줄로 되돌리고, 가드의 옛 규칙을 덮어씌운다.
 const REGRESS = String.raw`(() => {
-  const ft = document.querySelector('.git-conflict-dialog-ft');
-  const context = ft && ft.querySelector('.git-conflict-footer-context');
+  const context = document.querySelector('.git-conflict-footer-context');
   const strip = document.querySelector('.git-conflict-ai-strip');
   const guard = document.querySelector('.git-conflict-guard');
   if (!context || !strip || !guard) return false;
+  // rev4's guard band shared one row and was therefore a narrow column. Since 0560 T0024 the
+  // band is full width, so reproducing that accident means giving it back the old width.
+  context.style.width = '620px';
   strip.classList.remove('git-conflict-ai-strip');
   strip.classList.add('git-conflict-ai-run');
   context.insertBefore(strip, guard.nextSibling);
@@ -191,14 +219,18 @@ try {
   if (!measured.noprovider.stripRetry) failures.push('noprovider: no way to re-read the list from inside the dialog')
   if (!measured.providererror.stripRetry) failures.push('providererror: no way to re-read the list from inside the dialog')
   if (measured.noprovider.invokeDisabled !== true) failures.push('noprovider: the call button must be disabled')
-  if (!measured.noprovider.invokeTitle) failures.push('noprovider: the disabled call button says nothing')
+  // 0560 T0024 §2.5 판단: 막힌 이유는 hover title 이 아니라 버튼 위의 문장이다. 공통
+  // `DialogAction` 에는 임의 속성 통로가 없고(계약 확장은 D 보정 대상), 같은 문장이 이미
+  // 이 띠에 상시 떠 있다 — 아래 두 줄이 "아무 말도 안 한다"를 막는 실제 조건이다.
+  if (measured.noprovider.invokeTitle !== null) failures.push('noprovider: the tooltip came back — §2.5 says the sentence above the row is the answer')
+  if (!(measured.noprovider.stripText || '').trim()) failures.push('noprovider: the disabled call button says nothing, anywhere')
 
   // 시안이 그리는 상태에는 이 띠가 없어야 한다(액션바 시안 대조는 conflict-resolver-deck.0481.mjs).
   if (measured.idle.hasStrip) failures.push('idle: the deck state must carry no strip')
 
   await writeFile(
     resolve(scratch, 'conflict-resolver-running.0481.json'),
-    JSON.stringify({ cssBundle: cssName, measured, failures }, null, 2),
+    JSON.stringify({ cssBundle: cssName, cssOrder, measured, failures }, null, 2),
     'utf8',
   )
   console.log(JSON.stringify(measured, null, 2))

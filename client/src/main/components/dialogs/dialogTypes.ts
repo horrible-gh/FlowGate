@@ -303,7 +303,10 @@ export const footerRoleMaxCount: Partial<Record<DialogActionRole, number>> = {
  *   1000           ContextMenu.vue L87, ReviewActionBar.vue L1500
  *   1200           ReviewRejectDialog.vue L238, TimeMachineDialog.vue L386,
  *                  MainPanel.vue L5932
- *   1400           GitConflictResolverDialog.vue L638
+ *   1400           GitConflictResolverDialog.vue L638 — GONE as of 0560 T0024: that dialog is
+ *                  a `conflict-large` member of this layer now and takes `base` + its stack
+ *                  index like every other one. Left in the list because the figure below is
+ *                  what `base` was chosen against, and nothing about that choice changed.
  *   1500           GitMergeReviewDialog.vue L945 (reject sub-dialog)
  *   2000           ToastContainer.vue L33, NotificationCenter.vue L667
  *
