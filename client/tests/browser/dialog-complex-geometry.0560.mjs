@@ -59,6 +59,14 @@ const builtCss = [
   await bundle('main-'),
 ].join('\n')
 
+// Immutable pre-dedup declaration fixture copied from the two SFCs at HEAD before T0026.
+// It is intentionally independent of the imported partial so a changed declaration turns this browser gate red.
+const PRE_DEDUP_CSS = ".gcd-mono { font-family: var(--mono, ui-monospace, monospace); }\n.gcd-dot { margin: 0 5px; }\n.gcd-retry {\n  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; padding: 7px 11px;\n  font-size: 0.74rem; border: 1px solid var(--border, #e2e8f0); border-radius: 8px;\n  background: var(--bg, #fff); color: inherit; cursor: pointer;\n}\n.gcd-bd { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); }\n.gcd-filelist { min-height: 0; overflow: auto; padding: 8px; border-right: 1px solid var(--border, #e2e8f0); background: #f8fafc; }\n.gcd-nomatch { margin: 12px 6px; font-size: 0.74rem; color: var(--text-m, #64748b); }\n.gcd-file {\n  width: 100%; display: flex; flex-direction: column; gap: 3px; padding: 8px 9px; margin-bottom: 5px;\n  border: 1px solid transparent; border-radius: 8px; background: transparent; color: inherit; text-align: left; cursor: pointer;\n}\n.gcd-file:hover, .gcd-file.active { border-color: #bfdbfe; background: #fff; }\n.gcd-file-top { display: flex; align-items: center; gap: 6px; min-width: 0; }\n.gcd-file-name { overflow-wrap: anywhere; font: 600 0.75rem var(--mono, ui-monospace, monospace); }\n.gcd-file-dir { font: 0.66rem var(--mono, ui-monospace, monospace); color: var(--text-m, #64748b); overflow-wrap: anywhere; }\n.gcd-badge {\n  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;\n  width: 16px; height: 16px; border-radius: 4px; font-size: 0.62rem; font-weight: 700;\n}\n.gcd-badge-added { background: var(--success-bg, #dcfce7); color: var(--success, #15803d); }\n.gcd-badge-modified { background: var(--warning-bg, #fef3c7); color: var(--warning, #b45309); }\n.gcd-badge-deleted { background: var(--danger-bg, #fee2e2); color: var(--danger, #b91c1c); }\n.gcd-diffwrap { min-width: 0; min-height: 0; display: flex; flex-direction: column; }\n.gcd-diff-hd { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--border, #e2e8f0); }\n.gcd-diff-path {\n  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;\n  font: 700 0.76rem var(--mono, ui-monospace, monospace);\n}\n.gcd-diff-state { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 0.82rem; color: var(--text-m, #64748b); }\n.gcd-diff-error { flex-direction: column; }\n.gcd-diff { flex: 1 1 auto; min-height: 0; overflow: auto; font: 0.76rem/1.55 var(--mono, ui-monospace, monospace); tab-size: 2; background: #fff; }\n.gcd-gap {\n  padding: 3px 12px; color: var(--text-m, #64748b); background: #f1f5f9;\n  border-top: 1px solid var(--border, #e2e8f0); border-bottom: 1px solid var(--border, #e2e8f0); font-size: 0.71rem;\n}\n.gcd-line { display: grid; grid-template-columns: 46px 46px 14px minmax(0, 1fr); }\n.gcd-ln { padding: 0 6px; text-align: right; color: var(--text-m, #94a3b8); background: #f8fafc; user-select: none; font-size: 0.7rem; }\n.gcd-sign { text-align: center; color: var(--text-m, #94a3b8); }\n.gcd-text { padding: 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }\n.gcd-line-add, .gcd-text.gcd-line-add { background: #ecfdf5; }\n.gcd-line-del, .gcd-text.gcd-line-del { background: #fef2f2; }\n"
+const legacyOverrideCss = PRE_DEDUP_CSS.replace(/(^|})\s*([^@}][^{]*){/g, (_m, close, selectors) =>
+  close + selectors.split(',').map((selector) => ':root body ' + selector.trim()).join(', ') + ' {',
+)
+  + '\n:root body .gmr-bd { grid-template-columns: minmax(200px, 260px) minmax(0, 1fr) minmax(260px, 320px) !important; }'
+
 /**
  * What each instance must measure, and why that number.
  *
@@ -107,6 +115,21 @@ const proc = spawn(chrome, [
 const delay = (ms) => new Promise((done) => setTimeout(done, ms))
 const failures = []
 const report = {}
+const builtScopes = {
+  'group-changes': builtCss.match(/gcd-modal-body\[data-v-([a-f0-9]+)\]/)?.[1],
+  'git-merge-review': builtCss.match(/gmr-conv-log\[data-v-([a-f0-9]+)\]/)?.[1],
+}
+for (const [name, scope] of Object.entries(builtScopes)) {
+  if (!scope) throw new Error(`built scope for ${name} is missing`)
+}
+function productionScopedHtml(name, html) {
+  const marker = name === 'group-changes' ? 'gcd-modal-body' : name === 'git-merge-review' ? 'gmr-conv-log' : null
+  if (!marker) return html
+  const tag = html.match(new RegExp(`<[^>]*class="[^"]*\\b${marker}\\b[^"]*"[^>]*>`))?.[0]
+  const fixtureScope = tag?.match(/data-v-([a-f0-9]+)/)?.[1]
+  if (!fixtureScope) throw new Error(`fixture scope for ${name} is missing`)
+  return html.replaceAll('data-v-' + fixtureScope, 'data-v-' + builtScopes[name])
+}
 
 try {
   let page
@@ -139,7 +162,7 @@ try {
   await call('Runtime.enable')
 
   async function measure(name, html) {
-    const payload = JSON.stringify({ html, css: builtCss })
+    const payload = JSON.stringify({ html, css: builtCss, legacyCss: legacyOverrideCss })
     /*
      * `.fg-dialog-surface` opens with `animation: mIn .15s` whose first keyframe is
      * `scale(.97)`; measuring synchronously after the innerHTML write reports every surface
@@ -153,6 +176,32 @@ try {
       await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
 
       const round = (n) => Math.round(n);
+      const styleProperties = [
+        'display', 'flexDirection', 'alignItems', 'justifyContent', 'gap', 'width', 'height',
+        'minWidth', 'minHeight', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+        'marginBottom', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+        'borderTopColor', 'borderRightColor', 'borderBottomColor', 'borderLeftColor', 'borderRadius',
+        'backgroundColor', 'color', 'fontFamily', 'fontSize', 'fontWeight', 'lineHeight',
+        'gridTemplateColumns', 'overflowX', 'overflowY', 'whiteSpace', 'overflowWrap', 'textAlign', 'tabSize',
+      ];
+      const styleSelectors = [
+        '.gcd-bd', '.gcd-filelist', '.gcd-file', '.gcd-file-top', '.gcd-file-name', '.gcd-file-dir',
+        '.gcd-badge', '.gcd-badge-modified', '.gcd-diffwrap', '.gcd-diff-hd', '.gcd-diff-path',
+        '.gcd-diff', '.gcd-gap', '.gcd-line', '.gcd-ln', '.gcd-sign', '.gcd-text',
+        '.gcd-line-add', '.gcd-line-del',
+      ];
+      const snapshot = () => Object.fromEntries(styleSelectors.map((selector) => {
+        const el = document.querySelector(selector);
+        if (!el) return [selector, null];
+        const style = getComputedStyle(el);
+        return [selector, Object.fromEntries(styleProperties.map((property) => [property, style[property]]))];
+      }));
+      const postDedupStyles = snapshot();
+      const baselineStyle = document.createElement('style');
+      baselineStyle.textContent = f.legacyCss;
+      document.head.appendChild(baselineStyle);
+      const preDedupStyles = snapshot();
+      baselineStyle.remove();
       const surface = document.querySelector('.fg-dialog-surface');
       const overlay = document.querySelector('.fg-dialog-overlay');
       const footer = document.querySelector('.fg-dialog-footer');
@@ -180,6 +229,7 @@ try {
         headerCloseCount: document.querySelectorAll('.fg-dialog-header__close').length,
         legacyMarkup: document.querySelectorAll('.modal-bg, .modal-box, .modal-ft, .modal-close').length,
         buttons: buttons,
+        computedStyleParity: { preDedup: preDedupStyles, postDedup: postDedupStyles },
       });
     })()`
     const result = await call('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true })
@@ -192,7 +242,7 @@ try {
   }
 
   for (const [name, html] of Object.entries(cases)) {
-    const m = await measure(name, html)
+    const m = await measure(name, productionScopedHtml(name, html))
     const want = EXPECTED[name]
     if (want == null) { failures.push(`${name}: no expectation table entry`); continue }
 
@@ -205,6 +255,18 @@ try {
     }
     if (m.surfaceBackground === 'rgba(0, 0, 0, 0)') {
       failures.push(`${name}: the surface has no background — the token CSS did not load`)
+    }
+
+    /* ── T0026 §4-2: actual Chrome computed values match the pre-dedup declarations ── */
+    if (name === 'group-changes' || name === 'git-merge-review') {
+      const parity = m.computedStyleParity
+      for (const selector of Object.keys(parity.preDedup)) {
+        if (parity.preDedup[selector] == null || parity.postDedup[selector] == null) {
+          failures.push(`${name}: rendered fixture is missing ${selector}`)
+        } else if (JSON.stringify(parity.preDedup[selector]) !== JSON.stringify(parity.postDedup[selector])) {
+          failures.push(`${name}: ${selector} computed style changed across the CSS move`)
+        }
+      }
     }
 
     /* ── the old shell is really gone from the painted page ── */

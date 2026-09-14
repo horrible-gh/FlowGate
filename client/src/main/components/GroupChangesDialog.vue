@@ -502,6 +502,8 @@ onMounted(() => {
 </script>
 
 <style scoped>
+@import './dialogs/gitDiffFileList.css';
+
 /* `flex: 1 1 auto; min-height: 0` used to come from `.modal-bd`; on the common layer the
    sheet body (`.fg-dialog-surface--sheet .fg-dialog-body`) is a bare padding-0 flex column, so
    this box states its own share of the track. */
@@ -515,24 +517,9 @@ onMounted(() => {
 }
 /* `.gcd-hd-text` and its two child rules left with the old header markup - the title and the
    summary line are `DialogHeader`'s `title`/`subtitle` elements now. */
-.gcd-mono { font-family: var(--mono, ui-monospace, monospace); }
-.gcd-dot { margin: 0 5px; }
 .gcd-hd-lines { margin-left: 7px; display: inline-flex; gap: 6px; font-variant-numeric: tabular-nums; }
 .gcd-add { color: var(--success, #15803d); font-weight: 600; }
 .gcd-del { color: var(--danger, #b91c1c); font-weight: 600; }
-.gcd-retry {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 11px;
-  font-size: 0.74rem;
-  border: 1px solid var(--border, #e2e8f0);
-  border-radius: 8px;
-  background: var(--bg, #fff);
-  color: inherit;
-  cursor: pointer;
-}
 .gcd-blank {
   flex: 1;
   display: flex;
@@ -599,45 +586,6 @@ onMounted(() => {
 }
 .gcd-seg button + button { border-left: 1px solid var(--border, #e2e8f0); }
 .gcd-seg button.active { background: #dbeafe; color: #1d4ed8; font-weight: 700; }
-.gcd-bd {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
-}
-.gcd-filelist {
-  min-height: 0;
-  overflow: auto;
-  padding: 8px;
-  border-right: 1px solid var(--border, #e2e8f0);
-  background: #f8fafc;
-}
-.gcd-nomatch { margin: 12px 6px; font-size: 0.74rem; color: var(--text-m, #64748b); }
-.gcd-file {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 8px 9px;
-  margin-bottom: 5px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.gcd-file:hover, .gcd-file.active { border-color: #bfdbfe; background: #fff; }
-.gcd-file-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.gcd-file-name {
-  overflow-wrap: anywhere;
-  font: 600 0.75rem var(--mono, ui-monospace, monospace);
-}
-.gcd-file-dir {
-  font: 0.66rem var(--mono, ui-monospace, monospace);
-  color: var(--text-m, #64748b);
-  overflow-wrap: anywhere;
-}
 .gcd-file-stats {
   display: flex;
   align-items: center;
@@ -646,20 +594,6 @@ onMounted(() => {
   font-variant-numeric: tabular-nums;
 }
 .gcd-file-nostat { color: var(--text-m, #64748b); }
-.gcd-badge {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  font-size: 0.62rem;
-  font-weight: 700;
-}
-.gcd-badge-added { background: var(--success-bg, #dcfce7); color: var(--success, #15803d); }
-.gcd-badge-modified { background: var(--warning-bg, #fef3c7); color: var(--warning, #b45309); }
-.gcd-badge-deleted { background: var(--danger-bg, #fee2e2); color: var(--danger, #b91c1c); }
 .gcd-bar { display: inline-flex; gap: 1px; }
 .gcd-bar i {
   width: 5px;
@@ -669,23 +603,6 @@ onMounted(() => {
 }
 .gcd-bar i.p { background: var(--success, #15803d); }
 .gcd-bar i.m { background: var(--danger, #b91c1c); }
-.gcd-diffwrap { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.gcd-diff-hd {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border, #e2e8f0);
-}
-.gcd-diff-path {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: 700 0.76rem var(--mono, ui-monospace, monospace);
-}
 .gcd-diff-lines { flex: 0 0 auto; display: inline-flex; gap: 6px; font-size: 0.72rem; font-variant-numeric: tabular-nums; }
 .gcd-diff-nav { flex: 0 0 auto; display: inline-flex; gap: 6px; }
 .gcd-diff-nav button {
@@ -701,16 +618,6 @@ onMounted(() => {
   cursor: pointer;
 }
 .gcd-diff-nav button:disabled { opacity: 0.45; cursor: default; }
-.gcd-diff-state {
-  flex: 1 1 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  font-size: 0.82rem;
-  color: var(--text-m, #64748b);
-}
-.gcd-diff-error { flex-direction: column; }
 .gcd-notice {
   flex: 0 0 auto;
   margin: 0;
@@ -721,37 +628,8 @@ onMounted(() => {
   border-bottom: 1px solid #bfdbfe;
 }
 .gcd-notice-warn { color: #92400e; background: #fffbeb; border-bottom-color: #fde68a; }
-.gcd-diff {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  font: 0.76rem/1.55 var(--mono, ui-monospace, monospace);
-  tab-size: 2;
-  background: #fff;
-}
-.gcd-gap {
-  padding: 3px 12px;
-  color: var(--text-m, #64748b);
-  background: #f1f5f9;
-  border-top: 1px solid var(--border, #e2e8f0);
-  border-bottom: 1px solid var(--border, #e2e8f0);
-  font-size: 0.71rem;
-}
-.gcd-line { display: grid; grid-template-columns: 46px 46px 14px minmax(0, 1fr); }
 .gcd-srow { display: grid; grid-template-columns: 46px minmax(0, 1fr) 46px minmax(0, 1fr); }
 .gcd-srow > .gcd-text:nth-child(2) { border-right: 1px solid var(--border, #e2e8f0); }
-.gcd-ln {
-  padding: 0 6px;
-  text-align: right;
-  color: var(--text-m, #94a3b8);
-  background: #f8fafc;
-  user-select: none;
-  font-size: 0.7rem;
-}
-.gcd-sign { text-align: center; color: var(--text-m, #94a3b8); }
-.gcd-text { padding: 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.gcd-line-add, .gcd-text.gcd-line-add { background: #ecfdf5; }
-.gcd-line-del, .gcd-text.gcd-line-del { background: #fef2f2; }
 .gcd-line-changed, .gcd-text.gcd-line-changed { background: #fff7ed; }
 .gcd-line-blank { background: #f8fafc; }
 

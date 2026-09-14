@@ -85,18 +85,17 @@ function reviewPayload() {
 
 function routeGet(url: string): Promise<unknown> {
   const path = String(url)
-  if (path.includes('/review-diff')) {
-    return Promise.resolve({
-      data: {
-        ok: true,
-        result: {
-          path: 'server/app/git_service.py',
-          status: 'M',
-          old: { content: 'a\n', binary: false, truncated: false },
-          new: { content: 'b\n', binary: false, truncated: false },
-        },
-      },
-    })
+  if (path.includes('/review-diff') || (path.includes('/git/groups/') && path.includes('/diff?'))) {
+    const middle = Array.from({ length: 20 }, (_, i) => `shared-${i + 1}`).join('\n')
+    const result = {
+      path: 'server/app/git_service.py',
+      status: 'M',
+      old: { content: `old-first\n${middle}\nold-last\n`, binary: false, truncated: false },
+      new: { content: `new-first\n${middle}\nnew-last\n`, binary: false, truncated: false },
+    }
+    return path.includes('/review-diff')
+      ? Promise.resolve({ data: { ok: true, data: result } })
+      : Promise.resolve({ data: { data: result } })
   }
   if (path.includes('/git/merge/')) return Promise.resolve({ data: reviewPayload() })
   if (path.includes('/document-types')) {
@@ -246,6 +245,9 @@ it('exports the eight migrated instances for built-CSS geometry', async () => {
       providers: [{ id: 'p1', name: 'Claude Sonnet 5' }],
       selectedProvider: 'p1',
     }))
+    await flushPromises()
+    await flushPromises()
+    await new Promise((resolve) => setTimeout(resolve, 0))
     await flushPromises()
   })
 

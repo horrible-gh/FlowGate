@@ -46,7 +46,7 @@ for (const name of ['idle', 'waiting', 'answered']) {
 }
 
 const PROBE = String.raw`(() => {
-  const dialog = document.querySelector('.gmr-modal');
+  const dialog = document.querySelector('.gmr-review-dialog');
   if (!dialog) return { error: 'no dialog' };
   const box = (el) => { if (!el) return null; const r = el.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }; };
   const log = dialog.querySelector('.gmr-conv-log');
@@ -60,7 +60,7 @@ const PROBE = String.raw`(() => {
   const waitBox = box(wait);
   const inside = (a, b) => !!(a && b && a.x >= b.x - 1 && a.y >= b.y - 1 && a.x + a.w <= b.x + b.w + 1 && a.y + a.h <= b.y + b.h + 1);
   return {
-    modalCount: document.querySelectorAll('.modal-bg').length,
+    modalCount: document.querySelectorAll('.fg-dialog-overlay').length,
     fullScreenStateBox: !!dialog.querySelector('.gmr-state'),
     fileCount: dialog.querySelectorAll('.gcd-file').length,
     diffLineCount: dialog.querySelectorAll('.gcd-line').length,
