@@ -61,7 +61,14 @@ function mountPanel() {
       plugins: [i18n],
       // AiInvokeInline is deliberately real: what is under test is whether the run surface
       // actually covers the chat, not whether a prop was handed over.
-      stubs: { teleport: false, DocHeader: DocHeaderStub, AiInvokeInline: false },
+      stubs: {
+        teleport: false,
+        DocHeader: DocHeaderStub,
+        AiInvokeInline: false,
+        DocumentBodyRouter: false,
+        GenericDocumentBody: false,
+        ConversationDocumentView: false,
+      },
     },
   })
 }
