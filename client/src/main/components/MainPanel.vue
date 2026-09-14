@@ -142,8 +142,11 @@
             :doc-id="tab.id"
             :ref="(el) => bindActiveRef(stepVerificationCardRefs, tab.id, el)"
           />
-          <!-- Body selection lives in the documents router. CH/WP/Q remain slots in this
-               first extraction step so their stateful orchestration seams stay in MainPanel. -->
+          <!-- Every document body is chosen and wired by the documents router: AC/DC/generic
+               moved there in T#1, CH/WP/Q in T0007. MainPanel keeps the shell above and below
+               it plus the orchestration each body needs, and hands that over as props/events —
+               so a new special document type is a new body component plus one branch in the
+               router, never another branch in this template. -->
           <DocumentBodyRouter
             :tab="tab"
             :read-only="aiRunDocumentLocked"
@@ -154,6 +157,10 @@
             :text-wrap-enabled="textWrapEnabled"
             :download-available="exposedValue(docHeaderRefs[tab.id]?.downloadAvailable) === true"
             :download-busy="exposedValue(docHeaderRefs[tab.id]?.markdownDownloadBusy) === true"
+            :conversation-read-only="aiRunDocumentLocked && !activeChatOwnRun"
+            :conversation-manual-copy-text="convManualCopy[tab.id] ?? null"
+            :conversation-full-view-host="convFullViewHost"
+            :conversation-full-view-on="convFullViewOn"
             @close="tabsStore.closeTab(tab.id)"
             @edit-direct="onEditDirect(tab)"
             @edit-mention="onEditMentCopy(tab)"
@@ -165,59 +172,14 @@
             @update:text-wrap-enabled="textWrapEnabled = $event"
             @bind-md-viewer="bindActiveRef(mdViewerRefs, tab.id, $event)"
             @bind-text-viewer="bindActiveRef(textViewerRefs, tab.id, $event)"
+            @bind-conversation-view="bindActiveRef(convViewRefs, tab.id, $event)"
+            @bind-work-plan-editor="bindActiveRef(workPlanEditorRefs, tab.id, $event)"
+            @copy-mention="onConversationCopyMention(tab.id, $event)"
+            @manual-copy-dismiss="setConvManualCopy(tab.id, null)"
+            @q-status-changed="onQStatusChanged"
             @open-archive="openGitArchive"
             @archived="onGitArchived"
-          >
-            <template #conversation>
-              <div class="card md-preview-card conv-card">
-                <div class="card-hd">
-                  <span class="card-title">
-                    <span class="doc-tag c-CH" style="font-size:.68rem; padding:2px 5px; margin-right:4px;">CH</span>
-                    {{ t('main.conversation_view.title') }}
-                  </span>
-                  <div class="card-actions">
-                    <button class="btn btn-secondary btn-sm" type="button" @click="openFullView(tab)">
-                      <AppIcon name="corners-out" /> {{ t('main.document_preview.full_view') }}
-                    </button>
-                  </div>
-                </div>
-                <div class="card-bd conv-card-bd">
-                  <Teleport :to="convFullViewHost" :disabled="!convFullViewOn">
-                    <ConversationView
-                      :ref="(el) => bindActiveRef(convViewRefs, tab.id, el)"
-                      :doc-id="tab.id"
-                      :project-id="tab.projectId ?? null"
-                      :manual-copy-text="convManualCopy[tab.id] ?? null"
-                      :read-only="aiRunDocumentLocked && !activeChatOwnRun"
-                      @copy-mention="(opts) => onConversationCopyMention(tab.id, opts)"
-                      @manual-copy-dismiss="setConvManualCopy(tab.id, null)"
-                    />
-                  </Teleport>
-                </div>
-              </div>
-            </template>
-            <template #work-plan>
-              <WorkPlanEditor
-                :ref="(el) => bindActiveRef(workPlanEditorRefs, tab.id, el)"
-                :doc-id="tab.id"
-                :project-id="tab.projectId ?? null"
-                :read-only="aiRunDocumentLocked"
-              />
-            </template>
-            <template #question>
-              <div class="card md-preview-card">
-                <div class="card-hd">
-                  <span class="card-title">
-                    <span class="doc-tag c-Q" style="font-size:.68rem; padding:2px 5px; margin-right:4px;">Q</span>
-                    {{ tab.title }}
-                  </span>
-                </div>
-                <div class="card-bd" style="padding:16px;">
-                  <QTDetailViewer :q-id="tab.id" :read-only="aiRunDocumentLocked" @status-changed="onQStatusChanged" />
-                </div>
-              </div>
-            </template>
-          </DocumentBodyRouter>
+          />
           </template>
           </div><!-- doc-main -->
           <DocInfoPanel
@@ -1200,7 +1162,6 @@ import TimeMachineDialog from './TimeMachineDialog.vue'
 import DesignHandoffDialog from './DesignHandoffDialog.vue'
 import WorkPlanCreateDialog from './WorkPlanCreateDialog.vue'
 import WorkPlanProposalDialog, { type WorkPlanScope } from './WorkPlanProposalDialog.vue'
-import WorkPlanEditor from './WorkPlanEditor.vue'
 import {
   DEFAULT_INSTRUCTION_MODE,
   type ContinuationInstructionMode,
@@ -1218,9 +1179,7 @@ import ConfirmModal from './ConfirmModal.vue'
 import CommandSelectorModal from './CommandSelectorModal.vue'
 import AiInvokeDialog from './AiInvokeDialog.vue'
 import AiInvokeInline from './AiInvokeInline.vue'
-import QTDetailViewer from './QTDetailViewer.vue'
 import DocInfoPanel from './DocInfoPanel.vue'
-import ConversationView from './ConversationView.vue'
 
 const { t, locale } = useI18n()
 
@@ -5414,29 +5373,9 @@ watch(textWrapEnabled, (enabled) => {
   font-weight: 600;
 }
 
-/* .card (global) has overflow:hidden which clips the edit-dropdown-menu.
-   Override only for md-preview-card so the dropdown can extend beyond the card boundary. */
-.md-preview-card {
-  overflow: visible;
-}
-
-/* CH (conversation) — the card body hosts the chat (scrolling log + pinned
-   composer). It fills the conversation card (which itself flexes to fill the
-   space between the workflow strip and the sticky action bar — see
-   .content-wrap--conversation below), so the message list scrolls internally
-   and the whole surface grows/shrinks fluidly with the window instead of being
-   a fixed-height box that forces a page scrollbar. TR0044.0010 rev7. */
-.conv-card-bd {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  padding: 0;
-}
-.conv-card-bd > * {
-  flex: 1;
-  min-height: 0;
-}
+/* .doc-tag.c-CH is still MainPanel's own: the overview lists below paint a type tag for
+   every document type. The CH card's card/body rules moved with its markup into
+   documents/ConversationDocumentView.vue. */
 .doc-tag.c-CH {
   background: #06b6d4;
   color: #fff;
@@ -5498,7 +5437,11 @@ watch(textWrapEnabled, (enabled) => {
   flex-direction: column;
 }
 
-.content-wrap--conversation .conv-card {
+/* The chat card itself is rendered by documents/ConversationDocumentView.vue now, so this
+   rule reaches into the child component. The layout contract is unchanged: .doc-main gives
+   the card whatever height the header and workflow strip leave, and the card passes it on
+   to .conv-card-bd. */
+.content-wrap--conversation :deep(.conv-card) {
   flex: 1;
   min-height: 0;
   display: flex;
@@ -5535,13 +5478,6 @@ watch(textWrapEnabled, (enabled) => {
     height: calc(100% - 16px);
     max-width: none;
   }
-}
-
-.card-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
 }
 
 .text-wrap-toggle {

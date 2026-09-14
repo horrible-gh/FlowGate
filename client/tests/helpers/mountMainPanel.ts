@@ -30,11 +30,14 @@ export const MAIN_PANEL_STUBS: Record<string, unknown> = {
   TabBar: true,
   DocHeader: true,
   DocWorkflow: true,
-  // Keep the body router real so MainPanel tests exercise routing while leaf viewers stay stubbed.
+  // Keep the body router and the body components it selects real so MainPanel tests
+  // exercise routing end to end, while the leaf viewers below stay stubbed.
   DocumentBodyRouter: false,
   FinalApprovalBody: false,
   DiscardBody: false,
   GenericDocumentBody: false,
+  ConversationDocumentView: false,
+  QuestionDocumentBody: false,
   MdViewer: true,
   TextViewer: true,
   DocInfoPanel: true,

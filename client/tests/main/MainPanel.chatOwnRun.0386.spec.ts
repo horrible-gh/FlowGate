@@ -67,6 +67,7 @@ function mountPanel() {
         AiInvokeInline: false,
         DocumentBodyRouter: false,
         GenericDocumentBody: false,
+        ConversationDocumentView: false,
       },
     },
   })

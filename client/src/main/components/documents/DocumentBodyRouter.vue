@@ -8,9 +8,39 @@
     @archived="emit('archived', $event)"
   />
   <DiscardBody v-else-if="tab.typeCode === 'DC'" />
-  <slot v-else-if="tab.typeCode === 'CH'" name="conversation" />
-  <slot v-else-if="tab.typeCode === 'WP'" name="work-plan" />
-  <slot v-else-if="tab.type === 'qtui' || (tab.type === 'md' && tab.typeCode === 'Q')" name="question" />
+  <!-- CH keeps a single ConversationView instance across the full-view move, so everything
+       the chat's state depends on is handed down as a prop and every seam MainPanel drives
+       (the instance ref, the mention copy, the manual-copy dismissal) is relayed back up.
+       The router selects and wires the body; it owns none of that orchestration. -->
+  <ConversationDocumentView
+    v-else-if="tab.typeCode === 'CH'"
+    :tab="tab"
+    :read-only="conversationReadOnly"
+    :manual-copy-text="conversationManualCopyText"
+    :full-view-host="conversationFullViewHost"
+    :full-view-on="conversationFullViewOn"
+    @open-full-view="emit('open-full-view')"
+    @copy-mention="emit('copy-mention', $event)"
+    @manual-copy-dismiss="emit('manual-copy-dismiss')"
+    @bind-conversation-view="emit('bind-conversation-view', $event)"
+  />
+  <!-- WP reuses the existing WorkPlanEditor unchanged; only the choice and the wiring moved
+       here. The instance is relayed to MainPanel, which keeps the two seams that need it:
+       DocWorkflow's `sequence-updated` -> fetchPlan() (no F5 after a pour, 0434) and
+       ensureSaved() before a WP approval. -->
+  <WorkPlanEditor
+    v-else-if="tab.typeCode === 'WP'"
+    :ref="(el) => emit('bind-work-plan-editor', el)"
+    :doc-id="tab.id"
+    :project-id="tab.projectId ?? null"
+    :read-only="readOnly"
+  />
+  <QuestionDocumentBody
+    v-else-if="tab.type === 'qtui' || (tab.type === 'md' && tab.typeCode === 'Q')"
+    :tab="tab"
+    :read-only="readOnly"
+    @status-changed="emit('q-status-changed', $event)"
+  />
   <GenericDocumentBody
     v-else
     :tab="tab"
@@ -36,9 +66,12 @@
 
 <script setup lang="ts">
 import type { Tab } from '../../stores/tabs'
+import WorkPlanEditor from '../WorkPlanEditor.vue'
+import ConversationDocumentView from './ConversationDocumentView.vue'
 import DiscardBody from './DiscardBody.vue'
 import FinalApprovalBody from './FinalApprovalBody.vue'
 import GenericDocumentBody from './GenericDocumentBody.vue'
+import QuestionDocumentBody from './QuestionDocumentBody.vue'
 
 defineProps<{
   tab: Tab
@@ -50,6 +83,13 @@ defineProps<{
   textWrapEnabled: boolean
   downloadAvailable: boolean
   downloadBusy: boolean
+  // CH-specific inputs. They are separate props rather than being folded into the shared
+  // ones because MainPanel decides them: the chat's own AI run is exempt from the document
+  // lock, and the full-view target belongs to MainPanel's dialog.
+  conversationReadOnly: boolean
+  conversationManualCopyText: string | null
+  conversationFullViewHost: string | null
+  conversationFullViewOn: boolean
 }>()
 
 const emit = defineEmits<{
@@ -66,5 +106,10 @@ const emit = defineEmits<{
   'bind-text-viewer': [instance: unknown]
   'open-archive': [groupId: string]
   archived: [groupId: string]
+  'copy-mention': [opts?: { auto?: boolean }]
+  'manual-copy-dismiss': []
+  'bind-conversation-view': [instance: unknown]
+  'bind-work-plan-editor': [instance: unknown]
+  'q-status-changed': [payload: { qId: string; status: string; done: boolean }]
 }>()
 </script>

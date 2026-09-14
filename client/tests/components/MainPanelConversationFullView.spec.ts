@@ -75,7 +75,20 @@ function mountPanel(stubs: Record<string, unknown> = {}) {
     shallow: true,
     global: {
       plugins: [i18n],
-      stubs: { teleport: false, DocHeader: DocHeaderStub, AiInvokeInline: false, ...stubs },
+      // 0566 T0007: the bodies now live under documents/. A shallow mount stubs the router
+      // and every body it selects, which would hide the chat card entirely and let each
+      // assertion below fail (or, worse, pass vacuously). Unstub the whole body path so
+      // these cases keep looking at the real chat, the real generic card and the real
+      // full-view teleport.
+      stubs: {
+        teleport: false,
+        DocHeader: DocHeaderStub,
+        AiInvokeInline: false,
+        DocumentBodyRouter: false,
+        ConversationDocumentView: false,
+        GenericDocumentBody: false,
+        ...stubs,
+      },
     },
   })
 }
