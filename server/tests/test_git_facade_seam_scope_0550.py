@@ -46,7 +46,8 @@ import ast
 from pathlib import Path
 
 _SERVER_DIR = Path(__file__).resolve().parents[1]
-_SERVICES_DIR = _SERVER_DIR / "modules" / "flow_gate" / "services"
+_MODULES_DIR = _SERVER_DIR / "modules"
+_SERVICES_DIR = _MODULES_DIR / "flow_gate" / "services"
 _GIT_PKG_DIR = _SERVICES_DIR / "git"
 _TESTS_DIR = Path(__file__).resolve().parent
 
@@ -189,6 +190,66 @@ def _scan_test_corpus() -> tuple[set[str], dict, list]:
     return patched, sites, unresolved
 
 
+def _scan_operational_source(label: str, source: str) -> tuple[set[str], dict, list]:
+    tree = ast.parse(source, filename=label)
+    aliases = _git_service_aliases(tree)
+    rebound, sites, unresolved = set(), {}, []
+
+    def _record(name: str, lineno: int) -> None:
+        # The archive extension also stores installation metadata and original
+        # callables in new private slots. Those are not rebindings of an existing
+        # facade operation and therefore are outside the seam A-side.
+        if name.startswith("_flowgate_git_archive_"):
+            return
+        rebound.add(name)
+        sites.setdefault(name, []).append((label, lineno))
+
+    for node in ast.walk(tree):
+        targets = node.targets if isinstance(node, ast.Assign) else (
+            [node.target] if isinstance(node, (ast.AnnAssign, ast.AugAssign)) else []
+        )
+        for target in targets:
+            if (isinstance(target, ast.Attribute)
+                    and isinstance(target.value, ast.Name)
+                    and target.value.id in aliases):
+                _record(target.attr, node.lineno)
+        if (isinstance(node, ast.Call)
+                and _is_setattr_delattr_call(node.func)
+                and node.args
+                and isinstance(node.args[0], ast.Name)
+                and node.args[0].id in aliases):
+            if (len(node.args) >= 2
+                    and isinstance(node.args[1], ast.Constant)
+                    and isinstance(node.args[1].value, str)):
+                _record(node.args[1].value, node.lineno)
+            else:
+                unresolved.append((label, node.lineno))
+    return rebound, sites, unresolved
+
+
+def _scan_operational_modules() -> tuple[set[str], dict, list]:
+    rebound, sites, unresolved = set(), {}, []
+    for path in sorted(_MODULES_DIR.glob("**/*.py")):
+        label = str(path.relative_to(_SERVER_DIR))
+        found, found_sites, found_unresolved = _scan_operational_source(
+            label, path.read_text(encoding="utf-8-sig")
+        )
+        rebound |= found
+        for name, locations in found_sites.items():
+            sites.setdefault(name, []).extend(locations)
+        unresolved.extend(found_unresolved)
+    return rebound, sites, unresolved
+
+
+def _scan_facade_seam() -> tuple[set[str], dict, list, list]:
+    test_names, test_sites, test_unresolved = _scan_test_corpus()
+    operational_names, operational_sites, operational_unresolved = _scan_operational_modules()
+    sites = {name: list(locations) for name, locations in test_sites.items()}
+    for name, locations in operational_sites.items():
+        sites.setdefault(name, []).extend(locations)
+    return test_names | operational_names, sites, test_unresolved, operational_unresolved
+
+
 # ───────────────────── B면: 파사드 패치가 닿지 않는 자리 ─────────────────────────
 
 def _default_value_name_positions(tree: ast.AST) -> set[tuple[int, int]]:
@@ -320,7 +381,7 @@ def _format_locations(locations) -> str:
 # ──────────────────────────────── 시험 ────────────────────────────────────────
 
 def test_no_facade_patch_target_is_early_bound_in_a_git_module():
-    patched, sites, _unresolved = _scan_test_corpus()
+    patched, sites, _test_unresolved, _operational_unresolved = _scan_facade_seam()
     git_modules = _scan_git_modules()
     violations = _b1_violations(patched, sites, git_modules)
 
@@ -342,7 +403,7 @@ def test_no_facade_patch_target_is_early_bound_in_a_git_module():
 
 
 def test_no_facade_patch_target_is_reached_bare_inside_its_module():
-    patched, sites, _unresolved = _scan_test_corpus()
+    patched, sites, _test_unresolved, _operational_unresolved = _scan_facade_seam()
     git_modules = _scan_git_modules()
     violations = _b2_violations(patched, sites, git_modules)
 
@@ -377,7 +438,24 @@ def test_the_seam_scan_itself_is_not_vacuous():
 
     # 2. The A-side (test corpus) scan found a believable inventory, not an empty set
     #    from a broken alias/AST walk.
-    patched, _sites, unresolved = _scan_test_corpus()
+    test_paths = tuple(sorted(_TESTS_DIR.glob("**/*.py")))
+    assert len(test_paths) == 363, (
+        f"expected 363 test files, found {len(test_paths)}"
+    )
+    test_patched, _test_sites, test_unresolved = _scan_test_corpus()
+    operational, operational_sites, operational_unresolved = _scan_operational_modules()
+    patched = test_patched | operational
+    assert len(test_patched) == 70, (
+        f"expected 70 test facade-patched names, found {len(test_patched)}"
+    )
+    assert len(patched) == 72, (
+        f"expected 72 combined facade seam names, found {len(patched)}: {sorted(patched)}"
+    )
+    for expected in ("finalize", "get_finalize_state", "precheck_approve_git_action"):
+        assert expected in operational, (
+            f"expected operational rebinding of {expected}, got {sorted(operational)}"
+        )
+        assert operational_sites.get(expected), f"missing provenance for {expected}"
     assert len(patched) >= 60, (
         f"expected >=60 facade-patched names, found {len(patched)}: {sorted(patched)} "
         "-- the test-corpus scan itself may be broken"
@@ -392,9 +470,13 @@ def test_the_seam_scan_itself_is_not_vacuous():
     #    "해석 불가능한 동적 패치" list). The baseline for this corpus is 0; a nonzero
     #    count means some test patches a `git_service` alias with a computed attribute
     #    name that this scanner -- and therefore §3.4's whole guarantee -- cannot see.
-    assert unresolved == [], (
-        f"{len(unresolved)} dynamic (non-literal-name) facade patch(es) found -- this "
-        f"scanner cannot verify these are reachable: {unresolved!r}"
+    assert test_unresolved == [], (
+        f"{len(test_unresolved)} dynamic (non-literal-name) facade patch(es) found -- "
+        f"this scanner cannot verify these are reachable: {test_unresolved!r}"
+    )
+    assert operational_unresolved == [], (
+        f"{len(operational_unresolved)} dynamic operational facade rebinding(s) found "
+        f"-- this scanner cannot verify these are reachable: {operational_unresolved!r}"
     )
 
     # 4. Mutation proof: feed synthetic sources through the same scanner functions the
@@ -414,6 +496,24 @@ def test_the_seam_scan_itself_is_not_vacuous():
         "_scan_test_source -- the A-side scanner is not actually scanning"
     )
     assert fake_sites["_mutation_probe_name"] == [("<synthetic-test>", 4)]
+
+    fake_operational_source = (
+        "from modules.flow_gate.services import git_service as svc\n"
+        "\n"
+        "def install(value):\n"
+        "    svc._mutation_probe_name = value\n"
+        "    setattr(svc, \"_mutation_probe_setattr\", value)\n"
+    )
+    fake_operational, fake_operational_sites, fake_operational_unresolved = (
+        _scan_operational_source("<synthetic-operational>", fake_operational_source)
+    )
+    assert fake_operational == {
+        "_mutation_probe_name", "_mutation_probe_setattr"
+    }, "synthetic operational rebindings were not detected"
+    assert fake_operational_sites["_mutation_probe_name"] == [
+        ("<synthetic-operational>", 4)
+    ]
+    assert fake_operational_unresolved == []
 
     fake_module_source_b1 = (
         "from .credentials import _mutation_probe_name\n"
