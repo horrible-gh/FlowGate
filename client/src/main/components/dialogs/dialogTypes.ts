@@ -234,16 +234,17 @@ export interface DialogVariantBehaviour {
  * L0009 §1 "variant별 동작 기본값" (surface / closeOnEscape / closeOnBackdrop /
  * blocking), plus the default `size` per variant that L0009 deferred to this T.
  *
- * `closeOnBackdrop=true` is given only to the two variants that cannot lose user input
- * by closing (compact / readonly).
- *
- * NOTE for the 3순위 이관 (NR0011 §1 결론 3, §9-1): 0412 T0004 removed backdrop-close
- * from every existing dialog. `QaHistoryDialog` / `QaReviewHistoryDialog` are slated to
- * move onto `readonly`, whose default below is `closeOnBackdrop=true` — i.e. the
- * default and the 0412 contract disagree. Nothing regresses today because no screen is
- * wired to this layer yet, but whoever performs that migration must decide explicitly
- * whether to keep the default or pass `:close-on-backdrop="false"`. This T does not
- * change the value: L0009 already fixed it.
+ * `closeOnBackdrop` is `false` for every variant, including `compact`/`readonly` (0560
+ * T0035, NR0029 §10.3-11). A background click that closes the whole dialog loses
+ * whatever the user was doing behind it, and that risk is not limited to variants whose
+ * OWN body can lose input — so no variant defaults to closing on one. A later migration
+ * onto `compact`/`readonly` now inherits the safe default without having to restate
+ * `:close-on-backdrop="false"` itself, and the 3순위 disagreement this table used to
+ * warn about (0412 T0004's backdrop-no-close contract vs. this default) no longer exists.
+ * The one component that must keep closing on a backdrop click —
+ * `AiProviderCommandInfoDialog`, whose overlay did that before it joined this layer —
+ * states `:close-on-backdrop="true"` on its own instance instead of leaning on the
+ * variant table (T0035 §3).
  *
  * Size choices (T0012 §4-2), measured against the existing sizes in
  * `client/shared/app.css` so the new layer looks like the app it joins:
@@ -262,8 +263,8 @@ export const dialogVariantDefaults: Record<DialogVariant, DialogVariantBehaviour
   'conflict-large': { surface: 'sheet', closeOnEscape: true, closeOnBackdrop: false, blocking: false, size: 'xl' },
   'progress': { surface: 'panel', closeOnEscape: false, closeOnBackdrop: false, blocking: false, size: 'sm' },
   'blocking': { surface: 'panel', closeOnEscape: false, closeOnBackdrop: false, blocking: true, size: 'sm' },
-  'compact': { surface: 'panel', closeOnEscape: true, closeOnBackdrop: true, blocking: false, size: 'sm' },
-  'readonly': { surface: 'panel', closeOnEscape: true, closeOnBackdrop: true, blocking: false, size: 'lg' },
+  'compact': { surface: 'panel', closeOnEscape: true, closeOnBackdrop: false, blocking: false, size: 'sm' },
+  'readonly': { surface: 'panel', closeOnEscape: true, closeOnBackdrop: false, blocking: false, size: 'lg' },
   'alert': { surface: 'panel', closeOnEscape: true, closeOnBackdrop: false, blocking: false, size: 'sm' },
 }
 

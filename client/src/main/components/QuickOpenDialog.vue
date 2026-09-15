@@ -13,8 +13,9 @@
     skips disabled elements by construction.
 
     No footer, and none is invented (T0018 §2.2-2): the header X is the only way out, as
-    before. `:close-on-backdrop="false"` is explicit (T0018 §2.2-3) — `compact` defaults to
-    `true`, but NR0011 records BD=X for this overlay.
+    before. `:close-on-backdrop="false"` stays explicit (T0018 §2.2-3) — NR0011 records
+    BD=X for this overlay. `compact` defaults to `false` too since 0560 T0035, so this now
+    restates rather than overrides the table.
   -->
   <DialogShell
     :open="visible"

@@ -21,8 +21,10 @@
     replaces it: this element is rendered by the default slot and survives as long as the
     dialog is open, which is what keeps the teleport chain unbroken (T0018 §2.3-2).
 
-    `:close-on-backdrop="false"` is explicit (T0018 §2.2-3): `readonly`'s variant default is
-    `true`, but 0412 T0004 removed backdrop-close here and NR0011 records BD=X.
+    `:close-on-backdrop="false"` stays explicit (T0018 §2.2-3): 0412 T0004 removed
+    backdrop-close here and NR0011 records BD=X. `readonly`'s variant default is `false`
+    too since 0560 T0035, so this now restates rather than overrides the table — kept
+    explicit so the contract does not depend on the default staying put.
   -->
   <DialogShell
     :open="visible && tab != null"

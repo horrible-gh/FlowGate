@@ -11,8 +11,9 @@
 
     Nothing about the dialog's behaviour changes with the move: `readonly` (D0008 §6), no
     footer (it never had one — the X is the only way out, T0018 §2.2-2), and
-    `:close-on-backdrop="false"` stays explicit because `readonly`'s variant default is `true`
-    while 0412 T0004 fixed backdrop-no-close for this overlay (NR0011 BD=X).
+    `:close-on-backdrop="false"` stays explicit because 0412 T0004 fixed backdrop-no-close
+    for this overlay (NR0011 BD=X). `readonly`'s variant default is `false` too since 0560
+    T0035, so this now restates rather than overrides the table — kept explicit anyway.
   -->
   <DialogShell
     :open="open"

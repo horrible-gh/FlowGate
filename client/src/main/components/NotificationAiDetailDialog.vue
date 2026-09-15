@@ -9,8 +9,9 @@
 
     This is a PURE extraction: nothing about the contract T0018 §2.3-6 fixed changes.
     ESC is the common stack's single document listener, focus return is `return-focus-to`,
-    and `:close-on-backdrop="false"` stays explicit because `readonly` defaults to `true`
-    while this backdrop never closed the dialog (`@click.stop`, NR0011 BD=X).
+    and `:close-on-backdrop="false"` stays explicit because this backdrop never closed the
+    dialog (`@click.stop`, NR0011 BD=X). `readonly` defaults to `false` too since 0560
+    T0035, so this now restates rather than overrides the table.
   -->
   <DialogShell
     :open="open"

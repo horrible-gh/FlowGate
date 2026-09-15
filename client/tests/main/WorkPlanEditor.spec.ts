@@ -201,8 +201,9 @@ describe('WorkPlanEditor', () => {
     expect(headerButtons[1].classes()).toContain('fg-dialog-header__close')
     expect(dialog.find('.fg-dialog-footer').exists()).toBe(false)
 
-    // `readonly` defaults `closeOnBackdrop` to true; NR0011 records BD=X, so the override is
-    // explicit — a backdrop press+release leaves it standing (T0018 §2.2-3).
+    // NR0011 records BD=X, so the override stays explicit — a backdrop press+release leaves
+    // it standing (T0018 §2.2-3). `readonly` defaults `closeOnBackdrop` to false too since
+    // 0560 T0035, so this now restates the table rather than overriding it.
     const overlay = wrapper.get('.fg-dialog-overlay').element
     overlay.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
     overlay.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))

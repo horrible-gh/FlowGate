@@ -173,10 +173,13 @@ describe('the dead main-side ProjectsView is deleted (T0018 §4-2)', () => {
 /* ──────────────── 3. closeOnBackdrop override (T0018 §2.2-3 / §4-4) ───────────── */
 
 /**
- * The seven `compact`/`readonly` instances. L0009 §1 gives both variants
- * `closeOnBackdrop = true`, but 0412 T0004 fixed backdrop-no-close for every one of these and
- * NR0011's BD column records them all as `X`. Relying on the variant default would have
- * reverted that contract, so each one passes `false` explicitly.
+ * The seven `compact`/`readonly` instances. 0412 T0004 fixed backdrop-no-close for every
+ * one of these and NR0011's BD column records them all as `X`, so each one passes `false`
+ * explicitly instead of leaning on the variant default. 0560 T0035 (NR0029 §10.3-11)
+ * flipped that default itself to `false` for both variants, so the override below now
+ * restates the table rather than correcting it — kept because T0035 §4 forbids removing an
+ * override unrelated to its own request, and the assertion still proves each instance
+ * carries it.
  */
 const BACKDROP_OVERRIDE_FILES = [
   ['src/main/components/WorkPlanAiScopeDialog.vue', 32],

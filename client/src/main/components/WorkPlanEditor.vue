@@ -208,10 +208,11 @@
          is now viewport-wide. See the note in `WorkPlanAiScopeDialog.vue` for why that is
          accepted, and `tests/browser/dialog-local-overlay-geometry.0560.mjs` for the
          before/after coordinates.
-         `:close-on-backdrop="false"` is explicit (T0018 §2.2-3): `readonly` defaults to
-         `true`, NR0011 records BD=X. The `@keydown.escape` binding is gone with the overlay
-         div — it never fired (nothing inside was focused, NR0011 §9-5); the common stack's
-         single document listener is what closes this now. -->
+         `:close-on-backdrop="false"` stays explicit (T0018 §2.2-3): NR0011 records
+         BD=X. `readonly` defaults to `false` too since 0560 T0035, so this now restates
+         rather than overrides the table. The `@keydown.escape` binding is gone with the
+         overlay div — it never fired (nothing inside was focused, NR0011 §9-5); the common
+         stack's single document listener is what closes this now. -->
     <DialogShell
       :open="rawViewOpen"
       variant="readonly"

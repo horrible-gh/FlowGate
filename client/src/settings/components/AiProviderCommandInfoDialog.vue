@@ -4,11 +4,12 @@
     `AiProviderListEditor.vue` held. D0008 §6 maps it to `readonly`: the body only reports what
     is stored, and the single footer button puts it away.
 
-    `closeOnBackdrop` is NOT overridden. This is the one of the three whose overlay DID close on
-    a backdrop click (`@click.self="closeCmd"`), and `readonly`'s variant default is already
-    `true` (dialogTypes.ts) — so the behaviour carries over without an override, which is why
-    the 0412 T0004 contract that made the other 4순위 readonly instances pass `false` does not
-    apply here (T0020 §2.1).
+    `close-on-backdrop="true"` is explicit (0560 T0035 §3, NR0029 §10.3-11): `readonly`'s
+    variant default flipped to `false` so a stray background click cannot lose a form or a
+    diff behind another dialog, but this overlay closed on a backdrop click
+    (`@click.self="closeCmd"`) before it ever joined the common layer, and a read-only command
+    view has nothing to lose by closing — so the override keeps that legacy behaviour instead of
+    letting it flip with the table.
 
     `size="md"` is the 520px `.modal-box` track this box used; `readonly`'s default is `lg`.
   -->
@@ -16,6 +17,7 @@
     :open="open"
     variant="readonly"
     size="md"
+    :close-on-backdrop="true"
     :return-focus-to="returnFocusTo"
     @request-close="emit('close')"
   >

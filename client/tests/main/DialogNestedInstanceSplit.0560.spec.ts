@@ -91,20 +91,26 @@ describe('AiProviderListEditor is three dialog components now (T0020 §4-1)', ()
 })
 
 /**
- * T0020 §4-2. All three of the AiProvider instances already behaved the way their target
- * variant's default behaves, so an override would only restate the default — the opposite of
- * the 4순위 batch, where 0412 T0004's backdrop-no-close contract disagreed with `readonly`'s
- * default and had to be written down. Stated as a test so a later "for consistency" override
- * has to justify itself.
+ * T0020 §4-2 / 0560 T0035 §3. Two of the three AiProvider instances (form, delete-confirm)
+ * already behave the way their target variant's default behaves, so an override on either
+ * would only restate the default — stated as a test so a later "for consistency" override has
+ * to justify itself. The third, `AiProviderCommandInfoDialog`, is the opposite case: T0035
+ * flipped `readonly`'s `closeOnBackdrop` default to `false`, but this overlay closed on a
+ * backdrop click before it ever joined the common layer, so it now carries the override
+ * explicitly instead of losing that behaviour when the table default changed under it.
  */
 describe('the AiProvider dialogs lean on the variant defaults (T0020 §4-2)', () => {
   it.each([
     ['src/settings/components/AiProviderFormDialog.vue'],
-    ['src/settings/components/AiProviderCommandInfoDialog.vue'],
     ['src/settings/components/AiProviderDeleteConfirmDialog.vue'],
     ['src/main/components/GitMergeRejectDialog.vue'],
   ])('%s passes no close-on-backdrop override', (file) => {
     expect(source(file)).not.toContain('close-on-backdrop')
+  })
+
+  it('AiProviderCommandInfoDialog.vue keeps its legacy backdrop-close as an explicit exception (0560 T0035 §3)', () => {
+    expect(source('src/settings/components/AiProviderCommandInfoDialog.vue'))
+      .toMatch(/:close-on-backdrop="true"/)
   })
 })
 

@@ -99,17 +99,25 @@ describe('DialogShell — resolved defaults (L0009 §1 boolean props 기본값, 
     expect(entry.policy.busy).toBe(false)
   })
 
-  it('takes closeOnBackdrop=true from the variant table for compact/readonly', async () => {
+  it('resolves closeOnBackdrop=false from the variant table for compact with no override (0560 T0035)', async () => {
     mountShell({ variant: 'compact' })
     await flushPromises()
-    expect(dialogStackEntries()[0].policy.closeOnBackdrop).toBe(true)
+    expect(dialogStackEntries()[0].policy.closeOnBackdrop).toBe(false)
+  })
+
+  it('resolves closeOnBackdrop=false from the variant table for readonly with no override (0560 T0035)', async () => {
+    mountShell({ variant: 'readonly' })
+    await flushPromises()
+    expect(dialogStackEntries()[0].policy.closeOnBackdrop).toBe(false)
   })
 
   it('lets an explicit prop beat the variant default in both directions', async () => {
-    mountShell({ variant: 'compact', closeOnBackdrop: false, closeOnEscape: false })
+    mountShell({ variant: 'compact', closeOnBackdrop: true, closeOnEscape: false })
     await flushPromises()
     const entry = dialogStackEntries()[0]
-    expect(entry.policy.closeOnBackdrop).toBe(false)
+    // closeOnBackdrop: compact's own default is false (0560 T0035) — the explicit `true` wins.
+    expect(entry.policy.closeOnBackdrop).toBe(true)
+    // closeOnEscape: compact's default is true — the explicit `false` wins.
     expect(entry.policy.closeOnEscape).toBe(false)
   })
 })
@@ -152,7 +160,8 @@ describe('DialogShell — ESC and backdrop (L0009 §4, 완료조건 1/4/5)', () 
   })
 
   it('closes on a backdrop press+release that both land on the overlay', async () => {
-    const wrapper = mountShell({ variant: 'compact' })
+    // compact's own default is false since 0560 T0035; opt in explicitly to drive this path.
+    const wrapper = mountShell({ variant: 'compact', closeOnBackdrop: true })
     await flushPromises()
 
     clickBackdrop(overlays()[0])
@@ -160,7 +169,7 @@ describe('DialogShell — ESC and backdrop (L0009 §4, 완료조건 1/4/5)', () 
   })
 
   it('ignores a drag that starts inside the dialog and ends on the overlay', async () => {
-    const wrapper = mountShell({ variant: 'compact' })
+    const wrapper = mountShell({ variant: 'compact', closeOnBackdrop: true })
     await flushPromises()
 
     clickBackdrop(overlays()[0], surfaces()[0])

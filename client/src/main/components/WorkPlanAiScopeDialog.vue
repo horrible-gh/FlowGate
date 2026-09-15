@@ -9,8 +9,9 @@
        editor while it is up, and a per-instance containment surface would be a D0008/L0009
        change, which this T does not authorise. The before/after coordinates are measured in
        `tests/browser/dialog-local-overlay-geometry.0560.mjs`.
-       `:close-on-backdrop="false"` is explicit (T0018 §2.2-3): `compact` defaults to `true`,
-       but NR0011 records this overlay as BD=X today.
+       `:close-on-backdrop="false"` stays explicit (T0018 §2.2-3): NR0011 records this
+       overlay as BD=X. `compact` defaults to `false` too since 0560 T0035, so this now
+       restates rather than overrides the table.
        `size="lg"` keeps the 720px-class card this dialog measured (`min(760px, 100%)`). -->
   <DialogShell
     :open="visible"
