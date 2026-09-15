@@ -148,6 +148,98 @@ def test_tracked_merge_blockers_parsing():
     assert git_service._tracked_merge_blockers("fatal: unrelated") is None
 
 
+def _repo_pair(tmp_path: Path) -> tuple[Path, Path]:
+    """A base checkout (with an 'origin' remote) and a SEPARATE group worktree of the
+    same repository, seeded with a shared.txt both sides will edit differently.
+
+    NR0025 §8 / T0028 §3.4 (1): update_from_base ff-only-merges base_root against
+    origin/<base branch> before merging base_branch into wt_path, so the two paths
+    must be distinct checkouts, not one repo playing both roles.
+    """
+    origin = tmp_path / "origin.git"
+    subprocess.run(
+        ["git", "init", "--bare", "-b", "main", str(origin)],
+        cwd=tmp_path, text=True, capture_output=True, check=True,
+    )
+    base_root = tmp_path / "base"
+    subprocess.run(
+        ["git", "clone", str(origin), str(base_root)],
+        cwd=tmp_path, text=True, capture_output=True, check=True,
+    )
+    _git(base_root, "config", "user.name", "FlowGate Test")
+    _git(base_root, "config", "user.email", "flowgate@example.invalid")
+    (base_root / "shared.txt").write_text("seed\n", encoding="utf-8")
+    _git(base_root, "add", "shared.txt")
+    _git(base_root, "commit", "-m", "seed")
+    _git(base_root, "push", "origin", "main")
+    _git(base_root, "branch", "group/test")
+
+    wt_path = tmp_path / "group"
+    _git(base_root, "worktree", "add", str(wt_path), "group/test")
+
+    (wt_path / "shared.txt").write_text("group side\n", encoding="utf-8")
+    _git(wt_path, "commit", "-am", "group edits shared.txt")
+
+    (base_root / "shared.txt").write_text("main side\n", encoding="utf-8")
+    _git(base_root, "commit", "-am", "main edits shared.txt")
+    _git(base_root, "push", "origin", "main")
+
+    assert _git(base_root, "status", "--porcelain").stdout == ""
+    assert _git(wt_path, "status", "--porcelain").stdout == ""
+    return base_root, wt_path
+
+
+def _patch_group_update(
+    monkeypatch, cfg: dict, state: dict, project_id: str,
+    base_root: Path, wt_path: Path, calls: list[dict],
+) -> None:
+    monkeypatch.setattr(
+        git_service, "_finalize_context",
+        lambda _gid: (cfg, state, project_id, base_root, wt_path),
+    )
+    monkeypatch.setattr(git_service.db_git, "get_open_session_by_group", lambda _gid: None)
+    monkeypatch.setattr(git_service, "guard_base_free", lambda _pid: None)
+    monkeypatch.setattr(git_service, "git_available", lambda: True)
+    monkeypatch.setattr(git_service, "_acquire_lock", lambda _pid, _holder: True)
+    monkeypatch.setattr(git_service.db_git, "release_lock", lambda _pid, _holder: None)
+
+    def _fake_create_session(group_id, files, *, kind, context):
+        calls.append({"group_id": group_id, "files": files, "kind": kind, "context": context})
+        return 4242
+
+    monkeypatch.setattr(git_service.db_git, "create_session", _fake_create_session)
+
+
+def test_group_update_records_conflict_status_merge_id_and_files(tmp_path, monkeypatch):
+    """T0028 §3.3 test A — a REAL content conflict, resolved by the real merge, must
+    surface status/merge_id/conflict_files and open a real (unaborted) conflict."""
+    base_root, wt_path = _repo_pair(tmp_path)
+    cfg = {"base_branch": "main"}
+    state = {"branch": "group/test", "status": "waiting"}
+    calls: list[dict] = []
+    _patch_group_update(monkeypatch, cfg, state, "demo", base_root, wt_path, calls)
+
+    result = git_service.update_from_base("demo.default.0001")
+
+    assert result["ok"] is True
+    assert result["result"]["status"] == "conflict"
+    assert result["result"]["merge_id"] == 4242
+    assert result["result"]["conflict_files"] == ["shared.txt"]
+
+    assert len(calls) == 1
+    assert calls[0]["files"] == ["shared.txt"]
+    assert calls[0]["kind"] == git_service.db_git.SESSION_KIND_GROUP_UPDATE
+    assert calls[0]["context"] == {"prev_status": "waiting", "branch": "group/test"}
+
+    still_unmerged = subprocess.run(
+        ["git", "diff", "--name-only", "--diff-filter=U"],
+        cwd=wt_path, text=True, capture_output=True, check=True,
+    ).stdout.splitlines()
+    assert still_unmerged == ["shared.txt"]
+
+    subprocess.run(["git", "merge", "--abort"], cwd=wt_path, text=True, capture_output=True)
+
+
 def test_update_from_base_creates_session_for_real_content_conflict(tmp_path, monkeypatch):
     remote = tmp_path / "remote.git"
     subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
@@ -171,14 +263,10 @@ def test_update_from_base_creates_session_for_real_content_conflict(tmp_path, mo
     _git(base, "push")
 
     group_id = "demo.default.0001"
-    monkeypatch.setattr(
-        git_service, "_finalize_context",
-        lambda _gid: (
-            {"base_branch": "main"},
-            {"branch": "group/test", "status": "waiting"},
-            "demo", base, group,
-        ),
-    )
+    monkeypatch.setattr(git_service, "_finalize_context", lambda _gid: (
+        {"base_branch": "main"}, {"branch": "group/test", "status": "waiting"},
+        "demo", base, group,
+    ))
     monkeypatch.setattr(git_service, "git_available", lambda: True)
     monkeypatch.setattr(git_service, "guard_base_free", lambda _project: None)
     monkeypatch.setattr(git_service, "_acquire_lock", lambda _project, _holder: True)
@@ -191,13 +279,30 @@ def test_update_from_base_creates_session_for_real_content_conflict(tmp_path, mo
         return 73
 
     monkeypatch.setattr(git_service.db_git, "create_session", create_session)
-
     result = git_service.update_from_base(group_id)
 
     assert result["result"] == {
-        "status": "conflict", "merge_id": 73,
-        "conflict_files": ["conflict.txt"],
+        "status": "conflict", "merge_id": 73, "conflict_files": ["conflict.txt"],
     }
     assert created["group_id"] == group_id
     assert created["files"] == result["result"]["conflict_files"]
     assert created["kind"] == git_service.db_git.SESSION_KIND_GROUP_UPDATE
+
+
+def test_group_update_conflicts_go_through_facade_seam(tmp_path, monkeypatch):
+    """T0028 §3.3 test B — update_from_base must read conflicts via the git_service
+    facade attribute (`_gs._unmerged_paths`), not a name bound at finalize.py import
+    time. Patching the facade attribute must change what the caller returns."""
+    base_root, wt_path = _repo_pair(tmp_path)
+    cfg = {"base_branch": "main"}
+    state = {"branch": "group/test", "status": "none"}
+    calls: list[dict] = []
+    _patch_group_update(monkeypatch, cfg, state, "demo", base_root, wt_path, calls)
+    monkeypatch.setattr(git_service, "_unmerged_paths", lambda _wt: ["sentinel.txt"])
+
+    result = git_service.update_from_base("demo.default.0001")
+
+    assert result["result"]["conflict_files"] == ["sentinel.txt"]
+    assert calls[0]["files"] == ["sentinel.txt"]
+
+    subprocess.run(["git", "merge", "--abort"], cwd=wt_path, text=True, capture_output=True)
