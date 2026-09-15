@@ -381,7 +381,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
@@ -883,6 +883,16 @@ function resetState() {
   capabilityWarningReviewIntent.value = undefined
 }
 
+// flowgate.default.0560 T0031 (NR0029 §3.4/§10.1-1): start()'s 409 branch awaits this before
+// touching any reactive state or firing a second request. Nothing in `start()` cancels that
+// await when the dialog closes mid-flight, so a checkRunLive call begun by one mounted instance
+// used to keep running after unmount and land its getRequest call inside whichever screen (or
+// test) happened to be current when the response arrived. `disposed` cuts it off at both ends:
+// skip the call entirely if already unmounted, and skip acting on its result if unmount happened
+// while it was in flight.
+let disposed = false
+onBeforeUnmount(() => { disposed = true })
+
 // 0401 NR0003 §3 cause 4: the 409 body always names a run_id, whether or not it is still
 // alive -- the server-side end record (T0004 task 1-2) means a dead one now answers with a
 // persisted status='finished' payload instead of 404, so both cases are readable here.
@@ -1031,6 +1041,10 @@ async function start(reviewIntent?: 'rerun') {
     // belongs to the group-scoped inline indicator and must not block the UI.
     emit('update:visible', false)
   } catch (e: any) {
+    // flowgate.default.0560 T0031: the dialog already closed (unmounted) while postRequest
+    // was in flight -- do not fire the follow-up checkRunLive request at all, and do not
+    // touch any reactive state below.
+    if (disposed) return
     const status = e?.response?.status
     const data = e?.response?.data ?? {}
     if (status === 409 && data.code === 'run_in_progress' && data.run_id) {
@@ -1039,7 +1053,10 @@ async function start(reviewIntent?: 'rerun') {
       // unconditionally closed this dialog onto a run that was already gone, and the very next
       // poll turned it back into the '실행 기록이 소실되었습니다' card this run was trying to
       // escape. Verify liveness first; only a genuinely live run gets adopted (scenario 8 restore).
-      if (await checkRunLive(data.run_id)) {
+      const runIsLive = await checkRunLive(data.run_id)
+      // flowgate.default.0560 T0031: unmount could have happened during the await above.
+      if (disposed) return
+      if (runIsLive) {
         aiInvokeStore.trackStarted({
           run_id: data.run_id,
           group_id: groupId,
@@ -1076,7 +1093,7 @@ async function start(reviewIntent?: 'rerun') {
       startError.value = data.message ?? t('main.ai_invoke_dialog.error_start_failed')
     }
   } finally {
-    starting.value = false
+    if (!disposed) starting.value = false
   }
 }
 

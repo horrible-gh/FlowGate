@@ -1470,12 +1470,29 @@ describe('AiInvokeDialog deck parity — MirageGlass u3digra2 v6 (0417 T0017)', 
     // The cold-open order is: open -> resetState() -> provider fetch resolves. Seeding the two
     // stage pickers only in resetState() left them empty, which blanked the [검수] summary name
     // and disabled [AI 실행 시작].
+    // flowgate.default.0560 T0031 (NR0029 §3.4): a naive "every call rewrites the one
+    // captured resolver" mock is fragile against ANY concurrent getRequest call landing in
+    // this window, not just the providers fetch it means to intercept — including a stray
+    // late resolution of another test's own in-flight request replaying through this shared
+    // mock. Keying the held-open promise to the exact URL this test cares about means an
+    // unrelated call can no longer steal `resolveProviders` and strand the real fetch pending
+    // forever.
     let resolveProviders: (value: unknown) => void = () => {}
-    getRequest.mockImplementation(() => new Promise((resolve) => { resolveProviders = resolve }))
+    getRequest.mockImplementation((url: string) =>
+      url === '/api/v1/ai-invoke/providers'
+        ? new Promise((resolve) => { resolveProviders = resolve })
+        : Promise.resolve({ data: {} }),
+    )
     const wrapper = mountDialog({ actionScope: 'review' })
     await flushPromises()
     await pickLoop()
     expect((document.querySelector('[data-test="review-loop-reviewer"]') as HTMLSelectElement).value).toBe('')
+
+    // Reproduce the late checkRunLive-shaped request that used to overwrite the shared
+    // resolver. It must take the unrelated immediate-response branch while the providers
+    // request stays pending and remains releasable through resolveProviders.
+    await expect(getRequest('/api/v1/ai-invoke/aiv_late')).resolves.toEqual({ data: {} })
+    expect(getRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/aiv_late')
 
     resolveProviders({
       data: {
