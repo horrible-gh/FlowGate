@@ -46,11 +46,18 @@ def _mention_kwargs(**over):
 
 def test_continuous_mention_replaces_q_guard_ko():
     out = mention_service.build_mention(continuous=True, locale="ko", **_mention_kwargs())
-    # Unmanned/delegation/no-stop/autonomous block is present...
+    # Unmanned, scope-bounded autonomy is present without absolute authority language.
     assert "## Continuous work" in out
     assert "UNMANNED" in out
-    assert "위임" in out and "중단" in out
-    # ...and the Q-registration guard is gone (replaced, not merely appended).
+    assert "작업 범위 안" in out and "사용자 확인을 기다리지 말고" in out
+    assert "가장 적절한 방법을 선택해 진행" in out
+    assert "모든 권한이 당신에게 위임" not in out
+    assert "작업을 중단하지 마십시오" not in out
+    # Genuine scope, information, and destructive-action blockers remain explicit.
+    assert "요청된 범위를 벗어나는 변경" in out
+    assert "자체 조사로도 확보할 수 없" in out
+    assert "파괴적·비가역적 작업" in out
+    # The ordinary Q-registration guard is still replaced in continuous mode.
     assert "Clarification guide" not in out
     assert "/questions" not in out
     # Operational sections are preserved. (group 0372 set 3: the standalone doc_type
@@ -65,6 +72,11 @@ def test_continuous_mention_replaces_q_guard_ko():
 def test_continuous_mention_locale_en_no_korean_leak():
     out = mention_service.build_mention(continuous=True, locale="en", **_mention_kwargs())
     assert "UNMANNED" in out and "autonomously" in out
+    assert "routine implementation decisions independently" in out
+    assert "do not wait for user confirmation" in out
+    assert "Pause or raise a question only when" in out
+    assert "All authority is delegated to you" not in out
+    assert "Do NOT stop the work" not in out
     # English-locale continuous block must not leak the Korean directive prose.
     assert "위임" not in out and "무인" not in out
 
@@ -130,10 +142,12 @@ def test_decision_mention_review_mode_does_not_say_keep_going():
     go = mention_service.build_workflow_decision_mention(
         continuous=True, continuous_review_mode=False, locale="ko", **_decision_mention_kwargs()
     )
-    # Non-review (go): the worker barrels through — "keep going until done, do NOT stop".
-    assert "keep going until the" in go and "Do NOT stop after deciding" in go
+    # Non-review (go): the worker continues autonomously within the requested scope.
+    assert "keep progressing through" in go and "routine, reversible decisions independently" in go
+    assert "Do NOT stop after deciding" not in go
+    assert "limited boundary conditions" in go
     # Review phase: must NOT tell the worker to keep going / not stop after deciding.
-    assert "keep going until the" not in review
+    assert "keep progressing through" not in review
     assert "Do NOT stop after deciding" not in review
     # Instead it frames deciding as the pre-flight review and tells it to wait for the go.
     assert "REVIEW phase" in review
