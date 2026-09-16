@@ -116,7 +116,7 @@ def test_continuous_prompt_requires_synchronous_verification(locale, required):
     guide = mention_service._continuous_guide_body(locale)
     rendered = _build_new(locale=locale, continuous=True)
 
-    assert guide.count("\n- ") == 5
+    assert guide.count("\n- ") == 6
     assert "background" in guide
     assert required in guide
     assert guide in rendered

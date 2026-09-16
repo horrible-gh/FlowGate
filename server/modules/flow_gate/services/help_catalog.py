@@ -241,8 +241,8 @@ SUBMIT_SUMMARIES: dict[str, dict[str, str]] = {
 NOTICE_LINES: dict[str, dict[str, str]] = {
     "ko": {
         "continuous_unattended": "이 작업은 무인(UNMANNED) 연속 작업 체인의 일부입니다. 사람이 지켜보고 있지 않습니다.",
-        "continuous_no_stop": "작업을 중단하지 마십시오. 한 단계를 마치면 응답의 다음 토큰과 멘트로 곧장 다음 단계를 진행하십시오.",
-        "continuous_autonomous": "불명확한 점이 있어도 선택지를 제시하거나 질문으로 멈추지 말고, 가진 정보로 가장 합리적인 판단을 내려 진행하십시오.",
+        "continuous_no_stop": "한 단계를 마치면 응답의 다음 토큰과 멘트로 다음 단계를 이어가는 것이 이 연속 작업의 기본 동작입니다.",
+        "continuous_autonomous": "작업 범위 안의 일반적이고 되돌릴 수 있는 판단은 가진 정보와 자체 조사 결과를 바탕으로 합리적인 방법을 선택해 진행할 수 있습니다. 요청 범위 밖의 변경, 조사로 확보할 수 없는 필수 정보, 승인되지 않은 파괴적·비가역적 작업이 필요한 경우에만 중단하거나 질의하십시오.",
         "interactive_query_without_choice": "진행을 막는 정보가 없으면 문서에 연결된 질의(Q)를 등록하십시오. 콘솔 선택지를 요구하지 말고, 안전한 가정을 세울 수 있으면 그 가정을 명시하고 계속 진행하십시오.",
         "review_no_modify": "검토 작업에서는 대상 문서를 수정하거나 새 결과 문서를 만들지 말고, 지정된 판정만 제출하십시오.",
         "investigation_only": "이 단계는 조사 전용입니다. 소스 파일을 수정·생성·삭제하지 마십시오.",
@@ -250,8 +250,8 @@ NOTICE_LINES: dict[str, dict[str, str]] = {
     },
     "en": {
         "continuous_unattended": "This task is part of an UNMANNED continuous work chain. Nobody is watching.",
-        "continuous_no_stop": "Do not stop. When one step finishes, continue straight into the next step with the token and mention in the response.",
-        "continuous_autonomous": "Even when something is unclear, do not present choices or stop to ask. Make the most reasonable judgment from what you have and continue.",
+        "continuous_no_stop": "After one step is complete, continuing to the next step with the token and mention in the response is the normal behavior of this continuous run.",
+        "continuous_autonomous": "For routine, reversible decisions within the requested scope, select a reasonable approach using the available information and your own investigation. Pause or raise a question only when work requires an out-of-scope change, essential information cannot be obtained through investigation, or a destructive or irreversible action has not been authorized.",
         "interactive_query_without_choice": "If information you need is missing, register a query (Q) bound to the document. Do not demand a console choice; when a safe assumption exists, state it and continue.",
         "review_no_modify": "In a review step, do not modify the target document or create a new result document — submit only the verdict you were asked for.",
         "investigation_only": "This step is investigation-only. Do not modify, create or delete source files.",
@@ -259,8 +259,8 @@ NOTICE_LINES: dict[str, dict[str, str]] = {
     },
     "ja": {
         "continuous_unattended": "この作業は無人(UNMANNED)連続作業チェーンの一部です。人は見ていません。",
-        "continuous_no_stop": "作業を中断しないでください。一段階終えたら、応答に含まれる次のトークンとメントでそのまま次の段階へ進んでください。",
-        "continuous_autonomous": "不明な点があっても選択肢を提示したり質問で止まったりせず、手持ちの情報で最も合理的な判断を下して進めてください。",
+        "continuous_no_stop": "一段階が完了したら、応答に含まれる次のトークンとメンションで次の段階を続けることが、この連続作業の基本動作です。",
+        "continuous_autonomous": "要求範囲内の通常かつ元に戻せる判断は、手持ちの情報と自力の調査に基づいて合理的な方法を選び、進めることができます。要求範囲外の変更、調査でも得られない必須情報、または承認されていない破壊的・不可逆な作業が必要な場合に限り、中断または質問してください。",
         "interactive_query_without_choice": "進行を妨げる情報が無い場合は、文書に紐づく質問(Q)を登録してください。コンソールの選択肢を求めず、安全な仮定を立てられるならそれを明記して続行してください。",
         "review_no_modify": "レビュー作業では対象文書を修正したり新しい結果文書を作成したりせず、指定された判定のみを提出してください。",
         "investigation_only": "この段階は調査専用です。ソースファイルを修正・作成・削除しないでください。",

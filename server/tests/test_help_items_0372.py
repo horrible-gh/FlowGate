@@ -314,6 +314,36 @@ def test_notices_lines_follow_the_step_not_the_locale_file(monkeypatch):
     ]
 
 
+def test_continuous_notices_use_scope_bounded_autonomy_in_every_locale(monkeypatch):
+    for locale in ("ko", "en", "ja"):
+        body = _client(
+            monkeypatch,
+            _token(continuation_target_seq=9),
+            step_type="TR",
+        ).get(f"/api/v1/help/items/notices?locale={locale}").json()
+        lines = body["content"]["lines"]
+        rendered = "\n".join(lines)
+
+        assert help_catalog.NOTICE_LINES[locale]["continuous_no_stop"] in lines
+        assert help_catalog.NOTICE_LINES[locale]["continuous_autonomous"] in lines
+
+        if locale == "ko":
+            assert "작업을 중단하지 마십시오" not in rendered
+            assert "선택지를 제시하거나 질문으로 멈추지 말고" not in rendered
+            assert "작업 범위 안" in rendered
+            assert "경우에만 중단하거나 질의" in rendered
+        elif locale == "en":
+            assert "Do not stop" not in rendered
+            assert "do not present choices or stop to ask" not in rendered
+            assert "within the requested scope" in rendered
+            assert "Pause or raise a question only when" in rendered
+        else:
+            assert "作業を中断しないでください" not in rendered
+            assert "選択肢を提示したり質問で止まったりせず" not in rendered
+            assert "要求範囲内" in rendered
+            assert "場合に限り、中断または質問" in rendered
+
+
 def test_group_documents_answers_in_sequence_order(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="P")
     content = client.get("/api/v1/help/items/group_documents").json()["content"]

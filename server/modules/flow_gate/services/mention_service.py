@@ -496,63 +496,64 @@ _EDIT_TURN_END_TEXT = {
 }
 
 
-# ── Continuous (unmanned) work guide (group 0051 R0001 / NR0003 §2-3, §4-3) ──
-# R0001 requires that, in continuous (unmanned) mode, the Q/no-choices guidance is
-# REPLACED (not removed) by a delegation/unmanned/no-stop/autonomous block:
-#   - all authority delegated to the worker
-#   - unmanned operation — no human is watching
-#   - do not stop the work mid-chain
-#   - when unsure, decide autonomously rather than asking
-# This deliberately relaxes the FlowGate Q-gate, which is why the FE warning dialog
-# (NR0003 §4-5) makes the user accept "no liability for results; quality depends on how much information is given" before a
-# continuous token is minted. The block follows the worker display locale (ko/ja/en),
-# keeping the same English keywords (UNMANNED / autonomous / do NOT stop) in every
-# locale so the directive reads identically regardless of language. GET-credential
-# notes, Artifact registration, and the doc_type guide are kept unchanged — only the
-# Clarification guide §2 and the bottom Reminder §9 swap to this block.
+# ── Continuous (unmanned) work guide (group 0051 R0001 / 0574 T0004) ──
+# Continuous mode replaces the ordinary Q guide with scope-bounded autonomy:
+# routine implementation choices are made by the worker without confirmation, each
+# completed step advances to the next, and only genuine scope/information/destructive
+# blockers permit a pause or question. This preserves unattended execution without
+# framing the worker's authority or ability to stop as absolute.
 _CONTINUOUS_TEXT = {
     "ko": (
         "이 작업은 무인(UNMANNED) 연속 작업 체인의 일부입니다. 사람이 지켜보고 있지 않습니다.\n"
         "\n"
-        "- 모든 권한이 당신에게 위임되었습니다 — 진행에 필요한 결정을 직접 내리십시오.\n"
-        "- 작업을 중단하지 마십시오(do NOT stop). 한 단계를 마치면 응답에 동봉된 다음 토큰/멘트로 "
-        "곧장 다음 단계를 진행하십시오.\n"
+        "- 주어진 작업 범위 안의 일반적인 구현 판단은 직접 수행하십시오. 일반적인 구현 방법에 대해 "
+        "선택지를 제시하고 사용자에게 선택을 요청하지 말고, 가장 적절한 방법을 선택해 진행하십시오.\n"
+        "- 한 단계를 마치면 응답에 동봉된 다음 토큰/멘트로 곧장 다음 단계를 진행하십시오.\n"
+        "- 작업 범위 안의 일반적이고 되돌릴 수 있는 판단에 대해서는 사용자 확인을 기다리지 말고 "
+        "자율적으로(autonomously) 조사, 수정, 검증하십시오.\n"
         "- 장시간 검증(예: 전체 테스트 스위트)을 백그라운드(background)로 넘기고 완료 알림을 기다리며 "
         "현재 프로세스/턴을 끝내지 마십시오. 이 시스템에서는 그런 백그라운드+알림 대기가 정당한 대기로 "
         "인식되지 않고 무출력 재시도로 오판됩니다. 검증은 현재 프로세스 안에서 동기적으로(synchronously) "
         "끝까지 실행해 결과(성공/실패)를 확인한 뒤에만 다음 단계로 진행하십시오.\n"
-        "- 불명확한 점이 있어도 선택지를 제시하거나 질문으로 멈추지 말고, 가진 정보로 가장 합리적인 "
-        "판단을 내려 자율적으로(autonomously) 진행하십시오.\n"
+        "- 요청된 범위를 벗어나는 변경이 필요하거나, 필요한 정보를 자체 조사로도 확보할 수 없거나, "
+        "명시적으로 승인되지 않은 파괴적·비가역적 작업이 필요한 경우에만 중단하거나 질의하십시오.\n"
         "- 결과의 품질은 제공된 정보량에 의존합니다. 사용자는 이 점을 수락하고 연속 작업을 개시했습니다."
     ),
     "ja": (
         "この作業は無人(UNMANNED)連続作業チェーンの一部です。人は見ていません。\n"
         "\n"
-        "- すべての権限があなたに委任されています — 進行に必要な判断は自分で下してください。\n"
-        "- 作業を中断しないでください(do NOT stop)。1ステップを終えたら、応答に同梱された次のトークン/"
-        "メンションでそのまま次のステップへ進んでください。\n"
+        "- 与えられた作業範囲内の通常の実装判断は自分で行ってください。通常の実装方法について選択肢を示して"
+        "ユーザーに選択を求めず、最適な方法を選んで進めてください。\n"
+        "- 1ステップを終えたら、応答に同梱された次のトークン/メンションでそのまま次のステップへ進んでください。\n"
+        "- 作業範囲内の通常かつ元に戻せる判断ではユーザーの確認を待たず、自律的に(autonomously)調査、修正、"
+        "検証してください。\n"
         "- 長時間の検証（例: 全体テストスイート）をバックグラウンド(background)に回し、完了通知を待って"
         "現在のプロセス/ターンを終了しないでください。このシステムでは、そうしたバックグラウンド+通知待ちは"
         "正当な待機と認識されず、無出力の再試行と誤判定されます。検証は現在のプロセス内で同期的に"
         "(synchronously)最後まで実行し、結果（成功/失敗）を確認してから次のステップへ進んでください。\n"
-        "- 不明な点があっても選択肢を提示したり質問で止まったりせず、手持ちの情報で最も合理的な判断を下し、"
-        "自律的に(autonomously)進めてください。\n"
+        "- 要求範囲外の変更が必要な場合、必要情報を自力の調査でも得られない場合、または明示的に承認されていない"
+        "破壊的・不可逆な作業が必要な場合に限り、中断または質問してください。\n"
         "- 結果の品質は提供された情報量に依存します。ユーザーはこれを承諾して連続作業を開始しました。"
     ),
     "en": (
         "This task is part of an UNMANNED continuous work chain. No human is watching.\n"
         "\n"
-        "- All authority is delegated to you — make the decisions needed to proceed.\n"
-        "- Do NOT stop the work. When you finish a step, continue straight to the next one "
-        "using the next token/mention enclosed in the response.\n"
-        "- Do NOT hand off long-running verification (e.g. the full test suite) to the "
+        "- Make routine implementation decisions independently within the requested scope. "
+        "Do not ask the user to choose among ordinary implementation alternatives; select the "
+        "most appropriate approach and proceed.\n"
+        "- After completing one step, continue straight to the next one using the next "
+        "token/mention enclosed in the response.\n"
+        "- For routine, reversible decisions within scope, do not wait for user confirmation; "
+        "investigate, modify, and verify autonomously.\n"
+        "- Do not hand off long-running verification (e.g. the full test suite) to the "
         "background and end the current process/turn while waiting for a completion "
         "notification. This system does not recognize that kind of background-plus-notification "
         "wait as legitimate — it is misjudged as a silent (no-output) retry. Run verification to "
         "completion synchronously within the current process and confirm the result (pass/fail) "
         "before proceeding to the next step.\n"
-        "- If something is unclear, do NOT present choices or halt with a question; make the "
-        "most reasonable call with the information you have and proceed autonomously.\n"
+        "- Pause or raise a question only when the work requires a change outside the requested "
+        "scope, required information cannot be obtained through investigation, or a destructive "
+        "or irreversible action has not been explicitly authorized.\n"
         "- Output quality depends on the amount of information provided. The user accepted "
         "this and started the continuous run."
     ),
@@ -2388,8 +2389,10 @@ def build_workflow_decision_mention(
         s2_body += (
             "\n\nThis is an UNMANNED continuous run started before the workflow was "
             "decided. After you submit the decision, the response will enclose the next "
-            "step's token + mention — continue straight to it and keep going until the "
-            "chain reports it is done. Do NOT stop after deciding."
+            "step's token + mention — continue straight to it and keep progressing through "
+            "the requested scope. Make routine, reversible decisions independently; pause or "
+            "raise a question only under the limited boundary conditions in the Continuous "
+            "work guide."
         )
     elif continuous and continuous_review_mode:
         # PRE-FLIGHT REVIEW phase (group 0086 TR0004 rework rev5): review mode is "not go
