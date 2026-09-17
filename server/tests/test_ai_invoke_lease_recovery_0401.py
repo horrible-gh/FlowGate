@@ -416,7 +416,9 @@ def test_start_run_retries_once_on_run_id_collision_then_raises_cleanly():
     reach two lines of retry logic."""
     import inspect
 
-    source = inspect.getsource(svc.start_run)
+    # The stable service entry point now wraps pre-admission errors (0550).
+    # Collision retry belongs to the underlying admission implementation.
+    source = inspect.getsource(svc._admission_start_run)
     assert source.count("RunIdCollision") == 2
     assert source.count("_next_run_id()") >= 2
     assert '"run_id_collision"' in source

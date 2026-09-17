@@ -29,6 +29,7 @@ from modules.flow_gate.settings import ai_settings_service
 from . import admission
 from . import diagnostics
 from . import finalize
+from . import terminal
 from . import review
 from .runtime import (
     HOP_HANDOFF_FAILED_STOP_CODE,
@@ -397,6 +398,7 @@ def _write_handoff_row(
         )
     except Exception:  # noqa: BLE001 — the record is an aid, not a precondition
         logger.warning("ai-invoke handoff row write failed for %s", group_id, exc_info=True)
+        return False
 
 
 def _clear_handoff_row(group_id: Optional[str], stop_run_id: Optional[str]) -> None:
@@ -451,24 +453,10 @@ def _resettle_stop_after_park(run: dict, stop_code: str) -> None:
     run["stop_reason"] = finalize._stop_reason_text(stop_code, run)
     if run["stop_code"] == before_code and run["stop_reason"] == before_reason:
         return
-    _svc()._persist_run_record(run)
-    # The engine speaks for this stop: approve_failed / advance_blocked belong to the inbox's
-    # set, but the inbox never saw this one — the gate settled the step with no request in
-    # flight. `error_text` is the §4.3 sentence rather than the attempts-and-last-message
-    # default, because for these two codes the exception IS the news.
-    finalize._notify_chain_failure_if_needed(
-        run,
-        notify_codes=PARK_NOTIFY_STOP_CODES,
-        error_text=run.get("stop_reason"),
-    )
-    # Same pair, same order as _finalize_run: the record is durable before the browser is told
-    # to re-read. The card is holding a `hop_handoff` payload right now and is waiting for the
-    # successor hop that is never coming; this is what replaces it with the real stop.
-    _svc()._broadcast(run, "ai_invoke_finished", _svc().finished_payload(run))
-    _svc()._broadcast(run, "group_view_refresh", {
-        "group_id": run["group_id"],
-        "reason": "ai_invoke_finished",
-    })
+    terminal.attempt(run, "park_notify:" + stop_code, lambda:
+        finalize._notify_chain_failure_if_needed(
+            run, notify_codes=PARK_NOTIFY_STOP_CODES, error_text=run.get("stop_reason")))
+    terminal.publish(run)
 
 
 def _park_handoff(run: dict, pending: dict, stop_code: str) -> None:
@@ -502,19 +490,23 @@ def _park_handoff(run: dict, pending: dict, stop_code: str) -> None:
          group's next run is blocked until the lease expires. release only deletes rows
          whose run_id matches, so calling it twice is safe (restart reclaim included).
     """
-    group_id = run.get("group_id")
-    run["stop_code"] = stop_code
-    run["resumable"] = finalize.is_resumable(stop_code)
-    _svc()._write_handoff_row(group_id, pending, run, stop_code=stop_code)
-    # 0458 T0007 §2.1: the durable row is only ONE of the surfaces this stop has to reach.
-    # The run itself was closed out before the gate ever ran, so re-decide it here too.
-    _resettle_stop_after_park(run, stop_code)
-    if not group_id:
+    if not terminal.claim_abandon(run):
         return
-    try:
-        db_group_ai_leases.release(group_id, run["run_id"], reason=f"handoff_abandoned:{stop_code}")
-    except Exception:  # noqa: BLE001
-        logger.warning("ai-invoke handoff lease release failed for %s", group_id, exc_info=True)
+    group_id = run.get("group_id")
+    # Release is owner-checked and independent of park persistence/broadcast.
+    # If storage is unavailable the failed step remains retryable and visible.
+    released = terminal.attempt(run, "lease_release", lambda:
+        terminal.release_owned_lease(run, f"handoff_abandoned:{stop_code}"))
+    run["lease_cleanup_pending"] = not released
+    terminal.attempt(run, "park_row:" + stop_code, lambda:
+        terminal.require_success(
+            _svc()._write_handoff_row(group_id, pending, run, stop_code=stop_code), "park row persist"))
+    if run.get("status") != "finished":
+        run["stop_code"] = stop_code
+        run["resumable"] = finalize.is_resumable(stop_code)
+        run["stop_reason"] = finalize._stop_reason_text(stop_code, run)
+    else:
+        _resettle_stop_after_park(run, stop_code)
 
 
 def startup_recover_handoffs() -> int:
@@ -594,9 +586,12 @@ def _maybe_auto_resume_hop(run: dict) -> None:
     Any real stop (cancel / timeout / provider exhaustion / crash) drops the queued hop rather
     than continuing past it."""
     group_id = run.get("group_id")
+    if run.get("_terminal_abandoned") or run.get("post_process_recovered"):
+        return
     queued = peek_auto_resume(group_id)
     if queued is None:
         return
+    run["_terminal_pending"] = queued
     pending = queued
     # Carry the session override map AND the header default pin forward so the re-spawned hop
     # applies them too (neither is persisted on a token — both ride the run, hop to hop). The
@@ -668,11 +663,18 @@ def _maybe_auto_resume_hop(run: dict) -> None:
     if run.get("end_reason") != "exited" or cancelled:
         _svc()._park_handoff(run, pending, parked_code)
         return
+    if run.get("_terminal_abandoned") or run.get("post_process_recovered"):
+        _svc()._park_handoff(run, pending, HOP_HANDOFF_FAILED_STOP_CODE)
+        return
     try:
         # 0414 L0008 §2.1 진입점 2: the gate decides what the next hop IS — review, rework,
         # approve-and-continue, or stop. With no review selection it resolves to "work" and
         # calls the same _spawn_auto_resume this line used to call directly.
-        started = review.run_review_gate(group_id, pending, run)
+        parent_context = terminal.handoff_parent.set(run)
+        try:
+            started = review.run_review_gate(group_id, pending, run)
+        finally:
+            terminal.handoff_parent.reset(parent_context)
     except HTTPException as exc:
         logger.warning("ai-invoke auto-resume rejected for %s: %s",
                        group_id, getattr(exc, "detail", exc))
@@ -684,8 +686,10 @@ def _maybe_auto_resume_hop(run: dict) -> None:
         return
     if not started:
         return          # the gate parked the chain; its durable row IS the resume card
+    run["_handoff_succeeded"] = True
     # The follow-up hop actually started. **Only now** is the intent cleared.
-    _svc()._clear_handoff_row(group_id, run.get("run_id"))
+    terminal.attempt(run, "clear_handoff_row", lambda:
+        _svc()._clear_handoff_row(group_id, run.get("run_id")))
 
 
 def _spawn_auto_resume(group_id: str, pending: dict) -> None:

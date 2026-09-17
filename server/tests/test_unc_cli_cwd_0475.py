@@ -70,7 +70,7 @@ def test_windows_unc_cli_uses_managed_scratch_and_safe_observation(monkeypatch, 
         assert seen["kwargs"]["cwd"] is not None
         assert expected != unc
         assert seen["kwargs"]["shell"] is True
-        assert seen["kwargs"]["creationflags"] == 512
+        assert seen["kwargs"]["creationflags"] == (512 | 0x00000004)
         assert seen["cmd"].endswith(command)
         assert seen["kwargs"]["env"]["FLOWGATE_SCRATCH"] == str(scratch)
         event = _decision(caplog)

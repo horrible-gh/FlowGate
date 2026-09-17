@@ -379,60 +379,85 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         return "spawn_failed", f"CLI launch blocked: {reason}"
     eff_cmd = decision.pop("effective_command")
     agent_cwd = Path(decision["agent_cwd"])
-    kwargs = process_runner.popen_kwargs(agent_cwd, env)
-    kwargs["cwd"] = decision["spawn_cwd"]
-    kwargs["stdin"] = subprocess.PIPE
-    _audit_cli_launch(decision)
-
-    launched = time.monotonic()
+    owner = process_runner.WindowsProcessOwner(run.get("run_id"))
+    proc = None
+    watchdog_stop = watchdog_thread = None
     try:
-        proc = subprocess.Popen(eff_cmd, **kwargs)
-    except Exception:
-        return "spawn_failed", "unable to start CLI process"
+        kwargs = process_runner.popen_kwargs(agent_cwd, env)
+        kwargs["cwd"] = decision["spawn_cwd"]
+        kwargs["stdin"] = subprocess.PIPE
+        if os.name == "nt":
+            kwargs["creationflags"] = owner.creationflags(kwargs.get("creationflags", 0))
+        _audit_cli_launch(decision)
 
-    run["proc"] = proc
-    # Close the cancel-vs-spawn race: a cancel that landed between admission and
-    # Popen saw proc=None and killed nothing — reap the child ourselves now.
-    if run["cancel_event"].is_set():
-        process_runner.kill_process_tree(proc)
-    timed_out = False
-    # 0446 T0014 §3-1: the no-progress threshold is enforced BESIDE this wait, by the
-    # watchdog thread, because `communicate()` cannot be asked "is it still working?".
-    # What is left for the wait itself is the absolute ceiling — the one deadline that
-    # holds however well the worker is doing (§3-6) — so a run that keeps producing is
-    # no longer cut off at its threshold, and a run that produces nothing is still
-    # ended there, by the watchdog, long before this timeout could fire.
-    watchdog_stop, watchdog_thread = _start_progress_watchdog(run, proc)
-    remaining = max(1.0, _absolute_remaining_sec(run))
-    try:
-        stdout, stderr = proc.communicate(input=prompt.encode("utf-8"), timeout=remaining)
-    except subprocess.TimeoutExpired as exc:
-        timed_out = True
-        process_runner.kill_process_tree(proc)
+        launched = time.monotonic()
         try:
-            stdout, stderr = proc.communicate(timeout=5)
+            proc = subprocess.Popen(eff_cmd, **kwargs)
         except Exception:
-            stdout = getattr(exc, "output", None)
-            stderr = getattr(exc, "stderr", None)
-    except Exception as exc:
-        # e.g. stdin pipe broken before the child read the prompt
-        process_runner.kill_process_tree(proc)
+            return "spawn_failed", "unable to start CLI process"
+        owner.attach(proc)
+
+        run["proc"] = proc
+        # Close the cancel-vs-spawn race: a cancel that landed between admission and
+        # Popen saw proc=None and killed nothing — reap the child ourselves now.
+        if run["cancel_event"].is_set():
+            process_runner.kill_process_tree(proc)
+        timed_out = False
+        # 0446 T0014 §3-1: the no-progress threshold is enforced BESIDE this wait, by the
+        # watchdog thread, because `communicate()` cannot be asked "is it still working?".
+        # What is left for the wait itself is the absolute ceiling — the one deadline that
+        # holds however well the worker is doing (§3-6) — so a run that keeps producing is
+        # no longer cut off at its threshold, and a run that produces nothing is still
+        # ended there, by the watchdog, long before this timeout could fire.
+        watchdog_stop, watchdog_thread = _start_progress_watchdog(run, proc)
+        remaining = max(1.0, _absolute_remaining_sec(run))
         try:
-            stdout, stderr = proc.communicate(timeout=5)
-        except Exception:
-            stdout, stderr = None, None
-        elapsed = time.monotonic() - launched
-        if (
-            elapsed < _svc().FAST_FAIL_WINDOW_SEC
-            and not oracle._work_landed(run)
-            # 0446 T0014 §4-3: a watchdog kill is a clock decision, never a provider
-            # startup failure — it must not send the chain to the next provider.
-            and run.get("watchdog_kill") is None
-        ):
-            return "spawn_failed", str(exc)[:500]
+            stdout, stderr = process_runner.communicate_with_cleanup(
+                proc, owner, input=prompt.encode("utf-8"), timeout=remaining
+            )
+        except subprocess.TimeoutExpired as exc:
+            timed_out = True
+            process_runner.kill_process_tree(proc)
+            try:
+                stdout, stderr = process_runner.communicate_with_cleanup(proc, owner, timeout=5)
+            except Exception:
+                stdout = getattr(exc, "output", None)
+                stderr = getattr(exc, "stderr", None)
+        except Exception as exc:
+            # e.g. stdin pipe broken before the child read the prompt
+            process_runner.kill_process_tree(proc)
+            try:
+                stdout, stderr = process_runner.communicate_with_cleanup(proc, owner, timeout=5)
+            except Exception:
+                stdout, stderr = None, None
+            elapsed = time.monotonic() - launched
+            if (
+                elapsed < _svc().FAST_FAIL_WINDOW_SEC
+                and not oracle._work_landed(run)
+                # 0446 T0014 §4-3: a watchdog kill is a clock decision, never a provider
+                # startup failure — it must not send the chain to the next provider.
+                and run.get("watchdog_kill") is None
+            ):
+                return "spawn_failed", str(exc)[:500]
     finally:
-        run["proc"] = None
-        _stop_progress_watchdog(watchdog_stop, watchdog_thread, run.get("run_id"))
+        # Setup failures (attach/resume, watchdog start, remaining-budget lookup)
+        # have exactly the same ownership boundary as normal communication.
+        try:
+            _stop_progress_watchdog(watchdog_stop, watchdog_thread, run.get("run_id"))
+        finally:
+            try:
+                if proc is not None and (owner.active or proc.poll() is None):
+                    process_runner.kill_process_tree(proc)
+                if proc is not None:
+                    try:
+                        proc.wait(timeout=5)
+                    except Exception:
+                        logger.warning("ai-invoke %s: process_reap_failed", run.get("run_id"),
+                                       exc_info=True)
+            finally:
+                owner.close()
+                if run.get("proc") is proc:
+                    run["proc"] = None
 
     # 0446 T0014 §4-3: a watchdog kill ends `communicate()` NORMALLY — the child is
     # already gone, so there is no TimeoutExpired to catch and the local flag above is
