@@ -75,6 +75,28 @@ def get_created_memo_files_map_by_project(project_id: str) -> dict[str, str]:
     return result
 
 
+def get_created_memo_files_map_by_doc_ids(doc_ids: list[str]) -> dict[str, str]:
+    """Return latest non-empty created-event memo files for only requested docs."""
+    result: dict[str, str] = {}
+    ordered_ids = sorted(set(doc_ids))
+    store = get_store()
+    for offset in range(0, len(ordered_ids), 500):
+        chunk = ordered_ids[offset:offset + 500]
+        if not chunk:
+            continue
+        placeholders = ",".join("?" for _ in chunk)
+        rows = store._fetch_all(
+            "SELECT e.doc_id, e.memo_file FROM events e INNER JOIN ("
+            " SELECT doc_id, MAX(event_id) AS max_event_id FROM events"
+            f" WHERE doc_id IN ({placeholders}) AND event_type = 'created'"
+            " AND memo_file IS NOT NULL AND memo_file != '' GROUP BY doc_id"
+            ") latest ON e.doc_id = latest.doc_id AND e.event_id = latest.max_event_id",
+            chunk,
+        )
+        result.update({row["doc_id"]: row["memo_file"] for row in rows})
+    return result
+
+
 def is_file_processed(memo_file: str) -> bool:
     """Return whether the file has been processed."""
     row = get_store()._fetch_one(

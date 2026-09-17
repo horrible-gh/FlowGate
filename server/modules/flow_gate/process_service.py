@@ -19,6 +19,7 @@ from . import linter
 from .numbering import numbering_service
 from .storage import paths as storage_paths
 from .db.document_type_labels import get_type_name, get_type_names_map
+import LogAssist.log as perf_log
 
 logger = logging.getLogger(__name__)
 
@@ -5352,14 +5353,18 @@ def create_storage_file(
     return {"status": "success"}
 
 
-def get_group_tree(project_id: str) -> dict:
+def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None) -> dict:
     """Return the project's document tree.
 
     Following the prototype document-explorer structure, return the
     project -> module -> group -> document hierarchy as a flat node list.
     """
+    _tree_started = time.perf_counter()
     # Query the group list (based on the main DB)
     groups = db.get_groups_by_projects([project_id])
+    if visible_group_ids is not None:
+        perf_log.debug(f"group_tree_fast stage=groups_modules project_id={project_id} elapsed_ms={(time.perf_counter() - _tree_started) * 1000:.3f}")
+    _stage_started = time.perf_counter()
 
     # 0275 NR0003 cause 3: this tree used to issue one documents query per group
     # plus one 'created'-event memo_file query per document (≈ 2 + G + D queries
@@ -5375,11 +5380,26 @@ def get_group_tree(project_id: str) -> dict:
     # and the grouped/orphan split moves to Python below.
     group_ids = [dict(g)["group_id"] for g in groups]
     known_group_ids = set(group_ids)
-    all_tree_docs = [dict(d) for d in db.get_docs_for_tree_by_project(project_id)]
+    if visible_group_ids is None:
+        all_tree_docs = [dict(d) for d in db.get_docs_for_tree_by_project(project_id)]
+    else:
+        all_tree_docs = [dict(d) for d in db.get_docs_for_hidden_tree(project_id, visible_group_ids)]
+        groups = [g for g in groups if dict(g)["group_id"] in visible_group_ids]
+        group_ids = [dict(g)["group_id"] for g in groups]
+        perf_log.debug(f"group_tree_fast stage=visible_docs project_id={project_id} rows={len(all_tree_docs)} elapsed_ms={(time.perf_counter() - _stage_started) * 1000:.3f}")
+    _stage_started = time.perf_counter()
     try:
-        memo_files = db.get_created_memo_files_map_by_project(project_id)
+        if visible_group_ids is None:
+            memo_files = db.get_created_memo_files_map_by_project(project_id)
+        else:
+            memo_files = db.get_created_memo_files_map_by_doc_ids(
+                [doc["doc_id"] for doc in all_tree_docs]
+            )
     except Exception:
         memo_files = {}
+    if visible_group_ids is not None:
+        perf_log.debug(f"group_tree_fast stage=memo_map project_id={project_id} rows={len(memo_files)} elapsed_ms={(time.perf_counter() - _stage_started) * 1000:.3f}")
+    _stage_started = time.perf_counter()
 
     def _by_doc_id_desc(rows: list[dict]) -> list[dict]:
         return sorted(rows, key=lambda d: d.get("doc_id") or "", reverse=True)
@@ -5401,6 +5421,9 @@ def get_group_tree(project_id: str) -> dict:
         _by_doc_id_desc(orphan_docs),
         key=lambda d: (d.get("module") is not None, d.get("module") or ""),
     )
+    if visible_group_ids is not None:
+        perf_log.debug(f"group_tree_fast stage=grouping_sort project_id={project_id} elapsed_ms={(time.perf_counter() - _stage_started) * 1000:.3f}")
+    _stage_started = time.perf_counter()
 
     # Fixed column names from the main DB schema
     doc_type_col = "type_code"
@@ -5611,4 +5634,96 @@ def get_group_tree(project_id: str) -> dict:
             nodes.append(orphan_nodes[orphan_id])
         nodes.append(_build_doc_node(doc, orphan_id))
 
+    if visible_group_ids is not None:
+        perf_log.debug(f"group_tree_fast stage=node_assembly project_id={project_id} nodes={len(nodes)} elapsed_ms={(time.perf_counter() - _stage_started) * 1000:.3f}")
     return {"nodes": nodes}
+
+
+def get_hidden_group_tree(project_id: str) -> dict:
+    """Build the legacy-pruned tree without materializing terminal documents."""
+    started = time.perf_counter()
+    groups_started = time.perf_counter()
+    groups = [dict(row) for row in db.get_groups_by_projects([project_id])]
+    perf_log.debug(f"group_tree_fast stage=groups_for_closure project_id={project_id} rows={len(groups)} elapsed_ms={(time.perf_counter() - groups_started) * 1000:.3f}")
+    terminal_started = time.perf_counter()
+    terminal = db.get_terminal_group_ids(project_id)
+    perf_log.debug(f"group_tree_fast stage=terminal_markers project_id={project_id} rows={len(terminal)} elapsed_ms={(time.perf_counter() - terminal_started) * 1000:.3f}")
+    closure_started = time.perf_counter()
+    children: dict[str, list[str]] = {}
+    for group in groups:
+        parent_id = group.get("parent_id")
+        if parent_id:
+            children.setdefault(parent_id, []).append(group["group_id"])
+    hidden: set[str] = set()
+    stack = list(terminal)
+    while stack:
+        group_id = stack.pop()
+        if group_id in hidden:
+            continue
+        hidden.add(group_id)
+        stack.extend(children.get(group_id, ()))
+    visible = {group["group_id"] for group in groups} - hidden
+    perf_log.debug(f"group_tree_fast stage=closure project_id={project_id} hidden_groups={len(hidden)} visible_groups={len(visible)} elapsed_ms={(time.perf_counter() - closure_started) * 1000:.3f}")
+    finalization_started = time.perf_counter()
+    result = get_group_tree(project_id, visible_group_ids=visible)
+    perf_log.debug(f"group_tree_fast stage=finalization project_id={project_id} output_nodes={len(result.get('nodes') or [])} elapsed_ms={(time.perf_counter() - finalization_started) * 1000:.3f}")
+    perf_log.debug(
+        f"group_tree_fast project_id={project_id} include_terminal=false groups={len(groups)} "
+        f"visible_groups={len(visible)} output_nodes={len(result.get('nodes') or [])} "
+        f"elapsed_ms={(time.perf_counter() - started) * 1000:.3f}"
+    )
+    return result
+
+
+def get_group_tree_overview_summary(project_id: str) -> dict:
+    """Reproduce build_overview_summary from minimal document rows, without nodes."""
+    started = time.perf_counter()
+    rows = [dict(row) for row in db.get_tree_summary_rows(project_id)]
+    groups = [dict(row) for row in db.get_groups_by_projects([project_id])]
+    known_groups = {row["group_id"] for row in groups}
+    grouped = {group_id: [] for group_id in known_groups}
+    orphans = []
+    for row in rows:
+        (grouped[row.get("group_id")] if row.get("group_id") in known_groups else orphans).append(row)
+    ordered_rows = []
+    for group in groups:
+        ordered_rows.extend(sorted(
+            grouped[group["group_id"]], key=lambda row: row.get("doc_id") or "", reverse=True
+        ))
+    orphans = sorted(orphans, key=lambda row: row.get("doc_id") or "", reverse=True)
+    ordered_rows.extend(sorted(
+        orphans, key=lambda row: (row.get("module") is not None, row.get("module") or "")
+    ))
+    type_counts: dict[str, int] = {}
+    last_by_parent: dict[str, dict] = {}
+    for row in ordered_rows:
+        type_code = row.get("type_code")
+        if type_code:
+            type_counts[type_code] = type_counts.get(type_code, 0) + 1
+        group_id = row.get("group_id")
+        if group_id in known_groups:
+            parent_id = group_id
+        else:
+            module = (row.get("module") or "").strip() or "none"
+            parent_id = f"orphan:module:{project_id}:{module}:{group_id or '__ungrouped__'}"
+        number = (row.get("doc_id") or "").rsplit(".", 1)[-1]
+        current = last_by_parent.get(parent_id)
+        if current is None or number > current["number"]:
+            last_by_parent[parent_id] = {"number": number, "type_code": type_code}
+    working_groups = sum(
+        1 for doc in last_by_parent.values()
+        if doc.get("type_code") and (
+            doc["type_code"] in {"T", "N", "TS"}
+            or (len(doc["type_code"]) >= 2 and doc["type_code"].endswith("R"))
+        )
+    )
+    result = {
+        "total_documents": len(rows),
+        "working_groups": working_groups,
+        "type_distribution": [
+            {"type": type_code, "count": count}
+            for type_code, count in type_counts.items()
+        ],
+    }
+    perf_log.debug(f"group_tree_fast stage=summary project_id={project_id} rows={len(rows)} elapsed_ms={(time.perf_counter() - started) * 1000:.3f}")
+    return result

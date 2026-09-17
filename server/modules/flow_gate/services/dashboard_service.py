@@ -9,6 +9,7 @@ from typing import Any
 from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.db import ai_invoke_runs as db_ai_invoke_runs
 from modules.flow_gate.db import questions as db_questions
+from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.services import q_service
 
 _log = logging.getLogger(__name__)
@@ -145,21 +146,8 @@ def _fetch_project_groups(project_id: str) -> dict[str, dict]:
 
 
 def _fetch_terminal_group_ids(project_id: str) -> set[str]:
-    """Groups that have left active work: final-approved AC or discarded DC."""
-    rows = get_store()._fetch_all(
-        """
-        SELECT DISTINCT group_id
-        FROM documents
-        WHERE project_id = ?
-          AND group_id IS NOT NULL
-          AND (
-                (type_code IN (?, ?) AND doc_review_status = 'wf_done')
-             OR type_code = ?
-          )
-        """,
-        [project_id, *_WORKFLOW_ROOT_TYPES, _GROUP_DISCARD_TYPE],
-    )
-    return {row["group_id"] for row in rows if row.get("group_id")}
+    """Groups that have left active work (shared tree/dashboard definition)."""
+    return db_documents.get_terminal_group_ids(project_id, store=get_store())
 
 
 def _event_rows(

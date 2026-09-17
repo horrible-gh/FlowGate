@@ -269,6 +269,16 @@ def stub_tree(monkeypatch):
         return {"nodes": [dict(node) for node in MIXED_TREE]}
 
     monkeypatch.setattr(tree_routes.process_service, "get_group_tree", _fake)
+    monkeypatch.setattr(
+        tree_routes.process_service,
+        "get_hidden_group_tree",
+        lambda pid: (calls.append(pid), {"nodes": prune_terminal_subtrees([dict(node) for node in MIXED_TREE])})[1],
+    )
+    monkeypatch.setattr(
+        tree_routes.process_service,
+        "get_group_tree_overview_summary",
+        lambda _pid: build_overview_summary(MIXED_TREE),
+    )
     return calls
 
 
@@ -352,6 +362,16 @@ class TestRouteOverHttp:
             tree_routes.process_service,
             "get_group_tree",
             lambda _pid: {"nodes": [dict(node) for node in MIXED_TREE]},
+        )
+        monkeypatch.setattr(
+            tree_routes.process_service,
+            "get_hidden_group_tree",
+            lambda _pid: {"nodes": prune_terminal_subtrees([dict(node) for node in MIXED_TREE])},
+        )
+        monkeypatch.setattr(
+            tree_routes.process_service,
+            "get_group_tree_overview_summary",
+            lambda _pid: build_overview_summary(MIXED_TREE),
         )
         return TestClient(app)
 
@@ -544,6 +564,16 @@ class TestOverviewSummary:
             tree_routes.process_service,
             "get_group_tree",
             lambda _pid: {"nodes": [dict(node) for node in MIXED_TREE]},
+        )
+        monkeypatch.setattr(
+            tree_routes.process_service,
+            "get_hidden_group_tree",
+            lambda _pid: {"nodes": prune_terminal_subtrees([dict(node) for node in MIXED_TREE])},
+        )
+        monkeypatch.setattr(
+            tree_routes.process_service,
+            "get_group_tree_overview_summary",
+            lambda _pid: build_overview_summary(MIXED_TREE),
         )
         return TestClient(app)
 
@@ -999,11 +1029,16 @@ def load_variants() -> dict:
     with _load_db() as conn:
         with patch.object(_conn, "STORE", _ReadOnlyStore(conn)):
             tree = process_service.get_group_tree(LOAD_PROJECT)
+            fast_tree = process_service.get_hidden_group_tree(LOAD_PROJECT)
+            fast_summary = process_service.get_group_tree_overview_summary(LOAD_PROJECT)
 
     nodes = tree["nodes"]
-    with patch.object(process_service, "get_group_tree", lambda _pid: {"nodes": list(nodes)}):
-        full = tree_routes.get_groups_tree(LOAD_PROJECT, include_terminal=True)
-        pruned = tree_routes.get_groups_tree(LOAD_PROJECT, include_terminal=False)
+    assert fast_tree["nodes"] == prune_terminal_subtrees(nodes)
+    assert fast_summary == build_overview_summary(nodes)
+    with patch.object(process_service, "get_group_tree", lambda _pid: {"nodes": list(nodes)}), \
+         patch.object(process_service, "get_hidden_group_tree", lambda _pid: fast_tree):
+        full = tree_routes.get_groups_tree(LOAD_PROJECT, include_terminal=True, include_summary=False)
+        pruned = tree_routes.get_groups_tree(LOAD_PROJECT, include_terminal=False, include_summary=False)
 
     def _bytes(body: dict) -> int:
         # UTF-8 bytes of the serialized response — what actually travels the wire.
@@ -1015,8 +1050,44 @@ def load_variants() -> dict:
         "full_bytes": _bytes(full),
         "pruned_bytes": _bytes(pruned),
     }
-
-
+
+def test_hidden_memo_scope_and_latest_created_contract():
+    """T0006 §10: scoped SQL returns latest visible memo, skips terminal docs,
+    while the unchanged full-tree path retains both documents' memo payloads."""
+    from unittest.mock import patch
+
+    from modules.flow_gate import process_service
+    from modules.flow_gate.db import connection as _conn
+    from modules.flow_gate.db import events as db_events
+
+    hidden_doc = f"{LOAD_PROJECT}.default.0000.0000-R"
+    visible_doc = f"{LOAD_PROJECT}.default.0001.0000-R"
+    now = datetime.now(timezone.utc).isoformat()
+    with _load_db() as conn:
+        conn.executemany(
+            "INSERT INTO events (doc_id, event_type, memo_file, created_at) VALUES (?, ?, ?, ?)",
+            [
+                (visible_doc, "created", "visible-old.md", now),
+                (visible_doc, "created", "visible-latest.md", now),
+                (visible_doc, "updated", "ignored-update.md", now),
+                (hidden_doc, "created", "terminal-hidden.md", now),
+            ],
+        )
+        conn.commit()
+        with patch.object(_conn, "STORE", _ReadOnlyStore(conn)):
+            scoped = db_events.get_created_memo_files_map_by_doc_ids([visible_doc, visible_doc])
+            hidden = process_service.get_hidden_group_tree(LOAD_PROJECT)["nodes"]
+            full = process_service.get_group_tree(LOAD_PROJECT)["nodes"]
+
+    assert scoped == {visible_doc: "visible-latest.md"}
+    hidden_by_id = {node["id"]: node for node in hidden}
+    full_by_id = {node["id"]: node for node in full}
+    assert hidden_by_id[visible_doc]["filename"] == "visible-latest.md"
+    assert hidden_doc not in hidden_by_id
+    assert full_by_id[visible_doc]["filename"] == "visible-latest.md"
+    assert full_by_id[hidden_doc]["filename"] == "terminal-hidden.md"
+
+
 class TestLoadScaleVariants:
     def test_the_fixture_is_the_load_shape_with_a_stated_terminal_mix(self, load_variants):
         nodes = load_variants["full_nodes"]

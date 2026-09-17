@@ -547,11 +547,18 @@ def get_groups_tree(
     parameter (explorer.ts fetchGroupTree) — see `_get_raw_tree_nodes`'s docstring for the
     freshness guarantee it carries.
     """
-    raw_nodes = _get_raw_tree_nodes(project_id, force=force)
-    nodes = raw_nodes if include_terminal else prune_terminal_subtrees(raw_nodes)
+    if include_terminal:
+        raw_nodes = _get_raw_tree_nodes(project_id, force=force)
+        nodes = raw_nodes
+    else:
+        nodes = process_service.get_hidden_group_tree(project_id).get("nodes") or []
     data: dict = {"nodes": nodes}
     if include_summary:
-        data["overview_summary"] = build_overview_summary(raw_nodes)
+        data["overview_summary"] = (
+            build_overview_summary(raw_nodes)
+            if include_terminal
+            else process_service.get_group_tree_overview_summary(project_id)
+        )
     return {"data": data}
 
 
