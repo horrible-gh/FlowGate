@@ -1696,6 +1696,14 @@ _ENCODING_GUARD_COPY = {
             "보내세요. 정말 이대로 보내야 하면 force_encoding_reason에 사유(공백 제외 "
             "10자 이상)를 적어 다시 보내세요."
         ),
+        # 0474 T0007 §1.1: review has no force bypass -- this variant drops the
+        # force_encoding_reason escape hatch entirely instead of describing one that
+        # no longer works.
+        "corrupted_no_force": (
+            "{field} 항목이 깨진 글자(예: ??????)로 보입니다. 본문을 UTF-8 파일로 다시 "
+            "작성해 그 파일에서 글자 수와 해시(body_chars/body_sha256)를 구한 다음 "
+            "doc_path로 다시 제출하세요. 문자깨짐 상태로는 등록할 수 없습니다."
+        ),
     },
     "en": {
         "fingerprint_mismatch": (
@@ -1713,6 +1721,12 @@ _ENCODING_GUARD_COPY = {
             "as-is, add a reason (at least 10 non-whitespace characters) in "
             "force_encoding_reason and resend."
         ),
+        "corrupted_no_force": (
+            "The {field} field looks like corrupted characters (e.g. ??????). Rewrite "
+            "the body as a UTF-8 file, compute the character count and hash "
+            "(body_chars/body_sha256) from that file, then resubmit it as a doc_path. "
+            "Corrupted content cannot be registered as-is."
+        ),
     },
     "ja": {
         "fingerprint_mismatch": (
@@ -1728,6 +1742,12 @@ _ENCODING_GUARD_COPY = {
             "body_sha256)を求めて再送してください。どうしてもこのまま送る必要がある場合"
             "は、force_encoding_reasonに理由(空白を除いて10文字以上)を記入して再送して"
             "ください。"
+        ),
+        "corrupted_no_force": (
+            "{field} 項目が文字化け(例: ??????)しているように見えます。本文を先にUTF-8"
+            "ファイルとして書き直し、そのファイルから文字数とハッシュ(body_chars/"
+            "body_sha256)を求めてdoc_pathとして再提出してください。文字化けした状態の"
+            "ままでは登録できません。"
         ),
     },
 }
@@ -1748,6 +1768,7 @@ def _encoding_guard(
     force_encoding_reason: Optional[str],
     locale: str = "ko",
     fingerprint_bypasses_corruption: bool = True,
+    allow_force_bypass: bool = True,
 ) -> Optional[JSONResponse]:
     from modules.flow_gate.services import workflow_decision_service as _wf_decision
 
@@ -1777,14 +1798,18 @@ def _encoding_guard(
 
     # Fingerprint mismatches are rejected above unconditionally -- force only ever
     # reaches a corruption signal on text whose fingerprint (if any) already matched.
+    # 0474 T0007 §1.1: allow_force_bypass=False (review) skips this escape hatch
+    # entirely -- corruption always falls through to the loop below regardless of
+    # force_encoding_reason's length or content.
     reason = (force_encoding_reason or "").strip()
-    if len(reason.replace(" ", "")) >= 10:
+    if allow_force_bypass and len(reason.replace(" ", "")) >= 10:
         return None
 
+    corrupted_key = "corrupted" if allow_force_bypass else "corrupted_no_force"
     for name, value in check_fields.items():
         if _wf_decision._text_is_corrupted(value):
             display_name = labels.get(name, name)
-            return _fail(422, copy["corrupted"].format(field=display_name))
+            return _fail(422, copy[corrupted_key].format(field=display_name))
     return None
 
 
@@ -2802,6 +2827,9 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
         force_encoding_reason=body.get("force_encoding_reason"),
         locale=_locale,
         fingerprint_bypasses_corruption=False,
+        # 0474 T0007 §1.1 (NR0006 §2/§13.1): review is the one path where an AI-authored
+        # force_encoding_reason can never bypass a real corruption signal.
+        allow_force_bypass=False,
     )
     if _review_encoding_fail is not None:
         return _review_encoding_fail
@@ -2844,6 +2872,14 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
             force_encoding_reason=body.get("force_encoding_reason"),
             fingerprint_bypasses_corruption=False,
         )
+        # 0474 T0007 §1.3: second, independent fail-closed layer. Step 5.9 above
+        # (§1.1, allow_force_bypass=False) already rejects a corrupted review before
+        # this point is ever reached, but this refuses to mint a receipt on the same
+        # corruption_detected fact too -- so a future caller of issue() outside this
+        # route, or a regression in the Step 5.9 guard, still cannot make it durable.
+        if _review_validation.get("corruption_detected"):
+            _display_name = _ENCODING_FIELD_LABELS[_locale].get("body", "body")
+            return _fail(422, _ENCODING_GUARD_COPY[_locale]["corrupted_no_force"].format(field=_display_name))
         issued = review_receipt_service.issue(
             token_rec=token_rec, project_id=project, group_id=token_rec.get("group_id"),
             doc_id=doc_id, revision_no=revision_no, identity=receipt_identity,

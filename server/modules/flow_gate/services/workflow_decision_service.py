@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json as _json
 import logging
+import re
 from typing import Optional
 
 from modules.flow_gate.db import documents as db_documents
@@ -471,11 +472,23 @@ CONTINUATION_TO_END = -1
 _CORRUPT_MIN_MARKS = 2
 _CORRUPT_RATIO = 0.5
 
+# 0474 T0007 §1.2 (NR0006 §5.1/§5.2): a run of 4+ consecutive '?' is corruption on its
+# own, independent of the isascii()/ratio checks below. Those checks alone miss two
+# real cases: (a) a line that still carries live non-ASCII text (Hangul/Japanese/
+# emoji) alongside a corrupted run -- isascii() is False so the whole line was exempt;
+# (b) a pure-ASCII line where the corrupted run is diluted by enough surrounding text
+# that the run/visible-char ratio never reaches 0.5. "왜 실패했지???" (3 marks) stays
+# clean; the T0007 corpus's corrupted examples all carry 4+ consecutive marks.
+_CORRUPT_RUN_LENGTH = 4
+_CORRUPT_RUN_RE = re.compile(r"\?{" + str(_CORRUPT_RUN_LENGTH) + r",}")
+
 
 def _label_is_corrupted(label: Optional[str]) -> bool:
     """True when ``label`` looks like ascii-replace mojibake (Hangul lost to '?')."""
     if not label:
         return False
+    if _CORRUPT_RUN_RE.search(label):
+        return True
     if not label.isascii():
         return False  # real multibyte text survived — not the ascii-replace signature
     marks = label.count("?")

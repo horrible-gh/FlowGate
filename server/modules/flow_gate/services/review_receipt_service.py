@@ -52,8 +52,23 @@ def encoding_provenance(validation: dict) -> str:
     return json.dumps(data, sort_keys=True, separators=(",", ":"))
 
 
+class CorruptedReviewError(ValueError):
+    """issue() refused to mint a receipt for corrupted review content.
+
+    0474 T0007 §1.3: a second, independent fail-closed layer -- inbox_routes already
+    refuses to call issue() once validation["corruption_detected"] is true (Step 5.9
+    + the dry-run block both check it), but this means issue() itself can never mint
+    one even if a future caller skips that check or those guards regress.
+    """
+
+
 def issue(*, token_rec: dict, project_id: str, group_id: Optional[str], doc_id: str,
           revision_no: int, identity: str, validation: dict) -> dict:
+    if validation.get("corruption_detected"):
+        raise CorruptedReviewError(
+            "cannot issue a review receipt for corrupted content "
+            "(validation.corruption_detected=True)"
+        )
     issued_at = now_iso()
     receipt_id = secrets.token_urlsafe(32)
     # A receipt can never outlive its bearer token. Normalized to now_iso()'s tz/format

@@ -236,18 +236,21 @@ def test_ac3_missing_fingerprint_is_consistently_false(env):
     assert audit["fingerprint_matched"] is False
 
 
-# ── AC-4: corruption + valid force ───────────────────────────────────────────────────
+# ── AC-4: corruption + valid force is now fail-closed (0474 T0007 §1.1/§1.3) ─────────
+# force_encoding_reason used to let a corrupted review dry-run through and report
+# corruption_detected=True/force_used=True as if that were a safe, audited bypass --
+# that reported-but-allowed shape was exactly the hole NR0006 found. Review now rejects
+# it outright at Step 5.9 (allow_force_bypass=False) and never reaches the point where
+# a receipt could be minted.
 
-def test_ac4_corruption_with_valid_force_reports_both_true(env):
+def test_ac4_corruption_with_valid_force_is_rejected_and_mints_no_receipt(env):
     response = post_inbox(_dry_run_body(
         comment=CORRUPT,
         force_encoding_reason="검토자가 원문의 물음표 표현을 확인했습니다",
     ))
 
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    assert payload["validation"]["corruption_detected"] is True
-    assert payload["validation"]["force_used"] is True
+    assert response.status_code == 422, response.text
+    assert env["db"].fetch_all("SELECT * FROM review_dry_run_receipts") == []
 
 
 # ── AC-5: normal payload, force unused (and force reason present but not needed) ────
