@@ -54,7 +54,7 @@ describe('GitStatusPanel resolve_conflict lease admission (0447)', () => {
     const wrapper = await mountOpen()
     wrapper.findComponent(GitConflictResolverDialog).vm.$emit('copy-mention')
     await flushPromises()
-    expect(showToast).toHaveBeenCalledWith(DETAIL, 'danger')
+    expect(showToast).toHaveBeenCalledWith('Git finalize failed', 'danger')
     expect(wrapper.findComponent(GitConflictResolverDialog).props('busy')).toBe(false)
     wrapper.unmount()
   })

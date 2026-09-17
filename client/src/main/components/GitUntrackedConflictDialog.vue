@@ -84,6 +84,7 @@ import AppIcon from '@shared/AppIcon.vue'
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
+import { resolveGitError } from '@shared/gitErrors'
 
 const { t } = useI18n()
 
@@ -189,7 +190,7 @@ async function choose(mode: 'commit' | 'revert' | 'remove') {
       ;({ data } = await postRequest<GitResp>(url, { files: actionFiles }))
     }
     if (data.ok === false) {
-      errorMsg.value = data.error?.message || t('main.git_finalize.failed')
+      errorMsg.value = resolveGitError(data, t, 'main.git_finalize.failed')
       busy.value = false
       return
     }
@@ -225,7 +226,7 @@ async function choose(mode: 'commit' | 'revert' | 'remove') {
       }
     }
   } catch (e: any) {
-    errorMsg.value = e?.response?.data?.error?.message || t('main.git_finalize.failed')
+    errorMsg.value = resolveGitError(e, t, 'main.git_finalize.failed')
     busy.value = false
   }
 }

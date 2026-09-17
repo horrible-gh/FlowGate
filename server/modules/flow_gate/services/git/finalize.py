@@ -536,7 +536,7 @@ def update_from_base(group_id: str) -> dict:
             username=username, secret=secret,
         )
         if proc.returncode != 0:
-            raise GitServiceError(500, "git_error", _gs._last_line(proc.stderr))
+            raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
         if _gs._ref_exists(base_root, f"refs/remotes/origin/{base_branch}"):
             proc = _gs._run_git(["merge", "--ff-only", f"origin/{base_branch}"], cwd=base_root)
             if proc.returncode != 0:
@@ -546,7 +546,7 @@ def update_from_base(group_id: str) -> dict:
                         500, "base_diverged",
                         "base checkout has local-only commits and cannot fast-forward",
                     )
-                raise GitServiceError(500, "git_error", _gs._last_line(proc.stderr))
+                raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
 
         _absorb_worker_edits(
             wt_path, f"chore: preserve {group_id} work before base update",
@@ -586,7 +586,7 @@ def update_from_base(group_id: str) -> dict:
                     "conflict_files": conflicts,
                 }}
             _gs._run_git(["merge", "--abort"], cwd=wt_path)
-            raise GitServiceError(500, "git_error", _gs._last_line(proc.stderr))
+            raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
         after = _gs._run_git(["rev-parse", "HEAD"], cwd=wt_path)
         changed = (before.stdout or "").strip() != (after.stdout or "").strip()
         return {"ok": True, "result": {
@@ -653,7 +653,7 @@ def group_update_untracked_recover(
                 raise GitServiceError(422, "invalid_request", "remove accepts untracked files only")
             proc = _gs._run_git(["clean", "-f", "-q", "--", *cleaned], cwd=wt_path)
         if proc.returncode != 0:
-            raise GitServiceError(500, "git_error", _gs._last_line(proc.stderr))
+            raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
         return {"ok": True, "result": {
             "action": action, "files": cleaned, "scope": "group",
             "remaining_untracked": _untracked_files(wt_path),
@@ -842,7 +842,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
                 cwd=wt_path, timeout=_gs.GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
             )
             if proc.returncode != 0:
-                raise GitServiceError(500, "push_rejected", _gs._last_line(proc.stderr))
+                raise GitServiceError(500, "push_rejected", "Git push was rejected", diagnostic=_gs._last_line(proc.stderr))
             _gs._set_status(group_id, "pushed")
             # 0182 NR0003 §5: drop the slot leftovers right away (origin keeps
             # the pushed branch; only the local worktree/ref/ledger go).
@@ -881,7 +881,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
         )
         if proc.returncode != 0:
-            raise GitServiceError(500, "git_error", _gs._last_line(proc.stderr))
+            raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
         if _gs._ref_exists(base_root, f"refs/remotes/origin/{base_branch}"):
             proc = _gs._run_git(["merge", "--ff-only", f"origin/{base_branch}"], cwd=base_root)
             if proc.returncode != 0:
@@ -909,7 +909,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
                     # E6 — atomicity: never report merged unless the push landed.
                     _gs._run_git(["reset", "--hard", "ORIG_HEAD"], cwd=base_root)
                     _gs._set_status(group_id, "waiting")
-                    raise GitServiceError(500, "push_rejected", _gs._last_line(push.stderr))
+                    raise GitServiceError(500, "push_rejected", "Git push was rejected", diagnostic=_gs._last_line(push.stderr))
             head = _gs._run_git(["rev-parse", "--short", "HEAD"], cwd=base_root)
             merge_commit = (head.stdout or "").strip() or None
             _gs._set_status(group_id, "merged", merge_commit=merge_commit)
@@ -952,7 +952,7 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
                     "checkout; commit or remove them, then retry",
                     details={"files": blockers},
                 )
-            raise GitServiceError(500, "git_error", _gs._last_line(proc.stderr))
+            raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
         # 0481 D0006 §3.4 / L0007 §2.1: the review gate's `resolver_baseline` and its
         # eventual `expected_remote_head` CAS-push condition both need the exact
         # inputs this merge attempt started from, captured now while MERGE_HEAD is
@@ -1117,7 +1117,7 @@ def manual_push(project_id: str, branch: Optional[str]) -> dict:
             username=cfg.get("username"), secret=_gs._load_secret_for(cfg) or "",
         )
         if proc.returncode != 0:
-            raise GitServiceError(500, "push_rejected", _gs._last_line(proc.stderr))
+            raise GitServiceError(500, "push_rejected", "Git push was rejected", diagnostic=_gs._last_line(proc.stderr))
         ahead, behind = _gs._base_ahead_behind(cwd, base_branch) if pushes_base else (None, None)
         if pushes_base:
             _gs._emit_pending_changed(project_id, None, None)
@@ -1214,13 +1214,13 @@ def unmerge(group_id: str, merge_commit: str) -> dict:
         else:
             proc = _gs._run_git(["branch", branch, f"{top['full_sha']}^2"], cwd=base_root)
             if proc.returncode != 0:
-                raise GitServiceError(500, "git_error", _gs._last_line(proc.stderr))
+                raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
 
         _gs._set_status(group_id, "awaiting_choice")
         reset = _gs._run_git(["reset", "--hard", f"{top['full_sha']}^1"], cwd=base_root)
         if reset.returncode != 0:
             _gs._set_status(group_id, "merged", merge_commit=ledger_sha)
-            raise GitServiceError(500, "git_error", _gs._last_line(reset.stderr))
+            raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(reset.stderr))
         base_head = _short_head(base_root)
     finally:
         _gs.db_git.release_lock(project_id, holder)

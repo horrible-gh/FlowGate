@@ -265,12 +265,12 @@ def _stage_worker_edits(wt_path: Path) -> tuple[list[str], bool]:
     )
     proc = _gs._run_git(["add", "-u"], cwd=wt_path)
     if proc.returncode != 0:
-        raise GitServiceError(500, "git_error", _gs._last_line(proc.stderr))
+        raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
     for index in range(0, len(kept), _ADD_PATHSPEC_CHUNK):
         chunk = kept[index:index + _ADD_PATHSPEC_CHUNK]
         proc = _gs._run_git(["add", "--", *chunk], cwd=wt_path)
         if proc.returncode != 0:
-            raise GitServiceError(500, "git_error", _gs._last_line(proc.stderr))
+            raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
     staged = _gs._run_git(["diff", "--cached", "--quiet"], cwd=wt_path)
     return artifacts, staged.returncode != 0
 
@@ -320,7 +320,7 @@ def _absorb_worker_edits(
         [*_gs._GIT_IDENT, "commit", "-m", subject], cwd=wt_path, author_env=author_env
     )
     if proc.returncode != 0:
-        raise GitServiceError(500, "git_error", _gs._last_line(proc.stderr))
+        raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
     return artifacts
 
 

@@ -1018,7 +1018,7 @@ def read_group_tree(project_id: str, group_id: str) -> dict:
         ["ls-tree", "-r", "-z", commit], cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC
     )
     if proc.returncode != 0:
-        raise GitServiceError(500, "git_error", _one_line_subject(proc.stderr) or "ls-tree failed")
+        raise GitServiceError(500, "git_error", "Git tree lookup failed", diagnostic=_one_line_subject(proc.stderr))
     visible_files: list[str] = []
     for record in (proc.stdout or "").split("\0"):
         if not record:
@@ -1773,18 +1773,18 @@ def _freeze_commit_candidate(base_root: Path, base_branch: str) -> dict:
     expected_remote_head = _rev_parse(base_root, f"refs/remotes/origin/{base_branch}")
     write_tree = _run_git(["write-tree"], cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC)
     if write_tree.returncode != 0:
-        raise GitServiceError(500, "git_error", _last_line(write_tree.stderr))
+        raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_last_line(write_tree.stderr))
     snapshot_tree = (write_tree.stdout or "").strip()
     ls = _run_git(["ls-tree", "-r", "-z", snapshot_tree], cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC)
     if ls.returncode != 0:
-        raise GitServiceError(500, "git_error", _last_line(ls.stderr))
+        raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_last_line(ls.stderr))
     manifest = _parse_ls_tree_z(ls.stdout or "")
     diff_proc = _run_git(
         ["diff", "--name-status", "-M", "-z", base_head or "", snapshot_tree, "--"],
         cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC,
     )
     if diff_proc.returncode != 0:
-        raise GitServiceError(500, "git_error", _last_line(diff_proc.stderr))
+        raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_last_line(diff_proc.stderr))
     changes = _parse_name_status_manifest(diff_proc.stdout or "")
     fingerprint = _compute_review_fingerprint(base_head, merge_head, expected_remote_head, manifest)
     return {
@@ -2219,7 +2219,7 @@ def submit_review_write_plan(group_id: str, merge_id: int, *, plan: dict, ai_run
 def _tree_manifest_map(base_root: Path, tree: str) -> dict[str, dict]:
     ls = _run_git(["ls-tree", "-r", "-z", tree], cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC)
     if ls.returncode != 0:
-        raise GitServiceError(500, "git_error", _last_line(ls.stderr))
+        raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_last_line(ls.stderr))
     return {entry["path"]: entry for entry in _parse_ls_tree_z(ls.stdout or "")}
 
 
@@ -2241,7 +2241,7 @@ def _git_hash_object_write(base_root: Path, content: bytes) -> str:
     except subprocess.TimeoutExpired:
         raise GitServiceError(500, "git_error", "hash-object timed out")
     if proc.returncode != 0:
-        raise GitServiceError(500, "git_error", _last_line((proc.stderr or b"").decode("utf-8", "replace")))
+        raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_last_line((proc.stderr or b"").decode("utf-8", "replace")))
     return proc.stdout.decode("ascii", "strict").strip()
 
 

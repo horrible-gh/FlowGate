@@ -2609,6 +2609,21 @@ export default {
       tool_artifacts: 'ツールが残した痕跡 {n}件',
       tool_artifacts_note: 'テスト・ビルドが作った一時ファイルのため、変更一覧から除いています。コミットにも入りません。',
     },
+    git_errors: {
+      network: 'サーバーに接続できません。接続を確認してから再試行してください。',
+      generic: 'Git 操作に失敗しました。もう一度お試しください。',
+      base_dirty: 'ベースのチェックアウトにコミットされていない変更があります。',
+      base_untracked_conflict: 'ベースの未追跡ファイルがこの操作と競合しています。',
+      dirty_worktree: '作業ツリーにコミットされていない変更があります（{n} ファイル）。',
+      git_busy: '別の Git 操作が進行中です。',
+      git_unavailable: 'サーバーで Git を利用できません。',
+      review_not_found: 'マージレビューが見つかりません。',
+      review_not_ready: 'マージレビューはこの操作を実行できる状態ではありません。',
+      restoration_verification_failed: '復元したファイルを検証できませんでした。',
+      forbidden: 'この Git 操作を実行する権限がありません。',
+      invalid_state: '現在の状態ではこの Git 操作を実行できません。',
+      invalid_request: 'Git リクエストが正しくありません。',
+    },
     git_finalize: {
       // 0382 NR0003 proposal 1 — temporary artifacts excluded from the finalize commit.
       excluded_artifacts: 'コミットから除外した一時生成物 {n}件',

@@ -119,6 +119,7 @@ import AppIcon from '@shared/AppIcon.vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
+import { resolveGitError } from '@shared/gitErrors'
 import { useExplorerStore } from '../stores/explorer'
 import { useProjectStore } from '../stores/project'
 import { useTabsStore } from '../stores/tabs'
@@ -259,7 +260,7 @@ async function runFinalize(item: Pending, retried: boolean): Promise<void> {
     )
     if (data.ok === false) {
       if (!retried && (await handleFinalizeConflict(data.error))) return runFinalize(item, true)
-      showToast(data.error?.message || t('main.git_finalize.failed'), 'danger')
+      showToast(resolveGitError(data, t, 'main.git_finalize.failed'), 'danger')
     } else {
       const r = data.result
       if (r?.status === 'conflict') {
@@ -277,7 +278,7 @@ async function runFinalize(item: Pending, retried: boolean): Promise<void> {
   } catch (e: any) {
     const err = e?.response?.data?.error
     if (!retried && (await handleFinalizeConflict(err))) return runFinalize(item, true)
-    showToast(err?.message || t('main.git_finalize.failed'), 'danger')
+    showToast(resolveGitError(err, t, 'main.git_finalize.failed'), 'danger')
   }
 }
 

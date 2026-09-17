@@ -609,6 +609,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
+import { resolveGitError } from '@shared/gitErrors'
 import { useToast } from './common/useToast'
 import { useExplorerStore } from '../stores/explorer'
 import { useAiProviderStore } from '../stores/aiProvider'
@@ -901,7 +902,7 @@ async function commitTrConflict(slot: Slot) {
     collapseResolve()
   } catch (e: any) {
     showToast(
-      e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger',
+      resolveGitError(e, t, 'main.git_finalize.failed'), 'danger',
     )
   } finally {
     busy.value = false
@@ -922,7 +923,7 @@ async function abortTrConflict(slot: Slot) {
     collapseResolve()
   } catch (e: any) {
     showToast(
-      e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger',
+      resolveGitError(e, t, 'main.git_finalize.failed'), 'danger',
     )
   } finally {
     busy.value = false
@@ -951,7 +952,7 @@ async function doReapply(slot: Slot) {
       showToast(t('main.git_status.tr_commits.reapply_none'), 'warning')
     }
   } catch (e: any) {
-    showToast(e?.response?.data?.detail ?? t('main.git_status.failed'), 'danger')
+    showToast(resolveGitError(e, t, 'main.git_status.failed'), 'danger')
   } finally {
     reapplyBusy.value = null
     // 성공이든 차단이든 원장이 움직였을 수 있다 — 목록과 배지를 다시 읽는다.
@@ -1344,7 +1345,7 @@ async function runFinalize(groupId: string, payload: { action: string; commit_me
             ? t('main.git_finalize.dirty_push_blocked', {
                 n: Array.isArray(err?.details?.files) ? err.details.files.length : 0,
               })
-            : err?.message || t('main.git_finalize.failed')
+            : resolveGitError(err, t, 'main.git_finalize.failed')
         showToast(msg, 'danger')
       }
       return
@@ -1367,7 +1368,7 @@ async function runFinalize(groupId: string, payload: { action: string; commit_me
   } catch (e: any) {
     const err = e?.response?.data?.error
     if (!handleBaseDirty(groupId, payload, err)) {
-      showToast(err?.message || t('main.git_finalize.failed'), 'danger')
+      showToast(resolveGitError(err, t, 'main.git_finalize.failed'), 'danger')
     }
   }
 }
@@ -1422,7 +1423,7 @@ async function doBaseCommit() {
       msg ? { message: msg } : {},
     )
     if (data.ok === false) {
-      showToast(data.error?.message || t('main.git_status.failed'), 'danger')
+      showToast(resolveGitError(data, t, 'main.git_status.failed'), 'danger')
       return
     }
     const r = data.result
@@ -1443,7 +1444,7 @@ async function doBaseCommit() {
       await runFinalize(groupId, payload)
     }
   } catch (e: any) {
-    showToast(e?.response?.data?.error?.message || t('main.git_status.failed'), 'danger')
+    showToast(resolveGitError(e, t, 'main.git_status.failed'), 'danger')
   } finally {
     busy.value = false
     await fetchStatus()
@@ -1479,7 +1480,7 @@ async function doCommitUntracked() {
       body,
     )
     if (data.ok === false) {
-      showToast(data.error?.message || t('main.git_status.failed'), 'danger')
+      showToast(resolveGitError(data, t, 'main.git_status.failed'), 'danger')
       return
     }
     const r = data.result
@@ -1515,7 +1516,7 @@ async function doCommitUntracked() {
         'danger',
       )
     } else {
-      showToast(err?.message || t('main.git_status.failed'), 'danger')
+      showToast(resolveGitError(err, t, 'main.git_status.failed'), 'danger')
     }
   } finally {
     busy.value = false
@@ -1541,7 +1542,7 @@ async function doRemoveUntracked() {
       { files: targets },
     )
     if (data.ok === false) {
-      showToast(data.error?.message || t('main.git_status.failed'), 'danger')
+      showToast(resolveGitError(data, t, 'main.git_status.failed'), 'danger')
       return
     }
     const r = data.result
@@ -1550,7 +1551,7 @@ async function doRemoveUntracked() {
     const remainingUntracked: string[] = Array.isArray(r?.remaining_untracked) ? r.remaining_untracked : []
     await resumeIfUntrackedCleared(remainingUntracked)
   } catch (e: any) {
-    showToast(e?.response?.data?.error?.message || t('main.git_status.failed'), 'danger')
+    showToast(resolveGitError(e, t, 'main.git_status.failed'), 'danger')
   } finally {
     busy.value = false
     await fetchStatus()
@@ -1566,7 +1567,7 @@ async function doBaseRevert(file: string) {
       { files: [file] },
     )
     if (data.ok === false) {
-      showToast(data.error?.message || t('main.git_status.failed'), 'danger')
+      showToast(resolveGitError(data, t, 'main.git_status.failed'), 'danger')
       return
     }
     const remaining: string[] = Array.isArray(data.result?.remaining) ? data.result.remaining : []
@@ -1574,7 +1575,7 @@ async function doBaseRevert(file: string) {
     explorerStore.setBaseDirtyFiles(props.projectId, remaining) // badge trigger 3/4
     showToast(t('main.git_status.base_revert_done', { file }), 'success')
   } catch (e: any) {
-    showToast(e?.response?.data?.error?.message || t('main.git_status.failed'), 'danger')
+    showToast(resolveGitError(e, t, 'main.git_status.failed'), 'danger')
   } finally {
     busy.value = false
     await fetchStatus()
@@ -1649,7 +1650,7 @@ async function openResolve(groupId: string) {
     conflictFiles.value = (data.files || []).map(initConflictFile)
     conflictLoadStatus.value = 'ready'
   } catch (e: any) {
-    conflictError.value = e?.response?.data?.error?.message || t('main.git_finalize.failed')
+    conflictError.value = resolveGitError(e, t, 'main.git_finalize.failed')
     conflictLoadStatus.value = 'error'
   }
 }
@@ -1670,7 +1671,7 @@ async function submitResolveInline(p: ConflictTarget | null, auto: boolean) {
       },
     )
     if (data.ok === false) {
-      conflictError.value = data.error?.message || t('main.git_finalize.failed')
+      conflictError.value = resolveGitError(data, t, 'main.git_finalize.failed')
     } else if (data.result?.status === 'merged') {
       const key = data.result?.pushed === false ? 'main.git_finalize.merged_local_toast' : 'main.git_finalize.merged_toast'
       showToast(t(key, { commit: data.result.merge_commit || '' }), 'success')
@@ -1710,7 +1711,7 @@ async function submitResolveInline(p: ConflictTarget | null, auto: boolean) {
       showToast(conflictError.value, 'danger')
     }
   } catch (e: any) {
-    conflictError.value = e?.response?.data?.error?.message || t('main.git_finalize.failed')
+    conflictError.value = resolveGitError(e, t, 'main.git_finalize.failed')
   } finally {
     busy.value = false
     await fetchStatus()
@@ -1790,7 +1791,7 @@ async function invokeConflictAi(p: ConflictTarget | null, message?: string, auto
     })
     showToast(t('main.git_finalize.conflict_ai_started'), 'success')
   } catch (e: any) {
-    showToast(e?.response?.data?.message || e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')
+    showToast(resolveGitError(e, t, 'main.git_finalize.failed'), 'danger')
   } finally {
     busy.value = false
     conflictAiStarting.value = null
@@ -1878,7 +1879,7 @@ async function invokeBaseDirtyAi() {
     const key = known[code as string]
     const message = key
       ? t(`main.git_status.${key}`)
-      : data.message || data.error?.message || t('main.git_status.base_ai_failed')
+      : resolveGitError(data, t, 'main.git_status.base_ai_failed')
     baseAiError.value = message
     showToast(message, 'danger')
   } finally {
@@ -1907,8 +1908,7 @@ async function copyConflictMention(p: ConflictTarget | null) {
   } catch (e: any) {
     // A stale conflict card can point at a non-open merge session; the server now
     // returns the git envelope {ok:false,error:{message}} (0233 B0001) instead of a
-    // bodyless 500, so surface error.message like the other git actions do.
-    showToast(e?.response?.data?.error?.message || e?.response?.data?.detail || e?.message || t('main.git_finalize.failed'), 'danger')
+    showToast(resolveGitError(e, t, 'main.git_finalize.failed'), 'danger')
   } finally {
     busy.value = false
   }
@@ -1922,7 +1922,7 @@ async function abortInline(p: Pending) {
     showToast(t('main.git_finalize.aborted_toast'), 'success')
     collapseResolve()
   } catch (e: any) {
-    showToast(e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')
+    showToast(resolveGitError(e, t, 'main.git_finalize.failed'), 'danger')
   } finally {
     busy.value = false
     await fetchStatus()
@@ -1940,7 +1940,7 @@ async function doCleanup() {
       error?: any
     }>(`/api/v1/projects/${props.projectId}/git/cleanup`, {})
     if (data.ok === false) {
-      showToast(data.error?.message || t('main.git_status.failed'), 'danger')
+      showToast(resolveGitError(data, t, 'main.git_status.failed'), 'danger')
     } else {
       const cleaned = data.result?.cleaned?.length ?? 0
       const failed = data.result?.failed?.length ?? 0
@@ -1951,7 +1951,7 @@ async function doCleanup() {
       }
     }
   } catch (e: any) {
-    showToast(e?.response?.data?.error?.message || t('main.git_status.failed'), 'danger')
+    showToast(resolveGitError(e, t, 'main.git_status.failed'), 'danger')
   } finally {
     busy.value = false
     await fetchStatus()
@@ -1967,12 +1967,12 @@ async function doFetch() {
       {},
     )
     if (data.ok === false) {
-      showToast(data.error?.message || t('main.git_status.failed'), 'danger')
+      showToast(resolveGitError(data, t, 'main.git_status.failed'), 'danger')
     } else {
       showToast(t('main.git_status.fetch_done', { behind: data.result?.behind_count ?? 0 }), 'success')
     }
   } catch (e: any) {
-    showToast(e?.response?.data?.error?.message || t('main.git_status.failed'), 'danger')
+    showToast(resolveGitError(e, t, 'main.git_status.failed'), 'danger')
   } finally {
     busy.value = false
     await fetchStatus()
@@ -1988,12 +1988,12 @@ async function doPush(branch: string | null) {
       { branch },
     )
     if (data.ok === false) {
-      showToast(data.error?.message || t('main.git_status.failed'), 'danger')
+      showToast(resolveGitError(data, t, 'main.git_status.failed'), 'danger')
     } else {
       showToast(t('main.git_status.push_done', { branch: data.result?.branch || branch }), 'success')
     }
   } catch (e: any) {
-    showToast(e?.response?.data?.error?.message || t('main.git_status.failed'), 'danger')
+    showToast(resolveGitError(e, t, 'main.git_status.failed'), 'danger')
   } finally {
     busy.value = false
     await fetchStatus()
@@ -2014,7 +2014,7 @@ async function doUnmerge(m: UnpushedMerge) {
       { merge_commit: m.merge_commit },
     )
     if (data.ok === false) {
-      showToast(data.error?.message || t('main.git_status.failed'), 'danger')
+      showToast(resolveGitError(data, t, 'main.git_status.failed'), 'danger')
     } else {
       const key = data.result?.reprovisioned === false
         ? 'main.git_status.unmerge_reprovisioning'
@@ -2027,7 +2027,7 @@ async function doUnmerge(m: UnpushedMerge) {
       }
     }
   } catch (e: any) {
-    showToast(e?.response?.data?.error?.message || t('main.git_status.failed'), 'danger')
+    showToast(resolveGitError(e, t, 'main.git_status.failed'), 'danger')
   } finally {
     busy.value = false
     await fetchStatus()

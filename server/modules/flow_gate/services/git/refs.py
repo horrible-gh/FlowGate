@@ -143,7 +143,7 @@ def _ls_tree_entry(base_root: Path, commit: str, path: str) -> Optional[tuple[st
         ["ls-tree", "-z", commit, "--", path], cwd=base_root, timeout=_gs.GIT_READ_TIMEOUT_SEC
     )
     if proc.returncode != 0:
-        raise GitServiceError(500, "git_error", _gs._one_line_subject(proc.stderr) or "ls-tree failed")
+        raise GitServiceError(500, "git_error", "Git tree lookup failed", diagnostic=_gs._one_line_subject(proc.stderr))
     for record in (proc.stdout or "").split("\0"):
         if not record:
             continue
@@ -160,7 +160,7 @@ def _cat_file_size(base_root: Path, sha: str) -> int:
     from modules.flow_gate.services import git_service as _gs
     proc = _gs._run_git(["cat-file", "-s", sha], cwd=base_root, timeout=_gs.GIT_READ_TIMEOUT_SEC)
     if proc.returncode != 0:
-        raise GitServiceError(500, "git_error", _gs._one_line_subject(proc.stderr) or "cat-file failed")
+        raise GitServiceError(500, "git_error", "Git object lookup failed", diagnostic=_gs._one_line_subject(proc.stderr))
     try:
         return int((proc.stdout or "0").strip())
     except ValueError:

@@ -277,6 +277,7 @@ import AppIcon from '@shared/AppIcon.vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
+import { resolveGitError } from '@shared/gitErrors'
 import { useProjectStore } from '../stores/project'
 import { useAiProviderStore } from '../stores/aiProvider'
 import { isScreenOwnedRun, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
@@ -501,7 +502,7 @@ async function fetchConflicts(mergeId: number) {
     conflictLoadStatus.value = 'ready'
   } catch (e: any) {
     conflictFiles.value = []
-    conflictError.value = e?.response?.data?.error?.message || t('main.git_finalize.load_failed')
+    conflictError.value = resolveGitError(e, t, 'main.git_finalize.load_failed')
     conflictLoadStatus.value = 'error'
   }
 }
@@ -594,7 +595,7 @@ async function invokeConflictAi(message: string, auto: boolean) {
     })
     showToast(t('main.git_finalize.conflict_ai_started'), 'success')
   } catch (e: any) {
-    showToast(e?.response?.data?.message || e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')
+    showToast(resolveGitError(e, t, 'main.git_finalize.failed'), 'danger')
   } finally {
     busy.value = false
     conflictAiStarting.value = false
@@ -616,7 +617,7 @@ async function copyConflictMention() {
     await copyToClipboard(data.mention)
     showToast(t('main.git_finalize.conflict_mention_copied'), 'success')
   } catch (e: any) {
-    showToast(e?.response?.data?.detail || e?.message || t('main.git_finalize.failed'), 'danger')
+    showToast(resolveGitError(e, t, 'main.git_finalize.failed'), 'danger')
   } finally {
     busy.value = false
   }
@@ -647,7 +648,7 @@ async function runFinalize() {
     if (showCommitInput.value) payload.commit_message = commitMessage.value.trim()
     await postFinalize(payload, false)
   } catch (e: any) {
-    showToast(e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')
+    showToast(resolveGitError(e, t, 'main.git_finalize.failed'), 'danger')
   } finally {
     busy.value = false
     await fetchState()
@@ -696,7 +697,7 @@ function finalizeErrorMessage(err: any): string {
     const n = Array.isArray(err?.details?.files) ? err.details.files.length : 0
     return t('main.git_finalize.dirty_push_blocked', { n })
   }
-  return err?.message || t('main.git_finalize.failed')
+  return resolveGitError(err, t, 'main.git_finalize.failed')
 }
 
 // 0177 0007-CH: mirror GitActionMenu — the E3 base_dirty 409 is never auto-
@@ -757,7 +758,7 @@ async function submitResolve(auto: boolean) {
       },
     )
     if (data.ok === false) {
-      outcome = data.error?.message || t('main.git_finalize.failed')
+      outcome = resolveGitError(data, t, 'main.git_finalize.failed')
     } else if (data.result?.status === 'merged') {
       mergeCommit.value = data.result.merge_commit || null
       conflictDialogOpen.value = false
@@ -792,9 +793,9 @@ async function submitResolve(auto: boolean) {
   } catch (e: any) {
     if (e?.response?.status === 404) {
       conflictDialogOpen.value = false
-      showToast(e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')
+      showToast(resolveGitError(e, t, 'main.git_finalize.failed'), 'danger')
     } else {
-      outcome = e?.response?.data?.error?.message || t('main.git_finalize.failed')
+      outcome = resolveGitError(e, t, 'main.git_finalize.failed')
     }
   } finally {
     busy.value = false
@@ -812,7 +813,7 @@ async function abortMerge() {
     conflictDialogOpen.value = false
     showToast(t('main.git_finalize.aborted_toast'), 'success')
   } catch (e: any) {
-    showToast(e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')
+    showToast(resolveGitError(e, t, 'main.git_finalize.failed'), 'danger')
   } finally {
     busy.value = false
     await fetchState()

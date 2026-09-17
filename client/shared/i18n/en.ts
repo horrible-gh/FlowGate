@@ -2616,6 +2616,21 @@ export default {
       tool_artifacts: '{n} tool artifact(s)',
       tool_artifacts_note: 'Temporary files left by tests and builds, kept out of the change list. They are not committed either.',
     },
+    git_errors: {
+      network: 'Unable to reach the server. Check your connection and try again.',
+      generic: 'The Git operation failed. Please try again.',
+      base_dirty: 'The base checkout has uncommitted changes.',
+      base_untracked_conflict: 'Untracked base files conflict with this operation.',
+      dirty_worktree: 'The worktree has uncommitted changes ({n} files).',
+      git_busy: 'Another Git operation is already in progress.',
+      git_unavailable: 'Git is unavailable on the server.',
+      review_not_found: 'The merge review could not be found.',
+      review_not_ready: 'The merge review is not ready for this action.',
+      restoration_verification_failed: 'The restored files could not be verified.',
+      forbidden: 'You do not have permission to perform this Git operation.',
+      invalid_state: 'This Git operation is not available in the current state.',
+      invalid_request: 'The Git request is invalid.',
+    },
     git_finalize: {
       // 0382 NR0003 proposal 1 — temporary artifacts excluded from the finalize commit.
       excluded_artifacts: '{n} temporary artifact(s) kept out of the commit',

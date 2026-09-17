@@ -6,6 +6,7 @@ Extracted from git_service.py (flowgate.default.0550 T0007, D0006 §3.2/부록 A
 from __future__ import annotations
 
 import base64
+import copy
 import logging
 import os
 import stat
@@ -65,16 +66,38 @@ def _author_env_from_cfg(cfg: Optional[dict]) -> Optional[dict]:
 
 
 class GitServiceError(Exception):
-    """Carries (http_status, error_code, message) to the router envelope."""
+    """Stable Git failure contract; message and diagnostic are never UI copy."""
 
-    def __init__(self, status: int, code: str, message: str, details: Optional[dict] = None):
+    def __init__(
+        self, status: int, code: str, message: str, details: Optional[dict] = None,
+        *, params: Optional[dict] = None, diagnostic: Optional[str] = None,
+    ):
         super().__init__(f"{code}: {message}")
         self.status = status
         self.code = code
         self.message = message
-        # Optional structured payload surfaced verbatim in the router envelope
-        # (e.g. the base_dirty file list — flowgate.default.0176 T0010 §b).
-        self.details = details or {}
+        self.details = copy.deepcopy(details) if isinstance(details, dict) else {}
+        clean_params = {}
+        for key, value in (params.items() if isinstance(params, dict) else ()):
+            if isinstance(value, (str, bool)) or (
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                and value == value and abs(value) != float("inf")
+            ):
+                clean_params[key] = value
+            elif isinstance(value, (list, tuple)) and all(isinstance(item, str) for item in value):
+                clean_params[key] = list(value)
+        self.params = clean_params
+        self.diagnostic = diagnostic if isinstance(diagnostic, str) else None
+
+
+def git_error_envelope(exc: GitServiceError) -> dict:
+    """Serialize public fields identically for local guards and the global handler."""
+    error = {"code": exc.code, "message": exc.message}
+    if exc.params:
+        error["params"] = dict(exc.params)
+    if exc.details:
+        error["details"] = dict(exc.details)
+    return {"ok": False, "error": error}
 
 
 # ── Master key / encryption / masking (L0006 §2.3 — TOTP precedent) ─────────

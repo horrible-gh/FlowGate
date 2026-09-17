@@ -299,6 +299,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '@shared/AppIcon.vue'
 import { getRequest, postRequest } from '@shared/api'
+import { resolveGitError } from '@shared/gitErrors'
 import { randomUuid } from '@shared/utils/uuid'
 import AiProviderSelect from './AiProviderSelect.vue'
 import { useToast } from './common/useToast'
@@ -812,7 +813,7 @@ async function loadReview({ background = false } = {}) {
     }
     if (!background) loadError.value = ''
   } catch (e: any) {
-    if (!background) loadError.value = e?.response?.data?.error?.message || t('main.git_finalize.failed')
+    if (!background) loadError.value = resolveGitError(e, t, 'main.git_finalize.failed')
   } finally {
     if (!background) loading.value = false
   }
@@ -903,7 +904,7 @@ async function sendMessage(allowTestEdits = false) {
     // message appears in the log at once instead of two seconds later.
     void loadReview({ background: true }).finally(startPolling)
   } catch (e: any) {
-    showToast(e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')
+    showToast(resolveGitError(e, t, 'main.git_finalize.failed'), 'danger')
   } finally {
     sending.value = false
   }
@@ -929,7 +930,7 @@ async function cancelRun(): Promise<void> {
     const status = e?.response?.status
     if (status === 404 || status === 410) return // already gone; the poll will notice
     cancelling.value = false
-    showToast(e?.response?.data?.error?.message || t('main.ai_invoke_dialog.error_cancel_failed'), 'danger')
+    showToast(resolveGitError(e, t, 'main.ai_invoke_dialog.error_cancel_failed'), 'danger')
   }
 }
 // The run ended (naturally or by this cancel) once the server stops reporting one in
@@ -979,7 +980,7 @@ async function approve() {
     attemptId.value = newAttemptId()
     await loadReview({ background: true })
   } catch (e: any) {
-    const message = e?.response?.data?.error?.message || t('main.git_finalize.failed')
+    const message = resolveGitError(e, t, 'main.git_finalize.failed')
     showToast(message, 'danger')
     approveOutcome.value = {
       status: String(e?.response?.data?.error?.code || ''),
@@ -1009,7 +1010,7 @@ async function reject() {
     emit('resolved')
     emit('close')
   } catch (e: any) {
-    showToast(e?.response?.data?.error?.message || t('main.git_finalize.failed'), 'danger')
+    showToast(resolveGitError(e, t, 'main.git_finalize.failed'), 'danger')
   } finally {
     busy.value = false
   }

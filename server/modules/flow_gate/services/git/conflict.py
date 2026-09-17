@@ -214,7 +214,7 @@ def commit_tr_conflict(group_id: str, merge_id: int) -> dict:
                 cwd=root, author_env=_author_env_from_cfg(cfg), timeout=GIT_LOCAL_TIMEOUT_SEC,
             )
             if proc.returncode != 0:
-                raise GitServiceError(500, "git_error", _gs._last_line(proc.stderr))
+                raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
             head = _gs._run_git(["rev-parse", "HEAD"], cwd=root, timeout=_gs.GIT_READ_TIMEOUT_SEC)
             commit = (head.stdout or "").strip() or None
         # Either way the revert is over; the sequencer state is what is left of it.
@@ -552,7 +552,7 @@ def resolve_conflicts(
         target.write_text(content, encoding="utf-8")
         proc = _gs._run_git(["add", "--", path], cwd=root)
         if proc.returncode != 0:
-            raise GitServiceError(500, "git_error", _gs._last_line(proc.stderr))
+            raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
         _gs.db_git.mark_file_resolved(merge_id, path)
 
     if staged and _gs.db_git.session_kind(session) == _gs.db_git.SESSION_KIND_MERGE:
@@ -589,7 +589,7 @@ def resolve_conflicts(
             cwd=root, author_env=_author_env_from_cfg(cfg),
         )
         if proc.returncode != 0:
-            raise GitServiceError(500, "git_error", _gs._last_line(proc.stderr))
+            raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
         head = _gs._run_git(["rev-parse", "--short", "HEAD"], cwd=root)
         merge_commit = (head.stdout or "").strip() or None
         _gs.db_git.close_session(merge_id, "done")

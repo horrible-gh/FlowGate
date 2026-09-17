@@ -2612,6 +2612,21 @@ export default {
       tool_artifacts: '도구가 남긴 흔적 {n}개',
       tool_artifacts_note: '테스트·빌드가 만든 임시 파일이라 변경 목록에서 빼 두었습니다. 커밋에도 들어가지 않습니다.',
     },
+    git_errors: {
+      network: '서버에 연결할 수 없습니다. 연결을 확인한 뒤 다시 시도하세요.',
+      generic: 'Git 작업에 실패했습니다. 다시 시도하세요.',
+      base_dirty: '기준 체크아웃에 커밋되지 않은 변경이 있습니다.',
+      base_untracked_conflict: '기준 체크아웃의 추적되지 않은 파일이 이 작업과 충돌합니다.',
+      dirty_worktree: '작업 트리에 커밋되지 않은 변경이 있습니다({n}개 파일).',
+      git_busy: '다른 Git 작업이 진행 중입니다.',
+      git_unavailable: '서버에서 Git을 사용할 수 없습니다.',
+      review_not_found: '병합 검토를 찾을 수 없습니다.',
+      review_not_ready: '병합 검토가 이 작업을 수행할 준비가 되지 않았습니다.',
+      restoration_verification_failed: '복원된 파일을 확인하지 못했습니다.',
+      forbidden: '이 Git 작업을 수행할 권한이 없습니다.',
+      invalid_state: '현재 상태에서는 이 Git 작업을 수행할 수 없습니다.',
+      invalid_request: 'Git 요청이 올바르지 않습니다.',
+    },
     git_finalize: {
       // 0382 NR0003 제안 1 — 마무리 커밋에서 뺀 임시 산출물.
       excluded_artifacts: '커밋에서 제외한 임시 산출물 {n}개',

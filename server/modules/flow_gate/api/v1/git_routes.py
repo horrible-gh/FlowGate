@@ -50,6 +50,7 @@ from modules.flow_gate.services import (
 )
 from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.services.git_service import GitServiceError
+from modules.flow_gate.services.git.credentials import git_error_envelope
 
 router = APIRouter(prefix="/api/v1", tags=["Git"])
 
@@ -69,7 +70,9 @@ def _error_response(status_code: int, code: str, message: str, details: Optional
 
 
 def _guard(exc: GitServiceError) -> JSONResponse:
-    return _error_response(exc.status, exc.code, exc.message, getattr(exc, "details", None))
+    if exc.diagnostic:
+        git_service._log.warning("Git operation failed (%s): %s", exc.code, exc.diagnostic)
+    return JSONResponse(status_code=exc.status, content=git_error_envelope(exc))
 
 
 def _check_group_permission(user: dict, group_id: str, permission: str) -> Optional[JSONResponse]:

@@ -523,7 +523,7 @@ def manual_fetch(project_id: str) -> dict:
             username=cfg.get("username"), secret=_gs._load_secret_for(cfg) or "",
         )
         if proc.returncode != 0:
-            raise GitServiceError(500, "git_error", _gs._last_line(proc.stderr))
+            raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
         # 0320 B0001: a bare `fetch` only moved refs/remotes/origin/{base} and then
         # *reported* behind_count — the local base branch never advanced, so the
         # base checkout stayed behind upstream forever and the operator-facing
@@ -650,7 +650,7 @@ def _base_commit_locked(
     if proc.returncode != 0:
         # The checkout stays dirty (staged-but-uncommitted is still porcelain
         # output), so the E3 guard keeps holding and a retry re-stages.
-        raise GitServiceError(500, "git_error", _gs._last_line(proc.stderr))
+        raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
     head = _gs._run_git(["rev-parse", "--short", "HEAD"], cwd=base_root)
     return {"ok": True, "result": {
         "committed": True,
