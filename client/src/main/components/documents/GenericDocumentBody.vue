@@ -192,4 +192,17 @@ function onTextWrapChange(event: Event) {
 }
 .edit-dropdown-item:hover { background: var(--bg-hover, rgba(0, 0, 0, .05)); }
 .edit-dropdown-item i { width: 16px; color: var(--text-m, #6b7280); text-align: center; }
+.ro-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-m);
+  background: var(--surface-h);
+  font-size: .66rem;
+  font-weight: 700;
+}
+.ro-badge-sm { margin-left: auto; }
 </style>
