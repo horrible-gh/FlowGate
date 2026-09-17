@@ -160,7 +160,24 @@ FILE_LINE_CAPS: dict[str, int] = {
     # approval screen's chat, which now names which of the three identity checks fired and
     # keeps the answer instead of replacing it. The sixth is one comment quoting the
     # [AI에게 맡기기] button the base-dirty AI-run field on the status payload feeds.
-    "modules/flow_gate/services/git_service.py": 43,
+    #
+    # 43 -> 20: flowgate.default.0578 T0006 (NR0003 F1) takes every server-authored
+    # conversation sentence OUT of this file. `_materialize_pending_conversation_run`
+    # now stores a `message_code` + `message_params` and the surfaces choose the words,
+    # so the stale_run / run_lost / apply-outcome / cancel panel copy this cap used to
+    # budget is gone; what is left is design-rationale comments only. RE-MEASURED with
+    # this suite's own scanner after the change, not estimated.
+    "modules/flow_gate/services/git_service.py": 20,
+    # New file (flowgate.default.0578 T0006 work item 1), measured: 19 -> 25 after the
+    # rejection-1 fix added a ko `_STATUS_LABELS`/`_REVIEW_STATE_LABELS` branch (status
+    # and review_state are stable identifiers, not copy, so they needed the same
+    # per-locale display-name maps the other nine codes already had). The reason is
+    # `locale-map`, NOT a product-copy budget — this module IS the ko/en/ja dictionary
+    # for the nine merge-review turn codes plus these two label maps, and the ko branch
+    # of a locale map is Korean by definition (the same reason tool_registry.py and
+    # help_catalog.py are listed). test_server_korean_leak_0355 guards the other half:
+    # its en/ja branches must stay Hangul-free.
+    "modules/flow_gate/services/git/review_messages.py": 25,
     # 70 -> 73: flowgate.default.0523 T0004 added the document_attachments help item
     # (title/summary/note, ko locale) that bridges attachment list/read/copy to the
     # worker-token document surface.

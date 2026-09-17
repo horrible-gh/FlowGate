@@ -138,7 +138,28 @@
                   <div v-for="turn in conversation" :key="turn.turn_id" class="gmr-turn" :class="`gmr-turn-${turn.role}`">
                     <strong>{{ turn.role === 'human' ? t('main.git_review.turn_human') : t('main.git_review.turn_ai') }}:</strong>
                     <span v-if="turnStatusLabel(turn)" class="badge badge-yellow gmr-turn-status" data-test="gmr-turn-status">{{ turnStatusLabel(turn) }}</span>
-                    <span>{{ turn.message }}</span>
+                    <!-- 0578 T0006 §3 작업 5 — 한 차례는 두 블록이다. 서버가 만든 안내는
+                         message_code 로만 저장되므로 지금 화면 언어로 여기서 해석하고, 사람과
+                         AI 가 쓴 원문은 손대지 않고 그대로 낸다. 코드가 없는 기존 차례는 원문
+                         블록만 나오므로 지금 화면과 같다. -->
+                    <span v-if="turn.message_code" class="gmr-turn-notice" data-test="gmr-turn-notice">{{ turnNoticeText(turn) }}</span>
+                    <span v-if="turn.message" class="gmr-turn-content" data-test="gmr-turn-content">{{ turn.message }}</span>
+                    <!-- 적용 실패의 원인은 진단 자료다(D0005 §6): 본문에는 건수만 남고 원문은
+                         이 접힌 영역에서만 보인다. 기본으로 펼치지 않는다. -->
+                    <details
+                      v-if="applyErrors(turn).length"
+                      class="gmr-apply-errors"
+                      data-test="gmr-apply-errors"
+                    >
+                      <summary>{{ t('main.git_review.turn_message.apply_errors_title') }}</summary>
+                      <ul>
+                        <li
+                          v-for="(err, errIdx) in applyErrors(turn)"
+                          :key="`${turn.turn_id}-err-${errIdx}`"
+                          class="gcd-mono"
+                        >{{ applyErrorText(err) }}</li>
+                      </ul>
+                    </details>
                   </div>
                   <!-- 0481 T0010 rev1: the reply is written HERE, in the log the operator is
                        already reading, and the wait says so in place. Not a control — the
@@ -319,6 +340,13 @@ interface ConflictOrigin {
   end_line: number | null
   range_ambiguous: boolean
 }
+interface ApplyError {
+  code?: string
+  message?: string
+  path?: string
+  validator?: string
+  line?: number | null
+}
 interface ConversationTurn {
   turn_id: string
   role: 'human' | 'ai'
@@ -326,6 +354,13 @@ interface ConversationTurn {
   provider_id: string | null
   status: string
   created_at: string
+  // 0578 T0006 §2.1 — all optional: a turn stored before this change has none of them,
+  // and a human turn never gets a code. `source_locale` is recorded for diagnosis only
+  // (D0005 §3.3) and deliberately has no reader here.
+  message_code?: string
+  message_params?: Record<string, unknown>
+  source_locale?: string
+  apply_errors?: ApplyError[]
 }
 // 0481 T0010 rev1 — server truth about a chat turn whose run is still working.
 // Local `sending` state alone could not answer this: it dies with the component,
@@ -431,6 +466,150 @@ function turnStatusLabel(turn: ConversationTurn): string {
   if (turn.role !== 'ai') return ''
   const key = TURN_STATUS_LABELS[turn.status]
   return key ? t(`main.git_review.${key}`) : ''
+}
+// 0578 T0006 §2.2 / D0005 §3.2 — the codes this screen knows how to say. A code outside
+// this set (an older client meeting a newer server) falls back to the generic status
+// line; it never reaches for `message`, which by contract holds only content a human or
+// a model wrote, not the notice the server meant.
+const TURN_MESSAGE_PREFIX = 'main.git_review.turn_message'
+const TURN_MESSAGE_CODES = new Set([
+  'review_stale_run',
+  'review_run_lost',
+  'review_apply_re_review',
+  'review_apply_held_only',
+  'review_apply_rollback_verification_failed',
+  'review_apply_failed',
+  'review_cancelled',
+  'review_no_answer',
+  'review_run_failed',
+])
+const STALE_REASON_CODES = new Set([
+  'approval_settled',
+  'candidate_refrozen',
+  'instruction_generation_bumped',
+])
+
+// Review finding: the generic fallback and the settled-approval reason used to
+// interpolate `status`/`review_state` RAW -- stable internal identifiers, not copy --
+// which put English/Korean product state names into ko/en/ja sentences (ja generic
+// contained "failed", ja settled-approval contained "completed"). Both are display-only
+// maps: nothing that stores or compares `status`/`review_state` reads them.
+const STATUS_LABEL_KEYS: Record<string, string> = {
+  accepted: 'accepted', failed: 'failed', stale_run: 'stale_run',
+  run_lost: 'run_lost', cancelled: 'cancelled',
+}
+const REVIEW_STATE_LABEL_KEYS: Record<string, string> = {
+  applying: 'applying', reconciling: 'reconciling', completed: 'completed',
+}
+
+function statusLabel(status: unknown): string {
+  const key = typeof status === 'string' ? STATUS_LABEL_KEYS[status] : undefined
+  return t(`${TURN_MESSAGE_PREFIX}.status.${key ?? 'unknown'}`)
+}
+
+function reviewStateLabel(state: string): string {
+  const key = REVIEW_STATE_LABEL_KEYS[state]
+  return t(`${TURN_MESSAGE_PREFIX}.review_state.${key ?? 'unknown'}`)
+}
+
+function isNonNegInt(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+}
+
+function genericTurnNotice(turn: ConversationTurn): string {
+  return t(`${TURN_MESSAGE_PREFIX}.generic_status`, { status: statusLabel(turn.status) })
+}
+
+function heldNoteText(heldCount: number): string {
+  return heldCount > 0 ? t(`${TURN_MESSAGE_PREFIX}.held_note`, { held_count: heldCount }) : ''
+}
+
+function staleReasonText(code: string, params: Record<string, unknown>): string {
+  if (code !== 'approval_settled') return t(`${TURN_MESSAGE_PREFIX}.stale_reason.${code}`)
+  const state = params.review_state
+  return typeof state === 'string' && state
+    ? t(`${TURN_MESSAGE_PREFIX}.stale_reason.approval_settled`, { review_state: reviewStateLabel(state) })
+    : t(`${TURN_MESSAGE_PREFIX}.stale_reason.approval_settled_unknown`)
+}
+
+// Called from the template (not cached at mount), so a locale change re-renders turns
+// that were already loaded — T0006 §3 작업 5-7.
+//
+// Review finding: every branch below now validates its code's FULL params schema before
+// rendering, not just the field it happens to interpolate. `{}` or `{ paths: null,
+// path_count: 1, held_count: 0 }` for `review_apply_re_review` used to silently pass
+// (missing/`null` `paths` was treated as an empty array, so it rendered "changes were
+// applied" with no paths) instead of falling back — any malformed field now falls back to
+// the generic notice for the WHOLE code, and `message` (the raw content block) is never
+// touched by this function, so invalid params never lose the turn's actual content.
+function turnNoticeText(turn: ConversationTurn): string {
+  const code = turn.message_code
+  if (!code || !TURN_MESSAGE_CODES.has(code)) return genericTurnNotice(turn)
+  const params = (turn.message_params ?? {}) as Record<string, unknown>
+
+  if (code === 'review_stale_run') {
+    const changed = Array.isArray(params.changed) ? params.changed : []
+    if (!changed.length) return genericTurnNotice(turn)
+    const reasons = changed
+      .filter((reason): reason is string => typeof reason === 'string' && STALE_REASON_CODES.has(reason))
+      .map((reason) => staleReasonText(reason, params))
+    if (!reasons.length) return genericTurnNotice(turn)
+    if ('plan_discarded' in params && typeof params.plan_discarded !== 'boolean') return genericTurnNotice(turn)
+    const text = t(`${TURN_MESSAGE_PREFIX}.review_stale_run`, {
+      reasons: reasons.join(t(`${TURN_MESSAGE_PREFIX}.stale_reason_join`)),
+    })
+    return params.plan_discarded === true
+      ? text + t(`${TURN_MESSAGE_PREFIX}.stale_plan_discarded`)
+      : text
+  }
+  if (code === 'review_apply_re_review') {
+    const rawPaths = params.paths
+    if (!Array.isArray(rawPaths) || !rawPaths.every((path): path is string => typeof path === 'string')) {
+      return genericTurnNotice(turn)
+    }
+    if (!isNonNegInt(params.path_count) || params.path_count !== rawPaths.length) return genericTurnNotice(turn)
+    let held = 0
+    if ('held_count' in params) {
+      if (!isNonNegInt(params.held_count)) return genericTurnNotice(turn)
+      held = params.held_count
+    }
+    // Paths are source data, not copy: they are interpolated verbatim. '(none)' is a
+    // product expression, so the EMPTY case is a translated word, not a stored string.
+    const rendered = rawPaths.length
+      ? rawPaths.join(t(`${TURN_MESSAGE_PREFIX}.path_join`))
+      : t(`${TURN_MESSAGE_PREFIX}.no_paths`)
+    return t(`${TURN_MESSAGE_PREFIX}.review_apply_re_review`, { paths: rendered }) + heldNoteText(held)
+  }
+  if (code === 'review_apply_held_only') {
+    if (!isNonNegInt(params.held_count)) return genericTurnNotice(turn)
+    return t(`${TURN_MESSAGE_PREFIX}.review_apply_held_only`, { held_count: params.held_count })
+  }
+  if (code === 'review_apply_failed') {
+    if (!isNonNegInt(params.error_count)) return genericTurnNotice(turn)
+    let held = 0
+    if ('held_count' in params) {
+      if (!isNonNegInt(params.held_count)) return genericTurnNotice(turn)
+      held = params.held_count
+    }
+    return (
+      t(`${TURN_MESSAGE_PREFIX}.review_apply_failed`, { error_count: params.error_count })
+      + heldNoteText(held)
+    )
+  }
+  return t(`${TURN_MESSAGE_PREFIX}.${code}`)
+}
+
+function applyErrors(turn: ConversationTurn): ApplyError[] {
+  return Array.isArray(turn.apply_errors) ? turn.apply_errors : []
+}
+
+// Verbatim, in the diagnostic area only. Nothing here is translated: every part is
+// either a stable code, a path, or the server's own diagnostic sentence.
+function applyErrorText(err: ApplyError): string {
+  const head = [err.code, err.path, err.validator].filter((part) => !!part).join(' ')
+  const line = typeof err.line === 'number' ? `:${err.line}` : ''
+  const parts = [`${head}${line}`, err.message ?? ''].filter((part) => !!part)
+  return parts.length ? parts.join(' — ') : JSON.stringify(err)
 }
 const pendingConversation = computed<PendingConversation | null>(
   () => review.value?.pending_conversation ?? locallyPending.value,
@@ -944,6 +1123,14 @@ onBeforeUnmount(stopPolling)
 .gmr-turn { font-size: 0.78rem; line-height: 1.4; }
 .gmr-turn-human strong { color: #1d4ed8; }
 .gmr-turn-ai strong { color: #047857; }
+/* 안내는 서버가 말한 상태, 원문은 사람/AI 가 쓴 글. 원문만 있는 (코드 없는) 차례는
+   지금까지와 똑같이 이름 옆에 한 줄로 이어진다. */
+.gmr-turn-notice { color: var(--text-m, #64748b); }
+.gmr-turn-notice + .gmr-turn-content { display: block; margin-top: 3px; }
+.gmr-apply-errors { margin-top: 4px; font-size: 0.74rem; color: var(--text-m, #64748b); }
+.gmr-apply-errors > summary { cursor: pointer; }
+.gmr-apply-errors ul { margin: 4px 0 0; padding-left: 18px; }
+.gmr-apply-errors li { word-break: break-all; }
 /* The waiting turn reads as the reply's placeholder in the log itself, not as a
    separate status area — quieter than a real turn, same slot. */
 .gmr-turn-waiting { color: var(--text-m, #64748b); }

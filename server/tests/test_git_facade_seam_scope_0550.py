@@ -438,18 +438,29 @@ def test_the_seam_scan_itself_is_not_vacuous():
 
     # 2. The A-side (test corpus) scan found a believable inventory, not an empty set
     #    from a broken alias/AST walk.
+    # 0578 T0006: re-measured to 366. The count was 363 when 0550 wrote it and had
+    # already drifted to 365 before this group touched anything (two files added by
+    # other merged groups without updating this number); T0006 adds
+    # tests/test_review_turn_messages_0578.py, the third. Measured with
+    # `len(tuple(sorted(_TESTS_DIR.glob("**/*.py"))))`, not estimated.
     test_paths = tuple(sorted(_TESTS_DIR.glob("**/*.py")))
-    assert len(test_paths) == 363, (
-        f"expected 363 test files, found {len(test_paths)}"
+    assert len(test_paths) == 366, (
+        f"expected 366 test files, found {len(test_paths)}"
     )
     test_patched, _test_sites, test_unresolved = _scan_test_corpus()
     operational, operational_sites, operational_unresolved = _scan_operational_modules()
     patched = test_patched | operational
-    assert len(test_patched) == 70, (
-        f"expected 70 test facade-patched names, found {len(test_patched)}"
+    # 0578 T0006: 70 -> 71 / 72 -> 73. Both were exact at baseline; the one new name is
+    # `_apply_write_plan_locked`, which tests/test_review_turn_messages_0578.py patches to
+    # drive the four apply-outcome branches of `_materialize_pending_conversation_run`
+    # without a real repository. It is defined in git_service.py itself (not in a git/*
+    # module), so `test_no_facade_patch_target_is_reached_bare_inside_its_module` has
+    # nothing to say about it -- this is an inventory count, not a new seam.
+    assert len(test_patched) == 71, (
+        f"expected 71 test facade-patched names, found {len(test_patched)}"
     )
-    assert len(patched) == 72, (
-        f"expected 72 combined facade seam names, found {len(patched)}: {sorted(patched)}"
+    assert len(patched) == 73, (
+        f"expected 73 combined facade seam names, found {len(patched)}: {sorted(patched)}"
     )
     for expected in ("finalize", "get_finalize_state", "precheck_approve_git_action"):
         assert expected in operational, (

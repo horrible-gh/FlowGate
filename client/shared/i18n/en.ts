@@ -2993,6 +2993,55 @@ export default {
       turn_status_cancelled: 'cancelled by user',
       turn_status_failed: 'failed',
       turn_status_rejected: 'rejected',
+      // 0578 T0006 §3 work item 6 / D0005 §3.1 — server-authored conversation notices are
+      // stored as meaning (message_code) plus data (message_params); the sentence is chosen
+      // here. Switching the UI language re-renders turns that were already loaded. Text a
+      // human or a model wrote is content and is never translated.
+      turn_message: {
+        review_stale_run: 'While this answer was being written, {reasons}. The text below was written against the previous candidate (stale_run).',
+        review_run_lost: 'No record is left of the run that took this instruction, so no answer arrived (run_lost). Please send the same message again.',
+        review_apply_re_review: 'The requested change was applied and a new approval candidate was created. Changed files: {paths}',
+        review_apply_held_only: 'Every submitted operation targets a test path, so all of them were held ({held_count}, not applied). Ask again with [Re-instruct including test edits].',
+        review_apply_rollback_verification_failed: 'The change failed to apply and the rollback could not be verified either — a human has to check this.',
+        review_apply_failed: 'The change could not be applied ({error_count} cause(s)).',
+        review_cancelled: 'The user stopped this run (cancelled).',
+        review_no_answer: 'The run finished but its answer was empty.',
+        review_run_failed: 'The run failed, so no answer arrived.',
+        stale_reason: {
+          approval_settled: 'the approval wait ended (now {review_state})',
+          // [Reject] ends the wait by putting the session back to open, which leaves no
+          // review_state to name — this is the sentence for that case.
+          approval_settled_unknown: 'the approval wait ended',
+          candidate_refrozen: 'the approval target moved to a new candidate',
+          instruction_generation_bumped: 'a re-instruction raised the instruction generation',
+        },
+        stale_reason_join: ', ',
+        stale_plan_discarded: ' The write plan submitted with it was not applied.',
+        held_note: ' {held_count} held test edit(s) were not applied.',
+        no_paths: '(none)',
+        path_join: ', ',
+        generic_status: "This turn ended in the '{status}' state.",
+        apply_errors_title: 'Apply failure causes (diagnostic)',
+        // `status`/`review_state` are stable identifiers, not copy -- generic_status and
+        // stale_reason.approval_settled used to interpolate them raw, mixing another
+        // language's state name into the current screen language (review finding: ja
+        // generic contained "failed", ja settled-approval contained "completed"). They
+        // are mapped to a display name in the current locale before interpolation.
+        status: {
+          accepted: 'completed',
+          failed: 'failed',
+          stale_run: 'answer to a previous candidate',
+          run_lost: 'no run record',
+          cancelled: 'cancelled',
+          unknown: 'an unknown state',
+        },
+        review_state: {
+          applying: 'applying',
+          reconciling: 'reconciling',
+          completed: 'completed',
+          unknown: 'an unknown state',
+        },
+      },
       next_provider_label: 'Provider for the next instruction',
       apply_requested_label: 'Request edit application',
       held_test_operations_title: 'Held test edits',

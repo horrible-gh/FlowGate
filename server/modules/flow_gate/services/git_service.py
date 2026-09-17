@@ -38,6 +38,7 @@ from typing import Optional, Sequence
 
 from Crypto.Cipher import AES as _AES
 
+from modules.flow_gate import template_provision
 from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.db import groups as db_groups
@@ -48,6 +49,7 @@ from modules.flow_gate.db import terminal_cleanup_snapshots as db_terminal_clean
 from modules.flow_gate.db import tr_commit_ledger as db_tr_ledger
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.services import path_exclusion_rules
+from modules.flow_gate.services.git import review_messages
 from modules.flow_gate.storage.paths import get_storage_root, src_root
 
 _log = logging.getLogger(__name__)
@@ -3216,10 +3218,18 @@ def _materialize_pending_conversation_run(
         # The claim is persisted BEFORE the plan is applied: should this process
         # die mid-apply, the next poll must not apply the same plan a second
         # time on top of the candidate this one already changed.
+        # 0578 T0006 §3 work item 3-6: capture the start locale BEFORE the pop below, and
+        # before `_apply_write_plan_locked` makes this function re-read `context` from the
+        # session -- after either of those it is unreachable, and the turn appended at the
+        # bottom would have no `source_locale` to record.
+        pending_locale = template_provision.normalize_locale(
+            context.get("pending_conversation_locale")
+        )
         for key in (
             "pending_conversation_run_id", "pending_conversation_write_requested",
             "pending_conversation_allow_test_edits",
             "pending_conversation_start_fingerprint", "pending_conversation_start_generation",
+            "pending_conversation_locale",
         ):
             context.pop(key, None)
         db_git.set_session_context(merge_id, context)
@@ -3231,7 +3241,12 @@ def _materialize_pending_conversation_run(
                     group_id, merge_id, plan, base_root, base_branch,
                 )
             except GitServiceError as exc:
-                apply_result = {"status": "apply_failed", "errors": [{"message": f"{exc.code}: {exc.message}"}]}
+                # 0578 T0006 §2.3: code and diagnostic sentence stay separate fields so the
+                # screen's diagnostic area can show the cause without the body quoting it.
+                apply_result = {
+                    "status": "apply_failed",
+                    "errors": [{"code": exc.code, "message": exc.message}],
+                }
             # _apply_write_plan_locked persisted its own context changes (under
             # this same hold) — re-read so the turn appended below lands on top
             # of them instead of a stale copy that would silently undo them.
@@ -3248,21 +3263,32 @@ def _materialize_pending_conversation_run(
             # enforces it: nothing a stale run submitted is ever applied. But an ANSWER is
             # text about a candidate one revision behind, not a danger, so it is appended
             # under a line that says exactly what moved underneath it.
+            #
+            # 0578 T0006 §2.2: the three checks and the plan-discard rule are UNCHANGED --
+            # only their outcome is stored differently. The sentence used to be assembled
+            # here, in Korean, and frozen into `message` forever (NR0003 F1); now the
+            # WHICH-check-fired verdict travels as reason codes and the surface picks the
+            # words. `message` carries the AI's own answer and nothing else.
             changed = []
+            stale_params: dict = {}
             if context.get("review_state") not in REVIEW_PENDING_STATES:
-                changed.append(f"승인 대기가 끝났습니다(현재 {context.get('review_state')})")
+                changed.append(review_messages.STALE_APPROVAL_SETTLED)
+                settled_state = context.get("review_state")
+                if isinstance(settled_state, str) and settled_state:
+                    stale_params["review_state"] = settled_state
             if context.get("review_fingerprint") != start_fingerprint:
-                changed.append("승인 대상이 새 후보로 바뀌었습니다")
+                changed.append(review_messages.STALE_CANDIDATE_REFROZEN)
             if int(context.get("instruction_generation") or 0) != start_generation:
-                changed.append("재지시로 지시 회차가 올라갔습니다")
-            note = "이 답을 만드는 동안 " + ", ".join(changed) + "."
-            note += " 아래 내용은 그 이전 후보를 보고 쓴 것입니다(stale_run)."
-            if write_requested and detail.get("write_plan"):
-                note += " 함께 제출된 수정안은 적용하지 않았습니다."
+                changed.append(review_messages.STALE_INSTRUCTION_GENERATION_BUMPED)
+            stale_params["changed"] = changed
+            stale_params["plan_discarded"] = bool(write_requested and detail.get("write_plan"))
             answer = (detail.get("last_message") or "").strip()
             conversation.append({
                 "turn_id": str(uuid.uuid4()), "role": "ai",
-                "message": f"{note}\n\n{answer}" if answer else note,
+                "message": answer,
+                "message_code": review_messages.CODE_STALE_RUN,
+                "message_params": stale_params,
+                "source_locale": pending_locale,
                 "provider_id": detail.get("provider_id"), "status": "stale_run",
                 "created_at": now_iso(),
             })
@@ -3275,7 +3301,10 @@ def _materialize_pending_conversation_run(
             # Say so in the conversation and free the chat for another turn.
             conversation.append({
                 "turn_id": str(uuid.uuid4()), "role": "ai",
-                "message": "이 지시를 맡은 실행의 기록이 남아 있지 않아 답을 받지 못했습니다(run_lost). 같은 내용을 다시 보내 주십시오.",
+                "message": "",
+                "message_code": review_messages.CODE_RUN_LOST,
+                "message_params": {},
+                "source_locale": pending_locale,
                 "provider_id": None, "status": "run_lost",
                 "created_at": now_iso(),
             })
@@ -3286,43 +3315,68 @@ def _materialize_pending_conversation_run(
             # AI turn that reports the apply outcome, in addition to the structured
             # `held_test_operations` context field `get_merge_review` now exposes.
             held = apply_result.get("held_test_operations") or []
-            held_note = ""
-            if held:
-                held_desc = ", ".join(f"{op.get('path', '?')}({op.get('purpose', '')})" for op in held)
-                held_note = f" 보류된 테스트 편집 {len(held)}건(미적용, [테스트 편집 포함 재지시]로 재요청 가능): {held_desc}"
+            errors = apply_result.get("errors") or []
+            # 0578 T0006 §2.2: held operations stay OBSERVABLE (0009-TR rev3's point) but as
+            # a COUNT, not a sentence -- the paths and purposes are already on the session's
+            # own `held_test_operations`, which the screen lists in full. §2.3: the causes of
+            # a failed apply go to `apply_errors` verbatim; `json.dumps(errors)` is never
+            # spliced into the body again.
+            apply_params: dict = {"held_count": len(held)}
             if status == "re_review":
-                paths = ", ".join(apply_result.get("changed_paths") or []) or "(없음)"
-                message = f"요청한 수정을 적용해 새 승인 대상을 만들었습니다. 변경된 파일: {paths}" + held_note
+                code = review_messages.CODE_APPLY_RE_REVIEW
+                paths = list(apply_result.get("changed_paths") or [])
+                apply_params["paths"] = paths
+                apply_params["path_count"] = len(paths)
             elif status == "held_only":
-                held_desc = ", ".join(f"{op.get('path', '?')}({op.get('purpose', '')})" for op in held) or "(없음)"
-                message = f"제출된 연산이 모두 테스트 경로라 보류했습니다({len(held)}건, 미적용): {held_desc}. [테스트 편집 포함 재지시]로 다시 요청하십시오."
+                code = review_messages.CODE_APPLY_HELD_ONLY
+                apply_params = {"held_count": len(held)}
             elif status == "rollback_verification_failed":
-                message = "수정 적용 실패 후 상태 복구 확인에도 실패했습니다 — 사람 확인이 필요합니다."
+                code = review_messages.CODE_APPLY_ROLLBACK_VERIFICATION_FAILED
+                apply_params = {}
             else:
-                message = "수정 적용에 실패했습니다: " + json.dumps(apply_result.get("errors") or [], ensure_ascii=False) + held_note
-            conversation.append({
-                "turn_id": str(uuid.uuid4()), "role": "ai", "message": message,
+                code = review_messages.CODE_APPLY_FAILED
+                apply_params["error_count"] = len(errors)
+            turn = {
+                "turn_id": str(uuid.uuid4()), "role": "ai", "message": "",
+                "message_code": code, "message_params": apply_params,
+                "source_locale": pending_locale,
                 "provider_id": detail.get("provider_id"),
                 "status": "accepted" if status in ("re_review", "held_only") else "failed",
                 "created_at": now_iso(),
-            })
+            }
+            if errors and status not in ("re_review", "held_only"):
+                turn["apply_errors"] = errors
+            conversation.append(turn)
         elif detail.get("end_reason") == "cancelled":
             # T0004 §2.2 (flowgate.default.0570): a run the human stopped with the
             # STOP button must not fold into the conversation looking like an
             # ordinary run failure -- name it as a cancellation instead.
             conversation.append({
                 "turn_id": str(uuid.uuid4()), "role": "ai",
-                "message": "사용자가 이 실행을 중지했습니다(취소됨).",
+                "message": "",
+                "message_code": review_messages.CODE_CANCELLED,
+                "message_params": {},
+                "source_locale": pending_locale,
                 "provider_id": detail.get("provider_id"), "status": "cancelled",
                 "created_at": now_iso(),
             })
         else:
-            message = detail.get("last_message") or ("(no answer)" if succeeded else "(run failed)")
-            conversation.append({
-                "turn_id": str(uuid.uuid4()), "role": "ai", "message": message,
+            # 0578 T0006 §2.2: a real answer is content and stays verbatim in `message`.
+            # "no answer"/"run failed" were never the model's words -- they were this
+            # function's, in English, for a ko screen -- so they become codes instead.
+            answer = detail.get("last_message") or ""
+            turn = {
+                "turn_id": str(uuid.uuid4()), "role": "ai", "message": answer,
+                "source_locale": pending_locale,
                 "provider_id": detail.get("provider_id"), "status": "accepted" if succeeded else "failed",
                 "created_at": now_iso(),
-            })
+            }
+            if not answer:
+                turn["message_code"] = (
+                    review_messages.CODE_NO_ANSWER if succeeded else review_messages.CODE_RUN_FAILED
+                )
+                turn["message_params"] = {}
+            conversation.append(turn)
         context["conversation"] = conversation[-MAX_CHAT_TURNS:]
         db_git.set_session_context(merge_id, context)
     finally:
@@ -3334,6 +3388,7 @@ def send_review_message(
     provider_pinned: bool, apply_requested: bool,
     start_run: "Callable[[], Optional[str]]",
     allow_test_edits: bool = False,
+    locale: Optional[str] = None,
 ) -> dict:
     """D0006 §3.7 / L0007 §2.9 ``send_review_message``. A propose-only turn
     (``apply_requested=False``) asks a question against the frozen candidate and
@@ -3399,6 +3454,10 @@ def send_review_message(
         # still the one on screen.
         context["pending_conversation_start_fingerprint"] = context.get("review_fingerprint")
         context["pending_conversation_start_generation"] = int(context.get("instruction_generation") or 0)
+        # 0578 T0006 §3 work item 3-5 / D0005 §3.3: the locale this turn STARTED in, pinned
+        # beside the other pending bookkeeping and written under the same hold. A status
+        # poll, a cancel, or the screen switching language later must not move it.
+        context["pending_conversation_locale"] = template_provision.normalize_locale(locale)
         context["pending_conversation_run_id"] = run_id
         db_git.set_session_context(merge_id, context)
     finally:

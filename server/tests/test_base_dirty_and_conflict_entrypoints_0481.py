@@ -268,7 +268,11 @@ def test_a_run_whose_record_is_gone_answers_instead_of_waiting_forever(monkeypat
 
     assert result["pending_conversation"] is None
     assert result["conversation"][-1]["status"] == "run_lost"
-    assert "다시 보내" in result["conversation"][-1]["message"]
+    # 0578 T0006 §2.2: the sentence the operator reads is no longer stored — the turn
+    # carries the MEANING and each surface says it in its own language. Asserting on the
+    # code is asserting on the contract; the Korean sentence was only ever one rendering.
+    assert result["conversation"][-1]["message_code"] == "review_run_lost"
+    assert result["conversation"][-1]["message"] == ""
     # The chat is free again — nothing is left claiming the conversation slot.
     assert context.get("pending_conversation_run_id") is None
 

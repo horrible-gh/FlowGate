@@ -26,6 +26,7 @@ from modules.flow_gate.services import mention_service
 from modules.flow_gate.services import route_logging
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import git_service
+from modules.flow_gate.services.git import review_messages
 from modules.flow_gate.services.workflow_decision_service import (
     normalize_continuation_auto_approve_item_seqs,
     normalize_continuation_instruction_mode,
@@ -608,6 +609,10 @@ def _build_mention_for_token(
                 api_base_url=resolved_api_base,
                 write_requested_by_human=write_requested_by_human,
                 allow_test_edits=allow_test_edits,
+                # 0578 T0006 §3 work item 4-3 / D0005 §3.6: the history is rendered in the
+                # locale of the run that is about to CONSUME it -- the one this mention is
+                # being built for -- never in an earlier turn's `source_locale`.
+                locale=locale,
             )
         return _build_conflict_mention(
             group_id=group_id,
@@ -900,6 +905,7 @@ def _build_review_conversation_mention(
     api_base_url: str,
     write_requested_by_human: bool = False,
     allow_test_edits: bool = False,
+    locale: str = "ko",
 ) -> Optional[str]:
     """The prompt for a merge-review CONVERSATION turn (0481 T0010 rev6, rejection 3).
 
@@ -937,7 +943,42 @@ def _build_review_conversation_mention(
         body = " ".join((turn.get("message") or "").split())
         if len(body) > _REVIEW_CONVERSATION_MAX_TURN_CHARS:
             body = body[:_REVIEW_CONVERSATION_MAX_TURN_CHARS] + " ...(truncated)"
-        lines.append(f"[{index}] {who}{tag}: {body}")
+        # 0578 T0006 §3 work item 4 / D0005 §3.2: two shapes live in this log at once and
+        # both have to replay. A turn WITH `message_code` is a server notice -- rendered
+        # here, in this run's locale -- and its `message`, when there is one, is the
+        # previous run's own answer, which is content and stays verbatim on its own line.
+        # A turn WITHOUT a code is a legacy record (or a human/AI message) and is read
+        # exactly as it was stored. Neither shape may produce an empty line: a turn with
+        # no code and no text still says what state it ended in.
+        # Rejection finding (T0006 §4-5): only `body` used to be bounded here, so a large
+        # write plan's `paths` -- interpolated verbatim into the rendered notice -- made
+        # this line unbounded where the old stored `message` sentence would have been
+        # truncated. The rendered notice gets the SAME cap, applied separately from body's.
+        code = turn.get("message_code")
+        if code:
+            notice = " ".join(review_messages.render_turn_message(
+                code, turn.get("message_params"), locale, status,
+            ).split())
+            if len(notice) > _REVIEW_CONVERSATION_MAX_TURN_CHARS:
+                notice = notice[:_REVIEW_CONVERSATION_MAX_TURN_CHARS] + " ...(truncated)"
+            lines.append(f"[{index}] {who}{tag}: {notice}")
+            if body:
+                lines.append(f"    answer: {body}")
+        elif body:
+            lines.append(f"[{index}] {who}{tag}: {body}")
+        else:
+            notice = " ".join(
+                review_messages.render_turn_message(None, None, locale, status).split()
+            )
+            if len(notice) > _REVIEW_CONVERSATION_MAX_TURN_CHARS:
+                notice = notice[:_REVIEW_CONVERSATION_MAX_TURN_CHARS] + " ...(truncated)"
+            lines.append(f"[{index}] {who}{tag}: {notice}")
+        # §2.1: the causes of a failed apply are DIAGNOSTIC data, not product copy --
+        # handed over structured, the same way `last_error` below is, never folded into
+        # the sentence above.
+        turn_errors = turn.get("apply_errors")
+        if isinstance(turn_errors, list) and turn_errors:
+            lines.append(f"    apply_errors: {json.dumps(turn_errors, ensure_ascii=False)}")
     history = "\n".join(lines) or "(empty - the message above is the first turn)"
 
     last_error = brief.get("last_error")

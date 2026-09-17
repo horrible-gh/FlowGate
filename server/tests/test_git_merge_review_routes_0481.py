@@ -197,22 +197,61 @@ def test_review_message_requires_provider_pinned_true(monkeypatch):
 
 def test_review_message_success(monkeypatch):
     client = _client(monkeypatch)
+    # 0578 T0006 §3 work item 3-1: the route now normalizes X-Locale ONCE and hands the same
+    # value to the service (which pins it on the pending row) and to the run start (which puts
+    # it on the run's token). Both halves are recorded here so they cannot drift apart again.
+    seen: dict = {}
     monkeypatch.setattr(
         git_routes.git_service, "send_review_message",
-        lambda group_id, merge_id, *, message, provider_id, provider_pinned, apply_requested, start_run, allow_test_edits=False: {
+        lambda group_id, merge_id, *, message, provider_id, provider_pinned, apply_requested,
+        start_run, allow_test_edits=False, locale=None: seen.update(service_locale=locale) or {
             "ok": True, "result": {
                 "status": "accepted", "review_state": "resolved_pending_review",
                 "run_id": start_run(), "review_fingerprint": "f" * 64, "instruction_generation": 0,
             },
         },
     )
-    monkeypatch.setattr(git_routes, "_start_resolve_conflict_run", lambda **kw: "aiv_fake_run")
+    monkeypatch.setattr(
+        git_routes, "_start_resolve_conflict_run",
+        lambda **kw: seen.update(run_locale=kw.get("locale")) or "aiv_fake_run",
+    )
     resp = client.post(
         f"/api/v1/groups/{GROUP_ID}/git/merge/{MERGE_ID}/review-message",
         json={"message": "질문", "provider_id": "prov_1", "provider_pinned": True, "apply_requested": False},
+        headers={"X-Locale": "ja"},
     )
     assert resp.status_code == 200
     assert resp.json()["result"]["run_id"] == "aiv_fake_run"
+    assert seen["service_locale"] == "ja"
+    assert seen["run_locale"] == "ja"
+
+
+def test_review_message_without_a_locale_header_falls_back_to_the_default(monkeypatch):
+    # A request with no X-Locale must not leave the pending row with None: the normalizer
+    # folds it to the product default, and the same value goes to both halves.
+    client = _client(monkeypatch)
+    seen: dict = {}
+    monkeypatch.setattr(
+        git_routes.git_service, "send_review_message",
+        lambda group_id, merge_id, *, message, provider_id, provider_pinned, apply_requested,
+        start_run, allow_test_edits=False, locale=None: seen.update(service_locale=locale) or {
+            "ok": True, "result": {
+                "status": "accepted", "review_state": "resolved_pending_review",
+                "run_id": start_run(), "review_fingerprint": "f" * 64, "instruction_generation": 0,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        git_routes, "_start_resolve_conflict_run",
+        lambda **kw: seen.update(run_locale=kw.get("locale")) or "aiv_fake_run",
+    )
+    resp = client.post(
+        f"/api/v1/groups/{GROUP_ID}/git/merge/{MERGE_ID}/review-message",
+        json={"message": "질문", "provider_id": "prov_1", "provider_pinned": True},
+    )
+    assert resp.status_code == 200
+    assert seen["service_locale"] == "ko"
+    assert seen["run_locale"] == "ko"
 
 
 def test_resolve_token_route_forbids_the_auto_field(monkeypatch):
