@@ -194,7 +194,8 @@ def test_runtime_all_discovered_locale_maps_have_zero_korean():
 @pytest.mark.parametrize("locale", ["en", "ja"])
 def test_runtime_generated_instructions_and_errors_have_zero_korean(locale, monkeypatch):
     from modules.flow_gate import process_service, template_provision
-    from modules.flow_gate.api import inbox_routes
+    from modules.flow_gate.api import inbox_routes, token_routes
+    from modules.flow_gate.db import git_integration as db_git
     from modules.flow_gate.documents.routers import documents
     from modules.flow_gate.services import (
         invoke_mention_service,
@@ -259,6 +260,49 @@ def test_runtime_generated_instructions_and_errors_have_zero_korean(locale, monk
             test_run_service.parse_test_plan(content)
         parser_failures.append(exc_info.value.detail)
     outputs.extend(parser_failures)
+
+    # flowgate.default.0578 T0012 work item 4: the merge-review write-plan channel's
+    # procedure copy (_WRITE_PLAN_COPY, T0012 §2.1) and its two callers, each fed through
+    # write_requested_by_human=True so the write-plan section is actually rendered. The DB
+    # session lookup is monkeypatched away exactly like
+    # test_review_conversation_and_base_dirty_admission_0481.py's
+    # test_review_conversation_write_turn_still_gets_the_write_plan_channel does -- this
+    # unit test runs without a database, and a missing session degrades to the same
+    # placeholder base_fingerprint the real route falls back to.
+    monkeypatch.setattr(db_git, "get_session", lambda _merge_id: None)
+    outputs.append(token_routes._build_write_plan_section(
+        group_id="g1", merge_id=1, raw_token="tok",
+        api_base_url="http://example.test/api/v1", allow_test_edits=False, locale=locale,
+    ))
+    outputs.append(token_routes._build_write_plan_section(
+        group_id="g1", merge_id=1, raw_token="tok",
+        api_base_url="http://example.test/api/v1", allow_test_edits=True, locale=locale,
+    ))
+    monkeypatch.setattr(
+        token_routes.git_service, "list_conflicts",
+        lambda _group_id, _merge_id: {
+            "files": [], "kind": "merge", "branch": "b", "base_branch": "base",
+            "tr_conflict": None,
+        },
+    )
+    outputs.append(token_routes._build_conflict_mention(
+        group_id="g1", project_id="p1", merge_id=1, scratch_dir="/tmp/s", raw_token="tok",
+        api_base_url="http://example.test/api/v1", write_requested_by_human=True,
+        allow_test_edits=False, locale=locale,
+    ))
+    monkeypatch.setattr(
+        token_routes.git_service, "review_conversation_brief",
+        lambda _group_id, _merge_id: {
+            "review_state": "resolved_pending_review", "base_head": "a", "merge_head": "b",
+            "resolver_provider": "x", "changes": [], "conversation": [], "last_error": None,
+            "held_test_operations": [],
+        },
+    )
+    outputs.append(token_routes._build_review_conversation_mention(
+        group_id="g1", project_id="p1", merge_id=1, raw_token="tok",
+        api_base_url="http://example.test/api/v1", write_requested_by_human=True,
+        allow_test_edits=False, locale=locale,
+    ))
 
     assert_no_korean_leak(outputs)
 

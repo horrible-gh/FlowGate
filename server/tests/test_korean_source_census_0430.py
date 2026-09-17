@@ -65,13 +65,13 @@ FILE_LINE_CAPS: dict[str, int] = {
     "modules/flow_gate/documents/routers/documents.py": 13,
     "modules/flow_gate/documents/routers/work_plan.py": 5,
     "modules/flow_gate/process_service.py": 2,
-    # New (0 -> 21): flowgate.default.0481 T0008 item 1 (0009-TR rev2) added
-    # `_build_write_plan_section` — the merge review's explicit [수정 적용] turn has
-    # no write tool at all, so this mention section is the ONLY place the AI worker
-    # learns the anchored write-plan schema and the bound submission endpoint. All 21
-    # lines are that instructional Korean text (product copy the worker reads), not a
-    # design-rationale comment. This file had no measured Korean before 0481.
-    "modules/flow_gate/api/token_routes.py": 21,
+    # 21 -> 5: flowgate.default.0578 T0012 §2.1/§2.3 made `_build_write_plan_section`
+    # locale-aware -- its procedure copy moved into `_WRITE_PLAN_COPY` (ko/en/ja siblings)
+    # and the ko branch is now registered in `_korean_allowlist` (category A,
+    # locale-dictionary), so it no longer counts against this cap. The remaining 5 are
+    # unrelated pre-existing design-rationale comments (lines 82-83, 116, 584-585) quoting
+    # bracketed Korean button labels ([수정 적용], [반려]) -- out of this T's scope.
+    "modules/flow_gate/api/token_routes.py": 5,
     # 4 -> 6: flowgate.default.0481 T0008 item 1 (the anchored write-plan engine's
     # apply route, 0009-TR rev2) added the [수정 적용]/[테스트 편집 포함 재지시]
     # button labels to two design-rationale docstring/comment lines, on top of the

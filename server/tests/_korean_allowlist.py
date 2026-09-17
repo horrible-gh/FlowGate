@@ -223,6 +223,35 @@ PROTECTED = [
         ],
     },
     {
+        "file": "modules/flow_gate/api/token_routes.py",
+        "symbols": [
+            "이 재지시는 [수정 적용]으로 시작되었습니다", "직접 파일을 쓰는 도구는 이 실행에 없습니다",
+            "제출하는 것이 유일한 반영 경로이며", "실패 시 그대로 롤백합니다",
+            "테스트 경로 편집이 이번 재지시에서 허용되었습니다", "제품 코드와 같은 절차로 operations[]에 넣어도 됩니다",
+            "경로 세그먼트 test/tests)의 변경은", "operations[]에 넣지 마십시오",
+            "적용되지 않은 채 사람에게 표시됩니다", "위 세션이 보여준 `review_fingerprint`와 정확히 같아야 합니다",
+            "read/grep/glob/stat/diff/log/show 도구로 현재 상태를 다시 확인하십시오",
+            "치환 대상 자체의 정확한 바이트이며", "않는 일치 수가 `expected_count`와",
+            "세션이 보여준 스냅샷에 없는 경로에만 허용됩니다", "fallback이 아닙니다",
+            "모든 바이트 필드는 base64입니다", "`.git` 내부 경로는 거절됩니다",
+            "이 창구는 이 group_id와 merge_id에 바인딩된 토큰만 받습니다",
+            "엔드포인트는 이 토큰으로 접근할 수 없습니다",
+            "## Write plan 제출",
+        ],
+        "reason": (
+            "flowgate.default.0578 T0012 §2.1/§2.3: the ko branch of token_routes.py's "
+            "_WRITE_PLAN_COPY -- the merge-review write-plan channel's procedure copy, now "
+            "locale-aware (ko/en/ja siblings). Category A (locale-dictionary): the en/ja "
+            "branches are scanned for leakage by test_server_korean_leak_0355.py as usual. "
+            "Registered rather than added to the file's line cap, so this T contributes "
+            "zero to the census budget -- same convention as the inbox_routes.py "
+            "_SERVER_ASSEMBLED_NEW_COPY entry above."
+        ),
+        "tests": [
+            "tests/test_server_korean_leak_0355.py::test_runtime_generated_instructions_and_errors_have_zero_korean",
+        ],
+    },
+    {
         "file": "templates/flow_gate/group_detail.html",
         "symbols": ["다음 예상 액션", "멘트복사"],
         "reason": (
