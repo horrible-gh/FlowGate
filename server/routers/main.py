@@ -44,6 +44,7 @@ from modules.flow_gate.api.v1.chat_settings_routes import router as _chat_settin
 from modules.flow_gate.api.v1.ui_settings_routes import router as _ui_settings_router
 from modules.flow_gate.api.request_scope_middleware import RequestScopeMiddleware
 from modules.flow_gate.services.git_service import GitServiceError
+from modules.flow_gate.services.git.credentials import git_error_envelope
 from modules.flow_gate.services.mutation_policy import (
     GroupMutationPolicyMiddleware,
     MutationPolicyError,
@@ -112,13 +113,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 # route — present and future — matching the git_routes envelope exactly.
 @app.exception_handler(GitServiceError)
 async def git_service_exception_handler(request: Request, exc: GitServiceError):
-    error: dict = {"code": exc.code, "message": exc.message}
-    if exc.details:
-        error["details"] = exc.details
-    return JSONResponse(
-        status_code=exc.status,
-        content={"ok": False, "error": error},
-    )
+    if exc.diagnostic:
+        logger.warning(f"Git operation failed ({exc.code}): {exc.diagnostic}")
+    return JSONResponse(status_code=exc.status, content=git_error_envelope(exc))
 
 
 @app.exception_handler(MutationPolicyError)

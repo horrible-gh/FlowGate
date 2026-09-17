@@ -191,6 +191,31 @@ def test_router_rejects_zero_with_422(fake_settings):
     assert exc_info.value.status_code == 422
 
 
+# flowgate.default.0578 T0010 task 1: the client can no longer localize this failure from a
+# raw message, so the 422 body must carry a stable code + interpolation params instead.
+def test_router_rejects_zero_with_ai_repeat_count_out_of_range_code(fake_settings):
+    with pytest.raises(HTTPException) as exc_info:
+        system_router.update_settings(
+            system_router.SettingsPatch(updates={"ai_repeat_count_max": "0"}),
+            {"user_id": "usr_admin"},
+        )
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == {
+        "code": "ai_repeat_count_out_of_range",
+        "params": {"min": 1, "max": 30},
+    }
+
+
+def test_router_rejects_other_keys_with_plain_detail(fake_settings):
+    with pytest.raises(HTTPException) as exc_info:
+        system_router.update_settings(
+            system_router.SettingsPatch(updates={"source_mode": "bogus"}),
+            {"user_id": "usr_admin"},
+        )
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == "mode must be one of: local, remote"
+
+
 # ── Test 6: saving 31 and other malformed values are rejected ────────────────────
 
 @pytest.mark.parametrize("value", ["31", "abc", "", "3.5", True, None])

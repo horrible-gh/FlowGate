@@ -3,15 +3,18 @@ import i18n from '../../shared/i18n'
 import { extractApiErrorMessage, localizeApiError } from '../../shared/api'
 
 describe('AI-running 423 API error localization (0378)', () => {
-  it('extracts detail, structured error message, then fallback in order', () => {
+  // flowgate.default.0578 T0010 §2.3: extractApiErrorMessage no longer returns raw
+  // response.data.detail/error.message text. Without a registered code it always
+  // returns the caller's fallback verbatim.
+  it('never returns raw detail/error.message; returns the fallback when no code is registered', () => {
     expect(extractApiErrorMessage(
       { response: { data: { detail: 'detail', error: { message: 'nested' } } } },
       'fallback',
-    )).toBe('detail')
+    )).toBe('fallback')
     expect(extractApiErrorMessage(
       { response: { data: { error: { message: 'nested' } } } },
       'fallback',
-    )).toBe('nested')
+    )).toBe('fallback')
     expect(extractApiErrorMessage(new Error('boom'), 'fallback')).toBe('fallback')
   })
 

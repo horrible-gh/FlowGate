@@ -21,11 +21,13 @@ from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.documents.constants import is_server_assembled_type
 from modules.flow_gate.rbac.permission_service import has_permission
+from modules.flow_gate import template_provision
 from modules.flow_gate.services import invoke_mention_service
 from modules.flow_gate.services import mention_service
 from modules.flow_gate.services import route_logging
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import git_service
+from modules.flow_gate.services.git import review_messages
 from modules.flow_gate.services.workflow_decision_service import (
     normalize_continuation_auto_approve_item_seqs,
     normalize_continuation_instruction_mode,
@@ -608,6 +610,10 @@ def _build_mention_for_token(
                 api_base_url=resolved_api_base,
                 write_requested_by_human=write_requested_by_human,
                 allow_test_edits=allow_test_edits,
+                # 0578 T0006 §3 work item 4-3 / D0005 §3.6: the history is rendered in the
+                # locale of the run that is about to CONSUME it -- the one this mention is
+                # being built for -- never in an earlier turn's `source_locale`.
+                locale=locale,
             )
         return _build_conflict_mention(
             group_id=group_id,
@@ -618,6 +624,7 @@ def _build_mention_for_token(
             api_base_url=resolved_api_base,
             write_requested_by_human=write_requested_by_human,
             allow_test_edits=allow_test_edits,
+            locale=locale,
         )
 
     if not doc_ref or not group_id:
@@ -807,8 +814,134 @@ def _conflict_task_section(kind: str, tr: dict) -> str:
     )
 
 
+# flowgate.default.0578 T0012 §2.1: the ko/en/ja procedure copy for the merge-review
+# write-plan channel's ONLY instructional text -- the JSON schema, URL, and header lines
+# below stay identical across locales (an API contract, not product copy).
+_WRITE_PLAN_COPY = {
+    "ko": {
+        "heading": "## Write plan 제출",
+        "intro": (
+            "이 재지시는 [수정 적용]으로 시작되었습니다 — 질문/설명이 아니라 실제 소스 변경을 요구합니다. "
+            "직접 파일을 쓰는 도구는 이 실행에 없습니다: 아래 anchored write plan을 만들어 이 창구로 "
+            "제출하는 것이 유일한 반영 경로이며, 서버가 격리된 곳에서 검증한 뒤 원자적으로 반영하거나 "
+            "실패 시 그대로 롤백합니다."
+        ),
+        "note_test_edits_allowed": (
+            "테스트 경로 편집이 이번 재지시에서 허용되었습니다 (allow_test_edits=true) — "
+            "제품 코드와 같은 절차로 operations[]에 넣어도 됩니다."
+        ),
+        "note_test_edits_denied": (
+            "테스트 경로(server/tests/**, client/tests/**, 경로 세그먼트 test/tests)의 변경은 "
+            "operations[]에 넣지 마십시오 — 이유와 함께 held_test_operations[]에만 넣고, "
+            "적용되지 않은 채 사람에게 표시됩니다."
+        ),
+        "bullet_fingerprint": (
+            "- `base_fingerprint`은 위 세션이 보여준 `review_fingerprint`와 정확히 같아야 합니다 (달라졌으면 "
+            "제출 전에 read/grep/glob/stat/diff/log/show 도구로 현재 상태를 다시 확인하십시오)."
+        ),
+        "bullet_anchor": (
+            "- `edit`의 `anchor.body_base64`는 치환 대상 자체의 정확한 바이트이며, 적용 전 파일에서 겹치지 "
+            "않는 일치 수가 `expected_count`와 정확히 같아야 합니다."
+        ),
+        "bullet_create_file": (
+            "- `create_file`은 세션이 보여준 스냅샷에 없는 경로에만 허용됩니다 — 기존 파일을 덮어쓰는 "
+            "fallback이 아닙니다."
+        ),
+        "bullet_bytes_paths": (
+            "- 모든 바이트 필드는 base64입니다. 경로는 프로젝트 소스 루트 상대 경로이며 절대 경로, `..`, "
+            "`.git` 내부 경로는 거절됩니다."
+        ),
+        "bullet_token_binding": (
+            "- 이 창구는 이 group_id와 merge_id에 바인딩된 토큰만 받습니다. 다른 git/config/finalize "
+            "엔드포인트는 이 토큰으로 접근할 수 없습니다."
+        ),
+    },
+    "en": {
+        "heading": "## Write plan submission",
+        "intro": (
+            "This re-instruction was started with [Apply changes] -- it requires an actual source "
+            "change, not a question or an explanation. There is no tool that writes files directly "
+            "in this run: building the anchored write plan below and submitting it to this endpoint "
+            "is the only path to affect the tree, and the server validates it in isolation before "
+            "applying it atomically, or rolling back untouched on failure."
+        ),
+        "note_test_edits_allowed": (
+            "Test-path edits were allowed for this re-instruction (allow_test_edits=true) -- they "
+            "may go into operations[] through the same procedure as product code."
+        ),
+        "note_test_edits_denied": (
+            "Do not put changes to test paths (server/tests/**, client/tests/**, any path segment "
+            "named test/tests) into operations[] -- put them only into held_test_operations[] with "
+            "a reason; they are shown to a human, unapplied."
+        ),
+        "bullet_fingerprint": (
+            "- `base_fingerprint` must exactly match the `review_fingerprint` shown by the session "
+            "above (if it has changed, re-check the current state with the read/grep/glob/stat/diff/"
+            "log/show tools before submitting)."
+        ),
+        "bullet_anchor": (
+            "- `edit`'s `anchor.body_base64` must be the exact bytes of the replacement target "
+            "itself, and the number of non-overlapping matches in the file before applying must "
+            "equal `expected_count` exactly."
+        ),
+        "bullet_create_file": (
+            "- `create_file` is only allowed for a path absent from the snapshot the session showed "
+            "-- it is not a fallback for overwriting an existing file."
+        ),
+        "bullet_bytes_paths": (
+            "- All byte fields are base64. Paths are relative to the project source root; absolute "
+            "paths, `..`, and paths inside `.git` are rejected."
+        ),
+        "bullet_token_binding": (
+            "- This endpoint only accepts a token bound to this group_id and merge_id. Other git/"
+            "config/finalize endpoints cannot be reached with this token."
+        ),
+    },
+    "ja": {
+        "heading": "## Write plan の提出",
+        "intro": (
+            "この再指示は[修正を適用]で始まりました — 質問や説明ではなく、実際のソース変更を要求します。"
+            "このランには直接ファイルを書き込むツールはありません: 以下のanchored write planを作成して"
+            "この窓口に提出することが唯一の反映経路であり、サーバーが分離された場所で検証したうえで"
+            "原子的に反映するか、失敗時はそのままロールバックします。"
+        ),
+        "note_test_edits_allowed": (
+            "この再指示ではテストパスの編集が許可されています(allow_test_edits=true) — "
+            "製品コードと同じ手順でoperations[]に入れても構いません。"
+        ),
+        "note_test_edits_denied": (
+            "テストパス(server/tests/**、client/tests/**、パスのセグメントがtest/testsのもの)の変更は "
+            "operations[]に入れないでください — 理由とともにheld_test_operations[]にのみ入れ、"
+            "適用されないまま人に表示されます。"
+        ),
+        "bullet_fingerprint": (
+            "- `base_fingerprint`は上のセッションが示した`review_fingerprint`と正確に一致している必要が "
+            "あります(変わっていた場合は提出前にread/grep/glob/stat/diff/log/showツールで現在の状態を "
+            "再確認してください)。"
+        ),
+        "bullet_anchor": (
+            "- `edit`の`anchor.body_base64`は置換対象そのものの正確なバイトであり、適用前のファイルで "
+            "重複しない一致数が`expected_count`と正確に一致する必要があります。"
+        ),
+        "bullet_create_file": (
+            "- `create_file`はセッションが示したスナップショットに存在しないパスにのみ許可されます "
+            "— 既存ファイルを上書きするフォールバックではありません。"
+        ),
+        "bullet_bytes_paths": (
+            "- すべてのバイトフィールドはbase64です。パスはプロジェクトソースルートからの相対パスであり、"
+            "絶対パス、`..`、`.git`内部のパスは拒否されます。"
+        ),
+        "bullet_token_binding": (
+            "- この窓口はこのgroup_idとmerge_idに紐づけられたトークンのみを受け付けます。他のgit/config/"
+            "finalizeエンドポイントはこのトークンでアクセスできません。"
+        ),
+    },
+}
+
+
 def _build_write_plan_section(
     *, group_id: str, merge_id: int, raw_token: str, api_base_url: str, allow_test_edits: bool,
+    locale: str = "ko",
 ) -> str:
     """flowgate.default.0481 T0008 item 1 / L0007 §2.5-§2.9, Q&A on 0009-TR: the
     ONLY way this run's write turn can change the source tree. There is no write
@@ -819,17 +952,13 @@ def _build_write_plan_section(
     plan's own claims about the source tree."""
     from modules.flow_gate.db import git_integration as db_git
 
+    copy = _WRITE_PLAN_COPY[template_provision.normalize_locale(locale)]
     session = db_git.get_session(merge_id)
     context = db_git.session_context(session) if session is not None else {}
     base_fingerprint = context.get("review_fingerprint") or "<unknown — the review screen was not in a pending state>"
     write_plan_url = f"{api_base_url}/groups/{group_id}/git/merge/{merge_id}/write-plan-token"
     test_edit_note = (
-        "테스트 경로 편집이 이번 재지시에서 허용되었습니다 (allow_test_edits=true) — "
-        "제품 코드와 같은 절차로 operations[]에 넣어도 됩니다."
-        if allow_test_edits else
-        "테스트 경로(server/tests/**, client/tests/**, 경로 세그먼트 test/tests)의 변경은 "
-        "operations[]에 넣지 마십시오 — 이유와 함께 held_test_operations[]에만 넣고, "
-        "적용되지 않은 채 사람에게 표시됩니다."
+        copy["note_test_edits_allowed"] if allow_test_edits else copy["note_test_edits_denied"]
     )
     example = {
         "schema_version": "flowgate.write-plan.v1",
@@ -857,29 +986,21 @@ def _build_write_plan_section(
         "held_test_operations": [],
     }
     return (
-        "## Write plan submission\n"
+        f"{copy['heading']}\n"
         "---\n"
-        "이 재지시는 [수정 적용]으로 시작되었습니다 — 질문/설명이 아니라 실제 소스 변경을 요구합니다. "
-        "직접 파일을 쓰는 도구는 이 실행에 없습니다: 아래 anchored write plan을 만들어 이 창구로 "
-        "제출하는 것이 유일한 반영 경로이며, 서버가 격리된 곳에서 검증한 뒤 원자적으로 반영하거나 "
-        "실패 시 그대로 롤백합니다.\n\n"
+        f"{copy['intro']}\n\n"
         f"POST {write_plan_url}\n"
         f"Authorization: Bearer {raw_token}\n"
         "Content-Type: application/json\n\n"
         "```json\n"
         f"{json.dumps(example, ensure_ascii=False, indent=2)}\n"
         "```\n\n"
-        "- `base_fingerprint`은 위 세션이 보여준 `review_fingerprint`와 정확히 같아야 합니다 (달라졌으면 "
-        "제출 전에 read/grep/glob/stat/diff/log/show 도구로 현재 상태를 다시 확인하십시오).\n"
-        "- `edit`의 `anchor.body_base64`는 치환 대상 자체의 정확한 바이트이며, 적용 전 파일에서 겹치지 "
-        "않는 일치 수가 `expected_count`와 정확히 같아야 합니다.\n"
-        "- `create_file`은 세션이 보여준 스냅샷에 없는 경로에만 허용됩니다 — 기존 파일을 덮어쓰는 "
-        "fallback이 아닙니다.\n"
-        "- 모든 바이트 필드는 base64입니다. 경로는 프로젝트 소스 루트 상대 경로이며 절대 경로, `..`, "
-        "`.git` 내부 경로는 거절됩니다.\n"
+        f"{copy['bullet_fingerprint']}\n"
+        f"{copy['bullet_anchor']}\n"
+        f"{copy['bullet_create_file']}\n"
+        f"{copy['bullet_bytes_paths']}\n"
         f"- {test_edit_note}\n"
-        "- 이 창구는 이 group_id와 merge_id에 바인딩된 토큰만 받습니다. 다른 git/config/finalize "
-        "엔드포인트는 이 토큰으로 접근할 수 없습니다.\n\n"
+        f"{copy['bullet_token_binding']}\n\n"
     )
 
 
@@ -900,6 +1021,7 @@ def _build_review_conversation_mention(
     api_base_url: str,
     write_requested_by_human: bool = False,
     allow_test_edits: bool = False,
+    locale: str = "ko",
 ) -> Optional[str]:
     """The prompt for a merge-review CONVERSATION turn (0481 T0010 rev6, rejection 3).
 
@@ -937,7 +1059,42 @@ def _build_review_conversation_mention(
         body = " ".join((turn.get("message") or "").split())
         if len(body) > _REVIEW_CONVERSATION_MAX_TURN_CHARS:
             body = body[:_REVIEW_CONVERSATION_MAX_TURN_CHARS] + " ...(truncated)"
-        lines.append(f"[{index}] {who}{tag}: {body}")
+        # 0578 T0006 §3 work item 4 / D0005 §3.2: two shapes live in this log at once and
+        # both have to replay. A turn WITH `message_code` is a server notice -- rendered
+        # here, in this run's locale -- and its `message`, when there is one, is the
+        # previous run's own answer, which is content and stays verbatim on its own line.
+        # A turn WITHOUT a code is a legacy record (or a human/AI message) and is read
+        # exactly as it was stored. Neither shape may produce an empty line: a turn with
+        # no code and no text still says what state it ended in.
+        # Rejection finding (T0006 §4-5): only `body` used to be bounded here, so a large
+        # write plan's `paths` -- interpolated verbatim into the rendered notice -- made
+        # this line unbounded where the old stored `message` sentence would have been
+        # truncated. The rendered notice gets the SAME cap, applied separately from body's.
+        code = turn.get("message_code")
+        if code:
+            notice = " ".join(review_messages.render_turn_message(
+                code, turn.get("message_params"), locale, status,
+            ).split())
+            if len(notice) > _REVIEW_CONVERSATION_MAX_TURN_CHARS:
+                notice = notice[:_REVIEW_CONVERSATION_MAX_TURN_CHARS] + " ...(truncated)"
+            lines.append(f"[{index}] {who}{tag}: {notice}")
+            if body:
+                lines.append(f"    answer: {body}")
+        elif body:
+            lines.append(f"[{index}] {who}{tag}: {body}")
+        else:
+            notice = " ".join(
+                review_messages.render_turn_message(None, None, locale, status).split()
+            )
+            if len(notice) > _REVIEW_CONVERSATION_MAX_TURN_CHARS:
+                notice = notice[:_REVIEW_CONVERSATION_MAX_TURN_CHARS] + " ...(truncated)"
+            lines.append(f"[{index}] {who}{tag}: {notice}")
+        # §2.1: the causes of a failed apply are DIAGNOSTIC data, not product copy --
+        # handed over structured, the same way `last_error` below is, never folded into
+        # the sentence above.
+        turn_errors = turn.get("apply_errors")
+        if isinstance(turn_errors, list) and turn_errors:
+            lines.append(f"    apply_errors: {json.dumps(turn_errors, ensure_ascii=False)}")
     history = "\n".join(lines) or "(empty - the message above is the first turn)"
 
     last_error = brief.get("last_error")
@@ -952,6 +1109,7 @@ def _build_review_conversation_mention(
         _build_write_plan_section(
             group_id=group_id, merge_id=merge_id, raw_token=raw_token,
             api_base_url=api_base_url, allow_test_edits=allow_test_edits,
+            locale=locale,
         )
         if write_requested_by_human else ""
     )
@@ -1024,6 +1182,7 @@ def _build_conflict_mention(
     api_base_url: str,
     write_requested_by_human: bool = False,
     allow_test_edits: bool = False,
+    locale: str = "ko",
 ) -> Optional[str]:
     conflicts = git_service.list_conflicts(group_id, merge_id)
     files = conflicts.get("files") or []
@@ -1052,6 +1211,7 @@ def _build_conflict_mention(
         _build_write_plan_section(
             group_id=group_id, merge_id=merge_id, raw_token=raw_token,
             api_base_url=api_base_url, allow_test_edits=allow_test_edits,
+            locale=locale,
         )
         if write_requested_by_human else ""
     )

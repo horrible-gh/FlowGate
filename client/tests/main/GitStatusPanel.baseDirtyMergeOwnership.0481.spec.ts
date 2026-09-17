@@ -153,6 +153,6 @@ describe('GitStatusPanel — a refused base-dirty delegation says what happened'
       code: 'worktree_unavailable',
       message: '그룹 작업 폴더를 쓸 수 없습니다 (원인: merge_conflict_open)',
     })
-    expect(messages.some((m) => m.includes('merge_conflict_open'))).toBe(true)
+    expect(messages).toContain('기준 브랜치 AI 정리를 시작하지 못했습니다.')
   })
 })

@@ -2087,7 +2087,11 @@ class TestGitEndToEnd:
         assert review["review_fingerprint"] == fingerprint  # unchanged: nothing was applied
         cancelled_turn = next(t for t in review["conversation"] if t["role"] == "ai")
         assert cancelled_turn["status"] == "cancelled"
-        assert "실패" not in cancelled_turn["message"]
+        # 0578 T0006 §2.2: "not the word 실패" was a proxy for "this reads as a cancellation,
+        # not a failure". The stored turn now says that outright, in a code, and carries no
+        # server-authored sentence at all for any surface to mistake.
+        assert cancelled_turn["message_code"] == "review_cancelled"
+        assert cancelled_turn["message"] == ""
 
         # the slot is cleared -- a new message can start another run right away
         # (T0004 §2.2's "취소 후 다음 대화/수정 적용 요청을 다시 시작할 수 있어야 한다").
@@ -2924,11 +2928,16 @@ class TestGitEndToEnd:
         assert len(held) == 1
         assert held[0]["path"] == "server/tests/held_case.py"
         assert held[0]["purpose"] == "add a regression case for the fix"
-        roles = [(t["role"], t["status"], t["message"]) for t in review["conversation"]]
-        assert any(
-            role == "ai" and status == "accepted" and "held_case.py" in message
-            for role, status, message in roles
+        # 0578 T0006 §2.2: the held PATHS are checked above, on `held_test_operations` —
+        # the structured field this same test already reads. The turn keeps the count, not
+        # a rebuilt sentence listing the paths a second time.
+        held_turn = next(
+            t for t in review["conversation"]
+            if t["role"] == "ai" and t["status"] == "accepted"
         )
+        assert held_turn["message_code"] == "review_apply_held_only"
+        assert held_turn["message_params"]["held_count"] == 1
+        assert held_turn["message"] == ""
 
         svc.abort_merge(group, merge_id)
 
@@ -3170,9 +3179,14 @@ class TestGitEndToEnd:
         # kept. Before this the operator got only "the approval target changed, instruct
         # again" -- twice in the rejected transcript -- and never saw what the run said.
         stale = next(t for t in review["conversation"] if t["status"] == "stale_run")
-        assert "수정했습니다." in stale["message"]
-        assert "승인 대기가 끝났습니다" in stale["message"]
-        assert "수정안은 적용하지 않았습니다" in stale["message"]
+        # 0578 T0006 §2.2: the answer is CONTENT and stays byte-for-byte; the three things
+        # rev6 added to the sentence (which check fired, that it answers an older
+        # candidate, that the plan was discarded) are now params, so they survive a locale
+        # change instead of being frozen in Korean.
+        assert stale["message"] == "수정했습니다."
+        assert stale["message_code"] == "review_stale_run"
+        assert "approval_settled" in stale["message_params"]["changed"]
+        assert stale["message_params"]["plan_discarded"] is True
 
         # the plan never touched the tree: mainline still has exactly the commit
         # approval created, and no new candidate/generation was minted.
@@ -3251,8 +3265,13 @@ class TestGitEndToEnd:
         # rev6: kept, under a line that names what moved (here: the reject ended the wait
         # and refroze nothing, so the candidate identity is gone too).
         stale = next(t for t in context["conversation"] if t["status"] == "stale_run")
-        assert "이 답은 이미 버려진 후보에 대한 것입니다." in stale["message"]
-        assert "stale_run" in stale["message"]
+        # 0578 T0006 §2.2: same two facts, read off the contract instead of the sentence.
+        # [반려] leaves review_state None, so `review_state` is absent from the params and
+        # the surfaces say "the approval wait ended" without naming a state.
+        assert stale["message"] == "이 답은 이미 버려진 후보에 대한 것입니다."
+        assert stale["message_code"] == "review_stale_run"
+        assert "approval_settled" in stale["message_params"]["changed"]
+        assert "review_state" not in stale["message_params"]
         assert context.get("pending_conversation_run_id") is None
 
         svc.abort_merge(group, merge_id)

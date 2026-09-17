@@ -1090,6 +1090,7 @@ export default {
       notice_head_in_progress: 'すでに進行中の段階があります。',
       notice_issue_failed: 'トークンを発行できませんでした。',
       notice_ai_failed: 'AI 実行を開始できませんでした。',
+      create_failed: '作業計画の作成中にエラーが発生しました。',
     },
     work_plan_create_dialog: {
       title: '作業計画の作成',
@@ -1120,6 +1121,7 @@ export default {
       block_providers: '投入するプロバイダーを一つ以上チェックしてください。',
       create: '作成',
       creating: '作成中…',
+      create_failed: '作業計画の作成中にエラーが発生しました。',
     },
     work_plan: {
       title: '作業計画',
@@ -2609,6 +2611,29 @@ export default {
       tool_artifacts: 'ツールが残した痕跡 {n}件',
       tool_artifacts_note: 'テスト・ビルドが作った一時ファイルのため、変更一覧から除いています。コミットにも入りません。',
     },
+    git_errors: {
+      network: 'サーバーに接続できません。接続を確認してから再試行してください。',
+      generic: 'Git 操作に失敗しました。もう一度お試しください。',
+      base_dirty: 'ベースのチェックアウトにコミットされていない変更があります。',
+      base_untracked_conflict: 'ベースの未追跡ファイルがこの操作と競合しています。',
+      dirty_worktree: '作業ツリーにコミットされていない変更があります（{n} ファイル）。',
+      git_busy: '別の Git 操作が進行中です。',
+      git_unavailable: 'サーバーで Git を利用できません。',
+      review_not_found: 'マージレビューが見つかりません。',
+      review_not_ready: 'マージレビューはこの操作を実行できる状態ではありません。',
+      restoration_verification_failed: '復元したファイルを検証できませんでした。',
+      forbidden: 'この Git 操作を実行する権限がありません。',
+      invalid_state: '現在の状態ではこの Git 操作を実行できません。',
+      invalid_request: 'Git リクエストが正しくありません。',
+    },
+    api_errors: {
+      validation_failed: {
+        kind_unsupported_kind: 'このCLI種別はサポートされていません。',
+        model_name_invalid_model_name: 'モデル名が正しくありません。',
+        generic: '入力内容を確認してください。',
+      },
+      ai_repeat_count_out_of_range: '繰り返し回数は{min}〜{max}の範囲で指定してください。',
+    },
     git_finalize: {
       // 0382 NR0003 proposal 1 — temporary artifacts excluded from the finalize commit.
       excluded_artifacts: 'コミットから除外した一時生成物 {n}件',
@@ -2979,6 +3004,52 @@ export default {
       turn_status_cancelled: 'ユーザーが取消',
       turn_status_failed: '失敗',
       turn_status_rejected: '差し戻し',
+      // 0578 T0006 §3 作業 6 / D0005 §3.1 — サーバーが作る会話の案内は意味(message_code)と
+      // データ(message_params)だけで保存され、文はここで選ぶ。画面の言語を変えると、すでに
+      // 読み込まれたターンも描き直される。人やモデルが書いた本文は原文のまま残る。
+      turn_message: {
+        review_stale_run: 'この回答を作成している間に{reasons}。以下の内容は、その前の候補を見て書かれたものです(stale_run)。',
+        review_run_lost: 'この指示を担当した実行の記録が残っておらず、回答を受け取れませんでした(run_lost)。同じ内容をもう一度送ってください。',
+        review_apply_re_review: '依頼された修正を適用し、新しい承認対象を作成しました。変更されたファイル: {paths}',
+        review_apply_held_only: '提出された操作がすべてテストパスだったため保留しました({held_count} 件、未適用)。[テスト編集を含めて再指示]でもう一度依頼してください。',
+        review_apply_rollback_verification_failed: '修正の適用に失敗し、状態復旧の確認にも失敗しました — 人による確認が必要です。',
+        review_apply_failed: '修正の適用に失敗しました(原因 {error_count} 件)。',
+        review_cancelled: 'ユーザーがこの実行を停止しました(キャンセル)。',
+        review_no_answer: '実行は終了しましたが、回答が空でした。',
+        review_run_failed: '実行が失敗し、回答を受け取れませんでした。',
+        stale_reason: {
+          approval_settled: '承認待ちが終わりました(現在 {review_state})',
+          // [差し戻し]で待機が終わるとセッションが open に戻り review_state がない — その場合の文。
+          approval_settled_unknown: '承認待ちが終わりました',
+          candidate_refrozen: '承認対象が新しい候補に変わりました',
+          instruction_generation_bumped: '再指示により指示回次が上がりました',
+        },
+        stale_reason_join: '、',
+        stale_plan_discarded: ' 一緒に提出された修正案は適用していません。',
+        held_note: ' 保留されたテスト編集 {held_count} 件は適用していません。',
+        no_paths: '(なし)',
+        path_join: '、',
+        generic_status: "このターンは '{status}' の状態で終了しました。",
+        apply_errors_title: '適用失敗の原因(診断)',
+        // `status`/`review_state` は安定識別子であり文言ではない -- generic_status と
+        // stale_reason.approval_settled がこの値を原文のまま補間すると、画面言語と
+        // 異なる言語の状態名が混ざっていた(レビュー指摘: ja の generic に failed、
+        // ja の承認確定に completed)。ここで画面言語の表示名に変換してから補間する。
+        status: {
+          accepted: '完了',
+          failed: '失敗',
+          stale_run: '前の候補への回答',
+          run_lost: '実行記録なし',
+          cancelled: 'キャンセル済み',
+          unknown: '不明な状態',
+        },
+        review_state: {
+          applying: '適用中',
+          reconciling: '整合中',
+          completed: '完了',
+          unknown: '不明な状態',
+        },
+      },
       next_provider_label: '次の指示に使うプロバイダー',
       apply_requested_label: '修正の適用を要求',
       held_test_operations_title: '保留中のテスト編集',

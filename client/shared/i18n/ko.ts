@@ -1091,6 +1091,7 @@ export default {
       notice_head_in_progress: '이미 진행 중인 단계가 있습니다.',
       notice_issue_failed: '토큰을 발급하지 못했습니다.',
       notice_ai_failed: 'AI 실행을 시작하지 못했습니다.',
+      create_failed: '작업계획 생성 중 오류가 발생했습니다.',
     },
     work_plan_create_dialog: {
       title: '작업계획 생성',
@@ -1121,6 +1122,7 @@ export default {
       block_providers: '투입할 프로바이더를 하나 이상 체크해 주세요.',
       create: '생성',
       creating: '생성 중…',
+      create_failed: '작업계획 생성 중 오류가 발생했습니다.',
     },
     work_plan: {
       title: '작업계획',
@@ -2612,6 +2614,32 @@ export default {
       tool_artifacts: '도구가 남긴 흔적 {n}개',
       tool_artifacts_note: '테스트·빌드가 만든 임시 파일이라 변경 목록에서 빼 두었습니다. 커밋에도 들어가지 않습니다.',
     },
+    git_errors: {
+      network: '서버에 연결할 수 없습니다. 연결을 확인한 뒤 다시 시도하세요.',
+      generic: 'Git 작업에 실패했습니다. 다시 시도하세요.',
+      base_dirty: '기준 체크아웃에 커밋되지 않은 변경이 있습니다.',
+      base_untracked_conflict: '기준 체크아웃의 추적되지 않은 파일이 이 작업과 충돌합니다.',
+      dirty_worktree: '작업 트리에 커밋되지 않은 변경이 있습니다({n}개 파일).',
+      git_busy: '다른 Git 작업이 진행 중입니다.',
+      git_unavailable: '서버에서 Git을 사용할 수 없습니다.',
+      review_not_found: '병합 검토를 찾을 수 없습니다.',
+      review_not_ready: '병합 검토가 이 작업을 수행할 준비가 되지 않았습니다.',
+      restoration_verification_failed: '복원된 파일을 확인하지 못했습니다.',
+      forbidden: '이 Git 작업을 수행할 권한이 없습니다.',
+      invalid_state: '현재 상태에서는 이 Git 작업을 수행할 수 없습니다.',
+      invalid_request: 'Git 요청이 올바르지 않습니다.',
+    },
+    // flowgate.default.0578 T0010 §2.2/작업6 — extractApiErrorMessage와 비-Git 오류
+    // sink가 공유하는 등록 code 문구. GROUP_AI_RUN_LOCKED는 새 키를 만들지 않고
+    // review_action_bar의 기존 키를 그대로 참조한다.
+    api_errors: {
+      validation_failed: {
+        kind_unsupported_kind: '지원하지 않는 CLI 종류입니다.',
+        model_name_invalid_model_name: '모델 이름이 올바르지 않습니다.',
+        generic: '입력값을 확인해 주세요.',
+      },
+      ai_repeat_count_out_of_range: '반복 횟수는 {min}에서 {max} 사이여야 합니다.',
+    },
     git_finalize: {
       // 0382 NR0003 제안 1 — 마무리 커밋에서 뺀 임시 산출물.
       excluded_artifacts: '커밋에서 제외한 임시 산출물 {n}개',
@@ -2998,6 +3026,52 @@ export default {
       turn_status_cancelled: '사용자 취소',
       turn_status_failed: '실패',
       turn_status_rejected: '반려',
+      // 0578 T0006 §3 작업 6 / D0005 §3.1 — 서버가 만든 대화 안내는 이제 의미(message_code)와
+      // 데이터(message_params)로만 저장되고, 문장은 여기서 고른다. 화면 언어를 바꾸면 이미
+      // 불러온 차례도 이 키들로 다시 그려진다. 사람이 쓴 글과 AI의 실제 답변은 원문 그대로다.
+      turn_message: {
+        review_stale_run: '이 답을 만드는 동안 {reasons}. 아래 내용은 그 이전 후보를 보고 쓴 것입니다(stale_run).',
+        review_run_lost: '이 지시를 맡은 실행의 기록이 남아 있지 않아 답을 받지 못했습니다(run_lost). 같은 내용을 다시 보내 주십시오.',
+        review_apply_re_review: '요청한 수정을 적용해 새 승인 대상을 만들었습니다. 변경된 파일: {paths}',
+        review_apply_held_only: '제출된 연산이 모두 테스트 경로라 보류했습니다({held_count}건, 미적용). [테스트 편집 포함 재지시]로 다시 요청하십시오.',
+        review_apply_rollback_verification_failed: '수정 적용 실패 후 상태 복구 확인에도 실패했습니다 — 사람 확인이 필요합니다.',
+        review_apply_failed: '수정 적용에 실패했습니다(원인 {error_count}건).',
+        review_cancelled: '사용자가 이 실행을 중지했습니다(취소됨).',
+        review_no_answer: '실행은 끝났지만 답변이 비어 있습니다.',
+        review_run_failed: '실행이 실패해 답을 받지 못했습니다.',
+        stale_reason: {
+          approval_settled: '승인 대기가 끝났습니다(현재 {review_state})',
+          // [반려]로 대기가 끝나면 세션이 open 으로 돌아가 review_state 가 없다 — 그때 쓰는 문장.
+          approval_settled_unknown: '승인 대기가 끝났습니다',
+          candidate_refrozen: '승인 대상이 새 후보로 바뀌었습니다',
+          instruction_generation_bumped: '재지시로 지시 회차가 올라갔습니다',
+        },
+        stale_reason_join: ', ',
+        stale_plan_discarded: ' 함께 제출된 수정안은 적용하지 않았습니다.',
+        held_note: ' 보류된 테스트 편집 {held_count}건은 적용하지 않았습니다.',
+        no_paths: '(없음)',
+        path_join: ', ',
+        generic_status: "이 차례는 '{status}' 상태로 끝났습니다.",
+        apply_errors_title: '적용 실패 원인(진단)',
+        // `status`/`review_state`는 안정 식별자이지 문구가 아니다 — generic_status와
+        // stale_reason.approval_settled가 이 값을 원문 그대로 보간하면 화면 언어와
+        // 다른 언어의 상태 이름이 섞인다(반려: ja generic에 failed, ja 승인정산에
+        // completed). 여기서 화면 언어의 표시 이름으로 바꾼 뒤에만 보간한다.
+        status: {
+          accepted: '완료',
+          failed: '실패',
+          stale_run: '지난 후보에 대한 답변',
+          run_lost: '실행 기록 없음',
+          cancelled: '취소됨',
+          unknown: '알 수 없는 상태',
+        },
+        review_state: {
+          applying: '적용 중',
+          reconciling: '정리 중',
+          completed: '완료',
+          unknown: '알 수 없는 상태',
+        },
+      },
       next_provider_label: '다음 지시에 쓸 공급자',
       apply_requested_label: '수정 적용 요청',
       held_test_operations_title: '보류된 테스트 편집',

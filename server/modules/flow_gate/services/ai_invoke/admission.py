@@ -1217,7 +1217,16 @@ def start_run(
             continuation_target_seq=continuation_target_seq if mode == "continuous" else None,
             continuation_review_mode=bool(mode == "continuous" and continuation_review_mode),
             continuation_instruction_mode=continuation_instruction_mode if mode == "continuous" else None,
-            continuation_locale=continuation_locale if mode == "continuous" else None,
+            # 0578 T0006 §3 work item 3-4: a merge-review conversation run is `single`, so this
+            # dropped the language the reviewer started the turn in and the worker's help /
+            # tool prose came back in the server default. Only the LOCALE widens -- the other
+            # continuation_* fields stay continuous-only, because they describe a chain hop
+            # and a resolve_conflict run is not one.
+            continuation_locale=(
+                continuation_locale
+                if (mode == "continuous" or action_scope == "resolve_conflict")
+                else None
+            ),
             merge_id=merge_id if action_scope == "resolve_conflict" else None,
             provider_id=provider_id,
             ai_run_id=run_id,
@@ -1501,7 +1510,11 @@ def start_run(
         "prompt_final_sha256": _prompt_final_sha256,
         # 0359 L0007 §2.5: the retry rebuilds this hop's prompt from scratch when the token
         # has to be reissued, and a prompt is only correct in the locale the chain chose.
-        "continuation_locale": (continuation_locale if mode == "continuous" else None),
+        "continuation_locale": (
+            continuation_locale
+            if (mode == "continuous" or action_scope == "resolve_conflict")
+            else None
+        ),
         # 0317 TR0011 (Q153 opt-1): the per-step override map rides on the run so each
         # re-spawned hop can re-apply it (it never touches a token; it is session-scoped).
         "continuation_provider_overrides": (

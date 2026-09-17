@@ -42,6 +42,7 @@ from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
+from modules.flow_gate import template_provision
 from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.rbac.decorators import _has_permission, require_permission
 from modules.flow_gate.services import (
@@ -49,6 +50,7 @@ from modules.flow_gate.services import (
 )
 from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.services.git_service import GitServiceError
+from modules.flow_gate.services.git.credentials import git_error_envelope
 
 router = APIRouter(prefix="/api/v1", tags=["Git"])
 
@@ -68,7 +70,9 @@ def _error_response(status_code: int, code: str, message: str, details: Optional
 
 
 def _guard(exc: GitServiceError) -> JSONResponse:
-    return _error_response(exc.status, exc.code, exc.message, getattr(exc, "details", None))
+    if exc.diagnostic:
+        git_service._log.warning("Git operation failed (%s): %s", exc.code, exc.diagnostic)
+    return JSONResponse(status_code=exc.status, content=git_error_envelope(exc))
 
 
 def _check_group_permission(user: dict, group_id: str, permission: str) -> Optional[JSONResponse]:
@@ -701,7 +705,7 @@ def _start_resolve_conflict_run(
     *, group_id: str, merge_id: int, request: Request, user_id: str,
     provider_id: Optional[str], provider_pinned: bool, messages: list[str],
     write_requested_by_human: bool = False, allow_test_edits: bool = False,
-    review_conversation: bool = False,
+    review_conversation: bool = False, locale: Optional[str] = None,
 ) -> Optional[str]:
     """Kicks off a fresh resolve_conflict run bound to this merge session — the
     same mechanism [AI 호출] already uses, reused here for the [반려] retry run
@@ -715,13 +719,23 @@ def _start_resolve_conflict_run(
     from modules.flow_gate.services import ai_invoke_service
 
     project_id, module = _review_group_parts(group_id)
-    locale = request.headers.get("x-locale") or "ko"
+    # 0578 T0006 §3 work item 3-1/3-2 / D0005 §3.3: ONE normalization for this run. The
+    # caller that already fixed the turn's start locale hands it down (so the pending row
+    # and the run agree by construction); the [Reject] path still has none of its own and
+    # falls back to this request's header -- now through the same normalizer, so an
+    # unsupported value folds to ko instead of riding along as-is.
+    locale = template_provision.normalize_locale(
+        locale if locale is not None else request.headers.get("x-locale")
+    )
     api_base_url = _token_routes._build_api_base(request)
     result = ai_invoke_service.start_run(
         project_id=project_id, module=module, group_id=group_id,
         doc_ref="", action_scope="resolve_conflict", mode="single",
         continuation_target_seq=None, continuation_review_mode=False,
-        continuation_instruction_mode=None, continuation_locale=None,
+        # 0578 T0006 §3 work item 3-3 / D0005 §3.3: the worker reaches back for help and
+        # tool prose with THIS token; `continuation_locale` is the existing carrier for
+        # "the language this run started in", so a merge-review run gets it too.
+        continuation_instruction_mode=None, continuation_locale=locale,
         issued_to=user_id, api_base_url=api_base_url,
         mention_builder=_resolve_conflict_mention_builder(
             group_id=group_id, project_id=project_id, merge_id=merge_id,
@@ -851,15 +865,20 @@ def post_merge_review_message(
     user_id = user.get("user_id") or user.get("id") or user.get("email") or "unknown"
     apply_requested = bool(body.apply_requested)
     allow_test_edits = bool(body.allow_test_edits) and apply_requested
+    # 0578 T0006 §3 work item 3-1: normalized ONCE here and handed to both halves, so the
+    # locale pinned on the pending row and the locale the run is launched in cannot drift
+    # apart. Deliberately read from the header only -- no body field, no second source.
+    locale = template_provision.normalize_locale(request.headers.get("x-locale"))
     try:
         return git_service.send_review_message(
             group_id, merge_id, message=body.message,
             provider_id=body.provider_id, provider_pinned=True,
             apply_requested=apply_requested, allow_test_edits=allow_test_edits,
+            locale=locale,
             start_run=lambda: _start_resolve_conflict_run(
                 group_id=group_id, merge_id=merge_id, request=request, user_id=user_id,
                 provider_id=body.provider_id, provider_pinned=True,
-                messages=[body.message],
+                messages=[body.message], locale=locale,
                 write_requested_by_human=apply_requested,
                 allow_test_edits=allow_test_edits,
                 # 0481 T0010 rev6 (rejection 3): a question typed at the approval screen

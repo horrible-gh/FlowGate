@@ -241,7 +241,17 @@ const selectedProviders = ref<Set<string>>(new Set())
 const providerQuery = ref('')
 const selectedOnly = ref(false)
 const creating = ref(false)
-const createError = ref('')
+/** flowgate.default.0578.0011-TR rev1 (T0010 task 4.3): keeps the raw error and the
+ *  fallback translation key instead of a pre-resolved string, so a locale change after
+ *  the error is shown re-renders it in the new language instead of freezing it in
+ *  whatever locale was active when the request failed. */
+type CreateErrorState = { kind: 'none' } | { kind: 'api'; error: unknown; fallbackKey: string }
+const createErrorState = ref<CreateErrorState>({ kind: 'none' })
+const createError = computed(() => (
+  createErrorState.value.kind === 'api'
+    ? extractApiErrorMessage(createErrorState.value.error, t(createErrorState.value.fallbackKey))
+    : ''
+))
 
 const typesLoaded = computed<WorkPlanCountableType[]>(() => docTypeStore.countableTypes)
 const allCountableTypeCodes = computed(() => typesLoaded.value.map((item) => item.code))
@@ -408,7 +418,7 @@ watch(
     selectedProviders.value = new Set()
     providerQuery.value = ''
     selectedOnly.value = false
-    createError.value = ''
+    createErrorState.value = { kind: 'none' }
     creating.value = false
     void loadTypes()
     void loadProviders()
@@ -424,7 +434,7 @@ function onClose() {
 async function onCreate() {
   if (blockReason.value || creating.value) return
   creating.value = true
-  createError.value = ''
+  createErrorState.value = { kind: 'none' }
   try {
     const res = await postRequest<{ ok: boolean; doc_id: string; title: string; body: Record<string, unknown> }>(
       '/api/v1/documents/work-plan',
@@ -452,8 +462,7 @@ async function onCreate() {
     emit('created', { docId: data.doc_id, title: data.title, body: data.body })
     emit('update:visible', false)
   } catch (e: any) {
-    const detail = e?.response?.data
-    createError.value = extractApiErrorMessage(e, detail?.message || String(e))
+    createErrorState.value = { kind: 'api', error: e, fallbackKey: 'main.work_plan_create_dialog.create_failed' }
   } finally {
     creating.value = false
   }

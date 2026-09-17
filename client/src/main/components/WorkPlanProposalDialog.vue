@@ -376,7 +376,17 @@ const providersSettled = ref(false)
 const selectedTypes = ref<Set<string>>(new Set())
 const selectedProviders = ref<Set<string>>(new Set())
 const creating = ref(false)
-const createError = ref('')
+/** flowgate.default.0578.0011-TR rev1 (T0010 task 4.3): keeps the raw error and the
+ *  fallback translation key instead of a pre-resolved string, so a locale change after
+ *  the error is shown re-renders it in the new language instead of freezing it in
+ *  whatever locale was active when the request failed. */
+type CreateErrorState = { kind: 'none' } | { kind: 'api'; error: unknown; fallbackKey: string }
+const createErrorState = ref<CreateErrorState>({ kind: 'none' })
+const createError = computed(() => (
+  createErrorState.value.kind === 'api'
+    ? extractApiErrorMessage(createErrorState.value.error, t(createErrorState.value.fallbackKey))
+    : ''
+))
 /** flowgate.default.0416 T0004 — shared with WorkPlanEditor.vue's plan.defaults.note. */
 const note = ref('')
 /** flowgate.default.0421 NR0003 §1 — tracks whether the user already typed a value
@@ -588,7 +598,7 @@ watch(
     // That value isn't this dialog's own — it's the app-wide selection — and if the
     // value chosen in the header or AI invoke dialog vanished just because this one
     // reopened, it would drift out of sync with those dialogs again.
-    createError.value = ''
+    createErrorState.value = { kind: 'none' }
     creating.value = false
     providersError.value = false
     // 0405 T0011 rev2: if this project's list has already been fetched, the dialog
@@ -622,7 +632,7 @@ function onClose() {
 async function onCreateEmpty() {
   if (!canRun.value || creating.value || props.aiActive) return
   creating.value = true
-  createError.value = ''
+  createErrorState.value = { kind: 'none' }
   try {
     const allCodes = countableTypes.value.map((item) => item.code)
     const res = await postRequest<{ ok: boolean; doc_id: string; title: string; body: Record<string, unknown> }>(
@@ -653,8 +663,7 @@ async function onCreateEmpty() {
     emit('created', { docId: data.doc_id, title: data.title, body: data.body })
     emit('update:visible', false)
   } catch (e: any) {
-    const detail = e?.response?.data
-    createError.value = extractApiErrorMessage(e, detail?.message || String(e))
+    createErrorState.value = { kind: 'api', error: e, fallbackKey: 'main.work_plan_proposal_dialog.create_failed' }
   } finally {
     creating.value = false
   }

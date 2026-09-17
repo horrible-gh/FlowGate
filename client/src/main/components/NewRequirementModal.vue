@@ -459,21 +459,14 @@ async function submit() {
     emit('created', { docId, openAfter: form.value.openAfter })
   } catch (error: unknown) {
     flashOk.value = false
-      const serverErr = (error as { response?: { data?: { errors?: any[] } } })?.response?.data?.errors?.[0]
-      let message = t('main.requirement.create.error')
-      if (typeof serverErr === 'string') {
-        message = serverErr
-      } else if (serverErr && typeof serverErr === 'object') {
-        message = serverErr.message || serverErr.code || message
-      }
-      message = extractApiErrorMessage(error, message)
-      // surface server error via toast only — no inline .alert-danger in .modal-ft
-      try {
-        // show toast above modal (teleport ensures visibility)
-        showToast(message, 'danger')
-      } catch (e) {
-        // best-effort; do not throw from UI error handling
-      }
+    const message = extractApiErrorMessage(error, t('main.requirement.create.error'))
+    // surface server error via toast only — no inline .alert-danger in .modal-ft
+    try {
+      // show toast above modal (teleport ensures visibility)
+      showToast(message, 'danger')
+    } catch (e) {
+      // best-effort; do not throw from UI error handling
+    }
   } finally {
     submitting.value = false
   }

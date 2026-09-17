@@ -10,11 +10,18 @@ import i18n from '@shared/i18n'
 const postRequest = vi.fn()
 const getRequest = vi.fn()
 const patchRequest = vi.fn()
-vi.mock('@shared/api', () => ({
-  postRequest: (...args: unknown[]) => postRequest(...args),
-  getRequest: (...args: unknown[]) => getRequest(...args),
-  patchRequest: (...args: unknown[]) => patchRequest(...args),
-}))
+// flowgate.default.0578 T0010: extractApiErrorMessage now delegates to the shared
+// code-based resolver (apiErrors.ts) instead of returning raw detail/error.message, so this
+// mock keeps the real implementation and only stubs the request functions.
+vi.mock('@shared/api', async () => {
+  const actual = await vi.importActual<typeof import('@shared/api')>('@shared/api')
+  return {
+    ...actual,
+    postRequest: (...args: unknown[]) => postRequest(...args),
+    getRequest: (...args: unknown[]) => getRequest(...args),
+    patchRequest: (...args: unknown[]) => patchRequest(...args),
+  }
+})
 
 const showToast = vi.fn()
 vi.mock('@main/components/common/useToast', () => ({
@@ -174,7 +181,11 @@ describe('WorkflowDecisionModal — sequence edit hand-off (0268 B0001)', () => 
     )
   })
 
-  it('invoke failure surfaces the server message and leaves the dialog open', async () => {
+  // flowgate.default.0578 T0010 §2.1/§4.3: invokeAiSequenceEdit used to read
+  // response.data.message/error.message directly. It now goes through
+  // extractApiErrorMessage, which never returns raw server text for an unregistered code —
+  // this screen's own fallback is shown instead.
+  it('invoke failure surfaces this screen fallback, not the raw server message, and leaves the dialog open', async () => {
     postRequest.mockRejectedValue({ response: { data: { message: 'sequence_not_decided' } } })
     const wrapper = mountModal()
     await flushPromises()
@@ -182,7 +193,9 @@ describe('WorkflowDecisionModal — sequence edit hand-off (0268 B0001)', () => 
     await buttonByText(wrapper, 'main.workflow_edit_modal.invoke_ai').trigger('click')
     await flushPromises()
 
-    expect(showToast).toHaveBeenCalledWith('sequence_not_decided', 'error')
+    expect(showToast).toHaveBeenCalledWith(
+      i18n.global.t('main.workflow_edit_modal.error_ai_invoke'), 'error',
+    )
     // A failed invoke must not close the dialog, or the user loses the copy fallback.
     expect(wrapper.emitted('update:visible')).toBeUndefined()
     buttonByText(wrapper, 'main.workflow_edit_modal.mention_copy')

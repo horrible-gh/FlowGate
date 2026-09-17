@@ -5,6 +5,7 @@ import axios, {
   type InternalAxiosRequestConfig,
 } from 'axios'
 import i18n from './i18n'
+import { resolveApiErrorWithFallbackText } from './apiErrors'
 
 interface RefreshResponse {
   access_token: string
@@ -389,16 +390,11 @@ export const ensureValidAccessToken = async (): Promise<boolean> => {
   return true
 }
 
-export const extractApiErrorMessage = (error: unknown, fallback: string): string => {
-  const data = (error as { response?: { data?: unknown } })?.response?.data
-  if (!data || typeof data !== 'object') return fallback
-  const record = data as Record<string, any>
-  if (typeof record.detail === 'string' && record.detail) return record.detail
-  if (typeof record.error?.message === 'string' && record.error.message) {
-    return record.error.message
-  }
-  return fallback
-}
+// flowgate.default.0578 T0010 §2.3: delegates to the common resolver so a registered code
+// renders its i18n message; otherwise the caller's fallback is returned verbatim. Raw
+// response.data.detail/error.message text is never returned here anymore.
+export const extractApiErrorMessage = (error: unknown, fallback: string): string =>
+  resolveApiErrorWithFallbackText(error, i18n.global.t, fallback)
 
 export const localizeApiError = (error: AxiosError): AxiosError => {
   const data = error.response?.data
