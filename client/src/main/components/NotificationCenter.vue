@@ -177,7 +177,8 @@
         <article v-for="item in store.qaItems" v-else :key="item.doc_id" class="notif-qa-row">
           <div class="notif-target notif-qa-target">
             <span v-if="item.type_code" class="doc-tag" :class="'c-' + item.type_code">{{ item.type_code }}</span>
-            <strong class="notif-doc-id">{{ item.doc_id }}<template v-if="item.title?.trim()"> — {{ item.title.trim() }}</template></strong>
+            <strong class="notif-doc-id">{{ item.doc_id }}</strong>
+            <span v-if="item.title?.trim()" class="notif-target-title">{{ item.title.trim() }}</span>
           </div>
           <button class="notif-qa-open" type="button" @click="openQaDocument(item.doc_id)">{{ t('main.notif_center.qa_open') }} →</button>
         </article>
@@ -685,8 +686,10 @@ defineExpose({ open })
   align-items: center;
   gap: 10px;
   border-bottom: 1px solid var(--border-subtle, #f1f5f9);
+  transition: background var(--tr, .15s);
 }
+.notif-qa-row:hover { background: var(--hover, #f8fafc); }
 .notif-qa-target { min-width: 0; flex: 1; }
-.notif-qa-open { flex: none; color: var(--primary, #2563eb); font-size: .72rem; font-weight: 700; }
+.notif-qa-open { flex: none; white-space: nowrap; color: var(--primary, #2563eb); font-size: .72rem; font-weight: 700; }
 .notif-qa-open:hover { text-decoration: underline; }
 </style>

@@ -163,7 +163,10 @@ describe('NotificationCenter 시안 3 mockup (group 0135)', () => {
     await wrapper.findAll('.notif-section-tab')[2].trigger('click')
 
     expect(wrapper.findAll('.notif-section-tab')[2].text()).toBe('질의응답 3')
-    expect(wrapper.find('.notif-qa-row').text()).toContain('flowgate.default.0135.0017-T — Task title')
+    const openedRow = wrapper.find('.notif-qa-row')
+    expect(openedRow.find('.notif-doc-id').text()).toBe('flowgate.default.0135.0017-T')
+    expect(openedRow.find('.notif-target-title').text()).toBe('Task title')
+    expect(openedRow.text()).not.toContain('—')
     currentRoute.value.path = '/requirements/create'
 
     // Record the exact order of "intent recorded" vs "panel closed" with sync watchers on
@@ -197,13 +200,22 @@ describe('NotificationCenter 시안 3 mockup (group 0135)', () => {
   it('renders title-less Q&A rows and distinguishes loading, feed error, degraded, and genuine empty states', async () => {
     const wrapper = await mountOpen([])
     const store = useNotificationsStore()
-    store.qaItems = [{ doc_id: 'flowgate.default.0135.0018-TR', title: '   ', type_code: 'TR' }]
-    store.qaTotal = 1
+    store.qaItems = [
+      { doc_id: 'flowgate.default.0135.0018-TR', title: '   ', type_code: 'TR' },
+      { doc_id: 'flowgate.default.0135.0019-TR', title: null, type_code: 'TR' },
+    ]
+    store.qaTotal = 2
     await wrapper.findAll('.notif-section-tab')[2].trigger('click')
-    const rowText = wrapper.find('.notif-qa-row').text()
-    expect(rowText).toContain('flowgate.default.0135.0018-TR')
-    expect(rowText).not.toContain('—')
-    expect(rowText).not.toContain('null')
+    const rows = wrapper.findAll('.notif-qa-row')
+    expect(rows).toHaveLength(2)
+    for (const row of rows) {
+      expect(row.find('.notif-target-title').exists()).toBe(false)
+      expect(row.find('.doc-tag').exists()).toBe(true)
+      expect(row.text()).not.toContain('—')
+      expect(row.text()).not.toContain('null')
+    }
+    expect(rows[0].find('.notif-doc-id').text()).toBe('flowgate.default.0135.0018-TR')
+    expect(rows[1].find('.notif-doc-id').text()).toBe('flowgate.default.0135.0019-TR')
 
     store.qaItems = []
     store.loading = true
@@ -226,6 +238,40 @@ describe('NotificationCenter 시안 3 mockup (group 0135)', () => {
     store.degradedSections = []
     await wrapper.vm.$nextTick()
     expect(wrapper.text()).toContain('대기 중인 질의응답이 없습니다')
+  })
+
+  it('keeps long Q&A titles and doc ids on the shared notif-target-title contract without pushing the open action out', async () => {
+    const wrapper = await mountOpen([])
+    const store = useNotificationsStore()
+    const longTitle = '아주 긴 질의응답 문서 제목입니다 '.repeat(12).trim()
+    const longDocId = 'flowgate.default.0135.' + '9'.repeat(40) + '-TR'
+    store.qaItems = [{ doc_id: longDocId, title: longTitle, type_code: 'TR' }]
+    store.qaTotal = 1
+    await wrapper.findAll('.notif-section-tab')[2].trigger('click')
+
+    const row = wrapper.find('.notif-qa-row')
+    expect(row.find('.doc-tag').text()).toBe('TR')
+    expect(row.find('.notif-doc-id').text()).toBe(longDocId)
+    const titleEl = row.find('.notif-target-title')
+    expect(titleEl.exists()).toBe(true)
+    expect(titleEl.text()).toBe(longTitle)
+    const openBtn = row.find('.notif-qa-open')
+    expect(openBtn.exists()).toBe(true)
+    expect(openBtn.text()).toBe(i18n.global.t('main.notif_center.qa_open') + ' →')
+  })
+
+  it('keeps the Q&A open action keyboard-focusable', async () => {
+    const wrapper = await mountOpen([])
+    document.body.appendChild(wrapper.element)
+    const store = useNotificationsStore()
+    store.qaItems = [{ doc_id: 'flowgate.default.0135.0020-T', title: 'Focusable', type_code: 'T' }]
+    store.qaTotal = 1
+    await wrapper.findAll('.notif-section-tab')[2].trigger('click')
+
+    const openBtn = wrapper.find('.notif-qa-open').element as HTMLButtonElement
+    openBtn.focus()
+    expect(document.activeElement).toBe(openBtn)
+    wrapper.element.remove()
   })
 
   it('assigns a fresh intent sequence when the same Q&A document is opened again', async () => {
