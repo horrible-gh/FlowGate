@@ -1574,6 +1574,11 @@ def document_review_loop_payload(run: dict) -> dict | None:
     if not loop:
         return None
     payload = {key: loop.get(key) for key in ("round_no", "current_stage", "stop_reason", "stop_detail")}
+    # 0569 T0006: loop-scope same-stage retry count, distinct from the run-wide
+    # attempts_used the diagnostics payload exposes, which counts every hop regardless of
+    # stage (NR0005 §10).
+    payload["attempts_used"] = int(loop.get("attempts_used") or 0)
+    payload["failure_restart_max_attempts"] = int(loop.get("failure_restart_max_attempts") or 0)
     # 0417 T0013 items 7-8: the round table travels with EVERY start / status / finish
     # payload, rebuilt from canonical rows, so a card restored after F5, a reconnect or a
     # server restart shows the same rounds instead of only what this browser observed.

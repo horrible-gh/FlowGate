@@ -1324,6 +1324,7 @@ export default {
       review_loop_stage_review: 'レビュー中',
       review_loop_stage_rework: '差し戻し対応中',
       review_loop_stage_stopped: '停止済み',
+      review_loop_retry: '再試行 {used}/{max}',
       review_loop_history_stage_review: 'レビュー',
       review_loop_history_stage_rework: '差し戻し対応',
       review_loop_history_stage_unknown: '不明な段階',

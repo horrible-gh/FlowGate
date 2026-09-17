@@ -1765,3 +1765,108 @@ describe('document review loop state normalization (0417 T0013)', () => {
   })
 })
 
+
+describe('document review loop attempts_used exposure (0569 T0006)', () => {
+  it('normalizes attempts_used and failure_restart_max_attempts from snake_case', () => {
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    setActivePinia(createPinia())
+    const store = useAiInvokeRunsStore()
+    const groupId = 'flowgate.default.0569.normalize'
+    store.trackStarted({
+      run_id: 'loop-attempts-1', group_id: groupId, status: 'running',
+      document_review_loop: {
+        round_no: 1, current_stage: 'review',
+        attempts_used: 1, failure_restart_max_attempts: 1,
+      },
+    })
+    expect(store.runsByGroup[groupId].documentReviewLoop).toMatchObject({
+      attemptsUsed: 1, failureRestartMaxAttempts: 1,
+    })
+    store.$dispose()
+  })
+
+  it('keeps the stage-local retry count at 1 across a same-stage retry poll', () => {
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    setActivePinia(createPinia())
+    const store = useAiInvokeRunsStore()
+    const groupId = 'flowgate.default.0569.retry'
+    store.trackStarted({
+      run_id: 'loop-attempts-2', group_id: groupId, status: 'running',
+      document_review_loop: { round_no: 1, current_stage: 'review', attempts_used: 0, failure_restart_max_attempts: 1 },
+    })
+    store.trackStarted({
+      run_id: 'loop-attempts-2', group_id: groupId, status: 'running',
+      document_review_loop: { round_no: 1, current_stage: 'review', attempts_used: 1, failure_restart_max_attempts: 1 },
+    })
+    expect(store.runsByGroup[groupId].documentReviewLoop).toMatchObject({
+      roundNo: 1, currentStage: 'review', attemptsUsed: 1, failureRestartMaxAttempts: 1,
+    })
+    store.$dispose()
+  })
+
+  // The critical regression T0006 4.2 calls out: a successful retry resets attempts_used to
+  // 0 on the SAME transition that moves the stage on, and that reset must be accepted -- not
+  // clamped to the previous max the way roundNo is.
+  it('accepts the 1 -> 0 reset when the stage transitions after a successful retry', () => {
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    setActivePinia(createPinia())
+    const store = useAiInvokeRunsStore()
+    const groupId = 'flowgate.default.0569.reset'
+    store.trackStarted({
+      run_id: 'loop-attempts-3', group_id: groupId, status: 'running',
+      document_review_loop: { round_no: 1, current_stage: 'review', attempts_used: 1, failure_restart_max_attempts: 1 },
+    })
+    store.trackStarted({
+      run_id: 'loop-attempts-3', group_id: groupId, status: 'running',
+      document_review_loop: { round_no: 1, current_stage: 'rework', attempts_used: 0, failure_restart_max_attempts: 1 },
+    })
+    expect(store.runsByGroup[groupId].documentReviewLoop).toMatchObject({
+      currentStage: 'rework', attemptsUsed: 0,
+    })
+    store.$dispose()
+  })
+
+  // Older/partial payloads (a server that has not deployed the new fields yet, or a
+  // trimmed SSE event) must not be read as "no retries" -- the field is simply absent,
+  // not zero, so the previous observed value has to survive.
+  it('preserves attemptsUsed/failureRestartMaxAttempts when a later payload omits the fields', () => {
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    setActivePinia(createPinia())
+    const store = useAiInvokeRunsStore()
+    const groupId = 'flowgate.default.0569.partial'
+    store.trackStarted({
+      run_id: 'loop-attempts-4', group_id: groupId, status: 'running',
+      document_review_loop: { round_no: 1, current_stage: 'review', attempts_used: 1, failure_restart_max_attempts: 1 },
+    })
+    store.trackStarted({
+      run_id: 'loop-attempts-4', group_id: groupId, status: 'running',
+      document_review_loop: { round_no: 1, current_stage: 'review' },
+    })
+    expect(store.runsByGroup[groupId].documentReviewLoop).toMatchObject({
+      attemptsUsed: 1, failureRestartMaxAttempts: 1,
+    })
+    store.$dispose()
+  })
+
+  // A stale/regressed payload (round_no going backwards, arriving after a newer one) must
+  // not be allowed to overwrite the currently-displayed retry count either -- the same
+  // staleness guard that already protects currentStage/roundNo.
+  it('ignores attempts_used from a stale payload the same way currentStage already is', () => {
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    setActivePinia(createPinia())
+    const store = useAiInvokeRunsStore()
+    const groupId = 'flowgate.default.0569.stale'
+    store.trackStarted({
+      run_id: 'loop-attempts-5', group_id: groupId, status: 'running',
+      document_review_loop: { round_no: 2, current_stage: 'review', attempts_used: 1, failure_restart_max_attempts: 1 },
+    })
+    store.trackStarted({
+      run_id: 'loop-attempts-5', group_id: groupId, status: 'running',
+      document_review_loop: { round_no: 1, current_stage: 'review', attempts_used: 0, failure_restart_max_attempts: 1 },
+    })
+    expect(store.runsByGroup[groupId].documentReviewLoop).toMatchObject({
+      roundNo: 2, currentStage: 'review', attemptsUsed: 1,
+    })
+    store.$dispose()
+  })
+})

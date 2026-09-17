@@ -647,6 +647,104 @@ def test_completed_hop_checkpoints_durable_loop_and_updates_live_payload(monkeyp
     assert latest == run["document_review_loop"]
 
 
+def test_payload_exposes_stage_local_attempts_used_on_a_same_stage_retry(monkeypatch):
+    """0569 T0006 / NR0005: a review hop that produced no durable progress must surface a
+    loop-scope retry count distinct from the run-wide attempts diagnostics counter, so the
+    UI can tell this REVIEW apart from a brand-new one."""
+    from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
+    from modules.flow_gate.db import document_reviews as db_reviews
+
+    persisted = {
+        **BASE,
+        "failure_restart_max_attempts": 1,
+        "run_id": "aiv_retry",
+        "group_id": "flowgate.default.0569",
+        "doc_ref": "flowgate.default.0569.0011-T",
+        "updated_at": "2026-09-17T00:00:00+00:00",
+        "deadline_at": "2026-09-17T02:00:00+00:00",
+        "rework_message": "fix every finding",
+    }
+    monkeypatch.setattr(db_loops, "get", lambda run_id: dict(persisted))
+    monkeypatch.setattr(
+        service, "get_store",
+        lambda: type("Store", (), {"transaction": lambda self: nullcontext(self)})(),
+    )
+    # The provider exited without ever reaching POST /inbox: no review row exists yet.
+    monkeypatch.setattr(service.db_docs, "get_by_id", lambda doc_id: {"revision_no": 3})
+    monkeypatch.setattr(db_reviews, "list_by_doc", lambda doc_id: [])
+
+    captured = {}
+    def checkpoint(run_id, **kwargs):
+        captured.update(kwargs)
+        latest = {**persisted, **{k: v for k, v in kwargs.items() if not k.startswith("expected_")}}
+        return True, latest
+    monkeypatch.setattr(db_loops, "checkpoint", checkpoint)
+
+    # outcome is anything but 'complete': the hop produced no durable progress.
+    run = {"run_id": "aiv_retry", "outcome": "no_output", "document_review_loop": dict(persisted)}
+    service._checkpoint_document_review_loop(run)
+
+    assert captured["current_stage"] == "review"
+    assert captured["attempts_used"] == 1
+    payload = service.document_review_loop_payload(run)
+    assert payload["current_stage"] == "review"
+    assert payload["attempts_used"] == 1
+    # Same-stage retry budget, not the run-wide attempt_no diagnostics counter.
+    assert payload["failure_restart_max_attempts"] == 1
+
+
+def test_payload_resets_attempts_used_to_zero_on_the_transition_that_follows_a_retry(monkeypatch):
+    """0569 T0006 SS4.2: the retry succeeding and the stage advancing happen on the SAME
+    checkpoint, so the payload must show attempts_used go back to 0 immediately -- not stay
+    pinned at the prior retry's value."""
+    from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
+    from modules.flow_gate.db import document_reviews as db_reviews
+
+    persisted = {
+        **BASE,
+        "failure_restart_max_attempts": 1,
+        "attempts_used": 1,
+        "run_id": "aiv_retry_reset",
+        "group_id": "flowgate.default.0569",
+        "doc_ref": "flowgate.default.0569.0011-T",
+        "updated_at": "2026-09-17T00:00:00+00:00",
+        # Far enough in the future that this fixture's success path is never mistaken for
+        # a total_timeout stop, unlike the sibling retry fixture above where the deadline
+        # check is unreachable because the failed-hop branch returns first.
+        "deadline_at": "2099-01-01T00:00:00+00:00",
+        "rework_message": "fix every finding",
+    }
+    monkeypatch.setattr(db_loops, "get", lambda run_id: dict(persisted))
+    monkeypatch.setattr(
+        service, "get_store",
+        lambda: type("Store", (), {"transaction": lambda self: nullcontext(self)})(),
+    )
+    monkeypatch.setattr(service.db_docs, "get_by_id", lambda doc_id: {
+        "revision_no": 3, "doc_review_status": "pending_review", "rejection_history": "[]",
+    })
+    # The retried hop this time reaches POST /inbox and records an 'issues' verdict.
+    monkeypatch.setattr(db_reviews, "list_by_doc", lambda doc_id: [
+        {"id": 30, "verdict": "issues", "revision_no": 3, "findings": '["x"]'},
+    ])
+    monkeypatch.setattr(service, "_auto_reject", lambda *a, **k: {"ok": True})
+
+    captured = {}
+    def checkpoint(run_id, **kwargs):
+        captured.update(kwargs)
+        latest = {**persisted, **{k: v for k, v in kwargs.items() if not k.startswith("expected_")}}
+        return True, latest
+    monkeypatch.setattr(db_loops, "checkpoint", checkpoint)
+
+    run = {"run_id": "aiv_retry_reset", "outcome": "complete", "document_review_loop": dict(persisted)}
+    service._checkpoint_document_review_loop(run)
+
+    assert captured["current_stage"] == "rework"
+    assert captured["attempts_used"] == 0
+    payload = service.document_review_loop_payload(run)
+    assert payload["current_stage"] == "rework"
+    assert payload["attempts_used"] == 0
+
+
 def test_history_orders_a_rework_first_run_and_falls_back_to_revisions(monkeypatch):
     """A run that opened on an unanswered rejection lists its rework first (deck screen 6)."""
     from modules.flow_gate.db import document_revisions as db_revisions
@@ -745,8 +843,11 @@ def test_running_status_contains_same_document_review_loop_shape(monkeypatch):
     monkeypatch.setattr(service.db_reviews, "list_by_doc", lambda doc_id: [])
     monkeypatch.setattr(service.db_docs, "get_by_id", lambda doc_id: {})
     payload = service.get_status("aiv_live")
+    # 0569 T0006: the loop-scope retry counters ride along with every existing field --
+    # BASE carries attempts_used=0 / failure_restart_max_attempts=0 unchanged here.
     assert payload["document_review_loop"] == {
         "round_no": 2, "current_stage": "review", "stop_reason": None, "stop_detail": None,
+        "attempts_used": 0, "failure_restart_max_attempts": 0,
         "history": [],
     }
 

@@ -447,3 +447,149 @@ describe('AiInvokeInline document review loop cards (0417 T0013)', () => {
   })
 })
 
+
+describe('document review loop same-stage retry label (0569 T0006)', () => {
+  it('shows no retry text when attemptsUsed is 0', async () => {
+    const groupId = 'flowgate.default.0569.retry-zero'
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    setActivePinia(createPinia())
+    const wrapper = mount(AiInvokeInline, {
+      props: { groupId },
+      global: { plugins: [i18n] },
+    })
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'loop-retry-zero', group_id: groupId, status: 'running',
+      document_review_loop: {
+        round_no: 1, current_stage: 'review', attempts_used: 0, failure_restart_max_attempts: 1,
+      },
+    })
+    await nextTick()
+    const head = wrapper.find('.rlr-head')
+    expect(head.text()).not.toContain(i18n.global.t('main.ai_invoke_dialog.review_loop_retry', { used: 1, max: 1 }))
+    wrapper.unmount()
+  })
+
+  it('shows the retry text on a same-stage REVIEW retry', async () => {
+    const groupId = 'flowgate.default.0569.retry-review'
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    setActivePinia(createPinia())
+    const wrapper = mount(AiInvokeInline, {
+      props: { groupId },
+      global: { plugins: [i18n] },
+    })
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'loop-retry-review', group_id: groupId, status: 'running',
+      document_review_loop: {
+        round_no: 1, current_stage: 'review', attempts_used: 1, failure_restart_max_attempts: 1,
+      },
+    })
+    await nextTick()
+    const head = wrapper.find('.rlr-head')
+    expect(head.text()).toContain(i18n.global.t('main.ai_invoke_dialog.review_loop_retry', { used: 1, max: 1 }))
+    wrapper.unmount()
+  })
+
+  // The retry mechanism (resolve_document_review_loop_gate) is not REVIEW-specific, so the
+  // same badge must render for a REWORK hop that retried in place.
+  it('shows the retry text on a same-stage REWORK retry too', async () => {
+    const groupId = 'flowgate.default.0569.retry-rework'
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    setActivePinia(createPinia())
+    const wrapper = mount(AiInvokeInline, {
+      props: { groupId },
+      global: { plugins: [i18n] },
+    })
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'loop-retry-rework', group_id: groupId, status: 'running',
+      document_review_loop: {
+        round_no: 2, current_stage: 'rework', attempts_used: 1, failure_restart_max_attempts: 1,
+      },
+    })
+    await nextTick()
+    const head = wrapper.find('.rlr-head')
+    expect(head.text()).toContain(i18n.global.t('main.ai_invoke_dialog.review_loop_retry', { used: 1, max: 1 }))
+    wrapper.unmount()
+  })
+
+  it('drops the retry text once the stage transitions and attemptsUsed resets to 0', async () => {
+    const groupId = 'flowgate.default.0569.retry-reset'
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    setActivePinia(createPinia())
+    const wrapper = mount(AiInvokeInline, {
+      props: { groupId },
+      global: { plugins: [i18n] },
+    })
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'loop-retry-reset', group_id: groupId, status: 'running',
+      document_review_loop: {
+        round_no: 1, current_stage: 'review', attempts_used: 1, failure_restart_max_attempts: 1,
+      },
+    })
+    await nextTick()
+    expect(wrapper.find('.rlr-head').text()).toContain(
+      i18n.global.t('main.ai_invoke_dialog.review_loop_retry', { used: 1, max: 1 }),
+    )
+    store.trackStarted({
+      run_id: 'loop-retry-reset', group_id: groupId, status: 'running',
+      document_review_loop: {
+        round_no: 1, current_stage: 'rework', attempts_used: 0, failure_restart_max_attempts: 1,
+      },
+    })
+    await nextTick()
+    expect(wrapper.find('.rlr-head').text()).not.toContain(
+      i18n.global.t('main.ai_invoke_dialog.review_loop_retry', { used: 1, max: 1 }),
+    )
+    wrapper.unmount()
+  })
+
+  it('never shows retry text once the loop has stopped, even if attemptsUsed is still 1', async () => {
+    const groupId = 'flowgate.default.0569.retry-stopped'
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    setActivePinia(createPinia())
+    const wrapper = mount(AiInvokeInline, {
+      props: { groupId },
+      global: { plugins: [i18n] },
+    })
+    const store = useAiInvokeRunsStore()
+    store.trackFinished({
+      run_id: 'loop-retry-stopped', group_id: groupId, status: 'finished', outcome: 'complete',
+      document_review_loop: {
+        round_no: 1, current_stage: 'stopped', stop_reason: 'retry_exhausted',
+        attempts_used: 1, failure_restart_max_attempts: 1,
+      },
+    })
+    await nextTick()
+    expect(wrapper.find('.rlr-head').text()).not.toContain(
+      i18n.global.t('main.ai_invoke_dialog.review_loop_retry', { used: 1, max: 1 }),
+    )
+    wrapper.unmount()
+  })
+
+  // Existing deck-screen-6 history rendering must survive the new head content.
+  it('keeps the existing history rows intact alongside the new retry text', async () => {
+    const groupId = 'flowgate.default.0569.retry-history-intact'
+    localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
+    setActivePinia(createPinia())
+    const wrapper = mount(AiInvokeInline, {
+      props: { groupId },
+      global: { plugins: [i18n] },
+    })
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'loop-retry-history', group_id: groupId, status: 'running',
+      document_review_loop: {
+        round_no: 1, current_stage: 'review', attempts_used: 1, failure_restart_max_attempts: 1,
+        history: [{ round_no: 1, stage: 'review', result: 'issues' }],
+      },
+    })
+    await nextTick()
+    const card = wrapper.find('[data-test="review-loop-card"]')
+    expect(card.findAll('[data-test="review-loop-history-row"]')).toHaveLength(1)
+    expect(card.text()).toContain(i18n.global.t('main.ai_invoke_dialog.review_loop_retry', { used: 1, max: 1 }))
+    wrapper.unmount()
+  })
+})
