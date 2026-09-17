@@ -2995,6 +2995,7 @@ export default {
       // 본문만 보여 주면 "왜 이런 답이 왔는지"가 본문 안에만 숨어 있었다.
       turn_status_stale_run: '이전 후보 기준',
       turn_status_run_lost: '실행 기록 없음',
+      turn_status_cancelled: '사용자 취소',
       turn_status_failed: '실패',
       turn_status_rejected: '반려',
       next_provider_label: '다음 지시에 쓸 공급자',
@@ -3004,7 +3005,6 @@ export default {
       allow_test_edits: '테스트 편집 포함 재지시',
       message_placeholder: 'AI에게 다시 물어보거나 재지시를 입력하세요.',
       send: '전송',
-      apply_safety_note: '승인 후 소스 반영은 HiveWork apply 방식(앵커 단위 edit, 기본 propose-only, 푸시 전 실패는 전체 롤백)을 따릅니다.',
       reject: '반려 (다시 시도 지시)',
       approve: '승인 — 커밋 & 머지',
       reject_reason_label: '반려 사유 및 다시 시도 지시',

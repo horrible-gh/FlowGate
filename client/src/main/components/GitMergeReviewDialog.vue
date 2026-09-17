@@ -181,11 +181,12 @@
                     <button
                       type="button"
                       class="btn btn-secondary gmr-send-btn"
-                      :disabled="sending || !canSend || awaitingReply || !messageDraft.trim() || !selectedProvider"
-                      :title="awaitingReply ? waitingText : undefined"
-                      @click="sendMessage(false)"
+                      :disabled="awaitingReply ? cancelling : (sending || !canSend || !messageDraft.trim() || !selectedProvider)"
+                      :title="awaitingReply ? (cancelling ? t('main.ai_invoke_dialog.cancelling') : t('main.ai_invoke_dialog.btn_cancel_run')) : undefined"
+                      @click="awaitingReply ? cancelRun() : sendMessage(false)"
                     >
-                      <AppIcon name="paper-plane-tilt" /> {{ t('main.git_review.send') }}
+                      <AppIcon :name="awaitingReply ? 'prohibit' : 'paper-plane-tilt'" />
+                      {{ awaitingReply ? t('main.ai_invoke_dialog.btn_cancel_run') : t('main.git_review.send') }}
                     </button>
                     <button
                       v-if="heldTestOperations.length"
@@ -230,7 +231,6 @@
                 </li>
               </ul>
             </div>
-            <p class="gmr-ft-note">{{ t('main.git_review.apply_safety_note') }}</p>
             <div class="gmr-ft-actions">
               <button type="button" class="btn btn-danger-ol" :disabled="busy || !canReject" @click="openRejectPrompt">
                 <AppIcon name="prohibit" /> {{ t('main.git_review.reject') }}
@@ -391,6 +391,10 @@ const loadError = ref('')
 const review = ref<ReviewPayload | null>(null)
 const busy = ref(false)
 const sending = ref(false)
+// 0570 T0004 §2.1 — true from the STOP click until the poll observes the run
+// settled (mirrors ConversationView.vue's `cancelling`). Guards against a duplicate
+// click while the cancel POST is in flight or the server has not folded a result in yet.
+const cancelling = ref(false)
 const selectedPath = ref('')
 const diff = ref<ReviewDiffData | null>(null)
 const diffLoading = ref(false)
@@ -419,6 +423,7 @@ const conversation = computed(() => review.value?.conversation ?? [])
 const TURN_STATUS_LABELS: Record<string, string> = {
   stale_run: 'turn_status_stale_run',
   run_lost: 'turn_status_run_lost',
+  cancelled: 'turn_status_cancelled',
   failed: 'turn_status_failed',
   rejected: 'turn_status_rejected',
 }
@@ -725,6 +730,36 @@ async function sendMessage(allowTestEdits = false) {
   }
 }
 
+// 0570 T0004 §2.1/§2.2 — STOP for the review conversation, mirroring
+// ConversationView.vue's cancelRun(): there is no XHR to abort (the run lives in a
+// server-side worker), so this only asks the server to kill it. The button never
+// guesses the outcome -- polling already running whenever this button is visible
+// (loadReview/startPolling) observes the server's terminal state and folds it in via
+// _materialize_pending_conversation_run, exactly like a natural finish.
+async function cancelRun(): Promise<void> {
+  const runId = pendingConversation.value?.run_id
+  if (!runId || cancelling.value) return
+  cancelling.value = true
+  try {
+    await postRequest(`/api/v1/ai-invoke/${encodeURIComponent(runId)}/cancel`, {})
+    // 200 means 'cancelling' or 'finished' (cancel raced the natural finish) --
+    // either way the run is settled server-side; the poll already in flight picks
+    // up the result. `cancelling` itself is cleared by the watcher below once
+    // `awaitingReply` goes false.
+  } catch (e: any) {
+    const status = e?.response?.status
+    if (status === 404 || status === 410) return // already gone; the poll will notice
+    cancelling.value = false
+    showToast(e?.response?.data?.error?.message || t('main.ai_invoke_dialog.error_cancel_failed'), 'danger')
+  }
+}
+// The run ended (naturally or by this cancel) once the server stops reporting one in
+// flight -- release the button off the poll's own signal rather than the cancel
+// POST's outcome, so a cancel that lost the race to a natural finish still clears.
+watch(awaitingReply, (isAwaiting) => {
+  if (!isAwaiting) cancelling.value = false
+})
+
 /**
  * 0481 T0010 rev3 — [승인]은 반드시 무언가를 말한다.
  *
@@ -933,7 +968,6 @@ onBeforeUnmount(stopPolling)
 .gmr-held-note { margin: 0 0 6px; color: #92400e; }
 .gmr-held-tests ul { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 2px; }
 .gmr-ft { flex-direction: column; align-items: stretch; gap: 8px; }
-.gmr-ft-note { margin: 0; font-size: 0.72rem; color: var(--text-m); }
 .gmr-approve-outcome {
   border: 1px solid var(--danger, #dc2626); border-radius: 8px;
   background: #fef2f2; color: #991b1b; padding: 9px 11px;

@@ -3306,6 +3306,16 @@ def _materialize_pending_conversation_run(
                 "status": "accepted" if status in ("re_review", "held_only") else "failed",
                 "created_at": now_iso(),
             })
+        elif detail.get("end_reason") == "cancelled":
+            # T0004 §2.2 (flowgate.default.0570): a run the human stopped with the
+            # STOP button must not fold into the conversation looking like an
+            # ordinary run failure -- name it as a cancellation instead.
+            conversation.append({
+                "turn_id": str(uuid.uuid4()), "role": "ai",
+                "message": "사용자가 이 실행을 중지했습니다(취소됨).",
+                "provider_id": detail.get("provider_id"), "status": "cancelled",
+                "created_at": now_iso(),
+            })
         else:
             message = detail.get("last_message") or ("(no answer)" if succeeded else "(run failed)")
             conversation.append({
