@@ -46,6 +46,7 @@ from modules.flow_gate.storage import paths as storage_paths
 # (a pure formatter, §16) and `runtime` (the parameter block, §13) -- neither of which
 # admission's own callers create a path back through.
 from . import oracle
+from . import terminal
 from . import provider_api
 from . import review
 from .runtime import (
@@ -1710,7 +1711,9 @@ def start_run(
             # CAS SEALED -> ABORT and already ran abort_handoff itself.
             raise _http_error(500, "ai_invoke_worker_gate_lost", _GATE_LOST_MESSAGE)
     else:
-        if not gate.open_direct():
+        if not terminal.open_successor_gate(gate):
+            if gate.abort():
+                _abort_handoff(run, "predecessor_terminalized")
             # T0009 §10.1 (a): the worker's own PENDING wait already won CAS
             # PENDING -> ABORT and already ran abort_handoff itself.
             raise _http_error(500, "ai_invoke_worker_gate_lost", _GATE_LOST_MESSAGE)

@@ -44,6 +44,7 @@ from modules.flow_gate.utils.api_key_crypto import ApiKeyCryptoError
 from . import admission
 from . import oracle as oracle_module
 from . import provider_api
+from . import terminal
 from . import review
 from .runtime import (
     API_CALL_MAX_TIMEOUT_SEC,
@@ -136,58 +137,37 @@ _post_process_recovery_lock = threading.Lock()
 
 
 def _start_post_process_recovery(run: dict) -> tuple[threading.Event, threading.Timer]:
-    """Bound the worker tail after a provider attempt has returned (0541 T0004 Case C).
-
-    The CLI watchdog correctly stops once its child exits.  This narrowly covers the
-    remaining synchronous classify/judge/finalize tail so a blocked dependency there
-    cannot keep the in-memory registry live forever.  It is deliberately per-run and
-    starts only after a provider returns; provider timeout and handoff semantics stay
-    unchanged.
-    """
-    # This event names lifecycle terminalization, not status == "finished".
-    # finalize assigns that status before persistence/broadcast/lease work, and the
-    # handoff runs after finalize; only the worker's final exit can close this event.
+    """Bound every post-provider tail, including cancel and absent exit_code."""
     lifecycle_terminalized = threading.Event()
     run["post_process_phase"] = "classify"
     run["post_process_started_at"] = datetime.now(timezone.utc).isoformat()
 
     def recover() -> None:
-        cancel_event = run.get("cancel_event")
-        if lifecycle_terminalized.is_set() or (cancel_event is not None and cancel_event.is_set()):
+        if lifecycle_terminalized.is_set():
             return
         with _post_process_recovery_lock:
-            # status deliberately is NOT a completion signal: finalize assigns
-            # "finished" before persistence, broadcasts, lease release and handoff.
-            if lifecycle_terminalized.is_set():
+            if lifecycle_terminalized.is_set() or not terminal.provider_stopped(run):
+                return
+            if not terminal.claim_abandon(run):
                 return
             run["post_process_recovered"] = True
             run["post_process_phase"] = "reconciled_timeout"
-            run["outcome"] = "none"
-            run["end_reason"] = "post_process_timeout"
-            run["stop_code"] = "post_process_timeout"
-            run["stop_reason"] = "Provider exited, but post-process terminalization exceeded its deadline."
-            run["resumable"] = False
-            run["finished_at"] = datetime.now(timezone.utc).isoformat()
-            run["duration_ms"] = int((time.monotonic() - run["started_mono"]) * 1000)
-            run["status"] = "finished"
+            cancelled = run.get("cancel_event") is not None and run["cancel_event"].is_set()
+            code = "cancelled" if cancelled else "post_process_timeout"
+            run.update(outcome="none", end_reason=code, stop_code=code,
+                       stop_reason=("Cancelled; post-process cleanup exceeded its deadline."
+                                    if cancelled else
+                                    "Provider exited, but post-process terminalization exceeded its deadline."),
+                       resumable=False)
             logger.error("ai-invoke %s: recovered post-process lifecycle timeout", run.get("run_id"))
-            try:
-                _svc()._persist_run_record(run)
-            except Exception:
-                logger.exception("ai-invoke %s: post-process recovery persistence failed", run.get("run_id"))
-            try:
-                _svc()._broadcast(run, "ai_invoke_finished", _svc().finished_payload(run))
-                _svc()._broadcast(run, "group_view_refresh", {
-                    "group_id": run.get("group_id"), "reason": "ai_invoke_post_process_timeout",
-                })
-            except Exception:
-                logger.exception("ai-invoke %s: post-process recovery broadcast failed", run.get("run_id"))
-            group_id = run.get("group_id")
-            if group_id:
-                try:
-                    db_group_ai_leases.release(group_id, run["run_id"], reason="post_process_timeout")
-                except Exception:
-                    logger.exception("ai-invoke %s: post-process recovery lease release failed", run.get("run_id"))
+        # No recovery lock across external I/O. A stuck diagnostic must not block
+        # a different run's cleanup or a retry's provider-return boundary.
+        try:
+            terminal.abandon_handoff(run, stop_code=code)
+        except Exception:
+            logger.exception("ai-invoke %s: recovery handoff cleanup failed", run.get("run_id"))
+        finally:
+            terminal.cleanup(run, reason=code)
 
     timer = threading.Timer(POST_PROCESS_RECOVERY_SEC, recover)
     timer.name = f"ai-invoke-post-process-{run.get('run_id')}"
@@ -202,6 +182,23 @@ def _stop_post_process_recovery(completed: Optional[threading.Event],
         completed.set()
     if timer is not None:
         timer.cancel()
+
+
+def _apply_post_process_result(run: dict, action, fields: tuple, *args) -> bool:
+    """Discard a late classify/judge result after recovery claimed terminalization."""
+    result = dict(run)
+    action(result, *args)
+    with _post_process_recovery_lock:
+        if run.get("post_process_recovered"):
+            return False
+        for field in fields:
+            if field in result:
+                run[field] = result[field]
+        return True
+
+
+_JUDGMENT_FIELDS = ("docs_reached", "reached_doc_ids", "outcome", "oracle_mismatch",
+                   "docs_target", "chain_docs_target")
 
 
 def _worker(run: dict, chain: list[dict], prompt: str) -> None:
@@ -271,14 +268,18 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
                 post_process_completed = None
                 post_process_timer = None
 
-            started_ok = _svc()._execute_provider_chain(run, current_chain, current_prompt)
-            if run.get("exit_code") is not None:
-                post_process_completed, post_process_timer = _start_post_process_recovery(run)
+            run["_provider_active"] = True
+            try:
+                started_ok = _svc()._execute_provider_chain(run, current_chain, current_prompt)
+            finally:
+                run["_provider_active"] = False
+            post_process_completed, post_process_timer = _start_post_process_recovery(run)
             run["post_process_phase"] = "classify"
-            _svc()._classify_end_reason(run, started_ok)
+            if not _apply_post_process_result(run, _svc()._classify_end_reason,
+                                              ("end_reason",), started_ok):
+                return
             run["post_process_phase"] = "judge"
-            _svc()._judge_hop(run)
-            if run.get("post_process_recovered"):
+            if not _apply_post_process_result(run, _svc()._judge_hop, _JUDGMENT_FIELDS):
                 return
             run["attempts_used"] = int(run.get("attempts_used") or 0) + 1
 
@@ -387,28 +388,44 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
         _svc()._maybe_auto_resume_hop(run)
     except Exception:
         logger.exception("ai-invoke worker crashed for %s", run["run_id"])
-        run["end_reason"] = run.get("end_reason") or "exited"
-        try:
-            # A crashed attempt is never retried (L0007 §2.1): judge what it left, close out.
-            _svc()._judge_hop(run)
-            _svc()._finalize_run(run)
-        except Exception:
-            logger.exception("ai-invoke settle failed for %s", run["run_id"])
-            run["status"] = "finished"
-        # A crashed hop is a real stop, not a boundary: drop any pending re-spawn so the
-        # chain does not silently continue past a failure.
-        # 0406 T0022 item 4 — drop the queue, keep the intent. A crash is the third branch
-        # that does not spawn: _finalize_run only calls begin_handoff when it sees pending
-        # and skips release, so just clearing it blocks the group until the lease expires.
-        # A durable row lets the user resume the chain from the same place.
-        crashed_pending = _svc().pop_auto_resume(run.get("group_id"))
-        if crashed_pending is not None:
-            crashed_code = run.get("stop_code") or HOP_HANDOFF_FAILED_STOP_CODE
-            if crashed_code == HOP_HANDOFF_STOP_CODE:
-                crashed_code = HOP_HANDOFF_FAILED_STOP_CODE
-            _svc()._park_handoff(run, crashed_pending, crashed_code)
+        run["_terminal_abandoned"] = True
+        if not run.get("post_process_recovered"):
+            run["end_reason"] = (
+                "cancelled" if run["cancel_event"].is_set() else "worker_error"
+            )
+        if post_process_completed is None:
+            post_process_completed, post_process_timer = _start_post_process_recovery(run)
+        # Judge and finalize are independent: a secondary judge exception must
+        # never remove the finalizer, nor the low-level cleanup in finally.
+        for name in ("_judge_hop", "_finalize_run"):
+            if run.get("post_process_recovered"):
+                break
+            try:
+                if name == "_judge_hop":
+                    _apply_post_process_result(run, _svc()._judge_hop, _JUDGMENT_FIELDS)
+                else:
+                    _svc()._finalize_run(run)
+            except Exception:
+                logger.exception("ai-invoke %s failed for %s", name, run["run_id"])
     finally:
-        _stop_post_process_recovery(post_process_completed, post_process_timer)
+        try:
+            if not run.get("_handoff_succeeded"):
+                code = run.get("stop_code") or HOP_HANDOFF_FAILED_STOP_CODE
+                if code == HOP_HANDOFF_STOP_CODE:
+                    code = HOP_HANDOFF_FAILED_STOP_CODE
+                terminal.abandon_handoff(run, stop_code=code)
+        except Exception:
+            logger.exception("ai-invoke terminal handoff cleanup failed for %s", run["run_id"])
+        finally:
+            # This boundary does not call finalize. It also runs when finalize
+            # was replaced, failed before entry, or failed in its own cleanup.
+            for _ in range(2):
+                if terminal.cleanup(
+                    run, handoff=bool(run.get("_handoff_succeeded")),
+                    reason="worker_terminal",
+                ):
+                    break
+            _stop_post_process_recovery(post_process_completed, post_process_timer)
 
 
 def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:

@@ -205,19 +205,31 @@ def test_work_plan_and_workflow_routes_are_locked_without_side_effects(monkeypat
 
 
 def test_ai_start_acquires_lease_before_issuing_any_token():
-    source = inspect.getsource(ai_invoke_service.start_run)
+    source = inspect.getsource(ai_invoke_service._admission_start_run)
     acquire = source.index("db_group_ai_leases.acquire")
     assert acquire < source.index("_call_issue_builder")
     assert acquire < source.index("token_service.issue")
     assert source.index("db_group_ai_leases.activate") < source.index("thread.start()")
 
 
-def test_hop_handoff_marks_releasing_before_successor_spawn():
-    finalize_source = inspect.getsource(ai_invoke_service._finalize_run)
-    spawn_source = inspect.getsource(ai_invoke_service._maybe_auto_resume_hop)
-    assert "db_group_ai_leases.begin_handoff" in finalize_source
-    assert "db_group_ai_leases.release" in finalize_source
-    assert "_spawn_auto_resume" in spawn_source
+def test_hop_handoff_marks_releasing_before_successor_spawn(monkeypatch):
+    from modules.flow_gate.services.ai_invoke import terminal
+    run = {"group_id": GROUP, "project_id": "flowgate", "run_id": "aiv_predecessor",
+           "chain_id": "chain_guard", "status": "running", "action_scope": "new"}
+    monkeypatch.setattr(ai_invoke_service, "_persist_run_record", lambda r: None)
+    monkeypatch.setattr(ai_invoke_service, "finished_payload", lambda r: {})
+    monkeypatch.setattr(ai_invoke_service, "_broadcast", lambda *a: None)
+    leases.acquire(group_id=GROUP, project_id="flowgate", run_id=run["run_id"],
+                   chain_id=run["chain_id"], action_scope="new", worker_identity="test")
+    leases.activate(GROUP, run["run_id"], None, "new", "test", 3600)
+    assert terminal.cleanup(run, handoff=True)
+    assert leases.get(GROUP)["state"] == "releasing"
+    successor = leases.acquire(group_id=GROUP, project_id="flowgate", run_id="aiv_successor",
+                               chain_id=run["chain_id"], action_scope="new", worker_identity="test")
+    assert successor["run_id"] == "aiv_successor"
+    assert successor["generation"] == 2
+    terminal.cleanup(run, handoff=True)
+    assert leases.get(GROUP)["run_id"] == "aiv_successor"
 
 
 def test_expiry_rule_recovers_restart_stale_rows():

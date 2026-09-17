@@ -490,14 +490,29 @@ def test_worker_crash_parks_the_intent_instead_of_dropping_it(monkeypatch):
 
 
 def test_worker_crash_branch_is_wired_to_park(monkeypatch):
-    """위 시험이 재현한 절차가 실제 _worker 예외 처리에 들어 있는지 소스로 확인한다.
+    """Drive the worker through a primary crash and both secondary failures."""
+    import time
+    from modules.flow_gate.db import group_ai_leases as leases
 
-    _worker 전체를 돌리려면 프로바이더 프로세스가 필요하다. 대신 그 분기가 여전히
-    ``clear_auto_resume`` 하나로 끝나지 않는다는 것만 못 박는다 — 되돌아가면 여기서 걸린다.
-    """
-    import inspect
-
-    source = inspect.getsource(svc._worker)
-    tail = source.split("except Exception:")[-1]
-    assert "pop_auto_resume" in tail
-    assert "_park_handoff" in tail
+    run = _run()
+    run.update(status="running", project_id="flowgate", started_mono=time.monotonic(),
+               started_at="2026-09-17T00:00:00+00:00", exit_code=None)
+    parked = []
+    def boom(*args, **kwargs):
+        raise RuntimeError("injected worker/settle failure")
+    monkeypatch.setattr(svc, "_broadcast", boom)
+    monkeypatch.setattr(svc, "_judge_hop", boom)
+    monkeypatch.setattr(svc, "_finalize_run", boom)
+    monkeypatch.setattr(svc, "_persist_run_record", lambda r: None)
+    monkeypatch.setattr(svc, "finished_payload", lambda r: {})
+    monkeypatch.setattr(svc, "_park_handoff",
+                        lambda r, pending, code: parked.append((r["run_id"], pending, code)))
+    pending = _pending()
+    svc._auto_resume[run["group_id"]] = pending
+    leases.acquire(group_id=run["group_id"], project_id="flowgate", run_id=run["run_id"],
+                   chain_id=run["chain_id"], action_scope="new", worker_identity="test")
+    svc._worker(run, [{"id": "test", "name": "Test"}], "prompt")
+    assert run["status"] == "finished"
+    assert leases.get(run["group_id"]) is None
+    assert svc.peek_auto_resume(run["group_id"]) is None
+    assert parked == [(run["run_id"], pending, svc.HOP_HANDOFF_FAILED_STOP_CODE)]

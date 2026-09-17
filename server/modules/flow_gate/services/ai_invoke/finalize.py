@@ -32,6 +32,7 @@ from modules.flow_gate.storage import paths as storage_paths
 # lives on `runtime` (§13's parameter block), which keeps this module from opening a
 # path back into worker.py (worker -> ... -> chain -> finalize would otherwise cycle).
 from . import admission
+from . import terminal
 from . import oracle as oracle_module
 from . import review
 from .runtime import (
@@ -294,52 +295,49 @@ def previous_timeout_handoff(group_id: str, doc_ref: Optional[str] = None) -> Op
 
 
 def _finalize_run(run: dict) -> None:
-    """Close the hop out — once, whatever it took to get here (L0007 §2.7).
+    """Prepare diagnostics independently, then use the retryable terminal boundary."""
+    if run.get("post_process_recovered"):
+        terminal.cleanup(run, reason="post_process_timeout")
+        return
+    respawn_pending = _svc().peek_auto_resume(run.get("group_id")) is not None
+    if run.get("_terminal_abandoned"):
+        respawn_pending = False
+    steps = (
+        ("messages", lambda: _finalize_messages(run)),
+        ("stop", lambda: _finalize_stop(run, respawn_pending)),
+        ("scratch", lambda: _finalize_scratch(run)),
+        ("source", lambda: _finalize_source(run)),
+        ("diagnostics", lambda: _finalize_diagnostics(run)),
+        ("stop_row", lambda: _apply_stop_row(run, respawn_pending)),
+        ("review_checkpoint", lambda: _finalize_review_checkpoint(run)),
+        ("notify", lambda: _notify_chain_failure_if_needed(run)),
+    )
+    for name, action in steps:
+        if run.get("post_process_recovered"):
+            break
+        terminal.attempt(run, "prepare_" + name, action)
+    terminal.cleanup(run, handoff=respawn_pending, reason="normal_finish")
 
-    Three ordering rules, and all three are about what a human sees:
-      1. the stop row is written BEFORE the broadcast — the browser re-reads active-all the
-         moment it sees the finish event, so a late row means a late card;
-      2. the record is persisted BEFORE the broadcast — a detail lookup triggered by that
-         same event must not answer 404;
-      3. neither of them may block the broadcast. Both swallow their own failures: a record
-         is an aid, not the run.
-    """
-    # 0482 T0011: group-less base-dirty runs own a separate project admission lease.
-    # This block lived in ai_invoke_service._finalize_run, then in main's part-2 worker
-    # file; it travels with the function, not with the filename, so 0501 T0019 carries it
-    # into finalize.py — _finalize_run's own module (NR0003 §17).
-    if run.get("action_scope") == "resolve_base_dirty":
-        try:
-            from modules.flow_gate.db import project_ai_leases as db_project_ai_leases
-            db_project_ai_leases.release(str(run.get("project_id") or ""), str(run.get("run_id") or ""))
-        except Exception:
-            logger.exception("failed to release project AI lease")
 
-    # Final last_message (L0007 §2.6): the last attempt may have said nothing at all, while an
-    # earlier one left the sentence that actually explains the failure. Keep the explanation.
+def _finalize_messages(run: dict) -> None:
     if not run.get("last_message") and run.get("last_message_seen"):
         run["last_message"] = run["last_message_seen"]
         run["last_message_received"] = True
-
-    # 0357 T0004: fold this HOP's documents into the CHAIN counter — here, at finalize,
-    # not in the judge. A hop may be judged several times now (once per no-output attempt,
-    # L0007 §2.2), and crediting the chain on the first of those would freeze the count at
-    # attempt 1's zero and lose the document a later attempt went on to produce.
     if not run.get("chain_docs_accounted"):
         run["chain_docs_reached"] = (
             int(run.get("chain_docs_reached") or 0) + int(run.get("docs_reached") or 0)
         )
         run["chain_docs_accounted"] = True
 
-    respawn_pending = _svc().peek_auto_resume(run.get("group_id")) is not None
-    # Keep ownership across a hop boundary; the successor atomically transfers generation.
-    if respawn_pending:
-        db_group_ai_leases.begin_handoff(run["group_id"], run["run_id"])
-    run["stop_code"] = _resolve_stop_code(run, respawn_pending)
-    run["resumable"] = is_resumable(run["stop_code"])
-    run["stop_reason"] = _stop_reason_text(run["stop_code"], run)
 
-    # Scratch lifecycle: every deletion passes the manifest/identity boundary again.
+def _finalize_stop(run: dict, respawn_pending: bool) -> None:
+    code = _resolve_stop_code(run, respawn_pending)
+    reason = _stop_reason_text(code, run)
+    if not run.get("post_process_recovered"):
+        run.update(stop_code=code, resumable=is_resumable(code), stop_reason=reason)
+
+
+def _finalize_scratch(run: dict) -> None:
     scratch = Path(run["scratch_dir"])
     completed_at = datetime.now(timezone.utc).isoformat()
     manifest_updated = _mark_scratch_completed(
@@ -356,51 +354,34 @@ def _finalize_run(run: dict) -> None:
             run["scratch_retained"] = storage_paths.to_storage_relative(scratch, run["project_id"])
         except Exception:
             run["scratch_retained"] = run["scratch_dir"]
-        _safe_scratch_log(
-            run["project_id"], run["run_id"], scratch, "retained", cleanup_reason
-        )
+        _safe_scratch_log(run["project_id"], run["run_id"], scratch, "retained", cleanup_reason)
 
-    # Source-spill check (§2.8): only the delta vs the start-time snapshot.
+
+def _finalize_source(run: dict) -> None:
     baseline = run.get("dirty_baseline")
     now_paths = _svc()._git_status_paths(Path(run["source_root"]) if run.get("source_root") else None)
+    if run.get("post_process_recovered"):
+        return
     if baseline is None or now_paths is None:
-        run["source_dirty"] = None
-        run["source_dirty_files"] = []
+        run["source_dirty"], run["source_dirty_files"] = None, []
     else:
         spilled = sorted(now_paths - baseline)
         run["source_dirty"] = bool(spilled)
         run["source_dirty_files"] = spilled[:SOURCE_DIRTY_FILES_LIMIT]
 
-    # The whole hop, every attempt inside it — not just the last one.
-    run["duration_ms"] = int((time.monotonic() - run["started_mono"]) * 1000)
-    # 0446 T0016 §3-1: source delta and duration are both settled now, so read the
-    # watchdog's verdict ONCE, here. Nothing downstream — the row, the finished payload,
-    # the next rework prompt — touches `watchdog_kill` again; they read these two.
-    run["timeout_kind"], run["timeout_diagnosis"] = _resolve_timeout_diagnostics(run)
-    run["finished_at"] = now_iso()
-    run["status"] = "finished"
 
-    _apply_stop_row(run, respawn_pending)
+def _finalize_diagnostics(run: dict) -> None:
+    run["duration_ms"] = int((time.monotonic() - run["started_mono"]) * 1000)
+    run["timeout_kind"], run["timeout_diagnosis"] = _resolve_timeout_diagnostics(run)
+
+
+def _finalize_review_checkpoint(run: dict) -> None:
     if run.get("document_review_loop") and not run.get("document_review_loop_checkpointed"):
         try:
             review._checkpoint_document_review_loop(run)
         except Exception as exc:
             logger.exception("document review-loop checkpoint failed for %s", run["run_id"])
-            # 0486 T0029 item 3 (NR0028 F3): the group lease is released at the bottom of
-            # this function, and once it is gone no restart recovery can ever reach this
-            # loop again. A loop nobody could checkpoint is closed HERE, before that
-            # release, instead of sitting in `review` forever with no owner.
             review.force_stop_loop_after_checkpoint_failure(run, exc)
-    _svc()._persist_run_record(run)
-    _notify_chain_failure_if_needed(run)
-
-    _svc()._broadcast(run, "ai_invoke_finished", _svc().finished_payload(run))
-    _svc()._broadcast(run, "group_view_refresh", {
-        "group_id": run["group_id"],
-        "reason": "ai_invoke_finished",
-    })
-    if not respawn_pending:
-        db_group_ai_leases.release(run["group_id"], run["run_id"], reason="normal_finish")
 
 
 # ── Stop classification (0359 L0007 §4.1 ~ §4.3) ─────────────────────────────
@@ -871,7 +852,7 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
         logger.warning("ai-invoke stop-row update failed for %s", run["run_id"], exc_info=True)
 
 
-def _persist_run_record(run: dict) -> None:
+def _persist_run_record(run: dict) -> bool:
     """Write the one durable row for this hop (L0007 §2.10.1).
 
     At finalize — while a run is alive, memory is the truth. NR0003 §4: before this, a run
@@ -1017,9 +998,11 @@ def _persist_run_record(run: dict) -> None:
             ),
         )
         _persist_register_context_failures(run, stamp)
+        return True
     except Exception:
         # L0007 §5: a storage failure must never turn a finished hop into a crashed one.
         logger.warning("ai-invoke run record persist failed for %s", run["run_id"], exc_info=True)
+        return False
 
 
 def _persist_register_context_failures(run: dict, stamp: str) -> None:
