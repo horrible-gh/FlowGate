@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
@@ -134,5 +136,67 @@ describe('MainPanel AI-run rendered presentation (0398)', () => {
       console.log(wrapper.find('.content-panel').html())
       console.log('FLOWGATE_AI_RUN_DOM_END')
     }
+  })
+
+  it('renders the normal editable preview (no ro-badge lock) when no AI run is active (0572)', async () => {
+    const wrapper = mount(MainPanel, {
+      attachTo: document.body,
+      shallow: true,
+      global: {
+        plugins: [i18n],
+        stubs: {
+          teleport: false,
+          AiInvokeInline: false,
+          DocHeader: false,
+          DocumentBodyRouter: false,
+          GenericDocumentBody: false,
+          MdViewer: false,
+        },
+      },
+    })
+    await nextTick()
+
+    resolveBootstrap?.({ data: { runs: [], paused: [] } })
+    await flushPromises()
+
+    expect(wrapper.find('.md-preview-card .ro-badge-sm').exists()).toBe(false)
+    expect(wrapper.find('.md-preview-card .card-actions').text())
+      .toContain(i18n.global.t('main.document_preview.full_view'))
+    expect(wrapper.find('.md-viewer').text()).toContain('Actual document body')
+  })
+})
+
+describe('ro-badge scoped CSS ownership (0572)', () => {
+  function readStyleScoped(relativePath: string): string {
+    const source = readFileSync(join(process.cwd(), relativePath), 'utf8')
+    const match = source.match(/<style scoped>([\s\S]*?)<\/style>/)
+    if (!match) throw new Error(`no <style scoped> block found in ${relativePath}`)
+    return match[1]
+  }
+
+  it('GenericDocumentBody.vue owns the .ro-badge/.ro-badge-sm rules for the markup it renders', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/main/components/documents/GenericDocumentBody.vue'),
+      'utf8',
+    )
+    expect(source).toContain('class="ro-badge ro-badge-sm"')
+
+    const style = readStyleScoped('src/main/components/documents/GenericDocumentBody.vue')
+    expect(style).toMatch(/\.ro-badge\s*\{/)
+    expect(style).toMatch(/\.ro-badge-sm\s*\{/)
+  })
+
+  it('MainPanel.vue no longer carries the now-unused .ro-badge/.ro-badge-sm rules', () => {
+    const style = readStyleScoped('src/main/components/MainPanel.vue')
+    expect(style).not.toMatch(/\.ro-badge\s*\{/)
+    expect(style).not.toMatch(/\.ro-badge-sm\s*\{/)
+  })
+
+  it('DocHeader.vue keeps its own independent, unaffected .ro-badge rule', () => {
+    const source = readFileSync(join(process.cwd(), 'src/main/components/DocHeader.vue'), 'utf8')
+    expect(source).toContain('class="ro-badge"')
+
+    const style = readStyleScoped('src/main/components/DocHeader.vue')
+    expect(style).toMatch(/\.ro-badge\s*\{/)
   })
 })
