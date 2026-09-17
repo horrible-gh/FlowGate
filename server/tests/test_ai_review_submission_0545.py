@@ -40,7 +40,9 @@ def test_review_preflight_and_submit_preserve_semantic_payload_and_unicode(monke
         "comment": "검수 완료 日本語 😀",
         "body_sha256": "a" * 64,
         "body_chars": 12,
-        "force_encoding_reason": "의도된 물음표 문장입니다",
+        # 0474 T0007 §1.1: force_encoding_reason is no longer in the model's
+        # allowlisted review fields (_REGISTER_MODEL_FIELDS["review"]) -- a
+        # model-authored value here would be silently dropped, not forwarded.
     }
 
     def post(_run_arg, _token, body):
@@ -61,9 +63,9 @@ def test_review_preflight_and_submit_preserve_semantic_payload_and_unicode(monke
     assert len(calls) == 2
     dry, real = calls
     for key in ("action", "project", "module", "group_name", "doc_id",
-                "verdict", "findings", "comment", "body_sha256", "body_chars",
-                "force_encoding_reason"):
+                "verdict", "findings", "comment", "body_sha256", "body_chars"):
         assert dry[key] == real[key]
+    assert "force_encoding_reason" not in dry and "force_encoding_reason" not in real
     assert dry["dry_run"] is True and "receipt" not in dry
     assert real["receipt"] == "receipt-1" and "dry_run" not in real
     assert "한글 日本語 English 😀" in json.dumps(real, ensure_ascii=False)

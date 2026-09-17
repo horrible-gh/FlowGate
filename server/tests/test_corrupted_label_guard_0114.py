@@ -48,6 +48,30 @@ def test_empty_and_single_mark_are_not_corrupted():
     assert not svc._label_is_corrupted("a?")  # below the 2-mark floor
 
 
+# 0474 T0007 §1.2/§1.4 (NR0006 §5.1/§5.2): a run of 4+ consecutive '?' is corruption on
+# its own, independent of isascii()/ratio -- catches live Hangul/Japanese/emoji sharing a
+# line with a corrupted run, and pure-ASCII bodies where the run is diluted below the 0.5
+# ratio floor.
+@pytest.mark.parametrize("label", [
+    "????????",
+    "검수 결과 ???????? 문제가 있습니다",
+    "foo.py ???????? bar",
+    "정상문자 ?????? 정상문자",
+])
+def test_run_of_question_marks_is_corrupted_even_with_live_unicode(label):
+    assert svc._label_is_corrupted(label)
+
+
+@pytest.mark.parametrize("label", [
+    "이게 맞나요?",
+    "왜 실패했지???",
+    "Done?",
+    "query?a=1&b=2",
+])
+def test_short_question_mark_runs_stay_clean(label):
+    assert not svc._label_is_corrupted(label)
+
+
 # ── safe-label fallback ──────────────────────────────────────────────────────────
 
 def test_safe_label_falls_back_to_type_name(monkeypatch):

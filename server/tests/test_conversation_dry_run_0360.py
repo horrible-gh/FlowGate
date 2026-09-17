@@ -207,7 +207,10 @@ def test_chat_uses_the_same_line_based_corruption_verdict_as_documents():
     long_clean_tail = "\n".join("정상적인 한국어 문장입니다." for _ in range(200))
     cases = {
         # 한 줄만 깨진 긴 본문 — 전체 비율로는 임계 아래, 줄 단위로는 위. NR0004 의 실물 모양.
-        "one corrupted line in a long clean body": "?????? ??\n" + long_clean_tail,
+        # 0474 T0007 §1.2: 연속 '?' 4개 이상은 그 자체로 corruption 신호라 _label_is_corrupted
+        # 를 전체 문자열에 대해 바로 트립시킨다 — 이 줄의 모양은 그 신호를 건드리지 않도록
+        # (최대 연속 3개) 실제 mojibake 관측치(NR0003, CORRUPT 상수)와 같은 형태로 고른다.
+        "one corrupted line in a long clean body": "??? ?? ? ??\n" + long_clean_tail,
         "all corrupted": "?????? ??????",
         "clean korean": long_clean_tail,
         # '?' 로 끝나는 평범한 영문 — 잡으면 안 되는 쪽.

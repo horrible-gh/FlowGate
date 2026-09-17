@@ -504,12 +504,20 @@ def test_review_exact_fingerprint_does_not_bypass_corruption(monkeypatch):
     ))
 
     assert response.status_code == 422
-    assert "force_encoding_reason" in response.json()["error_message"]
+    # 0474 T0007 §1.1: review's corrupted-content message no longer offers the
+    # force_encoding_reason escape hatch at all (allow_force_bypass=False), so the
+    # pre-fix "the bypass exists" assertion is inverted -- it must NOT be mentioned.
+    assert "force_encoding_reason" not in response.json()["error_message"]
     mocks["insert_review"].assert_not_called()
     mocks["consume"].assert_not_called()
 
 
-def test_review_exact_fingerprint_with_valid_force_passes(monkeypatch):
+def test_review_exact_fingerprint_with_valid_force_still_rejects(monkeypatch):
+    """0474 T0007 §1.1 (NR0006 §2/§13.1): review sets allow_force_bypass=False, so a
+    valid force_encoding_reason can no longer let a corrupted review through even with
+    an exact fingerprint attached to the corrupted text itself. This is the inverted
+    contract of the old test_review_exact_fingerprint_with_valid_force_passes -- that
+    pass-through was the exact hole NR0006 identified."""
     import hashlib
 
     mocks = _patch_review_validation(monkeypatch)
@@ -520,9 +528,27 @@ def test_review_exact_fingerprint_with_valid_force_passes(monkeypatch):
         force_encoding_reason="검토자가 원문의 물음표 표현을 확인했습니다",
     ))
 
-    assert response.status_code == 201
-    mocks["insert_review"].assert_called_once()
-    mocks["consume"].assert_called_once()
+    assert response.status_code == 422
+    mocks["insert_review"].assert_not_called()
+    mocks["consume"].assert_not_called()
+
+
+def test_review_long_plausible_force_reason_still_rejects_corruption(monkeypatch):
+    """0474 T0007 §1.4: no accidental bypass survives even for a long (50+ char),
+    plausible-looking reason -- length/content of force_encoding_reason must never
+    matter once allow_force_bypass=False."""
+    mocks = _patch_review_validation(monkeypatch)
+    long_reason = (
+        "이 리뷰 코멘트에 포함된 물음표는 실제로 사용자가 작성한 정상적인 문장부호이며 "
+        "인코딩 손상이 아님을 검토자가 직접 확인했습니다"
+    )
+    assert len(long_reason.replace(" ", "")) >= 50
+
+    response = post_inbox(_review_body(comment=CORRUPT, force_encoding_reason=long_reason))
+
+    assert response.status_code == 422
+    mocks["insert_review"].assert_not_called()
+    mocks["consume"].assert_not_called()
 
 
 def test_review_short_force_does_not_bypass_corruption(monkeypatch):
@@ -567,6 +593,103 @@ def test_review_corrupted_finding_locus_rejected(monkeypatch):
     assert response.status_code == 422
     mocks["insert_review"].assert_not_called()
     mocks["consume"].assert_not_called()
+
+
+def test_review_mixed_unicode_and_run_of_question_marks_rejected_end_to_end(monkeypatch):
+    """0474 T0007 §1.4 integration check: §1.1 (force bypass removed) and §1.2 (run-of-
+    '?' detector) working together at the route level through a real dry_run call, not
+    just unit-tested in isolation. Before this group's fix, a line mixing live Hangul/
+    Japanese/emoji with a corrupted run passed the old isascii()-gated detector."""
+    mocks = _patch_review_validation(monkeypatch)
+    mixed = "검수 완료 レビュー完了 ✅ ???? 문제가 있습니다"
+
+    response = post_inbox(_review_body(comment=mixed, dry_run=True))
+
+    assert response.status_code == 422
+    mocks["insert_review"].assert_not_called()
+    mocks["consume"].assert_not_called()
+
+
+# ── inbox_routes review dry-run receipt gate (0474 T0007 §1.3) ──────────────────────
+
+def _patch_review_dry_run_receipt(monkeypatch):
+    from modules.flow_gate.services import review_receipt_service
+
+    mocks = _patch_review_validation(monkeypatch)
+    issue_mock = MagicMock(return_value={
+        "receipt": "receipt-0474-t0007", "payload_identity": "a" * 64,
+        "expires_at": "2030-01-01T00:00:00+09:00",
+    })
+    monkeypatch.setattr(review_receipt_service, "issue", issue_mock)
+    mocks["issue"] = issue_mock
+    return mocks
+
+
+def test_review_corrupted_dry_run_rejects_without_issuing_receipt(monkeypatch):
+    """§1.1 already rejects this at Step 5.9 before the dry-run block is reached, but
+    the observable contract this pins is: a corrupted dry-run, even with a valid
+    force_encoding_reason attached, must never mint a receipt."""
+    mocks = _patch_review_dry_run_receipt(monkeypatch)
+
+    response = post_inbox(_review_body(
+        comment=CORRUPT, dry_run=True,
+        force_encoding_reason="검토자가 원문의 물음표 표현을 확인했습니다",
+    ))
+
+    assert response.status_code == 422
+    mocks["issue"].assert_not_called()
+    mocks["insert_review"].assert_not_called()
+    mocks["consume"].assert_not_called()
+
+
+def test_review_clean_dry_run_still_issues_receipt(monkeypatch):
+    """Regression check: §1.3's new corruption gate must not block a clean dry-run."""
+    mocks = _patch_review_dry_run_receipt(monkeypatch)
+
+    response = post_inbox(_review_body(comment=CLEAN_EN, dry_run=True))
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["ok"] is True
+    mocks["issue"].assert_called_once()
+
+
+def test_review_dry_run_corruption_gate_blocks_receipt_even_if_step_5_9_is_bypassed(monkeypatch):
+    """0474 T0007 §1.3: the dry-run block's own corruption check on _review_validation
+    is an INDEPENDENT layer from §1.1's Step 5.9 guard -- simulate a Step 5.9
+    regression (_encoding_guard patched to always pass) and confirm §1.3 alone still
+    refuses to mint a receipt for corrupted content."""
+    from modules.flow_gate.api import inbox_routes
+
+    mocks = _patch_review_dry_run_receipt(monkeypatch)
+    monkeypatch.setattr(inbox_routes, "_encoding_guard", lambda **_k: None)
+
+    response = post_inbox(_review_body(comment=CORRUPT, dry_run=True))
+
+    assert response.status_code == 422
+    mocks["issue"].assert_not_called()
+
+
+def test_review_receipt_service_issue_refuses_corrupted_validation_directly():
+    """0474 T0007 §1.3/§1.4: review_receipt_service.issue() itself must refuse a
+    corrupted validation dict regardless of caller -- this is the defense that stays
+    in place even if §1.1's Step 5.9 guard (and the route-level §1.3 check alongside
+    it) both regress or a new caller skips them."""
+    from modules.flow_gate.services import review_receipt_service
+
+    with pytest.raises(review_receipt_service.CorruptedReviewError):
+        review_receipt_service.issue(
+            token_rec={"token_id": "tok-0474-t0007", "expires_at": None},
+            project_id="flowgate", group_id="flowgate.default.0474",
+            doc_id="flowgate.default.0474.0002-NR", revision_no=0,
+            identity="deadbeef" * 8,
+            validation={
+                "corruption_detected": True, "force_used": True,
+                "validated_at": "2026-01-01T00:00:00+09:00",
+                "fingerprint_supplied": False, "fingerprint_matched": False,
+                "body_sha256_present": False, "body_chars_present": False,
+            },
+        )
 
 
 # ── inbox_routes._encoding_validation_result: force_used after the reorder (0545 T0021
