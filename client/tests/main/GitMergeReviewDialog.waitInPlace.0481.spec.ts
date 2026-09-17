@@ -139,10 +139,11 @@ describe('GitMergeReviewDialog — waiting for the reply in place (0481 T0010 re
     expect(wrapper.text()).toContain('why did you touch ko.ts?')
     expect(wrapper.find('[data-test="gmr-waiting-turn"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('Claude Sonnet 5 is writing an answer')
-    // ...and sending again is blocked, visibly, with the reason on the control.
+    // ...and the send button turns into a STOP control (flowgate.default.0570 T0004)
+    // rather than being disabled with the wait reason on it.
     const send = wrapper.find('.gmr-send-btn')
-    expect(send.attributes('disabled')).toBeDefined()
-    expect(send.attributes('title')).toContain('is writing an answer')
+    expect(send.attributes('disabled')).toBeUndefined()
+    expect(send.attributes('title')).toContain(i18n.global.t('main.ai_invoke_dialog.btn_cancel_run'))
 
     // Ten seconds of polling: the dialog never falls back to the full-screen
     // loading/error states, and the file list + diff stay put.

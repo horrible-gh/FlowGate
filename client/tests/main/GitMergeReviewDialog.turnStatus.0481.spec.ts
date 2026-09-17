@@ -94,4 +94,18 @@ describe('0481 T0010 rev6 — 대화 턴의 결과가 화면에 보인다', () =
     ])
     conversation.splice(3)
   })
+
+  // flowgate.default.0570 T0004 §2.2 — a user-cancelled run must read as a
+  // cancellation, not fall into the generic 'failed' bucket above.
+  it('사용자가 중지한 답에는 실패가 아니라 취소 배지가 붙는다', async () => {
+    conversation.push(
+      { turn_id: 't6', role: 'ai', message: '사용자가 이 실행을 중지했습니다(취소됨).', provider_id: 'p1', status: 'cancelled', created_at: '2026-09-08T19:27:00+09:00' },
+    )
+    const wrapper = mountDialog()
+    await flushPromises()
+    const labels = wrapper.findAll('[data-test="gmr-turn-status"]').map((n) => n.text())
+    expect(labels[labels.length - 1]).toBe(i18n.global.t('main.git_review.turn_status_cancelled'))
+    expect(labels).not.toContain(i18n.global.t('main.git_review.turn_status_failed'))
+    conversation.splice(3)
+  })
 })
