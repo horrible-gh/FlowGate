@@ -607,6 +607,14 @@ class TestCliExecuteExits:
         # working run would still be cut off at its budget with no one asking why.
         seen = {}
 
+        # The process runner now owns the single background communicator. Inspect
+        # its deadline boundary, not the inner communicate() implementation.
+        monkeypatch.setattr(process_runner.WindowsProcessOwner, "attach", lambda self, proc: False)
+        monkeypatch.setattr(
+            process_runner, "communicate_with_cleanup",
+            lambda proc, owner, **kwargs: proc.communicate(**kwargs),
+        )
+
         class _Proc:
             returncode = 0
 
@@ -615,6 +623,9 @@ class TestCliExecuteExits:
                 return b"", b""
 
             def poll(self):
+                return 0
+
+            def wait(self, timeout=None):
                 return 0
         monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: _Proc())
         run = _cli_run(tmp_path, timeout_sec=1800)
@@ -642,7 +653,9 @@ class TestCliExecuteExits:
         assert run["timed_out"] is True
         assert run["exit_code"] is None
         assert run["watchdog_kill"] is None          # the WAIT expired, not the watchdog
-        assert len(killed) == 1
+        # Timeout recovery and unconditional final cleanup may both reap the
+        # same attempt. No cleanup may target a different process.
+        assert killed and all(proc is killed[0] for proc in killed)
         assert run["proc"] is None
         assert _no_watchdog_threads() == []
 
@@ -662,6 +675,8 @@ class TestCliExecuteExits:
 
     def test_a_broken_stdin_pipe_still_stops_the_watchdog(self, tmp_path, monkeypatch,
                                                           quiet_signals):
+        # This fake has no Windows process/thread handles.
+        monkeypatch.setattr(process_runner.WindowsProcessOwner, "attach", lambda self, proc: False)
         class _Proc:
             returncode = None
 
@@ -671,6 +686,9 @@ class TestCliExecuteExits:
                 return b"", b""
 
             def poll(self):
+                return self.returncode
+
+            def wait(self, timeout=None):
                 return self.returncode
         monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: _Proc())
         monkeypatch.setattr(process_runner, "kill_process_tree", lambda proc: None)
