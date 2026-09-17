@@ -354,8 +354,9 @@ def startup_recovery() -> None:
     lock is NOT re-acquired — the base is protected by the state gate, not a mutex
     (0205 §2.1). Sessions with no MERGE_HEAD are auto-aborted (orphan recovery).
     Any surviving lock is stale by definition (nothing legitimately outlives a
-    restart) — op:/sweep:/merge:/dispose: locks are all force-released. Finally a
-    sweep reclaims TTL-expired sessions and the daemon repeats it periodically."""
+    restart) — every project lock row is force-released regardless of holder.
+    Finally a sweep reclaims TTL-expired sessions and the daemon repeats it
+    periodically."""
     from modules.flow_gate.services import git_service as _gs
     try:
         sessions = _gs.db_git.list_open_sessions()
@@ -397,12 +398,11 @@ def startup_recovery() -> None:
                     touched.add(int(merge_id))
             except Exception:
                 _log.warning("git session recovery failed for merge %s", merge_id, exc_info=True)
-        # One-time lock cleanup: no lock legitimately survives a restart. This
-        # includes the legacy merge:{id} inheritance lock (§2.6).
+        # One-time lock cleanup: no lock legitimately survives a restart, so
+        # every row is force-released regardless of holder string (no prefix
+        # whitelist here, or a new holder prefix silently becomes another leak).
         for lock in _gs.db_git.list_locks():
-            holder = str(lock.get("holder") or "")
-            if holder.startswith(("op:", "sweep:", "merge:", "dispose:")):
-                _gs.db_git.force_release_lock(lock["project_id"])
+            _gs.db_git.force_release_lock(lock["project_id"])
         # The original snapshot is only a candidate-id list here; reconcile_push_session
         # re-reads each row and re-checks its guard before changing it.
         _gs.reconcile_due_merge_review_sessions("server_startup", sessions=sessions)

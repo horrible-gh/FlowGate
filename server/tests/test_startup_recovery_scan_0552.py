@@ -42,6 +42,63 @@ def test_startup_reads_open_sessions_once_even_when_empty(monkeypatch):
     assert listed.call_count == 1
 
 
+# T0004: startup_recovery must force-release EVERY project lock row regardless
+# of holder string. The old code whitelisted only op:/sweep:/merge:/dispose:
+# prefixes, so a lock held by e.g. trcommit:/review:/archive: survived a
+# restart forever. These cases must all be cleaned, including a holder string
+# that is not on any known list today (a future prefix must not need a
+# whitelist update to be swept).
+def test_startup_recovery_force_releases_every_lock_regardless_of_holder(monkeypatch):
+    locks = [
+        {"project_id": "flowgate", "holder": "op:11111111-1111-1111-1111-111111111111"},
+        {"project_id": "other-project", "holder": "trcommit:22222222-2222-2222-2222-222222222222"},
+        {"project_id": "third-project", "holder": "trconflict:33333333-3333-3333-3333-333333333333"},
+        {"project_id": "fourth-project", "holder": "review:1:44444444-4444-4444-4444-444444444444"},
+        {"project_id": "fifth-project", "holder": "reconcile:55555555-5555-5555-5555-555555555555"},
+        {"project_id": "sixth-project", "holder": "discard:66666666-6666-6666-6666-666666666666"},
+        {"project_id": "seventh-project", "holder": "archive:77777777-7777-7777-7777-777777777777"},
+        {"project_id": "eighth-project", "holder": "archive-restore:88888888-8888-8888-8888-888888888888"},
+        {"project_id": "ninth-project", "holder": "archive-purge:99999999-9999-9999-9999-999999999999"},
+        {"project_id": "tenth-project", "holder": "resolve_base_dirty:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"},
+        {"project_id": "eleventh-project", "holder": "cancel:bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"},
+        {"project_id": "twelfth-project", "holder": "terminal-reopen:cccccccc-cccc-cccc-cccc-cccccccccccc"},
+        {"project_id": "thirteenth-project", "holder": "initial_sync:dddddddd-dddd-dddd-dddd-dddddddddddd"},
+        {"project_id": "fourteenth-project", "holder": "some-future-holder-not-on-any-list:eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"},
+    ]
+    _startup_stubs(monkeypatch, [])
+    monkeypatch.setattr(svc.db_git, "list_locks", Mock(return_value=locks))
+    released = Mock()
+    monkeypatch.setattr(svc.db_git, "force_release_lock", released)
+
+    svc.startup_recovery()
+
+    assert released.call_count == len(locks)
+    released.assert_any_call("flowgate")
+    released.assert_any_call("other-project")
+    released.assert_any_call("third-project")
+    released.assert_any_call("fourth-project")
+    released.assert_any_call("fifth-project")
+    released.assert_any_call("sixth-project")
+    released.assert_any_call("seventh-project")
+    released.assert_any_call("eighth-project")
+    released.assert_any_call("ninth-project")
+    released.assert_any_call("tenth-project")
+    released.assert_any_call("eleventh-project")
+    released.assert_any_call("twelfth-project")
+    released.assert_any_call("thirteenth-project")
+    released.assert_any_call("fourteenth-project")
+
+
+def test_startup_recovery_releases_nothing_when_no_locks_exist(monkeypatch):
+    _startup_stubs(monkeypatch, [])
+    released = Mock()
+    monkeypatch.setattr(svc.db_git, "force_release_lock", released)
+
+    svc.startup_recovery()
+
+    released.assert_not_called()
+
+
 def test_startup_orphan_is_closed_once_and_not_reoffered_to_sweep(monkeypatch):
     session = _session()
     listed = _startup_stubs(monkeypatch, [session])
