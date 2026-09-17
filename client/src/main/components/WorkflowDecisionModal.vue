@@ -1305,8 +1305,7 @@ async function invokeAiSequenceEdit() {
     showToast(t('main.workflow_edit_modal.toast_ai_invoke_started'), 'success')
     close()
   } catch (e: any) {
-    const data = e?.response?.data
-    showToast(data?.message || data?.error?.message || t('main.workflow_edit_modal.error_ai_invoke'), 'error')
+    showToast(extractApiErrorMessage(e, t('main.workflow_edit_modal.error_ai_invoke')), 'error')
   } finally {
     invokingAi.value = false
   }

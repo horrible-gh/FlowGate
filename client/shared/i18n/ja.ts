@@ -1090,6 +1090,7 @@ export default {
       notice_head_in_progress: 'すでに進行中の段階があります。',
       notice_issue_failed: 'トークンを発行できませんでした。',
       notice_ai_failed: 'AI 実行を開始できませんでした。',
+      create_failed: '作業計画の作成中にエラーが発生しました。',
     },
     work_plan_create_dialog: {
       title: '作業計画の作成',
@@ -1120,6 +1121,7 @@ export default {
       block_providers: '投入するプロバイダーを一つ以上チェックしてください。',
       create: '作成',
       creating: '作成中…',
+      create_failed: '作業計画の作成中にエラーが発生しました。',
     },
     work_plan: {
       title: '作業計画',
@@ -2623,6 +2625,14 @@ export default {
       forbidden: 'この Git 操作を実行する権限がありません。',
       invalid_state: '現在の状態ではこの Git 操作を実行できません。',
       invalid_request: 'Git リクエストが正しくありません。',
+    },
+    api_errors: {
+      validation_failed: {
+        kind_unsupported_kind: 'このCLI種別はサポートされていません。',
+        model_name_invalid_model_name: 'モデル名が正しくありません。',
+        generic: '入力内容を確認してください。',
+      },
+      ai_repeat_count_out_of_range: '繰り返し回数は{min}〜{max}の範囲で指定してください。',
     },
     git_finalize: {
       // 0382 NR0003 proposal 1 — temporary artifacts excluded from the finalize commit.

@@ -5,9 +5,13 @@ import i18n from '@shared/i18n'
 
 // 0490 T0007 §6: the "실행 정책" card on AiSettingsView — reads ai_repeat_count_max from
 // GET /system/settings, saves via PATCH /system/settings with the SSOT-owning store
-// (client/src/settings/stores/settings.js, §3.7), shows the server's raw 422 string verbatim,
-// carries the structural min=1/max=30 bounds (§3.7), and names what it sets rather than
-// repeating the screen title (§3.6).
+// (client/src/settings/stores/settings.js, §3.7), carries the structural min=1/max=30 bounds
+// (§3.7), and names what it sets rather than repeating the screen title (§3.6).
+//
+// flowgate.default.0578 T0010 §2.5/작업5: the save-failure path no longer shows the server's
+// raw 422 detail string. routers/system.py now answers this one setting_key with a
+// registered `ai_repeat_count_out_of_range` code (T0010 작업1); resolveApiError renders that
+// code's i18n message, and any other/legacy raw detail renders this screen's own fallback.
 
 const { getRequest, putRequest, patchRequest } = vi.hoisted(() => ({
   getRequest: vi.fn(),
@@ -68,7 +72,23 @@ describe('AiSettingsView execution-policy card (0490 T0007)', () => {
     })
   })
 
-  it('shows the server 422 raw string verbatim, not the provider-row {errors:[...]} formatter', async () => {
+  it('renders the registered ai_repeat_count_out_of_range i18n message, not the raw detail', async () => {
+    patchRequest.mockRejectedValue({
+      response: {
+        status: 422,
+        data: { detail: { code: 'ai_repeat_count_out_of_range', params: { min: 1, max: 30 } } },
+      },
+    })
+    const wrapper = await mountView('7')
+    await wrapper.get('[data-test="ai-execution-policy-save"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain(
+      i18n.global.t('main.api_errors.ai_repeat_count_out_of_range', { min: 1, max: 30 }),
+    )
+  })
+
+  it('falls back to the screen text for a raw legacy 422 string, never the raw string verbatim', async () => {
     patchRequest.mockRejectedValue({
       response: { status: 422, data: { detail: 'ai_repeat_count_max must be an integer between 1 and 30' } },
     })
@@ -76,7 +96,8 @@ describe('AiSettingsView execution-policy card (0490 T0007)', () => {
     await wrapper.get('[data-test="ai-execution-policy-save"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('ai_repeat_count_max must be an integer between 1 and 30')
+    expect(wrapper.text()).not.toContain('ai_repeat_count_max must be an integer between 1 and 30')
+    expect(wrapper.text()).toContain(i18n.global.t('settings.system.ai.execution_policy.save_failed'))
   })
 
   it('does not let a save failure here block the independent provider-card save button', async () => {

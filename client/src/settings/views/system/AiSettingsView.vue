@@ -100,6 +100,7 @@ import { nextTick, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { createPinia, getActivePinia, setActivePinia } from 'pinia';
 import { getRequest, postRequest, putRequest } from '@shared/api';
+import { resolveApiError } from '@shared/apiErrors';
 import AiProviderListEditor from '../../components/AiProviderListEditor.vue';
 import { formatErrors } from '../../components/aiProviderLimits';
 import { useToast } from '../../../main/components/common/useToast';
@@ -147,12 +148,13 @@ async function saveExecutionPolicy() {
     applyExecutionPolicyFromSettings();
     showToast(t('common.toast.settings_saved'), 'success');
   } catch (e) {
-    // §3.7: routers/system.py raises HTTPException(422, detail=str(exc)) here — a raw,
-    // un-localized string, shown verbatim rather than run through the provider card's
-    // {detail:{errors:[...]}} formatter.
-    executionPolicyError.value = typeof e?.response?.data?.detail === 'string'
-      ? e.response.data.detail
-      : t('settings.system.ai.execution_policy.save_failed');
+    // flowgate.default.0578 T0010 §2.5/작업5: routers/system.py answers the
+    // ai_repeat_count_max case with the registered `ai_repeat_count_out_of_range` code
+    // (T0010 작업1); resolveApiError renders that code's i18n message and otherwise falls
+    // back to this screen's own text instead of showing the server's raw detail string.
+    executionPolicyError.value = resolveApiError(
+      e, t, 'settings.system.ai.execution_policy.save_failed',
+    );
   } finally {
     executionPolicySaving.value = false;
   }

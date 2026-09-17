@@ -18,14 +18,19 @@ import { useAiProviderStore } from '@main/stores/aiProvider'
 const postRequest = vi.fn()
 const getRequest = vi.fn()
 
-vi.mock('@shared/api', () => ({
-  default: { head: vi.fn(), get: vi.fn(), post: vi.fn(), patch: vi.fn() },
-  getRequest: (...args: any[]) => getRequest(...args),
-  postRequest: (...args: any[]) => postRequest(...args),
-  patchRequest: vi.fn(),
-  extractApiErrorMessage: (error: any, fallback: string) =>
-    error?.response?.data?.detail ?? error?.response?.data?.error?.message ?? fallback,
-}))
+// flowgate.default.0578 T0010: extractApiErrorMessage now delegates to the shared
+// code-based resolver (apiErrors.ts) instead of returning raw detail/error.message, so this
+// mock keeps the real implementation and only stubs the request functions.
+vi.mock('@shared/api', async () => {
+  const actual = await vi.importActual<typeof import('@shared/api')>('@shared/api')
+  return {
+    ...actual,
+    default: { head: vi.fn(), get: vi.fn(), post: vi.fn(), patch: vi.fn() },
+    getRequest: (...args: any[]) => getRequest(...args),
+    postRequest: (...args: any[]) => postRequest(...args),
+    patchRequest: vi.fn(),
+  }
+})
 
 // 0429 T0004 (NR0003): `data`/`items` mirrors the real document-types order — design
 // series sorts before instruction, so D precedes DS, and DS's real series is
@@ -265,7 +270,10 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
     expect(wrapper.emitted('update:visible')![0]).toEqual([false])
   })
 
-  it('생성이 실패하면 창은 열린 채 사유 한 줄만 바뀐다', async () => {
+  // flowgate.default.0578 T0010 §2.5: extractApiErrorMessage no longer surfaces
+  // response.data.message raw text — with no registered code, the screen's own fallback
+  // is shown instead.
+  it('생성이 실패하면 창은 열린 채 사유 한 줄만 바뀐다 (화면 fallback, 서버 원문 아님)', async () => {
     postRequest.mockRejectedValue({ response: { data: { message: '작업계획을 만들지 못했습니다.' } } })
     const wrapper = await mountDialog()
     await pick(wrapper, 'type', 0)
@@ -274,8 +282,31 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
     await flushPromises()
 
     expect(wrapper.emitted('update:visible')).toBeFalsy()
-    expect(wrapper.find('[data-test="wpp-notice"]').text()).toContain('작업계획을 만들지 못했습니다.')
+    expect(wrapper.find('[data-test="wpp-notice"]').text()).not.toContain('작업계획을 만들지 못했습니다.')
+    expect(wrapper.find('[data-test="wpp-notice"]').text())
+      .toContain(i18n.global.t('main.work_plan_proposal_dialog.create_failed'))
     expect(wrapper.find('[data-test="wpp-invoke-ai"]').exists()).toBe(true)
+  })
+
+  // flowgate.default.0578.0011-TR rev1 (T0010 task 4.3): createError used to store the
+  // already-translated string, so it stayed Korean after a locale change. It must now
+  // re-render in the newly active locale.
+  it('생성 실패 사유는 locale이 바뀌면 새 언어로 다시 렌더된다', async () => {
+    postRequest.mockRejectedValue({ response: { data: { message: '작업계획을 만들지 못했습니다.' } } })
+    const wrapper = await mountDialog()
+    await pick(wrapper, 'type', 0)
+    await pick(wrapper, 'provider', 0)
+    await wrapper.find('[data-test="wpp-create-empty"]').trigger('click')
+    await flushPromises()
+
+    const koText = i18n.global.t('main.work_plan_proposal_dialog.create_failed')
+    expect(wrapper.find('[data-test="wpp-notice"]').text()).toContain(koText)
+
+    i18n.global.locale.value = 'en'
+    await flushPromises()
+    const enText = i18n.global.t('main.work_plan_proposal_dialog.create_failed')
+    expect(wrapper.find('[data-test="wpp-notice"]').text()).toContain(enText)
+    expect(wrapper.find('[data-test="wpp-notice"]').text()).not.toContain(koText)
   })
 
   it('사유가 없으면 안내 한 줄에 고른 내용 요약이 남는다', async () => {

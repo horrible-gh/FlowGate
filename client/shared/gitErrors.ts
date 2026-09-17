@@ -1,3 +1,5 @@
+import { cleanDetails, cleanParams, isRecord, normalizeApiInput, type Translate } from './apiErrors'
+
 export type GitErrorScalar = string | number | boolean
 export type GitErrorParams = Readonly<Record<string, GitErrorScalar | readonly string[]>>
 
@@ -9,45 +11,18 @@ export interface NormalizedGitError {
   readonly network: boolean
 }
 
-type Translate = (key: string, params?: Record<string, unknown>) => string
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
-function cleanParams(value: unknown): GitErrorParams {
-  if (!isRecord(value)) return Object.freeze({})
-  const result: Record<string, GitErrorScalar | readonly string[]> = {}
-  for (const [key, item] of Object.entries(value)) {
-    if (typeof item === 'string' || typeof item === 'boolean'
-      || (typeof item === 'number' && Number.isFinite(item))) {
-      result[key] = item
-    } else if (Array.isArray(item) && item.every((entry) => typeof entry === 'string')) {
-      result[key] = Object.freeze([...item])
-    }
-  }
-  return Object.freeze(result)
-}
-
-function cleanDetails(value: unknown): Readonly<Record<string, unknown>> {
-  return Object.freeze(isRecord(value) ? { ...value } : {})
-}
-
 export function normalizeGitError(input: unknown): NormalizedGitError {
-  const root = isRecord(input) ? input : {}
-  const response = isRecord(root.response) ? root.response : {}
-  const responseData = isRecord(response.data) ? response.data : {}
-  const data = Object.keys(responseData).length ? responseData : root
+  const { data, response, network } = normalizeApiInput(input)
   const nested = isRecord(data.error) ? data.error : data
   const statusValue = response.status ?? data.status ?? nested.status
   const status = typeof statusValue === 'number' && Number.isInteger(statusValue) ? statusValue : null
   const code = typeof nested.code === 'string' && nested.code.trim() ? nested.code.trim() : null
-  const hasResponse = Object.keys(response).length > 0
   return Object.freeze({
     code,
     status,
     params: cleanParams(nested.params),
     details: cleanDetails(nested.details),
-    network: !!(root.isAxiosError && !hasResponse),
+    network,
   })
 }
 

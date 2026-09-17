@@ -1090,6 +1090,7 @@ export default {
       notice_head_in_progress: 'A step is already in progress.',
       notice_issue_failed: 'The token could not be issued.',
       notice_ai_failed: 'The AI run could not be started.',
+      create_failed: 'An error occurred while creating the work plan.',
     },
     work_plan_create_dialog: {
       title: 'Create Work Plan',
@@ -1120,6 +1121,7 @@ export default {
       block_providers: 'Check at least one provider to use.',
       create: 'Create',
       creating: 'Creating…',
+      create_failed: 'An error occurred while creating the work plan.',
     },
     work_plan: {
       title: 'Work Plan',
@@ -2630,6 +2632,14 @@ export default {
       forbidden: 'You do not have permission to perform this Git operation.',
       invalid_state: 'This Git operation is not available in the current state.',
       invalid_request: 'The Git request is invalid.',
+    },
+    api_errors: {
+      validation_failed: {
+        kind_unsupported_kind: 'This CLI kind is not supported.',
+        model_name_invalid_model_name: 'The model name is invalid.',
+        generic: 'Please check your input.',
+      },
+      ai_repeat_count_out_of_range: 'The repeat count must be between {min} and {max}.',
     },
     git_finalize: {
       // 0382 NR0003 proposal 1 — temporary artifacts excluded from the finalize commit.

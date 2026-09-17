@@ -16,14 +16,19 @@ import { useDocTypeStore } from '@main/stores/docTypeStore'
 
 const { getRequest, postRequest } = vi.hoisted(() => ({ getRequest: vi.fn(), postRequest: vi.fn() }))
 
-vi.mock('@shared/api', () => ({
-  default: { head: vi.fn(), get: vi.fn(), post: vi.fn(), patch: vi.fn() },
-  getRequest,
-  postRequest,
-  patchRequest: vi.fn(),
-  extractApiErrorMessage: (error: any, fallback: string) =>
-    error?.response?.data?.detail ?? error?.response?.data?.error?.message ?? fallback,
-}))
+// flowgate.default.0578 T0010: extractApiErrorMessage now delegates to the shared
+// code-based resolver (apiErrors.ts) instead of returning raw detail/error.message, so this
+// mock keeps the real implementation and only stubs the request functions.
+vi.mock('@shared/api', async () => {
+  const actual = await vi.importActual<typeof import('@shared/api')>('@shared/api')
+  return {
+    ...actual,
+    default: { head: vi.fn(), get: vi.fn(), post: vi.fn(), patch: vi.fn() },
+    getRequest,
+    postRequest,
+    patchRequest: vi.fn(),
+  }
+})
 
 // 0429 T0004 (NR0003): `data` mirrors the real document-types order — design series
 // sorts before instruction (alphabetically), so D precedes DS here. This used to list
@@ -199,7 +204,10 @@ describe('WorkPlanCreateDialog', () => {
     expect(preview).toContain('Claude Opus')
   })
 
-  it('rejects a server-side empty-selection response without crashing (P0009 §4.3 defense-in-depth)', async () => {
+  // flowgate.default.0578 T0010 §2.5: extractApiErrorMessage no longer surfaces
+  // response.data.message/detail raw text — an unregistered code (wp_validation_failed is
+  // not one of apiErrors.ts's registered codes) falls back to this screen's own text.
+  it('rejects a server-side empty-selection response without crashing, using the screen fallback', async () => {
     postRequest.mockRejectedValue({
       response: { status: 422, data: { code: 'wp_validation_failed', message: '작업계획을 만들지 못했습니다. 2개 항목이 규칙에 맞지 않습니다.' } },
     })
@@ -211,7 +219,32 @@ describe('WorkPlanCreateDialog', () => {
     await createButton(wrapper).trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('작업계획을 만들지 못했습니다')
+    expect(wrapper.text()).not.toContain('작업계획을 만들지 못했습니다')
+    expect(wrapper.text()).toContain(i18n.global.t('main.work_plan_create_dialog.create_failed'))
     expect(wrapper.emitted('created')).toBeUndefined()
+  })
+
+  // flowgate.default.0578.0011-TR rev1 (T0010 task 4.3): createError used to store the
+  // already-translated string, so it stayed Korean after a locale change. It must now
+  // re-render in the newly active locale.
+  it('re-renders the persistent create error in the new locale after a locale change', async () => {
+    postRequest.mockRejectedValue({
+      response: { status: 422, data: { code: 'wp_validation_failed', message: 'raw server text' } },
+    })
+    const wrapper = mountDialog()
+    await flushPromises()
+    await check(wrapper, 'DS').trigger('click')
+    await check(wrapper, 'Claude Opus').trigger('click')
+
+    await createButton(wrapper).trigger('click')
+    await flushPromises()
+    const koText = i18n.global.t('main.work_plan_create_dialog.create_failed')
+    expect(wrapper.text()).toContain(koText)
+
+    i18n.global.locale.value = 'en'
+    await flushPromises()
+    const enText = i18n.global.t('main.work_plan_create_dialog.create_failed')
+    expect(wrapper.text()).toContain(enText)
+    expect(wrapper.text()).not.toContain(koText)
   })
 })

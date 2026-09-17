@@ -1091,6 +1091,7 @@ export default {
       notice_head_in_progress: '이미 진행 중인 단계가 있습니다.',
       notice_issue_failed: '토큰을 발급하지 못했습니다.',
       notice_ai_failed: 'AI 실행을 시작하지 못했습니다.',
+      create_failed: '작업계획 생성 중 오류가 발생했습니다.',
     },
     work_plan_create_dialog: {
       title: '작업계획 생성',
@@ -1121,6 +1122,7 @@ export default {
       block_providers: '투입할 프로바이더를 하나 이상 체크해 주세요.',
       create: '생성',
       creating: '생성 중…',
+      create_failed: '작업계획 생성 중 오류가 발생했습니다.',
     },
     work_plan: {
       title: '작업계획',
@@ -2626,6 +2628,17 @@ export default {
       forbidden: '이 Git 작업을 수행할 권한이 없습니다.',
       invalid_state: '현재 상태에서는 이 Git 작업을 수행할 수 없습니다.',
       invalid_request: 'Git 요청이 올바르지 않습니다.',
+    },
+    // flowgate.default.0578 T0010 §2.2/작업6 — extractApiErrorMessage와 비-Git 오류
+    // sink가 공유하는 등록 code 문구. GROUP_AI_RUN_LOCKED는 새 키를 만들지 않고
+    // review_action_bar의 기존 키를 그대로 참조한다.
+    api_errors: {
+      validation_failed: {
+        kind_unsupported_kind: '지원하지 않는 CLI 종류입니다.',
+        model_name_invalid_model_name: '모델 이름이 올바르지 않습니다.',
+        generic: '입력값을 확인해 주세요.',
+      },
+      ai_repeat_count_out_of_range: '반복 횟수는 {min}에서 {max} 사이여야 합니다.',
     },
     git_finalize: {
       // 0382 NR0003 제안 1 — 마무리 커밋에서 뺀 임시 산출물.

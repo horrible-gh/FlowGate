@@ -45,7 +45,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { extractApiErrorMessage, postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
@@ -69,13 +69,30 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const name = ref('')
 const submitting = ref(false)
-const errorMessage = ref('')
 const inputRef = ref<HTMLInputElement | null>(null)
+
+/** flowgate.default.0578.0011-TR rev1 (T0010 task 4.3): keeps the raw error/text/key
+ *  instead of a pre-resolved string, so a locale change after the error is shown
+ *  re-renders it in the new language instead of freezing it in whatever locale was
+ *  active when the error occurred. */
+type ErrorState =
+  | { kind: 'none' }
+  | { kind: 'key'; key: string }
+  | { kind: 'text'; text: string }
+  | { kind: 'api'; error: unknown; fallbackKey: string }
+const errorState = ref<ErrorState>({ kind: 'none' })
+const errorMessage = computed(() => {
+  const state = errorState.value
+  if (state.kind === 'key') return t(state.key)
+  if (state.kind === 'text') return state.text
+  if (state.kind === 'api') return extractApiErrorMessage(state.error, t(state.fallbackKey))
+  return ''
+})
 
 watch(() => props.visible, async (val) => {
   if (!val) return
   name.value = ''
-  errorMessage.value = ''
+  errorState.value = { kind: 'none' }
   submitting.value = false
   await nextTick()
   inputRef.value?.focus()
@@ -84,11 +101,11 @@ watch(() => props.visible, async (val) => {
 async function submit() {
   const trimmed = name.value.trim()
   if (!trimmed) {
-    errorMessage.value = t('main.create_file_folder_modal.error_name_required')
+    errorState.value = { kind: 'key', key: 'main.create_file_folder_modal.error_name_required' }
     return
   }
   submitting.value = true
-  errorMessage.value = ''
+  errorState.value = { kind: 'none' }
   try {
     const endpoint = props.type === 'folder'
       ? '/api/v1/storage/folder'
@@ -101,16 +118,15 @@ async function submit() {
     })
     const data = res.data as any
     if (data.status === 'error') {
-      errorMessage.value = data.message || t('main.create_file_folder_modal.error_save_failed')
+      errorState.value = data.message
+        ? { kind: 'text', text: data.message }
+        : { kind: 'key', key: 'main.create_file_folder_modal.error_save_failed' }
       return
     }
     emit('saved', { name: trimmed, type: props.type })
     emit('update:visible', false)
   } catch (e: any) {
-    errorMessage.value = extractApiErrorMessage(
-      e,
-      e?.response?.data?.message || t('main.create_file_folder_modal.error_save_failed'),
-    )
+    errorState.value = { kind: 'api', error: e, fallbackKey: 'main.create_file_folder_modal.error_save_failed' }
   } finally {
     submitting.value = false
   }
