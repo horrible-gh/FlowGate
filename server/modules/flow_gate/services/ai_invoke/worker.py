@@ -428,6 +428,50 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
             _stop_post_process_recovery(post_process_completed, post_process_timer)
 
 
+_CLI_REVIEW_FILE_FIRST: dict[str, str] = {
+    "ko": (
+        "## CLI review 제출 필수 계약\n---\n"
+        "이 review는 CLI provider가 수행합니다. verdict, findings, comment를 담은 JSON을 "
+        "FLOWGATE_SCRATCH (`{SCRATCH}`) 안의 파일에 실제 비ASCII 문자를 보존하는 UTF-8로 "
+        "작성하십시오. 그 파일의 절대 경로만 POST /inbox envelope의 doc_path로 보내야 합니다. "
+        "envelope에 content 또는 inline verdict/findings/comment를 넣지 마십시오. 긴 한국어·"
+        "일본어·emoji 본문을 command argument, shell literal, curl -d 또는 동등한 inline "
+        "command-line JSON에 절대 넣지 마십시오. dry-run과 real submit 모두 같은 doc_path를 "
+        "사용하십시오."
+    ),
+    "ja": (
+        "## CLI review submission mandatory contract\n---\n"
+        "This review is performed by a CLI provider. Write a JSON file containing verdict, "
+        "findings, and comment under FLOWGATE_SCRATCH (`{SCRATCH}`), encoded as UTF-8 with "
+        "the actual non-ASCII characters preserved. The POST /inbox envelope MUST contain "
+        "only that file's absolute path as doc_path; it MUST NOT contain content or inline "
+        "verdict/findings/comment. NEVER place long Japanese, Korean, or emoji text in a "
+        "command argument, shell literal, curl -d, or equivalent inline command-line JSON. "
+        "Use the same doc_path for dry-run and real submit."
+    ),
+    "en": (
+        "## CLI review submission mandatory contract\n---\n"
+        "This review is performed by a CLI provider. Write a JSON file containing verdict, "
+        "findings, and comment under FLOWGATE_SCRATCH (`{SCRATCH}`), encoded as UTF-8 with "
+        "the actual non-ASCII characters preserved. The POST /inbox envelope MUST contain "
+        "only that file's absolute path as doc_path; it MUST NOT contain content or inline "
+        "verdict/findings/comment. NEVER place long Korean, Japanese, or emoji text in a "
+        "command argument, shell literal, curl -d, or equivalent inline command-line JSON. "
+        "Use the same doc_path for dry-run and real submit."
+    ),
+}
+
+
+def _provider_prompt(run: dict, provider: dict, prompt: str) -> str:
+    """Add transport rules that apply only at a concrete provider boundary."""
+    if provider.get("exec_type") == "api" or run.get("action_scope") != "review":
+        return prompt
+    locale = str(run.get("continuation_locale") or run.get("locale") or "ko").lower()
+    if locale not in _CLI_REVIEW_FILE_FIRST:
+        locale = "ko"
+    return prompt.rstrip() + "\n\n" + _CLI_REVIEW_FILE_FIRST[locale]
+
+
 def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
     """One attempt: walk the provider chain until one actually STARTS (L0006 §2.2).
 
@@ -461,10 +505,11 @@ def _execute_provider_chain(run: dict, chain: list[dict], prompt: str) -> bool:
                 "hop_item_seq": run.get("hop_item_seq"),
             })
 
+        provider_prompt = _provider_prompt(run, provider, prompt)
         if provider.get("exec_type") == "api":
-            classification, detail = _svc()._api_execute(provider, prompt, run)
+            classification, detail = _svc()._api_execute(provider, provider_prompt, run)
         else:
-            classification, detail = _svc()._cli_execute(provider, prompt, run)
+            classification, detail = _svc()._cli_execute(provider, provider_prompt, run)
 
         if classification == "started_ok":
             started_ok = True

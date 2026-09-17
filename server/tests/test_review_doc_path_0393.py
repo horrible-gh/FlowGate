@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -91,6 +92,7 @@ def review_env(monkeypatch, tmp_path):
         "doc_ref": DOC_ID,
         "scratch_dir": str(scratch),
         "ai_run_id": "air_review_0393",
+        "expires_at": "2036-09-12T00:00:00+09:00",
     })
     monkeypatch.setattr(inbox_routes, "has_permission", lambda *_a, **_k: True)
     monkeypatch.setattr(inbox_routes.db_docs, "get_by_id", lambda _id: {
@@ -105,7 +107,7 @@ def review_env(monkeypatch, tmp_path):
     # store.transaction(). Both writes are mocked here (this file is about doc_path),
     # but the transaction itself is real, so the store has to be able to open one.
     db = build_live_sqlite_db(tmp_path / "flowgate.db")
-    now = "2026-09-12T00:00:00+09:00"
+    now = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
     db.conn.execute(
         "INSERT INTO projects (project_id, project_name, created_at, updated_at) "
         "VALUES (?, ?, ?, ?)",
@@ -173,6 +175,32 @@ def test_a_verdict_file_inside_the_scratch_directory_registers(review_env):
     assert findings[1]["note"] == VERDICT_PAYLOAD["findings"][1]["note"]
     assert kwargs["doc_id"] == DOC_ID
     assert kwargs["reviewer_id"] == USER
+
+
+def test_long_mixed_unicode_file_reaches_insert_review_codepoint_exact(review_env):
+    korean = (
+        "긴 한국어 검토 문단은 Windows 명령줄의 코드페이지나 인용 규칙을 통과하지 않고 "
+        "UTF-8 파일을 통해 전달되어야 합니다. "
+    ) * 24
+    payload = {
+        "verdict": "issues",
+        "findings": [{
+            "locus": "경로/位置/🧭🚀",
+            "note": korean + "日本語の指摘です。境界を確認します。 🧪🌌",
+        }],
+        "comment": korean + "最終コメントをそのまま保存します。 😀𠮷🚀",
+    }
+    doc_path = _write_payload(review_env["scratch"], "긴 검토 🚀.json", payload)
+    raw = Path(doc_path).read_bytes()
+    assert raw == json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    assert b"\\u" not in raw
+
+    response = post_inbox(_body(doc_path=doc_path))
+
+    assert response.status_code == 201, response.text
+    kwargs = review_env["insert"].call_args.kwargs
+    assert kwargs["comment"] == payload["comment"]
+    assert json.loads(kwargs["findings_json"]) == payload["findings"]
 
 
 def test_the_same_payload_inline_as_content_also_registers(review_env):
