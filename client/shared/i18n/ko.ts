@@ -1325,6 +1325,7 @@ export default {
       review_loop_stage_review: '검수 진행 중',
       review_loop_stage_rework: '반려대응 진행 중',
       review_loop_stage_stopped: '정지됨',
+      review_loop_retry: '재시도 {used}/{max}',
       review_loop_history_stage_review: '검수',
       review_loop_history_stage_rework: '반려대응',
       review_loop_history_stage_unknown: '알 수 없는 단계',

@@ -108,6 +108,9 @@
       <div class="rlr-head">
         {{ t('main.ai_invoke_dialog.review_loop_round', { n: run.documentReviewLoop.roundNo }) }}
         · {{ reviewLoopStageLabel(run.documentReviewLoop.currentStage) }}
+        <template v-if="reviewLoopRetryLabel(run.documentReviewLoop)">
+          · {{ reviewLoopRetryLabel(run.documentReviewLoop) }}
+        </template>
       </div>
       <div
         v-for="(item, index) in run.documentReviewLoop.history"
@@ -155,6 +158,7 @@ import {
   isFinishedCard,
   useAiInvokeRunsStore,
   type AiInvokeProviderSwitch,
+  type DocumentReviewLoopState,
 } from '../stores/aiInvokeRuns'
 import { useToast } from './common/useToast'
 
@@ -253,6 +257,20 @@ function reviewLoopStageLabel(stage: string): string {
   if (stage === 'review') return t('main.ai_invoke_dialog.review_loop_stage_review')
   if (stage === 'rework') return t('main.ai_invoke_dialog.review_loop_stage_rework')
   return t('main.ai_invoke_dialog.review_loop_stage_stopped')
+}
+
+// 0569 T0006 §5.2: a same-stage retry (the hop re-ran because the previous one produced no
+// durable progress, not because the stage advanced) is otherwise indistinguishable on screen
+// from a brand-new hop of that same stage. Shown for both review and rework, since the
+// underlying retry mechanism (resolve_document_review_loop_gate) is not review-specific;
+// 'stopped' never shows it because a terminal loop has no in-flight hop left to retry.
+function reviewLoopRetryLabel(loop: DocumentReviewLoopState): string {
+  if (loop.currentStage === 'stopped') return ''
+  if (!(loop.attemptsUsed > 0)) return ''
+  return t('main.ai_invoke_dialog.review_loop_retry', {
+    used: loop.attemptsUsed,
+    max: loop.failureRestartMaxAttempts,
+  })
 }
 
 function reviewLoopHistoryStageLabel(stage: unknown): string {

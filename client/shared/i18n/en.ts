@@ -1324,6 +1324,7 @@ export default {
       review_loop_stage_review: 'Review in progress',
       review_loop_stage_rework: 'Rework in progress',
       review_loop_stage_stopped: 'Stopped',
+      review_loop_retry: 'Retry {used}/{max}',
       review_loop_history_stage_review: 'Review',
       review_loop_history_stage_rework: 'Rework',
       review_loop_history_stage_unknown: 'Unknown stage',

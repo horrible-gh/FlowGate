@@ -43,6 +43,10 @@ export interface AiInvokeRegisterError {
 export interface DocumentReviewLoopState {
   roundNo: number
   currentStage: 'review' | 'rework' | 'stopped'
+  // Stage-local same-stage retry count, distinct from AiInvokeRunEntry.attemptNo which
+  // counts every hop across the whole run regardless of stage (0569 T0006 / NR0005 §10).
+  attemptsUsed: number
+  failureRestartMaxAttempts: number
   // Every value ai_invoke_document_review_loops.stop_reason's CHECK allows, in the order the
   // migrations added them (091, 105, 106, 107). A value missing from this union reached the
   // card as an unlabelled reason (0486 NR0028 F4).
@@ -243,7 +247,20 @@ function normalizeDocumentReviewLoop(payload: unknown, previous: DocumentReviewL
     ? previous?.stopReason ?? null
     : nullableString(value.stop_reason) as DocumentReviewLoopState['stopReason']
   const stopDetail = value.stop_detail == null ? previous?.stopDetail ?? null : nullableString(value.stop_detail)
-  return { roundNo, currentStage, stopReason, stopDetail, history }
+  // attemptsUsed is stage-local and must NOT be carried forward as a running max the way
+  // roundNo is: a successful hop resets it to 0 on the very same transition that advances
+  // the stage, and that reset has to land on screen (0569 T0006 §4.2 -- Math.max here would
+  // freeze the retry badge on even after the loop moved past the stage that earned it).
+  // A stale/regressed payload is excluded the same way currentStage already excludes it, and
+  // an older/partial payload missing the field falls back to the previous value instead of
+  // resetting to 0 so a stray legacy event cannot silently erase a real in-flight retry count.
+  const attemptsUsed = stageRegressed || value.attempts_used == null
+    ? previous?.attemptsUsed ?? 0
+    : Number(value.attempts_used) || 0
+  const failureRestartMaxAttempts = value.failure_restart_max_attempts == null
+    ? previous?.failureRestartMaxAttempts ?? 0
+    : Number(value.failure_restart_max_attempts) || 0
+  return { roundNo, currentStage, stopReason, stopDetail, history, attemptsUsed, failureRestartMaxAttempts }
 }
 function normalizeSwitch(payload: Record<string, any>): AiInvokeProviderSwitch {
   return {
