@@ -297,6 +297,9 @@ def get_created_memo_file(doc_id):
 def get_created_memo_files_map_by_project(project_id):
     return _db_events.get_created_memo_files_map_by_project(project_id)
 
+def get_created_memo_files_map_by_doc_ids(doc_ids):
+    return _db_events.get_created_memo_files_map_by_doc_ids(doc_ids)
+
 
 def get_recent_events_by_doc_id(doc_id, limit: int = 5):
     return _db_events.get_recent_events_by_doc_id(doc_id, limit)
@@ -631,6 +634,15 @@ def get_docs_for_tree_by_project(project_id: str) -> list:
     """List every document of a project in one query (for get_group_tree only)."""
     return _db_documents.get_docs_for_tree_by_project(project_id)
 
+def get_docs_for_hidden_tree(project_id: str, visible_group_ids: set[str]) -> list:
+    return _db_documents.get_docs_for_hidden_tree(project_id, visible_group_ids)
+
+def get_terminal_group_ids(project_id: str) -> set[str]:
+    return _db_documents.get_terminal_group_ids(project_id)
+
+def get_tree_summary_rows(project_id: str) -> list:
+    return _db_documents.get_tree_summary_rows(project_id)
+
 
 # ── TV doc_id helpers (pure logic) ────────────────────────────────────────────
 
@@ -697,7 +709,7 @@ __all__ = [
     "get_documents_by_group_id", "get_next_number", "get_next_doc_id",
     "issue_group_id", "get_project_settings", "upsert_project_settings",
     "remove_project_settings", "get_created_memo_file",
-    "get_created_memo_files_map_by_project",
+    "get_created_memo_files_map_by_project", "get_created_memo_files_map_by_doc_ids",
     "get_allowed_projects", "get_allowed_project_names",
     "update_group_updated_at", "get_document_by_id",
     "get_documents_by_target_id", "get_documents_by_ids",
@@ -709,5 +721,6 @@ __all__ = [
     "update_group_status", "close_group",
     "get_outbox_documents", "get_inbox_process_documents",
     "get_docs_for_tree_by_group", "get_docs_for_tree_by_project",
+    "get_docs_for_hidden_tree", "get_terminal_group_ids", "get_tree_summary_rows",
     "derive_tv_doc_id", "derive_tvr_doc_id", "get_doc_seq_num",
 ]

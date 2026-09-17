@@ -747,18 +747,56 @@ TREE_DOC_COLUMNS = (
 
 
 def get_docs_for_tree_by_project(project_id: str) -> list[dict]:
-    """Return every tree document of a project in a single unordered query.
-
-    Replaces the get_docs_for_tree_by_groups() / get_orphan_docs_for_tree() pair
-    (0276 NR0003 finding 1). Both callers always passed the project's *entire* group
-    list, so `group_id IN (?×G)` and `group_id NOT IN (?×G)` between them spent
-    thousands of bind parameters encoding what `project_id = ?` says with one.
-    documents.project_id is NOT NULL, so one predicate covers grouped and orphan
-    documents alike; get_group_tree() splits them by group membership and applies
-    the ordering the two SQL statements used to apply.
-    """
+    """Return every tree document of a project in a single unordered query."""
     return get_store()._fetch_all(
         f"SELECT {TREE_DOC_COLUMNS} FROM documents WHERE project_id = ?",
+        [project_id],
+    )
+
+
+def get_terminal_group_ids(project_id: str, store=None) -> set[str]:
+    """Return terminal groups using the workflow-root/DC source of truth."""
+    rows = (store or get_store())._fetch_all(
+        "SELECT DISTINCT group_id FROM documents"
+        " WHERE project_id = ? AND group_id IS NOT NULL AND ("
+        " (type_code IN ('R', 'B') AND doc_review_status = 'wf_done')"
+        " OR type_code = 'DC')",
+        [project_id],
+    )
+    return {row["group_id"] for row in rows if row.get("group_id")}
+
+
+def get_docs_for_hidden_tree(project_id: str, visible_group_ids: set[str]) -> list[dict]:
+    """Fetch visible grouped documents plus legacy orphan documents.
+
+    Queries are chunked below SQLite's bind limit and remain qmark/dialect portable.
+    Crucially, terminal-group rows never cross the DB/Python boundary.
+    """
+    store = get_store()
+    rows: list[dict] = []
+    ordered_ids = sorted(visible_group_ids)
+    for offset in range(0, len(ordered_ids), 500):
+        chunk = ordered_ids[offset:offset + 500]
+        placeholders = ",".join("?" for _ in chunk)
+        rows.extend(store._fetch_all(
+            f"SELECT {TREE_DOC_COLUMNS} FROM documents"
+            f" WHERE project_id = ? AND group_id IN ({placeholders})",
+            [project_id, *chunk],
+        ))
+    rows.extend(store._fetch_all(
+        f"SELECT {TREE_DOC_COLUMNS} FROM documents d"
+        " WHERE d.project_id = ? AND (d.group_id IS NULL OR NOT EXISTS ("
+        " SELECT 1 FROM groups g WHERE g.group_id = d.group_id"
+        " AND g.project_id = d.project_id AND g.deleted_at IS NULL))",
+        [project_id],
+    ))
+    return rows
+
+
+def get_tree_summary_rows(project_id: str) -> list[dict]:
+    """Return only columns needed to reproduce the legacy overview aggregate."""
+    return get_store()._fetch_all(
+        "SELECT doc_id, group_id, module, type_code FROM documents WHERE project_id = ?",
         [project_id],
     )
 
