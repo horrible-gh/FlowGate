@@ -871,6 +871,15 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
     # `_redact_secrets` must already know it before any code that can fail and log.
     run["token_id"] = issue.get("token_id")
     run["raw_token"] = issue.get("raw_token") or run.get("raw_token")
+    # T0004 (0581 NR0003 §12, rev1 rejection): a reissued token's scratch must travel
+    # WITH it -- required key, no `or run.get(...)` fallback. The production
+    # issue_builder contract (chain.py/review.py/qa_routes.py, and start_run's own
+    # inline token_service.issue() call) always returns "scratch_dir"; falling back to
+    # the previous hop's run["token_scratch_dir"] would let FLOWGATE_TOKEN (new issue)
+    # and FLOWGATE_SCRATCH (stale issue) point at two different token grants the
+    # instant a mock or a future issuer ever omitted the key -- exactly the invariant
+    # this field exists to protect.
+    run["token_scratch_dir"] = issue["scratch_dir"]
     _note_issued_raw_token(run, run.get("raw_token"))
     if run.get("group_id"):
         # 0417 T0013: a document_review_loop hop's reissued token can carry a DIFFERENT

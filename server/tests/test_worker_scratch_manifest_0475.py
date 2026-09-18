@@ -65,6 +65,11 @@ def test_create_rejects_path_injection(monkeypatch, tmp_path):
 
 def test_cli_env_is_fully_run_owned(monkeypatch, tmp_path):
     run_id, scratch = _new(monkeypatch, tmp_path)
+    # T0004 (0581 NR0003): token scratch (FLOWGATE_SCRATCH / the /inbox doc_path jail)
+    # is deliberately a DIFFERENT directory from run scratch here, matching production
+    # where the two live under separate storage roots (scratch/ vs work/).
+    token_scratch = tmp_path / "token-owned" / "tok-0475"
+    token_scratch.mkdir(parents=True)
     source = tmp_path / "source"
     source.mkdir()
     seen = {}
@@ -74,12 +79,12 @@ def test_cli_env_is_fully_run_owned(monkeypatch, tmp_path):
     monkeypatch.setattr("subprocess.Popen", popen)
     status, _ = svc._cli_execute(
         {"kind": "custom", "cli_command": "worker"}, "PROMPT_SENTINEL",
-        {"run_id": run_id, "scratch_dir": str(scratch), "source_root": str(source),
-         "raw_token": "TOKEN_SENTINEL", "api_base_url": ""},
+        {"run_id": run_id, "scratch_dir": str(scratch), "token_scratch_dir": str(token_scratch),
+         "source_root": str(source), "raw_token": "TOKEN_SENTINEL", "api_base_url": ""},
     )
     assert status == "spawn_failed"
     env = seen["kwargs"]["env"]
-    assert env["FLOWGATE_SCRATCH"] == str(scratch)
+    assert env["FLOWGATE_SCRATCH"] == str(token_scratch)
     for key in ("TMP", "TEMP", "TMPDIR", "XDG_CACHE_HOME", "PIP_CACHE_DIR", "NPM_CONFIG_CACHE"):
         assert Path(env[key]).is_relative_to(scratch)
 

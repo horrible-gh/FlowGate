@@ -90,7 +90,14 @@ def test_windows_real_cli_process_posts_only_doc_path_and_preserves_unicode(
         monkeypatch.setattr(
             svc.storage_paths, "get_storage_root", lambda *_a, **_k: tmp_path / "storage root 日本語"
         )
-        scratch = svc._create_scratch(project_id, run_id)
+        # T0004 (0581 NR0003 §8): run scratch (engine-internal: TMP/TEMP/TMPDIR, provider
+        # output) and token scratch (the /inbox doc_path jail) are deliberately DIFFERENT
+        # directories here -- the old shared-directory setup made this E2E green even though
+        # production FLOWGATE_SCRATCH pointed at run scratch while inbox validated token
+        # scratch, which is exactly the 422 this group fixes.
+        run_scratch = svc._create_scratch(project_id, run_id)
+        token_scratch = tmp_path / "storage root 日本語" / "work" / "p0474" / "tok-review-0393"
+        token_scratch.mkdir(parents=True, exist_ok=True)
         worktree = tmp_path / "work tree 한글"
         worktree.mkdir()
         monkeypatch.setattr(svc.db_git, "get_config", lambda _p: {"enabled": True})
@@ -100,11 +107,13 @@ def test_windows_real_cli_process_posts_only_doc_path_and_preserves_unicode(
         monkeypatch.setattr(svc, "_absolute_remaining_sec", lambda _run: 30.0)
         monkeypatch.setattr(oracle, "_work_landed", lambda _run: True)
 
-        # The child must write into the token scratch validated by the inbox route.
-        review_env["scratch"] = scratch
+        # The child must write into the TOKEN scratch validated by the inbox route -- the
+        # engine now injects run["token_scratch_dir"] (this token's own scratch) as
+        # FLOWGATE_SCRATCH, never run_scratch.
+        review_env["scratch"] = token_scratch
         token = inbox_token = {
             "token_id": "tok-review-0393", "project": PROJECT, "issued_to": "user-1",
-            "action_scope": "review", "doc_ref": DOC_ID, "scratch_dir": str(scratch),
+            "action_scope": "review", "doc_ref": DOC_ID, "scratch_dir": str(token_scratch),
             "ai_run_id": "air_review_0393", "expires_at": "2036-09-12T00:00:00+09:00",
         }
         from modules.flow_gate.api import inbox_routes
@@ -114,7 +123,8 @@ def test_windows_real_cli_process_posts_only_doc_path_and_preserves_unicode(
         assert KOREAN not in command and EXPECTED["comment"] not in command
         run = {
             "project_id": project_id, "group_id": "flowgate.default.0474",
-            "run_id": run_id, "scratch_dir": str(scratch), "source_root": str(worktree),
+            "run_id": run_id, "scratch_dir": str(run_scratch),
+            "token_scratch_dir": str(token_scratch), "source_root": str(worktree),
             "raw_token": "raw", "api_base_url": f"http://127.0.0.1:{server.server_port}",
             "cancel_event": threading.Event(), "fallback_history": [],
             "started_mono": time.monotonic(),
@@ -131,14 +141,18 @@ def test_windows_real_cli_process_posts_only_doc_path_and_preserves_unicode(
             assert set(envelope) <= {"action", "project", "doc_id", "doc_path", "dry_run", "receipt"}
             assert not ({"content", "verdict", "findings", "comment"} & set(envelope))
             assert Path(envelope["doc_path"]).is_absolute()
-            assert Path(envelope["doc_path"]).is_relative_to(scratch)
+            assert Path(envelope["doc_path"]).is_relative_to(token_scratch)
+            # The point of this group: a file that only exists under run scratch must
+            # still be rejected -- proving FLOWGATE_SCRATCH really moved to token scratch,
+            # not merely that both happen to validate.
+            assert not Path(envelope["doc_path"]).is_relative_to(run_scratch)
         payload_path = Path(received[0]["doc_path"])
         expected_bytes = json.dumps(EXPECTED, ensure_ascii=False).encode("utf-8")
         assert payload_path.read_bytes() == expected_bytes
         kwargs = review_env["insert"].call_args.kwargs
         assert kwargs["comment"] == EXPECTED["comment"]
         assert json.loads(kwargs["findings_json"]) == EXPECTED["findings"]
-        assert (scratch / prompt_capture.name).read_text(encoding="utf-8") == "PROMPT ✓ 日本語 한글"
+        assert (token_scratch / prompt_capture.name).read_text(encoding="utf-8") == "PROMPT ✓ 日本語 한글"
     finally:
         server.shutdown()
         server.server_close()

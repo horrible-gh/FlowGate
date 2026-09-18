@@ -1439,6 +1439,12 @@ def start_run(
         "source_dirty": None,
         "source_dirty_files": [],
         "scratch_dir": str(scratch),
+        # T0004 (0581 NR0003): the token-owned scratch this hop's own token issue was
+        # minted with -- the SSOT the CLI worker's FLOWGATE_SCRATCH env and any /inbox
+        # doc_path submission must agree on. Distinct from "scratch_dir" above (the
+        # run-internal scratch: TMP/TEMP/TMPDIR, provider output, retained diagnostics),
+        # which keeps its existing meaning untouched.
+        "token_scratch_dir": issue["scratch_dir"],
         "scratch_retained": None,
         "duration_ms": None,
         "finished_at": None,

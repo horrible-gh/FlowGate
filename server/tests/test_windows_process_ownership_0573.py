@@ -248,7 +248,8 @@ class TestOwnershipFailureBoundaries(unittest.TestCase):
                 proc = mock.Mock()
                 proc.poll.return_value = None
                 proc.returncode = 0
-                run = dict(scratch_dir=str(Path.cwd()), run_id="failure-boundary",
+                run = dict(scratch_dir=str(Path.cwd()), token_scratch_dir=str(Path.cwd()),
+                           run_id="failure-boundary",
                            raw_token="test", cancel_event=threading.Event())
                 svc = SimpleNamespace(FAST_FAIL_WINDOW_SEC=10)
                 stack.enter_context(mock.patch.object(cli, "_svc", return_value=svc))

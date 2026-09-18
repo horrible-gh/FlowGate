@@ -160,6 +160,7 @@ class TestSpawnedCommand:
         run = {
             "run_id": "r1",
             "scratch_dir": str(tmp_path),
+            "token_scratch_dir": str(tmp_path),
             "source_root": str(tmp_path),
             "raw_token": "t",
             "api_base_url": "",

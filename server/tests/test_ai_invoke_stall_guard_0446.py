@@ -567,7 +567,8 @@ class TestCancelOutranksTheWatchdog:
 def _cli_run(tmp_path, *, timeout_sec=3600) -> dict:
     return {
         "run_id": "aiv_cli", "group_id": GROUP, "baseline_seq": 4,
-        "scratch_dir": str(tmp_path), "source_root": str(tmp_path),
+        "scratch_dir": str(tmp_path), "token_scratch_dir": str(tmp_path),
+        "source_root": str(tmp_path),
         "raw_token": "tok", "api_base_url": "", "cancel_event": threading.Event(),
         "timeout_sec": timeout_sec, "started_mono": time.monotonic(),
         "attempt_started_mono": time.monotonic(), "dirty_baseline": set(),

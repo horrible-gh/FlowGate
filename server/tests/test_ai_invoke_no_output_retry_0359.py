@@ -742,7 +742,8 @@ class TestRetryProviderChain:
 class TestRetryToken:
     def _run(self, tmp_path, **over):
         run = {"run_id": "aiv_x", "doc_ref": DOC_REF, "token_id": "tok_a",
-               "mention": "## prompt\n", "issue_builder": None, "raw_token": "raw_a"}
+               "mention": "## prompt\n", "issue_builder": None, "raw_token": "raw_a",
+               "token_scratch_dir": "/scratch/tok_a"}
         run.update(over)
         return run
 
@@ -759,13 +760,16 @@ class TestRetryToken:
 
         def _issue(ai_run_id=None):
             return {"raw_token": "raw_b", "token_id": "tok_b", "mention": "## fresh\n",
-                    "ai_run_id": ai_run_id}
+                    "ai_run_id": ai_run_id, "scratch_dir": "/scratch/tok_b"}
 
         run = self._run(tmp_path, issue_builder=_issue)
         prepared = svc._prepare_retry_token(run)
         assert prepared["reissued"] is True
         assert (prepared["token_id"], prepared["token_id_before"]) == ("tok_b", "tok_a")
         assert run["token_id"] == "tok_b" and run["raw_token"] == "raw_b"
+        # T0004 rev1 rejection: the reissued token's scratch must move WITH token_id/
+        # raw_token, never linger on the pre-reissue hop's scratch (tok_a's).
+        assert run["token_scratch_dir"] == "/scratch/tok_b"
 
     def test_consumed_token_without_a_reissue_path_blocks_the_retry(self, env, monkeypatch,
                                                                     tmp_path):
