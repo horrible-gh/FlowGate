@@ -106,9 +106,13 @@
               <span>{{ elapsedText(entry) }}</span>
               <!-- 0538 T0004: single/rework hops (mode="single", docs_target=0) never show
                    the progress bar above -- this is the only liveness signal they get, so it
-                   rides right next to the elapsed clock regardless of that condition. -->
+                   rides right next to the elapsed clock regardless of that condition.
+                   0579 T0004 §8: lastActivityAt already falls back to lastProgressAt in the
+                   store, so an un-upgraded server still shows this line. The signal name
+                   (document/source/process) rides the tooltip, never the visible text. -->
               <span
-                v-if="entry.lastProgressAt"
+                v-if="entry.lastActivityAt"
+                :title="entry.lastActivitySignal || undefined"
                 data-test="ai-miniplayer-last-activity"
               >{{ lastActivityText(entry) }}</span>
             </template>
@@ -429,7 +433,7 @@ function elapsedText(entry: AiInvokeRunEntry): string {
 // provider_cli._progress_watchdog_loop), independent of the progress-bar's docs-target
 // gate -- a single/rework hop with no target still gets to say "something moved".
 function lastActivityText(entry: AiInvokeRunEntry): string {
-  const at = entry.lastProgressAt ? Date.parse(entry.lastProgressAt) : NaN
+  const at = entry.lastActivityAt ? Date.parse(entry.lastActivityAt) : NaN
   if (!Number.isFinite(at)) return ''
   const seconds = Math.max(0, Math.floor((store.now - at) / 1000))
   return t('main.ai_miniplayer.last_activity', { seconds })

@@ -908,6 +908,44 @@ describe('AiInvokeMiniplayer — watchdog last-activity signal (0538 T0004)', ()
     expect(wrapper.text()).toContain(t('main.ai_miniplayer.provider', { name: '—' }))
     wrapper.unmount()
   })
+
+
+  // 0579 T0004 §8: last_activity_at is the preferred watermark (document/source progress
+  // OR subprocess churn, whichever ticked most recently); last_progress_at is only a
+  // fallback for a server payload shape that predates this field.
+  it('prefers last_activity_at over last_progress_at when the server sends both', async () => {
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'run-activity-preferred', group_id: 'flowgate.default.4004',
+      doc_ref: 'flowgate.default.4004.0001-T', mode: 'single', docs_target: 0,
+      last_progress_at: '2026-09-07T11:00:00.000Z',
+      last_activity_at: '2026-09-07T11:59:40.000Z',
+    })
+    await flushPromises()
+    await openPopover(wrapper)
+
+    expect(lastActivity(wrapper).exists()).toBe(true)
+    expect(lastActivity(wrapper).text()).toBe(t('main.ai_miniplayer.last_activity', { seconds: 20 }))
+  })
+
+  // A server that has not been upgraded yet (or a payload shape without the new field)
+  // must not regress the line to blank -- it keeps reading last_progress_at exactly as
+  // it always did.
+  it('falls back to last_progress_at when the server has not sent last_activity_at', async () => {
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'run-activity-fallback', group_id: 'flowgate.default.4005',
+      doc_ref: 'flowgate.default.4005.0001-T', mode: 'single', docs_target: 0,
+      last_progress_at: '2026-09-07T11:59:23.000Z',
+    })
+    await flushPromises()
+    await openPopover(wrapper)
+
+    expect(lastActivity(wrapper).exists()).toBe(true)
+    expect(lastActivity(wrapper).text()).toBe(t('main.ai_miniplayer.last_activity', { seconds: 37 }))
+  })
 })
 
 // 0294 B0001 회귀: the finished card lives for FINISHED_CARD_TTL_MS, but the closed chip

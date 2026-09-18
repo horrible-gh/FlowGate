@@ -1406,6 +1406,12 @@ def start_run(
         "last_progress_at": None,
         "last_progress_signal": None,
         "progress_observations": 0,
+        # T0004 §6: a separate, weaker liveness watermark -- document/source progress
+        # AND subprocess churn both write here, but only document/source resets
+        # `stall_anchor_mono` above. Diagnostics/UI read this, never the watchdog gate.
+        "last_activity_at": None,
+        "last_activity_signal": None,
+        "activity_observations": 0,
         "watchdog_kill": None,         # raw, monotonic, process-local (0446 T0014)
         # 0446 T0016 3-1: the durable reading of the above, resolved once at finalize.
         # These two are what the row, the detail response and the next rework prompt read.

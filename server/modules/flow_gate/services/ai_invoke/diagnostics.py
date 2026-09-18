@@ -121,6 +121,12 @@ def get_status(run_id: str, *, pending_q_doc_ids: Optional[list[str]] = None) ->
         "last_progress_at": run.get("last_progress_at"),
         "last_progress_signal": run.get("last_progress_signal"),
         "progress_observations": int(run.get("progress_observations") or 0),
+        # T0004 §7: the weaker liveness watermark (document/source progress OR subprocess
+        # churn) -- a run whose process snapshot is unsupported still gets this from
+        # document/source alone, same as `last_progress_at` above.
+        "last_activity_at": run.get("last_activity_at"),
+        "last_activity_signal": run.get("last_activity_signal"),
+        "activity_observations": int(run.get("activity_observations") or 0),
         # Server truth: an explicit empty array clears stale client state on the next poll.
         "pending_q_doc_ids": (
             _svc()._open_q_doc_ids(run["group_id"])

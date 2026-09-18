@@ -834,3 +834,121 @@ class TestRetryBudgetSeparation:
         working = _judged(started_mono=clock.now - 5400, stall_anchor_mono=clock.now - 60)
         assert svc._retry_eligible(working) is True
         assert "retry_block_reason" not in working
+
+
+# ── T0004 (group 0579): process liveness is a separate, weaker signal ────────
+#
+# NR0003's blind spot: a worker running a long subprocess (pytest/build/lint) with
+# neither document nor `git status` moving looked dead for the whole run even though
+# child processes were being created and reaped underneath it. This adds a THIRD signal,
+# read from `process_runner.process_tree_snapshot`, that writes ONLY `last_activity_*` --
+# never `last_progress_*` or `stall_anchor_mono` (T0004 §6/§9: a live-but-static or
+# churning subprocess must never be able to talk the no-progress guard out of firing).
+
+def _snapshots(monkeypatch, fn) -> None:
+    monkeypatch.setattr(process_runner, "process_tree_snapshot", fn)
+
+
+class TestProcessLivenessIsASeparateWeakerSignal:
+    def test_process_churn_alone_never_resets_the_stall_anchor_or_counts_as_progress(
+            self, clock, kills, monkeypatch, tmp_path):
+        # Documents and git are frozen for the whole run -- only the subprocess tree
+        # changes, in a plateauing step function (matching the doc/git control-group
+        # tests above), and it still dies exactly on schedule.
+        _docs(monkeypatch, lambda gid: 4)
+        _git(monkeypatch, lambda root: set())
+        started = clock.now
+
+        def snap(proc):
+            step = min(int((clock.now - started) // 300), 5)
+            return frozenset(range(step + 1))
+        _snapshots(monkeypatch, snap)
+        run = _run(clock, source_root=tmp_path, dirty_baseline=set())
+        anchor_before = run["stall_anchor_mono"]
+
+        verdict, _ = _loop(run, FakeProc(), clock)
+
+        assert verdict == "no_progress"
+        assert clock.now - started == THRESHOLD           # not extended by process churn
+        assert run["stall_anchor_mono"] == anchor_before   # process activity never touches it
+        assert run["progress_observations"] == 0
+        assert run["last_progress_at"] is None
+        assert run["activity_observations"] == 5           # 5 real changes after the baseline
+        assert run["last_activity_signal"] == "process"
+        assert run["last_activity_at"] is not None
+
+    def test_an_unchanging_process_snapshot_is_a_baseline_not_repeated_activity(
+            self, clock, kills, monkeypatch, tmp_path):
+        # §9: the same subprocess set staying alive for the whole no-progress window is
+        # exactly the "hung but not gone" case -- one baseline read, zero activity ticks,
+        # and the stall guard is not fooled into thinking anything is happening.
+        _docs(monkeypatch, lambda gid: 4)
+        _git(monkeypatch, lambda root: set())
+        _snapshots(monkeypatch, lambda proc: frozenset({111, 222}))
+        run = _run(clock, source_root=tmp_path, dirty_baseline=set())
+
+        verdict, _ = _loop(run, FakeProc(), clock)
+
+        assert verdict == "no_progress"
+        assert run.get("activity_observations", 0) == 0
+        assert run.get("last_activity_at") is None
+
+    def test_process_snapshot_failure_never_blocks_document_progress(
+            self, clock, kills, monkeypatch, tmp_path):
+        # §5 point 5: an unsupported/unreadable process snapshot (Job Object never
+        # attached, `/proc` missing, or a raised exception) must be invisible to the
+        # existing document/source progress gate -- this is the identical fixture to
+        # `TestDocumentProgressKeepsItAlive`'s rising-then-flat case, with process
+        # observation now always failing.
+        calls = {"n": 0}
+
+        def snap(proc):
+            calls["n"] += 1
+            raise RuntimeError("no ownership boundary in this test double")
+        _snapshots(monkeypatch, snap)
+        started = clock.now
+        last_gain = started + 4500
+
+        def seq(gid):
+            if clock.now > last_gain:
+                return 7
+            return 4 + int((clock.now - started) // 1500)
+        _docs(monkeypatch, seq)
+        _git(monkeypatch, lambda root: {"server/x.py"})
+        run = _run(clock, source_root=tmp_path, dirty_baseline={"server/x.py"})
+
+        verdict, _ = _loop(run, FakeProc(), clock, max_ticks=800)
+
+        assert verdict == "no_progress"
+        assert run["progress_observations"] == 3               # unchanged from the T0014 case
+        assert calls["n"] > 100                                 # it kept trying every tick
+        assert run["last_activity_signal"] == "document"        # process never contributed
+        assert run["activity_observations"] == 3
+
+    def test_document_and_process_moving_on_the_same_tick_combine_the_activity_signal(
+            self, clock, kills, monkeypatch, tmp_path):
+        # §6: a document tick is strong progress AND weak activity at once; when a
+        # process change lands on that SAME poll, the activity signal names both.
+        doc_calls = {"n": 0}
+
+        def seq(gid):
+            doc_calls["n"] += 1
+            return 5 if doc_calls["n"] >= 3 else 4
+        _docs(monkeypatch, seq)
+        _git(monkeypatch, lambda root: set())
+
+        proc_calls = {"n": 0}
+
+        def snap(proc):
+            proc_calls["n"] += 1
+            return frozenset({1, 2}) if proc_calls["n"] >= 3 else frozenset({1})
+        _snapshots(monkeypatch, snap)
+        run = _run(clock, source_root=tmp_path, dirty_baseline=set(), baseline_seq=4)
+
+        _loop(run, FakeProc(), clock, max_ticks=5)
+
+        assert run["last_progress_signal"] == "document"
+        assert run["last_activity_signal"] == "document,process"
+        assert run["progress_observations"] == 1
+        assert run["activity_observations"] == 1
+
