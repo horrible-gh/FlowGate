@@ -1862,6 +1862,7 @@ export default {
       toast_started: '連続作業のメンションをコピーしました。AIに渡すと無人で進行します。',
       preset_source: '作業計画 {doc} の値を入力しました。', preset_not_started: 'まだ実行されていません。',
       preset_unset: '未指定の{n}段階はデフォルトのプロバイダーを使用します。', preset_revert: '入力値を元に戻す',
+      sequence_notes_revert_confirm: '各段階の伝達事項とプロバイダーの選択を元の値に戻しますか？',
       preset_revert_confirm: '入力値だけを戻します。追加済みのワークフロー段階は戻りません。続行しますか？',
       preset_mode_refreshed: '実行方式に合わせて再入力しました。手動編集した{n}セルは保持しました。',
       preset_mode_failed: 'この実行方式の割り当てを再計算できませんでした。',

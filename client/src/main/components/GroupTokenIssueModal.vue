@@ -1,17 +1,16 @@
 <template>
-  <teleport to="body">
-    <div v-if="visible" class="modal-bg">
-      <div class="modal-box" style="width:620px;max-width:94vw;">
-        <div class="modal-hd">
-          <span class="modal-title gti-title">
+  <DialogShell :open="visible" variant="alert" surface-class="dialog-group-token-issue-modal"  @request-close="close">
+    <template #header>
+      <DialogHeader title="" :closeable="true" @close="close">
+        <template #title>
             <AppIcon name="key" />
             {{ t('main.group_tree_node.issue_token_title') }}
-          </span>
-          <button class="modal-close" type="button" @click="close">
-            <AppIcon name="x" />
-          </button>
-        </div>
-        <div class="modal-bd">
+          </template>
+      </DialogHeader>
+    </template>
+
+        
+        <div class="dialog-feature-body">
           <!-- Lead: mirrors the approved prototype — group scope only, no group/doc creation. -->
           <div class="gti-lead">
             <AppIcon name="info" />
@@ -54,15 +53,23 @@
             </div>
           </div>
         </div>
-        <div class="modal-ft">
-          <button type="button" class="btn btn-secondary" @click="close">{{ t('common.close') }}</button>
-        </div>
-      </div>
-    </div>
-  </teleport>
+        
+      
+
+    <template #footer>
+      <DialogFooter :actions="[
+        { id: 'close-0', role: 'cancel', label: t('common.close'), onSelect: () => close() }
+      ]">
+        <template #action-close-0>{{ t('common.close') }}</template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
+import DialogShell from './dialogs/DialogShell.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useFlowGateToken, splitGroupId, type IssuedToken } from '../composables/useFlowGateToken'
@@ -261,4 +268,6 @@ watch(
   line-height: 1.5;
 }
 .gti-deliver > .app-icon { margin-top: 2px; }
+
+:global(.fg-dialog-surface.dialog-group-token-issue-modal) { width:620px; max-width:94vw; }
 </style>

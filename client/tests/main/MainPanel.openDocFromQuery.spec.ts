@@ -52,7 +52,6 @@ function mountPanel() {
         DocInfoPanel: true,
         ReviewActionBar: true,
         QTDetailViewer: true,
-        NewQModal: true,
       },
     },
   })

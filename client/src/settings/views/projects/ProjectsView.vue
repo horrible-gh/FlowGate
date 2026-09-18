@@ -137,18 +137,18 @@
     </div>
   </div>
 
-  <div class="modal-bg" :class="{ hidden: !showModal }">
-    <div class="modal-box">
-      <div class="modal-hd">
-        <span class="modal-title">
+  <DialogShell :open="showModal" variant="form" surface-class="dialog-projects-view"  @request-close="showModal = false">
+    <template #header>
+      <DialogHeader title="" :closeable="true" @close="showModal = false">
+        <template #title>
           <AppIcon name="plus" style="color:var(--primary);" />
           {{ t('projects.modal_title') }}
-        </span>
-        <button class="modal-close" @click="showModal = false">
-          <AppIcon name="x" />
-        </button>
-      </div>
-      <div class="modal-bd">
+        </template>
+      </DialogHeader>
+    </template>
+
+      
+      <div class="dialog-feature-body">
         <div class="form-group">
           <label class="form-label req">{{ t('projects.label_display_name') }}</label>
           <input
@@ -245,17 +245,27 @@
           <input type="text" class="form-ctrl" placeholder="/mnt/storage/projects/myproject/">
         </div>
       </div>
-      <div class="modal-ft">
-        <button class="btn btn-secondary" @click="showModal = false">{{ t('common.cancel') }}</button>
-        <button class="btn btn-primary" :disabled="!slugValid" @click="createProject">
+      
+    
+
+    <template #footer>
+      <DialogFooter :actions="[
+        { id: 'showModal-0', role: 'cancel', label: t('common.cancel'), onSelect: () => { showModal = false } },
+        { id: 'createProject-1', role: 'primary', label: t('projects.create_btn'), onSelect: () => createProject(), disabled: !slugValid }
+      ]">
+        <template #action-showModal-0>{{ t('common.cancel') }}</template>
+        <template #action-createProject-1>
           <AppIcon name="plus" /> {{ t('projects.create_btn') }}
-        </button>
-      </div>
-    </div>
-  </div>
+        </template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup>
+import DialogShell from '../../../main/components/dialogs/DialogShell.vue'
+import DialogHeader from '../../../main/components/dialogs/DialogHeader.vue'
+import DialogFooter from '../../../main/components/dialogs/DialogFooter.vue'
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';

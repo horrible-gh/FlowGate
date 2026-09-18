@@ -49,7 +49,6 @@ function mountPanel() {
         NextEmptyDocModal: true,
         CommandSelectorModal: true,
         QTDetailViewer: true,
-        NewQModal: true,
       },
     },
   })

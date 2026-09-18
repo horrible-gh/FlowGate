@@ -1,18 +1,17 @@
 <template>
-  <teleport to="body">
-    <div v-if="visible" class="modal-bg">
-      <div class="modal-box modal-cwarn">
-        <div class="modal-hd">
-          <span class="modal-title">
+  <DialogShell :open="visible" variant="alert" surface-class="dialog-continuous-warning-dialog"  @request-close="close">
+    <template #header>
+      <DialogHeader title="" :closeable="true" @close="close">
+        <template #title>
             <AppIcon name="warning" style="color:var(--danger); margin-right:6px;" />
             {{ t('main.continuous_work.warn_title') }}
-          </span>
-          <button class="modal-close" type="button" @click="close">
-            <AppIcon name="x" />
-          </button>
-        </div>
+          </template>
+      </DialogHeader>
+    </template>
 
-        <div class="modal-bd cwarn-body">
+        
+
+        <div class="dialog-feature-body cwarn-body">
           <div class="cwarn-summary">
             <AppIcon name="fast-forward" />
             {{ summaryText }}
@@ -58,39 +57,35 @@
           </label>
         </div>
 
-        <div class="modal-ft cwarn-footer">
-          <button type="button" class="btn btn-ghost" @click="close">{{ t('common.cancel') }}</button>
-          <button
-            type="button"
-            class="btn btn-secondary"
-            :disabled="!consented"
-            @click="onAction('copy-mention')"
-          >
+        
+      
+
+    <template #footer>
+      <DialogFooter :actions="[
+        { id: 'close-0', role: 'cancel', label: t('common.cancel'), onSelect: () => close() },
+        { id: 'onAction-1', role: 'aux', label: t('main.continuous_work.warn_btn_copy'), onSelect: () => { onAction('copy-mention') }, disabled: !consented },
+        { id: 'onAction-2', role: 'aux', label: t('main.continuous_work.warn_btn_copy_message'), onSelect: () => { onAction('copy-with-message') }, disabled: !consented },
+        { id: 'onAction-3', role: 'primary', label: t('main.continuous_work.warn_btn_start'), onSelect: () => { onAction('confirm') }, disabled: !consented || aiProviderStore.loading || !aiProviderStore.selectedProviderId, tone: 'danger' }
+      ]">
+        <template #action-close-0>{{ t('common.cancel') }}</template>
+        <template #action-onAction-1>
             <AppIcon name="copy" /> {{ t('main.continuous_work.warn_btn_copy') }}
-          </button>
-          <button
-            type="button"
-            class="btn btn-secondary"
-            :disabled="!consented"
-            @click="onAction('copy-with-message')"
-          >
+          </template>
+        <template #action-onAction-2>
             <AppIcon name="copy" /> {{ t('main.continuous_work.warn_btn_copy_message') }}
-          </button>
-          <button
-            type="button"
-            class="btn btn-danger"
-            :disabled="!consented || aiProviderStore.loading || !aiProviderStore.selectedProviderId"
-            @click="onAction('confirm')"
-          >
+          </template>
+        <template #action-onAction-3>
             <AppIcon name="lightning" /> {{ t('main.continuous_work.warn_btn_start') }}
-          </button>
-        </div>
-      </div>
-    </div>
-  </teleport>
+          </template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
+import DialogShell from './dialogs/DialogShell.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '@shared/AppIcon.vue'
@@ -174,10 +169,7 @@ watch(
 </script>
 
 <style scoped>
-.modal-cwarn {
-  width: 560px;
-  max-width: 96vw;
-}
+
 .cwarn-body {
   padding: 18px 20px;
   display: flex;
@@ -243,10 +235,8 @@ watch(
   color: #991b1b;
   line-height: 1.45;
 }
-.cwarn-footer {
-  flex-wrap: wrap;
-}
-@media (max-width: 600px) {
-  .cwarn-footer .btn { flex: 1 1 calc(50% - 6px); }
-}
+
+
+
+:global(.fg-dialog-surface.dialog-continuous-warning-dialog) { width: 560px; max-width: 96vw; }
 </style>

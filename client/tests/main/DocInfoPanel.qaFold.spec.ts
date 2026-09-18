@@ -71,7 +71,9 @@ beforeEach(() => {
 
 afterEach(() => {
   // QaReviewHistoryDialog teleports to <body>; clear any leaked modal between tests.
-  document.body.querySelectorAll('.modal-qhd').forEach((n) => n.closest('.modal-bg')?.remove())
+  // 0560 T0039: both dialogs ride the common shell now — a leaked copy is a whole
+  // `.fg-dialog-overlay`, and its owner is already unmounted by the time this runs.
+  document.body.querySelectorAll('.fg-dialog-overlay').forEach((n) => n.remove())
 })
 
 describe('DocInfoPanel Q&A card + 전체보기 dialog (group 0126 / C안, 0311 T0004 rev1)', () => {
@@ -121,7 +123,7 @@ describe('DocInfoPanel Q&A card + 전체보기 dialog (group 0126 / C안, 0311 T
     expect(more.exists()).toBe(true)
     await more.trigger('click')
     await flushPromises()
-    expect(document.body.querySelector('.modal-qhd')).toBeTruthy()
+    expect(document.body.querySelector('.dialog-qa-history-dialog')).toBeTruthy()
     wrapper.unmount()
   })
 
@@ -132,7 +134,7 @@ describe('DocInfoPanel Q&A card + 전체보기 dialog (group 0126 / C안, 0311 T
     await wrapper.find('.dip-qa-fullview').trigger('click') // [전체보기]
     await flushPromises()
 
-    const modal = document.body.querySelector('.modal-qhd')
+    const modal = document.body.querySelector('.dialog-qa-history-dialog')
     expect(modal).toBeTruthy()
     // both the full question and the full answer text reach the modal uncut (no clamp),
     // in the query card the standalone full view already used.
@@ -156,7 +158,7 @@ describe('DocInfoPanel Q&A card + 전체보기 dialog (group 0126 / C안, 0311 T
     await flushPromises()
 
     // the dialog opened with the inline answer box shown for that query
-    expect(document.body.querySelector('.modal-qhd')).toBeTruthy()
+    expect(document.body.querySelector('.dialog-qa-history-dialog')).toBeTruthy()
     expect(document.body.querySelector('.qhd-answer-textarea')).toBeTruthy()
 
     wrapper.unmount()

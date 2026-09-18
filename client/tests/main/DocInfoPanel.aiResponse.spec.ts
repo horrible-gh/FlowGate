@@ -261,7 +261,7 @@ describe('DocInfoPanel merged AI검수·반려 feed (0311 T0004 rev1 §2)', () =
     expect(full.text()).toContain(i18n.global.t('main.doc_info_panel.qa_view_full'))
     await full.trigger('click')
     await flushPromises()
-    expect(document.body.querySelector('.modal-qhd')).toBeTruthy()
+    expect(document.body.querySelector('.dialog-qa-review-history-dialog')).toBeTruthy()
     wrapper.unmount()
   })
 })

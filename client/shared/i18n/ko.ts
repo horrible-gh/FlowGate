@@ -1865,6 +1865,7 @@ export default {
       preset_not_started: '아직 실행되지 않았습니다.',
       preset_unset: '미지정 {n}단계는 기본 공급자를 따릅니다.',
       preset_revert: '채운 값 되돌리기',
+      sequence_notes_revert_confirm: '순서별 전달사항과 제공자 선택을 원래 값으로 되돌릴까요?',
       preset_revert_confirm: '채운 값만 되돌립니다. 워크플로에 더해진 단계는 되돌아가지 않습니다. 계속할까요?',
       preset_mode_refreshed: '실행 방식이 바뀌어 배정을 다시 채웠습니다. 직접 고친 {n}칸은 그대로 두었습니다.',
       preset_mode_failed: '실행 방식에 맞는 배정을 다시 계산하지 못했습니다.',

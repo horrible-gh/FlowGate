@@ -40,8 +40,8 @@ describe('T0014 native confirm migration', () => {
     expect(files.aiSettings).toMatch(/onBeforeRouteLeave\(async \(\) => \{[\s\S]*await confirm\([\s\S]*if \(!ok\) return false;[\s\S]*return true;/)
   })
 
-  it('GitSettingsView stops before disconnect on cancel with the general confirm tone', () => {
-    expect(files.gitSettings).toContain("if (!await confirm({ title: t('settings.project.git.disconnect_confirm') })) return;")
+  it('GitSettingsView stops before disconnect on cancel with the approved danger confirm tone', () => {
+    expect(files.gitSettings).toContain("if (!await confirm({ title: t('settings.project.git.disconnect_confirm'), danger: true })) return;")
     expect(files.gitSettings.indexOf('await confirm')).toBeLessThan(files.gitSettings.indexOf("await deleteRequest(`/api/v1/projects/${projectId.value}/git/config`)"))
   })
 
@@ -73,8 +73,8 @@ describe('T0014 native confirm migration', () => {
     expect(files.gitStatus).toMatch(/doUnmerge[\s\S]*await confirm\(\{ title:[\s\S]*if \(!ok\) return[\s\S]*git\/unmerge/)
   })
 
-  it('uses danger at T0014 §2 table items 1 and 9', () => {
+  it('uses danger at T0014 §2 table items 1, 3 and 9', () => {
     const source = Object.values(files).join('\n')
-    expect(source.match(/danger\s*:\s*true/g)).toHaveLength(2)
+    expect(source.match(/danger\s*:\s*true/g)).toHaveLength(3)
   })
 })

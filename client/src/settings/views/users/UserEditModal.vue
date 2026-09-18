@@ -1,11 +1,13 @@
 <template>
-  <div class="modal-bg" role="dialog" aria-modal="true">
-    <div class="modal-box">
-      <div class="modal-hd">
-        <span class="modal-title"><AppIcon name="pencil-simple" style="color:var(--primary);" /> {{ $t('settings.users.user_edit_modal.modal_title_5') }}</span>
-        <button class="modal-close" type="button" @click="$emit('close')"><AppIcon name="x" /></button>
-      </div>
-      <div class="modal-bd">
+  <DialogShell :open="true" variant="form" surface-class="dialog-user-edit-modal"  @request-close="$emit('close')">
+    <template #header>
+      <DialogHeader title="" :closeable="true" @close="$emit('close')">
+        <template #title><AppIcon name="pencil-simple" style="color:var(--primary);" /> {{ $t('settings.users.user_edit_modal.modal_title_5') }}</template>
+      </DialogHeader>
+    </template>
+
+      
+      <div class="dialog-feature-body">
         <div class="form-row">
           <div class="form-group">
             <label class="form-label req">{{ $t('settings.users.user_edit_modal.label_11') }}</label>
@@ -61,17 +63,27 @@
           <input type="password" class="form-ctrl" v-model="form.new_password" :placeholder="$t('settings.users.user_edit_modal.placeholder_61')">
         </div>
       </div>
-      <div class="modal-ft">
-        <button class="btn btn-secondary" type="button" @click="$emit('close')">{{ $t('common.cancel') }}</button>
-        <button class="btn btn-primary" type="button" :disabled="submitting" @click="save">
+      
+    
+
+    <template #footer>
+      <DialogFooter :actions="[
+        { id: 'action-0', role: 'cancel', label: $t('common.cancel'), onSelect: () => { $emit('close') } },
+        { id: 'save-1', role: 'primary', label: $t('common.save'), onSelect: () => save(), disabled: submitting }
+      ]">
+        <template #action-action-0>{{ $t('common.cancel') }}</template>
+        <template #action-save-1>
           <AppIcon name="floppy-disk" /> {{ $t('common.save') }}
-        </button>
-      </div>
-    </div>
-  </div>
+        </template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup>
+import DialogShell from '../../../main/components/dialogs/DialogShell.vue'
+import DialogHeader from '../../../main/components/dialogs/DialogHeader.vue'
+import DialogFooter from '../../../main/components/dialogs/DialogFooter.vue'
 import { ref, onMounted } from 'vue';
 import { getRequest, patchRequest, postRequest, deleteRequest } from '@shared/api';
 import AppIcon from '@shared/AppIcon.vue';

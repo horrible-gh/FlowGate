@@ -3160,10 +3160,10 @@ async function onTimeMachineRetryCancel() {
 
 // [Git 상태 패널 열기] — the merged-group case's only real next action. Reuses the event
 // the approval flow already opens that panel with; no second opener (0405 T0011).
-// 0332 TR0014 검토 — 이 창(TimeMachineDialog, scoped .modal-bg, z-index 1200)을 먼저 닫아야
-// 한다. 관제소 모달(GitActionMenu.vue)은 0560 T0018 로 공통 dialog 계층(z-index 1600대)으로
-// 옮겨졌지만, 두 창이 같은 body 직속 fixed 레이어를 쓴다는 사정은 그대로다 — 이 창이 떠
-// 있는 채로 열리면 겹쳐 뜬다. 닫기는 [닫기]와 같은 정리(onTimeMachineVisibleChange)를 거쳐야
+// 0332 TR0014 검토 — 이 창(TimeMachineDialog)을 먼저 닫아야 한다. 0560 T0039 로 이 창의
+// scoped .modal-bg(z-index 1200)가 사라지고 관제소 모달(GitActionMenu.vue)과 같은 공통
+// dialog 계층(z-index 1600대)에 올라갔지만, 두 창이 같은 스택을 쓴다는 사정은 그대로다 —
+// 이 창이 떠 있는 채로 열리면 겹쳐 뜬다. 닫기는 [닫기]와 같은 정리(onTimeMachineVisibleChange)를 거쳐야
 // 되감긴 단계로의 이동도 그대로 산다.
 function onTimeMachineOpenGitPanel() {
   onTimeMachineVisibleChange(false)

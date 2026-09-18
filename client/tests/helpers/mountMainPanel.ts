@@ -40,7 +40,6 @@ export const MAIN_PANEL_STUBS: Record<string, unknown> = {
   NextEmptyDocModal: true,
   CommandSelectorModal: true,
   QTDetailViewer: true,
-  NewQModal: true,
   AiInvokeInline: true,
   GitFinalizePanel: true,
   ConfirmModal: true,

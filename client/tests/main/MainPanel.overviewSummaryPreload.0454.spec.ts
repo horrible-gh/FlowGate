@@ -79,7 +79,6 @@ function mountPanel(props: Record<string, unknown> = {}) {
         NextEmptyDocModal: true,
         CommandSelectorModal: true,
         QTDetailViewer: true,
-        NewQModal: true,
       },
     },
   })

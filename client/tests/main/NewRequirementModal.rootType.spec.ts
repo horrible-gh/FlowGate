@@ -41,7 +41,7 @@ describe('NewRequirementModal workflow-root tabs', () => {
 
   it('switches to B copy and submits doc_type=B', async () => {
     const wrapper = mount(NewRequirementModal, {
-      global: { plugins: [i18n] },
+      global: { plugins: [i18n], stubs: { teleport: true } },
     })
     await flushPromises()
 
@@ -49,12 +49,12 @@ describe('NewRequirementModal workflow-root tabs', () => {
     expect(tabs).toHaveLength(2)
     await tabs[1].trigger('click')
 
-    expect(wrapper.find('.modal-title').text()).toContain('New Bug')
+    expect(wrapper.find('.fg-dialog-header__title').text()).toContain('New Bug')
     expect(wrapper.find('input#newReqTitle').attributes('placeholder')).toBe('Enter a bug title')
     expect(wrapper.find('.req-start-info').classes()).toContain('bug')
 
     await wrapper.find('input#newReqTitle').setValue('Login fails')
-    await wrapper.find('button.btn-primary').trigger('click')
+    await wrapper.find('[data-dialog-action-id="submit-1"]').trigger('click')
     await flushPromises()
 
     expect(postUrlEncoded).toHaveBeenCalledWith(

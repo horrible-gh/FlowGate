@@ -770,7 +770,7 @@ function applyPlanFill() {
 }
 
 async function revertSequenceNotes() {
-  if (!await confirm({ title: t('main.continuous_work.preset_revert_confirm') })) return
+  if (!await confirm({ title: t('main.continuous_work.sequence_notes_revert_confirm') })) return
   applySequenceNotePrefill(picker.value.steps ?? [])
 }
 

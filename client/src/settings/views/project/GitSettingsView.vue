@@ -450,7 +450,7 @@ async function testConnection() {
 
 async function disconnect() {
   if (!projectId.value) return;
-  if (!await confirm({ title: t('settings.project.git.disconnect_confirm') })) return;
+  if (!await confirm({ title: t('settings.project.git.disconnect_confirm'), danger: true })) return;
   busy.value = true;
   try {
     await deleteRequest(`/api/v1/projects/${projectId.value}/git/config`);

@@ -51,7 +51,7 @@ describe('NewRequirementModal — use group name as title', () => {
   })
 
   it('fills the empty title input with the selected group name', async () => {
-    const wrapper = mount(NewRequirementModal, { global: { plugins: [i18n] } })
+    const wrapper = mount(NewRequirementModal, { global: { plugins: [i18n], stubs: { teleport: true } } })
     await flushPromises()
 
     // Switch to "existing group" mode and select the seeded group.
@@ -67,11 +67,13 @@ describe('NewRequirementModal — use group name as title', () => {
     expect(fillBtn.exists()).toBe(true)
     await fillBtn.trigger('click')
 
-    expect((titleInput.element as HTMLInputElement).value).toBe('User Login')
+    // Re-query: the dialog re-renders its teleported body on the fill, so the element captured
+    // above can be a detached node by now even though the live input carries the new value.
+    expect((wrapper.find('input#newReqTitle').element as HTMLInputElement).value).toBe('User Login')
   })
 
   it('hides the button when no group is selected (default new-group mode, empty name)', async () => {
-    const wrapper = mount(NewRequirementModal, { global: { plugins: [i18n] } })
+    const wrapper = mount(NewRequirementModal, { global: { plugins: [i18n], stubs: { teleport: true } } })
     await flushPromises()
     // Default mode is "new" with an empty new-group name → nothing to fill from.
     expect(wrapper.find('.title-fill-btn').exists()).toBe(false)

@@ -1,17 +1,16 @@
 <template>
-  <teleport to="body">
-    <div v-if="visible" class="modal-bg">
-      <div class="modal-box" style="max-width:480px;">
-        <div class="modal-hd">
-          <span class="modal-title">
+  <DialogShell :open="visible" variant="form" surface-class="dialog-create-edit-group-modal"  @request-close="onCancel">
+    <template #header>
+      <DialogHeader title="" :closeable="true" @close="onCancel">
+        <template #title>
             <AppIcon :name="dialogIcon" />
             {{ modalTitle }}
-          </span>
-          <button class="modal-close" type="button" @click="onCancel">
-            <AppIcon name="x" />
-          </button>
-        </div>
-        <div class="modal-bd">
+          </template>
+      </DialogHeader>
+    </template>
+
+        
+        <div class="dialog-feature-body">
           <form @submit.prevent="submit">
             <div v-if="!(isModuleDialog && mode === 'create')" class="form-group">
               <label class="form-label req">{{ titleLabel }}</label>
@@ -77,26 +76,34 @@
             </template>
           </form>
         </div>
-        <div class="modal-ft">
-          <div v-if="errorMessage" class="alert alert-danger" style="width:100%; margin-bottom:12px;">
+        
+      
+<div v-if="errorMessage" class="alert alert-danger" style="width:100%; margin-bottom:12px;">
             <AppIcon name="warning" />
             <span>{{ errorMessage }}</span>
           </div>
-          <button class="btn btn-secondary" type="button" @click="onCancel">
+    <template #footer>
+      <DialogFooter :actions="[
+        { id: 'onCancel-0', role: 'cancel', label: t('common.cancel'), onSelect: () => onCancel() },
+        { id: 'submit-1', role: 'primary', label: t('common.save'), onSelect: () => submit(), disabled: submitting || (isModuleDialog && mode === 'create' && !moduleSlugValid) }
+      ]">
+        <template #action-onCancel-0>
             {{ t('common.cancel') }}
-          </button>
-          <button class="btn btn-primary" type="button" :disabled="submitting || (isModuleDialog && mode === 'create' && !moduleSlugValid)" @click="submit">
+          </template>
+        <template #action-submit-1>
             <AppIcon v-if="submitting" name="spinner" spin />
             <AppIcon v-else name="floppy-disk" />
             {{ t('common.save') }}
-          </button>
-        </div>
-      </div>
-    </div>
-  </teleport>
+          </template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
+import DialogShell from './dialogs/DialogShell.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest, putRequest, patchRequest } from '@shared/api'
@@ -392,4 +399,6 @@ function onCancel() {
   margin-top: 4px;
   margin-bottom: 0;
 }
+
+:global(.fg-dialog-surface.dialog-create-edit-group-modal) { max-width:480px; }
 </style>

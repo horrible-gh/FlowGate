@@ -61,7 +61,6 @@ function mountPanel() {
         NextEmptyDocModal: true,
         CommandSelectorModal: true,
         QTDetailViewer: true,
-        NewQModal: true,
         StepVerificationCard: {
           props: ['docId'],
           template: '<div class="step-verify-card-stub" />',

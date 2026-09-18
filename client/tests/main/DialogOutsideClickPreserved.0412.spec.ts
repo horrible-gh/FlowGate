@@ -279,10 +279,13 @@ describe('QaHistoryDialog — overlay click no longer closes it (0412)', () => {
     })
     await flushPromises()
 
-    await wrapper.find('.modal-bg').trigger('click')
+    // 0560 T0039: this dialog now rides the common shell, so the 0412 contract is kept by
+    // the variant's `closeOnBackdrop: false` and ESC lives on the shell surface.
+    await wrapper.find('.fg-dialog-overlay').trigger('click')
     expect(wrapper.emitted('update:visible')).toBeFalsy()
 
-    await wrapper.find('.modal-bg').trigger('keydown', { key: 'Escape' })
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
     expect(wrapper.emitted('update:visible')).toBeTruthy()
     expect(wrapper.emitted('update:visible')![0]).toEqual([false])
 
@@ -296,7 +299,7 @@ describe('QaHistoryDialog — overlay click no longer closes it (0412)', () => {
       global: { plugins: [i18n], stubs: { teleport: true } },
     })
     await flushPromises()
-    await wrapper2.find('.modal-close').trigger('click')
+    await wrapper2.find('.fg-dialog-header__close').trigger('click')
     expect(wrapper2.emitted('update:visible')).toBeTruthy()
     expect(wrapper2.emitted('update:visible')![0]).toEqual([false])
     wrapper2.unmount()
@@ -311,10 +314,13 @@ describe('QaReviewHistoryDialog — overlay click no longer closes it (0412, mer
     })
     await flushPromises()
 
-    await wrapper.find('.modal-bg').trigger('click')
+    // 0560 T0039: this dialog now rides the common shell, so the 0412 contract is kept by
+    // the variant's `closeOnBackdrop: false` and ESC lives on the shell surface.
+    await wrapper.find('.fg-dialog-overlay').trigger('click')
     expect(wrapper.emitted('update:visible')).toBeFalsy()
 
-    await wrapper.find('.modal-bg').trigger('keydown', { key: 'Escape' })
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
     expect(wrapper.emitted('update:visible')).toBeTruthy()
     expect(wrapper.emitted('update:visible')![0]).toEqual([false])
 
@@ -325,7 +331,7 @@ describe('QaReviewHistoryDialog — overlay click no longer closes it (0412, mer
       global: { plugins: [i18n], stubs: { teleport: true } },
     })
     await flushPromises()
-    await wrapper2.find('.modal-close').trigger('click')
+    await wrapper2.find('.fg-dialog-header__close').trigger('click')
     expect(wrapper2.emitted('update:visible')).toBeTruthy()
     expect(wrapper2.emitted('update:visible')![0]).toEqual([false])
     wrapper2.unmount()

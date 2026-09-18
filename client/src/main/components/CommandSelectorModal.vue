@@ -1,20 +1,19 @@
 <template>
-  <teleport to="body">
-    <div v-if="visible" class="modal-bg">
-      <div class="modal-box csm-modal">
-        <div class="modal-hd">
-          <span class="modal-title">
+  <DialogShell :open="visible" variant="compact" surface-class="dialog-command-selector-modal"  @request-close="close">
+    <template #header>
+      <DialogHeader title="" :closeable="true" @close="close">
+        <template #title>
             <AppIcon name="terminal" style="color:var(--primary);" />
             {{ t('main.command_selector_modal.title') }}
-          </span>
-          <button class="modal-close" type="button" @click="close">
-            <AppIcon name="x" />
-          </button>
-        </div>
+          </template>
+      </DialogHeader>
+    </template>
+
+        
 
         <!-- Result view -->
         <template v-if="execResult">
-          <div class="modal-bd csm-result-body">
+          <div class="dialog-feature-body csm-result-body">
             <div class="csm-result-section">
               <div class="csm-result-label">{{ t('main.command_selector_modal.result_command') }}</div>
               <pre class="csm-result-code">{{ execResult.resolved }}</pre>
@@ -36,16 +35,12 @@
               <pre class="csm-result-pre csm-result-pre--err">{{ execResult.stderr }}</pre>
             </div>
           </div>
-          <div class="modal-ft">
-            <button type="button" class="btn btn-primary" @click="close">
-              {{ t('common.close') }}
-            </button>
-          </div>
+          
         </template>
 
         <!-- Selection / executing view -->
         <template v-else>
-          <div class="modal-bd csm-body">
+          <div class="dialog-feature-body csm-body">
             <div v-if="executing" class="csm-state">
               <AppIcon name="circle-notch" spin />
               {{ t('main.command_selector_modal.executing') }}
@@ -68,27 +63,35 @@
               </li>
             </ul>
           </div>
-          <div class="modal-ft">
-            <button type="button" class="btn btn-secondary" @click="close">
+          
+        </template>
+      
+
+    <template #footer>
+      <DialogFooter :actions="[
+        ...(((execResult)) ? [{ id: 'close-0', role: 'cancel' as const, label: t('common.close'), onSelect: () => close() }] : []),
+        ...((!(execResult)) ? [{ id: 'close-1', role: 'cancel' as const, label: t('common.cancel'), onSelect: () => close() }] : []),
+        ...((!(execResult)) ? [{ id: 'executeCommand-2', role: 'primary' as const, label: t('main.command_selector_modal.btn_execute'), onSelect: () => executeCommand(), disabled: !selectedId || executing }] : [])
+      ]">
+        <template #action-close-0><template v-if="(execResult)">
+              {{ t('common.close') }}
+            </template></template>
+        <template #action-close-1><template v-if="!(execResult)">
               {{ t('common.cancel') }}
-            </button>
-            <button
-              type="button"
-              class="btn btn-primary"
-              :disabled="!selectedId || executing"
-              @click="executeCommand"
-            >
+            </template></template>
+        <template #action-executeCommand-2><template v-if="!(execResult)">
               <AppIcon name="play" />
               {{ t('main.command_selector_modal.btn_execute') }}
-            </button>
-          </div>
-        </template>
-      </div>
-    </div>
-  </teleport>
+            </template></template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
+import DialogShell from './dialogs/DialogShell.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
@@ -189,9 +192,7 @@ function close() {
 </script>
 
 <style scoped>
-.csm-modal {
-  max-width: 560px;
-}
+
 .csm-body {
   padding: 0;
   max-height: 360px;
@@ -315,4 +316,6 @@ function close() {
   background: var(--danger-light, #fee2e2);
   color: var(--danger, #dc2626);
 }
+
+:global(.fg-dialog-surface.dialog-command-selector-modal) { max-width: 560px; }
 </style>

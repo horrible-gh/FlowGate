@@ -1866,6 +1866,7 @@ export default {
       toast_started: 'Copied the continuous-work mention. Hand it to the AI to run unattended.',
       preset_source: 'Filled from work plan {doc}.', preset_not_started: 'Not started yet.',
       preset_unset: '{n} unset steps will use the default provider.', preset_revert: 'Revert filled values',
+      sequence_notes_revert_confirm: 'Restore the original per-step delivery notes and provider selections?',
       preset_revert_confirm: 'Only filled values are reverted. Workflow steps already added remain. Continue?',
       preset_mode_refreshed: 'Assignments were recalculated for the new mode; {n} manually edited cells were preserved.',
       preset_mode_failed: 'Could not recalculate assignments for this mode.',

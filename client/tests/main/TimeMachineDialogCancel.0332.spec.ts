@@ -62,6 +62,20 @@ async function mountDialog(props: Record<string, unknown> = {}) {
   return wrapper
 }
 
+// 0560 T0039: the hand-made `.modal-ft` footer and its `.tmd-*-btn` classes are gone — the
+// dialog hands semantic actions to the common DialogFooter, which owns the markup and the
+// left-to-right order. Each button is addressed by the action id it was declared with.
+const FOOTER_ACTION = {
+  openGitPanel: 'emit-0',
+  retry: 'emit-1',
+  closeAfterResult: 'onClose-2',
+  confirm: 'onConfirm-4',
+} as const
+
+function footerAction(wrapper: ReturnType<typeof mount>, id: string) {
+  return wrapper.find(`.fg-dialog-footer [data-dialog-action-id="${id}"]`)
+}
+
 describe('TimeMachineDialog — 누르기 전 (D0005 §6.3)', () => {
   it('커밋이 있는 단계는 짧은 해시를, 없는 단계는 "소스 변경 없음"을 보인다', async () => {
     const wrapper = await mountDialog({ commitPreview: preview() })
@@ -104,7 +118,7 @@ describe('TimeMachineDialog — 누르기 전 (D0005 §6.3)', () => {
     expect(wrapper.find('.tmd-cancel-summary').text())
       .toBe('이미 병합되어 소스는 되돌아가지 않습니다.')
     // 되감기 자체는 유효하다 — git 상태로 단추를 잠그지 않는다(D0005 §6.3).
-    const confirm = wrapper.findAll('.modal-ft button')[1]
+    const confirm = footerAction(wrapper, FOOTER_ACTION.confirm)
     expect(confirm.attributes('disabled')).toBeUndefined()
   })
 
@@ -113,7 +127,7 @@ describe('TimeMachineDialog — 누르기 전 (D0005 §6.3)', () => {
 
     expect(wrapper.findAll('.tmd-step-commit').map(c => c.text()))
       .toEqual(['확인할 수 없음', '확인할 수 없음', '확인할 수 없음'])
-    expect(wrapper.findAll('.modal-ft button')[1].attributes('disabled')).toBeUndefined()
+    expect(footerAction(wrapper, FOOTER_ACTION.confirm).attributes('disabled')).toBeUndefined()
   })
 
   it('선택한 단계 이상의 살아 있는 커밋만 요약이 센다', async () => {
@@ -155,7 +169,7 @@ describe('TimeMachineDialog — 누르기 전 (D0005 §6.3)', () => {
     expect(wrapper.find('.tmd-cancel-summary').text())
       .toBe('이 그룹에는 워크트리가 없어 소스는 되돌아가지 않습니다.')
     // 되감기 자체는 유효하다 — git 상태로 단추를 잠그지 않는다.
-    const confirm = wrapper.findAll('.modal-ft button')[1]
+    const confirm = footerAction(wrapper, FOOTER_ACTION.confirm)
     expect(confirm.attributes('disabled')).toBeUndefined()
   })
 
@@ -205,8 +219,8 @@ describe('TimeMachineDialog — 되돌린 뒤 (D0005 §6.4)', () => {
     expect(rows[0].classes()).toContain('tmd-result-row--ok')
     expect(rows[1].text()).toContain('되돌림이 충돌해 여기서 멈췄습니다')
     // 충돌에는 자동 재시도가 없다 — 단추를 주지 않는다(L0007 §4.2).
-    expect(wrapper.find('.tmd-retry-btn').exists()).toBe(false)
-    expect(wrapper.find('.tmd-close-btn').exists()).toBe(true)
+    expect(footerAction(wrapper, FOOTER_ACTION.retry).exists()).toBe(false)
+    expect(footerAction(wrapper, FOOTER_ACTION.closeAfterResult).exists()).toBe(true)
   })
 
   // TR0019 — 충돌을 세션으로 남긴 경우. 바로 위 시험이 대조군이다: 같은 stopped_reason
@@ -252,11 +266,11 @@ describe('TimeMachineDialog — 되돌린 뒤 (D0005 §6.4)', () => {
 
     expect(wrapper.find('.tmd-result-row').text())
       .toContain('워크트리에 커밋되지 않은 변경이 있습니다')
-    await wrapper.find('.tmd-retry-btn').trigger('click')
+    await footerAction(wrapper, FOOTER_ACTION.retry).trigger('click')
 
     expect(wrapper.emitted('retry-cancel')).toHaveLength(1)
     // 병합이 아니므로 Git 패널 단추는 없다.
-    expect(wrapper.find('.tmd-open-git-btn').exists()).toBe(false)
+    expect(footerAction(wrapper, FOOTER_ACTION.openGitPanel).exists()).toBe(false)
   })
 
   it('재시도 중에는 단추가 잠긴다', async () => {
@@ -267,7 +281,7 @@ describe('TimeMachineDialog — 되돌린 뒤 (D0005 §6.4)', () => {
       retrying: true,
     })
 
-    expect(wrapper.find('.tmd-retry-btn').attributes('disabled')).toBeDefined()
+    expect(footerAction(wrapper, FOOTER_ACTION.retry).attributes('disabled')).toBeDefined()
   })
 
   it('이미 병합된 경우엔 [Git 상태 패널 열기]만 나온다', async () => {
@@ -279,8 +293,8 @@ describe('TimeMachineDialog — 되돌린 뒤 (D0005 §6.4)', () => {
 
     expect(wrapper.find('.tmd-result-row').text())
       .toContain('Git 상태 패널의 [병합 되돌리기]로만 취소할 수 있습니다')
-    expect(wrapper.find('.tmd-retry-btn').exists()).toBe(false)
-    await wrapper.find('.tmd-open-git-btn').trigger('click')
+    expect(footerAction(wrapper, FOOTER_ACTION.retry).exists()).toBe(false)
+    await footerAction(wrapper, FOOTER_ACTION.openGitPanel).trigger('click')
 
     expect(wrapper.emitted('open-git-panel')).toHaveLength(1)
   })
@@ -292,7 +306,7 @@ describe('TimeMachineDialog — 되돌린 뒤 (D0005 §6.4)', () => {
       }),
     })
 
-    await wrapper.find('.tmd-close-btn').trigger('click')
+    await footerAction(wrapper, FOOTER_ACTION.closeAfterResult).trigger('click')
 
     expect(wrapper.emitted('update:visible')?.[0]).toEqual([false])
   })

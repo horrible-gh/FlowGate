@@ -93,7 +93,7 @@ function mountPanel() {
         DocInfoPanel: true, ReviewActionBar: true, ReviewRejectDialog: true,
         DesignHandoffDialog: true, NextActionModal: true, NextEmptyDocModal: true,
         WorkPlanCreateDialog: true, WorkPlanProposalDialog: true, CommandSelectorModal: true,
-        QTDetailViewer: true, NewQModal: true,
+        QTDetailViewer: true,
       },
     },
   })

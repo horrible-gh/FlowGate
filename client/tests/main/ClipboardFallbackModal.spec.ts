@@ -96,7 +96,7 @@ describe('ClipboardFallbackModal', () => {
     expect(textarea).not.toBeNull()
     expect(textarea.value).toBe('manual copy me')
 
-    const copyBtn = document.body.querySelector('.modal-ft .btn-primary') as HTMLButtonElement
+    const copyBtn = document.body.querySelector('.fg-dialog-footer [data-dialog-action-role="primary"]') as HTMLButtonElement
     copyBtn.click()
     await flushPromises()
 
@@ -115,7 +115,7 @@ describe('ClipboardFallbackModal', () => {
     openClipboardFallback('still failing')
     await flushPromises()
 
-    const copyBtn = document.body.querySelector('.modal-ft .btn-primary') as HTMLButtonElement
+    const copyBtn = document.body.querySelector('.fg-dialog-footer [data-dialog-action-role="primary"]') as HTMLButtonElement
     copyBtn.click()
     await flushPromises()
 

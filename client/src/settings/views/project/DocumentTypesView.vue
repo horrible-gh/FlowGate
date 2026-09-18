@@ -91,17 +91,18 @@
     </div>
 
     <!-- Type create/edit modal -->
-    <Transition name="modal-fade">
-      <div v-if="showModal" class="modal-bg" role="dialog" aria-modal="true">
-        <div class="modal-box">
-          <div class="modal-hd">
-            <span class="modal-title">
+    <DialogShell :open="showModal" variant="form" surface-class="dialog-document-types-view"  @request-close="showModal = false">
+    <template #header>
+      <DialogHeader title="" :closeable="true" @close="showModal = false">
+        <template #title>
               <AppIcon :name="editing ? 'pencil-simple' : 'plus'" style="color:var(--primary);" />
               {{ editing ? $t('settings.project.document_types_view.text_86') : $t('settings.project.document_types_view.text_86_2') }}
-            </span>
-            <button class="modal-close" @click="showModal = false"><AppIcon name="x" /></button>
-          </div>
-          <div class="modal-bd">
+            </template>
+      </DialogHeader>
+    </template>
+
+          
+          <div class="dialog-feature-body">
             <div class="form-row">
               <div class="form-group">
                 <label class="form-label req">{{ $t('settings.project.document_types_view.label_93') }}</label>
@@ -146,16 +147,22 @@
               {{ $t('settings.project.document_types_view.text_132') }}
             </p>
           </div>
-          <div class="modal-ft">
-            <button class="btn btn-secondary" @click="showModal = false">{{ $t('common.cancel') }}</button>
-            <button class="btn btn-primary" @click="saveType">
+          
+        
+
+    <template #footer>
+      <DialogFooter :actions="[
+        { id: 'showModal-0', role: 'cancel', label: $t('common.cancel'), onSelect: () => { showModal = false } },
+        { id: 'saveType-1', role: 'primary', label: editing ? $t('common.save') : $t('common.add'), onSelect: () => saveType() }
+      ]">
+        <template #action-showModal-0>{{ $t('common.cancel') }}</template>
+        <template #action-saveType-1>
               <AppIcon :name="editing ? 'floppy-disk' : 'plus'" />
               {{ editing ? $t('common.save') : $t('common.add') }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Transition>
+            </template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 
     <!-- Delete confirmation (shared ConfirmModal, no native confirm()) -->
     <ConfirmModal
@@ -170,6 +177,9 @@
 </template>
 
 <script setup>
+import DialogShell from '../../../main/components/dialogs/DialogShell.vue'
+import DialogHeader from '../../../main/components/dialogs/DialogHeader.vue'
+import DialogFooter from '../../../main/components/dialogs/DialogFooter.vue'
 import { ref, computed, onMounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { getRequest, postRequest, patchRequest, deleteRequest } from '@shared/api';

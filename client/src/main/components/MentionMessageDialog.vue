@@ -1,18 +1,19 @@
 <template>
-  <teleport to="body">
-    <div v-if="visible" class="modal-bg">
-      <div class="modal-box mm-box">
-        <!-- Header -->
-        <div class="modal-hd">
-          <span class="modal-title">
+  <DialogShell :open="visible" variant="form" surface-class="dialog-mention-message-dialog"  @request-close="cancel">
+    <template #header>
+      <DialogHeader title="" :closeable="true" @close="cancel">
+        <template #title>
             <AppIcon name="copy" style="color:var(--primary); margin-right:6px;" />
             {{ t('main.next_action_modal.mm_dialog_title') }}
-          </span>
-          <button class="modal-close" type="button" @click="cancel"><AppIcon name="x" /></button>
-        </div>
+          </template>
+      </DialogHeader>
+    </template>
+
+        <!-- Header -->
+        
 
         <!-- Body -->
-        <div class="modal-bd mm-body">
+        <div class="dialog-feature-body mm-body">
           <div class="form-group">
             <label class="form-label">{{ t('main.next_action_modal.mm_dialog_doc_type') }}</label>
             <select class="form-ctrl" :value="selectedType" @change="onTypeChange(($event.target as HTMLSelectElement).value)">
@@ -42,22 +43,31 @@
         </div>
 
         <!-- Footer -->
-        <div class="modal-ft">
-          <button class="btn btn-secondary" type="button" @click="cancel">{{ t('common.cancel') }}</button>
-          <button class="btn btn-primary" type="button" :disabled="selectedIds.length === 0" @click="confirm">
+        
+      
+
+    <template #footer>
+      <DialogFooter :actions="[
+        { id: 'cancel-0', role: 'cancel', label: t('common.cancel'), onSelect: () => cancel() },
+        { id: 'confirm-1', role: 'aux', label: t('main.next_action_modal.mm_dialog_add'), onSelect: () => confirm(), disabled: selectedIds.length === 0 },
+        { id: 'confirmInvoke-2', role: 'primary', label: t('main.next_action_modal.mm_dialog_invoke_ai'), onSelect: () => confirmInvoke(), disabled: selectedIds.length === 0 }
+      ]">
+        <template #action-cancel-0>{{ t('common.cancel') }}</template>
+        <template #action-confirm-1>
             <AppIcon name="plus" /> {{ t('main.next_action_modal.mm_dialog_add') }}
-          </button>
-          <!-- Group 0223: same message pick, but fed straight into an in-app provider run. -->
-          <button class="btn btn-primary" type="button" :disabled="selectedIds.length === 0" @click="confirmInvoke">
+          </template>
+        <template #action-confirmInvoke-2>
             <AppIcon name="robot" /> {{ t('main.next_action_modal.mm_dialog_invoke_ai') }}
-          </button>
-        </div>
-      </div>
-    </div>
-  </teleport>
+          </template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
+import DialogShell from './dialogs/DialogShell.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
 import AppIcon from '@shared/AppIcon.vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -164,10 +174,7 @@ watch(
 </script>
 
 <style scoped>
-.mm-box {
-  width: 460px;
-  max-width: 94vw;
-}
+
 .mm-body {
   display: flex;
   flex-direction: column;
@@ -219,4 +226,6 @@ watch(
   color: var(--text-m);
   font-style: italic;
 }
+
+:global(.fg-dialog-surface.dialog-mention-message-dialog) { width: 460px; max-width: 94vw; }
 </style>

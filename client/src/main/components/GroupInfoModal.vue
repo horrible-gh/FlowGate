@@ -1,17 +1,16 @@
 <template>
-  <teleport to="body">
-    <div v-if="visible" class="modal-bg">
-      <div class="modal-box" style="width:560px;max-width:94vw;">
-        <div class="modal-hd">
-          <span class="modal-title gi-title">
+  <DialogShell :open="visible" variant="readonly" surface-class="dialog-group-info-modal"  @request-close="close">
+    <template #header>
+      <DialogHeader title="" :closeable="true" @close="close">
+        <template #title>
             <AppIcon name="info" />
             {{ t('main.group_actions.info_title') }}
-          </span>
-          <button class="modal-close" type="button" @click="close">
-            <AppIcon name="x" />
-          </button>
-        </div>
-        <div class="modal-bd">
+          </template>
+      </DialogHeader>
+    </template>
+
+        
+        <div class="dialog-feature-body">
           <div class="gi-id-row">
             <span class="gi-id-badge">{{ groupId }}</span>
           </div>
@@ -40,21 +39,30 @@
           </div>
           <p v-else class="gi-empty">{{ t('main.group_actions.info_empty') }}</p>
         </div>
-        <div class="modal-ft">
-          <button type="button" class="btn btn-outline gi-foot-left" @click="emit('rename')">
+        
+      
+
+    <template #footer>
+      <DialogFooter :actions="[
+        { id: 'emit-0', role: 'aux', label: t('main.group_actions.rename_group'), onSelect: () => { emit('rename') } },
+        { id: 'close-1', role: 'cancel', label: t('common.close'), onSelect: () => close() }
+      ]">
+        <template #action-emit-0>
             <AppIcon name="pencil-simple" />
             {{ t('main.group_actions.rename_group') }}
-          </button>
-          <button type="button" class="btn btn-secondary" @click="close">
+          </template>
+        <template #action-close-1>
             {{ t('common.close') }}
-          </button>
-        </div>
-      </div>
-    </div>
-  </teleport>
+          </template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
+import DialogShell from './dialogs/DialogShell.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
 import AppIcon from '@shared/AppIcon.vue'
 import { useI18n } from 'vue-i18n'
 
@@ -203,5 +211,7 @@ function aiBadgeTitle(d: GroupInfoDoc): string | undefined {
   color: var(--text-m);
   font-size: .78rem;
 }
-.gi-foot-left { margin-right: auto; }
+
+
+:global(.fg-dialog-surface.dialog-group-info-modal) { width:560px; max-width:94vw; }
 </style>

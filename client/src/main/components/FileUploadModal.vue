@@ -1,16 +1,15 @@
 <template>
-  <teleport to="body">
-    <div v-if="visible" class="modal-bg">
-      <div class="modal-box">
-        <div class="modal-hd">
-          <span class="modal-title">
+  <DialogShell :open="visible" variant="form" surface-class="dialog-file-upload-modal"  @request-close="close">
+    <template #header>
+      <DialogHeader title="" :closeable="true" @close="close">
+        <template #title>
             <AppIcon name="upload-simple" style="color:var(--primary);" /> {{ t('main.file_upload_modal.title') }}
-          </span>
-          <button class="modal-close" @click="close">
-            <AppIcon name="x" />
-          </button>
-        </div>
-        <div class="modal-bd">
+          </template>
+      </DialogHeader>
+    </template>
+
+        
+        <div class="dialog-feature-body">
           <div
             class="upload-drop-zone"
             :class="{ dragging }"
@@ -37,20 +36,29 @@
 
           <div v-if="errorMsg" class="upload-error">{{ errorMsg }}</div>
         </div>
-        <div class="modal-ft">
-          <button class="btn btn-secondary" @click="close">{{ t('common.cancel') }}</button>
-          <button class="btn btn-primary" :disabled="!selectedFile || !targetDocId || uploading" @click="doUpload">
+        
+      
+
+    <template #footer>
+      <DialogFooter :actions="[
+        { id: 'close-0', role: 'cancel', label: t('common.cancel'), onSelect: () => close() },
+        { id: 'doUpload-1', role: 'primary', label: uploading ? t('main.file_upload_modal.uploading') : t('main.file_upload_modal.upload'), onSelect: () => doUpload(), disabled: !selectedFile || !targetDocId || uploading }
+      ]">
+        <template #action-close-0>{{ t('common.cancel') }}</template>
+        <template #action-doUpload-1>
             <AppIcon v-if="uploading" name="spinner" spin />
             <AppIcon v-else name="upload-simple" />
             {{ uploading ? t('main.file_upload_modal.uploading') : t('main.file_upload_modal.upload') }}
-          </button>
-        </div>
-      </div>
-    </div>
-  </teleport>
+          </template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
+import DialogShell from './dialogs/DialogShell.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
 import AppIcon from '@shared/AppIcon.vue'
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
