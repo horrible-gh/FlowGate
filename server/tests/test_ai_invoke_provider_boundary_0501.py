@@ -363,6 +363,7 @@ class TestReissueBoundaryPreservesTokenIdentity:
             "doc_ref": None,
             "token_id": "tok_original_id",
             "raw_token": "tok_original_raw",
+            "token_scratch_dir": "/scratch/tok_original_id",
             "mention": "## original prompt\n",
             "issue_builder": None,
             # None keeps _prepare_retry_token off the group-lease DB update path
@@ -386,6 +387,7 @@ class TestReissueBoundaryPreservesTokenIdentity:
                             "token_id_before": "tok_original_id", "reissued": False}
         assert run["token_id"] == "tok_original_id"
         assert run["raw_token"] == "tok_original_raw"
+        assert run["token_scratch_dir"] == "/scratch/tok_original_id"
 
     def test_reissue_lands_token_id_and_raw_token_on_the_same_new_grant(self, monkeypatch):
         # Consumed -> not reusable -> forces the issue_builder reissue path.
@@ -396,7 +398,7 @@ class TestReissueBoundaryPreservesTokenIdentity:
 
         def _issue(ai_run_id=None):
             return {"raw_token": "tok_new_raw", "token_id": "tok_new_id",
-                    "mention": "## fresh prompt\n"}
+                    "mention": "## fresh prompt\n", "scratch_dir": "/scratch/tok_new_id"}
 
         run = self._run(issue_builder=_issue)
 
@@ -411,6 +413,10 @@ class TestReissueBoundaryPreservesTokenIdentity:
         assert run["raw_token"] == "tok_new_raw"
         assert run["token_id"] != "tok_original_id"
         assert run["raw_token"] != "tok_original_raw"
+        # T0004 rev1 rejection: the scratch is a THIRD identifier that must move with
+        # the other two -- never left pointing at the pre-reissue hop's token scratch.
+        assert run["token_scratch_dir"] == "/scratch/tok_new_id"
+        assert run["token_scratch_dir"] != "/scratch/tok_original_id"
 
     def test_a_raising_lease_update_cannot_leave_a_half_updated_token_pair(self, monkeypatch):
         """0496 T0008 (self-review of the test above): the sibling assertion only holds
@@ -429,7 +435,7 @@ class TestReissueBoundaryPreservesTokenIdentity:
 
         def _issue(ai_run_id=None):
             return {"raw_token": "tok_new_raw", "token_id": "tok_new_id",
-                    "mention": "## fresh prompt\n"}
+                    "mention": "## fresh prompt\n", "scratch_dir": "/scratch/tok_new_id"}
 
         def _lease_update_explodes(*_args, **_kwargs):
             raise RuntimeError("lease store unreachable")
@@ -448,6 +454,9 @@ class TestReissueBoundaryPreservesTokenIdentity:
         # same new grant, never one new and one stale.
         assert run["token_id"] == "tok_new_id"
         assert run["raw_token"] == "tok_new_raw"
+        # The scratch is set in the SAME statement block as token_id/raw_token above
+        # (worker.py, three adjacent lines) -- a raise here cannot catch it half-updated.
+        assert run["token_scratch_dir"] == "/scratch/tok_new_id"
         # And the new raw token is already known to `_redact_secrets` before anything
         # that can fail and log runs, so a crash on this path cannot leak it.
         assert "tok_new_raw" in svc._known_run_raw_tokens(run)
@@ -465,12 +474,13 @@ class TestReissueBoundaryPreservesTokenIdentity:
 
         def _issue(ai_run_id=None):
             return {"raw_token": "tok_new_raw", "token_id": "tok_new_id",
-                    "mention": "## fresh prompt\n"}
+                    "mention": "## fresh prompt\n", "scratch_dir": "/scratch/tok_new_id"}
 
         run = self._run(issue_builder=_issue)
         prepared = svc._prepare_retry_token(run)
         assert prepared["reissued"] is True
         assert run["raw_token"] == "tok_new_raw"
+        assert run["token_scratch_dir"] == "/scratch/tok_new_id"
 
         # Round out the run to what _execute_provider_chain/_api_execute touch, the
         # same fields _api_run() seeds for TestProviderFallbackPreservesTokenIdentity.

@@ -363,7 +363,13 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     # NOT exported (leak prevention, L0006 §2.3).
     env = {
         "FLOWGATE_TOKEN": run["raw_token"],
-        "FLOWGATE_SCRATCH": run["scratch_dir"],
+        # T0004 (0581 NR0003): the CLI worker's file-submission contract
+        # (FLOWGATE_SCRATCH/verdict.json -> POST /inbox doc_path) is validated against
+        # the TOKEN's own scratch, not the run-internal one -- they must be the same
+        # issue result as FLOWGATE_TOKEN above, or inbox's path jail rejects a file the
+        # worker wrote exactly where it was told to. run-internal scratch (TMP/TEMP/
+        # TMPDIR, provider output, retained diagnostics below) is untouched.
+        "FLOWGATE_SCRATCH": run["token_scratch_dir"],
         "TMP": str(scratch / "tmp"),
         "TEMP": str(scratch / "tmp"),
         "TMPDIR": str(scratch / "tmp"),

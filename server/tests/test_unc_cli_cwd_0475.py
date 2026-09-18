@@ -24,6 +24,10 @@ def _run(scratch: Path, source_root, *, token="RAW_TOKEN_SENTINEL", run_id="run-
     return {
         "run_id": run_id,
         "scratch_dir": str(scratch),
+        # T0004 (0581): CWD/UNC resolution is not this group's concern, so the token
+        # scratch is the same directory as run scratch here -- only the two-scratch
+        # tests (test_cli_review_doc_path_windows_0474.py) need them to differ.
+        "token_scratch_dir": str(scratch),
         "source_root": source_root,
         "raw_token": token,
         "api_base_url": "",

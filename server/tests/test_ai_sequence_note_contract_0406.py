@@ -269,6 +269,7 @@ def test_unrelated_single_retry_prompt_is_byte_identical(monkeypatch, scope):
         "run_id": "run-1", "token_id": None, "mode": "single", "action_scope": scope,
         "doc_ref": ROOT, "issue_builder": lambda **kwargs: {
             "mention": BASE_MENTION, "token_id": "tok-2", "raw_token": "raw",
+            "scratch_dir": "/scratch/tok-2",
         },
         "group_id": None,
     }

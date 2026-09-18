@@ -29,7 +29,8 @@ def _run(monkeypatch, tmp_path, *, kind="codex", with_group=True):
     monkeypatch.setattr(svc, "_is_group_worktree", lambda *_a: with_group)
     run = {
         "project_id": project_id, "group_id": "flowgate.default.0475" if with_group else None,
-        "run_id": run_id, "scratch_dir": str(scratch), "source_root": str(worktree),
+        "run_id": run_id, "scratch_dir": str(scratch), "token_scratch_dir": str(scratch),
+        "source_root": str(worktree),
         "raw_token": "TOKEN_SENTINEL", "api_base_url": "",
     }
     provider = {"kind": kind, "cli_command": f"{kind} COMMAND_SENTINEL"}
