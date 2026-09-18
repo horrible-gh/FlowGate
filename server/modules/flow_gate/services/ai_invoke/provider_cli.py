@@ -131,6 +131,12 @@ def _progress_watchdog_loop(run: dict, proc, stop_event: threading.Event,
     if not git_enabled:
         logger.info("ai-invoke %s: progress watchdog has no source tree — documents only",
                     run.get("run_id"))
+    # T0004 §5: subprocess liveness is a THIRD, weaker signal, read independently of the
+    # two above -- its own first successful read is a baseline only (a run that already
+    # has children when the watchdog starts must not look like it just spawned them), and
+    # its failures never touch `readable` (§5 point 5: an unsupported/unreadable process
+    # snapshot must never fail the provider or the document/source progress gate).
+    process_watermark = None
 
     while not stop_event.wait(interval):
         now = _svc()._now_mono()
@@ -164,6 +170,35 @@ def _progress_watchdog_loop(run: dict, proc, stop_event: threading.Event,
             elif paths != git_watermark:
                 git_watermark = paths
                 moved.append("source")               # added AND removed paths both count
+
+        # T0004 §5/§6: process liveness never feeds `readable` or `moved` above -- a
+        # snapshot failure here must not touch the no-progress gate, and a snapshot
+        # CHANGE must not touch it either (§9: a live/churning subprocess must never
+        # reset `stall_anchor_mono` on its own). It only ever writes `last_activity_*`.
+        process_moved = False
+        try:
+            snapshot = process_runner.process_tree_snapshot(proc)
+        except Exception:
+            snapshot = None
+            logger.warning("ai-invoke %s: process snapshot raised — treating as unavailable",
+                           run.get("run_id"), exc_info=True)
+        if snapshot is not None:
+            if process_watermark is None:
+                process_watermark = snapshot          # first reading: baseline only (§5)
+            elif snapshot != process_watermark:
+                process_watermark = snapshot
+                process_moved = True
+
+        if moved or process_moved:
+            # §6: a document/source tick is strong progress AND weak activity at once;
+            # a process-only tick is activity alone. Either way `last_activity_*` is the
+            # one field both paths write.
+            activity_signals = list(moved)
+            if process_moved:
+                activity_signals.append("process")
+            run["last_activity_at"] = now_iso()
+            run["last_activity_signal"] = ",".join(activity_signals)
+            run["activity_observations"] = int(run.get("activity_observations") or 0) + 1
 
         if moved:
             # §3-5, second half: one signal actually moving is enough — the other one

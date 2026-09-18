@@ -106,3 +106,34 @@ def test_a_run_without_a_scope_reports_none_rather_than_raising(monkeypatch):
 
     assert payload["action_scope"] is None
     assert payload["project_id"] is None
+
+
+# ── T0004 (group 0579): last_activity_* rides beside last_progress_* ─────────
+#
+# diagnostics.get_status is a pure read-model over `run` -- the watchdog
+# (provider_cli._progress_watchdog_loop) already writes last_activity_at/signal and
+# activity_observations onto it. Same shape discipline as last_progress_at above: a run
+# the watchdog has ticked for exposes the values verbatim, and one it has not ticked for
+# yet reads back as None/0, never a KeyError.
+
+def test_live_status_carries_the_activity_watermark_beside_progress(monkeypatch):
+    payload = _status(monkeypatch, _run_record(
+        last_progress_at="2026-09-08T10:40:00+09:00", last_progress_signal="document",
+        progress_observations=2, last_activity_at="2026-09-08T10:41:30+09:00",
+        last_activity_signal="document,process", activity_observations=5,
+    ))
+
+    assert payload["last_progress_at"] == "2026-09-08T10:40:00+09:00"
+    assert payload["last_progress_signal"] == "document"
+    assert payload["progress_observations"] == 2
+    assert payload["last_activity_at"] == "2026-09-08T10:41:30+09:00"
+    assert payload["last_activity_signal"] == "document,process"
+    assert payload["activity_observations"] == 5
+
+
+def test_a_run_the_watchdog_has_not_ticked_yet_reports_activity_as_none(monkeypatch):
+    payload = _status(monkeypatch, _run_record())
+
+    assert payload["last_activity_at"] is None
+    assert payload["last_activity_signal"] is None
+    assert payload["activity_observations"] == 0

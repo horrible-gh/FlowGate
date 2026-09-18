@@ -12,6 +12,7 @@ import logging
 import os
 import signal
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -68,6 +69,29 @@ class _JobBasicLimitInformation:
                 ("PeakJobMemoryUsed", ctypes.c_size_t),
             ]
         return ctypes, wintypes, JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+
+
+# JobObjectBasicProcessIdList (T0004 §2): a read-only query, unrelated to the
+# kill-boundary limit information above. JOBOBJECT_BASIC_PROCESS_ID_LIST is a
+# variable-length struct -- the trailing array is sized per query attempt.
+_JOB_OBJECT_BASIC_PROCESS_ID_LIST_CLASS = 3
+
+
+class _JobBasicProcessIdList:
+    """Factory namespace for the variable-length PID list struct, imported only on Windows."""
+
+    @staticmethod
+    def types(count: int):
+        import ctypes
+        from ctypes import wintypes
+
+        class JOBOBJECT_BASIC_PROCESS_ID_LIST(ctypes.Structure):
+            _fields_ = [
+                ("NumberOfAssignedProcesses", wintypes.DWORD),
+                ("NumberOfProcessIdsInList", wintypes.DWORD),
+                ("ProcessIdList", ctypes.c_size_t * max(count, 1)),
+            ]
+        return ctypes, wintypes, JOBOBJECT_BASIC_PROCESS_ID_LIST
 
 
 class WindowsProcessOwner:
@@ -236,6 +260,55 @@ class WindowsProcessOwner:
             else:
                 self.handle = None
 
+    def process_ids(self) -> Optional[frozenset]:
+        """Read-only PID membership of this Job Object, or None if unavailable.
+
+        T0004 §2: queried under the SAME `_handle_lock` as `terminate()`/`close()` so a
+        query never races handle teardown. `JOBOBJECT_BASIC_PROCESS_ID_LIST` is a
+        variable-length struct -- when the job holds more processes than the buffer has
+        room for, Win32 does NOT necessarily return TRUE with a truncated list: it commonly
+        returns FALSE (`GetLastError() == ERROR_MORE_DATA`) while still filling in
+        `NumberOfAssignedProcesses` with the true count. Both shapes -- a successful call
+        reporting more assigned processes than the buffer holds, and a failed call whose
+        error is specifically `ERROR_MORE_DATA` -- are buffer-too-small and are regrown and
+        retried; any other failure is a real query error.
+        """
+        _ERROR_MORE_DATA = 234
+        with self._handle_lock:
+            if not self.active:
+                return None
+            try:
+                import ctypes
+                count = 64
+                for _ in range(4):
+                    ctypes_mod, wintypes, list_type = _JobBasicProcessIdList.types(count)
+                    buf = list_type()
+                    self._kernel32.QueryInformationJobObject.argtypes = [
+                        wintypes.HANDLE, ctypes_mod.c_int, ctypes_mod.c_void_p,
+                        wintypes.DWORD, ctypes_mod.POINTER(wintypes.DWORD),
+                    ]
+                    self._kernel32.QueryInformationJobObject.restype = wintypes.BOOL
+                    ok = self._kernel32.QueryInformationJobObject(
+                        self.handle, _JOB_OBJECT_BASIC_PROCESS_ID_LIST_CLASS,
+                        ctypes_mod.byref(buf), ctypes_mod.sizeof(buf), None,
+                    )
+                    assigned = buf.NumberOfAssignedProcesses
+                    if not ok:
+                        error = ctypes_mod.get_last_error()
+                        if error == _ERROR_MORE_DATA and assigned > count:
+                            count = assigned
+                            continue
+                        raise ctypes_mod.WinError(error)
+                    if assigned > count:
+                        count = assigned
+                        continue
+                    in_list = buf.NumberOfProcessIdsInList
+                    return frozenset(int(buf.ProcessIdList[i]) for i in range(in_list))
+                return None
+            except Exception:
+                self._log_failure("job_query_pid_list_failed")
+                return None
+
 
 def communicate_with_cleanup(
     proc: subprocess.Popen,
@@ -365,6 +438,49 @@ def kill_process_tree(proc: subprocess.Popen) -> None:
             proc.kill()
         except Exception:
             logger.warning("process kill failed for %s", proc.pid, exc_info=True)
+
+
+def _linux_process_group_snapshot(pgid: int) -> Optional[frozenset]:
+    """PIDs whose process group equals *pgid*, or None if `/proc` is unreadable.
+
+    T0004 §3: `pgid` is `proc.pid` itself -- `popen_kwargs` starts the CLI provider with
+    `start_new_session=True`, which makes the launcher the leader of a brand-new session
+    and process group, and `kill_process_tree` already reaps that same boundary with
+    `os.killpg(proc.pid, ...)`. A PID that exits mid-enumeration is a normal race, not a
+    failure -- it is simply skipped.
+    """
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return None
+    pids = set()
+    for name in entries:
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        try:
+            if os.getpgid(pid) == pgid:
+                pids.add(pid)
+        except (ProcessLookupError, PermissionError, OSError):
+            continue
+    return frozenset(pids)
+
+
+def process_tree_snapshot(proc: subprocess.Popen) -> Optional[frozenset]:
+    """Read-only PID-set snapshot of proc's ownership boundary (T0004 §1).
+
+    Windows reads the Job Object `owner.attach()` already assigned the process to;
+    Linux reads `/proc` + `os.getpgid()` against the launcher's own PID, the same
+    process-group boundary `kill_process_tree` uses. Any other POSIX -- and any
+    Windows run whose Job Object never attached -- has no ownership primitive to read
+    and returns None; callers must treat None as "unknown", never as "empty".
+    """
+    owner = getattr(proc, "_flowgate_process_owner", None)
+    if owner is not None:
+        return owner.process_ids()
+    if sys.platform.startswith("linux"):
+        return _linux_process_group_snapshot(proc.pid)
+    return None
 
 
 def _decode_candidates() -> tuple[str, ...]:
