@@ -1,24 +1,18 @@
 <template>
-  <teleport to="body">
-    <div
-      v-if="visible"
-      class="modal-bg"
-      tabindex="-1"
-      @keydown.escape.prevent="onClose"
-    >
-      <div class="modal-box modal-qhd" role="dialog" aria-modal="true" aria-labelledby="qhd-title">
-        <!-- Header -->
-        <div class="modal-hd">
-          <div class="modal-title" id="qhd-title">
+  <DialogShell :open="visible" variant="readonly" surface-class="dialog-qa-history-dialog"  @request-close="onClose">
+    <template #header>
+      <DialogHeader title="" :closeable="true" @close="onClose">
+        <template #title>
             <AppIcon name="question" style="color:var(--primary, #2563eb); margin-right:6px;" />{{ t('main.qa_history.title') }}
-          </div>
-          <button type="button" class="modal-close" @click="onClose">
-            <AppIcon name="x" />
-          </button>
-        </div>
+          </template>
+      </DialogHeader>
+    </template>
+
+        <!-- Header -->
+        
 
         <!-- Body -->
-        <div class="modal-bd qhd-body">
+        <div class="dialog-feature-body qhd-body">
           <p class="qhd-desc">{{ t('main.qa_history.desc') }}</p>
 
           <div v-if="items.length === 0" class="qhd-empty">{{ t('main.qa_history.empty') }}</div>
@@ -160,15 +154,23 @@
         </div>
 
         <!-- Footer -->
-        <div class="modal-ft qhd-footer">
-          <button type="button" class="btn btn-outline btn-sm" @click="onClose">{{ t('common.close') }}</button>
-        </div>
-      </div>
-    </div>
-  </teleport>
+        
+      
+
+    <template #footer>
+      <DialogFooter :actions="[
+        { id: 'onClose-0', role: 'cancel', label: t('common.close'), onSelect: () => onClose() }
+      ]">
+        <template #action-onClose-0>{{ t('common.close') }}</template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
+import DialogShell from './dialogs/DialogShell.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { QaItem } from '../composables/useQaAnswers'
@@ -304,7 +306,7 @@ function onClose() {
 </script>
 
 <style scoped>
-.modal-qhd { width: 560px; max-width: 92vw; max-height: 80vh; display: flex; flex-direction: column; }
+
 .qhd-body { overflow-y: auto; }
 .qhd-desc { font-size: .78rem; color: var(--text-m); margin-bottom: 12px; }
 .qhd-empty { padding: 24px; text-align: center; color: var(--text-m); font-size: .85rem; }
@@ -334,7 +336,7 @@ function onClose() {
 }
 .qhd-answer { display: flex; gap: 6px; align-items: flex-start; border-left: 3px solid #22c55e; margin-top: 4px; }
 .qhd-answer-icon { color: #15803d; margin-top: 2px; }
-.qhd-footer { display: flex; justify-content: flex-end; }
+
 
 /* R0001 (group 0093): inline answer form within the full view (mirrors the
    DocInfoPanel .dip-qa-form idiom). */
@@ -377,4 +379,6 @@ function onClose() {
   .qhd-body::-webkit-scrollbar-thumb { border: 3px solid #eef2f8; border-radius: 999px; background: #b8c4d6; }
   .qhd-body::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 }
+
+:global(.fg-dialog-surface.dialog-qa-history-dialog) { width: 560px; max-width: 92vw; }
 </style>

@@ -5,32 +5,38 @@
        adds the review-gate-specific parts mockup v13 화면 2 asks for: a read-only
        resolver-provider badge, a conflict-origin overlay on the real diff, and the
        conversation/approve/reject footer. -->
-  <teleport to="body">
-    <div class="modal-bg">
-      <div
-        class="modal-box document-modal document-modal--edit gmr-modal"
-        role="dialog"
-        aria-modal="true"
-        :aria-label="t('main.git_review.title')"
-      >
-        <div class="modal-hd">
-          <div class="gmr-hd-text">
-            <h2 class="modal-title"><AppIcon name="clock" /> {{ headerTitle }}</h2>
-            <p>
-              <span class="gcd-mono">{{ branch || '-' }}</span>
-              →
-              <span class="gcd-mono">{{ baseBranch || 'main' }}</span>
-              <span class="gcd-dot">·</span>
-              {{ t('main.git_review.file_count', { n: changes.length }) }}
-            </p>
-          </div>
-          <div class="modal-hd-actions">
-            <button class="modal-close" type="button" :title="t('common.close')" :aria-label="t('common.close')" @click="emit('close')">
-              <AppIcon name="x" />
-            </button>
-          </div>
-        </div>
+  <!-- flowgate.default.0560 T0022 §2.8 (5순위) - the MAIN dialog joins the common layer.
+       D0008 §6 maps it to `workflow-large`; its reject sub-dialog already moved out in 4.5순위
+       (`GitMergeRejectDialog.vue`, `form-actions`), so with this change the pair is a real
+       parent/child on one stack and L0009 §2's nested-dialog contract applies by itself - the
+       three hand-written `rejectPromptOpen` guards TR0021 §2.2 called an approximation are
+       gone (see the footer note below).
 
+       `:open="true"` is a literal for the same reason as `GroupChangesDialog`: this component
+       has never had a visible/open prop. `GitFinalizePanel.vue` and `GitStatusPanel.vue` both
+       mount it behind a `v-if`, so mounted IS open, and `DialogShell`'s `onBeforeUnmount` runs
+       `force_cleanup` when the parent takes it away. `closeOnBackdrop` is not overridden -
+       `workflow-large` defaults to `false`, as the old `.modal-bg` (no handler) was. -->
+  <DialogShell
+    ref="shellRef"
+    :open="true"
+    variant="workflow-large"
+    surface-class="gmr-review-dialog"
+    @request-close="emit('close')"
+  >
+    <template #header>
+      <DialogHeader :title="headerTitle" icon="clock" @close="onHeaderClose">
+        <template #subtitle>
+          <span class="gcd-mono">{{ branch || '-' }}</span>
+          →
+          <span class="gcd-mono">{{ baseBranch || 'main' }}</span>
+          <span class="gcd-dot">·</span>
+          {{ t('main.git_review.file_count', { n: changes.length }) }}
+        </template>
+      </DialogHeader>
+    </template>
+
+    <template #default>
         <div v-if="loading" class="gmr-state">
           <AppIcon name="spinner" spin /> {{ t('common.loading') }}
         </div>
@@ -56,7 +62,7 @@
             <span>{{ warningText }}</span>
           </p>
 
-          <div class="modal-bd gmr-modal-body">
+          <div class="gmr-modal-body">
             <div class="gcd-bd gmr-bd">
               <aside class="gcd-filelist" :aria-label="t('main.git_review.file_list')">
                 <p v-if="!changes.length" class="gcd-nomatch">{{ t('main.group_changes.no_match') }}</p>
@@ -225,7 +231,20 @@
             </div>
           </div>
 
-          <div class="modal-ft gmr-ft">
+        </template>
+    </template>
+
+    <template #footer>
+      <!-- The whole band is drawn only once the review has loaded, exactly as the old
+           `.modal-ft` (inside `<template v-else>`) was. -->
+      <template v-if="!loading && !loadError">
+          <!-- The outcome box is feature content that used to sit INSIDE `.modal-ft`. (The
+               safety note that shared this box was dropped on main -- its i18n key is gone.)
+               `DialogFooter` owns the button row only, so the box renders as its sibling here
+               and `.gmr-ft-extras` carries the band's top border and padding (dialog.css's own
+               border is dropped for this surface in the unscoped block at the bottom of this
+               file, so the band still shows exactly one rule). -->
+          <div class="gmr-ft-extras">
             <!-- 0481 T0010 rev3: [승인]이 왜 안 됐는지를 여기서 말한다. 전에는
                  성공/재검토/정합화 셋만 문장이 있었고 나머지는 사라지는 위험
                  토스트 한 줄이라, "머지는 되지도 않음"이 되었다. 파일별 진단이
@@ -252,46 +271,41 @@
                 </li>
               </ul>
             </div>
-            <div class="gmr-ft-actions">
-              <button type="button" class="btn btn-danger-ol" :disabled="busy || !canReject" @click="openRejectPrompt">
-                <AppIcon name="prohibit" /> {{ t('main.git_review.reject') }}
-              </button>
-              <button type="button" class="btn btn-primary" :disabled="busy || !canApprove" @click="approve">
-                <AppIcon name="check" /> {{ t('main.git_review.approve') }}
-              </button>
-            </div>
           </div>
+          <!-- 0560 T0022 §2.8: the extra disabled term these two buttons (and
+               the header X) used to carry is GONE. It existed because TR0021 could only
+               approximate L0009 §2 "child active 중 parent: interaction 비활성" while this dialog
+               was still a legacy `.modal-bg`. Now that both are stack members the contract does
+               it for real: the child is `stack.top()`, so this whole surface renders `inert`
+               and neither button can be reached while the reject prompt is up. -->
+          <DialogFooter :actions="actions">
+            <template #action-reject>
+              <AppIcon name="prohibit" /> {{ t('main.git_review.reject') }}
+            </template>
+            <template #action-approve>
+              <AppIcon name="check" /> {{ t('main.git_review.approve') }}
+            </template>
+          </DialogFooter>
+      </template>
+    </template>
+  </DialogShell>
 
-          <div v-if="rejectPromptOpen" class="gmr-reject-overlay">
-            <div class="gmr-reject-box">
-              <h3>{{ t('main.git_review.reject') }}</h3>
-              <label>
-                {{ t('main.git_review.reject_reason_label') }}
-                <textarea v-model="rejectReason" rows="3" maxlength="4000"></textarea>
-              </label>
-              <label>
-                {{ t('main.git_review.next_provider_label') }}
-                <AiProviderSelect
-                  :providers="providers"
-                  :model-value="selectedProvider"
-                  :loading="providerLoading"
-                  :errored="providerErrored"
-                  hide-label
-                  @update:model-value="(v) => emit('update:provider', v)"
-                />
-              </label>
-              <div class="gmr-reject-actions">
-                <button type="button" class="btn btn-secondary" @click="rejectPromptOpen = false">{{ t('common.cancel') }}</button>
-                <button type="button" class="btn btn-danger-ol" :disabled="busy || !rejectReason.trim() || !selectedProvider" @click="reject">
-                  {{ t('main.git_review.reject_confirm') }}
-                </button>
-              </div>
-            </div>
-          </div>
-        </template>
-      </div>
-    </div>
-  </teleport>
+  <!-- 0560 T0020 (4.5순위, NR0005 §13 "메인 dialog와 reject sub-dialog의 관계 재설계"):
+       the reject prompt is its own dialog on the common layer now, and it sits OUTSIDE this
+       component's `<teleport>` because DialogShell teleports to the common host itself. The
+       reason text belongs to it; the POST below stays here (D0008 §1). -->
+  <GitMergeRejectDialog
+    :open="rejectPromptOpen"
+    :busy="busy"
+    :providers="providers"
+    :selected-provider="selectedProvider"
+    :provider-loading="providerLoading"
+    :provider-errored="providerErrored"
+    :return-focus-to="rejectTrigger"
+    @update:provider="(v) => emit('update:provider', v)"
+    @close="rejectPromptOpen = false"
+    @reject="reject"
+  />
 </template>
 
 <script setup lang="ts">
@@ -302,6 +316,11 @@ import { getRequest, postRequest } from '@shared/api'
 import { resolveGitError } from '@shared/gitErrors'
 import { randomUuid } from '@shared/utils/uuid'
 import AiProviderSelect from './AiProviderSelect.vue'
+import GitMergeRejectDialog from './GitMergeRejectDialog.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogShell from './dialogs/DialogShell.vue'
+import type { DialogAction } from './dialogs/dialogTypes'
 import { useToast } from './common/useToast'
 import {
   buildDiffRows,
@@ -438,7 +457,10 @@ const diffError = ref(false)
 const messageDraft = ref('')
 const applyRequested = ref(false)
 const rejectPromptOpen = ref(false)
-const rejectReason = ref('')
+// The [반려] button that opened the sub-dialog, handed to it as `return-focus-to` so the
+// common teardown puts focus back where it came from (L0009 §4). The reason text itself is the
+// sub-dialog's own state now (T0020 §2.2).
+const rejectTrigger = ref<HTMLElement | null>(null)
 const attemptId = ref('')
 // Why the last [승인] did not merge. Cleared only when the next attempt starts.
 const approveOutcome = ref<{ status: string; errors: ApproveError[]; message?: string } | null>(null)
@@ -658,6 +680,38 @@ const heldTestOperations = computed(() => review.value?.held_test_operations ?? 
 const canApprove = computed(() => !!review.value?.can_approve)
 const canReject = computed(() => !!review.value?.can_reject)
 const canSend = computed(() => !!review.value?.can_send)
+
+const shellRef = ref<InstanceType<typeof DialogShell> | null>(null)
+
+function onHeaderClose() {
+  shellRef.value?.requestClose('header')
+}
+
+/**
+ * T0022 §2.8 - this dialog completes with one of two actions and has no cancel: the way out
+ * is the header X (and, new on the common layer, ESC), never a footer button. [반려] takes the
+ * `danger` role - a destructive action that is NOT what completes the review - and [승인] is
+ * `primary`, so `footerRolePriority` keeps the left-to-right order they already had. The
+ * `disabled` conditions are the originals MINUS `rejectPromptOpen`, which the nested dialog
+ * contract now enforces for the whole surface instead.
+ */
+const actions = computed<DialogAction[]>(() => [
+  {
+    id: 'reject',
+    label: t('main.git_review.reject'),
+    role: 'danger',
+    tone: 'danger',
+    disabled: busy.value || !canReject.value,
+    onSelect: openRejectPrompt,
+  },
+  {
+    id: 'approve',
+    label: t('main.git_review.approve'),
+    role: 'primary',
+    disabled: busy.value || !canApprove.value,
+    onSelect: approve,
+  },
+])
 
 const REVIEW_STATE_LABELS: Record<string, string> = {
   resolved_pending_review: 'pending',
@@ -992,13 +1046,43 @@ async function approve() {
   }
 }
 
+/**
+ * The trigger is a `DialogFooter` button now, so there is no `MouseEvent` whose
+ * `currentTarget` can be read. `DialogFooter` stamps `data-dialog-action-id` on every button
+ * it renders, and that is the same element the old `currentTarget` was - so the focus-return
+ * target is found by that attribute instead (L0009 §4 "focus 복귀").
+ */
 function openRejectPrompt() {
-  rejectReason.value = ''
+  rejectTrigger.value = document.querySelector<HTMLElement>('[data-dialog-action-id="reject"]')
   rejectPromptOpen.value = true
 }
 
-async function reject() {
-  const reason = rejectReason.value.trim()
+/**
+ * Focus return, re-asserted one tick later.
+ *
+ * The common teardown restores focus synchronously inside `finalize_dialog_once`, at a moment
+ * when this surface is still carrying `inert`: the stack entry has already been removed, but
+ * the attribute is a rendered binding and Vue has not flushed that render yet. An element
+ * inside an inert subtree cannot take focus in a real browser, so the restore would land
+ * nowhere. Asking again after `nextTick` - when the attribute is gone - is idempotent: if the
+ * first attempt worked, this focuses the very same element, and if the dialog closed for good
+ * the trigger is detached and `focus()` is a no-op.
+ */
+watch(rejectPromptOpen, async (open) => {
+  if (open) return
+  const trigger = rejectTrigger.value
+  if (trigger == null) return
+  await nextTick()
+  if (document.activeElement === trigger) return
+  try {
+    trigger.focus()
+  } catch {
+    // Best effort; a focus failure must never break closing the reject prompt.
+  }
+})
+
+async function reject(rawReason: string) {
+  const reason = rawReason.trim()
   if (!reason || !props.selectedProvider || busy.value) return
   busy.value = true
   try {
@@ -1039,54 +1123,11 @@ onBeforeUnmount(stopPolling)
 </script>
 
 <style scoped>
-/* Shared with GroupChangesDialog.vue (styles are `scoped`, so duplicated rather
-   than imported — same class names, two independent components). */
-.gcd-mono { font-family: var(--mono, ui-monospace, monospace); }
-.gcd-dot { margin: 0 5px; }
-.gcd-retry {
-  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; padding: 7px 11px;
-  font-size: 0.74rem; border: 1px solid var(--border, #e2e8f0); border-radius: 8px;
-  background: var(--bg, #fff); color: inherit; cursor: pointer;
-}
-.gcd-bd { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); }
-.gcd-filelist { min-height: 0; overflow: auto; padding: 8px; border-right: 1px solid var(--border, #e2e8f0); background: #f8fafc; }
-.gcd-nomatch { margin: 12px 6px; font-size: 0.74rem; color: var(--text-m, #64748b); }
-.gcd-file {
-  width: 100%; display: flex; flex-direction: column; gap: 3px; padding: 8px 9px; margin-bottom: 5px;
-  border: 1px solid transparent; border-radius: 8px; background: transparent; color: inherit; text-align: left; cursor: pointer;
-}
-.gcd-file:hover, .gcd-file.active { border-color: #bfdbfe; background: #fff; }
-.gcd-file-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.gcd-file-name { overflow-wrap: anywhere; font: 600 0.75rem var(--mono, ui-monospace, monospace); }
-.gcd-file-dir { font: 0.66rem var(--mono, ui-monospace, monospace); color: var(--text-m, #64748b); overflow-wrap: anywhere; }
-.gcd-badge {
-  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
-  width: 16px; height: 16px; border-radius: 4px; font-size: 0.62rem; font-weight: 700;
-}
-.gcd-badge-added { background: var(--success-bg, #dcfce7); color: var(--success, #15803d); }
-.gcd-badge-modified { background: var(--warning-bg, #fef3c7); color: var(--warning, #b45309); }
-.gcd-badge-deleted { background: var(--danger-bg, #fee2e2); color: var(--danger, #b91c1c); }
-.gcd-diffwrap { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.gcd-diff-hd { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--border, #e2e8f0); }
-.gcd-diff-path {
-  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font: 700 0.76rem var(--mono, ui-monospace, monospace);
-}
-.gcd-diff-state { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 0.82rem; color: var(--text-m, #64748b); }
-.gcd-diff-error { flex-direction: column; }
-.gcd-diff { flex: 1 1 auto; min-height: 0; overflow: auto; font: 0.76rem/1.55 var(--mono, ui-monospace, monospace); tab-size: 2; background: #fff; }
-.gcd-gap {
-  padding: 3px 12px; color: var(--text-m, #64748b); background: #f1f5f9;
-  border-top: 1px solid var(--border, #e2e8f0); border-bottom: 1px solid var(--border, #e2e8f0); font-size: 0.71rem;
-}
-.gcd-line { display: grid; grid-template-columns: 46px 46px 14px minmax(0, 1fr); }
-.gcd-ln { padding: 0 6px; text-align: right; color: var(--text-m, #94a3b8); background: #f8fafc; user-select: none; font-size: 0.7rem; }
-.gcd-sign { text-align: center; color: var(--text-m, #94a3b8); }
-.gcd-text { padding: 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.gcd-line-add, .gcd-text.gcd-line-add { background: #ecfdf5; }
-.gcd-line-del, .gcd-text.gcd-line-del { background: #fef2f2; }
+@import './dialogs/gitDiffFileList.css';
 
-.gmr-hd-text p { margin: 3px 0 0; font-size: 0.78rem; color: var(--text-m); display: flex; align-items: center; gap: 6px; }
+/* `.gmr-hd-text` left with the old header markup: the title and the branch summary are
+   `DialogHeader`'s `title` and `subtitle` elements now (T0022 §2.7 made the same move in
+   `GroupChangesDialog.vue`). */
 .gmr-state { flex: 1; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 40px; color: var(--text-m); }
 .gmr-state-error { flex-direction: column; }
 .gmr-provider-badge {
@@ -1155,27 +1196,45 @@ onBeforeUnmount(stopPolling)
 .gmr-held-tests strong { display: block; margin-bottom: 3px; }
 .gmr-held-note { margin: 0 0 6px; color: #92400e; }
 .gmr-held-tests ul { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 2px; }
-.gmr-ft { flex-direction: column; align-items: stretch; gap: 8px; }
+/* The feature half of the old `.modal-ft` band. `DialogFooter` draws the button row directly
+   under this box and its own `border-top` is suppressed for this surface (unscoped block at
+   the bottom of the file), so the band still shows exactly one rule above it. */
+.gmr-ft-extras {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 12px 20px 0;
+  border-top: 1px solid var(--border);
+}
 .gmr-approve-outcome {
   border: 1px solid var(--danger, #dc2626); border-radius: 8px;
   background: #fef2f2; color: #991b1b; padding: 9px 11px;
 }
 .gmr-approve-outcome-hd { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 0.78rem; font-weight: 600; }
 .gmr-approve-outcome-list { margin: 6px 0 0; padding-left: 18px; font-size: 0.72rem; line-height: 1.55; }
-.gmr-ft-actions { display: flex; justify-content: flex-end; gap: 10px; }
-.gmr-reject-overlay {
-  position: fixed; inset: 0; z-index: 1500; display: flex; align-items: center; justify-content: center;
-  background: rgba(15, 23, 42, 0.46);
+/* 0560 T0020: the reject sub-dialog's own overlay/box/actions rules left with it — the
+   common layer paints all four now (`form-actions`, `md` surface), and its two fields are
+   styled in `GitMergeRejectDialog.vue`.
+   0560 T0022 §2.8: `.gmr-ft-actions` left too - the button row is `DialogFooter`'s. */
+</style>
+
+<!--
+  Unscoped: `surface-class` lands on the dialog surface, which `DialogShell` renders and
+  teleports out of this component's subtree, so a scoped rule could never reach it. The only
+  thing it does is hand the footer band's single top border to `.gmr-ft-extras`, which sits
+  above the button row and used to be inside the same `.modal-ft` box.
+-->
+<style>
+/* The width `.document-modal--edit` measured, kept rather than widened to the `xl` 1180px the
+   variant would otherwise give (T0018 made the same choice for `DocumentEditDialog`). */
+.fg-dialog-surface.gmr-review-dialog {
+  width: min(1120px, 94vw);
 }
-.gmr-reject-box {
-  width: min(480px, calc(100vw - 48px)); display: flex; flex-direction: column; gap: 10px;
-  padding: 18px; border-radius: 8px; background: var(--bg, #fff); color: var(--text);
-  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.3);
+
+.fg-dialog-surface.gmr-review-dialog .fg-dialog-footer {
+  border-top: none;
+  padding-top: 8px;
 }
-.gmr-reject-box h3 { margin: 0; font-size: 1rem; }
-.gmr-reject-box label { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; }
-.gmr-reject-box textarea {
-  padding: 8px; border: 1px solid var(--border, #cbd5e1); border-radius: 6px; font: inherit; font-size: 0.8rem;
-}
-.gmr-reject-actions { display: flex; justify-content: flex-end; gap: 8px; }
 </style>

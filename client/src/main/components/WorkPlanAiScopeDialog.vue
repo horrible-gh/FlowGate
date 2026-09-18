@@ -1,11 +1,35 @@
 <template>
-  <div v-if="visible" class="wp-ai-scope" role="dialog" aria-modal="true">
-    <div class="wp-ai-scope-card">
-      <header>
-        <h3>{{ t('main.work_plan.ai_scope_title') }}</h3>
-        <p>{{ t('main.work_plan.ai_scope_intro') }}</p>
-      </header>
+  <!-- flowgate.default.0560 T0018 (4순위, NR0011 원장 ID 32) on the common dialog layer;
+       D0008 maps this instance to `compact`.
+       T0018 §2.3-7: this was one of the four overlays that never used Teleport — it was
+       `position: absolute; inset: 0; z-index: 30` inside the WorkPlanEditor panel, so it
+       dimmed that panel and nothing else. L0009 §2 "Teleport" sends every common dialog to
+       one host, so it is a viewport-wide overlay from here on. That change is accepted
+       rather than worked around: this dialog is already `aria-modal`, it blocks the whole
+       editor while it is up, and a per-instance containment surface would be a D0008/L0009
+       change, which this T does not authorise. The before/after coordinates are measured in
+       `tests/browser/dialog-local-overlay-geometry.0560.mjs`.
+       `:close-on-backdrop="false"` stays explicit (T0018 §2.2-3): NR0011 records this
+       overlay as BD=X. `compact` defaults to `false` too since 0560 T0035, so this now
+       restates rather than overrides the table.
+       `size="lg"` keeps the 720px-class card this dialog measured (`min(760px, 100%)`). -->
+  <DialogShell
+    :open="visible"
+    variant="compact"
+    size="lg"
+    surface-class="work-plan-ai-scope-dialog"
+    :close-on-backdrop="false"
+    @request-close="emit('close')"
+  >
+    <template #header>
+      <DialogHeader
+        :title="t('main.work_plan.ai_scope_title')"
+        :subtitle="t('main.work_plan.ai_scope_intro')"
+        @close="emit('close')"
+      />
+    </template>
 
+    <template #default>
       <section>
         <div class="scope-heading">
           <strong>{{ t('main.work_plan.ai_scope_quantities') }}</strong>
@@ -48,22 +72,22 @@
         </div>
       </section>
 
-      <footer>
-        <button type="button" class="btn btn-secondary" @click="emit('close')">{{ t('common.cancel') }}</button>
-        <button type="button" class="btn btn-outline" :disabled="providerIds.size === 0 || busy" @click="emitScope('project-map')">
-          {{ t('main.work_plan.ai_scope_project_map') }}
-        </button>
-        <button type="button" class="btn btn-primary" :disabled="providerIds.size === 0 || busy" @click="emitScope('ai')">
-          {{ t('main.work_plan.ai_scope_delegate') }}
-        </button>
-      </footer>
-    </div>
-  </div>
+    </template>
+
+    <template #footer>
+      <DialogFooter :actions="scopeActions" />
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+
+import DialogFooter from './dialogs/DialogFooter.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogShell from './dialogs/DialogShell.vue'
+import type { DialogAction } from './dialogs/dialogTypes'
 
 export interface WorkPlanScope {
   quantity_type_codes: string[]
@@ -104,6 +128,41 @@ function selectAllSteps() {
 function selectAllProviders() {
   providerIds.value = new Set(props.candidates.map((provider) => provider.provider_id))
 }
+/**
+ * `[프로젝트맵] [취소] [AI 위임]`.
+ *
+ * The painted order changes here, and that is the point: this footer used to read
+ * `[취소] [프로젝트맵] [위임]`, with cancel stranded away from the primary button — one of
+ * the arrangements R0001 reported. `footerRolePriority` now sorts `aux → cancel → primary`
+ * before rendering, so 취소 sits immediately left of the primary action (DS0007 / D0008 §6)
+ * and no edit to this array can move it back.
+ *
+ * 프로젝트맵 is `aux`: it fills the plan from the project map instead of delegating, a
+ * secondary helper that leaves the dialog's own job (delegate) to the primary button.
+ */
+const scopeActions = computed<DialogAction[]>(() => [
+  {
+    id: 'cancel',
+    label: t('common.cancel'),
+    role: 'cancel',
+    onSelect: () => emit('close'),
+  },
+  {
+    id: 'project-map',
+    label: t('main.work_plan.ai_scope_project_map'),
+    role: 'aux',
+    disabled: providerIds.value.size === 0 || props.busy === true,
+    onSelect: () => emitScope('project-map'),
+  },
+  {
+    id: 'delegate',
+    label: t('main.work_plan.ai_scope_delegate'),
+    role: 'primary',
+    disabled: providerIds.value.size === 0 || props.busy === true,
+    onSelect: () => emitScope('ai'),
+  },
+])
+
 function emitScope(kind: 'project-map' | 'ai') {
   const scope: WorkPlanScope = {
     quantity_type_codes: [...quantityCodes.value],
@@ -116,11 +175,11 @@ function emitScope(kind: 'project-map' | 'ai') {
 </script>
 
 <style scoped>
-.wp-ai-scope { position:absolute; inset:0; z-index:30; display:flex; align-items:center; justify-content:center; padding:18px; background:rgba(15,23,42,.38); }
-.wp-ai-scope-card { width:min(760px,100%); max-height:calc(100% - 24px); overflow:auto; padding:18px; border:1px solid var(--border-d); border-radius:var(--r); background:var(--surface); box-shadow:0 16px 40px rgba(15,23,42,.22); }
-header h3 { margin:0; font-size:1rem; }
-header p { margin:5px 0 14px; color:var(--text-m); font-size:.76rem; }
+/* The overlay, the card, the title block and the footer row all belong to the common
+   dialog layer now (T0018). Only the scope body's own controls are left here.
+   `section:first-child` has no top margin because the shell's body already pads it. */
 section { margin-top:12px; }
+section:first-child { margin-top:0; }
 .scope-heading { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; font-size:.76rem; }
 .scope-heading span { display:flex; gap:4px; }
 .scope-heading button { padding:2px 8px; border:1px solid var(--border); border-radius:var(--r-sm); background:var(--surface); color:var(--text-m); cursor:pointer; }

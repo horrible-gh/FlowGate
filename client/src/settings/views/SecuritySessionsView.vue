@@ -16,11 +16,12 @@
 import { onMounted,ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { deleteRequest,getRequest,postRequest } from '@shared/api'
+import { confirm } from '../../main/composables/useDialogStack'
 interface Session {session_id:string;device_label:string|null;ip_display:string|null;created_at:string;last_used_at:string;is_current:boolean}
 const {t,locale}=useI18n(); const sessions=ref<Session[]>([]); const loading=ref(true); const busy=ref(false); const error=ref('')
 const load=async()=>{loading.value=true;error.value='';try{sessions.value=(await getRequest<{sessions:Session[]}>('/auth/sessions')).data.sessions}catch{error.value=t('settings.security_sessions.failed')}finally{loading.value=false}}
 const revoke=async(id:string)=>{busy.value=true;try{await deleteRequest('/auth/sessions/'+encodeURIComponent(id))}catch(e:any){if(e?.response?.status!==404)error.value=t('settings.security_sessions.failed')}finally{busy.value=false;await load()}}
-const revokeOthers=async()=>{if(!window.confirm(t('settings.security_sessions.confirm')))return;busy.value=true;try{await postRequest('/auth/sessions/revoke-others',{})}catch{error.value=t('settings.security_sessions.failed')}finally{busy.value=false;await load()}}
+const revokeOthers=async()=>{if(!await confirm({title:t('settings.security_sessions.confirm'),danger:true}))return;busy.value=true;try{await postRequest('/auth/sessions/revoke-others',{})}catch{error.value=t('settings.security_sessions.failed')}finally{busy.value=false;await load()}}
 const formatDate=(value:string)=>new Intl.DateTimeFormat(locale.value,{dateStyle:'medium',timeStyle:'short'}).format(new Date(value))
 onMounted(load)
 </script>

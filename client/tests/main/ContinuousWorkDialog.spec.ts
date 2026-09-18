@@ -79,7 +79,7 @@ describe('ContinuousWorkDialog', () => {
     expect((document.querySelectorAll('.cwd-mode input')[0] as HTMLInputElement).checked).toBe(true)
     expect((steps[3] as HTMLButtonElement).disabled).toBe(false)
     // Default target = last step → whole remaining sequence; [Next] is enabled.
-    const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+    const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
     expect(next.disabled).toBe(false)
   })
 
@@ -116,7 +116,7 @@ describe('ContinuousWorkDialog', () => {
     ;(afterSteps[2] as HTMLButtonElement).click()
     await flushPromises()
 
-    const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+    const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
     next.click()
     await flushPromises()
     const payload = wrapper.emitted('confirm')![0][0] as any
@@ -142,7 +142,7 @@ describe('ContinuousWorkDialog', () => {
     await flushPromises()
     expect(document.querySelectorAll('.wsp-step--target')[0]).toBe(steps[5])
 
-    const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+    const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
     next.click()
     await flushPromises()
     const payload2 = wrapper.emitted('confirm')![0][0] as any
@@ -172,7 +172,7 @@ describe('ContinuousWorkDialog', () => {
     autoRadio.dispatchEvent(new Event('change'))
     await flushPromises()
 
-    const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+    const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
     next.click()
     await flushPromises()
     const payload = wrapper.emitted('confirm')![0][0] as any
@@ -249,7 +249,7 @@ describe('ContinuousWorkDialog', () => {
       i18n.global.t('main.continuous_work.all_done_note'),
     )
     // Nothing left to continue → [Next] disabled, review-mode toggle hidden.
-    const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+    const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
     expect(next.disabled).toBe(true)
     expect(document.querySelector('.cwd-toggle')).toBeNull()
 
@@ -271,7 +271,7 @@ describe('ContinuousWorkDialog', () => {
     toggle.dispatchEvent(new Event('change'))
     await flushPromises()
 
-    const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+    const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
     next.click()
     await flushPromises()
 
@@ -301,7 +301,7 @@ describe('ContinuousWorkDialog', () => {
     const steps = document.querySelectorAll('.wsp-step')
     expect(steps).toHaveLength(1)
 
-    const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+    const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
     expect(next.disabled).toBe(false)
     next.click()
     await flushPromises()
@@ -340,7 +340,7 @@ describe('ContinuousWorkDialog', () => {
     expect(steps).toHaveLength(1)
 
     // [Next] is enabled and confirm emits the run-to-end sentinel + fromDecision flag.
-    const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+    const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
     expect(next.disabled).toBe(false)
     next.click()
     await flushPromises()
@@ -423,7 +423,7 @@ describe('ContinuousWorkDialog', () => {
       expect((steps[2] as HTMLButtonElement).disabled).toBe(true)
       expect(steps[2].querySelector('.wsp-step-tag--auto')).not.toBeNull()
 
-      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
       next.click()
       await flushPromises()
       const payload = wrapper.emitted('confirm')![0][0] as any
@@ -450,7 +450,7 @@ describe('ContinuousWorkDialog', () => {
       const steps = document.querySelectorAll('.wsp-step')
       expect((steps[2] as HTMLButtonElement).disabled).toBe(false)
 
-      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
       next.click()
       await flushPromises()
       const payload = wrapper.emitted('confirm')![0][0] as any
@@ -481,7 +481,7 @@ describe('ContinuousWorkDialog', () => {
       const steps = document.querySelectorAll('.wsp-step')
       expect(document.querySelectorAll('.wsp-step--target')[0]).toBe(steps[3])
 
-      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
       next.click()
       await flushPromises()
       const payload = wrapper.emitted('confirm')![0][0] as any
@@ -510,7 +510,7 @@ describe('ContinuousWorkDialog', () => {
       autoRadio.dispatchEvent(new Event('change'))
       await flushPromises()
 
-      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
       next.click()
       await flushPromises()
       const payload = wrapper.emitted('confirm')![0][0] as any
@@ -594,7 +594,7 @@ describe('ContinuousWorkDialog', () => {
     selects[0].dispatchEvent(new Event('change'))
     await flushPromises()
 
-    const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+    const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
     next.click()
     await flushPromises()
 
@@ -655,7 +655,7 @@ describe('ContinuousWorkDialog', () => {
     expect(document.querySelectorAll('.wsp-prov-tag')).toHaveLength(0)
     expect(document.querySelectorAll('.wsp-step').length).toBeGreaterThan(0)
 
-    const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+    const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
     next.click()
     await flushPromises()
 
@@ -722,7 +722,7 @@ describe('ContinuousWorkDialog', () => {
       rowInputs[0].dispatchEvent(new Event('input'))
       await flushPromises()
 
-      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
       next.click()
       await flushPromises()
 
@@ -746,7 +746,7 @@ describe('ContinuousWorkDialog', () => {
       rowInputs[0].dispatchEvent(new Event('input'))
       await flushPromises()
 
-      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
       next.click()
       await flushPromises()
 
@@ -783,7 +783,7 @@ describe('ContinuousWorkDialog', () => {
       rowInputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
       expect(rowInputs).toHaveLength(1)
 
-      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
       next.click()
       await flushPromises()
       expect((wrapper.emitted('confirm')![0][0] as any).messageOverrides).toEqual({})
@@ -852,7 +852,7 @@ describe('ContinuousWorkDialog', () => {
       expect(rowInputs[0].value).toBe('결제 실패 케이스도 문서화해줘')
       expect(rowInputs[1].value).toBe('')
 
-      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
       next.click()
       await flushPromises()
       const payload = wrapper.emitted('confirm')![0][0] as any
@@ -878,7 +878,7 @@ describe('ContinuousWorkDialog', () => {
         i18n.global.t('main.continuous_work.note_unset', { n: 1 }),
       )
       // Informational only — [Next] stays enabled.
-      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
       expect(next.disabled).toBe(false)
 
       wrapper.unmount()
@@ -896,7 +896,7 @@ describe('ContinuousWorkDialog', () => {
       rowInputs[0].dispatchEvent(new Event('input'))
       await flushPromises()
 
-      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
       next.click()
       await flushPromises()
       const payload = wrapper.emitted('confirm')![0][0] as any
@@ -949,7 +949,7 @@ describe('ContinuousWorkDialog', () => {
     expect(selects).toHaveLength(3)
     expect(selects[0].value).toBe('aip_opus')
 
-    const next = document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement
+    const next = document.querySelector('[data-dialog-action-role="primary"]') as HTMLButtonElement
     next.click()
     await flushPromises()
     const payload = wrapper.emitted('confirm')![0][0] as any
@@ -984,7 +984,7 @@ describe('ContinuousWorkDialog', () => {
       expect(select.querySelectorAll('option')).toHaveLength(7)
       expect(select.value).toBe('120')
 
-      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
       next.click()
       await flushPromises()
 
@@ -1006,7 +1006,7 @@ describe('ContinuousWorkDialog', () => {
 
       expect(select.value).toBe('240')
 
-      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
       next.click()
       await flushPromises()
 
@@ -1062,7 +1062,7 @@ describe('ContinuousWorkDialog', () => {
       expect(select.querySelectorAll('option')).toHaveLength(5)
       expect(select.value).toBe('1')
 
-      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
       next.click()
       await flushPromises()
 
@@ -1084,7 +1084,7 @@ describe('ContinuousWorkDialog', () => {
 
       expect(select.value).toBe('-1')
 
-      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
       next.click()
       await flushPromises()
 
@@ -1104,7 +1104,7 @@ describe('ContinuousWorkDialog', () => {
       await select.dispatchEvent(new Event('change'))
       await flushPromises()
 
-      const next = [...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement
+      const next = [...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement
       next.click()
       await flushPromises()
 

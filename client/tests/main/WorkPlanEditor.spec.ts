@@ -178,6 +178,43 @@ beforeEach(() => {
 })
 
 describe('WorkPlanEditor', () => {
+  // flowgate.default.0560 T0018 (4순위, NR0011 원장 ID 45): the raw view moved onto the common
+  // dialog layer. It has no footer and gets none (§2.2-2) — [복사] stays in the title bar through
+  // DialogHeader's `actions` slot, and the separate [닫기] button is now the header X that D0008
+  // §2 assigns to DialogHeader, so the close control keeps its place and there is exactly one.
+  it('raw view — 공통 dialog 계층 위의 머리줄 [복사] + X, footer 없음', async () => {
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    const rawButton = wrapper.findAll('.card-hd .card-actions button')
+      .find((button) => button.text().includes('원문 보기'))!
+    expect(rawButton).toBeTruthy()
+    await rawButton.trigger('click')
+    await flushPromises()
+
+    const dialog = wrapper.get('.work-plan-raw-dialog')
+    expect(dialog.find('.wp-raw-content').text()).toContain('"wp_version"')
+    // The two controls are the header's, and there is no footer to have invented.
+    const headerButtons = dialog.findAll('.fg-dialog-header__actions button')
+    expect(headerButtons).toHaveLength(2)
+    expect(headerButtons[0].text()).toContain('복사')
+    expect(headerButtons[1].classes()).toContain('fg-dialog-header__close')
+    expect(dialog.find('.fg-dialog-footer').exists()).toBe(false)
+
+    // NR0011 records BD=X, so the override stays explicit — a backdrop press+release leaves
+    // it standing (T0018 §2.2-3). `readonly` defaults `closeOnBackdrop` to false too since
+    // 0560 T0035, so this now restates the table rather than overriding it.
+    const overlay = wrapper.get('.fg-dialog-overlay').element
+    overlay.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    overlay.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    await flushPromises()
+    expect(wrapper.find('.work-plan-raw-dialog').exists()).toBe(true)
+
+    await headerButtons[1].trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.work-plan-raw-dialog').exists()).toBe(false)
+  })
+
   // 0399 M0020 — 편집기가 갖고 있던 전면 적용 미리보기 오버레이는 걷어냈다. 그것을 열던
   // 액션바 단추도 함께 없앴고, 편집기는 이제 그 창을 열 길 자체를 노출하지 않는다.
   it('적용 미리보기 오버레이도, 그것을 여는 길도 남아 있지 않다', async () => {
@@ -439,7 +476,9 @@ describe('WorkPlanEditor', () => {
     // The AI scope's [all] domain is the same registered-all set, not the two candidates.
     const aiButton = wrapper.findAll('.wp-toolbar button').find((button) => button.text().includes('AI 제안'))!
     await aiButton.trigger('click')
-    const aiScopeText = wrapper.get('.wp-ai-scope').text()
+    // T0018 (4순위): the scope dialog is a common dialog now — `surface-class` is the stable
+    // hook that replaces the old `.wp-ai-scope` overlay class.
+    const aiScopeText = wrapper.get('.work-plan-ai-scope-dialog').text()
     expect(aiScopeText).toContain('Gemini Pro')
     console.info(`WORK_PLAN_PROVIDER_DOM=${JSON.stringify({ stepProviderOptions, aiScopeText })}`)
   })

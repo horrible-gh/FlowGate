@@ -1,17 +1,16 @@
 <template>
-  <teleport to="body">
-    <div class="modal-bg" role="dialog" aria-modal="true">
-      <div class="modal-box">
-        <div class="modal-hd">
-          <span class="modal-title">
+  <DialogShell :open="true" variant="form" surface-class="dialog-new-related-doc-modal"  @request-close="$emit('close')">
+    <template #header>
+      <DialogHeader title="" :closeable="true" @close="$emit('close')">
+        <template #title>
             <AppIcon name="plus" style="color:var(--primary);" /> {{ t('main.new_related_doc_modal.title') }}
-          </span>
-          <button class="modal-close" type="button" @click="$emit('close')">
-            <AppIcon name="x" />
-          </button>
-        </div>
+          </template>
+      </DialogHeader>
+    </template>
 
-        <div class="modal-bd">
+        
+
+        <div class="dialog-feature-body">
           <form @submit.prevent="submit">
             <!-- Document type -->
             <div class="form-group">
@@ -77,8 +76,9 @@
           </form>
         </div>
 
-        <div class="modal-ft">
-          <div
+        
+      
+<div
             v-if="flashMessage"
             :class="['alert', flashOk ? 'alert-success' : 'alert-danger']"
             style="width:100%; margin-bottom:12px;"
@@ -86,22 +86,29 @@
             <AppIcon :name="flashOk ? 'check' : 'warning'" />
             <span>{{ flashMessage }}</span>
           </div>
-          <button class="btn btn-secondary" type="button" @click="$emit('close')">{{ t('common.cancel') }}</button>
-          <button class="btn btn-primary" type="button" :disabled="submitting" @click="submit">
+    <template #footer>
+      <DialogFooter :actions="[
+        { id: 'action-0', role: 'cancel', label: t('common.cancel'), onSelect: () => { $emit('close') } },
+        { id: 'submit-1', role: 'primary', label: t('main.new_related_doc_modal.create'), onSelect: () => submit(), disabled: submitting }
+      ]">
+        <template #action-action-0>{{ t('common.cancel') }}</template>
+        <template #action-submit-1>
             <span v-if="submitting">
               <AppIcon name="spinner" spin /> {{ t('main.new_related_doc_modal.creating') }}
             </span>
             <span v-else>
               <AppIcon name="plus" /> {{ t('main.new_related_doc_modal.create') }}
             </span>
-          </button>
-        </div>
-      </div>
-    </div>
-  </teleport>
+          </template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
+import DialogShell from './dialogs/DialogShell.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
 import AppIcon from '@shared/AppIcon.vue'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'

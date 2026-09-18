@@ -81,29 +81,17 @@
       </button>
     </div>
 
-    <!-- "관제소" — the project Git status panel, reached from the safety-net menu. -->
-    <teleport to="body">
-      <div v-if="panelOpen" class="modal-bg">
-        <div class="modal-box git-panel-modal">
-          <div class="modal-hd">
-            <span class="modal-title">
-              <AppIcon name="tree-structure" style="color:var(--text-m);" />
-              {{ t('main.git_status.title') }}
-            </span>
-            <button class="modal-close" type="button" @click="panelOpen = false">
-              <AppIcon name="x" />
-            </button>
-          </div>
-          <div class="modal-bd git-panel-modal-bd">
-            <GitStatusPanel
-              v-if="projectId"
-              :project-id="projectId || ''"
-              @open-group="openGroup"
-            />
-          </div>
-        </div>
-      </div>
-    </teleport>
+    <!-- "관제소" — the project Git status panel, reached from the safety-net menu
+         (NR0011 원장 ID 39). T0018 put it on the common dialog layer; 0560 T0020 (4.5순위)
+         took the common-shell block out of this file into its own component, which is the
+         half of D0008 §4 the 4순위 step left undone. What stays here is exactly what D0008 §4
+         leaves with the parent: the open flag and the project id handed down. -->
+    <GitStatusPanelDialog
+      :open="panelOpen"
+      :project-id="projectId"
+      @close="panelOpen = false"
+      @open-group="openGroup"
+    />
 
     <!-- 0177 0007-CH: base_dirty 409 → operator chooses commit / revert / cancel
          (no silent auto-commit) before the finalize retries. -->
@@ -125,7 +113,7 @@ import { useProjectStore } from '../stores/project'
 import { useTabsStore } from '../stores/tabs'
 import { useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import { useToast } from './common/useToast'
-import GitStatusPanel from './GitStatusPanel.vue'
+import GitStatusPanelDialog from './GitStatusPanelDialog.vue'
 import GitBaseDirtyDialog from './GitBaseDirtyDialog.vue'
 import GitUntrackedConflictDialog from './GitUntrackedConflictDialog.vue'
 
@@ -487,13 +475,5 @@ watch(projectId, fetchStatus)
 .badge-red {
   background: #fef2f2;
   color: #b91c1c;
-}
-.git-panel-modal {
-  max-width: 620px;
-  width: 100%;
-}
-.git-panel-modal-bd {
-  max-height: 70vh;
-  overflow-y: auto;
 }
 </style>

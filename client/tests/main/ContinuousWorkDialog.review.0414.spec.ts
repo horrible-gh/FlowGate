@@ -138,7 +138,7 @@ async function setSelect(select: HTMLSelectElement, value: string) {
 }
 
 async function proceed() {
-  ;([...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement).click()
+  ;([...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement).click()
   await flushPromises()
 }
 

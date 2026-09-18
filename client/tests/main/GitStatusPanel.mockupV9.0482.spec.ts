@@ -10,6 +10,17 @@ vi.mock('@shared/api', () => ({
   default: { head: vi.fn(), get: vi.fn(), post: vi.fn(), patch: vi.fn() }, getRequest, postRequest,
 }))
 vi.mock('@main/components/common/useToast', () => ({ useToast: () => ({ showToast: vi.fn() }) }))
+const { dialogConfirm } = vi.hoisted(() => ({
+  dialogConfirm: vi.fn((options: { title: string }) => Promise.resolve(window.confirm(options.title))),
+}))
+// flowgate.default.0560 T0018 (4순위): a whole-module replacement used to be harmless here —
+// only `confirm()` was reached for. Now that screens in these trees render a real DialogShell,
+// the module also has to keep supplying the stack itself (`nextDialogInstanceId`,
+// `registerDialog`, …), so only `confirm` is swapped and the rest stays real.
+vi.mock('@main/composables/useDialogStack', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  confirm: dialogConfirm,
+}))
 
 const GROUP = 'flowgate.default.0482'
 const conflictPaths = Array.from({ length: 12 }, (_, i) => `conflict/file-${i + 1}.ts`)

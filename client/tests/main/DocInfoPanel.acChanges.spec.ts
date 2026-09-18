@@ -174,24 +174,26 @@ describe('DocInfoPanel source-change summary (0325 R0001)', () => {
     const open = wrapper.find('.dip-chg-open')
     expect(open.exists()).toBe(true)
     expect(open.text()).toContain('Open changes')
-    // Nothing is fetched or mounted until it is actually clicked.
-    expect(wrapper.find('.modal-box.document-modal.document-modal--edit').exists()).toBe(false)
+    // Nothing is fetched or mounted until it is actually clicked. 0560 T0022 §2.7 moved the
+    // viewer onto the common layer, so the shell to look for is the `workflow-large` surface
+    // rather than `.modal-box.document-modal--edit`; the lazy-mount contract is the same one.
+    const viewer = () => wrapper.find('[data-dialog-variant="workflow-large"]')
+    expect(viewer().exists()).toBe(false)
     expect(getRequest).not.toHaveBeenCalledWith(expect.stringContaining('/diff?path='))
 
     await open.trigger('click')
     await flushPromises()
 
-    const dialog = wrapper.find('.modal-box.document-modal.document-modal--edit')
-    expect(dialog.exists()).toBe(true)
+    expect(viewer().exists()).toBe(true)
     // The viewer gets the file set the summary already loaded — no second /changes call.
     expect(wrapper.findAll('.gcd-file')).toHaveLength(CHANGES.length)
-    expect(dialog.text()).toContain('flowgate_default_0325')
+    expect(viewer().text()).toContain('flowgate_default_0325')
     expect(getRequest).toHaveBeenCalledWith(expect.stringContaining('/diff?path='))
 
     // Closing returns to the approval screen with the summary still in place.
-    await wrapper.find('.gcd-back').trigger('click')
+    await wrapper.find('[data-dialog-action-id="back"]').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.modal-box.document-modal.document-modal--edit').exists()).toBe(false)
+    expect(viewer().exists()).toBe(false)
     expect(wrapper.find('.dip-chg-headline').exists()).toBe(true)
   })
 

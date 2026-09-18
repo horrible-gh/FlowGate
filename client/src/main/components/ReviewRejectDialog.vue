@@ -1,110 +1,106 @@
 <template>
-  <teleport to="body">
-    <div
-      v-if="visible"
-      ref="overlayRef"
-      class="modal-bg"
-      tabindex="-1"
-      @keydown.escape.prevent="onClose"
-    >
-      <div class="modal-box modal-rrd" role="dialog" aria-modal="true" aria-labelledby="rrd-title">
+  <!-- flowgate.default.0560 T0016 §2.2 (2단계) — migrated onto the common dialog layer.
+       D0008 "기존 instance 이관 목적지" maps this instance to `form-actions`.
+       `size="lg"`: the variant default (md, 520px) would undo 0419 T0006, which widened
+       this box from 480px to 620px precisely because a long rejection reason did not fit;
+       lg (720px) is the nearest size that never re-narrows it. -->
+  <DialogShell
+    ref="shellRef"
+    :open="visible"
+    variant="form-actions"
+    size="lg"
+    @request-close="onClose"
+    @opened="onOpened"
+  >
+    <template #header>
+      <DialogHeader :title="t('main.review_reject_dialog.title')" @close="onHeaderClose">
+        <template #icon>
+          <AppIcon name="x-circle" style="color:var(--danger);" />
+        </template>
+      </DialogHeader>
+    </template>
 
-        <!-- Header -->
-        <div class="modal-hd">
-          <div class="modal-title" id="rrd-title">
-            <AppIcon name="x-circle" style="color:var(--danger); margin-right:6px;" />{{ t('main.review_reject_dialog.title') }}
-          </div>
-          <button type="button" class="modal-close" @click="onClose">
-            <AppIcon name="x" />
-          </button>
+    <template #default="{ descriptionId }">
+      <div class="rrd-body">
+        <div :id="descriptionId" class="rrd-doc-info">
+          <span class="rrd-doc-label">{{ t('main.review_reject_dialog.target_doc') }}</span>
+          <span class="rrd-doc-name">{{ displayDocName }}</span>
         </div>
 
-        <!-- Body -->
-        <div class="modal-bd rrd-body">
-          <div class="rrd-doc-info">
-            <span class="rrd-doc-label">{{ t('main.review_reject_dialog.target_doc') }}</span>
-            <span class="rrd-doc-name">{{ displayDocName }}</span>
-          </div>
-
-          <div class="rrd-field">
-            <label class="rrd-field-label" for="rrd-reason">{{ t('main.review_reject_dialog.reason_label') }}</label>
-            <textarea
-              id="rrd-reason"
-              ref="textareaRef"
-              v-model="reason"
-              class="rrd-textarea"
-              rows="5"
-              :placeholder="t('main.review_reject_dialog.reason_placeholder')"
-              :disabled="saved"
-            ></textarea>
-          </div>
-        </div>
-
-        <!-- Footer -->
-        <div class="modal-ft rrd-footer">
-          <!-- Save message button -->
-          <button
-            type="button"
-            class="btn btn-danger btn-sm"
-            :disabled="saved || saving || !reason.trim()"
-            @click="onSaveReason"
-          >
-            <template v-if="saving">
-              <AppIcon name="spinner" spin /> {{ t('main.review_reject_dialog.saving') }}
-            </template>
-            <template v-else-if="saved">
-              <AppIcon name="check" /> {{ t('main.review_reject_dialog.saved') }}
-            </template>
-            <template v-else>
-              <AppIcon name="floppy-disk" /> {{ t('main.review_reject_dialog.save_message') }}
-            </template>
-          </button>
-
-          <!-- Reject ▼ dropdown — 0419 T0006: edit mode only corrects existing
-               wording, it doesn't re-copy a mention or re-invoke AI (that stays
-               scoped to the original reject action; NR0003 §risk 5). -->
-          <div v-if="!editMode" class="rrd-split-wrap">
-            <button
-              type="button"
-              class="btn btn-secondary btn-sm rrd-split-caret"
-              @click.stop="toggleDropdown"
-            >
-              {{ t('main.review_reject_dialog.reject') }} <AppIcon name="caret-down" />
-            </button>
-            <div v-if="dropdownOpen" class="rrd-dropdown">
-              <button
-                type="button"
-                class="rrd-dropdown-item"
-                @click="onCopyMention"
-              >
-                <AppIcon name="copy" /> {{ t('main.review_reject_dialog.copy_mention') }}
-              </button>
-              <!-- Group 0223: in-app invoke beside every copy-mention (side by side, not either/or). -->
-              <button
-                type="button"
-                class="rrd-dropdown-item"
-                @click="onInvokeAi"
-              >
-                <AppIcon name="robot" /> {{ t('main.review_reject_dialog.invoke_ai') }}
-              </button>
-              <button
-                type="button"
-                class="rrd-dropdown-item"
-                disabled
-                :title="t('main.review_reject_dialog.coming_soon')"
-              >
-                <AppIcon name="terminal" /> {{ t('main.review_reject_dialog.invoke_command') }}
-              </button>
-            </div>
-          </div>
-
-          <button type="button" class="btn btn-outline btn-sm rrd-close-btn" @click="onClose">
-            {{ t('common.close') }}
-          </button>
+        <div class="rrd-field">
+          <label class="rrd-field-label" for="rrd-reason">{{ t('main.review_reject_dialog.reason_label') }}</label>
+          <textarea
+            id="rrd-reason"
+            ref="textareaRef"
+            v-model="reason"
+            class="rrd-textarea"
+            rows="5"
+            :placeholder="t('main.review_reject_dialog.reason_placeholder')"
+            :disabled="saved"
+          ></textarea>
         </div>
       </div>
-    </div>
-  </teleport>
+    </template>
+
+    <template #footer>
+      <!-- The 반려 ▼ control is a compound control — its drop-up panel owns buttons of
+           its own, and `DialogFooter`'s `action-*` slot injects content INSIDE the
+           `<button>` it renders, so the panel cannot live there without nesting
+           interactive elements. The trigger itself, though, is an ordinary `DialogAction`
+           (id `reject-menu`, role `aux`) like every other footer button: it goes through
+           `footerRolePriority` ordering, the duplicate-role check, disabled/busy and the
+           single execution path exactly like 닫기/저장. Only the panel is special-cased,
+           via DialogFooter's `popover-{id}` slot, which renders it as that action's
+           sibling inside `.fg-dialog-footer__action` (`position: relative`) so it can be
+           anchored with plain `position: absolute` instead of nesting.
+           0419 T0006: edit mode only corrects existing wording, it doesn't re-copy a
+           mention or re-invoke AI (that stays scoped to the original reject action;
+           NR0003 §risk 5) — editMode leaves `reject-menu` out of `actions` entirely. -->
+      <DialogFooter :actions="actions">
+        <template #action-reject-menu>
+          {{ t('main.review_reject_dialog.reject') }} <AppIcon name="caret-down" />
+        </template>
+        <template #popover-reject-menu>
+          <div v-if="dropdownOpen" ref="dropdownPanelRef" class="rrd-dropdown">
+            <button
+              type="button"
+              class="rrd-dropdown-item"
+              @click="onCopyMention"
+            >
+              <AppIcon name="copy" /> {{ t('main.review_reject_dialog.copy_mention') }}
+            </button>
+            <!-- Group 0223: in-app invoke beside every copy-mention (side by side, not either/or). -->
+            <button
+              type="button"
+              class="rrd-dropdown-item"
+              @click="onInvokeAi"
+            >
+              <AppIcon name="robot" /> {{ t('main.review_reject_dialog.invoke_ai') }}
+            </button>
+            <button
+              type="button"
+              class="rrd-dropdown-item"
+              disabled
+              :title="t('main.review_reject_dialog.coming_soon')"
+            >
+              <AppIcon name="terminal" /> {{ t('main.review_reject_dialog.invoke_command') }}
+            </button>
+          </div>
+        </template>
+        <template #action-save>
+          <template v-if="saving">
+            <AppIcon name="spinner" spin /> {{ t('main.review_reject_dialog.saving') }}
+          </template>
+          <template v-else-if="saved">
+            <AppIcon name="check" /> {{ t('main.review_reject_dialog.saved') }}
+          </template>
+          <template v-else>
+            <AppIcon name="floppy-disk" /> {{ t('main.review_reject_dialog.save_message') }}
+          </template>
+        </template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
@@ -112,6 +108,11 @@ import AppIcon from '@shared/AppIcon.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDocTypeStore } from '../stores/docTypeStore'
+
+import DialogFooter from './dialogs/DialogFooter.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogShell from './dialogs/DialogShell.vue'
+import type { DialogAction } from './dialogs/dialogTypes'
 
 const props = defineProps<{
   visible: boolean
@@ -135,8 +136,9 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const docTypeStore = useDocTypeStore()
-const overlayRef = ref<HTMLElement | null>(null)
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
+const shellRef = ref<InstanceType<typeof DialogShell> | null>(null)
+const dropdownPanelRef = ref<HTMLElement | null>(null)
 const reason = ref('')
 const saving = ref(false)
 const saved = ref(false)
@@ -148,6 +150,58 @@ const displayDocName = computed(() => {
   return raw.replace(/^\[[^\]]+\]/, `[${localizedType}]`)
 })
 
+/**
+ * Role assignment (T0016 §2.2 asked the TR to fix it and record the reasoning).
+ *
+ * `저장` is `primary` with `tone: 'danger'`, NOT `role: 'danger'`. `dialogTypes.ts`
+ * separates the two by function, not by colour: `primary` is "the one action that
+ * finishes the dialog", `danger` is "a separate destructive action that is NOT the
+ * primary". Saving the reason is what completes this dialog — the parent answers with
+ * `notifySaved()`, which closes it — so it holds the primary position, and D0008 §6
+ * "Danger Confirm"(`[취소] [위험 주버튼]`) is exactly the rule for a destructive action
+ * in that position. Reading it the other way (`role: 'danger'`, no primary at all) would
+ * leave 닫기 as the right-most button again, which is the very placement T0016 §2.1 #6
+ * removed `margin-left: auto` to stop.
+ *
+ * `닫기` is `cancel` (Type A form cancel: it leaves without committing), so the rendered
+ * order is `[반려 ▼ (aux)] [닫기] [저장]` — cancel immediately left of the primary, the
+ * same shape the other four components in this migration now have.
+ *
+ * `반려 ▼` (`reject-menu`) is `aux` too, like every other footer button here — it is a
+ * real `DialogAction`, not a hand-placed element wearing the `aux` attribute, so it goes
+ * through the same ordering/dedup/disabled/busy path (see the footer template's
+ * `popover-reject-menu` slot for why only its drop-up panel is special-cased). editMode
+ * leaves it out of the array entirely, matching the old `v-if="!editMode"` wrapper.
+ */
+const actions = computed<DialogAction[]>(() => {
+  const list: DialogAction[] = []
+  if (!props.editMode) {
+    list.push({
+      id: 'reject-menu',
+      label: t('main.review_reject_dialog.reject'),
+      role: 'aux',
+      onSelect: toggleDropdown,
+    })
+  }
+  list.push(
+    {
+      id: 'close',
+      label: t('common.close'),
+      role: 'cancel',
+      onSelect: onClose,
+    },
+    {
+      id: 'save',
+      label: t('main.review_reject_dialog.save_message'),
+      role: 'primary',
+      tone: 'danger',
+      disabled: saved.value || saving.value || reason.value.trim().length === 0,
+      onSelect: onSaveReason,
+    },
+  )
+  return list
+})
+
 watch(
   () => props.visible,
   (v) => {
@@ -156,13 +210,20 @@ watch(
       saved.value = false
       saving.value = false
       dropdownOpen.value = false
-      nextTick(() => {
-        overlayRef.value?.focus()
-        if (!reason.value) textareaRef.value?.focus()
-      })
     }
   },
 )
+
+/**
+ * `opened` fires after DialogShell applied its own initial focus, so putting the caret in
+ * the reason field here reproduces the pre-migration behaviour deterministically instead
+ * of racing the shell. As before, an existing reason is left alone — the shell's
+ * fallback (the primary button) takes focus in that case.
+ */
+function onOpened() {
+  if (reason.value) return
+  void nextTick(() => textareaRef.value?.focus())
+}
 
 watch(
   () => props.existingReason,
@@ -173,9 +234,14 @@ watch(
   },
 )
 
+// header X / ESC / backdrop and the 닫기 button all land here — one close meaning.
 function onClose() {
   dropdownOpen.value = false
   emit('update:visible', false)
+}
+
+function onHeaderClose() {
+  shellRef.value?.requestClose('header')
 }
 
 async function onSaveReason() {
@@ -202,8 +268,20 @@ function onInvokeAi() {
   emit('invoke-ai', r)
 }
 
-function onOutsideDropdownClick() {
-  if (dropdownOpen.value) dropdownOpen.value = false
+/*
+ * The trigger button is now rendered BY `DialogFooter` (an ordinary `DialogAction`), so
+ * this component can no longer put `@click.stop` on it to keep its own toggle click from
+ * reaching this listener. Checking containment instead is strictly more correct than the
+ * old stopPropagation did: it also covers clicks inside the drop-up panel itself, which
+ * previously worked only because every panel button already set `dropdownOpen` to
+ * `false` itself.
+ */
+function onOutsideDropdownClick(event: MouseEvent) {
+  if (!dropdownOpen.value) return
+  const target = event.target as Node | null
+  if (target && document.querySelector('[data-dialog-action-id="reject-menu"]')?.contains(target)) return
+  if (target && dropdownPanelRef.value?.contains(target)) return
+  dropdownOpen.value = false
 }
 
 onMounted(() => {
@@ -228,71 +306,6 @@ defineExpose({ notifySaved, notifySaveFailed })
 </script>
 
 <style scoped>
-.modal-bg {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1200;
-}
-
-.modal-box {
-  background: var(--bg-card, #fff);
-  border-radius: 10px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
-  display: flex;
-  flex-direction: column;
-  max-height: 90vh;
-  overflow: hidden;
-}
-
-.modal-rrd {
-  /* 0419 T0006 (NR0003 follow-up T recommendation 1 / TR0005 rev2 mockup): the 480px fixed width
-     was too narrow to hold a long rejection reason. .modal-box itself already has no fixed
-     height and sizes to content, so here the width is widened while only the viewport cap is
-     added alongside it — WorkflowDecisionModal.vue's height:85vh fixed idiom always displayed at
-     its maximum height regardless of the rejection reason's length, producing a "태평양"
-     rejection, so it was not reused. */
-  width: 620px;
-  max-width: 96vw;
-  max-height: 78vh;
-}
-
-.modal-hd {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border, #e2e8f0);
-}
-
-.modal-title {
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--text, #1e293b);
-}
-
-.modal-close {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 1rem;
-  color: var(--text-m, #64748b);
-  padding: 4px 6px;
-  border-radius: 4px;
-  transition: background 0.1s;
-}
-.modal-close:hover {
-  background: var(--bg-hover, #f1f5f9);
-}
-
-.modal-bd {
-  padding: 20px;
-  overflow-y: auto;
-}
-
 .rrd-body {
   display: flex;
   flex-direction: column;
@@ -358,32 +371,10 @@ defineExpose({ notifySaved, notifySaveFailed })
   cursor: not-allowed;
 }
 
-.modal-ft {
-  padding: 14px 20px;
-  border-top: 1px solid var(--border, #e2e8f0);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.rrd-footer {
-  justify-content: flex-start;
-}
-
-.rrd-close-btn {
-  margin-left: auto;
-}
-
-.rrd-split-wrap {
-  position: relative;
-  display: inline-flex;
-}
-
-.rrd-split-caret {
-  border-radius: 6px;
-  padding-inline: 10px;
-}
-
+/* The drop-up panel is `reject-menu`'s `popover-*` slot content: DialogFooter renders it
+   as a sibling of that action's `<button>` inside `.fg-dialog-footer__action`, which is
+   `position: relative`, so this only has to anchor itself inside that box (T0016 §2.2
+   rework — no more component-local wrapper class needed to establish the anchor). */
 .rrd-dropdown {
   position: absolute;
   bottom: calc(100% + 4px);   /* drop-up */

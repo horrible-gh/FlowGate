@@ -109,7 +109,8 @@ beforeEach(() => {
 })
 
 function footerButtons(wrapper: ReturnType<typeof mountModal>) {
-  return wrapper.findAll('.modal-ft button')
+  // 0560 T0016: the footer buttons are rendered by the common DialogFooter now.
+  return wrapper.findAll('.fg-dialog-footer button')
 }
 
 function buttonByText(wrapper: ReturnType<typeof mountModal>, key: string) {
@@ -140,8 +141,10 @@ describe('WorkflowDecisionModal — sequence edit hand-off (0268 B0001)', () => 
     const wrapper = mountModal()
     await flushPromises()
     // rev1 review: the picker must lead the footer row, not sit between the copy and
-    // invoke buttons. Asserted on DOM order within .modal-ft, so any re-ordering fails here.
-    const footer = wrapper.find('.modal-ft')
+    // invoke buttons. Asserted on DOM order within the footer row, so any re-ordering
+    // fails here. 0560 T0016 moved that row to `.wdm-ft-row`: the picker is a `<select>`,
+    // not an action, so it sits beside DialogFooter rather than inside it.
+    const footer = wrapper.find('.wdm-ft-row')
     const children = Array.from(footer.element.children)
     const picker = wrapper.find('.wdm-provider')
     expect(picker.exists()).toBe(true)

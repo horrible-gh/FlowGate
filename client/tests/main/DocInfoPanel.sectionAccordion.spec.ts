@@ -51,7 +51,9 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  document.body.querySelectorAll('.modal-qhd').forEach((n) => n.closest('.modal-bg')?.remove())
+  // 0560 T0039: both dialogs ride the common shell now — a leaked copy is a whole
+  // `.fg-dialog-overlay`, and its owner is already unmounted by the time this runs.
+  document.body.querySelectorAll('.fg-dialog-overlay').forEach((n) => n.remove())
 })
 
 describe('DocInfoPanel section accordion (R0001 group 0126 C안)', () => {

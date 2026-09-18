@@ -65,16 +65,19 @@
     </div>
 
     <!-- Create/edit modal -->
-    <div v-if="showModal" class="modal-bg" role="dialog" aria-modal="true">
-      <div class="modal-box">
-        <div class="modal-hd">
-          <span class="modal-title">
+    <DialogShell :open="showModal" variant="form" surface-class="dialog-env-variables-view"  @request-close="closeModal">
+    <template #header>
+      <DialogHeader title="" :closeable="false" @close="closeModal">
+        <template #title>
             {{ modalMode === 'create'
               ? $t('settings.system.env_variables.modal_create')
               : $t('settings.system.env_variables.modal_edit') }}
-          </span>
-        </div>
-        <div class="modal-bd">
+          </template>
+      </DialogHeader>
+    </template>
+
+        
+        <div class="dialog-feature-body">
           <div class="form-group">
             <label class="form-label req">{{ $t('settings.system.env_variables.label_name') }}</label>
             <input
@@ -100,15 +103,22 @@
           </div>
           <p v-if="apiError" class="form-hint" style="color:var(--danger);">{{ apiError }}</p>
         </div>
-        <div class="modal-ft">
-          <button class="btn btn-secondary" @click="closeModal">{{ $t('common.cancel') }}</button>
-          <button class="btn btn-primary" :disabled="saving" @click="submitModal">
+        
+      
+
+    <template #footer>
+      <DialogFooter :actions="[
+        { id: 'closeModal-0', role: 'cancel', label: $t('common.cancel'), onSelect: () => closeModal() },
+        { id: 'submitModal-1', role: 'primary', label: $t('common.save'), onSelect: () => submitModal(), disabled: saving }
+      ]">
+        <template #action-closeModal-0>{{ $t('common.cancel') }}</template>
+        <template #action-submitModal-1>
             <AppIcon v-if="saving" name="spinner" spin />
             {{ $t('common.save') }}
-          </button>
-        </div>
-      </div>
-    </div>
+          </template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 
     <!-- Delete confirmation (shared ConfirmModal, no native confirm()) -->
     <ConfirmModal
@@ -123,6 +133,9 @@
 </template>
 
 <script setup>
+import DialogShell from '../../../main/components/dialogs/DialogShell.vue'
+import DialogHeader from '../../../main/components/dialogs/DialogHeader.vue'
+import DialogFooter from '../../../main/components/dialogs/DialogFooter.vue'
 import AppIcon from '@shared/AppIcon.vue'
 import { ref, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'

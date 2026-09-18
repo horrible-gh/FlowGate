@@ -20,9 +20,15 @@
 // `.ai-badge-skip` icon that carries the same wording as a hover tooltip (title/data-tip) and
 // an always-on `aria-label` (§5 accessibility requirement), so the visibility tests below
 // check the icon and its aria-label instead of `wrapper.text()`.
-import { mount } from '@vue/test-utils'
-import { describe, expect, it, vi } from 'vitest'
+//
+// 0560 T0020 (4.5순위): the add/edit dialog is `AiProviderFormDialog.vue` now and DialogShell
+// teleports it out of the editor's subtree, so the "there is no checkbox / no hint" assertions
+// below read the open dialog from the document. Left pointed at the wrapper they would have
+// counted zero elements in an empty tree and passed for the wrong reason.
+import { DOMWrapper, mount } from '@vue/test-utils'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
+import { resetDialogSystem } from '@main/composables/useDialogStack'
 import AiProviderListEditor from '@/settings/components/AiProviderListEditor.vue'
 import {
   hasPermissionSkip,
@@ -76,11 +82,38 @@ function cliProvider(extra = {}) {
   }
 }
 
+const wrappers = []
+
+function track(wrapper) {
+  wrappers.push(wrapper)
+  return wrapper
+}
+
+afterEach(() => {
+  while (wrappers.length > 0) {
+    try {
+      wrappers.pop().unmount()
+    } catch {
+      // already unmounted
+    }
+  }
+  resetDialogSystem()
+  document.body.innerHTML = ''
+})
+
+/** The open dialog's surface as a wrapper, so `findAll` reads as it did before the split. */
+function dialog() {
+  const el = document.body.querySelector('.fg-dialog-surface')
+  if (el == null) throw new Error('no dialog is open')
+  return new DOMWrapper(el)
+}
+
 function mountEditor(providers = []) {
-  return mount(AiProviderListEditor, {
+  return track(mount(AiProviderListEditor, {
     props: { providers, defaultIndex: 0, catalog: CATALOG },
     global: { plugins: [i18n] },
-  })
+    attachTo: document.body,
+  }))
 }
 
 async function openAddForm(wrapper) {
@@ -145,36 +178,36 @@ describe('permission-skip rules (catalog driven)', () => {
 describe('permission-skip control is not offered in the provider editor', () => {
   it('a new provider has no permission-skip checkbox, hint or warning text', async () => {
     const wrapper = await openAddForm(mountEditor())
-    expect(wrapper.get('.modal-bg').findAll('input[type="checkbox"]').length).toBe(1) // just "enabled"
-    expect(wrapper.get('.modal-bg').findAll('.form-hint').length).toBe(0)
+    expect(dialog().findAll('input[type="checkbox"]').length).toBe(1) // just "enabled"
+    expect(dialog().findAll('.form-hint').length).toBe(0)
   })
 
   it('an existing row that already skips still shows no checkbox when edited', async () => {
     const wrapper = await openEditForm(
       mountEditor([cliProvider({ cli_command: `claude ${CLAUDE_SKIP} --model m -p -` })]),
     )
-    expect(wrapper.get('.modal-bg').findAll('input[type="checkbox"]').length).toBe(1) // just "enabled"
+    expect(dialog().findAll('input[type="checkbox"]').length).toBe(1) // just "enabled"
   })
 
   it('typing the flag into the command by hand does not conjure a checkbox', async () => {
     const wrapper = await openAddForm(mountEditor())
-    await wrapper.find('input.mono').setValue(`claude ${CLAUDE_SKIP} -p -`)
-    expect(wrapper.get('.modal-bg').findAll('input[type="checkbox"]').length).toBe(1) // just "enabled"
+    await dialog().find('input.mono').setValue(`claude ${CLAUDE_SKIP} -p -`)
+    expect(dialog().findAll('input[type="checkbox"]').length).toBe(1) // just "enabled"
   })
 
   it('is absent for every kind, including one with no known flag', async () => {
     const wrapper = await openAddForm(mountEditor())
     for (const kind of ['claude', 'copilot', 'custom']) {
-      await wrapper.findAll('select')[1].setValue(kind)
-      expect(wrapper.get('.modal-bg').findAll('input[type="checkbox"]').length).toBe(1) // just "enabled"
+      await dialog().findAll('select')[1].setValue(kind)
+      expect(dialog().findAll('input[type="checkbox"]').length).toBe(1) // just "enabled"
     }
   })
 
   it('an API provider, which spawns no command, is unaffected either way', async () => {
     const wrapper = await openAddForm(mountEditor())
-    await wrapper.findAll('select')[0].setValue('api')
-    expect(wrapper.text()).toContain(i18n.global.t('settings.ai.label_api_model'))
-    expect(wrapper.get('.modal-bg').findAll('input[type="checkbox"]').length).toBe(1) // just "enabled"
+    await dialog().findAll('select')[0].setValue('api')
+    expect(dialog().text()).toContain(i18n.global.t('settings.ai.label_api_model'))
+    expect(dialog().findAll('input[type="checkbox"]').length).toBe(1) // just "enabled"
   })
 })
 

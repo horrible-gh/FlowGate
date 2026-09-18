@@ -1868,6 +1868,7 @@ export default {
       preset_not_started: '아직 실행되지 않았습니다.',
       preset_unset: '미지정 {n}단계는 기본 공급자를 따릅니다.',
       preset_revert: '채운 값 되돌리기',
+      sequence_notes_revert_confirm: '순서별 전달사항과 제공자 선택을 원래 값으로 되돌릴까요?',
       preset_revert_confirm: '채운 값만 되돌립니다. 워크플로에 더해진 단계는 되돌아가지 않습니다. 계속할까요?',
       preset_mode_refreshed: '실행 방식이 바뀌어 배정을 다시 채웠습니다. 직접 고친 {n}칸은 그대로 두었습니다.',
       preset_mode_failed: '실행 방식에 맞는 배정을 다시 계산하지 못했습니다.',
@@ -1957,6 +1958,9 @@ export default {
       save_failed: '문서 저장에 실패했습니다.',
       save_error_details: '{summary} 상세 내용은 편집 창에서 확인하세요.',
       save_success: '문서가 저장되었습니다.',
+      discard_confirm_title: '저장하지 않은 편집을 버릴까요?',
+      discard_confirm_message: '편집 창을 닫으면 저장하지 않은 내용은 사라집니다.',
+      discard_confirm_ok: '버리고 닫기',
     },
     workflow_decision_modal: {
       title: '워크플로 결정',
@@ -3083,6 +3087,11 @@ export default {
       approve: '승인 — 커밋 & 머지',
       reject_reason_label: '반려 사유 및 다시 시도 지시',
       reject_confirm: '반려하고 다시 시도',
+      // 0560 T0020 §2.2 (a): 반려 창은 공통 계층으로 오면서 ESC로도 닫힐 수 있게 됐다.
+      // 적던 사유가 있으면 어느 경로로 닫든 먼저 묻는다.
+      discard_confirm_title: '작성 중인 반려 사유를 버릴까요?',
+      discard_confirm_message: '이 창을 닫으면 적어 둔 반려 사유는 사라집니다.',
+      discard_confirm_ok: '버리고 닫기',
       approved_toast: '승인했습니다.',
       re_review_toast: '검토 대상이 바뀌어 새 내용으로 다시 확인이 필요합니다.',
       reconciling_toast: '반영 결과를 확인하는 중입니다.',

@@ -49,10 +49,13 @@ describe('ContinuousWarningDialog', () => {
     const consent = document.querySelector('.cwarn-consent input') as HTMLInputElement
     consent.click()
     await flushPromises()
-    const buttons = [...document.querySelectorAll<HTMLButtonElement>('.cwarn-footer button')]
-    buttons[1].click()
-    buttons[2].click()
-    buttons[3].click()
+    // 0560 T0039: the hand-made `.cwarn-footer` is gone — DialogFooter owns the order now, so
+    // the buttons are addressed by their semantic action id instead of by DOM position.
+    const action = (id: string) =>
+      document.querySelector<HTMLButtonElement>(`.fg-dialog-footer [data-dialog-action-id="${id}"]`)!
+    action('onAction-1').click()
+    action('onAction-2').click()
+    action('onAction-3').click()
 
     expect(wrapper.emitted('copy-mention')).toHaveLength(1)
     expect(wrapper.emitted('copy-with-message')).toHaveLength(1)

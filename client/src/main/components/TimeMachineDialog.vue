@@ -1,27 +1,20 @@
 <template>
-  <teleport to="body">
-    <div
-      v-if="visible"
-      ref="overlayRef"
-      class="modal-bg"
-      tabindex="-1"
-      @keydown.escape.prevent="onClose"
-    >
-      <div class="modal-box modal-tmd" role="dialog" aria-modal="true" aria-labelledby="tmd-title">
+  <DialogShell :open="visible" variant="workflow-large" surface-class="dialog-time-machine-dialog"  @request-close="onClose">
+    <template #header>
+      <DialogHeader title="" :closeable="true" @close="onClose">
+        <template #title>
+            <AppIcon name="clock-counter-clockwise" style="color:var(--warning, #d97706); margin-right:6px;" />{{ t('main.time_machine.title') }}
+          </template>
+      </DialogHeader>
+    </template>
+
 
         <!-- Header -->
-        <div class="modal-hd">
-          <div class="modal-title" id="tmd-title">
-            <AppIcon name="clock-counter-clockwise" style="color:var(--warning, #d97706); margin-right:6px;" />{{ t('main.time_machine.title') }}
-          </div>
-          <button type="button" class="modal-close" @click="onClose">
-            <AppIcon name="x" />
-          </button>
-        </div>
+        
 
         <!-- Body — 0332 D0005 §6.4: after a rewind whose source cancel did not fully
              succeed, the dialog does NOT close; the body becomes the result screen. -->
-        <div class="modal-bd tmd-body">
+        <div class="dialog-feature-body tmd-body">
           <template v-if="cancelResult">
             <p class="tmd-result-head">{{ t('main.time_machine.result_title') }}</p>
             <ul class="tmd-result-list">
@@ -82,61 +75,52 @@
         </div>
 
         <!-- Footer -->
-        <div class="modal-ft tmd-footer">
-          <template v-if="cancelResult">
-            <button
-              v-if="cancelResult.blocked_reason === 'already_merged'"
-              type="button"
-              class="btn btn-outline btn-sm tmd-open-git-btn"
-              @click="emit('open-git-panel')"
-            >
+        
+      
+
+    <template #footer>
+      <DialogFooter :actions="[
+        ...(((cancelResult) && (cancelResult.blocked_reason === 'already_merged')) ? [{ id: 'emit-0', role: 'aux' as const, label: t('main.time_machine.btn_open_git_panel'), onSelect: () => { emit('open-git-panel') } }] : []),
+        ...(((cancelResult) && (cancelResult.retryable)) ? [{ id: 'emit-1', role: 'primary' as const, label: t('main.time_machine.btn_retry'), onSelect: () => { emit('retry-cancel') }, disabled: retrying }] : []),
+        ...(((cancelResult)) ? [{ id: 'onClose-2', role: 'cancel' as const, label: t('main.time_machine.btn_close'), onSelect: () => onClose() }] : []),
+        ...((!(cancelResult)) ? [{ id: 'onClose-3', role: 'cancel' as const, label: t('common.cancel'), onSelect: () => onClose() }] : []),
+        ...((!(cancelResult)) ? [{ id: 'onConfirm-4', role: 'primary' as const, label: t('main.time_machine.confirm'), onSelect: () => onConfirm(), disabled: !selectedStep || submitting }] : [])
+      ]">
+        <template #action-emit-0><template v-if="(cancelResult) && (cancelResult.blocked_reason === 'already_merged')">
               <AppIcon name="tree-structure" /> {{ t('main.time_machine.btn_open_git_panel') }}
-            </button>
-            <button
-              v-if="cancelResult.retryable"
-              type="button"
-              class="btn btn-warning btn-sm tmd-retry-btn"
-              :disabled="retrying"
-              @click="emit('retry-cancel')"
-            >
+            </template></template>
+        <template #action-emit-1><template v-if="(cancelResult) && (cancelResult.retryable)">
               <template v-if="retrying">
                 <AppIcon name="spinner" spin /> {{ t('main.time_machine.retrying') }}
               </template>
               <template v-else>
                 <AppIcon name="arrow-counter-clockwise" /> {{ t('main.time_machine.btn_retry') }}
               </template>
-            </button>
-            <button type="button" class="btn btn-outline btn-sm tmd-close-btn" @click="onClose">
+            </template></template>
+        <template #action-onClose-2><template v-if="(cancelResult)">
               {{ t('main.time_machine.btn_close') }}
-            </button>
-          </template>
-
-          <template v-else>
-            <button type="button" class="btn btn-outline btn-sm" @click="onClose">
+            </template></template>
+        <template #action-onClose-3><template v-if="!(cancelResult)">
               {{ t('common.cancel') }}
-            </button>
-            <button
-              type="button"
-              class="btn btn-warning btn-sm"
-              :disabled="!selectedStep || submitting"
-              @click="onConfirm"
-            >
+            </template></template>
+        <template #action-onConfirm-4><template v-if="!(cancelResult)">
               <template v-if="submitting">
                 <AppIcon name="spinner" spin /> {{ t('main.time_machine.reopening') }}
               </template>
               <template v-else>
                 <AppIcon name="clock-counter-clockwise" /> {{ t('main.time_machine.confirm') }}
               </template>
-            </button>
-          </template>
-        </div>
-      </div>
-    </div>
-  </teleport>
+            </template></template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import DialogShell from './dialogs/DialogShell.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import AppIcon from '@shared/AppIcon.vue'
@@ -206,7 +190,6 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const docTypeStore = useDocTypeStore()
-const overlayRef = ref<HTMLElement | null>(null)
 const selectedDocId = ref<string | null>(null)
 const submitting = ref(false)
 
@@ -355,7 +338,6 @@ watch(
       // 0018 R0001 — honour a strip-click pre-selection; AC-reject opens with none (null).
       selectedDocId.value = props.preselectDocId ?? null
       submitting.value = false
-      nextTick(() => overlayRef.value?.focus())
     }
   },
 )
@@ -376,59 +358,20 @@ function onConfirm() {
 </script>
 
 <style scoped>
-.modal-bg {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1200;
-}
 
-.modal-box {
-  background: var(--bg-card, #fff);
-  border-radius: 10px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
-  display: flex;
-  flex-direction: column;
-  max-height: 90vh;
-  overflow: hidden;
-}
 
-.modal-tmd {
-  width: 480px;
-}
 
-.modal-hd {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border, #e2e8f0);
-}
 
-.modal-title {
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--text, #1e293b);
-}
 
-.modal-close {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 1rem;
-  color: var(--text-m, #64748b);
-  padding: 4px 6px;
-  border-radius: 4px;
-  transition: background 0.1s;
-}
-.modal-close:hover {
-  background: var(--bg-hover, #f1f5f9);
-}
 
-.modal-bd {
+
+
+
+
+
+
+
+.dialog-feature-body {
   padding: 20px;
   overflow-y: auto;
 }
@@ -595,12 +538,7 @@ function onConfirm() {
   min-width: 0;
 }
 
-.modal-ft {
-  padding: 14px 20px;
-  border-top: 1px solid var(--border, #e2e8f0);
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-}
+
+
+:global(.fg-dialog-surface.dialog-time-machine-dialog) { width: 480px; }
 </style>

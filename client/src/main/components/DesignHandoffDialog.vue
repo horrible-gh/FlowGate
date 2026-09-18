@@ -1,28 +1,19 @@
 <template>
-  <teleport to="body">
-    <div
-      v-if="visible"
-      ref="overlayRef"
-      class="modal-bg"
-      tabindex="-1"
-      @keydown.escape.prevent="onClose"
-    >
-      <div class="modal-box modal-dhd" role="dialog" aria-modal="true" aria-labelledby="dhd-title">
+  <DialogShell :open="visible" variant="workflow-large" surface-class="dialog-design-handoff-dialog"  @request-close="onClose">
+    <template #header>
+      <DialogHeader title="" :closeable="true" @close="onClose">
+        <template #title>
+              <AppIcon name="stack" style="color:var(--primary); margin-right:6px;" />{{ t('main.design_handoff_dialog.title') }}
+            </template>
+      </DialogHeader>
+    </template>
+
 
         <!-- Header -->
-        <div class="modal-hd">
-          <div>
-            <div class="modal-title" id="dhd-title">
-              <AppIcon name="stack" style="color:var(--primary); margin-right:6px;" />{{ t('main.design_handoff_dialog.title') }}
-            </div>
-          </div>
-          <button type="button" class="modal-close" @click="onClose">
-            <AppIcon name="x" />
-          </button>
-        </div>
+        
 
         <!-- Body -->
-        <div class="modal-bd dhd-body">
+        <div class="dialog-feature-body dhd-body">
 
           <!-- 1. Target card -->
           <div>
@@ -112,36 +103,35 @@
             </div>
           </div>
 
-        </div><!-- /modal-bd -->
+        </div><!-- /dialog-feature-body -->
 
         <!-- Footer -->
-        <div class="modal-ft">
-          <button type="button" class="btn btn-ghost" @click="onClose">{{ t('common.cancel') }}</button>
-          <button
-            type="button"
-            class="btn btn-primary"
-            :disabled="orderedChecked.length === 0"
-            @click="onCopyMention"
-          >
-            <AppIcon name="copy" /> {{ t('main.design_handoff_dialog.copy_mention') }}
-          </button>
-          <!-- Group 0223: in-app invoke beside every copy-mention (running alongside it, not either/or). -->
-          <button
-            type="button"
-            class="btn btn-primary"
-            :disabled="orderedChecked.length === 0"
-            @click="onInvokeAi"
-          >
-            <AppIcon name="robot" /> {{ t('main.design_handoff_dialog.invoke_ai') }}
-          </button>
-        </div>
+        
 
-      </div>
-    </div>
-  </teleport>
+      
+
+    <template #footer>
+      <DialogFooter :actions="[
+        { id: 'onClose-0', role: 'cancel', label: t('common.cancel'), onSelect: () => onClose() },
+        { id: 'onCopyMention-1', role: 'aux', label: t('main.design_handoff_dialog.copy_mention'), onSelect: () => onCopyMention(), disabled: orderedChecked.length === 0 },
+        { id: 'onInvokeAi-2', role: 'primary', label: t('main.design_handoff_dialog.invoke_ai'), onSelect: () => onInvokeAi(), disabled: orderedChecked.length === 0 }
+      ]">
+        <template #action-onClose-0>{{ t('common.cancel') }}</template>
+        <template #action-onCopyMention-1>
+            <AppIcon name="copy" /> {{ t('main.design_handoff_dialog.copy_mention') }}
+          </template>
+        <template #action-onInvokeAi-2>
+            <AppIcon name="robot" /> {{ t('main.design_handoff_dialog.invoke_ai') }}
+          </template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
+import DialogShell from './dialogs/DialogShell.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDocTypeStore } from '../stores/docTypeStore'
@@ -174,7 +164,6 @@ const ALL_TYPES = computed(() => TYPE_ORDER.map(code => ({ code, label: docTypeS
 
 const checkedSet = ref<Set<DesignType>>(new Set(props.defaultTypes))
 const mode = ref<'batch' | 'single'>('batch')
-const overlayRef = ref<HTMLElement | null>(null)
 
 watch(
   () => props.visible,
@@ -182,7 +171,6 @@ watch(
     if (val) {
       checkedSet.value = new Set(props.defaultTypes)
       mode.value = 'batch'
-      setTimeout(() => overlayRef.value?.focus(), 50)
     }
   },
 )
@@ -249,10 +237,7 @@ function onInvokeAi() {
 </script>
 
 <style scoped>
-.modal-dhd {
-  width: 560px;
-  max-width: 94vw;
-}
+
 
 .dhd-body {
   padding: 18px 20px;
@@ -486,4 +471,6 @@ function onInvokeAi() {
   color: rgba(255, 255, 255, .3);
   font-style: italic;
 }
+
+:global(.fg-dialog-surface.dialog-design-handoff-dialog) { width: 560px; max-width: 94vw; }
 </style>

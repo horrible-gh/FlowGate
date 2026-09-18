@@ -71,7 +71,7 @@ describe('ContinuousWorkDialog — overlay click no longer closes it (0412)', ()
 
   it('preserves the entered note and stays open when the overlay itself is clicked', async () => {
     getRequest.mockResolvedValue(seqResponse())
-    mountDialog()
+    const wrapper = mountDialog()
     await flushPromises()
 
     const messageTab = Array.from(document.querySelectorAll('.cwd-tab'))
@@ -84,16 +84,21 @@ describe('ContinuousWorkDialog — overlay click no longer closes it (0412)', ()
     input.dispatchEvent(new Event('input'))
     await flushPromises()
 
-    // Click the overlay itself (not a child) — this is exactly the event @click.self
-    // used to react to.
-    const overlay = document.querySelector<HTMLElement>('.modal-bg')!
+    // Click the overlay itself (not a child) — exactly the event `@click.self` used to react
+    // to. 0560 T0022 §2.2 moved this dialog onto the common layer, so the overlay is the
+    // shell's and the 0412 contract is kept by `workflow-large`'s `closeOnBackdrop: false`
+    // (no override) rather than by the absence of a binding.
+    const overlay = document.querySelector<HTMLElement>('.fg-dialog-overlay')!
     overlay.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flushPromises()
 
-    expect(document.querySelector('.modal-bg')).toBeTruthy()
+    expect(document.querySelector('.fg-dialog-overlay')).toBeTruthy()
     expect(document.querySelector<HTMLInputElement>('.cwd-message-default-input')!.value).toBe('유지되어야 하는 멘트')
 
-    document.body.innerHTML = ''
+    // `document.body.innerHTML = ''` used to clear the teleported markup here. It cannot stay:
+    // the common shell teleports into the same host, and tearing its nodes out from under Vue
+    // leaves the teleport's anchors dangling for every dialog mounted afterwards in this file.
+    wrapper.unmount()
   })
 
   it('still closes via the header X button', async () => {
@@ -101,13 +106,13 @@ describe('ContinuousWorkDialog — overlay click no longer closes it (0412)', ()
     const wrapper = mountDialog()
     await flushPromises()
 
-    ;(document.querySelector('.modal-close') as HTMLButtonElement).click()
+    ;(document.querySelector('.fg-dialog-header__close') as HTMLButtonElement).click()
     await flushPromises()
 
     expect(wrapper.emitted('update:visible')).toBeTruthy()
     expect(wrapper.emitted('update:visible')![0]).toEqual([false])
 
-    document.body.innerHTML = ''
+    wrapper.unmount()
   })
 })
 
@@ -149,18 +154,28 @@ describe('GitConflictResolverDialog — overlay click no longer emits close (041
     })
   }
 
+  // 0560 T0024: the hand-built `.git-conflict-overlay` / `.git-dialog-close` are gone — the
+  // frame is `DialogShell`'s `conflict-large` surface. The 0412 contract is unchanged and is
+  // now enforced by the variant default (`closeOnBackdrop: false`) instead of by the absence
+  // of a per-file binding, so this drives the shell's real backdrop path (mousedown + mouseup
+  // on the overlay, which is how `DialogShell` distinguishes a backdrop click from a drag that
+  // started inside the box) rather than a bare `click`.
   it('keeps the current chunk selection and does not emit close on an overlay click', async () => {
     ;(Element.prototype as any).scrollTo = vi.fn()
     const wrapper = mountDialog()
     await flushPromises()
 
-    const activeBefore = wrapper.find('.git-conflict-chip.active').text()
+    const chip = () => document.querySelector('.git-conflict-chip.active') as HTMLElement
+    const activeBefore = chip().textContent
 
-    await wrapper.find('.git-conflict-overlay').trigger('click')
+    const overlay = document.querySelector('.fg-dialog-overlay') as HTMLElement
+    expect(overlay).toBeTruthy()
+    overlay.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    overlay.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
     await flushPromises()
 
     expect(wrapper.emitted('close')).toBeFalsy()
-    expect(wrapper.find('.git-conflict-chip.active').text()).toBe(activeBefore)
+    expect(chip().textContent).toBe(activeBefore)
 
     wrapper.unmount()
   })
@@ -170,7 +185,8 @@ describe('GitConflictResolverDialog — overlay click no longer emits close (041
     const wrapper = mountDialog()
     await flushPromises()
 
-    await wrapper.find('.git-dialog-close').trigger('click')
+    ;(document.querySelector('.fg-dialog-header__close') as HTMLButtonElement).click()
+    await flushPromises()
     expect(wrapper.emitted('close')).toBeTruthy()
 
     wrapper.unmount()
@@ -225,7 +241,9 @@ describe('NextActionModal — overlay click no longer closes it (0412)', () => {
     const search = wrapper.find<HTMLInputElement>('.nad-doc-search')
     await search.setValue('유지되어야 하는 검색어')
 
-    await wrapper.find('.modal-bg').trigger('click')
+    // 0560 T0022 §2.5: the overlay is the common shell's, and `workflow-large` keeps the 0412
+    // contract by defaulting `closeOnBackdrop` to false (no override on this instance).
+    await wrapper.find('.fg-dialog-overlay').trigger('click')
     await flushPromises()
 
     expect(wrapper.emitted('update:visible')).toBeFalsy()
@@ -238,7 +256,7 @@ describe('NextActionModal — overlay click no longer closes it (0412)', () => {
     installApis()
     const wrapper = await mountModal()
 
-    await wrapper.find('.modal-close').trigger('click')
+    await wrapper.find('.fg-dialog-header__close').trigger('click')
 
     expect(wrapper.emitted('update:visible')).toBeTruthy()
     expect(wrapper.emitted('update:visible')![0]).toEqual([false])
@@ -261,10 +279,13 @@ describe('QaHistoryDialog — overlay click no longer closes it (0412)', () => {
     })
     await flushPromises()
 
-    await wrapper.find('.modal-bg').trigger('click')
+    // 0560 T0039: this dialog now rides the common shell, so the 0412 contract is kept by
+    // the variant's `closeOnBackdrop: false` and ESC lives on the shell surface.
+    await wrapper.find('.fg-dialog-overlay').trigger('click')
     expect(wrapper.emitted('update:visible')).toBeFalsy()
 
-    await wrapper.find('.modal-bg').trigger('keydown', { key: 'Escape' })
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
     expect(wrapper.emitted('update:visible')).toBeTruthy()
     expect(wrapper.emitted('update:visible')![0]).toEqual([false])
 
@@ -278,7 +299,7 @@ describe('QaHistoryDialog — overlay click no longer closes it (0412)', () => {
       global: { plugins: [i18n], stubs: { teleport: true } },
     })
     await flushPromises()
-    await wrapper2.find('.modal-close').trigger('click')
+    await wrapper2.find('.fg-dialog-header__close').trigger('click')
     expect(wrapper2.emitted('update:visible')).toBeTruthy()
     expect(wrapper2.emitted('update:visible')![0]).toEqual([false])
     wrapper2.unmount()
@@ -293,10 +314,13 @@ describe('QaReviewHistoryDialog — overlay click no longer closes it (0412, mer
     })
     await flushPromises()
 
-    await wrapper.find('.modal-bg').trigger('click')
+    // 0560 T0039: this dialog now rides the common shell, so the 0412 contract is kept by
+    // the variant's `closeOnBackdrop: false` and ESC lives on the shell surface.
+    await wrapper.find('.fg-dialog-overlay').trigger('click')
     expect(wrapper.emitted('update:visible')).toBeFalsy()
 
-    await wrapper.find('.modal-bg').trigger('keydown', { key: 'Escape' })
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
     expect(wrapper.emitted('update:visible')).toBeTruthy()
     expect(wrapper.emitted('update:visible')![0]).toEqual([false])
 
@@ -307,7 +331,7 @@ describe('QaReviewHistoryDialog — overlay click no longer closes it (0412, mer
       global: { plugins: [i18n], stubs: { teleport: true } },
     })
     await flushPromises()
-    await wrapper2.find('.modal-close').trigger('click')
+    await wrapper2.find('.fg-dialog-header__close').trigger('click')
     expect(wrapper2.emitted('update:visible')).toBeTruthy()
     expect(wrapper2.emitted('update:visible')![0]).toEqual([false])
     wrapper2.unmount()

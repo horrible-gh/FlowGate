@@ -26,10 +26,11 @@ function optionItem(overrides: Record<string, unknown> = {}) {
 }
 
 function mountDialog(props: Record<string, unknown> = {}, item = optionItem()) {
-  return mount(QaHistoryDialog, {
+  openWrapper = mount(QaHistoryDialog, {
     props: { visible: true, items: [item], ...props },
     global: { plugins: [i18n] },
   })
+  return openWrapper as ReturnType<typeof mount>
 }
 
 function openAnswerForm() {
@@ -41,8 +42,15 @@ function optionButtons() {
   return Array.from(document.body.querySelectorAll<HTMLButtonElement>('.qhd-opt-btn'))
 }
 
+// 0560 T0039: this dialog rides the common shell now, so its markup leaves <body> when the
+// component unmounts — not when a `.modal-bg` node is torn out from under Vue. Tests that
+// forget to unmount used to leak a second copy into <body>, and the `document.body`
+// look-ups below would then address the stale one.
+let openWrapper: { unmount: () => void } | null = null
+
 afterEach(() => {
-  document.body.querySelectorAll('.modal-qhd').forEach((n) => n.closest('.modal-bg')?.remove())
+  if (document.body.querySelector('.fg-dialog-overlay')) openWrapper?.unmount()
+  openWrapper = null
 })
 
 describe('QaHistoryDialog query options (group 0243 R0001)', () => {

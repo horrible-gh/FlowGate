@@ -7,9 +7,16 @@
 // saves immediately on every row operation instead of via a bottom Save button — the save
 // trigger in the tests below is a dialog confirm/save click, not `button.btn-primary` on the
 // view itself.
+//
+// 0560 T0020 (4.5순위): the three dialogs are three components on the common dialog layer
+// now, and DialogShell teleports them out of the editor's subtree. Every probe below reads
+// the document rather than the wrapper - a `wrapper.find('.modal-bg')` left in place would
+// not fail loudly, it would make each "the dialog is gone" assertion pass against an empty
+// tree.
 import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
+import { resetDialogSystem } from '@main/composables/useDialogStack'
 import AiProviderListEditor from '@/settings/components/AiProviderListEditor.vue'
 import { CLI_COMMAND_MAX, formatErrors } from '@/settings/components/aiProviderLimits'
 
@@ -21,11 +28,74 @@ const i18nApi = { t: i18n.global.t, te: i18n.global.te }
 
 const CATALOG = { exec_types: ['cli', 'api'], kinds: { cli: ['claude'], api: ['claude'] } }
 
+const wrappers = []
+
+function track(wrapper) {
+  wrappers.push(wrapper)
+  return wrapper
+}
+
+afterEach(() => {
+  while (wrappers.length > 0) {
+    try {
+      wrappers.pop().unmount()
+    } catch {
+      // already unmounted
+    }
+  }
+  resetDialogSystem()
+  document.body.innerHTML = ''
+})
+
+/** The open dialog's surface, or null. */
+function dialogSurface() {
+  return document.body.querySelector('.fg-dialog-surface')
+}
+
+function inDialog(selector) {
+  const el = document.body.querySelector('.fg-dialog-surface ' + selector)
+  if (el == null) throw new Error('no open dialog contains ' + selector)
+  return el
+}
+
+function dialogAction(id) {
+  const button = document.body.querySelector('[data-dialog-action-id="' + id + '"]')
+  if (button == null) throw new Error('footer action ' + id + ' is not rendered')
+  return button
+}
+
+async function setDialogValue(selector, value) {
+  const el = inDialog(selector)
+  el.value = value
+  el.dispatchEvent(new Event('input'))
+  await flushPromises()
+}
+
+async function clickSave() {
+  dialogAction('save').click()
+  await flushPromises()
+}
+
+/** A real backdrop click: press AND release on the overlay itself (L0009 §4). */
+async function clickBackdrop() {
+  const overlay = document.body.querySelector('.fg-dialog-overlay')
+  if (overlay == null) throw new Error('no dialog is open')
+  overlay.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+  overlay.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+  await flushPromises()
+}
+
+async function pressEscape() {
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+  await flushPromises()
+}
+
 function mountEditor(providers = []) {
-  return mount(AiProviderListEditor, {
+  return track(mount(AiProviderListEditor, {
     props: { providers, defaultIndex: providers.length ? 0 : -1, catalog: CATALOG },
     global: { plugins: [i18n] },
-  })
+    attachTo: document.body,
+  }))
 }
 
 async function openAddForm(wrapper) {
@@ -40,8 +110,9 @@ async function openEditForm(wrapper, row = 0) {
   await buttons[row].trigger('click')
 }
 
-function formError(wrapper) {
-  return wrapper.find('p.text-sm').exists() ? wrapper.get('p.text-sm').text() : ''
+function formError() {
+  const el = document.body.querySelector('.fg-dialog-surface p.text-sm')
+  return el ? el.textContent.trim() : ''
 }
 
 describe('AI provider 422 error formatting', () => {
@@ -91,7 +162,7 @@ describe('AiSettingsView immediate save', () => {
       data: { providers, default_provider_id: providers[0]?.id ?? null, catalog: CATALOG },
     })
     const AiSettingsView = (await import('@/settings/views/system/AiSettingsView.vue')).default
-    const wrapper = mount(AiSettingsView, { global: { plugins: [i18n] } })
+    const wrapper = track(mount(AiSettingsView, { global: { plugins: [i18n] }, attachTo: document.body }))
     await flushPromises()
     return wrapper
   }
@@ -108,16 +179,14 @@ describe('AiSettingsView immediate save', () => {
   async function saveViaEditDialog(wrapper, row = 0) {
     const editButtons = wrapper.findAll(`button[title="${i18n.global.t('common.edit')}"]`)
     await editButtons[row].trigger('click')
-    await wrapper.get('.modal-bg button.btn-primary').trigger('click')
-    await flushPromises()
+    await clickSave()
   }
 
   async function renameViaEditDialog(wrapper, name, row = 0) {
     const editButtons = wrapper.findAll(`button[title="${i18n.global.t('common.edit')}"]`)
     await editButtons[row].trigger('click')
-    await wrapper.get('.modal-bg input.form-ctrl').setValue(name)
-    await wrapper.get('.modal-bg button.btn-primary').trigger('click')
-    await flushPromises()
+    await setDialogValue('input.form-ctrl', name)
+    await clickSave()
   }
 
   async function addViaDialog(wrapper, name) {
@@ -125,10 +194,9 @@ describe('AiSettingsView immediate save', () => {
       (b) => b.text().includes(i18n.global.t('settings.ai.add_provider')),
     )
     await add.trigger('click')
-    await wrapper.get('.modal-bg input.form-ctrl').setValue(name)
-    await wrapper.get('.modal-bg input.mono').setValue('claude -p')
-    await wrapper.get('.modal-bg button.btn-primary').trigger('click')
-    await flushPromises()
+    await setDialogValue('input.form-ctrl', name)
+    await setDialogValue('input.mono', 'claude -p')
+    await clickSave()
   }
 
   /** Holds a PUT open so the next operation lands while that save is still in flight. */
@@ -218,9 +286,11 @@ describe('AiSettingsView immediate save', () => {
     // Ticking "clear key" sends an explicit empty string (delete).
     const editButtons = wrapper.findAll(`button[title="${i18n.global.t('common.edit')}"]`)
     await editButtons[0].trigger('click')
-    await wrapper.get('input[type="checkbox"]').setValue(true)
-    await wrapper.get('.modal-bg button.btn-primary').trigger('click')
+    const clearKey = inDialog('input[type="checkbox"]')
+    clearKey.checked = true
+    clearKey.dispatchEvent(new Event('change'))
     await flushPromises()
+    await clickSave()
     payload = putRequest.mock.calls.at(-1)[1]
     expect(payload.providers[0].api_key).toBe('')
   })
@@ -310,31 +380,38 @@ describe('AI provider dialog accessibility and dismissal', () => {
     ])
   })
 
+  // The same contract as before the 4.5순위 split, re-pointed at the layer that owns it now:
+  // the form and the delete confirm survive a backdrop click and close on ESC. Neither of the
+  // two new components passes `:close-on-backdrop`, so this is also the evidence that the
+  // variant defaults (`form` / `confirm-danger` = false) match the behaviour they replaced.
   it('keeps edit, add, and delete dialogs open on backdrop clicks but dismisses them with Escape', async () => {
     const wrapper = mountEditor([PROVIDER])
     await openEditForm(wrapper)
-    await wrapper.get('.modal-bg').trigger('click')
-    expect(wrapper.find('.modal-bg').exists()).toBe(true)
-    await wrapper.get('.modal-bg').trigger('keydown', { key: 'Escape' })
-    expect(wrapper.find('.modal-bg').exists()).toBe(false)
+    await clickBackdrop()
+    expect(dialogSurface()).not.toBeNull()
+    await pressEscape()
+    expect(dialogSurface()).toBeNull()
 
     await openAddForm(wrapper)
-    await wrapper.get('.modal-bg').trigger('keydown', { key: 'Escape' })
-    expect(wrapper.find('.modal-bg').exists()).toBe(false)
+    await pressEscape()
+    expect(dialogSurface()).toBeNull()
 
     await wrapper.find(`button[title="${i18n.global.t('common.delete')}"]`).trigger('click')
-    await wrapper.get('.modal-bg').trigger('click')
-    expect(wrapper.find('.modal-bg').exists()).toBe(true)
-    await wrapper.get('.modal-bg').trigger('keydown', { key: 'Escape' })
-    expect(wrapper.find('.modal-bg').exists()).toBe(false)
+    await clickBackdrop()
+    expect(dialogSurface()).not.toBeNull()
+    await pressEscape()
+    expect(dialogSurface()).toBeNull()
   })
 
   it('allows only the command dialog to close by clicking its backdrop', async () => {
     const wrapper = mountEditor([PROVIDER])
     await wrapper.find(`button[title="${i18n.global.t('settings.ai.view_command')}"]`).trigger('click')
-    expect(wrapper.get('[role="dialog"]').attributes('aria-modal')).toBe('true')
-    await wrapper.get('.modal-bg').trigger('click')
-    expect(wrapper.find('.modal-bg').exists()).toBe(false)
+    await flushPromises()
+    // ARIA is the shell's now (L0009 §2 "ARIA"), not markup this feature writes by hand.
+    expect(dialogSurface().getAttribute('role')).toBe('dialog')
+    expect(dialogSurface().getAttribute('aria-modal')).toBe('true')
+    await clickBackdrop()
+    expect(dialogSurface()).toBeNull()
   })
 })
 
@@ -342,22 +419,22 @@ describe('AI provider form pre-flight validation', () => {
   it('rejects a cli_command past the limit instead of letting the save 422', async () => {
     const wrapper = mountEditor()
     await openAddForm(wrapper)
-    await wrapper.get('input.form-ctrl').setValue('claude cli')
-    await wrapper.get('input.mono').setValue('c'.repeat(CLI_COMMAND_MAX + 1))
-    await wrapper.get('.modal-bg button.btn-primary').trigger('click')
+    await setDialogValue('input.form-ctrl', 'claude cli')
+    await setDialogValue('input.mono', 'c'.repeat(CLI_COMMAND_MAX + 1))
+    await clickSave()
 
-    expect(formError(wrapper)).toContain(String(CLI_COMMAND_MAX))
+    expect(formError()).toContain(String(CLI_COMMAND_MAX))
     expect(wrapper.emitted('update:providers')).toBeUndefined()
   })
 
   it('accepts a cli_command exactly at the limit', async () => {
     const wrapper = mountEditor()
     await openAddForm(wrapper)
-    await wrapper.get('input.form-ctrl').setValue('claude cli')
-    await wrapper.get('input.mono').setValue('c'.repeat(CLI_COMMAND_MAX))
-    await wrapper.get('.modal-bg button.btn-primary').trigger('click')
+    await setDialogValue('input.form-ctrl', 'claude cli')
+    await setDialogValue('input.mono', 'c'.repeat(CLI_COMMAND_MAX))
+    await clickSave()
 
-    expect(formError(wrapper)).toBe('')
+    expect(formError()).toBe('')
     expect(wrapper.emitted('update:providers')).toHaveLength(1)
   })
 
@@ -366,11 +443,11 @@ describe('AI provider form pre-flight validation', () => {
       { name: 'Claude CLI', exec_type: 'cli', kind: 'claude', enabled: true, cli_command: 'claude -p' },
     ])
     await openAddForm(wrapper)
-    await wrapper.get('input.form-ctrl').setValue('claude cli')
-    await wrapper.get('input.mono').setValue('claude -p')
-    await wrapper.get('.modal-bg button.btn-primary').trigger('click')
+    await setDialogValue('input.form-ctrl', 'claude cli')
+    await setDialogValue('input.mono', 'claude -p')
+    await clickSave()
 
-    expect(formError(wrapper)).not.toBe('')
+    expect(formError()).not.toBe('')
     expect(wrapper.emitted('update:providers')).toBeUndefined()
   })
 
@@ -379,10 +456,10 @@ describe('AI provider form pre-flight validation', () => {
       { name: 'claude cli', exec_type: 'cli', kind: 'claude', enabled: true, cli_command: 'claude -p' },
     ])
     await openEditForm(wrapper)
-    await wrapper.get('input.mono').setValue('claude -p --verbose')
-    await wrapper.get('.modal-bg button.btn-primary').trigger('click')
+    await setDialogValue('input.mono', 'claude -p --verbose')
+    await clickSave()
 
-    expect(formError(wrapper)).toBe('')
+    expect(formError()).toBe('')
     expect(wrapper.emitted('update:providers')).toHaveLength(1)
   })
 })

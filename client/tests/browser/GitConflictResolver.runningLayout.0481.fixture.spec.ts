@@ -9,6 +9,7 @@ import { mount } from '@vue/test-utils'
 import { expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import GitConflictResolverDialog from '@main/components/GitConflictResolverDialog.vue'
+import { resetDialogSystem } from '@main/composables/useDialogStack'
 import { parseConflictFile, residualMarkers, type ConflictFileState } from '@main/composables/useConflictChunks'
 
 vi.mock('@main/components/common/useToast', () => ({ useToast: () => ({ showToast: vi.fn() }) }))
@@ -31,6 +32,15 @@ function makeFile(path: string): ConflictFileState {
   return { path, conflict_count: 1, directText: CONTENT, mode: 'chunk', segments, notice: '' }
 }
 
+/**
+ * flowgate.default.0560 T0024 §2.8 — the dialog is a common-layer instance now, so
+ * `wrapper.html()` is EMPTY here: `DialogShell` teleports the whole surface to `#dialog-root`
+ * (falling back to `document.body`), which is outside this wrapper's subtree. The dump has to
+ * come from the real document, the way `tests/browser/DialogComplexGeometry.0560.fixture.spec.ts`
+ * takes it — `attachTo: document.body` plus `document.body.innerHTML`. The harness that reads
+ * these files injects exactly that string back into a body, so what is measured there is what
+ * a browser actually lays out here.
+ */
 function dump(name: string, props: Record<string, unknown>) {
   const wrapper = mount(GitConflictResolverDialog, {
     props: {
@@ -41,11 +51,21 @@ function dump(name: string, props: Record<string, unknown>) {
       ...props,
     },
     global: { plugins: [i18n], stubs: { AppIcon: true } },
+    attachTo: document.body,
   })
   const scratch = process.env.FLOWGATE_SCRATCH
   if (!scratch) throw new Error('FLOWGATE_SCRATCH is required')
-  writeFileSync(resolve(scratch, `conflict-resolver-running.${name}.html`), wrapper.html(), 'utf8')
+  const overlay = document.querySelector('.fg-dialog-overlay')
+  if (!overlay) throw new Error(`${name}: the dialog did not render a common-layer overlay`)
+  // The overlay only — see the deck fixture: a body dump leads with `data-v-app`, which is
+  // the first `data-v-` string the harness would pick up as this component's scoped-CSS id.
+  writeFileSync(
+    resolve(scratch, `conflict-resolver-running.${name}.html`),
+    overlay.outerHTML,
+    'utf8',
+  )
   wrapper.unmount()
+  resetDialogSystem()
 }
 
 it('the fixture really is the reported guard sentence', () => {

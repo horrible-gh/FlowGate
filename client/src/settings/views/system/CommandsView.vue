@@ -64,17 +64,24 @@
       </div>
     </div>
 
-    <!-- Create/edit modal -->
-    <div v-if="showModal" class="modal-bg" role="dialog" aria-modal="true">
-      <div class="modal-box" style="max-width:560px;">
-        <div class="modal-hd">
-          <span class="modal-title">
-            {{ modalMode === 'create'
-              ? $t('settings.system.commands.modal_create')
-              : $t('settings.system.commands.modal_edit') }}
-          </span>
-        </div>
-        <div class="modal-bd">
+    <!-- Create/edit modal — flowgate.default.0560 T0018 (4순위) on the common dialog
+         layer. D0008 "기존 instance 이관 목적지" maps this instance to `form`, whose
+         `closeOnBackdrop` default is already `false`, so no override is needed
+         (T0018 §2.2-3). `size="md"` is the same 520px `.modal-box` track this box used;
+         the old inline `max-width:560px` is dropped in favour of the common size scale.
+         The header X is new here — D0008 §2 gives "X close" to DialogHeader, and this was
+         the one instance in this batch with no close affordance in its title bar at all. -->
+    <DialogShell :open="showModal" variant="form" size="md" @request-close="closeModal">
+      <template #header>
+        <DialogHeader
+          :title="modalMode === 'create'
+            ? $t('settings.system.commands.modal_create')
+            : $t('settings.system.commands.modal_edit')"
+          @close="closeModal"
+        />
+      </template>
+
+      <template #default>
           <div class="form-group">
             <label class="form-label req">{{ $t('settings.system.commands.label_name') }}</label>
             <input
@@ -85,6 +92,7 @@
               v-model="form.name"
               :placeholder="$t('settings.system.commands.placeholder_name')"
               :disabled="modalMode === 'edit'"
+              :data-dialog-autofocus="modalMode === 'create' ? '' : undefined"
             >
             <p v-if="nameError" class="form-hint" style="color:var(--danger);">{{ nameError }}</p>
             <p v-else class="form-hint">{{ $t('settings.system.commands.hint_name') }}</p>
@@ -124,16 +132,12 @@
           </div>
 
           <p v-if="apiError" class="form-hint" style="color:var(--danger); margin-top:8px;">{{ apiError }}</p>
-        </div>
-        <div class="modal-ft">
-          <button class="btn btn-secondary" @click="closeModal">{{ $t('common.cancel') }}</button>
-          <button class="btn btn-primary" :disabled="saving" @click="submitModal">
-            <AppIcon v-if="saving" name="spinner" spin />
-            {{ $t('common.save') }}
-          </button>
-        </div>
-      </div>
-    </div>
+      </template>
+
+      <template #footer>
+        <DialogFooter :actions="modalActions" />
+      </template>
+    </DialogShell>
 
     <!-- Delete confirmation (shared ConfirmModal, no native confirm()) -->
     <ConfirmModal
@@ -148,11 +152,14 @@
 </template>
 
 <script setup>
-import { ref, nextTick, onMounted } from 'vue'
+import { computed, ref, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest, putRequest, deleteRequest } from '@shared/api'
 import { useToast } from '../../../main/components/common/useToast'
 import ConfirmModal from '@main/components/ConfirmModal.vue'
+import DialogFooter from '@main/components/dialogs/DialogFooter.vue'
+import DialogHeader from '@main/components/dialogs/DialogHeader.vue'
+import DialogShell from '@main/components/dialogs/DialogShell.vue'
 import AppIcon from '@shared/AppIcon.vue'
 
 const { t } = useI18n()
@@ -300,6 +307,29 @@ function openEdit(cmd) {
 function closeModal() {
   showModal.value = false
 }
+
+/**
+ * `[취소] [저장]` — the order is the layer's now, not this file's: `footerRolePriority`
+ * puts `cancel` immediately left of `primary` before rendering (D0008 §6 "Footer 규칙").
+ * The save spinner comes from DialogFooter's own in-flight state — `submitModal` is
+ * awaited by the single execution path, so no hand-rolled `v-if="saving"` icon is needed.
+ */
+const modalActions = computed(() => [
+  {
+    id: 'cancel',
+    label: t('common.cancel'),
+    role: 'cancel',
+    onSelect: closeModal,
+  },
+  {
+    id: 'save',
+    label: t('common.save'),
+    role: 'primary',
+    disabled: saving.value,
+    loading: saving.value,
+    onSelect: submitModal,
+  },
+])
 
 function validateForm() {
   nameError.value = ''

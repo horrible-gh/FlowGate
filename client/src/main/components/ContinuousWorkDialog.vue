@@ -1,17 +1,35 @@
 <template>
-  <teleport to="body">
-    <div v-if="visible" class="modal-bg">
-      <div class="modal-box modal-cwd">
-        <!-- ── Header ── -->
-        <div class="modal-hd">
-          <span class="modal-title">
-            <AppIcon name="fast-forward" style="color:var(--primary); margin-right:6px;" />
-            {{ t('main.continuous_work.title') }}
-          </span>
-          <button class="modal-close" type="button" @click="close">
-            <AppIcon name="x" />
-          </button>
-        </div>
+  <!-- flowgate.default.0560 T0022 §2.2 (5순위) - migrated onto the common dialog layer.
+       D0008 §6 maps this instance to `workflow-large`. `surface="panel"` is an explicit caller
+       value for the same reason as `AiInvokeDialog`: `sheet` is a fixed `min(860px, 88vh)`
+       working surface, and this dialog is a content-height box whose two-column grid caps
+       ITSELF at `min(480px, 58vh)` (0328 TR0005 rev6) - on a sheet that cap would leave a
+       dead band between the grid and the footer. `size="xl"` is the nearest track to the
+       860px `.modal-cwd` was (`lg` 720 would squeeze the 5:5 grid, the same reason T0016 gave
+       for `WorkflowDecisionModal`). `closeOnBackdrop` is not overridden - `workflow-large`
+       already defaults to `false`, as this `.modal-bg` (no handler) was.
+
+       The two `await confirm(...)` calls in `revertPreset` / `revertSequenceNotes` are 2순위's
+       work (T0014/TR0015 replaced the native `window.confirm` there; a grep for `window.confirm`
+       over `client/src` finds nothing). They are untouched here and now run as real nested
+       dialogs above this one - L0009 §2 "Native confirm 치환". -->
+  <DialogShell
+    ref="shellRef"
+    :open="visible"
+    variant="workflow-large"
+    surface="panel"
+    size="xl"
+    @request-close="close"
+  >
+    <template #header>
+      <DialogHeader
+        :title="t('main.continuous_work.title')"
+        icon="fast-forward"
+        @close="onHeaderClose"
+      />
+    </template>
+
+    <template #default>
 
         <div v-if="presetActive" class="cwd-preset-banner">
           <div>
@@ -36,7 +54,7 @@
         <div v-if="presetRefreshMessage" class="cwd-preset-refresh">{{ presetRefreshMessage }}</div>
 
         <!-- ── Body: left = step list, right = settings tabs (0317 T0010 rev4) ── -->
-        <div class="modal-bd cwd-body">
+        <div class="cwd-body">
           <div class="cwd-col cwd-col-steps">
             <p class="cwd-intro">{{ t('main.continuous_work.intro') }}</p>
             <!-- 0242: the step list / head / all-done / pre-decision handling all live in the
@@ -330,21 +348,17 @@
           </div>
         </div>
 
-        <!-- ── Footer ── -->
-        <div class="modal-ft">
-          <button type="button" class="btn btn-ghost" @click="close">{{ t('common.cancel') }}</button>
-          <button
-            type="button"
-            class="btn btn-primary"
-            :disabled="!canProceed"
-            @click="onProceed"
-          >
-            <AppIcon name="arrow-right" /> {{ t('main.continuous_work.btn_next') }}
-          </button>
-        </div>
-      </div>
-    </div>
-  </teleport>
+    </template>
+
+    <!-- ── Footer ── -->
+    <template #footer>
+      <DialogFooter :actions="actions">
+        <template #action-next>
+          <AppIcon name="arrow-right" /> {{ t('main.continuous_work.btn_next') }}
+        </template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
@@ -353,6 +367,10 @@ import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import AiProviderSelect from './AiProviderSelect.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogShell from './dialogs/DialogShell.vue'
+import type { DialogAction } from './dialogs/dialogTypes'
 import WorkflowStepPicker from './WorkflowStepPicker.vue'
 import type { WorkflowStepItem, WorkflowStepPickerState } from '../types/workflowStepPicker'
 import { DEFAULT_INSTRUCTION_MODE, type WorkPlanFillPreset } from '../types/workPlanFillPreset'
@@ -363,6 +381,7 @@ import {
   loadStoredStepTimeoutMin,
   storeStepTimeoutMin,
 } from '../composables/useStepTimeout'
+import { confirm } from '../composables/useDialogStack'
 
 const props = defineProps<{
   visible: boolean
@@ -750,8 +769,8 @@ function applyPlanFill() {
   overrides.value = nextProviders
 }
 
-function revertSequenceNotes() {
-  if (!window.confirm(t('main.continuous_work.preset_revert_confirm'))) return
+async function revertSequenceNotes() {
+  if (!await confirm({ title: t('main.continuous_work.sequence_notes_revert_confirm') })) return
   applySequenceNotePrefill(picker.value.steps ?? [])
 }
 
@@ -989,6 +1008,33 @@ function onProceed() {
   })
 }
 
+const shellRef = ref<InstanceType<typeof DialogShell> | null>(null)
+
+function onHeaderClose() {
+  shellRef.value?.requestClose('header')
+}
+
+/**
+ * T0022 §2.2 - the simplest footer of the eight: `[취소](cancel)` and `[다음](primary)`, in
+ * that order both before and after (`footerRolePriority` cancel 30 -> primary 40). The
+ * `action-next` slot exists only to keep the arrow icon; the label comes from the action.
+ */
+const actions = computed<DialogAction[]>(() => [
+  {
+    id: 'cancel',
+    label: t('common.cancel'),
+    role: 'cancel',
+    onSelect: close,
+  },
+  {
+    id: 'next',
+    label: t('main.continuous_work.btn_next'),
+    role: 'primary',
+    disabled: !canProceed.value,
+    onSelect: onProceed,
+  },
+])
+
 function close() {
   emit('update:visible', false)
 }
@@ -1063,8 +1109,8 @@ async function refreshPresetForMode() {
   }
 }
 
-function revertPreset() {
-  if (!window.confirm(t('main.continuous_work.preset_revert_confirm'))) return
+async function revertPreset() {
+  if (!await confirm({ title: t('main.continuous_work.preset_revert_confirm') })) return
   installPreset(null)
 }
 
@@ -1124,21 +1170,16 @@ watch(presetActive, (active) => {
 .cwd-stored-provider--unavailable { color:#b45309; background:#fff7ed; }
 /* 0399 T0018: notice for steps with no mention — informational, never blocks (D0010 §3.5). */
 .cwd-note-unset-flag { color:#b45309; font-weight:700; }
-.modal-cwd {
-  width: 860px;
-  max-width: 96vw;
-  display: flex;
-  flex-direction: column;
-  max-height: 88vh;
-}
-/* 0328 TR0005 rev4: the body itself must NOT scroll. While it did, a short window pushed the
+/* `.modal-cwd` left with the markup - the width is the shell's `size="xl"` and the height cap
+   is `panel`'s own `max-height: 88vh`. The two rules that were on `.modal-bd` moved onto
+   `.cwd-body` below, which is the same element they always shared (one div, both class names).
+   0328 TR0005 rev4: the body itself must NOT scroll. While it did, a short window pushed the
    whole right-hand column (tab bar + default-provider row included) into the body scroller, so
-   capping the per-step list alone could not keep those two fixed. The body now clips and each
+   capping the per-step list alone could not keep those two fixed. The body clips and each
    column owns its own scrolling. */
-.modal-cwd .modal-bd {
-  flex: 1;
+.cwd-body {
+  flex: 1 1 auto;
   overflow: hidden;
-  min-height: 0;
   /* 0328 TR0005 rev6: one bound for BOTH columns. Each column used to cap its own list
      (280px each), so the taller column decided the body height and the shorter one was left
      with dead space under its last box — that is the misaligned bottom line the rejection
@@ -1146,8 +1187,6 @@ watch(presetActive, (active) => {
      single grid row the only height authority: both columns are stretched to it and each one's
      list flexes to fill, so the two bottom borders land on the same line at any step count. */
   max-height: min(480px, 58vh);
-}
-.cwd-body {
   display: grid;
   /* rev6: even 5:5 split — the left "어디까지 연속 작업할지 선택" column was 1.15fr and read
      as the wider half. */

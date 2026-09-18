@@ -52,44 +52,47 @@
       </div>
     </div>
 
-    <!-- Message create/edit modal -->
-    <Transition name="modal-fade">
-      <div v-if="showModal" class="modal-bg" role="dialog" aria-modal="true">
-        <div class="modal-box">
-          <div class="modal-hd">
-            <span class="modal-title">
-              <AppIcon :name="editing ? 'pencil-simple' : 'plus'" style="color:var(--primary);" />
-              {{ editing ? $t('settings.project.messages_view.modal_edit_title') : $t('settings.project.messages_view.modal_add_title') }}
-            </span>
-            <button class="modal-close" @click="showModal = false"><AppIcon name="x" /></button>
-          </div>
-          <div class="modal-bd">
-            <div class="form-group">
-              <label class="form-label req">{{ $t('settings.project.messages_view.label_doc_type') }}</label>
-              <select class="form-ctrl" v-model="form.doc_type">
-                <option v-for="opt in docTypeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label class="form-label req">{{ $t('settings.project.messages_view.label_message') }}</label>
-              <textarea
-                class="form-ctrl"
-                rows="3"
-                v-model="form.message"
-                :placeholder="$t('settings.project.messages_view.placeholder_message')"
-              ></textarea>
-            </div>
-          </div>
-          <div class="modal-ft">
-            <button class="btn btn-secondary" @click="showModal = false">{{ $t('common.cancel') }}</button>
-            <button class="btn btn-primary" :disabled="!form.message.trim()" @click="saveMessage">
-              <AppIcon :name="editing ? 'floppy-disk' : 'plus'" />
-              {{ editing ? $t('common.save') : $t('common.add') }}
-            </button>
-          </div>
+    <!-- Message create/edit modal — flowgate.default.0560 T0018 (4순위) on the common
+         dialog layer. D0008 "기존 instance 이관 목적지" maps this instance to `form`, whose
+         `closeOnBackdrop` default is already `false`, so no override is needed here
+         (T0018 §2.2-3). The `modal-fade` Transition is gone with the markup it wrapped:
+         DialogShell brings its own open animation. -->
+    <DialogShell :open="showModal" variant="form" @request-close="showModal = false">
+      <template #header>
+        <DialogHeader
+          :title="editing ? $t('settings.project.messages_view.modal_edit_title') : $t('settings.project.messages_view.modal_add_title')"
+          :icon="editing ? 'pencil-simple' : 'plus'"
+          @close="showModal = false"
+        />
+      </template>
+
+      <template #default>
+        <div class="form-group">
+          <label class="form-label req">{{ $t('settings.project.messages_view.label_doc_type') }}</label>
+          <select class="form-ctrl" v-model="form.doc_type">
+            <option v-for="opt in docTypeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+          </select>
         </div>
-      </div>
-    </Transition>
+        <div class="form-group">
+          <label class="form-label req">{{ $t('settings.project.messages_view.label_message') }}</label>
+          <textarea
+            class="form-ctrl"
+            rows="3"
+            v-model="form.message"
+            :placeholder="$t('settings.project.messages_view.placeholder_message')"
+          ></textarea>
+        </div>
+      </template>
+
+      <template #footer>
+        <DialogFooter :actions="modalActions">
+          <template #action-save>
+            <AppIcon :name="editing ? 'floppy-disk' : 'plus'" />
+            {{ editing ? $t('common.save') : $t('common.add') }}
+          </template>
+        </DialogFooter>
+      </template>
+    </DialogShell>
 
     <!-- Delete confirmation (shared ConfirmModal, no native confirm()) -->
     <ConfirmModal
@@ -109,6 +112,9 @@ import { ref, computed, onMounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { getRequest, postRequest, patchRequest, deleteRequest } from '@shared/api';
 import ConfirmModal from '../../../main/components/ConfirmModal.vue';
+import DialogFooter from '../../../main/components/dialogs/DialogFooter.vue';
+import DialogHeader from '../../../main/components/dialogs/DialogHeader.vue';
+import DialogShell from '../../../main/components/dialogs/DialogShell.vue';
 import { useToast } from '../../../main/components/common/useToast';
 import { useAuthStore } from '../../stores/auth.js';
 import { useSettingsStore } from '../../stores/settings.js';
@@ -157,6 +163,27 @@ async function fetchMessages() {
   messages.value = data.data || [];
 }
 
+/**
+ * `[취소] [저장/추가]` — the same left-to-right order this modal already had, except the
+ * order is no longer this file's property: `footerRolePriority` puts `cancel` immediately
+ * left of `primary` before rendering (D0008 §6 "Footer 규칙").
+ */
+const modalActions = computed(() => [
+  {
+    id: 'cancel',
+    label: t('common.cancel'),
+    role: 'cancel',
+    onSelect: () => { showModal.value = false; },
+  },
+  {
+    id: 'save',
+    label: editing.value ? t('common.save') : t('common.add'),
+    role: 'primary',
+    disabled: !form.value.message.trim(),
+    onSelect: saveMessage,
+  },
+]);
+
 function openModal(m) {
   editing.value = m;
   form.value = m
@@ -203,14 +230,3 @@ watch(() => settings.currentProjectId, reload);
 watch(locale, fetchDocTypes);
 onMounted(reload);
 </script>
-
-<style scoped>
-.modal-fade-enter-active,
-.modal-fade-leave-active {
-  transition: opacity 0.15s ease;
-}
-.modal-fade-enter-from,
-.modal-fade-leave-to {
-  opacity: 0;
-}
-</style>

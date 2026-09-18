@@ -1,13 +1,14 @@
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { watch } from 'vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import NotificationCenter from '@main/components/NotificationCenter.vue'
 import { useNotificationsStore } from '@main/stores/notifications'
 import { useProjectStore } from '@main/stores/project'
 import type { DashboardActivity } from '@main/stores/dashboard'; import { getRequest } from '@shared/api'
 import { useQaOpenIntent } from '@main/composables/useQaOpenIntent'
+import { resetDialogSystem } from '@main/composables/useDialogStack'
 
 // R0001 group 0135 / N0008 — 시안 3 (라이브 피드) actually applied to the notification center.
 // These lock the VISIBLE mockup features the user asked for: filter tabs with live counts, per-row
@@ -47,6 +48,52 @@ function activity(over: Partial<DashboardActivity> & { event_id: number }): Dash
   }
 }
 
+// Every mounted centre is torn down between cases. The detail dialog teleports OUT of the
+// wrapper now, so a wrapper left mounted leaves its dialog standing in `document.body` and the
+// next case's probes would read the previous case's dialog (T0018).
+const mounted: { unmount: () => void }[] = []
+
+afterEach(() => {
+  while (mounted.length > 0) {
+    try {
+      mounted.pop()!.unmount()
+    } catch {
+      // already unmounted
+    }
+  }
+  resetDialogSystem()
+  document.body.innerHTML = ''
+})
+
+// flowgate.default.0560 T0018 (4순위): the AI-detail dialog moved onto the common dialog layer,
+// which teleports every dialog to `#dialog-root` (falling back to `document.body`). It is
+// therefore no longer inside this component's wrapper, so the three probes below read the real
+// document instead of `wrapper.find(...)` — which would now silently return "not found" and turn
+// every "the dialog is gone" assertion into a vacuous pass.
+function detailDialog(): HTMLElement | null {
+  return document.body.querySelector<HTMLElement>('.notif-detail-dialog')
+}
+
+function detailDialogOpen(): boolean {
+  return detailDialog() != null
+}
+
+function detailMessage(): string {
+  const el = document.body.querySelector('.notif-detail-message')
+  if (el == null) throw new Error('the AI detail dialog is not open')
+  return el.textContent ?? ''
+}
+
+/** The footer's [닫기]. `dismiss` role now, not a `btn-primary` (T0018 §2.3-6). */
+async function closeDetail(): Promise<void> {
+  const button = document.body.querySelector<HTMLButtonElement>(
+    '.notif-detail-dialog [data-dialog-action-id="close"]',
+  )
+  if (button == null) throw new Error('the AI detail dialog is not open')
+  button.click()
+  await flushPromises()
+}
+
 async function mountOpen(items: DashboardActivity[]) {
   const project = useProjectStore()
   project.currentProjectId = 'flowgate'
@@ -54,6 +101,7 @@ async function mountOpen(items: DashboardActivity[]) {
   vi.spyOn(store, 'fetchFeed').mockResolvedValue()
   vi.spyOn(store, 'markSeen').mockResolvedValue()
   const wrapper = mount(NotificationCenter, { global: { plugins: [i18n] } })
+  mounted.push(wrapper)
   // Seed after mount so onMounted's refresh (stubbed) doesn't clobber it; keep watermark null so
   // isUnread stays true for the fresh/unread paths.
   store.items = items
@@ -311,8 +359,8 @@ describe('NotificationCenter 시안 3 mockup (group 0135)', () => {
     await wrapper.find('.notif-ai-detail-btn').trigger('click')
     await flushPromises()
     expect(getRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/run-1')
-    expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
-    expect(wrapper.find('.notif-dialog-message').text()).toBe('FULL LINE 1\n  indented line 2\nFULL LINE 3')
+    expect(detailDialogOpen()).toBe(true)
+    expect(detailMessage()).toBe('FULL LINE 1\n  indented line 2\nFULL LINE 3')
     expect(wrapper.find('.notif-panel').exists()).toBe(true)
   })
 
@@ -370,20 +418,20 @@ describe('NotificationCenter 시안 3 mockup (group 0135)', () => {
     let rejectDetail!: (error: unknown) => void
     vi.mocked(getRequest).mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectDetail = reject }))
     await wrapper.find('.notif-ai-detail-btn').trigger('click')
-    expect(wrapper.find('.notif-dialog-message').text()).toContain('불러오는 중')
+    expect(detailMessage()).toContain('불러오는 중')
     rejectDetail(new Error('offline'))
     await flushPromises()
-    expect(wrapper.find('.notif-dialog-message').text()).toContain('불러오지 못했습니다')
+    expect(detailMessage()).toContain('불러오지 못했습니다')
 
-    await wrapper.find('.notif-dialog-actions button').trigger('click')
+    await closeDetail()
     vi.mocked(getRequest).mockResolvedValueOnce({ data: { run_id: 'run-1', doc_ref: null, doc_title: null, succeeded: false, outcome: 'failed', end_reason: 'failed', stop_code: null, stop_reason: 'provider stopped', provider_name: null, finished_at: null, last_message: null } } as any)
     await wrapper.find('.notif-ai-detail-btn').trigger('click'); await flushPromises()
-    expect(wrapper.find('.notif-dialog-message').text()).toBe('provider stopped')
+    expect(detailMessage()).toBe('provider stopped')
 
-    await wrapper.find('.notif-dialog-actions button').trigger('click')
+    await closeDetail()
     vi.mocked(getRequest).mockResolvedValueOnce({ data: { run_id: 'run-1', doc_ref: null, doc_title: null, succeeded: false, outcome: 'failed', end_reason: 'failed', stop_code: null, stop_reason: null, provider_name: null, finished_at: null, last_message: null } } as any)
     await wrapper.find('.notif-ai-detail-btn').trigger('click'); await flushPromises()
-    expect(wrapper.find('.notif-dialog-message').text()).toContain('남은 메시지가 없습니다')
+    expect(detailMessage()).toContain('남은 메시지가 없습니다')
   })
 
   it('discards a late detail response after a faster row selection', async () => {
@@ -401,7 +449,26 @@ describe('NotificationCenter 시안 3 mockup (group 0135)', () => {
     await flushPromises()
     resolveSlow({ data: { run_id: 'slow', last_message: 'STALE' } })
     await flushPromises()
-    expect(wrapper.find('.notif-dialog-message').text()).toBe('FAST')
+    expect(detailMessage()).toBe('FAST')
+  })
+
+  // flowgate.default.0560 T0018 §2.3-6: the footer is DialogFooter's now, so the painted order
+  // is the layer's — `[문서 열기](aux)` then `[닫기](dismiss)`. 닫기 is no longer a `btn-primary`:
+  // a read-only overlay has no action that completes it, so it has no primary button at all
+  // (D0008 §3-7), which retires the pattern NR0005 §4.1 named.
+  it('paints the detail footer as aux + dismiss, with no primary', async () => {
+    const wrapper = await mountOpen([])
+    const store = useNotificationsStore()
+    store.aiItems = [{ run_id: 'run-1', doc_ref: 'flowgate.default.0135.0010-TR', doc_title: 'Report', doc_type_code: 'TR', succeeded: true, outcome: 'complete', docs_reached: 1, docs_target: 1, end_reason: 'completed', stop_code: null, provider_name: null, finished_at: '2026-07-02T00:05:00Z', last_message_excerpt: null }]
+    vi.mocked(getRequest).mockResolvedValue({ data: { run_id: 'run-1', doc_ref: 'flowgate.default.0135.0010-TR', doc_title: 'Report', succeeded: true, outcome: 'complete', end_reason: 'completed', stop_code: null, stop_reason: null, provider_name: null, finished_at: null, last_message: 'done' } } as any)
+    await wrapper.findAll('.notif-section-tab')[1].trigger('click')
+    await wrapper.find('.notif-ai-detail-btn').trigger('click')
+    await flushPromises()
+
+    const buttons = [...document.body.querySelectorAll('.notif-detail-dialog [data-dialog-action-id]')]
+    expect(buttons.map((el) => el.getAttribute('data-dialog-action-id'))).toEqual(['open-document', 'close'])
+    expect(buttons.map((el) => el.getAttribute('data-dialog-action-role'))).toEqual(['aux', 'dismiss'])
+    expect(document.body.querySelector('.notif-detail-dialog [data-dialog-action-role="primary"]')).toBeNull()
   })
 
   it('closes detail by the footer button and Escape while keeping the notification panel', async () => {
@@ -412,14 +479,14 @@ describe('NotificationCenter 시안 3 mockup (group 0135)', () => {
     await wrapper.findAll('.notif-section-tab')[1].trigger('click')
 
     await wrapper.find('.notif-ai-detail-btn').trigger('click'); await flushPromises()
-    await wrapper.find('.notif-dialog-actions button').trigger('click')
-    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    await closeDetail()
+    expect(detailDialogOpen()).toBe(false)
     expect(wrapper.find('.notif-panel').exists()).toBe(true)
 
     await wrapper.find('.notif-ai-detail-btn').trigger('click'); await flushPromises()
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     await wrapper.vm.$nextTick()
-    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    expect(detailDialogOpen()).toBe(false)
     expect(wrapper.find('.notif-panel').exists()).toBe(true)
   })
 

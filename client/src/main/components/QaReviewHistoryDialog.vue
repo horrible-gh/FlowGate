@@ -1,24 +1,18 @@
 <template>
-  <teleport to="body">
-    <div
-      v-if="visible"
-      class="modal-bg"
-      tabindex="-1"
-      @keydown.escape.prevent="onClose"
-    >
-      <div class="modal-box modal-qhd" role="dialog" aria-modal="true" aria-labelledby="qrh-title">
-        <!-- Header -->
-        <div class="modal-hd">
-          <div class="modal-title" id="qrh-title">
+  <DialogShell :open="visible" variant="readonly" surface-class="dialog-qa-review-history-dialog"  @request-close="onClose">
+    <template #header>
+      <DialogHeader title="" :closeable="true" @close="onClose">
+        <template #title>
             <AppIcon name="chat-slash" style="color:var(--primary, #2563eb); margin-right:6px;" />{{ t('main.qa_review_history.title') }}
-          </div>
-          <button type="button" class="modal-close" @click="onClose">
-            <AppIcon name="x" />
-          </button>
-        </div>
+          </template>
+      </DialogHeader>
+    </template>
+
+        <!-- Header -->
+        
 
         <!-- Body -->
-        <div class="modal-bd qhd-body">
+        <div class="dialog-feature-body qhd-body">
           <p class="qhd-desc">{{ t('main.qa_review_history.desc') }}</p>
 
           <!-- Filter for 0311 T0004 §3. Per rev3 rejection ("현재 적용되어있는 스타일을 전혀 사용하지
@@ -138,15 +132,23 @@
         </div>
 
         <!-- Footer -->
-        <div class="modal-ft qhd-footer">
-          <button type="button" class="btn btn-outline btn-sm" @click="onClose">{{ t('common.close') }}</button>
-        </div>
-      </div>
-    </div>
-  </teleport>
+        
+      
+
+    <template #footer>
+      <DialogFooter :actions="[
+        { id: 'onClose-0', role: 'cancel', label: t('common.close'), onSelect: () => onClose() }
+      ]">
+        <template #action-onClose-0>{{ t('common.close') }}</template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
+import DialogShell from './dialogs/DialogShell.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
 import { computed, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { AiReview } from '../types/aiReview'
@@ -285,7 +287,7 @@ function onClose() {
    The only newly written rules are the filter row's count badge (.qrh-count) and the
    AI-review comment's fold clamp (.rhd-comment.collapsed, TR0005 rev6 rejection §2) —
    the filter row itself is the global app.css .tab-nav / .tab-nav-item. */
-.modal-qhd { width: 560px; max-width: 92vw; max-height: 80vh; display: flex; flex-direction: column; }
+
 .qhd-body { overflow-y: auto; }
 .qhd-desc { font-size: .78rem; color: var(--text-m); margin-bottom: 12px; }
 .qhd-empty { padding: 24px; text-align: center; color: var(--text-m); font-size: .85rem; }
@@ -294,7 +296,7 @@ function onClose() {
 /* Filter row: uses the global .tab-nav as-is, just appending a faded count. */
 .qrh-filters { margin-bottom: 12px; }
 .qrh-count { opacity: .6; font-variant-numeric: tabular-nums; }
-.qhd-footer { display: flex; justify-content: flex-end; }
+
 
 /* ── Rejection · AI review entries: card copied as-is from the pre-merge ReviewHistoryDialog ── */
 .rhd-item { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
@@ -359,4 +361,6 @@ function onClose() {
   .qhd-body::-webkit-scrollbar-thumb { border: 3px solid #eef2f8; border-radius: 999px; background: #b8c4d6; }
   .qhd-body::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 }
+
+:global(.fg-dialog-surface.dialog-qa-review-history-dialog) { width: 560px; max-width: 92vw; }
 </style>

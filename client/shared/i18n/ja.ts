@@ -1865,6 +1865,7 @@ export default {
       toast_started: '連続作業のメンションをコピーしました。AIに渡すと無人で進行します。',
       preset_source: '作業計画 {doc} の値を入力しました。', preset_not_started: 'まだ実行されていません。',
       preset_unset: '未指定の{n}段階はデフォルトのプロバイダーを使用します。', preset_revert: '入力値を元に戻す',
+      sequence_notes_revert_confirm: '各段階の伝達事項とプロバイダーの選択を元の値に戻しますか？',
       preset_revert_confirm: '入力値だけを戻します。追加済みのワークフロー段階は戻りません。続行しますか？',
       preset_mode_refreshed: '実行方式に合わせて再入力しました。手動編集した{n}セルは保持しました。',
       preset_mode_failed: 'この実行方式の割り当てを再計算できませんでした。',
@@ -1954,6 +1955,9 @@ export default {
       save_failed: 'ドキュメントの保存に失敗しました。',
       save_error_details: '{summary} 詳細は編集画面で確認してください。',
       save_success: 'ドキュメントを保存しました。',
+      discard_confirm_title: '保存していない編集を破棄しますか？',
+      discard_confirm_message: '編集画面を閉じると、保存していない内容は失われます。',
+      discard_confirm_ok: '破棄して閉じる',
     },
     workflow_decision_modal: {
       title: 'ワークフロー決定',
@@ -3061,6 +3065,10 @@ export default {
       approve: '承認 — コミット & マージ',
       reject_reason_label: '却下理由と再試行の指示',
       reject_confirm: '却下して再試行',
+      // 0560 T0020 §2.2 (a)
+      discard_confirm_title: '入力中の却下理由を破棄しますか？',
+      discard_confirm_message: 'この画面を閉じると、入力した却下理由は失われます。',
+      discard_confirm_ok: '破棄して閉じる',
       approved_toast: '承認しました。',
       re_review_toast: 'レビュー対象が変わったため、新しい内容の再確認が必要です。',
       reconciling_toast: '反映結果を確認しています。',

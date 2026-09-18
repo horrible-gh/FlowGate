@@ -181,24 +181,37 @@
     </div>
 
     <!-- Storage path change confirmation modal -->
-    <div v-if="showStorageConfirm" class="modal-bg" role="dialog" aria-modal="true">
-      <div class="modal-box">
-        <div class="modal-hd">
-          <span class="modal-title">{{ $t('settings.system.storage.confirm_title') }}</span>
-        </div>
-        <div class="modal-bd">
+    <DialogShell :open="showStorageConfirm" variant="form" surface-class="dialog-system-settings-view"  @request-close="showStorageConfirm = false">
+    <template #header>
+      <DialogHeader title="" :closeable="false" @close="showStorageConfirm = false">
+        <template #title>{{ $t('settings.system.storage.confirm_title') }}</template>
+      </DialogHeader>
+    </template>
+
+        
+        <div class="dialog-feature-body">
           <p>{{ $t('settings.system.storage.confirm') }}</p>
         </div>
-        <div class="modal-ft">
-          <button class="btn btn-secondary" @click="showStorageConfirm = false">{{ $t('common.cancel') }}</button>
-          <button class="btn btn-primary" @click="confirmSaveStorage">{{ $t('common.confirm') }}</button>
-        </div>
-      </div>
-    </div>
+        
+      
+
+    <template #footer>
+      <DialogFooter :actions="[
+        { id: 'showStorageConfirm-0', role: 'cancel', label: $t('common.cancel'), onSelect: () => { showStorageConfirm = false } },
+        { id: 'confirmSaveStorage-1', role: 'primary', label: $t('common.confirm'), onSelect: () => confirmSaveStorage() }
+      ]">
+        <template #action-showStorageConfirm-0>{{ $t('common.cancel') }}</template>
+        <template #action-confirmSaveStorage-1>{{ $t('common.confirm') }}</template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
   </div>
 </template>
 
 <script setup>
+import DialogShell from '../../../main/components/dialogs/DialogShell.vue'
+import DialogHeader from '../../../main/components/dialogs/DialogHeader.vue'
+import DialogFooter from '../../../main/components/dialogs/DialogFooter.vue'
 import { ref, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useSettingsStore } from '../../stores/settings.js';

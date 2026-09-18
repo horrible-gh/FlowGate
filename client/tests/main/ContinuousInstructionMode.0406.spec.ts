@@ -68,7 +68,7 @@ describe('연속 실행의 N/T 작성 주체 (0406 T0022 작업 1·2·3)', () =>
     await flushPromises()
     // 창이 열리자마자 [자동승인] 라디오가 골라져 있어야 한다.
     expect((document.querySelectorAll('.cwd-mode input')[0] as HTMLInputElement).checked).toBe(true)
-    ;([...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement).click()
+    ;([...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement).click()
     await flushPromises()
 
     const payload = wrapper.emitted('confirm')![0][0] as Record<string, unknown>
@@ -120,7 +120,7 @@ describe('연속 실행의 N/T 작성 주체 (0406 T0022 작업 1·2·3)', () =>
     const steps = document.querySelectorAll('.wsp-step')
     expect((steps[2] as HTMLButtonElement).disabled).toBe(tIsAutoHandled)
 
-    ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
+    ;(document.querySelector('[data-dialog-action-role="primary"]') as HTMLButtonElement).click()
     await flushPromises()
     const body = postRequest.mock.calls[0][1] as Record<string, unknown>
     expect(body.continuation_instruction_mode).toBe(mode)

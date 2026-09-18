@@ -184,26 +184,19 @@
         </article>
       </div>
     </div>
-    <div v-if="detailOpen" class="notif-dialog-backdrop" @click.stop>
-      <section ref="detailDialogEl" class="notif-dialog" role="dialog" aria-modal="true" aria-labelledby="notif-ai-detail-title" tabindex="-1">
-        <header class="notif-dialog-hd">
-          <div>
-            <strong id="notif-ai-detail-title">{{ t('main.notif_center.ai_detail_title') }}</strong>
-            <span v-if="detail" :class="detail.succeeded ? 'detail-success' : 'detail-failure'">{{ detail.succeeded ? t('main.notif_center.ai_success') : t('main.notif_center.ai_failure') }}</span>
-          </div>
-          <button type="button" :aria-label="t('main.notif_center.close')" @click="closeAiDetail">×</button>
-        </header>
-        <div class="notif-dialog-meta">
-          <p v-if="detail?.doc_ref"><strong>{{ detail.doc_ref }}</strong><template v-if="detail.doc_title"> · {{ detail.doc_title }}</template></p>
-          <p v-if="detail">{{ [detail.stop_code || detail.end_reason, detail.finished_at ? formatDashboardTime(detail.finished_at) : null, detail.provider_name].filter(Boolean).join(' · ') }}</p>
-        </div>
-        <pre class="notif-dialog-message">{{ detailMessage }}</pre>
-        <footer class="notif-dialog-actions">
-          <button v-if="detail?.doc_ref" class="btn btn-outline btn-sm" type="button" @click="openDetailDocument">{{ t('main.notif_center.open_document') }}</button>
-          <button class="btn btn-primary btn-sm" type="button" @click="closeAiDetail">{{ t('main.notif_center.close') }}</button>
-        </footer>
-      </section>
-    </div>
+    <!-- AI 호출 상세 (NR0011 원장 ID 44). T0018 put it on the common dialog layer; 0560
+         T0020 (4.5순위) moved the shell block into its own component — D0008 §4's other
+         half. This file keeps the open flag, the fetched detail and the trigger element,
+         and nothing about the dialog's own contract moved with it. -->
+    <NotificationAiDetailDialog
+      :open="detailOpen"
+      :detail="detail"
+      :loading="detailLoading"
+      :errored="detailError"
+      :return-focus-to="detailReturnFocus"
+      @close="closeAiDetail"
+      @open-document="openDetailDocument"
+    />
   </div>
 </template>
 
@@ -218,6 +211,7 @@ import { useQaOpenIntent } from '../composables/useQaOpenIntent'
 import { useActivityFormat } from '../composables/useActivityFormat'
 import type { DashboardActivity } from '../stores/dashboard'; import type { AiInvokeDetail, AiInvokeNotification } from '../stores/notifications'; import { getRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
+import NotificationAiDetailDialog from './NotificationAiDetailDialog.vue'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -234,18 +228,11 @@ const detailOpen = ref(false)
 const detail = ref<AiInvokeDetail | null>(null)
 const detailLoading = ref(false)
 const detailError = ref(false)
-const detailDialogEl = ref<HTMLElement | null>(null)
 let detailVersion = 0
-let detailReturnFocus: HTMLElement | null = null
-
-const detailMessage = computed(() => {
-  if (detailLoading.value) return t('main.notif_center.ai_detail_loading')
-  if (detailError.value) return t('main.notif_center.ai_detail_failed')
-  const message = detail.value?.last_message?.trim()
-  if (message) return detail.value!.last_message!
-  const reason = detail.value?.stop_reason?.trim()
-  return reason || t('main.notif_center.ai_no_message')
-})
+// A ref, not a plain `let`: the dialog reads it as a prop at open time and the shell hands
+// focus back to it from the common teardown path (T0018 §2.3-6), so the value has to be
+// reactive rather than read once by a hand-written `nextTick` after close.
+const detailReturnFocus = ref<HTMLElement | null>(null)
 
 function aiSummary(item: AiInvokeNotification): string {
   const parts: string[] = []
@@ -259,14 +246,13 @@ function aiSummary(item: AiInvokeNotification): string {
 }
 
 async function openAiDetail(runId: string, event: Event) {
-  detailReturnFocus = event.currentTarget as HTMLElement
+  detailReturnFocus.value = event.currentTarget as HTMLElement
   const version = ++detailVersion
   detailOpen.value = true
   detail.value = null
   detailError.value = false
   detailLoading.value = true
   await nextTick()
-  detailDialogEl.value?.focus()
   try {
     const response = await getRequest<AiInvokeDetail>('/api/v1/ai-invoke/' + encodeURIComponent(runId))
     if (version === detailVersion) detail.value = response.data
@@ -281,7 +267,8 @@ function closeAiDetail() {
   detailVersion++
   detailOpen.value = false
   detail.value = null
-  nextTick(() => detailReturnFocus?.focus())
+  // No hand-rolled focus return: `return-focus-to` on the shell puts focus back on the
+  // trigger from the one teardown procedure (L0009 §2 "Open / Close lifecycle").
 }
 
 async function openDetailDocument() {
@@ -378,15 +365,20 @@ function onItemClick(item: DashboardActivity) {
 
 function onClickOutside(e: MouseEvent) {
   if (!open.value) return
+  // The detail dialog left this component's subtree when it moved onto the common layer
+  // (DialogShell teleports to `#dialog-root`), so every click inside it now reads as
+  // "outside the notification centre" and would close the panel underneath. Ignoring
+  // clicks while the dialog is up keeps the pre-migration behaviour, where the dialog was
+  // still a descendant of `rootEl` (T0018 §2.3-6).
+  if (detailOpen.value) return
   if (rootEl.value && !rootEl.value.contains(e.target as Node)) open.value = false
 }
 
 function onKeyDown(e: KeyboardEvent) {
   if (e.key !== 'Escape') return
-  if (detailOpen.value) {
-    closeAiDetail()
-    return
-  }
+  // The detail dialog's ESC belongs to the common stack's single document listener now
+  // (L0009 §2 "ESC"). Keeping a branch for it here would close it twice.
+  if (detailOpen.value) return
   if (open.value) open.value = false
 }
 
@@ -660,19 +652,13 @@ defineExpose({ open })
 .notif-ai-row--success { border-left-color: #22c55e; }
 .notif-ai-row--failure { border-left-color: #ef4444; background: rgba(239, 68, 68, .04); }
 .notif-ai-status-icon { margin-top: 2px; }
-.notif-ai-row--success .notif-ai-status-icon, .detail-success { color: #15803d; }
-.notif-ai-row--failure .notif-ai-status-icon, .detail-failure { color: #b91c1c; }
+/* The `.detail-*` half of these two rules left with the dialog (T0020) — a scoped rule
+   here could not reach markup this component no longer renders. */
+.notif-ai-row--success .notif-ai-status-icon { color: #15803d; }
+.notif-ai-row--failure .notif-ai-status-icon { color: #b91c1c; }
 .notif-ai-content { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 4px; }
 .notif-ai-status { font-size: .78rem; }
 .notif-ai-detail-btn { align-self: center; color: var(--primary, #2563eb); font-size: .72rem; font-weight: 700; white-space: nowrap; }
-.notif-dialog-backdrop { position: fixed; inset: 0; z-index: 2000; display: grid; place-items: center; padding: 24px; background: rgba(15, 23, 42, .42); }
-.notif-dialog { width: min(640px, calc(100vw - 48px)); max-height: min(720px, calc(100vh - 48px)); overflow: auto; border-radius: 12px; background: var(--surface, #fff); box-shadow: 0 24px 64px rgba(0,0,0,.28); outline: none; }
-.notif-dialog-hd, .notif-dialog-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--border, #e2e8f0); }
-.notif-dialog-hd div { display: flex; gap: 10px; align-items: center; }
-.notif-dialog-meta { padding: 12px 18px 0; color: var(--text-secondary, #475569); font-size: .78rem; }
-.notif-dialog-message { min-height: 180px; margin: 12px 18px; padding: 14px; overflow: auto; border: 1px solid var(--border, #e2e8f0); border-radius: 8px; background: #f8fafc; color: var(--text, #0f172a); font: .8rem/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
-.notif-dialog-actions { justify-content: flex-end; border-top: 1px solid var(--border, #e2e8f0); border-bottom: 0; }
-
 /* Newly arrived (unread) rows slide in — the mockup's "완료가 리스트로 흘러 들어온다". */
 .notif-item--fresh { animation: notifFreshIn .45s ease-out; }
 @keyframes notifFreshIn {

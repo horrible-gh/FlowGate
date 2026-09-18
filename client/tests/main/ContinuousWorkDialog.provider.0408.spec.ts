@@ -87,7 +87,7 @@ function selects() {
   return document.querySelectorAll('.cwd-override-select .aip-select-input') as NodeListOf<HTMLSelectElement>
 }
 async function confirm(wrapper: ReturnType<typeof mountDialog>) {
-  ;([...document.querySelectorAll('.modal-ft .btn-primary')][0] as HTMLButtonElement).click()
+  ;([...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement).click()
   await flushPromises()
   return wrapper.emitted('confirm')![0][0] as any
 }
@@ -110,7 +110,7 @@ describe('ContinuousWorkDialog stored provider states (0408)', () => {
     expect(badges).toHaveLength(1)
     expect(badges[0].textContent).toContain(i18n.global.t('main.continuous_work.sequence_provider_unavailable'))
     expect(badges[0].classList.contains('cwd-stored-provider--unavailable')).toBe(true)
-    expect((document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).disabled).toBe(false)
+    expect((document.querySelector('[data-dialog-action-role="primary"]') as HTMLButtonElement).disabled).toBe(false)
     expect((await confirm(wrapper)).providerOverrides).toEqual({})
   })
 

@@ -48,13 +48,26 @@ export const MAIN_PANEL_STUBS: Record<string, unknown> = {
   NextEmptyDocModal: true,
   CommandSelectorModal: true,
   QTDetailViewer: true,
-  NewQModal: true,
   AiInvokeInline: true,
   GitFinalizePanel: true,
   ConfirmModal: true,
   TimeMachineDialog: true,
   MentionAddModal: true,
   ClipboardFallbackModal: true,
+  // flowgate.default.0560 T0018 (4순위) / D0008 §4: MainPanel's four dialog instances are four
+  // components now. They are opted OUT of the shallow stub on purpose — their markup used to be
+  // inline in MainPanel, so leaving them stubbed would quietly empty every existing assertion
+  // about the full view, the editor, the archive catalogue and quick open, and the "X is not
+  // shown" cases among them would keep passing for the wrong reason (the §5.1 vacuum this
+  // helper's header note is about). The common shell/header/footer come with them, since a
+  // stubbed DialogShell renders no body and no teleport target.
+  DocumentFullViewDialog: false,
+  DocumentEditDialog: false,
+  GitArchiveCatalogDialog: false,
+  QuickOpenDialog: false,
+  DialogShell: false,
+  DialogHeader: false,
+  DialogFooter: false,
 }
 
 export interface MountMainPanelOptions {

@@ -131,7 +131,7 @@ describe('AiInvokeDialog continuous target', () => {
 
     // A user who knows nothing about the sequence can just press [Start]: the default target
     // is the last step, i.e. the whole remaining sequence.
-    const start = document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement
+    const start = document.querySelector('[data-dialog-action-role="primary"]') as HTMLButtonElement
     expect(start.disabled).toBe(false)
     start.click()
     await flushPromises()
@@ -153,7 +153,7 @@ describe('AiInvokeDialog continuous target', () => {
     // Stop at TR (item_seq 4) instead of the default last step.
     ;(document.querySelectorAll('.wsp-step')[3] as HTMLButtonElement).click()
     await flushPromises()
-    ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
+    ;(document.querySelector('[data-dialog-action-role="primary"]') as HTMLButtonElement).click()
     await flushPromises()
 
     expect(startBody().continuation_target_seq).toBe(4)
@@ -174,7 +174,7 @@ describe('AiInvokeDialog continuous target', () => {
     const wrapper = mountDialog()
     await pickContinuous()
 
-    const start = document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement
+    const start = document.querySelector('[data-dialog-action-role="primary"]') as HTMLButtonElement
     expect(start.disabled).toBe(false)
     start.click()
     await flushPromises()
@@ -232,7 +232,7 @@ describe('AiInvokeDialog continuous target', () => {
 
     // Nothing left to chain — there is no target to express, so [Start] stays disabled
     // instead of posting a seq the server would have silently stopped on.
-    expect((document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).disabled).toBe(true)
+    expect((document.querySelector('[data-dialog-action-role="primary"]') as HTMLButtonElement).disabled).toBe(true)
     expect(document.querySelectorAll('.wsp-step--done')).toHaveLength(2)
 
     wrapper.unmount()
@@ -401,7 +401,7 @@ describe('AiInvokeDialog 전달멘트 forwarding (0346 T0005)', () => {
       messageOverrides: { 4: '개별 멘트' },
     })
     await flushPromises()
-    ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
+    ;(document.querySelector('[data-dialog-action-role="primary"]') as HTMLButtonElement).click()
     await flushPromises()
 
     const body = startBody()
@@ -431,7 +431,7 @@ describe('AiInvokeDialog 실행 시간 선택 (0446 T0010 R5)', () => {
   }
 
   async function clickStart() {
-    ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
+    ;(document.querySelector('[data-dialog-action-role="primary"]') as HTMLButtonElement).click()
     await flushPromises()
   }
 
@@ -884,7 +884,7 @@ describe('AiInvokeDialog 검수 전달 (0414 T0012)', () => {
       reviewerOverrides: { 4: 'aip_codex' },
     })
     await flushPromises()
-    ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
+    ;(document.querySelector('[data-dialog-action-role="primary"]') as HTMLButtonElement).click()
     await flushPromises()
 
     const body = startBody()
@@ -907,7 +907,7 @@ describe('AiInvokeDialog 검수 전달 (0414 T0012)', () => {
       reviewerOverrides: { 4: 'aip_codex' },
     })
     await pickContinuous()
-    ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
+    ;(document.querySelector('[data-dialog-action-role="primary"]') as HTMLButtonElement).click()
     await flushPromises()
 
     const body = startBody()
@@ -936,7 +936,7 @@ describe('AiInvokeDialog 재검수 admission parity (0544 T0011)', () => {
     const wrapper = mountDialog({ actionScope: 'review', hasCompletedReview: true })
     await flushPromises()
 
-    const rerun = document.querySelector('[data-test="review-rerun"]') as HTMLButtonElement
+    const rerun = document.querySelector('[data-dialog-action-id="review-rerun"]') as HTMLButtonElement
     expect(rerun.disabled).toBe(false)
 
     rerun.click()
@@ -958,7 +958,7 @@ describe('AiInvokeDialog 재검수 admission parity (0544 T0011)', () => {
     loopRadio.dispatchEvent(new Event('change'))
     await flushPromises()
 
-    const rerun = document.querySelector('[data-test="review-rerun"]') as HTMLButtonElement
+    const rerun = document.querySelector('[data-dialog-action-id="review-rerun"]') as HTMLButtonElement
     expect(rerun.disabled).toBe(true)
 
     rerun.click()
@@ -983,11 +983,13 @@ describe('AiInvokeDialog 검수/재검수 단일 버튼 통합 (0544 T0013)', ()
     const wrapper = mountDialog({ actionScope: 'review', hasCompletedReview: false })
     await flushPromises()
 
-    expect(document.querySelector('[data-test="review-rerun"]')).toBeNull()
-    expect(document.querySelectorAll('.modal-ft button')).toHaveLength(2)
-    const start = document.querySelector('[data-test="review-start"]') as HTMLButtonElement
+    expect(document.querySelector('[data-dialog-action-id="review-rerun"]')).toBeNull()
+    expect(document.querySelectorAll('.fg-dialog-footer button')).toHaveLength(2)
+    const start = document.querySelector('[data-dialog-action-id="review-start"]') as HTMLButtonElement
     expect(start).not.toBeNull()
-    expect(start.classList.contains('btn-primary')).toBe(true)
+    // 0560 T0022 §2.1: the primary look is `dialog.css`'s `fg-dialog-btn--primary` now.
+    expect(start.classList.contains('fg-dialog-btn--primary')).toBe(true)
+    expect(start.getAttribute('data-dialog-action-role')).toBe('primary')
 
     start.click()
     await flushPromises()
@@ -1002,11 +1004,18 @@ describe('AiInvokeDialog 검수/재검수 단일 버튼 통합 (0544 T0013)', ()
     const wrapper = mountDialog({ actionScope: 'review', hasCompletedReview: true })
     await flushPromises()
 
-    expect(document.querySelector('[data-test="review-start"]')).toBeNull()
-    expect(document.querySelectorAll('.modal-ft button')).toHaveLength(2)
-    const rerun = document.querySelector('[data-test="review-rerun"]') as HTMLButtonElement
+    expect(document.querySelector('[data-dialog-action-id="review-start"]')).toBeNull()
+    expect(document.querySelectorAll('.fg-dialog-footer button')).toHaveLength(2)
+    const rerun = document.querySelector('[data-dialog-action-id="review-rerun"]') as HTMLButtonElement
     expect(rerun).not.toBeNull()
-    expect(rerun.classList.contains('btn-primary')).toBe(false)
+    // 0560 T0022 §2.1: the rerun state used to be told apart by colour (`btn-warning` vs
+    // `btn-primary`). `DialogActionTone` has only 'default' and 'danger', and adding a third is
+    // a D correction this T may not make, so the rerun action keeps the primary role and the
+    // default tone; what distinguishes it is the icon and the label, and that is what is
+    // asserted here instead of the colour.
+    expect(rerun.classList.contains('fg-dialog-btn--primary')).toBe(true)
+    expect(rerun.classList.contains('fg-dialog-btn--tone-default')).toBe(true)
+    expect(rerun.textContent).toContain(i18n.global.t('main.ai_invoke_dialog.review_rerun_button'))
 
     wrapper.unmount()
   })
@@ -1022,8 +1031,8 @@ describe('AiInvokeDialog 검수/재검수 단일 버튼 통합 (0544 T0013)', ()
     const wrapper = mountDialog({ actionScope: 'review', hasCompletedReview: true })
     await flushPromises()
 
-    expect(document.querySelector('[data-test="review-start"]')).toBeNull()
-    const rerun = document.querySelector('[data-test="review-rerun"]') as HTMLButtonElement
+    expect(document.querySelector('[data-dialog-action-id="review-start"]')).toBeNull()
+    const rerun = document.querySelector('[data-dialog-action-id="review-rerun"]') as HTMLButtonElement
     expect(rerun).not.toBeNull()
 
     rerun.click()
@@ -1041,7 +1050,7 @@ describe('AiInvokeDialog 검수/재검수 단일 버튼 통합 (0544 T0013)', ()
     const wrapper = mountDialog({ actionScope: 'review', hasCompletedReview: true })
     await flushPromises()
 
-    const rerun = document.querySelector('[data-test="review-rerun"]') as HTMLButtonElement
+    const rerun = document.querySelector('[data-dialog-action-id="review-rerun"]') as HTMLButtonElement
     rerun.click()
     await flushPromises()
 
@@ -1055,7 +1064,7 @@ describe('AiInvokeDialog 검수/재검수 단일 버튼 통합 (0544 T0013)', ()
     const wrapper = mountDialog({ actionScope: 'review', hasCompletedReview: true })
     await flushPromises()
 
-    const rerun = document.querySelector('[data-test="review-rerun"]') as HTMLButtonElement
+    const rerun = document.querySelector('[data-dialog-action-id="review-rerun"]') as HTMLButtonElement
     // Only path available on this button is confirm -> rerun; there is no click sequence that
     // reaches start() with no intent while completed.
     rerun.click()
@@ -1089,7 +1098,7 @@ describe('AiInvokeDialog 검수/재검수 단일 버튼 통합 (0544 T0013)', ()
       },
     })
 
-    const rerun = document.querySelector('[data-test="review-rerun"]') as HTMLButtonElement
+    const rerun = document.querySelector('[data-dialog-action-id="review-rerun"]') as HTMLButtonElement
     rerun.click()
     await flushPromises()
 
@@ -1126,7 +1135,7 @@ describe('AiInvokeDialog 검수/재검수 단일 버튼 통합 (0544 T0013)', ()
 
     // canStart is false here (no reviewer/rework provider resolved) — the single merged button
     // must stay disabled exactly as the old separate [재검수] button did.
-    const rerun = document.querySelector('[data-test="review-rerun"]') as HTMLButtonElement
+    const rerun = document.querySelector('[data-dialog-action-id="review-rerun"]') as HTMLButtonElement
     expect(rerun.disabled).toBe(true)
 
     wrapper.unmount()
@@ -1146,9 +1155,9 @@ describe('AiInvokeDialog 검수/재검수 단일 버튼 통합 (0544 T0013)', ()
     runsStore.trackStarted({ run_id: 'aiv_running', group_id: groupId, doc_ref: MEMBER })
     await nextTick()
 
-    const rerun = document.querySelector('[data-test="review-rerun"]') as HTMLButtonElement
+    const rerun = document.querySelector('[data-dialog-action-id="review-rerun"]') as HTMLButtonElement
     expect(rerun).not.toBeNull()
-    expect(document.querySelector('[data-test="review-start"]')).toBeNull()
+    expect(document.querySelector('[data-dialog-action-id="review-start"]')).toBeNull()
     expect(rerun.classList.contains('btn-primary')).toBe(false)
     expect(rerun.disabled).toBe(true)
 
@@ -1211,7 +1220,7 @@ describe('AiInvokeDialog document review loop behavior (0417 T0013)', () => {
       i18n.global.t('main.ai_invoke_dialog.review_loop_review_summary_until_pass', { provider: 'Reviewer AI' }),
     )
 
-    ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
+    ;(document.querySelector('[data-dialog-action-role="primary"]') as HTMLButtonElement).click()
     await flushPromises()
     expect(startBody()).toMatchObject({
       provider_id: null,
@@ -1285,7 +1294,7 @@ describe('AiInvokeDialog rejected-state rework entry offers the review/rework lo
     await flushPromises()
     expect(document.querySelector('[data-test="ai-invoke-step-timeout"]')).toBeNull()
 
-    ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
+    ;(document.querySelector('[data-dialog-action-role="primary"]') as HTMLButtonElement).click()
     await flushPromises()
 
     const body = startBody()
@@ -1309,7 +1318,7 @@ describe('AiInvokeDialog rejected-state rework entry offers the review/rework lo
   it('an ordinary (non-loop) rework on this scope still sends no document_review_loop key', async () => {
     const wrapper = mountDialog({ actionScope: 'rework' })
     await flushPromises()
-    ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
+    ;(document.querySelector('[data-dialog-action-role="primary"]') as HTMLButtonElement).click()
     await flushPromises()
 
     const body = startBody()
@@ -1382,7 +1391,10 @@ describe('AiInvokeDialog deck parity — MirageGlass u3digra2 v6 (0417 T0017)', 
     // request keeps sending provider_id: null.
     expect(document.querySelector('.aiv-provider-row')).not.toBeNull()
     expect(providerSelect().disabled).toBe(true)
-    expect((document.querySelector('.modal-aiv') as HTMLElement).classList).toContain('modal-aiv--loop')
+    // 0560 T0022 §2.1: `.modal-aiv--loop` (620px) is gone with the hand-built box; the loop
+    // state widens the common surface by asking for the next size up instead.
+    expect((document.querySelector('.fg-dialog-surface') as HTMLElement).classList)
+      .toContain('fg-dialog-surface--lg')
     wrapper.unmount()
   })
 
@@ -1458,12 +1470,29 @@ describe('AiInvokeDialog deck parity — MirageGlass u3digra2 v6 (0417 T0017)', 
     // The cold-open order is: open -> resetState() -> provider fetch resolves. Seeding the two
     // stage pickers only in resetState() left them empty, which blanked the [검수] summary name
     // and disabled [AI 실행 시작].
+    // flowgate.default.0560 T0031 (NR0029 §3.4): a naive "every call rewrites the one
+    // captured resolver" mock is fragile against ANY concurrent getRequest call landing in
+    // this window, not just the providers fetch it means to intercept — including a stray
+    // late resolution of another test's own in-flight request replaying through this shared
+    // mock. Keying the held-open promise to the exact URL this test cares about means an
+    // unrelated call can no longer steal `resolveProviders` and strand the real fetch pending
+    // forever.
     let resolveProviders: (value: unknown) => void = () => {}
-    getRequest.mockImplementation(() => new Promise((resolve) => { resolveProviders = resolve }))
+    getRequest.mockImplementation((url: string) =>
+      url === '/api/v1/ai-invoke/providers'
+        ? new Promise((resolve) => { resolveProviders = resolve })
+        : Promise.resolve({ data: {} }),
+    )
     const wrapper = mountDialog({ actionScope: 'review' })
     await flushPromises()
     await pickLoop()
     expect((document.querySelector('[data-test="review-loop-reviewer"]') as HTMLSelectElement).value).toBe('')
+
+    // Reproduce the late checkRunLive-shaped request that used to overwrite the shared
+    // resolver. It must take the unrelated immediate-response branch while the providers
+    // request stays pending and remains releasable through resolveProviders.
+    await expect(getRequest('/api/v1/ai-invoke/aiv_late')).resolves.toEqual({ data: {} })
+    expect(getRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/aiv_late')
 
     resolveProviders({
       data: {
@@ -1479,7 +1508,7 @@ describe('AiInvokeDialog deck parity — MirageGlass u3digra2 v6 (0417 T0017)', 
     await flushPromises()
     expect((document.querySelector('[data-test="review-loop-reviewer"]') as HTMLSelectElement).value).toBe('reviewer')
     expect(document.querySelector('[data-test="review-loop-review-summary"]')?.textContent).toContain('Reviewer AI')
-    expect((document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).disabled).toBe(false)
+    expect((document.querySelector('[data-dialog-action-role="primary"]') as HTMLButtonElement).disabled).toBe(false)
     await openTab('rework')
     expect((document.querySelector('[data-test="review-loop-reworker"]') as HTMLSelectElement).value).toBe('reviewer')
     wrapper.unmount()
@@ -1519,7 +1548,7 @@ describe('AiInvokeDialog deck parity — MirageGlass u3digra2 v6 (0417 T0017)', 
     exhaust.checked = false
     exhaust.dispatchEvent(new Event('change'))
     await flushPromises()
-    ;(document.querySelector('.modal-ft .btn-primary') as HTMLButtonElement).click()
+    ;(document.querySelector('[data-dialog-action-role="primary"]') as HTMLButtonElement).click()
     await flushPromises()
     expect(startBody()).toMatchObject({
       provider_id: null,

@@ -23,15 +23,22 @@ function items() {
 }
 
 function mountDialog(props: Record<string, unknown> = {}) {
-  return mount(QaHistoryDialog, {
+  openWrapper = mount(QaHistoryDialog, {
     props: { visible: true, items: items(), ...props },
     global: { plugins: [i18n] },
   })
+  return openWrapper as ReturnType<typeof mount>
 }
 
+// 0560 T0039: this dialog rides the common shell now, so its markup leaves <body> when the
+// component unmounts — not when a `.modal-bg` node is torn out from under Vue. Tests that
+// forget to unmount used to leak a second copy into <body>, and the `document.body`
+// look-ups below would then address the stale one.
+let openWrapper: { unmount: () => void } | null = null
+
 afterEach(() => {
-  // The dialog teleports to <body>; clear any leaked modal between tests.
-  document.body.querySelectorAll('.modal-qhd').forEach((n) => n.closest('.modal-bg')?.remove())
+  if (document.body.querySelector('.fg-dialog-overlay')) openWrapper?.unmount()
+  openWrapper = null
 })
 
 describe('QaHistoryDialog answer capability (group 0093 R0001)', () => {

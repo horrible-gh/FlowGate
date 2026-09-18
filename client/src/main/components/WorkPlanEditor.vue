@@ -196,23 +196,45 @@
       </template>
     </div>
 
-    <!-- Raw view overlay (read-only) — P0009 §3.4 / D0007 §6.5 -->
-    <div v-if="rawViewOpen" class="wp-raw-overlay" @keydown.escape="rawViewOpen = false">
-      <div class="wp-raw-box">
-        <div class="wp-raw-hd">
-          <span>{{ t('main.work_plan.raw_view_title') }}</span>
-          <div>
+    <!-- Raw view overlay (read-only) — P0009 §3.4 / D0007 §6.5.
+         flowgate.default.0560 T0018 (4순위, NR0011 원장 ID 45) on the common dialog layer;
+         D0008 maps it to `readonly`. It has no footer and gets none (T0018 §2.2-2): its two
+         controls always sat in the title bar, so [복사] stays there through DialogHeader's
+         `actions` slot and the separate [닫기] button becomes the header X that D0008 §2
+         assigns to DialogHeader — the close control keeps its place, it is the common one
+         now. `size="lg"` is the same 720px track `.wp-raw-box` had.
+         T0018 §2.3-7: like the AI-scope dialog above, this was a non-Teleport
+         `position: absolute; inset: 0; z-index: 50` overlay confined to the editor panel and
+         is now viewport-wide. See the note in `WorkPlanAiScopeDialog.vue` for why that is
+         accepted, and `tests/browser/dialog-local-overlay-geometry.0560.mjs` for the
+         before/after coordinates.
+         `:close-on-backdrop="false"` stays explicit (T0018 §2.2-3): NR0011 records
+         BD=X. `readonly` defaults to `false` too since 0560 T0035, so this now restates
+         rather than overrides the table. The `@keydown.escape` binding is gone with the
+         overlay div — it never fired (nothing inside was focused, NR0011 §9-5); the common
+         stack's single document listener is what closes this now. -->
+    <DialogShell
+      :open="rawViewOpen"
+      variant="readonly"
+      size="lg"
+      surface="sheet"
+      surface-class="work-plan-raw-dialog"
+      :close-on-backdrop="false"
+      @request-close="rawViewOpen = false"
+    >
+      <template #header>
+        <DialogHeader :title="t('main.work_plan.raw_view_title')" @close="rawViewOpen = false">
+          <template #actions>
             <button type="button" class="btn btn-outline btn-sm" @click="copyRaw">
               <AppIcon name="copy" /> {{ t('main.work_plan.copy') }}
             </button>
-            <button type="button" class="btn btn-secondary btn-sm" @click="rawViewOpen = false">
-              {{ t('main.work_plan.close') }}
-            </button>
-          </div>
-        </div>
+          </template>
+        </DialogHeader>
+      </template>
+      <template #default>
         <pre class="wp-raw-content">{{ rawJson }}</pre>
-      </div>
-    </div>
+      </template>
+    </DialogShell>
 
     <WorkPlanAiScopeDialog
       :visible="aiScopeOpen"
@@ -235,6 +257,8 @@ import AppIcon from '@shared/AppIcon.vue'
 import AiProviderSelect from './AiProviderSelect.vue'
 import WorkPlanAiScopeDialog from './WorkPlanAiScopeDialog.vue'
 import type { WorkPlanScope } from './WorkPlanAiScopeDialog.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogShell from './dialogs/DialogShell.vue'
 import { useContentLayoutTier } from '../composables/useContentLayoutTier'
 import { useToast } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
@@ -1083,13 +1107,12 @@ watch(() => props.docId, () => { void fetchPlan() })
 .wp-unreadable-desc, .wp-unreadable-detail { font-size: .8rem; color: var(--text-m); margin: 0; }
 .wp-unreadable-revisions { margin-top: 8px; font-size: .76rem; color: var(--text-m); text-align: left; }
 .wp-unreadable-raw { margin-top: 10px; width: 100%; max-height: 200px; overflow: auto; background: #0f172a; color: #e2e8f0; padding: 10px; border-radius: var(--r, 6px); font-size: .7rem; text-align: left; }
-.wp-raw-overlay {
-  position: absolute; inset: 0; background: rgba(15,23,42,.45); display: flex;
-  align-items: center; justify-content: center; z-index: 50; padding: 24px;
-}
-.wp-raw-box { background: #fff; border-radius: var(--r, 8px); width: 100%; max-width: 720px; max-height: 100%; display: flex; flex-direction: column; overflow: hidden; }
-.wp-raw-hd { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border, #e2e8f0); font-weight: 700; font-size: .84rem; }
-.wp-raw-hd > div { display: flex; gap: 8px; }
+/* The overlay, the box and the title row belong to the common dialog layer now (T0018);
+   only the raw JSON block is still this component's, and it is unchanged. `surface="sheet"`
+   is what lets it stay unchanged: dialog.css hands a sheet's body to the feature as a bare
+   `display:flex; flex-direction:column; overflow:hidden; padding:0` column — the same box
+   `.wp-raw-box` was — so the dark block still bleeds to the surface edge and is still the one
+   scroll container, instead of being inset by the panel body's padding and scrolled by it. */
 .wp-raw-content { margin: 0; padding: 14px; overflow: auto; font-size: .74rem; background: #0f172a; color: #e2e8f0; flex: 1; }
 
 /* L0010 §1.4: mid tier drops the document column, narrow tier stacks cards. */

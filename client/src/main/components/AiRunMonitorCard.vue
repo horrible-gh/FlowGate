@@ -95,6 +95,7 @@ import { useTabsStore } from '../stores/tabs'
 import { useExplorerStore } from '../stores/explorer'
 import { useProjectStore } from '../stores/project'
 import { useToast } from './common/useToast'
+import { confirm } from '../composables/useDialogStack'
 import {
   compareRunEntries,
   isAwaitingQ,
@@ -139,8 +140,10 @@ async function doRemove(entry: AiInvokeRunEntry): Promise<void> {
     store.dismiss(entry.groupId)
     return
   }
-  if (isNonResumableSystemStop(entry)
-    && !window.confirm(t('main.ai_miniplayer.release_confirm_system'))) return
+  if (isNonResumableSystemStop(entry)) {
+    const ok = await confirm({ title: t('main.ai_miniplayer.release_confirm_system') })
+    if (!ok) return
+  }
   busy.add(entry.groupId)
   try {
     await store.removeCard(entry.groupId)

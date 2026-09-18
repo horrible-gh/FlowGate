@@ -67,7 +67,7 @@ describe('NewRequirementModal — active AI run on the target group (0424)', () 
   })
 
   it('disables the busy group option and the submit button, and a disabled-button click sends nothing', async () => {
-    const wrapper = mount(NewRequirementModal, { global: { plugins: [i18n] } })
+    const wrapper = mount(NewRequirementModal, { global: { plugins: [i18n], stubs: { teleport: true } } })
     await flushPromises()
     useAiInvokeRunsStore().trackStarted({
       run_id: 'aiv_0424',
@@ -89,9 +89,11 @@ describe('NewRequirementModal — active AI run on the target group (0424)', () 
     expect(option.attributes('disabled')).toBeDefined()
     expect(option.text()).toContain('AI run')
 
-    const submitBtn = wrapper.get('.btn.btn-primary')
+    // 0560 T0039: DialogFooter owns the button element, so the busy hint that used to be the
+    // button's own `title` now rides its label span — the explanation still ships.
+    const submitBtn = wrapper.get('[data-dialog-action-id="submit-1"]')
     expect(submitBtn.attributes('disabled')).toBeDefined()
-    expect(submitBtn.attributes('title')).toContain('AI run')
+    expect(submitBtn.get('.nrm-submit-label').attributes('title')).toContain('AI run')
 
     await submitBtn.trigger('click')
     await flushPromises()
@@ -99,7 +101,7 @@ describe('NewRequirementModal — active AI run on the target group (0424)', () 
   })
 
   it('leaves the group selectable and the submit button enabled while idle', async () => {
-    const wrapper = mount(NewRequirementModal, { global: { plugins: [i18n] } })
+    const wrapper = mount(NewRequirementModal, { global: { plugins: [i18n], stubs: { teleport: true } } })
     await flushPromises()
 
     const toggles = wrapper.findAll('.group-toggle-btn')
@@ -110,7 +112,8 @@ describe('NewRequirementModal — active AI run on the target group (0424)', () 
     const option = groupSelect.get('option')
     expect(option.attributes('disabled')).toBeUndefined()
 
-    const submitBtn = wrapper.get('.btn.btn-primary')
+    const submitBtn = wrapper.get('[data-dialog-action-id="submit-1"]')
     expect(submitBtn.attributes('disabled')).toBeUndefined()
+    expect(submitBtn.get('.nrm-submit-label').attributes('title')).toBeUndefined()
   })
 })

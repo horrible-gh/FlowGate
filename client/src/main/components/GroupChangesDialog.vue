@@ -9,43 +9,47 @@
        N0004 §1 rejected "승인 화면 본문에 항상 펼쳐진 diff 카드", so this opens as a
        modal shell like the document editor — closing it explicitly returns to the
        original spot (the approval screen stays as it was). -->
-  <teleport to="body">
-    <div class="modal-bg">
-      <div
-        class="modal-box document-modal document-modal--edit"
-        role="dialog"
-        aria-modal="true"
-        :aria-label="t('main.group_changes.title')"
-      >
-        <div class="modal-hd">
-          <div class="gcd-hd-text">
-            <h2 class="modal-title"><AppIcon name="git-diff" /> {{ t('main.group_changes.title') }}</h2>
-            <p>
-              <span class="gcd-mono">{{ branch || '-' }}</span>
-              ↔
-              <span class="gcd-mono">{{ baseBranch || 'main' }}</span>
-              <span class="gcd-dot">·</span>
-              {{ t('main.group_changes.file_count', { n: changes.length }) }}
-              <span v-if="totals.known" class="gcd-hd-lines">
-                <span class="gcd-add">+{{ totals.insertions.toLocaleString() }}</span>
-                <span class="gcd-del">−{{ totals.deletions.toLocaleString() }}</span>
-              </span>
-            </p>
-          </div>
-          <div class="modal-hd-actions">
-            <button
-              class="modal-close"
-              type="button"
-              :title="t('common.close')"
-              :aria-label="t('common.close')"
-              @click="emit('close')"
-            >
-              <AppIcon name="x" />
-            </button>
-          </div>
-        </div>
+  <!-- flowgate.default.0560 T0022 §2.7 (5순위) - migrated onto the common dialog layer.
+       D0008 §6 maps this instance to `workflow-large` (a sheet surface whose body stays
+       feature-owned). Two things are deliberate here:
 
-        <div class="modal-bd gcd-modal-body">
+       - `:open="true"` is a literal. This component has never had a `visible`/`open` prop:
+         `DocInfoPanel.vue` mounts it behind `v-if="changesDialogOpen && props.groupId"`, so
+         "open" and "mounted" have always been the same fact. Adding a prop now would give the
+         same state two owners; the shell is told the truth instead, and unmounting still runs
+         `force_cleanup` through `DialogShell`'s `onBeforeUnmount` (L0009 §2 "teardown").
+       - the branch/file-count/line summary moves into `DialogHeader`'s `subtitle` slot rather
+         than being packed into `title`. It is one secondary line under the title - exactly
+         what the slot renders (`.fg-dialog-header__subtitle`) - and keeping it out of `title`
+         leaves `aria-labelledby` pointing at the title text alone.
+
+       `closeOnBackdrop` is not overridden: `workflow-large` defaults to `false` and the old
+       `.modal-bg` carried no backdrop handler. -->
+  <DialogShell
+    ref="shellRef"
+    :open="true"
+    variant="workflow-large"
+    surface-class="gcd-changes-dialog"
+    @request-close="emit('close')"
+  >
+    <template #header>
+      <DialogHeader :title="t('main.group_changes.title')" icon="git-diff" @close="onHeaderClose">
+        <template #subtitle>
+          <span class="gcd-mono">{{ branch || '-' }}</span>
+          ↔
+          <span class="gcd-mono">{{ baseBranch || 'main' }}</span>
+          <span class="gcd-dot">·</span>
+          {{ t('main.group_changes.file_count', { n: changes.length }) }}
+          <span v-if="totals.known" class="gcd-hd-lines">
+            <span class="gcd-add">+{{ totals.insertions.toLocaleString() }}</span>
+            <span class="gcd-del">−{{ totals.deletions.toLocaleString() }}</span>
+          </span>
+        </template>
+      </DialogHeader>
+    </template>
+
+    <template #default>
+        <div class="gcd-modal-body">
           <!-- 0382 NR0003 proposal 3: exclude artifacts from the list, but **don't treat them as
                nonexistent**. 261 of them never showing on any screen while still being approved
                and merged was the core of that incident. Keep this outside the list branch so it's
@@ -216,20 +220,26 @@
             </div>
           </template>
         </div>
-        <div class="modal-ft">
-          <button class="btn btn-secondary gcd-back" type="button" @click="emit('close')">
-            <AppIcon name="arrow-bend-up-left" /> {{ t('main.group_changes.back_to_approval') }}
-          </button>
-        </div>
-      </div>
-    </div>
-  </teleport>
+    </template>
+
+    <template #footer>
+      <DialogFooter :actions="actions">
+        <template #action-back>
+          <AppIcon name="arrow-bend-up-left" /> {{ t('main.group_changes.back_to_approval') }}
+        </template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '@shared/AppIcon.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogShell from './dialogs/DialogShell.vue'
+import type { DialogAction } from './dialogs/dialogTypes'
 import { useExplorerStore, type GroupChangeData, type GroupFileDiffData } from '../stores/explorer'
 import {
   buildDiffRows,
@@ -257,6 +267,26 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ (e: 'close'): void }>()
+
+const shellRef = ref<InstanceType<typeof DialogShell> | null>(null)
+
+function onHeaderClose() {
+  shellRef.value?.requestClose('header')
+}
+
+/**
+ * A single-button footer. [변경 화면으로] is the only way out besides the header X, and it
+ * takes the `cancel` role rather than `primary`: it completes nothing, it returns the reviewer
+ * to where they came from. The same shape the command/info dialogs took in 3순위 / 4.5순위.
+ */
+const actions = computed<DialogAction[]>(() => [
+  {
+    id: 'back',
+    label: t('main.group_changes.back_to_approval'),
+    role: 'cancel',
+    onSelect: () => emit('close'),
+  },
+])
 
 const artifactsOpen = ref(false)
 const artifactPaths = computed(() => props.toolArtifacts ?? [])
@@ -458,50 +488,38 @@ watch(visibleFiles, (list) => {
   if (!list.some((file) => file.path === selectedPath.value)) select(list[0].path)
 })
 
-function onKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape') {
-    event.stopPropagation()
-    emit('close')
-  }
-}
-
+/*
+ * T0022 §2.7 - the hand-wired ESC listener is gone. L0009 §2 "ESC" puts exactly ONE document
+ * keydown listener in the stack manager, and it fires for the top dialog regardless of what
+ * holds focus; the window listener here would be a second handler for the same key, so a
+ * single ESC would emit `close` twice (the problem T0018 §2.3-6 warned about). The observable
+ * behaviour - ESC closes this screen - is unchanged, it just arrives as `request-close`.
+ */
 onMounted(() => {
-  window.addEventListener('keydown', onKeydown)
   const first = visibleFiles.value[0]
   if (first) select(first.path)
 })
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <style scoped>
+@import './dialogs/gitDiffFileList.css';
+
+/* `flex: 1 1 auto; min-height: 0` used to come from `.modal-bd`; on the common layer the
+   sheet body (`.fg-dialog-surface--sheet .fg-dialog-body`) is a bare padding-0 flex column, so
+   this box states its own share of the track. */
 .gcd-modal-body {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   min-height: 0;
   padding: 0;
   overflow: hidden;
 }
-.gcd-hd-text { min-width: 0; flex: 1 1 auto; }
-.gcd-hd-text .modal-title { margin: 0; line-height: 1.3; display: flex; align-items: center; gap: 7px; }
-.gcd-hd-text p { margin: 3px 0 0; font-size: 0.74rem; color: var(--text-m, #64748b); }
-.gcd-mono { font-family: var(--mono, ui-monospace, monospace); }
-.gcd-dot { margin: 0 5px; }
+/* `.gcd-hd-text` and its two child rules left with the old header markup - the title and the
+   summary line are `DialogHeader`'s `title`/`subtitle` elements now. */
 .gcd-hd-lines { margin-left: 7px; display: inline-flex; gap: 6px; font-variant-numeric: tabular-nums; }
 .gcd-add { color: var(--success, #15803d); font-weight: 600; }
 .gcd-del { color: var(--danger, #b91c1c); font-weight: 600; }
-.gcd-retry {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 11px;
-  font-size: 0.74rem;
-  border: 1px solid var(--border, #e2e8f0);
-  border-radius: 8px;
-  background: var(--bg, #fff);
-  color: inherit;
-  cursor: pointer;
-}
 .gcd-blank {
   flex: 1;
   display: flex;
@@ -568,45 +586,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 }
 .gcd-seg button + button { border-left: 1px solid var(--border, #e2e8f0); }
 .gcd-seg button.active { background: #dbeafe; color: #1d4ed8; font-weight: 700; }
-.gcd-bd {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
-}
-.gcd-filelist {
-  min-height: 0;
-  overflow: auto;
-  padding: 8px;
-  border-right: 1px solid var(--border, #e2e8f0);
-  background: #f8fafc;
-}
-.gcd-nomatch { margin: 12px 6px; font-size: 0.74rem; color: var(--text-m, #64748b); }
-.gcd-file {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 8px 9px;
-  margin-bottom: 5px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.gcd-file:hover, .gcd-file.active { border-color: #bfdbfe; background: #fff; }
-.gcd-file-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.gcd-file-name {
-  overflow-wrap: anywhere;
-  font: 600 0.75rem var(--mono, ui-monospace, monospace);
-}
-.gcd-file-dir {
-  font: 0.66rem var(--mono, ui-monospace, monospace);
-  color: var(--text-m, #64748b);
-  overflow-wrap: anywhere;
-}
 .gcd-file-stats {
   display: flex;
   align-items: center;
@@ -615,20 +594,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   font-variant-numeric: tabular-nums;
 }
 .gcd-file-nostat { color: var(--text-m, #64748b); }
-.gcd-badge {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  font-size: 0.62rem;
-  font-weight: 700;
-}
-.gcd-badge-added { background: var(--success-bg, #dcfce7); color: var(--success, #15803d); }
-.gcd-badge-modified { background: var(--warning-bg, #fef3c7); color: var(--warning, #b45309); }
-.gcd-badge-deleted { background: var(--danger-bg, #fee2e2); color: var(--danger, #b91c1c); }
 .gcd-bar { display: inline-flex; gap: 1px; }
 .gcd-bar i {
   width: 5px;
@@ -638,23 +603,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 }
 .gcd-bar i.p { background: var(--success, #15803d); }
 .gcd-bar i.m { background: var(--danger, #b91c1c); }
-.gcd-diffwrap { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.gcd-diff-hd {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border, #e2e8f0);
-}
-.gcd-diff-path {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: 700 0.76rem var(--mono, ui-monospace, monospace);
-}
 .gcd-diff-lines { flex: 0 0 auto; display: inline-flex; gap: 6px; font-size: 0.72rem; font-variant-numeric: tabular-nums; }
 .gcd-diff-nav { flex: 0 0 auto; display: inline-flex; gap: 6px; }
 .gcd-diff-nav button {
@@ -670,16 +618,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   cursor: pointer;
 }
 .gcd-diff-nav button:disabled { opacity: 0.45; cursor: default; }
-.gcd-diff-state {
-  flex: 1 1 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  font-size: 0.82rem;
-  color: var(--text-m, #64748b);
-}
-.gcd-diff-error { flex-direction: column; }
 .gcd-notice {
   flex: 0 0 auto;
   margin: 0;
@@ -690,37 +628,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   border-bottom: 1px solid #bfdbfe;
 }
 .gcd-notice-warn { color: #92400e; background: #fffbeb; border-bottom-color: #fde68a; }
-.gcd-diff {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  font: 0.76rem/1.55 var(--mono, ui-monospace, monospace);
-  tab-size: 2;
-  background: #fff;
-}
-.gcd-gap {
-  padding: 3px 12px;
-  color: var(--text-m, #64748b);
-  background: #f1f5f9;
-  border-top: 1px solid var(--border, #e2e8f0);
-  border-bottom: 1px solid var(--border, #e2e8f0);
-  font-size: 0.71rem;
-}
-.gcd-line { display: grid; grid-template-columns: 46px 46px 14px minmax(0, 1fr); }
 .gcd-srow { display: grid; grid-template-columns: 46px minmax(0, 1fr) 46px minmax(0, 1fr); }
 .gcd-srow > .gcd-text:nth-child(2) { border-right: 1px solid var(--border, #e2e8f0); }
-.gcd-ln {
-  padding: 0 6px;
-  text-align: right;
-  color: var(--text-m, #94a3b8);
-  background: #f8fafc;
-  user-select: none;
-  font-size: 0.7rem;
-}
-.gcd-sign { text-align: center; color: var(--text-m, #94a3b8); }
-.gcd-text { padding: 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.gcd-line-add, .gcd-text.gcd-line-add { background: #ecfdf5; }
-.gcd-line-del, .gcd-text.gcd-line-del { background: #fef2f2; }
 .gcd-line-changed, .gcd-text.gcd-line-changed { background: #fff7ed; }
 .gcd-line-blank { background: #f8fafc; }
 
@@ -754,5 +663,18 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   overflow: auto;
   color: var(--text-m, #64748b);
   font-size: 0.74rem;
+}
+</style>
+
+<!--
+  Unscoped: `surface-class` lands on the dialog surface, which `DialogShell` renders and
+  teleports out of this component's subtree, so a scoped rule could never reach it. This is the
+  width `.document-modal--edit` measured, kept rather than widened to the `xl` 1180px the
+  variant would otherwise give - the same choice T0018 made for `DocumentEditDialog`, which sat
+  on that same app.css track.
+-->
+<style>
+.fg-dialog-surface.gcd-changes-dialog {
+  width: min(1120px, 94vw);
 }
 </style>

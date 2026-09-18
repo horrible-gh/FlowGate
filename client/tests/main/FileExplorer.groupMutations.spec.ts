@@ -224,11 +224,19 @@ describe('FileExplorer group-branch mutations (0327 T0004 / B0001)', () => {
     // the whole group hung off `providers?.length`, so [중단] and [해결 제출] disappeared with
     // the AI buttons and this dialog had no way to finish. The AI controls are what this host
     // does not offer; the two it does wire have to be there.
-    const actions = wrapper.find('.git-conflict-footer-actions')
-    expect(actions.exists()).toBe(true)
-    expect(actions.findAll('button')).toHaveLength(2)
-    expect(wrapper.find('.git-conflict-invoke-options').exists()).toBe(false)
-    expect(wrapper.find('.git-conflict-message-bar').exists()).toBe(false)
+    // 0560 T0024: the resolver is on the common dialog layer, so its DOM is teleported out of
+    // this wrapper and the row is `DialogFooter`'s. `hideAiActions` parity is the same fact it
+    // always was — this host gets [중단] and [해결 제출] and nothing else.
+    const footer = document.querySelector('.fg-dialog-footer')
+    expect(footer).not.toBeNull()
+    expect(
+      [...footer!.querySelectorAll('[data-dialog-action-id]')].map((b) => b.getAttribute('data-dialog-action-id')),
+    ).toEqual(['abort', 'submit'])
+    expect(document.querySelector('.git-conflict-invoke-options')).toBeNull()
+    expect(document.querySelector('.git-conflict-message-bar')).toBeNull()
+    // the guard sentence is still there — the band only loses its AI half
+    expect(document.querySelector('.git-conflict-footer-context .git-conflict-guard')).not.toBeNull()
+    expect(document.querySelector('.git-conflict-footer-context .ft-divider')).toBeNull()
   })
 
   it('leaves the base checkout view untouched', async () => {

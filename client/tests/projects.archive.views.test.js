@@ -2,7 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, shallowMount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { createI18n } from 'vue-i18n';
-import MainProjectsView from '../src/main/views/ProjectsView.vue';
+// flowgate.default.0560 T0018 §2.3-1: `src/main/views/ProjectsView.vue` was deleted. It was
+// dead — `/projects` in `src/main/router/index.ts` renders `{ template: '<div />' }` and
+// redirects to `/settings/projects` in `beforeEnter`, and this file's `mount()` was the only
+// thing in the tree that imported the component. The living project create/edit screen is
+// `src/settings/views/projects/ProjectsView.vue`, so both cases below drive that one: the
+// success path moved over from the deleted view's test rather than being dropped with it, so
+// the archive round trip keeps its coverage.
 import SettingsProjectsView from '../src/settings/views/projects/ProjectsView.vue';
 import ko from '@shared/i18n/ko';
 import en from '@shared/i18n/en';
@@ -71,9 +77,9 @@ beforeEach(() => {
 });
 
 describe('project archive controls', () => {
-  it('main view archives through HTTP and refreshes the management list on success', async () => {
+  it('settings view archives through HTTP and refreshes the management list on success', async () => {
     setProjectArchiveState.mockResolvedValue({ project_id: 'active', is_active: 0 });
-    const wrapper = mountView(MainProjectsView);
+    const wrapper = mountView(SettingsProjectsView);
     await flushPromises();
 
     expect(wrapper.text()).toContain('Active');

@@ -229,7 +229,7 @@ describe('MainPanel — what an AI run does to the document on screen', () => {
     expect(textarea).not.toBeNull()
     textarea!.value = 'group after'
     textarea!.dispatchEvent(new Event('input', { bubbles: true }))
-    document.body.querySelector<HTMLButtonElement>('.document-modal--edit .btn-primary')!.click()
+    document.body.querySelector<HTMLButtonElement>('.document-edit-dialog [data-dialog-action-id="save"]')!.click()
     await flushPromises()
 
     expect(apiPatch).toHaveBeenCalledWith(expectedUrl, { content: 'group after' }, undefined)

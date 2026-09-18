@@ -1,17 +1,16 @@
 <template>
-  <teleport to="body">
-    <div v-if="visible" class="modal-bg">
-      <div class="modal-box" style="max-width:420px;">
-        <div class="modal-hd">
-          <span class="modal-title">
+  <DialogShell :open="visible" variant="form" surface-class="dialog-create-file-folder-modal"  @request-close="onCancel">
+    <template #header>
+      <DialogHeader title="" :closeable="true" @close="onCancel">
+        <template #title>
             <AppIcon :name="type === 'folder' ? 'folder-simple-plus' : 'file-plus'" />
             {{ type === 'folder' ? t('main.create_file_folder_modal.title_folder') : t('main.create_file_folder_modal.title_file') }}
-          </span>
-          <button class="modal-close" type="button" @click="onCancel">
-            <AppIcon name="x" />
-          </button>
-        </div>
-        <div class="modal-bd">
+          </template>
+      </DialogHeader>
+    </template>
+
+        
+        <div class="dialog-feature-body">
           <form @submit.prevent="submit">
             <div class="form-group" style="margin-bottom:0;">
               <input
@@ -25,26 +24,34 @@
             </div>
           </form>
         </div>
-        <div class="modal-ft">
-          <div v-if="errorMessage" class="alert alert-danger" style="width:100%; margin-bottom:12px;">
+        
+      
+<div v-if="errorMessage" class="alert alert-danger" style="width:100%; margin-bottom:12px;">
             <AppIcon name="warning" />
             <span>{{ errorMessage }}</span>
           </div>
-          <button class="btn btn-secondary" type="button" @click="onCancel">
+    <template #footer>
+      <DialogFooter :actions="[
+        { id: 'onCancel-0', role: 'cancel', label: t('common.cancel'), onSelect: () => onCancel() },
+        { id: 'submit-1', role: 'primary', label: t('common.save'), onSelect: () => submit(), disabled: submitting }
+      ]">
+        <template #action-onCancel-0>
             {{ t('common.cancel') }}
-          </button>
-          <button class="btn btn-primary" type="button" :disabled="submitting" @click="submit">
+          </template>
+        <template #action-submit-1>
             <AppIcon v-if="submitting" name="spinner" spin />
             <AppIcon v-else name="floppy-disk" />
             {{ t('common.save') }}
-          </button>
-        </div>
-      </div>
-    </div>
-  </teleport>
+          </template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
+import DialogShell from './dialogs/DialogShell.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
 import { computed, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { extractApiErrorMessage, postRequest } from '@shared/api'
@@ -136,3 +143,7 @@ function onCancel() {
   emit('update:visible', false)
 }
 </script>
+
+<style scoped>
+:global(.fg-dialog-surface.dialog-create-file-folder-modal) { max-width:420px; }
+</style>

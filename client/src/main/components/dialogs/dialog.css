@@ -1,0 +1,401 @@
+/*
+ * Common dialog layer stylesheet.
+ *
+ * flowgate.default.0560 T0012 §2.8 / design: D0008 §2 (semantic action visuals live in
+ * this one file), §6 "Footer 규칙".
+ *
+ * Scope note: this file does NOT replace the global button/modal definitions in
+ * `client/shared/app.css` (`.btn-*`, `.modal-bg`, `.modal-overlay`, `.modal-box`), and
+ * this T changes none of them — deduplicating the two is 6순위 (NR0005 §13). What this
+ * file decides is narrower: inside a common dialog, which semantic role gets which
+ * appearance. It reuses the same design tokens as app.css, so a dialog built on this
+ * layer looks like the rest of the app without importing its classes.
+ *
+ * Loaded by DialogShell.vue (`<style src="./dialog.css">`), unscoped, so header/footer
+ * rendered in its slots are covered too.
+ */
+
+/* ───────────────────────────── overlay + surface ────────────────────────────── */
+
+/*
+ * z-index is NOT set here: DialogShell writes it inline from `dialogZOrder`
+ * (base 1600 + stackIndex × 10, surface +1), because a nested dialog's layer depends on
+ * runtime stack depth. T0012 §4-1 records why 1600: above every legacy dialog
+ * (max 1500, GitMergeReviewDialog's reject sub-dialog) and below the 2000 toast layer,
+ * so toasts keep covering dialogs exactly as they do today.
+ */
+.fg-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, .52);
+  backdrop-filter: blur(2px);
+}
+
+/* A dialog that is no longer `stack.top()` keeps its DOM and its state and only stops
+   taking interaction (L0009 §2 "Nested dialog"); `inert` does the blocking, this only
+   makes the demotion visible. */
+.fg-dialog-overlay--inactive {
+  background: rgba(0, 0, 0, .32);
+}
+
+.fg-dialog-surface {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface);
+  border-radius: var(--r-xl);
+  box-shadow: var(--sh-lg);
+  animation: mIn .15s ease;
+}
+
+.fg-dialog-surface:focus {
+  outline: none;
+}
+
+/*
+ * Sizes (T0012 §4-2). Each width is the measured value of the app.css class this
+ * variant replaces, so the new layer does not silently resize anything when instances
+ * are migrated in 3순위:
+ *   sm 400px   — ConfirmModal.vue's `max-width:400px` confirm box
+ *   md 520px   — `.modal-box`  (app.css L484)
+ *   lg 720px   — `.modal-lg`   (app.css L490)
+ *   xl 1180px  — `.document-modal` (app.css L492)
+ * `max-width: 92vw` is app.css's own cap, kept so narrow windows behave identically.
+ */
+.fg-dialog-surface--sm { width: 400px; }
+.fg-dialog-surface--md { width: 520px; }
+.fg-dialog-surface--lg { width: 720px; }
+.fg-dialog-surface--xl { width: 1180px; }
+
+.fg-dialog-surface--sm,
+.fg-dialog-surface--md,
+.fg-dialog-surface--lg,
+.fg-dialog-surface--xl {
+  max-width: 92vw;
+}
+
+/*
+ * Surfaces. `panel` is the ordinary centred box; `sheet` is the tall working surface the
+ * large workflow/conflict dialogs need (D0008 §6: their bodies stay feature-owned, only
+ * the frame is common).
+ *
+ * The vh caps are measured against the viewport on purpose — this overlay is
+ * full-screen (`inset: 0`), unlike app.css's `.modal-bg--below-header`, where a vh cap
+ * would be measured against the wrong track and push the box's bottom edge off-screen.
+ * Any future below-header variant of this layer must switch to container-relative `%`.
+ */
+.fg-dialog-surface--panel { max-height: 88vh; }
+
+.fg-dialog-surface--sheet {
+  height: min(860px, 88vh);
+  max-height: 88vh;
+}
+
+/*
+ * flowgate.default.0560 T0018 §2.4 — the below-header reading surface.
+ *
+ * 0269 D0002 fixed that the document full view dims from the app header DOWN, so the run
+ * monitor chip in the header stays visible and clickable while a document is read; that is
+ * what `app.css .modal-bg--below-header` does for the pre-migration markup. `DialogShell`
+ * opts into it with `below-header`, and this is the whole of the behaviour.
+ *
+ * The height caps below are the reason this could not be a feature-side class: inside a
+ * container that is already `100vh - var(--hdr-h)` tall, a `vh` cap is measured against
+ * the WRONG track — the centred box overflows by (H - C)/2 at the bottom, past a fixed
+ * layer nothing can scroll, and the controls at the box's bottom edge become unreachable
+ * (app.css L485-490 records the same bug). `%` follows `--hdr-h` automatically, so every
+ * height limit under this overlay is container-relative.
+ */
+.fg-dialog-overlay--below-header { top: var(--hdr-h); }
+
+.fg-dialog-overlay--below-header .fg-dialog-surface--panel {
+  max-height: calc(100% - 16px);
+}
+
+.fg-dialog-overlay--below-header .fg-dialog-surface--sheet {
+  height: min(860px, calc(100% - 16px));
+  max-height: calc(100% - 16px);
+}
+
+/* ─────────────────────────────────── header ─────────────────────────────────── */
+
+.fg-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  /* Never squeezed out of the surface track. The body is the flexible row
+     (`flex: 1 1 auto; min-height: 0`); header and footer are fixed bands, and a footer that
+     can shrink is a save button clipped away by the surface's `overflow: hidden` — the
+     regression `.document-modal--edit .modal-ft { flex-shrink: 0 }` was added for, carried
+     over here with that instance in T0018 §2.4. */
+  flex-shrink: 0;
+}
+
+.fg-dialog-header__main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.fg-dialog-header__icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--primary);
+  font-size: 1rem;
+  padding-top: 2px;
+}
+
+.fg-dialog-header__text {
+  min-width: 0;
+}
+
+.fg-dialog-header__title {
+  margin: 0;
+  font-size: .9375rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.fg-dialog-header__subtitle {
+  margin: 4px 0 0;
+  font-size: .78rem;
+  color: var(--text-m);
+  line-height: 1.45;
+}
+
+.fg-dialog-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.fg-dialog-header__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--text-m);
+  cursor: pointer;
+  transition: all var(--tr);
+}
+
+.fg-dialog-header__close:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* ──────────────────────────────────── body ─────────────────────────────────── */
+
+.fg-dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 20px;
+}
+
+/*
+ * flowgate.default.0560 T0016 §2.3 — the one change the 3순위 migration needed in this
+ * layer, kept as narrow as the reason for it.
+ *
+ * D0008 §6 already says the large sheet dialogs keep their bodies feature-owned and hand
+ * only the frame to the common layer. `WorkflowDecisionModal.vue` is the first instance
+ * to actually land on `workflow-large`, and its body is a full-bleed column — edge-to-edge
+ * notice strips and a two-column grid whose two panes scroll independently. A padded,
+ * `overflow:auto` block cannot host that: the strips would be inset from the surface edge
+ * and the panes would have no bounded height to scroll inside of.
+ *
+ * So `sheet` — and only `sheet` — gives its body away as a bare flex column. `panel`, which
+ * is every confirm/form dialog, is untouched and keeps the padding above.
+ */
+.fg-dialog-surface--sheet .fg-dialog-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.fg-dialog-message {
+  margin: 0;
+  font-size: .9rem;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.fg-dialog-message--warning { color: var(--warning); }
+.fg-dialog-message--danger { color: var(--danger); }
+
+/* ─────────────────────────────────── footer ─────────────────────────────────── */
+
+.fg-dialog-footer {
+  border-top: 1px solid var(--border);
+  padding: 12px 20px;
+  /* See `.fg-dialog-header`: a fixed band, never squeezed out of the track. */
+  flex-shrink: 0;
+}
+
+/* Right-aligned row. The ORDER inside it is not CSS's business — DialogFooter sorts by
+   semantic role (aux/dismiss → danger → stop → cancel → primary) before rendering, so
+   `row-reverse` tricks or per-screen ordering cannot re-enter through a stylesheet. */
+.fg-dialog-footer__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Anchor box for one action's button + its optional popover slot (T0016 §2.2 rework).
+   `position: relative` only — it carries no size/spacing of its own, so wrapping a
+   button in it does not change the row's geometry. */
+.fg-dialog-footer__action {
+  position: relative;
+  display: inline-flex;
+}
+
+.fg-dialog-footer__error {
+  margin: 0 0 8px;
+  font-size: .78rem;
+  color: var(--danger);
+  line-height: 1.45;
+}
+
+/* ──────────────────────────── semantic action visuals ───────────────────────── */
+
+/*
+ * Base button geometry mirrors app.css `.btn` so a dialog button is the same physical
+ * size as every other button in the product. The per-role rules below are the part
+ * D0008 §2 asked this file to own.
+ */
+.fg-dialog-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  font-size: .8125rem;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all var(--tr);
+}
+
+.fg-dialog-btn:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* primary — the one action that finishes the dialog (app.css `.btn-primary`). */
+.fg-dialog-btn--primary {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
+.fg-dialog-btn--primary:hover {
+  background: var(--primary-h);
+  border-color: var(--primary-h);
+}
+
+/* A destructive primary (Danger Confirm's right-hand button) reads as danger while
+   keeping the primary position. */
+.fg-dialog-btn--primary.fg-dialog-btn--tone-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.fg-dialog-btn--primary.fg-dialog-btn--tone-danger:hover {
+  background: #b91c1c;
+  border-color: #b91c1c;
+}
+
+/*
+ * cancel — Type A form cancel. DS0007 fixed the visual reference as
+ * `WorkflowDecisionModal.vue`'s `.wdm-cancel-btn`: an outline button tinted with the
+ * danger hue rather than a filled destructive button. It was copied here by value, not by
+ * importing that component's scoped class — which is why T0016 §2.1 #4 could delete
+ * `.wdm-cancel-btn` itself (it was repainting only ONE of that file's two cancel buttons)
+ * without changing what a cancel button looks like. This rule is now the only definition.
+ */
+.fg-dialog-btn--cancel {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+  background: color-mix(in srgb, var(--danger) 7%, var(--surface));
+}
+
+.fg-dialog-btn--cancel:hover {
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+}
+
+/* danger — a separate destructive action that is NOT the primary (it sits left of
+   cancel). Filled, so it never reads as the quiet option. */
+.fg-dialog-btn--danger {
+  background: var(--danger);
+  color: #fff;
+  border-color: var(--danger);
+}
+
+.fg-dialog-btn--danger:hover {
+  background: #b91c1c;
+  border-color: #b91c1c;
+}
+
+/* stop — Type B "stop the running work". Deliberately NOT the cancel appearance:
+   NR0003 §7 forbids collapsing the two meanings into one look, and this button stays
+   enabled while the dialog is busy. */
+.fg-dialog-btn--stop {
+  background: var(--surface);
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+}
+
+.fg-dialog-btn--stop:hover {
+  background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+}
+
+/* aux — secondary helpers on the left (app.css `.btn-secondary`). */
+.fg-dialog-btn--aux {
+  background: var(--surface);
+  color: var(--text-s);
+  border-color: var(--border);
+}
+
+.fg-dialog-btn--aux:hover {
+  background: var(--bg);
+  color: var(--text);
+  border-color: var(--border-d);
+}
+
+/* dismiss — Type C transient dismiss. Lightweight on purpose; the form-cancel look is
+   explicitly not forced on it (D0008 §3). */
+.fg-dialog-btn--dismiss {
+  background: transparent;
+  color: var(--text-s);
+  border-color: transparent;
+}
+
+.fg-dialog-btn--dismiss:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.fg-dialog-btn.is-loading {
+  opacity: .85;
+}

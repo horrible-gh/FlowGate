@@ -127,13 +127,13 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
   it('네 버튼이 언제나 같은 개수로 그려진다', async () => {
     const wrapper = await mountDialog()
     for (const key of ['cancel', 'create-empty', 'copy-mention', 'invoke-ai']) {
-      expect(wrapper.find(`[data-test="wpp-${key}"]`).exists()).toBe(true)
+      expect(wrapper.find(`[data-dialog-action-id="wpp-${key}"]`).exists()).toBe(true)
     }
     // 아무것도 고르지 않은 상태에서도 사라지지 않는다 — 비활성일 뿐이다.
-    expect(wrapper.find('[data-test="wpp-create-empty"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('[data-test="wpp-copy-mention"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('[data-test="wpp-invoke-ai"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('[data-test="wpp-cancel"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('[data-dialog-action-id="wpp-create-empty"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-dialog-action-id="wpp-copy-mention"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-dialog-action-id="wpp-invoke-ai"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-dialog-action-id="wpp-cancel"]').attributes('disabled')).toBeUndefined()
   })
 
   it('두 칸은 처음에 아무것도 고르지 않은 상태다', async () => {
@@ -151,7 +151,7 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
     expect(wrapper.findAll('.wpp-count-pill')[0].text()).toBe('4 / 4')
 
     await pick(wrapper, 'provider', 0)
-    await wrapper.get('[data-test="wpp-copy-mention"]').trigger('click')
+    await wrapper.get('[data-dialog-action-id="wpp-copy-mention"]').trigger('click')
     const scope = wrapper.emitted('copy-mention')![0][0] as any
     expect(scope.quantity_type_codes).toEqual(['DS', 'D', 'T', 'TS'])
 
@@ -169,7 +169,7 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
     expect(rows(wrapper, 'provider').filter((row: any) => row.classes('on')).length).toBe(2)
     expect(wrapper.findAll('.wpp-count-pill')[1].text()).toBe('2 / 2')
 
-    await wrapper.get('[data-test="wpp-copy-mention"]').trigger('click')
+    await wrapper.get('[data-dialog-action-id="wpp-copy-mention"]').trigger('click')
     const scope = wrapper.emitted('copy-mention')![0][0] as any
     expect(scope.provider_ids).toEqual(['aip_opus', 'aip_sonnet'])
 
@@ -221,7 +221,7 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
     await pick(wrapper, 'type', 0)      // DS — 나중에 골라도 순서는 등록 순서
     await pick(wrapper, 'provider', 1)  // sonnet
     await pick(wrapper, 'provider', 0)  // opus
-    await wrapper.find('[data-test="wpp-copy-mention"]').trigger('click')
+    await wrapper.find('[data-dialog-action-id="wpp-copy-mention"]').trigger('click')
 
     const scope = wrapper.emitted('copy-mention')![0][0] as any
     expect(scope.quantity_type_codes).toEqual(['DS', 'T'])
@@ -234,7 +234,7 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
     await pick(wrapper, 'type', 0)
     await pick(wrapper, 'provider', 1)
     await pick(wrapper, 'provider', 0)
-    await wrapper.find('[data-test="wpp-invoke-ai"]').trigger('click')
+    await wrapper.find('[data-dialog-action-id="wpp-invoke-ai"]').trigger('click')
 
     const payload = wrapper.emitted('invoke-ai')![0][0] as any
     // flowgate.default.0416 TR0005 rev2: 실행 프로바이더는 앱 공통 선택(aiProviderStore)의
@@ -257,7 +257,7 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
     await pick(wrapper, 'type', 0)      // DS
     await pick(wrapper, 'type', 2)      // T
     await pick(wrapper, 'provider', 0)
-    await wrapper.find('[data-test="wpp-create-empty"]').trigger('click')
+    await wrapper.find('[data-dialog-action-id="wpp-create-empty"]').trigger('click')
     await flushPromises()
 
     const [url, body] = postRequest.mock.calls[0]
@@ -278,14 +278,14 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
     const wrapper = await mountDialog()
     await pick(wrapper, 'type', 0)
     await pick(wrapper, 'provider', 0)
-    await wrapper.find('[data-test="wpp-create-empty"]').trigger('click')
+    await wrapper.find('[data-dialog-action-id="wpp-create-empty"]').trigger('click')
     await flushPromises()
 
     expect(wrapper.emitted('update:visible')).toBeFalsy()
     expect(wrapper.find('[data-test="wpp-notice"]').text()).not.toContain('작업계획을 만들지 못했습니다.')
     expect(wrapper.find('[data-test="wpp-notice"]').text())
       .toContain(i18n.global.t('main.work_plan_proposal_dialog.create_failed'))
-    expect(wrapper.find('[data-test="wpp-invoke-ai"]').exists()).toBe(true)
+    expect(wrapper.find('[data-dialog-action-id="wpp-invoke-ai"]').exists()).toBe(true)
   })
 
   // flowgate.default.0578.0011-TR rev1 (T0010 task 4.3): createError used to store the
@@ -296,7 +296,7 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
     const wrapper = await mountDialog()
     await pick(wrapper, 'type', 0)
     await pick(wrapper, 'provider', 0)
-    await wrapper.find('[data-test="wpp-create-empty"]').trigger('click')
+    await wrapper.find('[data-dialog-action-id="wpp-create-empty"]').trigger('click')
     await flushPromises()
 
     const koText = i18n.global.t('main.work_plan_proposal_dialog.create_failed')
@@ -322,10 +322,10 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
     const wrapper = await mountDialog({ aiActive: true })
     await pick(wrapper, 'type', 0)
     await pick(wrapper, 'provider', 0)
-    expect(wrapper.find('[data-test="wpp-invoke-ai"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('[data-test="wpp-copy-mention"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('[data-test="wpp-create-empty"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('[data-test="wpp-cancel"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('[data-dialog-action-id="wpp-invoke-ai"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-dialog-action-id="wpp-copy-mention"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-dialog-action-id="wpp-create-empty"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-dialog-action-id="wpp-cancel"]').attributes('disabled')).toBeUndefined()
     expect(wrapper.find('[data-test="wpp-notice"]').text()).toContain('다른 AI 실행')
   })
 
@@ -333,14 +333,14 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
     const wrapper = await mountDialog({ busyAction: 'copy' })
     await pick(wrapper, 'type', 0)
     await pick(wrapper, 'provider', 0)
-    expect(wrapper.findAll('.modal-ft .btn').length).toBe(4)
+    expect(wrapper.findAll('.fg-dialog-btn').length).toBe(4)
     expect(wrapper.find('[data-test="wpp-notice"]').text()).toContain('발급')
   })
 
   it('[취소]는 요청을 하나도 보내지 않고 닫는다', async () => {
     const wrapper = await mountDialog()
     await pick(wrapper, 'type', 0)
-    await wrapper.find('[data-test="wpp-cancel"]').trigger('click')
+    await wrapper.find('[data-dialog-action-id="wpp-cancel"]').trigger('click')
     expect(postRequest).not.toHaveBeenCalled()
     expect(wrapper.emitted('update:visible')![0]).toEqual([false])
   })
@@ -386,7 +386,7 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
       await pick(wrapper, 'type', 0)
       await pick(wrapper, 'provider', 0)
       await wrapper.get('[data-test="wpp-note"]').setValue('한 줄 지시')
-      await wrapper.find('[data-test="wpp-create-empty"]').trigger('click')
+      await wrapper.find('[data-dialog-action-id="wpp-create-empty"]').trigger('click')
       await flushPromises()
 
       const [, body] = postRequest.mock.calls[0]
@@ -402,10 +402,10 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
       await pick(wrapper, 'provider', 0)
       await wrapper.get('[data-test="wpp-note"]').setValue('공통 지시')
 
-      await wrapper.find('[data-test="wpp-copy-mention"]').trigger('click')
+      await wrapper.find('[data-dialog-action-id="wpp-copy-mention"]').trigger('click')
       expect((wrapper.emitted('copy-mention')![0][0] as any).note).toBe('공통 지시')
 
-      await wrapper.find('[data-test="wpp-invoke-ai"]').trigger('click')
+      await wrapper.find('[data-dialog-action-id="wpp-invoke-ai"]').trigger('click')
       expect((wrapper.emitted('invoke-ai')![0][0] as any).scope.note).toBe('공통 지시')
     })
 
@@ -415,9 +415,9 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
       await pick(wrapper, 'provider', 0)
       await wrapper.get('[data-test="wpp-note"]').setValue('가'.repeat(1001))
 
-      expect(wrapper.find('[data-test="wpp-create-empty"]').attributes('disabled')).toBeDefined()
-      expect(wrapper.find('[data-test="wpp-copy-mention"]').attributes('disabled')).toBeDefined()
-      expect(wrapper.find('[data-test="wpp-invoke-ai"]').attributes('disabled')).toBeDefined()
+      expect(wrapper.find('[data-dialog-action-id="wpp-create-empty"]').attributes('disabled')).toBeDefined()
+      expect(wrapper.find('[data-dialog-action-id="wpp-copy-mention"]').attributes('disabled')).toBeDefined()
+      expect(wrapper.find('[data-dialog-action-id="wpp-invoke-ai"]').attributes('disabled')).toBeDefined()
       expect(wrapper.get('[data-test="wpp-notice"]').text()).toContain('전달 멘트가 글자 수 제한을 초과했습니다.')
       expect(wrapper.get('[data-test="wpp-note"]').classes()).toContain('is-over-limit')
     })
@@ -464,15 +464,15 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
       await pick(wrapper, 'provider', 0)
       await wrapper.get('[data-test="wpp-default-provider"] select').setValue('aip_sonnet')
 
-      await wrapper.get('[data-test="wpp-copy-mention"]').trigger('click')
+      await wrapper.get('[data-dialog-action-id="wpp-copy-mention"]').trigger('click')
       expect((wrapper.emitted('copy-mention')![0][0] as any).provider_id).toBe('aip_sonnet')
 
-      await wrapper.get('[data-test="wpp-invoke-ai"]').trigger('click')
+      await wrapper.get('[data-dialog-action-id="wpp-invoke-ai"]').trigger('click')
       const aiPayload = wrapper.emitted('invoke-ai')![0][0] as any
       expect(aiPayload.providerId).toBe('aip_sonnet')
       expect(aiPayload.scope.provider_id).toBe('aip_sonnet')
 
-      await wrapper.find('[data-test="wpp-create-empty"]').trigger('click')
+      await wrapper.find('[data-dialog-action-id="wpp-create-empty"]').trigger('click')
       await flushPromises()
       const [, body] = postRequest.mock.calls[0]
       // 발견 2: 이 값이 defaults.provider_id 로 나가면 만들어지는 모든 단계가 사람 몰래
@@ -528,7 +528,7 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
       await flushPromises()
 
       expect(wrapper.get('[data-test="wpp-note-count"]').text()).toContain('12')
-      expect(wrapper.find('[data-test="wpp-create-empty"]').attributes('disabled')).toBeDefined()
+      expect(wrapper.find('[data-dialog-action-id="wpp-create-empty"]').attributes('disabled')).toBeDefined()
       expect(wrapper.get('[data-test="wpp-notice"]').text())
         .toContain('전달 멘트가 글자 수 제한을 초과했습니다.')
     })
@@ -544,7 +544,7 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
       await wrapper.get('[data-test="wpp-note"]').setValue('가'.repeat(1000))
       await flushPromises()
 
-      expect(wrapper.find('[data-test="wpp-create-empty"]').attributes('disabled')).toBeUndefined()
+      expect(wrapper.find('[data-dialog-action-id="wpp-create-empty"]').attributes('disabled')).toBeUndefined()
     })
   })
 
@@ -659,14 +659,14 @@ describe('WorkPlanProposalDialog — 고를 공급자가 하나도 없을 때', 
 
     // 공급자 개수가 이 창의 모양을 정한다. 답이 오기 전에 그리면 버튼이 한 번 자리를 옮긴다.
     expect(wrapper.find('[data-test="wpp-loading"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="wpp-create-empty"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="wpp-invoke-ai"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="wpp-cancel"]').exists()).toBe(true)
+    expect(wrapper.find('[data-dialog-action-id="wpp-create-empty"]').exists()).toBe(false)
+    expect(wrapper.find('[data-dialog-action-id="wpp-invoke-ai"]').exists()).toBe(false)
+    expect(wrapper.find('[data-dialog-action-id="wpp-cancel"]').exists()).toBe(true)
 
     release({ data: { providers: [], default_provider_id: null } })
     await flushPromises()
     expect(wrapper.find('[data-test="wpp-loading"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="wpp-create-empty"]').exists()).toBe(true)
+    expect(wrapper.find('[data-dialog-action-id="wpp-create-empty"]').exists()).toBe(true)
     wrapper.unmount()
   })
 
@@ -687,12 +687,17 @@ describe('WorkPlanProposalDialog — 고를 공급자가 하나도 없을 때', 
 
   it('[AI 호출]이 없고 [문서생성]이 맨 오른쪽 주버튼이다', async () => {
     const wrapper = await mountNoProviders()
-    expect(wrapper.find('[data-test="wpp-invoke-ai"]').exists()).toBe(false)
-    const create = wrapper.get('[data-test="wpp-create-empty"]')
-    expect(create.classes()).toContain('btn-primary')
-    expect(create.classes()).toContain('wpp-ft-last')
-    expect(wrapper.get('[data-test="wpp-copy-mention"]').classes()).toContain('btn-secondary')
-    expect(wrapper.findAll('.modal-ft .btn').length).toBe(3)
+    expect(wrapper.find('[data-dialog-action-id="wpp-invoke-ai"]').exists()).toBe(false)
+    const create = wrapper.get('[data-dialog-action-id="wpp-create-empty"]')
+    // 0560 T0022 §2.4: "문서생성이 맨 오른쪽 주버튼" is a ROLE now, not a colour class plus an
+    // `order: 9` rule. `role="primary"` is both the blue paint (dialog.css) and the rightmost
+    // slot (footerRolePriority), so the two old assertions become one each.
+    expect(create.classes()).toContain('fg-dialog-btn--primary')
+    expect(create.attributes('data-dialog-action-role')).toBe('primary')
+    expect(wrapper.get('[data-dialog-action-id="wpp-copy-mention"]').classes())
+      .toContain('fg-dialog-btn--aux')
+    const ids = wrapper.findAll('.fg-dialog-btn').map((n) => n.attributes('data-dialog-action-id'))
+    expect(ids).toEqual(['wpp-copy-mention', 'wpp-cancel', 'wpp-create-empty'])
     wrapper.unmount()
   })
 
@@ -706,8 +711,8 @@ describe('WorkPlanProposalDialog — 고를 공급자가 하나도 없을 때', 
     expect(notice.text()).not.toContain('공급자를 하나도 고르지 않았습니다')
     expect(notice.text()).toContain('등록된 AI 공급자 없음')
     expect(notice.classes('warn')).toBe(false)
-    expect(wrapper.get('[data-test="wpp-create-empty"]').attributes('disabled')).toBeUndefined()
-    expect(wrapper.get('[data-test="wpp-copy-mention"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[data-dialog-action-id="wpp-create-empty"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[data-dialog-action-id="wpp-copy-mention"]').attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })
 
@@ -718,7 +723,7 @@ describe('WorkPlanProposalDialog — 고를 공급자가 하나도 없을 때', 
     const wrapper = await mountNoProviders()
     await pick(wrapper, 'type', 0)
     await pick(wrapper, 'type', 2)
-    await wrapper.get('[data-test="wpp-create-empty"]').trigger('click')
+    await wrapper.get('[data-dialog-action-id="wpp-create-empty"]').trigger('click')
     await flushPromises()
 
     const [, body] = postRequest.mock.calls[0]
@@ -734,7 +739,7 @@ describe('WorkPlanProposalDialog — 고를 공급자가 하나도 없을 때', 
     await wrapper.setProps({ aiActive: true })
     await pick(wrapper, 'type', 0)
     expect(wrapper.get('[data-test="wpp-notice"]').text()).toContain('다른 AI 실행')
-    expect(wrapper.get('[data-test="wpp-create-empty"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-dialog-action-id="wpp-create-empty"]').attributes('disabled')).toBeDefined()
     wrapper.unmount()
   })
 
@@ -743,7 +748,7 @@ describe('WorkPlanProposalDialog — 고를 공급자가 하나도 없을 때', 
     const wrapper = await mountNoProviders()
     expect(wrapper.find('[data-test="wpp-sec-providers"]').exists()).toBe(true)
     expect(wrapper.find('.wpp-load-error').exists()).toBe(true)
-    expect(wrapper.find('[data-test="wpp-invoke-ai"]').exists()).toBe(true)
+    expect(wrapper.find('[data-dialog-action-id="wpp-invoke-ai"]').exists()).toBe(true)
     wrapper.unmount()
   })
 
@@ -755,7 +760,7 @@ describe('WorkPlanProposalDialog — 고를 공급자가 하나도 없을 때', 
     expect(wrapper.find('[data-test="wpp-note"]').exists()).toBe(true)
     await pick(wrapper, 'type', 0)
     await wrapper.get('[data-test="wpp-note"]').setValue('공급자 없는 프로젝트의 지시')
-    await wrapper.get('[data-test="wpp-create-empty"]').trigger('click')
+    await wrapper.get('[data-dialog-action-id="wpp-create-empty"]').trigger('click')
     await flushPromises()
 
     const [, body] = postRequest.mock.calls[0]

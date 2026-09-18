@@ -1,17 +1,17 @@
-﻿<template>
-  <div class="modal-bg" role="dialog" aria-modal="true">
-    <div class="modal-box">
-      <div class="modal-hd">
-        <span class="modal-title">
+<template>
+  <DialogShell :open="true" variant="form" surface-class="dialog-new-requirement-modal"  @request-close="$emit('close')">
+    <template #header>
+      <DialogHeader title="" :closeable="true" @close="$emit('close')">
+        <template #title>
           <span class="doc-tag" :class="`c-${rootType}`" style="font-size:.7rem; padding:2px 6px; margin-right:4px;">{{ rootType }}</span>
           {{ $t(`main.new_requirement_modal.title_${rootType}`) }}
-        </span>
-        <button class="modal-close" type="button" @click="$emit('close')">
-          <AppIcon name="x" />
-        </button>
-      </div>
+        </template>
+      </DialogHeader>
+    </template>
 
-      <div class="modal-bd">
+      
+
+      <div class="dialog-feature-body">
         <div class="root-tabs" role="tablist" :aria-label="$t('main.new_requirement_modal.root_type_label')">
           <button
             v-for="type in rootTypes"
@@ -171,36 +171,42 @@
         </form>
       </div>
 
-      <div class="modal-ft">
-        <div v-if="flashMessage" :class="['alert', flashOk ? 'alert-success' : 'alert-danger']" style="width: 100%; margin-bottom: 12px;">
+      
+    
+<div v-if="flashMessage" :class="['alert', flashOk ? 'alert-success' : 'alert-danger']" style="width: 100%; margin-bottom: 12px;">
           <AppIcon :name="flashOk ? 'check' : 'warning'" />
           <span>{{ flashMessage }}</span>
         </div>
-        <button class="btn btn-secondary" type="button" @click="$emit('close')">
+    <template #footer>
+      <DialogFooter :actions="[
+        { id: 'action-0', role: 'cancel', label: $t('common.cancel'), onSelect: () => { $emit('close') } },
+        { id: 'submit-1', role: 'primary', label: $t('main.new_requirement_modal.create_button'), onSelect: () => submit(), disabled: submitting || targetGroupBusy }
+      ]">
+        <template #action-action-0>
           {{ $t('common.cancel') }}
-        </button>
-        <button
-          class="btn btn-primary"
-          type="button"
-          :disabled="submitting || targetGroupBusy"
-          :title="targetGroupBusy ? busyHint : undefined"
-          @click="submit"
-        >
+        </template>
+        <!-- `DialogAction` has no tooltip field and adding one would be a D/L correction,
+             not this T's job — so the busy hint the hand-made footer put on the button
+             itself rides the slot content instead. -->
+        <template #action-submit-1>
           <span v-if="submitting">
             <AppIcon name="spinner" spin />
             {{ $t('main.new_requirement_modal.registering') || 'Registering...' }}
           </span>
-          <span v-else>
+          <span v-else class="nrm-submit-label" :title="targetGroupBusy ? busyHint : undefined">
             <AppIcon name="file-plus" />
             {{ $t('main.new_requirement_modal.create_button') }}
           </span>
-        </button>
-      </div>
-    </div>
-  </div>
+        </template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
+import DialogShell from './dialogs/DialogShell.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
 import AppIcon from '@shared/AppIcon.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'

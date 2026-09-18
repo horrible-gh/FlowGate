@@ -1,17 +1,16 @@
 <template>
-  <teleport to="body">
-    <div v-if="state.visible" class="modal-bg">
-      <div class="modal-box cfb-box">
-        <div class="modal-hd">
-          <span class="modal-title">
+  <DialogShell :open="state.visible" variant="alert" surface-class="dialog-clipboard-fallback-modal"  @request-close="close">
+    <template #header>
+      <DialogHeader title="" :closeable="true" @close="close">
+        <template #title>
             <AppIcon name="warning" style="color:var(--warning);" />
             {{ t('main.clipboard_fallback.title') }}
-          </span>
-          <button class="modal-close" type="button" @click="close">
-            <AppIcon name="x" />
-          </button>
-        </div>
-        <div class="modal-bd">
+          </template>
+      </DialogHeader>
+    </template>
+
+        
+        <div class="dialog-feature-body">
           <p class="cfb-msg">{{ t('main.clipboard_fallback.message') }}</p>
           <textarea
             ref="textEl"
@@ -22,21 +21,30 @@
             @focus="selectAll"
           ></textarea>
         </div>
-        <div class="modal-ft">
-          <button type="button" class="btn btn-secondary" @click="close">
+        
+      
+
+    <template #footer>
+      <DialogFooter :actions="[
+        { id: 'close-0', role: 'cancel', label: t('common.close'), onSelect: () => close() },
+        { id: 'onCopyAgain-1', role: 'primary', label: t('main.clipboard_fallback.copy_btn'), onSelect: () => onCopyAgain() }
+      ]">
+        <template #action-close-0>
             {{ t('common.close') }}
-          </button>
-          <button type="button" class="btn btn-primary" @click="onCopyAgain">
+          </template>
+        <template #action-onCopyAgain-1>
             <AppIcon name="copy" />
             {{ t('main.clipboard_fallback.copy_btn') }}
-          </button>
-        </div>
-      </div>
-    </div>
-  </teleport>
+          </template>
+      </DialogFooter>
+    </template>
+  </DialogShell>
 </template>
 
 <script setup lang="ts">
+import DialogShell from './dialogs/DialogShell.vue'
+import DialogHeader from './dialogs/DialogHeader.vue'
+import DialogFooter from './dialogs/DialogFooter.vue'
 // Manual-copy fallback for failed clipboard writes (B0001 / group 0221) — see
 // useClipboardFallback for why this exists on HTTP LAN deploys. Mounted once in App.vue.
 import { nextTick, ref, watch } from 'vue'
@@ -82,9 +90,7 @@ async function onCopyAgain() {
 </script>
 
 <style scoped>
-.cfb-box {
-  width: 640px;
-}
+
 .cfb-msg {
   font-size: .9rem;
   color: var(--text);
@@ -105,4 +111,6 @@ async function onCopyAgain() {
   color: var(--text);
   white-space: pre;
 }
+
+:global(.fg-dialog-surface.dialog-clipboard-fallback-modal) { width: 640px; }
 </style>

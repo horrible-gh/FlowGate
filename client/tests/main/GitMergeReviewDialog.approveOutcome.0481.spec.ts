@@ -73,7 +73,7 @@ function mountDialog() {
 }
 
 async function approve(wrapper: ReturnType<typeof mountDialog>) {
-  const button = wrapper.findAll('.gmr-ft-actions button').at(1)!
+  const button = wrapper.find('[data-dialog-action-id="approve"]')
   await button.trigger('click')
   await flushPromises()
 }
@@ -162,7 +162,7 @@ describe('GitMergeReviewDialog approve outcome (0481 T0010 rev3)', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-test="gmr-approve-outcome"]').exists()).toBe(true)
-    expect(wrapper.find('.gmr-ft-actions').exists()).toBe(true)
+    expect(wrapper.find('.fg-dialog-footer__actions').exists()).toBe(true)
   })
 
   it('closes on a real merge and says nothing was blocked', async () => {
