@@ -383,7 +383,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { getRequest, postRequest } from '@shared/api'
+import { getRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import DialogFooter from './dialogs/DialogFooter.vue'
 import DialogHeader from './dialogs/DialogHeader.vue'
@@ -401,6 +401,7 @@ import {
   loadStoredStepTimeoutMin,
   storeStepTimeoutMin,
 } from '../composables/useStepTimeout'
+import { startAiInvoke } from '../composables/useAiInvokeStarter'
 
 const props = defineProps<{
   visible: boolean
@@ -893,21 +894,6 @@ function resetState() {
 let disposed = false
 onBeforeUnmount(() => { disposed = true })
 
-// 0401 NR0003 §3 cause 4: the 409 body always names a run_id, whether or not it is still
-// alive -- the server-side end record (T0004 task 1-2) means a dead one now answers with a
-// persisted status='finished' payload instead of 404, so both cases are readable here.
-async function checkRunLive(runId: string): Promise<boolean> {
-  try {
-    const res = await getRequest<any>(`/api/v1/ai-invoke/${encodeURIComponent(runId)}`)
-    const status = res.data?.status
-    return status === 'running' || status === 'pause_requested'
-  } catch (e: any) {
-    // Unknown run_id ⇒ definitely not live. Any other failure fails toward "live" (the
-    // pre-T0004 behaviour) so a transient lookup error cannot dead-end the dialog either.
-    return e?.response?.status !== 404
-  }
-}
-
 async function onReleaseLeaseClick(): Promise<void> {
   if (!lockedGroupId.value || releasingLease.value) return
   releasingLease.value = true
@@ -927,170 +913,104 @@ async function start(reviewIntent?: 'rerun') {
   starting.value = true
   startError.value = ''
   try {
-    await aiProviderStore.ensureLoaded(props.project)
-    const target = resolvedTarget.value
-    // A continuous run picked before the workflow is decided must start FROM the decision step,
-    // exactly as the ContinuousWorkDialog path does (MainPanel.onContinuousWarnConfirm): the
-    // scope becomes workflow_decide and the run-to-end sentinel stands in for a target that
-    // does not exist yet. workflow_decide is keyed by the sequence ROOT, not the acted-on doc.
-    const preDecision = mode.value === 'continuous' && !!target?.fromDecision
-    const scope = preDecision ? 'workflow_decide' : props.actionScope
-    const body: Record<string, unknown> = {
-      project: props.project,
-      group: props.group,
-      doc_ref: preDecision ? (props.sequenceDocRef || props.docRef) : props.docRef,
-      action_scope: scope,
-      mode: mode.value,
-    }
-    // The normal review path deliberately omits this field. Clicking the explicitly labelled
-    // [재검수] button is the only completed-state path that supplies rerun.
-    if (scope === 'review' && reviewIntent === 'rerun') body.review_intent = 'rerun'
-    // 0448 T0005 §5-1. Two independent request states, never one:
-    //   provider_id            — the ordinary selection (aiProviderStore.selectProvider), i.e.
-    //                            the default for hops that stored no provider of their own.
-    //   provider_pinned=true   — force-all, and ONLY when the run went through the explicit
-    //                            aiProviderStore.forceProviderForAllSteps API. `pinned` can no
-    //                            longer be set by a selector's change event, so an ordinary
-    //                            pick sends provider_id alone and the server keeps running each
-    //                            step's stored provider (start_run tier 3 beats tier 4).
-    if (reviewLoopActive.value) {
-      body.provider_id = null
-      body.provider_pinned = false
-      body.document_review_loop = {
-        review_count: reviewCount.value, reviewer_provider_id: reviewerProviderId.value,
-        review_criteria: reviewCriteria.value, rework_provider_id: reworkProviderId.value,
-        rework_timeout_sec: reworkTimeoutSec.value, rework_message: reworkMessage.value,
-        failure_restart_max_attempts: failureRestartMaxAttempts.value, total_timeout_sec: totalTimeoutSec.value,
-      }
-    } else {
-      if (aiProviderStore.selectedProviderId) body.provider_id = aiProviderStore.selectedProviderId
-      if (aiProviderStore.pinned) body.provider_pinned = true
-    }
-    if (mode.value === 'single' && capabilityWarningAck.value) body.capability_warning_ack = true
-    if (props.module != null) body.module = props.module
-    if (props.selectedDocs?.length) body.selected_docs = props.selectedDocs
-    if (props.messages?.length) body.messages = props.messages
-    if (props.rejectReason) body.reject_reason = props.rejectReason
-    if (props.designTypes?.length) body.design_types = props.designTypes
-    if (props.designMode) body.design_mode = props.designMode
-    if (props.designFirstLabel) body.design_first_label = props.designFirstLabel
-    if (mode.value === 'continuous') {
-      body.continuation_target_seq = target?.seq ?? null
-      body.continuation_review_mode = !!props.continuationReviewMode
-      body.continuation_instruction_mode = props.continuationInstructionMode
-      // 0448 T0005 §5-2: item_seq -> provider_id, independent of provider_id/provider_pinned
-      // above. One fixed rule for the empty case — an empty map is OMITTED, exactly like the
-      // note map below, so "no per-step override" reaches the server as an absent key and never
-      // as `{}`. A present map is forwarded verbatim (the only producer of this wire key).
-      if (props.providerOverrides && Object.keys(props.providerOverrides).length) {
-        body.continuation_provider_overrides = props.providerOverrides
-      }
-      if (props.defaultMessage) body.continuation_default_note = props.defaultMessage
-      if (props.messageOverrides && Object.keys(props.messageOverrides).length) {
-        body.continuation_note_overrides = props.messageOverrides
-      }
-      if (props.continuationStepTimeoutSec) {
-        body.continuation_step_timeout_sec = props.continuationStepTimeoutSec
-      }
-      // 0 and -1 are both meaningful restart-count picks ("재실행 안 함" / "될 때까지"),
-      // so this must not use a truthy check like the budget pick above.
-      if (props.continuationRestartMaxAttempts != null) {
-        body.continuation_restart_max_attempts = props.continuationRestartMaxAttempts
-      }
-      // 0352 T0004 §2/§3.7: never sent for a pre-decision (workflow_decide) start — no
-      // item_seq exists yet, and the server rejects a selection on that scope (§2).
-      if (!preDecision && props.continuationAutoApproveItemSeqs?.length) {
-        body.continuation_auto_approve_item_seqs = props.continuationAutoApproveItemSeqs
-      }
-      // 0414 T0012 / P0007: 두 필드 모두 선택이며, 보내지 않은 요청의 동작은 지금과 같다 —
-      // 빈 맵을 `{}` 로 실어 서버가 무시하게 만드는 대신 키 자체를 생략한다. 단계별 검수는
-      // item_seq 로 매기므로 pre-decision(workflow_decide)에는 실을 수 없다: 그 시점에는
-      // 아직 시퀀스가 없다. 다이얼로그 경로에서 두 맵은 비어 있지만 방어적으로도 막는다.
-      if (!preDecision && props.reviewCountOverrides && Object.keys(props.reviewCountOverrides).length) {
-        body.continuation_review_count_overrides = props.reviewCountOverrides
-      }
-      if (!preDecision && props.reviewerOverrides && Object.keys(props.reviewerOverrides).length) {
-        body.continuation_reviewer_overrides = props.reviewerOverrides
-      }
-    }
-    // 0446 NR0003 R5 / T0010 §3-6: the single rejection rework's own budget, sent OUTSIDE the
-    // continuous block above so the two paths stay independent. The field keeps its
-    // `continuation_` name because T0010 §3-1 forbids inventing a second one — the server
-    // reads it mode-independently (_resolve_timeout_sec puts an in-range explicit pick above
-    // the mode branch), and ai_invoke_routes already validated it against 1800..14400 without
-    // ever looking at `mode`.
-    //
-    // Priority, written down because it is not obvious: a preset handed in by
-    // ContinuousWorkDialog OUTRANKS this dialog's local pick. That path collected its own
-    // choice and owns it. A rework never receives one today (MainPanel.openAiInvokeDialog is
-    // called with no preset for 'rework', so the prop arrives null), so this is the documented
-    // order rather than a live branch — but without it the next person wires it backwards.
-    if (stepTimeoutActive.value) {
-      body.continuation_step_timeout_sec =
-        props.continuationStepTimeoutSec ?? stepTimeoutMinutes.value * 60
-    }
-    const res = await postRequest<any>('/api/v1/ai-invoke/start', body)
-    const data = res.data
-    const groupId = aiInvokeGroupId(props.project, props.module, props.group)
-    aiInvokeStore.trackStarted({
-      ...data,
-      group_id: data.group_id ?? groupId,
-      doc_ref: data.doc_ref ?? props.docRef,
-    })
-    // Starting an invoke is a short setup interaction. Once admitted, progress
-    // belongs to the group-scoped inline indicator and must not block the UI.
-    emit('update:visible', false)
-  } catch (e: any) {
-    // flowgate.default.0560 T0031: the dialog already closed (unmounted) while postRequest
-    // was in flight -- do not fire the follow-up checkRunLive request at all, and do not
-    // touch any reactive state below.
+    // flowgate.default.0585 T0004 §2: the actual execution common part (provider ensure,
+    // request body assembly, POST, trackStarted, 409/422 normalization) lives in
+    // useAiInvokeStarter now, shared with the headless autoStart path (MainPanel). Everything
+    // below is this dialog's OWN concern: mapping the typed result onto startError /
+    // lockedGroupId / capabilityWarning, unchanged from before the extraction.
+    const result = await startAiInvoke(
+      {
+        project: props.project,
+        module: props.module,
+        group: props.group,
+        docRef: props.docRef,
+        sequenceDocRef: props.sequenceDocRef,
+        actionScope: props.actionScope,
+        mode: mode.value,
+        reviewIntent,
+        target: resolvedTarget.value,
+        continuationReviewMode: props.continuationReviewMode,
+        continuationInstructionMode: props.continuationInstructionMode,
+        continuationAutoApproveItemSeqs: props.continuationAutoApproveItemSeqs,
+        providerOverrides: props.providerOverrides,
+        defaultMessage: props.defaultMessage,
+        messageOverrides: props.messageOverrides,
+        reviewCountOverrides: props.reviewCountOverrides,
+        reviewerOverrides: props.reviewerOverrides,
+        continuationStepTimeoutSec: props.continuationStepTimeoutSec,
+        continuationRestartMaxAttempts: props.continuationRestartMaxAttempts,
+        // 0446 NR0003 R5 / T0010 §3-6: the single rejection rework's own budget, independent of
+        // the continuous block above. A preset handed in by ContinuousWorkDialog (props value)
+        // outranks this dialog's local picker.
+        singleRunTimeoutSec: stepTimeoutActive.value
+          ? props.continuationStepTimeoutSec ?? stepTimeoutMinutes.value * 60
+          : undefined,
+        capabilityWarningAck: capabilityWarningAck.value,
+        documentReviewLoop: reviewLoopActive.value
+          ? {
+              review_count: reviewCount.value,
+              reviewer_provider_id: reviewerProviderId.value,
+              review_criteria: reviewCriteria.value,
+              rework_provider_id: reworkProviderId.value,
+              rework_timeout_sec: reworkTimeoutSec.value,
+              rework_message: reworkMessage.value,
+              failure_restart_max_attempts: failureRestartMaxAttempts.value,
+              total_timeout_sec: totalTimeoutSec.value,
+            }
+          : null,
+        selectedDocs: props.selectedDocs,
+        messages: props.messages,
+        rejectReason: props.rejectReason,
+        designTypes: props.designTypes,
+        designMode: props.designMode,
+        designFirstLabel: props.designFirstLabel,
+      },
+      { isCancelled: () => disposed },
+    )
+    // flowgate.default.0560 T0031: the dialog already closed (unmounted) while the request
+    // was in flight -- do not touch any reactive state below.
     if (disposed) return
-    const status = e?.response?.status
-    const data = e?.response?.data ?? {}
-    if (status === 409 && data.code === 'run_in_progress' && data.run_id) {
-      const groupId = data.group_id ?? aiInvokeGroupId(props.project, props.module, props.group)
-      // 0401 NR0003 §3 cause 4: the 409 body always names A run_id, live or not -- adopting it
-      // unconditionally closed this dialog onto a run that was already gone, and the very next
-      // poll turned it back into the '실행 기록이 소실되었습니다' card this run was trying to
-      // escape. Verify liveness first; only a genuinely live run gets adopted (scenario 8 restore).
-      const runIsLive = await checkRunLive(data.run_id)
-      // flowgate.default.0560 T0031: unmount could have happened during the await above.
-      if (disposed) return
-      if (runIsLive) {
-        aiInvokeStore.trackStarted({
-          run_id: data.run_id,
-          group_id: groupId,
-          doc_ref: props.docRef,
-          mode: mode.value,
-        })
-        void aiInvokeStore.refresh(groupId)
-        emit('update:visible', false)
-      } else {
-        lockedGroupId.value = groupId
+    if (result.ok) {
+      // Starting an invoke is a short setup interaction. Once admitted, progress
+      // belongs to the group-scoped inline indicator and must not block the UI.
+      emit('update:visible', false)
+      return
+    }
+    switch (result.kind) {
+      case 'run_in_progress_orphaned':
+        lockedGroupId.value = result.groupId
         startError.value = t('main.ai_invoke_dialog.error_run_in_progress_orphaned')
-      }
-    } else if (status === 409 && data.code === 'review_already_completed') {
-      startError.value = t('main.ai_invoke_dialog.error_review_already_completed')
-    } else if (status === 409 && data.code === 'review_rerun_not_available') {
-      startError.value = t('main.ai_invoke_dialog.error_review_rerun_not_available')
-    } else if (status === 409 && data.code === 'no_provider_registered') {
-      // 0292 T0003: distinct from no_enabled_provider — there is nothing in AI settings
-      // to switch on, so point at the seed script instead of at a toggle.
-      startError.value = t('main.ai_invoke_dialog.error_no_provider_registered')
-    } else if (status === 409 && data.code === 'no_enabled_provider') {
-      startError.value = t('main.ai_invoke_dialog.error_no_provider')
-    } else if (status === 422 && data.code === 'provider_capability_confirmation_required' && mode.value === 'single') {
-      // The first request only displays the server-authoritative warning. A second explicit
-      // click is the sole path that carries the ephemeral acknowledgement — and it must retry
-      // with the SAME reviewIntent this failed request used, not a bare start().
-      capabilityWarning.value = data
-      capabilityWarningReviewIntent.value = reviewIntent
-      startError.value = data.message || 'This provider cannot modify source or run tests.'
-    } else if (status === 422) {
-      const msgs = (data.errors ?? []).map((er: any) => `${er.loc}: ${er.msg}`).join(' / ')
-      startError.value = msgs || t('main.ai_invoke_dialog.error_start_failed')
-    } else {
-      startError.value = data.message ?? t('main.ai_invoke_dialog.error_start_failed')
+        break
+      case 'review_already_completed':
+        startError.value = t('main.ai_invoke_dialog.error_review_already_completed')
+        break
+      case 'review_rerun_not_available':
+        startError.value = t('main.ai_invoke_dialog.error_review_rerun_not_available')
+        break
+      case 'no_provider_registered':
+        // 0292 T0003: distinct from no_enabled_provider — there is nothing in AI settings
+        // to switch on, so point at the seed script instead of at a toggle.
+        startError.value = t('main.ai_invoke_dialog.error_no_provider_registered')
+        break
+      case 'no_enabled_provider':
+        startError.value = t('main.ai_invoke_dialog.error_no_provider')
+        break
+      case 'capability_warning':
+        // The first request only displays the server-authoritative warning. A second explicit
+        // click is the sole path that carries the ephemeral acknowledgement — and it must retry
+        // with the SAME reviewIntent this failed request used, not a bare start().
+        capabilityWarning.value = result.warning
+        capabilityWarningReviewIntent.value = reviewIntent
+        startError.value = result.message || 'This provider cannot modify source or run tests.'
+        break
+      case 'validation_error':
+        startError.value = result.message || t('main.ai_invoke_dialog.error_start_failed')
+        break
+      case 'unknown_error':
+        startError.value = result.message ?? t('main.ai_invoke_dialog.error_start_failed')
+        break
+      case 'cancelled':
+        break
     }
   } finally {
     if (!disposed) starting.value = false

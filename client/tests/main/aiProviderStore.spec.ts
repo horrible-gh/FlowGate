@@ -221,3 +221,143 @@ describe('runtime AI provider store', () => {
     expect(localStorage.getItem(LEGACY_PIN_KEY)).toBeNull()
   })
 })
+
+// flowgate.default.0585 T0004 §3 (NR0003 §6/§13 권장 2): AiInvokeDialog's visible watcher and
+// its own start() both called ensureLoaded(project) on a cold open, and every other preload
+// surface (AppHeader, ContinuousWarningDialog, ...) can race the same project too. Before this,
+// "already loaded" was the only de-dup — an in-flight, not-yet-resolved load was invisible to a
+// second caller, so it fired its own GET.
+describe('in-flight load coalescing (0585 T0004 §3)', () => {
+  it('joins a second ensureLoaded for the same project onto the first in-flight GET', async () => {
+    let resolveFirst!: (value: unknown) => void
+    getRequest.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve }))
+    const store = useAiProviderStore()
+
+    const first = store.ensureLoaded('flowgate')
+    const second = store.ensureLoaded('flowgate')
+    expect(getRequest).toHaveBeenCalledTimes(1)
+
+    resolveFirst({ data: payload() })
+    await Promise.all([first, second])
+
+    expect(getRequest).toHaveBeenCalledTimes(1)
+    expect(store.selectedProviderId).toBe('aip_two')
+    expect(store.loadedProjectId).toBe('flowgate')
+  })
+
+  it('still starts its own request for force=true while a non-force load is in flight', async () => {
+    let resolveFirst!: (value: unknown) => void
+    getRequest.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve }))
+    getRequest.mockResolvedValueOnce({ data: payload() })
+    const store = useAiProviderStore()
+
+    const first = store.ensureLoaded('flowgate')
+    const forced = store.loadForProject('flowgate', true)
+    expect(getRequest).toHaveBeenCalledTimes(2)
+
+    resolveFirst({ data: payload() })
+    await Promise.all([first, forced])
+    expect(store.selectedProviderId).toBe('aip_two')
+  })
+
+  it('lets a caller retry with force after a failed load, instead of joining nothing forever', async () => {
+    getRequest.mockRejectedValueOnce(new Error('boom'))
+    const store = useAiProviderStore()
+    await store.ensureLoaded('flowgate')
+    expect(store.error).toBe('load_failed')
+
+    getRequest.mockResolvedValueOnce({ data: payload() })
+    await store.loadForProject('flowgate', true)
+    expect(store.error).toBeNull()
+    expect(store.selectedProviderId).toBe('aip_two')
+    expect(getRequest).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not let a late response for an abandoned project overwrite the project switched to', async () => {
+    let resolveFlowgate!: (value: unknown) => void
+    getRequest.mockImplementationOnce(() => new Promise((resolve) => { resolveFlowgate = resolve }))
+    getRequest.mockResolvedValueOnce({
+      data: { ok: true, project: 'other', default_provider_id: 'aip_other', providers: [
+        { id: 'aip_other', name: 'Other', exec_type: 'cli', kind: 'codex' },
+      ] },
+    })
+    const store = useAiProviderStore()
+
+    const flowgateLoad = store.loadForProject('flowgate')
+    const otherLoad = store.loadForProject('other')
+    await otherLoad
+    expect(store.loadedProjectId).toBe('other')
+    expect(store.selectedProviderId).toBe('aip_other')
+
+    // The abandoned 'flowgate' request resolves AFTER 'other' has already landed.
+    resolveFlowgate({ data: payload() })
+    await flowgateLoad
+
+    expect(store.loadedProjectId).toBe('other')
+    expect(store.selectedProviderId).toBe('aip_other')
+  })
+
+  // 0585 TR0005 rework: `pendingLoads` used to key purely on projectId, so re-requesting A while
+  // its first fetch was still in flight but already superseded by an intervening B load would
+  // JOIN that doomed A promise instead of starting a new one. The joined promise resolves fine,
+  // but its own fetchAndApply discards its response (serial guard), so the caller's "it loaded"
+  // await returns while the store is still left on B's data.
+  it('starts a fresh request for A instead of joining its own superseded in-flight load (A -> B -> A)', async () => {
+    let resolveA1!: (value: unknown) => void
+    getRequest.mockImplementationOnce(() => new Promise((resolve) => { resolveA1 = resolve }))
+    getRequest.mockResolvedValueOnce({
+      data: {
+        ok: true,
+        project: 'other',
+        default_provider_id: 'aip_other',
+        providers: [{ id: 'aip_other', name: 'Other', exec_type: 'cli', kind: 'codex' }],
+      },
+    })
+    getRequest.mockResolvedValueOnce({ data: payload() })
+    const store = useAiProviderStore()
+
+    const a1 = store.ensureLoaded('flowgate')
+    const b = store.ensureLoaded('other')
+    await b
+    expect(store.loadedProjectId).toBe('other')
+
+    // A is requested again while its first fetch is still pending and already doomed by B's
+    // serial bump -- this must fire a third GET, not join a1.
+    const a2 = store.ensureLoaded('flowgate')
+    expect(getRequest).toHaveBeenCalledTimes(3)
+
+    await a2
+    expect(store.loadedProjectId).toBe('flowgate')
+    expect(store.selectedProviderId).toBe('aip_two')
+
+    // The stale first A response lands last and must not disturb the fresh A2 result.
+    resolveA1({ data: payload() })
+    await a1
+    expect(store.loadedProjectId).toBe('flowgate')
+    expect(store.selectedProviderId).toBe('aip_two')
+  })
+
+  // Same defect, reached via clear() instead of a second project: clear() bumps requestSerial
+  // exactly like a switch to another project does, so an entry left behind by a pre-clear load
+  // must not be joined by a same-project reload right after.
+  it('does not join a stale entry left behind by clear() when the same project is reloaded immediately', async () => {
+    let resolveFirst!: (value: unknown) => void
+    getRequest.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve }))
+    getRequest.mockResolvedValueOnce({ data: payload() })
+    const store = useAiProviderStore()
+
+    const first = store.ensureLoaded('flowgate')
+    store.clear()
+    const second = store.ensureLoaded('flowgate')
+    expect(getRequest).toHaveBeenCalledTimes(2)
+
+    await second
+    expect(store.loadedProjectId).toBe('flowgate')
+    expect(store.selectedProviderId).toBe('aip_two')
+
+    resolveFirst({ data: payload() })
+    await first
+    expect(store.loadedProjectId).toBe('flowgate')
+    expect(store.selectedProviderId).toBe('aip_two')
+  })
+})

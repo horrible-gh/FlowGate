@@ -2255,6 +2255,7 @@ export default {
       error_vr_mention_fetch_failed: 'VRメンション取得失敗',
       error_parent_r_not_found: '親Rドキュメントが見つかりません。',
       error_workflow_info_unavailable: 'ワークフロー情報を取得できません。',
+      error_ai_autostart_run_locked: '前回の実行が異常終了し、ロックが残っています。このグループの文書で[AI呼び出し]を開いて解除してください。',
       error_next_step_unavailable: '次のステップ情報を取得できません。',
       error_next_step_already_started: 'このワークフローステップはすでに作成されています。',
       error_empty_doc_not_allowed: '{docType}ステップは空ドキュメントを作成できません。',

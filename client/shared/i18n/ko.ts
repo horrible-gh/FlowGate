@@ -2258,6 +2258,7 @@ export default {
       error_vr_mention_fetch_failed: 'VR 멘트 조회 실패',
       error_parent_r_not_found: '부모 R 문서를 찾을 수 없습니다.',
       error_workflow_info_unavailable: '워크플로 정보를 가져올 수 없습니다.',
+      error_ai_autostart_run_locked: '이전 실행이 비정상 종료되어 잠금이 남아 있습니다. 이 그룹의 문서에서 [AI 호출]을 열어 잠금을 해제해 주세요.',
       error_next_step_unavailable: '다음 단계 정보를 가져올 수 없습니다.',
       error_next_step_already_started: '이미 생성된 워크플로 단계입니다.',
       error_empty_doc_not_allowed: '{docType} 단계는 빈 문서로 생성할 수 없습니다.',
