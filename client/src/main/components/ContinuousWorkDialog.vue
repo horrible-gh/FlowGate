@@ -19,6 +19,7 @@
     variant="workflow-large"
     surface="panel"
     size="xl"
+    surface-class="continuous-work-dialog"
     @request-close="close"
   >
     <template #header>
@@ -1555,5 +1556,12 @@ watch(presetActive, (active) => {
   border-radius: var(--r-sm);
   padding: 8px 10px;
   flex-shrink: 0;
+}
+</style>
+
+<style>
+/* Restore the pre-0560 geometry without changing the shared xl size token. */
+.fg-dialog-surface.continuous-work-dialog {
+  width: min(860px, 92vw);
 }
 </style>
