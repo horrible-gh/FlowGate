@@ -733,6 +733,68 @@ def test_human_create_read_save_roundtrip(seed, storage_root):
     assert db_docs.get_by_id(doc_id)["revision_no"] == 1
 
 
+@pytest.mark.parametrize(
+    "locale,doc_code,expected_message,expected_errors",
+    [
+        (
+            "ja",
+            "0997-WP",
+            "作業計画を保存できませんでした。2件の項目が規則に合いません。",
+            {
+                "missing_field": "必須項目 defaults がありません。",
+                "unknown_field": (
+                    "未知の項目 provider_candidatez です。"
+                    "実験用の項目は x_ で始めてください。"
+                ),
+            },
+        ),
+        (
+            "en",
+            "0998-WP",
+            "The work plan was not saved. 2 item(s) break the rules.",
+            {
+                "missing_field": "Required field defaults is missing.",
+                "unknown_field": (
+                    "Unknown field provider_candidatez. "
+                    "Experimental fields must start with x_ to be preserved."
+                ),
+            },
+        ),
+    ],
+)
+def test_save_http_localizes_validation_from_x_locale(
+    seed, locale, doc_code, expected_message, expected_errors,
+):
+    """0589 T#1: header -> route locale -> validator -> localized HTTP response."""
+    client = _client()
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value=doc_code,
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "counted_types": ["D"],
+            "provider_candidates": ["aip_opus"],
+            "quantities": {"D": 1},
+        })
+    assert created.status_code == 201, created.text
+
+    invalid_body = json.loads(json.dumps(created.json()["body"]))
+    invalid_body.pop("defaults")
+    invalid_body["provider_candidatez"] = []
+    response = client.put(
+        f"/api/v1/documents/{created.json()['doc_id']}/work-plan",
+        json={"base_revision_no": 0, "body": invalid_body},
+        headers={"X-Locale": locale},
+    )
+
+    assert response.status_code == 422, response.text
+    payload = response.json()
+    assert payload["code"] == "wp_validation_failed"
+    assert payload["message"] == expected_message
+    assert {error["code"]: error["msg"] for error in payload["errors"]} == expected_errors
+
+
 def test_capability_warning_findings_distinguishes_unassigned_from_incapable():
     """flowgate.default.0533 T0004: provider_id=None is a normal unassigned WP state and
     must not be treated like a specified-but-incapable/unknown/disabled provider by the

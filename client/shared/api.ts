@@ -203,9 +203,9 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
       config.timeout = LONG_TIMEOUT_MS
     }
   }
-  // Forward the UI locale so server-built artifacts (e.g. worker mentions) can
-  // emit localized doc-type names. Same source the i18n bootstrap reads.
-  config.headers['X-Locale'] = localStorage.getItem('preferred_locale') || 'ko'
+  // Forward the locale currently rendered by the UI. The i18n instance already
+  // normalizes stored/browser values and also changes immediately on a runtime switch.
+  config.headers['X-Locale'] = String(i18n.global.locale.value)
   return config
 })
 
