@@ -152,6 +152,7 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
     expect(body.counted_types).toEqual(['DS', 'D', 'T', 'TS'])
     expect(body.quantities).toEqual({ DS: 0, D: 0, T: 0, TS: 0 })
     expect(body.provider_candidates).toEqual([])
+    expect(body).not.toHaveProperty('title')
     expect(wrapper.emitted('created')).toBeTruthy()
   })
 

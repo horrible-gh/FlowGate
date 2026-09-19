@@ -8,6 +8,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import i18n from '@shared/i18n'
 import WorkPlanEditor from '@main/components/WorkPlanEditor.vue'
 import { useProjectStore } from '@main/stores/project'
+import { useTabsStore } from '@main/stores/tabs'
 
 const { getRequest, postRequest, putRequest } = vi.hoisted(() => ({
   getRequest: vi.fn(),
@@ -759,5 +760,54 @@ describe('approval presave surface', () => {
     await expect((wrapper.vm as any).ensureSaved()).resolves.toBe('failed')
     expect(putRequest).toHaveBeenCalledTimes(1)
     expect(wrapper.find('.wp-dirty-banner').exists()).toBe(true)
+  })
+})
+describe('WorkPlanEditor canonical title synchronization (0591 T#2)', () => {
+  it('applies body/revision/title from one save response and asks DocHeader to pull', async () => {
+    const tabsStore = useTabsStore()
+    tabsStore.openTab({
+      id: READ_RESPONSE.doc_id,
+      title: 'old title',
+      path: '',
+      type: 'md',
+      typeCode: 'WP',
+    })
+    const canonicalBody = structuredClone(PLAN_BODY)
+    canonicalBody.quantities.D.count = 4
+    canonicalBody.quantities.T.count = 3
+    const derivedTitle = '작업계획 — 설계 4장 · 작업 3세트'
+    putRequest.mockResolvedValue({
+      data: {
+        revision_no: 4,
+        title: derivedTitle,
+        body: canonicalBody,
+        totals: { design_sheets: 4, work_sets: 3, steps: 3 },
+        assignment_summary: [],
+        unassigned_step_count: 2,
+      },
+    })
+    i18n.global.locale.value = 'en'
+    const refreshes: CustomEvent[] = []
+    const onRefresh = (event: Event) => refreshes.push(event as CustomEvent)
+    window.addEventListener('fg:open_docs_refresh', onRefresh)
+
+    const wrapper = mountEditor()
+    await flushPromises()
+    const saveBtn = wrapper.findAll('button')
+      .find((button) => button.text().includes('Save') || button.text().includes('저장'))!
+    await saveBtn.trigger('click')
+    await flushPromises()
+
+    expect((wrapper.vm as any).revisionNo).toBe(4)
+    expect((wrapper.vm as any).plan.quantities).toEqual(canonicalBody.quantities)
+    expect(tabsStore.tabs.find((tab) => tab.id === READ_RESPONSE.doc_id)?.title).toBe(derivedTitle)
+    expect(refreshes.at(-1)?.detail).toEqual({
+      project: 'flowgate',
+      doc_id: READ_RESPONSE.doc_id,
+    })
+    expect(putRequest.mock.calls[0][1]).not.toHaveProperty('title')
+
+    window.removeEventListener('fg:open_docs_refresh', onRefresh)
+    wrapper.unmount()
   })
 })

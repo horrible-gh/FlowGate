@@ -413,9 +413,10 @@ def create_work_plan(
     # 0403 NR0004 F8 — the title-length check runs BEFORE a document number is reserved.
     # A reservation cannot be undone. Throwing a 422 afterwards leaves that number owning no
     # document and punches a hole in the group's numbering. Every check decidable from the request alone goes before the reservation.
-    requested_title = (body.title or "").strip()
-    if len(requested_title) > 100:
-        raise HTTPException(status_code=422, detail="Title must be 100 characters or fewer.")
+    title_locale = wp.resolve_title_locale(creation_locale=locale)
+    title = wp.derived_title(plan, title_locale)
+
+    # WorkPlanCreate.title remains accepted only for backward compatibility and is ignored.
 
     try:
         doc_code = numbering_service.reserve_document(
@@ -438,7 +439,7 @@ def create_work_plan(
         module=module,
         branch=branch,
     )
-    title = requested_title or doc_id
+    # title is derived above from the validated canonical body.
 
     try:
         wp.write_body_atomically(path, plan)
@@ -463,7 +464,7 @@ def create_work_plan(
             "revision_no": 0,
             "created_at": now,
             "updated_at": now,
-            "meta": _json.dumps({"work_plan": {"origin": "human"}}, ensure_ascii=False),
+            "meta": _json.dumps({"work_plan": {"origin": "human", "title_locale": title_locale}}, ensure_ascii=False),
         }, actor_user_id=current_user["user_id"])
     except Exception as exc:  # noqa: BLE001 — roll the file back, never leave an orphan
         try:
@@ -517,7 +518,7 @@ def create_work_plan(
 
     refreshed = db_docs.get_by_id(doc_id) or doc
     _emit(refreshed, "created",
-          {"doc_id": doc_id, "type": WORK_PLAN_TYPE, "title": title,
+          {"doc_id": doc_id, "type": WORK_PLAN_TYPE, "title": refreshed.get("title"),
            "status": refreshed.get("status"), "revision_no": 0},
           current_user["user_id"])
 
@@ -525,7 +526,7 @@ def create_work_plan(
         "ok": True,
         "doc_id": doc_id,
         "doc_type": WORK_PLAN_TYPE,
-        "title": title,
+        "title": refreshed.get("title"),
         "group_id": group_id,
         "parent_doc_id": body.parent_doc_id,
         "status": refreshed.get("status"),
@@ -586,14 +587,22 @@ def _heal_unwritten_plan(
     except OSError:
         return None
     relative = storage_paths.to_storage_relative(path, doc.get("project_id"))
+    title_locale = wp.resolve_title_locale(doc.get("meta"), current_title=doc.get("title"))
+    updates = {
+        "file_path": relative,
+        "title": wp.derived_title(body, title_locale),
+        "meta": _json.dumps(
+            wp.metadata_with_title_locale(doc.get("meta"), title_locale),
+            ensure_ascii=False,
+        ),
+    }
     try:
-        document_service.update_document(
-            doc.get("doc_id") or "", {"file_path": relative}, actor_user_id=actor_user_id,
-        )
+        updated = db_docs.update(doc.get("doc_id") or "", updates)
+        if updated:
+            doc.update(updated)
     except Exception as exc_update:  # noqa: BLE001 — the file has already been revived
         import LogAssist.log as logger
-        logger.warning(f"[work-plan] file_path repoint skipped ({doc.get('doc_id')}): {exc_update}")
-    doc["file_path"] = relative
+        logger.warning(f"[work-plan] canonical repoint skipped ({doc.get('doc_id')}): {exc_update}")
     return body
 
 
@@ -679,6 +688,14 @@ def save_work_plan(
                 fresh, locale, body.base_revision_no, current_revision,
             )
 
+        title_locale = wp.resolve_title_locale(
+            fresh.get("meta"), current_title=fresh.get("title"),
+        )
+        derived_title = wp.derived_title(plan, title_locale)
+        updated_meta = _json.dumps(
+            wp.metadata_with_title_locale(fresh.get("meta"), title_locale),
+            ensure_ascii=False,
+        )
         path = _plan_path(fresh)
         backup_rel: Optional[str] = None
         if path.exists():
@@ -697,9 +714,9 @@ def save_work_plan(
         store = get_store()
         store._execute(
             "UPDATE documents SET revision_no = revision_no + 1, updated_at = ?, "
-            "file_path = ? WHERE doc_id = ? AND revision_no = ?",
+            "file_path = ?, title = ?, meta = ? WHERE doc_id = ? AND revision_no = ?",
             [now, storage_paths.to_storage_relative(path, doc.get("project_id")),
-             doc_id, current_revision],
+             derived_title, updated_meta, doc_id, current_revision],
         )
         refreshed = db_docs.get_by_id(doc_id)
         if refreshed is None or refreshed.get("revision_no") != current_revision + 1:
@@ -716,14 +733,17 @@ def save_work_plan(
             # file still holds the previous body, so the data stays consistent — only the revision number runs one ahead.
             try:
                 store._execute(
-                    "UPDATE documents SET revision_no = ?, updated_at = ? "
-                    "WHERE doc_id = ? AND revision_no = ?",
-                    [current_revision, fresh.get("updated_at"), doc_id, new_revision],
+                    "UPDATE documents SET revision_no = ?, updated_at = ?, file_path = ?, "
+                    "title = ?, meta = ? WHERE doc_id = ? AND revision_no = ?",
+                    [current_revision, fresh.get("updated_at"), fresh.get("file_path"),
+                     fresh.get("title"), fresh.get("meta"), doc_id, new_revision],
                 )
             except Exception as revert_exc:  # noqa: BLE001
                 import LogAssist.log as logger
                 logger.warning(f"[work-plan] revision revert failed ({doc_id}): {revert_exc}")
             raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
+
+    refreshed = db_docs.get_by_id(doc_id) or refreshed
 
     if backup_rel:
         try:
@@ -772,6 +792,8 @@ def save_work_plan(
         "updated_at": now,
         "updated_by": current_user["user_id"],
         "doc_review_status": refreshed.get("doc_review_status"),
+        "title": refreshed.get("title"),
+        "body": plan,
         "unassigned_step_count": wp.unassigned_step_count(plan),
         "assignment_summary": wp.assignment_summary(plan, providers),
         "totals": wp.totals(plan),

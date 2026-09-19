@@ -90,6 +90,17 @@ DEFAULTS_FIELD_ORDER = ("provider_id", "note")
 LOCALES = ("ko", "en", "ja")
 FALLBACK_LOCALE = "ko"
 
+TITLE_TEMPLATES = {
+    "ko": "작업계획 — 설계 {design_sheets}장 · 작업 {work_sets}세트",
+    "en": "Work plan — {design_sheets} design sheet(s) · {work_sets} work set(s)",
+    "ja": "作業計画 — 設計{design_sheets}枚 · 作業{work_sets}セット",
+}
+_TITLE_PREFIXES = {
+    "ko": "작업계획 — ",
+    "en": "Work plan — ",
+    "ja": "作業計画 — ",
+}
+
 DOCUMENT_FILENAME = "document.json"
 HELP_TEMPLATE_PATH = "/help/items/design_template/WP"
 
@@ -349,6 +360,55 @@ def normalize_locale(value: Optional[str]) -> str:
         return FALLBACK_LOCALE
     head = raw.split(",")[0].split("-")[0].split("_")[0]
     return head if head in LOCALES else FALLBACK_LOCALE
+
+
+def _meta_object(value: object) -> dict:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return {}
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
+def resolve_title_locale(
+    meta: object = None,
+    *,
+    current_title: Optional[str] = None,
+    creation_locale: Optional[str] = None,
+) -> str:
+    """Return the immutable title locale for a work-plan document.
+
+    New documents freeze their normalized creation locale. Legacy rows first infer one
+    of the server-owned title prefixes, then deterministically fall back to Korean.
+    """
+    work_plan_meta = _meta_object(meta).get("work_plan") or {}
+    stored = work_plan_meta.get("title_locale") if isinstance(work_plan_meta, dict) else None
+    if stored in LOCALES:
+        return stored
+    if creation_locale is not None:
+        return normalize_locale(creation_locale)
+    title = str(current_title or "")
+    for locale, prefix in _TITLE_PREFIXES.items():
+        if title.startswith(prefix):
+            return locale
+    return FALLBACK_LOCALE
+
+
+def metadata_with_title_locale(meta: object, locale: str) -> dict:
+    result = _meta_object(meta)
+    work_plan_meta = result.get("work_plan")
+    if not isinstance(work_plan_meta, dict):
+        work_plan_meta = {}
+    else:
+        work_plan_meta = dict(work_plan_meta)
+    work_plan_meta["title_locale"] = normalize_locale(locale)
+    result["work_plan"] = work_plan_meta
+    return result
 
 
 def _copy(table: dict, locale: str, key: str) -> str:
@@ -1362,6 +1422,16 @@ def totals(body: dict) -> dict:
         "work_sets": work_sets,
         "steps": len(body.get("steps") or []),
     }
+
+
+def derived_title(body: dict, locale: str) -> str:
+    """Build the server-owned title from validated canonical totals only."""
+    locale = normalize_locale(locale)
+    summary = totals(body)
+    return TITLE_TEMPLATES[locale].format(
+        design_sheets=summary["design_sheets"],
+        work_sets=summary["work_sets"],
+    )
 
 
 def unassigned_step_count(body: dict) -> int:

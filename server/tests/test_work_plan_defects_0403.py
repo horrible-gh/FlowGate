@@ -589,8 +589,8 @@ def test_f7_the_read_view_reports_where_a_plan_was_last_applied(seed, storage_ro
     assert view["last_application"]["via"] == "sequence_edit"
 
 
-def test_f8_a_title_that_is_too_long_does_not_consume_a_document_number(seed):
-    """NR0004 F8: 번호를 먼저 예약하고 제목을 나중에 검사하면 번호에 구멍이 남는다."""
+def test_f8_legacy_request_title_is_ignored_and_canonical_totals_own_the_title(seed):
+    """0591 T#2: deprecated request titles cannot reject or name a canonical WP."""
     client = _client()
     calls: list = []
 
@@ -604,10 +604,11 @@ def test_f8_a_title_that_is_too_long_does_not_consume_a_document_number(seed):
     ):
         resp = client.post("/api/v1/documents/work-plan", json={
             "parent_doc_id": ROOT_DOC,
-            "title": "가" * 101,
+            "title": "가" * 500,
             "counted_types": ["D"],
             "provider_candidates": ["aip_opus"],
+            "quantities": {"D": 2},
         })
-    assert resp.status_code == 422
-    assert "100 characters" in resp.text
-    assert calls == []
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["title"] == "작업계획 — 설계 2장 · 작업 0세트"
+    assert len(calls) == 1

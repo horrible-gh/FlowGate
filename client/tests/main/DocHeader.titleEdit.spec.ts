@@ -27,12 +27,13 @@ vi.mock('@main/components/common/useToast', () => ({
 
 let typeCode = 'T'
 let isEditable = true
+let detailTitle = '작업지시'
 
 function detailResponse() {
   return {
     data: {
       doc_id: 'flowgate.default.0006.0004-T',
-      title: '작업지시',
+      title: detailTitle,
       status: 'draft',
       type_code: typeCode,
       doc_review_status: 'approved',
@@ -64,6 +65,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   typeCode = 'T'
   isEditable = true
+  detailTitle = '작업지시'
   getRequest.mockReset()
   patchRequest.mockReset()
   patchRequest.mockResolvedValue({ data: {} })
@@ -134,6 +136,35 @@ describe('DocHeader title save sync', () => {
     await flushPromises()
 
     expect(patchRequest).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+})
+
+describe('DocHeader derived WP title policy (0591 T#2)', () => {
+  it('hides both manual title actions for WP while preserving non-WP behavior', async () => {
+    typeCode = 'WP'
+    detailTitle = '작업계획 — 설계 2장 · 작업 1세트'
+    const wrapper = mountHeader()
+    await flushPromises()
+    ;(wrapper.vm as any).groupTitle = 'Group title'
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('.doc-title-pencil').exists()).toBe(false)
+    expect(wrapper.find('.doc-title-btn--group').exists()).toBe(false)
+    expect(wrapper.find('.doc-title-input').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('converges the open tab label from a successful document detail pull', async () => {
+    typeCode = 'WP'
+    detailTitle = '작업계획 — 설계 4장 · 작업 3세트'
+    const tabsStore = useTabsStore()
+    tabsStore.openTab(makeTab() as any)
+
+    const wrapper = mountHeader()
+    await flushPromises()
+
+    expect(tabsStore.tabs.find((tab) => tab.id === makeTab().id)?.title).toBe(detailTitle)
     wrapper.unmount()
   })
 })

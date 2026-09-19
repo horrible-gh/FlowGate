@@ -8,6 +8,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import i18n from '@shared/i18n'
 import WorkPlanEditor from '@main/components/WorkPlanEditor.vue'
 import { useProjectStore } from '@main/stores/project'
+import { useTabsStore } from '@main/stores/tabs'
 
 const { getRequest, postRequest, putRequest, showToast } = vi.hoisted(() => ({
   getRequest: vi.fn(),
@@ -95,7 +96,11 @@ function readResponse(body: ReturnType<typeof planBody>) {
   }
 }
 
-function routeGet(body: ReturnType<typeof planBody> = planBody()) {
+function routeGet(
+  body: ReturnType<typeof planBody> = planBody(),
+  title = '0576 작업계획',
+  revisionNo = 3,
+) {
   getRequest.mockImplementation((url: string) => {
     if (url.includes('/document-types')) return Promise.resolve({
       data: { data: TYPES, work_plan_countable_types: TYPES_WP },
@@ -103,7 +108,9 @@ function routeGet(body: ReturnType<typeof planBody> = planBody()) {
     if (url.includes('/ai-invoke/providers')) return Promise.resolve({
       data: { providers: structuredClone(REGISTERED_PROVIDERS), default_provider_id: 'aip_opus' },
     })
-    if (url.includes('/work-plan')) return Promise.resolve({ data: structuredClone(readResponse(body)) })
+    if (url.includes('/work-plan')) return Promise.resolve({
+      data: { ...structuredClone(readResponse(body)), title, revision_no: revisionNo },
+    })
     return Promise.reject(new Error(`unexpected url: ${url}`))
   })
 }
@@ -586,5 +593,46 @@ describe('WorkPlanEditor — upload provider capability gate', () => {
     expect(putRequest.mock.calls[0][1]).not.toHaveProperty('capability_warning_acks')
     expect(wrapper.find('[data-test="capability-warning-banner"]').exists()).toBe(true)
     expect(showToast).not.toHaveBeenCalledWith('저장했습니다.', 'success')
+  })
+})
+
+describe('WorkPlanEditor upload canonical title synchronization (0591 T#2)', () => {
+  it('converges a 4-sheet/3-set upload body, revision and tab title from the server result', async () => {
+    const canonical = planBody()
+    canonical.quantities.D.count = 4
+    canonical.quantities.T.count = 3
+    canonical.defaults.note = 'canonical upload'
+    const title = '작업계획 — 설계 4장 · 작업 3세트'
+    const tabsStore = useTabsStore()
+    tabsStore.openTab({ id: DOC_ID, title: 'old title', path: '', type: 'md', typeCode: 'WP' })
+    i18n.global.locale.value = 'ja'
+
+    const wrapper = mountEditor()
+    await flushPromises()
+    routeGet(canonical, title, 4)
+    putRequest.mockResolvedValue({
+      data: {
+        revision_no: 4,
+        title,
+        body: structuredClone(canonical),
+        totals: { design_sheets: 4, work_sets: 3, steps: canonical.steps.length },
+        assignment_summary: [],
+        unassigned_step_count: 2,
+      },
+    })
+
+    const file = new File([JSON.stringify(canonical)], 'plan.json', { type: 'application/json' })
+    const input = wrapper.find('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { value: [file], configurable: true })
+    await input.trigger('change')
+    await flushAll()
+
+    expect((wrapper.vm as any).revisionNo).toBe(4)
+
+    expect((wrapper.vm as any).plan.quantities).toEqual(canonical.quantities)
+    expect(tabsStore.tabs.find((tab) => tab.id === DOC_ID)?.title).toBe(title)
+    expect(putRequest.mock.calls[0][1]).not.toHaveProperty('title')
+
+    wrapper.unmount()
   })
 })

@@ -493,16 +493,6 @@ const summaryLine = computed(() => {
   })
 })
 
-const generatedTitle = computed(() => {
-  let design = 0
-  let work = 0
-  for (const item of countableTypes.value) {
-    if (!selectedTypes.value.has(item.code)) continue
-    if (item.unit === 'set') work += 1
-    else design += 1
-  }
-  return t('main.work_plan_proposal_dialog.generated_title', { design, work }).slice(0, 100)
-})
 
 function toggleType(code: string) {
   const next = new Set(selectedTypes.value)
@@ -707,7 +697,6 @@ async function onCreateEmpty() {
       '/api/v1/documents/work-plan',
       {
         parent_doc_id: props.parentDocId,
-        title: generatedTitle.value,
         counted_types: allCodes,
         provider_candidates: scope.value.provider_ids,
         quantities: Object.fromEntries(
