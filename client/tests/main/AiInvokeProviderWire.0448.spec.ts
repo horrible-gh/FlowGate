@@ -258,10 +258,13 @@ describe('plan value vs sequence value, screen to request (0448 T0005 §7-5 / §
 })
 
 describe('MainPanel is the hop between the two dialogs (0448 T0005 §7-8)', () => {
-  it('hands the confirm payload map to AiInvokeDialog under the providerOverrides prop', async () => {
+  it('carries the confirm payload map to the /ai-invoke/start request without opening AiInvokeDialog', async () => {
     // The typo NR0003 §7-3 warned about lives exactly here: ContinuousWorkDialog emits
-    // `providerOverrides`, MainPanel stores it and re-exposes it as `:provider-overrides`.
-    // Neither existing suite crossed this boundary.
+    // `providerOverrides`, and MainPanel used to store it and re-expose it as
+    // `:provider-overrides` on AiInvokeDialog. flowgate.default.0585 T0004 §1 moved this
+    // confirm handler (onContinuousWarnConfirm) off AiInvokeDialog entirely -- it now calls
+    // startAiInvoke() directly, so the map must reach the server as
+    // continuation_provider_overrides without the dialog ever going visible.
     await loadedStore()
     const wrapper = mount(MainPanel, { attachTo: document.body, shallow: true, global: { plugins: [i18n] } })
     await flushPromises()
@@ -283,7 +286,8 @@ describe('MainPanel is the hop between the two dialogs (0448 T0005 §7-8)', () =
     await wrapper.findComponent(ContinuousWarningDialog).vm.$emit('confirm')
     await flushPromises()
 
-    expect(wrapper.findComponent(AiInvokeDialog).props('providerOverrides')).toEqual({ 1: 'aip_plan' })
+    expect(startBody().continuation_provider_overrides).toEqual({ 1: 'aip_plan' })
+    expect(wrapper.findComponent(AiInvokeDialog).props('visible')).toBe(false)
     wrapper.unmount()
   })
 })

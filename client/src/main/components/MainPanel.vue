@@ -878,7 +878,6 @@
       :reviewer-overrides="aiInvokeReviewerOverrides"
       :continuation-step-timeout-sec="aiInvokeStepTimeoutSec"
       :continuation-restart-max-attempts="aiInvokeRestartMaxAttempts"
-      :auto-start="aiInvokeAutoStart"
       :selected-docs="aiInvokeSelectedDocs"
       :messages="aiInvokeMessages"
       :reject-reason="aiInvokeRejectReason"
@@ -943,6 +942,7 @@ import {
 import { useShortcuts } from '../composables/useShortcuts'
 import { useDashboardNavigation } from '../composables/useDashboardNavigation'
 import { useActivityFormat } from '../composables/useActivityFormat'
+import { startAiInvoke, type AiInvokeStartResult } from '../composables/useAiInvokeStarter'
 import { useToast, type ToastType } from './common/useToast'
 import { summarizeEditSaveError } from '../utils/editSaveError'
 import { useDocTypeStore } from '../stores/docTypeStore'
@@ -1488,7 +1488,6 @@ const aiInvokeStepTimeoutSec = ref<number | null>(null)
 // request. null means "no explicit pick" (entry points other than ContinuousWorkDialog),
 // and the server falls back to its own default.
 const aiInvokeRestartMaxAttempts = ref<number | null>(null)
-const aiInvokeAutoStart = ref(false)
 const aiInvokeRunsStore = useAiInvokeRunsStore()
 // 0351 T4: a conversation-turn search result (GroupExplorer) opens this CH tab and
 // asks the mounted ConversationView to scroll to one turn. GroupExplorer does not
@@ -1927,7 +1926,6 @@ function openAiInvokeDialog(
     // flowgate.default.0443 T0002 (R0001): the restart-count pick chosen in
     // ContinuousWorkDialog.
     restartMaxAttempts?: number | null
-    autoStart?: boolean
     // 0242 NR0003 recommendation 2: sequence-owning root for the continuous-target picker, when it is
     // NOT the same document the run acts on (docRef). /workflow/sequence is keyed by the root.
     sequenceDocRef?: string
@@ -1963,7 +1961,6 @@ function openAiInvokeDialog(
   aiInvokeReviewerOverrides.value = preset?.reviewerOverrides ?? {}
   aiInvokeStepTimeoutSec.value = preset?.stepTimeoutSec ?? null
   aiInvokeRestartMaxAttempts.value = preset?.restartMaxAttempts ?? null
-  aiInvokeAutoStart.value = !!preset?.autoStart
   aiInvokeSelectedDocs.value = extras?.selectedDocs ?? null
   aiInvokeMessages.value = extras?.messages ?? null
   aiInvokeRejectReason.value = extras?.rejectReason ?? null
@@ -4036,6 +4033,39 @@ function onContinuousDialogConfirm(payload: {
 // Consent given → start the in-app provider immediately. Pre-decision runs use the
 // workflow_decide token/mention and the run-to-end sentinel; decided sequences retain the
 // concrete target chosen in ContinuousWorkDialog.
+// flowgate.default.0585 T0004 §1: the headless counterpart of AiInvokeDialog's own startError
+// mapping (AiInvokeDialog.vue start()) -- this path has no dialog to show the message in, so
+// every failure kind surfaces as a toast instead. The orphaned-lock case gets its own copy: the
+// dialog's string points at an inline [잠금 해제] button that does not exist here.
+function aiInvokeStartErrorMessage(result: AiInvokeStartResult): string {
+  if (result.ok) return ''
+  switch (result.kind) {
+    case 'run_in_progress_orphaned':
+      return t('main.main_panel.error_ai_autostart_run_locked')
+    case 'review_already_completed':
+      return t('main.ai_invoke_dialog.error_review_already_completed')
+    case 'review_rerun_not_available':
+      return t('main.ai_invoke_dialog.error_review_rerun_not_available')
+    case 'no_provider_registered':
+      return t('main.ai_invoke_dialog.error_no_provider_registered')
+    case 'no_enabled_provider':
+      return t('main.ai_invoke_dialog.error_no_provider')
+    case 'capability_warning':
+      return result.message || t('main.ai_invoke_dialog.error_start_failed')
+    case 'validation_error':
+      return result.message || t('main.ai_invoke_dialog.error_start_failed')
+    case 'unknown_error':
+      return result.message ?? t('main.ai_invoke_dialog.error_start_failed')
+    default:
+      return t('main.ai_invoke_dialog.error_start_failed')
+  }
+}
+
+// Consent given -> start the in-app provider directly (T0004 §1): this is the ONLY autoStart
+// caller, and AiInvokeDialog must not render at all here -- the settings screen used to flash
+// open just to auto-click its own [AI 실행 시작]. useAiInvokeStarter is the same start() common
+// part AiInvokeDialog uses, so the wire payload (continuation_target_seq, provider_id/pinned,
+// per-item_seq overrides, ...) is unchanged.
 async function onContinuousWarnConfirm() {
   continuousWarnVisible.value = false
   const project = continuousProjectId.value
@@ -4046,27 +4076,29 @@ async function onContinuousWarnConfirm() {
     showToast(t('main.main_panel.error_workflow_info_unavailable'), 'danger')
     return
   }
-  openAiInvokeDialog(
+  const gParts = splitGroupId(groupId)
+  const fromDecision = continuousFromDecision.value
+  const result = await startAiInvoke({
     project,
-    groupId,
+    module: gParts?.module ?? null,
+    group: gParts?.groupCode ?? groupId,
     docRef,
-    continuousFromDecision.value ? 'workflow_decide' : 'new',
-    {
-      mode: 'continuous',
-      targetSeq,
-      reviewMode: continuousReviewMode.value,
-      instructionMode: continuousInstructionMode.value,
-      autoApproveItemSeqs: continuousAutoApproveItemSeqs.value,
-      providerOverrides: continuousProviderOverrides.value,
-      defaultMessage: continuousDefaultMessage.value,
-      messageOverrides: continuousMessageOverrides.value,
-      reviewCountOverrides: continuousReviewCountOverrides.value,
-      reviewerOverrides: continuousReviewerOverrides.value,
-      stepTimeoutSec: continuousStepTimeoutSec.value,
-      restartMaxAttempts: continuousRestartMaxAttempts.value,
-      autoStart: true,
-    },
-  )
+    sequenceDocRef: docRef,
+    actionScope: fromDecision ? 'workflow_decide' : 'new',
+    mode: 'continuous',
+    target: { seq: targetSeq, fromDecision },
+    continuationReviewMode: continuousReviewMode.value,
+    continuationInstructionMode: continuousInstructionMode.value,
+    continuationAutoApproveItemSeqs: continuousAutoApproveItemSeqs.value,
+    providerOverrides: continuousProviderOverrides.value,
+    defaultMessage: continuousDefaultMessage.value,
+    messageOverrides: continuousMessageOverrides.value,
+    reviewCountOverrides: continuousReviewCountOverrides.value,
+    reviewerOverrides: continuousReviewerOverrides.value,
+    continuationStepTimeoutSec: continuousStepTimeoutSec.value,
+    continuationRestartMaxAttempts: continuousRestartMaxAttempts.value,
+  })
+  if (!result.ok) showToast(aiInvokeStartErrorMessage(result), 'danger')
 }
 
 async function issueContinuousToken(): Promise<IssuedToken | null> {

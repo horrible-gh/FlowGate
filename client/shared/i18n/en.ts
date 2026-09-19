@@ -2260,6 +2260,7 @@ export default {
       error_vr_mention_fetch_failed: 'Failed to fetch VR mention',
       error_parent_r_not_found: 'Parent R document not found.',
       error_workflow_info_unavailable: 'Could not retrieve workflow information.',
+      error_ai_autostart_run_locked: 'The previous run ended abnormally and left its lock behind. Open [Invoke AI] on a document in this group to release it.',
       error_next_step_unavailable: 'Could not retrieve next step information.',
       error_next_step_already_started: 'This workflow step has already been created.',
       error_empty_doc_not_allowed: '{docType} step cannot create an empty document.',

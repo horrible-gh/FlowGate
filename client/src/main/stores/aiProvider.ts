@@ -113,6 +113,24 @@ export const useAiProviderStore = defineStore('ai-provider', () => {
   // etc. are on clear()/load-failure (§3.2).
   const executionPolicy = ref<RuntimeExecutionPolicy>({ ...DEFAULT_EXECUTION_POLICY })
   let requestSerial = 0
+  // 0585 T0004 §3 (0585 TR0005 rework): a non-force ensureLoaded() while another non-force load
+  // for the SAME project is already in flight joins that promise instead of firing a second GET.
+  // force=true always starts its own fetch (never joins an existing one), but still becomes the
+  // entry a concurrent caller joins next -- so a failed load can still be retried with force and
+  // never wedges the map.
+  //
+  // Each entry also carries the `requestSerial` that was current at the moment its fetch was
+  // started. An intervening load for a DIFFERENT project bumps `requestSerial` past that value,
+  // which means the entry's own fetchAndApply will discard its response on arrival (the
+  // `serial !== requestSerial` guard in fetchAndApply) without ever touching state. Joining such
+  // an entry would resolve successfully while silently leaving the store on the other project's
+  // data -- e.g. A starts, B starts before A resolves, then A is requested again: without this
+  // check the second A call would join the doomed first A promise and return as if A had loaded,
+  // while the store still shows B. So a join only happens when the entry's serial still matches
+  // the live `requestSerial`; otherwise a fresh fetch is started, exactly as if nothing had been
+  // pending. `clear()` bumps `requestSerial` too, so a clear() immediately followed by a reload of
+  // the same project also skips the stale entry instead of joining it.
+  const pendingLoads = new Map<string, { promise: Promise<void>; serial: number }>()
 
   function clear() {
     requestSerial += 1
@@ -177,6 +195,28 @@ export const useAiProviderStore = defineStore('ai-provider', () => {
     purgeLegacyPin(projectId)
     if (!force && loadedProjectId.value === projectId && providers.value.length > 0) return
 
+    if (!force) {
+      const inFlight = pendingLoads.get(projectId)
+      // Only join an entry whose fetch is still guaranteed to apply its result. An entry left
+      // behind by a since-superseded request (its serial no longer matches the live
+      // requestSerial) would resolve without ever writing state for `projectId` -- fall through
+      // and start a fresh fetch instead.
+      if (inFlight && inFlight.serial === requestSerial) return inFlight.promise
+    }
+
+    const promise = fetchAndApply(projectId)
+    // fetchAndApply bumps requestSerial synchronously as its first statement, before its first
+    // `await` -- so by the time the call above returns a pending promise, requestSerial already
+    // holds this fetch's serial.
+    pendingLoads.set(projectId, { promise, serial: requestSerial })
+    try {
+      await promise
+    } finally {
+      if (pendingLoads.get(projectId)?.promise === promise) pendingLoads.delete(projectId)
+    }
+  }
+
+  async function fetchAndApply(projectId: string): Promise<void> {
     const serial = ++requestSerial
     loading.value = true
     error.value = null
