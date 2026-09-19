@@ -180,9 +180,10 @@ describe('AiInvokeInline', () => {
     wrapper.unmount()
   })
 
-  // 0290 NR0003 §5.3: the header monitor keeps a finished card for 30 minutes, but this
-  // banner sits on the document — it gets its own, much shorter, view of the same entry.
-  // The registry keeps the card either way; only this surface stops showing it.
+  // 0290 NR0003 §5.3: the header monitor keeps a finished card for however long the
+  // retention setting says (0563 T#2: until manually deleted, by default), but this banner
+  // sits on the document — it gets its own, much shorter, view of the same entry. The
+  // registry keeps the card either way; only this surface stops showing it.
   it('stops showing a finished run after its own short window, without dismissing it', async () => {
     vi.useFakeTimers()
     try {
@@ -204,7 +205,8 @@ describe('AiInvokeInline', () => {
       vi.advanceTimersByTime(INLINE_RESULT_WINDOW_MS + 1_000)
       await nextTick()
       expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(false)
-      expect(store.runsByGroup['flowgate.default.0290']?.phase).toBe('finished')
+      // 0563 T0007: a genuine finish moves into run-keyed finished history.
+      expect(store.finishedByRun['run-w']?.phase).toBe('finished')
       wrapper.unmount()
     } finally {
       vi.useRealTimers()
@@ -239,7 +241,7 @@ describe('AiInvokeInline', () => {
       await nextTick()
       expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(false)
       // The card itself is untouched — this surface expired its own view, nothing more.
-      expect(store.runsByGroup['flowgate.default.0452']?.phase).toBe('finished')
+      expect(store.finishedByRun['run-never']?.phase).toBe('finished')
       wrapper.unmount()
     } finally {
       localStorage.removeItem(RETENTION_MIRROR_KEY)

@@ -1541,7 +1541,10 @@ const aiRunBootstrapPending = computed(() => aiInvokeRunsStore.bootstrapPending)
 const activeChatOwnRun = computed(() => {
   const tab = activeTab.value
   if (!tab || tab.typeCode !== 'CH') return false
-  return aiInvokeRunsStore.runsByGroup[activeAiInvokeGroupId.value]?.docRef === tab.id
+  // 0563 T0007: a finished/lost own-run moves out of runsByGroup the moment it lands, so
+  // this has to see it through the merged group lookup or the exclusion below would drop
+  // right as the run's own result comes back (the ghost's inline banner would then win).
+  return aiInvokeRunsStore.currentEntryForGroup(activeAiInvokeGroupId.value)?.docRef === tab.id
 })
 // 0481 T0010 rev3: the same line `activeChatOwnRun` draws, for the git panels.
 // GitFinalizePanel hosts BOTH the conflict resolver and the merge approval dialog
@@ -1554,7 +1557,8 @@ const activeChatOwnRun = computed(() => {
 // this run's progress in place (GitMergeReviewDialog's pending_conversation wait),
 // so the group-wide cover is both wrong and destructive here.
 const activeGitOwnRun = computed(() =>
-  isScreenOwnedRun(aiInvokeRunsStore.runsByGroup[activeAiInvokeGroupId.value]),
+  // 0563 T0007: same reasoning as activeChatOwnRun above -- see it through a finish too.
+  isScreenOwnedRun(aiInvokeRunsStore.currentEntryForGroup(activeAiInvokeGroupId.value)),
 )
 const activeGroupRunActive = computed(() =>
   !activeChatOwnRun.value
@@ -1566,7 +1570,9 @@ const activeGroupRunInlineVisible = computed(() => {
   // not also claim the column (and its finished/lost card must not push the git
   // panel out of the way the moment the reply lands).
   if (activeChatOwnRun.value || activeGitOwnRun.value) return false
-  const run = aiInvokeRunsStore.runsByGroup[activeAiInvokeGroupId.value]
+  // 0563 T0007: a finished/lost run for this group is no longer in runsByGroup -- the
+  // merged lookup is what still lets the inline strip claim the column for it below.
+  const run = aiInvokeRunsStore.currentEntryForGroup(activeAiInvokeGroupId.value)
   return activeGroupRunActive.value
     || run?.phase === 'paused'
     || run?.phase === 'finished'

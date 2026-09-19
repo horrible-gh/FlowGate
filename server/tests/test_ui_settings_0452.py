@@ -91,10 +91,10 @@ def memory_store(monkeypatch):
 # ── 1. reading the setting ────────────────────────────────────────────────────
 
 class TestResolveSettings:
-    def test_never_saved_is_thirty_minutes_and_says_so(self, memory_store):
+    def test_never_saved_is_manual_delete_only_and_says_so(self, memory_store):
         settings, is_default = uss.resolve_ui_settings("u1")
         assert is_default is True
-        assert settings == {FIELD: 30, "updated_at": None}
+        assert settings == {FIELD: -1, "updated_at": None}
 
     def test_unknown_user_is_treated_like_someone_who_never_saved(self, memory_store):
         assert uss.resolve_ui_settings(None) == (uss.defaults(), True)
@@ -108,6 +108,16 @@ class TestResolveSettings:
         assert is_default is False
         assert settings[FIELD] == 1440
         assert settings["updated_at"] == "2026-08-23T18:22:41+09:00"
+
+    def test_an_explicit_thirty_from_before_the_default_changed_is_not_migrated(self, memory_store):
+        # T#2 changes the fallback to -1 but must not touch rows a user already saved.
+        memory_store.row = {
+            "user_id": "u1", FIELD: 30,
+            "created_at": "x", "updated_at": "2026-08-23T18:22:41+09:00",
+        }
+        settings, is_default = uss.resolve_ui_settings("u1")
+        assert is_default is False
+        assert settings[FIELD] == 30
 
     @pytest.mark.parametrize("stored", list(uss.RETENTION_DOMAIN_MINUTES))
     def test_every_domain_member_survives_a_round_trip(self, memory_store, stored):
@@ -123,7 +133,7 @@ class TestResolveSettings:
     def test_values_outside_the_domain_read_back_as_the_default(self, memory_store, stored):
         memory_store.row = {"user_id": "u1", FIELD: stored, "created_at": "x", "updated_at": "t"}
         settings, is_default = uss.resolve_ui_settings("u1")
-        assert settings[FIELD] == 30
+        assert settings[FIELD] == -1
         # Still "saved": the row exists, it just holds something unusable.
         assert is_default is False
 
@@ -137,9 +147,9 @@ class TestResolveSettings:
     def test_response_carries_the_domain_so_no_screen_holds_its_own_copy(self, memory_store):
         body = uss.settings_response("u1")
         assert body["domain"] == {FIELD: [-1, 0, 30, 60, 120, 180, 360, 720, 1440]}
-        assert body["defaults"] == {FIELD: 30}
+        assert body["defaults"] == {FIELD: -1}
         assert "updated_at" not in body["defaults"]
-        assert body["settings"] == {FIELD: 30, "updated_at": None}
+        assert body["settings"] == {FIELD: -1, "updated_at": None}
         assert body["is_default"] is True
 
     def test_an_unreachable_store_answers_defaults_instead_of_failing(self, monkeypatch):
@@ -152,7 +162,7 @@ class TestResolveSettings:
         assert uss.resolve_ui_settings_safe("u1") == uss.defaults()
         body = uss.settings_response_safe("u1")
         assert body["ok"] is True
-        assert body["settings"][FIELD] == 30
+        assert body["settings"][FIELD] == -1
         assert body["domain"][FIELD] == list(uss.RETENTION_DOMAIN_MINUTES)
 
 
@@ -189,7 +199,7 @@ class TestSaveSettings:
         # screen sees, even when the server had to substitute the default.
         memory_store.row = {"user_id": "u1", FIELD: 45, "created_at": "x", "updated_at": "t"}
         body = uss.settings_response("u1")
-        assert body["settings"][FIELD] == 30
+        assert body["settings"][FIELD] == -1
 
     @pytest.mark.parametrize(
         "patch,field,message",
@@ -249,7 +259,7 @@ class TestUiSettingsEndpoint:
         body = _client().get("/me/ui-settings").json()
         assert body["ok"] is True
         assert body["is_default"] is True
-        assert body["settings"][FIELD] == 30
+        assert body["settings"][FIELD] == -1
         assert body["domain"][FIELD] == [-1, 0, 30, 60, 120, 180, 360, 720, 1440]
         assert memory_store.writes == []
         assert memory_store.row is None
@@ -315,7 +325,7 @@ class TestUiSettingsEndpoint:
         )
         response = _client().get("/me/ui-settings")
         assert response.status_code == 200
-        assert response.json()["settings"][FIELD] == 30
+        assert response.json()["settings"][FIELD] == -1
 
 
 # ── 4. the mutation inventory ─────────────────────────────────────────────────

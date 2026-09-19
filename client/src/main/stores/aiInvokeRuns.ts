@@ -2,7 +2,6 @@ import { computed, onScopeDispose, reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { deleteRequest, getRequest, postRequest } from '@shared/api'
 import {
-  MINUTE_MS,
   RETENTION_DEFAULT_MINUTES,
   RETENTION_MIRROR_KEY,
   RETENTION_NEVER,
@@ -160,7 +159,10 @@ const HANDOFF_FINALIZE_AFTER_POLLS = 2
 // 0452 L0003 §1-3: this is no longer the number the sweep reads. It is DERIVED from the
 // default so it still means exactly "the retention of somebody who has never saved", which
 // is what the regressions that import it are about. The live TTL is `retentionTtlMs`.
-export const FINISHED_CARD_TTL_MS = RETENTION_DEFAULT_MINUTES * MINUTE_MS
+// 0563 T#2: the default is now -1 ("until manually deleted"), so this goes through
+// retentionMs() instead of a raw multiplication -- a plain `-1 * MINUTE_MS` would silently
+// become a negative TTL instead of the Infinity that "never expires" means everywhere else.
+export const FINISHED_CARD_TTL_MS = retentionMs(RETENTION_DEFAULT_MINUTES)
 // The document screen's inline banner shares this registry but not its lifetime: a result
 // panel pinned over the document for 30 minutes is nobody's idea of helpful (NR0003 §5.3).
 // Unchanged by the setting: the user asked for the header list to keep results, not for the
@@ -168,11 +170,9 @@ export const FINISHED_CARD_TTL_MS = RETENTION_DEFAULT_MINUTES * MINUTE_MS
 export const INLINE_RESULT_WINDOW_MS = 60_000
 // A 30-minute TTL turns the list into a log unless it is capped (NR0003 §5.5).
 export const MAX_FINISHED_CARDS = 20
-// 0452 L0003 §2-7: "never expires" is an explicit choice to pile results up, so cutting it
-// at 20 would break the very request. The cap still has to exist — persistFinished's quota
-// failure used to lose every stored card silently — so it moves rather than disappears.
-export const MAX_FINISHED_CARDS_UNBOUNDED = 200
-// One bounded retry's worth of cards when sessionStorage refuses the full snapshot.
+// One bounded retry's worth of cards when sessionStorage refuses the full snapshot -- a
+// best-effort recovery for a storage write failure, not a retention-policy cap (0563 T#2:
+// "-1" must not be capped by count, so this number must stay unrelated to that choice).
 export const PERSIST_QUOTA_FALLBACK_CARDS = 20
 const FINISHED_STORAGE_KEY = 'fg.ai_invoke.finished_cards'
 
@@ -187,9 +187,11 @@ export function isExpired(finishedAtMs: number, referenceNowMs: number, ttlMs: n
   return referenceNowMs - finishedAtMs >= ttlMs
 }
 
-// Slot count is a memory guard, not a time rule, so only the unbounded choice widens it.
+// Slot count is a memory guard, not a time rule. 0563 T#2: "-1" (until manually deleted) is
+// an explicit choice not to cap by count either, so it widens to Infinity rather than a
+// bigger fixed number -- there is no size at which piling results up stops being the point.
 export function cardSlotsFor(minutes: number): number {
-  return minutes === RETENTION_NEVER ? MAX_FINISHED_CARDS_UNBOUNDED : MAX_FINISHED_CARDS
+  return minutes === RETENTION_NEVER ? Number.POSITIVE_INFINITY : MAX_FINISHED_CARDS
 }
 
 function nullableString(value: unknown): string | null {
@@ -575,8 +577,13 @@ export function compareRunEntries(a: AiInvokeRunEntry, b: AiInvokeRunEntry): num
   if (rank !== 0) return rank
   // Two runs can finish inside the same millisecond, so the group id still has to break
   // the tie — otherwise the order of two finished cards is whatever the object yields.
-  if (sortRank(a) === 3 && a.finishedAtMs !== b.finishedAtMs) {
-    return (b.finishedAtMs ?? 0) - (a.finishedAtMs ?? 0)
+  if (sortRank(a) === 3) {
+    if (a.finishedAtMs !== b.finishedAtMs) return (b.finishedAtMs ?? 0) - (a.finishedAtMs ?? 0)
+    // 0563 T0007 §5: the same group can now hold several finished cards at once, so a
+    // finish-time tie still needs a stable order -- runId is the final tie-break (never
+    // blank for a card that reached this predicate).
+    const byGroup = a.groupId.localeCompare(b.groupId)
+    return byGroup !== 0 ? byGroup : a.runId.localeCompare(b.runId)
   }
   return a.groupId.localeCompare(b.groupId)
 }
@@ -614,9 +621,14 @@ function loadPersistedFinished(): Record<string, AiInvokeRunEntry> {
     const ttlMs = retentionMsFromMirror()
     const now = Date.now()
     const restored: Record<string, AiInvokeRunEntry> = {}
-    for (const [groupId, entry] of Object.entries(parsed as Record<string, AiInvokeRunEntry>)) {
-      if (entry && isFinishedCard(entry) && !isExpired(entry.finishedAtMs as number, now, ttlMs)) {
-        restored[groupId] = entry
+    // Rekeyed by entry.runId regardless of the stored object's own keys: a legacy
+    // snapshot keyed the outer object by groupId (one finished card per group), a
+    // current one by runId (several per group can coexist -- 0563 T0007). Reading the
+    // entry's own runId field restores both shapes the same way, no version flag needed.
+    for (const entry of Object.values(parsed as Record<string, AiInvokeRunEntry>)) {
+      const runId = entry?.runId ? String(entry.runId) : ''
+      if (runId && isFinishedCard(entry) && !isExpired(entry.finishedAtMs as number, now, ttlMs)) {
+        restored[runId] = entry
       }
     }
     return restored
@@ -625,9 +637,9 @@ function loadPersistedFinished(): Record<string, AiInvokeRunEntry> {
   }
 }
 
-function persistFinished(runsByGroup: Record<string, AiInvokeRunEntry>): void {
+function persistFinished(finishedByRun: Record<string, AiInvokeRunEntry>): void {
   if (typeof sessionStorage === 'undefined') return
-  const entries = Object.entries(runsByGroup).filter(([, entry]) => isFinishedCard(entry))
+  const entries = Object.entries(finishedByRun).filter(([, entry]) => isFinishedCard(entry))
   try {
     if (entries.length === 0) {
       sessionStorage.removeItem(FINISHED_STORAGE_KEY)
@@ -652,7 +664,13 @@ function persistFinished(runsByGroup: Record<string, AiInvokeRunEntry>): void {
 }
 
 export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
-  const runsByGroup = reactive<Record<string, AiInvokeRunEntry>>(loadPersistedFinished())
+  const runsByGroup = reactive<Record<string, AiInvokeRunEntry>>({})
+  // Run-keyed completion history, separate from the group-keyed current/active state
+  // above (0563 T0007): a new run starting in a group must never evict that group's
+  // still-unread finished card, and the same group can hold several finished runs at
+  // once. Seeded synchronously from sessionStorage, same reasoning as the old
+  // runsByGroup seed this replaces (see loadPersistedFinished's own comment).
+  const finishedByRun = reactive<Record<string, AiInvokeRunEntry>>(loadPersistedFinished())
   const now = ref(Date.now())
   const discoveryInFlight = new Set<string>()
   const refreshingRunIds = new Set<string>()
@@ -709,7 +727,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
   function flushPersist(): void {
     if (!persistDirty) return
     persistDirty = false
-    persistFinished(runsByGroup)
+    persistFinished(finishedByRun)
   }
 
   function handoffKey(groupId: string, runId: string): string {
@@ -751,10 +769,18 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       schedulePersist()
       return
     }
-    run.phase = 'finished'
-    run.handoffPending = false
-    run.finishedPayload = handoffFinishedPayloads.get(groupId) ?? run.finishedPayload
-    run.finishedAtMs = Date.now()
+    // The settled hop leaves the active slot for good here -- it is a genuine finished
+    // card now, not a placeholder waiting on adoption, so it moves into the run-keyed
+    // history the same way trackFinished()/markLost() do below (0563 T0007 §4).
+    const finished: AiInvokeRunEntry = {
+      ...run,
+      phase: 'finished',
+      handoffPending: false,
+      finishedPayload: handoffFinishedPayloads.get(groupId) ?? run.finishedPayload,
+      finishedAtMs: Date.now(),
+    }
+    delete runsByGroup[groupId]
+    finishedByRun[finished.runId] = finished
     clearHandoffTracking(groupId)
     schedulePersist()
   }
@@ -789,9 +815,12 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       // A real start (including a replacement run_id) is authoritative adoption.
       clearHandoffTracking(groupId)
     }
-    const replacedFinished = previous != null && isFinishedCard(previous)
+    // 0563 T0007: `previous` is never a finished/lost card any more -- trackFinished(),
+    // markLost() and finalizeHandoff() all move a settled run into finishedByRun the
+    // moment it lands, so this active slot only ever holds a running/pause_requested/
+    // paused entry. A new run therefore replaces at most a stale ACTIVE entry, and the
+    // group's finished history is untouched by construction.
     runsByGroup[groupId] = startedEntry(payload, previous)
-    if (replacedFinished) schedulePersist()
   }
 
   function trackProviderSwitched(payload: Record<string, any>): void {
@@ -842,15 +871,26 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     if (!payload?.run_id || !groupId) return
     payload = { ...payload, group_id: groupId }
     const runId = String(payload.run_id)
-    const existing = runsByGroup[groupId]
-    if (existing && existing.runId !== runId && existing.runId !== '') return
+    const activeEntry = runsByGroup[groupId]
+    // A conflicting, still-active DIFFERENT run owns this group now -- a late/duplicate
+    // finish for an older run_id must never touch it (0563 T0007 §4 item 4).
+    const matchingActiveEntry = activeEntry?.runId === runId ? activeEntry : undefined
 
-    const base = existing ?? startedEntry(payload)
+    // Base prefers the live active entry, then a previously recorded finished card for
+    // this exact runId (a duplicate/late finished event updates the same card instead of
+    // fabricating a new one -- §4 item 5), then a synthesized one.
+    const base = matchingActiveEntry ?? finishedByRun[runId] ?? startedEntry(payload)
     // The store owns hop-vs-chain completion. The server's stop_code is authoritative;
     // the marker and counters only preserve compatibility with older/lost SSE frames.
     const explicitHandoff = continuationHandoffs.delete(handoffKey(groupId, runId))
     const handoffPending = isContinuationHandoff(payload, base, explicitHandoff)
-    const firstSettledHandoff = handoffPending && !handoffFinishedPayloads.has(groupId)
+    // Group-scoped handoff payload/timer/poll state belongs to the run currently owning
+    // the group. A late boundary from old A may be recognized as a handoff, but must not
+    // enter newer B's lifecycle or overwrite the payload B will use at finalization.
+    const ownsGroupHandoff = !activeEntry || activeEntry.runId === runId
+    const firstSettledHandoff = handoffPending
+      && ownsGroupHandoff
+      && !handoffFinishedPayloads.has(groupId)
     // Boundary stop (P0008 S4): a user-paused finish is a PAUSED card with a resume
     // button, never a finished card — and never a TTL-sweep candidate.
     const userPaused = payload.end_reason === 'user_paused'
@@ -858,14 +898,18 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     // neither makes a finished card at any setting. Only what is left over — a real
     // completion — is dropped outright when the user chose "disappears immediately".
     if (!userPaused && !handoffPending && retentionTtlMs.value === 0) {
-      delete runsByGroup[groupId]
-      clearHandoffTracking(groupId)
+      if (activeEntry && activeEntry.runId === runId) delete runsByGroup[groupId]
+      delete finishedByRun[runId]
+      // The run-keyed marker for this payload was removed above. Group-scoped timers,
+      // poll counters and the settled payload belong to whichever run owns the current
+      // slot, so a late finish for old A must not erase new B's handoff lifecycle.
+      if (!activeEntry || activeEntry.runId === runId) clearHandoffTracking(groupId)
       schedulePersist()
       return
     }
     const finishedSwitches = normalizeSwitches(payload.fallback_history)
     const persisted = payload.persisted === true
-    runsByGroup[groupId] = {
+    const merged: AiInvokeRunEntry = {
       ...base,
       runId,
       groupId,
@@ -922,13 +966,28 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       // moment it was restored. Stamping Date.now() on every bootstrap restarted the
       // retention clock of a card that ended days ago, so the TTL sweep could never
       // reach it — the second half of why the ghost card was immortal. `persisted` is
-      // the server's own word for "this came from the DB, not from a live SSE".
+      // the server's own word for "this came from the DB, not from a live SSE". A
+      // duplicate/late event for an already-recorded card (base from finishedByRun)
+      // keeps that card's original stamp instead of resetting its retention clock.
       finishedAtMs: userPaused || handoffPending
         ? null
-        : (persisted ? persistedFinishedAtMs(payload) : Date.now()),
+        : (persisted ? persistedFinishedAtMs(payload) : (base.finishedAtMs ?? Date.now())),
       persisted,
     }
-    if (handoffPending) {
+    if (userPaused || handoffPending) {
+      // A boundary pause or an unsettled hop is still current-state, group-keyed. A late
+      // boundary for an older run must not replace a newer run already owning the group.
+      if (!activeEntry || activeEntry.runId === runId || activeEntry.runId.length === 0) {
+        runsByGroup[groupId] = merged
+      }
+    } else {
+      // A real completion (0563 T0007 §4 items 1-3): normalize into the run-keyed
+      // history and clear the active slot ONLY if it was still pointing at this run --
+      // a newer run already occupying the group's active slot is never touched.
+      if (activeEntry && activeEntry.runId === runId) delete runsByGroup[groupId]
+      finishedByRun[runId] = merged
+    }
+    if (handoffPending && ownsGroupHandoff) {
       handoffFinishedPayloads.set(groupId, { ...payload })
       if (firstSettledHandoff) {
         handoffPollMisses.set(groupId, 0)
@@ -938,7 +997,10 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
         )
         scheduleHandoffAdoption(groupId)
       }
-    } else {
+    } else if (!activeEntry || activeEntry.runId === runId) {
+      // Only this run's ownership may clear group-scoped handoff state. When a newer
+      // run already owns the group, its adoption timer/poll state must survive this
+      // older run's late terminal payload.
       clearHandoffTracking(groupId)
     }
     schedulePersist()
@@ -953,9 +1015,11 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       schedulePersist()
       return
     }
-    run.phase = 'lost'
-    run.cancelling = false
-    run.finishedAtMs = Date.now()
+    // 0563 T0007 §4: a lost card is finished-band history now, run-keyed like every
+    // other terminal card -- see isFinishedCard (phase 'finished' OR 'lost').
+    const lost: AiInvokeRunEntry = { ...run, phase: 'lost', cancelling: false, finishedAtMs: Date.now() }
+    delete runsByGroup[groupId]
+    finishedByRun[lost.runId] = lost
     schedulePersist()
   }
 
@@ -1108,8 +1172,9 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       // the result card keeps the complete finished payload instead of the terse
       // cancel response, then fall back to that response if recovery was partial.
       await refresh(groupId)
-      const recovered = runsByGroup[groupId]
-      if (!recovered || recovered.runId !== run.runId || recovered.phase !== 'finished') {
+      // A genuine finish now lives in finishedByRun, keyed by the run's own id.
+      const recovered = finishedByRun[run.runId]
+      if (!recovered || recovered.phase !== 'finished') {
         trackFinished({ ...payload, run_id: payload.run_id ?? run.runId, group_id: payload.group_id ?? groupId })
       }
     } else {
@@ -1196,36 +1261,38 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     }
   }
 
-  async function dismissFinishedCard(groupId: string): Promise<void> {
+  async function dismissFinishedCard(runId: string): Promise<void> {
     // 0529 B0001: the finished-card counterpart of releasePaused() above. A card
     // active-all rebuilt from `ai_invoke_document_review_loops` needs the SERVER to be
     // told it is gone; a local delete is undone by the very next bootstrap.
     //
     // Run-keyed, not group-keyed: the durable row is the run's, and the same group can
-    // own several of them over time. Same success rule as releasePaused() — only the
-    // server confirming dismissed/already_dismissed drops the card, so a 403/409/5xx
-    // leaves it on screen and rethrows for the surface to explain.
-    const run = runsByGroup[groupId]
+    // own several of them over time (0563 T0007). Same success rule as releasePaused()
+    // — only the server confirming dismissed/already_dismissed drops the card, so a
+    // 403/409/5xx leaves it on screen and rethrows for the surface to explain.
+    const run = finishedByRun[runId]
     if (!run || !isDurableFinishedCard(run)) return
     const response = await deleteRequest<any>(
       `/api/v1/ai-invoke/runs/${encodeURIComponent(run.runId)}/card`,
     )
     const payload = response.data ?? {}
     if (payload.dismissed || payload.already_dismissed) {
-      delete runsByGroup[groupId]
+      delete finishedByRun[runId]
       schedulePersist()
     }
   }
 
-  function dismiss(groupId: string): void {
-    const run = runsByGroup[groupId]
-    if (run && !ACTIVE_PHASES.includes(run.phase) && run.phase !== 'paused') {
-      delete runsByGroup[groupId]
+  function dismiss(runId: string): void {
+    // 0563 T0007: finished/lost was always the only band this ever removed (the
+    // ACTIVE_PHASES/paused exclusion it used to carry existed for exactly that reason)
+    // -- that band now lives entirely in finishedByRun, keyed by the run's own id.
+    if (finishedByRun[runId]) {
+      delete finishedByRun[runId]
       schedulePersist()
     }
   }
 
-  async function removeCard(groupId: string): Promise<void> {
+  async function removeCard(entry: AiInvokeRunEntry): Promise<void> {
     // 0500 T0004 §7/§8: what every "목록에서 제거" control on a card must call.
     //
     // A local dismiss() alone CANNOT remove a non-resumable system stop: the card is
@@ -1240,20 +1307,22 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     // and a resumable system stop are not removed by this at all (dismiss() refuses every
     // paused card), and a finished/lost card is still a purely local dismiss with no
     // request at all.
-    const run = runsByGroup[groupId]
-    if (!run) return
-    if (isNonResumableSystemStop(run)) {
-      await releasePaused(groupId)
+    //
+    // 0563 T0007 §7: takes the entry itself, not a bare id -- a finished/lost card's
+    // identity for removal purposes is its runId, a paused card's is still its groupId,
+    // and only the entry carries both plus the phase needed to tell them apart.
+    if (isNonResumableSystemStop(entry)) {
+      await releasePaused(entry.groupId)
       return
     }
     // 0529 B0001: a finished card the bootstrap rebuilds from the DB has the same
     // problem for a different reason — no paused row, a durable review-loop row — so it
     // takes the same shape of answer rather than the local dismiss below.
-    if (isDurableFinishedCard(run)) {
-      await dismissFinishedCard(groupId)
+    if (isDurableFinishedCard(entry)) {
+      await dismissFinishedCard(entry.runId)
       return
     }
-    dismiss(groupId)
+    dismiss(entry.runId)
   }
 
   async function dismissAllFinished(): Promise<void> {
@@ -1266,13 +1335,13 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     // (Promise.allSettled), so one card the server refuses cannot strand the rest.
     let removed = false
     const durable: Array<Promise<void>> = []
-    for (const [groupId, run] of Object.entries(runsByGroup)) {
+    for (const [runId, run] of Object.entries(finishedByRun)) {
       if (!isFinishedCard(run)) continue
       if (isDurableFinishedCard(run)) {
-        durable.push(dismissFinishedCard(groupId))
+        durable.push(dismissFinishedCard(runId))
         continue
       }
-      delete runsByGroup[groupId]
+      delete finishedByRun[runId]
       removed = true
     }
     if (removed) schedulePersist()
@@ -1380,19 +1449,19 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     const slots = cardSlotsFor(retentionMinutes.value)
     let removed = false
     const survivors: Array<[string, AiInvokeRunEntry]> = []
-    for (const [groupId, run] of Object.entries(runsByGroup)) {
+    for (const [runId, run] of Object.entries(finishedByRun)) {
       if (!isFinishedCard(run)) continue
       if (isExpired(run.finishedAtMs as number, now.value, ttlMs)) {
-        delete runsByGroup[groupId]
+        delete finishedByRun[runId]
         removed = true
       } else {
-        survivors.push([groupId, run])
+        survivors.push([runId, run])
       }
     }
     if (survivors.length > slots) {
       survivors.sort((a, b) => (a[1].finishedAtMs as number) - (b[1].finishedAtMs as number))
-      for (const [groupId] of survivors.slice(0, survivors.length - slots)) {
-        delete runsByGroup[groupId]
+      for (const [runId] of survivors.slice(0, survivors.length - slots)) {
+        delete finishedByRun[runId]
         removed = true
       }
     }
@@ -1517,8 +1586,33 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     flushPersist()
   })
 
+  // 0563 T0007 §5: the merged projection the header popover / dashboard card render --
+  // current group state (active/paused) plus the run-keyed finished/lost history. The
+  // existing sort priority (Q wait > active > paused > finished) and its tie-break are
+  // unchanged; only the source is now two records instead of one.
+  const allEntries = computed(() => [...Object.values(runsByGroup), ...Object.values(finishedByRun)])
+
+  // The one entry a group-scoped surface (the inline document banner, the git panels'
+  // own-run notices) should show right now: the live/paused state if there is one,
+  // otherwise the most recently finished run for that group (there can be more than one
+  // once finished cards are kept across a new run -- 0563 T0007 §5), otherwise null.
+  function currentEntryForGroup(groupId: string | null | undefined): AiInvokeRunEntry | null {
+    if (!groupId) return null
+    const active = runsByGroup[groupId]
+    if (active) return active
+    let latest: AiInvokeRunEntry | null = null
+    for (const entry of Object.values(finishedByRun)) {
+      if (entry.groupId !== groupId) continue
+      if (!latest || (entry.finishedAtMs ?? 0) > (latest.finishedAtMs ?? 0)) latest = entry
+    }
+    return latest
+  }
+
   return {
     runsByGroup,
+    finishedByRun,
+    allEntries,
+    currentEntryForGroup,
     bootstrapPending,
     // 1s clock, exposed so a surface can age its own view of an entry (the inline banner
     // uses it for INLINE_RESULT_WINDOW_MS) without running a second timer.
@@ -1536,8 +1630,8 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     // Alive exactly as long as the card is (0294 B0001) — the sweep, a dismiss or an
     // acknowledged read drops the entry and these fall back on their own, so the chip
     // needs no expiry timer of its own.
-    finishedCount: computed(() => Object.values(runsByGroup).filter(isFinishedCard).length),
-    finishedAlertCount: computed(() => Object.values(runsByGroup).filter(isFinishedAlert).length),
+    finishedCount: computed(() => Object.values(finishedByRun).filter(isFinishedCard).length),
+    finishedAlertCount: computed(() => Object.values(finishedByRun).filter(isFinishedAlert).length),
     trackStarted,
     trackProviderSwitched,
     trackFinished,

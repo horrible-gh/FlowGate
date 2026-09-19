@@ -10,8 +10,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import i18n from '@shared/i18n'
 import AiInvokeMiniplayer from '@main/components/AiInvokeMiniplayer.vue'
-import { FINISHED_CARD_TTL_MS, useAiInvokeRunsStore } from '@main/stores/aiInvokeRuns'
-import { RETENTION_MIRROR_KEY } from '@shared/aiFinishedCardRetention'
+import { useAiInvokeRunsStore } from '@main/stores/aiInvokeRuns'
+import { RETENTION_MIRROR_KEY, retentionMs } from '@shared/aiFinishedCardRetention'
 import { useProjectStore } from '@main/stores/project'
 import { useExplorerStore } from '@main/stores/explorer'
 import { useToast } from '@main/components/common/useToast'
@@ -594,9 +594,11 @@ describe('AiInvokeMiniplayer', () => {
     wrapper.unmount()
   })
 
-  // 0290 R0001 §1: the card is the completion notice, so reading it (문서 열기) is what
-  // retires it — not a stopwatch the user never sees.
-  it('retires a finished card once its document has been opened', async () => {
+  // 0563 T#2: opening a document is reading a result, not confirming or clearing the card
+  // that reports it -- the two used to be the same click and got split apart by a rejection
+  // (문서열기는 완료카드의 확인/삭제 행위가 아니다). The card, and any durable delete, only ever move on
+  // an explicit remove.
+  it('keeps a finished card after its document has been opened', async () => {
     const wrapper = mountPlayer()
     const store = useAiInvokeRunsStore()
     store.trackStarted({
@@ -616,7 +618,9 @@ describe('AiInvokeMiniplayer', () => {
     await openBtn!.trigger('click')
     await flushPromises()
 
-    expect(store.runsByGroup['flowgate.default.3010']).toBeUndefined()
+    // 0563 T#2: a finished card is run-keyed history and survives being read.
+    expect(store.finishedByRun['run-d']).toBeDefined()
+    expect(deleteRequest).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
@@ -948,20 +952,20 @@ describe('AiInvokeMiniplayer — watchdog last-activity signal (0538 T0004)', ()
   })
 })
 
-// 0294 B0001 회귀: the finished card lives for FINISHED_CARD_TTL_MS, but the closed chip
+// 0294 B0001 회귀: the finished card lives for the chosen retention, but the closed chip
 // used to stop counting it the instant the run ended — and the popover is closed by
 // default, so "완료" was the one state the user could never see. The store-level TTL test
 // passed the whole time; only the chip's own signal was missing, so it is pinned here.
 //
-// 0452: FINISHED_CARD_TTL_MS is now the retention of somebody who has never opened the
-// account screen, which is what this case is about — hence the cleared mirror below.
+// 0563 T#2: the default retention is now -1 (until manually deleted, no TTL at all), so this
+// case sets the mirror to 30 explicitly to keep pinning the TTL/badge interaction it is about.
 describe('AiInvokeMiniplayer — end-of-run signal on the closed chip', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     // Finished cards outlive the store now (per-tab persistence), so each case has to
     // start from an empty cache or it inherits the previous one's results.
     sessionStorage.clear()
-    localStorage.removeItem(RETENTION_MIRROR_KEY)
+    localStorage.setItem(RETENTION_MIRROR_KEY, '30')
     setActivePinia(createPinia())
     getRequest.mockReset()
     postRequest.mockReset()
@@ -998,16 +1002,17 @@ describe('AiInvokeMiniplayer — end-of-run signal on the closed chip', () => {
       t('main.ai_miniplayer.fab_summary_done', { running: 0, waiting: 0, done: 1 }),
     )
 
-    vi.advanceTimersByTime(FINISHED_CARD_TTL_MS - 2_000)
+    vi.advanceTimersByTime(retentionMs(30) - 2_000)
     await nextTick()
     expect(badge(wrapper).exists()).toBe(true)
-    expect(store.runsByGroup['flowgate.default.3020']).toBeDefined()
+    // 0563 T0007: a genuine finish moves into run-keyed finished history.
+    expect(store.finishedByRun['run-fin']).toBeDefined()
 
     // TTL reached: signal and card go together, never one before the other.
     vi.advanceTimersByTime(3_000)
     await nextTick()
     expect(badge(wrapper).exists()).toBe(false)
-    expect(store.runsByGroup['flowgate.default.3020']).toBeUndefined()
+    expect(store.finishedByRun['run-fin']).toBeUndefined()
     expect(wrapper.find('.aiv-mini').classes()).toContain('aiv-mini--idle')
     wrapper.unmount()
   })
@@ -1149,7 +1154,8 @@ describe('AiInvokeMiniplayer — end-of-run signal on the closed chip', () => {
       expect(postRequest).toHaveBeenCalledWith(
         '/api/v1/ai-invoke/leases/flowgate.default.3030/release', {},
       )
-      expect(store.runsByGroup['flowgate.default.3030']).toBeUndefined()
+      // 0563 T0007: a lost card is finished-band history, run-keyed by 'run-lost-1'.
+      expect(store.finishedByRun['run-lost-1']).toBeUndefined()
       wrapper.unmount()
     })
 
@@ -1164,7 +1170,7 @@ describe('AiInvokeMiniplayer — end-of-run signal on the closed chip', () => {
 
       expect(wrapper.find('[data-test="ai-miniplayer-release-error"]').text())
         .toBe(t('main.ai_miniplayer.error_release_lease_still_live'))
-      expect(store.runsByGroup['flowgate.default.3030']).toBeDefined()
+      expect(store.finishedByRun['run-lost-1']).toBeDefined()
       wrapper.unmount()
     })
 
@@ -1177,7 +1183,7 @@ describe('AiInvokeMiniplayer — end-of-run signal on the closed chip', () => {
       await wrapper.find('[data-test="ai-miniplayer-release-lease"]').trigger('click')
       await flushPromises()
 
-      expect(store.runsByGroup['flowgate.default.3030']).toBeUndefined()
+      expect(store.finishedByRun['run-lost-1']).toBeUndefined()
       expect(wrapper.find('[data-test="ai-miniplayer-release-error"]').exists()).toBe(false)
       wrapper.unmount()
     })
@@ -1193,7 +1199,7 @@ describe('AiInvokeMiniplayer — end-of-run signal on the closed chip', () => {
 
       expect(wrapper.find('[data-test="ai-miniplayer-release-error"]').text())
         .toBe(t('main.ai_miniplayer.error_release_lease_failed'))
-      expect(store.runsByGroup['flowgate.default.3030']).toBeDefined()
+      expect(store.finishedByRun['run-lost-1']).toBeDefined()
       wrapper.unmount()
     })
   })

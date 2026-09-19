@@ -34,8 +34,8 @@ function envelope(minutes: number, domain: number[] = [...RETENTION_DOMAIN_MINUT
     data: {
       ok: true,
       settings: { [FIELD]: minutes, updated_at: null },
-      is_default: minutes === 30,
-      defaults: { [FIELD]: 30 },
+      is_default: minutes === -1,
+      defaults: { [FIELD]: -1 },
       domain: { [FIELD]: domain },
     },
   }
@@ -95,14 +95,14 @@ describe('AiRunMonitorSettingsView — finished-card retention', () => {
     const labels = options(wrapper).map((o) => o.text())
 
     expect(labels).toEqual([
-      'Never', 'Immediately', '30 min',
+      'Until manually deleted', 'Immediately', '30 min',
       '1 hour', '2 hours', '3 hours', '6 hours', '12 hours', '24 hours',
     ])
   })
 
   it.each([
-    ['ko', ['사라지지 않음', '바로 사라짐', '30분', '1시간', '24시간']],
-    ['ja', ['消えない', 'すぐに消す', '30分', '1時間', '24時間']],
+    ['ko', ['직접 삭제할 때까지', '바로 사라짐', '30분', '1시간', '24시간']],
+    ['ja', ['手動で削除するまで', 'すぐに消す', '30分', '1時間', '24時間']],
   ])('labels them in %s too', async (locale, expected) => {
     i18n.global.locale.value = locale as 'ko' | 'ja'
     const wrapper = await mountView()
@@ -111,26 +111,26 @@ describe('AiRunMonitorSettingsView — finished-card retention', () => {
     expect([labels[0], labels[1], labels[2], labels[3], labels[8]]).toEqual(expected)
   })
 
-  it('repairs a stored value the server never repaired', async () => {
+  it('repairs a stored value the server never repaired, to manual-delete-only', async () => {
     getRequest.mockResolvedValueOnce(envelope(45))
     const wrapper = await mountView()
 
     const select = wrapper.get('#ai-finished-card-retention').element as HTMLSelectElement
-    expect(Number(select.value)).toBe(30)
+    expect(Number(select.value)).toBe(-1)
   })
 
-  it('saves the chosen value, adopts the answer and writes the mirror', async () => {
+  it('saves as soon as the listbox changes, adopts the answer and writes the mirror', async () => {
     const wrapper = await mountView()
     patchRequest.mockResolvedValueOnce(envelope(-1))
 
     await wrapper.get('#ai-finished-card-retention').setValue('-1')
-    await wrapper.get('button').trigger('click')
     await flush()
 
     expect(patchRequest).toHaveBeenCalledWith(UI_SETTINGS_PATH, { [FIELD]: -1 })
     // The mirror carries what the server answered with, not what was sent.
     expect(localStorage.getItem(RETENTION_MIRROR_KEY)).toBe('-1')
-    expect(wrapper.text()).toContain(i18n.global.t('settings.ai_run_monitor.retention.saved'))
+    // No confirmation message: a listbox change is expected to save silently.
+    expect(wrapper.find('.state').exists()).toBe(false)
     expect(wrapper.find('.error').exists()).toBe(false)
   })
 
@@ -139,7 +139,6 @@ describe('AiRunMonitorSettingsView — finished-card retention', () => {
     patchRequest.mockResolvedValueOnce(envelope(30))
 
     await wrapper.get('#ai-finished-card-retention').setValue('1440')
-    await wrapper.get('button').trigger('click')
     await flush()
 
     const select = wrapper.get('#ai-finished-card-retention').element as HTMLSelectElement
@@ -147,19 +146,41 @@ describe('AiRunMonitorSettingsView — finished-card retention', () => {
     expect(localStorage.getItem(RETENTION_MIRROR_KEY)).toBe('30')
   })
 
-  it('leaves the mirror alone when the save fails', async () => {
+  it('leaves the mirror alone when the save fails, and shows no confirmation either way', async () => {
     const wrapper = await mountView()
     patchRequest.mockRejectedValueOnce({ response: { status: 422 } })
 
     await wrapper.get('#ai-finished-card-retention').setValue('0')
-    await wrapper.get('button').trigger('click')
     await flush()
 
     // A mirror written here would tell an open monitor tab to apply a setting that is not
     // stored anywhere, and nothing would ever correct it.
     expect(localStorage.getItem(RETENTION_MIRROR_KEY)).toBeNull()
-    expect(wrapper.text()).toContain(i18n.global.t('settings.ai_run_monitor.retention.save_failed'))
-    expect(wrapper.text()).not.toContain(i18n.global.t('settings.ai_run_monitor.retention.saved'))
+    expect(wrapper.find('.error').text()).toBe(
+      i18n.global.t('settings.ai_run_monitor.retention.save_failed'),
+    )
+    expect(i18n.global.te('settings.ai_run_monitor.retention.saved')).toBe(false)
+    // The rejected value must not linger on screen as if it were the stored setting: the
+    // select rolls back to what the last successful GET/PATCH actually confirmed (30).
+    const select = wrapper.get('#ai-finished-card-retention').element as HTMLSelectElement
+    expect(Number(select.value)).toBe(30)
+  })
+
+  it('rolls the listbox back to the last confirmed value on a network error too', async () => {
+    const wrapper = await mountView()
+    patchRequest.mockResolvedValueOnce(envelope(1440))
+    await wrapper.get('#ai-finished-card-retention').setValue('1440')
+    await flush()
+    let select = wrapper.get('#ai-finished-card-retention').element as HTMLSelectElement
+    expect(Number(select.value)).toBe(1440)
+
+    patchRequest.mockRejectedValueOnce(new Error('network'))
+    await wrapper.get('#ai-finished-card-retention').setValue('0')
+    await flush()
+
+    select = wrapper.get('#ai-finished-card-retention').element as HTMLSelectElement
+    expect(Number(select.value)).toBe(1440)
+    expect(localStorage.getItem(RETENTION_MIRROR_KEY)).toBe('1440')
   })
 
   it('still draws the choices when the lookup fails, and says what happened', async () => {
@@ -179,7 +200,6 @@ describe('AiRunMonitorSettingsView — finished-card retention', () => {
     await nextTick()
 
     expect(wrapper.get('#ai-finished-card-retention').attributes('disabled')).toBeDefined()
-    expect(wrapper.get('button').attributes('disabled')).toBeDefined()
     expect(wrapper.text()).toContain(i18n.global.t('settings.ai_run_monitor.retention.loading'))
 
     settleGet(envelope(30))
@@ -188,15 +208,14 @@ describe('AiRunMonitorSettingsView — finished-card retention', () => {
 
     let settlePatch: (value: unknown) => void = () => {}
     patchRequest.mockImplementationOnce(() => new Promise((resolve) => { settlePatch = resolve }))
-    await wrapper.get('button').trigger('click')
+    await wrapper.get('#ai-finished-card-retention').setValue('1440')
     await nextTick()
 
-    expect(wrapper.get('button').attributes('disabled')).toBeDefined()
-    expect(wrapper.get('button').text()).toBe(i18n.global.t('settings.ai_run_monitor.retention.saving'))
+    expect(wrapper.get('#ai-finished-card-retention').attributes('disabled')).toBeDefined()
 
     settlePatch(envelope(30))
     await flush()
-    expect(wrapper.get('button').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('#ai-finished-card-retention').attributes('disabled')).toBeUndefined()
   })
 
   // The screen is only reachable if the router and the sidebar agree with it. A view

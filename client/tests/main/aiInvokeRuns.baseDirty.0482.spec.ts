@@ -40,7 +40,8 @@ describe('0482 group-less base-dirty run registry', () => {
       action_scope: 'resolve_base_dirty', outcome: 'complete',
     } })
 
-    expect(store.runsByGroup['project:flowgate'].phase).toBe('finished')
+    // 0563 T0007: a genuine finish moves out of runsByGroup into run-keyed history.
+    expect(store.finishedByRun['base-run'].phase).toBe('finished')
     expect(store.runsByGroup.null).toBeUndefined()
     expect(store.isGroupRunning('project:flowgate')).toBe(false)
   })
@@ -67,7 +68,7 @@ describe('0482 group-less base-dirty run registry', () => {
       action_scope: 'resolve_base_dirty', outcome: 'complete',
     } })
 
-    expect(store.runsByGroup['project:flowgate'].phase).toBe('finished')
+    expect(store.finishedByRun['base-run'].phase).toBe('finished')
     expect(store.runsByGroup['flowgate.none.0000']).toBeUndefined()
   })
 

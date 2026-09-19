@@ -62,7 +62,7 @@
       <TransitionGroup v-else name="aiv-mini-card" tag="ul" class="aiv-mini__list">
         <li
           v-for="entry in entries"
-          :key="entry.groupId"
+          :key="cardKey(entry)"
           class="aiv-mini__card"
           :class="`aiv-mini__card--${entry.phase}`"
         >
@@ -145,11 +145,11 @@
                group stayed stuck even after the card was gone. This calls the actual release
                endpoint and shows the reason inline when it can't (still-live / already gone). -->
           <div
-            v-if="releaseErrors[entry.groupId]"
+            v-if="releaseErrors[cardKey(entry)]"
             class="aiv-mini__meta aiv-mini__release-error"
             data-test="ai-miniplayer-release-error"
           >
-            {{ releaseErrors[entry.groupId] }}
+            {{ releaseErrors[cardKey(entry)] }}
           </div>
           <div v-if="entry.phase === 'pause_requested'" class="aiv-mini__meta">
             {{ t('main.ai_miniplayer.pause_scheduled') }}
@@ -268,8 +268,8 @@
               type="button"
               class="btn btn-ghost btn-sm"
               data-test="ai-miniplayer-remove"
-              :disabled="busy.has(entry.groupId)"
-              :aria-disabled="busy.has(entry.groupId)"
+              :disabled="busy.has(cardKey(entry))"
+              :aria-disabled="busy.has(cardKey(entry))"
               @click="doRemove(entry)"
             >
               <AppIcon name="x" />
@@ -321,9 +321,18 @@ const busy = reactive(new Set<string>())
 const titles = reactive<Record<string, string>>({})
 const releaseErrors = reactive<Record<string, string>>({})
 
+// 0563 T0007 §5: the merged projection (current group state + run-keyed finished
+// history) -- a group can now show an active card and several finished ones at once.
 const entries = computed<AiInvokeRunEntry[]>(() =>
-  Object.values(store.runsByGroup).slice().sort(compareRunEntries),
+  store.allEntries.slice().sort(compareRunEntries),
 )
+
+// The identity a card-scoped control (busy guard, error text, list key) should use:
+// a finished/lost card's identity is its runId (several can share a groupId now), every
+// other phase is still addressed by its groupId the way it always was.
+function cardKey(entry: AiInvokeRunEntry): string {
+  return entry.phase === 'finished' || entry.phase === 'lost' ? entry.runId : entry.groupId
+}
 
 const idle = computed(() => entries.value.length === 0)
 
@@ -569,16 +578,16 @@ async function doRemove(entry: AiInvokeRunEntry): Promise<void> {
   // deleted server-side beyond the card itself.
   const durable = isNonResumableSystemStop(entry) || isDurableFinishedCard(entry)
   if (!durable) {
-    store.dismiss(entry.groupId)
+    store.dismiss(cardKey(entry))
     return
   }
   if (isNonResumableSystemStop(entry)) {
     const ok = await confirm({ title: t('main.ai_miniplayer.release_confirm_system') })
     if (!ok) return
   }
-  busy.add(entry.groupId)
+  busy.add(cardKey(entry))
   try {
-    await store.removeCard(entry.groupId)
+    await store.removeCard(entry)
     // Same rule as doReleasePaused: only an actually-gone card may claim success (§16).
     if (isNonResumableSystemStop(entry) && !store.runsByGroup[entry.groupId]) {
       showToast(t('main.ai_miniplayer.release_paused_success'), 'success')
@@ -587,7 +596,7 @@ async function doRemove(entry: AiInvokeRunEntry): Promise<void> {
     if (isNonResumableSystemStop(entry)) showReleaseError(error)
     else showRemoveCardError(error)
   } finally {
-    busy.delete(entry.groupId)
+    busy.delete(cardKey(entry))
   }
 }
 
@@ -617,23 +626,27 @@ async function doClearFinished(): Promise<void> {
 }
 
 async function doReleaseLease(entry: AiInvokeRunEntry): Promise<void> {
-  busy.add(entry.groupId)
-  delete releaseErrors[entry.groupId]
+  // 0563 T0007: a 'lost' card is finished-band history now (isFinishedCard), addressed
+  // by its runId -- the lease release call itself stays group-scoped (the lease is the
+  // group's, not the run's).
+  const key = cardKey(entry)
+  busy.add(key)
+  delete releaseErrors[key]
   try {
     await store.releaseGroupLease(entry.groupId)
-    store.dismiss(entry.groupId)
+    store.dismiss(entry.runId)
   } catch (error: any) {
     const status = error?.response?.status
     if (status === 404) {
       // Already gone (expired / released elsewhere) -- the goal state is already true.
-      store.dismiss(entry.groupId)
+      store.dismiss(entry.runId)
     } else if (status === 409) {
-      releaseErrors[entry.groupId] = t('main.ai_miniplayer.error_release_lease_still_live')
+      releaseErrors[key] = t('main.ai_miniplayer.error_release_lease_still_live')
     } else {
-      releaseErrors[entry.groupId] = t('main.ai_miniplayer.error_release_lease_failed')
+      releaseErrors[key] = t('main.ai_miniplayer.error_release_lease_failed')
     }
   } finally {
-    busy.delete(entry.groupId)
+    busy.delete(key)
   }
 }
 
@@ -668,10 +681,9 @@ async function openDoc(entry: AiInvokeRunEntry): Promise<void> {
       d.doc_id,
       { switchProject: true },
     )
-    // Opening the document IS the acknowledgement (0290 R0001 §1): the result has been
-    // read, so the card goes now instead of waiting out the TTL. dismiss() ignores
-    // running/awaiting/paused cards, so a live run is never dropped by this.
-    store.dismiss(entry.groupId)
+    // 0563 T#2: opening a document is not confirming or deleting a finished card anymore
+    // -- reading a result is not the same act as clearing it. finished/lost cards stay
+    // until an explicit per-card remove or dismissAllFinished(); only the popover closes.
   } catch {
     showToast(t('main.ai_miniplayer.error_open_failed'), 'danger')
   }

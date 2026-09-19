@@ -25,7 +25,7 @@
              and nesting one inside another is invalid markup (0290 NR0003 §5.2). -->
         <div
           v-for="entry in entries"
-          :key="entry.groupId"
+          :key="cardKey(entry)"
           class="airm-row"
         >
           <button
@@ -74,8 +74,8 @@
             :title="t('main.ai_miniplayer.btn_remove')"
             :aria-label="t('main.ai_miniplayer.btn_remove')"
             data-test="ai-run-monitor-remove"
-            :disabled="busy.has(entry.groupId)"
-            :aria-disabled="busy.has(entry.groupId)"
+            :disabled="busy.has(cardKey(entry))"
+            :aria-disabled="busy.has(cardKey(entry))"
             @click="doRemove(entry)"
           >
             <AppIcon name="x" />
@@ -114,11 +114,19 @@ const tabsStore = useTabsStore()
 const explorerStore = useExplorerStore()
 const projectStore = useProjectStore()
 
+// 0563 T0007 §5: the merged projection (current group state + run-keyed finished
+// history) -- a group can now show an active card and several finished ones at once.
 const entries = computed<AiInvokeRunEntry[]>(() =>
-  Object.values(store.runsByGroup).slice().sort(compareRunEntries),
+  store.allEntries.slice().sort(compareRunEntries),
 )
 
-// Per-group in-flight guard for the durable remove below: the DELETE is a round trip, and
+// A finished/lost card's identity is its runId (several can share a groupId now);
+// every other phase is still addressed by its groupId the way it always was.
+function cardKey(entry: AiInvokeRunEntry): string {
+  return entry.phase === 'finished' || entry.phase === 'lost' ? entry.runId : entry.groupId
+}
+
+// Per-card in-flight guard for the durable remove below: the DELETE is a round trip, and
 // a second click while it is out would fire a second one against the same row.
 const busy = reactive(new Set<string>())
 
@@ -137,16 +145,16 @@ async function doRemove(entry: AiInvokeRunEntry): Promise<void> {
   // locally.
   const durable = isNonResumableSystemStop(entry) || isDurableFinishedCard(entry)
   if (!durable) {
-    store.dismiss(entry.groupId)
+    store.dismiss(cardKey(entry))
     return
   }
   if (isNonResumableSystemStop(entry)) {
     const ok = await confirm({ title: t('main.ai_miniplayer.release_confirm_system') })
     if (!ok) return
   }
-  busy.add(entry.groupId)
+  busy.add(cardKey(entry))
   try {
-    await store.removeCard(entry.groupId)
+    await store.removeCard(entry)
     if (isNonResumableSystemStop(entry) && !store.runsByGroup[entry.groupId]) {
       showToast(t('main.ai_miniplayer.release_paused_success'), 'success')
     }
@@ -154,7 +162,7 @@ async function doRemove(entry: AiInvokeRunEntry): Promise<void> {
     if (isNonResumableSystemStop(entry)) showReleaseError(error)
     else showRemoveCardError(error)
   } finally {
-    busy.delete(entry.groupId)
+    busy.delete(cardKey(entry))
   }
 }
 
@@ -252,8 +260,8 @@ async function openDoc(entry: AiInvokeRunEntry): Promise<void> {
       d.doc_id,
       { switchProject: true },
     )
-    // Same acknowledgement rule as the header monitor (0290 R0001 §1).
-    store.dismiss(entry.groupId)
+    // 0563 T#2: opening a document no longer acknowledges/removes the finished card --
+    // finished/lost cards stay until an explicit per-card remove or dismissAllFinished().
   } catch {
     showToast(t('main.ai_miniplayer.error_open_failed'), 'danger')
   }

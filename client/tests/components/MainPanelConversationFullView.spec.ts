@@ -355,7 +355,8 @@ describe('MainPanel CH full view', () => {
     // ...and it never cost the user the chat underneath it.
     expect(wrapper.findComponent(ConversationView).exists()).toBe(true)
 
-    store.dismiss(GROUP_ID)
+    // 0563 T0007: dismiss() is run-keyed now -- the finished card lives in finishedByRun.
+    store.dismiss('run-1')
     await flushPromises()
 
     expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(false)

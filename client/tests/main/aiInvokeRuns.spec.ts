@@ -4,9 +4,9 @@ import { deleteRequest, getRequest, postRequest } from '@shared/api'
 import {
   FINISHED_CARD_TTL_MS,
   MAX_FINISHED_CARDS,
-  MAX_FINISHED_CARDS_UNBOUNDED,
   PERSIST_QUOTA_FALLBACK_CARDS,
   cardSlotsFor,
+  compareRunEntries,
   isExpired,
   isFinishedCard,
   openTargetDocId,
@@ -139,7 +139,8 @@ describe('aiInvokeRuns store', () => {
       },
     })
 
-    const run = store.runsByGroup[groupId]
+    // 0563 T0007: a genuine finish moves out of runsByGroup into run-keyed history.
+    const run = store.finishedByRun['run-a']
     expect(run.phase).toBe('finished')
     expect(run.provider?.name).toBe('Provider B')
     expect(run.providerSwitches).toHaveLength(1)
@@ -184,11 +185,11 @@ describe('aiInvokeRuns store', () => {
       oracle_mismatch: false,
     })
 
-    expect(store.runsByGroup[groupId].registerErrors).toEqual([
+    expect(store.finishedByRun['run-diagnostic'].registerErrors).toEqual([
       { status: 409, reason: 'dup_body', turn: 4 },
     ])
-    expect(store.runsByGroup[groupId].toolCallMisses).toBe(2)
-    expect(store.runsByGroup[groupId].turnLimitExhausted).toBe(true)
+    expect(store.finishedByRun['run-diagnostic'].toolCallMisses).toBe(2)
+    expect(store.finishedByRun['run-diagnostic'].turnLimitExhausted).toBe(true)
   })
 
   it('keeps simultaneous groups isolated', () => {
@@ -212,7 +213,7 @@ describe('aiInvokeRuns store', () => {
       docs_reached: 1,
     })
 
-    expect(store.runsByGroup[groupA].phase).toBe('finished')
+    expect(store.finishedByRun['run-a'].phase).toBe('finished')
     expect(store.runsByGroup[groupB].phase).toBe('running')
     expect(store.runsByGroup[groupB].runId).toBe('run-b')
     expect(store.runsByGroup[groupB].providerSwitches).toHaveLength(0)
@@ -224,9 +225,10 @@ describe('aiInvokeRuns store', () => {
     store.trackStarted({ run_id: 'run-a', group_id: groupId, doc_ref: 'a' })
     store.trackFinished({ run_id: 'run-a', group_id: groupId, outcome: 'complete' })
 
-    store.dismiss(groupId)
+    // 0563 T0007: dismiss() is run-keyed -- the finished card lives in finishedByRun.
+    store.dismiss('run-a')
 
-    expect(store.runsByGroup[groupId]).toBeUndefined()
+    expect(store.finishedByRun['run-a']).toBeUndefined()
   })
 
   it('marks only the polled group lost when its run returns 404', async () => {
@@ -238,7 +240,8 @@ describe('aiInvokeRuns store', () => {
 
     await store.refresh(groupA)
 
-    expect(store.runsByGroup[groupA].phase).toBe('lost')
+    // 0563 T0007: markLost() moves the card into run-keyed finished history too.
+    expect(store.finishedByRun['run-a'].phase).toBe('lost')
     expect(store.runsByGroup[groupB].phase).toBe('running')
   })
 
@@ -257,7 +260,8 @@ describe('aiInvokeRuns store', () => {
     expect(run.endReason).toBe('user_paused')
     expect(run.finishedAtMs).toBeNull()
     // Paused cards are not dismissible — resume (or another path) owns their removal.
-    store.dismiss(groupId)
+    // 0563 T0007: dismiss() is run-keyed now; a paused card was never in finishedByRun.
+    store.dismiss(run.runId)
     expect(store.runsByGroup[groupId]).toBeDefined()
   })
 
@@ -578,7 +582,9 @@ describe('aiInvokeRuns store', () => {
         data: { ok: true, group_id: groupId, released: true, already_released: false },
       } as any)
 
-      await store.removeCard(groupId)
+      // 0563 T0007: removeCard() now takes the entry itself (a finished card's identity
+      // is its runId, several can share a groupId), not a bare id.
+      await store.removeCard(store.runsByGroup[groupId])
 
       expect(vi.mocked(deleteRequest)).toHaveBeenCalledWith(
         `/api/v1/ai-invoke/paused/${encodeURIComponent(groupId)}`,
@@ -597,7 +603,7 @@ describe('aiInvokeRuns store', () => {
         data: { ok: true, runs: [], paused: [LEASE_DENIED_ROW(groupId)] },
       } as any)
 
-      await expect(store.removeCard(groupId)).rejects.toBe(rejection)
+      await expect(store.removeCard(store.runsByGroup[groupId])).rejects.toBe(rejection)
 
       expect(store.runsByGroup[groupId]?.phase).toBe('paused')
     })
@@ -608,7 +614,7 @@ describe('aiInvokeRuns store', () => {
       const groupId = 'flowgate.default.0500.remove-user-pause'
       store.trackFinished({ run_id: 'run-old', group_id: groupId, end_reason: 'user_paused' })
 
-      await store.removeCard(groupId)
+      await store.removeCard(store.runsByGroup[groupId])
 
       expect(vi.mocked(deleteRequest)).not.toHaveBeenCalled()
       expect(store.runsByGroup[groupId]?.phase).toBe('paused')
@@ -635,7 +641,7 @@ describe('aiInvokeRuns store', () => {
       } as any)
       await store.bootstrap()
 
-      await store.removeCard(groupId)
+      await store.removeCard(store.runsByGroup[groupId])
 
       expect(vi.mocked(deleteRequest)).not.toHaveBeenCalled()
       expect(store.runsByGroup[groupId]?.phase).toBe('paused')
@@ -645,11 +651,12 @@ describe('aiInvokeRuns store', () => {
     it('dismisses an ordinary finished card locally without any request', async () => {
       const groupId = 'flowgate.default.0500.remove-finished'
       finishOne(store, groupId)
+      const runId = `run-${groupId}`
 
-      await store.removeCard(groupId)
+      await store.removeCard(store.finishedByRun[runId])
 
       expect(vi.mocked(deleteRequest)).not.toHaveBeenCalled()
-      expect(store.runsByGroup[groupId]).toBeUndefined()
+      expect(store.finishedByRun[runId]).toBeUndefined()
     })
 
     // The whole point of the rejection: after a confirmed remove the next active-all
@@ -661,7 +668,7 @@ describe('aiInvokeRuns store', () => {
         data: { ok: true, group_id: groupId, released: true, already_released: false },
       } as any)
 
-      await store.removeCard(groupId)
+      await store.removeCard(store.runsByGroup[groupId])
       vi.mocked(getRequest).mockResolvedValueOnce({
         data: { ok: true, runs: [], paused: [] },
       } as any)
@@ -850,7 +857,7 @@ describe('aiInvokeRuns store', () => {
       stop_reason: "The group gate refused this run's own worker (GROUP_AI_RUN_OWNER_MISMATCH) on POST /flowgate/api/v1/inbox, so nothing it submitted was registered. A human must clear this: the run is not resumable.",
     })
 
-    expect(store.runsByGroup[groupId]).toMatchObject({
+    expect(store.finishedByRun['aiv-0393']).toMatchObject({
       phase: 'finished',
       stopCode: 'group_lease_denied',
       stopReason: "The group gate refused this run's own worker (GROUP_AI_RUN_OWNER_MISMATCH) on POST /flowgate/api/v1/inbox, so nothing it submitted was registered. A human must clear this: the run is not resumable.",
@@ -1002,7 +1009,9 @@ describe('aiInvokeRuns store', () => {
         stop_code: 'hop_handoff', outcome: 'none',
       })
 
-      const run = store.runsByGroup[groupId]
+      // 0563 T0007: a user pause stays group-keyed current state; any other end reason
+      // is a genuine completion and moves into the run-keyed finished history.
+      const run = endReason === 'user_paused' ? store.runsByGroup[groupId] : store.finishedByRun['run-old']
       expect(run.handoffPending).toBe(false)
       expect(run.phase).toBe(endReason === 'user_paused' ? 'paused' : 'finished')
     },
@@ -1034,9 +1043,9 @@ describe('aiInvokeRuns store', () => {
       chain_id: 'chain-1', chain_docs_target: 10, chain_docs_reached: 10,
     })
 
-    expect(store.runsByGroup[groupId].phase).toBe('finished')
-    expect(store.runsByGroup[groupId].handoffPending).toBe(false)
-    expect(isFinishedCard(store.runsByGroup[groupId])).toBe(true)
+    expect(store.finishedByRun['run-final'].phase).toBe('finished')
+    expect(store.finishedByRun['run-final'].handoffPending).toBe(false)
+    expect(isFinishedCard(store.finishedByRun['run-final'])).toBe(true)
   })
 
   // TR0012 rev2: bootstrap() and the user-pause triggered refreshPausedState() (fired from
@@ -1109,24 +1118,76 @@ describe('aiInvokeRuns store — bounded handoff adoption', () => {
     expect(store.runsByGroup[groupId].handoffPending).toBe(true)
 
     await store.refreshAllRunning()
-    expect(store.runsByGroup[groupId].handoffPending).toBe(false)
-    expect(store.runsByGroup[groupId].phase).toBe('finished')
-    expect(isFinishedCard(store.runsByGroup[groupId])).toBe(true)
+    // 0563 T0007: finalizeHandoff() lands the settled hop in run-keyed finished history.
+    expect(store.finishedByRun['run-old'].handoffPending).toBe(false)
+    expect(store.finishedByRun['run-old'].phase).toBe('finished')
+    expect(isFinishedCard(store.finishedByRun['run-old'])).toBe(true)
 
     const activeAllCalls = vi.mocked(getRequest).mock.calls
       .filter(([path]) => path === '/api/v1/ai-invoke/active-all')
     expect(activeAllCalls.length).toBeGreaterThanOrEqual(6)
   })
+
+  it('keeps a newer run handoff lifecycle when an older run finishes late', async () => {
+    const groupId = 'flowgate.default.handoff.late-old-finish'
+    store.trackStarted({
+      run_id: 'run-B', group_id: groupId, mode: 'continuous',
+      continuation_pending: true, chain_id: 'chain-B',
+    })
+    store.trackFinished({
+      run_id: 'run-B', group_id: groupId, mode: 'continuous',
+      end_reason: 'exited', stop_code: 'hop_handoff', outcome: 'complete',
+      chain_id: 'chain-B',
+    })
+    expect(store.runsByGroup[groupId]).toMatchObject({
+      runId: 'run-B', phase: 'running', handoffPending: true,
+    })
+
+    // A terminal event for an older run may create A's history, but must not clear B's
+    // group-scoped adoption timer, poll counters or settled payload.
+    store.trackFinished({
+      run_id: 'run-A', group_id: groupId, mode: 'single',
+      end_reason: 'exited', outcome: 'complete',
+    })
+    expect(store.finishedByRun['run-A']).toMatchObject({ runId: 'run-A', phase: 'finished' })
+    expect(store.runsByGroup[groupId]).toMatchObject({
+      runId: 'run-B', phase: 'running', handoffPending: true,
+    })
+
+    // The same late A is even more dangerous when it is itself a handoff boundary:
+    // it must not overwrite B's settled payload or create A timers inside B's slot.
+    store.trackFinished({
+      run_id: 'run-A', group_id: groupId, mode: 'continuous',
+      end_reason: 'exited', stop_code: 'hop_handoff', outcome: 'none',
+      chain_id: 'chain-A',
+    })
+    expect(store.runsByGroup[groupId]).toMatchObject({
+      runId: 'run-B', phase: 'running', handoffPending: true, chainId: 'chain-B',
+    })
+
+    await vi.advanceTimersByTimeAsync(3_000)
+    await store.refreshAllRunning()
+    await store.refreshAllRunning()
+
+    expect(store.runsByGroup[groupId]).toBeUndefined()
+    expect(store.finishedByRun['run-B']).toMatchObject({
+      runId: 'run-B', phase: 'finished', handoffPending: false,
+      outcome: 'complete', chainId: 'chain-B',
+    })
+  })
 })
 
-// Every case in this block is the DEFAULT retention — somebody who has never opened the
-// account screen. 0452 kept that number at 30 minutes precisely so these regressions keep
-// meaning what they meant; the per-user cases live in the block after it.
+// 0563 T#2: the default retention is now -1 (until manually deleted), so these cases can no
+// longer rely on "nobody has opened the account screen" to mean a finite TTL. Each one sets
+// the mirror to 30 explicitly -- the exact sweep/cap mechanics these regressions pin are
+// unchanged, they are just no longer implied by silence. The per-user cases (including -1's
+// own no-TTL/no-cap behaviour) live in the block after it.
 describe('aiInvokeRuns store — finished-card TTL sweep', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     sessionStorage.clear()
     localStorage.clear()
+    localStorage.setItem(RETENTION_MIRROR_KEY, '30')
     setActivePinia(createPinia())
     vi.clearAllMocks()
     vi.mocked(getRequest).mockResolvedValue({ data: {} } as any)
@@ -1143,11 +1204,11 @@ describe('aiInvokeRuns store — finished-card TTL sweep', () => {
     store.trackStarted({ run_id: 'run-p', group_id: 'g.paused.1', doc_ref: 'r', mode: 'continuous' })
     store.trackFinished({ run_id: 'run-p', group_id: 'g.paused.1', end_reason: 'user_paused' })
 
-    vi.advanceTimersByTime(FINISHED_CARD_TTL_MS - 2_000)
-    expect(store.runsByGroup['g.finished.1']).toBeDefined()
+    vi.advanceTimersByTime(retentionMs(30) - 2_000)
+    expect(store.finishedByRun['run-f']).toBeDefined()
 
     vi.advanceTimersByTime(3_000)
-    expect(store.runsByGroup['g.finished.1']).toBeUndefined()
+    expect(store.finishedByRun['run-f']).toBeUndefined()
     expect(store.runsByGroup['g.paused.1']?.phase).toBe('paused')
 
     store.$dispose()
@@ -1172,7 +1233,7 @@ describe('aiInvokeRuns store — finished-card TTL sweep', () => {
     expect(store.pausedCount).toBe(1)
     expect(store.activeCount).toBe(0)
 
-    vi.advanceTimersByTime(FINISHED_CARD_TTL_MS - 2_000)
+    vi.advanceTimersByTime(retentionMs(30) - 2_000)
     expect(store.finishedCount).toBe(3)
 
     vi.advanceTimersByTime(3_000)
@@ -1190,7 +1251,7 @@ describe('aiInvokeRuns store — finished-card TTL sweep', () => {
     store.trackFinished({ run_id: 'run-f', group_id: 'g.finished.2', outcome: 'complete' })
 
     vi.advanceTimersByTime(10 * 60_000)
-    expect(store.runsByGroup['g.finished.2']).toBeDefined()
+    expect(store.finishedByRun['run-f']).toBeDefined()
 
     store.$dispose()
   })
@@ -1204,10 +1265,12 @@ describe('aiInvokeRuns store — finished-card TTL sweep', () => {
       vi.advanceTimersByTime(1_000)  // distinct finishedAtMs so "oldest" is unambiguous
     }
 
-    const remaining = Object.keys(store.runsByGroup).sort()
+    // 0563 T0007: the finished backlog is run-keyed now, so membership is checked by
+    // run_id (`run-${i}`), not the group id used to build each card.
+    const remaining = Object.keys(store.finishedByRun).sort()
     expect(remaining).toHaveLength(MAX_FINISHED_CARDS)
-    expect(remaining).not.toContain('g.cap.00')
-    expect(remaining).toContain(`g.cap.${String(MAX_FINISHED_CARDS + 2).padStart(2, '0')}`)
+    expect(remaining).not.toContain('run-0')
+    expect(remaining).toContain(`run-${MAX_FINISHED_CARDS + 2}`)
 
     store.$dispose()
   })
@@ -1223,7 +1286,7 @@ describe('aiInvokeRuns store — finished-card TTL sweep', () => {
 
     store.dismissAllFinished()
 
-    expect(store.runsByGroup['g.bulk.fin']).toBeUndefined()
+    expect(store.finishedByRun['run-f']).toBeUndefined()
     expect(store.runsByGroup['g.bulk.pau']?.phase).toBe('paused')
     expect(store.runsByGroup['g.bulk.run']?.phase).toBe('running')
     expect(store.finishedCount).toBe(0)
@@ -1234,10 +1297,10 @@ describe('aiInvokeRuns store — finished-card TTL sweep', () => {
   // /ai-invoke/active-all never returns finished runs, so without this a reload wiped
   // the cards the TTL exists to keep (0290 NR0003 §3.5).
   it('restores finished cards across a reload and drops the expired ones', () => {
-    // The mirror is what a reload judges by (0452 L0003 §2-4), and 30 is what it holds for
-    // a user who never changed the setting. Without it this case would be the fail-open
-    // branch instead, which the next block covers on its own.
-    localStorage.setItem(RETENTION_MIRROR_KEY, String(RETENTION_DEFAULT_MINUTES))
+    // The mirror is what a reload judges by (0452 L0003 §2-4); this block pins the 30-minute
+    // TTL sweep explicitly (0563 T#2: the default is -1 now). Without a mirror this case
+    // would be the fail-open branch instead, which the next block covers on its own.
+    localStorage.setItem(RETENTION_MIRROR_KEY, '30')
     const store = useAiInvokeRunsStore()
     store.trackStarted({ run_id: 'run-f', group_id: 'g.persist.1', doc_ref: 'r' })
     store.trackFinished({ run_id: 'run-f', group_id: 'g.persist.1', outcome: 'complete' })
@@ -1246,13 +1309,14 @@ describe('aiInvokeRuns store — finished-card TTL sweep', () => {
 
     setActivePinia(createPinia())
     const reloaded = useAiInvokeRunsStore()
-    expect(reloaded.runsByGroup['g.persist.1']?.phase).toBe('finished')
+    // 0563 T0007: persisted finished snapshots restore into finishedByRun, keyed by runId.
+    expect(reloaded.finishedByRun['run-f']?.phase).toBe('finished')
     reloaded.$dispose()
 
-    vi.advanceTimersByTime(FINISHED_CARD_TTL_MS)
+    vi.advanceTimersByTime(retentionMs(30))
     setActivePinia(createPinia())
     const stale = useAiInvokeRunsStore()
-    expect(stale.runsByGroup['g.persist.1']).toBeUndefined()
+    expect(stale.finishedByRun['run-f']).toBeUndefined()
     stale.$dispose()
   })
 
@@ -1318,8 +1382,8 @@ describe('finished-card retention — the shared contract', () => {
     expect(isExpired(1_000, 995, 1_800_000)).toBe(false)
   })
 
-  it('widens the slot count only for the unbounded choice', () => {
-    expect(cardSlotsFor(-1)).toBe(MAX_FINISHED_CARDS_UNBOUNDED)
+  it('removes the count cap entirely at -1, the manual-delete-only choice', () => {
+    expect(cardSlotsFor(-1)).toBe(Number.POSITIVE_INFINITY)
     for (const minutes of RETENTION_DOMAIN_MINUTES.filter((m) => m !== -1)) {
       expect(cardSlotsFor(minutes)).toBe(MAX_FINISHED_CARDS)
     }
@@ -1340,7 +1404,7 @@ describe('aiInvokeRuns store — per-user retention', () => {
     vi.useRealTimers()
   })
 
-  it('starts from the mirror and falls back to 30 when there is none', () => {
+  it('starts from the mirror and falls back to manual-delete-only when there is none', () => {
     localStorage.setItem(RETENTION_MIRROR_KEY, '1440')
     const mirrored = useAiInvokeRunsStore()
     expect(mirrored.retentionMinutes).toBe(1440)
@@ -1353,43 +1417,48 @@ describe('aiInvokeRuns store — per-user retention', () => {
     broken.$dispose()
   })
 
-  it('never expires a card by time at -1, and caps the pile at 200 instead of 20', () => {
+  it('never expires a card by time at -1, and never caps the pile by count either', () => {
+    // 0563 T#2: the old 200-slot "unbounded" cap is gone. "-1" is a real choice to let
+    // results pile up, and no count silently starts deleting the oldest ones again.
     localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
     const store = useAiInvokeRunsStore()
     finishOne(store, 'g.never.1')
 
     vi.advanceTimersByTime(2 * 24 * 60 * 60_000)
-    expect(store.runsByGroup['g.never.1']).toBeDefined()
+    expect(store.finishedByRun['run-g.never.1']).toBeDefined()
     expect(store.finishedCount).toBe(1)
 
-    for (let i = 0; i < MAX_FINISHED_CARDS_UNBOUNDED + 2; i += 1) {
+    const total = 220   // well past the old 200-card cap
+    for (let i = 0; i < total; i += 1) {
       finishOne(store, `g.never.cap.${String(i).padStart(3, '0')}`)
-      vi.advanceTimersByTime(1_000)   // distinct finishedAtMs so "oldest" is unambiguous
+      vi.advanceTimersByTime(1_000)
     }
 
-    const remaining = Object.keys(store.runsByGroup)
-    expect(remaining).toHaveLength(MAX_FINISHED_CARDS_UNBOUNDED)
-    // The first card and the two oldest of the batch are what fell out, newest first out
-    // is never the rule.
-    expect(remaining).not.toContain('g.never.1')
-    expect(remaining).not.toContain('g.never.cap.000')
-    expect(remaining).toContain(
-      `g.never.cap.${String(MAX_FINISHED_CARDS_UNBOUNDED + 1).padStart(3, '0')}`,
-    )
+    // 0563 T0007: the backlog is run-keyed (finishOne's `run-${groupId}`), not group-keyed.
+    const remaining = Object.keys(store.finishedByRun)
+    expect(remaining).toHaveLength(total + 1)
+    // Nothing fell out -- not the first card, not the oldest of the batch.
+    expect(remaining).toContain('run-g.never.1')
+    expect(remaining).toContain('run-g.never.cap.000')
+    expect(remaining).toContain(`run-g.never.cap.${String(total - 1).padStart(3, '0')}`)
     store.$dispose()
   })
 
-  it('makes no finished or lost card at 0, and still leaves paused and handoff alone', () => {
+  it('makes no finished or lost card at 0, and still leaves paused and handoff alone', async () => {
     localStorage.setItem(RETENTION_MIRROR_KEY, '0')
     const store = useAiInvokeRunsStore()
 
     finishOne(store, 'g.zero.done')
     expect(store.runsByGroup['g.zero.done']).toBeUndefined()
+    // 0563 T0007: at retention 0 no card is created anywhere, not just absent from the
+    // old group-keyed slot -- the run-keyed history must be equally empty.
+    expect(store.finishedByRun['run-g.zero.done']).toBeUndefined()
     expect(store.finishedCount).toBe(0)
 
     store.trackStarted({ run_id: 'run-lost', group_id: 'g.zero.lost', doc_ref: 'r' })
     store.markLost('g.zero.lost', 'run-lost')
     expect(store.runsByGroup['g.zero.lost']).toBeUndefined()
+    expect(store.finishedByRun['run-lost']).toBeUndefined()
 
     // A user pause and a hop boundary are judged FIRST and are not completions, so
     // "disappears immediately" must not reach either of them (L0003 §4-1).
@@ -1409,10 +1478,23 @@ describe('aiInvokeRuns store — per-user retention', () => {
     expect(store.runsByGroup['g.zero.handoff']?.handoffPending).toBe(true)
     expect(store.runsByGroup['g.zero.handoff']?.phase).toBe('running')
 
-    // Not one tick: a card must never appear and then be swept a second later.
-    vi.advanceTimersByTime(5_000)
+    // The retention=0 early return for old A must not clear newer B's group-scoped
+    // adoption timer/poll state either.
+    store.trackFinished({
+      run_id: 'run-old-A', group_id: 'g.zero.handoff',
+      end_reason: 'exited', outcome: 'complete',
+    })
+    expect(store.runsByGroup['g.zero.handoff']).toMatchObject({
+      runId: 'run-h', phase: 'running', handoffPending: true,
+    })
+
+    // Not one tick: a card must never appear and then be swept a second later. B still
+    // reaches normal handoff finalization; retention=0 then removes it without a card.
+    await vi.advanceTimersByTimeAsync(5_000)
+    await store.refreshAllRunning()
+    await store.refreshAllRunning()
     expect(store.finishedCount).toBe(0)
-    expect(store.runsByGroup['g.zero.paused']?.phase).toBe('paused')
+    expect(store.runsByGroup['g.zero.handoff']).toBeUndefined()
     store.$dispose()
   })
 
@@ -1425,10 +1507,10 @@ describe('aiInvokeRuns store — per-user retention', () => {
       finishOne(store, 'g.boundary')
 
       vi.advanceTimersByTime(minutes * 60_000 - 1_000)
-      expect(store.runsByGroup['g.boundary']).toBeDefined()
+      expect(store.finishedByRun['run-g.boundary']).toBeDefined()
 
       vi.advanceTimersByTime(1_000)
-      expect(store.runsByGroup['g.boundary']).toBeUndefined()
+      expect(store.finishedByRun['run-g.boundary']).toBeUndefined()
       store.$dispose()
     },
   )
@@ -1439,14 +1521,16 @@ describe('aiInvokeRuns store — per-user retention', () => {
     localStorage.setItem(RETENTION_MIRROR_KEY, '30')
     seedFinishedSnapshot('g.restore.30', finishedAtMs)
     const short = useAiInvokeRunsStore()
-    expect(short.runsByGroup['g.restore.30']).toBeUndefined()
+    // 0563 T0007: restore rekeys every snapshot entry by its own runId (seedFinishedSnapshot
+    // always stamps 'run-seed'), regardless of the legacy group-keyed outer object.
+    expect(short.finishedByRun['run-seed']).toBeUndefined()
     short.$dispose()
 
     setActivePinia(createPinia())
     localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
     seedFinishedSnapshot('g.restore.never', finishedAtMs)
     const never = useAiInvokeRunsStore()
-    expect(never.runsByGroup['g.restore.never']).toBeDefined()
+    expect(never.finishedByRun['run-seed']).toBeDefined()
     never.$dispose()
 
     // No mirror: restore everything. Assuming 30 here would permanently delete the cards
@@ -1457,7 +1541,7 @@ describe('aiInvokeRuns store — per-user retention', () => {
     localStorage.removeItem(RETENTION_MIRROR_KEY)
     seedFinishedSnapshot('g.restore.absent', finishedAtMs)
     const failOpen = useAiInvokeRunsStore()
-    expect(failOpen.runsByGroup['g.restore.absent']).toBeDefined()
+    expect(failOpen.finishedByRun['run-seed']).toBeDefined()
     failOpen.$dispose()
   })
 
@@ -1490,7 +1574,7 @@ describe('aiInvokeRuns store — per-user retention', () => {
     store.$dispose()
   })
 
-  it('keeps a usable value when the lookup fails, and lands on 30 when there is none', async () => {
+  it('keeps a usable value when the lookup fails, and lands on manual-delete-only when there is none', async () => {
     localStorage.setItem(RETENTION_MIRROR_KEY, '720')
     const mirrored = useAiInvokeRunsStore()
     vi.mocked(getRequest).mockRejectedValueOnce(new Error('offline'))
@@ -1608,8 +1692,9 @@ describe('aiInvokeRuns store — per-user retention', () => {
 
     const stored = JSON.parse(sessionStorage.getItem(FINISHED_STORAGE_KEY) as string)
     expect(Object.keys(stored)).toHaveLength(PERSIST_QUOTA_FALLBACK_CARDS)
-    expect(stored[`g.quota.${String(total - 1).padStart(2, '0')}`]).toBeDefined()
-    expect(stored['g.quota.00']).toBeUndefined()
+    // 0563 T0007: the persisted snapshot is keyed by runId (finishOne's `run-${groupId}`).
+    expect(stored[`run-g.quota.${String(total - 1).padStart(2, '0')}`]).toBeDefined()
+    expect(stored['run-g.quota.00']).toBeUndefined()
     // The write was given up on; the registry was not.
     expect(store.finishedCount).toBe(total)
     store.$dispose()
@@ -1676,13 +1761,15 @@ describe('document review loop state normalization (0417 T0013)', () => {
         history: [{ round_no: 2, stage: 'rework', result: 'complete' }],
       },
     })
-    expect(store.runsByGroup[groupId].documentReviewLoop).toMatchObject({
+    // 0563 T0007: this trackFinished call is a genuine completion, so the card moved
+    // into finishedByRun -- keyed by the run's own id ('loop-1').
+    expect(store.finishedByRun['loop-1'].documentReviewLoop).toMatchObject({
       roundNo: 2, currentStage: 'stopped', stopReason: 'review_passed',
       stopDetail: 'passed on round 2',
     })
     // A LATE, shorter copy of the table (an older response arriving after a newer one)
     // never shrinks what is already on screen.
-    expect(store.runsByGroup[groupId].documentReviewLoop?.history).toHaveLength(2)
+    expect(store.finishedByRun['loop-1'].documentReviewLoop?.history).toHaveLength(2)
 
     // The server's table is the authority: a fuller one replaces the card's rows outright.
     store.trackFinished({
@@ -1696,8 +1783,8 @@ describe('document review loop state normalization (0417 T0013)', () => {
         ],
       },
     })
-    expect(store.runsByGroup[groupId].documentReviewLoop?.history).toHaveLength(3)
-    expect(store.runsByGroup[groupId].documentReviewLoop?.history[0]).toMatchObject({
+    expect(store.finishedByRun['loop-1'].documentReviewLoop?.history).toHaveLength(3)
+    expect(store.finishedByRun['loop-1'].documentReviewLoop?.history[0]).toMatchObject({
       round_no: 1, stage: 'review', result: 'issues', finding_count: 3,
     })
     store.$dispose()
@@ -1757,10 +1844,12 @@ describe('document review loop state normalization (0417 T0013)', () => {
       ...base, status: 'finished', outcome: 'complete',
       document_review_loop: { round_no: 2, current_stage: 'stopped', stop_reason: 'review_passed' },
     })
-    expect(store.runsByGroup[groupId].documentReviewLoop).toMatchObject({
+    // 0563 T0007: a genuine completion moves the card into finishedByRun, keyed by
+    // the run's own id ('loop-observed').
+    expect(store.finishedByRun['loop-observed'].documentReviewLoop).toMatchObject({
       roundNo: 2, currentStage: 'stopped', stopReason: 'review_passed',
     })
-    expect(store.runsByGroup[groupId].documentReviewLoop?.history).toEqual([])
+    expect(store.finishedByRun['loop-observed'].documentReviewLoop?.history).toEqual([])
     store.$dispose()
   })
 })
@@ -1868,5 +1957,186 @@ describe('document review loop attempts_used exposure (0569 T0006)', () => {
       roundNo: 2, currentStage: 'review', attemptsUsed: 1,
     })
     store.$dispose()
+  })
+})
+
+// 0563 T0007 §11: the required regressions for the run-keyed finished-history split.
+// TC10 (existing lifecycle regressions keep passing) is the rest of this file and the
+// rest of the suite staying green, not a test of its own.
+describe('aiInvokeRuns store — run-keyed finished history (0563 T0007)', () => {
+  let store: ReturnType<typeof useAiInvokeRunsStore>
+
+  beforeEach(() => {
+    sessionStorage.clear()
+    localStorage.clear()
+    setActivePinia(createPinia())
+    store = useAiInvokeRunsStore()
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    store.$dispose()
+  })
+
+  // TC1 — a new run starting in the same group must not evict the previous finished card.
+  it('keeps a finished card when a new run starts in the same group', () => {
+    const groupId = 'flowgate.default.0563.tc1'
+    store.trackStarted({ run_id: 'run-A', group_id: groupId, doc_ref: 'a' })
+    store.trackFinished({ run_id: 'run-A', group_id: groupId, outcome: 'complete' })
+    store.trackStarted({ run_id: 'run-B', group_id: groupId, doc_ref: 'b' })
+
+    expect(store.finishedByRun['run-A']).toMatchObject({ phase: 'finished' })
+    expect(store.runsByGroup[groupId]).toMatchObject({ runId: 'run-B', phase: 'running' })
+  })
+
+  // TC2 — two finished runs from the same group must coexist.
+  it('lets two finished runs from the same group coexist', () => {
+    const groupId = 'flowgate.default.0563.tc2'
+    store.trackStarted({ run_id: 'run-A', group_id: groupId, doc_ref: 'a' })
+    store.trackFinished({ run_id: 'run-A', group_id: groupId, outcome: 'complete' })
+    store.trackStarted({ run_id: 'run-B', group_id: groupId, doc_ref: 'b' })
+    store.trackFinished({ run_id: 'run-B', group_id: groupId, outcome: 'complete' })
+
+    expect(store.finishedByRun['run-A']).toBeDefined()
+    expect(store.finishedByRun['run-B']).toBeDefined()
+    expect(store.finishedCount).toBe(2)
+  })
+
+  // TC3 — removing one finished run by its own id must not touch a sibling in the same
+  // group, and the durable DELETE must address exactly that run's own id.
+  it('removes one finished run by its own id without touching a sibling in the same group', async () => {
+    const groupId = 'flowgate.default.0563.tc3'
+    store.trackStarted({ run_id: 'run-A', group_id: groupId, doc_ref: 'a' })
+    store.trackFinished({
+      run_id: 'run-A', group_id: groupId, outcome: 'complete', persisted: true,
+    })
+    store.trackStarted({ run_id: 'run-B', group_id: groupId, doc_ref: 'b' })
+    store.trackFinished({ run_id: 'run-B', group_id: groupId, outcome: 'complete' })
+
+    vi.mocked(deleteRequest).mockResolvedValueOnce({
+      data: { ok: true, dismissed: true, already_dismissed: false },
+    } as any)
+
+    await store.removeCard(store.finishedByRun['run-A'])
+
+    expect(vi.mocked(deleteRequest)).toHaveBeenCalledWith('/api/v1/ai-invoke/runs/run-A/card')
+    expect(store.finishedByRun['run-A']).toBeUndefined()
+    expect(store.finishedByRun['run-B']).toBeDefined()
+  })
+
+  // TC4 — several finished runs from the same group must all survive a reload.
+  it('restores several finished runs from the same group across a reload', () => {
+    localStorage.setItem(RETENTION_MIRROR_KEY, String(RETENTION_DEFAULT_MINUTES))
+    const groupId = 'flowgate.default.0563.tc4'
+    store.trackStarted({ run_id: 'run-A', group_id: groupId, doc_ref: 'a' })
+    store.trackFinished({ run_id: 'run-A', group_id: groupId, outcome: 'complete' })
+    store.trackStarted({ run_id: 'run-B', group_id: groupId, doc_ref: 'b' })
+    store.trackFinished({ run_id: 'run-B', group_id: groupId, outcome: 'complete' })
+    store.$dispose()
+
+    setActivePinia(createPinia())
+    const reloaded = useAiInvokeRunsStore()
+    expect(reloaded.finishedByRun['run-A']).toBeDefined()
+    expect(reloaded.finishedByRun['run-B']).toBeDefined()
+    reloaded.$dispose()
+  })
+
+  // TC6 — an active run and a finished run from the same group must both be visible in
+  // the merged projection, sorted active-first per the existing priority.
+  it('keeps an active run and a finished run from the same group both visible, active first', () => {
+    const groupId = 'flowgate.default.0563.tc6'
+    store.trackStarted({ run_id: 'run-A', group_id: groupId, doc_ref: 'a' })
+    store.trackFinished({ run_id: 'run-A', group_id: groupId, outcome: 'complete' })
+    store.trackStarted({ run_id: 'run-B', group_id: groupId, doc_ref: 'b' })
+
+    expect(store.activeCount).toBe(1)
+    expect(store.finishedCount).toBe(1)
+    const ordered = store.allEntries.slice().sort(compareRunEntries)
+    expect(ordered.map((e) => e.runId)).toEqual(['run-B', 'run-A'])
+  })
+
+  // TC7 — a duplicate finished event for the same run must update, not duplicate, the card.
+  it('does not duplicate a finished card on a repeated finished event for the same run', () => {
+    const groupId = 'flowgate.default.0563.tc7'
+    store.trackStarted({ run_id: 'run-A', group_id: groupId, doc_ref: 'a' })
+    store.trackFinished({ run_id: 'run-A', group_id: groupId, outcome: 'complete' })
+    store.trackFinished({ run_id: 'run-A', group_id: groupId, outcome: 'complete' })
+
+    expect(store.finishedCount).toBe(1)
+    expect(Object.keys(store.finishedByRun)).toEqual(['run-A'])
+  })
+
+  // TC8 — a locally restored finished card and the same durable card active-all returns
+  // on bootstrap must reconcile into one, not two.
+  it('reconciles a locally restored finished card with the same durable card from bootstrap', async () => {
+    // Seed sessionStorage and construct a FRESH store -- loadPersistedFinished() only
+    // runs once, at store construction, so the beforeEach store above never sees this.
+    store.$dispose()
+    localStorage.setItem(RETENTION_MIRROR_KEY, String(RETENTION_DEFAULT_MINUTES))
+    const runId = 'aiv_tc8'
+    const groupId = 'flowgate.default.0563.tc8'
+    const finishedAtIso = new Date().toISOString()
+    sessionStorage.setItem(FINISHED_STORAGE_KEY, JSON.stringify({
+      [runId]: {
+        runId, groupId, docRef: 'r', phase: 'finished', mode: 'single',
+        handoffPending: false, endReason: 'exited', outcome: 'complete',
+        pendingQDocIds: [], reachedDocIds: [], finishedAtMs: Date.parse(finishedAtIso),
+        persisted: true,
+      },
+    }))
+    setActivePinia(createPinia())
+    const restored = useAiInvokeRunsStore()
+    expect(Object.keys(restored.finishedByRun)).toHaveLength(1)
+
+    vi.mocked(getRequest).mockResolvedValueOnce({
+      data: {
+        ok: true,
+        runs: [{
+          run_id: runId, group_id: groupId, doc_ref: 'r', status: 'finished',
+          mode: 'single', outcome: 'complete', end_reason: 'exited',
+          finished_at: finishedAtIso, persisted: true,
+        }],
+        paused: [],
+      },
+    } as any)
+    await restored.bootstrap()
+
+    expect(Object.keys(restored.finishedByRun)).toHaveLength(1)
+    expect(restored.finishedByRun[runId].persisted).toBe(true)
+    restored.$dispose()
+  })
+
+  // TC9 — a new active run in the group must survive the FIRST late finished event AND
+  // bootstrap response for the run it replaced, while that old run is still recorded.
+  it('records an old run first seen finished after a new run became active without replacing the new run', async () => {
+    const groupId = 'flowgate.default.0563.tc9'
+    store.trackStarted({ run_id: 'run-A', group_id: groupId, doc_ref: 'a' })
+    store.trackStarted({ run_id: 'run-B', group_id: groupId, doc_ref: 'b' })
+
+    expect(store.finishedByRun['run-A']).toBeUndefined()
+
+    // The first finished payload for the OLD run must create its history card without
+    // touching the newer active run that already owns this group.
+    store.trackFinished({ run_id: 'run-A', group_id: groupId, doc_ref: 'a', outcome: 'complete' })
+    expect(store.finishedByRun['run-A']).toMatchObject({
+      runId: 'run-A', groupId, docRef: 'a', phase: 'finished', outcome: 'complete',
+    })
+    expect(store.runsByGroup[groupId]).toMatchObject({ runId: 'run-B', phase: 'running' })
+
+    // A stale bootstrap response that only knows about the old run must not clear the
+    // new active run either.
+    vi.mocked(getRequest).mockResolvedValueOnce({
+      data: {
+        ok: true,
+        runs: [{
+          run_id: 'run-A', group_id: groupId, doc_ref: 'a',
+          status: 'finished', outcome: 'complete',
+        }],
+        paused: [],
+      },
+    } as any)
+    await store.bootstrap()
+    expect(store.runsByGroup[groupId]).toMatchObject({ runId: 'run-B', phase: 'running' })
+    expect(Object.keys(store.finishedByRun)).toEqual(['run-A'])
   })
 })

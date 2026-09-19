@@ -31,6 +31,7 @@ import {
   useAiInvokeRunsStore,
 } from '@main/stores/aiInvokeRuns'
 import { useToast } from '@main/components/common/useToast'
+import { RETENTION_MIRROR_KEY } from '@shared/aiFinishedCardRetention'
 
 const { getRequest, postRequest, deleteRequest } = vi.hoisted(() => (
   { getRequest: vi.fn(), postRequest: vi.fn(), deleteRequest: vi.fn() }
@@ -96,24 +97,24 @@ describe('0529 B0001 — the finished card that would not go away (store)', () =
   it('marks a card active-all rebuilt from the database as persisted', async () => {
     await bootstrapGhost()
 
-    expect(store.runsByGroup[GROUP]).toMatchObject({
+    expect(store.finishedByRun[RUN_ID]).toMatchObject({
       runId: RUN_ID, phase: 'finished', persisted: true,
     })
-    expect(isDurableFinishedCard(store.runsByGroup[GROUP])).toBe(true)
+    expect(isDurableFinishedCard(store.finishedByRun[RUN_ID])).toBe(true)
   })
 
   it('a card this tab watched finish is not persisted and stays a local dismiss', async () => {
     store.trackStarted({ run_id: 'run-live', group_id: 'flowgate.default.0529', doc_ref: 'r' })
     store.trackFinished({ run_id: 'run-live', group_id: 'flowgate.default.0529', outcome: 'complete' })
 
-    const entry = store.runsByGroup['flowgate.default.0529']
+    const entry = store.finishedByRun['run-live']
     expect(entry.persisted).toBe(false)
     expect(isDurableFinishedCard(entry)).toBe(false)
 
-    await store.removeCard('flowgate.default.0529')
+    await store.removeCard(entry)
 
     expect(deleteRequest).not.toHaveBeenCalled()
-    expect(store.runsByGroup['flowgate.default.0529']).toBeUndefined()
+    expect(store.finishedByRun['run-live']).toBeUndefined()
   })
 
   // Link 1: the restarted clock. Stamping Date.now() on every bootstrap is why a card
@@ -121,8 +122,8 @@ describe('0529 B0001 — the finished card that would not go away (store)', () =
   it('carries the run own finish time, not the moment of the restore', async () => {
     await bootstrapGhost()
 
-    expect(store.runsByGroup[GROUP].finishedAtMs).toBe(Date.parse(FINISHED_AT))
-    expect(store.runsByGroup[GROUP].finishedAtMs).toBeLessThan(Date.now())
+    expect(store.finishedByRun[RUN_ID].finishedAtMs).toBe(Date.parse(FINISHED_AT))
+    expect(store.finishedByRun[RUN_ID].finishedAtMs).toBeLessThan(Date.now())
   })
 
   it('falls back to now when the restored row has no readable finish time', async () => {
@@ -130,17 +131,24 @@ describe('0529 B0001 — the finished card that would not go away (store)', () =
     // the list, which is worse than keeping it one retention too long.
     await bootstrapGhost({ finished_at: null })
 
-    expect(store.runsByGroup[GROUP].finishedAtMs).toBeGreaterThan(0)
-    expect(store.runsByGroup[GROUP].phase).toBe('finished')
+    expect(store.finishedByRun[RUN_ID].finishedAtMs).toBeGreaterThan(0)
+    expect(store.finishedByRun[RUN_ID].phase).toBe('finished')
   })
 
   it('the retention sweep can finally reach the six-day-old restored card', async () => {
-    await bootstrapGhost()
-    expect(store.runsByGroup[GROUP]).toBeDefined()
+    // 0563 T#2: the default retention is now -1 (until manually deleted), which never
+    // sweeps by time at all -- so this pins the sweep mechanics under an explicit finite
+    // retention, the same way T#2's own TTL-sweep regressions do.
+    localStorage.setItem(RETENTION_MIRROR_KEY, '30')
+    setActivePinia(createPinia())
+    const finiteStore = useAiInvokeRunsStore()
+    getRequest.mockResolvedValueOnce(activeAll([restoredRun()]) as any)
+    await finiteStore.bootstrap()
+    expect(finiteStore.finishedByRun[RUN_ID]).toBeDefined()
 
-    store.sweepFinishedCards()
+    finiteStore.sweepFinishedCards()
 
-    expect(store.runsByGroup[GROUP]).toBeUndefined()
+    expect(finiteStore.finishedByRun[RUN_ID]).toBeUndefined()
   })
 
   // Link 2: the removal that did not stick.
@@ -151,10 +159,10 @@ describe('0529 B0001 — the finished card that would not go away (store)', () =
         data: { ok: true, run_id: RUN_ID, group_id: GROUP, dismissed: true, already_dismissed: false },
       } as any)
 
-      await store.removeCard(GROUP)
+      await store.removeCard(store.finishedByRun[RUN_ID])
 
       expect(deleteRequest).toHaveBeenCalledWith(CARD_URL)
-      expect(store.runsByGroup[GROUP]).toBeUndefined()
+      expect(store.finishedByRun[RUN_ID]).toBeUndefined()
     })
 
     it('treats already_dismissed as success too', async () => {
@@ -163,9 +171,9 @@ describe('0529 B0001 — the finished card that would not go away (store)', () =
         data: { ok: true, run_id: RUN_ID, dismissed: false, already_dismissed: true },
       } as any)
 
-      await store.removeCard(GROUP)
+      await store.removeCard(store.finishedByRun[RUN_ID])
 
-      expect(store.runsByGroup[GROUP]).toBeUndefined()
+      expect(store.finishedByRun[RUN_ID]).toBeUndefined()
     })
 
     it('keeps the card and rethrows when the server refuses', async () => {
@@ -173,18 +181,18 @@ describe('0529 B0001 — the finished card that would not go away (store)', () =
       const rejection = { response: { status: 409, data: { code: 'run_still_active' } } }
       deleteRequest.mockRejectedValueOnce(rejection)
 
-      await expect(store.removeCard(GROUP)).rejects.toBe(rejection)
+      await expect(store.removeCard(store.finishedByRun[RUN_ID])).rejects.toBe(rejection)
 
-      expect(store.runsByGroup[GROUP]?.phase).toBe('finished')
+      expect(store.finishedByRun[RUN_ID]?.phase).toBe('finished')
     })
 
     it('keeps the card on an unexpected 2xx that confirms nothing', async () => {
       await bootstrapGhost()
       deleteRequest.mockResolvedValueOnce({ data: { ok: true } } as any)
 
-      await store.removeCard(GROUP)
+      await store.removeCard(store.finishedByRun[RUN_ID])
 
-      expect(store.runsByGroup[GROUP]?.phase).toBe('finished')
+      expect(store.finishedByRun[RUN_ID]?.phase).toBe('finished')
     })
 
     // The whole point: the server stops listing it, so the next bootstrap is silent.
@@ -193,12 +201,12 @@ describe('0529 B0001 — the finished card that would not go away (store)', () =
       deleteRequest.mockResolvedValueOnce({
         data: { ok: true, dismissed: true, already_dismissed: false },
       } as any)
-      await store.removeCard(GROUP)
+      await store.removeCard(store.finishedByRun[RUN_ID])
 
       getRequest.mockResolvedValueOnce(activeAll([]) as any)
       await store.bootstrap()
 
-      expect(store.runsByGroup[GROUP]).toBeUndefined()
+      expect(store.finishedByRun[RUN_ID]).toBeUndefined()
     })
   })
 
@@ -212,7 +220,7 @@ describe('0529 B0001 — the finished card that would not go away (store)', () =
       await store.dismissAllFinished()
 
       expect(deleteRequest).toHaveBeenCalledWith(CARD_URL)
-      expect(store.runsByGroup[GROUP]).toBeUndefined()
+      expect(store.finishedByRun[RUN_ID]).toBeUndefined()
     })
 
     it('still clears purely local finished cards with no request at all', async () => {
@@ -222,7 +230,7 @@ describe('0529 B0001 — the finished card that would not go away (store)', () =
       await store.dismissAllFinished()
 
       expect(deleteRequest).not.toHaveBeenCalled()
-      expect(store.runsByGroup['flowgate.default.0529']).toBeUndefined()
+      expect(store.finishedByRun['run-local']).toBeUndefined()
     })
 
     it('one refused card cannot strand the rest, and the refusal is still reported', async () => {
@@ -236,8 +244,8 @@ describe('0529 B0001 — the finished card that would not go away (store)', () =
       // claimed to have cleared -- the same shape of lie the whole bug is about.
       await expect(store.dismissAllFinished()).rejects.toBe(rejection)
 
-      expect(store.runsByGroup['flowgate.default.0529']).toBeUndefined()
-      expect(store.runsByGroup[GROUP]?.phase).toBe('finished')
+      expect(store.finishedByRun['run-local']).toBeUndefined()
+      expect(store.finishedByRun[RUN_ID]?.phase).toBe('finished')
     })
   })
 })
@@ -285,7 +293,7 @@ describe('0529 B0001 — [목록에서 제거] on both card surfaces', () => {
 
       expect(confirmSpy).not.toHaveBeenCalled()
       expect(deleteRequest).toHaveBeenCalledWith(CARD_URL)
-      expect(store.runsByGroup[GROUP]).toBeUndefined()
+      expect(store.finishedByRun[RUN_ID]).toBeUndefined()
       wrapper.unmount()
     })
 
@@ -296,7 +304,7 @@ describe('0529 B0001 — [목록에서 제거] on both card surfaces', () => {
       await wrapper.find('[data-test="ai-miniplayer-remove"]').trigger('click')
       await flushPromises()
 
-      expect(store.runsByGroup[GROUP]?.phase).toBe('finished')
+      expect(store.finishedByRun[RUN_ID]?.phase).toBe('finished')
       expect(useToast().toasts.value.at(-1)).toMatchObject({
         message: t('main.ai_miniplayer.error_remove_card_still_active'),
         type: 'danger',
@@ -328,7 +336,7 @@ describe('0529 B0001 — [목록에서 제거] on both card surfaces', () => {
       await flushPromises()
 
       expect(deleteRequest).toHaveBeenCalledWith(CARD_URL)
-      expect(store.runsByGroup[GROUP]).toBeUndefined()
+      expect(store.finishedByRun[RUN_ID]).toBeUndefined()
       wrapper.unmount()
     })
 
@@ -339,7 +347,7 @@ describe('0529 B0001 — [목록에서 제거] on both card surfaces', () => {
       await wrapper.find('[data-test="ai-miniplayer-clear-finished"]').trigger('click')
       await flushPromises()
 
-      expect(store.runsByGroup[GROUP]?.phase).toBe('finished')
+      expect(store.finishedByRun[RUN_ID]?.phase).toBe('finished')
       expect(useToast().toasts.value.at(-1)).toMatchObject({
         message: t('main.ai_miniplayer.error_remove_card_forbidden'),
         type: 'danger',
@@ -361,7 +369,7 @@ describe('0529 B0001 — [목록에서 제거] on both card surfaces', () => {
       await flushPromises()
 
       expect(deleteRequest).toHaveBeenCalledWith(CARD_URL)
-      expect(store.runsByGroup[GROUP]).toBeUndefined()
+      expect(store.finishedByRun[RUN_ID]).toBeUndefined()
       wrapper.unmount()
     })
 
@@ -374,7 +382,7 @@ describe('0529 B0001 — [목록에서 제거] on both card surfaces', () => {
       await wrapper.find('[data-test="ai-run-monitor-remove"]').trigger('click')
       await flushPromises()
 
-      expect(store.runsByGroup[GROUP]?.phase).toBe('finished')
+      expect(store.finishedByRun[RUN_ID]?.phase).toBe('finished')
       expect(useToast().toasts.value.at(-1)).toMatchObject({
         message: t('main.ai_miniplayer.error_remove_card_failed'),
         type: 'danger',
