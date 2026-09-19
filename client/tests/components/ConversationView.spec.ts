@@ -644,10 +644,15 @@ describe('ConversationView context range', () => {
   })
 })
 
-// Group 0515 T0011 §2/§6/§7/§13/§15.1-15.4: the AI source access radio group (server
-// contract from a prior T, this T just wires the client dialog + same-tab refresh).
-describe('ConversationView AI source access (group 0515 T0011)', () => {
-  it('renders the three known radios with the authoritative value selected', async () => {
+// Group 0568 T0004: the AI source access radio group inside the gear settings panel
+// (group 0515/T0011) was promoted to a composer-level Quick Mode segmented control
+// that applies on click, with no save button and no dialog.
+describe('ConversationView AI source mode Quick Mode (group 0568 T0004)', () => {
+  function modeBtn(wrapper: VueWrapper<any>, label: string) {
+    return wrapper.findAll('.conv-source-mode-btn').find((btn) => btn.attributes('aria-label') === label)!
+  }
+
+  it('renders the three known modes outside the settings panel with the server-confirmed value selected', async () => {
     getRequest.mockImplementation((url: unknown) => {
       if (typeof url === 'string' && url.includes('ai-invoke/providers')) return Promise.resolve(PROVIDERS_RESPONSE)
       if (typeof url === 'string' && url.includes('/me/chat-settings')) {
@@ -657,37 +662,65 @@ describe('ConversationView AI source access (group 0515 T0011)', () => {
     })
     const wrapper = mountView()
     await flushPromises()
-    await openChatSettings(wrapper)
-    expect(wrapper.find('input[type="radio"][value="read_only"]').exists()).toBe(true)
-    expect(wrapper.find('input[type="radio"][value="edit"]').exists()).toBe(true)
-    expect(wrapper.find('input[type="radio"][value="edit_once"]').exists()).toBe(true)
-    expect((wrapper.find('input[type="radio"][value="edit"]').element as HTMLInputElement).checked).toBe(true)
-    expect((wrapper.find('input[type="radio"][value="read_only"]').element as HTMLInputElement).checked).toBe(false)
+    expect(wrapper.find('.conv-settings').exists()).toBe(false) // rendered outside the (closed) panel
+    expect(wrapper.findAll('.conv-source-mode-btn').length).toBe(3)
+    expect(modeBtn(wrapper, 'Allow edit').attributes('aria-pressed')).toBe('true')
+    expect(modeBtn(wrapper, 'Read only').attributes('aria-pressed')).toBe('false')
+    expect(modeBtn(wrapper, 'Allow edit for next turn only').attributes('aria-pressed')).toBe('false')
   })
 
-  it('does not PATCH source_access_mode when the radio was left untouched', async () => {
+  it('does not request the currently active mode again', async () => {
+    const wrapper = mountView() // default: read_only
+    await flushPromises()
+    await modeBtn(wrapper, 'Read only').trigger('click')
+    expect(patchRequest).not.toHaveBeenCalled()
+  })
+
+  it('PATCHes source_access_mode alone and only flips selection after the server confirms', async () => {
+    let resolvePatch: (v: unknown) => void = () => {}
+    patchRequest.mockReset().mockImplementation(() => new Promise((resolve) => { resolvePatch = resolve }))
+    const wrapper = mountView() // default: read_only
+    await flushPromises()
+    await modeBtn(wrapper, 'Allow edit').trigger('click')
+    expect(patchRequest).toHaveBeenCalledTimes(1)
+    expect(patchRequest).toHaveBeenCalledWith('/api/v1/me/chat-settings', { source_access_mode: 'edit' })
+    // Not optimistic: still reads read_only while the request is in flight.
+    expect(modeBtn(wrapper, 'Read only').attributes('aria-pressed')).toBe('true')
+    expect(modeBtn(wrapper, 'Allow edit').attributes('aria-pressed')).toBe('false')
+    resolvePatch!(savedChatSettingsResponse({ source_access_mode: 'edit' }))
+    await flushPromises()
+    expect(modeBtn(wrapper, 'Allow edit').attributes('aria-pressed')).toBe('true')
+    expect(modeBtn(wrapper, 'Read only').attributes('aria-pressed')).toBe('false')
+  })
+
+  it('disables every mode button and ignores a second click while a change is in flight', async () => {
+    let resolvePatch: (v: unknown) => void = () => {}
+    patchRequest.mockReset().mockImplementation(() => new Promise((resolve) => { resolvePatch = resolve }))
     const wrapper = mountView()
     await flushPromises()
-    await openChatSettings(wrapper)
-    await wrapper.find('.conv-settings-select').setValue('10') // touch an unrelated field only
-    await saveChatSettings(wrapper)
-    const call = patchRequest.mock.calls.find((c) => c[0] === '/api/v1/me/chat-settings')
-    expect(call?.[1]).not.toHaveProperty('source_access_mode')
-  })
-
-  it('PATCHes source_access_mode when the user actually changes the radio', async () => {
-    const wrapper = mountView()
+    const editBtn = modeBtn(wrapper, 'Allow edit')
+    await editBtn.trigger('click')
+    expect(editBtn.attributes('disabled')).toBeDefined()
+    expect(modeBtn(wrapper, 'Read only').attributes('disabled')).toBeDefined()
+    await editBtn.trigger('click') // duplicate click while busy
+    expect(patchRequest).toHaveBeenCalledTimes(1)
+    resolvePatch!(savedChatSettingsResponse({ source_access_mode: 'edit' }))
     await flushPromises()
-    await openChatSettings(wrapper)
-    await wrapper.find('input[type="radio"][value="edit"]').setValue()
-    await saveChatSettings(wrapper)
-    expect(patchRequest).toHaveBeenCalledWith(
-      '/api/v1/me/chat-settings',
-      expect.objectContaining({ source_access_mode: 'edit' }),
-    )
+    expect(modeBtn(wrapper, 'Allow edit').attributes('disabled')).toBeUndefined()
   })
 
-  it('follows the server value on refresh when the draft was left untouched (§13 scenario A)', async () => {
+  it('keeps the previous selection and shows an error toast when the PATCH fails', async () => {
+    patchRequest.mockReset().mockRejectedValueOnce({ response: { data: { detail: 'nope' } } })
+    const wrapper = mountView() // default: read_only
+    await flushPromises()
+    await modeBtn(wrapper, 'Allow edit').trigger('click')
+    await flushPromises()
+    expect(modeBtn(wrapper, 'Read only').attributes('aria-pressed')).toBe('true')
+    expect(modeBtn(wrapper, 'Allow edit').attributes('aria-pressed')).toBe('false')
+    expect(showToast).toHaveBeenCalledWith(expect.stringContaining('nope'), 'danger')
+  })
+
+  it('reflects the server response on refresh, e.g. after an edit_once claim is consumed', async () => {
     getRequest.mockImplementation((url: unknown) => {
       if (typeof url === 'string' && url.includes('ai-invoke/providers')) return Promise.resolve(PROVIDERS_RESPONSE)
       if (typeof url === 'string' && url.includes('/me/chat-settings')) {
@@ -697,10 +730,9 @@ describe('ConversationView AI source access (group 0515 T0011)', () => {
     })
     const wrapper = mountView()
     await flushPromises()
-    await openChatSettings(wrapper) // baseline=draft=edit_once
-    expect((wrapper.find('input[type="radio"][value="edit_once"]').element as HTMLInputElement).checked).toBe(true)
+    expect(modeBtn(wrapper, 'Allow edit for next turn only').attributes('aria-pressed')).toBe('true')
 
-    // The server consumed the one-shot while the dialog sat open.
+    // The server consumed the one-shot claim via a successful CH token handoff.
     getRequest.mockImplementation((url: unknown) => {
       if (typeof url === 'string' && url.includes('ai-invoke/providers')) return Promise.resolve(PROVIDERS_RESPONSE)
       if (typeof url === 'string' && url.includes('/me/chat-settings')) {
@@ -710,20 +742,33 @@ describe('ConversationView AI source access (group 0515 T0011)', () => {
     })
     await (wrapper.vm as any).refreshChatSettings()
     await flushPromises()
-    expect((wrapper.find('input[type="radio"][value="read_only"]').element as HTMLInputElement).checked).toBe(true)
-    expect((wrapper.find('input[type="radio"][value="edit_once"]').element as HTMLInputElement).checked).toBe(false)
+    expect(modeBtn(wrapper, 'Read only').attributes('aria-pressed')).toBe('true')
+    expect(modeBtn(wrapper, 'Allow edit for next turn only').attributes('aria-pressed')).toBe('false')
   })
 
-  it('keeps a changed-but-unsaved draft on refresh (§13 scenario B)', async () => {
-    const wrapper = mountView() // default: read_only
+  it('never includes source_access_mode in an unrelated chat-settings panel save', async () => {
+    const wrapper = mountView()
     await flushPromises()
-    await openChatSettings(wrapper) // baseline=read_only
-    await wrapper.find('input[type="radio"][value="edit_once"]').setValue() // draft=edit_once, not saved
+    await openChatSettings(wrapper)
+    await wrapper.find('.conv-settings-select').setValue('10') // touch an unrelated field only
+    await saveChatSettings(wrapper)
+    const call = patchRequest.mock.calls.find((c) => c[0] === '/api/v1/me/chat-settings')
+    expect(call?.[1]).not.toHaveProperty('source_access_mode')
+  })
 
-    // Server is unchanged (still read_only) when refresh runs.
-    await (wrapper.vm as any).refreshChatSettings()
+  it('no longer shows an AI source access radio group inside the gear settings panel', async () => {
+    const wrapper = mountView()
     await flushPromises()
-    expect((wrapper.find('input[type="radio"][value="edit_once"]').element as HTMLInputElement).checked).toBe(true)
+    await openChatSettings(wrapper)
+    expect(wrapper.find('input[type="radio"][value="edit_once"]').exists()).toBe(false)
+    expect(wrapper.find('.conv-settings').find('.conv-source-mode').exists()).toBe(false)
+  })
+
+  it('renders neither the composer nor the source mode control on a read-only conversation', async () => {
+    const wrapper = mountView(DOC_ID, true)
+    await flushPromises()
+    expect(wrapper.find('.conv-composer').exists()).toBe(false)
+    expect(wrapper.find('.conv-source-mode').exists()).toBe(false)
   })
 })
 
@@ -776,10 +821,9 @@ describe('ConversationView chat AI invoke', () => {
     expect(showToast).toHaveBeenCalledWith('AI call failed: server exploded', 'danger')
   })
 
-  // Group 0515 T0011 §9/§15.6: a fresh run_id means /ai-invoke/start actually minted (and,
-  // for edit_once, may have consumed) a chat capability -- refresh so this tab's cached
-  // source_access_mode cannot go stale until the next unrelated GET/PATCH.
-  it('refreshes chat settings after a fresh run_id (§15.6)', async () => {
+  // Group 0568 rev3: starting the run is not the user-visible consumption boundary.
+  // Keep 1× Edit selected until pollRun has observed the delivered AI reply.
+  it('does not refresh chat settings merely because a fresh run_id was issued', async () => {
     const wrapper = mountView()
     await flushPromises()
     const before = getRequest.mock.calls.filter((c) => c[0] === '/api/v1/me/chat-settings').length
@@ -789,7 +833,54 @@ describe('ConversationView chat AI invoke', () => {
     await btns[btns.length - 1].trigger('click')
     await flushPromises()
     const after = getRequest.mock.calls.filter((c) => c[0] === '/api/v1/me/chat-settings').length
-    expect(after).toBeGreaterThan(before)
+    expect(after).toBe(before)
+  })
+
+  // Group 0568 rev4: a baseline taken AFTER /ai-invoke/start resolves is wrong if the AI's
+  // SSE reply wins the race and lands first -- it would already be counted in the
+  // baseline, so aiTurns > baselineAiTurns stays false forever and Quick Mode never
+  // switches back to Read even though the answer was delivered.
+  it('still refreshes chat settings when the SSE answer lands before start resolves (race, rev4)', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountView()
+    try {
+      await flushPromises()
+      const before = getRequest.mock.calls.filter((c) => c[0] === '/api/v1/me/chat-settings').length
+
+      let resolveStart: (v: unknown) => void = () => {}
+      postRequest.mockReset().mockImplementationOnce(() => new Promise((resolve) => { resolveStart = resolve }))
+      const btns = wrapper.findAll('.conv-assist-btn')
+      await btns[btns.length - 1].trigger('click') // manual [Call AI] — start left pending
+      await flushPromises()
+
+      // The reply arrives over SSE while /ai-invoke/start is still in flight.
+      window.dispatchEvent(new CustomEvent('fg:conversation_turn', {
+        detail: { doc_id: DOC_ID, head_seq: 1, turn: turn(1, { speaker: 'ai', body: 'fast reply' }) },
+      }))
+      await flushPromises()
+      expect(wrapper.text()).toContain('fast reply')
+
+      // start only now resolves with the run id.
+      resolveStart!({ data: { ok: true, run_id: 'r1' } })
+      await flushPromises()
+
+      getRequest.mockImplementation((url: unknown) => {
+        if (typeof url === 'string' && url.includes('/api/v1/ai-invoke/r1')) {
+          return Promise.resolve({ data: { status: 'finished', docs_reached: 0, last_message_received: true } })
+        }
+        if (typeof url === 'string' && url.includes('ai-invoke/providers')) return Promise.resolve(PROVIDERS_RESPONSE)
+        if (typeof url === 'string' && url.includes('/me/chat-settings')) return Promise.resolve(savedChatSettingsResponse())
+        return Promise.resolve(turnsPage())
+      })
+      await vi.advanceTimersByTimeAsync(2500)
+      await flushPromises()
+
+      expect(getRequest.mock.calls.filter((c) => c[0] === '/api/v1/me/chat-settings').length).toBeGreaterThan(before)
+      expect(showToast).not.toHaveBeenCalled()
+    } finally {
+      wrapper.unmount()
+      vi.useRealTimers()
+    }
   })
 
   // §9: adopting an existing run via 409 run_in_progress minted nothing new, so it must
@@ -1028,13 +1119,16 @@ describe('ConversationView chat AI invoke', () => {
         return Promise.resolve(turnsPage([turn(1, { speaker: 'ai', display_name: 'Opus', body: 'reply' })]))
       })
       postRequest.mockReset().mockResolvedValueOnce({ data: { ok: true, run_id: 'r1' } })
+      const settingsBefore = getRequest.mock.calls.filter((c) => c[0] === '/api/v1/me/chat-settings').length
       const btns = wrapper.findAll('.conv-assist-btn')
       await btns[btns.length - 1].trigger('click')
       await flushPromises()
+      expect(getRequest.mock.calls.filter((c) => c[0] === '/api/v1/me/chat-settings')).toHaveLength(settingsBefore)
       await vi.advanceTimersByTimeAsync(2500)
       await flushPromises()
 
       expect(getRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/r1')
+      expect(getRequest.mock.calls.filter((c) => c[0] === '/api/v1/me/chat-settings').length).toBeGreaterThan(settingsBefore)
       expect(showToast).not.toHaveBeenCalled()
       expect(wrapper.find('.conv-send').attributes('title')).toBe('Send')
     } finally {
