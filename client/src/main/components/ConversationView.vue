@@ -212,23 +212,6 @@
             </p>
           </div>
 
-          <!-- AI source access (group 0515, T0009 server contract / T0011 client UI):
-               whether a CH token minted from this dialog on may write to source. -->
-          <div class="conv-settings-group">
-            <span class="conv-settings-group-label">{{ t('main.conversation_view.source_access_label') }}</span>
-            <div
-              class="conv-settings-radios"
-              role="radiogroup"
-              :aria-label="t('main.conversation_view.source_access_label')"
-            >
-              <label v-for="mode in sourceAccessOptions" :key="mode" class="conv-radio">
-                <input type="radio" :value="mode" v-model="draftSourceAccessMode" />
-                {{ t(SOURCE_ACCESS_LABEL_KEYS[mode]) }}
-              </label>
-            </div>
-            <p class="conv-settings-hint">{{ t('main.conversation_view.source_access_hint') }}</p>
-          </div>
-
           <p v-if="chatSettingsErrorMessage && chatSettingsErrorField !== 'context_turns'" class="conv-settings-error">
             {{ chatSettingsErrorMessage }}
           </p>
@@ -249,21 +232,55 @@
         </div>
       </div>
       <div class="conv-assist">
-        <!-- Chat settings gear (D0008 §6-1/§6-2, group 0362). Replaces the inline
-             [전송 시] radios that used to sit here — those now live in the dialog
-             this button opens. "Call AI" inside that dialog is disabled when no
-             provider is available (single source of truth: aiProvider store). -->
-        <button
-          type="button"
-          class="conv-gear-btn"
-          :class="{ 'is-active': showChatSettings }"
-          :title="t('main.conversation_view.chat_settings_title')"
-          :aria-label="t('main.conversation_view.chat_settings_title')"
-          :aria-expanded="showChatSettings"
-          @click="toggleChatSettings"
-        >
-          <AppIcon name="gear" />
-        </button>
+        <div class="conv-assist-left">
+          <!-- Chat settings gear (D0008 §6-1/§6-2, group 0362). Replaces the inline
+               [전송 시] radios that used to sit here — those now live in the dialog
+               this button opens. "Call AI" inside that dialog is disabled when no
+               provider is available (single source of truth: aiProvider store). -->
+          <button
+            type="button"
+            class="conv-gear-btn"
+            :class="{ 'is-active': showChatSettings }"
+            :title="t('main.conversation_view.chat_settings_title')"
+            :aria-label="t('main.conversation_view.chat_settings_title')"
+            :aria-expanded="showChatSettings"
+            @click="toggleChatSettings"
+          >
+            <AppIcon name="gear" />
+          </button>
+          <!-- AI source mode Quick Mode (group 0568, T0004): promoted out of the gear
+               settings panel into a composer-level 3-state segmented control that
+               applies immediately -- no save button, no dialog. Selection is
+               server-confirmed only: a click PATCHes source_access_mode alone and the
+               highlighted button moves only once the server answers (T0004 §2). This
+               mode is per-account, not per-conversation, and applies from the next AI
+               call -- never retroactively (NR0003 §5/§6). -->
+          <div
+            v-if="sourceAccessOptions.length > 0"
+            class="conv-source-mode"
+            role="group"
+            :aria-label="t('main.conversation_view.source_mode_group_label')"
+          >
+            <button
+              v-for="mode in sourceAccessOptions"
+              :key="mode"
+              type="button"
+              class="conv-source-mode-btn"
+              :class="{ 'is-active': sourceAccessMode === mode }"
+              :aria-pressed="sourceAccessMode === mode"
+              :aria-label="t(SOURCE_ACCESS_LABEL_KEYS[mode])"
+              :title="t(SOURCE_ACCESS_TOOLTIP_KEYS[mode])"
+              :disabled="sourceAccessSaving"
+              @click="setSourceAccessMode(mode)"
+            >
+              <AppIcon
+                :name="sourceAccessSaving && pendingSourceAccessMode === mode ? 'spinner' : SOURCE_ACCESS_ICON_KEYS[mode]"
+                :spin="sourceAccessSaving && pendingSourceAccessMode === mode"
+              />
+              <span class="conv-source-mode-label">{{ t(SOURCE_ACCESS_SHORT_LABEL_KEYS[mode]) }}</span>
+            </button>
+          </div>
+        </div>
         <div class="conv-assist-btns">
           <!-- Manual delivery fallback — copy a chat-only mention and paste it to the
                AI worker. Always available (D0005 §3-3: [Copy mention] never hidden). -->
@@ -552,14 +569,13 @@ const chatSettingsDomain = ref<ChatSettingsDomain>({
   source_access_mode: ['read_only', 'edit', 'edit_once'],
 })
 
-// ── AI source access (group 0515, T0009 server contract / T0011 client UI) ───
-// sourceAccessMode is the last value the server confirmed (settings/domain response);
-// draftSourceAccessMode is what the radio group shows while the settings dialog is
-// open; sourceAccessBaseline is what the dialog opened with, so saveChatSettings can
-// tell a real user choice from an untouched draft (§6/§13).
+// ── AI source mode Quick Mode (group 0568, T0004; server contract from group 0515) ──
+// sourceAccessMode is the last value the server confirmed (settings/domain response).
+// The composer's segmented control never flips optimistically -- setSourceAccessMode
+// below only updates it from a successful PATCH response (T0004 §2).
 const sourceAccessMode = ref<string>('read_only')
-const draftSourceAccessMode = ref<string>('read_only')
-const sourceAccessBaseline = ref<string>('read_only')
+const sourceAccessSaving = ref(false)
+const pendingSourceAccessMode = ref<string | null>(null)
 // §3/§11: labels for the three known values. An unexpected domain value from the
 // server is fail-closed -- filtered out rather than shown as a new, unlabeled choice.
 const SOURCE_ACCESS_LABEL_KEYS: Record<string, string> = {
@@ -567,9 +583,51 @@ const SOURCE_ACCESS_LABEL_KEYS: Record<string, string> = {
   edit: 'main.conversation_view.source_access_edit',
   edit_once: 'main.conversation_view.source_access_edit_once',
 }
+const SOURCE_ACCESS_ICON_KEYS: Record<string, string> = {
+  read_only: 'eye',
+  edit: 'pencil',
+  edit_once: 'pencil',
+}
+const SOURCE_ACCESS_SHORT_LABEL_KEYS: Record<string, string> = {
+  read_only: 'main.conversation_view.source_mode_short_read',
+  edit: 'main.conversation_view.source_mode_short_edit',
+  edit_once: 'main.conversation_view.source_mode_short_edit_once',
+}
+const SOURCE_ACCESS_TOOLTIP_KEYS: Record<string, string> = {
+  read_only: 'main.conversation_view.source_mode_tooltip_read_only',
+  edit: 'main.conversation_view.source_mode_tooltip_edit',
+  edit_once: 'main.conversation_view.source_mode_tooltip_edit_once',
+}
+// A /me/chat-settings response whose domain omits source_access_mode entirely (an older
+// caller/mock predating T0009's server contract) must fail closed to no options, not
+// throw and wedge the whole render (0391 encoding-reject regression: the crash left the
+// send button stuck disabled).
 const sourceAccessOptions = computed(() =>
-  chatSettingsDomain.value.source_access_mode.filter((mode) => mode in SOURCE_ACCESS_LABEL_KEYS),
+  (chatSettingsDomain.value.source_access_mode ?? []).filter((mode) => mode in SOURCE_ACCESS_LABEL_KEYS),
 )
+
+// T0004 §2/§13: click-to-apply, no save button, never optimistic -- the highlighted
+// button only moves once applyChatSettings() has absorbed a successful PATCH. A
+// failure leaves the last server-confirmed mode selected and surfaces a toast, the
+// same describeErrorDetail() shape used by invokeAi()/postTurn() below.
+async function setSourceAccessMode(mode: string): Promise<void> {
+  if (sourceAccessSaving.value || mode === sourceAccessMode.value) return
+  sourceAccessSaving.value = true
+  pendingSourceAccessMode.value = mode
+  try {
+    const res = await patchRequest<ChatSettingsResponse>('/api/v1/me/chat-settings', {
+      source_access_mode: mode,
+    })
+    applyChatSettings(res.data)
+  } catch (e: any) {
+    const data = e?.response?.data
+    const detail = describeErrorDetail(data?.error?.message ?? data?.detail ?? data ?? e)
+    showToast(t('main.conversation_view.source_mode_save_failed', { detail }), 'danger')
+  } finally {
+    sourceAccessSaving.value = false
+    pendingSourceAccessMode.value = null
+  }
+}
 
 function applyChatSettings(data: ChatSettingsResponse): void {
   sendAction.value = data.settings.send_action
@@ -671,8 +729,6 @@ function openChatSettings(): void {
   draftSendAction.value = sendAction.value
   draftRangeChoice.value = draftRangeChoiceFor(contextMode.value, contextTurns.value)
   draftContextTurnsCustom.value = contextTurns.value
-  draftSourceAccessMode.value = sourceAccessMode.value
-  sourceAccessBaseline.value = sourceAccessMode.value
   chatSettingsErrorField.value = null
   chatSettingsErrorMessage.value = null
   showChatSettings.value = true
@@ -691,13 +747,8 @@ async function saveChatSettings(): Promise<void> {
   if (savingChatSettings.value) return
   const mode: ContextMode = draftRangeChoice.value === 'all' ? 'all' : 'recent'
   const patch: Record<string, unknown> = { send_action: draftSendAction.value, context_mode: mode }
-  // T0011 §6: source_access_mode is PATCHed only when the user actually moved the
-  // radio away from the value the dialog opened with. A one-shot claim consumed by
-  // the server WHILE the dialog sat open (edit_once -> read_only) must not be
-  // re-armed by an untouched, now-stale draft riding along with an unrelated save.
-  if (draftSourceAccessMode.value !== sourceAccessBaseline.value) {
-    patch.source_access_mode = draftSourceAccessMode.value
-  }
+  // T0004 §3: source_access_mode is never part of this payload -- it is only ever
+  // PATCHed alone, by setSourceAccessMode() from the composer's Quick Mode control.
   // §2-7-4: never send context_turns alongside context_mode: 'all' — the number the
   // user was using must survive an [전체] round trip untouched (server only writes
   // fields present in the request body).
@@ -738,15 +789,6 @@ async function refreshChatSettings(): Promise<void> {
     const res = await getRequest<ChatSettingsResponse>('/api/v1/me/chat-settings')
     if (disposed) return
     applyChatSettings(res.data)
-    if (showChatSettings.value) {
-      // Untouched draft follows the server; a draft the user already changed is kept as-is
-      // so a refresh triggered by an unrelated action cannot clobber a choice still
-      // sitting in the open dialog (§13 scenario B).
-      if (draftSourceAccessMode.value === sourceAccessBaseline.value) {
-        draftSourceAccessMode.value = sourceAccessMode.value
-      }
-      sourceAccessBaseline.value = sourceAccessMode.value
-    }
   } catch {
     // A refresh that cannot complete (network failure, or a response with no
     // recognizable chat-settings shape) leaves the tab on its last known values --
@@ -1198,6 +1240,12 @@ async function invokeAi(trigger: 'manual' | 'auto'): Promise<void> {
   const moduleCode = parts[1]
   const groupCode = parts[2]
   invoking.value = true
+  // Capture the AI-turn baseline BEFORE the network round trip, not after it resolves: the
+  // SSE answer can land (onSseTurn) while /ai-invoke/start is still in flight, and a
+  // post-await baseline would then already include that just-delivered turn, making
+  // aiTurns > baselineAiTurns false forever and stranding Quick Mode at 1× Edit
+  // (flowgate.default.0568 rev4).
+  const baselineAiTurns = turns.value.filter((turn) => turn.speaker === 'ai').length
   try {
     const res = await postRequest<{ ok: boolean; run_id?: string }>('/api/v1/ai-invoke/start', {
       project,
@@ -1210,12 +1258,10 @@ async function invokeAi(trigger: 'manual' | 'auto'): Promise<void> {
     })
     const runId = (res.data as any)?.run_id
     if (runId) {
-      // T0011 §9: a fresh run means /ai-invoke/start actually minted (and, for an
-      // edit_once mode, consumed) a chat capability -- refresh so this tab's radio
-      // reflects the authoritative value right away instead of waiting on the next
-      // unrelated GET/PATCH.
-      void refreshChatSettings()
-      void pollRun(runId, turns.value.filter((turn) => turn.speaker === 'ai').length)
+      // Keep the visible Quick Mode at 1× Edit while the run is still waiting for its
+      // answer. pollRun refreshes the authoritative setting only after catchUp has
+      // observed a newly delivered AI turn (flowgate.default.0568 rev3).
+      void pollRun(runId, baselineAiTurns)
     } else {
       releaseRun()
     }
@@ -1225,7 +1271,7 @@ async function invokeAi(trigger: 'manual' | 'auto'): Promise<void> {
     // the stop button rather than surfacing an error or restarting (L0008 §5). No new
     // token/claim was minted on this path, so no refresh (T0011 §9).
     if (data?.code === 'run_in_progress' && data?.run_id) {
-      void pollRun(data.run_id, turns.value.filter((turn) => turn.speaker === 'ai').length)
+      void pollRun(data.run_id, baselineAiTurns)
       return
     }
     releaseRun()
@@ -1253,6 +1299,9 @@ async function adoptActiveRun(): Promise<void> {
   const parts = props.docId.split('.')
   if (parts.length < 4) return
   const groupId = `${projectCode.value || parts[0]}.${parts[1]}.${parts[2]}`
+  // Same pre-request capture as invokeAi (flowgate.default.0568 rev4): an SSE answer can
+  // land while this GET is still in flight.
+  const baselineAiTurns = turns.value.filter((turn) => turn.speaker === 'ai').length
   try {
     const res = await getRequest<{
       active?: boolean
@@ -1265,7 +1314,7 @@ async function adoptActiveRun(): Promise<void> {
     if (!data?.active || !data?.run_id) return
     if (data.doc_ref !== props.docId) return
     if (data.status === 'finished') return
-    void pollRun(data.run_id, turns.value.filter((turn) => turn.speaker === 'ai').length)
+    void pollRun(data.run_id, baselineAiTurns)
   } catch {
     // Best effort: an idle surface is the status quo, and a manual [Call AI] still adopts
     // the run through the 409 run_in_progress path.
@@ -1344,6 +1393,11 @@ async function pollRun(runId: string, baselineAiTurns: number): Promise<void> {
         // so verifying the run no longer costs a full reload of the conversation.
         await catchUp()
         const aiTurns = turns.value.filter((turn) => turn.speaker === 'ai').length
+        // A one-shot mode must remain visibly selected while the user is waiting. Only
+        // the delivered AI answer is the UI boundary that changes it back to Read.
+        if (aiTurns > baselineAiTurns) {
+          await refreshChatSettings()
+        }
         // A run the user stopped on purpose is not a failure (0264 R0001).
         if (stopped) {
           showToast(t('main.ai_invoke_dialog.end_cancelled'), 'info')
@@ -1894,6 +1948,66 @@ defineExpose({ load, scrollToBottom, jumpToSeq, refreshChatSettings })
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.conv-assist-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* AI source mode Quick Mode (group 0568, T0004) -- a composer-level segmented
+   control replacing the old gear-panel radio group. Selected state is never color
+   only: the active button also carries a filled background and bold label. */
+.conv-source-mode {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.conv-source-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: .7rem;
+  font-family: inherit;
+  color: var(--text-m);
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+  transition: background .12s, color .12s;
+}
+
+.conv-source-mode-btn:last-child {
+  border-right: none;
+}
+
+.conv-source-mode-btn:hover:not(:disabled):not(.is-active) {
+  background: var(--bg, #f1f5f9);
+}
+
+.conv-source-mode-btn.is-active {
+  background: var(--primary, #2563eb);
+  color: #fff;
+  font-weight: 700;
+}
+
+.conv-source-mode-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Narrow composer: keep the mode buttons but drop their text label -- the
+   accessible name and title tooltip on each button are unaffected (T0004 §1). */
+@media (max-width: 640px) {
+  .conv-source-mode-label {
+    display: none;
+  }
 }
 
 /* Inline manual-copy panel (B0001 / group 0240) — in the composer's flow, NOT an

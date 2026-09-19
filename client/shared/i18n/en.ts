@@ -1916,11 +1916,17 @@ export default {
       // Group 0515 (T0009 server contract / T0011 client UI): labels for the three
       // server-determined per-user values (read_only/edit/edit_once) that decide whether
       // a CH token may write to source.
-      source_access_label: 'AI source access',
       source_access_read_only: 'Read only',
       source_access_edit: 'Allow edit',
       source_access_edit_once: 'Allow edit for next turn only',
-      source_access_hint: 'Read only: the AI may only read source. Allow edit: the AI may keep editing source. Allow edit for next turn only: edit is allowed for exactly the next successful CH token handoff, then it reverts to read only.',
+      source_mode_group_label: 'AI source mode',
+      source_mode_short_read: 'Read',
+      source_mode_short_edit: 'Edit',
+      source_mode_short_edit_once: '1× Edit',
+      source_mode_tooltip_read_only: 'Read only · applies to your account\'s CH calls, effective from the next AI call. The AI may only read source.',
+      source_mode_tooltip_edit: 'Edit · applies to your account\'s CH calls, effective from the next AI call. The AI may keep editing source until you change this.',
+      source_mode_tooltip_edit_once: '1× Edit · applies to your account\'s CH calls. Edit is allowed for exactly the next successful CH AI call, then it reverts to read only.',
+      source_mode_save_failed: 'Could not change the AI source mode: {detail}',
       chat_settings_save_failed: 'Failed to save settings.',
       invoke_ai_running: 'Calling AI…',
       invoke_ai_failed: 'AI call failed: {detail}',
