@@ -541,7 +541,7 @@ describe('WorkPlanEditor', () => {
         data: {
           message: '작업계획을 저장하지 못했습니다. 1개 항목이 규칙에 맞지 않습니다.',
           errors: [
-            { loc: 'steps.0', key: 'D#1', code: 'provider_not_candidate', msg: '지정한 공급자는 후보도 아니고 등록된 공급자도 아닙니다.' },
+            { loc: 'steps.0', key: 'D#1', code: 'provider_not_candidate', params: { value: 'aip_ghost' }, msg: '지정한 공급자는 후보도 아니고 등록된 공급자도 아닙니다.' },
           ],
         },
       },
@@ -558,7 +558,9 @@ describe('WorkPlanEditor', () => {
     const rows = wrapper.findAll('.wp-step-row')
     const errorBox = rows[0].get('.wp-step-errors')
     expect(errorBox.attributes('role')).toBe('alert')
-    expect(errorBox.text()).toContain('지정한 공급자는 후보도 아니고 등록된 공급자도 아닙니다.')
+    // T0007 §1.2 — a code this client has a translation key for renders from code+params
+    // (the ko i18n template), not the server's request-locale `msg` text.
+    expect(errorBox.text()).toContain('aip_ghost 는 이 작업계획의 공급자 후보도 아니고 이 프로젝트에 등록된 공급자도 아닙니다.')
     expect(rows[1].find('.wp-step-errors').exists()).toBe(false)
     expect(rows[2].find('.wp-step-errors').exists()).toBe(false)
   })
@@ -570,9 +572,9 @@ describe('WorkPlanEditor', () => {
         data: {
           message: '작업계획을 저장하지 못했습니다. 3개 항목이 규칙에 맞지 않습니다.',
           errors: [
-            { loc: 'steps.0', key: 'D#1', code: 'note_too_long', msg: '한줄 멘트가 너무 깁니다.' },
-            { loc: 'steps.0', key: 'D#1', code: 'provider_not_candidate', msg: '지정한 공급자는 후보가 아닙니다.' },
-            { loc: 'steps.1', key: 'T#1', code: 'provider_id_format_invalid', msg: '공급자 식별자 형식이 잘못됐습니다.' },
+            { loc: 'steps.0', key: 'D#1', code: 'note_too_long', params: { max: 1000 }, msg: '한줄 멘트가 너무 깁니다.' },
+            { loc: 'steps.0', key: 'D#1', code: 'provider_not_candidate', params: { value: 'aip_ghost' }, msg: '지정한 공급자는 후보가 아닙니다.' },
+            { loc: 'steps.1', key: 'T#1', code: 'provider_id_format_invalid', params: { value: 'bad id' }, msg: '공급자 식별자 형식이 잘못됐습니다.' },
           ],
         },
       },
@@ -586,11 +588,11 @@ describe('WorkPlanEditor', () => {
 
     const rows = wrapper.findAll('.wp-step-row')
     expect(rows[0].findAll('.wp-step-error-msg').map((n) => n.text())).toEqual([
-      '한줄 멘트가 너무 깁니다.',
-      '지정한 공급자는 후보가 아닙니다.',
+      '한줄 멘트는 1000 자까지입니다.',
+      'aip_ghost 는 이 작업계획의 공급자 후보도 아니고 이 프로젝트에 등록된 공급자도 아닙니다.',
     ])
     expect(rows[1].findAll('.wp-step-error-msg').map((n) => n.text())).toEqual([
-      '공급자 식별자 형식이 잘못됐습니다.',
+      '공급자 식별자 서식이 올바르지 않습니다: bad id',
     ])
     expect(rows[2].find('.wp-step-errors').exists()).toBe(false)
   })
@@ -602,7 +604,7 @@ describe('WorkPlanEditor', () => {
         data: {
           message: '작업계획을 저장하지 못했습니다. 1개 항목이 규칙에 맞지 않습니다.',
           errors: [
-            { loc: 'steps', key: null, code: 'steps_quantity_mismatch', msg: '스텝 수량이 수량 절과 맞지 않습니다.' },
+            { loc: 'steps', key: null, code: 'steps_quantity_mismatch', params: {}, msg: '스텝 수량이 수량 절과 맞지 않습니다.' },
           ],
         },
       },
@@ -614,7 +616,7 @@ describe('WorkPlanEditor', () => {
     await saveBtn.trigger('click')
     await flushPromises()
 
-    expect(wrapper.get('.wp-error-banner').text()).toContain('스텝 수량이 수량 절과 맞지 않습니다.')
+    expect(wrapper.get('.wp-error-banner').text()).toContain('steps 가 quantities 에서 펼쳐지는 단계 목록과 다릅니다.')
     expect(wrapper.findAll('.wp-step-errors')).toHaveLength(0)
   })
 
@@ -625,7 +627,7 @@ describe('WorkPlanEditor', () => {
         data: {
           message: '작업계획을 저장하지 못했습니다. 1개 항목이 규칙에 맞지 않습니다.',
           errors: [
-            { loc: 'steps.0', key: 'D#1', code: 'provider_not_candidate', msg: '지정한 공급자는 후보가 아닙니다.' },
+            { loc: 'steps.0', key: 'D#1', code: 'provider_not_candidate', params: { value: 'aip_ghost' }, msg: '지정한 공급자는 후보가 아닙니다.' },
           ],
         },
       },
@@ -665,7 +667,9 @@ describe('WorkPlanEditor', () => {
         data: {
           message: '작업계획을 저장하지 못했습니다. 1개 항목이 규칙에 맞지 않습니다.',
           errors: [
-            { loc: 'steps.0', key: 'D#1', code: 'provider_not_candidate', msg: 'Provider is neither a candidate nor a registered provider.' },
+            // T0007 §1.2 — a code this client build has no i18n key for (unlike the codes
+            // above) falls back to the server's own msg text unchanged, whatever locale it is.
+            { loc: 'steps.0', key: 'D#1', code: 'a_future_code_this_build_does_not_know', params: {}, msg: 'Provider is neither a candidate nor a registered provider.' },
           ],
         },
       },
@@ -679,6 +683,78 @@ describe('WorkPlanEditor', () => {
 
     expect(wrapper.findAll('.wp-step-row')[0].get('.wp-step-error-msg').text())
       .toBe('Provider is neither a candidate nor a registered provider.')
+  })
+
+  // 0589 T0007 §1.3 — the error SSOT is {code, params}, rendered by the CURRENT UI locale on
+  // every render. Before the fix, the screen kept the request-locale `msg` string as-is, so
+  // switching locale after the error was already on screen changed nothing without a new
+  // save attempt. This must fail against that old implementation.
+  it('re-renders an already-shown validation error in the new locale the instant it changes, without a new request', async () => {
+    putRequest.mockRejectedValueOnce({
+      response: {
+        status: 422,
+        data: {
+          message: '작업계획을 저장하지 못했습니다. 1개 항목이 규칙에 맞지 않습니다.',
+          errors: [
+            { loc: 'steps.0', key: 'D#1', code: 'note_too_long', params: { max: 1000 }, msg: '한줄 멘트는 1000 자까지입니다.' },
+          ],
+        },
+      },
+    })
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    const saveBtn = wrapper.findAll('button').find((b) => b.text().includes('저장') && !b.text().includes('저장 중'))!
+    await saveBtn.trigger('click')
+    await flushPromises()
+
+    const putCallsBefore = putRequest.mock.calls.length
+    expect(wrapper.findAll('.wp-step-row')[0].get('.wp-step-error-msg').text())
+      .toBe('한줄 멘트는 1000 자까지입니다.')
+
+    i18n.global.locale.value = 'ja'
+    await flushPromises()
+
+    expect(putRequest.mock.calls.length).toBe(putCallsBefore)
+    expect(wrapper.findAll('.wp-step-row')[0].get('.wp-step-error-msg').text())
+      .toBe('一行メモは 1000 文字までです。')
+  })
+
+  // 0589 T0007 rev1 §1 — `empty_selection`'s translated noun must not be baked into
+  // `params` at the response's locale. Before the fix, a ko response's
+  // `params.what === '수량을 확인할 타입'` was interpolated as-is into the ja template on a
+  // locale switch, mixing two languages in one sentence. `params` must instead carry the
+  // stable `what_key`, which this build resolves through its OWN locale table on every
+  // render, so switching to ja never leaves a Korean word behind.
+  it('re-renders empty_selection from what_key, never leaking the other locale\'s resolved noun', async () => {
+    putRequest.mockRejectedValueOnce({
+      response: {
+        status: 422,
+        data: {
+          message: '작업계획을 저장하지 못했습니다. 1개 항목이 규칙에 맞지 않습니다.',
+          errors: [
+            { loc: 'counted_types', key: null, code: 'empty_selection', params: { what_key: 'counted_types' }, msg: '수량을 확인할 타입 을 하나 이상 체크해 주세요.' },
+          ],
+        },
+      },
+    })
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    const saveBtn = wrapper.findAll('button').find((b) => b.text().includes('저장') && !b.text().includes('저장 중'))!
+    await saveBtn.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.wp-error-banner').text()).toContain('수량을 확인할 타입 을 하나 이상 체크해 주세요.')
+
+    const putCallsBefore = putRequest.mock.calls.length
+    i18n.global.locale.value = 'ja'
+    await flushPromises()
+
+    expect(putRequest.mock.calls.length).toBe(putCallsBefore)
+    const banner = wrapper.get('.wp-error-banner').text()
+    expect(banner).toContain('数量を確認するタイプ を一つ以上チェックしてください。')
+    expect(banner).not.toContain('수량을 확인할 타입')
   })
 })
 
