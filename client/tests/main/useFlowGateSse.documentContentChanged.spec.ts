@@ -4,6 +4,7 @@ import { defineComponent, onMounted } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import { useFlowGateSse } from '@main/composables/useFlowGateSse'
+import { useTabsStore } from '@main/stores/tabs'
 
 const { showToast } = vi.hoisted(() => ({ showToast: vi.fn() }))
 
@@ -296,6 +297,34 @@ describe('useFlowGateSse conversation turn bridge', () => {
     expect(seen).toHaveLength(1)
 
     window.removeEventListener('fg:conversation_turn', onTurn)
+    wrapper.unmount()
+  })
+})
+
+describe('useFlowGateSse canonical title synchronization (0591 T#2)', () => {
+  it('updates only the event document tab title without changing selection', () => {
+    const tabsStore = useTabsStore()
+    tabsStore.openTab({ id: 'test.none.0002.0004-WP', title: 'old WP', path: '', type: 'md', typeCode: 'WP' })
+    tabsStore.openTab({ id: 'test.none.0002.0005-T', title: 'other tab', path: '', type: 'md', typeCode: 'T' })
+    const activeBefore = tabsStore.activeTabId
+    const wrapper = mount(Harness, { global: { plugins: [i18n] } })
+
+    MockEventSource.instance?.emit('document_explorer_refresh', {
+      project: 'test',
+      doc_id: 'test.none.0002.0004-WP',
+      payload: {
+        operation: 'updated',
+        doc_id: 'test.none.0002.0004-WP',
+        title: '작업계획 — 설계 4장 · 작업 3세트',
+        revision_no: 2,
+      },
+    })
+
+    expect(tabsStore.tabs.find((tab) => tab.id === 'test.none.0002.0004-WP')?.title)
+      .toBe('작업계획 — 설계 4장 · 작업 3세트')
+    expect(tabsStore.tabs.find((tab) => tab.id === 'test.none.0002.0005-T')?.title)
+      .toBe('other tab')
+    expect(tabsStore.activeTabId).toBe(activeBefore)
     wrapper.unmount()
   })
 })

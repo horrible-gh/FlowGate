@@ -154,6 +154,15 @@ def update_document(
     existing = db_docs.get_by_id(doc_id)
     if existing is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+    if str(existing.get("type_code") or "").upper() == "WP" and "title" in updates:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "wp_title_is_derived",
+                "message": "Work-plan titles are derived from canonical totals and cannot be edited manually.",
+            },
+        )
+
     final_approved = is_final_approved(existing)
     if not is_document_editable(existing, final_approved=final_approved):
         if final_approved:

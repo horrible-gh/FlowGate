@@ -1081,6 +1081,7 @@ def create_related_document(
 @router.post("/next-empty", status_code=201)
 @require_permission("perm_document_create")
 def create_next_empty_document(
+    request: Request,
     body: NextEmptyDocumentCreate,
     current_user: dict = Depends(get_current_user),
 ) -> dict:
@@ -1095,9 +1096,9 @@ def create_next_empty_document(
     title = (body.title or "").strip()
     type_code = (body.type_code or "").strip().upper()
     module = body.module or "none"
-    if not title:
+    if type_code != WORK_PLAN_TYPE and not title:
         raise HTTPException(status_code=422, detail="Title is required.")
-    if len(title) > 100:
+    if type_code != WORK_PLAN_TYPE and len(title) > 100:
         raise HTTPException(status_code=422, detail="Title must be 100 characters or fewer.")
     if type_code in {"AC", "RJ", "V", "C"}:
         raise HTTPException(status_code=422, detail=f"Cannot create an empty document for type: {type_code}")
@@ -1169,6 +1170,17 @@ def create_next_empty_document(
     is_work_plan = type_code == WORK_PLAN_TYPE
     from modules.flow_gate.services import work_plan_service as _wp
 
+    wp_plan = (
+        _wp.auto_plan_body(body.project_id, _db_wfseq.get_sequence_items(seq["id"]))
+        if is_work_plan else None
+    )
+    wp_title_locale = (
+        _wp.resolve_title_locale(creation_locale=request.headers.get("x-locale"))
+        if is_work_plan else None
+    )
+    if wp_plan is not None and wp_title_locale is not None:
+        title = _wp.derived_title(wp_plan, wp_title_locale)
+
     doc_file_path = storage_paths.document_path(
         project_id=body.project_id,
         group_code=body.group_id,
@@ -1185,7 +1197,7 @@ def create_next_empty_document(
             # group's workflow sequence, providers from the project's run chain and per-doc-type table (work_plan_service.auto_plan_body).
             _wp.write_body_atomically(
                 doc_file_path,
-                _wp.auto_plan_body(body.project_id, _db_wfseq.get_sequence_items(seq["id"])),
+                wp_plan,
             )
         else:
             md_content = _build_next_empty_content(
@@ -1219,7 +1231,7 @@ def create_next_empty_document(
     }
     if is_work_plan:
         # The marker the work-plan screen reads as "a human-created plan". Same value as the create-dialog path.
-        data["meta"] = _json.dumps({"work_plan": {"origin": "human"}}, ensure_ascii=False)
+        data["meta"] = _json.dumps({"work_plan": {"origin": "human", "title_locale": wp_title_locale}}, ensure_ascii=False)
 
     try:
         store = get_store()

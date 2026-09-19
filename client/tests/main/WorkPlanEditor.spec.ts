@@ -8,6 +8,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import i18n from '@shared/i18n'
 import WorkPlanEditor from '@main/components/WorkPlanEditor.vue'
 import { useProjectStore } from '@main/stores/project'
+import { useTabsStore } from '@main/stores/tabs'
 
 const { getRequest, postRequest, putRequest } = vi.hoisted(() => ({
   getRequest: vi.fn(),
@@ -483,6 +484,42 @@ describe('WorkPlanEditor', () => {
     console.info(`WORK_PLAN_PROVIDER_DOM=${JSON.stringify({ stepProviderOptions, aiScopeText })}`)
   })
 
+  // flowgate.default.0591 T0005 §4 — locks the pipeline the T relies on before relaxing
+  // create_work_plan()'s provider_candidates pre-check: an empty snapshot must not narrow
+  // the AI scope dialog's [전체] domain, because it never drove that domain to begin with
+  // (0411 T0004: liveProviderRows/scopeProviderOptions read the server's live
+  // registered_providers, not plan.provider_candidates).
+  it('keeps the AI scope\'s [전체] on the full registered set when the snapshot has no candidates at all (provider_candidates=[])', async () => {
+    const response = structuredClone(READ_RESPONSE)
+    response.body.provider_candidates = []
+    getRequest.mockImplementation((url: string) => {
+      if (url.includes('/document-types')) return Promise.resolve({
+        data: { data: TYPES, work_plan_countable_types: TYPES_WP },
+      })
+      if (url.includes('/ai-invoke/providers')) return Promise.resolve({
+        data: { providers: structuredClone(REGISTERED_PROVIDERS), default_provider_id: 'aip_opus' },
+      })
+      if (url.includes('/work-plan')) return Promise.resolve({ data: response })
+      return Promise.reject(new Error(`unexpected url: ${url}`))
+    })
+
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    const aiButton = wrapper.findAll('.wp-toolbar button').find((button) => button.text().includes('AI 제안'))!
+    await aiButton.trigger('click')
+    const aiScopeText = wrapper.get('.work-plan-ai-scope-dialog').text()
+    for (const provider of REGISTERED_PROVIDERS) {
+      expect(aiScopeText).toContain(provider.name)
+    }
+    // WorkPlanAiScopeDialog.reset() fills providerIds with every `candidates` entry as soon
+    // as it opens — the same effect as pressing [전체] — so all three checkboxes start checked.
+    const gridChecks = wrapper.findAll('.work-plan-ai-scope-dialog .scope-grid input[type="checkbox"]')
+    const providerChecks = gridChecks.slice(gridChecks.length - REGISTERED_PROVIDERS.length)
+    expect(providerChecks).toHaveLength(REGISTERED_PROVIDERS.length)
+    expect(providerChecks.every((input) => (input.element as HTMLInputElement).checked)).toBe(true)
+  })
+
   it('saves the canonical body unchanged when nothing was edited (JSON round-trip preservation)', async () => {
     putRequest.mockResolvedValue({
       data: {
@@ -799,5 +836,54 @@ describe('approval presave surface', () => {
     await expect((wrapper.vm as any).ensureSaved()).resolves.toBe('failed')
     expect(putRequest).toHaveBeenCalledTimes(1)
     expect(wrapper.find('.wp-dirty-banner').exists()).toBe(true)
+  })
+})
+describe('WorkPlanEditor canonical title synchronization (0591 T#2)', () => {
+  it('applies body/revision/title from one save response and asks DocHeader to pull', async () => {
+    const tabsStore = useTabsStore()
+    tabsStore.openTab({
+      id: READ_RESPONSE.doc_id,
+      title: 'old title',
+      path: '',
+      type: 'md',
+      typeCode: 'WP',
+    })
+    const canonicalBody = structuredClone(PLAN_BODY)
+    canonicalBody.quantities.D.count = 4
+    canonicalBody.quantities.T.count = 3
+    const derivedTitle = '작업계획 — 설계 4장 · 작업 3세트'
+    putRequest.mockResolvedValue({
+      data: {
+        revision_no: 4,
+        title: derivedTitle,
+        body: canonicalBody,
+        totals: { design_sheets: 4, work_sets: 3, steps: 3 },
+        assignment_summary: [],
+        unassigned_step_count: 2,
+      },
+    })
+    i18n.global.locale.value = 'en'
+    const refreshes: CustomEvent[] = []
+    const onRefresh = (event: Event) => refreshes.push(event as CustomEvent)
+    window.addEventListener('fg:open_docs_refresh', onRefresh)
+
+    const wrapper = mountEditor()
+    await flushPromises()
+    const saveBtn = wrapper.findAll('button')
+      .find((button) => button.text().includes('Save') || button.text().includes('저장'))!
+    await saveBtn.trigger('click')
+    await flushPromises()
+
+    expect((wrapper.vm as any).revisionNo).toBe(4)
+    expect((wrapper.vm as any).plan.quantities).toEqual(canonicalBody.quantities)
+    expect(tabsStore.tabs.find((tab) => tab.id === READ_RESPONSE.doc_id)?.title).toBe(derivedTitle)
+    expect(refreshes.at(-1)?.detail).toEqual({
+      project: 'flowgate',
+      doc_id: READ_RESPONSE.doc_id,
+    })
+    expect(putRequest.mock.calls[0][1]).not.toHaveProperty('title')
+
+    window.removeEventListener('fg:open_docs_refresh', onRefresh)
+    wrapper.unmount()
   })
 })

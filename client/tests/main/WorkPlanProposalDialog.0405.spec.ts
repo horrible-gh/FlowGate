@@ -129,11 +129,51 @@ describe('WorkPlanProposalDialog — 두 칸과 네 버튼', () => {
     for (const key of ['cancel', 'create-empty', 'copy-mention', 'invoke-ai']) {
       expect(wrapper.find(`[data-dialog-action-id="wpp-${key}"]`).exists()).toBe(true)
     }
-    // 아무것도 고르지 않은 상태에서도 사라지지 않는다 — 비활성일 뿐이다.
-    expect(wrapper.find('[data-dialog-action-id="wpp-create-empty"]').attributes('disabled')).toBeDefined()
+    // flowgate.default.0591 T0005 §2/§3: [+문서생성]은 더 이상 [멘트복사]/[AI호출]과 조건을
+    // 공유하지 않는다 — 아무것도 고르지 않은 초기 상태에서도 canonical all-zero WP를 만들
+    // 수 있어야 하므로 비활성이 아니다.
+    expect(wrapper.find('[data-dialog-action-id="wpp-create-empty"]').attributes('disabled')).toBeUndefined()
     expect(wrapper.find('[data-dialog-action-id="wpp-copy-mention"]').attributes('disabled')).toBeDefined()
     expect(wrapper.find('[data-dialog-action-id="wpp-invoke-ai"]').attributes('disabled')).toBeDefined()
     expect(wrapper.find('[data-dialog-action-id="wpp-cancel"]').attributes('disabled')).toBeUndefined()
+  })
+
+  // flowgate.default.0591 T0005 §3/§6/§10 — the T#1 contract this group's R0001 asked for.
+  it('아무것도 고르지 않아도 [+문서생성]으로 canonical all-zero WP를 만들 수 있다', async () => {
+    postRequest.mockResolvedValue({
+      data: { ok: true, doc_id: 'flowgate.default.0591.0006-WP', title: '작업계획', body: {} },
+    })
+    const wrapper = await mountDialog()
+    await wrapper.find('[data-dialog-action-id="wpp-create-empty"]').trigger('click')
+    await flushPromises()
+
+    const [url, body] = postRequest.mock.calls[0]
+    expect(url).toBe('/api/v1/documents/work-plan')
+    expect(body.counted_types).toEqual(['DS', 'D', 'T', 'TS'])
+    expect(body.quantities).toEqual({ DS: 0, D: 0, T: 0, TS: 0 })
+    expect(body.provider_candidates).toEqual([])
+    expect(body).not.toHaveProperty('title')
+    expect(wrapper.emitted('created')).toBeTruthy()
+  })
+
+  it('provider가 있으면 [멘트복사] [취소] [+문서생성] [AI호출] 순서·역할·색으로 그려진다', async () => {
+    const wrapper = await mountDialog()
+    const create = wrapper.get('[data-dialog-action-id="wpp-create-empty"]')
+    const invoke = wrapper.get('[data-dialog-action-id="wpp-invoke-ai"]')
+
+    // §6 목표 배치: cancel < 문서생성 < primary.
+    const ids = wrapper.findAll('.fg-dialog-btn').map((n: any) => n.attributes('data-dialog-action-id'))
+    expect(ids).toEqual(['wpp-copy-mention', 'wpp-cancel', 'wpp-create-empty', 'wpp-invoke-ai'])
+
+    // §7/§8: [+문서생성]은 새 role(cancel~primary 사이)과 success tone, [AI호출]은 기존
+    // primary/default 유지 — 0405 T0011 rev1의 결정을 보존한다.
+    expect(create.attributes('data-dialog-action-role')).toBe('create')
+    expect(create.classes()).toContain('fg-dialog-btn--create')
+    expect(create.classes()).toContain('fg-dialog-btn--tone-success')
+    expect(create.classes()).not.toContain('fg-dialog-btn--primary')
+    expect(invoke.attributes('data-dialog-action-role')).toBe('primary')
+    expect(invoke.classes()).toContain('fg-dialog-btn--primary')
+    expect(wrapper.findAll('[data-dialog-action-role="primary"]').length).toBe(1)
   })
 
   it('두 칸은 처음에 아무것도 고르지 않은 상태다', async () => {

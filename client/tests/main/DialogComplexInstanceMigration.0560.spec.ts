@@ -459,21 +459,28 @@ describe('WorkPlanProposalDialog (workflow-large)', () => {
   }
 
   /**
-   * flowgate.default.0560 TR0023 rejection rework: identical bug and identical fix as
-   * `WorkPlanCreateDialog.vue` above — [AI 호출]/[문서생성] are both disabled until a type is
-   * picked, so the tree would otherwise nominate a disabled primary button on a cold open.
-   * `[전체선택]` in §1 now carries `data-dialog-autofocus` here too.
+   * flowgate.default.0560 TR0023 rejection rework: [AI 호출]/[+문서생성] used to both stay
+   * disabled until a type was picked, so the tree would otherwise nominate a disabled primary
+   * button on a cold open. `[전체선택]` in §1 carries `data-dialog-autofocus` here too.
+   *
+   * flowgate.default.0591 T0005 relaxed [+문서생성]'s own condition — in the no-provider branch
+   * exercised here it is `role="primary"` and no longer needs a type picked, so it is enabled
+   * from the very first render. That does not change the invariant this test exists for:
+   * `resolveInitialFocus()` always prefers an explicit `[data-dialog-autofocus]` target over
+   * `primary` regardless of the primary's disabled state (D0008/L0009 §4), so [전체선택] still
+   * gets the focus either way.
    */
-  it('§4-3 — initial focus lands on the enabled [전체선택] target, not a disabled primary', async () => {
+  it('§4-3 — initial focus lands on the explicit [전체선택] target, not the primary button', async () => {
     open()
     await flushPromises()
-
-    const primary = surface()!.querySelector<HTMLButtonElement>('[data-dialog-action-role="primary"]')
-    expect(primary?.disabled).toBe(true)
 
     const autofocusTarget = surface()!.querySelector('[data-dialog-autofocus]')
     expect(autofocusTarget).not.toBeNull()
     expect(document.activeElement).toBe(autofocusTarget)
+
+    const primary = surface()!.querySelector<HTMLButtonElement>('[data-dialog-action-role="primary"]')
+    expect(primary).not.toBeNull()
+    expect(autofocusTarget).not.toBe(primary)
   })
 })
 

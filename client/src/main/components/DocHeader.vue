@@ -61,7 +61,7 @@
       </div>
     </div>
     <div class="doc-title-row">
-      <template v-if="editingTitle && !readOnly">
+      <template v-if="editingTitle && !readOnly && headerTypeCode !== 'WP'">
         <input
           ref="titleInputRef"
           v-model="editTitleValue"
@@ -76,7 +76,7 @@
           <AppIcon name="x" />
         </button>
         <button
-          v-if="groupTitle"
+          v-if="groupTitle && headerTypeCode !== 'WP'"
           class="doc-title-btn doc-title-btn--group"
           type="button"
           :title="t('main.doc_header.use_group_name')"
@@ -88,7 +88,7 @@
       <template v-else>
         <span class="doc-title">{{ doc.title }}</span>
         <button
-          v-if="!readOnly && canEditDocument && headerTypeCode !== 'DC'"
+          v-if="!readOnly && canEditDocument && !['DC', 'WP'].includes(headerTypeCode)"
           class="doc-title-pencil"
           :title="t('main.doc_header.edit_title')"
           @click="startEditTitle"
@@ -96,7 +96,7 @@
           <AppIcon name="pencil" />
         </button>
         <button
-          v-if="!readOnly && canEditDocument && headerTypeCode !== 'DC' && groupTitle"
+          v-if="!readOnly && canEditDocument && !['DC', 'WP'].includes(headerTypeCode) && groupTitle"
           class="doc-title-btn doc-title-btn--group"
           type="button"
           :title="t('main.doc_header.use_group_name')"
@@ -441,7 +441,7 @@ const savingTitle = ref(false)
 const titleInputRef = ref<HTMLInputElement | null>(null)
 
 function startEditTitle() {
-  if (props.readOnly || !doc.value) return
+  if (props.readOnly || !doc.value || headerTypeCode.value === 'WP') return
   editTitleValue.value = doc.value.title
   editingTitle.value = true
   nextTick(() => titleInputRef.value?.focus())
@@ -453,7 +453,7 @@ function cancelEditTitle() {
 }
 
 async function saveTitle() {
-  if (props.readOnly || !doc.value || savingTitle.value) return
+  if (props.readOnly || !doc.value || headerTypeCode.value === 'WP' || savingTitle.value) return
   const newTitle = editTitleValue.value.trim()
   if (!newTitle) return
   savingTitle.value = true
@@ -665,6 +665,9 @@ async function fetchDocOnce(id: string, opts?: { silent?: boolean }): Promise<bo
   } else {
     doc.value = incoming
   }
+  if (typeof doc.value?.title === 'string' && doc.value.title) {
+    tabsStore.setTabTitle(props.tab.id, doc.value.title)
+  }
   workflowSteps.value = doc.value?.workflow_steps ?? null
   void fetchWorkflowOrphan(id, fetchGeneration)
   if (doc.value?.owner_id) fetchOwner(doc.value.owner_id)
@@ -781,7 +784,7 @@ async function copyDocId() {
 // not yet in edit mode, enter it (and focus) so the filled value can be reviewed and
 // saved; if already editing, just replace the in-progress value.
 function applyGroupNameToTitle() {
-  if (!groupTitle.value) return
+  if (!groupTitle.value || headerTypeCode.value === 'WP') return
   if (!editingTitle.value) {
     editingTitle.value = true
     nextTick(() => titleInputRef.value?.focus())

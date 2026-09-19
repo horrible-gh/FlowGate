@@ -4335,7 +4335,10 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         file_content_for_title = stored_path.read_text(encoding="utf-8")
     except OSError:
         file_content_for_title = content if isinstance(content, str) else ""
-    if title_override:
+    if wp_plan is not None:
+        wp_title_locale = work_plan_service.resolve_title_locale(creation_locale=wp_locale)
+        extracted_title = work_plan_service.derived_title(wp_plan, wp_title_locale)
+    elif title_override:
         extracted_title = title_override
     else:
         extracted_title = _extract_title_from_content(file_content_for_title) or canonical_doc_id
@@ -4373,6 +4376,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         meta_payload["work_plan"] = {
             "origin": "ai",
             "origin_run_id": token_rec.get("ai_run_id"),
+            "title_locale": wp_title_locale,
         }
     meta_value = json.dumps(meta_payload) if meta_payload else None
     # NR0003/081: freeze who authored this document at creation time. token_rec.ai_run_id
@@ -4985,6 +4989,21 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 help_url=work_plan_service.HELP_TEMPLATE_PATH,
             )
 
+    wp_title_locale: Optional[str] = None
+    wp_derived_title: Optional[str] = None
+    wp_meta_value: Optional[str] = None
+    if wp_plan is not None:
+        wp_title_locale = work_plan_service.resolve_title_locale(
+            existing_doc.get("meta"), current_title=existing_doc.get("title"),
+        )
+        wp_derived_title = work_plan_service.derived_title(wp_plan, wp_title_locale)
+        wp_meta_value = json.dumps(
+            work_plan_service.metadata_with_title_locale(
+                existing_doc.get("meta"), wp_title_locale,
+            ),
+            ensure_ascii=False,
+        )
+
     # Mirror _handle_new's cross-group duplicate guard on the edit path. B0106 only
     # defended `new`, so the same contamination (correct title, stale/reused body from
     # another group) recurred through inbox edit — most often on CH conversations, whose
@@ -5242,18 +5261,19 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     new_file_path_rel = to_storage_relative(stored_path, project)
     store = get_store()
     now = now_iso()
+    update_fields = ["revision_no = revision_no + 1", "updated_at = ?", "file_path = ?"]
+    update_values: list[object] = [now, new_file_path_rel]
     if rejection_history_update is not None:
-        store._execute(
-            "UPDATE documents SET revision_no = revision_no + 1, updated_at = ?, "
-            "file_path = ?, rejection_history = ? WHERE doc_id = ? AND revision_no = ?",
-            [now, new_file_path_rel, rejection_history_update, doc_id, current_revision_no],
-        )
-    else:
-        store._execute(
-            "UPDATE documents SET revision_no = revision_no + 1, updated_at = ?, "
-            "file_path = ? WHERE doc_id = ? AND revision_no = ?",
-            [now, new_file_path_rel, doc_id, current_revision_no],
-        )
+        update_fields.append("rejection_history = ?")
+        update_values.append(rejection_history_update)
+    if wp_plan is not None:
+        update_fields.extend(["title = ?", "meta = ?"])
+        update_values.extend([wp_derived_title, wp_meta_value])
+    store._execute(
+        f"UPDATE documents SET {', '.join(update_fields)} "
+        "WHERE doc_id = ? AND revision_no = ?",
+        [*update_values, doc_id, current_revision_no],
+    )
     refreshed = db_docs.get_by_id(doc_id)
     if refreshed is None or refreshed.get("revision_no") != current_revision_no + 1:
         # CAS conflict → rollback
@@ -5299,6 +5319,10 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         _edit_force_encoding_reason = str(body.get("force_encoding_reason") or "").strip()
         if _edit_force_encoding_reason:
             _meta_obj["force_encoding_reason"] = _edit_force_encoding_reason
+        if wp_plan is not None and wp_title_locale is not None:
+            _meta_obj = work_plan_service.metadata_with_title_locale(
+                _meta_obj, wp_title_locale,
+            )
         db_docs.update(doc_id, {"meta": json.dumps(_meta_obj) if _meta_obj else None})
     except Exception as _fp_exc:  # noqa: BLE001 — best-effort; edit already committed
         import LogAssist.log as logger
@@ -5543,6 +5567,8 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 logger.warning(f"[inbox edit] work plan before-image unreadable (ignored): {_wp_exc}")
         resp_body["change_summary"] = work_plan_service.change_summary(wp_plan, wp_before, locale=_locale)
         resp_body["doc_type"] = WORK_PLAN_TYPE
+        resp_body["title"] = refreshed.get("title")
+        resp_body["body"] = wp_plan
     else:
         resp_body["change_summary"] = _build_change_summary(
             doc_id=doc_id,

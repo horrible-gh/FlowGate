@@ -947,7 +947,7 @@ def test_human_create_applies_quantities_defaults_and_type_providers(seed):
     assert resp.status_code == 201, resp.text
     created = resp.json()
     plan = created["body"]
-    assert created["title"] == "채워진 작업계획"
+    assert created["title"] == "작업계획 — 설계 2장 · 작업 3세트"
     assert plan["quantities"] == {
         "D": {"unit": "sheet", "count": 2},
         "T": {"unit": "set", "count": 2},
@@ -1087,7 +1087,7 @@ def test_human_create_legacy_request_defaults_unspecified_types_to_zero(seed):
     assert resp.status_code == 201, resp.text
     created = resp.json()
     plan = created["body"]
-    assert created["title"] == created["doc_id"]
+    assert created["title"] == "작업계획 — 설계 0장 · 작업 0세트"
     assert {code: item["count"] for code, item in plan["quantities"].items()} == {"D": 0, "T": 0}
     assert plan["defaults"] == {"provider_id": None, "note": ""}
     assert plan["steps"] == []
@@ -1301,10 +1301,13 @@ def test_submit_help_explains_the_work_plan_body_contract(seed, locale, needle):
 
 
 def test_human_create_refuses_an_empty_selection(seed):
-    # 0405 T0011 rev2: 후보를 비워 보낸 요청이 거절되는 것은 "고를 수 있는데 비웠을 때"다.
-    # 등록된 공급자가 하나도 없는 프로젝트에서는 고를 방법 자체가 없어 빈 후보가 정상이므로
-    # (사용자 반려: "AI공급자 선택할게 없으면 ... 1만 선택하고 생성할수 있게"), 이 시험이
-    # 말하려는 상황 — 고를 수 있는 프로젝트 — 을 명시한다.
+    # flowgate.default.0591 T0005: provider_candidates=[] alone no longer refuses create —
+    # 0411 T0004's registered-project rejection was relaxed once the AI scope dialog's
+    # [전체]/suggest_work_plan.selectable_ids were confirmed to already resolve from the
+    # project's LIVE registered providers, never from this saved snapshot (see
+    # test_work_plan_proposal_0405.test_create_now_accepts_empty_candidates_when_providers_exist
+    # and client WorkPlanEditor.spec.ts). Only an empty counted_types still refuses — [+문서생성]
+    # always needs at least the type structure a canonical (even all-zero) WP requires.
     from unittest.mock import patch as mock_patch
 
     client = _client()
@@ -1320,7 +1323,7 @@ def test_human_create_refuses_an_empty_selection(seed):
     assert resp.status_code == 422
     payload = resp.json()
     assert payload["code"] == "wp_validation_failed"
-    assert {e["loc"] for e in payload["errors"]} == {"counted_types", "provider_candidates"}
+    assert {e["loc"] for e in payload["errors"]} == {"counted_types"}
 
 
 def _inbox_client():
@@ -1345,7 +1348,10 @@ def _token(tmp_path):
     return result["raw_token"]
 
 
-def _inbox_post(tmp_path, content, doc_code="0003-WP", doc_type="WP"):
+def _inbox_post(tmp_path, content, doc_code="0003-WP", doc_type="WP", locale=None):
+    headers = {"Authorization": f"Bearer {_token(tmp_path)}"}
+    if locale:
+        headers["X-Locale"] = locale
     with patch("modules.flow_gate.api.inbox_routes.numbering_service.reserve_document",
                return_value=doc_code):
         return _inbox_client().post(
@@ -1355,8 +1361,28 @@ def _inbox_post(tmp_path, content, doc_code="0003-WP", doc_type="WP"):
                 "action": "new", "prev_doc_id": ROOT_DOC, "doc_type": doc_type,
                 "title": "0402 작업계획 — AI", "content": content,
             },
-            headers={"Authorization": f"Bearer {_token(tmp_path)}"},
+            headers=headers,
         )
+
+
+def _inbox_edit(tmp_path, doc_id, content, *, locale=None):
+    from modules.flow_gate.services import token_service
+
+    with patch.object(token_service, "_scratch_dir", return_value=tmp_path / "scratch"):
+        token = token_service.issue(
+            project=PROJECT, group_id=GROUP, action_scope="edit",
+            doc_ref=doc_id, issued_to="usr_wp_001",
+            continuation_locale=locale,
+        )["raw_token"]
+    return _inbox_client().post(
+        "/api/v1/inbox",
+        json={
+            "project": PROJECT, "module": "__ALL__", "group_name": GROUP,
+            "action": "edit", "doc_id": doc_id, "edit_reason": "worker_self",
+            "content": content,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
 
 
 def test_ai_inbox_creates_a_json_work_plan(seed, storage_root, tmp_path):
@@ -1379,6 +1405,7 @@ def test_ai_inbox_creates_a_json_work_plan(seed, storage_root, tmp_path):
     assert data["change_summary"]["steps"] == 15
     assert "T 3세트" in data["change_summary"]["quantities"]
     assert data["origin"] == "ai"
+    assert data["title"] == wp.derived_title(plan, "ko")
     # 결정 3 (§2.6): stored in canonical form regardless of how it arrived.
     assert Path(data["stored_path"]).read_text(encoding="utf-8") == wp.dumps(plan)
 
@@ -1390,6 +1417,91 @@ def test_ai_inbox_creates_a_json_work_plan(seed, storage_root, tmp_path):
     assert view["body"]["wp_version"] == 1
     assert len(view["body"]["steps"]) == 15
     assert view["unassigned_step_count"] == 0
+
+
+def test_ai_inbox_edit_reuses_derived_title_and_frozen_creation_locale(
+    seed, storage_root, tmp_path,
+):
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.services import work_plan_service as wp
+
+    initial = wp.validate(
+        _plan(counted_types=["D", "T"], counts={"D": 2, "T": 1}),
+        project_id=PROJECT,
+    )
+    created_response = _inbox_post(
+        tmp_path, wp.dumps(initial), doc_code="WP0007", locale="en-US",
+    )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+    doc_id = created["doc_id"]
+    assert created["title"] == "Work plan — 2 design sheet(s) · 1 work set(s)"
+
+    uploaded = wp.validate(
+        _plan(counted_types=["D", "T"], counts={"D": 4, "T": 3}),
+        project_id=PROJECT,
+    )
+    edited_response = _inbox_edit(
+        tmp_path, doc_id, wp.dumps(uploaded), locale="ja",
+    )
+    assert edited_response.status_code == 200, edited_response.text
+    edited = edited_response.json()
+    assert edited["revision_no"] == 1
+    assert edited["title"] == "Work plan — 4 design sheet(s) · 3 work set(s)"
+    assert edited["body"] == uploaded
+
+    row = db_docs.get_by_id(doc_id)
+    assert row["title"] == edited["title"]
+    assert json.loads(row["meta"])["work_plan"]["title_locale"] == "en"
+    assert (storage_root / row["file_path"]).read_text(encoding="utf-8") == wp.dumps(uploaded)
+
+    reread = _client().get(f"/api/v1/documents/{doc_id}/work-plan")
+    assert reread.status_code == 200, reread.text
+    assert reread.json()["title"] == edited["title"]
+    assert reread.json()["body"] == uploaded
+
+
+def test_ai_inbox_edit_cas_loser_rolls_back_body_and_keeps_title_meta(
+    seed, storage_root, tmp_path,
+):
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.services import work_plan_service as wp
+
+    initial = wp.validate(
+        _plan(counted_types=["D", "T"], counts={"D": 2, "T": 1}),
+        project_id=PROJECT,
+    )
+    created_response = _inbox_post(
+        tmp_path, wp.dumps(initial), doc_code="WP0008", locale="ja",
+    )
+    assert created_response.status_code == 201, created_response.text
+    doc_id = created_response.json()["doc_id"]
+    before = dict(db_docs.get_by_id(doc_id))
+    before_file = (storage_root / before["file_path"]).read_text(encoding="utf-8")
+
+    uploaded = wp.validate(
+        _plan(counted_types=["D", "T"], counts={"D": 4, "T": 3}),
+        project_id=PROJECT,
+    )
+    store = get_store()
+    execute = store._execute
+
+    def lose_revision_cas(sql, params=None):
+        if str(sql).startswith("UPDATE documents SET revision_no = revision_no + 1"):
+            return None
+        return execute(sql, params)
+
+    with patch.object(store, "_execute", side_effect=lose_revision_cas):
+        rejected = _inbox_edit(
+            tmp_path, doc_id, wp.dumps(uploaded), locale="ko",
+        )
+    assert rejected.status_code == 409, rejected.text
+
+    after = db_docs.get_by_id(doc_id)
+    for field in ("revision_no", "updated_at", "file_path", "title", "meta"):
+        assert after[field] == before[field]
+    assert (storage_root / after["file_path"]).read_text(encoding="utf-8") == before_file
 
 
 def test_ai_inbox_refuses_markdown_and_rule_breaks(seed, tmp_path):
@@ -1681,8 +1793,8 @@ def test_next_empty_creates_a_plan_that_opens_as_a_table(seed, storage_root):
     assert by_key["TR#1"]["provider_id"] == "aip_seed_a"  # 짝 레포트도 같은 공급자
     assert by_key["TSR#1"]["locked"] is True and by_key["TSR#1"]["provider_id"] is None
 
-    # 4. 제목은 사용자가 적은 것 그대로다 (문서번호가 아니다).
-    assert payload["title"] == "ww"
+    # 4. 제목은 canonical totals에서 파생되고 요청 문자열 "ww"는 정본이 아니다.
+    assert payload["title"] == "작업계획 — 설계 2장 · 작업 2세트"
 
 
 def test_next_empty_still_writes_markdown_for_other_types(seed, storage_root):
@@ -1910,3 +2022,216 @@ def test_suggest_scope_validates_and_echoes_the_exact_boundary(seed, storage_roo
     assert payload["suggested"]["steps"] == []
     assert set(payload["suggested"]["quantities"]).issubset({"D"})
     assert payload["basis"] == "project_type_provider_map"
+
+
+def test_suggest_selects_every_registered_provider_from_an_empty_candidate_snapshot(seed, storage_root):
+    """flowgate.default.0591 T0005 §4 — locks the pipeline the T relies on before relaxing
+    create_work_plan()'s provider_candidates pre-check: an empty provider_candidates snapshot
+    must not narrow suggest_work_plan's selectable_ids. 0411 T0004 already unions the live
+    registered providers in (candidate_ids | registered_provider_ids); this pins that union
+    for the specific case (candidate_ids is empty) T0005's create-time relaxation produces.
+    """
+    from unittest.mock import patch as mock_patch
+
+    client = _client()
+    providers = [
+        {"id": "aip_opus", "name": "Claude Opus", "kind": "claude", "exec_type": "cli", "enabled": True},
+        {"id": "aip_sonnet", "name": "Claude Sonnet", "kind": "claude", "exec_type": "cli", "enabled": True},
+    ]
+    with mock_patch(
+        "modules.flow_gate.documents.routers.work_plan._providers", return_value=providers,
+    ), mock_patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0591-WP",
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "title": "0591 빈 후보 스냅샷",
+            "counted_types": ["D"],
+            "provider_candidates": [],
+            "quantities": {"D": 1},
+            "defaults": {"provider_id": None, "note": ""},
+            "type_providers": {},
+        })
+        assert created.status_code == 201, created.text
+        assert created.json()["body"]["provider_candidates"] == []
+        doc_id = created.json()["doc_id"]
+
+        resp = client.post(
+            f"/api/v1/documents/{doc_id}/work-plan/suggest",
+            json={"base_revision_no": 0, "scope": {
+                "quantity_type_codes": [],
+                "step_keys": [],
+                "provider_ids": ["aip_opus", "aip_sonnet"],
+            }},
+        )
+    # 두 provider 모두 selectable_ids 안에 있어야 200 — candidate_ids가 비어도
+    # registered_provider_ids 쪽에서 이미 둘 다 들어온다.
+    assert resp.status_code == 200, resp.text
+
+# ── flowgate.default.0591 T#2: canonical totals own the WP title ─────────────
+
+@pytest.mark.parametrize(
+    ("locale", "expected"),
+    [
+        ("ko", "작업계획 — 설계 2장 · 작업 1세트"),
+        ("en-US", "Work plan — 2 design sheet(s) · 1 work set(s)"),
+        ("ja", "作業計画 — 設計2枚 · 作業1セット"),
+        ("unknown", "작업계획 — 설계 2장 · 작업 1세트"),
+    ],
+)
+def test_derived_title_uses_canonical_totals_and_normalized_locale(locale, expected):
+    from modules.flow_gate.services import work_plan_service as wp
+
+    body = _plan(counted_types=["D", "T"], counts={"D": 2, "T": 1})
+    assert wp.derived_title(body, locale) == expected
+
+
+def test_title_locale_is_stored_first_then_inferred_once_for_legacy_rows():
+    from modules.flow_gate.services import work_plan_service as wp
+
+    assert wp.resolve_title_locale(
+        {"work_plan": {"title_locale": "en"}},
+        current_title="作業計画 — 設計2枚 · 作業1セット",
+    ) == "en"
+    assert wp.resolve_title_locale(
+        None, current_title="作業計画 — 設計2枚 · 作業1セット",
+    ) == "ja"
+    assert wp.resolve_title_locale(None, current_title="legacy custom title") == "ko"
+    assert wp.metadata_with_title_locale('{"other": 1}', "en-US") == {
+        "other": 1,
+        "work_plan": {"title_locale": "en"},
+    }
+
+
+def test_title_body_revision_and_locale_move_as_one_state(seed, storage_root):
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.services import work_plan_service as wp
+
+    client = _full_client()
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0996-WP",
+    ):
+        created_response = client.post(
+            "/api/v1/documents/work-plan",
+            json={
+                "parent_doc_id": ROOT_DOC,
+                "title": "x" * 500,
+                "counted_types": ["D", "T"],
+                "provider_candidates": [],
+                "quantities": {"D": 2, "T": 1},
+            },
+            headers={"X-Locale": "ja-JP"},
+        )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+    doc_id = created["doc_id"]
+    assert created["title"] == "作業計画 — 設計2枚 · 作業1セット"
+    row = db_docs.get_by_id(doc_id)
+    assert row["title"] == created["title"]
+    assert json.loads(row["meta"])["work_plan"]["title_locale"] == "ja"
+
+    updated_body = json.loads(json.dumps(created["body"]))
+    updated_body["quantities"]["D"]["count"] = 4
+    updated_body["quantities"]["T"]["count"] = 3
+    updated_body["steps"] = wp.expand_steps(
+        updated_body["counted_types"], updated_body["quantities"],
+    )
+    published = []
+    with patch(
+        "modules.flow_gate.api.v1.events.publisher.publish_event_threadsafe",
+        side_effect=published.append,
+    ):
+        saved_response = client.put(
+            f"/api/v1/documents/{doc_id}/work-plan",
+            json={"base_revision_no": 0, "body": updated_body},
+            headers={"X-Locale": "ko"},
+        )
+    assert saved_response.status_code == 200, saved_response.text
+    saved = saved_response.json()
+    explorer_event = next(
+        event for event in published
+        if getattr(event.event_type, "value", event.event_type) == "document_explorer_refresh"
+    )
+    assert explorer_event.doc_id == doc_id
+    assert explorer_event.payload["title"] == saved["title"]
+    assert explorer_event.payload["revision_no"] == saved["revision_no"]
+    assert saved["revision_no"] == 1
+    assert saved["title"] == "作業計画 — 設計4枚 · 作業3セット"
+    assert saved["body"] == wp.validate(updated_body, project_id=PROJECT)
+    assert saved["totals"] == {"design_sheets": 4, "work_sets": 3, "steps": 10}
+
+    row = db_docs.get_by_id(doc_id)
+    assert row["revision_no"] == 1
+    assert row["title"] == saved["title"]
+    assert json.loads(row["meta"])["work_plan"]["title_locale"] == "ja"
+    reread = client.get(f"/api/v1/documents/{doc_id}/work-plan").json()
+    assert reread["title"] == saved["title"]
+    assert reread["body"] == saved["body"]
+
+    # General document PATCH cannot override a derived WP title, even when it is the
+    # only requested field. Ordinary documents retain their existing title-edit contract.
+    rejected = client.patch(
+        f"/api/v1/documents/{doc_id}", json={"title": "manual override"},
+    )
+    assert rejected.status_code == 422
+    assert rejected.json()["detail"]["code"] == "wp_title_is_derived"
+    assert db_docs.get_by_id(doc_id)["title"] == saved["title"]
+    ordinary = client.patch(
+        f"/api/v1/documents/{ROOT_DOC}", json={"title": "Renamed root"},
+    )
+    assert ordinary.status_code == 200, ordinary.text
+    assert ordinary.json()["title"] == "Renamed root"
+
+    # Validation failures and stale writers do not touch any member of the saved state.
+    before_rejection = dict(db_docs.get_by_id(doc_id))
+    before_rejection_file = (
+        storage_root / before_rejection["file_path"]
+    ).read_text(encoding="utf-8")
+    invalid_body = json.loads(json.dumps(saved["body"]))
+    invalid_body["quantities"]["D"]["count"] = 21
+    invalid = client.put(
+        f"/api/v1/documents/{doc_id}/work-plan",
+        json={"base_revision_no": 1, "body": invalid_body},
+    )
+    assert invalid.status_code == 422
+
+    stale_body = json.loads(json.dumps(saved["body"]))
+    stale_body["quantities"]["D"]["count"] = 5
+    stale_body["steps"] = wp.expand_steps(
+        stale_body["counted_types"], stale_body["quantities"],
+    )
+    stale = client.put(
+        f"/api/v1/documents/{doc_id}/work-plan",
+        json={"base_revision_no": 0, "body": stale_body},
+    )
+    assert stale.status_code == 409
+    after_rejections = db_docs.get_by_id(doc_id)
+    for field in ("revision_no", "updated_at", "file_path", "title", "meta"):
+        assert after_rejections[field] == before_rejection[field]
+    assert (
+        storage_root / after_rejections["file_path"]
+    ).read_text(encoding="utf-8") == before_rejection_file
+
+    # A storage failure restores every DB member of the successful-state tuple.
+    before_failure = dict(db_docs.get_by_id(doc_id))
+    before_file = (storage_root / before_failure["file_path"]).read_text(encoding="utf-8")
+    failed_body = json.loads(json.dumps(saved["body"]))
+    failed_body["quantities"]["D"]["count"] = 5
+    failed_body["steps"] = wp.expand_steps(
+        failed_body["counted_types"], failed_body["quantities"],
+    )
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.wp.write_body_atomically",
+        side_effect=OSError("simulated write failure"),
+    ):
+        failed = client.put(
+            f"/api/v1/documents/{doc_id}/work-plan",
+            json={"base_revision_no": 1, "body": failed_body},
+        )
+    assert failed.status_code == 500
+    after_failure = db_docs.get_by_id(doc_id)
+    for field in ("revision_no", "updated_at", "file_path", "title", "meta"):
+        assert after_failure[field] == before_failure[field]
+    assert (storage_root / after_failure["file_path"]).read_text(encoding="utf-8") == before_file

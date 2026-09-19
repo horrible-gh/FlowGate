@@ -352,15 +352,19 @@ def create_work_plan(
     # 0405 T0011 rev2 (rejected: "if there is no AI provider to pick, hide [2 candidate providers]
     # and let the user pick only 1 and create, no?"): in a project with no registered provider
     # there is no way to choose at all, so an empty candidate set is accepted — only there.
-    # Sending empty when a choice was possible is still rejected. Allowing an empty candidate
-    # set does not contradict the canonical rule (work_plan_service: "with no candidates, leave steps[].provider_id empty").
-    # 0411 T0004: "candidates" narrowed to mean "the range selectable when delegating to AI",
-    # but this check is left as is. A human picking per step is now free across the whole
-    # registered list; what is asked here is "was no AI-delegation range chosen at all?" —
-    # sending empty when a choice existed yields a plan whose AI dialog's [all] selects nobody.
+    # 0411 T0004 then widened this rejection to registered projects too, worried that an
+    # empty candidate set would leave the AI scope dialog's [all] selecting nobody.
+    # flowgate.default.0591 T0005 found that concern already moot: WorkPlanAiScopeDialog's
+    # [all] and this route's own suggest_work_plan() below both resolve their selectable set
+    # from the project's LIVE registered providers (client: WorkPlanEditor.liveProviderRows /
+    # scopeProviderOptions; server: selectable_ids = candidate_ids | registered_provider_ids),
+    # never from this saved snapshot alone — an empty provider_candidates here never narrows
+    # either one. R0001 additionally requires [+문서생성] to build a canonical all-zero WP with
+    # nothing picked in either dialog section, so this create-time rejection is removed for
+    # the human path; the client's own AI-delegation gate ([멘트복사]/[AI호출] still require at
+    # least one candidate provider whenever the project has any registered) is what protects
+    # "chose nothing to delegate to" now.
     registered_providers = _providers(parent.get("project_id"))
-    if not body.provider_candidates and registered_providers:
-        errors.append(wp.empty_selection_error("provider_candidates"))
     # 0405 NR0006 §3.2: this pre-check used to demand >= 1 for EVERY entry, which
     # contradicted the canonical rule (work_plan_service.COUNT_MIN = 0, and a count of 0
     # simply produces no step). The screen always sends the full countable key set with 0
@@ -409,9 +413,10 @@ def create_work_plan(
     # 0403 NR0004 F8 — the title-length check runs BEFORE a document number is reserved.
     # A reservation cannot be undone. Throwing a 422 afterwards leaves that number owning no
     # document and punches a hole in the group's numbering. Every check decidable from the request alone goes before the reservation.
-    requested_title = (body.title or "").strip()
-    if len(requested_title) > 100:
-        raise HTTPException(status_code=422, detail="Title must be 100 characters or fewer.")
+    title_locale = wp.resolve_title_locale(creation_locale=locale)
+    title = wp.derived_title(plan, title_locale)
+
+    # WorkPlanCreate.title remains accepted only for backward compatibility and is ignored.
 
     try:
         doc_code = numbering_service.reserve_document(
@@ -434,7 +439,7 @@ def create_work_plan(
         module=module,
         branch=branch,
     )
-    title = requested_title or doc_id
+    # title is derived above from the validated canonical body.
 
     try:
         wp.write_body_atomically(path, plan)
@@ -459,7 +464,7 @@ def create_work_plan(
             "revision_no": 0,
             "created_at": now,
             "updated_at": now,
-            "meta": _json.dumps({"work_plan": {"origin": "human"}}, ensure_ascii=False),
+            "meta": _json.dumps({"work_plan": {"origin": "human", "title_locale": title_locale}}, ensure_ascii=False),
         }, actor_user_id=current_user["user_id"])
     except Exception as exc:  # noqa: BLE001 — roll the file back, never leave an orphan
         try:
@@ -513,7 +518,7 @@ def create_work_plan(
 
     refreshed = db_docs.get_by_id(doc_id) or doc
     _emit(refreshed, "created",
-          {"doc_id": doc_id, "type": WORK_PLAN_TYPE, "title": title,
+          {"doc_id": doc_id, "type": WORK_PLAN_TYPE, "title": refreshed.get("title"),
            "status": refreshed.get("status"), "revision_no": 0},
           current_user["user_id"])
 
@@ -521,7 +526,7 @@ def create_work_plan(
         "ok": True,
         "doc_id": doc_id,
         "doc_type": WORK_PLAN_TYPE,
-        "title": title,
+        "title": refreshed.get("title"),
         "group_id": group_id,
         "parent_doc_id": body.parent_doc_id,
         "status": refreshed.get("status"),
@@ -582,14 +587,22 @@ def _heal_unwritten_plan(
     except OSError:
         return None
     relative = storage_paths.to_storage_relative(path, doc.get("project_id"))
+    title_locale = wp.resolve_title_locale(doc.get("meta"), current_title=doc.get("title"))
+    updates = {
+        "file_path": relative,
+        "title": wp.derived_title(body, title_locale),
+        "meta": _json.dumps(
+            wp.metadata_with_title_locale(doc.get("meta"), title_locale),
+            ensure_ascii=False,
+        ),
+    }
     try:
-        document_service.update_document(
-            doc.get("doc_id") or "", {"file_path": relative}, actor_user_id=actor_user_id,
-        )
+        updated = db_docs.update(doc.get("doc_id") or "", updates)
+        if updated:
+            doc.update(updated)
     except Exception as exc_update:  # noqa: BLE001 — the file has already been revived
         import LogAssist.log as logger
-        logger.warning(f"[work-plan] file_path repoint skipped ({doc.get('doc_id')}): {exc_update}")
-    doc["file_path"] = relative
+        logger.warning(f"[work-plan] canonical repoint skipped ({doc.get('doc_id')}): {exc_update}")
     return body
 
 
@@ -675,6 +688,14 @@ def save_work_plan(
                 fresh, locale, body.base_revision_no, current_revision,
             )
 
+        title_locale = wp.resolve_title_locale(
+            fresh.get("meta"), current_title=fresh.get("title"),
+        )
+        derived_title = wp.derived_title(plan, title_locale)
+        updated_meta = _json.dumps(
+            wp.metadata_with_title_locale(fresh.get("meta"), title_locale),
+            ensure_ascii=False,
+        )
         path = _plan_path(fresh)
         backup_rel: Optional[str] = None
         if path.exists():
@@ -693,9 +714,9 @@ def save_work_plan(
         store = get_store()
         store._execute(
             "UPDATE documents SET revision_no = revision_no + 1, updated_at = ?, "
-            "file_path = ? WHERE doc_id = ? AND revision_no = ?",
+            "file_path = ?, title = ?, meta = ? WHERE doc_id = ? AND revision_no = ?",
             [now, storage_paths.to_storage_relative(path, doc.get("project_id")),
-             doc_id, current_revision],
+             derived_title, updated_meta, doc_id, current_revision],
         )
         refreshed = db_docs.get_by_id(doc_id)
         if refreshed is None or refreshed.get("revision_no") != current_revision + 1:
@@ -712,14 +733,17 @@ def save_work_plan(
             # file still holds the previous body, so the data stays consistent — only the revision number runs one ahead.
             try:
                 store._execute(
-                    "UPDATE documents SET revision_no = ?, updated_at = ? "
-                    "WHERE doc_id = ? AND revision_no = ?",
-                    [current_revision, fresh.get("updated_at"), doc_id, new_revision],
+                    "UPDATE documents SET revision_no = ?, updated_at = ?, file_path = ?, "
+                    "title = ?, meta = ? WHERE doc_id = ? AND revision_no = ?",
+                    [current_revision, fresh.get("updated_at"), fresh.get("file_path"),
+                     fresh.get("title"), fresh.get("meta"), doc_id, new_revision],
                 )
             except Exception as revert_exc:  # noqa: BLE001
                 import LogAssist.log as logger
                 logger.warning(f"[work-plan] revision revert failed ({doc_id}): {revert_exc}")
             raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
+
+    refreshed = db_docs.get_by_id(doc_id) or refreshed
 
     if backup_rel:
         try:
@@ -768,6 +792,8 @@ def save_work_plan(
         "updated_at": now,
         "updated_by": current_user["user_id"],
         "doc_review_status": refreshed.get("doc_review_status"),
+        "title": refreshed.get("title"),
+        "body": plan,
         "unassigned_step_count": wp.unassigned_step_count(plan),
         "assignment_summary": wp.assignment_summary(plan, providers),
         "totals": wp.totals(plan),

@@ -397,12 +397,6 @@ const previewLine2Html = computed(() => {
     each: bold(t('main.work_plan_create_dialog.preview_each')),
   })
 })
-const generatedTitle = computed(() =>
-  t('main.work_plan_create_dialog.generated_title', {
-    design: planSummary.value.design,
-    work: planSummary.value.work,
-  }).slice(0, 100),
-)
 
 const blockReason = computed<string>(() => {
   if (selectedTypes.value.size === 0) return t('main.work_plan_create_dialog.block_types')
@@ -494,7 +488,6 @@ async function onCreate() {
       '/api/v1/documents/work-plan',
       {
         parent_doc_id: props.parentDocId,
-        title: generatedTitle.value.slice(0, 100),
         counted_types: allCountableTypeCodes.value,
         provider_candidates: Array.from(selectedProviders.value),
         // The dialog only picks what to count and who is a candidate; sheet and

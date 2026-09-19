@@ -3,6 +3,7 @@ import { useI18n } from 'vue-i18n'
 import { useExplorerStore } from '../stores/explorer'
 import { useProjectStore } from '../stores/project'
 import { useDashboardStore } from '../stores/dashboard'
+import { useTabsStore } from '../stores/tabs'
 import { useToast } from '../components/common/useToast'
 
 function getSseUrl(project?: string | null): string {
@@ -50,6 +51,7 @@ export function useFlowGateSse(refreshAll: () => void) {
   const explorerStore = useExplorerStore()
   const projectStore = useProjectStore()
   const dashboardStore = useDashboardStore()
+  const tabsStore = useTabsStore()
   const { t } = useI18n()
   const { showToast } = useToast()
 
@@ -411,6 +413,9 @@ export function useFlowGateSse(refreshAll: () => void) {
         const payload = data.payload ?? {}
         const operation = payload.operation
         const docId = payload.doc_id ?? data.doc_id ?? null
+        if (docId && typeof payload.title === 'string' && payload.title) {
+          tabsStore.setTabTitle(docId, payload.title)
+        }
         // Notify on the SSE event itself so the toast appears whether the changed
         // document is the one on screen, a *different* document is open, or none
         // is. The previous design only toasted when the edited doc's own MdViewer

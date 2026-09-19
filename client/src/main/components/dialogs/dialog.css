@@ -383,6 +383,38 @@
   border-color: var(--border-d);
 }
 
+/*
+ * create — flowgate.default.0591 T0005: a create-and-continue action that sits between
+ * cancel and primary (WorkPlanProposalDialog's [+문서생성] next to [AI 호출]). Its base
+ * look matches `aux` so it reads as neutral chrome when it is the only enabled action;
+ * `tone=success` (below) is what actually distinguishes it from a `primary` action sharing
+ * the same footer.
+ */
+.fg-dialog-btn--create {
+  background: var(--surface);
+  color: var(--text-s);
+  border-color: var(--border);
+}
+
+.fg-dialog-btn--create:hover {
+  background: var(--bg);
+  color: var(--text);
+  border-color: var(--border-d);
+}
+
+/* A `create` action painted with the app's green action colour (app.css `.btn-success`)
+   so it never reads as the same colour as a `primary` sharing the footer. */
+.fg-dialog-btn--create.fg-dialog-btn--tone-success {
+  background: var(--success);
+  color: #fff;
+  border-color: var(--success);
+}
+
+.fg-dialog-btn--create.fg-dialog-btn--tone-success:hover {
+  background: #15803d;
+  border-color: #15803d;
+}
+
 /* dismiss — Type C transient dismiss. Lightweight on purpose; the form-cancel look is
    explicitly not forced on it (D0008 §3). */
 .fg-dialog-btn--dismiss {

@@ -322,6 +322,7 @@ import { useContentLayoutTier } from '../composables/useContentLayoutTier'
 import { useToast } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import { useAiProviderStore } from '../stores/aiProvider'
+import { useTabsStore } from '../stores/tabs'
 import { groupIdFromDocId, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import { copyToClipboard } from '../utils/clipboard'
 
@@ -381,6 +382,7 @@ const { t, locale } = useI18n()
 const { showToast } = useToast()
 const docTypeStore = useDocTypeStore()
 const aiProviderStore = useAiProviderStore()
+const tabsStore = useTabsStore()
 
 const rootRef = ref<HTMLElement | null>(null)
 const loading = ref(true)
@@ -640,6 +642,9 @@ async function fetchPlan(): Promise<boolean> {
     if (!docTypeStore.loaded) await Promise.all([docTypeStore.loadLabels(locale.value), providerLoad])
     else await providerLoad
     const res = await getRequest<any>(`/api/v1/documents/${encodeURIComponent(props.docId)}/work-plan`)
+    if (typeof res.data.title === 'string' && res.data.title) {
+      tabsStore.setTabTitle(props.docId, res.data.title)
+    }
     serverRegisteredProvidersKnown.value = Array.isArray(res.data.registered_providers)
     serverRegisteredProviders.value = serverRegisteredProvidersKnown.value
       ? res.data.registered_providers
@@ -1086,10 +1091,18 @@ async function persistPlanBody(body: WPBody, capabilityWarningAcks: string[] = [
     }
     if (capabilityWarningAcks.length) payload.capability_warning_acks = capabilityWarningAcks
     const res = await putRequest<any>(`/api/v1/documents/${encodeURIComponent(props.docId)}/work-plan`, payload)
+    // Apply the canonical response as one state for both manual save and JSON upload.
+    plan.value = (res.data.body ?? body) as WPBody
     revisionNo.value = res.data.revision_no
     totals.value = res.data.totals
     assignmentSummary.value = res.data.assignment_summary ?? []
     unassignedStepCount.value = res.data.unassigned_step_count ?? 0
+    if (typeof res.data.title === 'string' && res.data.title) {
+      tabsStore.setTabTitle(props.docId, res.data.title)
+      window.dispatchEvent(new CustomEvent('fg:open_docs_refresh', {
+        detail: { project: props.projectId, doc_id: props.docId },
+      }))
+    }
     restoreBuffer.clear()
     dirty.value = false
     return { status: 'saved' }
