@@ -12,13 +12,38 @@
            [Load AI Suggestion] sits in the table toolbar and [Fill Into Continuous Task] in the
            document action bar. -->
       <div class="card-actions">
+        <button
+          class="btn btn-secondary btn-sm"
+          type="button"
+          :disabled="loading || !!unreadable || dirty || downloading || hasPendingCapabilityWarning"
+          :title="dirty ? t('main.work_plan.upload_needs_save') : undefined"
+          @click="downloadWorkPlan"
+        >
+          <AppIcon name="download-simple" /> {{ t('main.work_plan.download') }}
+        </button>
+        <button
+          class="btn btn-secondary btn-sm"
+          type="button"
+          :disabled="loading || !!unreadable || saving || uploading || isLocked || dirty || hasPendingCapabilityWarning"
+          :title="dirty ? t('main.work_plan.upload_needs_save') : (isLocked ? lockedHint : undefined)"
+          @click="triggerUpload"
+        >
+          <AppIcon name="upload-simple" /> {{ uploading ? t('main.work_plan.uploading') : t('main.work_plan.upload') }}
+        </button>
+        <input
+          ref="workPlanFileInput"
+          type="file"
+          accept=".json,application/json"
+          hidden
+          @change="onWorkPlanFileSelected"
+        />
         <button class="btn btn-secondary btn-sm" type="button" :disabled="loading || !!unreadable" @click="rawViewOpen = true">
           <AppIcon name="code" /> {{ t('main.work_plan.raw_view') }}
         </button>
         <button
           class="btn btn-primary btn-sm"
           type="button"
-          :disabled="loading || !!unreadable || saving || isLocked"
+          :disabled="loading || !!unreadable || saving || isLocked || hasPendingCapabilityWarning"
           @click="save"
         >
           <AppIcon name="floppy-disk" /> {{ saving ? t('main.work_plan.saving') : t('main.work_plan.save') }}
@@ -82,6 +107,39 @@
           <AppIcon name="warning-circle" />
           <span>{{ t('main.work_plan.save_conflict_message', { who: conflict.updatedBy ?? '?', when: conflict.updatedAt ?? '' }) }}</span>
           <button type="button" class="btn btn-outline btn-sm" @click="reload">{{ t('main.work_plan.reload') }}</button>
+        </div>
+        <!-- NR0003 rev2 — the upload PUT already committed a new revision server-side; this
+             screen just failed to confirm it. Editing/saving stays blocked (isLocked) until an
+             explicit reload succeeds, so a stale-looking save can never overwrite it. -->
+        <div v-if="staleAfterUpload" class="wp-conflict-banner">
+          <AppIcon name="warning-circle" />
+          <span>{{ t('main.work_plan.upload_sync_failed') }}</span>
+          <button type="button" class="btn btn-outline btn-sm" @click="reload">{{ t('main.work_plan.reload') }}</button>
+        </div>
+        <!-- flowgate.default.0576 TR0005 rev4 — PUT /work-plan refuses to apply a body at all
+             (422 provider_capability_confirmation_required) when a T/TR step's provider cannot
+             modify source or run tests, or is unknown to this project. The body stays unapplied
+             until the person reviews the findings and explicitly confirms; [취소] drops it. -->
+        <div v-if="capabilityWarnings.length" class="wp-conflict-banner wp-capability-banner" data-test="capability-warning-banner">
+          <div class="wp-capability-banner-head">
+            <AppIcon name="warning-circle" />
+            <span>{{ t('main.work_plan.capability_warning_title') }}</span>
+          </div>
+          <ul class="wp-capability-list">
+            <li v-for="finding in capabilityWarnings" :key="finding.step_key">
+              <strong>{{ finding.step_key }} · {{ finding.step_type }}</strong>
+              — {{ finding.provider_name || finding.provider_id || '?' }}:
+              {{ (finding.missing_capabilities || []).join(', ') }}
+            </li>
+          </ul>
+          <div class="wp-capability-banner-actions">
+            <button type="button" class="btn btn-warning btn-sm" :disabled="confirmingCapability" @click="confirmCapabilityWarning">
+              {{ t('main.work_plan.capability_warning_confirm') }}
+            </button>
+            <button type="button" class="btn btn-outline btn-sm" :disabled="confirmingCapability" @click="cancelCapabilityWarning">
+              {{ t('main.work_plan.capability_warning_cancel') }}
+            </button>
+          </div>
         </div>
         <div v-if="topLevelErrors.length" class="wp-error-banner">
           <AppIcon name="warning-circle" />
@@ -272,6 +330,13 @@ interface WPRegisteredProvider { id: string; name: string | null; group_label: s
 interface WPProviderStatus { provider_id: string; registered: boolean; current_name: string | null; snapshot_name: string | null; name_changed: boolean }
 interface WPAssignmentSummary { provider_id: string; display_name: string; step_count: number }
 interface WPQuantity { unit: 'sheet' | 'set'; count: number }
+interface WPCapabilityFinding {
+  step_key: string
+  step_type: string
+  provider_id: string | null
+  provider_name: string | null
+  missing_capabilities: string[]
+}
 interface WPStep {
   key: string
   type: string
@@ -323,6 +388,9 @@ const aiSuggesting = ref(false)
 const aiScopeOpen = ref(false)
 const aiRunId = ref<string | null>(null)
 const rawViewOpen = ref(false)
+const downloading = ref(false)
+const uploading = ref(false)
+const workPlanFileInput = ref<HTMLInputElement | null>(null)
 
 const plan = ref<WPBody | null>(null)
 const serverRegisteredProviders = ref<WPRegisteredProvider[]>([])
@@ -342,6 +410,20 @@ const editable = ref(true)
 const editLockedReason = ref<string | null>(null)
 const totals = ref({ design_sheets: 0, work_sets: 0, steps: 0 })
 const conflict = ref<{ updatedBy: string | null; updatedAt: string | null } | null>(null)
+// Set when an upload's PUT committed a new revision but the immediate canonical refetch failed
+// (network blip, 5xx). The screen still shows the pre-upload plan under the now-stale
+// revisionNo, so editing/saving must stay blocked (via isLocked) until reload() confirms it —
+// otherwise a save from this screen would carry the new revision number over stale content and
+// silently overwrite the just-uploaded plan without a conflict.
+const staleAfterUpload = ref(false)
+// PUT /work-plan can refuse to apply a body at all (422 provider_capability_confirmation_required)
+// when a T/TR step's provider cannot modify source or run tests, or is unknown to the project.
+// The body is held here, unapplied, until the user explicitly confirms — a manual save and a
+// JSON upload both go through persistPlanBody, so both land here the same way.
+const capabilityWarnings = ref<WPCapabilityFinding[]>([])
+const pendingCapabilityBody = ref<WPBody | null>(null)
+const pendingCapabilitySource = ref<'save' | 'upload' | null>(null)
+const confirmingCapability = ref(false)
 const topLevelErrors = ref<string[]>([])
 const stepErrors = ref<Record<string, string[]>>({})
 const unreadable = ref<{ message: string; detail: string; raw: string | null; revisions: { revision_no: number; created_by: string; created_at: string }[] } | null>(null)
@@ -380,14 +462,17 @@ watch(
 )
 
 const aiRunLocked = computed(() => props.readOnly === true || groupBusy.value)
-const isLocked = computed(() => !editable.value || aiRunLocked.value)
+const isLocked = computed(() => !editable.value || aiRunLocked.value || staleAfterUpload.value)
+const hasPendingCapabilityWarning = computed(() => capabilityWarnings.value.length > 0)
 
 const lockedHint = computed(() =>
   aiRunLocked.value
     ? t('main.review_action_bar.ai_running_hint')
-    : editLockedReason.value === 'final_approved'
-      ? t('main.work_plan.locked_after_final_approval')
-      : t('main.work_plan.locked_by_status'),
+    : staleAfterUpload.value
+      ? t('main.work_plan.upload_sync_failed')
+      : editLockedReason.value === 'final_approved'
+        ? t('main.work_plan.locked_after_final_approval')
+        : t('main.work_plan.locked_by_status'),
 )
 
 // The scope dialog is a write surface too — a run that starts while it is open must not
@@ -524,10 +609,13 @@ function reexpand(
 
 // ── Fetch ─────────────────────────────────────────────────────────────────
 
-async function fetchPlan() {
+async function fetchPlan(): Promise<boolean> {
   loading.value = true
   unreadable.value = null
   conflict.value = null
+  capabilityWarnings.value = []
+  pendingCapabilityBody.value = null
+  pendingCapabilitySource.value = null
   topLevelErrors.value = []
   stepErrors.value = {}
   restoreBuffer.clear()
@@ -570,6 +658,8 @@ async function fetchPlan() {
     editLockedReason.value = res.data.edit_locked_reason ?? null
     dirty.value = false
     totals.value = res.data.totals ?? { design_sheets: 0, work_sets: 0, steps: plan.value.steps.length }
+    staleAfterUpload.value = false
+    return true
   } catch (e: any) {
     const status = e?.response?.status
     const data = e?.response?.data
@@ -583,6 +673,7 @@ async function fetchPlan() {
     } else {
       showToast(data?.message || data?.detail || String(e), 'danger')
     }
+    return false
   } finally {
     loading.value = false
   }
@@ -927,9 +1018,9 @@ async function copyRaw() {
   showToast(ok ? t('main.work_plan.copy_done') : t('main.work_plan.copy_failed'), ok ? 'success' : 'danger')
 }
 
-let saveInFlight: Promise<'saved' | 'failed'> | null = null
+let saveInFlight: Promise<'saved' | 'failed' | 'capability_warning'> | null = null
 
-async function ensureSaved(): Promise<'clean' | 'saved' | 'failed'> {
+async function ensureSaved(): Promise<'clean' | 'saved' | 'failed' | 'capability_warning'> {
   if (!dirty.value) return 'clean'
   if (saveInFlight) return saveInFlight
   if (!plan.value || isLocked.value) return 'failed'
@@ -943,7 +1034,7 @@ async function ensureSaved(): Promise<'clean' | 'saved' | 'failed'> {
 }
 
 async function save() {
-  if (!plan.value || saving.value || isLocked.value) return
+  if (!plan.value || saving.value || isLocked.value || hasPendingCapabilityWarning.value) return
   if (dirty.value) {
     await ensureSaved()
     return
@@ -951,29 +1042,44 @@ async function save() {
   await saveDirtyPlan()
 }
 
-async function saveDirtyPlan(): Promise<'saved' | 'failed'> {
-  saving.value = true
+// NR0003 §5 — the PUT / validation-error / conflict handling that a manual save and a JSON
+// upload share. Letting them diverge would mean a save and an upload disagree on what a 422
+// or a 409 means for the screen.
+//
+// flowgate.default.0576 TR0005 rev4 — the same PUT can also refuse to apply the body at all
+// (422 provider_capability_confirmation_required) when a T/TR step's provider cannot modify
+// source or run tests, or is unassigned/unknown to this project. That gate is server-authoritative
+// (work_plan_service.capability_warning_findings) and applies to whatever body is sent, so a save
+// and an upload must honor it identically instead of only the manual-edit path checking it.
+type PersistResult =
+  | { status: 'saved' }
+  | { status: 'failed' }
+  | { status: 'capability_warning'; findings: WPCapabilityFinding[] }
+
+async function persistPlanBody(body: WPBody, capabilityWarningAcks: string[] = []): Promise<PersistResult> {
   conflict.value = null
   topLevelErrors.value = []
   stepErrors.value = {}
   try {
-    const res = await putRequest<any>(`/api/v1/documents/${encodeURIComponent(props.docId)}/work-plan`, {
+    const payload: { base_revision_no: number; body: WPBody; capability_warning_acks?: string[] } = {
       base_revision_no: revisionNo.value,
-      body: canonicalBody(),
-    })
+      body,
+    }
+    if (capabilityWarningAcks.length) payload.capability_warning_acks = capabilityWarningAcks
+    const res = await putRequest<any>(`/api/v1/documents/${encodeURIComponent(props.docId)}/work-plan`, payload)
     revisionNo.value = res.data.revision_no
     totals.value = res.data.totals
     assignmentSummary.value = res.data.assignment_summary ?? []
     unassignedStepCount.value = res.data.unassigned_step_count ?? 0
     restoreBuffer.clear()
     dirty.value = false
-    showToast(t('main.work_plan.save_success'), 'success')
-    const unassigned = res.data.unassigned_step_count ?? 0
-    if (unassigned > 0) showToast(t('main.work_plan.unassigned_warning', { n: unassigned }), 'warning', 5000)
-    return 'saved'
+    return { status: 'saved' }
   } catch (e: any) {
     const status = e?.response?.status
     const data = e?.response?.data
+    if (status === 422 && data?.code === 'provider_capability_confirmation_required') {
+      return { status: 'capability_warning', findings: Array.isArray(data.findings) ? data.findings : [] }
+    }
     if (status === 422 && Array.isArray(data?.errors)) {
       const byKey: Record<string, string[]> = {}
       const top: string[] = []
@@ -993,10 +1099,182 @@ async function saveDirtyPlan(): Promise<'saved' | 'failed'> {
     } else {
       showToast(data?.message || data?.detail || String(e), 'danger')
     }
-    return 'failed'
+    return { status: 'failed' }
+  }
+}
+
+// Fires the save-success toasts. Shared by a first save attempt and by the retry that follows
+// an explicit capability-warning confirmation, so the two never disagree on what "saved" means.
+function announceSaveSuccess() {
+  showToast(t('main.work_plan.save_success'), 'success')
+  if (unassignedStepCount.value > 0) {
+    showToast(t('main.work_plan.unassigned_warning', { n: unassignedStepCount.value }), 'warning', 5000)
+  }
+}
+
+async function saveDirtyPlan(): Promise<'saved' | 'failed' | 'capability_warning'> {
+  saving.value = true
+  try {
+    const body = canonicalBody()
+    const result = await persistPlanBody(body)
+    if (result.status === 'capability_warning') {
+      capabilityWarnings.value = result.findings
+      pendingCapabilityBody.value = body
+      pendingCapabilitySource.value = 'save'
+    } else if (result.status === 'saved') {
+      announceSaveSuccess()
+    }
+    return result.status
   } finally {
     saving.value = false
   }
+}
+
+// ── Download / upload (flowgate.default.0576 T0004 / NR0003) ────────────────
+
+function fallbackWorkPlanFilename(docId: string): string {
+  return docId ? `${docId}.work-plan.json` : 'work-plan.json'
+}
+
+// NR0003 §3.1 — the download source is a fresh GET of the canonical body, never `rawJson`.
+// `canonicalBody()` only lists the fixed fields the editor knows, so a top-level `x_*`
+// extension the server preserves would silently vanish from the downloaded file.
+async function downloadWorkPlan() {
+  if (loading.value || !!unreadable.value || dirty.value || downloading.value) return
+  downloading.value = true
+  try {
+    const res = await getRequest<any>(`/api/v1/documents/${encodeURIComponent(props.docId)}/work-plan`)
+    const json = `${JSON.stringify(res.data.body, null, 2)}\n`
+    const blob = new Blob([json], { type: 'application/json;charset=utf-8' })
+    const href = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = href
+    anchor.download = fallbackWorkPlanFilename(props.docId)
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(href)
+  } catch (e: any) {
+    showToast(e?.response?.data?.message || e?.response?.data?.detail || t('main.work_plan.download_failed'), 'danger')
+  } finally {
+    downloading.value = false
+  }
+}
+
+function triggerUpload() {
+  if (loading.value || !!unreadable.value || saving.value || uploading.value || isLocked.value || dirty.value || hasPendingCapabilityWarning.value) return
+  workPlanFileInput.value?.click()
+}
+
+// Blob.text() is unavailable in the jsdom test environment; FileReader has been supported
+// everywhere since long before that, so this reads the same way in real browsers and in tests.
+function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(reader.error ?? new Error('file read error'))
+    reader.readAsText(file)
+  })
+}
+
+// NR0003 §4.2 — a parsed upload is never written into `plan.value` before the PUT succeeds.
+// Reflecting it on screen first would show an "applied" plan the server actually rejected.
+// The PUT already succeeded server-side by this point. A failed refetch here is not an
+// upload failure — it only means this screen could not confirm it, so fetchPlan's own error
+// toast / unreadable banner stands in for the failure signal instead of a second, contradictory
+// "success" toast. But persistPlanBody already moved revisionNo to the new revision and cleared
+// dirty, while plan.value is still the pre-upload body — saving from that mismatched state would
+// carry the new revision number over stale content and overwrite the just-uploaded plan without
+// a conflict. staleAfterUpload keeps the screen locked (isLocked) until reload() actually lands
+// the canonical body. Shared by a first upload and by the retry after an explicit
+// capability-warning confirmation.
+async function finishUploadedSave() {
+  const refetched = await fetchPlan()
+  if (refetched) {
+    showToast(t('main.work_plan.upload_success'), 'success')
+  } else {
+    staleAfterUpload.value = true
+  }
+}
+
+async function onWorkPlanFileSelected(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0] ?? null
+  input.value = ''
+  if (!file) return
+  if (loading.value || !!unreadable.value || saving.value || uploading.value || isLocked.value || dirty.value || hasPendingCapabilityWarning.value) return
+
+  uploading.value = true
+  try {
+    let text: string
+    try {
+      text = await readFileAsText(file)
+    } catch {
+      showToast(t('main.work_plan.upload_parse_error'), 'danger')
+      return
+    }
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1)
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      showToast(t('main.work_plan.upload_parse_error'), 'danger')
+      return
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      showToast(t('main.work_plan.upload_parse_error'), 'danger')
+      return
+    }
+    const body = parsed as WPBody
+    const result = await persistPlanBody(body)
+    if (result.status === 'capability_warning') {
+      capabilityWarnings.value = result.findings
+      pendingCapabilityBody.value = body
+      pendingCapabilitySource.value = 'upload'
+    } else if (result.status === 'saved') {
+      await finishUploadedSave()
+    }
+  } finally {
+    uploading.value = false
+  }
+}
+
+// flowgate.default.0576 TR0005 rev4 — the explicit confirmation the capability gate requires
+// (P0009 / provider_capability_service): re-send the same held body with every finding's
+// step_key acknowledged. Never auto-derived from a click elsewhere — only this button counts.
+async function confirmCapabilityWarning() {
+  const body = pendingCapabilityBody.value
+  const source = pendingCapabilitySource.value
+  if (!body || !source) return
+  const acks = capabilityWarnings.value.map((finding) => finding.step_key)
+  const busy = source === 'save' ? saving : uploading
+  confirmingCapability.value = true
+  busy.value = true
+  try {
+    const result = await persistPlanBody(body, acks)
+    if (result.status === 'capability_warning') {
+      // The findings changed underneath (providers/steps moved) — show the current set instead
+      // of silently retrying with acks that no longer match.
+      capabilityWarnings.value = result.findings
+      pendingCapabilityBody.value = body
+      return
+    }
+    capabilityWarnings.value = []
+    pendingCapabilityBody.value = null
+    pendingCapabilitySource.value = null
+    if (result.status !== 'saved') return
+    if (source === 'save') announceSaveSuccess()
+    else await finishUploadedSave()
+  } finally {
+    confirmingCapability.value = false
+    busy.value = false
+  }
+}
+
+function cancelCapabilityWarning() {
+  capabilityWarnings.value = []
+  pendingCapabilityBody.value = null
+  pendingCapabilitySource.value = null
 }
 
 watch(() => props.docId, () => { void fetchPlan() })
@@ -1009,6 +1287,10 @@ watch(() => props.docId, () => { void fetchPlan() })
 }
 .wp-status-approved { background: var(--success-l, #dcfce7); color: var(--success, #16a34a); }
 .wp-status-rejected { background: var(--danger-l, #fee2e2); color: var(--danger, #dc2626); }
+/* rej_01M2VY4Z8FG9M2S0 — card-hd's .card-actions has no gap rule in this component (unlike
+   the duplicated copies in AttachmentCard/GenericDocumentBody/ConversationDocumentView), so
+   the header buttons sat only 4px apart (plain inline whitespace) instead of a real gap. */
+.card-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .wp-body { display: flex; flex-direction: column; gap: 14px; padding: 16px; }
 .wp-loading { padding: 24px; text-align: center; color: var(--text-m); }
 .wp-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
@@ -1021,6 +1303,11 @@ watch(() => props.docId, () => { void fetchPlan() })
   display: flex; align-items: center; gap: 8px; font-size: .8rem; padding: 8px 12px; border-radius: var(--r, 6px);
 }
 .wp-conflict-banner { background: var(--warning-l, #fef3c7); color: var(--warning, #b45309); }
+.wp-capability-banner { flex-direction: column; align-items: stretch; gap: 6px; }
+.wp-capability-banner-head { display: flex; align-items: center; gap: 8px; }
+.wp-capability-list { margin: 0; padding-left: 20px; list-style: disc; }
+.wp-capability-list li { margin: 2px 0; }
+.wp-capability-banner-actions { display: flex; gap: 8px; }
 /* 0403 NR0004 F5 — unsaved-edit strip. Same spot, same shape as the save-conflict strip. */
 .wp-dirty-banner {
   display: flex; align-items: center; gap: 8px; font-size: .8rem; padding: 8px 12px;
