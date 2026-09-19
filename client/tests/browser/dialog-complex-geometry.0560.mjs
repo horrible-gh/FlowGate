@@ -85,8 +85,8 @@ const EXPECTED = {
   'ai-invoke': { width: 520, actions: ['cancel', 'review-start'] },
   // 620px `.modal-aiv--loop` → `lg` (720), the nearest track up.
   'ai-invoke-loop': { width: 720, actions: ['cancel', 'review-start'] },
-  // 860px `.modal-cwd` → `xl`; `lg` would squeeze its 5:5 grid.
-  'continuous-work': { width: 1180, actions: ['cancel', 'next'] },
+  // 860px `.modal-cwd`, restored through its dedicated surface class; `lg` would squeeze the 5:5 grid.
+  'continuous-work': { width: 860, surfaceClass: 'continuous-work-dialog', actions: ['cancel', 'next'] },
   // 940px `.modal-wpc` → `xl`, same reason.
   'work-plan-create': { width: 1180, actions: ['cancel', 'create'] },
   // 1040px `.modal-wpp` → `xl`.
@@ -281,6 +281,9 @@ try {
     if (m.surfaceWidth !== want.width) {
       failures.push(`${name}: the surface is ${m.surfaceWidth}px wide, expected ${want.width}px`)
     }
+    if (want.surfaceClass && !m.surfaceClasses.split(/\s+/).includes(want.surfaceClass)) {
+      failures.push(`${name}: the surface is missing dedicated class ${want.surfaceClass}`)
+    }
 
     /* ── FOOTER ORDER, by coordinate ── */
     const painted = m.buttons.map((b) => b.id)
@@ -297,6 +300,16 @@ try {
       failures.push(`${name}: more than one primary button in the footer`)
     }
   }
+
+  /* ── ContinuousWorkDialog stays inside the common 92vw policy on a narrow viewport. ── */
+  const continuousDesktop = report['continuous-work']
+  await call('Emulation.setDeviceMetricsOverride', { width: 800, height: 900, deviceScaleFactor: 1, mobile: false })
+  const continuousNarrow = await measure('continuous-work', productionScopedHtml('continuous-work', cases['continuous-work']))
+  report['continuous-work'] = continuousDesktop
+  if (continuousNarrow.surfaceWidth > Math.round(800 * 0.92)) {
+    failures.push(`continuous-work: narrow surface is ${continuousNarrow.surfaceWidth}px wide, exceeding 92vw`)
+  }
+  report['continuous-work-narrow'] = continuousNarrow
 
   /* ── the review dialog's footer band still shows exactly one rule above it ── */
   const review = report['git-merge-review']
