@@ -726,6 +726,11 @@ def test_human_create_read_save_roundtrip(seed, storage_root):
     assert rejected.json()["code"] == "wp_validation_failed"
     assert rejected.json()["errors"][0]["code"] == "provider_not_allowed"
     assert rejected.json()["errors"][0]["key"] == "TSR#1"
+    # flowgate.default.0576 T0004 (NR0003 §9): the client's JSON upload leans on this same
+    # PUT to mean "invalid input never touches the plan" — pin that the rejected save left
+    # both the file and the revision exactly where the last successful save put them.
+    assert json.loads((storage_root / stored).read_text(encoding="utf-8")) == on_disk
+    assert db_docs.get_by_id(doc_id)["revision_no"] == 1
 
 
 def test_capability_warning_findings_distinguishes_unassigned_from_incapable():
