@@ -1165,10 +1165,13 @@ def test_submit_help_explains_the_work_plan_body_contract(seed, locale, needle):
 
 
 def test_human_create_refuses_an_empty_selection(seed):
-    # 0405 T0011 rev2: 후보를 비워 보낸 요청이 거절되는 것은 "고를 수 있는데 비웠을 때"다.
-    # 등록된 공급자가 하나도 없는 프로젝트에서는 고를 방법 자체가 없어 빈 후보가 정상이므로
-    # (사용자 반려: "AI공급자 선택할게 없으면 ... 1만 선택하고 생성할수 있게"), 이 시험이
-    # 말하려는 상황 — 고를 수 있는 프로젝트 — 을 명시한다.
+    # flowgate.default.0591 T0005: provider_candidates=[] alone no longer refuses create —
+    # 0411 T0004's registered-project rejection was relaxed once the AI scope dialog's
+    # [전체]/suggest_work_plan.selectable_ids were confirmed to already resolve from the
+    # project's LIVE registered providers, never from this saved snapshot (see
+    # test_work_plan_proposal_0405.test_create_now_accepts_empty_candidates_when_providers_exist
+    # and client WorkPlanEditor.spec.ts). Only an empty counted_types still refuses — [+문서생성]
+    # always needs at least the type structure a canonical (even all-zero) WP requires.
     from unittest.mock import patch as mock_patch
 
     client = _client()
@@ -1184,7 +1187,7 @@ def test_human_create_refuses_an_empty_selection(seed):
     assert resp.status_code == 422
     payload = resp.json()
     assert payload["code"] == "wp_validation_failed"
-    assert {e["loc"] for e in payload["errors"]} == {"counted_types", "provider_candidates"}
+    assert {e["loc"] for e in payload["errors"]} == {"counted_types"}
 
 
 def _inbox_client():
@@ -1774,3 +1777,49 @@ def test_suggest_scope_validates_and_echoes_the_exact_boundary(seed, storage_roo
     assert payload["suggested"]["steps"] == []
     assert set(payload["suggested"]["quantities"]).issubset({"D"})
     assert payload["basis"] == "project_type_provider_map"
+
+
+def test_suggest_selects_every_registered_provider_from_an_empty_candidate_snapshot(seed, storage_root):
+    """flowgate.default.0591 T0005 §4 — locks the pipeline the T relies on before relaxing
+    create_work_plan()'s provider_candidates pre-check: an empty provider_candidates snapshot
+    must not narrow suggest_work_plan's selectable_ids. 0411 T0004 already unions the live
+    registered providers in (candidate_ids | registered_provider_ids); this pins that union
+    for the specific case (candidate_ids is empty) T0005's create-time relaxation produces.
+    """
+    from unittest.mock import patch as mock_patch
+
+    client = _client()
+    providers = [
+        {"id": "aip_opus", "name": "Claude Opus", "kind": "claude", "exec_type": "cli", "enabled": True},
+        {"id": "aip_sonnet", "name": "Claude Sonnet", "kind": "claude", "exec_type": "cli", "enabled": True},
+    ]
+    with mock_patch(
+        "modules.flow_gate.documents.routers.work_plan._providers", return_value=providers,
+    ), mock_patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0591-WP",
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "title": "0591 빈 후보 스냅샷",
+            "counted_types": ["D"],
+            "provider_candidates": [],
+            "quantities": {"D": 1},
+            "defaults": {"provider_id": None, "note": ""},
+            "type_providers": {},
+        })
+        assert created.status_code == 201, created.text
+        assert created.json()["body"]["provider_candidates"] == []
+        doc_id = created.json()["doc_id"]
+
+        resp = client.post(
+            f"/api/v1/documents/{doc_id}/work-plan/suggest",
+            json={"base_revision_no": 0, "scope": {
+                "quantity_type_codes": [],
+                "step_keys": [],
+                "provider_ids": ["aip_opus", "aip_sonnet"],
+            }},
+        )
+    # 두 provider 모두 selectable_ids 안에 있어야 200 — candidate_ids가 비어도
+    # registered_provider_ids 쪽에서 이미 둘 다 들어온다.
+    assert resp.status_code == 200, resp.text

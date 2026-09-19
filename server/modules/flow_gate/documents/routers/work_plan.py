@@ -352,15 +352,19 @@ def create_work_plan(
     # 0405 T0011 rev2 (rejected: "if there is no AI provider to pick, hide [2 candidate providers]
     # and let the user pick only 1 and create, no?"): in a project with no registered provider
     # there is no way to choose at all, so an empty candidate set is accepted — only there.
-    # Sending empty when a choice was possible is still rejected. Allowing an empty candidate
-    # set does not contradict the canonical rule (work_plan_service: "with no candidates, leave steps[].provider_id empty").
-    # 0411 T0004: "candidates" narrowed to mean "the range selectable when delegating to AI",
-    # but this check is left as is. A human picking per step is now free across the whole
-    # registered list; what is asked here is "was no AI-delegation range chosen at all?" —
-    # sending empty when a choice existed yields a plan whose AI dialog's [all] selects nobody.
+    # 0411 T0004 then widened this rejection to registered projects too, worried that an
+    # empty candidate set would leave the AI scope dialog's [all] selecting nobody.
+    # flowgate.default.0591 T0005 found that concern already moot: WorkPlanAiScopeDialog's
+    # [all] and this route's own suggest_work_plan() below both resolve their selectable set
+    # from the project's LIVE registered providers (client: WorkPlanEditor.liveProviderRows /
+    # scopeProviderOptions; server: selectable_ids = candidate_ids | registered_provider_ids),
+    # never from this saved snapshot alone — an empty provider_candidates here never narrows
+    # either one. R0001 additionally requires [+문서생성] to build a canonical all-zero WP with
+    # nothing picked in either dialog section, so this create-time rejection is removed for
+    # the human path; the client's own AI-delegation gate ([멘트복사]/[AI호출] still require at
+    # least one candidate provider whenever the project has any registered) is what protects
+    # "chose nothing to delegate to" now.
     registered_providers = _providers(parent.get("project_id"))
-    if not body.provider_candidates and registered_providers:
-        errors.append(wp.empty_selection_error("provider_candidates"))
     # 0405 NR0006 §3.2: this pre-check used to demand >= 1 for EVERY entry, which
     # contradicted the canonical rule (work_plan_service.COUNT_MIN = 0, and a count of 0
     # simply produces no step). The screen always sends the full countable key set with 0

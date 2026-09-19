@@ -243,30 +243,33 @@ describe('③ 공급자가 있는 창의 주버튼은 [AI 호출]이다', () => 
     wrapper.unmount()
   })
 
-  it('파란 주버튼은 [AI 호출] 하나뿐이고 [문서생성]은 보조 버튼이다', async () => {
+  it('파란 주버튼은 [AI 호출] 하나뿐이고 [+문서생성]은 다른 색의 별도 role이다', async () => {
     const wrapper = await mountDialog()
     const create = wrapper.get('[data-dialog-action-id="wpp-create-empty"]')
     const copy = wrapper.get('[data-dialog-action-id="wpp-copy-mention"]')
     const ai = wrapper.get('[data-dialog-action-id="wpp-invoke-ai"]')
 
     expect(ai.text()).toContain('AI 호출')
-    // 0560 T0022 §2.4: the blue primary is `role="primary"` painted by dialog.css, and the two
-    // helpers are `aux` — `btn-primary`/`btn-secondary`/`wpp-main-btn` left with the markup.
+    // 0560 T0022 §2.4 / flowgate.default.0591 T0005 §5: 0405 T0011 rev1의 "AI호출만 강조"
+    // 결정은 그대로다 — 파란 primary는 [AI 호출] 하나뿐이다.
     expect(ai.classes()).toContain('fg-dialog-btn--primary')
     expect(create.text()).toContain('문서생성')
-    expect(create.classes()).toContain('fg-dialog-btn--aux')
+    // T0005 §7/§8: [+문서생성]은 이제 cancel~primary 사이의 새 role과 success tone을 쓴다 —
+    // aux(멘트복사)와도, primary(AI호출)와도 다른 색이다.
+    expect(create.classes()).toContain('fg-dialog-btn--create')
+    expect(create.classes()).toContain('fg-dialog-btn--tone-success')
+    expect(create.classes()).not.toContain('fg-dialog-btn--aux')
     expect(create.classes()).not.toContain('fg-dialog-btn--primary')
     expect(copy.classes()).toContain('fg-dialog-btn--aux')
 
-    // 창 전체에 파란 주버튼은 하나다.
+    // 창 전체에 파란 primary는 하나다.
     expect(wrapper.findAll('[data-dialog-action-role="primary"]').length).toBe(1)
-    // 네 버튼 그대로이고, 순서만 DS0007 규칙으로 정렬된다:
-    // 보조(문서생성·멘트복사) → 취소 → 주버튼(AI 호출). 이전엔 취소가 맨 앞이었다.
+    // T0005 §6 목표 배치: [멘트복사] [취소] [+문서생성] [AI호출].
     const ids = wrapper.findAll('.fg-dialog-btn').map((n) => n.attributes('data-dialog-action-id'))
-    expect(ids).toEqual(['wpp-create-empty', 'wpp-copy-mention', 'wpp-cancel', 'wpp-invoke-ai'])
+    expect(ids).toEqual(['wpp-copy-mention', 'wpp-cancel', 'wpp-create-empty', 'wpp-invoke-ai'])
     const labels = wrapper.findAll('.fg-dialog-btn').map((n) => n.text().trim())
-    expect(labels[0]).toContain('문서생성')
-    expect(labels[1]).toContain('멘트복사')
+    expect(labels[0]).toContain('멘트복사')
+    expect(labels[2]).toContain('문서생성')
     expect(labels[3]).toContain('AI 호출')
     wrapper.unmount()
   })
@@ -327,12 +330,14 @@ describe('④ 고를 공급자가 없으면 그 칸도 [AI 호출]도 나오지 
     wrapper.unmount()
   })
 
-  it('타입 하나만 골라도 만들 수 있고 후보는 빈 배열로 나간다', async () => {
+  it('타입을 안 골라도 만들 수 있고, 하나 골라도 후보는 빈 배열로 나간다', async () => {
     postRequest.mockResolvedValue({
       data: { ok: true, doc_id: 'flowgate.default.0405.0009-WP', title: '작업계획', body: {} },
     })
     const wrapper = await mountDialog([])
-    expect(wrapper.get('[data-dialog-action-id="wpp-create-empty"]').attributes('disabled')).toBeDefined()
+    // flowgate.default.0591 T0005 §2/§3: [+문서생성]은 타입 선택 여부와 조건을 공유하지
+    // 않는다 — 공급자가 없는 이 상태에서도 처음부터 활성이다.
+    expect(wrapper.get('[data-dialog-action-id="wpp-create-empty"]').attributes('disabled')).toBeUndefined()
 
     await wrapper.findAll('[data-test="wpp-type"]')[0].trigger('click')
     expect(wrapper.get('[data-dialog-action-id="wpp-create-empty"]').attributes('disabled')).toBeUndefined()

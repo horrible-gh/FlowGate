@@ -433,7 +433,23 @@ const noteOverLimit = computed(() => note.value.length > noteMaxChars.value)
 const showNoteAutoFilled = computed(() => noteAutoFilled.value && !noteTouched.value)
 
 const hasContext = computed(() => !!props.projectId && !!props.groupId && !!props.parentDocId)
-const canRun = computed(() =>
+
+/** flowgate.default.0591 T0005 §2/§3 — [+문서생성] no longer shares its condition with
+ *  [멘트복사]/[AI호출]. It only needs a usable parent/context, no active AI run on the
+ *  group, a note within the character limit, and no create request already in flight — it
+ *  does NOT require a quantity type or a candidate provider (the dialog's initial
+ *  all-nothing-selected state must already build a canonical all-zero WP). */
+const canCreateDocument = computed(() =>
+  hasContext.value
+  && !props.aiActive
+  && !noteOverLimit.value
+  && !creating.value,
+)
+
+/** The AI-delegation contract [멘트복사]/[AI호출] already had before 0591 T0005 (this was
+ *  `canRun` before the split): at least one quantity type, and at least one candidate
+ *  provider whenever the project has any registered. */
+const canDelegate = computed(() =>
   hasContext.value
   && !props.aiActive
   && !noteOverLimit.value
@@ -638,18 +654,24 @@ const actions = computed<DialogAction[]>(() => {
     },
   ]
   if (!providersSettled.value) return list
+  // flowgate.default.0591 T0005 §5/§6/§8: with no provider, [+문서생성] keeps 0405 T0011
+  // rev2's decision (the sole primary, blue). With a provider, it moves to the new `create`
+  // role between [취소] and [AI호출] and takes the success tone instead — 0405 T0011 rev1's
+  // "AI호출만 강조" decision is untouched, so `role: 'primary'` below still belongs to
+  // [AI호출] alone.
   list.push({
     id: 'wpp-create-empty',
     label: createLabel.value,
-    role: noProviders.value ? 'primary' : 'aux',
-    disabled: !canRun.value || creating.value,
+    role: noProviders.value ? 'primary' : 'create',
+    tone: noProviders.value ? undefined : 'success',
+    disabled: !canCreateDocument.value,
     onSelect: onCreateEmpty,
   })
   list.push({
     id: 'wpp-copy-mention',
     label: copyLabel.value,
     role: 'aux',
-    disabled: !canRun.value || props.busyAction === 'copy',
+    disabled: !canDelegate.value || props.busyAction === 'copy',
     onSelect: onCopyMention,
   })
   if (!noProviders.value) {
@@ -657,7 +679,7 @@ const actions = computed<DialogAction[]>(() => {
       id: 'wpp-invoke-ai',
       label: aiLabel.value,
       role: 'primary',
-      disabled: !canRun.value || props.busyAction === 'ai' || props.aiActive,
+      disabled: !canDelegate.value || props.busyAction === 'ai' || props.aiActive,
       onSelect: onInvokeAi,
     })
   }
@@ -676,7 +698,7 @@ const actions = computed<DialogAction[]>(() => {
  * an empty array (the server only expects an empty array in that case too).
  */
 async function onCreateEmpty() {
-  if (!canRun.value || creating.value || props.aiActive) return
+  if (!canCreateDocument.value) return
   creating.value = true
   createErrorState.value = { kind: 'none' }
   try {
@@ -716,12 +738,12 @@ async function onCreateEmpty() {
 }
 
 function onCopyMention() {
-  if (!canRun.value || props.busyAction || props.aiActive) return
+  if (!canDelegate.value || props.busyAction || props.aiActive) return
   emit('copy-mention', scope.value)
 }
 
 function onInvokeAi() {
-  if (!canRun.value || props.busyAction || props.aiActive || noProviders.value) return
+  if (!canDelegate.value || props.busyAction || props.aiActive || noProviders.value) return
   // flowgate.default.0416 TR0005: the provider used for this run is the value of
   // the newly added execution-provider box. It falls back to the first candidate
   // only in the rare case where the list is empty and the value hasn't been filled

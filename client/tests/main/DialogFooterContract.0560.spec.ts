@@ -84,6 +84,20 @@ describe('DialogFooter — semantic ordering (DS0007 / L0009 §2, 완료조건 6
     ).toEqual(['aux', 'danger', 'stop', 'cancel', 'primary'])
   })
 
+  // flowgate.default.0591 T0005 §7: an additive role for a create-and-continue action
+  // (WorkPlanProposalDialog's [+문서생성]) that sits between cancel and primary without
+  // disturbing any of the existing role priorities above.
+  it('slots a create action between cancel and primary', () => {
+    expect(
+      renderedOrder([
+        action('primary', 'primary'),
+        action('create', 'create'),
+        action('cancel', 'cancel'),
+        action('aux', 'aux'),
+      ]),
+    ).toEqual(['aux', 'cancel', 'create', 'primary'])
+  })
+
   it('renders a danger confirm as [cancel] [danger primary]', () => {
     expect(
       renderedOrder([

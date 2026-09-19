@@ -483,6 +483,42 @@ describe('WorkPlanEditor', () => {
     console.info(`WORK_PLAN_PROVIDER_DOM=${JSON.stringify({ stepProviderOptions, aiScopeText })}`)
   })
 
+  // flowgate.default.0591 T0005 §4 — locks the pipeline the T relies on before relaxing
+  // create_work_plan()'s provider_candidates pre-check: an empty snapshot must not narrow
+  // the AI scope dialog's [전체] domain, because it never drove that domain to begin with
+  // (0411 T0004: liveProviderRows/scopeProviderOptions read the server's live
+  // registered_providers, not plan.provider_candidates).
+  it('keeps the AI scope\'s [전체] on the full registered set when the snapshot has no candidates at all (provider_candidates=[])', async () => {
+    const response = structuredClone(READ_RESPONSE)
+    response.body.provider_candidates = []
+    getRequest.mockImplementation((url: string) => {
+      if (url.includes('/document-types')) return Promise.resolve({
+        data: { data: TYPES, work_plan_countable_types: TYPES_WP },
+      })
+      if (url.includes('/ai-invoke/providers')) return Promise.resolve({
+        data: { providers: structuredClone(REGISTERED_PROVIDERS), default_provider_id: 'aip_opus' },
+      })
+      if (url.includes('/work-plan')) return Promise.resolve({ data: response })
+      return Promise.reject(new Error(`unexpected url: ${url}`))
+    })
+
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    const aiButton = wrapper.findAll('.wp-toolbar button').find((button) => button.text().includes('AI 제안'))!
+    await aiButton.trigger('click')
+    const aiScopeText = wrapper.get('.work-plan-ai-scope-dialog').text()
+    for (const provider of REGISTERED_PROVIDERS) {
+      expect(aiScopeText).toContain(provider.name)
+    }
+    // WorkPlanAiScopeDialog.reset() fills providerIds with every `candidates` entry as soon
+    // as it opens — the same effect as pressing [전체] — so all three checkboxes start checked.
+    const gridChecks = wrapper.findAll('.work-plan-ai-scope-dialog .scope-grid input[type="checkbox"]')
+    const providerChecks = gridChecks.slice(gridChecks.length - REGISTERED_PROVIDERS.length)
+    expect(providerChecks).toHaveLength(REGISTERED_PROVIDERS.length)
+    expect(providerChecks.every((input) => (input.element as HTMLInputElement).checked)).toBe(true)
+  })
+
   it('saves the canonical body unchanged when nothing was edited (JSON round-trip preservation)', async () => {
     putRequest.mockResolvedValue({
       data: {

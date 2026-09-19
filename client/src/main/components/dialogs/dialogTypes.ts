@@ -31,9 +31,9 @@ export type DialogCloseReason =
  * NOT folded into `cancel`/`aux`: D0008 §3 and NR0003 §7 forbid collapsing the three
  * cancel meanings into one class (L0009 §2 "Cancel / Stop / Dismiss").
  */
-export type DialogActionRole = 'aux' | 'danger' | 'cancel' | 'primary' | 'stop' | 'dismiss'
+export type DialogActionRole = 'aux' | 'danger' | 'cancel' | 'create' | 'primary' | 'stop' | 'dismiss'
 
-export type DialogActionTone = 'default' | 'danger'
+export type DialogActionTone = 'default' | 'danger' | 'success'
 
 export type DialogSize = 'sm' | 'md' | 'lg' | 'xl'
 
@@ -282,6 +282,9 @@ export const footerRolePriority: Record<DialogActionRole, number> = {
   danger: 20,
   stop: 25,
   cancel: 30,
+  /** flowgate.default.0591 T0005 ? a create-and-continue action that sits between cancel
+   *  and primary (e.g. WorkPlanProposalDialog's [+????] beside [AI ??]). */
+  create: 35,
   primary: 40,
 }
 
@@ -289,6 +292,7 @@ export const footerRolePriority: Record<DialogActionRole, number> = {
 export const footerRoleMaxCount: Partial<Record<DialogActionRole, number>> = {
   primary: 1,
   cancel: 1,
+  create: 1,
 }
 
 /**

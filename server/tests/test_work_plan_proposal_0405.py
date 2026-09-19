@@ -831,8 +831,17 @@ def test_create_accepts_empty_candidates_when_the_project_has_no_provider(seed, 
     assert {step["provider_id"] for step in body["steps"]} == {None}
 
 
-def test_create_still_rejects_empty_candidates_when_providers_exist(seed, storage_root):
-    """고를 수 있는데 비워 보낸 요청은 지금까지대로 반려한다 — 완화는 '없을 때'뿐이다."""
+def test_create_now_accepts_empty_candidates_when_providers_exist(seed, storage_root):
+    """flowgate.default.0591 T0005: 0411 T0004가 이 반려를 지켰던 이유(빈 후보가 AI 배정
+    범위 다이얼로그의 [전체]를 '아무도 선택하지 못하는' 상태로 만들 것이라는 우려)는 이제
+    성립하지 않는다 — WorkPlanAiScopeDialog의 [전체]와 이 라우트의 suggest_work_plan()이
+    쓰는 selectable_ids 모두 저장된 스냅샷이 아니라 프로젝트의 살아있는 등록 공급자에서
+    나온다(test_suggest_selects_every_registered_provider_from_an_empty_candidate_snapshot이
+    이를 못 박는다). R0001은 [+문서생성]이 두 칸 모두 아무것도 고르지 않은 상태에서도
+    canonical all-zero WP를 만들 수 있어야 한다고 요구했으므로, 등록 공급자가 있어도
+    provider_candidates=[]인 human create는 더 이상 거절되지 않는다 — AI위임
+    ([멘트복사]/[AI호출])이 최소 1개 provider를 요구하는 계약은 클라이언트 쪽에 그대로
+    남는다."""
     from unittest.mock import patch as mock_patch
 
     client = _client()
@@ -840,18 +849,52 @@ def test_create_still_rejects_empty_candidates_when_providers_exist(seed, storag
         "modules.flow_gate.documents.routers.work_plan._providers",
         return_value=[{"id": "aip_opus", "name": "Claude Opus", "kind": "claude",
                        "exec_type": "cli", "enabled": True}],
+    ), mock_patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0591-WP",
     ):
         resp = client.post("/api/v1/documents/work-plan", json={
             "parent_doc_id": ROOT_DOC,
-            "title": "0405 후보를 비워 보낸 요청",
+            "title": "0591 등록 공급자가 있어도 빈 후보로 생성",
             "counted_types": ["DS"],
             "provider_candidates": [],
             "quantities": {"DS": 1},
             "defaults": {"provider_id": None, "note": ""},
             "type_providers": {},
         })
-    assert resp.status_code == 422, resp.text
-    assert any(
-        "provider_candidates" in str(err.get("loc") or err.get("field") or err)
-        for err in resp.json().get("errors", [])
-    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()["body"]
+    assert body["provider_candidates"] == []
+
+
+def test_create_builds_an_all_zero_canonical_wp_with_nothing_picked(seed, storage_root):
+    """flowgate.default.0591 T0005 §3 — [+문서생성]의 초기 상태(타입/후보 provider 모두
+    미선택)가 그대로 all-zero canonical WP를 만든다: steps=[], quantities 전부 0,
+    provider_candidates=[]."""
+    from unittest.mock import patch as mock_patch
+
+    client = _client()
+    with mock_patch(
+        "modules.flow_gate.documents.routers.work_plan._providers",
+        return_value=[
+            {"id": "aip_opus", "name": "Claude Opus", "kind": "claude", "exec_type": "cli", "enabled": True},
+            {"id": "aip_sonnet", "name": "Claude Sonnet", "kind": "claude", "exec_type": "cli", "enabled": True},
+        ],
+    ), mock_patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0592-WP",
+    ):
+        resp = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "title": "0591 all-zero canonical WP",
+            "counted_types": ["DS", "D", "P", "L", "DB", "N", "T", "TS"],
+            "provider_candidates": [],
+            "quantities": {"DS": 0, "D": 0, "P": 0, "L": 0, "DB": 0, "N": 0, "T": 0, "TS": 0},
+            "defaults": {"provider_id": None, "note": ""},
+            "type_providers": {},
+        })
+    assert resp.status_code == 201, resp.text
+    body = resp.json()["body"]
+    assert body["steps"] == []
+    assert body["provider_candidates"] == []
+    assert {item["count"] for item in body["quantities"].values()} == {0}
