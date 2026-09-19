@@ -227,8 +227,9 @@ describe('MainPanel continuous invoke handoff', () => {
       chain_id: 'chain-1', chain_docs_target: 10, chain_docs_reached: 10,
     })
 
-    expect(store.runsByGroup[groupId].phase).toBe('finished')
-    expect(store.runsByGroup[groupId].handoffPending).toBe(false)
+    // 0563 T0007: a genuine finish moves out of runsByGroup into run-keyed history.
+    expect(store.finishedByRun['hop-final'].phase).toBe('finished')
+    expect(store.finishedByRun['hop-final'].handoffPending).toBe(false)
     wrapper.unmount()
   })
 })

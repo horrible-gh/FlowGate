@@ -616,7 +616,8 @@ describe('AiInvokeMiniplayer', () => {
     await openBtn!.trigger('click')
     await flushPromises()
 
-    expect(store.runsByGroup['flowgate.default.3010']).toBeUndefined()
+    // 0563 T0007: a finished card is run-keyed history now.
+    expect(store.finishedByRun['run-d']).toBeUndefined()
     wrapper.unmount()
   })
 
@@ -1001,13 +1002,14 @@ describe('AiInvokeMiniplayer — end-of-run signal on the closed chip', () => {
     vi.advanceTimersByTime(FINISHED_CARD_TTL_MS - 2_000)
     await nextTick()
     expect(badge(wrapper).exists()).toBe(true)
-    expect(store.runsByGroup['flowgate.default.3020']).toBeDefined()
+    // 0563 T0007: a genuine finish moves into run-keyed finished history.
+    expect(store.finishedByRun['run-fin']).toBeDefined()
 
     // TTL reached: signal and card go together, never one before the other.
     vi.advanceTimersByTime(3_000)
     await nextTick()
     expect(badge(wrapper).exists()).toBe(false)
-    expect(store.runsByGroup['flowgate.default.3020']).toBeUndefined()
+    expect(store.finishedByRun['run-fin']).toBeUndefined()
     expect(wrapper.find('.aiv-mini').classes()).toContain('aiv-mini--idle')
     wrapper.unmount()
   })
@@ -1149,7 +1151,8 @@ describe('AiInvokeMiniplayer — end-of-run signal on the closed chip', () => {
       expect(postRequest).toHaveBeenCalledWith(
         '/api/v1/ai-invoke/leases/flowgate.default.3030/release', {},
       )
-      expect(store.runsByGroup['flowgate.default.3030']).toBeUndefined()
+      // 0563 T0007: a lost card is finished-band history, run-keyed by 'run-lost-1'.
+      expect(store.finishedByRun['run-lost-1']).toBeUndefined()
       wrapper.unmount()
     })
 
@@ -1164,7 +1167,7 @@ describe('AiInvokeMiniplayer — end-of-run signal on the closed chip', () => {
 
       expect(wrapper.find('[data-test="ai-miniplayer-release-error"]').text())
         .toBe(t('main.ai_miniplayer.error_release_lease_still_live'))
-      expect(store.runsByGroup['flowgate.default.3030']).toBeDefined()
+      expect(store.finishedByRun['run-lost-1']).toBeDefined()
       wrapper.unmount()
     })
 
@@ -1177,7 +1180,7 @@ describe('AiInvokeMiniplayer — end-of-run signal on the closed chip', () => {
       await wrapper.find('[data-test="ai-miniplayer-release-lease"]').trigger('click')
       await flushPromises()
 
-      expect(store.runsByGroup['flowgate.default.3030']).toBeUndefined()
+      expect(store.finishedByRun['run-lost-1']).toBeUndefined()
       expect(wrapper.find('[data-test="ai-miniplayer-release-error"]').exists()).toBe(false)
       wrapper.unmount()
     })
@@ -1193,7 +1196,7 @@ describe('AiInvokeMiniplayer — end-of-run signal on the closed chip', () => {
 
       expect(wrapper.find('[data-test="ai-miniplayer-release-error"]').text())
         .toBe(t('main.ai_miniplayer.error_release_lease_failed'))
-      expect(store.runsByGroup['flowgate.default.3030']).toBeDefined()
+      expect(store.finishedByRun['run-lost-1']).toBeDefined()
       wrapper.unmount()
     })
   })

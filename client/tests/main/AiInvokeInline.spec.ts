@@ -204,7 +204,8 @@ describe('AiInvokeInline', () => {
       vi.advanceTimersByTime(INLINE_RESULT_WINDOW_MS + 1_000)
       await nextTick()
       expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(false)
-      expect(store.runsByGroup['flowgate.default.0290']?.phase).toBe('finished')
+      // 0563 T0007: a genuine finish moves into run-keyed finished history.
+      expect(store.finishedByRun['run-w']?.phase).toBe('finished')
       wrapper.unmount()
     } finally {
       vi.useRealTimers()
@@ -239,7 +240,7 @@ describe('AiInvokeInline', () => {
       await nextTick()
       expect(wrapper.find('.ai-invoke-status-card').exists()).toBe(false)
       // The card itself is untouched — this surface expired its own view, nothing more.
-      expect(store.runsByGroup['flowgate.default.0452']?.phase).toBe('finished')
+      expect(store.finishedByRun['run-never']?.phase).toBe('finished')
       wrapper.unmount()
     } finally {
       localStorage.removeItem(RETENTION_MIRROR_KEY)

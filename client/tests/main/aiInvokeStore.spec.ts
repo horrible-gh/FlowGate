@@ -28,7 +28,8 @@ describe('group-scoped AI invoke store', () => {
       },
     } }))
 
-    expect(store.runsByGroup['p.none.0001'].phase).toBe('finished')
+    // 0563 T0007: a genuine finish moves out of runsByGroup into run-keyed history.
+    expect(store.finishedByRun['r1'].phase).toBe('finished')
     expect(store.runsByGroup['p.none.0002'].phase).toBe('running')
     expect(store.activeCount).toBe(1)
   })
@@ -79,6 +80,7 @@ describe('group-scoped AI invoke store', () => {
     await store.cancel('p.none.0005')
 
     expect(getRequest).toHaveBeenCalledWith('/api/v1/ai-invoke/r5')
-    expect(store.runsByGroup['p.none.0005'].phase).toBe('finished')
+    // 0563 T0007: a genuine finish moves out of runsByGroup into run-keyed history.
+    expect(store.finishedByRun['r5'].phase).toBe('finished')
   })
 })

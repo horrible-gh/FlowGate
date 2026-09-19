@@ -1845,7 +1845,10 @@ watch(
 )
 
 watch(
-  () => aiInvokeRunsStore.runsByGroup[`project:${props.projectId}`]?.phase,
+  // 0563 T0007: a finished/lost run leaves runsByGroup the moment it lands (it moves
+  // into the run-keyed history), so a bare map read here would never observe the
+  // 'finished'/'lost' transition this watcher exists to catch -- the merged lookup does.
+  () => aiInvokeRunsStore.currentEntryForGroup(`project:${props.projectId}`)?.phase,
   async phase => {
     if (phase === 'finished' || phase === 'lost') await fetchStatus()
   },

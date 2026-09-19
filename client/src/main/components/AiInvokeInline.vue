@@ -174,7 +174,10 @@ const groupId = computed(() => props.groupId)
 // hour is in the way. The registry stays the single source of truth; only this surface's
 // view of a finished run expires early (NR0003 §5.3). Removing it here is not a dismiss:
 // the card is still in the header monitor until read or swept.
-const storeRun = computed(() => store.runsByGroup[groupId.value] ?? null)
+// 0563 T0007: a finished/lost run is no longer in runsByGroup once it lands (it moves
+// into the run-keyed history), so the group's current OR most-recently-finished entry
+// has to come from the store's own merged lookup instead of a bare map read.
+const storeRun = computed(() => store.currentEntryForGroup(groupId.value))
 const hiddenEntryKey = ref('')
 function entryKey(entry: NonNullable<typeof storeRun.value>): string {
   return entry.runId || `paused:${entry.pausedAt ?? entry.docRef}`
@@ -214,7 +217,14 @@ const titleText = computed(() => {
 })
 
 const elapsedText = computed(() => {
-  const total = Math.floor(store.elapsedMsFor(groupId.value) / 1000)
+  const current = run.value
+  // A non-active phase's elapsed time is fixed at the moment it ended -- elapsedMsFor()
+  // only ticks live against runsByGroup, which no longer holds a finished/lost entry
+  // (0563 T0007), so this reads the card's own stored value directly for that band.
+  const totalMs = current && current.phase !== 'running' && current.phase !== 'pause_requested'
+    ? current.elapsedMs
+    : store.elapsedMsFor(groupId.value)
+  const total = Math.floor(totalMs / 1000)
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
 })
 
@@ -348,7 +358,8 @@ function closeSurface(): void {
   // still be resumed from the miniplayer after this document overlay is closed.
   hiddenEntryKey.value = entryKey(current)
   if (current.phase === 'finished' || current.phase === 'lost') {
-    store.dismiss(groupId.value)
+    // 0563 T0007: dismiss() is run-keyed now -- this entry lives in finishedByRun.
+    store.dismiss(current.runId)
   }
 }
 
