@@ -53,8 +53,14 @@ const STEPS = [
   { docId: 'flowgate.default.0560.0009-TR', seq: 9, typeCode: 'TR', title: '앞 레포트' },
   { docId: 'flowgate.default.0560.0010-T', seq: 10, typeCode: 'T', title: '지시' },
 ]
+const MANY_STEPS = Array.from({ length: 30 }, (_, index) => ({
+  docId: `flowgate.default.0560.${String(index + 1).padStart(4, '0')}-T`,
+  seq: index + 1,
+  typeCode: 'T',
+  title: `긴 목록 단계 ${index + 1}`,
+}))
 
-it('exports the six NR0029 §4.3 footers for built-CSS geometry', async () => {
+it('exports the six NR0029 §4.3 footers and TimeMachine long-content geometry', async () => {
   setActivePinia(createPinia())
   i18n.global.locale.value = 'ko'
   getRequest.mockImplementation((url: string) => {
@@ -124,6 +130,12 @@ it('exports the six NR0029 §4.3 footers for built-CSS geometry', async () => {
     await flushPromises()
   })
 
+  // A real long picker verifies that the panel body, not the feature wrapper, owns scroll.
+  await capture('time-machine-dialog-picker-long', async () => {
+    mount(TimeMachineDialog, mountOptions({ visible: true, steps: MANY_STEPS }))
+    await flushPromises()
+  })
+
   await capture('group-info-modal', async () => {
     mount(GroupInfoModal, mountOptions({
       visible: true, groupId: 'flowgate.default.0560', groupName: '다이얼로그 공통 계층', documents: [],
@@ -153,7 +165,7 @@ it('exports the six NR0029 §4.3 footers for built-CSS geometry', async () => {
     expect(document.querySelector('.csm-result-code'), 'the result screen did not open').toBeTruthy()
   })
 
-  expect(Object.keys(cases)).toHaveLength(6)
+  expect(Object.keys(cases)).toHaveLength(7)
 
   const scratch = process.env.FLOWGATE_SCRATCH
   if (!scratch) throw new Error('FLOWGATE_SCRATCH is required')

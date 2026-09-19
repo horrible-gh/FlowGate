@@ -1,5 +1,5 @@
 <template>
-  <DialogShell :open="visible" variant="workflow-large" surface-class="dialog-time-machine-dialog"  @request-close="onClose">
+  <DialogShell :open="visible" variant="form-actions" surface-class="dialog-time-machine-dialog"  @request-close="onClose">
     <template #header>
       <DialogHeader title="" :closeable="true" @close="onClose">
         <template #title>
@@ -370,11 +370,6 @@ function onConfirm() {
 
 
 
-
-.dialog-feature-body {
-  padding: 20px;
-  overflow-y: auto;
-}
 
 .tmd-body {
   display: flex;

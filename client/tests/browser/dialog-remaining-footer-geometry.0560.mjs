@@ -91,6 +91,7 @@ const EXPECTED_ROLES = {
   'design-handoff-dialog': ['aux', 'cancel', 'primary'],
   'mention-message-dialog': ['aux', 'cancel', 'primary'],
   'time-machine-dialog-result': ['cancel', 'primary'],
+  'time-machine-dialog-picker-long': ['cancel', 'primary'],
   'group-info-modal': ['aux', 'cancel'],
   'command-selector-modal-result': ['cancel'],
 }
@@ -165,13 +166,26 @@ try {
       probe.remove();
       const buttons = Array.from(document.querySelectorAll('[data-dialog-action-role]')).map(measure);
       const legacyShell = document.querySelectorAll('.modal-bg, .modal-box, .modal-ft').length;
-      const surface = document.querySelector('.fg-dialog-surface');
-      const surfaceRect = surface ? surface.getBoundingClientRect() : null;
+      const measureBox = (el) => {
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        const s = getComputedStyle(el);
+        return {
+          top: Math.round(r.top), bottom: Math.round(r.bottom),
+          width: Math.round(r.width), height: Math.round(r.height),
+          clientWidth: el.clientWidth, clientHeight: el.clientHeight, scrollHeight: el.scrollHeight,
+          overflowY: s.overflowY,
+        };
+      };
       return JSON.stringify({
         buttons,
         dangerToken,
         legacyShell,
-        surface: surfaceRect ? { width: Math.round(surfaceRect.width), height: Math.round(surfaceRect.height) } : null,
+        viewportHeight: window.innerHeight,
+        surface: measureBox(document.querySelector('.fg-dialog-surface')),
+        body: measureBox(document.querySelector('.fg-dialog-body')),
+        featureBody: measureBox(document.querySelector('.tmd-body')),
+        footer: measureBox(document.querySelector('.fg-dialog-footer')),
       });
     })()`
     const result = await call('Runtime.evaluate', { expression: expr, returnByValue: true })
@@ -214,7 +228,45 @@ try {
     }
   }
 
-  // 4. the R0001 assertion: ONE cancel/close appearance across all six.
+  // 4. TimeMachine's panel contract: natural short height, capped long height, one scroll owner.
+  const shortTimeMachine = report['time-machine-dialog-result']
+  if (!shortTimeMachine?.surface) {
+    failures.push('time-machine-dialog-result: surface was not measured')
+  } else {
+    if (shortTimeMachine.surface.clientHeight >= 600) {
+      failures.push(`time-machine-dialog-result: short content is ${shortTimeMachine.surface.clientHeight}px tall; expected natural height below 600px`)
+    }
+    if (shortTimeMachine.surface.clientWidth < 470 || shortTimeMachine.surface.clientWidth > 490) {
+      failures.push(`time-machine-dialog-result: layout width ${shortTimeMachine.surface.clientWidth}px no longer preserves the 480px dialog`)
+    }
+  }
+
+  const longTimeMachine = report['time-machine-dialog-picker-long']
+  if (!longTimeMachine?.surface || !longTimeMachine.body || !longTimeMachine.featureBody || !longTimeMachine.footer) {
+    failures.push('time-machine-dialog-picker-long: surface/body/feature/footer geometry is incomplete')
+  } else {
+    const maxHeight = Math.ceil(longTimeMachine.viewportHeight * 0.88) + 1
+    if (longTimeMachine.surface.clientHeight > maxHeight || longTimeMachine.surface.bottom > longTimeMachine.viewportHeight + 1) {
+      failures.push(`time-machine-dialog-picker-long: surface ${longTimeMachine.surface.clientHeight}px exceeds the ${maxHeight}px viewport cap`)
+    }
+    if (longTimeMachine.body.scrollHeight <= longTimeMachine.body.clientHeight) {
+      failures.push(`time-machine-dialog-picker-long: common body does not scroll (${longTimeMachine.body.scrollHeight}/${longTimeMachine.body.clientHeight})`)
+    }
+    if (!['auto', 'scroll'].includes(longTimeMachine.body.overflowY)) {
+      failures.push(`time-machine-dialog-picker-long: common body overflow-y is ${longTimeMachine.body.overflowY}`)
+    }
+    if (longTimeMachine.featureBody.overflowY !== 'visible' ||
+        longTimeMachine.featureBody.scrollHeight > longTimeMachine.featureBody.clientHeight + 1) {
+      failures.push(`time-machine-dialog-picker-long: feature body became a second scroll owner (${longTimeMachine.featureBody.overflowY}, ${longTimeMachine.featureBody.scrollHeight}/${longTimeMachine.featureBody.clientHeight})`)
+    }
+    if (longTimeMachine.footer.height <= 0 ||
+        longTimeMachine.footer.bottom > longTimeMachine.surface.bottom + 1 ||
+        longTimeMachine.footer.top < longTimeMachine.body.bottom - 1) {
+      failures.push('time-machine-dialog-picker-long: footer is clipped or overlaps the scrolling body')
+    }
+  }
+
+  // 5. the R0001 assertion: ONE cancel/close appearance across all measured dialogs.
   const cancels = Object.entries(report).map(([name, data]) => [name, data.buttons.find((b) => b.role === 'cancel')])
   const signatures = new Set(cancels
     .filter(([, c]) => c)
@@ -250,4 +302,4 @@ if (failures.length > 0) {
   console.error('FAILURES:\n' + failures.map((f) => ' - ' + f).join('\n'))
   process.exit(1)
 }
-console.log('OK — six NR0029 §4.3 footers measured under the production stylesheet, one cancel appearance.')
+console.log('OK — footer geometry and TimeMachine natural/capped height verified under the production stylesheet.')
