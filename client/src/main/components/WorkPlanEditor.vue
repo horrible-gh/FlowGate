@@ -311,6 +311,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest, putRequest } from '@shared/api'
+import { renderWpFieldError, type WpFieldError } from '@shared/workPlanErrors'
 import AppIcon from '@shared/AppIcon.vue'
 import AiProviderSelect from './AiProviderSelect.vue'
 import WorkPlanAiScopeDialog from './WorkPlanAiScopeDialog.vue'
@@ -424,8 +425,19 @@ const capabilityWarnings = ref<WPCapabilityFinding[]>([])
 const pendingCapabilityBody = ref<WPBody | null>(null)
 const pendingCapabilitySource = ref<'save' | 'upload' | null>(null)
 const confirmingCapability = ref(false)
-const topLevelErrors = ref<string[]>([])
-const stepErrors = ref<Record<string, string[]>>({})
+// T0007 §1.2 — the raw {code, params, loc, key, msg} the server sends is the SSOT; the
+// displayed strings below are computed from it so a locale switch re-renders them without a
+// new request, instead of freezing whatever `msg` text the save-time locale produced.
+const topLevelErrorRecords = ref<WpFieldError[]>([])
+const stepErrorRecords = ref<Record<string, WpFieldError[]>>({})
+const topLevelErrors = computed(() => topLevelErrorRecords.value.map((err) => renderWpFieldError(err, t)))
+const stepErrors = computed(() => {
+  const rendered: Record<string, string[]> = {}
+  for (const [key, errs] of Object.entries(stepErrorRecords.value)) {
+    rendered[key] = errs.map((err) => renderWpFieldError(err, t))
+  }
+  return rendered
+})
 const unreadable = ref<{ message: string; detail: string; raw: string | null; revisions: { revision_no: number; created_by: string; created_at: string }[] } | null>(null)
 
 
@@ -616,8 +628,8 @@ async function fetchPlan(): Promise<boolean> {
   capabilityWarnings.value = []
   pendingCapabilityBody.value = null
   pendingCapabilitySource.value = null
-  topLevelErrors.value = []
-  stepErrors.value = {}
+  topLevelErrorRecords.value = []
+  stepErrorRecords.value = {}
   restoreBuffer.clear()
   serverRegisteredProviders.value = []
   serverRegisteredProvidersKnown.value = false
@@ -1000,7 +1012,7 @@ onBeforeUnmount(() => window.removeEventListener('fg:document_content_changed', 
 
 function canonicalBody(): WPBody {
   const p = plan.value!
-  return {
+  const body: WPBody = {
     wp_version: p.wp_version,
     binding: p.binding,
     counted_types: [...p.counted_types],
@@ -1009,6 +1021,13 @@ function canonicalBody(): WPBody {
     defaults: { ...p.defaults },
     steps: p.steps.map((s) => ({ ...s })),
   }
+  // T0007 §3 — GET can hand back top-level x_* extension fields the server preserves but this
+  // editor has no UI for; carry them through untouched so a manual save/copy never drops them.
+  const raw = p as unknown as Record<string, unknown>
+  for (const key of Object.keys(raw)) {
+    if (key.startsWith('x_')) (body as unknown as Record<string, unknown>)[key] = raw[key]
+  }
+  return body
 }
 
 const rawJson = computed(() => (plan.value ? JSON.stringify(canonicalBody(), null, 2) : ''))
@@ -1058,8 +1077,8 @@ type PersistResult =
 
 async function persistPlanBody(body: WPBody, capabilityWarningAcks: string[] = []): Promise<PersistResult> {
   conflict.value = null
-  topLevelErrors.value = []
-  stepErrors.value = {}
+  topLevelErrorRecords.value = []
+  stepErrorRecords.value = {}
   try {
     const payload: { base_revision_no: number; body: WPBody; capability_warning_acks?: string[] } = {
       base_revision_no: revisionNo.value,
@@ -1081,18 +1100,20 @@ async function persistPlanBody(body: WPBody, capabilityWarningAcks: string[] = [
       return { status: 'capability_warning', findings: Array.isArray(data.findings) ? data.findings : [] }
     }
     if (status === 422 && Array.isArray(data?.errors)) {
-      const byKey: Record<string, string[]> = {}
-      const top: string[] = []
-      for (const err of data.errors) {
+      const byKey: Record<string, WpFieldError[]> = {}
+      const top: WpFieldError[] = []
+      for (const err of data.errors as WpFieldError[]) {
         if (err.key) {
           byKey[err.key] = byKey[err.key] ?? []
-          byKey[err.key].push(err.msg)
+          byKey[err.key].push(err)
         } else {
-          top.push(err.msg)
+          top.push(err)
         }
       }
-      stepErrors.value = byKey
-      topLevelErrors.value = top.length ? top : [data.message]
+      stepErrorRecords.value = byKey
+      // No top-level field error: fall back to the headline `message` (unknown code renders
+      // as its own msg, i.e. this fixed text) rather than leaving the banner empty.
+      topLevelErrorRecords.value = top.length ? top : [{ loc: '', key: null, code: '', params: {}, msg: data.message }]
       showToast(data.message, 'danger', 5000)
     } else if (status === 409 && data?.code === 'wp_revision_conflict') {
       conflict.value = { updatedBy: data.updated_by ?? null, updatedAt: data.updated_at ?? null }

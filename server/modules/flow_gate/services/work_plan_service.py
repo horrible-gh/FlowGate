@@ -366,7 +366,13 @@ def empty_selection_error(field: str) -> dict:
 
 
 def render_errors(errors: list[dict], locale: str) -> list[dict]:
-    """Attach the localized ``msg`` and drop the internal ``params`` carrier."""
+    """Attach the localized ``msg`` and keep the substituted ``params`` alongside it.
+
+    ``params`` is kept locale-independent: a ``what_key`` (see ``_EMPTY_SELECTION_WHAT``)
+    is carried through as-is rather than resolved to a word in this request's locale, so a
+    client can re-render the same error under a *different* locale from ``code``+``params``
+    alone, without a new request. Only ``msg`` (this request's locale) resolves it.
+    """
     locale = normalize_locale(locale)
     rendered = []
     for err in errors[:ERRORS_REPORTED_MAX]:
@@ -374,17 +380,19 @@ def render_errors(errors: list[dict], locale: str) -> list[dict]:
         params = dict(err.get("params") or {})
         # The "please tick one" phrasing needs a localized noun, so the error carries the noun's key
         # rather than a pre-rendered word — the error is built before the locale is known.
-        what_key = params.pop("what_key", None)
+        format_params = dict(params)
+        what_key = params.get("what_key")
         if what_key:
-            params["what"] = _copy(_EMPTY_SELECTION_WHAT, locale, what_key)
+            format_params["what"] = _copy(_EMPTY_SELECTION_WHAT, locale, what_key)
         try:
-            msg = template.format(**params)
+            msg = template.format(**format_params)
         except (KeyError, IndexError, ValueError):
             msg = template
         rendered.append({
             "loc": err.get("loc", ""),
             "key": err.get("key"),
             "code": err["code"],
+            "params": params,
             "msg": msg,
         })
     return rendered
@@ -1627,7 +1635,7 @@ TEMPLATE_RULES = {
         "제목과 연결 대상은 인박스 요청의 title / prev_doc_id 를 쓰고 본문에 적지 않습니다.",
         "steps 의 key 는 <타입코드>#<회차> 서식이며 문서 안에서 유일해야 합니다.",
         "steps 는 quantities 에서 펼쳐지는 목록과 순서까지 같아야 합니다.",
-        "steps[].note 는 그 단계를 맡을 AI에게 줄 한 줄 지시입니다. TSR 외 단계는 null이어도 되지만, 값을 채우면 한 줄로 200자 이내여야 하며 줄바꿈과 탭은 쓰지 않습니다.",
+        f"steps[].note 는 그 단계를 맡을 AI에게 줄 한 줄 지시입니다. TSR 외 단계는 null이어도 되지만, 값을 채우면 한 줄로 {NOTE_MAX_CHARS}자 이내여야 하며 줄바꿈과 탭은 쓰지 않습니다.",
         "수량은 근거(부모 R/B, workflow_type_counts, group_documents)에서 산정하고, 근거가 없으면 counted_types/quantities에 키를 남긴 채 0으로 둡니다. 1을 기본값으로 추측하지 않습니다.",
         "defaults.note 는 모든 단계에 공통으로 붙일 한 줄입니다. 요청 멘트의 '작업계획 맡길 범위' 절에 '전달 멘트'가 있으면 그 값을 그대로 옮겨 적습니다.",
         "steps[].provider_id 는 provider_candidates 안의 값이거나 이 프로젝트에 등록된 공급자여야 하며, 고를 것이 없으면 비워 둡니다.",
@@ -1645,7 +1653,7 @@ TEMPLATE_RULES = {
         "Title and parent come from the inbox request (title / prev_doc_id); never write them in the body.",
         "Each steps[].key is <TYPE>#<ordinal> and must be unique in the document.",
         "steps must equal the list expanded from quantities, in the same order.",
-        "steps[].note is a one-line instruction for the AI assigned to that step; non-TSR steps may leave it null, but a non-null note must be one line, within 200 characters, and without newlines or tabs.",
+        f"steps[].note is a one-line instruction for the AI assigned to that step; non-TSR steps may leave it null, but a non-null note must be one line, within {NOTE_MAX_CHARS} characters, and without newlines or tabs.",
         "Quantities are derived from evidence (the parent R/B, workflow_type_counts, group_documents); when there is no basis, keep the key in counted_types/quantities with count 0. Never guess 1 as a default.",
         "defaults.note is the one-line instruction shared by every step; when the request mention carries a Delivery note in its work-plan scope section, copy that value verbatim.",
         "steps[].provider_id must be one of provider_candidates or a provider registered in this project; leave it empty when there is nothing to choose.",
@@ -1663,7 +1671,7 @@ TEMPLATE_RULES = {
         "タイトルと連結対象はインボックス要求の title / prev_doc_id を使い、本文には書きません。",
         "steps の key は <タイプコード>#<回次> の書式で、文書内で一意でなければなりません。",
         "steps は quantities から展開されるリストと順序まで一致していなければなりません。",
-        "steps[].note はその段階を担当するAIへの一行指示です。TSR以外の段階は null でも構いませんが、値を入れる場合は一行・200文字以内、改行・タブなしとします。",
+        f"steps[].note はその段階を担当するAIへの一行指示です。TSR以外の段階は null でも構いませんが、値を入れる場合は一行・{NOTE_MAX_CHARS}文字以内、改行・タブなしとします。",
         "数量は根拠(親 R/B、workflow_type_counts、group_documents)から算定し、根拠がなければ counted_types/quantities にキーを残したまま 0 とします。1 を既定値として推測しません。",
         "defaults.note は全段階に共通する一行指示です。要求メモの「作業計画を任せる範囲」節に「伝達メモ」があれば、その値をそのまま書き写します。",
         "steps[].provider_id は provider_candidates 内の値、またはこのプロジェクトに登録された提供者でなければならず、選べるものが無ければ空欄にします。",

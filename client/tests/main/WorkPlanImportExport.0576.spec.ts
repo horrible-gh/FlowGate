@@ -588,3 +588,43 @@ describe('WorkPlanEditor — upload provider capability gate', () => {
     expect(showToast).not.toHaveBeenCalledWith('저장했습니다.', 'success')
   })
 })
+
+// 0589 T0007 §3 — canonicalBody() used to rebuild only the fixed fields it knows, silently
+// dropping a top-level x_* extension the server preserves. Download already re-fetched GET to
+// route around it; a manual edit -> save and the raw-view/clipboard source went through
+// canonicalBody() and lost it. This must fail before the canonicalBody() fix.
+describe('WorkPlanEditor — top-level x_* extension fields', () => {
+  it('일반 편집 후 저장(PUT) 본문에 최상위 x_* 확장 필드가 그대로 남는다', async () => {
+    const body = { ...planBody(), x_test_extension: { foo: 'bar' } }
+    routeGet(body as any)
+    putRequest.mockResolvedValue({
+      data: { revision_no: 4, totals: { design_sheets: 1, work_sets: 1, steps: 3 }, assignment_summary: [], unassigned_step_count: 2 },
+    })
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    const plusButtons = wrapper.findAll('.wp-stepper-btn').filter((button) => button.text() === '+')
+    await plusButtons[0].trigger('click')
+    await flushPromises()
+
+    await actionButton(wrapper, '저장').trigger('click')
+    await flushAll()
+
+    expect(putRequest).toHaveBeenCalledTimes(1)
+    expect(putRequest.mock.calls[0][1].body.x_test_extension).toEqual({ foo: 'bar' })
+  })
+
+  it('원문 보기(클립보드 복사 대상)도 x_* 확장 필드를 그대로 보여준다', async () => {
+    const body = { ...planBody(), x_test_extension: { foo: 'bar' } }
+    routeGet(body as any)
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    await actionButton(wrapper, '원문 보기').trigger('click')
+    await flushPromises()
+
+    const raw = wrapper.find('.wp-raw-content')
+    expect(raw.exists()).toBe(true)
+    expect(JSON.parse(raw.text())).toMatchObject({ x_test_extension: { foo: 'bar' } })
+  })
+})

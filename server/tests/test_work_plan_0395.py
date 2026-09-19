@@ -795,6 +795,80 @@ def test_save_http_localizes_validation_from_x_locale(
     assert {error["code"]: error["msg"] for error in payload["errors"]} == expected_errors
 
 
+def test_save_http_validation_errors_carry_substituted_params():
+    """0589 T0007 §1.1: each errors[] item also carries the substituted `params` a client
+    can re-render under a different locale without a new request — `code`/`loc`/`key`/`msg`
+    stay exactly as before for existing consumers."""
+    client = _client()
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0999-WP",
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "counted_types": ["D"],
+            "provider_candidates": ["aip_opus"],
+            "quantities": {"D": 1},
+        })
+    assert created.status_code == 201, created.text
+
+    invalid_body = json.loads(json.dumps(created.json()["body"]))
+    invalid_body.pop("defaults")
+    invalid_body["provider_candidatez"] = []
+    response = client.put(
+        f"/api/v1/documents/{created.json()['doc_id']}/work-plan",
+        json={"base_revision_no": 0, "body": invalid_body},
+        headers={"X-Locale": "ko"},
+    )
+
+    assert response.status_code == 422, response.text
+    errors = {error["code"]: error for error in response.json()["errors"]}
+    assert errors["missing_field"]["params"] == {"field": "defaults"}
+    assert set(errors["missing_field"].keys()) == {"loc", "key", "code", "params", "msg"}
+    assert errors["unknown_field"]["params"] == {"field": "provider_candidatez"}
+
+
+def test_empty_selection_error_params_stay_locale_independent():
+    """0589 T0007 rev1 §1: `empty_selection`'s translated noun must not be baked into
+    `params` at the request's locale. Before this fix, a ko request's `params` carried
+    `{"what": "수량을 확인할 타입"}`; re-rendering that same params dict under `ja` produced a
+    Korean noun glued to a Japanese sentence. `params` must instead carry the stable
+    `what_key`, resolvable to a word in ANY locale — `msg` (this request's locale only) is
+    the sole place a resolved word may appear."""
+    client = _client()
+    response = client.post(
+        "/api/v1/documents/work-plan",
+        json={
+            "parent_doc_id": ROOT_DOC,
+            "counted_types": [],
+            "provider_candidates": ["aip_opus"],
+            "quantities": {},
+        },
+        headers={"X-Locale": "ko"},
+    )
+
+    assert response.status_code == 422, response.text
+    errors = {error["code"]: error for error in response.json()["errors"]}
+    empty_selection = errors["empty_selection"]
+    assert empty_selection["params"] == {"what_key": "counted_types"}
+    assert "수량을 확인할 타입" in empty_selection["msg"]
+
+    from modules.flow_gate.services import work_plan_service as wp_service
+
+    rerendered = wp_service.render_errors(
+        [{
+            "loc": empty_selection["loc"],
+            "key": empty_selection["key"],
+            "code": empty_selection["code"],
+            "params": empty_selection["params"],
+        }],
+        "ja",
+    )
+    assert rerendered[0]["params"] == {"what_key": "counted_types"}
+    assert "数量を確認するタイプ" in rerendered[0]["msg"]
+    assert "수량을 확인할 타입" not in rerendered[0]["msg"]
+
+
 def test_capability_warning_findings_distinguishes_unassigned_from_incapable():
     """flowgate.default.0533 T0004: provider_id=None is a normal unassigned WP state and
     must not be treated like a specified-but-incapable/unknown/disabled provider by the

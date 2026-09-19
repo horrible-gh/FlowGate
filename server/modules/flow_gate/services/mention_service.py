@@ -41,6 +41,7 @@ from typing import Optional
 
 from modules.flow_gate import template_provision
 from modules.flow_gate.db.document_type_labels import get_type_name
+from modules.flow_gate.documents.constants import STEP_NOTE_MAX_CHARS
 from modules.flow_gate.settings import source_mode_service
 from modules.flow_gate.services import test_command_service
 from modules.flow_gate.services import tool_registry
@@ -2883,7 +2884,7 @@ def build_work_plan_fill_mention(
             "steps": "프로바이더와 한줄 멘트를 정해도 되는 단계",
             "providers": "고를 수 있는 프로바이더",
             "outside": "범위 밖 값은 지금 값 그대로 두십시오.",
-            "notes": "선택된 모든 비잠금 단계의 note를 반드시 채우십시오(200자 이내, 줄바꿈·탭 금지).",
+            "notes": f"선택된 모든 비잠금 단계의 note를 반드시 채우십시오({STEP_NOTE_MAX_CHARS}자 이내, 줄바꿈·탭 금지).",
             "submit": "수정한 정본 JSON 전체를 인박스 수정(edit) 제출로 되돌려 주십시오.",
         },
         "en": {
@@ -2894,7 +2895,7 @@ def build_work_plan_fill_mention(
             "steps": "Steps whose provider and one-line note may change",
             "providers": "Providers that may be chosen",
             "outside": "Keep every value outside this scope exactly as it is.",
-            "notes": "Fill note for every selected unlocked step (at most 200 characters; no newlines or tabs).",
+            "notes": f"Fill note for every selected unlocked step (at most {STEP_NOTE_MAX_CHARS} characters; no newlines or tabs).",
             "submit": "Return the complete canonical JSON through an inbox edit submission.",
         },
         "ja": {
@@ -2905,7 +2906,7 @@ def build_work_plan_fill_mention(
             "steps": "プロバイダーと一行メモを変更できる段階",
             "providers": "選択できるプロバイダー",
             "outside": "範囲外の値は現在のまま変更しないでください。",
-            "notes": "選択したロックなし段階のnoteを必ず入力してください（200文字以内、改行・タブ禁止）。",
+            "notes": f"選択したロックなし段階のnoteを必ず入力してください（{STEP_NOTE_MAX_CHARS}文字以内、改行・タブ禁止）。",
             "submit": "正本JSON全体をインボックスのedit提出で返してください。",
         },
     }[language]

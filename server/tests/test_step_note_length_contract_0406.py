@@ -125,3 +125,39 @@ def test_normalizer_never_silently_cuts_read_values():
     assert wpseq.normalize_note(too_long) == too_long
     with pytest.raises(wpseq.NoteTooLong):
         wpseq.normalize_note(too_long, strict=True)
+
+
+# T0007 §2 — TEMPLATE_RULES's note-length sentence must be generated from STEP_NOTE_MAX_CHARS,
+# not a retyped "200", so a future change to the constant cannot leave the guidance stale.
+def test_template_rules_note_guidance_matches_the_canonical_limit():
+    for loc in ("ko", "en", "ja"):
+        note_lines = [line for line in wp.TEMPLATE_RULES[loc] if "note" in line.lower()]
+        assert note_lines, loc
+        joined = " ".join(note_lines)
+        assert str(STEP_NOTE_MAX_CHARS) in joined, loc
+        assert "200" not in joined, loc
+
+
+def test_work_plan_fill_mention_note_guidance_matches_the_canonical_limit(monkeypatch):
+    from modules.flow_gate.services import mention_service
+
+    monkeypatch.setattr(mention_service, "get_type_name", lambda code, locale: code)
+    body = wp.initial_body(["D"], [], "wpprj")
+    body["quantities"]["D"]["count"] = 0
+    body["steps"] = wp.expand_steps(body["counted_types"], body["quantities"])
+    scope = {"quantity_type_codes": [], "step_keys": [], "provider_ids": []}
+    for loc in ("ko", "en", "ja"):
+        mention = mention_service.build_work_plan_fill_mention(
+            token_rec={"project": "wpprj", "group_id": "wpprj.default.0406", "scratch_dir": "/scratch"},
+            target_doc={"doc_id": "wpprj.default.0406.0002-WP"},
+            body=body,
+            scope=scope,
+            api_base_url="http://localhost:8000",
+            raw_token="secret",
+            locale=loc,
+        )
+        note_lines = [line for line in mention.splitlines() if "note" in line.lower()]
+        assert note_lines, loc
+        joined = " ".join(note_lines)
+        assert str(STEP_NOTE_MAX_CHARS) in joined, loc
+        assert "200" not in joined, loc
