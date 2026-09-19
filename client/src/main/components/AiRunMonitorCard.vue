@@ -260,8 +260,8 @@ async function openDoc(entry: AiInvokeRunEntry): Promise<void> {
       d.doc_id,
       { switchProject: true },
     )
-    // Same acknowledgement rule as the header monitor (0290 R0001 §1).
-    store.dismiss(cardKey(entry))
+    // 0563 T#2: opening a document no longer acknowledges/removes the finished card --
+    // finished/lost cards stay until an explicit per-card remove or dismissAllFinished().
   } catch {
     showToast(t('main.ai_miniplayer.error_open_failed'), 'danger')
   }

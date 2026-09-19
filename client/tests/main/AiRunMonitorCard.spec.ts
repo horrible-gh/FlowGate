@@ -127,7 +127,10 @@ describe('AiRunMonitorCard (dashboard)', () => {
     wrapper.unmount()
   })
 
-  it('removes a finished row when it is opened, and offers an explicit remove button', async () => {
+  // 0563 T#2: opening a document is reading a result, not confirming or clearing the card
+  // that reports it. Only the explicit remove button (or dismissAllFinished) takes a
+  // finished card away — the row button never does, no matter how many times it is opened.
+  it('offers an explicit remove button, and keeps a finished row when it is only opened', async () => {
     const wrapper = mountCard()
     const store = useAiInvokeRunsStore()
     store.trackStarted({
@@ -157,11 +160,12 @@ describe('AiRunMonitorCard (dashboard)', () => {
       .find(row => row.text().includes(docRef))!
     await rowFor('flowgate.default.4005.0001-R')
       .find('[data-test="ai-run-monitor-remove"]').trigger('click')
-    expect(store.runsByGroup['flowgate.default.4005']).toBeUndefined()
+    expect(store.finishedByRun['run-f']).toBeUndefined()
 
     await rowFor('flowgate.default.4006.0001-R').find('.airm-row-main').trigger('click')
     await flushPromises()
-    expect(store.runsByGroup['flowgate.default.4006']).toBeUndefined()
+    expect(store.finishedByRun['run-g']).toBeDefined()
+    expect(deleteRequest).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

@@ -31,6 +31,7 @@ import {
   useAiInvokeRunsStore,
 } from '@main/stores/aiInvokeRuns'
 import { useToast } from '@main/components/common/useToast'
+import { RETENTION_MIRROR_KEY } from '@shared/aiFinishedCardRetention'
 
 const { getRequest, postRequest, deleteRequest } = vi.hoisted(() => (
   { getRequest: vi.fn(), postRequest: vi.fn(), deleteRequest: vi.fn() }
@@ -135,12 +136,19 @@ describe('0529 B0001 — the finished card that would not go away (store)', () =
   })
 
   it('the retention sweep can finally reach the six-day-old restored card', async () => {
-    await bootstrapGhost()
-    expect(store.finishedByRun[RUN_ID]).toBeDefined()
+    // 0563 T#2: the default retention is now -1 (until manually deleted), which never
+    // sweeps by time at all -- so this pins the sweep mechanics under an explicit finite
+    // retention, the same way T#2's own TTL-sweep regressions do.
+    localStorage.setItem(RETENTION_MIRROR_KEY, '30')
+    setActivePinia(createPinia())
+    const finiteStore = useAiInvokeRunsStore()
+    getRequest.mockResolvedValueOnce(activeAll([restoredRun()]) as any)
+    await finiteStore.bootstrap()
+    expect(finiteStore.finishedByRun[RUN_ID]).toBeDefined()
 
-    store.sweepFinishedCards()
+    finiteStore.sweepFinishedCards()
 
-    expect(store.finishedByRun[RUN_ID]).toBeUndefined()
+    expect(finiteStore.finishedByRun[RUN_ID]).toBeUndefined()
   })
 
   // Link 2: the removal that did not stick.

@@ -180,9 +180,10 @@ describe('AiInvokeInline', () => {
     wrapper.unmount()
   })
 
-  // 0290 NR0003 §5.3: the header monitor keeps a finished card for 30 minutes, but this
-  // banner sits on the document — it gets its own, much shorter, view of the same entry.
-  // The registry keeps the card either way; only this surface stops showing it.
+  // 0290 NR0003 §5.3: the header monitor keeps a finished card for however long the
+  // retention setting says (0563 T#2: until manually deleted, by default), but this banner
+  // sits on the document — it gets its own, much shorter, view of the same entry. The
+  // registry keeps the card either way; only this surface stops showing it.
   it('stops showing a finished run after its own short window, without dismissing it', async () => {
     vi.useFakeTimers()
     try {

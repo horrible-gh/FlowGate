@@ -2,7 +2,6 @@ import { computed, onScopeDispose, reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { deleteRequest, getRequest, postRequest } from '@shared/api'
 import {
-  MINUTE_MS,
   RETENTION_DEFAULT_MINUTES,
   RETENTION_MIRROR_KEY,
   RETENTION_NEVER,
@@ -160,7 +159,10 @@ const HANDOFF_FINALIZE_AFTER_POLLS = 2
 // 0452 L0003 §1-3: this is no longer the number the sweep reads. It is DERIVED from the
 // default so it still means exactly "the retention of somebody who has never saved", which
 // is what the regressions that import it are about. The live TTL is `retentionTtlMs`.
-export const FINISHED_CARD_TTL_MS = RETENTION_DEFAULT_MINUTES * MINUTE_MS
+// 0563 T#2: the default is now -1 ("until manually deleted"), so this goes through
+// retentionMs() instead of a raw multiplication -- a plain `-1 * MINUTE_MS` would silently
+// become a negative TTL instead of the Infinity that "never expires" means everywhere else.
+export const FINISHED_CARD_TTL_MS = retentionMs(RETENTION_DEFAULT_MINUTES)
 // The document screen's inline banner shares this registry but not its lifetime: a result
 // panel pinned over the document for 30 minutes is nobody's idea of helpful (NR0003 §5.3).
 // Unchanged by the setting: the user asked for the header list to keep results, not for the
@@ -168,11 +170,9 @@ export const FINISHED_CARD_TTL_MS = RETENTION_DEFAULT_MINUTES * MINUTE_MS
 export const INLINE_RESULT_WINDOW_MS = 60_000
 // A 30-minute TTL turns the list into a log unless it is capped (NR0003 §5.5).
 export const MAX_FINISHED_CARDS = 20
-// 0452 L0003 §2-7: "never expires" is an explicit choice to pile results up, so cutting it
-// at 20 would break the very request. The cap still has to exist — persistFinished's quota
-// failure used to lose every stored card silently — so it moves rather than disappears.
-export const MAX_FINISHED_CARDS_UNBOUNDED = 200
-// One bounded retry's worth of cards when sessionStorage refuses the full snapshot.
+// One bounded retry's worth of cards when sessionStorage refuses the full snapshot -- a
+// best-effort recovery for a storage write failure, not a retention-policy cap (0563 T#2:
+// "-1" must not be capped by count, so this number must stay unrelated to that choice).
 export const PERSIST_QUOTA_FALLBACK_CARDS = 20
 const FINISHED_STORAGE_KEY = 'fg.ai_invoke.finished_cards'
 
@@ -187,9 +187,11 @@ export function isExpired(finishedAtMs: number, referenceNowMs: number, ttlMs: n
   return referenceNowMs - finishedAtMs >= ttlMs
 }
 
-// Slot count is a memory guard, not a time rule, so only the unbounded choice widens it.
+// Slot count is a memory guard, not a time rule. 0563 T#2: "-1" (until manually deleted) is
+// an explicit choice not to cap by count either, so it widens to Infinity rather than a
+// bigger fixed number -- there is no size at which piling results up stops being the point.
 export function cardSlotsFor(minutes: number): number {
-  return minutes === RETENTION_NEVER ? MAX_FINISHED_CARDS_UNBOUNDED : MAX_FINISHED_CARDS
+  return minutes === RETENTION_NEVER ? Number.POSITIVE_INFINITY : MAX_FINISHED_CARDS
 }
 
 function nullableString(value: unknown): string | null {

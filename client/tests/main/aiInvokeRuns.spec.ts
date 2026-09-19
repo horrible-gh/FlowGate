@@ -4,7 +4,6 @@ import { deleteRequest, getRequest, postRequest } from '@shared/api'
 import {
   FINISHED_CARD_TTL_MS,
   MAX_FINISHED_CARDS,
-  MAX_FINISHED_CARDS_UNBOUNDED,
   PERSIST_QUOTA_FALLBACK_CARDS,
   cardSlotsFor,
   compareRunEntries,
@@ -1178,14 +1177,17 @@ describe('aiInvokeRuns store — bounded handoff adoption', () => {
   })
 })
 
-// Every case in this block is the DEFAULT retention — somebody who has never opened the
-// account screen. 0452 kept that number at 30 minutes precisely so these regressions keep
-// meaning what they meant; the per-user cases live in the block after it.
+// 0563 T#2: the default retention is now -1 (until manually deleted), so these cases can no
+// longer rely on "nobody has opened the account screen" to mean a finite TTL. Each one sets
+// the mirror to 30 explicitly -- the exact sweep/cap mechanics these regressions pin are
+// unchanged, they are just no longer implied by silence. The per-user cases (including -1's
+// own no-TTL/no-cap behaviour) live in the block after it.
 describe('aiInvokeRuns store — finished-card TTL sweep', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     sessionStorage.clear()
     localStorage.clear()
+    localStorage.setItem(RETENTION_MIRROR_KEY, '30')
     setActivePinia(createPinia())
     vi.clearAllMocks()
     vi.mocked(getRequest).mockResolvedValue({ data: {} } as any)
@@ -1202,7 +1204,7 @@ describe('aiInvokeRuns store — finished-card TTL sweep', () => {
     store.trackStarted({ run_id: 'run-p', group_id: 'g.paused.1', doc_ref: 'r', mode: 'continuous' })
     store.trackFinished({ run_id: 'run-p', group_id: 'g.paused.1', end_reason: 'user_paused' })
 
-    vi.advanceTimersByTime(FINISHED_CARD_TTL_MS - 2_000)
+    vi.advanceTimersByTime(retentionMs(30) - 2_000)
     expect(store.finishedByRun['run-f']).toBeDefined()
 
     vi.advanceTimersByTime(3_000)
@@ -1231,7 +1233,7 @@ describe('aiInvokeRuns store — finished-card TTL sweep', () => {
     expect(store.pausedCount).toBe(1)
     expect(store.activeCount).toBe(0)
 
-    vi.advanceTimersByTime(FINISHED_CARD_TTL_MS - 2_000)
+    vi.advanceTimersByTime(retentionMs(30) - 2_000)
     expect(store.finishedCount).toBe(3)
 
     vi.advanceTimersByTime(3_000)
@@ -1295,10 +1297,10 @@ describe('aiInvokeRuns store — finished-card TTL sweep', () => {
   // /ai-invoke/active-all never returns finished runs, so without this a reload wiped
   // the cards the TTL exists to keep (0290 NR0003 §3.5).
   it('restores finished cards across a reload and drops the expired ones', () => {
-    // The mirror is what a reload judges by (0452 L0003 §2-4), and 30 is what it holds for
-    // a user who never changed the setting. Without it this case would be the fail-open
-    // branch instead, which the next block covers on its own.
-    localStorage.setItem(RETENTION_MIRROR_KEY, String(RETENTION_DEFAULT_MINUTES))
+    // The mirror is what a reload judges by (0452 L0003 §2-4); this block pins the 30-minute
+    // TTL sweep explicitly (0563 T#2: the default is -1 now). Without a mirror this case
+    // would be the fail-open branch instead, which the next block covers on its own.
+    localStorage.setItem(RETENTION_MIRROR_KEY, '30')
     const store = useAiInvokeRunsStore()
     store.trackStarted({ run_id: 'run-f', group_id: 'g.persist.1', doc_ref: 'r' })
     store.trackFinished({ run_id: 'run-f', group_id: 'g.persist.1', outcome: 'complete' })
@@ -1311,7 +1313,7 @@ describe('aiInvokeRuns store — finished-card TTL sweep', () => {
     expect(reloaded.finishedByRun['run-f']?.phase).toBe('finished')
     reloaded.$dispose()
 
-    vi.advanceTimersByTime(FINISHED_CARD_TTL_MS)
+    vi.advanceTimersByTime(retentionMs(30))
     setActivePinia(createPinia())
     const stale = useAiInvokeRunsStore()
     expect(stale.finishedByRun['run-f']).toBeUndefined()
@@ -1380,8 +1382,8 @@ describe('finished-card retention — the shared contract', () => {
     expect(isExpired(1_000, 995, 1_800_000)).toBe(false)
   })
 
-  it('widens the slot count only for the unbounded choice', () => {
-    expect(cardSlotsFor(-1)).toBe(MAX_FINISHED_CARDS_UNBOUNDED)
+  it('removes the count cap entirely at -1, the manual-delete-only choice', () => {
+    expect(cardSlotsFor(-1)).toBe(Number.POSITIVE_INFINITY)
     for (const minutes of RETENTION_DOMAIN_MINUTES.filter((m) => m !== -1)) {
       expect(cardSlotsFor(minutes)).toBe(MAX_FINISHED_CARDS)
     }
@@ -1402,7 +1404,7 @@ describe('aiInvokeRuns store — per-user retention', () => {
     vi.useRealTimers()
   })
 
-  it('starts from the mirror and falls back to 30 when there is none', () => {
+  it('starts from the mirror and falls back to manual-delete-only when there is none', () => {
     localStorage.setItem(RETENTION_MIRROR_KEY, '1440')
     const mirrored = useAiInvokeRunsStore()
     expect(mirrored.retentionMinutes).toBe(1440)
@@ -1415,7 +1417,9 @@ describe('aiInvokeRuns store — per-user retention', () => {
     broken.$dispose()
   })
 
-  it('never expires a card by time at -1, and caps the pile at 200 instead of 20', () => {
+  it('never expires a card by time at -1, and never caps the pile by count either', () => {
+    // 0563 T#2: the old 200-slot "unbounded" cap is gone. "-1" is a real choice to let
+    // results pile up, and no count silently starts deleting the oldest ones again.
     localStorage.setItem(RETENTION_MIRROR_KEY, '-1')
     const store = useAiInvokeRunsStore()
     finishOne(store, 'g.never.1')
@@ -1424,21 +1428,19 @@ describe('aiInvokeRuns store — per-user retention', () => {
     expect(store.finishedByRun['run-g.never.1']).toBeDefined()
     expect(store.finishedCount).toBe(1)
 
-    for (let i = 0; i < MAX_FINISHED_CARDS_UNBOUNDED + 2; i += 1) {
+    const total = 220   // well past the old 200-card cap
+    for (let i = 0; i < total; i += 1) {
       finishOne(store, `g.never.cap.${String(i).padStart(3, '0')}`)
-      vi.advanceTimersByTime(1_000)   // distinct finishedAtMs so "oldest" is unambiguous
+      vi.advanceTimersByTime(1_000)
     }
 
     // 0563 T0007: the backlog is run-keyed (finishOne's `run-${groupId}`), not group-keyed.
     const remaining = Object.keys(store.finishedByRun)
-    expect(remaining).toHaveLength(MAX_FINISHED_CARDS_UNBOUNDED)
-    // The first card and the two oldest of the batch are what fell out, newest first out
-    // is never the rule.
-    expect(remaining).not.toContain('run-g.never.1')
-    expect(remaining).not.toContain('run-g.never.cap.000')
-    expect(remaining).toContain(
-      `run-g.never.cap.${String(MAX_FINISHED_CARDS_UNBOUNDED + 1).padStart(3, '0')}`,
-    )
+    expect(remaining).toHaveLength(total + 1)
+    // Nothing fell out -- not the first card, not the oldest of the batch.
+    expect(remaining).toContain('run-g.never.1')
+    expect(remaining).toContain('run-g.never.cap.000')
+    expect(remaining).toContain(`run-g.never.cap.${String(total - 1).padStart(3, '0')}`)
     store.$dispose()
   })
 
@@ -1572,7 +1574,7 @@ describe('aiInvokeRuns store — per-user retention', () => {
     store.$dispose()
   })
 
-  it('keeps a usable value when the lookup fails, and lands on 30 when there is none', async () => {
+  it('keeps a usable value when the lookup fails, and lands on manual-delete-only when there is none', async () => {
     localStorage.setItem(RETENTION_MIRROR_KEY, '720')
     const mirrored = useAiInvokeRunsStore()
     vi.mocked(getRequest).mockRejectedValueOnce(new Error('offline'))

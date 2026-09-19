@@ -37,7 +37,7 @@ _log = logging.getLogger(__name__)
 # The closed list, in the order the screen draws it.  -1 = never expires,
 # 0 = no finished card at all; the rest are minutes.
 RETENTION_DOMAIN_MINUTES = (-1, 0, 30, 60, 120, 180, 360, 720, 1440)
-RETENTION_DEFAULT_MINUTES = 30
+RETENTION_DEFAULT_MINUTES = -1
 RETENTION_NEVER = -1
 RETENTION_IMMEDIATE = 0
 

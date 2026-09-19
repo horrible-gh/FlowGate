@@ -16,8 +16,8 @@ export const RETENTION_FIELD = 'ai_finished_card_retention_minutes'
 /** The closed list, in the order the account screen draws it (L0003 §1-1). */
 export const RETENTION_DOMAIN_MINUTES = [-1, 0, 30, 60, 120, 180, 360, 720, 1440] as const
 
-/** Somebody who has never saved gets today's behaviour: 30 minutes. */
-export const RETENTION_DEFAULT_MINUTES = 30
+/** Somebody who has never saved, or an invalid stored value, means "until manually deleted". */
+export const RETENTION_DEFAULT_MINUTES = -1
 /** Sentinel: no expiry by time at all. */
 export const RETENTION_NEVER = -1
 /** Sentinel: never make a finished card in the first place. */

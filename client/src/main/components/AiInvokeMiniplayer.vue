@@ -681,10 +681,9 @@ async function openDoc(entry: AiInvokeRunEntry): Promise<void> {
       d.doc_id,
       { switchProject: true },
     )
-    // Opening the document IS the acknowledgement (0290 R0001 §1): the result has been
-    // read, so the card goes now instead of waiting out the TTL. dismiss() ignores
-    // running/awaiting/paused cards, so a live run is never dropped by this.
-    store.dismiss(cardKey(entry))
+    // 0563 T#2: opening a document is not confirming or deleting a finished card anymore
+    // -- reading a result is not the same act as clearing it. finished/lost cards stay
+    // until an explicit per-card remove or dismissAllFinished(); only the popover closes.
   } catch {
     showToast(t('main.ai_miniplayer.error_open_failed'), 'danger')
   }

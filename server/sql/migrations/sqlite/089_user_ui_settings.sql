@@ -16,7 +16,7 @@
 -- who never opened chat settings. Two tables have no such collision.
 --
 -- The value column carries no schema default on purpose: the one source of truth for the
--- default is RETENTION_DEFAULT_MINUTES = 30 in services/ui_settings_service.py (DB0004 0-2).
+-- default is RETENTION_DEFAULT_MINUTES = -1 in services/ui_settings_service.py (DB0004 0-2).
 --
 -- Additive only, and reversible: save the rows, remove the table, then delete its row from
 -- the migrations ledger (DB0004 3-5).
