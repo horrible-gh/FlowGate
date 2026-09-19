@@ -290,11 +290,15 @@ def add_questions(
     created_by: Optional[str] = None,
     project_id: Optional[str] = None,
     notify_audience: Optional[str] = None,
+    asker_provenance: Optional[dict] = None,
 ) -> dict:
     """Add N queries to the document's container (creating the container if absent).
 
     asker_kind: 'human'([+query]) | 'ai' (§3.3/§3.4 AI registration). A done container
     reverts to pending.
+    ``asker_provenance`` (0582 T0005 §D) is the AI run/provider snapshot the caller
+    already resolved via ai_invoke.provenance.resolve_run_provenance — ignored for a
+    human query, and legitimately {} for an AI query whose token carried no bound run.
     Returns {"doc_id", "added_item_ids": [...]}.
     """
     if not questions:
@@ -302,6 +306,7 @@ def add_questions(
     if asker_kind not in ("human", "ai"):
         raise HTTPException(status_code=400, detail="asker_kind must be 'human' or 'ai'")
     normalized = _normalize_questions(questions)
+    _provenance = asker_provenance if asker_kind == "ai" and asker_provenance else {}
 
     target_doc = db_documents.get_by_id(doc_id)
     if target_doc is not None and target_doc.get("type_code") == "CH":
@@ -323,6 +328,9 @@ def add_questions(
             db_question_items.insert(
                 question_pk=qpk, seq=max_seq + offset, body=body,
                 title=title, asker_kind=asker_kind, options=_dump_json(options),
+                asker_ai_run_id=_provenance.get("ai_run_id"),
+                asker_actual_provider_id=_provenance.get("actual_provider_id"),
+                asker_actual_provider_name=_provenance.get("actual_provider_name"),
             )
         # Re-query: revert done → pending (consistent with D0005 §4 "re-query = new item")
         if container.get("status") == "done":
@@ -354,6 +362,7 @@ def register_answer(
     author_id: Optional[str] = None,
     selected_option_ids: Optional[list[str]] = None,
     notify_audience: Optional[str] = None,
+    author_provenance: Optional[dict] = None,
 ) -> dict:
     """Register an answer to a query item and transition the container status (atomic).
 
@@ -403,6 +412,7 @@ def register_answer(
     # A body that is already written stays as written: submitting a pick alongside prose
     # keeps the prose as the body and records the pick in selected_options only.
 
+    _provenance = author_provenance if author_kind == "ai" and author_provenance else {}
     q_status = container["status"]
     store = get_store()
     with store.transaction():
@@ -410,6 +420,9 @@ def register_answer(
             question_item_id=item_id, body=body,
             author_kind=author_kind, author_id=author_id,
             selected_options=_dump_json(selected),
+            author_ai_run_id=_provenance.get("ai_run_id"),
+            author_actual_provider_id=_provenance.get("actual_provider_id"),
+            author_actual_provider_name=_provenance.get("actual_provider_name"),
         )
         db_question_items.increment_answer_count(pk=item_id)
         unanswered = db_question_items.list_unanswered(container["id"])
@@ -451,11 +464,27 @@ def _parse_selected_options(answer: dict) -> list[str]:
     return [o for o in parsed if isinstance(o, str)] if isinstance(parsed, list) else []
 
 
+def _provider_view(run_id: Any, provider_id: Any, provider_name: Any) -> Optional[dict]:
+    """Nest one AI run/provider snapshot into the canonical public shape (0582 T0005 §6).
+
+    None when there is no evidence at all — a human item, or an AI item whose token
+    carried no bound run (legacy row / [Copy Mention] hand-off) — so the UI can render
+    an explicit "external/unconfirmed" label instead of a fabricated provider name.
+    """
+    if not run_id and not provider_id and not provider_name:
+        return None
+    return {"ai_run_id": run_id, "ai_provider_id": provider_id, "ai_provider_name": provider_name}
+
+
 def get_qa_detail(doc_id: str) -> dict:
     """The document's query container + items + answers tree. Empty structure if no container.
 
     Returns {doc_id, status, items: [{...item, options: [{id, label}], answers: [...]}]}.
     options / selected_options are handed to the UI parsed, never as the stored JSON text.
+    Each AI item (asker_kind/author_kind='ai') nests its raw asker_*/author_* columns
+    into ``asker_provider``/``answer.provider`` (0582 T0005 §D) — the same
+    {ai_run_id, ai_provider_id, ai_provider_name} shape every other AI-provenance
+    surface uses, rather than exposing the raw column names to the API.
     """
     container = db_questions.get_container_by_doc(doc_id)
     if container is None:
@@ -468,10 +497,20 @@ def get_qa_detail(doc_id: str) -> dict:
     for item in items:
         item_dict = dict(item)
         item_dict["options"] = _parse_options(item)
+        item_dict["asker_provider"] = _provider_view(
+            item_dict.pop("asker_ai_run_id", None),
+            item_dict.pop("asker_actual_provider_id", None),
+            item_dict.pop("asker_actual_provider_name", None),
+        )
         answers = []
         for answer in db_answers.list_by_question_item(item["id"]):
             answer_dict = dict(answer)
             answer_dict["selected_options"] = _parse_selected_options(answer)
+            answer_dict["author_provider"] = _provider_view(
+                answer_dict.pop("author_ai_run_id", None),
+                answer_dict.pop("author_actual_provider_id", None),
+                answer_dict.pop("author_actual_provider_name", None),
+            )
             answers.append(answer_dict)
         item_dict["answers"] = answers
         result["items"].append(item_dict)

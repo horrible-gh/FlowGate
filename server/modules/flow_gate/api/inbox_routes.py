@@ -2644,10 +2644,20 @@ def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
         return {}
     try:
         from modules.flow_gate.services.ai_invoke.runtime import get_run_record
+        from modules.flow_gate.services.ai_invoke.provenance import (
+            effective_action_scope,
+            resolve_run_provenance,
+        )
         review_run = get_run_record(run_id)
+        # 0582 TR0006 rev1: a document_review_loop hop's action_scope stays pinned to
+        # whatever the RUN was first admitted under, for the run's whole lifetime -- a
+        # loop that starts in "rework" and is still on this run_id when it reaches its
+        # review hop reports action_scope=="edit" there too. effective_action_scope reads
+        # the live hop_kind instead, so this stage check survives review<->rework stage
+        # switches within the SAME run (see its docstring for the full mechanism).
         if (
             not review_run
-            or review_run.get("action_scope") != "review"
+            or effective_action_scope(review_run) != "review"
             or review_run.get("doc_ref") != doc_id
         ):
             return {}
@@ -2659,21 +2669,22 @@ def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
             if review_intent == "rerun" and superseded_id is not None:
                 provenance["superseded_review_id"] = int(superseded_id)
 
-        requested_id = review_run.get("requested_provider_id")
-        actual_id = review_run.get("provider_id")
-        if not requested_id or not actual_id:
+        # 0582 T0005: the requested/actual provider evidence itself now comes from the
+        # one common lookup every other AI-authored result uses too (rejection rework
+        # response, in-app Q&A) -- see ai_invoke.provenance.resolve_run_provenance.
+        snapshot = resolve_run_provenance(
+            run_id, doc_id=doc_id, allowed_action_scopes=("review",), run=review_run,
+        )
+        if not snapshot:
             return provenance
-        fallback_used = requested_id != actual_id
         provenance.update({
-            "review_run_id": run_id,
-            "requested_provider_id": requested_id,
-            "actual_provider_id": actual_id,
-            "actual_provider_name": (review_run.get("provider") or {}).get("name"),
-            "provider_source": (
-                "fallback" if fallback_used else review_run.get("selected_provider_source")
-            ),
-            "attempt_no": int(review_run.get("attempt_no") or 0) or None,
-            "fallback_used": fallback_used,
+            "review_run_id": snapshot["ai_run_id"],
+            "requested_provider_id": snapshot["requested_provider_id"],
+            "actual_provider_id": snapshot["actual_provider_id"],
+            "actual_provider_name": snapshot["actual_provider_name"],
+            "provider_source": snapshot["provider_source"],
+            "attempt_no": snapshot["attempt_no"],
+            "fallback_used": snapshot["fallback_used"],
         })
         return provenance
     except Exception:
@@ -4735,6 +4746,19 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         target["responded_at"] = now_iso()
         target["response_recorded_by"] = actor_user_id
         target["response_revision_no"] = existing_doc.get("revision_no", 0) + 1
+        # 0582 T0005 SSC: snapshot THIS rework submission's own effective run/provider --
+        # never the review's (a different run) and never a prior response's (a stale
+        # snapshot). action_scope="edit" matches how this very token was admitted;
+        # doc_id=None because a rejected resubmission may answer on behalf of a document
+        # whose doc_ref the run recorded before any anchor/rename, and a legacy/external
+        # token with no bound run degrades to {} exactly like _review_provenance does.
+        from modules.flow_gate.services.ai_invoke.provenance import resolve_run_provenance
+        _response_provenance = resolve_run_provenance(
+            token_rec.get("ai_run_id"), doc_id=None, allowed_action_scopes=("edit",)
+        )
+        target["response_ai_run_id"] = _response_provenance.get("ai_run_id")
+        target["response_actual_provider_id"] = _response_provenance.get("actual_provider_id")
+        target["response_actual_provider_name"] = _response_provenance.get("actual_provider_name")
         rejection_history_update = json.dumps(history, ensure_ascii=False)
 
     if linked_doc_id and db_docs.get_by_id(linked_doc_id) is None:
@@ -5358,7 +5382,10 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 edited_doc = db_docs.get_by_id(doc_id)
                 if edited_doc and edited_doc.get("doc_review_status") == "revised":
                     from modules.flow_gate.api.v1.events.publisher import broadcast_event_threadsafe
-                    from modules.flow_gate.workflow.pipeline_service import parse_rejection_history
+                    from modules.flow_gate.workflow.pipeline_service import (
+                        enrich_rejection_history_provenance,
+                        parse_rejection_history,
+                    )
                     # flowgate.default.0561 T0004: the rework response (ai_response /
                     # responded_at / response_revision_no) is already written into
                     # rejection_history atomically with the revision CAS above (T0007),
@@ -5367,6 +5394,15 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
                     # doc.rejection_history when the key is PRESENT on the payload, so
                     # omitting it here left the sidebar's AI response thread blank until
                     # a manual reload/reopen even though the row was already saved.
+                    #
+                    # 0582 TR0006 rev1: GET /document already runs this same list through
+                    # enrich_rejection_history_provenance (document_routes.py /
+                    # documents/routers/documents.py) before a browser ever sees it. This
+                    # broadcast is the OTHER path a browser's rejection_history can come
+                    # from, and DocHeader's listener replaces its whole enriched array with
+                    # whatever this payload carries -- an un-enriched list here showed the
+                    # just-recorded response's provider as undefined ("AI · 외부/미확인")
+                    # until the next manual GET.
                     broadcast_event_threadsafe(FlowEvent(
                         event_type=EventType.DOC_REVIEW_STATUS_CHANGED,
                         payload={
@@ -5374,8 +5410,8 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
                             "prev_status": "rejected",
                             "next_status": "revised",
                             "rejection_reason": None,
-                            "rejection_history": parse_rejection_history(
-                                edited_doc.get("rejection_history")
+                            "rejection_history": enrich_rejection_history_provenance(
+                                parse_rejection_history(edited_doc.get("rejection_history"))
                             ),
                         },
                         audience="*",

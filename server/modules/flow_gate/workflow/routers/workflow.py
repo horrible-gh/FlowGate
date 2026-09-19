@@ -42,6 +42,7 @@ from ..pipeline_service import (
     TransitionError,
     create_group,
     WorkflowSlotConflictError,
+    enrich_rejection_history_provenance,
     register_workflow_result,
     transition_document,
     transition_document_review,
@@ -802,7 +803,13 @@ async def document_review_transition_endpoint(
             "prev_status": prev_review_status,
             "next_status": result.get("doc_review_status"),
             "rejection_reason": body.comment if action == "reject" else None,
-            "rejection_history": _parse_rejection_history(result.get("rejection_history")),
+            # 0582 TR0006 rev1: DocHeader's fg:doc_review_status_changed listener replaces
+            # the open tab's whole (already-enriched, from GET /document) rejection_history
+            # array with whatever this payload carries -- enrich here too, the same way
+            # GET /document does.
+            "rejection_history": enrich_rejection_history_provenance(
+                _parse_rejection_history(result.get("rejection_history"))
+            ),
         }
         # 0332 P0006 §1-7: the strip marker and the Git panel repaint off this event,
         # so the commit result rides along instead of forcing a poll. Only present on a
@@ -913,7 +920,10 @@ async def update_rejection_reason_endpoint(
                 "prev_status": "rejected",
                 "next_status": updated.get("doc_review_status"),
                 "rejection_reason": reason,
-                "rejection_history": _parse_rejection_history(updated.get("rejection_history")),
+                # 0582 TR0006 rev1: same DocHeader whole-array replacement as above.
+                "rejection_history": enrich_rejection_history_provenance(
+                    _parse_rejection_history(updated.get("rejection_history"))
+                ),
             },
             audience="*",
             doc_id=doc_id,

@@ -1379,12 +1379,23 @@ def _checkpoint_document_review_loop_tx(run: dict) -> dict | None:
             # an open tab about a rejection that a later failure in this same transaction
             # could still roll back.
             from modules.flow_gate.db import connection as db_connection
+            # 0582 TR0006 rev1: this payload reaches DocHeader's fg:doc_review_status_changed
+            # listener, which REPLACES the open tab's whole (already-enriched, from GET
+            # /document) rejection_history array with whatever this carries -- the raw
+            # parse below used to null out the just-recorded automatic rejection's own
+            # provider (rejection_provider) until the next manual reload. Same enrichment
+            # GET /document runs (pipeline_service.enrich_rejection_history_provenance).
+            from modules.flow_gate.workflow.pipeline_service import (
+                enrich_rejection_history_provenance,
+            )
             _reject_broadcast_payload = {
                 "doc_id": persisted["doc_ref"],
                 "prev_status": slot["review_status"],
                 "next_status": (doc or {}).get("doc_review_status"),
                 "rejection_reason": (doc or {}).get("rejection_reason"),
-                "rejection_history": _parse_rejection_history((doc or {}).get("rejection_history")),
+                "rejection_history": enrich_rejection_history_provenance(
+                    _parse_rejection_history((doc or {}).get("rejection_history"))
+                ),
             }
 
             def _broadcast_reject() -> None:

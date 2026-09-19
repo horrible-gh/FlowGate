@@ -34,6 +34,7 @@
                 <span class="qhd-asker">
                   <AppIcon :name="item.asker_kind === 'ai' ? 'robot' : 'user'" />
                   {{ item.asker_kind === 'ai' ? t('main.doc_info_panel.qa_by_ai') : t('main.doc_info_panel.qa_by_human') }}
+                  <span v-if="item.asker_kind === 'ai'" class="qhd-provider">{{ providerLabel(item.asker_provider) }}</span>
                 </span>
               </div>
               <!-- Full content, no inner scroll: the dialog body is the single scroll
@@ -60,6 +61,7 @@
                 <div class="qhd-blabel">{{ t('main.doc_info_panel.qa_answer') }}</div>
                 <p v-for="(a, ai) in item.answers" :key="ai" class="qhd-box qhd-answer">
                   <AppIcon :name="a.author_kind === 'ai' ? 'robot' : 'user'" class="qhd-answer-icon" />
+                  <span v-if="a.author_kind === 'ai'" class="qhd-provider">{{ providerLabel(a.author_provider) }}</span>
                   <span>{{ a.body }}</span>
                 </p>
               </template>
@@ -174,6 +176,7 @@ import DialogFooter from './dialogs/DialogFooter.vue'
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { QaItem } from '../composables/useQaAnswers'
+import type { AiProvenance } from '../types/aiReview'
 import AppIcon from '@shared/AppIcon.vue'
 import AiProviderSelect from './AiProviderSelect.vue'
 
@@ -221,6 +224,14 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ 'update:visible': [value: boolean] }>()
 
 const { t } = useI18n()
+
+// 0582 T0005 §D/§7: the same 'AI · {provider}' rule every other AI-provenance badge in
+// the app follows — an explicit unknown label rather than a fabricated name when the
+// AI item's token carried no bound run (legacy row / [Copy Mention] hand-off).
+function providerLabel(p?: AiProvenance | null): string {
+  const name = p?.ai_provider_name || p?.ai_provider_id
+  return name ? `AI · ${name}` : `AI · ${t('main.doc_info_panel.ai_provider_unknown')}`
+}
 
 const answerOpenId = ref<number | null>(null)
 const answerBody = ref('')
@@ -325,6 +336,8 @@ function onClose() {
 .qhd-seq { font-size: .72rem; font-weight: 700; color: var(--text); }
 .qhd-title-text { font-size: .76rem; color: var(--text-s); }
 .qhd-asker { margin-left: auto; font-size: .62rem; color: var(--text-m); display: inline-flex; align-items: center; gap: 4px; }
+/* 0582 T0005 §D/§7: the AI question/answer's own 'AI · {provider}' badge. */
+.qhd-provider { font-size: .6rem; font-weight: 600; color: var(--text-s); }
 .qhd-blabel { font-size: .62rem; font-weight: 700; color: #6b7280; margin: 8px 0 3px; }
 /* Full text takes its natural height — the dialog body (.qhd-body, max-height 80vh)
    is the single scroll surface, so a long question/answer scrolls the dialog rather

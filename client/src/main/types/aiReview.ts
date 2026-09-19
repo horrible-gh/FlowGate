@@ -1,6 +1,17 @@
 // AI review result (document_reviews child record), matching ai_review / ai_review_history in the backend detail response.
 // A review belongs to its target document rather than being a document itself. The server derives finding_count from findings.
 
+// 0582 T0005 §6: the ONE public shape every AI-provenance surface outside document_reviews
+// uses (rejection auto-reject, rejection rework response, Q&A) — null when there is no
+// evidence (a human action, or an AI action whose token carried no bound run, e.g. a
+// [Copy Mention] hand-off). document_reviews keeps its own established AiReviewProvider
+// shape below; this one is for everything that did not already have a field of its own.
+export interface AiProvenance {
+  ai_run_id?: string | null
+  ai_provider_id?: string | null
+  ai_provider_name?: string | null
+}
+
 export interface AiReviewFinding {
   locus?: string | null
   note?: string | null
