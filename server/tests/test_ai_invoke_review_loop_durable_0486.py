@@ -54,6 +54,12 @@ OWNER = "owner-0486"
 REVIEW_MIGRATIONS = (
     "035_document_reviews.sql",
     "104_document_review_provider_provenance.sql",
+    # 0583 T0004: 111 was added after this harness was written and `insert_review` names
+    # every provenance column unconditionally, so leaving it out made every hop that
+    # posts a verdict die on "table document_reviews has no column named review_intent"
+    # -- the whole review-posting half of this file. The tuple has to track the columns
+    # the writer actually binds.
+    "111_document_review_intent_provenance.sql",
 )
 # 107 is this T's own migration; the tuple without it is the pre-fix control.
 LOOP_MIGRATIONS_106 = (

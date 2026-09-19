@@ -55,6 +55,7 @@ from .runtime import (
     NO_OUTPUT_MAX_ATTEMPTS,
     POST_PROCESS_RECOVERY_SEC,
     RETRY_MIN_REMAINING_SEC,
+    REVIEW_HOP_KIND,
     REWORK_HOP_KIND,
     # 0515 T0009 §10: handoff-gate state names, aliased so a generic bare `OPEN`/`ABORT`
     # never shadows anything else in this module's namespace.
@@ -288,6 +289,21 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
             if run.get("document_review_loop"):
                 loop = review._checkpoint_document_review_loop(run)
                 run["document_review_loop_checkpointed"] = True
+                # 0583 T0004 section 5: the gate reserves the review stage AGAIN only
+                # when the hop it just judged left no verdict this run owns. Before a
+                # second reviewer is launched -- second token, second provider, second
+                # durable verdict for one round -- ask once more on a connection opened
+                # after the checkpoint's own read. `late` is None when there is still
+                # nothing, and the retry below then proceeds exactly as before.
+                if (
+                    loop
+                    and loop.get("current_stage") == REVIEW_HOP_KIND
+                    and loop.get("last_hop_kind") == REVIEW_HOP_KIND
+                    and loop.get("last_hop_outcome") == "failed"
+                ):
+                    late = review.recheck_review_hop_before_retry(run)
+                    if late is not None:
+                        loop = late
                 if not loop or loop.get("current_stage") == "stopped":
                     break
                 # 0417 T0013: the reissue inside _prepare_retry_token calls this SAME

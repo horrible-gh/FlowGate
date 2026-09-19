@@ -86,6 +86,10 @@ class _DialectDB:
 
     def __init__(self):
         self.rows: list[dict] = []
+        # 0583 T0004: the review round claims this backend has taken, keyed the way the
+        # real PRIMARY KEY is. Modelled rather than ignored, so the barrier's INSERT is
+        # a statement this backend really answers -- and really refuses twice.
+        self.round_claims: set[tuple] = set()
         self._next_id = 1
         self._last_id: int | None = None
         self._result: list[dict] = []
@@ -115,6 +119,23 @@ class _DialectDB:
 
     def execute(self, sql, params=None):
         params = list(params or [])
+        if "FROM document_review_round_claims" in sql:
+            key = tuple(params[:3])
+            self._result = (
+                [{"review_run_id": key[0], "doc_id": key[1], "revision_no": key[2]}]
+                if key in self.round_claims else []
+            )
+            return self
+        if "INSERT INTO document_review_round_claims" in sql:
+            key = tuple(params[:3])
+            if key in self.round_claims:
+                raise RuntimeError(
+                    "duplicate key value violates unique constraint "
+                    '"document_review_round_claims_pkey"'
+                )
+            self.round_claims.add(key)
+            self._result = []
+            return self
         if "INSERT INTO document_reviews" in sql:
             self.check_bind(params)
             self.store_row(params)
@@ -125,6 +146,19 @@ class _DialectDB:
             return self
         if self.last_id_sql.lower() in sql.lower():
             self._result = [{"rid": self._last_id}]
+            return self
+        if "FROM document_reviews WHERE doc_id" in sql and "review_run_id" in sql:
+            # 0583 T0004: the barrier's second read. The claim table is born empty, so
+            # "is this round already registered" is asked of document_reviews too, and
+            # this backend has to answer it for the registration to get as far as its
+            # INSERT. Insertion order is the ORDER BY (created_at ASC, id ASC).
+            doc_id, revision_no, run_id = params[0], params[1], params[2]
+            matches = [
+                r for r in self.rows
+                if r["doc_id"] == doc_id and r["revision_no"] == revision_no
+                and r.get("review_run_id") == run_id
+            ]
+            self._result = [self.read_back(r) for r in matches[:1]]
             return self
         if "FROM document_reviews WHERE id" in sql:
             wanted = params[0] if params else None
