@@ -1050,6 +1050,15 @@ def _document_loop_review_view(bundle: dict, reviews: list[dict]) -> tuple[list[
     only leaves a rework hop once `doc.revision_no` has moved past the last review's, so two
     review rows share a revision exactly when they belong to the same round (a duplicate
     delivery, or a retried hop) and differ whenever a real round boundary was crossed.
+
+    That same-revision collapse is READ-SIDE TOLERANCE, not a licence (0583 T0004 section
+    6). Writing two verdicts into one round is not normal and is no longer possible: the
+    registration barrier (`db/document_review_rounds.py`) refuses the second INSERT for a
+    given (review_run_id, doc_id, revision_no). What survives here is the ability to read
+    a database that already contains such rows -- every deployment predating that barrier
+    does, and a restart must not walk into a broken state machine over history it cannot
+    change. So the collapse stays, and stays tested; it just no longer describes anything
+    this server writes.
     """
     baseline = int(bundle.get("review_baseline_id") or 0)
     after_baseline = [
@@ -1246,6 +1255,32 @@ def _checkpoint_document_review_loop(run: dict) -> dict | None:
         return _checkpoint_document_review_loop_tx(run)
 
 
+def recheck_review_hop_before_retry(run: dict) -> dict | None:
+    """Last look for this round's verdict before a second reviewer is launched.
+
+    0583 T0004 section 5. The checkpoint reserves another REVIEW stage when the hop it
+    just judged left no durable verdict it owns. Between that judgement and the relaunch
+    a verdict can still land -- the provider's own POST /inbox commits on a different
+    connection, and the checkpoint read its snapshot before that commit. Launching
+    anyway spends a second token and a second provider to write a second verdict for a
+    round that already has one.
+
+    So the same question is asked once more here, on a connection opened AFTER the
+    checkpoint's, using the same ownership rule the checkpoint uses
+    (``_document_loop_review_view`` -> ``check_expected_progress``, keyed on
+    ``review_run_id`` + ``revision_no``). This is deliberately NOT a second re-read
+    inside the checkpoint's own transaction: under MySQL's REPEATABLE READ a repeated
+    SELECT there returns the same snapshot and could never see the late commit.
+
+    Returns the updated loop row when the verdict turned up -- the caller continues with
+    whatever stage the gate resolved from it (rework, or a terminal stop) -- and None
+    when there is still nothing, which means the retry it was about to run is genuine
+    and proceeds untouched. Nothing is written in the None case.
+    """
+    with _svc().get_store().transaction():
+        return _checkpoint_document_review_loop_tx(run, late_recheck=True)
+
+
 CHECKPOINT_FAILURE_STOP_DETAIL = "loop checkpoint could not be written"
 
 
@@ -1292,8 +1327,16 @@ def force_stop_loop_after_checkpoint_failure(run: dict, error: BaseException | N
         return False
 
 
-def _checkpoint_document_review_loop_tx(run: dict) -> dict | None:
-    """Transaction body for one completed document-review-loop hop."""
+def _checkpoint_document_review_loop_tx(run: dict, *, late_recheck: bool = False) -> dict | None:
+    """Transaction body for one completed document-review-loop hop.
+
+    ``late_recheck`` re-resolves the PREVIOUS review hop instead of a new one (0583
+    T0004 section 5, entered through :func:`recheck_review_hop_before_retry`). It is not
+    a hop of its own: nothing about the run changed, so no attempt is counted, and the
+    only question asked is whether the verdict that hop was judged not to have produced
+    has since become durable. When it still has not, the row is left exactly as the
+    checkpoint wrote it and None says "the retry you were about to run is real".
+    """
     loop = run.get("document_review_loop")
     if not loop or loop.get("current_stage") == "stopped":
         return loop
@@ -1308,6 +1351,18 @@ def _checkpoint_document_review_loop_tx(run: dict) -> dict | None:
     stage = persisted["current_stage"]
     succeeded = run.get("outcome") == "complete"
     attempts = int(persisted.get("attempts_used") or 0) + 1
+    if late_recheck:
+        if (
+            persisted.get("current_stage") != REVIEW_HOP_KIND
+            or persisted.get("last_hop_kind") != REVIEW_HOP_KIND
+            or persisted.get("last_hop_outcome") != "failed"
+        ):
+            # Only the "review hop produced nothing, review reserved again" shape is a
+            # retry this can pre-empt. Anything else is not this function's business.
+            return None
+        stage = REVIEW_HOP_KIND
+        succeeded = True
+        attempts = int(persisted.get("attempts_used") or 0)
     bundle = {
         **persisted,
         "doc": doc or {},
@@ -1326,6 +1381,10 @@ def _checkpoint_document_review_loop_tx(run: dict) -> dict | None:
         "review_run_id": run["run_id"],
     }
     if succeeded and not check_expected_progress(bundle, doc or {}, reviews):
+        if late_recheck:
+            # Still nothing after a fresh read: the hop really did produce no verdict,
+            # so the reserved retry stands and this call writes nothing at all.
+            return None
         bundle["last_hop_outcome"] = "failed"
         bundle["failure_detail"] = f"{stage} hop produced no expected durable progress"
 

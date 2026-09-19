@@ -91,9 +91,14 @@ def test_previous_round_verdict_is_not_this_round_progress():
     )["stop_reason"] == "review_passed"
 
 
-def test_replayed_verdict_of_the_same_round_is_still_one_round():
-    # The same round delivering its verdict twice (a retried hop, a duplicated POST) shares
-    # the document revision it reviewed, so it stays ONE round and the higher attempt wins.
+def test_legacy_duplicate_rows_of_one_round_still_read_as_one_round():
+    # 0583 T0004 section 6. Two verdicts for one round is NOT a shape this server writes
+    # any longer -- the registration barrier (db/document_review_rounds.py) refuses the
+    # second INSERT for a given (review_run_id, doc_id, revision_no), and the loop no
+    # longer relaunches a round whose verdict it already owns. What this pins is the
+    # READ side: every database written before that barrier can still contain such rows,
+    # and reading one must not break the state machine. They share the document revision
+    # they reviewed, so they stay ONE round and the higher attempt wins.
     rows = [
         review(11, "pass", attempt=1, revision=3),
         review(12, "issues", attempt=2, revision=3),

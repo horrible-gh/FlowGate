@@ -2563,6 +2563,35 @@ class _ReviewReceiptClaimFailed(Exception):
     """Raised when a validated receipt loses its single-use CAS race."""
 
 
+_REVIEW_ROUND_DUPLICATE_MESSAGES = {
+    "ko": "이 AI 검수 회차에는 이미 등록된 결과가 있어 두 번째 검수 결과를 등록하지 않았습니다.",
+    "en": "This AI review round already has a registered verdict; no second review was added.",
+    "ja": "このAIレビューラウンドには既に結果が登録されているため、二番目のレビューは登録しませんでした。",
+}
+
+
+def _review_round_duplicate(existing: Optional[dict], doc_id: str, locale: str) -> JSONResponse:
+    """The answer to a second submission for one review round (0583 T0004 section 7).
+
+    The first durable verdict IS that round's result: nothing is inserted, nothing is
+    overwritten, and the response names the row that already won so the caller reads a
+    finished round rather than a transient failure worth retrying.
+    """
+    messages = _REVIEW_ROUND_DUPLICATE_MESSAGES
+    return JSONResponse(status_code=409, content={
+        "ok": False,
+        "http_status": 409,
+        "code": "review_round_already_registered",
+        "doc_id": doc_id,
+        "registered": False,
+        "review_id": (existing or {}).get("id"),
+        "verdict": (existing or {}).get("verdict"),
+        "reviewed_at": (existing or {}).get("reviewed_at"),
+        "error_message": messages.get(locale) or messages["ko"],
+        "help_url": _help_url(),
+    })
+
+
 _REVIEW_RECEIPT_MESSAGES = {
     "ko": {
         "receipt_missing": "review receipt가 필요합니다.",
@@ -2624,16 +2653,40 @@ def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
     anything else                               (row omitted)  null
     ==========================================  =============  ==========
 
-    "Anything else" is a legacy/non-AI token, a run lookup that failed or raised, a run
-    bound to another action or another document, or a run missing either provider id.
-    All of them return ``{}`` so every provenance column is stored NULL: with one id
-    missing there is no evidence that the requested provider is what actually ran, and
-    the old ``bool(requested and actual and requested != actual)`` collapsed exactly
-    that unknown into ``False`` — "we checked, no fallback happened" — which is a
-    different claim from "we could not check". provider_source is derived from the same
-    two ids, so it must not be guessed ("fallback"/the run's selected source) from
-    evidence too incomplete to decide, and attempt_no is snapshotted only alongside the
-    evidence it belongs to.
+    "Anything else" is a run missing either provider id. Those store every provider
+    column NULL: with one id missing there is no evidence that the requested provider is
+    what actually ran, and the old ``bool(requested and actual and requested != actual)``
+    collapsed exactly that unknown into ``False`` - "we checked, no fallback happened" -
+    which is a different claim from "we could not check". provider_source is derived from
+    the same two ids, so it must not be guessed ("fallback"/the run's selected source)
+    from evidence too incomplete to decide, and attempt_no is snapshotted only alongside
+    the evidence it belongs to.
+
+    ``review_run_id`` is deliberately NOT part of that table (0583 T0004 section 3.1). It
+    is the run's IDENTITY, not evidence about a provider, and it is what makes a review
+    row belong to a round: the document-review loop reads its own verdicts back by it
+    (``review._document_loop_review_view``) and the duplicate barrier keys on it. While
+    it was folded into the provider block, a run with an incomplete provider snapshot
+    wrote a verdict nothing could attribute - so it is now stamped from the verified run
+    alone, and the provider columns stay independently NULL-able.
+
+    Which runs may stamp it:
+
+    * a top-level review run (``action_scope == "review"``);
+    * a document review loop currently executing its REVIEW stage. Such a loop is
+      admitted under the scope of its FIRST hop, so a loop that ``starts_with_rework``
+      - the shape the UI posts for a rejected document (action_scope=rework, folded to
+      ``edit``) - is an edit-scope run for its whole life. Gating on that admission scope
+      dropped the provenance of every review those loops ever wrote (0583 NR0003 / T0004
+      section 1): their own verdicts read back as a foreign run's, the hop was judged to
+      have produced no durable progress, and the loop relaunched the SAME review round -
+      the two 08:37/08:38 rev-1 verdicts on 0579.0005-TR. The STAGE, not the admission
+      scope, is the axis here; the submitted token is review-scoped and bound to this run
+      and this document either way (Step 3 above), so no non-review caller reaches here.
+
+    For that loop stage the requested provider is the loop's own ``reviewer_provider_id``
+    rather than the run's first-hop snapshot - otherwise a rework-first loop would report
+    its ordinary rework -> review stage switch as a provider ``fallback``.
 
     Lookup failures degrade gracefully (empty provenance) rather than failing the whole
     registration: a review that reached this point is a real result, and the provider
@@ -2643,15 +2696,20 @@ def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
     if not run_id:
         return {}
     try:
-        from modules.flow_gate.services.ai_invoke.runtime import get_run_record
+        from modules.flow_gate.services.ai_invoke.runtime import (
+            REVIEW_HOP_KIND,
+            get_run_record,
+        )
         review_run = get_run_record(run_id)
-        if (
-            not review_run
-            or review_run.get("action_scope") != "review"
-            or review_run.get("doc_ref") != doc_id
-        ):
+        if not review_run or review_run.get("doc_ref") != doc_id:
             return {}
-        provenance: dict[str, Any] = {}
+        loop = review_run.get("document_review_loop") or {}
+        loop_review_hop = bool(loop) and REVIEW_HOP_KIND in (
+            loop.get("current_stage"), review_run.get("hop_kind"),
+        )
+        if review_run.get("action_scope") != "review" and not loop_review_hop:
+            return {}
+        provenance: dict[str, Any] = {"review_run_id": run_id}
         review_intent = review_run.get("review_intent")
         if review_intent in ("normal", "rerun"):
             provenance["review_intent"] = review_intent
@@ -2659,13 +2717,15 @@ def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
             if review_intent == "rerun" and superseded_id is not None:
                 provenance["superseded_review_id"] = int(superseded_id)
 
-        requested_id = review_run.get("requested_provider_id")
+        requested_id = (
+            loop.get("reviewer_provider_id") if loop_review_hop
+            else review_run.get("requested_provider_id")
+        )
         actual_id = review_run.get("provider_id")
         if not requested_id or not actual_id:
             return provenance
         fallback_used = requested_id != actual_id
         provenance.update({
-            "review_run_id": run_id,
             "requested_provider_id": requested_id,
             "actual_provider_id": actual_id,
             "actual_provider_name": (review_run.get("provider") or {}).get("name"),
@@ -2904,6 +2964,36 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
     if receipt_reason != "ok":
         return _review_receipt_failure(receipt_reason, _locale)
 
+    # ── Step 5.97: one durable verdict per AI review round (0583 T0004 §4) ──
+    # The receipt/token CAS below guarantees "one review per TOKEN". That is a
+    # different unit from a review ROUND: the document-review loop reissues a token
+    # per stage retry, so a second token for the same (run, document, revision) is
+    # exactly the shape that wrote 0579.0005-TR's 08:37 and 08:38 verdicts. The round
+    # identity is server-owned -- it comes from _review_provenance above, never from
+    # the submitted payload -- and attempt_no / a requested-vs-actual provider
+    # difference are movements INSIDE one round, not evidence of a new one.
+    #
+    # A run id is what makes a round addressable, so a submission without one (a
+    # human/legacy/copy-mention review) is left exactly as it was: unclaimed, and
+    # unaffected by this barrier (section 3.3).
+    #
+    # "Already registered" is read from BOTH durable records of the round -- its claim
+    # and its document_reviews row -- because the claim table is born empty. Migration
+    # 113 backfills the identities that exist when it runs, and this read covers the
+    # rest of the deployment boundary: a verdict an old process writes after 113 has
+    # already run carries no claim, and a review token issued before the deploy can
+    # submit after it.
+    from modules.flow_gate.db import document_review_rounds as db_rounds
+    round_run_id = review_provider.get("review_run_id")
+    if round_run_id and db_rounds.is_registered(round_run_id, doc_id, revision_no):
+        # Cheap pre-write answer for the ordinary duplicate. The claim INSERT inside
+        # the transaction is what actually closes the race; this only keeps a known
+        # duplicate from touching the receipt or the token on its way to the same
+        # conclusion.
+        return _review_round_duplicate(
+            db_reviews.get_for_round(doc_id, revision_no, round_run_id), doc_id, _locale
+        )
+
     # ── Step 6+7: claim receipt + token and store review atomically ──
     # One transaction covers the token claim, the review row, its readback and the
     # token_consumed event, so a submission is all of it or none of it:
@@ -2934,6 +3024,19 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
                 require_claim=True,
             ):
                 raise _ReviewTokenAlreadyClaimed()
+            if round_run_id:
+                # Atomic, and inside this transaction on purpose: the claim and the
+                # review row commit together or not at all, so a rolled-back
+                # registration never leaves a claim that would block the retry it is
+                # entitled to. Its PRIMARY KEY is the barrier -- the loser of a race
+                # between two review tokens raises here instead of inserting a second
+                # verdict for the round -- and claim() also absorbs an already-durable
+                # verdict that carries no claim (the deployment boundary), reading it
+                # inside this same transaction.
+                db_rounds.claim(
+                    review_run_id=round_run_id, doc_id=doc_id,
+                    revision_no=revision_no, token_id=token_rec["token_id"],
+                )
             db_reviews.insert_review(
                 doc_id=doc_id,
                 revision_no=revision_no,
@@ -2957,6 +3060,18 @@ def _handle_review(request: Request, raw_token: str, body: dict) -> JSONResponse
         )
     except _ReviewTokenAlreadyClaimed:
         return _fail(409, "This review token has already been consumed; no review was added.")
+    except db_rounds.RoundAlreadyClaimed as exc:
+        # Same rollback-then-classify shape as the receipt CAS above: on PostgreSQL the
+        # failing INSERT aborts the transaction, so the statement cannot be interrogated
+        # from inside it. Re-read the round only once nothing this request wrote
+        # survives; a claim or a durable verdict that is really there is a winner (a
+        # concurrent one, or one that predates the claim table), and anything else was a
+        # genuine DB fault wearing the same exception.
+        if db_rounds.is_registered(round_run_id, doc_id, revision_no):
+            return _review_round_duplicate(
+                db_reviews.get_for_round(doc_id, revision_no, round_run_id), doc_id, _locale
+            )
+        return _fail(500, f"DB registration error: {exc}")
     except Exception as exc:
         return _fail(500, f"DB registration error: {exc}")
 

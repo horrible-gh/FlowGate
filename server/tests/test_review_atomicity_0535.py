@@ -576,6 +576,10 @@ _PROVENANCE_COLUMNS = (
     "actual_provider_name", "provider_source", "attempt_no", "fallback_used",
 )
 
+# 0583 T0004 section 3.1: everything except the run id is evidence ABOUT A PROVIDER.
+# The run id is the round's identity, and it is decided on its own axis.
+_PROVIDER_EVIDENCE_COLUMNS = _PROVENANCE_COLUMNS[1:]
+
 
 def _raise(_run_id):
     raise RuntimeError("run registry unavailable")
@@ -599,7 +603,14 @@ def test_unprovable_provenance_is_stored_as_null_not_as_false(
 ):
     """T0007 §2 row 3: NULL means "no evidence to decide", and False must never stand in
     for it. `bool(requested and actual and requested != actual)` used to answer False for
-    every one of these."""
+    every one of these.
+
+    0583 T0004 §3.1 splits the axes: the last two cases DO have a verified review run
+    bound to this document -- only its provider snapshot is incomplete -- so the round
+    stays attributable through `review_run_id` while every provider column is still NULL.
+    The first five have no usable run at all, so nothing is stamped. Keeping the run id
+    hostage to provider evidence is what left the document-review loop unable to
+    recognise its own verdicts (the 0579 duplicate)."""
     if token_overrides:
         monkeypatch.setattr(
             inbox_routes.token_service, "verify",
@@ -612,8 +623,11 @@ def test_unprovable_provenance_is_stored_as_null_not_as_false(
 
     assert response.status_code == 201, f"{case}: {response.text}"
     row = env["db"].reviews()[0]
-    for column in _PROVENANCE_COLUMNS:
+    run_is_verified = "provider id missing" in case
+    for column in (_PROVIDER_EVIDENCE_COLUMNS if run_is_verified else _PROVENANCE_COLUMNS):
         assert row[column] is None, f"{case}: {column} should be NULL, got {row[column]!r}"
+    if run_is_verified:
+        assert row["review_run_id"] == RUN_ID, case
 
 
 def test_a_submitted_payload_cannot_forge_the_provenance(env, monkeypatch):

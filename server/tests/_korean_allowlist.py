@@ -223,6 +223,27 @@ PROTECTED = [
         ],
     },
     {
+        "file": "modules/flow_gate/api/inbox_routes.py",
+        "symbols": [
+            "_REVIEW_ROUND_DUPLICATE_MESSAGES",
+            # The census matches the resolved LITERAL, not the constant name.
+            "이 AI 검수 회차에는 이미 등록된 결과가 있어 두 번째 검수 결과를 등록하지 않았습니다.",
+        ],
+        "reason": (
+            "flowgate.default.0583 T0004 section 7: the ko branch of "
+            "_REVIEW_ROUND_DUPLICATE_MESSAGES, the answer a worker reads when it submits "
+            "a second verdict for a review round that already has one. Category A "
+            "(locale-dictionary): the en and ja branches carry the same sentence and are "
+            "scanned for leakage by test_server_korean_leak_0355.py as usual. Registered "
+            "rather than added to the file's line cap, so this T contributes zero to the "
+            "census budget -- same convention as the _SERVER_ASSEMBLED_NEW_COPY entry "
+            "above."
+        ),
+        "tests": [
+            "tests/test_review_round_idempotency_0583.py::test_the_duplicate_answer_speaks_the_requested_locale",
+        ],
+    },
+    {
         "file": "modules/flow_gate/api/token_routes.py",
         "symbols": [
             "이 재지시는 [수정 적용]으로 시작되었습니다", "직접 파일을 쓰는 도구는 이 실행에 없습니다",

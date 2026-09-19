@@ -129,6 +129,26 @@ def get_latest_for_revision(doc_id: str, revision_no: int) -> Optional[dict]:
     )
 
 
+def get_for_round(doc_id: str, revision_no: int, review_run_id: str) -> Optional[dict]:
+    """The verdict one AI review round already registered, or None (0583 T0004 §7).
+
+    The round key is the same triple ``document_review_rounds`` claims, so this answers
+    "which row won this round" -- for the duplicate-submission response, and for the
+    barrier itself, which reads this table as well as the claim table so that a verdict
+    written before the claim table existed still closes its round (0583 TR0005 rev1).
+
+    Oldest first: §7 makes the FIRST durable verdict the round's result, so on legacy
+    history that predates the barrier this names the row that actually won rather than the
+    duplicate that followed it.  From now on the barrier makes at most one row match.
+    """
+    return get_store()._fetch_one(
+        "SELECT * FROM document_reviews "
+        "WHERE doc_id = ? AND revision_no = ? AND review_run_id = ? "
+        "ORDER BY created_at ASC, id ASC LIMIT 1",
+        [doc_id, revision_no, review_run_id],
+    )
+
+
 def get_latest_by_doc(doc_id: str) -> Optional[dict]:
     """Return the document's latest review."""
     return get_store()._fetch_one(
