@@ -2687,7 +2687,6 @@ def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
             REVIEW_HOP_KIND,
             get_run_record,
         )
-        from modules.flow_gate.services.ai_invoke.provenance import effective_action_scope
         review_run = get_run_record(run_id)
         if not review_run or review_run.get("doc_ref") != doc_id:
             return {}
@@ -2695,12 +2694,16 @@ def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
         loop_review_hop = bool(loop) and REVIEW_HOP_KIND in (
             loop.get("current_stage"), review_run.get("hop_kind"),
         )
-        # 0582 TR0006 rev1: the run's live hop_kind-aware stage (effective_action_scope)
-        # covers this same review<->rework alternation even when there is no document_review_loop
-        # record to read a current_stage from -- loop_review_hop stays as an extra signal for
-        # a loop hop whose current_stage has advanced before hop_kind catches up.
-        if effective_action_scope(review_run) != "review" and not loop_review_hop:
-            return {}
+        if review_run.get("action_scope") != "review" and not loop_review_hop:
+            # 0582 TR0006 rev1: a document_review_loop hop rewrites hop_kind in place as it
+            # alternates stages, but a loop's own current_stage/hop_kind can say "review" even
+            # when there is no document_review_loop record to read a current_stage from (a
+            # loop hop whose current_stage has advanced before hop_kind catches up). The run's
+            # live hop_kind-aware stage (effective_action_scope) is the second-chance check
+            # before this is treated as a genuinely non-review run.
+            from modules.flow_gate.services.ai_invoke.provenance import effective_action_scope
+            if effective_action_scope(review_run) != "review":
+                return {}
         provenance: dict[str, Any] = {"review_run_id": run_id}
         review_intent = review_run.get("review_intent")
         if review_intent in ("normal", "rerun"):
@@ -2716,28 +2719,16 @@ def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
         actual_id = review_run.get("provider_id")
         if not requested_id or not actual_id:
             return provenance
-        # 0582 T0005: the requested/actual provider evidence itself now comes from the
-        # one common lookup every other AI-authored result uses too (rejection rework
-        # response, in-app Q&A) -- see ai_invoke.provenance.resolve_run_provenance. The
-        # loop-aware requested_id above already carries the reviewer_provider_id override
-        # for a loop's review hop, so it is handed to the resolver via a patched snapshot.
-        from modules.flow_gate.services.ai_invoke.provenance import resolve_run_provenance
-        run_for_snapshot = review_run
-        if requested_id != review_run.get("requested_provider_id"):
-            run_for_snapshot = dict(review_run)
-            run_for_snapshot["requested_provider_id"] = requested_id
-        snapshot = resolve_run_provenance(
-            run_id, doc_id=doc_id, allowed_action_scopes=("review",), run=run_for_snapshot,
-        )
-        if not snapshot:
-            return provenance
+        fallback_used = requested_id != actual_id
         provenance.update({
-            "requested_provider_id": snapshot["requested_provider_id"],
-            "actual_provider_id": snapshot["actual_provider_id"],
-            "actual_provider_name": snapshot["actual_provider_name"],
-            "provider_source": snapshot["provider_source"],
-            "attempt_no": snapshot["attempt_no"],
-            "fallback_used": snapshot["fallback_used"],
+            "requested_provider_id": requested_id,
+            "actual_provider_id": actual_id,
+            "actual_provider_name": (review_run.get("provider") or {}).get("name"),
+            "provider_source": (
+                "fallback" if fallback_used else review_run.get("selected_provider_source")
+            ),
+            "attempt_no": int(review_run.get("attempt_no") or 0) or None,
+            "fallback_used": fallback_used,
         })
         return provenance
     except Exception:
