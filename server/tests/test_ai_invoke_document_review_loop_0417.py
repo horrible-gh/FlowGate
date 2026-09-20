@@ -1316,8 +1316,6 @@ def test_real_worker_standalone_loop_restart_restore_and_never_approves(monkeypa
         return True
 
     monkeypatch.setattr(service, "_execute_provider_chain", execute)
-    # See test_real_worker_standalone_loop_broadcasts_reject_and_response_across_two_reviews
-    # above for why end_reason (not outcome) belongs on the classify stub (0583 T0004).
     monkeypatch.setattr(service, "_classify_end_reason", lambda item, ok: item.update(end_reason="exited"))
     monkeypatch.setattr(service, "_judge_hop", lambda item: item.update(outcome="complete"))
     monkeypatch.setattr(service, "_prepare_retry_token", lambda item: {"mention": "token"})
@@ -1579,8 +1577,6 @@ def test_worker_stage_switch_applies_rework_timeout_sec_to_the_new_hop(monkeypat
         "timeout_sec": 14400,
     }
     monkeypatch.setattr(service, "_execute_provider_chain", lambda *a, **k: True)
-    # See test_real_worker_standalone_loop_broadcasts_reject_and_response_across_two_reviews
-    # for why end_reason (not outcome) belongs on the classify stub (0583 T0004).
     monkeypatch.setattr(service, "_classify_end_reason", lambda item, ok: item.update(end_reason="exited"))
     monkeypatch.setattr(service, "_judge_hop", lambda item: item.update(outcome="complete"))
     monkeypatch.setattr(service, "_prepare_retry_token", lambda item: {"mention": "token"})
