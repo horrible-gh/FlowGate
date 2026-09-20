@@ -328,6 +328,14 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
                 run["hop_kind"] = loop["current_stage"]
                 run["provider"] = oracle_module._provider_brief(selected)
                 run["provider_id"] = selected_id
+                # 0582 TR0006 rev1: requested_provider_id is set once at admission (the
+                # FIRST stage's own provider) and never touched again by this transition --
+                # left alone, a provenance snapshot taken on stage 2+ would compare stage
+                # 2's actual provider against stage 1's requested one and report a fallback
+                # that never happened. A loop stage is a single-candidate chain
+                # (resolve_loop_provider names the only provider this hop will run), so the
+                # requested and actual provider for THIS hop are, by construction, the same.
+                run["requested_provider_id"] = selected_id
                 run["attempt_no"] = int(run.get("attempt_no") or 0) + 1
                 run["document_review_loop_checkpointed"] = False
                 # T0011 §4 / 0486 NR0010 Finding 3: a stage switch is a new HOP, so its

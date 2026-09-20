@@ -2548,6 +2548,8 @@ export default {
       ai_response_label: 'AI 대응',
       ai_response_missing: 'AI 대응 미기록',
       ai_response_missing_warn: '대응 기록 없음 — 문서가 이미 수정/승인되었지만 이 반려에 대한 AI 대응이 기록되어 있지 않습니다.',
+      // 0582 T0005 §2.3/§7: AI가 만든 것은 확실하지만 실행 provider를 확정할 수 없는 경로(레거시 기록·외부 붙여넣기)의 표시.
+      ai_provider_unknown: '외부/미확인',
       review_reject_empty: 'AI 검수 의견·반려 사유 없음',
       review_reject_hint: '검수요청 또는 반려 처리 후 여기에 표시됩니다.',
       ai_review_view_history: '전체 이력 보기',

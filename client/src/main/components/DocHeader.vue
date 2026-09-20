@@ -1220,7 +1220,12 @@ function _onOpenDocsRefresh(e: Event) {
 }
 
 function _onReviewStatusChanged(e: Event) {
-  const payload = (e as CustomEvent).detail as { doc_id?: string; next_status?: string; rejection_reason?: string | null; rejection_history?: Array<{ reason: string; rejected_at: string; rejected_by: string | null }> | null }
+  // 0582 TR0006 rev1: the server now runs every doc_review_status_changed emitter's
+  // rejection_history through the SAME enrich_rejection_history_provenance GET
+  // /document uses (inbox_routes.py / ai_invoke/review.py / workflow.py), so this
+  // payload's shape matches RejectionHistoryItem, provider fields included -- the
+  // whole-array replacement below is safe without a follow-up refetch.
+  const payload = (e as CustomEvent).detail as { doc_id?: string; next_status?: string; rejection_reason?: string | null; rejection_history?: RejectionHistoryItem[] | null }
   if (doc.value && payload.doc_id === doc.value.doc_id && payload.next_status) {
     invalidatePendingDocFetches()
     doc.value.doc_review_status = payload.next_status

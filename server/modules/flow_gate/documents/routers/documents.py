@@ -499,7 +499,11 @@ def _parse_doc_workflow(doc: dict) -> dict:
         parsed_history = raw_history
     else:
         parsed_history = []
-    out["rejection_history"] = parsed_history
+    # 0582 T0005 §4: attach the same AI provider evidence api/v1/document_routes
+    # attaches (rejection_provider/response_provider), via the one shared function, so
+    # the console UI and the T-API worker view of the same rejection cannot disagree.
+    from modules.flow_gate.workflow.pipeline_service import enrich_rejection_history_provenance
+    out["rejection_history"] = enrich_rejection_history_provenance(parsed_history)
 
     # 0291 T3: read the group's document list **once, first**, and let the R/B root lookup and
     # the head decision below share that result. Previously the root was fetched by two narrow

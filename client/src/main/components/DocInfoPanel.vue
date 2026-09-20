@@ -201,7 +201,9 @@
             class="dip-qa-card"
             :class="{ 'answered-card': itemAnswered(item) }"
           >
-            <strong class="dip-qa-card-title">Q{{ item.seq }} · {{ item.title || item.body }}</strong>
+            <div class="dip-qa-card-head">
+              <strong class="dip-qa-card-title">Q{{ item.seq }} · {{ item.title || item.body }}</strong>
+            </div>
             <p class="dip-qa-card-body">{{ item.body }}</p>
             <!-- group 0243 R0001: the card previews the options; picking one happens in the
                  full view, which [답변] opens. -->
@@ -295,8 +297,8 @@
                   @click="toggleFold('reason', entry.key)"
                 >
                   <span class="dip-reject-quote-author">
-                    <AppIcon name="user-gear" />
-                    <strong>{{ rejectedByDisplay(entry.reject!.rejected_by) || t('main.doc_info_panel.rejection_review_author') }}</strong>
+                    <AppIcon :name="entry.reject!.review_id != null ? 'robot' : 'user-gear'" />
+                    <strong>{{ rejectionAuthorDisplay(entry.reject!) }}</strong>
                   </span>
                   <span v-if="entry.reject!.rejected_at" class="dip-reject-date">{{ formatRejectionDate(entry.reject!.rejected_at) }}</span>
                   <AppIcon name="caret-down" class="dip-reject-chevron" />
@@ -328,6 +330,7 @@
                   <span class="dip-ai-response-label">
                     <AppIcon name="arrow-bend-up-left" class="dip-ai-response-thread" />
                     <AppIcon name="robot" /> {{ t('main.doc_info_panel.ai_response_label') }}
+                    <span class="dip-ai-provider">{{ responseProviderLabel(entry.reject!) }}</span>
                   </span>
                   <span v-if="entry.reject!.responded_at" class="dip-ai-response-date">{{ formatRejectionDate(entry.reject!.responded_at) }}</span>
                   <AppIcon name="caret-down" class="dip-ai-response-chevron" />
@@ -545,7 +548,7 @@ import { useToast } from './common/useToast'
 import { useMentionCopy } from '../composables/useMentionCopy'
 import { ClipboardAbort, copyToClipboardDeferred } from '../utils/clipboard'
 import type { StepState } from '../workflow/workflowViewState'
-import type { AiReview } from '../types/aiReview'
+import type { AiReview, AiProvenance } from '../types/aiReview'
 import type { RejectionHistoryItem } from '../composables/useFlowGateToken'
 import type { TrScopePathSlice, TrScopeVerdict } from '../types/trScope'
 
@@ -912,6 +915,29 @@ function isMissingResponseWarn(reject: RejectionHistoryItem): boolean {
   return !hasAiResponse(reject) && (props.reviewStatus === 'revised' || props.reviewStatus === 'approved')
 }
 
+// 0582 T0005 §4/§7: the ONE display rule every AI-provenance badge in this panel
+// follows -- 'AI · {provider}', falling back to an explicit unknown label rather than
+// inventing a name when the evidence is missing (§2.3).
+function providerLabel(p?: AiProvenance | null): string {
+  const name = p?.ai_provider_name || p?.ai_provider_id
+  return name ? `AI · ${name}` : ''
+}
+// The rejection quote author: an AUTOMATIC (review_id-bearing) rejection names the
+// AI review that produced the `issues` verdict, never the chain-issuer user id the
+// server executed the transition as (0582 T0005 §2.1/§3).
+function rejectionAuthorDisplay(reject: RejectionHistoryItem): string {
+  if (reject.review_id != null) {
+    return providerLabel(reject.rejection_provider) || `AI · ${t('main.doc_info_panel.ai_provider_unknown')}`
+  }
+  return rejectedByDisplay(reject.rejected_by) || t('main.doc_info_panel.rejection_review_author')
+}
+// The rework response is always AI-authored when present (hasAiResponse gates the
+// block this labels), so an unresolved snapshot still reads as AI, just unconfirmed
+// which one (0582 T0005 §2.3), instead of silently showing nothing.
+function responseProviderLabel(reject: RejectionHistoryItem): string {
+  return providerLabel(reject.response_provider) || `AI · ${t('main.doc_info_panel.ai_provider_unknown')}`
+}
+
 // A review's real time column, in the order the server fills them.
 function reviewWhen(r: AiReview): string {
   return r.reviewed_at ?? r.created_at ?? ''
@@ -1255,7 +1281,6 @@ function reviewVerdictLabel(r: AiReview): string {
   if (r.verdict === 'hold') return t('main.doc_info_panel.ai_verdict_hold')
   return t('main.doc_info_panel.ai_verdict_issues', { n: r.finding_count ?? 0 })
 }
-
 // group 0126 / option C + T0013 + 0311 T0004: qa full-history modal. TR0005 rev6
 // rejection §3 ("질의는 빼라" — leave query out) split the once-merged dialog back in
 // two — this ref only opens QaHistoryDialog now. The query headline's [전체보기] opens
@@ -1464,8 +1489,9 @@ onBeforeUnmount(() => window.removeEventListener('fg:qa_refresh', _onQaRefresh))
   border-radius: var(--r, 6px); background: #fffbeb;
 }
 .dip-qa-card + .dip-qa-card { margin-top: 8px; }
+.dip-qa-card-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .dip-qa-card-title {
-  display: block; overflow: hidden; margin-bottom: 4px;
+  display: block; overflow: hidden; margin-bottom: 0; flex: 1 1 auto; min-width: 0;
   color: #78350f; font-size: .76rem; text-overflow: ellipsis; white-space: nowrap;
 }
 .dip-qa-card-body {
@@ -1583,6 +1609,19 @@ onBeforeUnmount(() => window.removeEventListener('fg:qa_refresh', _onQaRefresh))
 }
 .dip-ai-verdict.pass { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
 .dip-ai-verdict.warn { background: #fef3c7; color: #b45309; border: 1px solid #fde68a; }
+/* 0582 T0005 §4/§7: the shared 'AI · {provider}' badge -- compact review card,
+   auto-reject author row, and rework response label all use this ONE class. */
+.dip-ai-provider {
+  display: inline-block;
+  flex: 0 0 auto;
+  font-size: .6rem;
+  font-weight: 600;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+}
 /* R0001 (rev1): the comment box now shares the rejection-reason / AI-response control
    idiom exactly — a clickable header row (label + chevron, no "expand/collapse" text button)
    sitting above a body that is clamped to two lines and expands to a height-capped,

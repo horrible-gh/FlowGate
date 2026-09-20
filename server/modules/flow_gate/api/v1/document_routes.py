@@ -36,14 +36,23 @@ router = APIRouter(prefix="/api/v1", tags=["OutboundDocument"])
 
 
 def _parse_rejection_history(raw: Any) -> list:
-    """Convert DB rejection_history JSON string to a Python list. Returns an empty list on parse failure."""
+    """DB rejection_history JSON string -> API list, with AI provider evidence attached.
+
+    0582 T0005 SS4: every item gains ``rejection_provider``/``response_provider``
+    (both nullable) via pipeline_service.enrich_rejection_history_provenance, the same
+    one function the console-facing documents.py router calls, so the two read
+    surfaces cannot report different providers for the same rejection.
+    """
     if not raw:
         return []
     try:
         parsed = json.loads(raw)
-        return parsed if isinstance(parsed, list) else []
     except (json.JSONDecodeError, TypeError):
         return []
+    if not isinstance(parsed, list):
+        return []
+    from modules.flow_gate.workflow.pipeline_service import enrich_rejection_history_provenance
+    return enrich_rejection_history_provenance(parsed)
 
 
 def _fail(status: int, message: str) -> JSONResponse:

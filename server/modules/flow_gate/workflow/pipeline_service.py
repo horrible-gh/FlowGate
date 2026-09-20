@@ -881,6 +881,58 @@ def parse_rejection_history(raw: Any) -> list:
     return []
 
 
+def rejection_provenance_view(item: dict) -> dict:
+    """Shape one rejection_history item's AI-provider evidence for API/UI (0582 T0005).
+
+    Resolves two independent, both-optional facts -- neither is stored redundantly on
+    the item itself, and both are None-safe for a legacy row that predates this T:
+
+    * ``rejection_provider`` -- when this rejection carries a ``review_id`` (an
+      AUTOMATIC AI-review rejection, T0005 2.1.5), the ACTUAL reviewing AI, resolved
+      from ``document_reviews`` at read time. The server logic that executed the
+      auto-reject transition is never reported as "the AI" here (0582 T0005 SS2.1) --
+      only the AI review run that produced the `issues` verdict is.
+    * ``response_provider`` -- the AI that generated ``ai_response`` (the rework
+      reply), if it was recorded with a run/provider snapshot (0582 T0005 SSC).
+
+    Returns a NEW dict; the source item is left untouched.
+    """
+    from modules.flow_gate.services.ai_invoke.provenance import to_api_payload
+
+    out = dict(item)
+    rejection_provider = None
+    review_id = item.get("review_id")
+    if is_review_row_id(review_id):
+        try:
+            from modules.flow_gate.db import document_reviews as db_reviews
+            row = db_reviews.get_by_id(int(str(review_id).strip()))
+        except Exception:
+            row = None
+        if row is not None:
+            rejection_provider = to_api_payload({
+                "ai_run_id": row.get("review_run_id"),
+                "actual_provider_id": row.get("actual_provider_id"),
+                "actual_provider_name": row.get("actual_provider_name"),
+            })
+    out["rejection_provider"] = rejection_provider
+    out["response_provider"] = to_api_payload({
+        "ai_run_id": item.get("response_ai_run_id"),
+        "actual_provider_id": item.get("response_actual_provider_id"),
+        "actual_provider_name": item.get("response_actual_provider_name"),
+    })
+    return out
+
+
+def enrich_rejection_history_provenance(history: list) -> list:
+    """Apply :func:`rejection_provenance_view` across a whole rejection_history list.
+
+    Every document read path that surfaces ``rejection_history`` (api/v1/document_routes,
+    documents/routers/documents) calls this ONE function so the derived provider fields
+    cannot drift between the console UI and the T-API worker view (0582 T0005 SS4).
+    """
+    return [rejection_provenance_view(item) for item in history if isinstance(item, dict)]
+
+
 def resolve_rejection_target(
     history: list, *, rejection_id: str | None = None, review_id: Any = None,
 ) -> dict | None:
@@ -916,6 +968,9 @@ def record_rejection_response(
     revision_no: int | None,
     review_id: Any = None,
     rejection_id: str | None = None,
+    response_ai_run_id: str | None = None,
+    response_actual_provider_id: str | None = None,
+    response_actual_provider_name: str | None = None,
 ) -> dict | None:
     """Annotate the rejection this response answers with how the AI addressed it.
 
@@ -975,6 +1030,12 @@ def record_rejection_response(
     target["responded_at"] = now_iso()
     target["response_recorded_by"] = recorded_by
     target["response_revision_no"] = revision_no
+    # 0582 T0005 SSC: the rework run's OWN effective provider, never the review's or a
+    # stale prior response's -- callers resolve it fresh per call via
+    # ai_invoke.provenance.resolve_run_provenance and pass the snapshot in.
+    target["response_ai_run_id"] = response_ai_run_id
+    target["response_actual_provider_id"] = response_actual_provider_id
+    target["response_actual_provider_name"] = response_actual_provider_name
 
     db_docs.update(doc_id, {
         "rejection_history": json.dumps(history, ensure_ascii=False),
