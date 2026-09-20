@@ -2625,7 +2625,7 @@ def _review_receipt_failure(reason: str, locale: str) -> JSONResponse:
     })
 
 
-def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
+def _review_provenance_impl(token_rec: dict, doc_id: str) -> dict[str, Any]:
     """Server-owned provider evidence for one review submission (0535 T0007 §2).
 
     The three states of ``fallback_used`` are decided ONLY from the ai-invoke run
@@ -2723,6 +2723,57 @@ def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
             "fallback_used": fallback_used,
         })
         return provenance
+    except Exception:
+        return {}
+
+
+def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
+    """Public entry point for review provenance (0582 T0005 / TR0012).
+
+    ``_review_provenance_impl`` above is main's own 0583 review-round-aware body, kept
+    byte-for-byte as main has it so this file merges against main without conflict.
+    Its own early guard is blind to one shape ``effective_action_scope`` (the common
+    0582 provenance helper) already knows how to read: a document_review_loop hop can
+    rewrite ``hop_kind`` to "review"/"rework" without leaving a ``document_review_loop``
+    record behind to read a ``current_stage`` from, and the impl's guard treats that as
+    a plain non-review run, returning ``{}`` before it ever looks at the provider ids.
+
+    This wrapper only re-derives provenance through the common helper
+    (``resolve_run_provenance``) when the impl came back empty -- an ordinary
+    submission (impl succeeds on its own) still calls ``get_run_record`` exactly once.
+    """
+    provenance = _review_provenance_impl(token_rec, doc_id)
+    if provenance:
+        return provenance
+    run_id = token_rec.get("ai_run_id")
+    if not run_id:
+        return {}
+    try:
+        from modules.flow_gate.services.ai_invoke.provenance import (
+            effective_action_scope,
+            resolve_run_provenance,
+        )
+        from modules.flow_gate.services.ai_invoke.runtime import get_run_record
+
+        review_run = get_run_record(run_id)
+        if not review_run or review_run.get("doc_ref") != doc_id:
+            return {}
+        if effective_action_scope(review_run) != "review":
+            return {}
+        loop = review_run.get("document_review_loop") or {}
+        requested_id = loop.get("reviewer_provider_id") or review_run.get("requested_provider_id")
+        run_for_resolve = {**review_run, "requested_provider_id": requested_id}
+        snapshot = resolve_run_provenance(run_id, doc_id=doc_id, run=run_for_resolve)
+        result: dict[str, Any] = {"review_run_id": run_id}
+        review_intent = review_run.get("review_intent")
+        if review_intent in ("normal", "rerun"):
+            result["review_intent"] = review_intent
+            superseded_id = review_run.get("review_admission_superseded_review_id")
+            if review_intent == "rerun" and superseded_id is not None:
+                result["superseded_review_id"] = int(superseded_id)
+        if snapshot:
+            result.update({k: v for k, v in snapshot.items() if k != "ai_run_id"})
+        return result
     except Exception:
         return {}
 
