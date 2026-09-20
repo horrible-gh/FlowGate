@@ -2625,6 +2625,26 @@ def _review_receipt_failure(reason: str, locale: str) -> JSONResponse:
     })
 
 
+def _review_provenance_run_record(run_id: str) -> Optional[dict[str, Any]]:
+    """0582 TR0006 rev1, kept outside _review_provenance's own admission-scope guard: a
+    document_review_loop hop rewrites hop_kind in place as it alternates stages, and a hop
+    can report hop_kind == "review" with no document_review_loop record left to read a
+    current_stage from (the loop record is gone by the time this reads it, whether because
+    it never existed or because it already finished). Normalizing action_scope to the run's
+    live hop-based stage here, once, before _review_provenance's own guard reads it, means
+    that guard needs no separate loop-record-aware fallback of its own.
+    """
+    from modules.flow_gate.services.ai_invoke.provenance import effective_action_scope
+    from modules.flow_gate.services.ai_invoke.runtime import get_run_record
+
+    run = get_run_record(run_id)
+    if not run:
+        return run
+    effective = effective_action_scope(run)
+    if effective is not None and effective != run.get("action_scope"):
+        run = {**run, "action_scope": effective}
+    return run
+
 def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
     """Server-owned provider evidence for one review submission (0535 T0007 §2).
 
@@ -2687,7 +2707,7 @@ def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
             REVIEW_HOP_KIND,
             get_run_record,
         )
-        review_run = get_run_record(run_id)
+        review_run = _review_provenance_run_record(run_id)
         if not review_run or review_run.get("doc_ref") != doc_id:
             return {}
         loop = review_run.get("document_review_loop") or {}
@@ -2695,15 +2715,7 @@ def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
             loop.get("current_stage"), review_run.get("hop_kind"),
         )
         if review_run.get("action_scope") != "review" and not loop_review_hop:
-            # 0582 TR0006 rev1: a document_review_loop hop rewrites hop_kind in place as it
-            # alternates stages, but a loop's own current_stage/hop_kind can say "review" even
-            # when there is no document_review_loop record to read a current_stage from (a
-            # loop hop whose current_stage has advanced before hop_kind catches up). The run's
-            # live hop_kind-aware stage (effective_action_scope) is the second-chance check
-            # before this is treated as a genuinely non-review run.
-            from modules.flow_gate.services.ai_invoke.provenance import effective_action_scope
-            if effective_action_scope(review_run) != "review":
-                return {}
+            return {}
         provenance: dict[str, Any] = {"review_run_id": run_id}
         review_intent = review_run.get("review_intent")
         if review_intent in ("normal", "rerun"):
