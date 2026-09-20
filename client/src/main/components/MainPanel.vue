@@ -157,6 +157,7 @@
             :text-wrap-enabled="textWrapEnabled"
             :download-available="exposedValue(docHeaderRefs[tab.id]?.downloadAvailable) === true"
             :download-busy="exposedValue(docHeaderRefs[tab.id]?.markdownDownloadBusy) === true"
+            :upload-busy="markdownUploadBusy[tab.id] === true"
             :conversation-read-only="aiRunDocumentLocked && !activeChatOwnRun"
             :conversation-manual-copy-text="convManualCopy[tab.id] ?? null"
             :conversation-full-view-host="convFullViewHost"
@@ -169,6 +170,7 @@
             @open-full-view="openFullView(tab)"
             @toggle-edit-dropdown="toggleEditDropdown(tab.id)"
             @download-markdown="docHeaderRefs[tab.id]?.downloadMarkdown?.()"
+            @upload-markdown="uploadMarkdownContent(tab.id, $event)"
             @update:text-wrap-enabled="textWrapEnabled = $event"
             @bind-md-viewer="bindActiveRef(mdViewerRefs, tab.id, $event)"
             @bind-text-viewer="bindActiveRef(textViewerRefs, tab.id, $event)"
@@ -1166,6 +1168,10 @@ const textViewerRefs = reactive<Record<string, any>>({})
 const stepVerificationCardRefs = reactive<Record<string, any>>({})
 const convViewRefs = reactive<Record<string, any>>({})
 const workPlanEditorRefs = reactive<Record<string, any>>({})
+// T0004 — generic-document Markdown upload busy state, keyed by tab id. Not owned by
+// DocHeader (NR0003 §19: DocHeader stays the download-only fetch/blob owner), so it lives
+// here alongside the orchestration that drives the upload.
+const markdownUploadBusy = reactive<Record<string, boolean>>({})
 
 // Only WP approval needs to coordinate with its table editor. A failed save leaves the
 // editor's existing validation/conflict/error UI in place and prevents the approval POST.
@@ -4619,6 +4625,49 @@ async function saveEditContent() {
     )
   } finally {
     editSaving.value = false
+  }
+}
+
+// T0004 §5/§9/§10 — mirrors the WP upload contract (WorkPlanEditor.vue's
+// readFileAsText/onWorkPlanFileSelected): read the file, strip a leading UTF-8 BOM, PATCH
+// the same content path saveEditContent uses, and only refresh after that PATCH succeeds.
+// A failed read or a failed save leaves the current viewer untouched — the uploaded text is
+// never shown until the server has confirmed it as the new canonical body.
+function readUploadedFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(reader.error ?? new Error('file read error'))
+    reader.readAsText(file)
+  })
+}
+
+async function uploadMarkdownContent(tabId: string, file: File) {
+  if (markdownUploadBusy[tabId]) return
+  markdownUploadBusy[tabId] = true
+  try {
+    let text: string
+    try {
+      text = await readUploadedFileAsText(file)
+    } catch {
+      showToast(t('main.document_preview.upload_read_error'), 'danger')
+      return
+    }
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1)
+    try {
+      await patchRequest('/api/v1/documents/content', {
+        doc_id: tabId,
+        content: text,
+      })
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail ?? e?.message ?? t('main.document_preview.save_failed'), 'danger')
+      return
+    }
+    await mdViewerRefs[tabId]?.loadContent?.()
+    await stepVerificationCardRefs[tabId]?.fetchData?.()
+    showToast(t('main.document_preview.upload_success'), 'success')
+  } finally {
+    markdownUploadBusy[tabId] = false
   }
 }
 const activeProjects = computed(() =>

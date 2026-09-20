@@ -50,6 +50,7 @@
     :text-wrap-enabled="textWrapEnabled"
     :download-available="downloadAvailable"
     :download-busy="downloadBusy"
+    :upload-busy="uploadBusy"
     @close="emit('close')"
     @edit-direct="emit('edit-direct')"
     @edit-mention="emit('edit-mention')"
@@ -58,6 +59,7 @@
     @open-full-view="emit('open-full-view')"
     @toggle-edit-dropdown="emit('toggle-edit-dropdown')"
     @download-markdown="emit('download-markdown')"
+    @upload-markdown="emit('upload-markdown', $event)"
     @update:text-wrap-enabled="emit('update:text-wrap-enabled', $event)"
     @bind-md-viewer="emit('bind-md-viewer', $event)"
     @bind-text-viewer="emit('bind-text-viewer', $event)"
@@ -83,6 +85,7 @@ defineProps<{
   textWrapEnabled: boolean
   downloadAvailable: boolean
   downloadBusy: boolean
+  uploadBusy: boolean
   // CH-specific inputs. They are separate props rather than being folded into the shared
   // ones because MainPanel decides them: the chat's own AI run is exempt from the document
   // lock, and the full-view target belongs to MainPanel's dialog.
@@ -101,6 +104,7 @@ const emit = defineEmits<{
   'open-full-view': []
   'toggle-edit-dropdown': []
   'download-markdown': []
+  'upload-markdown': [file: File]
   'update:text-wrap-enabled': [enabled: boolean]
   'bind-md-viewer': [instance: unknown]
   'bind-text-viewer': [instance: unknown]

@@ -1,11 +1,17 @@
 // flowgate.default.0534 — The Markdown download button in the "문서 내용 미리보기" card.
 // TR0006/0010 built the download action but wired it into DocHeader's TITLE row.
 // TR0012 rev1 (rej_01M1WH0B2S5DWNA8) moved it to the left of the document-detail [수정]
-// button. TR0012 rev3 (rej_01M1WKS3QGRY4RH9) moves it to the far right of the card-actions.
+// button. TR0012 rev3 (rej_01M1WKS3QGRY4RH9) moved it to the far right of the card-actions.
+//
+// flowgate.default.0587 T0004/NR0003 — the far-right placement above is superseded: the
+// generic-document card now mirrors the work-plan card's [다운로드][업로드][...] pairing at
+// the front of card-actions, so download and (when the doc is editable) upload lead
+// card-actions in that order, followed by [수정]/[전체보기].
 //
 // DocHeader keeps owning the fetch (doc.value.download_available) and the download
 // logic, exposing downloadAvailable / markdownDownloadBusy / downloadMarkdown so
-// MainPanel can drive a button without a second detail fetch.
+// MainPanel can drive a button without a second detail fetch. Upload is not a DocHeader
+// concern (NR0003 §19) — MainPanel owns the read/PATCH/refresh orchestration itself.
 
 import { defineComponent, h } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -44,7 +50,7 @@ const TAB = {
 }
 
 /** Honest DocHeader stand-in: exposes exactly what the real component exposes for this binding. */
-function fakeDocHeader(downloadAvailable: boolean, downloadMarkdown = vi.fn()) {
+function fakeDocHeader(downloadAvailable: boolean, downloadMarkdown = vi.fn(), canEditDocument = true) {
   return defineComponent({
     name: 'DocHeader',
     props: { tab: { type: Object, default: null } },
@@ -53,7 +59,7 @@ function fakeDocHeader(downloadAvailable: boolean, downloadMarkdown = vi.fn()) {
         docTypeCode: 'TR',
         docProjectId: 'test',
         docModule: 'test',
-        canEditDocument: true,
+        canEditDocument,
         docLoaded: true,
         testRun: null,
         downloadAvailable,
@@ -69,8 +75,8 @@ beforeEach(() => {
   setActivePinia(createPinia())
 })
 
-describe('0534: document-preview Markdown download button at the far right', () => {
-  it('renders the download button as the last child of card-actions when available', async () => {
+describe('0534/0587: document-preview download/upload button placement', () => {
+  it('renders download then upload as the first two children of card-actions', async () => {
     const wrapper = await mountMainPanel({
       tabs: [TAB],
       activeTabId: TAB.id,
@@ -81,8 +87,8 @@ describe('0534: document-preview Markdown download button at the far right', () 
     const actions = wrapper.find('.card-actions')
     expect(actions.exists()).toBe(true)
     const children = actions.element.children
-    expect(children[0].classList.contains('edit-dropdown-wrap')).toBe(true)
-    expect(children[children.length - 1].classList.contains('doc-markdown-download')).toBe(true)
+    expect(children[0].classList.contains('doc-markdown-download')).toBe(true)
+    expect(children[1].classList.contains('doc-markdown-upload')).toBe(true)
   })
 
   it('does not render the download button when the document has no download-available capability', async () => {
@@ -98,7 +104,19 @@ describe('0534: document-preview Markdown download button at the far right', () 
     expect(wrapper.find('.edit-dropdown-wrap').exists()).toBe(true)
   })
 
-  it('delegates the click to the DocHeader instance that owns the fetch/download logic', async () => {
+  it('hides the upload button (but keeps download) when the document is not editable', async () => {
+    const wrapper = await mountMainPanel({
+      tabs: [TAB],
+      activeTabId: TAB.id,
+      stubs: { DocHeader: fakeDocHeader(true, vi.fn(), false) },
+    })
+    expectDocumentBranchMounted(wrapper)
+
+    expect(wrapper.find('.doc-markdown-download').exists()).toBe(true)
+    expect(wrapper.find('.doc-markdown-upload').exists()).toBe(false)
+  })
+
+  it('delegates the download click to the DocHeader instance that owns the fetch/download logic', async () => {
     const downloadMarkdown = vi.fn()
     const wrapper = await mountMainPanel({
       tabs: [TAB],
