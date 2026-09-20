@@ -378,12 +378,12 @@ def test_real_worker_standalone_loop_broadcasts_reject_and_response_across_two_r
 
     broadcasts = []
     monkeypatch.setattr(service, "_execute_provider_chain", execute)
-    monkeypatch.setattr(service, "_classify_end_reason", lambda item, ok: item.update(outcome="complete"))
-    # `_judge_hop`'s own real fields whitelist is `_JUDGMENT_FIELDS` (includes "outcome"),
-    # NOT `_classify_end_reason`'s ("end_reason" only, see `_apply_post_process_result`
-    # per-step field lists in worker.py) -- a no-op judge mock leaves run["outcome"] unset,
-    # so `_checkpoint_document_review_loop_tx`'s `succeeded = run.get("outcome")=="complete"`
-    # reads every hop as a failure and the loop never leaves its first "review" hop.
+    # 0583 T0004: `_apply_post_process_result` runs each step against a COPY of the run
+    # and copies back only that step's own fields, so `outcome` -- a _JUDGMENT_FIELDS
+    # member -- survives only when the JUDGE sets it, which is also where production
+    # decides it. Set on the classify stub instead, it was silently dropped and every
+    # hop below read as "failed", so these real-worker cases never reached a stage switch.
+    monkeypatch.setattr(service, "_classify_end_reason", lambda item, ok: item.update(end_reason="exited"))
     monkeypatch.setattr(service, "_judge_hop", lambda item: item.update(outcome="complete"))
     monkeypatch.setattr(service, "_prepare_retry_token", lambda item: {"mention": "token"})
     monkeypatch.setattr(service, "_reset_attempt_state", lambda item: None)
@@ -1316,8 +1316,13 @@ def test_real_worker_standalone_loop_restart_restore_and_never_approves(monkeypa
         return True
 
     monkeypatch.setattr(service, "_execute_provider_chain", execute)
-    monkeypatch.setattr(service, "_classify_end_reason", lambda item, ok: item.update(outcome="complete"))
-    monkeypatch.setattr(service, "_judge_hop", lambda item: None)
+    # 0583 T0004: `_apply_post_process_result` runs each step against a COPY of the run
+    # and copies back only that step's own fields, so `outcome` -- a _JUDGMENT_FIELDS
+    # member -- survives only when the JUDGE sets it, which is also where production
+    # decides it. Set on the classify stub instead, it was silently dropped and every
+    # hop below read as "failed", so this real-worker case never reached a stage switch.
+    monkeypatch.setattr(service, "_classify_end_reason", lambda item, ok: item.update(end_reason="exited"))
+    monkeypatch.setattr(service, "_judge_hop", lambda item: item.update(outcome="complete"))
     monkeypatch.setattr(service, "_prepare_retry_token", lambda item: {"mention": "token"})
     monkeypatch.setattr(service, "_reset_attempt_state", lambda item: None)
     monkeypatch.setattr(service, "_broadcast", lambda *args: None)
@@ -1577,8 +1582,13 @@ def test_worker_stage_switch_applies_rework_timeout_sec_to_the_new_hop(monkeypat
         "timeout_sec": 14400,
     }
     monkeypatch.setattr(service, "_execute_provider_chain", lambda *a, **k: True)
-    monkeypatch.setattr(service, "_classify_end_reason", lambda item, ok: item.update(outcome="complete"))
-    monkeypatch.setattr(service, "_judge_hop", lambda item: None)
+    # 0583 T0004: `_apply_post_process_result` runs each step against a COPY of the run
+    # and copies back only that step's own fields, so `outcome` -- a _JUDGMENT_FIELDS
+    # member -- survives only when the JUDGE sets it, which is also where production
+    # decides it. Set on the classify stub instead, it was silently dropped and this
+    # real-worker case never reached its stage switch.
+    monkeypatch.setattr(service, "_classify_end_reason", lambda item, ok: item.update(end_reason="exited"))
+    monkeypatch.setattr(service, "_judge_hop", lambda item: item.update(outcome="complete"))
     monkeypatch.setattr(service, "_prepare_retry_token", lambda item: {"mention": "token"})
     monkeypatch.setattr(service, "_reset_attempt_state", lambda item: None)
     monkeypatch.setattr(service, "_broadcast", lambda *args: None)

@@ -2640,16 +2640,43 @@ def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
     anything else                               (row omitted)  null
     ==========================================  =============  ==========
 
-    "Anything else" is a legacy/non-AI token, a run lookup that failed or raised, a run
-    bound to another action or another document, or a run missing either provider id.
-    All of them return ``{}`` so every provenance column is stored NULL: with one id
-    missing there is no evidence that the requested provider is what actually ran, and
-    the old ``bool(requested and actual and requested != actual)`` collapsed exactly
-    that unknown into ``False`` — "we checked, no fallback happened" — which is a
-    different claim from "we could not check". provider_source is derived from the same
-    two ids, so it must not be guessed ("fallback"/the run's selected source) from
-    evidence too incomplete to decide, and attempt_no is snapshotted only alongside the
-    evidence it belongs to.
+    "Anything else" is a run missing either provider id. Those store every provider
+    column NULL: with one id missing there is no evidence that the requested provider is
+    what actually ran, and the old ``bool(requested and actual and requested != actual)``
+    collapsed exactly that unknown into ``False`` - "we checked, no fallback happened" -
+    which is a different claim from "we could not check". provider_source is derived from
+    the same two ids, so it must not be guessed ("fallback"/the run's selected source)
+    from evidence too incomplete to decide, and attempt_no is snapshotted only alongside
+    the evidence it belongs to.
+
+    ``review_run_id`` is deliberately NOT part of that table (0583 T0004 section 3.1). It
+    is the run's IDENTITY, not evidence about a provider, and it is what makes a review
+    row belong to a round: the document-review loop reads its own verdicts back by it
+    (``review._document_loop_review_view``) and the duplicate barrier keys on it. While
+    it was folded into the provider block, a run with an incomplete provider snapshot
+    wrote a verdict nothing could attribute - so it is now stamped from the verified run
+    alone, and the provider columns stay independently NULL-able.
+
+    Which runs may stamp it:
+
+    * a top-level review run (``action_scope == "review"``);
+    * a document review loop currently executing its REVIEW stage. Such a loop is
+      admitted under the scope of its FIRST hop, so a loop that ``starts_with_rework``
+      - the shape the UI posts for a rejected document (action_scope=rework, folded to
+      ``edit``) - is an edit-scope run for its whole life. Gating on that admission scope
+      dropped the provenance of every review those loops ever wrote (0583 NR0003 / T0004
+      section 1): their own verdicts read back as a foreign run's, the hop was judged to
+      have produced no durable progress, and the loop relaunched the SAME review round -
+      the two 08:37/08:38 rev-1 verdicts on 0579.0005-TR. The STAGE, not the admission
+      scope, is the axis here; the submitted token is review-scoped and bound to this run
+      and this document either way (Step 3 above), so no non-review caller reaches here.
+      0582's ``effective_action_scope`` covers the common case (it reads the same live
+      ``hop_kind`` this loop sets), and ``loop_review_hop`` below also checks the loop's
+      own ``current_stage`` so a hop that hasn't updated ``hop_kind`` yet still counts.
+
+    For that loop stage the requested provider is the loop's own ``reviewer_provider_id``
+    rather than the run's first-hop snapshot - otherwise a rework-first loop would report
+    its ordinary rework -> review stage switch as a provider ``fallback``.
 
     Lookup failures degrade gracefully (empty provenance) rather than failing the whole
     registration: a review that reached this point is a real result, and the provider
@@ -2659,25 +2686,24 @@ def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
     if not run_id:
         return {}
     try:
-        from modules.flow_gate.services.ai_invoke.runtime import get_run_record
+        from modules.flow_gate.services.ai_invoke.runtime import (
+            REVIEW_HOP_KIND,
+            get_run_record,
+        )
         from modules.flow_gate.services.ai_invoke.provenance import (
             effective_action_scope,
             resolve_run_provenance,
         )
         review_run = get_run_record(run_id)
-        # 0582 TR0006 rev1: a document_review_loop hop's action_scope stays pinned to
-        # whatever the RUN was first admitted under, for the run's whole lifetime -- a
-        # loop that starts in "rework" and is still on this run_id when it reaches its
-        # review hop reports action_scope=="edit" there too. effective_action_scope reads
-        # the live hop_kind instead, so this stage check survives review<->rework stage
-        # switches within the SAME run (see its docstring for the full mechanism).
-        if (
-            not review_run
-            or effective_action_scope(review_run) != "review"
-            or review_run.get("doc_ref") != doc_id
-        ):
+        if not review_run or review_run.get("doc_ref") != doc_id:
             return {}
-        provenance: dict[str, Any] = {}
+        loop = review_run.get("document_review_loop") or {}
+        loop_review_hop = bool(loop) and REVIEW_HOP_KIND in (
+            loop.get("current_stage"), review_run.get("hop_kind"),
+        )
+        if effective_action_scope(review_run) != "review" and not loop_review_hop:
+            return {}
+        provenance: dict[str, Any] = {"review_run_id": run_id}
         review_intent = review_run.get("review_intent")
         if review_intent in ("normal", "rerun"):
             provenance["review_intent"] = review_intent
@@ -2687,14 +2713,22 @@ def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
 
         # 0582 T0005: the requested/actual provider evidence itself now comes from the
         # one common lookup every other AI-authored result uses too (rejection rework
-        # response, in-app Q&A) -- see ai_invoke.provenance.resolve_run_provenance.
+        # response, in-app Q&A) -- see ai_invoke.provenance.resolve_run_provenance. For a
+        # loop's review hop the requested provider is the loop's own
+        # ``reviewer_provider_id`` rather than the run's first-hop snapshot (see the
+        # docstring above), so the run snapshot handed to the resolver is patched with it.
+        run_for_snapshot = review_run
+        if loop_review_hop:
+            reviewer_provider_id = loop.get("reviewer_provider_id")
+            if reviewer_provider_id:
+                run_for_snapshot = dict(review_run)
+                run_for_snapshot["requested_provider_id"] = reviewer_provider_id
         snapshot = resolve_run_provenance(
-            run_id, doc_id=doc_id, allowed_action_scopes=("review",), run=review_run,
+            run_id, doc_id=doc_id, allowed_action_scopes=("review",), run=run_for_snapshot,
         )
         if not snapshot:
             return provenance
         provenance.update({
-            "review_run_id": snapshot["ai_run_id"],
             "requested_provider_id": snapshot["requested_provider_id"],
             "actual_provider_id": snapshot["actual_provider_id"],
             "actual_provider_name": snapshot["actual_provider_name"],
