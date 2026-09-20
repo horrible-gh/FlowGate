@@ -401,6 +401,76 @@ def _finalize_run(run: dict) -> None:
     })
     if not respawn_pending:
         db_group_ai_leases.release(run["group_id"], run["run_id"], reason="normal_finish")
+    # NR0003 §11 제안 1/2 (T#1): the responder dispatch below starts a brand-new run through
+    # the ordinary admission path, which refuses a second concurrent run for this group
+    # (`run_in_progress`) as long as THIS hop's own lease is still held -- so it must run
+    # strictly after the release directly above, never before it.
+    if run.get("stop_code") == "question_pending":
+        _dispatch_question_responder(run)
+
+
+def _dispatch_question_responder(run: dict) -> None:
+    """Auto-dispatch the AI responder for a `question_pending` stop.
+
+    Connects two pieces NR0003 found already built on their own (§12): the responder
+    priority `review.resolve_question_responder` resolves, and the existing
+    `q_answer_invoke_service.dispatch_answer_run` a human's own [AI 답변 요청] click
+    already performs. No new AI execution engine is built here -- only the missing wiring
+    between `question_pending` and that dispatch (제안 2).
+
+    Only the earliest (lowest-seq) unanswered item is dispatched when several questions are
+    pending at once: one AI run answers exactly one item (D0005 §3.2), and the group lease
+    this function relies on being free (see the caller) permits only one run in flight per
+    group regardless -- firing one per pending item here would only manufacture
+    `run_in_progress` failures for every item after the first.
+
+    Every failure is swallowed and logged: an auto-dispatch that could not start (no
+    enabled provider, an unusable pick, an admission error) leaves the question exactly
+    where a human can still answer it by hand through [AI 답변 요청]/[멘트복사] -- a
+    successful `question_pending` stop must never turn into an unhandled exception here.
+    """
+    doc_ref = run.get("doc_ref")
+    if not doc_ref:
+        return
+    try:
+        from modules.flow_gate.db import questions as db_questions
+        from modules.flow_gate.db import question_items as db_question_items
+        from modules.flow_gate.services import q_service, q_answer_invoke_service
+
+        anchor = q_service.resolve_question_anchor(doc_ref)
+        container = db_questions.get_container_by_doc(anchor)
+        if container is None or container.get("status") != "pending":
+            return
+        unanswered = db_question_items.list_unanswered(container["id"])
+        if not unanswered:
+            return
+        target = min(unanswered, key=lambda row: row.get("seq") or 0)
+
+        doc = db_docs.get_by_id(anchor)
+        if doc is None:
+            return
+        doc = {**doc, "doc_id": anchor}
+        item = q_answer_invoke_service.resolve_item(anchor, target["id"])
+
+        item_seq = admission.continuation_hop_item_seq(
+            doc_ref,
+            continuation_instruction_mode=run.get("continuation_instruction_mode"),
+            continuation_auto_approve_item_seqs=run.get("continuation_auto_approve_item_seqs"),
+        )
+        provider_id = review.resolve_question_responder(
+            run.get("continuation_reviewer_overrides"),
+            item_seq,
+            run.get("continuation_base_provider_id"),
+            run.get("project_id"),
+        )
+        q_answer_invoke_service.dispatch_answer_run(
+            doc=doc, item=item, issued_to=run.get("issued_to"),
+            api_base_url=run.get("api_base_url"), provider_id=provider_id,
+        )
+    except Exception:
+        logger.warning(
+            "question responder auto-dispatch failed for %s", doc_ref, exc_info=True,
+        )
 
 
 # ── Stop classification (0359 L0007 §4.1 ~ §4.3) ─────────────────────────────
