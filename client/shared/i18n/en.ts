@@ -2496,8 +2496,6 @@ export default {
       ai_response_missing_warn: 'No response on record — this document is already revised/approved, but no AI response was recorded for this rejection.',
       // 0582 T0005 §2.3/§7: shown when an action is definitely AI-authored but its effective provider cannot be confirmed (legacy record / external paste).
       ai_provider_unknown: 'External/Unconfirmed',
-      section_revisions: 'Revision history',
-      revision_label: 'Revision r{n}',
       review_reject_empty: 'No AI review or rejection',
       review_reject_hint: 'Appears here after a review request or a rejection.',
       ai_review_view_history: 'View full history',

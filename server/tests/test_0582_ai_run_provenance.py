@@ -521,29 +521,7 @@ def test_provider_rename_does_not_alter_an_already_stored_snapshot(store):
 
 
 
-# ── Part C: T0007 revision / failure-origin persistence and API shaping ─────────
-
-def test_revision_provider_snapshot_round_trips_without_fabricating_legacy_rows(store):
-    from modules.flow_gate.db import document_revisions as revisions
-    from modules.flow_gate.services.ai_invoke.provenance import to_api_payload
-
-    saved = revisions.create({
-        "doc_id": DOC, "revision_no": 1, "backup_path": "revisions/r1.md",
-        "edit_reason": "worker_self", "created_by": "u1",
-        "ai_run_id": "aiv_edit", "actual_provider_id": GOOD_EFFECTIVE_PROVIDER,
-        "actual_provider_name": "GOOD_EFFECTIVE_PROVIDER",
-    })
-    assert to_api_payload(saved) == {
-        "ai_run_id": "aiv_edit", "ai_provider_id": GOOD_EFFECTIVE_PROVIDER,
-        "ai_provider_name": "GOOD_EFFECTIVE_PROVIDER",
-    }
-    legacy = revisions.create({
-        "doc_id": DOC, "revision_no": 0, "backup_path": "revisions/r0.md",
-        "edit_reason": "user_comment", "created_by": "u1",
-    })
-    assert to_api_payload(legacy) is None
-    assert legacy["created_by"] == "u1"
-
+# ── Part C: T0007 failure-origin persistence and API shaping ─────────
 
 def test_failure_origin_snapshot_is_atomic_and_shape_run_exposes_it(store):
     from modules.flow_gate.db import test_runs
@@ -585,83 +563,6 @@ def _route_client(*routers):
     for router in routers:
         app.include_router(router)
     return TestClient(app)
-
-
-def test_inbox_rejected_edit_reuses_one_snapshot_and_relations_exposes_it(store, tmp_path):
-    """T0007 §7.2: exercise the real POST inbox edit route and GET relations route.
-
-    The resolver must run once; the rejection response and revision row must receive
-    that same snapshot, and the public relations serializer must return it unchanged.
-    """
-    from modules.flow_gate.api import inbox_routes
-    from modules.flow_gate.api.v1 import document_routes
-    from modules.flow_gate.db import documents as db_docs
-    from modules.flow_gate.services import git_service, token_service
-    from modules.flow_gate.services.ai_invoke import runtime
-
-    doc = db_docs.get_by_id(DOC)
-    history = [{
-        "rejection_id": "rej_route_1", "review_id": 91, "reason": "revise",
-        "rejected_at": "2026-09-20T00:00:00Z", "rejected_by": "u1",
-    }]
-    store._conn.execute(
-        "UPDATE documents SET status = 'rejected', rejection_history = ? WHERE doc_id = ?",
-        [_json.dumps(history), DOC],
-    )
-    store._conn.commit()
-    token_rec = {
-        "token_id": "tok_edit_route", "project": "p582", "action_scope": "edit",
-        "doc_ref": DOC, "group_id": "p582.none.0001", "issued_to": "u1",
-        "scratch_dir": str(tmp_path / "scratch"), "ai_run_id": "aiv_edit_route",
-    }
-    run = _fake_run(doc_ref=DOC, action_scope="edit")
-    run["provider"]["name"] = "GOOD_EFFECTIVE_PROVIDER"
-
-    with patch.object(token_service, "verify", return_value=token_rec), \
-            patch.object(token_service, "consume", return_value=None), \
-            patch.object(inbox_routes, "has_permission", return_value=True), \
-            patch.object(inbox_routes.document_service, "is_final_approved", return_value=False), \
-            patch.object(inbox_routes.document_service, "is_document_editable", return_value=True), \
-            patch.object(inbox_routes, "_design_template_submission_error", return_value=None), \
-            patch.object(git_service, "worktree_untracked_summary", return_value={}), \
-            patch.object(inbox_routes.step_verification_service, "evaluate",
-                         return_value={"verdict": "pass", "codes": []}), \
-            patch.object(runtime, "get_run_record", return_value=run) as get_run:
-        response = _route_client(inbox_routes.router).post(
-            "/api/v1/inbox",
-            json={
-                "project": "p582", "module": "none", "group_name": "p582.none.0001",
-                "action": "edit", "doc_id": DOC, "edit_reason": "rejected",
-                "content": "# revised by route\n", "rejection_response": "addressed",
-                "rejection_id": "rej_route_1", "review_id": 91,
-            },
-            headers={"Authorization": "Bearer raw"},
-        )
-
-    assert response.status_code == 200, response.text
-    get_run.assert_called_once_with("aiv_edit_route")
-    saved_doc = db_docs.get_by_id(DOC)
-    saved_history = _json.loads(saved_doc["rejection_history"])
-    response_provider = {
-        "ai_run_id": saved_history[0]["response_ai_run_id"],
-        "ai_provider_id": saved_history[0]["response_actual_provider_id"],
-        "ai_provider_name": saved_history[0]["response_actual_provider_name"],
-    }
-
-    with patch.object(document_routes, "verify_bearer", return_value={"user_id": "u1"}):
-        relations = _route_client(document_routes.router).get(
-            f"/api/v1/document/{DOC}/relations",
-            headers={"Authorization": "Bearer reader"},
-        )
-    assert relations.status_code == 200, relations.text
-    editor_provider = relations.json()["revisions"][0]["editor_provider"]
-    expected = {
-        "ai_run_id": "aiv_edit_route", "ai_provider_id": GOOD_EFFECTIVE_PROVIDER,
-        "ai_provider_name": "GOOD_EFFECTIVE_PROVIDER",
-    }
-    assert editor_provider == expected
-    assert response_provider == expected
-    assert BAD_REQUESTED_PROVIDER not in _json.dumps(relations.json())
 
 
 def test_inbox_failure_origin_route_persists_and_document_api_exposes_provider(store, tmp_path):

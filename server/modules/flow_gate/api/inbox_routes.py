@@ -4710,14 +4710,6 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if not has_permission(actor_user_id, project, "perm_document_update"):
         return _permission_denied("Insufficient permissions for this operation")
 
-    # 0582 T0007: resolve this edit's actual provider exactly once from the verified
-    # token-bound run. A rejected rework response and its document_revisions row reuse
-    # this same snapshot, so they cannot drift to different provider identities.
-    from modules.flow_gate.services.ai_invoke.provenance import resolve_run_provenance
-    _edit_provenance = resolve_run_provenance(
-        token_rec.get("ai_run_id"), doc_id=None, allowed_action_scopes=("edit",)
-    )
-
     # ── Step 5: Referential integrity + body validation ──────────────────────────────────────
     existing_doc = db_docs.get_by_id(doc_id)
     if existing_doc is None:
@@ -4770,12 +4762,19 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         target["responded_at"] = now_iso()
         target["response_recorded_by"] = actor_user_id
         target["response_revision_no"] = existing_doc.get("revision_no", 0) + 1
-        # 0582 T0005/T0007: snapshot THIS rework submission's own effective run/provider,
-        # reusing the one edit snapshot above for both the rejection response and the
-        # document revision created by this request.
-        target["response_ai_run_id"] = _edit_provenance.get("ai_run_id")
-        target["response_actual_provider_id"] = _edit_provenance.get("actual_provider_id")
-        target["response_actual_provider_name"] = _edit_provenance.get("actual_provider_name")
+        # 0582 T0005 SSC: snapshot THIS rework submission's own effective run/provider --
+        # never the review's (a different run) and never a prior response's (a stale
+        # snapshot). action_scope="edit" matches how this very token was admitted;
+        # doc_id=None because a rejected resubmission may answer on behalf of a document
+        # whose doc_ref the run recorded before any anchor/rename, and a legacy/external
+        # token with no bound run degrades to {} exactly like _review_provenance does.
+        from modules.flow_gate.services.ai_invoke.provenance import resolve_run_provenance
+        _response_provenance = resolve_run_provenance(
+            token_rec.get("ai_run_id"), doc_id=None, allowed_action_scopes=("edit",)
+        )
+        target["response_ai_run_id"] = _response_provenance.get("ai_run_id")
+        target["response_actual_provider_id"] = _response_provenance.get("actual_provider_id")
+        target["response_actual_provider_name"] = _response_provenance.get("actual_provider_name")
         rejection_history_update = json.dumps(history, ensure_ascii=False)
 
     if linked_doc_id and db_docs.get_by_id(linked_doc_id) is None:
@@ -5240,9 +5239,6 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             "linked_doc_id": linked_doc_id,
             "created_by": actor_user_id,
             "created_at": now,
-            "ai_run_id": _edit_provenance.get("ai_run_id"),
-            "actual_provider_id": _edit_provenance.get("actual_provider_id"),
-            "actual_provider_name": _edit_provenance.get("actual_provider_name"),
         })
 
     db_events.create({

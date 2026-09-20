@@ -36,25 +36,6 @@
         </div>
       </div>
 
-      <!-- Revision history from the same /relations response already owned by DocHeader. -->
-      <div v-if="(documentRevisions?.length ?? 0) > 0" class="dip-section" :class="{ collapsed: sectionCollapsed.revisions }">
-        <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.revisions" @click="toggleSection('revisions')">
-          <AppIcon name="clock-counter-clockwise" />
-          <AppIcon name="caret-down" class="dip-acc-caret" />
-          {{ t('main.doc_info_panel.section_revisions') }}
-        </button>
-        <div class="dip-sec-body dip-revision-list">
-          <div v-for="revision in documentRevisions" :key="`${revision.revision_no}-${revision.created_at}`" class="dip-revision-row">
-            <div class="dip-revision-main">
-              <strong>{{ t('main.doc_info_panel.revision_label', { n: revision.revision_no ?? '—' }) }}</strong>
-              <span v-if="revision.created_at">{{ formatRejectionDate(revision.created_at) }}</span>
-            </div>
-            <span v-if="revisionProviderLabel(revision)" class="dip-ai-provider">{{ revisionProviderLabel(revision) }}</span>
-            <span v-if="revision.edit_reason" class="dip-revision-reason">{{ revision.edit_reason }}</span>
-          </div>
-        </div>
-      </div>
-
       <!-- Mockup xc32frrg screen 1 — the doc-info panel's [Provider assignment (by step)] box.
            0399 M0020 rejection — if there is nothing to show, this box is not drawn at all.
            No "불러오는 중" (loading) text while reading, no "failed to load" text either. An
@@ -222,11 +203,6 @@
           >
             <div class="dip-qa-card-head">
               <strong class="dip-qa-card-title">Q{{ item.seq }} · {{ item.title || item.body }}</strong>
-              <!-- 0582 TR0006 rev1: the same 'AI · {provider}' badge QaHistoryDialog
-                   already shows for this question's asker, now on the default panel
-                   card too -- in-app AI-authored questions must name their AI here, not
-                   only in the full [전체보기] dialog. -->
-              <span v-if="item.asker_kind === 'ai'" class="dip-ai-provider">{{ askerProviderLabel(item) }}</span>
             </div>
             <p class="dip-qa-card-body">{{ item.body }}</p>
             <!-- group 0243 R0001: the card previews the options; picking one happens in the
@@ -402,9 +378,6 @@
                   <span class="dip-ai-verdict" :class="reviewVerdictClass(entry.review!)">
                     {{ reviewVerdictLabel(entry.review!) }}
                   </span>
-                  <span v-if="reviewProviderLabel(entry.review!)" class="dip-ai-provider">
-                    {{ reviewProviderLabel(entry.review!) }}
-                  </span>
                   <AppIcon name="caret-down" class="dip-ai-comment-chevron" />
                 </button>
                 <div class="dip-ai-comment-body">{{ entry.review!.comment }}</div>
@@ -576,7 +549,6 @@ import { useMentionCopy } from '../composables/useMentionCopy'
 import { ClipboardAbort, copyToClipboardDeferred } from '../utils/clipboard'
 import type { StepState } from '../workflow/workflowViewState'
 import type { AiReview, AiProvenance } from '../types/aiReview'
-import type { DocumentRevision } from '../types/documentRevision'
 import type { RejectionHistoryItem } from '../composables/useFlowGateToken'
 import type { TrScopePathSlice, TrScopeVerdict } from '../types/trScope'
 
@@ -595,7 +567,6 @@ const props = defineProps<{
   rejectionHistory?: RejectionHistoryItem[]
   aiReview?: AiReview | null
   aiReviewHistory?: AiReview[]
-  documentRevisions?: DocumentRevision[]
   // TR work-scope verification result (0299 D0004 §6). The server unpacks this from documents.meta.
   trScope?: TrScopeVerdict | null
   qStatus?: string | null
@@ -627,14 +598,13 @@ const emit = defineEmits<{
 // 0311 T0004 rev1 §2: 'ai_review' is now the MERGED AI review·rejection section's key. The old
 // standalone 'reject' key is dropped — a repo-wide grep found no other reference to it
 // (it had already been left dangling with no section of its own).
-type SectionKey = 'status' | 'wp_assignments' | 'qa' | 'ai_review' | 'revisions' | 'tr_scope' | 'changes'
+type SectionKey = 'status' | 'wp_assignments' | 'qa' | 'ai_review' | 'tr_scope' | 'changes'
 const sectionCollapsed = reactive<Record<SectionKey, boolean>>({
   status: false,
   // Mockup xc32frrg screen 1 draws this box already expanded.
   wp_assignments: false,
   qa: false,
   ai_review: false,
-  revisions: false,
   // Folded when the result is pass with no reasons (D0004 §6). The watch below opens it based on the verdict.
   tr_scope: true,
   // 0325 T0006: this section only appears on AC, and the very reason it appears is "지금 보라" (look now), so it starts expanded.
@@ -951,19 +921,6 @@ function isMissingResponseWarn(reject: RejectionHistoryItem): boolean {
 function providerLabel(p?: AiProvenance | null): string {
   const name = p?.ai_provider_name || p?.ai_provider_id
   return name ? `AI · ${name}` : ''
-}
-
-function revisionProviderLabel(revision: DocumentRevision): string {
-  // A null provider is a manual/legacy revision: do not turn created_by or document
-  // origin into an AI identity. Partial rows may use the durable provider id fallback.
-  return providerLabel(revision.editor_provider)
-}
-// 0582 TR0006 rev1: the default Q card (qaFeedVisible, not just QaHistoryDialog's full
-// view) needs the same convention for the in-app AI that asked the question -- an
-// explicit unknown label rather than silence when asker_kind is 'ai' but the run/
-// provider snapshot could not be resolved (a legacy row or unconfirmed path).
-function askerProviderLabel(item: QaItem): string {
-  return providerLabel(item.asker_provider) || `AI · ${t('main.doc_info_panel.ai_provider_unknown')}`
 }
 // The rejection quote author: an AUTOMATIC (review_id-bearing) rejection names the
 // AI review that produced the `issues` verdict, never the chain-issuer user id the
@@ -1324,16 +1281,6 @@ function reviewVerdictLabel(r: AiReview): string {
   if (r.verdict === 'hold') return t('main.doc_info_panel.ai_verdict_hold')
   return t('main.doc_info_panel.ai_verdict_issues', { n: r.finding_count ?? 0 })
 }
-// 0582 T0005 §A: the compact card's own provider badge -- reuses the SAME
-// review_provider the [전체보기] dialog (QaReviewHistoryDialog.actualProviderLabel)
-// already reads, so the two views of one review row cannot disagree. Backend-complete
-// already (NR0003 §2); this was UI-only. Empty (no badge) mirrors that sibling dialog's
-// own behaviour when a legacy review row carries no provider evidence.
-function reviewProviderLabel(r: AiReview): string {
-  const name = r.review_provider?.actual_provider_name || r.review_provider?.actual_provider_id
-  return name ? `AI · ${name}` : ''
-}
-
 // group 0126 / option C + T0013 + 0311 T0004: qa full-history modal. TR0005 rev6
 // rejection §3 ("질의는 빼라" — leave query out) split the once-merged dialog back in
 // two — this ref only opens QaHistoryDialog now. The query headline's [전체보기] opens

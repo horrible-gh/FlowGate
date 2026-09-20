@@ -2491,8 +2491,6 @@ export default {
       ai_response_missing_warn: '対応記録なし — この文書はすでに修正・承認済みですが、この差し戻しに対するAI対応が記録されていません。',
       // 0582 T0005 §2.3/§7: AIが作成したことは確実だが実行providerを確定できない経路(レガシー記録・外部貼り付け)の表示。
       ai_provider_unknown: '外部/未確認',
-      section_revisions: '修正履歴',
-      revision_label: 'リビジョン r{n}',
       review_reject_empty: 'AIレビュー・差し戻し理由なし',
       review_reject_hint: 'レビュー依頼または差し戻しの後にここに表示されます。',
       ai_review_view_history: '全履歴を表示',
