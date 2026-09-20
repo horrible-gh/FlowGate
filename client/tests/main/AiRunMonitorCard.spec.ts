@@ -127,10 +127,9 @@ describe('AiRunMonitorCard (dashboard)', () => {
     wrapper.unmount()
   })
 
-  // 0563 T#2: opening a document is reading a result, not confirming or clearing the card
-  // that reports it. Only the explicit remove button (or dismissAllFinished) takes a
-  // finished card away — the row button never does, no matter how many times it is opened.
-  it('offers an explicit remove button, and keeps a finished row when it is only opened', async () => {
+  // 0592 T0004: both the explicit remove action and a successful document open use the
+  // store's shared removal lifecycle.
+  it('offers an explicit remove button, and removes a finished row after opening it', async () => {
     const wrapper = mountCard()
     const store = useAiInvokeRunsStore()
     store.trackStarted({
@@ -164,8 +163,35 @@ describe('AiRunMonitorCard (dashboard)', () => {
 
     await rowFor('flowgate.default.4006.0001-R').find('.airm-row-main').trigger('click')
     await flushPromises()
-    expect(store.finishedByRun['run-g']).toBeDefined()
+    expect(store.finishedByRun['run-g']).toBeUndefined()
     expect(deleteRequest).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('keeps an opened durable row and reports remove failure separately', async () => {
+    const wrapper = mountCard()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'run-durable-fail', group_id: 'flowgate.default.4007',
+      doc_ref: 'flowgate.default.4007.0001-R', mode: 'single',
+    })
+    store.trackFinished({
+      run_id: 'run-durable-fail', group_id: 'flowgate.default.4007',
+      doc_ref: 'flowgate.default.4007.0001-R', outcome: 'complete',
+    })
+    vi.spyOn(store, 'removeCard').mockRejectedValueOnce({ response: { status: 409, data: { code: 'run_still_active' } } })
+    await flushPromises()
+
+    await wrapper.find('.airm-row-main').trigger('click')
+    await flushPromises()
+
+    expect(store.finishedByRun['run-durable-fail']).toBeDefined()
+    expect(useToast().toasts.value.at(-1)).toMatchObject({
+      message: t('main.ai_miniplayer.error_remove_card_still_active'), type: 'danger',
+    })
+    expect(useToast().toasts.value.some(
+      toast => toast.message === t('main.ai_miniplayer.error_open_failed'),
+    )).toBe(false)
     wrapper.unmount()
   })
 

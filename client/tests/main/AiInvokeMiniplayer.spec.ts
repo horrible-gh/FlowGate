@@ -594,11 +594,9 @@ describe('AiInvokeMiniplayer', () => {
     wrapper.unmount()
   })
 
-  // 0563 T#2: opening a document is reading a result, not confirming or clearing the card
-  // that reports it -- the two used to be the same click and got split apart by a rejection
-  // (문서열기는 완료카드의 확인/삭제 행위가 아니다). The card, and any durable delete, only ever move on
-  // an explicit remove.
-  it('keeps a finished card after its document has been opened', async () => {
+  // 0592 T0004: a successful document open uses the same store lifecycle as the explicit
+  // remove action. An ordinary finished card is therefore dismissed locally.
+  it('removes a local finished card after its document has been opened', async () => {
     const wrapper = mountPlayer()
     const store = useAiInvokeRunsStore()
     store.trackStarted({
@@ -618,9 +616,39 @@ describe('AiInvokeMiniplayer', () => {
     await openBtn!.trigger('click')
     await flushPromises()
 
-    // 0563 T#2: a finished card is run-keyed history and survives being read.
-    expect(store.finishedByRun['run-d']).toBeDefined()
+    expect(store.finishedByRun['run-d']).toBeUndefined()
     expect(deleteRequest).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('keeps an opened durable card and reports remove failure separately', async () => {
+    const wrapper = mountPlayer()
+    const store = useAiInvokeRunsStore()
+    store.trackStarted({
+      run_id: 'run-durable-fail', group_id: 'flowgate.default.3013',
+      doc_ref: 'flowgate.default.3013.0001-R', mode: 'single',
+    })
+    store.trackFinished({
+      run_id: 'run-durable-fail', group_id: 'flowgate.default.3013',
+      doc_ref: 'flowgate.default.3013.0001-R', outcome: 'complete',
+    })
+    vi.spyOn(store, 'removeCard').mockRejectedValueOnce({ response: { status: 403 } })
+    await flushPromises()
+    await openPopover(wrapper)
+
+    const openBtn = wrapper.findAll('button').find(
+      b => b.text().includes(t('main.ai_miniplayer.btn_open_doc')),
+    )
+    await openBtn!.trigger('click')
+    await flushPromises()
+
+    expect(store.finishedByRun['run-durable-fail']).toBeDefined()
+    expect(useToast().toasts.value.at(-1)).toMatchObject({
+      message: t('main.ai_miniplayer.error_remove_card_forbidden'), type: 'danger',
+    })
+    expect(useToast().toasts.value.some(
+      toast => toast.message === t('main.ai_miniplayer.error_open_failed'),
+    )).toBe(false)
     wrapper.unmount()
   })
 
@@ -691,6 +719,7 @@ describe('AiInvokeMiniplayer', () => {
     // ancestor group expanded so it is actually revealed.
     expect(explorerStore.selectedGroupNodeId).toBe('flowgate.default.9001.0001-R')
     expect(explorerStore.isGroupNodeExpanded('proj-B', 'grp-9001')).toBe(true)
+    expect(store.finishedByRun['run-xp']).toBeUndefined()
     wrapper.unmount()
   })
 
