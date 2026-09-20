@@ -2670,9 +2670,6 @@ def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
       the two 08:37/08:38 rev-1 verdicts on 0579.0005-TR. The STAGE, not the admission
       scope, is the axis here; the submitted token is review-scoped and bound to this run
       and this document either way (Step 3 above), so no non-review caller reaches here.
-      0582's ``effective_action_scope`` covers the common case (it reads the same live
-      ``hop_kind`` this loop sets), and ``loop_review_hop`` below also checks the loop's
-      own ``current_stage`` so a hop that hasn't updated ``hop_kind`` yet still counts.
 
     For that loop stage the requested provider is the loop's own ``reviewer_provider_id``
     rather than the run's first-hop snapshot - otherwise a rework-first loop would report
@@ -2690,10 +2687,7 @@ def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
             REVIEW_HOP_KIND,
             get_run_record,
         )
-        from modules.flow_gate.services.ai_invoke.provenance import (
-            effective_action_scope,
-            resolve_run_provenance,
-        )
+        from modules.flow_gate.services.ai_invoke.provenance import effective_action_scope
         review_run = get_run_record(run_id)
         if not review_run or review_run.get("doc_ref") != doc_id:
             return {}
@@ -2701,6 +2695,10 @@ def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
         loop_review_hop = bool(loop) and REVIEW_HOP_KIND in (
             loop.get("current_stage"), review_run.get("hop_kind"),
         )
+        # 0582 TR0006 rev1: the run's live hop_kind-aware stage (effective_action_scope)
+        # covers this same review<->rework alternation even when there is no document_review_loop
+        # record to read a current_stage from -- loop_review_hop stays as an extra signal for
+        # a loop hop whose current_stage has advanced before hop_kind catches up.
         if effective_action_scope(review_run) != "review" and not loop_review_hop:
             return {}
         provenance: dict[str, Any] = {"review_run_id": run_id}
@@ -2711,18 +2709,23 @@ def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
             if review_intent == "rerun" and superseded_id is not None:
                 provenance["superseded_review_id"] = int(superseded_id)
 
+        requested_id = (
+            loop.get("reviewer_provider_id") if loop_review_hop
+            else review_run.get("requested_provider_id")
+        )
+        actual_id = review_run.get("provider_id")
+        if not requested_id or not actual_id:
+            return provenance
         # 0582 T0005: the requested/actual provider evidence itself now comes from the
         # one common lookup every other AI-authored result uses too (rejection rework
-        # response, in-app Q&A) -- see ai_invoke.provenance.resolve_run_provenance. For a
-        # loop's review hop the requested provider is the loop's own
-        # ``reviewer_provider_id`` rather than the run's first-hop snapshot (see the
-        # docstring above), so the run snapshot handed to the resolver is patched with it.
+        # response, in-app Q&A) -- see ai_invoke.provenance.resolve_run_provenance. The
+        # loop-aware requested_id above already carries the reviewer_provider_id override
+        # for a loop's review hop, so it is handed to the resolver via a patched snapshot.
+        from modules.flow_gate.services.ai_invoke.provenance import resolve_run_provenance
         run_for_snapshot = review_run
-        if loop_review_hop:
-            reviewer_provider_id = loop.get("reviewer_provider_id")
-            if reviewer_provider_id:
-                run_for_snapshot = dict(review_run)
-                run_for_snapshot["requested_provider_id"] = reviewer_provider_id
+        if requested_id != review_run.get("requested_provider_id"):
+            run_for_snapshot = dict(review_run)
+            run_for_snapshot["requested_provider_id"] = requested_id
         snapshot = resolve_run_provenance(
             run_id, doc_id=doc_id, allowed_action_scopes=("review",), run=run_for_snapshot,
         )
