@@ -260,8 +260,15 @@ async function openDoc(entry: AiInvokeRunEntry): Promise<void> {
       d.doc_id,
       { switchProject: true },
     )
-    // 0563 T#2: opening a document no longer acknowledges/removes the finished card --
-    // finished/lost cards stay until an explicit per-card remove or dismissAllFinished().
+    // 0592 T0004: the document is already open. Removal is deliberately isolated from
+    // the outer open-error handler so a durable refusal keeps the card and reports the
+    // existing remove-card error instead of claiming that document opening failed.
+    try {
+      await store.removeCard(entry)
+    } catch (error: any) {
+      if (isNonResumableSystemStop(entry)) showReleaseError(error)
+      else showRemoveCardError(error)
+    }
   } catch {
     showToast(t('main.ai_miniplayer.error_open_failed'), 'danger')
   }
