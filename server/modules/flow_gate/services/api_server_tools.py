@@ -108,6 +108,40 @@ DESCRIPTIONS["read_help"] = (
     "Read personalized help without HTTP. Empty input returns the help index; "
     "item returns one item; item plus child returns one child. child requires item."
 )
+# ref-capable source tools (0514 T0004 §3.3): the bare name.replace("_", " ") default left
+# no hint that ref switches between the working tree and a committed Git tree, or that
+# merge_preview_source's own return values are meant to be fed back in as ref. Overriding
+# these descriptions lets a provider discover that link from the tool definition alone,
+# without a separate read_help round trip.
+DESCRIPTIONS["read_source_file"] = (
+    "Read a file. Omit ref to read the current worktree (including uncommitted changes); "
+    "set ref to a commit/tree/ref to read that committed tree instead. Feed merge_preview_source's "
+    "head/target_sha/merge_base/merge_tree into ref to inspect each side of a merge."
+)
+DESCRIPTIONS["search_source"] = (
+    "Search the source tree with a regular expression. Omit ref to search the current worktree "
+    "(including uncommitted changes); set ref to a commit/tree/ref to search that committed tree instead. "
+    "merge_preview_source's head/target_sha/merge_base/merge_tree can be passed as ref."
+)
+DESCRIPTIONS["glob_source"] = (
+    "List file paths matching a glob pattern. Omit ref to list the current worktree (including uncommitted "
+    "changes); set ref to a commit/tree/ref to list that committed tree instead. merge_preview_source's "
+    "head/target_sha/merge_base/merge_tree can be passed as ref."
+)
+DESCRIPTIONS["stat_source"] = (
+    "Inspect whether a path exists and its type/size. Omit ref to inspect the current worktree (including "
+    "uncommitted changes); set ref to a commit/tree/ref to inspect that committed tree instead. "
+    "merge_preview_source's head/target_sha/merge_base/merge_tree can be passed as ref."
+)
+DESCRIPTIONS["merge_preview_source"] = (
+    "Preview a 3-way merge of HEAD onto target_ref without changing anything, and return "
+    "merge_base/head/target_sha/merge_tree -- four committed-tree refs, not the worktree. Pass one of "
+    "them as read_source_file.ref (or search_source/glob_source/stat_source.ref) to inspect that "
+    "committed tree: head for HEAD, target_sha for target/main, merge_base for the common base, or "
+    "merge_tree for the candidate merge result -- merge_tree's conflicted files contain "
+    "<<<<<<< / ======= / >>>>>>> markers. To inspect the current worktree (including uncommitted "
+    "changes) instead, omit ref entirely; none of merge_preview_source's return values represent it."
+)
 
 
 def ready() -> bool:
