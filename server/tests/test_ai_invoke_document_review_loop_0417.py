@@ -1315,7 +1315,12 @@ def test_real_worker_standalone_loop_restart_restore_and_never_approves(monkeypa
         conn.commit()
         return True
 
-    monkeypatch.setattr(service, "_execute_provider_chain", execute)  # aiv_e2e
+    monkeypatch.setattr(service, "_execute_provider_chain", execute)
+    # 0583 T0004: `_apply_post_process_result` runs each step against a COPY of the run
+    # and copies back only that step's own fields, so `outcome` -- a _JUDGMENT_FIELDS
+    # member -- survives only when the JUDGE sets it, which is also where production
+    # decides it. Set on the classify stub instead, it was silently dropped and every
+    # hop below read as "failed", so these real-worker cases never reached a stage switch.
     monkeypatch.setattr(service, "_classify_end_reason", lambda item, ok: item.update(end_reason="exited"))
     monkeypatch.setattr(service, "_judge_hop", lambda item: item.update(outcome="complete"))
     monkeypatch.setattr(service, "_prepare_retry_token", lambda item: {"mention": "token"})
@@ -1576,7 +1581,12 @@ def test_worker_stage_switch_applies_rework_timeout_sec_to_the_new_hop(monkeypat
         # rework hop this test switches to.
         "timeout_sec": 14400,
     }
-    monkeypatch.setattr(service, "_execute_provider_chain", lambda *a, **k: True)  # aiv_stage_timeout
+    monkeypatch.setattr(service, "_execute_provider_chain", lambda *a, **k: True)
+    # 0583 T0004: `_apply_post_process_result` runs each step against a COPY of the run
+    # and copies back only that step's own fields, so `outcome` -- a _JUDGMENT_FIELDS
+    # member -- survives only when the JUDGE sets it, which is also where production
+    # decides it. Set on the classify stub instead, it was silently dropped and every
+    # hop below read as "failed", so these real-worker cases never reached a stage switch.
     monkeypatch.setattr(service, "_classify_end_reason", lambda item, ok: item.update(end_reason="exited"))
     monkeypatch.setattr(service, "_judge_hop", lambda item: item.update(outcome="complete"))
     monkeypatch.setattr(service, "_prepare_retry_token", lambda item: {"mention": "token"})
