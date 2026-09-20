@@ -767,6 +767,13 @@ def _build_test_run_mention(
 
 
 def shape_run(run: dict, *, include_cases: bool = False) -> dict:
+    from modules.flow_gate.services.ai_invoke.provenance import to_api_payload
+
+    failure_origin_provider = to_api_payload({
+        "ai_run_id": run.get("failure_origin_ai_run_id"),
+        "actual_provider_id": run.get("failure_origin_actual_provider_id"),
+        "actual_provider_name": run.get("failure_origin_actual_provider_name"),
+    })
     out = {
         "run_id": run.get("run_id"),
         "revision_no": run.get("revision_no"),
@@ -780,6 +787,7 @@ def shape_run(run: dict, *, include_cases: bool = False) -> dict:
         "tsr_doc_id": run.get("tsr_doc_id"),
         "failure_origin": run.get("failure_origin"),
         "failure_origin_comment": run.get("failure_origin_comment"),
+        "failure_origin_provider": failure_origin_provider,
         "code_rework_cycle": count_code_rework_cycles(run.get("doc_id"))
         if run.get("failure_origin") else None,
         # 0280 T0005: expose the recorded execution root so a "ran in main" report

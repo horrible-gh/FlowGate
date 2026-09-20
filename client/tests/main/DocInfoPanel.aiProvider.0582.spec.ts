@@ -24,7 +24,7 @@ const ISSUED_TO_SENTINEL = 'u-issued-to-should-not-appear'
 const GOOD_EFFECTIVE_PROVIDER = 'Claude Opus 5'
 const REWORK_PROVIDER = 'Codex1 GPT-5.6 Sol'
 
-function mountPanel(opts: { reviews?: AiReview[]; rejectionHistory?: RejectionHistoryItem[]; qaItems?: any[] }) {
+function mountPanel(opts: { reviews?: AiReview[]; rejectionHistory?: RejectionHistoryItem[]; qaItems?: any[]; documentRevisions?: any[] }) {
   const reviews = opts.reviews ?? []
   if (opts.qaItems) {
     getRequest.mockResolvedValue({ data: { qa: { items: opts.qaItems } } })
@@ -38,6 +38,7 @@ function mountPanel(opts: { reviews?: AiReview[]; rejectionHistory?: RejectionHi
       rejectionHistory: opts.rejectionHistory ?? [],
       aiReview: reviews[reviews.length - 1] ?? null,
       aiReviewHistory: reviews,
+      documentRevisions: opts.documentRevisions ?? [],
       stepStates: [],
       nextStepIndex: null,
       collapsed: false,
@@ -212,5 +213,29 @@ describe('DocInfoPanel Q card asker provider badge (0582 TR0006 rev1)', () => {
     const card = qCard(wrapper)
     expect(card.exists()).toBe(true)
     expect(card.find('.dip-ai-provider').exists()).toBe(false)
+  })
+})
+
+describe('DocInfoPanel revision editor provider (0582 T0007)', () => {
+  it('shows the effective snapshot and leaves a manual legacy revision unlabelled', () => {
+    const wrapper = mountPanel({
+      documentRevisions: [
+        { revision_no: 2, edit_reason: 'worker_self', editor_provider: { ai_provider_id: 'aip_good', ai_provider_name: GOOD_EFFECTIVE_PROVIDER } },
+        { revision_no: 1, edit_reason: 'manual', editor_provider: null },
+      ],
+    })
+    const rows = wrapper.findAll('.dip-revision-row')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].text()).toContain(`AI · ${GOOD_EFFECTIVE_PROVIDER}`)
+    expect(rows[0].text()).not.toContain('BAD_REQUESTED_PROVIDER')
+    expect(rows[0].text()).not.toContain(ISSUED_TO_SENTINEL)
+    expect(rows[1].find('.dip-ai-provider').exists()).toBe(false)
+  })
+
+  it('uses provider id only when the stored name snapshot is absent', () => {
+    const wrapper = mountPanel({
+      documentRevisions: [{ revision_no: 3, editor_provider: { ai_provider_id: 'aip_compat', ai_provider_name: null } }],
+    })
+    expect(wrapper.find('.dip-revision-row .dip-ai-provider').text()).toBe('AI · aip_compat')
   })
 })

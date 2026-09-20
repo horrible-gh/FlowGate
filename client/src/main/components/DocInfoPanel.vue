@@ -36,6 +36,25 @@
         </div>
       </div>
 
+      <!-- Revision history from the same /relations response already owned by DocHeader. -->
+      <div v-if="(documentRevisions?.length ?? 0) > 0" class="dip-section" :class="{ collapsed: sectionCollapsed.revisions }">
+        <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.revisions" @click="toggleSection('revisions')">
+          <AppIcon name="clock-counter-clockwise" />
+          <AppIcon name="caret-down" class="dip-acc-caret" />
+          {{ t('main.doc_info_panel.section_revisions') }}
+        </button>
+        <div class="dip-sec-body dip-revision-list">
+          <div v-for="revision in documentRevisions" :key="`${revision.revision_no}-${revision.created_at}`" class="dip-revision-row">
+            <div class="dip-revision-main">
+              <strong>{{ t('main.doc_info_panel.revision_label', { n: revision.revision_no ?? '—' }) }}</strong>
+              <span v-if="revision.created_at">{{ formatRejectionDate(revision.created_at) }}</span>
+            </div>
+            <span v-if="revisionProviderLabel(revision)" class="dip-ai-provider">{{ revisionProviderLabel(revision) }}</span>
+            <span v-if="revision.edit_reason" class="dip-revision-reason">{{ revision.edit_reason }}</span>
+          </div>
+        </div>
+      </div>
+
       <!-- Mockup xc32frrg screen 1 — the doc-info panel's [Provider assignment (by step)] box.
            0399 M0020 rejection — if there is nothing to show, this box is not drawn at all.
            No "불러오는 중" (loading) text while reading, no "failed to load" text either. An
@@ -557,6 +576,7 @@ import { useMentionCopy } from '../composables/useMentionCopy'
 import { ClipboardAbort, copyToClipboardDeferred } from '../utils/clipboard'
 import type { StepState } from '../workflow/workflowViewState'
 import type { AiReview, AiProvenance } from '../types/aiReview'
+import type { DocumentRevision } from '../types/documentRevision'
 import type { RejectionHistoryItem } from '../composables/useFlowGateToken'
 import type { TrScopePathSlice, TrScopeVerdict } from '../types/trScope'
 
@@ -575,6 +595,7 @@ const props = defineProps<{
   rejectionHistory?: RejectionHistoryItem[]
   aiReview?: AiReview | null
   aiReviewHistory?: AiReview[]
+  documentRevisions?: DocumentRevision[]
   // TR work-scope verification result (0299 D0004 §6). The server unpacks this from documents.meta.
   trScope?: TrScopeVerdict | null
   qStatus?: string | null
@@ -606,13 +627,14 @@ const emit = defineEmits<{
 // 0311 T0004 rev1 §2: 'ai_review' is now the MERGED AI review·rejection section's key. The old
 // standalone 'reject' key is dropped — a repo-wide grep found no other reference to it
 // (it had already been left dangling with no section of its own).
-type SectionKey = 'status' | 'wp_assignments' | 'qa' | 'ai_review' | 'tr_scope' | 'changes'
+type SectionKey = 'status' | 'wp_assignments' | 'qa' | 'ai_review' | 'revisions' | 'tr_scope' | 'changes'
 const sectionCollapsed = reactive<Record<SectionKey, boolean>>({
   status: false,
   // Mockup xc32frrg screen 1 draws this box already expanded.
   wp_assignments: false,
   qa: false,
   ai_review: false,
+  revisions: false,
   // Folded when the result is pass with no reasons (D0004 §6). The watch below opens it based on the verdict.
   tr_scope: true,
   // 0325 T0006: this section only appears on AC, and the very reason it appears is "지금 보라" (look now), so it starts expanded.
@@ -929,6 +951,12 @@ function isMissingResponseWarn(reject: RejectionHistoryItem): boolean {
 function providerLabel(p?: AiProvenance | null): string {
   const name = p?.ai_provider_name || p?.ai_provider_id
   return name ? `AI · ${name}` : ''
+}
+
+function revisionProviderLabel(revision: DocumentRevision): string {
+  // A null provider is a manual/legacy revision: do not turn created_by or document
+  // origin into an AI identity. Partial rows may use the durable provider id fallback.
+  return providerLabel(revision.editor_provider)
 }
 // 0582 TR0006 rev1: the default Q card (qaFeedVisible, not just QaHistoryDialog's full
 // view) needs the same convention for the in-app AI that asked the question -- an

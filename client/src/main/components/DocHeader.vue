@@ -245,6 +245,7 @@ import { useDocumentContextStore } from '../stores/documentContext'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import type { AiReview } from '../types/aiReview'
 import type { TestRun } from '../types/testRun'
+import type { DocumentRevision } from '../types/documentRevision'
 import type { RejectionHistoryItem } from '../composables/useFlowGateToken'
 import type { TrScopeVerdict } from '../types/trScope'
 
@@ -433,6 +434,7 @@ const workflowOrphan = ref(false)
 // read alongside workflow.orphan so DocInfoPanel can target a specific slot instead of
 // blindly posting an empty recover body.
 const workflowCandidateSlots = ref<Array<{ item_seq: number; type: string; empty: boolean }>>([])
+const documentRevisions = ref<DocumentRevision[]>([])
 const qAnswerStatus = ref<string | null>(null)
 
 const editingTitle = ref(false)
@@ -582,10 +584,12 @@ async function fetchWorkflowOrphan(id: string, generation: number): Promise<void
     workflowOrphan.value = res.data?.workflow?.orphan === true
     const slots = res.data?.workflow?.candidate_slots
     workflowCandidateSlots.value = Array.isArray(slots) ? slots : []
+    documentRevisions.value = Array.isArray(res.data?.revisions) ? res.data.revisions : []
   } catch {
     if (generation !== docFetchGeneration || props.tab.id !== id) return
     workflowOrphan.value = false
     workflowCandidateSlots.value = []
+    documentRevisions.value = []
   }
   emit('doc-updated', { docId: id })
 }
@@ -619,6 +623,7 @@ async function fetchDocOnce(id: string, opts?: { silent?: boolean }): Promise<bo
     workflowSteps.value = null
     workflowOrphan.value = false
     workflowCandidateSlots.value = []
+    documentRevisions.value = []
     ownerName.value = null
     groupLabel.value = null
     groupTitle.value = ''
@@ -1403,6 +1408,7 @@ defineExpose({
   workflowSteps,
   workflowOrphan,
   workflowCandidateSlots,
+  documentRevisions,
   openWorkflowDecisionModal,
   mentionText,
   parentRDocId,

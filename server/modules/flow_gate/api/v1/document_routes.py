@@ -978,6 +978,7 @@ def get_document_relations(
         )
 
     from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.services.ai_invoke.provenance import to_api_payload
     from modules.flow_gate.db import groups as db_groups
 
     group_id = doc.get("group_id")
@@ -1030,6 +1031,7 @@ def get_document_relations(
                 "edit_reason": r.get("edit_reason"),
                 "linked_doc_id": r.get("linked_doc_id"),
                 "backup_path": r.get("backup_path"),
+                "editor_provider": to_api_payload(r),
             }
             for r in revisions
         ],

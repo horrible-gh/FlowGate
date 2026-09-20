@@ -24,12 +24,15 @@ def create(data: dict[str, Any]) -> dict:
     now = now_iso()
     store._execute(
         "INSERT INTO document_revisions "
-        "(doc_id, revision_no, backup_path, edit_reason, linked_doc_id, created_by, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "(doc_id, revision_no, backup_path, edit_reason, linked_doc_id, created_by, created_at, "
+        "ai_run_id, actual_provider_id, actual_provider_name) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             data["doc_id"], data["revision_no"], data["backup_path"],
             data["edit_reason"], data.get("linked_doc_id"),
             data["created_by"], data.get("created_at", now),
+            data.get("ai_run_id"), data.get("actual_provider_id"),
+            data.get("actual_provider_name"),
         ],
     )
     row = store._fetch_one(
