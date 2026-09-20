@@ -11,6 +11,7 @@ sqloader rule: no inline SQL. Go through queries.json + the db module.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from typing import Any, Optional, Union
 
@@ -29,6 +30,8 @@ from modules.flow_gate.api.v1.events.publisher import FlowEvent, publish_event_t
 # with no human subject (AI registration / artifact-accompanied) to satisfy the
 # created_by FK and NOT NULL constraints (L0007 §3.1).
 AI_SYSTEM_USER = "u-system"
+
+logger = logging.getLogger(__name__)
 
 QuestionInput = Union[str, dict]
 
@@ -344,6 +347,125 @@ def add_questions(
     return {"doc_id": doc_id, "added_item_ids": added_ids}
 
 
+# ── Last-answer → paused-chain continuation (flowgate.default.0551 T#2) ────────
+
+def auto_resume_answered_chain(
+    *,
+    doc_id: str,
+    api_base_url: str,
+    locale: str = "ko",
+    responder_run: Optional[dict] = None,
+) -> Optional[dict]:
+    """Resume the durable question_pending chain once the group has no open Q.
+
+    This is orchestration only: ai_invoke_service.resume_chain remains the one
+    resume engine and its group lock + paused-row compare-and-swap remain the one
+    exactly-once boundary. The helper is deliberately best-effort because an answer
+    that was committed must never be rolled back or reported as failed merely because
+    the continuation lost a race to cancel, another answer, or another process.
+
+    It is called both from the answer write path (human answers and restart recovery)
+    and after run finalization (an AI responder still owns the group lease while it
+    POSTs its answer, so that first call is expected to defer until finalization).
+    """
+    try:
+        doc = db_documents.get_by_id(doc_id)
+        group_id = (doc or {}).get("group_id")
+        if not group_id:
+            return None
+
+        from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+        from modules.flow_gate.db import ai_invoke_runs as db_runs
+        from modules.flow_gate.services import ai_invoke_service
+
+        row = db_paused.get_by_group(group_id)
+        if (
+            row is None
+            or (row.get("stop_kind") or "user") != "system"
+            or row.get("stop_code") != "question_pending"
+        ):
+            return None
+        # A container can be done while another document in the same group still has
+        # an unanswered item. The group-wide query is the final gate.
+        if db_questions.list_open_doc_ids_by_group(group_id):
+            return None
+
+        requester_run_id = row.get("stop_run_id")
+        requester_provider_id = None
+        if requester_run_id:
+            try:
+                requester = db_runs.get(requester_run_id)
+                requester_provider_id = (requester or {}).get("provider_id")
+            except Exception:
+                logger.warning(
+                    "question auto-resume requester lookup failed for %s",
+                    requester_run_id,
+                    exc_info=True,
+                )
+
+        trace = {
+            "requester_run_id": requester_run_id,
+            "requester_provider_id": requester_provider_id,
+            "responder_run_id": (responder_run or {}).get("run_id"),
+            "responder_provider_id": (responder_run or {}).get("provider_id"),
+            "paused_chain_id": row.get("chain_id"),
+            "resumed_run_id": None,
+            "resumed_chain_id": None,
+        }
+        try:
+            resumed = ai_invoke_service.resume_chain(
+                group_id=group_id,
+                # The paused chain belongs to its original requester, not necessarily
+                # to the human/responder that supplied the final answer.
+                user_id=row.get("paused_by"),
+                api_base_url=api_base_url,
+                locale=locale or "ko",
+            )
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            logger.info(
+                "question auto-resume deferred group_id=%s code=%s "
+                "requester_run_id=%s responder_run_id=%s chain_id=%s",
+                group_id,
+                detail.get("code") or exc.status_code,
+                trace["requester_run_id"],
+                trace["responder_run_id"],
+                trace["paused_chain_id"],
+            )
+            return None
+
+        trace["resumed_run_id"] = resumed.get("run_id")
+        trace["resumed_chain_id"] = resumed.get("chain_id")
+        resumed["question_resume_trace"] = trace
+        # Keep the correlation on the live run too, so GET status exposes the same
+        # evidence as the immediate answer response. The structured log remains the
+        # durable audit trail after this process exits.
+        resumed_record = ai_invoke_service.get_run_record(trace["resumed_run_id"])
+        if resumed_record is not None:
+            resumed_record["question_resume_trace"] = dict(trace)
+        logger.info(
+            "question auto-resumed group_id=%s requester_run_id=%s "
+            "requester_provider_id=%s responder_run_id=%s responder_provider_id=%s "
+            "paused_chain_id=%s resumed_run_id=%s resumed_chain_id=%s",
+            group_id,
+            trace["requester_run_id"],
+            trace["requester_provider_id"],
+            trace["responder_run_id"],
+            trace["responder_provider_id"],
+            trace["paused_chain_id"],
+            trace["resumed_run_id"],
+            trace["resumed_chain_id"],
+        )
+        return trace
+    except Exception:
+        logger.warning(
+            "question auto-resume failed for %s (answer remains committed)",
+            doc_id,
+            exc_info=True,
+        )
+        return None
+
+
 # ── Register answer (human/AI bidirectional, atomicity L0007 §3.2/§3.3) ──────────
 
 def register_answer(
@@ -354,6 +476,8 @@ def register_answer(
     author_id: Optional[str] = None,
     selected_option_ids: Optional[list[str]] = None,
     notify_audience: Optional[str] = None,
+    auto_resume_api_base_url: Optional[str] = None,
+    auto_resume_locale: str = "ko",
 ) -> dict:
     """Register an answer to a query item and transition the container status (atomic).
 
@@ -428,13 +552,22 @@ def register_answer(
         unanswered_count=len(unanswered),
     )
 
-    return {
+    result = {
         "doc_id": doc_id,
         "item_id": item_id,
         "answer_id": answer_id,
         "author_kind": author_kind,
         "status": q_status,
     }
+    if not unanswered and auto_resume_api_base_url:
+        trace = auto_resume_answered_chain(
+            doc_id=doc_id,
+            api_base_url=auto_resume_api_base_url,
+            locale=auto_resume_locale,
+        )
+        if trace is not None:
+            result["question_resume_trace"] = trace
+    return result
 
 
 # ── Lookup ───────────────────────────────────────────────────────────────────────

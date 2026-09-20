@@ -401,12 +401,51 @@ def _finalize_run(run: dict) -> None:
     })
     if not respawn_pending:
         db_group_ai_leases.release(run["group_id"], run["run_id"], reason="normal_finish")
+    # T#2: an AI responder POSTs while it still owns this lease, so the answer-path
+    # attempt necessarily defers. Retry after finalization/release; human answers and
+    # restart recovery already use the same helper directly from register_answer.
+    _auto_resume_answered_question_chain(run)
     # NR0003 §11 제안 1/2 (T#1): the responder dispatch below starts a brand-new run through
     # the ordinary admission path, which refuses a second concurrent run for this group
     # (`run_in_progress`) as long as THIS hop's own lease is still held -- so it must run
     # strictly after the release directly above, never before it.
     if run.get("stop_code") == "question_pending":
         _dispatch_question_responder(run)
+
+
+def _auto_resume_answered_question_chain(run: dict) -> None:
+    """Best-effort finalization hook for the last-answer continuation.
+
+    The shared q_service helper re-checks the durable system stop and every open Q
+    in the group, then enters the ordinary resume_chain CAS path. Calling it for all
+    completed runs also closes the narrow race where a human answers while the
+    requester itself is still finalizing its question_pending stop.
+    """
+    doc_ref = run.get("doc_ref")
+    api_base_url = run.get("api_base_url")
+    if not doc_ref or not api_base_url:
+        return
+    try:
+        from modules.flow_gate.services import q_service
+
+        is_q_responder = bool(
+            run.get("mode") == "single"
+            and run.get("action_scope") == "edit"
+            and run.get("completion_oracle") is not None
+            and not run.get("scope_oracle_run")
+        )
+        q_service.auto_resume_answered_chain(
+            doc_id=doc_ref,
+            api_base_url=api_base_url,
+            locale=run.get("continuation_locale") or "ko",
+            responder_run=run if is_q_responder else None,
+        )
+    except Exception:
+        logger.warning(
+            "question answer finalization resume failed for %s",
+            doc_ref,
+            exc_info=True,
+        )
 
 
 def _dispatch_question_responder(run: dict) -> None:
@@ -892,11 +931,23 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
             continuation_target_seq=run.get("continuation_target_seq"),
             docs_target=run.get("docs_target"),
             docs_reached=int(run.get("docs_reached") or 0),
-            # A SYSTEM row deliberately carries no chain counters (0357 T0004): the run
-            # record this stop points at (stop_run_id) has none either, and resume_chain
-            # re-derives the target from the sequence when the row leaves them NULL. The
-            # user-pause refresh above does carry them — that row is a snapshot taken
-            # mid-chain and would otherwise go stale.
+            # T#2: a question stop is not a new chain. Keep the original chain identity
+            # and lifetime counters on its durable row so answer-triggered resume can
+            # reconstruct the exact continuation even after a process restart. Other
+            # legacy system stops retain their existing re-derived-counter behaviour.
+            chain_id=(
+                run.get("chain_id") if run.get("stop_code") == "question_pending" else None
+            ),
+            chain_docs_target=(
+                run.get("chain_docs_target")
+                if run.get("stop_code") == "question_pending"
+                else None
+            ),
+            chain_docs_reached=(
+                int(run.get("chain_docs_reached") or 0)
+                if run.get("stop_code") == "question_pending"
+                else 0
+            ),
             stop_kind="system",
             stop_code=run.get("stop_code"),
             stop_run_id=run.get("run_id"),
@@ -1245,6 +1296,7 @@ def finished_payload(run: dict) -> dict:
         "docs_reached": run["docs_reached"],
         "docs_target": run["docs_target"],
         "chain_id": run.get("chain_id"),
+        "question_resume_trace": run.get("question_resume_trace"),
         "chain_docs_target": int(run.get("chain_docs_target") or 0),
         "chain_docs_reached": int(run.get("chain_docs_reached") or 0),
         "reached_doc_ids": run["reached_doc_ids"],
