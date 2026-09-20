@@ -317,6 +317,16 @@ def _finalize_run(run: dict) -> None:
             break
         terminal.attempt(run, "prepare_" + name, action)
     terminal.cleanup(run, handoff=respawn_pending, reason="normal_finish")
+    # T#2: an AI responder POSTs while it still owns this lease, so the answer-path
+    # attempt necessarily defers. Retry after finalization/release; human answers and
+    # restart recovery already use the same helper directly from register_answer.
+    _auto_resume_answered_question_chain(run)
+    # NR0003 §11 제안 1/2 (T#1): the responder dispatch below starts a brand-new run through
+    # the ordinary admission path, which refuses a second concurrent run for this group
+    # (`run_in_progress`) as long as THIS hop's own lease is still held -- so it must run
+    # strictly after the release directly above, never before it.
+    if run.get("stop_code") == "question_pending":
+        _dispatch_question_responder(run)
 
 
 def _finalize_messages(run: dict) -> None:
@@ -382,6 +392,105 @@ def _finalize_review_checkpoint(run: dict) -> None:
         except Exception as exc:
             logger.exception("document review-loop checkpoint failed for %s", run["run_id"])
             review.force_stop_loop_after_checkpoint_failure(run, exc)
+
+
+def _auto_resume_answered_question_chain(run: dict) -> None:
+    """Best-effort finalization hook for the last-answer continuation.
+
+    The shared q_service helper re-checks the durable system stop and every open Q
+    in the group, then enters the ordinary resume_chain CAS path. Calling it for all
+    completed runs also closes the narrow race where a human answers while the
+    requester itself is still finalizing its question_pending stop.
+    """
+    doc_ref = run.get("doc_ref")
+    api_base_url = run.get("api_base_url")
+    if not doc_ref or not api_base_url:
+        return
+    try:
+        from modules.flow_gate.services import q_service
+
+        is_q_responder = bool(
+            run.get("mode") == "single"
+            and run.get("action_scope") == "edit"
+            and run.get("completion_oracle") is not None
+            and not run.get("scope_oracle_run")
+        )
+        q_service.auto_resume_answered_chain(
+            doc_id=doc_ref,
+            api_base_url=api_base_url,
+            locale=run.get("continuation_locale") or "ko",
+            responder_run=run if is_q_responder else None,
+        )
+    except Exception:
+        logger.warning(
+            "question answer finalization resume failed for %s",
+            doc_ref,
+            exc_info=True,
+        )
+
+
+def _dispatch_question_responder(run: dict) -> None:
+    """Auto-dispatch the AI responder for a `question_pending` stop.
+
+    Connects two pieces NR0003 found already built on their own (§12): the responder
+    priority `review.resolve_question_responder` resolves, and the existing
+    `q_answer_invoke_service.dispatch_answer_run` a human's own [AI 답변 요청] click
+    already performs. No new AI execution engine is built here -- only the missing wiring
+    between `question_pending` and that dispatch (제안 2).
+
+    Only the earliest (lowest-seq) unanswered item is dispatched when several questions are
+    pending at once: one AI run answers exactly one item (D0005 §3.2), and the group lease
+    this function relies on being free (see the caller) permits only one run in flight per
+    group regardless -- firing one per pending item here would only manufacture
+    `run_in_progress` failures for every item after the first.
+
+    Every failure is swallowed and logged: an auto-dispatch that could not start (no
+    enabled provider, an unusable pick, an admission error) leaves the question exactly
+    where a human can still answer it by hand through [AI 답변 요청]/[멘트복사] -- a
+    successful `question_pending` stop must never turn into an unhandled exception here.
+    """
+    doc_ref = run.get("doc_ref")
+    if not doc_ref:
+        return
+    try:
+        from modules.flow_gate.db import questions as db_questions
+        from modules.flow_gate.db import question_items as db_question_items
+        from modules.flow_gate.services import q_service, q_answer_invoke_service
+
+        anchor = q_service.resolve_question_anchor(doc_ref)
+        container = db_questions.get_container_by_doc(anchor)
+        if container is None or container.get("status") != "pending":
+            return
+        unanswered = db_question_items.list_unanswered(container["id"])
+        if not unanswered:
+            return
+        target = min(unanswered, key=lambda row: row.get("seq") or 0)
+
+        doc = db_docs.get_by_id(anchor)
+        if doc is None:
+            return
+        doc = {**doc, "doc_id": anchor}
+        item = q_answer_invoke_service.resolve_item(anchor, target["id"])
+
+        item_seq = admission.continuation_hop_item_seq(
+            doc_ref,
+            continuation_instruction_mode=run.get("continuation_instruction_mode"),
+            continuation_auto_approve_item_seqs=run.get("continuation_auto_approve_item_seqs"),
+        )
+        provider_id = review.resolve_question_responder(
+            run.get("continuation_reviewer_overrides"),
+            item_seq,
+            run.get("continuation_base_provider_id"),
+            run.get("project_id"),
+        )
+        q_answer_invoke_service.dispatch_answer_run(
+            doc=doc, item=item, issued_to=run.get("issued_to"),
+            api_base_url=run.get("api_base_url"), provider_id=provider_id,
+        )
+    except Exception:
+        logger.warning(
+            "question responder auto-dispatch failed for %s", doc_ref, exc_info=True,
+        )
 
 
 # ── Stop classification (0359 L0007 §4.1 ~ §4.3) ─────────────────────────────
@@ -803,11 +912,23 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
             continuation_target_seq=run.get("continuation_target_seq"),
             docs_target=run.get("docs_target"),
             docs_reached=int(run.get("docs_reached") or 0),
-            # A SYSTEM row deliberately carries no chain counters (0357 T0004): the run
-            # record this stop points at (stop_run_id) has none either, and resume_chain
-            # re-derives the target from the sequence when the row leaves them NULL. The
-            # user-pause refresh above does carry them — that row is a snapshot taken
-            # mid-chain and would otherwise go stale.
+            # T#2: a question stop is not a new chain. Keep the original chain identity
+            # and lifetime counters on its durable row so answer-triggered resume can
+            # reconstruct the exact continuation even after a process restart. Other
+            # legacy system stops retain their existing re-derived-counter behaviour.
+            chain_id=(
+                run.get("chain_id") if run.get("stop_code") == "question_pending" else None
+            ),
+            chain_docs_target=(
+                run.get("chain_docs_target")
+                if run.get("stop_code") == "question_pending"
+                else None
+            ),
+            chain_docs_reached=(
+                int(run.get("chain_docs_reached") or 0)
+                if run.get("stop_code") == "question_pending"
+                else 0
+            ),
             stop_kind="system",
             stop_code=run.get("stop_code"),
             stop_run_id=run.get("run_id"),
@@ -1158,6 +1279,7 @@ def finished_payload(run: dict) -> dict:
         "docs_reached": run["docs_reached"],
         "docs_target": run["docs_target"],
         "chain_id": run.get("chain_id"),
+        "question_resume_trace": run.get("question_resume_trace"),
         "chain_docs_target": int(run.get("chain_docs_target") or 0),
         "chain_docs_reached": int(run.get("chain_docs_reached") or 0),
         "reached_doc_ids": run["reached_doc_ids"],

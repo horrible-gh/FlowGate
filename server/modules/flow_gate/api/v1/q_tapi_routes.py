@@ -48,6 +48,13 @@ def _fail(status: int, message: str) -> JSONResponse:
     )
 
 
+def _operator_facing_api_base(request: Request) -> str:
+    """Build the same browser-facing API base used by the AI-invoke routes."""
+    from modules.flow_gate.api import token_routes
+
+    return token_routes._build_api_base(request)
+
+
 def _compose_doc_id(project_id: str, module: str, group_seq: str, doc_code: str) -> str:
     """Slash path segments → canonical doc_id."""
     group_id = f"{project_id}.{module}.{group_seq}"
@@ -277,6 +284,7 @@ def _add_questions_response(
 
 def _register_answer_response(
     doc_id: str, item_id: int, body: RegisterAnswerRequest, user_id: str,
+    request: Request,
     ai_run_id: Optional[str] = None,
 ) -> JSONResponse:
     project_id = _doc_project_or_403(doc_id, user_id, "perm_document_create", reject_disposed=True)
@@ -292,6 +300,8 @@ def _register_answer_response(
             selected_option_ids=body.selected_option_ids,
             notify_audience=user_id,
             author_provenance=_resolve_ai_provenance(ai_run_id) if body.author_kind == "ai" else None,
+            auto_resume_api_base_url=_operator_facing_api_base(request),
+            auto_resume_locale=request.headers.get("x-locale") or "ko",
         )
     except HTTPException as exc:
         return _fail(exc.status_code, exc.detail)
@@ -364,6 +374,7 @@ def post_register_answer_by_path(
     if forced_kind is not None:
         body.author_kind = forced_kind
     return _register_answer_response(doc_id, item_id, body, user_id, ai_run_id=ai_run_id)
+    return _register_answer_response(doc_id, item_id, body, user_id, request)
 
 
 @router.post("/q/{doc_id}/items/{item_id}/answers")
@@ -384,6 +395,7 @@ def post_register_answer(
     if forced_kind is not None:
         body.author_kind = forced_kind
     return _register_answer_response(doc_id, item_id, body, user_id, ai_run_id=ai_run_id)
+    return _register_answer_response(doc_id, item_id, body, user_id, request)
 
 
 # ── Answer hand-off — give one query item to an AI worker ────────────────────────────

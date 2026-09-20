@@ -91,6 +91,7 @@ def get_status(run_id: str, *, pending_q_doc_ids: Optional[list[str]] = None) ->
         "docs_target": run["docs_target"],
         "docs_reached_so_far": docs_so_far,
         "chain_id": run.get("chain_id"),
+        "question_resume_trace": run.get("question_resume_trace"),
         "chain_docs_target": int(run.get("chain_docs_target") or 0),
         "chain_docs_reached": (
             int(run.get("chain_docs_reached") or 0)

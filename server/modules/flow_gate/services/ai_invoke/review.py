@@ -287,6 +287,36 @@ def resolve_step_executor(
     return _first_enabled_provider_id(project_id)
 
 
+def resolve_question_responder(
+    reviewer_overrides: Optional[dict],
+    item_seq: Optional[int],
+    base_provider_id: Optional[str],
+    project_id: Optional[str],
+) -> Optional[str]:
+    """Who answers this hop's pending question (NR0003 §11 제안 1, T#1).
+
+    Priority: 1) the step's own reviewer, if still enabled -- the reviewer already reads
+    every document this hop produces, so a question raised while producing it is exactly
+    their business. 2) the run's header/default selected provider
+    (`continuation_base_provider_id`), if still enabled -- the same provider a manual
+    [AI 답변 요청] click would use today (NR0003 §4). 3) neither: return None and let
+    `dispatch_answer_run`'s ordinary provider chain/default policy decide, exactly as a
+    manual [AI 답변 요청] click with no provider chosen already does -- no new
+    default-provider logic is built here.
+
+    Unlike `resolve_reviewer`, an invalid/absent reviewer does NOT fall straight to the
+    project default here: the header pick sits between the two, and reusing
+    `resolve_reviewer`'s own fallback would skip it and silently reorder step 3 ahead of
+    step 2.
+    """
+    reviewer_id = _map_lookup(reviewer_overrides, item_seq)
+    if reviewer_id and _provider_enabled(project_id, reviewer_id):
+        return reviewer_id
+    if base_provider_id and _provider_enabled(project_id, base_provider_id):
+        return base_provider_id
+    return None
+
+
 # doc_review_status values that mean "this output is not through the gate yet".
 REVIEW_PENDING_DOC_STATUSES = frozenset({"pending_review", "revised", "rejected"})
 
