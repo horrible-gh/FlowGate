@@ -433,12 +433,18 @@ async def document_review_transition_rpc(
             return 409, {"ok": False, "error": error, "git": {"ok": False, "error": error}, "approval": pending}
 
         outcome: dict = {}
+        # 0555 T0008 §2 / D0005 §3.8: one-shot per REQUEST, minted before Git runs so
+        # a conflict can park it in the very INSERT that opens the merge session. It is
+        # not the merge session id: a session says what is being merged, an intent says
+        # which approval that merge finishes.
+        approval_intent_id = str(uuid.uuid4())
         try:
             context = git_service.ApprovalFinalizeContext(
                 doc_id=body.doc_id,
                 group_id=group_id,
                 actor_user_id=current_user["user_id"],
                 lock_holder=holder,
+                approval_intent_id=approval_intent_id,
             )
             outcome = git_service.run_approve_git_action(
                 group_id, git_action, approval_context=context
@@ -450,14 +456,35 @@ async def document_review_transition_rpc(
                     "ok": False, "error": error, "git": outcome, "approval": pending,
                 }
             if outcome.get("deferred") or not outcome.get("terminal"):
-                pending.update(stage="git_finalize", deferred=True)
+                # A10/B1: not a failure — the approval is now owned by the conflict
+                # review and will be committed by _complete_merge_review.
+                pending.update(
+                    stage="git_finalize", deferred=True,
+                    approval_intent_id=approval_intent_id,
+                    merge_id=(outcome.get("result") or {}).get("merge_id"),
+                )
                 return 200, {"ok": True, "git": outcome, "approval": pending}
+            # §9 / D0005 §3.9: a retry of an approval whose Git already reached
+            # terminal finds the intent its own conflict parked earlier and consumes
+            # THAT one, in this transaction. Without this the re-approval would approve
+            # the document while leaving a live intent behind, and the next merge review
+            # to close that session would try to approve it a second time.
+            parked_session, parked_intent = git_service.approval_intent.find_intent_session(group_id)
+            consume_hook = None
+            if parked_intent is not None and parked_intent.get("ac_doc_id") == body.doc_id:
+                parked_merge_id = int(parked_session["merge_id"])
+                parked_id = parked_intent["approval_intent_id"]
+
+                def consume_hook(_doc, _root, _merge_id=parked_merge_id, _intent_id=parked_id):
+                    return git_service.approval_intent.consume_intent(_merge_id, _intent_id)
+
             try:
                 committed = commit_final_approval(
                     doc_id=body.doc_id,
                     actor_user_id=current_user["user_id"],
                     user_permissions=user_permissions,
                     locale=locale,
+                    consume_hook=consume_hook,
                 )
             except Exception as exc:
                 pending["stage"] = "approval_commit"

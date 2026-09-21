@@ -11,6 +11,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from . import approval_intent
 from .command import GIT_LOCAL_TIMEOUT_SEC
 from .commit import _release_cancel_lock
 from .credentials import GitServiceError, _author_env_from_cfg
@@ -708,7 +709,17 @@ def abort_merge(group_id: str, merge_id: int) -> dict:
         return {"ok": True, "result": {
             "status": "aborted", "branch_preserved": True,
         }}
+    # 0555 T0008 §8 (D0005 §3.6 B10): abort ends the Git attempt this final approval
+    # was riding on, so its parked intent is discarded — never carried over to a
+    # later session. The AC stays pending_review and the root stays in progress, so
+    # pressing 최종승인 again simply starts over with a fresh intent id. Note this is
+    # the ONLY discard path besides the §3.3 validity mismatch: a review rejection or
+    # a re-review does NOT get here and must leave the intent alone.
+    discarded = approval_intent.discard_intent(merge_id)
     _gs.db_git.close_session(merge_id, "aborted")
     _gs._set_status(group_id, "waiting")
     _gs.db_git.release_lock(project_id, f"merge:{merge_id}")   # legacy leftover, best-effort
-    return {"ok": True, "result": {"status": "waiting", "branch_preserved": True}}
+    return {"ok": True, "result": {
+        "status": "waiting", "branch_preserved": True,
+        "final_approval_intent_discarded": discarded is not None,
+    }}

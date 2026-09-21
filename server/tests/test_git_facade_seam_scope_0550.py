@@ -438,29 +438,34 @@ def test_the_seam_scan_itself_is_not_vacuous():
 
     # 2. The A-side (test corpus) scan found a believable inventory, not an empty set
     #    from a broken alias/AST walk.
-    # 0578 T0006: re-measured to 366. The count was 363 when 0550 wrote it and had
-    # already drifted to 365 before this group touched anything (two files added by
-    # other merged groups without updating this number); T0006 adds
-    # tests/test_review_turn_messages_0578.py, the third. Measured with
+    # 0555 T0008: re-measured to 375. It read 366 (0578 T0006's measurement) and had
+    # already drifted to 374 before this group touched anything — eight files added by
+    # other merged groups that did not re-measure, which is why this assertion was
+    # already failing on the branch base. T0008 adds
+    # tests/test_final_approval_conflict_intent_0555.py, the ninth. Measured with
     # `len(tuple(sorted(_TESTS_DIR.glob("**/*.py"))))`, not estimated.
     test_paths = tuple(sorted(_TESTS_DIR.glob("**/*.py")))
-    assert len(test_paths) == 366, (
-        f"expected 366 test files, found {len(test_paths)}"
+    assert len(test_paths) == 375, (
+        f"expected 375 test files, found {len(test_paths)}"
     )
     test_patched, _test_sites, test_unresolved = _scan_test_corpus()
     operational, operational_sites, operational_unresolved = _scan_operational_modules()
     patched = test_patched | operational
-    # 0578 T0006: 70 -> 71 / 72 -> 73. Both were exact at baseline; the one new name is
-    # `_apply_write_plan_locked`, which tests/test_review_turn_messages_0578.py patches to
-    # drive the four apply-outcome branches of `_materialize_pending_conversation_run`
-    # without a real repository. It is defined in git_service.py itself (not in a git/*
-    # module), so `test_no_facade_patch_target_is_reached_bare_inside_its_module` has
+    # 0555 T0008: 71 -> 72 / 73 -> 75. Re-measured, not adjusted by the delta: the
+    # test-patched count was exact on the branch base, but the combined count had
+    # already drifted to 74 there (an operational rebinding another merged group added
+    # without re-measuring), which is the second reason this assertion was already
+    # failing before T0008. The one name T0008 adds is `_emit`, which
+    # tests/test_final_approval_conflict_intent_0555.py patches to observe WHEN the
+    # git completion event is published relative to the deferred approval commit
+    # (D0005 §3.12). `_emit` is defined in git_service.py itself, not in a git/*
+    # module, so `test_no_facade_patch_target_is_reached_bare_inside_its_module` has
     # nothing to say about it -- this is an inventory count, not a new seam.
-    assert len(test_patched) == 71, (
-        f"expected 71 test facade-patched names, found {len(test_patched)}"
+    assert len(test_patched) == 72, (
+        f"expected 72 test facade-patched names, found {len(test_patched)}"
     )
-    assert len(patched) == 73, (
-        f"expected 73 combined facade seam names, found {len(patched)}: {sorted(patched)}"
+    assert len(patched) == 75, (
+        f"expected 75 combined facade seam names, found {len(patched)}: {sorted(patched)}"
     )
     for expected in ("finalize", "get_finalize_state", "precheck_approve_git_action"):
         assert expected in operational, (

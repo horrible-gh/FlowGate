@@ -14,6 +14,7 @@ from typing import Optional, Sequence
 from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db.connection import get_store
 
+from . import approval_intent
 from .base_slot import default_base_commit_message
 from .commit import (
     COMMIT_SUBJECT_MAX,
@@ -40,6 +41,7 @@ _log = logging.getLogger(__name__)
 ACTION_VALUES = ("merge", "merge_only", "push", "commit_push", "commit_only", "wait")
 APPROVAL_FINALIZE_ACTIONS = ("merge", "merge_only", "push", "commit_push")
 FINALIZE_MAIN_CHOICES = ("merge", "merge_only", "wait")
+FINALIZE_AUX_CHOICES = ("push",)
 
 
 @dataclass(frozen=True)
@@ -50,7 +52,10 @@ class ApprovalFinalizeContext:
     group_id: str
     actor_user_id: str
     lock_holder: str
-FINALIZE_AUX_CHOICES = ("push",)
+    # 0555 T0008 §2: the one-shot id this request would hand to a conflict session
+    # so the deferred approval can be found again later (D0005 §3.8).  Generated per
+    # final-approval REQUEST, never derived from the merge session it may create.
+    approval_intent_id: str = ""
 
 # NR flowgate.default.0331.0005 §8 — the approved v4 mockup drives the finalize
 # UI from two INDEPENDENT axes (scope of application x push to remote) instead of a flat card
@@ -495,6 +500,12 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         "merge_commit": state.get("merge_commit"),
         "review_state": review_state,
         "reconciliation_kind": reconciliation_kind,
+        # 0555 T0008 §10 / D0005 §3.11: the coupling marker. True means this
+        # group's Git is finishing a final approval that is still waiting, so no
+        # surface may offer a NEW finalize — only "go resolve the conflict". The
+        # same fact the finalize() guard above rejects on, so the screen and the
+        # server never disagree about it.
+        "final_approval_bound": approval_intent.group_is_final_approval_bound(group_id),
         "commit_message": commit_message,
         # True only for the display-only pre-approval preview (0197 T0004 §B);
         # the persisted status is still 'none'. Advisory for the FE.
@@ -739,6 +750,17 @@ def finalize(
     action = action or cfg.get("default_finalize_action") or "wait"
     if action not in ACTION_VALUES:
         raise GitServiceError(422, "invalid_request", f"invalid action: {action!r}")
+    # 0555 T0008 §10 / D0005 §3.11: Git work already coupled to a waiting final
+    # approval is not something a second surface may restart. The screen hides the
+    # control; this is the same fact enforced on the request, so hiding it is not
+    # the only thing standing between a stale tab and a duplicate finalize. The
+    # approval's own continuation carries the capability and is exempt.
+    if approval_context is None and approval_intent.group_is_final_approval_bound(group_id):
+        raise GitServiceError(
+            409, "final_approval_bound",
+            "this group's git finalize belongs to a final approval that is waiting "
+            "for the conflict review to finish",
+        )
 
     # Confirmed commit subject (flowgate.default.0173 P0003 §3): normalize+validate
     # BEFORE any state transition or lock acquisition (422 has no side effects). A
@@ -1048,17 +1070,30 @@ def finalize(
         review_base_head = _rev_parse(base_root, "HEAD")
         review_merge_head = _rev_parse(base_root, "MERGE_HEAD")
         review_expected_remote_head = _rev_parse(base_root, f"refs/remotes/origin/{base_branch}")
-        merge_id = _gs.db_git.create_session(
-            group_id, files, finalize_action=action,
-            context={
-                "review_state": None,
-                "auto_authority": False,
-                "resolver_baseline": {
-                    "base_head": review_base_head,
-                    "merge_head": review_merge_head,
-                    "expected_remote_head": review_expected_remote_head,
-                },
+        session_context = {
+            "review_state": None,
+            "auto_authority": False,
+            "resolver_baseline": {
+                "base_head": review_base_head,
+                "merge_head": review_merge_head,
+                "expected_remote_head": review_expected_remote_head,
             },
+        }
+        # 0555 T0008 §2 / D0005 §3.5: a conflict that interrupts a FINAL APPROVAL
+        # parks that approval here — in the same INSERT that creates the session, so
+        # the "open session, no intent" orphan (a merge nobody could ever approve)
+        # cannot be produced by a request dying in between. A plain manual finalize
+        # passes no context and its session keeps exactly the shape it always had.
+        if approval_context is not None and approval_context.approval_intent_id:
+            session_context[approval_intent.INTENT_KEY] = approval_intent.build_intent(
+                approval_intent_id=approval_context.approval_intent_id,
+                group_id=group_id,
+                ac_doc_id=approval_context.doc_id,
+                requested_by=approval_context.actor_user_id,
+                git_action=action,
+            )
+        merge_id = _gs.db_git.create_session(
+            group_id, files, finalize_action=action, context=session_context,
         )
         _gs._set_status(group_id, "conflict", merge_id=merge_id)
         # 0205 L §2.1: DO NOT transfer the lock to the session. The conflict wait
@@ -1076,6 +1111,11 @@ def finalize(
             "result": {
                 "action": action, "status": "conflict", "merge_commit": None,
                 "pushed": False, "merge_id": merge_id, "conflict_files": files,
+                # None for a manual finalize conflict: only an approval-coupled one
+                # parks an intent here (T0008 §15 "no intent is forced on every session").
+                "approval_intent_id": (
+                    session_context.get(approval_intent.INTENT_KEY) or {}
+                ).get("approval_intent_id"),
                 **_artifact_payload(excluded_artifacts, staged_new_file_count),
             },
         }

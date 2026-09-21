@@ -105,8 +105,24 @@ class _MockTxn:
         self._cur = None
 
     def execute(self, sql, params=None):
+        # No commit here: a transaction that commits every statement cannot roll
+        # anything back, and then an atomic unit of work (0555 D0005 INV-6: AC
+        # approval + root completion + intent consume, all or nothing) silently
+        # tests as "each write landed on its own". begin_transaction below owns
+        # the commit/rollback.
         self._cur = self._conn.execute(sql, params or [])
-        self._conn.commit()
+
+    @property
+    def cursor(self):
+        """The live cursor, so `_execute_affected` can read a real rowcount.
+
+        FlowGateStore._execute_affected reads the affected-row count off the
+        transaction's cursor (that is the one portable place all three real
+        adapters expose it). A mock that hides its cursor makes every CAS write
+        raise "database driver did not expose affected row count" — a harness
+        gap, not a product one (0555 T0008).
+        """
+        return self._cur
 
     def fetchone(self):
         row = self._cur.fetchone() if self._cur else None
@@ -135,7 +151,13 @@ class _MockDB:
 
     @contextmanager
     def begin_transaction(self):
-        yield _MockTxn(self._conn)
+        txn = _MockTxn(self._conn)
+        try:
+            yield txn
+        except BaseException:
+            self._conn.rollback()
+            raise
+        self._conn.commit()
 
     def close(self):
         self._conn.close()

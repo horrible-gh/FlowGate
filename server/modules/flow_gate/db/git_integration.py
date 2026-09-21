@@ -326,6 +326,36 @@ def close_session(merge_id: int, status: str) -> None:
     )
 
 
+def sessions_by_group(group_id: str) -> list[dict]:
+    """Every session ever opened for a group, newest first.
+
+    The open-session accessors above answer "what is this group doing now".  A
+    deferred final approval also has to find the session it was parked on AFTER
+    that session closed (0555 D0005 §3.9 re-approval), so the closed rows have to
+    be reachable too.
+    """
+    return get_store()._fetch_all(
+        "SELECT * FROM git_merge_session WHERE group_id = ? ORDER BY merge_id DESC",
+        [group_id],
+    )
+
+
+def cas_session_context(merge_id: int, expected_raw: Any, context: dict) -> bool:
+    """Replace a session's `context` only if the stored text is still `expected_raw`.
+
+    :func:`set_session_context` is a blind write and `_execute` reports no rowcount
+    (see [[store-execute-has-no-rowcount]]).  A final approval consuming its intent
+    has to know whether THIS call was the one that consumed it, so it goes through
+    the affected-row boundary with the previous text as the CAS condition.  Run
+    inside a transaction the caller owns and the consume shares that unit of work.
+    """
+    affected = get_store()._execute_affected(
+        "UPDATE git_merge_session SET context = ? WHERE merge_id = ? AND context = ?",
+        [json.dumps(context or {}, ensure_ascii=False), merge_id, expected_raw],
+    )
+    return affected == 1
+
+
 def set_session_context(merge_id: int, context: dict) -> None:
     """Replace a session's `context` JSON (088).
 

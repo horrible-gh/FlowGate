@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from types import SimpleNamespace
 
 os.environ.setdefault("TESTING", "1")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
@@ -35,7 +36,20 @@ def _payload(response):
     return json.loads(response.body.decode("utf-8"))
 
 
-def _install_orchestration_fakes(monkeypatch, outcome, commit, events):
+def _install_orchestration_fakes(monkeypatch, outcome, commit, events, parked=None):
+    # 0555 T0008: before it commits, the orchestrator asks whether a conflict of
+    # its own parked an approval intent it now has to consume (D0005 §3.9). These
+    # tests own no database, so that lookup is the fake's responsibility too;
+    # `parked` is (session, intent) for the recovery case and (None, None) for the
+    # ordinary one.
+    monkeypatch.setattr(
+        workflow.git_service, "approval_intent",
+        SimpleNamespace(
+            find_intent_session=lambda group_id: parked or (None, None),
+            consume_intent=lambda merge_id, intent_id: events.append(
+                f"consume:{merge_id}:{intent_id}") or True,
+        ),
+    )
     monkeypatch.setattr(workflow, "_guard_group_not_disposed", lambda *a: None)
     monkeypatch.setattr(workflow, "_guard_group_not_ai_running", lambda *a: None)
     monkeypatch.setattr(workflow.db_docs, "get_by_id", lambda doc_id: dict(DOC))
@@ -126,6 +140,79 @@ def test_approval_commit_failure_preserves_terminal_git_for_retry(monkeypatch):
     assert body["git"]["result"]["terminal_retry"] is True
     assert body["approval"]["stage"] == "approval_commit"
     assert events == ["precheck", "lock", "git", "approval", "release"]
+
+
+def test_terminal_retry_consumes_the_intent_its_own_conflict_parked(monkeypatch):
+    """0555 T0008 §9 — the D0005 §3.9 re-approval finishes the parked intent too.
+
+    Approving without consuming would leave a live intent on the closed session,
+    and the next merge review to read it would approve the same document twice.
+    """
+    events = []
+    outcome = {"ok": True, "terminal": True,
+               "result": {"status": "merged", "merge_commit": "abc", "terminal_retry": True}}
+    committed = {"document": {**DOC, "doc_review_status": "approved"}, "root": {"doc_review_status": "wf_done"}}
+    parked = (
+        {"merge_id": 7},
+        {"approval_intent_id": "intent-1", "ac_doc_id": DOC["doc_id"]},
+    )
+    captured = {}
+
+    def _commit(**kwargs):
+        events.append("approval")
+        captured["hook"] = kwargs.get("consume_hook")
+        return committed
+
+    _install_orchestration_fakes(monkeypatch, outcome, lambda: committed, events, parked=parked)
+    monkeypatch.setattr(workflow, "commit_final_approval", _commit)
+
+    response = asyncio.run(workflow.document_review_transition_rpc(
+        "approve", workflow.DocumentBodyRequest(doc_id=DOC["doc_id"], git_action="merge"), USER, None
+    ))
+    assert response.status_code == 200
+    assert _payload(response)["approval"]["approved"] is True
+    assert captured["hook"] is not None
+    assert captured["hook"]({}, {}) is True
+    assert "consume:7:intent-1" in events
+
+
+def test_terminal_without_a_parked_intent_passes_no_consume_hook(monkeypatch):
+    """The ordinary (never-conflicted) approval keeps its T#1 shape exactly."""
+    events = []
+    outcome = {"ok": True, "terminal": True, "result": {"status": "merged", "merge_commit": "abc"}}
+    committed = {"document": {**DOC, "doc_review_status": "approved"}, "root": {"doc_review_status": "wf_done"}}
+    captured = {}
+
+    def _commit(**kwargs):
+        events.append("approval")
+        captured["hook"] = kwargs.get("consume_hook")
+        return committed
+
+    _install_orchestration_fakes(monkeypatch, outcome, lambda: committed, events)
+    monkeypatch.setattr(workflow, "commit_final_approval", _commit)
+
+    response = asyncio.run(workflow.document_review_transition_rpc(
+        "approve", workflow.DocumentBodyRequest(doc_id=DOC["doc_id"], git_action="merge"), USER, None
+    ))
+    assert response.status_code == 200
+    assert captured["hook"] is None
+    assert not [e for e in events if e.startswith("consume:")]
+
+
+def test_conflict_reports_the_parked_intent_id(monkeypatch):
+    """§2 — the deferred answer names the intent, so the caller can follow it."""
+    events = []
+    outcome = {"ok": True, "terminal": False, "deferred": True,
+               "result": {"status": "conflict", "merge_id": 11, "approval_intent_id": "x"}}
+    _install_orchestration_fakes(monkeypatch, outcome, lambda: pytest.fail("no approval"), events)
+
+    response = asyncio.run(workflow.document_review_transition_rpc(
+        "approve", workflow.DocumentBodyRequest(doc_id=DOC["doc_id"], git_action="merge"), USER, None
+    ))
+    approval = _payload(response)["approval"]
+    assert approval["deferred"] is True
+    assert approval["merge_id"] == 11
+    assert approval["approval_intent_id"]
 
 
 def test_lock_busy_stops_before_git_and_approval(monkeypatch):
