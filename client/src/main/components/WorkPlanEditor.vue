@@ -207,28 +207,142 @@
           <div class="wp-step-head">
             <span>{{ t('main.work_plan.col_step') }}</span><span>{{ t('main.work_plan.col_type') }}</span>
             <span>{{ t('main.work_plan.col_document') }}</span><span>{{ t('main.work_plan.col_provider') }}</span>
-            <span>{{ t('main.work_plan.col_note') }}</span>
+            <span>{{ t('main.work_plan.col_review') }}</span><span>{{ t('main.work_plan.col_note') }}</span>
+            <span class="wp-col-instr-head">{{ t('main.work_plan.col_instruction') }}</span>
           </div>
           <div class="wp-step-list">
             <div v-if="plan.steps.length === 0" class="step-empty">{{ t('main.work_plan.empty_all_zero') }}</div>
-            <div v-for="(step, idx) in plan.steps" v-else :key="step.key" class="wp-step-row" :class="{ 'is-first': isFirstOfType(step, idx), 'is-locked': step.locked, 'wp-row-error': stepErrors[step.key] }">
-              <span class="wp-step-no">{{ t('main.work_plan.step_no', { n: idx + 1 }) }}</span>
-              <span class="doc-tag" :class="`c-${step.type}`">{{ step.type }}</span>
-              <span class="wp-step-label">{{ stepDocName(step) }} <small>{{ stepDocQuantity(step) }}</small></span>
-              <select v-if="step.locked" class="prov-select" disabled><option>{{ t('main.work_plan.locked_note') }}</option></select>
-              <AiProviderSelect v-else :providers="providerOptionsWithUnassigned" :model-value="step.provider_id ?? ''" :disabled="isLocked" hide-label hide-icon compact @update:model-value="(v) => setStepProvider(step.key, v || null)" />
-              <span class="wp-note-field">
-                <input class="wp-step-msg" :class="{ 'is-ai': step.origin === 'ai_suggested', 'is-over-limit': (step.note ?? '').length > noteMaxChars }" type="text" :placeholder="t('main.work_plan.note_placeholder')" :value="step.locked ? '' : (step.note ?? '')" :disabled="step.locked || isLocked" @input="(e) => setStepNote(step.key, (e.target as HTMLInputElement).value)" />
-                <small v-if="!step.locked" class="wp-note-count" :class="{ 'is-over-limit': (step.note ?? '').length > noteMaxChars }">
-                  {{ (step.note ?? '').length > noteMaxChars
-                    ? t('main.work_plan.note_char_over', { current: (step.note ?? '').length, max: noteMaxChars })
-                    : t('main.work_plan.note_char_count', { current: (step.note ?? '').length, max: noteMaxChars }) }}
-                </small>
-              </span>
-              <div v-if="stepErrors[step.key]?.length" class="wp-step-errors" role="alert">
-                <span v-for="(msg, i) in stepErrors[step.key]" :key="i" class="wp-step-error-msg">{{ msg }}</span>
+            <template v-for="(step, idx) in plan.steps" v-else :key="step.key">
+              <div class="wp-step-row" :class="{ 'is-first': isFirstOfType(step, idx), 'is-locked': step.locked, 'wp-row-error': stepErrors[step.key] }">
+                <span v-if="step.locked" class="wp-step-no">{{ t('main.work_plan.step_no', { n: idx + 1 }) }}</span>
+                <button
+                  v-else
+                  type="button"
+                  class="wp-step-no wp-step-no-btn"
+                  :title="t('main.work_plan.drawer_open_hint')"
+                  data-test="step-name-toggle"
+                  @click="toggleDrawer(step)"
+                >
+                  {{ t('main.work_plan.step_no', { n: idx + 1 }) }}
+                  <AppIcon name="caret-right" class="wp-step-caret" :class="{ open: openDrawerKey === step.key }" />
+                </button>
+                <span class="doc-tag" :class="`c-${step.type}`">{{ step.type }}</span>
+                <span class="wp-step-label">{{ stepDocName(step) }} <small>{{ stepDocQuantity(step) }}</small></span>
+                <select v-if="step.locked" class="prov-select" disabled><option>{{ t('main.work_plan.locked_note') }}</option></select>
+                <AiProviderSelect v-else :providers="providerOptionsWithUnassigned" :model-value="step.provider_id ?? ''" :disabled="isLocked" hide-label hide-icon compact @update:model-value="(v) => setStepProvider(step.key, v || null)" />
+                <button
+                  type="button"
+                  class="wp-review-pill"
+                  :class="{ 'has-review': !step.locked && (step.review_count ?? 0) !== 0, 'is-locked': step.locked }"
+                  :disabled="step.locked"
+                  :title="t('main.work_plan.drawer_open_hint')"
+                  data-test="review-pill-toggle"
+                  @click="toggleDrawer(step)"
+                >
+                  <span class="wp-review-pill-text">{{ step.locked ? '—' : reviewSummaryText(step) }}</span>
+                </button>
+                <span class="wp-note-field">
+                  <input class="wp-step-msg" :class="{ 'is-ai': step.origin === 'ai_suggested', 'is-over-limit': (step.note ?? '').length > noteMaxChars }" type="text" :placeholder="t('main.work_plan.note_placeholder')" :value="step.locked ? '' : (step.note ?? '')" :disabled="step.locked || isLocked" @input="(e) => setStepNote(step.key, (e.target as HTMLInputElement).value)" />
+                  <small v-if="!step.locked" class="wp-note-count" :class="{ 'is-over-limit': (step.note ?? '').length > noteMaxChars }">
+                    {{ (step.note ?? '').length > noteMaxChars
+                      ? t('main.work_plan.note_char_over', { current: (step.note ?? '').length, max: noteMaxChars })
+                      : t('main.work_plan.note_char_count', { current: (step.note ?? '').length, max: noteMaxChars }) }}
+                  </small>
+                </span>
+                <button
+                  type="button"
+                  class="wp-instr-icon"
+                  :class="{ 'has-value': !step.locked && instrEligible(step) && stepHasInstructionValue(step), 'is-locked': step.locked || !instrEligible(step) }"
+                  :disabled="step.locked"
+                  :title="step.locked ? t('main.work_plan.instr_not_eligible', { reason: t('main.work_plan.instr_excluded_server_assembled') }) : (instrEligible(step) ? t('main.work_plan.drawer_open_hint') : t('main.work_plan.instr_not_eligible', { reason: t('main.work_plan.instr_excluded_report') }))"
+                  data-test="instr-icon-toggle"
+                  @click="toggleDrawer(step)"
+                >
+                  <AppIcon name="pencil-simple" />
+                </button>
+                <div v-if="stepErrors[step.key]?.length" class="wp-step-errors" role="alert">
+                  <span v-for="(msg, i) in stepErrors[step.key]" :key="i" class="wp-step-error-msg">{{ msg }}</span>
+                </div>
               </div>
-            </div>
+              <div v-if="!step.locked && openDrawerKey === step.key" class="wp-step-drawer" data-test="step-drawer">
+                <div class="wp-drawer-block">
+                  <div class="wp-drawer-block-hd">
+                    <AppIcon name="magnifying-glass" />
+                    <span class="wp-drawer-block-title">{{ t('main.work_plan.drawer_review_title', { n: idx + 1 }) }}</span>
+                  </div>
+                  <div class="wp-drawer-review-row">
+                    <select
+                      class="wp-drawer-select wp-drawer-review-count"
+                      :class="{ 'is-active': (step.review_count ?? 0) !== 0 }"
+                      :disabled="isLocked"
+                      :value="step.review_count"
+                      data-test="drawer-review-count"
+                      @change="(e) => setStepReviewCount(step.key, Number((e.target as HTMLSelectElement).value))"
+                    >
+                      <option v-for="choice in reviewCountChoices" :key="choice" :value="choice">{{ reviewCountLabel(choice) }}</option>
+                    </select>
+                    <AiProviderSelect
+                      :providers="reviewerOptionsWithDefault"
+                      :model-value="step.reviewer_provider_id ?? ''"
+                      :disabled="isLocked || (step.review_count ?? 0) === 0"
+                      hide-label hide-icon compact
+                      @update:model-value="(v) => setStepReviewer(step.key, v || null)"
+                    />
+                  </div>
+                </div>
+                <div class="wp-drawer-divider"></div>
+                <div v-if="instrEligible(step)" class="wp-drawer-block">
+                  <div class="wp-drawer-block-hd">
+                    <AppIcon name="file-text" />
+                    <span class="wp-drawer-block-title">{{ t('main.work_plan.drawer_instruction_title', { n: idx + 1 }) }}</span>
+                  </div>
+                  <div class="wp-drawer-instr-block">
+                    <span class="wp-drawer-mode-label"><AppIcon name="pencil-simple" /> {{ t('main.work_plan.instr_manual_label') }}</span>
+                    <div class="wp-drawer-textarea-wrap">
+                      <textarea
+                        class="wp-drawer-textarea"
+                        :value="step.pre_instruction_text ?? ''"
+                        :disabled="isLocked"
+                        :placeholder="t('main.work_plan.instr_placeholder')"
+                        data-test="drawer-instr-text"
+                        @input="(e) => setStepInstruction(step.key, (e.target as HTMLTextAreaElement).value)"
+                      ></textarea>
+                      <span class="wp-drawer-count" :class="{ 'is-over-limit': (step.pre_instruction_text ?? '').length > preInstructionMaxChars }">
+                        {{ t('main.work_plan.instr_char_count', { current: (step.pre_instruction_text ?? '').length, max: preInstructionMaxChars }) }}
+                      </span>
+                    </div>
+                  </div>
+                  <div class="wp-drawer-instr-block wp-drawer-file-row">
+                    <span class="wp-drawer-mode-label"><AppIcon name="paperclip" /> {{ t('main.work_plan.instr_attach_label') }}</span>
+                    <label class="btn btn-outline btn-sm wp-drawer-file-btn" :class="{ 'is-disabled': isLocked || instrUploadingKey === step.key }">
+                      <AppIcon name="upload-simple" /> {{ instrUploadingKey === step.key ? t('main.work_plan.instr_attach_uploading') : t('main.work_plan.instr_attach_choose') }}
+                      <input type="file" class="wp-drawer-file-input" hidden :disabled="isLocked || instrUploadingKey === step.key" data-test="drawer-instr-file-input" @change="(e) => onInstrFileSelected(step, e)" />
+                    </label>
+                    <span class="wp-drawer-file-name" :class="{ 'has-file': !!step.pre_instruction_attachment }" data-test="drawer-instr-file-name">
+                      {{ step.pre_instruction_attachment ? step.pre_instruction_attachment.original_filename : t('main.work_plan.instr_attach_none') }}
+                    </span>
+                    <button
+                      v-if="step.pre_instruction_attachment"
+                      type="button" class="wp-drawer-file-remove" :disabled="isLocked"
+                      :title="t('main.work_plan.instr_attach_remove')"
+                      data-test="drawer-instr-file-remove"
+                      @click="removeStepInstructionAttachment(step.key)"
+                    >
+                      <AppIcon name="x" />
+                    </button>
+                  </div>
+                </div>
+                <p v-else class="wp-drawer-excluded">
+                  <AppIcon name="info" /> {{ t('main.work_plan.instr_not_eligible', { reason: t('main.work_plan.instr_excluded_report') }) }}
+                </p>
+                <div class="wp-drawer-actions">
+                  <button type="button" class="btn btn-outline btn-sm" data-test="drawer-close" @click="closeDrawer">{{ t('main.work_plan.drawer_close') }}</button>
+                  <button type="button" class="btn btn-primary btn-sm" :disabled="saving || isLocked || hasPendingCapabilityWarning" data-test="drawer-save" @click="saveFromDrawer(step.key, idx)">
+                    {{ saving ? t('main.work_plan.saving') : t('main.work_plan.drawer_save') }}
+                  </button>
+                </div>
+              </div>
+            </template>
           </div>
 
         </section>
@@ -310,7 +424,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { getRequest, postRequest, putRequest } from '@shared/api'
+import { getRequest, postFormRequest, postRequest, putRequest } from '@shared/api'
 import { renderWpFieldError, type WpFieldError } from '@shared/workPlanErrors'
 import AppIcon from '@shared/AppIcon.vue'
 import AiProviderSelect from './AiProviderSelect.vue'
@@ -318,6 +432,7 @@ import WorkPlanAiScopeDialog from './WorkPlanAiScopeDialog.vue'
 import type { WorkPlanScope } from './WorkPlanAiScopeDialog.vue'
 import DialogHeader from './dialogs/DialogHeader.vue'
 import DialogShell from './dialogs/DialogShell.vue'
+import { confirm } from '../composables/useDialogStack'
 import { useContentLayoutTier } from '../composables/useContentLayoutTier'
 import { useToast } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
@@ -339,6 +454,12 @@ interface WPCapabilityFinding {
   provider_name: string | null
   missing_capabilities: string[]
 }
+interface WPPreInstructionAttachment {
+  doc_id: string
+  filename: string
+  original_filename: string
+  content_sha256: string
+}
 interface WPStep {
   key: string
   type: string
@@ -348,6 +469,11 @@ interface WPStep {
   provider_id: string | null
   provider_display_name: string | null
   note: string | null
+  review_count: number
+  reviewer_provider_id: string | null
+  reviewer_provider_display_name: string | null
+  pre_instruction_text: string | null
+  pre_instruction_attachment: WPPreInstructionAttachment | null
   locked: boolean
   locked_reason: string | null
   origin: 'human' | 'ai_suggested' | 'system'
@@ -367,6 +493,16 @@ const COUNT_MIN = 0
 const COUNT_MAX = 20
 // The server response limit is canonical; 1000 is compatibility for old mocks.
 const noteMaxChars = ref(1000)
+// T0010 §5.4 / D0007 §5.1 — same SSOT pattern as noteMaxChars: the server publishes the
+// current selectable review counts and the pre-instruction character cap in the WP GET
+// response, so a system-setting change never leaves this screen showing a stale list.
+const reviewCountChoices = ref<number[]>([0])
+const preInstructionMaxChars = ref(20000)
+const preInstructionAttachmentMaxBytes = ref(0)
+// D0007 §6.1-§6.2 — the three entry points (step name / review pill / instruction icon) open
+// the SAME drawer for that step; opening one closes any other step's drawer.
+const openDrawerKey = ref<string | null>(null)
+const instrUploadingKey = ref<string | null>(null)
 
 const props = defineProps<{
   docId: string
@@ -560,6 +696,11 @@ function makeStep(type: string, ordinal: number, pairKey: string | null, pairRol
     provider_id: null,
     provider_display_name: null,
     note: null,
+    review_count: 0,
+    reviewer_provider_id: null,
+    reviewer_provider_display_name: null,
+    pre_instruction_text: null,
+    pre_instruction_attachment: null,
     locked,
     locked_reason: locked ? 'server_assembled' : null,
     origin: locked ? 'system' : 'human',
@@ -589,6 +730,12 @@ function hasValue(step: WPStep): boolean {
   if (step.locked) return false
   if (step.provider_id) return true
   if ((step.note ?? '').trim() !== '') return true
+  // D0007 §5.5 — a step carrying only a new field (review/reviewer/pre-instruction) is not
+  // an empty step; the quantity-lowering removal warning must fire for it too.
+  if ((step.review_count ?? 0) !== 0) return true
+  if (step.reviewer_provider_id) return true
+  if ((step.pre_instruction_text ?? '').trim() !== '') return true
+  if (step.pre_instruction_attachment) return true
   return false
 }
 
@@ -607,6 +754,13 @@ function reexpand(
       s.provider_display_name = prior.provider_display_name
       s.note = prior.note
       s.origin = prior.origin
+      // D0007 §3.6 / §5.5 — a quantity round-trip (down then back up) must not lose the new
+      // execution-setting fields any more than it loses provider/note.
+      s.review_count = prior.review_count ?? 0
+      s.reviewer_provider_id = prior.reviewer_provider_id ?? null
+      s.reviewer_provider_display_name = prior.reviewer_provider_display_name ?? null
+      s.pre_instruction_text = prior.pre_instruction_text ?? null
+      s.pre_instruction_attachment = prior.pre_instruction_attachment ?? null
     }
     result.push(s)
   }
@@ -633,6 +787,7 @@ async function fetchPlan(): Promise<boolean> {
   topLevelErrorRecords.value = []
   stepErrorRecords.value = {}
   restoreBuffer.clear()
+  openDrawerKey.value = null
   serverRegisteredProviders.value = []
   serverRegisteredProvidersKnown.value = false
   try {
@@ -667,6 +822,11 @@ async function fetchPlan(): Promise<boolean> {
     unassignedStepCount.value = res.data.unassigned_step_count ?? 0
     revisionNo.value = res.data.revision_no
     noteMaxChars.value = Number(res.data.limits?.note_max_chars) || 1000
+    preInstructionMaxChars.value = Number(res.data.limits?.pre_instruction_text_max_chars) || 20000
+    preInstructionAttachmentMaxBytes.value = Number(res.data.limits?.pre_instruction_attachment_max_bytes) || 0
+    reviewCountChoices.value = Array.isArray(res.data.review_count_choices) && res.data.review_count_choices.length
+      ? res.data.review_count_choices
+      : [0]
     docReviewStatus.value = res.data.doc_review_status
     // 0403 NR0004 F7: use the value the server judged, as-is. If it's absent from the
     // response (old response · mock), leave it open — only the server knows whether to
@@ -737,12 +897,24 @@ function updateDerivedSummary() {
   }))
 }
 
-function setQuantity(code: string, next: number) {
+async function setQuantity(code: string, next: number) {
   if (!plan.value || isLocked.value) return
   const clamped = Math.max(COUNT_MIN, Math.min(COUNT_MAX, next))
   const unit = plan.value.quantities[code]?.unit ?? 'sheet'
   const quantities = { ...plan.value.quantities, [code]: { unit, count: clamped } }
-  const { result } = reexpand(plan.value.steps, plan.value.counted_types, quantities)
+  const { result, removalCandidates } = reexpand(plan.value.steps, plan.value.counted_types, quantities)
+  // D0007 §5.5 — a quantity decrease that would drop a step still carrying provider/note/
+  // review/pre-instruction values needs an explicit confirmation, not a silent removal.
+  if (removalCandidates.length > 0) {
+    const ok = await confirm({
+      title: t('main.work_plan.quantity_removal_warning_title', { n: removalCandidates.length }),
+      confirmLabel: t('main.work_plan.quantity_removal_warning_confirm'),
+      cancelLabel: t('main.work_plan.quantity_removal_warning_cancel'),
+      danger: true,
+    })
+    if (!ok) return
+  }
+  if (!plan.value || isLocked.value) return
   plan.value.quantities = quantities
   plan.value.steps = result
   markDirty()
@@ -840,7 +1012,7 @@ function setStepNote(key: string, note: string) {
   markDirty()
 }
 
-const providerOptionsWithUnassigned = computed(() => {
+function buildProviderOptions(unassignedLabel: string, extraIds: (string | null)[]): { id: string; name: string }[] {
   const options: { id: string; name: string }[] = []
   const seen = new Set<string>()
   const append = (providerId: string) => {
@@ -854,15 +1026,140 @@ const providerOptionsWithUnassigned = computed(() => {
         : `${name} (${t('main.work_plan.unavailable_provider')})`,
     })
   }
-
   // Manual assignment is registered-all, independent from the frozen AI candidate scope.
   liveProviderRows.value.forEach((provider) => append(provider.id))
   // Keep deleted providers visible only when the body actually uses them.
-  append(plan.value?.defaults.provider_id ?? '')
-  ;(plan.value?.steps ?? []).forEach((step) => append(step.provider_id ?? ''))
+  extraIds.forEach((id) => append(id ?? ''))
+  return [{ id: '', name: unassignedLabel }, ...options]
+}
 
-  return [{ id: '', name: t('main.work_plan.unassigned') }, ...options]
-})
+const providerOptionsWithUnassigned = computed(() => buildProviderOptions(
+  t('main.work_plan.unassigned'),
+  [plan.value?.defaults.provider_id ?? null, ...(plan.value?.steps ?? []).map((step) => step.provider_id)],
+))
+
+// D0007 §3.3/§3.4 — reviewer is a second, independent provider slot per step. An empty
+// value means "project default reviewer at execution time", not "unassigned" like the
+// provider column, so it gets its own label instead of reusing providerOptionsWithUnassigned.
+const reviewerOptionsWithDefault = computed(() => buildProviderOptions(
+  t('main.work_plan.reviewer_project_default'),
+  (plan.value?.steps ?? []).map((step) => step.reviewer_provider_id),
+))
+
+// ── Review count / reviewer / pre-instruction editing (T0010 §4-§7, D0007 §3.2-§3.4) ──────
+
+function reviewCountLabel(count: number): string {
+  if (count === 0) return t('main.work_plan.review_none')
+  if (count === -1) return t('main.work_plan.review_unlimited')
+  return t('main.work_plan.review_n_times', { n: count })
+}
+
+function reviewSummaryText(step: WPStep): string {
+  const count = step.review_count ?? 0
+  if (count === 0) return reviewCountLabel(0)
+  const reviewerLabel = step.reviewer_provider_id
+    ? (providerDisplayName(step.reviewer_provider_id) ?? step.reviewer_provider_id)
+    : t('main.work_plan.reviewer_project_default')
+  return t('main.work_plan.review_summary_active', { count: reviewCountLabel(count), reviewer: reviewerLabel })
+}
+
+// D0007 §3.2 — a result-role step (NR/TR) is a report: pre-instruction has no meaning there.
+// A locked (TSR) step never reaches this — its drawer never opens at all.
+function instrEligible(step: WPStep): boolean {
+  return step.pair_role !== 'result'
+}
+
+function stepHasInstructionValue(step: WPStep): boolean {
+  return (step.pre_instruction_text ?? '').trim() !== '' || !!step.pre_instruction_attachment
+}
+
+function toggleDrawer(step: WPStep) {
+  if (step.locked) return
+  openDrawerKey.value = openDrawerKey.value === step.key ? null : step.key
+}
+
+function closeDrawer() {
+  openDrawerKey.value = null
+}
+
+function setStepReviewCount(key: string, count: number) {
+  if (isLocked.value) return
+  const step = plan.value?.steps.find((s) => s.key === key)
+  if (!step || step.locked) return
+  step.review_count = count
+  // D0007 §3.3 — "검수 안 함을 고른 단계에서는 검수 담당 칸이 꺼진다": a stale reviewer left
+  // behind a switch back to 0 would otherwise fail save with reviewer_not_allowed.
+  if (count === 0) {
+    step.reviewer_provider_id = null
+    step.reviewer_provider_display_name = null
+  }
+  markDirty()
+}
+
+function setStepReviewer(key: string, providerId: string | null) {
+  if (isLocked.value) return
+  const step = plan.value?.steps.find((s) => s.key === key)
+  if (!step || step.locked || (step.review_count ?? 0) === 0) return
+  step.reviewer_provider_id = providerId
+  step.reviewer_provider_display_name = providerId ? providerDisplayName(providerId) : null
+  markDirty()
+}
+
+function setStepInstruction(key: string, text: string) {
+  if (isLocked.value) return
+  const step = plan.value?.steps.find((s) => s.key === key)
+  if (!step || step.locked || !instrEligible(step)) return
+  step.pre_instruction_text = text
+  step.origin = 'human'
+  markDirty()
+}
+
+function removeStepInstructionAttachment(key: string) {
+  if (isLocked.value) return
+  const step = plan.value?.steps.find((s) => s.key === key)
+  if (!step || step.locked || !instrEligible(step)) return
+  step.pre_instruction_attachment = null
+  markDirty()
+}
+
+// D0007 §3.7 — the file goes straight to this document's own attachment store on selection;
+// the step only ever holds a reference. One file per step: a replace re-uses the same field, it
+// never adds a second reference, and the previous reserved file becomes cleanup-eligible only
+// after the next successful save (T#1 lifecycle), never here.
+async function onInstrFileSelected(step: WPStep, event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0] ?? null
+  input.value = ''
+  if (!file || isLocked.value || step.locked || !instrEligible(step)) return
+  instrUploadingKey.value = step.key
+  try {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('step_key', step.key)
+    const res = await postFormRequest<any>(
+      `/api/v1/documents/${encodeURIComponent(props.docId)}/work-plan/pre-instruction-attachments`,
+      form,
+    )
+    step.pre_instruction_attachment = res.data.reference
+    step.origin = 'human'
+    markDirty()
+  } catch (e: any) {
+    const data = e?.response?.data
+    showToast(data?.message || data?.detail || String(e), 'danger')
+  } finally {
+    instrUploadingKey.value = null
+  }
+}
+
+async function saveFromDrawer(stepKey: string, stepIndex: number) {
+  const result = await ensureSaved()
+  if (result === 'saved' || result === 'clean') {
+    if (openDrawerKey.value === stepKey) openDrawerKey.value = null
+    showToast(t('main.work_plan.drawer_save_success', { n: stepIndex + 1 }), 'success')
+  }
+  // 'failed' / 'capability_warning': the drawer and its inputs stay exactly as-is (D0007 §6.2)
+  // — the existing save-failure / capability-warning banners already show what went wrong.
+}
 
 function isFirstOfType(step: WPStep, idx: number): boolean {
   if (idx === 0) return true
@@ -928,7 +1225,7 @@ async function fetchSuggestion(scope: WorkPlanScope) {
       { base_revision_no: revisionNo.value, scope },
     )
     const quantities = res.data?.suggested?.quantities ?? {}
-    for (const [code, count] of Object.entries(quantities)) setQuantity(code, Number(count))
+    for (const [code, count] of Object.entries(quantities)) await setQuantity(code, Number(count))
     const steps = res.data?.suggested?.steps ?? []
     for (const suggested of steps) {
       const target = plan.value.steps.find((item) => item.key === suggested.key)
@@ -1387,7 +1684,7 @@ watch(() => props.docId, () => { void fetchPlan() })
 .wp-note-count { color:var(--text-m); font-size:.62rem; line-height:1.15; text-align:right; }
 .wp-note-count.is-over-limit { color:var(--danger); font-weight:700; }
 .wp-defaults-note.is-over-limit,.wp-step-msg.is-over-limit { border-color:var(--danger); background:color-mix(in srgb,var(--danger) 6%,var(--surface)); }
-.wp-step-head,.wp-step-row { display:grid; gap:8px; grid-template-columns:52px 40px minmax(110px,1fr) 172px minmax(190px,1.5fr); align-items:center; }
+.wp-step-head,.wp-step-row { display:grid; gap:6px; grid-template-columns:52px 40px minmax(96px,.9fr) 150px 176px minmax(140px,1.1fr) 30px; align-items:center; }
 .wp-step-head { padding:7px 10px 6px; margin-top:10px; border-bottom:1px solid var(--border-d); color:var(--text-m); font-size:.62rem; font-weight:700; letter-spacing:.07em; text-transform:uppercase; }
 .wp-step-list {
   display: flex; flex-direction: column; gap: 4px;
@@ -1406,11 +1703,69 @@ watch(() => props.docId, () => { void fetchPlan() })
 .wp-step-row .prov-select,.wp-step-row select { width:100%; min-width:0; height:20px; padding:2px 8px; font-size:.74rem; }
 .wp-step-msg { width:100%; min-width:0; height:20px; padding:2px 8px; border:1px solid var(--border); border-radius:var(--r-sm); color:var(--text); background:var(--surface); font-size:.74rem; }
 .wp-step-msg.is-ai { border-color:#ddd6fe; background:#faf5ff; }
+/* T0010 §6 / 시안 deck t17hbdfg v8 — step-name button, review pill, instruction icon: the
+   three entry points that open the same per-step drawer (D0007 §6.1). */
+.wp-step-no-btn { display:flex; align-items:center; gap:3px; background:none; border:0; padding:0; color:var(--text-m); font-size:.66rem; font-weight:700; cursor:pointer; }
+.wp-step-no-btn:hover { color:var(--primary); }
+.wp-step-caret { font-size:.68rem; transition:transform .15s ease; }
+.wp-step-caret.open { transform:rotate(90deg); }
+.wp-col-instr-head { text-align:center; }
+.wp-review-pill {
+  display:flex; align-items:center; justify-content:center; gap:4px; width:100%; min-width:0;
+  height:22px; padding:2px 9px; border:1.5px solid var(--border); border-radius:999px;
+  background:var(--surface); color:var(--text-s); font-size:.7rem; font-weight:600; cursor:pointer;
+}
+.wp-review-pill:hover:not(:disabled) { border-color:var(--primary); }
+.wp-review-pill.has-review { border-color:var(--primary); color:var(--primary-h); background:var(--primary-l); }
+.wp-review-pill:disabled, .wp-review-pill.is-locked { opacity:.5; cursor:not-allowed; }
+.wp-review-pill-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.wp-instr-icon {
+  width:26px; height:22px; border-radius:var(--r-sm); border:1.5px solid var(--border);
+  background:var(--surface); color:var(--text-s); display:flex; align-items:center; justify-content:center;
+  cursor:pointer; font-size:.8rem; margin:0 auto;
+}
+.wp-instr-icon:hover:not(:disabled) { border-color:var(--primary); color:var(--primary); }
+.wp-instr-icon.has-value { border-color:var(--primary); color:var(--primary-h); background:var(--primary-l); }
+.wp-instr-icon:disabled, .wp-instr-icon.is-locked { opacity:.4; cursor:not-allowed; }
+.wp-step-drawer {
+  margin:2px 2px 6px; padding:12px 14px; border:1px solid var(--border-d); border-radius:var(--r-sm);
+  background:var(--surface-h); display:flex; flex-direction:column; gap:10px;
+}
+.wp-drawer-block { display:flex; flex-direction:column; gap:6px; }
+.wp-drawer-block-hd { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }
+.wp-drawer-block-title { font-size:.76rem; font-weight:700; color:var(--text); }
+.wp-drawer-divider { height:1px; margin:0 -14px; background:var(--border-d); }
+.wp-drawer-excluded { display:flex; align-items:center; gap:4px; margin:0; font-size:.7rem; color:var(--text-m); }
+.wp-drawer-review-row { display:flex; align-items:center; gap:8px; }
+.wp-drawer-review-count { width:96px; flex-shrink:0; height:24px; padding:2px 8px; font-size:.74rem; }
+.wp-drawer-select { border:1px solid var(--border); border-radius:var(--r-sm); background:var(--surface); color:var(--text-s); }
+.wp-drawer-select:disabled { opacity:.5; }
+.wp-drawer-review-count.is-active { border-color:var(--primary); color:var(--primary); font-weight:600; }
+.wp-drawer-instr-block { display:flex; flex-direction:column; gap:4px; }
+.wp-drawer-mode-label { display:flex; align-items:center; gap:4px; font-size:.7rem; font-weight:700; color:var(--text-m); }
+.wp-drawer-textarea-wrap { position:relative; }
+.wp-drawer-textarea {
+  width:100%; min-height:68px; resize:vertical; padding:8px 10px 22px; font-size:.78rem; line-height:1.5;
+  border:1px solid var(--border); border-radius:var(--r-sm); background:var(--surface); color:var(--text); font-family:inherit;
+}
+.wp-drawer-count { position:absolute; right:8px; bottom:6px; font-size:.62rem; color:var(--text-m); }
+.wp-drawer-count.is-over-limit { color:var(--danger); font-weight:700; }
+.wp-drawer-file-row { flex-direction:row; align-items:center; gap:8px; flex-wrap:wrap; }
+.wp-drawer-file-btn { display:inline-flex; align-items:center; gap:4px; cursor:pointer; white-space:nowrap; }
+.wp-drawer-file-btn.is-disabled { opacity:.5; cursor:not-allowed; pointer-events:none; }
+.wp-drawer-file-name { font-size:.72rem; color:var(--text-m); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:260px; }
+.wp-drawer-file-name.has-file { color:var(--text); font-weight:600; }
+.wp-drawer-file-remove {
+  width:20px; height:20px; padding:0; border:1px solid var(--border); border-radius:var(--r-sm);
+  background:var(--surface); color:var(--text-s); cursor:pointer; display:inline-flex; align-items:center; justify-content:center;
+}
+.wp-drawer-file-remove:hover { background:var(--danger-l); border-color:var(--danger); color:var(--danger); }
+.wp-drawer-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:2px; }
 .step-empty { padding:16px; border:1px dashed var(--border-d); border-radius:var(--r); color:var(--text-m); background:var(--surface-h); }
 .wp-row-error { border-color:var(--danger,#dc2626); }
 .wp-step-errors { grid-column: 1 / -1; display:flex; flex-direction:column; gap:2px; padding:2px 2px 4px; }
 .wp-step-error-msg { font-size:.7rem; line-height:1.4; color:var(--danger,#dc2626); white-space:normal; word-break:break-word; }
-.wp-layout-narrow .wp-step-head,.wp-layout-narrow .wp-step-row { grid-template-columns:48px 36px 0 minmax(130px,1fr) minmax(160px,1.2fr); }
+.wp-layout-narrow .wp-step-head,.wp-layout-narrow .wp-step-row { grid-template-columns:48px 36px 0 minmax(120px,1fr) 150px minmax(140px,1.1fr) 28px; }
 .wp-layout-narrow .wp-step-label { visibility:hidden; }
 /* Mockup xc32frrg screen 1 — bottom 3 quantity cards */
 .wp-sum-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
