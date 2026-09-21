@@ -2,7 +2,10 @@
 //
 // 시안이 등록한 네 화면이 곧 첨부 카드의 네 상태다(D0010 6-5).
 //   ① empty     — 첨부 0개: 큰 드롭존 + 빈 안내문 + 배지 "0개"
-//   ② main      — 첨부 N개: 얇은 한 줄 드롭존 + 목록 N줄 + 배지 "N개"
+//   ② main      — 첨부 N개: 목록 N줄 + ①과 같은 큰 드롭존이 그대로 노출 + 배지 "N개"
+//     (0595 T0004 rework: 검수자가 "왜 기존 화면을 안 쓰고 좁은 화면 높이만 키우냐"고 반려해,
+//      별도의 medium/compact 요소를 두는 대신 기존 큰 드롭존을 has-files 에서도 그대로 재사용한다
+//      — D0010 6-4의 얇은 바 규칙을 대체)
 //   ③ deleting  — 삭제를 누른 줄이 `.removing` 전환으로 옅어지며 밀리고, 전환이 끝난 뒤 목록이 다시 그려짐
 //   ④ collapsed — 제목 줄만 남고 배지·요약은 유지, 파일을 끌어오면 자동으로 펼쳐짐
 //
@@ -89,7 +92,7 @@ describe('시안 wdkcvrmk ① 빈 상태 (empty.html)', () => {
     const wrapper = await mountCard([])
 
     expect(wrapper.find('.attach-count-pill').text()).toBe('0개')
-    // has-files 가 없어야 CSS 가 큰 드롭존을 보여 준다(1개 이상이면 얇은 바로 바뀐다).
+    // 0595 T0004 rework: has-files 유무와 무관하게 같은 큰 드롭존이 항상 보인다.
     expect(wrapper.find('.attach-card').classes()).not.toContain('has-files')
     expect(wrapper.find('.attach-dz-empty').exists()).toBe(true)
     expect(wrapper.find('.attach-dz-icon').exists()).toBe(true)
@@ -107,14 +110,30 @@ describe('시안 wdkcvrmk ① 빈 상태 (empty.html)', () => {
 })
 
 describe('시안 wdkcvrmk ② 다건 (main)', () => {
-  it('배지가 "3개"이고, 얇은 드롭존과 목록 3줄이 보인다', async () => {
+  it('배지가 "3개"이고, has-files 상태에서도 ①과 같은 큰 드롭존이 계속 노출되며 목록 3줄이 보인다 (0595 T0004 rework)', async () => {
     const wrapper = await mountCard(THREE)
 
     expect(wrapper.find('.attach-count-pill').text()).toBe('3개')
     expect(wrapper.find('.attach-card').classes()).toContain('has-files')
-    expect(wrapper.find('.attach-dz-compact').exists()).toBe(true)
+    // has-files 여도 드롭존이 별도의 좁은 요소로 바뀌지 않고, ①의 큰 드롭존을 그대로 재사용한다.
+    expect(wrapper.find('.attach-dz-empty').exists()).toBe(true)
+    expect(wrapper.find('.attach-dz-icon').exists()).toBe(true)
+    expect(wrapper.find('.attach-select-btn').text()).toContain('파일 선택')
+    expect(wrapper.find('.attach-dz-hint').exists()).toBe(true)
+    // 드래그/드롭·파일 선택 진입점은 has-files 에서도 그대로 살아 있다.
+    expect(wrapper.find('.attach-dropzone').exists()).toBe(true)
     expect(wrapper.findAll('.attach-item')).toHaveLength(3)
     expect(wrapper.find('.attach-empty-note').exists()).toBe(false)
+  })
+
+  it('has-files 여도 별도의 medium/compact 드롭존 요소를 새로 두지 않는다 — 반려된 T0004 rev0 접근을 되돌린 회귀 고정', async () => {
+    const wrapper = await mountCard(THREE)
+    // 반려 사유: "왜 기존의 화면을 안쓰고 이상하고 좁아터진 화면의 높이만 변경하는거지?"
+    // rev0 는 attach-dz-compact 를 attach-dz-medium 으로 이름만 바꾸고 높이만 키웠다.
+    // rework 는 그 별도 요소 자체를 없애고 ①의 큰 드롭존을 그대로 재사용한다.
+    expect(wrapper.find('.attach-dz-compact').exists()).toBe(false)
+    expect(wrapper.find('.attach-dz-medium').exists()).toBe(false)
+    expect(wrapper.find('.attach-inline-btn').exists()).toBe(false)
   })
 
   it('목록 줄은 시안대로 [종류 아이콘 · 파일명 · 크기 · 삭제] 네 칸이다', async () => {
