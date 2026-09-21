@@ -42,6 +42,7 @@ from .runtime import (
     REVIEW_HOP_KIND,
     REVIEW_NO_VERDICT_STOP_CODE,
     REWORK_HOP_KIND,
+    _actual_work_executor_provider_id,
     _auto_resume_lock,
     _http_error,
     _runs_lock,
@@ -134,6 +135,14 @@ def pause_run(run_id: str, user_id: str) -> dict:
             continuation_base_provider_id=run.get("continuation_base_provider_id"),
             continuation_provider_pinned=run.get("continuation_provider_pinned"),
             continuation_provider_overrides=run.get("continuation_provider_overrides"),
+            # flowgate.default.0596 T0004 (NR0003 rev3): a user can pause mid review/rework
+            # chain too — carry the actual work-hop executor the same way the other
+            # session-scoped picks above are carried, or a resume loses it.
+            # rev3 (human rejection 2026-09-21): this used to read
+            # continuation_selected_provider_id, the chain HEAD picked before the hop ran —
+            # a startup fallback moves the real executor to run["provider_id"] instead, and
+            # that value must win (_actual_work_executor_provider_id, runtime.py).
+            continuation_work_executor_provider_id=_actual_work_executor_provider_id(run),
             continuation_default_note=run.get("continuation_default_note"),
             continuation_note_overrides=run.get("continuation_note_overrides"),
             # 0352 T0004 §3.6: the N/T authoring mode + its per-item_seq auto-approve
@@ -271,6 +280,25 @@ def _carry(pending: dict, pending_key: str, run: dict, run_key: str):
     return value if value is not None else run.get(run_key)
 
 
+def _carry_work_executor_provider_id(pending: dict, run: dict) -> Optional[str]:
+    """work_executor_provider_id survives on KEY PRESENCE, not `_carry`'s None-check.
+
+    Every other field above treats a stored `None` as "unset, ask the run" — but for this
+    field `None` is itself a legitimate CAPTURED value: an existing pre-migration paused row
+    (the new column defaults to NULL), or a captured provider later deleted (the FK's
+    `ON DELETE SET NULL`), both mean "captured — nobody" — not "never captured".
+    Re-deriving from `run` in either case reaches into the CURRENT hop's own run, which —
+    once the chain has moved on to its review/rework hop — is the reviewer's own run, not
+    the work hop's; that reviewer would then be captured as the work executor and a
+    following rework would wrongly land on the reviewer instead of the original author
+    (human rejection 2026-09-21, rej_01M31D24MZB58B80). Only a truly absent key — the plain
+    inbox handoff payload, which carries no gate fields at all — means "not yet captured".
+    """
+    if "work_executor_provider_id" in pending:
+        return pending.get("work_executor_provider_id")
+    return _actual_work_executor_provider_id(run)
+
+
 def _handoff_bundle(pending: dict, run: Optional[dict]) -> dict:
     """The queued intent plus this hop's session picks = one set that revives the next hop.
 
@@ -311,6 +339,16 @@ def _handoff_bundle(pending: dict, run: Optional[dict]) -> dict:
                                      run, "continuation_provider_overrides"),
         "base_provider_id": _carry(pending, "base_provider_id",
                                    run, "continuation_base_provider_id"),
+        # flowgate.default.0596 T0004 (NR0003 rev3): the provider that ACTUALLY produced
+        # this hop's work, kept separately from base_provider_id (the header/default). Once
+        # the bundle has captured it, this keeps that captured value instead of letting a
+        # LATER hop's own run overwrite the original author — a review/rework hop's own run
+        # DOES populate run["provider_id"] (with the reviewer's own provider, once that hop
+        # itself executes), so the guard here is the `pending` value taking precedence, not
+        # the run's value being absent.
+        # rev4 (human rejection 2026-09-21, rej_01M31D24MZB58B80): "captured" is decided by
+        # KEY PRESENCE, not `is not None` — see _carry_work_executor_provider_id.
+        "work_executor_provider_id": _carry_work_executor_provider_id(pending, run),
         "provider_pinned": _carry(pending, "provider_pinned",
                                   run, "continuation_provider_pinned"),
         "note_overrides": _carry(pending, "note_overrides",
@@ -384,6 +422,10 @@ def _write_handoff_row(
             continuation_base_provider_id=bundle.get("base_provider_id"),
             continuation_provider_pinned=bundle.get("provider_pinned"),
             continuation_provider_overrides=bundle.get("provider_overrides"),
+            # flowgate.default.0596 T0004 (NR0003 rev3): the actual work-hop executor rides
+            # this row too, or a restart-triggered resume loses it and resolve_step_executor
+            # falls back to the header default (the exact bug this TR fixes).
+            continuation_work_executor_provider_id=bundle.get("work_executor_provider_id"),
             continuation_default_note=bundle.get("default_note"),
             continuation_note_overrides=bundle.get("note_overrides"),
             continuation_instruction_mode=bundle.get("instruction_mode"),
@@ -606,6 +648,15 @@ def _maybe_auto_resume_hop(run: dict) -> None:
                                      run, "continuation_provider_overrides"),
         "base_provider_id": _carry(pending, "base_provider_id",
                                    run, "continuation_base_provider_id"),
+        # flowgate.default.0596 T0004 (NR0003 rev3): the provider that ACTUALLY executed
+        # this hop's work, kept separately from base_provider_id (the header/default). Once
+        # the queued bundle has captured it, a later review/rework hop's own run cannot
+        # overwrite it — this only falls back to the run's value when the bundle has none
+        # yet, so a review hop's own run["provider_id"] (its OWN reviewer, once that hop
+        # executes) never reaches here even though it is not None.
+        # rev4 (human rejection 2026-09-21, rej_01M31D24MZB58B80): "captured" is decided by
+        # KEY PRESENCE, not `is not None` — see _carry_work_executor_provider_id.
+        "work_executor_provider_id": _carry_work_executor_provider_id(pending, run),
         "provider_pinned": _carry(pending, "provider_pinned",
                                   run, "continuation_provider_pinned"),
         # 0346 T0005: carry the [전달멘트] note bundle forward the same way — the first-hop-only
@@ -1295,6 +1346,10 @@ def resume_chain(
                     continuation_base_provider_id=row.get("continuation_base_provider_id"),
                     continuation_provider_pinned=row.get("continuation_provider_pinned"),
                     continuation_provider_overrides=row.get("continuation_provider_overrides"),
+                    # flowgate.default.0596 T0004 (NR0003 rev3): part of restoring the row
+                    # whole too — a failed resume must not drop the captured work executor.
+                    continuation_work_executor_provider_id=row.get(
+                        "continuation_work_executor_provider_id"),
                     continuation_default_note=row.get("continuation_default_note"),
                     continuation_note_overrides=row.get("continuation_note_overrides"),
                     # 0352 T0004 §3.6: the N/T authoring mode + its per-item_seq selection are
@@ -1410,6 +1465,11 @@ def resume_chain(
             "step_timeout_sec": row.get("continuation_step_timeout_sec"),
             "provider_overrides": gate_provider_overrides,
             "base_provider_id": gate_base_provider_id,
+            # flowgate.default.0596 T0004 (NR0003 rev3): the actual work-hop executor
+            # captured at pause/park time. resolve_step_executor already degrades a
+            # no-longer-enabled provider to the next tier, so no _resumable_base_provider-
+            # style pre-filter is needed here the way gate_base_provider_id needs one.
+            "work_executor_provider_id": row.get("continuation_work_executor_provider_id"),
             "provider_pinned": gate_provider_pinned,
             "note_overrides": gate_note_overrides,
             "default_note": gate_default_note,

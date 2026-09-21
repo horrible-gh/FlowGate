@@ -263,9 +263,10 @@ def resolve_step_executor(
 ) -> Optional[str]:
     """Who REWORKS this step (L0008 §2.2) — the step's executor, not its reviewer.
 
-    Priority order: step override → current request/work provider → stored sequence
-    assignment → project default. The rework hop is mode="single", so start_run's own
-    continuous tiers never run for it — this replays the intended order ahead of time.
+    Priority order: step override → actual work-hop executor → header/base selection →
+    stored sequence assignment → project default. The rework hop is mode="single", so
+    start_run's own continuous tiers never run for it — this replays the intended order
+    ahead of time.
 
     The current request/work provider wins over the stored sequence provider regardless
     of `provider_pinned`: that flag only distinguishes an explicit user pick from an
@@ -274,10 +275,39 @@ def resolve_step_executor(
     hold (0508 T0004 — this is the same regression fixed once before in 0389f567 and
     877da308 and lost again in a later merge; do not reintroduce the `provider_pinned`
     gate here).
+
+    flowgate.default.0596 T0004 (NR0003 rev3): `base_provider_id` is the run's header/
+    default selection (`continuation_base_provider_id`), NOT necessarily the provider
+    that actually executed the hop being reworked — a step override or a stored sequence
+    provider can win the per-hop resolution in admission.start_run while the header stays
+    whatever the chain was started with. `bundle["work_executor_provider_id"]` carries the
+    ACTUAL executor of the just-finished work hop (`run["provider_id"]` after any startup
+    fallback — see `_actual_work_executor_provider_id` in runtime.py — NOT the pre-attempt
+    `continuation_selected_provider_id` chain head, which a fallback can leave pointing at
+    a provider that never ran) and must be checked ahead of `base_provider_id`, or a step
+    whose real author was Opus while the header default is Sonnet silently reworks on
+    Sonnet after a GPT rejection. This
+    does not reopen the 0494/0508 regression above: that fix is "the CURRENT selection
+    outranks a stale stored-sequence row", and `work_executor_provider_id` (when present)
+    IS the current selection — a more precise one than the header default ever was,
+    because it reflects the tiers admission.start_run already resolved (step override →
+    force-all → stored sequence → header → doc-type) for THIS hop, not just the header. A
+    reviewer's own provider never reaches this bundle field: chain._handoff_bundle /
+    chain._maybe_auto_resume_hop carry it forward via `_carry_work_executor_provider_id`,
+    which keys "already captured" off KEY PRESENCE, not truthiness — a captured-but-empty
+    value (a pre-migration paused row, or a captured provider since deleted via the FK's
+    `ON DELETE SET NULL`) is preserved as `None` here rather than getting refilled from a
+    later reviewer's own run (human rejection 2026-09-21, rej_01M31D24MZB58B80): `None`
+    falls straight through the `if work_executor_provider_id and ...` check below to
+    `base_provider_id` → stored sequence → default, exactly like "never captured" did
+    before this field existed.
     """
     provider_id = _map_lookup(bundle.get("provider_overrides"), item_seq)
     if provider_id and _provider_enabled(project_id, provider_id):
         return provider_id
+    work_executor_provider_id = bundle.get("work_executor_provider_id")
+    if work_executor_provider_id and _provider_enabled(project_id, work_executor_provider_id):
+        return work_executor_provider_id
     base_provider_id = bundle.get("base_provider_id")
     if base_provider_id and _provider_enabled(project_id, base_provider_id):
         return base_provider_id

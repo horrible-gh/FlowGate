@@ -117,6 +117,12 @@ def upsert(
     continuation_base_provider_id: Optional[str] = None,
     continuation_provider_pinned: Optional[bool] = None,
     continuation_provider_overrides=None,
+    # flowgate.default.0596 T0004 (NR0003 rev3): the provider that ACTUALLY executed the
+    # last work hop, distinct from continuation_base_provider_id (the header/default
+    # selection). Every caller that already passes the columns above MUST pass this too --
+    # same invariant I3 -- or a resumed rework silently loses the real author and falls back
+    # to the header default (the exact bug this migration/TR fixes).
+    continuation_work_executor_provider_id: Optional[str] = None,
     continuation_default_note: Optional[str] = None,
     continuation_note_overrides=None,
     # 0352 T0004 §3.6: the N/T authoring mode (auto_approved/ai_direct) and its per-item_seq
@@ -164,12 +170,13 @@ def upsert(
         " stop_kind, stop_code, stop_run_id, stop_last_message_excerpt,"
         " continuation_base_provider_id, continuation_provider_pinned,"
         " continuation_provider_overrides,"
+        " continuation_work_executor_provider_id,"
         " continuation_default_note, continuation_note_overrides,"
         " continuation_instruction_mode, continuation_auto_approve_item_seqs,"
         " continuation_step_timeout_sec, continuation_restart_max_attempts,"
         " continuation_review_count_overrides, continuation_reviewer_overrides,"
         " created_at, updated_at) "
-        "VALUES (?, ?, 'continuous', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "VALUES (?, ?, 'continuous', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(group_id) DO UPDATE SET "
         "doc_ref = excluded.doc_ref, "
         "paused_by = excluded.paused_by, "
@@ -187,6 +194,7 @@ def upsert(
         "continuation_base_provider_id = excluded.continuation_base_provider_id, "
         "continuation_provider_pinned = excluded.continuation_provider_pinned, "
         "continuation_provider_overrides = excluded.continuation_provider_overrides, "
+        "continuation_work_executor_provider_id = excluded.continuation_work_executor_provider_id, "
         "continuation_default_note = excluded.continuation_default_note, "
         "continuation_note_overrides = excluded.continuation_note_overrides, "
         "continuation_instruction_mode = excluded.continuation_instruction_mode, "
@@ -206,6 +214,7 @@ def upsert(
          _clean_text(continuation_base_provider_id),
          1 if continuation_provider_pinned else 0,
          dump_json_map(continuation_provider_overrides),
+         _clean_text(continuation_work_executor_provider_id),
          _clean_text(continuation_default_note),
          dump_json_map(continuation_note_overrides),
          _clean_text(continuation_instruction_mode),
