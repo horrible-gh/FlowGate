@@ -240,6 +240,16 @@ def transition_group(
             group_id=group_id,
         )
 
+    if str(next_status).lower() == "closed":
+        try:
+            from modules.flow_gate.services import snapshot_materialization_service
+            snapshot_materialization_service.cleanup_for_group(
+                group_id, actor=f"group-close:{actor_user_id}"
+            )
+        except Exception:
+            # Group closure is already durable. Snapshot cleanup stays retryable via TTL.
+            _log.warning("snapshot group-close cleanup failed for %s", group_id, exc_info=True)
+
     result = dict(updated or {})
     if warnings:
         result["__warnings"] = warnings

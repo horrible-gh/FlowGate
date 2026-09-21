@@ -85,6 +85,11 @@ async def lifespan(app: FastAPI):
     app.state.shutdown_event = asyncio.Event()
     yield                  # ← server running
     app.state.shutdown_event.set()
+    try:
+        from modules.flow_gate.services import snapshot_materialization_service
+        snapshot_materialization_service.shutdown()
+    except Exception:
+        logger.warning("snapshot cleanup shutdown failed", exc_info=True)
 
 
 app = FastAPI(lifespan=lifespan)

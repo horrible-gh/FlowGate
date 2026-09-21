@@ -93,3 +93,19 @@ def test_worker_token_http_route_uses_live_token_metadata(monkeypatch):
  assert captured["data"]["provider_id"]=="provider_live"
  assert captured["data"]["run_id"]=="run_live"
  assert captured["actor"]=="worker_user"
+
+
+def test_approval_does_not_materialize_until_explicit_endpoint(monkeypatch):
+ captured=[]
+ approved=BASE|{"snapshot_id":"snap_route","status":"approved"}
+ monkeypatch.setattr(snapshot_routes.service,"decide",lambda *args:approved)
+ monkeypatch.setattr(
+  snapshot_routes.materialization,"materialize",
+  lambda snapshot_id,actor:captured.append((snapshot_id,actor)) or approved|{"status":"created"},
+ )
+ result=snapshot_routes.approve("snap_route",user={"user_id":"human"})
+ assert result["request"]["status"]=="approved"
+ assert captured==[]
+ created=snapshot_routes.materialize_snapshot("snap_route",user={"user_id":"human"})
+ assert created["request"]["status"]=="created"
+ assert captured==[("snap_route","human")]

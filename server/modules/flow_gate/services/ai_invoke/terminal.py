@@ -99,6 +99,14 @@ def cleanup(run: dict, *, handoff: bool = False, reason: str = "normal_finish") 
         lease_ok = attempt(run, "lease_release", lambda: release_owned_lease(run, reason))
     run["lease_cleanup_pending"] = not lease_ok
 
+    def _cleanup_run_snapshots() -> None:
+        from modules.flow_gate.services import snapshot_materialization_service
+        snapshot_materialization_service.cleanup_for_run(
+            str(run.get("run_id") or ""), actor="snapshot-run-cleanup"
+        )
+
+    attempt(run, "snapshot_cleanup", _cleanup_run_snapshots)
+
     run.setdefault("outcome", "none")
     if not run.get("outcome"):
         run["outcome"] = "none"

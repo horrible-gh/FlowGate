@@ -1,6 +1,6 @@
 """Durable snapshot request validation, transitions, and audit."""
 import json
-from pathlib import PurePosixPath
+from pathlib import PurePosixPath, PureWindowsPath
 from modules.flow_gate.db import snapshot_requests as db
 from modules.flow_gate.db import workflow_events
 from modules.flow_gate.db.connection import get_store
@@ -20,9 +20,12 @@ def validate_request(data):
  if not isinstance(paths,list) or any(not isinstance(p,str) or not p.strip() for p in paths): raise SnapshotRequestError(422,"invalid_paths","requested_paths must be a string array")
  clean=[]
  for raw in paths:
-  value=raw.replace("\\","/").strip(); path=PurePosixPath(value)
-  if path.is_absolute() or ".." in path.parts or value in ("","."): raise SnapshotRequestError(422,"invalid_paths","paths must be relative")
-  clean.append(value.rstrip("/"))
+  value=raw.replace("\\","/").strip(); path=PurePosixPath(value); windows=PureWindowsPath(value)
+  if (path.is_absolute() or windows.is_absolute() or windows.drive or value.startswith("//")
+      or "\x00" in value or any(ord(ch)<32 for ch in value)
+      or any(part in ("",".","..") or ":" in part for part in value.split("/"))):
+   raise SnapshotRequestError(422,"invalid_paths","paths must be normal worktree-relative paths")
+  clean.append(path.as_posix().rstrip("/"))
  scope=n["scope"]
  if scope in ("single_file","directory") and len(clean)!=1: raise SnapshotRequestError(422,"invalid_scope_paths",scope+" requires one path")
  if scope=="selected_files" and not clean: raise SnapshotRequestError(422,"invalid_scope_paths","selected_files requires paths")

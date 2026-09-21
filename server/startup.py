@@ -76,6 +76,15 @@ def record_deployment():
         logger.warning(f"[startup] deployment marker failed: {exc}")
 
 
+def start_snapshot_cleanup():
+    """Recover interrupted snapshots, sweep expired ones, and start the TTL worker."""
+    try:
+        from modules.flow_gate.services import snapshot_materialization_service
+        snapshot_materialization_service.startup()
+    except Exception as exc:
+        logger.warning(f"[startup] snapshot cleanup bootstrap failed: {exc}")
+
+
 def run_all():
     """Run full bootstrap sequence (called on lifespan entry)."""
     configure_console_encoding()
@@ -84,3 +93,4 @@ def run_all():
     recover_ai_invoke_leases()
     recover_git_sessions()
     encrypt_ai_provider_keys()
+    start_snapshot_cleanup()

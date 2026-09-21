@@ -4,6 +4,7 @@ from fastapi import APIRouter,Depends,HTTPException,Request
 from pydantic import BaseModel
 from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.services import token_service,snapshot_request_service as service
+from modules.flow_gate.services import snapshot_materialization_service as materialization
 from modules.flow_gate.db import snapshot_requests as db, ai_invoke_runs
 router=APIRouter(prefix="/api/v1/snapshots",tags=["Snapshots"])
 class RequestIn(BaseModel):
@@ -24,8 +25,20 @@ def pending(project_id:str|None=None,group_id:str|None=None,user=Depends(get_cur
  return {"ok":True,"requests":db.list_pending(project_id,group_id)}
 @router.get("/{snapshot_id}")
 def detail(snapshot_id:str,user=Depends(get_current_user)):
- row=db.get(snapshot_id)
- if not row: raise HTTPException(404,"snapshot request not found")
+ try: row=materialization.refresh_stale(snapshot_id,actor=user["user_id"])
+ except service.SnapshotRequestError as exc: _error(exc)
+ return {"ok":True,"request":row}
+
+@router.post("/{snapshot_id}/materialize")
+def materialize_snapshot(snapshot_id:str,user=Depends(get_current_user)):
+ try: row=materialization.materialize(snapshot_id,user["user_id"])
+ except service.SnapshotRequestError as exc: _error(exc)
+ return {"ok":True,"request":row}
+
+@router.post("/{snapshot_id}/cleanup")
+def cleanup_snapshot(snapshot_id:str,user=Depends(get_current_user)):
+ try: row=materialization.cleanup(snapshot_id,user["user_id"],trigger="explicit")
+ except service.SnapshotRequestError as exc: _error(exc)
  return {"ok":True,"request":row}
 @router.post("/{snapshot_id}/approve")
 def approve(snapshot_id:str,user=Depends(get_current_user)):
