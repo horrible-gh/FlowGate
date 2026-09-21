@@ -1047,3 +1047,111 @@ def test_a_jail_that_cannot_be_resolved_at_all_denies_instead_of_waving_it_throu
         "STORAGE_PATH_OUTSIDE_ROOT",
     )
     assert not (room_of(env) / "메모.txt").exists()
+
+
+# ── flowgate.default.0554 T0008 — reserved WorkPlan attachment lifecycle ─────
+
+def test_general_attachment_list_hides_reserved_work_plan_files(monkeypatch):
+    from modules.flow_gate.documents.attachments import service
+
+    monkeypatch.setattr(service, "load_document", lambda doc_id: {"doc_id": doc_id})
+    monkeypatch.setattr(service, "registry_list", lambda doc_id: [
+        {
+            "doc_id": doc_id,
+            "filename": "human.pdf",
+            "original_filename": "human.pdf",
+            "size": 1,
+            "content_type": "application/pdf",
+            "content_sha256": "a" * 64,
+        },
+        {
+            "doc_id": doc_id,
+            "filename": "__wp_pre_instruction__T-1__private.pdf",
+            "original_filename": "private.pdf",
+            "size": 1,
+            "content_type": "application/pdf",
+            "content_sha256": "b" * 64,
+        },
+    ])
+    listed = service.list_attachments("doc")
+    assert [row["filename"] for row in listed["attachments"]] == ["human.pdf"]
+    assert listed["count"] == 1
+
+
+def test_general_delete_cannot_remove_reserved_work_plan_file(monkeypatch):
+    from modules.flow_gate.documents.attachments import service
+
+    monkeypatch.setattr(service, "load_document", lambda doc_id: {"doc_id": doc_id})
+    monkeypatch.setattr(service, "assert_mutable", lambda *args: None)
+    with pytest.raises(service.AttachmentError) as exc:
+        service.delete_attachment(
+            "doc", "__wp_pre_instruction__T-1__private.txt", {"user_id": "u"}
+        )
+    assert exc.value.code == "DOCUMENT_NOT_MUTABLE"
+    assert exc.value.details["reason"] == "reserved_work_plan_attachment"
+
+
+def test_work_plan_cleanup_deletes_only_unreferenced_reserved_rows(tmp_path, monkeypatch):
+    from modules.flow_gate.services import work_plan_attachment_service as lifecycle
+
+    keep_path = tmp_path / "__wp_pre_instruction__T-1__keep.txt"
+    orphan_path = tmp_path / "__wp_pre_instruction__T-2__orphan.txt"
+    human_path = tmp_path / "human.txt"
+    for path in (keep_path, orphan_path, human_path):
+        path.write_text("x", encoding="utf-8")
+    rows = [
+        {"filename": keep_path.name},
+        {"filename": orphan_path.name},
+        {"filename": human_path.name},
+    ]
+    by_name = {
+        keep_path.name: keep_path,
+        orphan_path.name: orphan_path,
+        human_path.name: human_path,
+    }
+    deleted = []
+    monkeypatch.setattr(lifecycle, "registry_list", lambda doc_id: rows)
+    monkeypatch.setattr(
+        lifecycle,
+        "resolve_registered_attachment",
+        lambda doc, name, require_file=False: (
+            {"filename": name}, by_name[name],
+        ),
+    )
+    monkeypatch.setattr(
+        lifecycle, "registry_delete", lambda doc_id, name: deleted.append(name)
+    )
+    body = {
+        "steps": [{
+            "pre_instruction_attachment": {
+                "filename": keep_path.name,
+            },
+        }],
+    }
+    assert lifecycle.cleanup_unreferenced({"doc_id": "doc"}, body) == []
+    assert keep_path.exists()
+    assert human_path.exists()
+    assert not orphan_path.exists()
+    assert deleted == [orphan_path.name]
+
+
+def test_attachment_reference_codes_distinguish_scope_name_and_missing_row(monkeypatch):
+    from modules.flow_gate.services import work_plan_attachment_service as lifecycle
+
+    reference = {
+        "doc_id": "doc",
+        "filename": "__wp_pre_instruction__T-1__a.txt",
+        "original_filename": "a.txt",
+        "content_sha256": "a" * 64,
+    }
+    assert lifecycle.validate_reference("other", reference) == (
+        "pre_instruction_attachment_doc_mismatch"
+    )
+    forged = dict(reference, filename="ordinary.txt")
+    assert lifecycle.validate_reference("doc", forged) == (
+        "pre_instruction_attachment_reserved_name_required"
+    )
+    monkeypatch.setattr(lifecycle, "registry_get", lambda doc_id, filename: None)
+    assert lifecycle.validate_reference("doc", reference) == (
+        "pre_instruction_attachment_registry_missing"
+    )

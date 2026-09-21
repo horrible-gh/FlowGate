@@ -228,7 +228,7 @@ def test_binding_and_version_gates():
     assert "binding_not_allowed" in _codes(exc.value)
 
     body = _plan()
-    body["wp_version"] = 2
+    body["wp_version"] = 3
     with pytest.raises(wp.WorkPlanValidationError) as exc:
         wp.validate(body)
     assert _codes(exc.value) == ["wp_version_unsupported"]
@@ -668,7 +668,7 @@ def test_human_create_read_save_roundtrip(seed, storage_root):
     stored = created["stored_path"]
     assert stored.endswith("_document.json"), stored
     assert (storage_root / stored).is_file()
-    assert json.loads((storage_root / stored).read_text(encoding="utf-8"))["wp_version"] == 1
+    assert json.loads((storage_root / stored).read_text(encoding="utf-8"))["wp_version"] == 2
 
     # 결정 4: pending review, and the parent is left exactly as it was.
     row = db_docs.get_by_id(doc_id)
@@ -1414,7 +1414,7 @@ def test_ai_inbox_creates_a_json_work_plan(seed, storage_root, tmp_path):
     view_response = _client().get(f"/api/v1/documents/{data['doc_id']}/work-plan")
     assert view_response.status_code == 200, view_response.text
     view = view_response.json()
-    assert view["body"]["wp_version"] == 1
+    assert view["body"]["wp_version"] == 2
     assert len(view["body"]["steps"]) == 15
     assert view["unassigned_step_count"] == 0
 
@@ -1777,7 +1777,7 @@ def test_next_empty_creates_a_plan_that_opens_as_a_table(seed, storage_root):
     stored = created.json()["data"]["file_path"]
     assert stored.endswith("_document.json"), stored
     on_disk = json.loads((storage_root / stored).read_text(encoding="utf-8"))
-    assert on_disk["wp_version"] == 1
+    assert on_disk["wp_version"] == 2
 
     # 2. 문서를 열면 표가 나온다 — 409 "표로 열 수 없습니다" 가 아니다.
     view = client.get(f"/api/v1/documents/{doc_id}/work-plan")
@@ -1866,7 +1866,7 @@ def test_an_already_broken_plan_heals_the_first_time_it_is_opened(seed, storage_
 
     healed = db_docs.get_by_id(doc_id)["file_path"]
     assert healed.endswith("_document.json"), healed
-    assert json.loads((storage_root / healed).read_text(encoding="utf-8"))["wp_version"] == 1
+    assert json.loads((storage_root / healed).read_text(encoding="utf-8"))["wp_version"] == 2
     assert stub_path.is_file()  # 되살리기는 지우는 일이 아니다
 
     # 두 번째로 열어도 같은 표가 나온다(되살리기는 한 번으로 끝난다).

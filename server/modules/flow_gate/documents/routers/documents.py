@@ -2814,6 +2814,20 @@ def delete_document(
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
+    if str(doc.get("type_code") or "").upper() == WORK_PLAN_TYPE:
+        from modules.flow_gate.services import work_plan_attachment_service as wp_attach
+
+        try:
+            wp_attach.cleanup_unreferenced(doc, None, strict=True)
+        except wp_attach.AttachmentError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={
+                    "code": exc.code,
+                    "message": exc.message,
+                    **exc.details,
+                },
+            ) from exc
     document_service.delete_document(doc_id, actor_user_id=current_user["user_id"])
 
 

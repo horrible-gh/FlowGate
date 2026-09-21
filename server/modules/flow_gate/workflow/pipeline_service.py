@@ -763,6 +763,7 @@ def transition_document_review(
                 plan_body = _wp.load_body(
                     _wp.plan_path_for_doc(fresh_plan_doc),
                     project_id=fresh_plan_doc.get("project_id"),
+                    doc_id=fresh_plan_doc.get("doc_id"),
                 )
                 expansion = _wpseq.expand_final_work_plan(
                     doc=fresh_plan_doc, plan=plan_body, locale=locale,

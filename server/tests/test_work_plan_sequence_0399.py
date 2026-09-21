@@ -74,7 +74,7 @@ def test_the_registered_queries_carry_the_three_columns_both_ways():
     for column in ("note", "source_doc_id", "source_revision_no"):
         assert column in queries["insert_sequence_item"]
         assert f"wsi.{column}" in queries["get_sequence_items"]
-    assert queries["insert_sequence_item"].count("?") == 11
+    assert queries["insert_sequence_item"].count("?") == 16
 
 from modules.flow_gate.services import work_plan_apply_service as wpa
 from modules.flow_gate.services import work_plan_sequence_service as wpseq
@@ -512,3 +512,158 @@ def test_a_save_with_no_fingerprint_is_not_compared(save_wired):
     inserted, _ = save_wired
     wds.edit_workflow_pending(OWNER_DOC_ID, [{"type": "P", "label": "프로토콜설계"}])
     assert [row["type_"] for row in inserted] == ["P"]
+
+
+# ── flowgate.default.0554 T0008 — execution setting persistence ──────────────
+
+_EXECUTION_COLUMNS = {
+    "review_count",
+    "reviewer_provider_id",
+    "reviewer_provider_display_name",
+    "pre_instruction_text",
+    "pre_instruction_attachment_json",
+}
+
+
+def test_migration_115_adds_execution_setting_columns_and_old_row_defaults():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as handle:
+        db_path = handle.name
+    conn = sqlite3.connect(db_path)
+    try:
+        for migration in sorted(_MIGRATIONS_DIR.glob("*.sql")):
+            conn.executescript(migration.read_text(encoding="utf-8"))
+        columns = {
+            row[1]: row for row in conn.execute(
+                "PRAGMA table_info(workflow_sequence_items)"
+            )
+        }
+        assert set(columns) >= _EXECUTION_COLUMNS
+        assert columns["review_count"][3] == 1
+        assert str(columns["review_count"][4]) in {"0", "'0'"}
+
+        conn.execute(
+            "INSERT INTO workflow_sequences (id, doc_id, created_at, updated_at)"
+            " VALUES (99, 'flowgate.default.0554.0001-R', 'now', 'now')"
+        )
+        conn.execute(
+            "INSERT INTO workflow_sequence_items"
+            " (sequence_id, item_seq, type, label, doc_class, sort_order,"
+            " created_at, updated_at)"
+            " VALUES (99, 1, 'T', '작업지시', 'R', 0, 'now', 'now')"
+        )
+        row = conn.execute(
+            "SELECT review_count, reviewer_provider_id,"
+            " reviewer_provider_display_name, pre_instruction_text,"
+            " pre_instruction_attachment_json FROM workflow_sequence_items"
+        ).fetchone()
+        assert row == (0, None, None, None, None)
+    finally:
+        conn.close()
+        Path(db_path).unlink(missing_ok=True)
+
+
+def test_all_three_dialects_publish_the_same_five_columns():
+    migration_root = Path(__file__).resolve().parents[1] / "sql" / "migrations"
+    for dialect in ("sqlite", "mysql", "postgres"):
+        sql = (
+            migration_root / dialect / "115_workflow_sequence_execution_settings.sql"
+        ).read_text(encoding="utf-8")
+        for column in _EXECUTION_COLUMNS:
+            assert column in sql
+
+
+class _ExecutionSettingsStore:
+    """Minimal real-SQL store for execution-setting CRUD regression tests."""
+
+    def __init__(self, db_path):
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA foreign_keys = ON")
+
+    def _execute(self, sql, params=None):
+        cursor = self._conn.execute(sql, params or [])
+        self._conn.commit()
+        return cursor
+
+    def _fetch_one(self, sql, params=None):
+        row = self._conn.execute(sql, params or []).fetchone()
+        return dict(row) if row else None
+
+    def _fetch_all(self, sql, params=None):
+        return [dict(row) for row in self._conn.execute(sql, params or []).fetchall()]
+
+
+@pytest.fixture
+def execution_settings_db(monkeypatch, migrated_sqlite_db):
+    from modules.flow_gate.db import workflow_sequences as db_wfseq
+
+    db_path = migrated_sqlite_db("sequence_execution_settings_0554.db")
+    store = _ExecutionSettingsStore(db_path)
+    monkeypatch.setattr(db_wfseq, "get_store", lambda: store)
+    try:
+        db_wfseq.insert_sequence("flowgate.default.0554.0001-R")
+        sequence = db_wfseq.get_sequence_by_doc_id("flowgate.default.0554.0001-R")
+        yield db_wfseq, sequence
+    finally:
+        store._conn.close()
+
+
+def _execution_settings(row):
+    return {column: row[column] for column in _EXECUTION_COLUMNS}
+
+
+def test_insert_and_get_round_trip_execution_settings_in_real_db(execution_settings_db):
+    db_wfseq, sequence = execution_settings_db
+    attachment = {"stored_name": "__wp_pre__insert.txt", "sha256": "a" * 64}
+
+    db_wfseq.insert_sequence_item(
+        sequence_id=sequence["id"], item_seq=1, type_="T", label="작업지시",
+        doc_class="R", sort_order=0, review_count=2,
+        reviewer_provider_id="aip_insert", reviewer_provider_display_name="삽입 검수자",
+        pre_instruction_text="삽입 전 지시\n둘째 줄",
+        pre_instruction_attachment=attachment,
+    )
+
+    stored = db_wfseq.get_sequence_items(sequence["id"])[0]
+    assert _execution_settings(stored) == {
+        "review_count": 2,
+        "reviewer_provider_id": "aip_insert",
+        "reviewer_provider_display_name": "삽입 검수자",
+        "pre_instruction_text": "삽입 전 지시\n둘째 줄",
+        "pre_instruction_attachment_json": '{"stored_name":"__wp_pre__insert.txt","sha256":"' + "a" * 64 + '"}',
+    }
+
+
+def test_update_and_get_round_trip_execution_settings_in_real_db(execution_settings_db):
+    db_wfseq, sequence = execution_settings_db
+    db_wfseq.insert_sequence_item(
+        sequence_id=sequence["id"], item_seq=1, type_="T", label="작업지시",
+        doc_class="R", sort_order=0, review_count=1,
+        reviewer_provider_id="aip_before", reviewer_provider_display_name="변경 전",
+        pre_instruction_text="변경 전 지시",
+        pre_instruction_attachment={"stored_name": "__wp_pre__before.txt"},
+    )
+    before = db_wfseq.get_sequence_items(sequence["id"])[0]
+    before_settings = _execution_settings(before)
+
+    db_wfseq.update_sequence_item_execution_settings(
+        before["id"], review_count=3, reviewer_provider_id="aip_after",
+        reviewer_provider_display_name="변경 후", pre_instruction_text="변경 후 지시",
+        pre_instruction_attachment={"stored_name": "__wp_pre__after.txt", "size": 17},
+    )
+
+    after = db_wfseq.get_sequence_items(sequence["id"])[0]
+    assert before_settings == {
+        "review_count": 1,
+        "reviewer_provider_id": "aip_before",
+        "reviewer_provider_display_name": "변경 전",
+        "pre_instruction_text": "변경 전 지시",
+        "pre_instruction_attachment_json": '{"stored_name":"__wp_pre__before.txt"}',
+    }
+    assert _execution_settings(after) == {
+        "review_count": 3,
+        "reviewer_provider_id": "aip_after",
+        "reviewer_provider_display_name": "변경 후",
+        "pre_instruction_text": "변경 후 지시",
+        "pre_instruction_attachment_json": '{"stored_name":"__wp_pre__after.txt","size":17}',
+    }

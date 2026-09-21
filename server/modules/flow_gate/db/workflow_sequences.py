@@ -5,6 +5,7 @@ Do not add new inline SQL.
 """
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 from .connection import FlowGateStore, get_store
@@ -115,6 +116,11 @@ def insert_sequence_item(
     source_revision_no: Optional[int] = None,
     provider_id: Optional[str] = None,
     provider_display_name: Optional[str] = None,
+    review_count: int = 0,
+    reviewer_provider_id: Optional[str] = None,
+    reviewer_provider_display_name: Optional[str] = None,
+    pre_instruction_text: Optional[str] = None,
+    pre_instruction_attachment: Optional[dict | str] = None,
 ) -> None:
     """Insert a sequence item.
 
@@ -124,11 +130,46 @@ def insert_sequence_item(
     every existing caller that only knows about the structural columns keeps working and
     stores "this row did not come from a plan", which is the truth for those paths.
     """
+    attachment_json = (
+        json.dumps(pre_instruction_attachment, ensure_ascii=False, separators=(",", ":"))
+        if isinstance(pre_instruction_attachment, dict)
+        else pre_instruction_attachment
+    )
     store = get_store()
     sql = _sql(store, "workflow_sequences.insert_sequence_item")
     store._execute(sql, [
         sequence_id, item_seq, type_, label, doc_class, sort_order,
         note or "", source_doc_id, source_revision_no, provider_id, provider_display_name,
+        review_count, reviewer_provider_id, reviewer_provider_display_name,
+        pre_instruction_text, attachment_json,
+    ])
+
+
+def update_sequence_item_execution_settings(
+    item_id: int,
+    *,
+    review_count: int = 0,
+    reviewer_provider_id: Optional[str] = None,
+    reviewer_provider_display_name: Optional[str] = None,
+    pre_instruction_text: Optional[str] = None,
+    pre_instruction_attachment: Optional[dict | str] = None,
+) -> None:
+    """Replace the execution-setting snapshot for one sequence item."""
+
+    attachment_json = (
+        json.dumps(pre_instruction_attachment, ensure_ascii=False, separators=(",", ":"))
+        if isinstance(pre_instruction_attachment, dict)
+        else pre_instruction_attachment
+    )
+    store = get_store()
+    sql = _sql(store, "workflow_sequences.update_sequence_item_execution_settings")
+    store._execute(sql, [
+        review_count,
+        reviewer_provider_id,
+        reviewer_provider_display_name,
+        pre_instruction_text,
+        attachment_json,
+        item_id,
     ])
 
 
