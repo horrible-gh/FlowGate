@@ -38,9 +38,11 @@
     </div>
 
     <div :id="bodyId" class="card-bd attach-card-bd">
-      <!-- Dropzone: a large area when there are 0 files, a thin single-line bar once there is
-           1 or more (D0010 6-4). In read-only mode (AI run in progress), upload/delete are
-           removed, leaving only list/download (D0010 6-1). -->
+      <!-- Dropzone: the same large drop target for 0 files and for 1+ files -- it no longer
+           swaps to a separate, narrower element once files exist (0595 T0004 rework, after
+           review pushback on the T0004 rev0 "medium" bar. Supersedes the original D0010 6-4
+           thin-bar rule). In read-only mode (AI run in progress), upload/delete are removed,
+           leaving only list/download (D0010 6-1). -->
       <div
         v-if="!readOnly"
         class="attach-dropzone"
@@ -59,15 +61,6 @@
             <AppIcon name="folder-open" /> {{ t('main.attachment_card.select_files') }}
           </button>
           <p class="attach-dz-hint">{{ t('main.attachment_card.hint', { size: maxUploadLabel }) }}</p>
-        </div>
-        <div class="attach-dz-compact">
-          <AppIcon name="plus-circle" class="attach-dz-plus" />
-          <span>
-            {{ t('main.attachment_card.drop_zone_compact') }}
-            <button class="attach-inline-btn" type="button" @click.stop="openPicker">
-              {{ t('main.attachment_card.select_inline') }}
-            </button>
-          </span>
         </div>
       </div>
 
@@ -423,26 +416,9 @@ defineExpose({ fetchList, attachments, collapsed })
 .attach-dz-icon { color: var(--text-m); font-size: 1.6rem; }
 .attach-dz-text { margin: 0; color: var(--text-s); font-size: .82rem; }
 .attach-dz-hint { margin: 2px 0 0; color: var(--text-m); font-size: .68rem; }
-.attach-dz-compact {
-  display: none;
-  align-items: center;
-  gap: 7px;
-  padding: 9px 12px;
-  color: var(--text-s);
-  font-size: .76rem;
-}
-.attach-dz-plus { color: var(--primary); font-size: 1rem; }
-.attach-inline-btn {
-  border: 0;
-  color: var(--primary);
-  background: transparent;
-  font-weight: 600;
-  text-decoration: underline;
-  cursor: pointer;
-}
-/* 0 files → large dropzone, 1+ files → thin single-line bar (D0010 6-4). */
-.attach-card.has-files .attach-dz-empty { display: none; }
-.attach-card.has-files .attach-dz-compact { display: flex; }
+/* The dropzone no longer has a has-files variant -- the same large drop target from the
+   0-file state stays up once files exist too, instead of swapping to a separate, shorter
+   element (0595 T0004 rework; supersedes the original D0010 6-4 thin-bar rule). */
 
 .attach-list {
   display: flex;
