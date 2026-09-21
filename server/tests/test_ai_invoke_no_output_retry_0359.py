@@ -73,7 +73,12 @@ class FakePausedStore:
                stop_kind="user", stop_code=None, stop_run_id=None,
                stop_last_message_excerpt=None,
                continuation_base_provider_id=None, continuation_provider_pinned=None,
-               continuation_provider_overrides=None, continuation_default_note=None,
+               continuation_provider_overrides=None,
+               # flowgate.default.0596 T0004 (NR0003 rev3): named explicitly like the
+               # [검수] maps below -- a permissive double would silently drop the captured
+               # actual work-hop executor.
+               continuation_work_executor_provider_id=None,
+               continuation_default_note=None,
                continuation_note_overrides=None,
                # 0352 T0004 §3.6: unlike provider/note preferences (not sent on a SYSTEM
                # row unless 0435's explicit provider pin is active), the N/T authoring
@@ -103,6 +108,7 @@ class FakePausedStore:
             "continuation_base_provider_id": continuation_base_provider_id,
             "continuation_provider_pinned": bool(continuation_provider_pinned),
             "continuation_provider_overrides": continuation_provider_overrides,
+            "continuation_work_executor_provider_id": continuation_work_executor_provider_id,
             "continuation_default_note": continuation_default_note,
             "continuation_note_overrides": continuation_note_overrides,
             "continuation_instruction_mode": continuation_instruction_mode,

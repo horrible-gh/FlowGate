@@ -49,6 +49,7 @@ from .runtime import (
     REVIEW_VERDICT_HOLD_STOP_CODE,
     SOURCE_DIRTY_FILES_LIMIT,
     _absolute_cap_sec,
+    _actual_work_executor_provider_id,
     _known_run_prompts,
     _known_run_raw_tokens,
     _mark_scratch_completed,
@@ -871,6 +872,17 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
                     continuation_base_provider_id=run.get("continuation_base_provider_id"),
                     continuation_provider_pinned=run.get("continuation_provider_pinned"),
                     continuation_provider_overrides=run.get("continuation_provider_overrides"),
+                    # flowgate.default.0596 T0004 (NR0003 rev3): pause_run already stores the
+                    # actual work-hop executor into this same row (chain.pause_run reads
+                    # _actual_work_executor_provider_id) — this refresh upsert runs right
+                    # after every user pause and overwrites every column, so omitting it here
+                    # immediately erases what pause_run just wrote and a resumed rework
+                    # silently falls back to the header/default provider.
+                    # rev3 (human rejection 2026-09-21): read the same helper pause_run uses —
+                    # run["provider_id"] (the actual post-startup-fallback executor) ahead of
+                    # continuation_selected_provider_id (the pre-attempt chain head), or this
+                    # refresh reintroduces the exact fallback bug on the very same row.
+                    continuation_work_executor_provider_id=_actual_work_executor_provider_id(run),
                     continuation_default_note=run.get("continuation_default_note"),
                     continuation_note_overrides=run.get("continuation_note_overrides"),
                     # 0352 T0004 §3.6: the N/T authoring mode + its per-item_seq auto-approve

@@ -855,6 +855,45 @@ class TestValueResolution:
             bundle(provider_overrides=None, provider_pinned=False), 7, "flowgate",
             SPINE) == "aip_default"
 
+    # flowgate.default.0596 T0004 (NR0003 rev3): base_provider_id is the run's header/
+    # default selection, not necessarily the provider that actually executed the hop being
+    # reworked -- a step-level resolution (override / stored sequence) can win the per-hop
+    # pick while the header stays whatever the chain was started with. work_executor_
+    # provider_id carries that ACTUAL executor and must outrank base_provider_id.
+    def test_case_a_the_actual_step_executor_outranks_the_header_default(self, world):
+        """header/base = aip_default, but the step's actual work hop resolved to aip_step5
+        (e.g. via the stored sequence tier) -- GPT (aip_rev) reviews and rejects, and the
+        rework must go back to aip_step5, not silently to the header default."""
+        b = bundle(provider_overrides=None, base_provider_id="aip_default",
+                   work_executor_provider_id="aip_step5", reviewer_overrides={"5": "aip_rev"})
+        assert svc.resolve_step_executor(b, 5, "flowgate", SPINE) == "aip_step5"
+
+    def test_case_b_the_actual_executor_still_outranks_a_stale_stored_row(self, world):
+        """0494/0508 regression contract, restated with work_executor_provider_id populated:
+        the step ACTUALLY executed on the header default (aip_default) even though the
+        sequence row still stores aip_step5 -- rework must stay on aip_default, never fall
+        back to the stale stored row."""
+        b = bundle(provider_overrides=None, base_provider_id="aip_default",
+                   work_executor_provider_id="aip_default")
+        assert svc.resolve_step_executor(b, 5, "flowgate", SPINE) == "aip_default"
+
+    def test_case_d_the_reviewer_selection_never_becomes_the_rework_executor(self, world):
+        """resolve_step_executor must not read reviewer_overrides at all -- a reviewer
+        (aip_rev) picked for this step can never leak into the rework executor."""
+        b = bundle(provider_overrides=None, base_provider_id="aip_default",
+                   work_executor_provider_id="aip_step5", reviewer_overrides={"5": "aip_rev"})
+        executor = svc.resolve_step_executor(b, 5, "flowgate", SPINE)
+        assert executor == "aip_step5"
+        assert executor != "aip_rev"
+
+    def test_case_e_a_disabled_captured_executor_falls_through_without_a_silent_swap(self, world):
+        """The captured executor is no longer enabled (deleted/disabled) by rework time --
+        this must fall through the SAME explicit tiers (base -> stored -> default), never
+        silently substitute an unrelated provider."""
+        b = bundle(provider_overrides=None, base_provider_id="aip_default",
+                   work_executor_provider_id="aip_removed")
+        assert svc.resolve_step_executor(b, 5, "flowgate", SPINE) == "aip_default"
+
 
 # ══════════════════════════════════════════════════════════════════════════════════════
 # L0008 §2.6 — the automatic rejection

@@ -948,6 +948,24 @@ def _known_run_prompts(run: dict) -> set[str]:
     return {p for p in run.get("_issued_prompts") or () if p}
 
 
+def _actual_work_executor_provider_id(run: dict) -> Optional[str]:
+    """The provider that ACTUALLY ran THIS run's hop — the caller decides whose run it is.
+
+    `run["continuation_selected_provider_id"]` (0435 T0004) is the chain HEAD picked
+    before this attempt ran and is never updated afterward. When startup fell back past
+    that head, `_execute_provider_chain` moved `run["provider_id"]` to whichever provider
+    actually started (worker.py) — that is the one whose output this run's hop produced,
+    so it must win here, with the original head as the only fallback (a run whose hop
+    never reached `_execute_provider_chain` at all, e.g. one still being admitted).
+
+    A review/rework hop's OWN run answers this with ITS OWN provider, not the work hop's —
+    callers that must not let a reviewer's pick leak into the captured work executor (e.g.
+    `chain._handoff_bundle`/`_maybe_auto_resume_hop`) rely on the handoff bundle already
+    holding a captured value and never call this against that later run for that purpose.
+    """
+    return run.get("provider_id") or run.get("continuation_selected_provider_id")
+
+
 def _svc():
     """The `ai_invoke_service` compatibility shim, resolved at CALL time.
 
