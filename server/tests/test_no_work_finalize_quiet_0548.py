@@ -248,9 +248,10 @@ def test_the_approval_ride_along_reports_a_no_work_failure_quietly(slot, monkeyp
 
     out = svc.run_approve_git_action(_GROUP, "merge")
 
-    # ok stays honest (the action did not run); quiet is the display verdict.
+    # Final approval no longer disguises a Git failure as an approved quiet no-op.
     assert out["ok"] is False
-    assert out["quiet"] is True
+    assert out["terminal"] is False
+    assert out.get("quiet") is None
     assert out["error"]["code"] == "invalid_state"
 
 
@@ -281,7 +282,7 @@ def test_a_real_finalize_failure_on_a_working_group_still_warns(slot, monkeypatc
     monkeypatch.setattr(svc.db_git, "get_config", lambda project_id: slot.cfg)
     monkeypatch.setattr(svc.db_git, "get_state", lambda group_id: slot.state())
 
-    def _busy(group_id, action, commit_message=None):
+    def _busy(group_id, action, commit_message=None, **kwargs):
         raise svc.GitServiceError(409, "git_busy", "another git operation is in progress")
 
     monkeypatch.setattr(svc, "finalize", _busy)

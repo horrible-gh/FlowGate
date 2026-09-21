@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -37,7 +38,18 @@ from .worktree import _ensure_worktree_locked, worktree_branch_name
 _log = logging.getLogger(__name__)
 
 ACTION_VALUES = ("merge", "merge_only", "push", "commit_push", "commit_only", "wait")
+APPROVAL_FINALIZE_ACTIONS = ("merge", "merge_only", "push", "commit_push")
 FINALIZE_MAIN_CHOICES = ("merge", "merge_only", "wait")
+
+
+@dataclass(frozen=True)
+class ApprovalFinalizeContext:
+    """Unforgeable-in-HTTP capability for finalize-before-approval execution."""
+
+    doc_id: str
+    group_id: str
+    actor_user_id: str
+    lock_holder: str
 FINALIZE_AUX_CHOICES = ("push",)
 
 # NR flowgate.default.0331.0005 §8 — the approved v4 mockup drives the finalize
@@ -662,9 +674,64 @@ def group_update_untracked_recover(
         _gs.db_git.release_lock(project_id, holder)
 
 
-def finalize(group_id: str, action: Optional[str], commit_message: Optional[str] = None) -> dict:
+def _validate_approval_context(
+    context: ApprovalFinalizeContext,
+    group_id: str,
+    project_id: str,
+) -> dict:
+    """Revalidate the document capability and borrowed mutex under the lock."""
+    from modules.flow_gate.services import git_service as _gs
+
+    doc = db_documents.get_by_id(context.doc_id)
+    root = db_documents.get_by_id((doc or {}).get("target_id") or "")
+    lock = _gs.db_git.get_lock(project_id)
+    if (
+        context.group_id != group_id
+        or doc is None
+        or doc.get("group_id") != group_id
+        or str(doc.get("type_code") or "").upper() != "AC"
+        or doc.get("doc_review_status") != "pending_review"
+        or root is None
+        or root.get("group_id") != group_id
+        or str(root.get("type_code") or "").upper() not in {"R", "B"}
+        or root.get("doc_review_status") != "wf_in_progress"
+        or lock is None
+        or lock.get("holder") != context.lock_holder
+    ):
+        raise GitServiceError(
+            409, "invalid_state", "approval finalize context is no longer valid"
+        )
+    return doc
+
+
+def _terminal_retry_result(state: dict, action: str) -> dict:
+    status = state.get("status") or "none"
+    return {
+        "ok": True,
+        "result": {
+            "action": action,
+            "status": status,
+            "merge_commit": state.get("merge_commit"),
+            "pushed": status == "pushed" or (status == "merged" and action == "merge"),
+            "merge_id": None,
+            "conflict_files": [],
+            "terminal_retry": True,
+        },
+    }
+
+
+def finalize(
+    group_id: str,
+    action: Optional[str],
+    commit_message: Optional[str] = None,
+    *,
+    approval_context: Optional[ApprovalFinalizeContext] = None,
+) -> dict:
     from modules.flow_gate.services import git_service as _gs
     cfg, state, project_id, base_root, wt_path = _gs._finalize_context(group_id)
+    borrowed_lock = approval_context is not None
+    if approval_context is not None:
+        _validate_approval_context(approval_context, group_id, project_id)
     open_session = _gs.db_git.get_open_session_by_group(group_id)
     if (open_session is not None
             and _gs.db_git.session_kind(open_session) == _gs.db_git.SESSION_KIND_GROUP_UPDATE):
@@ -683,19 +750,26 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             "commit_message must be a single line of at most 200 characters.",
         )
 
-    # Refresh the lazy wf_done transition before the state guard (L0006 §4.2).
-    # Pending ledger states are only a cached consequence of final workflow approval,
-    # never proof of it: re-check the root here to contain stale historical/manual data.
+    # Public finalize remains admitted only after wf_done.  The internal approval
+    # capability is the sole exception: it permits the pending AC to run Git while
+    # borrowing the mutex already owned by the orchestrator.
     status = (state.get("status") or "none")
+    if approval_context is not None and action not in APPROVAL_FINALIZE_ACTIONS:
+        raise GitServiceError(
+            422, "invalid_request",
+            "final approval requires a terminal Git action",
+        )
     root_wf_done = (
         _gs._group_root_wf_done(group_id)
-        if status in ("none", "awaiting_choice", "waiting")
-        else None
+        if approval_context is None and status in ("none", "awaiting_choice", "waiting")
+        else False
     )
-    if status == "none" and root_wf_done:
+    if approval_context is None and status == "none" and root_wf_done:
         _gs._set_status(group_id, "awaiting_choice")
         status = "awaiting_choice"
     if status in ("merged", "pushed"):
+        if approval_context is not None:
+            return _terminal_retry_result(state, action)
         raise GitServiceError(409, "invalid_state", "already finalized")
     if status == "conflict":
         raise GitServiceError(409, "invalid_state", "resolve or abort the merge first")
@@ -704,9 +778,14 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             409, "git_busy",
             f"Another git operation is in progress for project '{project_id}' (try again shortly)",
         )
-    if status not in ("awaiting_choice", "waiting"):
+    allowed_statuses = (
+        ("none", "awaiting_choice", "waiting")
+        if approval_context is not None
+        else ("awaiting_choice", "waiting")
+    )
+    if status not in allowed_statuses:
         raise GitServiceError(409, "invalid_state", f"finalize not available in state '{status}'")
-    if not root_wf_done:
+    if approval_context is None and not root_wf_done:
         raise GitServiceError(
             409,
             "invalid_state",
@@ -728,8 +807,12 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             500, "git_unavailable",
             "git binary not found on server (install git in the runtime image)",
         )
-    holder = f"op:{uuid.uuid4()}"
-    if not _gs._acquire_lock(project_id, holder):
+    holder = (
+        approval_context.lock_holder
+        if approval_context is not None
+        else f"op:{uuid.uuid4()}"
+    )
+    if not borrowed_lock and not _gs._acquire_lock(project_id, holder):
         raise GitServiceError(
             409, "git_busy",
             f"Another git operation is in progress for project '{project_id}' (try again shortly)",
@@ -813,15 +896,17 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         # merge/push path (never discard on doubt).
         ahead = _ahead_of_base(base_root, base_branch, branch)
         if ahead == 0:
-            _gs._cleanup_group_slot(project_id, group_id, force_discard=True)
-            # Leave the DB status "none" on the now-unregistered slot (see
-            # DISCARDED_STATUS); "discarded" is only a response/SSE label.
-            _gs._set_status(group_id, "none")
-            _gs._emit("git_finalize_done", project_id, group_id, {
-                "project": project_id, "group_id": group_id,
-                "action": action, "status": DISCARDED_STATUS, "merge_commit": None,
-                **_artifact_payload(excluded_artifacts, staged_new_file_count),
-            })
+            # Approval-coupled no-work is only labelled here.  Slot teardown is
+            # delayed until the AC/root transaction commits, so a failed approval
+            # can safely prove the same no-work condition again on retry.
+            if approval_context is None:
+                _gs._cleanup_group_slot(project_id, group_id, force_discard=True)
+                _gs._set_status(group_id, "none")
+                _gs._emit("git_finalize_done", project_id, group_id, {
+                    "project": project_id, "group_id": group_id,
+                    "action": action, "status": DISCARDED_STATUS, "merge_commit": None,
+                    **_artifact_payload(excluded_artifacts, staged_new_file_count),
+                })
             return {"ok": True, "result": {
                 "action": action, "status": DISCARDED_STATUS, "merge_commit": None,
                 "pushed": False, "merge_id": None, "conflict_files": [],
@@ -844,13 +929,15 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             if proc.returncode != 0:
                 raise GitServiceError(500, "push_rejected", "Git push was rejected", diagnostic=_gs._last_line(proc.stderr))
             _gs._set_status(group_id, "pushed")
-            # 0182 NR0003 §5: drop the slot leftovers right away (origin keeps
-            # the pushed branch; only the local worktree/ref/ledger go).
-            _gs._cleanup_group_slot(project_id, group_id)
+            # Approval keeps the terminal ledger and slot intact until its DB
+            # transaction decides; manual finalize preserves immediate cleanup.
+            if approval_context is None:
+                _gs._cleanup_group_slot(project_id, group_id)
             return _finalize_result(
                 group_id, project_id, action, "pushed",
                 pushed=True, artifacts=excluded_artifacts,
                 staged_new_file_count=staged_new_file_count,
+                emit=approval_context is None,
             )
 
         if action == "commit_only":
@@ -913,15 +1000,15 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             head = _gs._run_git(["rev-parse", "--short", "HEAD"], cwd=base_root)
             merge_commit = (head.stdout or "").strip() or None
             _gs._set_status(group_id, "merged", merge_commit=merge_commit)
-            # 0182 NR0003 §5: merged content lives in base — remove the group's
-            # worktree, work branch and ledger registration best-effort.
-            _gs._cleanup_group_slot(project_id, group_id)
-            _gs._emit("git_finalize_done", project_id, group_id, {
-                "project": project_id, "group_id": group_id,
-                "action": action, "status": "merged", "merge_commit": merge_commit,
-                "pushed": wants_push,
-                **_artifact_payload(excluded_artifacts, staged_new_file_count),
-            })
+            # Approval owns cleanup/notification after its atomic DB commit.
+            if approval_context is None:
+                _gs._cleanup_group_slot(project_id, group_id)
+                _gs._emit("git_finalize_done", project_id, group_id, {
+                    "project": project_id, "group_id": group_id,
+                    "action": action, "status": "merged", "merge_commit": merge_commit,
+                    "pushed": wants_push,
+                    **_artifact_payload(excluded_artifacts, staged_new_file_count),
+                })
             return {
                 "ok": True,
                 "result": {
@@ -975,10 +1062,9 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
         )
         _gs._set_status(group_id, "conflict", merge_id=merge_id)
         # 0205 L §2.1: DO NOT transfer the lock to the session. The conflict wait
-        # is expressed by the persistent 'conflict' state + open session — which
-        # the base gate reads — not by an indefinitely-held project mutex (the
-        # 0203 tangle's root cause). The finally releases the lock unconditionally,
-        # so a later group can provision its worktree while this waits.
+        # is expressed by the persistent 'conflict' state + open session. Manual
+        # finalize releases its own lock below; approval finalize leaves the
+        # borrowed lock for its orchestrator to release exactly once.
         session = _gs.db_git.get_session(merge_id)
         _gs._emit("git_merge_conflict", project_id, group_id, {
             "project": project_id, "group_id": group_id,
@@ -994,16 +1080,17 @@ def finalize(group_id: str, action: Optional[str], commit_message: Optional[str]
             },
         }
     finally:
-        _gs.db_git.release_lock(project_id, holder)
+        if not borrowed_lock:
+            _gs.db_git.release_lock(project_id, holder)
 
 
 def _finalize_result(
     group_id: str, project_id: str, action: str, status: str, *,
     pushed: bool = False, artifacts: Sequence[str] = (),
-    staged_new_file_count: int = 0,
+    staged_new_file_count: int = 0, emit: bool = True,
 ) -> dict:
     from modules.flow_gate.services import git_service as _gs
-    if status in ("pushed", "merged"):
+    if emit and status in ("pushed", "merged"):
         _gs._emit("git_finalize_done", project_id, group_id, {
             "project": project_id, "group_id": group_id,
             "action": action, "status": status, "merge_commit": None,
@@ -1236,15 +1323,13 @@ def unmerge(group_id: str, merge_commit: str) -> dict:
 
 
 def precheck_approve_git_action(doc: Optional[dict], git_action: str) -> str:
-    """Validate a git_action carried on an AC approval BEFORE the approval runs
-    (L §2.1 step 1 / §4.2). Returns the group_id; raises GitServiceError(422)
-    on any violation so the caller skips the approval entirely (P §1-7)."""
+    """Validate the terminal Git choice before the approval mutex is acquired."""
     from modules.flow_gate.services import git_service as _gs
     invalid = GitServiceError(
         422, "invalid_request",
         "git_action is only accepted on AC documents of a git-active group",
     )
-    if git_action not in ACTION_VALUES:
+    if git_action not in APPROVAL_FINALIZE_ACTIONS:
         raise invalid
     doc = doc or {}
     if doc.get("type_code") != "AC":
@@ -1261,40 +1346,79 @@ def precheck_approve_git_action(doc: Optional[dict], git_action: str) -> str:
     return group_id
 
 
-def run_approve_git_action(group_id: str, git_action: str) -> dict:
-    """Post-approval git finalize (L §2.1 step 3). NEVER raises — a git failure
-    is reported as {ok: false, error} while the approval itself stands (D §3.1).
-    A merge conflict is a successful {ok: true, result: {status: "conflict"}}.
-
-    0548 T0004 §3/§4: when the failure is only that there was nothing to finalize
-    in the first place, the SAME ``{ok: false, error}`` additionally carries
-    ``quiet: true``. ``ok`` keeps telling the truth (the action did not run), and
-    ``quiet`` is the display verdict the client obeys — no toast, no Git panel
-    auto-open — exactly as ``tr_commit.quiet`` sits beside ``committed`` on the TR
-    side (§5). A real failure (conflict, dirty base, busy lock, a group that
-    genuinely carries work) never gets the flag and is untouched."""
+def run_approve_git_action(
+    group_id: str,
+    git_action: str,
+    *,
+    approval_context: Optional[ApprovalFinalizeContext] = None,
+) -> dict:
+    """Run Git without assuming approval and return a branchable verdict."""
     from modules.flow_gate.services import git_service as _gs
     try:
-        outcome = _gs.finalize(group_id, git_action)
-        return {"ok": True, "result": outcome["result"]}
+        outcome = _gs.finalize(
+            group_id, git_action, approval_context=approval_context
+        )
+        result = outcome["result"]
+        if result.get("status") == "conflict":
+            return {
+                "ok": True,
+                "terminal": False,
+                "deferred": True,
+                "result": result,
+            }
+        terminal = result.get("status") in {
+            "merged", "pushed", DISCARDED_STATUS, "stashed"
+        }
+        return {"ok": True, "terminal": terminal, "result": result}
     except GitServiceError as exc:
-        # Carry the structured details (e.g. base_dirty's file list) so the approve
-        # path can surface an actionable error too, not just a bare message (T0010 §b).
         error = {"code": exc.code, "message": exc.message}
         if getattr(exc, "details", None):
             error["details"] = exc.details
-        if _gs.group_finalize_is_noop(group_id):
-            # The approval's own no-work auto-discard (0199 B0001) can tear the
-            # slot down between the AC dialog's preview and this call, so the
-            # ride-along action arrives with nothing left to act on. That is the
-            # normal end of a group with no work, not something to put in front of
-            # an operator who never touched a source file.
-            _log.info(
-                "approve git_action %r on %s is a no-op (%s) — reported quietly",
-                git_action, group_id, exc.code,
-            )
-            return {"ok": False, "quiet": True, "error": error}
-        return {"ok": False, "error": error}
+        return {
+            "ok": False,
+            "terminal": False,
+            "http_status": exc.status,
+            "error": error,
+        }
+
+
+def complete_approve_git_action(
+    group_id: str,
+    git_action: str,
+    outcome: dict,
+    *,
+    approved: bool,
+) -> None:
+    """Best-effort cleanup and terminal notification after approval is decided."""
+    from modules.flow_gate.services import git_service as _gs
+
+    result = outcome.get("result") or {}
+    status = result.get("status")
+    try:
+        project_id = _gs._project_of_group(group_id)
+        if approved:
+            if status == DISCARDED_STATUS:
+                _gs._cleanup_group_slot(project_id, group_id, force_discard=True)
+                _gs._set_status(group_id, "none")
+            elif status in ("merged", "pushed"):
+                _gs._cleanup_group_slot(project_id, group_id)
+        _gs._emit("git_finalize_done", project_id, group_id, {
+            "project": project_id,
+            "group_id": group_id,
+            "action": git_action,
+            **result,
+            "approval": {
+                "approved": approved,
+                "document_status": "approved" if approved else "pending_review",
+                "root_status": "wf_done" if approved else "wf_in_progress",
+                "stage": "complete" if approved else "approval_commit",
+                "deferred": False,
+            },
+        })
+    except Exception:
+        _log.warning(
+            "approval finalize post-processing failed for %s", group_id, exc_info=True
+        )
 
 
 def reopen_group_git(

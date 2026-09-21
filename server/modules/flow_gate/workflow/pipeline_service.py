@@ -632,6 +632,7 @@ def transition_document_review(
     comment: str | None = None,
     locale: str = "ko",
     review_id: Any = None,
+    dry_run: bool = False,
 ) -> dict:
     """Transition the document review state (doc_review_status column).
 
@@ -711,6 +712,14 @@ def transition_document_review(
             item["review_id"] = review_id
         existing_history.append(item)
         update_fields["rejection_history"] = json.dumps(existing_history, ensure_ascii=False)
+
+    if dry_run:
+        return {
+            "document": doc,
+            "current_review_status": current_review_status,
+            "next_status": next_status,
+            "update_fields": update_fields,
+        }
 
     updated = db_docs.update(doc_id, update_fields)
     if not updated:
@@ -792,6 +801,99 @@ def transition_document_review(
                 "[work plan] final expansion after approving %s failed: %s", doc_id, exc, exc_info=True
             )
     return updated
+
+
+def precheck_document_review_transition(
+    *,
+    doc_id: str,
+    action: str,
+    actor_user_id: str,
+    user_permissions: set[str],
+    comment: str | None = None,
+    locale: str = "ko",
+    review_id: Any = None,
+) -> dict:
+    """Run the canonical review rules without writing documents or events."""
+    return transition_document_review(
+        doc_id=doc_id,
+        action=action,
+        actor_user_id=actor_user_id,
+        user_permissions=user_permissions,
+        comment=comment,
+        locale=locale,
+        review_id=review_id,
+        dry_run=True,
+    )
+
+
+def commit_final_approval(
+    *,
+    doc_id: str,
+    actor_user_id: str,
+    user_permissions: set[str],
+    locale: str = "ko",
+    consume_hook: Any = None,
+) -> dict:
+    """Atomically approve one AC and finish its canonical R/B root.
+
+    ``consume_hook`` is the T#2 seam: when supplied it runs inside the same
+    transaction after both CAS updates and may raise (or return ``False``) to
+    roll the whole unit back.
+    """
+    store = get_store()
+    with store.transaction():
+        plan = precheck_document_review_transition(
+            doc_id=doc_id,
+            action="approve",
+            actor_user_id=actor_user_id,
+            user_permissions=user_permissions,
+            locale=locale,
+        )
+        doc = plan["document"]
+        if str(doc.get("type_code") or "").upper() != "AC":
+            raise TransitionError("Final approval requires an AC document")
+        root = db_docs.get_by_id(doc.get("target_id") or "")
+        if (
+            root is None
+            or root.get("group_id") != doc.get("group_id")
+            or str(root.get("type_code") or "").upper() not in _WORKFLOW_ROOT_TYPES
+            or root.get("doc_review_status") != "wf_in_progress"
+        ):
+            raise TransitionError("Workflow root is not in wf_in_progress")
+
+        updated_doc = db_docs.update_review_status_cas(
+            doc_id, plan["current_review_status"], plan["next_status"]
+        )
+        if updated_doc is None:
+            raise TransitionError("Final approval document changed concurrently")
+        updated_root = db_docs.update_review_status_cas(
+            root["doc_id"], "wf_in_progress", "wf_done"
+        )
+        if updated_root is None:
+            raise TransitionError("Workflow root changed concurrently")
+
+        log_state_changed(
+            project_id=doc.get("project_id", ""),
+            actor_user_id=actor_user_id,
+            from_state=f"review:{plan['current_review_status']}",
+            to_state=f"review:{plan['next_status']}",
+            group_id=doc.get("group_id"),
+            document_id=doc.get("id"),
+            action_code="review_approve",
+        )
+        log_state_changed(
+            project_id=root.get("project_id", ""),
+            actor_user_id=actor_user_id,
+            from_state="review:wf_in_progress",
+            to_state="review:wf_done",
+            group_id=root.get("group_id"),
+            document_id=root.get("id"),
+            action_code="final_approval",
+        )
+        if consume_hook is not None and consume_hook(doc, root) is False:
+            raise TransitionError("Final approval intent was already consumed")
+
+    return {"document": updated_doc, "root": updated_root}
 
 
 # P0005/T0006: AI response length ceiling (fixed by T0006).

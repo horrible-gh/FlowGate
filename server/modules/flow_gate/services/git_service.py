@@ -653,6 +653,8 @@ def effective_src_root(project_id: Optional[str], group_id: Optional[str]) -> Op
 
 from .git.finalize import (
     ACTION_VALUES,
+    APPROVAL_FINALIZE_ACTIONS,
+    ApprovalFinalizeContext,
     DISCARDED_STATUS,
     FINALIZE_AUX_CHOICES,
     FINALIZE_MAIN_CHOICES,
@@ -670,6 +672,7 @@ from .git.finalize import (
     _groups_root_wf_done,
     _tracked_merge_blockers,
     _untracked_merge_blockers,
+    _validate_approval_context,
     finalize,
     get_finalize_state,
     group_update_untracked_recover,
@@ -679,6 +682,7 @@ from .git.finalize import (
     realize_wf_done_transition,
     reopen_group_git,
     run_approve_git_action,
+    complete_approve_git_action,
     unmerge,
     update_from_base,
 )
