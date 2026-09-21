@@ -6,6 +6,35 @@
         {{ t('main.document_preview.title') }}
       </span>
       <div class="card-actions">
+        <button
+          v-if="downloadAvailable"
+          class="btn btn-secondary btn-sm doc-markdown-download"
+          type="button"
+          :disabled="downloadBusy"
+          :title="t('main.doc_info_panel.markdown_download')"
+          @click="emit('download-markdown')"
+        >
+          <AppIcon name="download-simple" /> {{ t('main.doc_info_panel.markdown_download') }}
+        </button>
+        <button
+          v-if="canUploadMarkdown"
+          class="btn btn-secondary btn-sm doc-markdown-upload"
+          type="button"
+          :disabled="uploadBusy"
+          :title="t('main.document_preview.upload')"
+          @click="triggerUpload"
+        >
+          <AppIcon name="upload-simple" /> {{ uploadBusy ? t('main.document_preview.uploading') : t('main.document_preview.upload') }}
+        </button>
+        <input
+          v-if="canUploadMarkdown"
+          ref="uploadFileInput"
+          type="file"
+          class="doc-markdown-upload-input"
+          accept=".md,text/markdown,text/plain"
+          hidden
+          @change="onUploadFileSelected"
+        />
         <div v-if="!readOnly && canEdit" class="edit-dropdown-wrap">
           <button class="btn btn-outline btn-sm" type="button" @click.stop="emit('toggle-edit-dropdown')">
             <AppIcon name="pencil-simple" /> {{ t('main.document_preview.edit') }}
@@ -34,16 +63,6 @@
         <span v-else class="ro-badge ro-badge-sm">
           <AppIcon name="lock-simple" /> {{ t('main.document_preview.edit_locked') }}
         </span>
-        <button
-          v-if="downloadAvailable"
-          class="btn btn-secondary btn-sm doc-markdown-download"
-          type="button"
-          :disabled="downloadBusy"
-          :title="t('main.doc_info_panel.markdown_download')"
-          @click="emit('download-markdown')"
-        >
-          <AppIcon name="download-simple" /> {{ t('main.doc_info_panel.markdown_download') }}
-        </button>
       </div>
     </div>
     <div class="card-bd">
@@ -115,6 +134,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppIcon from '@shared/AppIcon.vue'
 import { isFileTab, type Tab } from '../../stores/tabs'
@@ -122,7 +142,7 @@ import FileDiffViewer from '../FileDiffViewer.vue'
 import MdViewer from '../MdViewer.vue'
 import TextViewer from '../TextViewer.vue'
 
-defineProps<{
+const props = defineProps<{
   tab: Tab
   readOnly: boolean
   canEdit: boolean
@@ -130,6 +150,7 @@ defineProps<{
   textWrapEnabled: boolean
   downloadAvailable: boolean
   downloadBusy: boolean
+  uploadBusy: boolean
 }>()
 
 const emit = defineEmits<{
@@ -141,6 +162,7 @@ const emit = defineEmits<{
   'open-full-view': []
   'toggle-edit-dropdown': []
   'download-markdown': []
+  'upload-markdown': [file: File]
   'update:text-wrap-enabled': [enabled: boolean]
   'bind-md-viewer': [instance: unknown]
   'bind-text-viewer': [instance: unknown]
@@ -149,6 +171,29 @@ const { t } = useI18n()
 
 function onTextWrapChange(event: Event) {
   emit('update:text-wrap-enabled', (event.target as HTMLInputElement).checked)
+}
+
+// T0004 §5/§8 — this component only starts the file pick and relays the chosen File; the
+// actual read (FileReader/BOM strip), the content PATCH and every refresh belong to
+// MainPanel, which already owns that orchestration for the direct-edit save path.
+//
+// rev2 review fix — GenericDocumentBody also renders editable Markdown *source file* tabs
+// (FileExplorer's isFileTab tabs share this same body), and MainPanel's upload relay always
+// PATCHes /api/v1/documents/content with the tab id as doc_id. That only makes sense for an
+// actual document tab, so upload must not appear on a file tab even when canEdit is true.
+const canUploadMarkdown = computed(() => !props.readOnly && props.canEdit && !isFileTab(props.tab))
+const uploadFileInput = ref<HTMLInputElement | null>(null)
+
+function triggerUpload() {
+  uploadFileInput.value?.click()
+}
+
+function onUploadFileSelected(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0] ?? null
+  input.value = ''
+  if (!file) return
+  emit('upload-markdown', file)
 }
 </script>
 
