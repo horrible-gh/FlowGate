@@ -31,22 +31,35 @@ from modules.flow_gate.services import ai_invoke_service, dashboard_service
 @pytest.mark.parametrize(
     "outcome,stop_code,end_reason,expected",
     [
+        # Normal terminal states, including continuation boundaries, are successful.
         ("complete", None, "completed", True),
+        ("complete", "hop_handoff", "exited", True),
+        ("complete", "chain_completed", "exited", True),
         ("complete", None, None, True),
-        ("COMPLETE", "", "", True),  # case/whitespace-insensitive on both fields
-        ("partial", None, "completed", False),  # outcome must be exactly 'complete'
-        (None, None, "completed", False),  # missing outcome
-        ("complete", "worker_failed", "completed", False),  # any stop_code blocks success
+        ("COMPLETE", "", "", True),  # outcome/end_reason matching is case-insensitive
+        (" complete ", None, "completed", True),  # surrounding whitespace is ignored
+        ("complete", "   ", "completed", True),
+        # Failure/interruption stop codes remain unsuccessful even with complete outcome.
+        ("complete", "head_slot_mismatch", "exited", False),
+        ("complete", "approve_denied", "exited", False),
+        ("complete", "approve_failed", "exited", False),
+        ("complete", "advance_blocked", "exited", False),
+        ("complete", "review_hold", "exited", False),
+        ("complete", "user_paused", "exited", False),
+        ("complete", "worker_failed", "completed", False),  # unknown codes fail closed
+        # Existing non-complete outcomes and failure end reasons keep their meaning.
+        ("partial", None, "completed", False),
+        ("failed", None, "completed", False),
+        ("error", None, "completed", False),
+        (None, None, "completed", False),
         ("complete", None, "cancelled", False),
         ("complete", None, "canceled", False),
         ("complete", None, "failed", False),
         ("complete", None, "error", False),
         ("complete", None, "stopped", False),
         ("complete", None, "timeout", False),
-        ("complete", None, "TIMEOUT", False),  # end_reason check is also case-insensitive
-        (" complete ", None, "completed", True),  # outcome whitespace is stripped, not just cased
-        ("complete", None, " timeout ", False),  # end_reason whitespace is stripped before the failure-set check
-        ("complete", "   ", "completed", True),  # a whitespace-only stop_code strips to empty: does not block success
+        ("complete", None, "TIMEOUT", False),
+        ("complete", None, " timeout ", False),
     ],
 )
 def test_ai_run_succeeded_matrix(outcome, stop_code, end_reason, expected):
@@ -156,7 +169,7 @@ def test_feed_three_sections_page_independently(empty_store, monkeypatch):
     ai_row_1 = {
         "run_id": "run-1", "doc_ref": "flowgate.default.0471.0003-T", "doc_title": "Run 1",
         "doc_type_code": "T", "outcome": "complete", "docs_reached": 3, "docs_target": 3,
-        "end_reason": "completed", "stop_code": None, "provider_name": "anthropic",
+        "end_reason": "exited", "stop_code": "hop_handoff", "provider_name": "anthropic",
         "finished_at": "2026-06-12T00:05:00Z", "last_message_excerpt": "done",
     }
     ai_row_2 = {
@@ -197,7 +210,7 @@ def test_feed_three_sections_page_independently(empty_store, monkeypatch):
             {
                 "run_id": "run-1", "doc_ref": "flowgate.default.0471.0003-T", "doc_title": "Run 1",
                 "doc_type_code": "T", "succeeded": True, "outcome": "complete", "docs_reached": 3,
-                "docs_target": 3, "end_reason": "completed", "stop_code": None,
+                "docs_target": 3, "end_reason": "exited", "stop_code": "hop_handoff",
                 "provider_name": "anthropic", "finished_at": "2026-06-12T00:05:00.000Z",
                 "last_message_excerpt": "done",
             },

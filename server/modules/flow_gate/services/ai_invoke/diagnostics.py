@@ -39,14 +39,26 @@ from .runtime import (
 # process. Memory wins whenever both would answer — the moment right after
 # finalize persists the row is the only overlap, and it is the freshest source.
 
+_AI_RUN_SUCCESS_STOP_CODES = frozenset({"", "hop_handoff", "chain_completed"})
+_AI_RUN_FAILURE_END_REASONS = frozenset({
+    "cancelled", "canceled", "failed", "error", "stopped", "timeout",
+})
+
+
 def ai_run_succeeded(row: dict) -> bool:
-    """Return the single terminal success verdict used by list and detail views."""
+    """Return the single terminal success verdict used by list and detail views.
+
+    Only normal completion stop codes are accepted.  Unknown codes therefore remain
+    fail-closed alongside explicit failure/interruption codes.
+    """
     outcome = str(row.get("outcome") or "").strip().lower()
     stop_code = str(row.get("stop_code") or "").strip()
     end_reason = str(row.get("end_reason") or "").strip().lower()
-    return outcome == "complete" and not stop_code and end_reason not in {
-        "cancelled", "canceled", "failed", "error", "stopped", "timeout",
-    }
+    return (
+        outcome == "complete"
+        and stop_code in _AI_RUN_SUCCESS_STOP_CODES
+        and end_reason not in _AI_RUN_FAILURE_END_REASONS
+    )
 
 
 def get_status(run_id: str) -> dict:
