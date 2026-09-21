@@ -177,6 +177,9 @@ def build_prompt(
     lines.append(f"[{_label('workflow.context.expected_output')}]")
     lines.append(expected)
     lines.append("")
+    lines.append("[Snapshot request safety]")
+    lines.append("Request a source snapshot only when FlowGate read/search/git tools are insufficient or a real file tree is required. For reading, comparison, or merge-conflict analysis, use existing tools and Merge Context Tool first; requests require a human decision and never create files automatically.")
+    lines.append("")
     lines.append(f"[{_label('workflow.context.next_actions')}]")
     _append_next_actions(lines, doc, group)
 

@@ -719,7 +719,9 @@ def _content_notices(ctx: dict) -> dict:
         keys.append("assigned_scope_only")
     # A key requested by two conditions still prints once.
     ordered = list(dict.fromkeys(keys))
-    return {"lines": [_copy(NOTICE_LINES, ctx["locale"], key) for key in ordered]}
+    lines = [_copy(NOTICE_LINES, ctx["locale"], key) for key in ordered]
+    lines.append("Source snapshots are exceptional: request one only when FlowGate read/search/git tools are insufficient or a real file tree is required. Prefer existing tools and Merge Context Tool for reading, comparison, and merge-conflict analysis. A request requires human approval and never creates files automatically.")
+    return {"lines": lines}
 
 
 def _content_group_documents(ctx: dict) -> dict:

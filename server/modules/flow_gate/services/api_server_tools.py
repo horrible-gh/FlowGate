@@ -13,11 +13,11 @@ from pathlib import Path
 from typing import Any
 
 from modules.flow_gate.db import documents as db_documents
-from modules.flow_gate.services import git_service, help_catalog, process_runner, remote_tool_service, test_command_service, token_service, tool_registry
+from modules.flow_gate.services import git_service, help_catalog, process_runner, remote_tool_service, snapshot_request_service, test_command_service, token_service, tool_registry
 from modules.flow_gate.utils.help_url import help_url
 
 DOCUMENT_SCOPES = frozenset({"new", "edit", "review", "test_run"})
-BASE_NAMES = ("read_document", "read_help", "create_question", "register_document")
+BASE_NAMES = ("read_document", "read_help", "create_question", "request_source_snapshot", "register_document")
 SOURCE_NAMES = ("read_source_file", "search_source", "glob_source", "stat_source", "diff_source", "log_source", "show_commit_source", "merge_preview_source", "patch_source_file", "write_source_file", "remove_source_file", "run_test")
 # Provider names are stable aliases; every source operation dispatches through the HTTP remote service.
 SOURCE_OPS = {
@@ -92,6 +92,7 @@ SCHEMAS = {
     "read_document": READ_DOCUMENT_SCHEMA,
     "read_help": READ_HELP_SCHEMA,
     "create_question": _obj({"questions": {"type": "array", "minItems": 1, "items": _obj({"title": {"type": "string"}, "body": {"type": "string", "minLength": 1}, "options": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 200}, "maxItems": 10}}, ["body"])}}, ["questions"]),
+    "request_source_snapshot": _obj({"reason":{"type":"string","minLength":1},"scope":{"type":"string","enum":["single_file","selected_files","directory","whole_source"]},"requested_paths":{"type":"array","items":{"type":"string","minLength":1}},"purpose":{"type":"string","minLength":1},"source_kind":{"type":"string","enum":["current_worktree"]}},["reason","scope","requested_paths","purpose"]),
 }
 
 REGISTER_SCHEMAS = {
@@ -104,6 +105,7 @@ REGISTER_SCHEMAS = {
 }
 
 DESCRIPTIONS = {name: name.replace("_", " ") for name in (*BASE_NAMES, *SOURCE_NAMES)}
+DESCRIPTIONS["request_source_snapshot"] = ("Request a human-approved disposable current-worktree snapshot only when existing FlowGate read/search/git tools are insufficient or a real file tree is required. Prefer those tools and Merge Context Tool for reading, comparison, and merge-conflict analysis; this request never creates files or approves itself.")
 DESCRIPTIONS["read_help"] = (
     "Read personalized help without HTTP. Empty input returns the help index; "
     "item returns one item; item plus child returns one child. child requires item."
@@ -239,6 +241,16 @@ def read_help(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     except help_catalog.HelpSupplierError:
         return 500, {"ok": False, "http_status": 500, "error_message": f"Failed to build help item '{item}'", "help_url": help_url()}
     return 200, {**envelope, **body}
+
+
+def request_source_snapshot(run: dict, tool_input: dict) -> tuple[int, dict]:
+    data = dict(tool_input)
+    data.update({"project_id":run.get("project_id"),"group_id":run.get("group_id"),"run_id":run.get("run_id"),"token_id":run.get("token_id"),"provider_id":run.get("provider_id")})
+    try:
+        row = snapshot_request_service.create_request(data, str(run.get("issued_to") or "ai-worker"))
+    except snapshot_request_service.SnapshotRequestError as exc:
+        raise ToolError(exc.status, exc.code, exc.message) from exc
+    return 201, {"ok":True,"request":row,"materialized":False,"requires_human_decision":True}
 
 
 def source_call(run: dict, raw_token: str, name: str, tool_input: dict) -> tuple[int, dict]:

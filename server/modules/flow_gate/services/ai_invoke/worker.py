@@ -1394,6 +1394,8 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                         _status, resp = api_server_tools.source_call(run, current_token, call["name"], call["input"])
                     elif call["name"] == "run_test":
                         _status, resp = api_server_tools.run_test(run, call["input"], _svc()._remaining_sec(run))
+                    elif call["name"] == "request_source_snapshot":
+                        _status, resp = api_server_tools.request_source_snapshot(run, call["input"])
                     elif call["name"] == "read_document":
                         _status, resp = _svc()._api_read_document(run, current_token, call["input"])
                     elif call["name"] == "read_help":
