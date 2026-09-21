@@ -522,55 +522,37 @@ describe('ContinuousWorkDialog paired instruction mentions (0408 T0020)', () => 
   })
 })
 
-// 0408 M0019 재반려 3 — "문서에서 멘트와 프로바이더를 변경했는데 왜 다이얼로그에 적용되지 않는거지?"
-// The sequence rows are the plan as it was when somebody last poured it. The dialog reads the
-// plan's CURRENT projection (the same L0010 §2.6 call the apply preview makes) so the document
-// stays the thing a person edits.
-describe('ContinuousWorkDialog reads the live work plan (0408 M0019 재반려 3)', () => {
-  const PREVIEW_URL = `/api/v1/documents/${encodeURIComponent(WP_DOC)}/work-plan/apply/preview`
-
-  function planPreview(notes: Record<string, string>, providers: Record<string, string> = {}) {
-    return {
-      data: {
-        wp_doc_id: WP_DOC,
-        wp_revision_no: 12,
-        fill_preview: { note_overrides: notes, provider_overrides: providers },
-      },
-    }
-  }
-
-  it('shows the plan\'s current mention and provider, not the poured snapshot', async () => {
-    postRequest.mockResolvedValue(planPreview({ 2: 'edited in the document' }, { 2: 'other' }))
+// 0554 T0012: apply is the snapshot boundary. A later run reads the saved sequence and must
+// not silently re-project a newer WP revision into an already approved workflow.
+describe('ContinuousWorkDialog reads the durable sequence snapshot (0554 T0012)', () => {
+  it('shows the poured mention and provider without re-reading the work plan', async () => {
     const wrapper = mountDialog('default', pairedItems)
     await flushPromises()
     await openMessages()
 
-    expect(postRequest).toHaveBeenCalledWith(PREVIEW_URL, { instruction_mode: 'auto_approved' })
+    expect(postRequest).not.toHaveBeenCalled()
     const inputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
-    expect(inputs[0].value).toBe('edited in the document')
+    expect(inputs[0].value).toBe('NR plan handoff')
     await openProviders()
-    expect(selects()[0].value).toBe('other')
+    expect(selects()[0].value).toBe('stored')
 
     const payload = await confirm(wrapper)
-    expect(payload.messageOverrides).toEqual({ 2: 'edited in the document' })
-    expect(payload.providerOverrides).toEqual({ 2: 'other' })
+    expect(payload.messageOverrides).toEqual({})
+    expect(payload.providerOverrides).toEqual({})
   })
 
-  it('re-reads the projection when the 실행 방식 changes, because the fold moves with it', async () => {
-    postRequest.mockResolvedValue(planPreview({ 2: 'folded onto the report' }))
+  it('changes worker rows by mode while retaining each row\'s saved snapshot', async () => {
     mountDialog('default', pairedItems)
     await flushPromises()
-    postRequest.mockResolvedValue(planPreview({ 1: 'the N step itself' }))
     await switchInstructionMode('ai_direct')
     await openMessages()
 
-    expect(postRequest).toHaveBeenLastCalledWith(PREVIEW_URL, { instruction_mode: 'ai_direct' })
+    expect(postRequest).not.toHaveBeenCalled()
     const inputs = document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
-    expect(inputs[0].value).toBe('the N step itself')
+    expect(inputs[0].value).toBe('N plan handoff')
   })
 
   it('never walks over a mention the person just typed', async () => {
-    postRequest.mockResolvedValue(planPreview({ 2: 'from the plan' }))
     mountDialog('default', pairedItems)
     await flushPromises()
     await openMessages()
@@ -585,8 +567,7 @@ describe('ContinuousWorkDialog reads the live work plan (0408 M0019 재반려 3)
     expect(after[1].value).toBe('typed by hand')
   })
 
-  it('keeps every stored value when the plan cannot be read', async () => {
-    postRequest.mockRejectedValue(new Error('plan gone'))
+  it('keeps every stored value independently of plan availability', async () => {
     const wrapper = mountDialog('default', pairedItems)
     await flushPromises()
     await openMessages()

@@ -468,6 +468,11 @@ export interface SequenceItem {
   providerId: string | null
   providerDisplayName: string | null
   providerRegistered: boolean | null
+  reviewCount?: number
+  reviewerProviderId?: string | null
+  reviewerProviderDisplayName?: string | null
+  preInstructionText?: string | null
+  preInstructionAttachment?: Record<string, unknown> | null
   // 0399 T0016 / D0010 §3.4: "줄의 문서 종류를 다른 것으로 바꾸면 그 멘트는 더 이상 그
   // 단계 이야기가 아니므로 비운다." — set the moment changeRowType() runs, never reset.
   typeChanged: boolean
@@ -489,6 +494,11 @@ export interface PourRow {
   provider_id: string | null
   provider_display_name: string | null
   provider_registered: boolean | null
+  review_count?: number
+  reviewer_provider_id?: string | null
+  reviewer_provider_display_name?: string | null
+  pre_instruction_text?: string | null
+  pre_instruction_attachment?: Record<string, unknown> | null
 }
 
 export interface PourNotification {
@@ -645,6 +655,11 @@ interface ServerItem {
   provider_id?: string | null
   provider_display_name?: string | null
   provider_registered?: boolean | null
+  review_count?: number
+  reviewer_provider_id?: string | null
+  reviewer_provider_display_name?: string | null
+  pre_instruction_text?: string | null
+  pre_instruction_attachment?: Record<string, unknown> | null
 }
 
 const loading = ref(false)
@@ -775,11 +790,13 @@ function findBlockEnd(startIdx: number): number {
 
 // 0399 L0011 §2.7: a row a person adds here starts with an empty note and no plan behind
 // it. There is nowhere else it could come from — this row was not in any plan.
-function blankRowFields(): Pick<SequenceItem, 'note' | 'noteSource' | 'origin' | 'planKey' | 'sourceDocId' | 'sourceRevisionNo' | 'providerId' | 'providerDisplayName' | 'providerRegistered' | 'typeChanged'> {
+function blankRowFields(): Pick<SequenceItem, 'note' | 'noteSource' | 'origin' | 'planKey' | 'sourceDocId' | 'sourceRevisionNo' | 'providerId' | 'providerDisplayName' | 'providerRegistered' | 'reviewCount' | 'reviewerProviderId' | 'reviewerProviderDisplayName' | 'preInstructionText' | 'preInstructionAttachment' | 'typeChanged'> {
   return {
     note: '', noteSource: null, origin: 'manual', planKey: null,
     sourceDocId: null, sourceRevisionNo: null,
     providerId: null, providerDisplayName: null, providerRegistered: null,
+    reviewCount: 0, reviewerProviderId: null, reviewerProviderDisplayName: null,
+    preInstructionText: null, preInstructionAttachment: null,
     typeChanged: false,
   }
 }
@@ -821,6 +838,11 @@ function changeRowType(item: SequenceItem, newType: string) {
   item.label = docTypeStore.getLabel(newType)
   item.note = ''
   item.noteSource = null
+  item.reviewCount = 0
+  item.reviewerProviderId = null
+  item.reviewerProviderDisplayName = null
+  item.preInstructionText = null
+  item.preInstructionAttachment = null
   item.typeChanged = true
   const seq = sequence.value.filter(s => !(s.isAuto && s.autoOfId === item.id))
   const idx = seq.findIndex(s => s.id === item.id)
@@ -1112,6 +1134,11 @@ function dbItemsToSequence(items: ServerItem[]): SequenceItem[] {
       providerId: it.provider_id ?? null,
       providerDisplayName: it.provider_display_name ?? null,
       providerRegistered: it.provider_registered ?? null,
+      reviewCount: it.review_count ?? 0,
+      reviewerProviderId: it.reviewer_provider_id ?? null,
+      reviewerProviderDisplayName: it.reviewer_provider_display_name ?? null,
+      preInstructionText: it.pre_instruction_text ?? null,
+      preInstructionAttachment: it.pre_instruction_attachment ?? null,
       typeChanged: false,
     }
     if (AUTO_TYPES.has(it.type)) {
@@ -1156,7 +1183,11 @@ async function loadSequence() {
     lockedItems.value = items.filter(it => it.status !== 'pending')
     const pendingItems = items.filter(it => it.status === 'pending')
     metaContractMissing.value = legacyShape || pendingItems.some(row =>
-      !['note', 'source_doc_id', 'source_revision_no', 'provider_id', 'provider_display_name'].every(key =>
+      ![
+        'note', 'source_doc_id', 'source_revision_no', 'provider_id', 'provider_display_name',
+        'review_count', 'reviewer_provider_id', 'reviewer_provider_display_name',
+        'pre_instruction_text', 'pre_instruction_attachment',
+      ].every(key =>
         Object.prototype.hasOwnProperty.call(row, key),
       ),
     )
@@ -1192,6 +1223,11 @@ function applyPour(payload: PourPayload) {
       provider_id: row.provider_id,
       provider_display_name: row.provider_display_name,
       provider_registered: row.provider_registered,
+      review_count: row.review_count ?? 0,
+      reviewer_provider_id: row.reviewer_provider_id ?? null,
+      reviewer_provider_display_name: row.reviewer_provider_display_name ?? null,
+      pre_instruction_text: row.pre_instruction_text ?? null,
+      pre_instruction_attachment: row.pre_instruction_attachment ?? null,
     }))
   sequence.value = payload.rows
     .filter(row => !row.locked)
@@ -1210,6 +1246,11 @@ function applyPour(payload: PourPayload) {
       providerId: row.provider_id ?? null,
       providerDisplayName: row.provider_display_name ?? null,
       providerRegistered: row.provider_registered ?? null,
+      reviewCount: row.review_count ?? 0,
+      reviewerProviderId: row.reviewer_provider_id ?? null,
+      reviewerProviderDisplayName: row.reviewer_provider_display_name ?? null,
+      preInstructionText: row.pre_instruction_text ?? null,
+      preInstructionAttachment: row.pre_instruction_attachment ?? null,
       typeChanged: false,
     }))
   // The report rows arrive from the server already paired; relink each to the row above it
@@ -1262,6 +1303,11 @@ async function save() {
         source_revision_no: it.sourceRevisionNo,
         provider_id: it.providerId,
         provider_display_name: it.providerDisplayName,
+        review_count: it.reviewCount ?? 0,
+        reviewer_provider_id: it.reviewerProviderId ?? null,
+        reviewer_provider_display_name: it.reviewerProviderDisplayName ?? null,
+        pre_instruction_text: it.preInstructionText ?? null,
+        pre_instruction_attachment: it.preInstructionAttachment ?? null,
       })),
       // P0013 ②: sent only when a plan was poured. On an ordinary save there is no earlier
       // snapshot to be stale against, and demanding one would break every other caller.

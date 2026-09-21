@@ -15,7 +15,8 @@ import ContinuousWorkDialog from '@main/components/ContinuousWorkDialog.vue'
 //   2) 검수 행은 [프로바이더]·[전달멘트] 와 똑같은 executionSteps 다.
 //   3) 횟수 옵션의 DOM 순서는 정확히 -1, 0, 1, 2, 3 이고 모든 행의 기본값은 0 이다
 //      (시안의 예시 선택값 -1,0,1,2 는 예시일 뿐 제품 기본값이 아니다).
-//   4) confirm payload 의 두 맵이 실제 item_seq 로 짝지어지고, 0 인 행은 둘 다에서 빠진다.
+//   4) confirm payload 는 시퀀스 기준값과 다른 런타임 값만 item_seq 로 싣고,
+//      명시적 0 과 검수자-only override 도 독립적으로 보존한다.
 
 const { getRequest, postRequest, putRequest } = vi.hoisted(() => ({
   getRequest: vi.fn(), postRequest: vi.fn(), putRequest: vi.fn(),
@@ -328,12 +329,10 @@ describe('ContinuousWorkDialog [검수] confirm payload (0414 T0012 작업 2)', 
     const payload = wrapper.emitted('confirm')!.at(-1)![0] as any
 
     expect(payload.reviewCountOverrides).toEqual({ 3: -1, 4: 1, 5: 2, 6: 3 })
-    // 손대지 않은 두 행(TR@4, TSR@6)의 검수자는 체인의 첫 항목이다.
+    // 검수자는 실제로 바꾼 행만 런타임 override 로 내보낸다.
     expect(payload.reviewerOverrides).toEqual({
       3: 'aip_sonnet',
-      4: 'aip_codex',
       5: 'aip_opus',
-      6: 'aip_codex',
     })
     // 값은 횟수 정수와 provider id 문자열이다 — 이름도, 화면 번호도, 문서 타입도 아니다.
     expect(Object.values(payload.reviewCountOverrides).every(v => typeof v === 'number')).toBe(true)
@@ -347,13 +346,12 @@ describe('ContinuousWorkDialog [검수] confirm payload (0414 T0012 작업 2)', 
     wrapper.unmount()
   })
 
-  it('횟수 0 인 단계는 두 맵에서 모두 빠지고, 키 공간이 일치한다', async () => {
+  it('검수자-only override 는 횟수 맵과 독립적으로 보존된다', async () => {
     const wrapper = mountDialog()
     await flushPromises()
     await openReviewTab()
 
-    // TS@5 에만 횟수를 준다. TR@4 는 검수자만 골라 두는데(횟수 0), 그 값은 나가지 않는다 —
-    // 횟수 없는 검수자 항목은 서버 정규화가 떨어뜨리는 고아다.
+    // TS@5 에는 횟수만, TR@4 에는 검수자만 고른다. 두 맵은 독립적인 런타임 차이다.
     await setSelect(countSelects()[1], '2')
     await setSelect(reviewerSelects()[0], 'aip_sonnet')
 
@@ -361,8 +359,7 @@ describe('ContinuousWorkDialog [검수] confirm payload (0414 T0012 작업 2)', 
     const payload = wrapper.emitted('confirm')!.at(-1)![0] as any
 
     expect(payload.reviewCountOverrides).toEqual({ 5: 2 })
-    expect(payload.reviewerOverrides).toEqual({ 5: 'aip_codex' })
-    expect(Object.keys(payload.reviewerOverrides)).toEqual(Object.keys(payload.reviewCountOverrides))
+    expect(payload.reviewerOverrides).toEqual({ 4: 'aip_sonnet' })
 
     wrapper.unmount()
   })
@@ -396,6 +393,36 @@ describe('ContinuousWorkDialog [검수] confirm payload (0414 T0012 작업 2)', 
 
     wrapper.unmount()
   })
+
+  it('시퀀스 기준값을 표시하고 명시적 0·검수자-only 차이만 내보낸다', async () => {
+    const baseline = seqResponse() as any
+    Object.assign(baseline.data.items[3], {
+      review_count: 2,
+      reviewer_provider_id: 'aip_sonnet',
+      reviewer_provider_display_name: 'Claude Sonnet',
+    })
+    Object.assign(baseline.data.items[4], {
+      review_count: 1,
+      reviewer_provider_id: 'aip_opus',
+      reviewer_provider_display_name: 'Claude Opus',
+    })
+    getRequest.mockResolvedValue(baseline)
+    const wrapper = mountDialog()
+    await flushPromises()
+    await openReviewTab()
+
+    expect(countSelects().map(select => select.value)).toEqual(['2', '1'])
+    expect(reviewerSelects().map(select => select.value)).toEqual(['aip_sonnet', 'aip_opus'])
+
+    await setSelect(countSelects()[0], '0')
+    await setSelect(reviewerSelects()[1], 'aip_sonnet')
+    await proceed()
+    const payload = wrapper.emitted('confirm')!.at(-1)![0] as any
+    expect(payload.reviewCountOverrides).toEqual({ 4: 0 })
+    expect(payload.reviewerOverrides).toEqual({ 5: 'aip_sonnet' })
+
+    wrapper.unmount()
+  })
 })
 
 describe('ContinuousWorkDialog [검수] 행이 사라질 때 (0414 T0012 작업 2)', () => {
@@ -417,7 +444,7 @@ describe('ContinuousWorkDialog [검수] 행이 사라질 때 (0414 T0012 작업 
     const payload = wrapper.emitted('confirm')!.at(-1)![0] as any
     expect(payload.targetSeq).toBe(4)
     expect(payload.reviewCountOverrides).toEqual({ 4: 1 })
-    expect(payload.reviewerOverrides).toEqual({ 4: 'aip_codex' })
+    expect(payload.reviewerOverrides).toEqual({})
 
     wrapper.unmount()
   })
@@ -471,7 +498,7 @@ describe('ContinuousWorkDialog [검수] 행이 사라질 때 (0414 T0012 작업 
     const payload = wrapper.emitted('confirm')!.at(-1)![0] as any
     expect(payload.autoApproveItemSeqs).toEqual([3])
     expect(payload.reviewCountOverrides).toEqual({ 4: 1 })
-    expect(payload.reviewerOverrides).toEqual({ 4: 'aip_codex' })
+    expect(payload.reviewerOverrides).toEqual({})
 
     wrapper.unmount()
   })

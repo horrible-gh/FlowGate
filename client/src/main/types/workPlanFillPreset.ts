@@ -30,6 +30,8 @@ export interface WorkPlanFillPreset {
   targetSeq: number
   providerOverrides: Record<number, string>
   messageOverrides: Record<number, string>
+  reviewCountOverrides?: Record<number, number>
+  reviewerOverrides?: Record<number, string>
   defaultMessage: string
   filledSeqs: number[]
   warnings: WorkPlanWarning[]

@@ -185,6 +185,9 @@ def test_append_carries_plan_notes_and_their_origin(wired):
         "plan_key": None, "source_doc_id": WP_DOC_ID, "source_revision_no": 1,
         "source_freshness": "current", "source_current_revision_no": 1,
         "provider_id": None, "provider_display_name": None, "provider_registered": None,
+        "review_count": 0, "reviewer_provider_id": None,
+        "reviewer_provider_display_name": None, "pre_instruction_text": None,
+        "pre_instruction_attachment": None,
     }
 
 
@@ -433,6 +436,30 @@ def test_saving_stores_the_note_and_where_the_row_came_from(save_wired):
         # 0434 T0004 F1: worker-shaped edits omit reports; the rebuilt row keeps the handoff.
         ("TR", "테스트 포함 구현", WP_DOC_ID, 1),
     ]
+
+
+def test_partial_sequence_edit_preserves_execution_metadata(save_wired):
+    inserted, stored = save_wired
+    stored[-1].update({
+        "review_count": 2,
+        "reviewer_provider_id": "aip_review",
+        "reviewer_provider_display_name": "Reviewer",
+        "pre_instruction_text": "keep me",
+        "pre_instruction_attachment_json": '{"stored_name":"brief.txt"}',
+    })
+
+    wds.edit_workflow_pending(OWNER_DOC_ID, [
+        {"type": "P", "label": "프로토콜설계"},
+        {"type": "D", "label": "기본설계"},
+    ])
+
+    assert inserted[0]["review_count"] == 2
+    assert inserted[0]["reviewer_provider_id"] == "aip_review"
+    assert inserted[0]["reviewer_provider_display_name"] == "Reviewer"
+    assert inserted[0]["pre_instruction_text"] == "keep me"
+    assert inserted[0]["pre_instruction_attachment"] == {
+        "stored_name": "brief.txt"
+    }
 
 
 def test_saving_retrims_the_note_it_is_handed(save_wired):

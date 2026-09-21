@@ -110,6 +110,72 @@ def test_ai_direct_projection_does_not_fold():
     assert out["provider_overrides"] == {"1": "p1"} and out["folded"] == []
 
 
+def test_execution_settings_fold_review_but_never_pre_instruction():
+    instruction = {
+        **step("T#1", "p1", "instruction note"),
+        "review_count": 2,
+        "reviewer_provider_id": "reviewer",
+        "reviewer_provider_display_name": "Reviewer",
+        "pre_instruction_text": "read this first",
+        "pre_instruction_attachment": {"stored_name": "brief.txt"},
+    }
+    result_step = {
+        **step("TR#1", None, "result note"),
+        "review_count": 0,
+        "reviewer_provider_id": None,
+    }
+    items = [item(1, "T"), item(2, "TR")]
+    registry = REGISTRY + [{"id": "reviewer", "name": "Reviewer"}]
+
+    folded = svc.project(
+        [instruction, result_step],
+        svc.build_step_map([instruction, result_step], items),
+        items,
+        "auto_approved",
+        registry,
+    )
+    assert folded["review_count_overrides"] == {"2": 2}
+    assert folded["reviewer_overrides"] == {"2": "reviewer"}
+    assert folded["pre_instruction_texts"] == {}
+    assert folded["pre_instruction_attachments"] == {}
+    assert {
+        "key": "T#1",
+        "field": "pre_instruction",
+        "item_seq": 1,
+        "reason": "instruction_step_is_server_assembled_no_worker_target",
+    } in folded["unfilled"]
+
+    direct = svc.project(
+        [instruction, result_step],
+        svc.build_step_map([instruction, result_step], items),
+        items,
+        "ai_direct",
+        registry,
+    )
+    assert direct["review_count_overrides"] == {"1": 2}
+    assert direct["pre_instruction_texts"] == {"1": "read this first"}
+    assert direct["pre_instruction_attachments"] == {
+        "1": {"stored_name": "brief.txt"}
+    }
+
+
+def test_review_projection_has_no_wrong_pair_leakage():
+    steps = [
+        {**step("T#1"), "review_count": 1, "pre_instruction_text": "I1"},
+        {**step("TR#1"), "review_count": 0},
+        {**step("T#2"), "review_count": 2, "pre_instruction_text": "I2"},
+        {**step("TR#2"), "review_count": 3},
+    ]
+    items = [
+        item(1, "T"), item(2, "TR"), item(3, "T"), item(4, "TR"),
+    ]
+    out = svc.project(
+        steps, svc.build_step_map(steps, items), items, "auto_approved", REGISTRY,
+    )
+    assert out["review_count_overrides"] == {"2": 1, "4": 3}
+    assert out["pre_instruction_texts"] == {}
+
+
 def test_ts_never_folds_in_auto_mode():
     steps = [step("TS#1")]
     items = [item(1, "TS"), item(2, "TSR")]

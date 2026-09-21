@@ -1344,9 +1344,11 @@ def start_run(
         )
         if mode == "continuous" else None
     )
-    hop_review_count = review.resolve_review_count(review_count_overrides, hop_item_seq)
+    hop_review_count = review.resolve_review_count(
+        review_count_overrides, hop_item_seq, doc_ref
+    )
     hop_reviewer_provider_id = (
-        review.resolve_reviewer(reviewer_overrides, hop_item_seq, project_id)
+        review.resolve_reviewer(reviewer_overrides, hop_item_seq, project_id, doc_ref)
         if hop_review_count else None
     )
     if document_review_loop is not None:

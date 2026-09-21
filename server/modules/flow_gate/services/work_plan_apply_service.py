@@ -271,6 +271,12 @@ def _first_pair_after(items: Iterable[dict], source_seq: int, pair_type: str) ->
 # L0010 §2.6 / §4.2
 def project(plan_steps: Iterable[dict], step_map: Iterable[dict], items: Iterable[dict],
             instruction_mode: str, provider_registry: Any) -> dict:
+    """Project every execution setting through the same logical-step mapping.
+
+    Provider/note and review policy follow the effective worker target.  Pre-instruction is
+    deliberately different: an auto-assembled instruction has no worker, so its text/file is
+    reported as unapplied instead of leaking into the paired result prompt.
+    """
     mode = instruction_mode if instruction_mode in INSTRUCTION_MODES else "auto_approved"
     rows = list(step_map or [])
     mapping = {str(row.get("key")): row for row in rows}
@@ -292,6 +298,13 @@ def project(plan_steps: Iterable[dict], step_map: Iterable[dict], items: Iterabl
         target_seq, is_folded = source_seq, False
         code = str(step.get("type") or "").upper()
         if mode == "auto_approved" and code in INSTRUCTION_AUTO_TYPES:
+            if step.get("pre_instruction_text") or step.get("pre_instruction_attachment"):
+                unfilled.append({
+                    "key": key,
+                    "field": "pre_instruction",
+                    "item_seq": source_seq,
+                    "reason": "instruction_step_is_server_assembled_no_worker_target",
+                })
             target = _first_pair_after(items, source_seq, AUTO_REPORT_MAP.get(code, ""))
             if target:
                 target_seq, is_folded = _int(target.get("item_seq")), True
@@ -304,8 +317,14 @@ def project(plan_steps: Iterable[dict], step_map: Iterable[dict], items: Iterabl
 
     provider_out: dict[str, str] = {}
     note_out: dict[str, str] = {}
+    review_count_out: dict[str, int] = {}
+    reviewer_out: dict[str, str] = {}
+    reviewer_name_out: dict[str, str] = {}
+    pre_instruction_text_out: dict[str, str] = {}
+    pre_instruction_attachment_out: dict[str, dict] = {}
+    execution_item_seqs: set[int] = set()
 
-    def put(step: dict, target_seq: int, absent_only: bool) -> None:
+    def put(step: dict, target_seq: int, absent_only: bool, *, allow_pre_instruction: bool) -> None:
         target = str(target_seq)
         provider, note = _usable_provider(step, registry), _usable_note(step)
         if provider is not None and (not absent_only or target not in provider_out):
@@ -321,14 +340,57 @@ def project(plan_steps: Iterable[dict], step_map: Iterable[dict], items: Iterabl
         if note is None:
             unfilled.append({"key": step.get("key"), "reason": "note_empty"})
 
+        execution_item_seqs.add(int(target_seq))
+        count = _int(step.get("review_count"), 0)
+        # A WorkPlan's canonical 0 is its empty/default policy.  It must not mask a folded,
+        # enabled instruction policy on the same effective result row.
+        if count != 0 and (not absent_only or target not in review_count_out):
+            review_count_out[target] = count
+            reviewer_id = step.get("reviewer_provider_id")
+            if reviewer_id:
+                reviewer_out[target] = str(reviewer_id)
+                reviewer_row = registry.get(str(reviewer_id)) or {}
+                reviewer_name_out[target] = str(
+                    reviewer_row.get("display_name")
+                    or reviewer_row.get("name")
+                    or step.get("reviewer_provider_display_name")
+                    or reviewer_id
+                )
+        if allow_pre_instruction:
+            text = step.get("pre_instruction_text")
+            attachment = step.get("pre_instruction_attachment")
+            if text is not None and str(text) and (not absent_only or target not in pre_instruction_text_out):
+                pre_instruction_text_out[target] = str(text)
+            if isinstance(attachment, dict) and (not absent_only or target not in pre_instruction_attachment_out):
+                pre_instruction_attachment_out[target] = dict(attachment)
+
     for step, target, _source in own:  # own values win
-        put(step, target, False)
+        put(step, target, False, allow_pre_instruction=True)
     for step, target, source in sorted(tucked, key=lambda row: row[2], reverse=True):
-        put(step, target, True)  # folded values fill only empty cells
-    filled = sorted({int(x) for x in provider_out} | {int(x) for x in note_out})
+        # Clear any stale baseline on the server-assembled instruction slot. Review policy
+        # folds to the paired result; pre-instruction never does.
+        execution_item_seqs.add(int(source))
+        put(step, target, True, allow_pre_instruction=False)
+
+    filled = sorted(
+        {int(x) for x in provider_out}
+        | {int(x) for x in note_out}
+        | {int(x) for x in review_count_out}
+        | {int(x) for x in pre_instruction_text_out}
+        | {int(x) for x in pre_instruction_attachment_out}
+    )
     return {
-        "provider_overrides": provider_out, "note_overrides": note_out,
-        "filled_item_seqs": filled, "folded": folded, "unfilled": unfilled,
+        "provider_overrides": provider_out,
+        "note_overrides": note_out,
+        "review_count_overrides": review_count_out,
+        "reviewer_overrides": reviewer_out,
+        "reviewer_display_names": reviewer_name_out,
+        "pre_instruction_texts": pre_instruction_text_out,
+        "pre_instruction_attachments": pre_instruction_attachment_out,
+        "execution_item_seqs": sorted(execution_item_seqs),
+        "filled_item_seqs": filled,
+        "folded": folded,
+        "unfilled": unfilled,
     }
 
 
@@ -423,7 +485,13 @@ def build_warnings(*, plan_steps: list[dict], step_map: list[dict], provider_reg
     ):
         if keys:
             result.append(_warning(code, locale, keys))
-    if not projection.get("provider_overrides") and not projection.get("note_overrides"):
+    if not any(projection.get(key) for key in (
+        "provider_overrides",
+        "note_overrides",
+        "review_count_overrides",
+        "pre_instruction_texts",
+        "pre_instruction_attachments",
+    )):
         result.append(_warning("nothing_to_fill", locale))
     folded = [row.get("from_key") for row in projection.get("folded") or []]
     if folded:
@@ -523,7 +591,13 @@ def _preview_apply_blocker(*, sequence_decided: bool, target_seq: Optional[int],
         return "workflow_not_decided"
     if target_seq is None:
         return "unmatched_plan_steps" if has_unmatched_steps else "no_target"
-    if not projection.get("provider_overrides") and not projection.get("note_overrides"):
+    if not any(projection.get(key) for key in (
+        "provider_overrides",
+        "note_overrides",
+        "review_count_overrides",
+        "pre_instruction_texts",
+        "pre_instruction_attachments",
+    )):
         return "nothing_to_fill"
     return None
 
@@ -674,16 +748,15 @@ def apply(*, doc: dict, owner_doc: dict, plan: dict, plan_path: Path, providers:
                 sequence = db_wfseq.get_sequence_by_doc_id(owner_id)
             for item in proposed:
                 item_seq = _int(item.get("item_seq"))
-                provider_id = projection["provider_overrides"].get(str(item_seq))
+                key = str(item_seq)
+                provider_id = projection["provider_overrides"].get(key)
                 provider = provider_registry.get(str(provider_id)) if provider_id else None
                 db_wfseq.insert_sequence_item(
                     sequence_id=sequence["id"], item_seq=item_seq,
                     type_=str(item.get("type") or ""), label=str(item.get("label") or ""),
                     doc_class=str(owner_doc.get("type_code") or "R"),
                     sort_order=_int(item.get("sort_order")),
-                    # 0434 T0004 F3: projection already decided these values. Persist that
-                    # decision on the same rows instead of reporting a fill that never landed.
-                    note=projection["note_overrides"].get(str(item_seq), ""),
+                    note=projection["note_overrides"].get(key, ""),
                     provider_id=provider_id,
                     provider_display_name=(
                         str(provider.get("display_name") or provider.get("name") or provider_id)
@@ -691,8 +764,49 @@ def apply(*, doc: dict, owner_doc: dict, plan: dict, plan_path: Path, providers:
                     ),
                     source_doc_id=doc.get("doc_id"),
                     source_revision_no=current_revision,
+                    review_count=projection["review_count_overrides"].get(key, 0),
+                    reviewer_provider_id=projection["reviewer_overrides"].get(key),
+                    reviewer_provider_display_name=projection["reviewer_display_names"].get(key),
+                    pre_instruction_text=projection["pre_instruction_texts"].get(key),
+                    pre_instruction_attachment=projection["pre_instruction_attachments"].get(key),
                 )
             added = proposed
+        sequence, current = _sequence(owner_id)
+
+    # Apply and preview share the projection above.  Snapshot it onto every still-pending
+    # effective row, including rows that already existed before this apply.  The auto-handled
+    # instruction source is included in execution_item_seqs so stale metadata is cleared there
+    # while its review policy lands on the paired result.
+    snapshot_seqs = (
+        set(projection["execution_item_seqs"])
+        | {int(value) for value in projection["provider_overrides"]}
+        | {int(value) for value in projection["note_overrides"]}
+    )
+    if sequence is not None and snapshot_seqs:
+        with get_store().transaction():
+            for item in current:
+                item_seq = _int(item.get("item_seq"))
+                if item_seq not in snapshot_seqs or _progress(item) != "pending":
+                    continue
+                key = str(item_seq)
+                provider_id = projection["provider_overrides"].get(key)
+                provider = provider_registry.get(str(provider_id)) if provider_id else None
+                db_wfseq.update_sequence_item_plan_snapshot(
+                    item["id"],
+                    note=projection["note_overrides"].get(key, ""),
+                    source_doc_id=doc.get("doc_id"),
+                    source_revision_no=current_revision,
+                    provider_id=provider_id,
+                    provider_display_name=(
+                        str(provider.get("display_name") or provider.get("name") or provider_id)
+                        if provider is not None else None
+                    ),
+                    review_count=projection["review_count_overrides"].get(key, 0),
+                    reviewer_provider_id=projection["reviewer_overrides"].get(key),
+                    reviewer_provider_display_name=projection["reviewer_display_names"].get(key),
+                    pre_instruction_text=projection["pre_instruction_texts"].get(key),
+                    pre_instruction_attachment=projection["pre_instruction_attachments"].get(key),
+                )
         sequence, current = _sequence(owner_id)
     target_seq = suggest_target_seq(steps, mapping, projection["folded"], providers)
     unmatched = [str(x.get("key")) for x in mapping if not x.get("matched")] if not change_workflow else []
@@ -714,6 +828,12 @@ def apply(*, doc: dict, owner_doc: dict, plan: dict, plan_path: Path, providers:
         "target_type": target.get("type"), "target_label": target.get("label"),
         "provider_overrides": projection["provider_overrides"],
         "note_overrides": projection["note_overrides"],
+        "review_count_overrides": projection["review_count_overrides"],
+        "reviewer_overrides": projection["reviewer_overrides"],
+        "reviewer_display_names": projection["reviewer_display_names"],
+        "pre_instruction_texts": projection["pre_instruction_texts"],
+        "pre_instruction_attachments": projection["pre_instruction_attachments"],
+        "execution_item_seqs": projection["execution_item_seqs"],
         "default_note": str((plan.get("defaults") or {}).get("note") or "").strip(),
         "filled_item_seqs": projection["filled_item_seqs"],
         "folded": projection["folded"], "unfilled": projection["unfilled"],

@@ -18,6 +18,19 @@ def _sql(store, key: str) -> str:
     return FlowGateStore._sql(store, key)
 
 
+def decode_pre_instruction_attachment(raw) -> Optional[dict]:
+    """Decode the stored JSON snapshot without making a damaged legacy row unreadable."""
+    if isinstance(raw, dict):
+        return dict(raw)
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
 # ── Sequence header ───────────────────────────────────────────────────────────
 
 def get_sequence_by_doc_id(doc_id: str) -> Optional[dict]:
@@ -164,6 +177,44 @@ def update_sequence_item_execution_settings(
     store = get_store()
     sql = _sql(store, "workflow_sequences.update_sequence_item_execution_settings")
     store._execute(sql, [
+        review_count,
+        reviewer_provider_id,
+        reviewer_provider_display_name,
+        pre_instruction_text,
+        attachment_json,
+        item_id,
+    ])
+
+
+def update_sequence_item_plan_snapshot(
+    item_id: int,
+    *,
+    note: str,
+    source_doc_id: Optional[str],
+    source_revision_no: Optional[int],
+    provider_id: Optional[str],
+    provider_display_name: Optional[str],
+    review_count: int = 0,
+    reviewer_provider_id: Optional[str] = None,
+    reviewer_provider_display_name: Optional[str] = None,
+    pre_instruction_text: Optional[str] = None,
+    pre_instruction_attachment: Optional[dict | str] = None,
+) -> None:
+    """Atomically replace the WorkPlan-owned execution snapshot for one pending row."""
+
+    attachment_json = (
+        json.dumps(pre_instruction_attachment, ensure_ascii=False, separators=(",", ":"))
+        if isinstance(pre_instruction_attachment, dict)
+        else pre_instruction_attachment
+    )
+    store = get_store()
+    sql = _sql(store, "workflow_sequences.update_sequence_item_plan_snapshot")
+    store._execute(sql, [
+        note or "",
+        source_doc_id,
+        source_revision_no,
+        provider_id,
+        provider_display_name,
         review_count,
         reviewer_provider_id,
         reviewer_provider_display_name,

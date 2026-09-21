@@ -18,6 +18,11 @@ export interface WorkflowStepItem {
   provider_id?: string | null
   provider_display_name?: string | null
   provider_registered?: boolean | null
+  review_count?: number
+  reviewer_provider_id?: string | null
+  reviewer_provider_display_name?: string | null
+  pre_instruction_text?: string | null
+  pre_instruction_attachment?: Record<string, unknown> | null
 }
 
 /** A runnable target the user picked. Absent (null) whenever nothing is runnable. */

@@ -308,9 +308,9 @@ def _review_item_seq_key(key) -> int:
 def normalize_continuation_review_count_overrides(raw) -> Optional[dict]:
     """P0007 정규화 규칙 1·2·4 for the per-step review COUNT map.
 
-    Keys unify to strings; count 0 is dropped (it is the default "do not review", so
-    "no selection" must have exactly ONE representation — invariant I4); an empty result
-    folds to None. Raises ValueError on the first violation, in key order.
+    Keys unify to strings and explicit 0 is preserved. Absence means "use the durable
+    sequence baseline"; 0 means "disable review for this run", so collapsing them would
+    resurrect a non-zero WorkPlan baseline. An empty result folds to None.
 
     bool is rejected explicitly for the same reason
     normalize_continuation_auto_approve_item_seqs rejects it: in Python ``True == 1``, so an
@@ -329,8 +329,6 @@ def normalize_continuation_review_count_overrides(raw) -> Optional[dict]:
             raise ValueError(
                 f"invalid_review_count_value:{value!r} — must be one of "
                 f"{', '.join(str(v) for v in choices)}")
-        if value == REVIEW_COUNT_DEFAULT:
-            continue
         normalized[str(item_seq)] = value
     return normalized or None
 
@@ -340,27 +338,20 @@ def normalize_continuation_reviewer_overrides(
 ) -> Optional[dict]:
     """P0007 정규화 규칙 1·3·4 for the per-step REVIEWER map.
 
-    Values are validated BEFORE rule 3 drops the orphans, so a malformed reviewer id is a
-    422 even on a step whose count was 0 — the request is wrong either way, and silently
-    accepting it would hide a client bug until the step it names is actually reached.
-
-    Rule 3: a reviewer on a step with no surviving review count has nothing to apply to, so
-    it is dropped; an empty result folds to None (invariant I4). Passing the ALREADY
-    normalized count map is what makes the two maps agree on which steps exist.
+    Values are validated independently of the runtime count map. A reviewer-only override
+    is meaningful when the sequence baseline enables review, so it must survive even when the
+    request omits a count. A count=0 override simply makes the reviewer dormant for this run.
     """
     if raw is None:
         return None
     if not isinstance(raw, dict):
         raise ValueError(
             f"invalid_reviewer_map:{raw!r} — must be an object keyed by item_seq")
-    counts = review_count_overrides or {}
     normalized: dict[str, str] = {}
     for key, value in raw.items():
         item_seq = _review_item_seq_key(key)
         if isinstance(value, bool) or not isinstance(value, str) or not value.strip():
             raise ValueError(f"invalid_reviewer_provider_id:{value!r}")
-        if str(item_seq) not in counts:
-            continue
         normalized[str(item_seq)] = value.strip()
     return normalized or None
 
@@ -656,6 +647,21 @@ def expand_steps_with_reports(sequence: list[dict], locale: str = "ko") -> list[
                 None if report_type in SERVER_ASSEMBLED_REPORT_TYPES
                 else item.get("provider_display_name")
             ),
+            "review_count": (
+                0 if report_type in SERVER_ASSEMBLED_REPORT_TYPES
+                else int(item.get("review_count") or 0)
+            ),
+            "reviewer_provider_id": (
+                None if report_type in SERVER_ASSEMBLED_REPORT_TYPES
+                else item.get("reviewer_provider_id")
+            ),
+            "reviewer_provider_display_name": (
+                None if report_type in SERVER_ASSEMBLED_REPORT_TYPES
+                else item.get("reviewer_provider_display_name")
+            ),
+            # Never fold pre-instruction onto a result row.
+            "pre_instruction_text": None,
+            "pre_instruction_attachment": None,
         })
     for new_id, item in enumerate(expanded, start=1):
         item["id"] = new_id
@@ -1506,6 +1512,13 @@ def request_sequence_edit(
             # so a value this list never carries is a value the PATCH cannot preserve.
             "provider_id": it.get("provider_id"),
             "provider_display_name": it.get("provider_display_name"),
+            "review_count": int(it.get("review_count") or 0),
+            "reviewer_provider_id": it.get("reviewer_provider_id"),
+            "reviewer_provider_display_name": it.get("reviewer_provider_display_name"),
+            "pre_instruction_text": it.get("pre_instruction_text"),
+            "pre_instruction_attachment": db_wfseq.decode_pre_instruction_attachment(
+                it.get("pre_instruction_attachment_json")
+            ),
         }
         for it in items
     ]
@@ -1781,6 +1794,13 @@ def get_workflow_sequence(doc_id: str) -> dict:
             "note": it.get("note") or "",
             "source_doc_id": it.get("source_doc_id"),
             "source_revision_no": it.get("source_revision_no"),
+            "review_count": int(it.get("review_count") or 0),
+            "reviewer_provider_id": it.get("reviewer_provider_id"),
+            "reviewer_provider_display_name": it.get("reviewer_provider_display_name"),
+            "pre_instruction_text": it.get("pre_instruction_text"),
+            "pre_instruction_attachment": db_wfseq.decode_pre_instruction_attachment(
+                it.get("pre_instruction_attachment_json")
+            ),
             **plan_revision_freshness(
                 it.get("source_doc_id"), it.get("source_revision_no")
             ),
@@ -1996,49 +2016,49 @@ def _start_created_sequence(doc_id: str) -> None:
         _log.warning("git worktree hook failed for %s", doc_id, exc_info=True)
 
 
-def _restore_omitted_providers(new_items: list[dict], existing: list[dict]) -> None:
-    """Keep a stored provider that the caller's item never mentioned (0444 T0007 / NR0003 §4-6).
+_EXECUTION_METADATA_FIELDS = (
+    "review_count",
+    "reviewer_provider_id",
+    "reviewer_provider_display_name",
+    "pre_instruction_text",
+    "pre_instruction_attachment",
+)
 
-    edit_workflow_pending() deletes the pending rows and re-inserts what the caller sent, so a
-    key the payload omits is a value the row loses. For note/source that is harmless and even
-    intended: every one of those is spelled out in the mention payload, the mention rules and
-    the help example, so an absent key really does mean "leave it empty". The provider was in
-    none of those three places until this change, and the AI sequence-edit worker is a real
-    partial-payload caller — it was clearing a value the server had never shown it.
 
-    The condition is the ABSENCE of the key, never a falsy value. ``{"provider_id": None}`` is
-    a caller saying "empty this", and it is obeyed; folding the two together behind a falsy
-    check would make "clear it" impossible to express.
+def _restore_omitted_execution_metadata(new_items: list[dict], existing: list[dict]) -> None:
+    """Preserve stored execution metadata for true partial sequence edits.
 
-    Deliberately NOT applied to ``note``. That key has always been in the contract, so its
-    absence carries no meaning to recover, and a retyped row clearing its note is the
-    documented behaviour — test_ai_sequence_note_contract_0406.py::
-    test_retyped_row_and_automatic_report_have_empty_metadata pins it.
+    An explicitly supplied null/0 still clears or disables a field.  Only an absent key is
+    restored, and only when type+label identifies one unique pending row, so reorder survives
+    while a retyped/ambiguous row never inherits another step's policy.
     """
     candidates: dict[tuple, Optional[dict]] = {}
     for row in existing or []:
-        # A locked row's provider belongs to a step that already ran; it is not a value the
-        # pending tail may inherit.
         if row.get("result_doc_id") is not None:
             continue
         key = ((row.get("type") or "").upper(), row.get("label") or "")
-        # Two pending rows sharing one key are indistinguishable from here, so the key drops
-        # out of the map entirely rather than being guessed at.
         candidates[key] = None if key in candidates else row
+
     for item in new_items or []:
-        if "provider_id" in item or "provider_display_name" in item:
-            continue
         stored = candidates.get(((item.get("type") or "").upper(), item.get("label") or ""))
-        if stored is None or not stored.get("provider_id"):
-            # Same silent outcome as before this change; the line is here so a support case
-            # can tell "nothing was stored" from "the row could not be matched".
+        if stored is None:
             _log.debug(
-                "sequence edit omitted the provider keys and no unique pending row matched %s/%s",
+                "sequence edit omitted metadata and no unique pending row matched %s/%s",
                 item.get("type"), item.get("label"),
             )
             continue
-        item["provider_id"] = stored.get("provider_id")
-        item["provider_display_name"] = stored.get("provider_display_name")
+        if "provider_id" not in item and "provider_display_name" not in item:
+            item["provider_id"] = stored.get("provider_id")
+            item["provider_display_name"] = stored.get("provider_display_name")
+        for field in _EXECUTION_METADATA_FIELDS:
+            if field in item:
+                continue
+            if field == "pre_instruction_attachment":
+                item[field] = db_wfseq.decode_pre_instruction_attachment(
+                    stored.get("pre_instruction_attachment_json")
+                )
+            else:
+                item[field] = stored.get(field)
 
 
 def edit_workflow_pending(
@@ -2109,7 +2129,7 @@ def edit_workflow_pending(
     # assert_sequence_item_providers() so a restored value is validated exactly like a sent
     # one, and ahead of expand_steps_with_reports() so it also rides onto the automatic
     # TR/NR row the server attaches.
-    _restore_omitted_providers(new_items, existing)
+    _restore_omitted_execution_metadata(new_items, existing)
 
     assert_sequence_item_sources(new_items)
     # 0406 T0022 item 6: overflow is rejected here. The old save path silently cut everything
@@ -2153,10 +2173,24 @@ def edit_workflow_pending(
     _definition_fields = (
         "type", "label", "note", "source_doc_id", "source_revision_no",
         "provider_id", "provider_display_name",
+        "review_count", "reviewer_provider_id", "reviewer_provider_display_name",
+        "pre_instruction_text", "pre_instruction_attachment",
     )
 
     def _definition(row: dict) -> tuple:
-        return tuple(row.get(key) for key in _definition_fields)
+        values = []
+        for key in _definition_fields:
+            if key == "pre_instruction_attachment":
+                values.append(
+                    row.get(key)
+                    if isinstance(row.get(key), dict)
+                    else db_wfseq.decode_pre_instruction_attachment(
+                        row.get("pre_instruction_attachment_json")
+                    )
+                )
+            else:
+                values.append(row.get(key))
+        return tuple(values)
 
     if not create_sequence and [_definition(it) for it in pending_before] == [
         _definition(it) for it in new_items
@@ -2201,6 +2235,11 @@ def edit_workflow_pending(
                 source_revision_no=item.get("source_revision_no"),
                 provider_id=item.get("provider_id"),
                 provider_display_name=item.get("provider_display_name"),
+                review_count=int(item.get("review_count") or 0),
+                reviewer_provider_id=item.get("reviewer_provider_id"),
+                reviewer_provider_display_name=item.get("reviewer_provider_display_name"),
+                pre_instruction_text=item.get("pre_instruction_text"),
+                pre_instruction_attachment=item.get("pre_instruction_attachment"),
             )
 
         # The definition replacement, root reopen and approval retirement are one atomic
