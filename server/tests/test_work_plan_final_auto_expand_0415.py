@@ -190,8 +190,8 @@ def test_approval_hook_returns_success_when_final_expansion_fails(monkeypatch):
     }
     assert stored["doc_review_status"] == "approved"
 
-def test_final_expansion_snapshots_each_instruction_on_its_paired_worker(monkeypatch):
-    """The approval path persists T/N pre-instruction only on the TR/NR worker rows."""
+def test_final_expansion_keeps_each_instruction_payload_on_its_own_row(monkeypatch):
+    """The approval path persists WorkPlan instruction payload on the T/N rows."""
     attachments = {
         "T#1": {"doc_id": WP_ID, "filename": "t.txt", "content_sha256": "a" * 64},
         "T#2": {"doc_id": WP_ID, "filename": "t2.txt", "content_sha256": "b" * 64},
@@ -233,10 +233,10 @@ def test_final_expansion_snapshots_each_instruction_on_its_paired_worker(monkeyp
     rows = seen["rows"]
     assert [row["type"] for row in rows] == ["T", "TR", "T", "TR", "N", "NR"]
     assert [row["pre_instruction_text"] for row in rows] == [
-        None, "first task", None, "second task", None, "research task",
+        "first task", None, "second task", None, "research task", None,
     ]
     assert [row["pre_instruction_attachment"] for row in rows] == [
-        None, attachments["T#1"], None, attachments["T#2"], None, attachments["N#1"],
+        attachments["T#1"], None, attachments["T#2"], None, attachments["N#1"], None,
     ]
     assert all(row["source_doc_id"] == WP_ID for row in rows)
     assert all(row["source_revision_no"] == DOC["revision_no"] for row in rows)
@@ -260,9 +260,10 @@ def test_auto_row_pre_instruction_snapshot_is_idempotent():
     twice, _uid = wpseq.attach_auto_rows(once, next_uid=uid)
 
     assert once == twice
-    assert once[0]["pre_instruction_text"] is None
-    assert once[1]["pre_instruction_text"] == "durable"
-    assert once[1]["pre_instruction_attachment"] == attachment
+    assert once[0]["pre_instruction_text"] == "durable"
+    assert once[1]["pre_instruction_text"] is None
+    assert once[0]["pre_instruction_attachment"] == attachment
+    assert once[1]["pre_instruction_attachment"] is None
 
 
 _CONNECTED_GROUP = "flowgate.default.0415"
@@ -386,13 +387,13 @@ def test_final_expansion_persists_pairs_and_builds_real_worker_prompts(
     stored = db_wfseq.get_sequence_items(sequence["id"])
     assert [row["type"] for row in stored] == ["T", "TR", "T", "TR", "N", "NR"]
     assert [row["pre_instruction_text"] for row in stored] == [
-        None, "first task", None, "second task", None, "research task",
+        "first task", None, "second task", None, "research task", None,
     ]
     assert [
         db_wfseq.decode_pre_instruction_attachment(row["pre_instruction_attachment_json"])
         for row in stored
     ] == [
-        None, attachments["T#1"], None, attachments["T#2"], None, attachments["N#1"],
+        attachments["T#1"], None, attachments["T#2"], None, attachments["N#1"], None,
     ]
 
     # Keep reference validation at its attachment-storage boundary. Resolution, row folding,
@@ -403,8 +404,8 @@ def test_final_expansion_persists_pairs_and_builds_real_worker_prompts(
         base_prompt, OWNER_ID, default_note=None, note_overrides=None,
         instruction_mode="auto_approved", locale="ko",
     )
-    assert "first task" in tr_prompt
-    assert attachments["T#1"]["filename"] in tr_prompt
+    assert "first task" not in tr_prompt
+    assert attachments["T#1"]["filename"] not in tr_prompt
     assert "second task" not in tr_prompt and "research task" not in tr_prompt
     assert attachments["T#2"]["filename"] not in tr_prompt
     assert attachments["N#1"]["filename"] not in tr_prompt
@@ -418,8 +419,8 @@ def test_final_expansion_persists_pairs_and_builds_real_worker_prompts(
         base_prompt, OWNER_ID, default_note=None, note_overrides=None,
         instruction_mode="auto_approved", locale="ko",
     )
-    assert "research task" in nr_prompt
-    assert attachments["N#1"]["filename"] in nr_prompt
+    assert "research task" not in nr_prompt
+    assert attachments["N#1"]["filename"] not in nr_prompt
     assert "first task" not in nr_prompt and "second task" not in nr_prompt
     assert attachments["T#1"]["filename"] not in nr_prompt
     assert attachments["T#2"]["filename"] not in nr_prompt

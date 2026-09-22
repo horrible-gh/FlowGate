@@ -1311,6 +1311,220 @@ class NextApprovedError(Exception):
         self.detail = detail
 
 
+def _work_plan_instruction_descriptor(sequence_id: int, head: dict) -> Optional[dict]:
+    """Return the durable WP instruction snapshot for ``head``, or ``None`` for legacy N/T.
+
+    The sequence already stores the WorkPlan document/revision and the instruction payload.
+    The step key is reconstructed from that revision's same-type slot order; WorkPlan keys are
+    canonical ``<type>#<ordinal>`` values.  No live WorkPlan body is read, so a later WP edit
+    cannot change the instruction snapshot that was approved into this sequence.
+    """
+    from modules.flow_gate.db import workflow_sequences as _db_wfseq
+
+    type_code = str(head.get("type") or "").upper()
+    source_doc_id = str(head.get("source_doc_id") or "").strip()
+    try:
+        source_revision_no = int(head.get("source_revision_no"))
+    except (TypeError, ValueError):
+        return None
+    if type_code not in {"N", "T"} or not source_doc_id:
+        return None
+    source_doc = document_service.get_document(source_doc_id)
+    if source_doc is None or str(source_doc.get("type_code") or "").upper() != WORK_PLAN_TYPE:
+        return None
+
+    note = str(head.get("note") or "").strip()
+    pre_instruction_text = str(head.get("pre_instruction_text") or "").strip()
+    attachment = _db_wfseq.decode_pre_instruction_attachment(
+        head.get("pre_instruction_attachment_json")
+    )
+    if attachment is None and isinstance(head.get("pre_instruction_attachment"), dict):
+        attachment = dict(head["pre_instruction_attachment"])
+    if not note and not pre_instruction_text and attachment is None:
+        return None
+
+    same_type = []
+    for item in _db_wfseq.get_sequence_items(sequence_id) or []:
+        try:
+            item_revision_no = int(item.get("source_revision_no"))
+        except (TypeError, ValueError):
+            continue
+        if (
+            str(item.get("type") or "").upper() == type_code
+            and str(item.get("source_doc_id") or "") == source_doc_id
+            and item_revision_no == source_revision_no
+        ):
+            same_type.append(item)
+    head_id = head.get("id")
+    head_seq = head.get("item_seq")
+    ordinal = next(
+        (
+            index for index, item in enumerate(same_type, start=1)
+            if (head_id is not None and item.get("id") == head_id)
+            or (head_id is None and item.get("item_seq") == head_seq)
+        ),
+        None,
+    )
+    if ordinal is None:
+        return None
+    step_key = f"{type_code}#{ordinal}"
+    return {
+        "source_wp_doc_id": source_doc_id,
+        "source_wp_revision_no": source_revision_no,
+        "source_wp_step_key": step_key,
+        "idempotency_key": f"{source_doc_id}:{source_revision_no}:{step_key}",
+        "instruction_note": note,
+        "pre_instruction_text": pre_instruction_text,
+        "pre_instruction_attachment": attachment,
+    }
+
+
+def _build_work_plan_instruction_content(
+    *,
+    project_id: str,
+    module: str,
+    group_id: str,
+    type_code: str,
+    doc_code: str,
+    title: str,
+    target_id: str,
+    next_type: str,
+    materialization: dict,
+    locale: str,
+) -> str:
+    """Build the canonical Markdown body for a materialized WorkPlan N/T instruction."""
+    from modules.flow_gate.template_provision import normalize_locale
+
+    header = _build_next_empty_content(
+        project_id=project_id,
+        module=module,
+        group_id=group_id,
+        type_code=type_code,
+        doc_code=doc_code,
+        title=title,
+        target_id=target_id,
+        next_type=next_type,
+    )
+    close_at = header.rfind("---\n")
+    provenance_lines = [
+        f"source_wp_doc_id: {_json.dumps(materialization['source_wp_doc_id'], ensure_ascii=False)}",
+        f"source_wp_revision_no: {int(materialization['source_wp_revision_no'])}",
+        f"source_wp_step_key: {_json.dumps(materialization['source_wp_step_key'], ensure_ascii=False)}",
+        f"materialization_key: {_json.dumps(materialization['idempotency_key'], ensure_ascii=False)}",
+    ]
+    attachment = materialization.get("pre_instruction_attachment")
+    if isinstance(attachment, dict):
+        provenance_lines.append(
+            "source_wp_attachment: "
+            + _json.dumps(attachment, ensure_ascii=False, separators=(",", ":"))
+        )
+    header = header[:close_at] + "\n".join(provenance_lines) + "\n" + header[close_at:]
+
+    loc = normalize_locale(locale)
+    labels = {
+        "ko": ("지시 내용", "추가 사전 지시", "출처", "첨부 참조"),
+        "ja": ("指示内容", "追加の事前指示", "出典", "添付参照"),
+        "en": ("Instruction", "Additional pre-instruction", "Provenance", "Attachment reference"),
+    }
+    instruction_label, pre_label, source_label, attachment_label = labels.get(
+        loc, labels["ko"]
+    )
+    note = materialization.get("instruction_note") or ""
+    pre_instruction = materialization.get("pre_instruction_text") or ""
+    primary = note or pre_instruction
+    lines = [f"# {title}", "", f"## {instruction_label}", "", primary]
+    if note and pre_instruction:
+        lines.extend(["", f"## {pre_label}", "", pre_instruction])
+    lines.extend([
+        "",
+        f"## {source_label}",
+        "",
+        f"- WorkPlan: `{materialization['source_wp_doc_id']}`",
+        f"- Revision: `{materialization['source_wp_revision_no']}`",
+        f"- Step: `{materialization['source_wp_step_key']}`",
+    ])
+    if isinstance(attachment, dict):
+        lines.extend([
+            "",
+            f"## {attachment_label}",
+            "",
+            "```json",
+            _json.dumps(attachment, ensure_ascii=False, indent=2, sort_keys=True),
+            "```",
+        ])
+    return header + "\n".join(lines).rstrip() + "\n"
+
+
+def _materialized_document_matches(doc: dict, materialization: dict) -> bool:
+    """Verify an occupied slot belongs to the exact WP revision/step idempotency key."""
+    try:
+        content = _document_file_path(doc).read_text(encoding="utf-8")
+    except (HTTPException, OSError, UnicodeError):
+        return False
+    marker = "materialization_key: " + _json.dumps(
+        materialization["idempotency_key"], ensure_ascii=False
+    )
+    return marker in content
+
+
+def materialize_work_plan_instruction(
+    *,
+    project_id: str,
+    group_id: str,
+    module: str,
+    prev_doc_id: str,
+    sequence_id: int,
+    head: dict,
+    actor_user_id: str,
+    approver_perms: set,
+    locale: str = "ko",
+) -> dict:
+    """Materialize a WP-authored N/T, delegating legacy heads to the fixed template.
+
+    Idempotency is the logical ``WP doc_id + revision_no + step key`` embedded in the
+    canonical document.  Re-entry on an occupied slot reuses that document only when its
+    marker matches; a different occupant is a conflict and is never overwritten.
+    """
+    materialization = _work_plan_instruction_descriptor(sequence_id, head)
+    if materialization is None:
+        return create_next_approved_core(
+            project_id=project_id,
+            group_id=group_id,
+            module=module,
+            prev_doc_id=prev_doc_id,
+            type_code=str(head.get("type") or ""),
+            actor_user_id=actor_user_id,
+            approver_perms=approver_perms,
+            locale=locale,
+        )
+    result_doc_id = head.get("result_doc_id")
+    if result_doc_id:
+        existing = document_service.get_document(str(result_doc_id))
+        if existing is not None and _materialized_document_matches(existing, materialization):
+            return {
+                "data": existing,
+                "doc_id": existing.get("doc_id"),
+                "stored_path": existing.get("file_path"),
+                "materialization": materialization,
+                "idempotent_reuse": True,
+            }
+        raise NextApprovedError(409, "Workflow slot is occupied by a different document.")
+    created = create_next_approved_core(
+        project_id=project_id,
+        group_id=group_id,
+        module=module,
+        prev_doc_id=prev_doc_id,
+        type_code=str(head.get("type") or ""),
+        actor_user_id=actor_user_id,
+        approver_perms=approver_perms,
+        locale=locale,
+        _work_plan_materialization=materialization,
+    )
+    created["materialization"] = materialization
+    created["idempotent_reuse"] = False
+    return created
+
+
 def create_next_approved_core(
     *,
     project_id: str,
@@ -1321,6 +1535,7 @@ def create_next_approved_core(
     actor_user_id: str,
     approver_perms: set,
     locale: str = "ko",
+    _work_plan_materialization: Optional[dict] = None,
 ) -> dict:
     """Create + approve an instruction document (N | T) for the current head.
 
@@ -1382,6 +1597,12 @@ def create_next_approved_core(
     if result_doc_id is not None and result_review != "approved":
         raise NextApprovedError(409, "Workflow step has already been created.")
 
+    # Every creation entry point (managed /next-approved and unmanned continuation) reads
+    # the same WP materialization descriptor.  The HTTP request still accepts no title or
+    # content; this is an internal, provenance-gated replacement for the generic template.
+    if _work_plan_materialization is None:
+        _work_plan_materialization = _work_plan_instruction_descriptor(seq["id"], head)
+
     # (G3) Approve permission check — block with 403 BEFORE reserving a number (avoid
     # wasting a doc number). The caller resolves the real/effective permission set via the
     # same resolver as the live approve action; approve must never be bypassed with a
@@ -1389,10 +1610,23 @@ def create_next_approved_core(
     if "document.approve" not in (approver_perms or set()):
         raise NextApprovedError(403, "document.approve permission is required.")
 
-    # (T1) Server-side title/body templates — no client input (P0005 D-B).
+    # (T1) The public/generic path keeps its fixed server template.  Only the private
+    # WorkPlan materializer may supply a canonical instruction snapshot.
     label = get_type_name(type_code, locale)
-    gen_title = _auto_approved_title(label, locale)
-    gen_body = _auto_approved_body(label, locale)
+    materialization = (
+        dict(_work_plan_materialization)
+        if isinstance(_work_plan_materialization, dict)
+        else None
+    )
+    if materialization is not None:
+        step_key = str(materialization.get("source_wp_step_key") or "")
+        if not step_key.startswith(type_code + "#"):
+            raise NextApprovedError(422, "WorkPlan materialization type/step mismatch.")
+        gen_title = f"{label} — {step_key}"
+        gen_body = None
+    else:
+        gen_title = _auto_approved_title(label, locale)
+        gen_body = _auto_approved_body(label, locale)
 
     try:
         doc_code = numbering_service.reserve_document(
@@ -1415,16 +1649,30 @@ def create_next_approved_core(
         module=module,
         branch=_get_project_branch(project_id),
     )
-    md_content = _build_next_empty_content(
-        project_id=project_id,
-        module=module,
-        group_id=group_id,
-        type_code=type_code,
-        doc_code=doc_code,
-        title=gen_title,
-        target_id=prev_doc_id,
-        next_type=next_type,
-    ) + gen_body + "\n"
+    if materialization is not None:
+        md_content = _build_work_plan_instruction_content(
+            project_id=project_id,
+            module=module,
+            group_id=group_id,
+            type_code=type_code,
+            doc_code=doc_code,
+            title=gen_title,
+            target_id=prev_doc_id,
+            next_type=next_type,
+            materialization=materialization,
+            locale=locale,
+        )
+    else:
+        md_content = _build_next_empty_content(
+            project_id=project_id,
+            module=module,
+            group_id=group_id,
+            type_code=type_code,
+            doc_code=doc_code,
+            title=gen_title,
+            target_id=prev_doc_id,
+            next_type=next_type,
+        ) + str(gen_body) + "\n"
 
     try:
         doc_file_path.parent.mkdir(parents=True, exist_ok=True)

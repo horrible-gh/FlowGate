@@ -1561,8 +1561,8 @@ class TestConnectedFlowFullEffectiveBundle:
         assert result["fill"]["provider_overrides"]["2"] == WORKER_PROVIDER
         assert result["fill"]["review_count_overrides"]["2"] == 2
         assert result["fill"]["reviewer_overrides"]["2"] == REVIEWER_PROVIDER
-        assert result["fill"]["pre_instruction_texts"]["2"] == PRE_TEXT
-        assert result["fill"]["pre_instruction_attachments"]["2"] == ATTACHMENT
+        assert result["fill"]["pre_instruction_texts"]["1"] == PRE_TEXT
+        assert result["fill"]["pre_instruction_attachments"]["1"] == ATTACHMENT
         assert not any(
             entry.get("reason") == "instruction_step_is_server_assembled_no_worker_target"
             for entry in result["fill"]["unfilled"]
@@ -1576,13 +1576,13 @@ class TestConnectedFlowFullEffectiveBundle:
         )
         row = next(i for i in env["wfseq"].get_sequence_items(1) if i["item_seq"] == 2)
         assert source_row["type"] == "T"
-        assert source_row["pre_instruction_text"] is None
+        assert source_row["pre_instruction_text"] == PRE_TEXT
         assert row["type"] == "TR"
         assert row["provider_id"] == WORKER_PROVIDER
         assert row["note"] == "계획 단계 개별 메모"
         assert row["review_count"] == 2
         assert row["reviewer_provider_id"] == REVIEWER_PROVIDER
-        assert row["pre_instruction_text"] == PRE_TEXT
+        assert row["pre_instruction_text"] is None
         assert row["source_doc_id"] == WP_DOC_ID
 
         # ---- 2. dialog/start payload -> a real start_run hop (steps 11-13), paused mid-hop
@@ -1611,10 +1611,10 @@ class TestConnectedFlowFullEffectiveBundle:
         assert run["end_reason"] == "user_paused"
         assert GROUP_ID in env["paused"].rows
         before_text = _read(worker_outfile).decode("utf-8")
-        assert before_text.count("## WorkPlan 사전지시") == 1
-        assert PRE_TEXT in before_text
+        assert "## WorkPlan 사전지시" not in before_text
+        assert PRE_TEXT not in before_text
         assert "계획 단계 개별 메모" in before_text
-        assert ATTACHMENT["original_filename"] in before_text
+        assert ATTACHMENT["original_filename"] not in before_text
 
         cmd2, outfile_after = _capture_cmd(env["tmp"])
         monkeypatch.setattr(wds, "advance_workflow", lambda **kw: {
@@ -1727,8 +1727,8 @@ class TestConnectedFlowFullEffectiveBundle:
         assert rework_run is not None
         _wait_finished(rework_run["run_id"])
         rework_text = _read(rework_outfile).decode("utf-8")
-        assert rework_text.count("## WorkPlan 사전지시") == 1
-        assert PRE_TEXT in rework_text
+        assert "## WorkPlan 사전지시" not in rework_text
+        assert PRE_TEXT not in rework_text
         # T0014 §9: rework re-applies the slot's pre-instruction, not `note` — that field is
         # only ever injected on the "new"/continuous path (_inject_hop_notes), which the
         # rework hop structurally never reaches (see the companion rework test above).
