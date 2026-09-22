@@ -221,6 +221,14 @@ def _new_row(
     pair_provider_display_name: Optional[str] = None,
     pair_note: str = "",
     pair_note_source: Optional[str] = None,
+    review_count: int = 0,
+    reviewer_provider_id: Optional[str] = None,
+    reviewer_provider_display_name: Optional[str] = None,
+    pre_instruction_text: Optional[str] = None,
+    pre_instruction_attachment: Optional[dict] = None,
+    pair_review_count: int = 0,
+    pair_reviewer_provider_id: Optional[str] = None,
+    pair_reviewer_provider_display_name: Optional[str] = None,
     item_seq_before: Optional[int] = None,
     label: Optional[str] = None,
     status: str = "pending",
@@ -247,6 +255,14 @@ def _new_row(
         # never this row's own note — the two steps carry two different sentences.
         "pair_note": pair_note,
         "pair_note_source": pair_note_source,
+        "review_count": review_count,
+        "reviewer_provider_id": reviewer_provider_id,
+        "reviewer_provider_display_name": reviewer_provider_display_name,
+        "pre_instruction_text": pre_instruction_text,
+        "pre_instruction_attachment": pre_instruction_attachment,
+        "pair_review_count": pair_review_count,
+        "pair_reviewer_provider_id": pair_reviewer_provider_id,
+        "pair_reviewer_provider_display_name": pair_reviewer_provider_display_name,
         "item_seq_before": item_seq_before,
         "status": status,
         "locked": locked,
@@ -300,6 +316,13 @@ def load_current_rows(items: Iterable[dict], locale: str = "ko") -> tuple[list[d
             source_revision_no=_int(item.get("source_revision_no")),
             provider_id=provider_id,
             provider_display_name=provider_name,
+            review_count=_int(item.get("review_count"), 0) or 0,
+            reviewer_provider_id=item.get("reviewer_provider_id"),
+            reviewer_provider_display_name=item.get("reviewer_provider_display_name"),
+            pre_instruction_text=item.get("pre_instruction_text"),
+            pre_instruction_attachment=db_wfseq.decode_pre_instruction_attachment(
+                item.get("pre_instruction_attachment_json")
+            ),
             item_seq_before=_int(item.get("item_seq")),
             label=item.get("label") or None,
             status=str(item.get("status") or "pending"),
@@ -356,6 +379,22 @@ def _carry_provider_to_pair(result_step: dict, rows: list[dict], plan: dict,
     target["pair_provider_display_name"] = provider_name
 
 
+def _carry_review_to_pair(result_step: dict, rows: list[dict]) -> None:
+    """Hold a result step's own review policy until its automatic row is attached."""
+    pair_key = result_step.get("pair_key")
+    target = next((row for row in rows if row.get("plan_key") == pair_key), None)
+    if target is None:
+        return
+    count = _int(result_step.get("review_count"), 0) or 0
+    if count == 0:
+        return
+    target["pair_review_count"] = count
+    target["pair_reviewer_provider_id"] = result_step.get("reviewer_provider_id")
+    target["pair_reviewer_provider_display_name"] = result_step.get(
+        "reviewer_provider_display_name"
+    )
+
+
 def plan_to_rows(
     plan: dict,
     plan_doc_id: str,
@@ -391,6 +430,7 @@ def plan_to_rows(
             continue
         if code in AUTO_ROW_TYPES:
             _carry_note_to_pair(step, rows, dropped)
+            _carry_review_to_pair(step, rows)
             # The result step's provider rides to its partner row, so it faces the same
             # check — and owes the same visible reason when it fails.
             pair_id, _pair_name = resolve_step_provider(step, plan)
@@ -422,6 +462,15 @@ def plan_to_rows(
             source_revision_no=plan_revision_no,
             provider_id=provider_id,
             provider_display_name=provider_name,
+            review_count=_int(step.get("review_count"), 0) or 0,
+            reviewer_provider_id=step.get("reviewer_provider_id"),
+            reviewer_provider_display_name=step.get("reviewer_provider_display_name"),
+            pre_instruction_text=step.get("pre_instruction_text"),
+            pre_instruction_attachment=(
+                dict(step.get("pre_instruction_attachment"))
+                if isinstance(step.get("pre_instruction_attachment"), dict)
+                else None
+            ),
         ))
 
     defaults = plan.get("defaults")
@@ -471,12 +520,31 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
     for row in rows:
         if row.get("is_auto"):
             continue
-        out.append(row)
         want = AUTO_ROW_MAP.get(row["type"]) if row["type"] in INSTRUCTION_TYPES else None
+        # WorkPlan T/N remains the canonical owner, but auto-approved execution runs the
+        # paired TR/NR row.  Move an immutable snapshot onto that worker and keep the
+        # server-assembled instruction slot empty, matching work_plan_apply_service.project().
+        worker_pre_instruction = row["type"] in {"T", "N"} and bool(want)
+        old = by_parent.get(row["uid"])
+        old_matches = old is not None and old.get("type") == want
+        pre_instruction_text = (
+            row.get("pre_instruction_text")
+            if worker_pre_instruction and row.get("pre_instruction_text") is not None
+            else old.get("pre_instruction_text") if worker_pre_instruction and old_matches else None
+        )
+        attachment = (
+            row.get("pre_instruction_attachment")
+            if worker_pre_instruction and isinstance(row.get("pre_instruction_attachment"), dict)
+            else old.get("pre_instruction_attachment") if worker_pre_instruction and old_matches else None
+        )
+        pre_instruction_attachment = dict(attachment) if isinstance(attachment, dict) else None
+        if worker_pre_instruction:
+            row["pre_instruction_text"] = None
+            row["pre_instruction_attachment"] = None
+        out.append(row)
         if not want:
             continue
-        old = by_parent.get(row["uid"])
-        if old is not None and old.get("type") == want:
+        if old_matches:
             auto_uid = old["uid"]
             status = old.get("status", "pending")
             locked = bool(old.get("locked"))
@@ -517,6 +585,26 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
             source_revision_no=row.get("source_revision_no"),
             provider_id=provider_id,
             provider_display_name=provider_name,
+            review_count=(
+                0 if server_assembled else (
+                    row.get("pair_review_count") or row.get("review_count") or 0
+                )
+            ),
+            reviewer_provider_id=(
+                None if server_assembled else (
+                    row.get("pair_reviewer_provider_id")
+                    or row.get("reviewer_provider_id")
+                )
+            ),
+            reviewer_provider_display_name=(
+                None if server_assembled else (
+                    row.get("pair_reviewer_provider_display_name")
+                    or row.get("reviewer_provider_display_name")
+                )
+            ),
+            # T/N is server-assembled in auto-approved mode; TR/NR is the actual worker.
+            pre_instruction_text=pre_instruction_text,
+            pre_instruction_attachment=pre_instruction_attachment,
             status=status,
             locked=locked,
             item_seq_before=item_seq_before,
@@ -680,6 +768,11 @@ def _public_row(row: dict, provider_view: dict, plan_doc: dict) -> dict:
         "plan_key": row.get("plan_key"),
         "source_doc_id": row.get("source_doc_id"),
         "source_revision_no": row.get("source_revision_no"),
+        "review_count": int(row.get("review_count") or 0),
+        "reviewer_provider_id": row.get("reviewer_provider_id"),
+        "reviewer_provider_display_name": row.get("reviewer_provider_display_name"),
+        "pre_instruction_text": row.get("pre_instruction_text"),
+        "pre_instruction_attachment": row.get("pre_instruction_attachment"),
         **plan_revision_freshness(
             row.get("source_doc_id"), row.get("source_revision_no"), known_plan_doc=plan_doc
         ),
@@ -796,7 +889,15 @@ def expand_final_work_plan(*, doc: dict, plan: dict, locale: str = "ko") -> dict
     candidate = replace_candidate
     if not candidate.get("plan_step_count"):
         return {"status": "skipped", "reason": "no_placeable_steps", "revision_no": revision_no}
-    pending_rows = [{key: row.get(key) for key in ("type", "label", "note", "source_doc_id", "source_revision_no", "provider_id", "provider_display_name")} for row in candidate["rows"] if row.get("status") == "pending"]
+    pending_rows = [{
+        key: row.get(key)
+        for key in (
+            "type", "label", "note", "source_doc_id", "source_revision_no",
+            "provider_id", "provider_display_name", "review_count",
+            "reviewer_provider_id", "reviewer_provider_display_name",
+            "pre_instruction_text", "pre_instruction_attachment",
+        )
+    } for row in candidate["rows"] if row.get("status") == "pending"]
     from modules.flow_gate.services.workflow_decision_service import edit_workflow_pending
     result = edit_workflow_pending(owner_doc_id, pending_rows, expected_workflow_tag=candidate["workflow_tag"], expected_plan={"wp_doc_id": wp_doc_id, "wp_revision_no": revision_no}, applied_by="wp_final_auto_expand", locale=locale)
     return {"status": "expanded", "revision_no": revision_no, "result": result}

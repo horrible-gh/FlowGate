@@ -24,6 +24,18 @@ vi.mock('@shared/api', () => ({
   patchRequest: vi.fn(),
 }))
 
+// D0007 §5.5 — removing a value-bearing step by lowering a quantity goes through the shared
+// imperative confirm() (L0009 §2), not window.confirm. Default to "confirmed" so quantity
+// stepper clicks elsewhere in this file that happen to drop an empty step keep working
+// unattended; the dedicated test below overrides this to check the actual gate.
+const { dialogConfirm } = vi.hoisted(() => ({
+  dialogConfirm: vi.fn(() => Promise.resolve(true)),
+}))
+vi.mock('@main/composables/useDialogStack', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  confirm: dialogConfirm,
+}))
+
 const TYPES = [
   { code: 'D', label: '기본설계', category: 'design', countable: true, unit: 'sheet', sort_order: 1 },
   { code: 'T', label: '작업지시', category: 'instruction', countable: true, unit: 'set', pair_code: 'TR', sort_order: 2 },
@@ -175,6 +187,8 @@ beforeEach(() => {
   getRequest.mockReset()
   postRequest.mockReset()
   putRequest.mockReset()
+  dialogConfirm.mockReset()
+  dialogConfirm.mockImplementation(() => Promise.resolve(true))
   routeGet()
 })
 
@@ -548,15 +562,26 @@ describe('WorkPlanEditor', () => {
     expect(payload.body).toEqual(PLAN_BODY)
   })
 
-  it('lowers a value-bearing quantity immediately and restores its values when raised again', async () => {
+  it('asks for confirmation before lowering a value-bearing quantity, then restores its values when raised again', async () => {
     const wrapper = mountEditor()
     await flushPromises()
 
     const minusButtons = wrapper.findAll('.wp-stepper-btn').filter((button) => button.text() === '−')
+
+    // D0007 §5.5 — cancelling the removal must leave the value-bearing step untouched.
+    dialogConfirm.mockResolvedValueOnce(false)
     await minusButtons[0].trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).not.toContain('입력값이 있는 단계가 빠집니다')
+    expect(dialogConfirm).toHaveBeenCalledTimes(1)
+    expect(dialogConfirm.mock.calls[0][0]).toMatchObject({ danger: true })
+    expect(wrapper.findAll('.wp-step-row')).toHaveLength(3)
+
+    dialogConfirm.mockResolvedValueOnce(true)
+    await minusButtons[0].trigger('click')
+    await flushPromises()
+
+    expect(dialogConfirm).toHaveBeenCalledTimes(2)
     expect(wrapper.findAll('.wp-step-row')).toHaveLength(2)
 
     const plusButtons = wrapper.findAll('.wp-stepper-btn').filter((button) => button.text() === '+')

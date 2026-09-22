@@ -4074,7 +4074,10 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             )
         try:
             wp_plan = work_plan_service.validate(
-                wp_parsed, project_id=project, action="create",
+                wp_parsed,
+                project_id=project,
+                action="create",
+                allow_pre_instruction_attachments=False,
             )
         except work_plan_service.WorkPlanValidationError as exc:
             return _fail(
@@ -5060,7 +5063,11 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             )
         try:
             wp_plan = work_plan_service.validate(
-                wp_parsed, project_id=project, action="save",
+                wp_parsed,
+                project_id=project,
+                doc_id=existing_doc.get("doc_id"),
+                action="save",
+                allow_pre_instruction_attachments=False,
             )
         except work_plan_service.WorkPlanValidationError as exc:
             return _fail(

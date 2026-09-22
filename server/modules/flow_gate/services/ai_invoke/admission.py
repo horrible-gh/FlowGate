@@ -34,6 +34,7 @@ from modules.flow_gate.db.connection import now_iso
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services import invoke_mention_service
 from modules.flow_gate.services import token_service
+from modules.flow_gate.services import work_plan_attachment_service
 from modules.flow_gate.settings import ai_execution_policy_service
 from modules.flow_gate.settings import ai_settings_service
 from modules.flow_gate.storage import paths as storage_paths
@@ -1200,7 +1201,21 @@ def start_run(
         # one of them was issued through this branch, which never passed it, so there was no
         # bridge from a dead hop's token back to the run that died. Builders that do not accept
         # the keyword (review / sequence_edit / test_run) keep being called with no arguments.
-        issue = _call_issue_builder(issue_builder, run_id)
+        try:
+            issue = _call_issue_builder(issue_builder, run_id)
+        except work_plan_attachment_service.PreInstructionAttachmentError as exc:
+            # 0554 T0014 §5: a rework issue_builder (issue_rework_request) already revoked
+            # the token it minted before re-raising — this only has the group lease left to
+            # give back, mirroring the mention_unavailable/run_lease_lost cleanups below.
+            if not project_scoped:
+                db_group_ai_leases.release(
+                    group_id, run_id, reason="admission_rollback_pre_instruction_attachment_invalid"
+                )
+            raise _http_error(
+                409, exc.code,
+                "WorkPlan pre-instruction attachment is not valid for this step.",
+                source_doc_id=exc.source_doc_id,
+            )
         mention = issue.get("mention")
     else:
         issue = token_service.issue(
@@ -1275,17 +1290,39 @@ def start_run(
         "prompt_user_message_sha256": None,
     }
     if mode == "continuous" or (mode == "single" and action_scope == "new"):
-        mention = _inject_hop_notes(
-            mention,
-            doc_ref,
-            default_note=(continuation_default_note if mode == "continuous" else None),
-            note_overrides=(continuation_note_overrides if mode == "continuous" else None),
-            instruction_mode=continuation_instruction_mode,
-            auto_approve_item_seqs=continuation_auto_approve_item_seqs,
-            fold_worker_item_seq=(mode == "continuous"),
-            locale=continuation_locale,
-            audit=prompt_audit,
-        )
+        try:
+            mention = _inject_hop_notes(
+                mention,
+                doc_ref,
+                default_note=(continuation_default_note if mode == "continuous" else None),
+                note_overrides=(continuation_note_overrides if mode == "continuous" else None),
+                instruction_mode=continuation_instruction_mode,
+                auto_approve_item_seqs=continuation_auto_approve_item_seqs,
+                fold_worker_item_seq=(mode == "continuous"),
+                locale=continuation_locale,
+                audit=prompt_audit,
+            )
+        except work_plan_attachment_service.PreInstructionAttachmentError as exc:
+            # 0554 T0014 §5: a stored pre-instruction attachment that no longer validates
+            # must stop the hop before the AI is invoked — same fail-closed shape as
+            # mention_unavailable above, reusing its exact token+lease cleanup.
+            try:
+                token_service.revoke(
+                    issue["token_id"], reason="ai_invoke_pre_instruction_attachment_invalid"
+                )
+            except Exception:
+                logger.warning(
+                    "token revoke failed after pre_instruction_attachment_invalid", exc_info=True
+                )
+            if not project_scoped:
+                db_group_ai_leases.release(
+                    group_id, run_id, reason="admission_rollback_pre_instruction_attachment_invalid"
+                )
+            raise _http_error(
+                409, exc.code,
+                "WorkPlan pre-instruction attachment is not valid for this step.",
+                source_doc_id=exc.source_doc_id,
+            )
     _prompt_final_length, _prompt_final_sha256 = prompt_digest(mention)
 
     if scope_oracle_run:
@@ -1344,9 +1381,11 @@ def start_run(
         )
         if mode == "continuous" else None
     )
-    hop_review_count = review.resolve_review_count(review_count_overrides, hop_item_seq)
+    hop_review_count = review.resolve_review_count(
+        review_count_overrides, hop_item_seq, doc_ref
+    )
     hop_reviewer_provider_id = (
-        review.resolve_reviewer(reviewer_overrides, hop_item_seq, project_id)
+        review.resolve_reviewer(reviewer_overrides, hop_item_seq, project_id, doc_ref)
         if hop_review_count else None
     )
     if document_review_loop is not None:
@@ -1982,10 +2021,19 @@ def _inject_hop_notes(
 
     hop_note: Optional[str] = None
     hop_source: Optional[str] = None
+    item_seq: Optional[int] = None
+    # rej_01M338WJ83A3JTZJ finding 1: this used to be one try/except shared with the note
+    # fallback below, so a sequence/head lookup exception collapsed item_seq to None — the
+    # exact same value a workflow_decide run (genuinely no sequence yet) produces without
+    # ever raising. §5's fail-closed pre-instruction check below could not tell "nothing to
+    # check" from "we don't know", and a note-only failure contract ("must not stall the
+    # hop") got applied to a safety check it was never meant to cover. Split so only THIS
+    # lookup's failure is tracked — the note fallback right after stays exactly as
+    # permissive as before.
+    item_seq_lookup_failed = False
     try:
         seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
         head = db_wfseq.get_effective_head(seq["id"]) if seq is not None else None
-        item_seq = None
         if head:
             item_seq = (
                 _hop_worker_item_seq(
@@ -1997,7 +2045,13 @@ def _inject_hop_notes(
                 if fold_worker_item_seq
                 else head.get("item_seq")
             )
+    except Exception:  # noqa: BLE001 — captured; §5 fail-closed check below acts on this
+        logger.warning(
+            "continuation hop item_seq resolution failed for %s", doc_ref, exc_info=True
+        )
+        item_seq_lookup_failed = True
 
+    try:
         override_present = False
         override_value = None
         if item_seq is not None and isinstance(note_overrides, dict):
@@ -2030,6 +2084,39 @@ def _inject_hop_notes(
             mention = invoke_mention_service.prepend_messages_section(mention, notes, locale)
     except Exception:  # noqa: BLE001 — a note failure must not stall the hop
         logger.warning("continuation hop note injection failed for %s", doc_ref, exc_info=True)
+    # 0554 T0014 §2/§5: pre-instruction is resolved from the SAME row the note came from
+    # (item_seq above), but — unlike the note — a stored attachment reference that fails
+    # validation is not swallowed here: PreInstructionAttachmentError propagates out of this
+    # function so the hop stops before the AI is invoked (T0014 §5's fail-closed contract).
+    if item_seq_lookup_failed:
+        # rej_01M338WJ83A3JTZJ finding 1: we could not determine which sequence row this hop
+        # fills, so we cannot tell "this row has no pre-instruction" from "it might have one
+        # and we failed to read it". A stable, dedicated code reuses the exact same
+        # token-revoke + lease-release + 409 cleanup every other PreInstructionAttachmentError
+        # already gets at both call sites (admission.start_run, worker._prepare_retry_token) —
+        # see the "except PreInstructionAttachmentError" blocks that wrap calls into this
+        # function.
+        raise work_plan_attachment_service.PreInstructionAttachmentError(
+            "pre_instruction_sequence_lookup_failed", None
+        )
+    if item_seq is not None:
+        try:
+            item = _sequence_item_by_seq(doc_ref, item_seq)
+        except work_plan_attachment_service.PreInstructionAttachmentError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — re-raised below as a stable fail-closed code
+            logger.warning(
+                "sequence item re-lookup failed for %s item_seq=%s", doc_ref, item_seq,
+                exc_info=True,
+            )
+            raise work_plan_attachment_service.PreInstructionAttachmentError(
+                "pre_instruction_sequence_lookup_failed", None
+            ) from exc
+        pre = work_plan_attachment_service.resolve_pre_instruction(item)
+        if pre:
+            mention = invoke_mention_service.prepend_pre_instruction_section(
+                mention, text=pre.get("text"), attachment=pre.get("attachment"), locale=locale,
+            )
     if audit is not None:
         sources = []
         if hop_source:
@@ -2045,6 +2132,25 @@ def _inject_hop_notes(
             "prompt_user_message_sha256": digest,
         })
     return mention
+
+
+def _sequence_item_by_seq(doc_ref: str, item_seq: int) -> Optional[dict]:
+    """Return one sequence-row by item_seq — None means "no such row", nothing else.
+
+    rej_01M338WJ83A3JTZJ finding 1: this used to degrade a DB lookup exception to the same
+    None a genuinely absent row returns, so its one caller (the §5 fail-closed pre-instruction
+    check in :func:`_inject_hop_notes`) could not distinguish "this row has no pre-instruction"
+    from "we could not read the row that might have one" — the former is safe to proceed on,
+    the latter is exactly what §5 requires stopping the hop for. Exceptions now propagate; the
+    caller is responsible for turning them into a stable fail-closed error.
+    """
+    seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+    if seq is None:
+        return None
+    for item in db_wfseq.get_sequence_items(seq["id"]) or []:
+        if item.get("item_seq") == item_seq:
+            return item
+    return None
 
 
 def resolve_stored_step_note(doc_ref: str, item_seq: int) -> Optional[str]:

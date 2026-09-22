@@ -90,6 +90,11 @@ def world(monkeypatch, tmp_path):
     monkeypatch.setattr(svc.db_docs, "get_by_id", w.get_by_id)
     monkeypatch.setattr(svc.db_reviews, "list_by_doc", w.list_by_doc)
     monkeypatch.setattr(svc.db_tokens, "get_by_id", w.token_by_id)
+    # A single "new" run reaches admission._inject_hop_notes too (mode=="single" and
+    # action_scope=="new" is in its trigger condition) — a genuinely undecided sequence
+    # (None, not an exception) is the correct real-world shape for these single-shot runs,
+    # not something this suite's own scope-oracle behavior needs to model further.
+    monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda doc_id: None)
     monkeypatch.setattr(svc.db_projects, "get_by_id", lambda pid: {"project_name": "testproj"})
     monkeypatch.setattr(
         svc.ai_settings_service, "resolve_effective",

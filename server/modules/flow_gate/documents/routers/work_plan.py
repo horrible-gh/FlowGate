@@ -33,8 +33,10 @@ from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.documents import document_service
 from modules.flow_gate.documents.constants import WORK_PLAN_TYPE
+from modules.flow_gate.documents.attachments.constants import ATTACH_MAX_UPLOAD_BYTES
 from modules.flow_gate.numbering import numbering_service
 from modules.flow_gate.services import work_plan_service as wp
+from modules.flow_gate.services import work_plan_attachment_service as wp_attach
 from modules.flow_gate.services import work_plan_apply_service as wpa
 from modules.flow_gate.services import work_plan_sequence_service as wpseq
 from modules.flow_gate.settings import ai_settings_service
@@ -307,12 +309,44 @@ def _read_view(doc: dict, body: dict) -> dict:
             if provider.get("id")
         ],
         "provider_status": wp.provider_status(body, providers),
+        "step_execution_status": [
+            {
+                "step_key": step.get("key"),
+                "reviewer_provider": {
+                    "provider_id": step.get("reviewer_provider_id"),
+                    "enabled": (
+                        step.get("reviewer_provider_id") is None
+                        or step.get("reviewer_provider_id") in {
+                            str(provider.get("id")) for provider in providers
+                            if provider.get("id")
+                        }
+                    ),
+                    "current_name": next(
+                        (
+                            provider.get("name") for provider in providers
+                            if str(provider.get("id")) == str(step.get("reviewer_provider_id"))
+                        ),
+                        None,
+                    ),
+                },
+                "pre_instruction_attachment": wp_attach.reference_status(
+                    doc.get("doc_id") or "",
+                    step.get("pre_instruction_attachment"),
+                ),
+            }
+            for step in body.get("steps") or []
+        ],
+        "review_count_choices": list(wp.review_count_choices()),
         "assignment_summary": wp.assignment_summary(body, providers),
         "unassigned_step_count": wp.unassigned_step_count(body),
         "totals": wp.totals(body),
         # 0406 T0022 item 6: where the screen used to hold its own 200 and block input silently.
         # The server states the cap and the editor draws the remaining count from that value.
-        "limits": {"note_max_chars": wp.NOTE_MAX_CHARS},
+        "limits": {
+            "note_max_chars": wp.NOTE_MAX_CHARS,
+            "pre_instruction_text_max_chars": wp.PRE_INSTRUCTION_TEXT_MAX_CHARS,
+            "pre_instruction_attachment_max_bytes": ATTACH_MAX_UPLOAD_BYTES,
+        },
         "last_application": (applications.get("items") or [None])[0],
     }
 
@@ -616,7 +650,11 @@ def get_work_plan(
     locale = _locale(request)
     doc = _load_doc(doc_id)
     try:
-        body = wp.load_body(_plan_path(doc), project_id=doc.get("project_id"))
+        body = wp.load_body(
+            _plan_path(doc),
+            project_id=doc.get("project_id"),
+            doc_id=doc.get("doc_id"),
+        )
     except wp.WorkPlanUnreadable as exc:
         body = _heal_unwritten_plan(doc, exc, current_user["user_id"])
         if body is None:
@@ -657,7 +695,12 @@ def save_work_plan(
     # user throw away their edits with [reload] only to be told the values were
     # invalid anyway — two rounds of wasted work for one mistake.
     try:
-        plan = wp.validate(body.body, project_id=doc.get("project_id"), action="save")
+        plan = wp.validate(
+            body.body,
+            project_id=doc.get("project_id"),
+            doc_id=doc_id,
+            action="save",
+        )
     except wp.WorkPlanValidationError as exc:
         return _validation_response(exc, locale)
     warnings = wp.capability_warning_findings(plan, doc.get("project_id") or "")
@@ -745,6 +788,14 @@ def save_work_plan(
 
     refreshed = db_docs.get_by_id(doc_id) or refreshed
 
+    lifecycle_warnings = wp_attach.cleanup_unreferenced(refreshed, plan)
+    if lifecycle_warnings:
+        import LogAssist.log as logger
+        logger.warning(
+            f"[work-plan] reserved attachment cleanup incomplete ({doc_id}): "
+            f"{lifecycle_warnings}"
+        )
+
     if backup_rel:
         try:
             db_revisions.create({
@@ -797,8 +848,66 @@ def save_work_plan(
         "unassigned_step_count": wp.unassigned_step_count(plan),
         "assignment_summary": wp.assignment_summary(plan, providers),
         "totals": wp.totals(plan),
-        "warnings": warnings,
+        "warnings": [*warnings, *lifecycle_warnings],
     }
+
+
+@router.post("/{doc_id}/work-plan/pre-instruction-attachments", status_code=201)
+@require_permission("perm_document_update")
+async def upload_pre_instruction_attachment(
+    request: Request,
+    doc_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Upload one server-named reserved file for an editable instruction step."""
+
+    doc = _load_doc(doc_id)
+    from modules.flow_gate.documents.routers.documents import (
+        _reject_if_group_ai_running,
+        _reject_if_group_disposed,
+    )
+    _reject_if_group_disposed(doc)
+    _reject_if_group_ai_running(doc)
+    final_approved = document_service.is_final_approved(doc)
+    if not document_service.is_document_editable(doc, final_approved=final_approved):
+        raise HTTPException(status_code=422, detail="Work plan is not editable.")
+
+    form = await request.form()
+    files = list(form.getlist("file"))
+    step_key = str(form.get("step_key") or "")
+    if len(files) != 1:
+        raise HTTPException(status_code=422, detail="Exactly one file is required.")
+    try:
+        plan = wp.load_body(
+            _plan_path(doc),
+            project_id=doc.get("project_id"),
+            doc_id=doc_id,
+        )
+    except wp.WorkPlanUnreadable as exc:
+        return _unreadable_response(doc, exc, _locale(request))
+    step = next(
+        (candidate for candidate in plan.get("steps") or []
+         if candidate.get("key") == step_key),
+        None,
+    )
+    if step is None:
+        raise HTTPException(status_code=422, detail="Unknown WorkPlan step_key.")
+    if step.get("locked") or step.get("pair_role") == "result":
+        raise HTTPException(
+            status_code=422,
+            detail="Pre-instruction attachments are allowed only on editable instruction steps.",
+        )
+    try:
+        uploaded = await wp_attach.upload_pre_instruction_attachment(
+            doc_id,
+            step_key,
+            files[0],
+            current_user,
+            request.headers.get("content-length"),
+        )
+    except wp_attach.AttachmentError as exc:
+        return exc.response()
+    return {"ok": True, **uploaded}
 
 
 # ── Suggestion (P0009 §4.9) ──────────────────────────────────────────────────
@@ -824,7 +933,11 @@ def suggest_work_plan(
     if body.base_revision_no is not None and body.base_revision_no != current_revision:
         return _revision_conflict_response(doc, locale, body.base_revision_no, current_revision)
     try:
-        plan = wp.load_body(_plan_path(doc), project_id=doc.get("project_id"))
+        plan = wp.load_body(
+            _plan_path(doc),
+            project_id=doc.get("project_id"),
+            doc_id=doc.get("doc_id"),
+        )
     except wp.WorkPlanUnreadable as exc:
         return _unreadable_response(doc, exc, locale)
 
@@ -913,7 +1026,11 @@ def suggest_work_plan(
 
 def _preview_sync(doc_id: str, body: WorkPlanApplyPreview, locale: str) -> dict:
     doc = _load_doc(doc_id)
-    plan = wp.load_body(_plan_path(doc), project_id=doc.get("project_id"))
+    plan = wp.load_body(
+            _plan_path(doc),
+            project_id=doc.get("project_id"),
+            doc_id=doc.get("doc_id"),
+        )
     return wpa.preview(
         doc=doc,
         plan=plan,
@@ -945,7 +1062,11 @@ def _apply_sync(
 ) -> dict:
     doc = _load_doc(doc_id)
     plan_path = _plan_path(doc)
-    plan = wp.load_body(plan_path, project_id=doc.get("project_id"))
+    plan = wp.load_body(
+        plan_path,
+        project_id=doc.get("project_id"),
+        doc_id=doc.get("doc_id"),
+    )
     owner_id = doc.get("target_id") or doc.get("triggered_by")
     owner_doc = db_docs.get_by_id(owner_id)
     if owner_doc is None:
@@ -1027,7 +1148,11 @@ def _sequence_candidates_sync(doc_id: str, body: WorkPlanSequenceCandidates, loc
     if str(doc.get("type_code") or "").upper() != WORK_PLAN_TYPE:
         return JSONResponse(status_code=422, content={"error": "not_a_work_plan", "doc_id": doc_id})
     try:
-        plan = wp.load_body(_plan_path(doc), project_id=doc.get("project_id"))
+        plan = wp.load_body(
+            _plan_path(doc),
+            project_id=doc.get("project_id"),
+            doc_id=doc.get("doc_id"),
+        )
     except wp.WorkPlanUnreadable as exc:
         # L0011 §4.1-2 "plan_unreadable": a plan nobody can open as a table is a different
         # problem from a plan with nothing in it, and the person's next move differs, so it

@@ -60,6 +60,31 @@
         </div>
       </div>
 
+      <!-- T0010 §9 / D0007 §6.3 — unlike the assignment box above, these two summary lines
+           always render once the doc is a WP (even with nothing set yet the spec calls for a
+           short "none" state, not an empty sidebar). -->
+      <div v-if="typeCode === 'WP'" class="dip-section" :class="{ collapsed: sectionCollapsed.wp_review }">
+        <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.wp_review" @click="toggleSection('wp_review')">
+          <AppIcon name="caret-down" class="dip-acc-caret" />
+          <AppIcon name="magnifying-glass" />
+          {{ t('main.doc_info_panel.wp_review_summary_title') }}
+        </button>
+        <div class="dip-sec-body">
+          <p class="dip-status-desc" data-test="wp-review-summary">{{ wpReviewSummaryText }}</p>
+        </div>
+      </div>
+
+      <div v-if="typeCode === 'WP'" class="dip-section" :class="{ collapsed: sectionCollapsed.wp_instruction }">
+        <button type="button" class="dip-section-title dip-sec-toggle" :aria-expanded="!sectionCollapsed.wp_instruction" @click="toggleSection('wp_instruction')">
+          <AppIcon name="caret-down" class="dip-acc-caret" />
+          <AppIcon name="note-pencil" />
+          {{ t('main.doc_info_panel.wp_instruction_summary_title') }}
+        </button>
+        <div class="dip-sec-body">
+          <p class="dip-status-desc" data-test="wp-instruction-summary">{{ wpInstructionSummaryText }}</p>
+        </div>
+      </div>
+
       <!-- Section 1.5: source-change summary (0325 R0001 / N0004 §2·§3).
            Only at final approval (AC), it fills the space left empty once query/answer,
            AI review comments, and rejection reasons are gone. It's the one place, on the
@@ -598,11 +623,14 @@ const emit = defineEmits<{
 // 0311 T0004 rev1 §2: 'ai_review' is now the MERGED AI review·rejection section's key. The old
 // standalone 'reject' key is dropped — a repo-wide grep found no other reference to it
 // (it had already been left dangling with no section of its own).
-type SectionKey = 'status' | 'wp_assignments' | 'qa' | 'ai_review' | 'tr_scope' | 'changes'
+type SectionKey = 'status' | 'wp_assignments' | 'wp_review' | 'wp_instruction' | 'qa' | 'ai_review' | 'tr_scope' | 'changes'
 const sectionCollapsed = reactive<Record<SectionKey, boolean>>({
   status: false,
   // Mockup xc32frrg screen 1 draws this box already expanded.
   wp_assignments: false,
+  // T0010 §9 — both start expanded, same as the assignment box above.
+  wp_review: false,
+  wp_instruction: false,
   qa: false,
   ai_review: false,
   // Folded when the result is pass with no reasons (D0004 §6). The watch below opens it based on the verdict.
@@ -619,15 +647,52 @@ const wpUnassignedSteps = ref(0)
 // grow and shrink when a document is opened.
 const wpAssignmentsShown = computed(() => wpAssignments.value.length > 0 || wpUnassignedSteps.value > 0)
 
+// T0010 §9 / D0007 §6.3 — the two step-key lists behind the always-visible review/instruction
+// summary lines. Kept as light metadata (not the whole WPBody) since this panel only ever
+// renders the two short sentences below, not a step table.
+interface WorkPlanStepMeta { key: string; locked: boolean; pairRole: string; reviewCount: number; hasInstruction: boolean }
+const wpStepMeta = ref<WorkPlanStepMeta[]>([])
+
+const wpReviewSummaryText = computed(() => {
+  const unlocked = wpStepMeta.value.filter((step) => !step.locked)
+  const withReview = unlocked.filter((step) => step.reviewCount !== 0)
+  if (!withReview.length) return t('main.doc_info_panel.wp_review_summary_none')
+  return t('main.doc_info_panel.wp_review_summary_text', {
+    total: unlocked.length,
+    n: withReview.length,
+    list: withReview.map((step) => step.key).join(' · '),
+  })
+})
+
+const wpInstructionSummaryText = computed(() => {
+  const eligible = wpStepMeta.value.filter((step) => !step.locked && step.pairRole !== 'result')
+  const written = eligible.filter((step) => step.hasInstruction)
+  if (!written.length) return t('main.doc_info_panel.wp_instruction_summary_none')
+  return t('main.doc_info_panel.wp_instruction_summary_text', {
+    total: eligible.length,
+    n: written.length,
+    list: written.map((step) => step.key).join(' · '),
+  })
+})
+
 async function fetchWpAssignments() {
   if (props.typeCode !== 'WP') return
   try {
     const res = await getRequest<any>('/api/v1/documents/' + encodeURIComponent(props.docId) + '/work-plan')
     wpAssignments.value = res.data.assignment_summary ?? []
     wpUnassignedSteps.value = res.data.unassigned_step_count ?? 0
+    const steps = res.data.body?.steps ?? []
+    wpStepMeta.value = steps.map((step: any) => ({
+      key: step.key,
+      locked: !!step.locked,
+      pairRole: step.pair_role,
+      reviewCount: step.review_count ?? 0,
+      hasInstruction: !!(String(step.pre_instruction_text ?? '').trim() !== '' || step.pre_instruction_attachment),
+    }))
   } catch {
     wpAssignments.value = []
     wpUnassignedSteps.value = 0
+    wpStepMeta.value = []
   }
 }
 

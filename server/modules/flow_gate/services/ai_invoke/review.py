@@ -183,16 +183,49 @@ def _provider_name_of(project_id: Optional[str], provider_id: Optional[str]) -> 
     return provider_id
 
 
-def resolve_review_count(review_count_overrides: Optional[dict], item_seq: Optional[int]) -> int:
-    """How many times this step's output is reviewed (L0008 §2.2).
+def _map_contains(mapping: Optional[dict], item_seq: Optional[int]) -> bool:
+    if not isinstance(mapping, dict) or item_seq is None:
+        return False
+    return item_seq in mapping or str(item_seq) in mapping
 
-    0 for every step the user did not pick — count 0 never reaches storage, because P0007's
-    normalization already dropped it, so "absent" and "0" are the same fact. A value outside
-    the SSOT choice set (flowgate.default.0490 T0005: ai_execution_policy_service.repeat_count_choices,
-    not a fixed literal set) can only come from a hand-edited row (the write path is
-    422-guarded), and is read as "no review" rather than crashing the chain.
-    """
-    raw = _map_lookup(review_count_overrides, item_seq)
+
+def _stored_review_policy_for_item_seq(
+    doc_ref: Optional[str], item_seq: Optional[int],
+) -> tuple[int, Optional[str]]:
+    """Return the durable sequence baseline; malformed legacy values degrade safely."""
+    if not doc_ref or item_seq is None:
+        return REVIEW_COUNT_DEFAULT, None
+    try:
+        seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+        if seq is None:
+            return REVIEW_COUNT_DEFAULT, None
+        row = next((
+            item for item in (db_wfseq.get_sequence_items(seq["id"]) or [])
+            if item.get("item_seq") == item_seq
+        ), None)
+        if row is None:
+            return REVIEW_COUNT_DEFAULT, None
+        count = row.get("review_count")
+        choices = ai_execution_policy_service.repeat_count_choices(allow_zero=True)
+        if isinstance(count, bool) or not isinstance(count, int) or count not in choices:
+            count = REVIEW_COUNT_DEFAULT
+        return count, row.get("reviewer_provider_id")
+    except Exception:  # noqa: BLE001 — a damaged baseline must not stall a running chain
+        logger.warning("review gate sequence baseline lookup failed for %s", doc_ref,
+                       exc_info=True)
+        return REVIEW_COUNT_DEFAULT, None
+
+
+def resolve_review_count(
+    review_count_overrides: Optional[dict],
+    item_seq: Optional[int],
+    doc_ref: Optional[str] = None,
+) -> int:
+    """Resolve runtime explicit override (including 0), then sequence baseline, then 0."""
+    if _map_contains(review_count_overrides, item_seq):
+        raw = _map_lookup(review_count_overrides, item_seq)
+    else:
+        raw, _reviewer = _stored_review_policy_for_item_seq(doc_ref, item_seq)
     if isinstance(raw, bool) or not isinstance(raw, int):
         return REVIEW_COUNT_DEFAULT
     if raw not in ai_execution_policy_service.repeat_count_choices(allow_zero=True):
@@ -218,19 +251,16 @@ def review_rounds_remain(rounds_used: int, limit: int) -> bool:
 
 
 def resolve_reviewer(
-    reviewer_overrides: Optional[dict], item_seq: Optional[int], project_id: Optional[str]
+    reviewer_overrides: Optional[dict],
+    item_seq: Optional[int],
+    project_id: Optional[str],
+    doc_ref: Optional[str] = None,
 ) -> Optional[str]:
-    """Who reviews this step (L0008 §2.2): the step's own pick, else the project default.
-
-    The step EXECUTOR's provider tiers are deliberately not consulted — a reviewer is chosen
-    to have the work read by someone else, and folding the executor in here would quietly
-    make that self-review.
-
-    A pick that is no longer enabled degrades to the default rather than removing the review:
-    a chain a person parked must stay resumable (P0007 [엣지] 재개 시 검수자 소멸). The 422
-    that refuses the same pick outright belongs to the fresh-request path only.
-    """
-    provider_id = _map_lookup(reviewer_overrides, item_seq)
+    """Resolve runtime reviewer, then sequence baseline, then project default."""
+    if _map_contains(reviewer_overrides, item_seq):
+        provider_id = _map_lookup(reviewer_overrides, item_seq)
+    else:
+        _count, provider_id = _stored_review_policy_for_item_seq(doc_ref, item_seq)
     if provider_id and _provider_enabled(project_id, provider_id):
         return provider_id
     if provider_id:
@@ -476,7 +506,9 @@ def resolve_review_gate(bundle: dict) -> dict:
     if slot is None:
         return {"stage": WORK_HOP_KIND}                      # nothing to review — old flow
 
-    count = resolve_review_count(bundle.get("review_count_overrides"), slot["item_seq"])
+    count = resolve_review_count(
+        bundle.get("review_count_overrides"), slot["item_seq"], bundle.get("doc_ref")
+    )
     if count == 0:
         return {"stage": WORK_HOP_KIND, "approve_first": True, "slot": slot, "count": 0}
 
@@ -808,7 +840,10 @@ def _spawn_review_hop(group_id: str, bundle: dict, gate: dict) -> dict:
     locale = bundle.get("locale") or "ko"
     api_base_url = bundle.get("api_base_url")
     issued_to = bundle.get("issued_to")
-    reviewer_id = resolve_reviewer(bundle.get("reviewer_overrides"), slot["item_seq"], project_id)
+    reviewer_id = resolve_reviewer(
+        bundle.get("reviewer_overrides"), slot["item_seq"], project_id,
+        bundle.get("doc_ref"),
+    )
     executor_id = resolve_step_executor(bundle, slot["item_seq"], project_id, bundle.get("doc_ref"))
     if reviewer_id and reviewer_id == executor_id:
         # Allowed — a person may deliberately pick it — but never silent (L0008 §2.2).

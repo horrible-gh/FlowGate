@@ -39,13 +39,14 @@ from modules.flow_gate.documents.constants import (
 )
 
 # ── L0010 §1.1 thresholds — single source of truth ───────────────────────────
-WP_VERSION_SUPPORTED = 1
+WP_VERSION_SUPPORTED = 2
 COUNT_MIN = 0
 COUNT_MAX = 20
 STEPS_MAX = 100
 # 0406 T0022 item 6: documents.constants is the sole source of truth for the one-line note
 # cap. A separate 200 written here grew into three copies with the sequence's and the screen's.
 NOTE_MAX_CHARS = STEP_NOTE_MAX_CHARS
+PRE_INSTRUCTION_TEXT_MAX_CHARS = 20_000
 PROVIDER_CANDIDATES_MAX = 50
 ERRORS_REPORTED_MAX = 50
 
@@ -58,6 +59,10 @@ PROVIDER_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 # included on purpose — a one-line note never legitimately holds them, and
 # silently replacing them would tell the AI its body was stored verbatim.
 CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+# Pre-instructions are multiline: CR/LF and tab are intentional, while the remaining
+# C0 controls and DEL are never valid document text.
+PRE_INSTRUCTION_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 PAIR_ROLES = ("instruction", "result", "single")
 ORIGINS = ("human", "ai_suggested", "system")
@@ -80,12 +85,23 @@ STEP_FIELD_ORDER = (
     "provider_id",
     "provider_display_name",
     "note",
+    "review_count",
+    "reviewer_provider_id",
+    "reviewer_provider_display_name",
+    "pre_instruction_text",
+    "pre_instruction_attachment",
     "locked",
     "locked_reason",
     "origin",
 )
 CANDIDATE_FIELD_ORDER = ("provider_id", "display_name", "group_label")
 DEFAULTS_FIELD_ORDER = ("provider_id", "note")
+PRE_INSTRUCTION_ATTACHMENT_FIELD_ORDER = (
+    "doc_id",
+    "filename",
+    "original_filename",
+    "content_sha256",
+)
 
 LOCALES = ("ko", "en", "ja")
 FALLBACK_LOCALE = "ko"
@@ -124,6 +140,9 @@ def step_contract() -> dict:
         "pair_map": dict(WORK_PLAN_PAIR_MAP),
         "single_types": list(WORK_PLAN_SHEET_TYPES),
         "locked_types": sorted(WORK_PLAN_LOCKED_TYPES),
+        "review_count_choices": list(review_count_choices()),
+        "pre_instruction_text_max_chars": PRE_INSTRUCTION_TEXT_MAX_CHARS,
+        "pre_instruction_attachment_fields": list(PRE_INSTRUCTION_ATTACHMENT_FIELD_ORDER),
     }
 
 
@@ -307,6 +326,86 @@ _ERROR_COPY: dict[str, dict[str, str]] = {
         "ko": "provider_id 가 비어 있으면 provider_display_name 도 null 이어야 합니다.",
         "en": "provider_display_name must be null whenever provider_id is null.",
         "ja": "provider_id が空なら provider_display_name も null でなければなりません。",
+    },
+    "review_count_invalid": {
+        "ko": "검수 횟수가 현재 허용 목록에 없습니다.",
+        "en": "The review count is not in the current allowed choices.",
+        "ja": "レビュー回数は現在の許可リストにありません。",
+    },
+    "reviewer_not_allowed": {
+        "ko": "검수 안 함 또는 서버 조립 단계에는 검수 담당을 지정할 수 없습니다.",
+        "en": "A reviewer is not allowed when review is disabled or the step is server-assembled.",
+        "ja": "レビューなし、またはサーバー組立段階にはレビュー担当を指定できません。",
+    },
+    "reviewer_provider_unavailable": {
+        "ko": "검수 담당 provider가 현재 프로젝트에서 활성 상태가 아닙니다.",
+        "en": "The reviewer provider is not currently enabled for this project.",
+        "ja": "レビュー担当 provider は現在このプロジェクトで有効ではありません。",
+    },
+    "reviewer_display_name_without_provider_id": {
+        "ko": "reviewer_provider_id가 비어 있으면 표시명도 null이어야 합니다.",
+        "en": "The reviewer display name must be null when reviewer_provider_id is null.",
+        "ja": "reviewer_provider_id が空なら表示名も null でなければなりません。",
+    },
+    "pre_instruction_too_long": {
+        "ko": "사전지시 본문은 {max}자까지입니다.",
+        "en": "Pre-instruction text may be at most {max} characters.",
+        "ja": "事前指示本文は {max} 文字までです。",
+    },
+    "pre_instruction_control_char": {
+        "ko": "사전지시 본문에 허용되지 않는 제어문자가 있습니다.",
+        "en": "Pre-instruction text contains a forbidden control character.",
+        "ja": "事前指示本文に許可されていない制御文字があります。",
+    },
+    "pre_instruction_not_allowed": {
+        "ko": "결과 또는 서버 조립 단계에는 사전지시를 넣을 수 없습니다.",
+        "en": "Pre-instructions are not allowed on result or server-assembled steps.",
+        "ja": "結果またはサーバー組立段階には事前指示を設定できません。",
+    },
+    "pre_instruction_attachment_digest_invalid": {
+        "ko": "첨부 SHA-256은 소문자 64자리 16진수여야 합니다.",
+        "en": "The attachment SHA-256 must be 64 lowercase hexadecimal characters.",
+        "ja": "添付 SHA-256 は小文字64桁の16進数でなければなりません。",
+    },
+    "pre_instruction_attachment_ai_forbidden": {
+        "ko": "AI 작성 경로에서는 사전지시 첨부 참조를 만들 수 없습니다.",
+        "en": "AI-authored work plans cannot create pre-instruction attachment references.",
+        "ja": "AI作成経路では事前指示添付参照を作成できません。",
+    },
+    "pre_instruction_attachment_doc_mismatch": {
+        "ko": "첨부 참조가 현재 작업계획 문서를 가리키지 않습니다.",
+        "en": "The attachment reference does not belong to this work plan.",
+        "ja": "添付参照が現在の作業計画文書を指していません。",
+    },
+    "pre_instruction_attachment_reserved_name_required": {
+        "ko": "사전지시 첨부는 서버가 만든 예약 이름이어야 합니다.",
+        "en": "A pre-instruction attachment must use a server-generated reserved name.",
+        "ja": "事前指示添付はサーバー生成の予約名でなければなりません。",
+    },
+    "pre_instruction_attachment_registry_missing": {
+        "ko": "사전지시 첨부 registry 행이 없습니다.",
+        "en": "The pre-instruction attachment registry row is missing.",
+        "ja": "事前指示添付の registry 行がありません。",
+    },
+    "pre_instruction_attachment_file_missing": {
+        "ko": "사전지시 첨부 파일이 없습니다.",
+        "en": "The pre-instruction attachment file is missing.",
+        "ja": "事前指示添付ファイルがありません。",
+    },
+    "pre_instruction_attachment_original_name_mismatch": {
+        "ko": "사전지시 첨부의 원래 파일명이 registry와 다릅니다.",
+        "en": "The attachment original filename differs from the registry.",
+        "ja": "添付の元ファイル名が registry と異なります。",
+    },
+    "pre_instruction_attachment_digest_mismatch": {
+        "ko": "사전지시 첨부의 내용 지문이 다릅니다.",
+        "en": "The pre-instruction attachment content digest does not match.",
+        "ja": "事前指示添付の内容ダイジェストが一致しません。",
+    },
+    "pre_instruction_attachment_outside_storage": {
+        "ko": "사전지시 첨부 경로가 저장소 경계를 벗어납니다.",
+        "en": "The pre-instruction attachment path is outside the storage boundary.",
+        "ja": "事前指示添付パスが保存領域の境界外です。",
     },
 }
 
@@ -701,6 +800,11 @@ def make_step(type_code: str, ordinal: int, pair_key: Optional[str], pair_role: 
         "provider_id": None,
         "provider_display_name": None,
         "note": None,
+        "review_count": 0,
+        "reviewer_provider_id": None,
+        "reviewer_provider_display_name": None,
+        "pre_instruction_text": None,
+        "pre_instruction_attachment": None,
         "locked": locked,
         "locked_reason": LOCKED_REASON_SERVER_ASSEMBLED if locked else None,
         "origin": "system" if locked else "human",
@@ -962,6 +1066,79 @@ def is_unwritten_plan(raw: Optional[str]) -> bool:
 
 # ── Validation (L0010 §2.3) ──────────────────────────────────────────────────
 
+def review_count_choices() -> tuple[int, ...]:
+    """Current selectable review counts, in the UI/API display order."""
+
+    from modules.flow_gate.settings import ai_execution_policy_service
+
+    values = ai_execution_policy_service.repeat_count_choices(allow_zero=True)
+    return tuple(value for value in values if value != -1) + ((-1,) if -1 in values else ())
+
+
+def review_count_absolute_max() -> int:
+    from modules.flow_gate.settings import ai_execution_policy_service
+
+    return ai_execution_policy_service.REPEAT_COUNT_HARD_MAX
+
+
+def upgrade_v1_to_v2(body: dict) -> dict:
+    """Return a non-mutating v2 view of a stored/imported v1 plan."""
+
+    if body.get("wp_version") != 1:
+        return body
+    upgraded = dict(body)
+    upgraded["wp_version"] = 2
+    upgraded_steps = []
+    for raw_step in body.get("steps") or []:
+        if not isinstance(raw_step, dict):
+            upgraded_steps.append(raw_step)
+            continue
+        step = dict(raw_step)
+        step.setdefault("review_count", 0)
+        step.setdefault("reviewer_provider_id", None)
+        step.setdefault("reviewer_provider_display_name", None)
+        step.setdefault("pre_instruction_text", None)
+        step.setdefault("pre_instruction_attachment", None)
+        upgraded_steps.append(step)
+    upgraded["steps"] = upgraded_steps
+    return upgraded
+
+
+def _pre_instruction_text_errors(value: Any, loc: str, key: Optional[str]) -> list[dict]:
+    if value is None or value == "":
+        return []
+    if not isinstance(value, str):
+        return [_error("type_invalid", loc, key, field=loc)]
+    if PRE_INSTRUCTION_CONTROL_CHARS.search(value):
+        return [_error("pre_instruction_control_char", loc, key)]
+    if len(unicodedata.normalize("NFC", value)) > PRE_INSTRUCTION_TEXT_MAX_CHARS:
+        return [_error(
+            "pre_instruction_too_long", loc, key, max=PRE_INSTRUCTION_TEXT_MAX_CHARS,
+        )]
+    return []
+
+
+def _pre_instruction_attachment_shape_errors(
+    value: Any, loc: str, key: Optional[str],
+) -> list[dict]:
+    if value is None:
+        return []
+    if not isinstance(value, dict):
+        return [_error("type_invalid", loc, key, field=loc)]
+    errors = _unknown_fields(value, PRE_INSTRUCTION_ATTACHMENT_FIELD_ORDER, loc)
+    for field in PRE_INSTRUCTION_ATTACHMENT_FIELD_ORDER:
+        field_loc = f"{loc}.{field}"
+        if field not in value:
+            errors.append(_error("missing_field", field_loc, key, field=field_loc))
+        elif not isinstance(value.get(field), str) or not value.get(field):
+            errors.append(_error("type_invalid", field_loc, key, field=field_loc))
+    digest = value.get("content_sha256")
+    if isinstance(digest, str) and not SHA256_PATTERN.fullmatch(digest):
+        errors.append(_error("pre_instruction_attachment_digest_invalid",
+                             f"{loc}.content_sha256", key))
+    return errors
+
+
 def _is_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
@@ -1097,6 +1274,44 @@ def _check_step_shape(step: Any, loc: str) -> list[dict]:
         errors.append(_error("provider_display_name_without_provider_id",
                              f"{loc}.provider_display_name", key))
     errors.extend(_note_errors(step.get("note"), f"{loc}.note", key))
+    if "review_count" in step:
+        review_count = step.get("review_count")
+        if (
+            not _is_int(review_count)
+            or review_count < -1
+            or review_count > review_count_absolute_max()
+        ):
+            errors.append(_error("review_count_invalid", f"{loc}.review_count", key))
+    reviewer_id = step.get("reviewer_provider_id")
+    if "reviewer_provider_id" in step and reviewer_id is not None and (
+        not isinstance(reviewer_id, str) or not PROVIDER_ID_PATTERN.match(reviewer_id)
+    ):
+        errors.append(_error(
+            "provider_id_format_invalid", f"{loc}.reviewer_provider_id", key,
+            value=reviewer_id,
+        ))
+    reviewer_display = step.get("reviewer_provider_display_name")
+    if "reviewer_provider_display_name" in step:
+        if reviewer_display is not None and not isinstance(reviewer_display, str):
+            errors.append(_error(
+                "type_invalid", f"{loc}.reviewer_provider_display_name", key,
+                field=f"{loc}.reviewer_provider_display_name",
+            ))
+        elif reviewer_id is None and reviewer_display is not None:
+            errors.append(_error(
+                "reviewer_display_name_without_provider_id",
+                f"{loc}.reviewer_provider_display_name", key,
+            ))
+    if "pre_instruction_text" in step:
+        errors.extend(_pre_instruction_text_errors(
+            step.get("pre_instruction_text"), f"{loc}.pre_instruction_text", key,
+        ))
+    if "pre_instruction_attachment" in step:
+        errors.extend(_pre_instruction_attachment_shape_errors(
+            step.get("pre_instruction_attachment"),
+            f"{loc}.pre_instruction_attachment",
+            key,
+        ))
     return errors
 
 
@@ -1104,8 +1319,10 @@ def validate(
     body: Any,
     *,
     project_id: Optional[str] = None,
+    doc_id: Optional[str] = None,
     action: str = "save",
     enforce_provider_scope: bool = True,
+    allow_pre_instruction_attachments: bool = True,
 ) -> dict:
     """Run every layer of L0010 §2.3 and return the canonical body.
 
@@ -1130,8 +1347,9 @@ def validate(
         fail([_error("wp_version_invalid", "wp_version")])
     if version > WP_VERSION_SUPPORTED:
         fail([_error("wp_version_unsupported", "wp_version", value=version)])
-    # A lower version is read as the current one (P0009 §2.7). Only version 1 exists,
-    # so the upgrade is the identity — the branch stays so version 2 has a home.
+    # v1 is promoted only in memory. Reads never rewrite the file or bump a revision;
+    # the next successful canonical save is the persistence boundary.
+    body = upgrade_v1_to_v2(body)
 
     # ── layer 2: top-level fields ───────────────────────────────────────────
     errors: list[dict] = []
@@ -1192,7 +1410,12 @@ def validate(
     # ── layer 4: providers ──────────────────────────────────────────────────
     # 0411 T0004: the registered list is read once per validation. The candidate list itself is
     # not widened here — candidates are "the AI-delegation range", the registered list is "what a human may pick".
-    registered_ids = _registered_provider_ids(project_id) if enforce_provider_scope else set()
+    registered_providers = (
+        _registered_providers(project_id) if enforce_provider_scope else []
+    )
+    registered_ids = {
+        str(provider["id"]) for provider in registered_providers if provider.get("id")
+    }
     errors.extend(_check_provider_candidates(body["provider_candidates"]))
     errors.extend(_check_defaults(
         body["defaults"], body["provider_candidates"], registered_ids, enforce_provider_scope,
@@ -1229,6 +1452,12 @@ def validate(
     # ── layer 7: what the values mean ───────────────────────────────────────
     # 0411 T0004 (B0001): an unlocked step's provider need only be a candidate or currently registered.
     selectable_ids = _candidate_ids(body["provider_candidates"]) | registered_ids
+    reviewer_names = {
+        str(provider["id"]): provider.get("name")
+        for provider in registered_providers
+        if provider.get("id")
+    }
+    allowed_review_counts = set(review_count_choices())
     for index, step in enumerate(steps):
         loc = f"steps[{index}]"
         expected = expected_steps[index]
@@ -1245,17 +1474,67 @@ def validate(
             or step.get("locked_reason") != expected["locked_reason"]
         ):
             errors.append(_error("locked_flag_mismatch", f"{loc}.locked", key))
+
+        review_count = step.get("review_count")
+        reviewer_id = step.get("reviewer_provider_id")
+        reviewer_display = step.get("reviewer_provider_display_name")
+        pre_text = step.get("pre_instruction_text")
+        pre_attachment = step.get("pre_instruction_attachment")
+
+        if enforce_provider_scope and review_count not in allowed_review_counts:
+            errors.append(_error("review_count_invalid", f"{loc}.review_count", key))
+        if review_count == 0 and (reviewer_id is not None or reviewer_display is not None):
+            errors.append(_error("reviewer_not_allowed", f"{loc}.reviewer_provider_id", key))
+        elif reviewer_id is not None and enforce_provider_scope:
+            if reviewer_id not in reviewer_names:
+                errors.append(_error(
+                    "reviewer_provider_unavailable",
+                    f"{loc}.reviewer_provider_id", key,
+                ))
+            else:
+                # The saved display name is a server snapshot, never trusted request copy.
+                step["reviewer_provider_display_name"] = reviewer_names[reviewer_id]
+
         if expected["locked"]:
             if step.get("provider_id") is not None:
                 errors.append(_error("provider_not_allowed", f"{loc}.provider_id", key))
             if (step.get("note") or "").strip():
                 errors.append(_error("note_not_allowed", f"{loc}.note", key))
+            if review_count != 0 or reviewer_id is not None or reviewer_display is not None:
+                errors.append(_error("reviewer_not_allowed", f"{loc}.review_count", key))
+            if pre_text not in (None, "") or pre_attachment is not None:
+                errors.append(_error("pre_instruction_not_allowed",
+                                     f"{loc}.pre_instruction_text", key))
             if step.get("origin") != "system":
                 errors.append(_error("origin_not_allowed", f"{loc}.origin", key))
-        elif step.get("provider_id") is not None:
-            if enforce_provider_scope and step["provider_id"] not in selectable_ids:
-                errors.append(_error("provider_not_candidate", f"{loc}.provider_id", key,
-                                     value=step["provider_id"]))
+        else:
+            if step.get("provider_id") is not None:
+                if enforce_provider_scope and step["provider_id"] not in selectable_ids:
+                    errors.append(_error(
+                        "provider_not_candidate", f"{loc}.provider_id", key,
+                        value=step["provider_id"],
+                    ))
+            if step.get("pair_role") == "result" and (
+                pre_text not in (None, "") or pre_attachment is not None
+            ):
+                errors.append(_error(
+                    "pre_instruction_not_allowed", f"{loc}.pre_instruction_text", key,
+                ))
+
+        if pre_attachment is not None:
+            if not allow_pre_instruction_attachments:
+                errors.append(_error(
+                    "pre_instruction_attachment_ai_forbidden",
+                    f"{loc}.pre_instruction_attachment", key,
+                ))
+            elif enforce_provider_scope:
+                from modules.flow_gate.services import work_plan_attachment_service as wp_attach
+
+                ref_code = wp_attach.validate_reference(doc_id, pre_attachment)
+                if ref_code:
+                    errors.append(_error(
+                        ref_code, f"{loc}.pre_instruction_attachment", key,
+                    ))
     if errors:
         fail(errors)
 
@@ -1263,6 +1542,18 @@ def validate(
 
 
 # ── Canonical form (P0009 §2.6 decisions 3 and 4) ────────────────────────────
+
+def _canonical_step_value(step: dict, field: str) -> Any:
+    value = step.get(field)
+    if field == "pre_instruction_text" and value == "":
+        return None
+    if field == "pre_instruction_attachment" and isinstance(value, dict):
+        return {
+            name: value.get(name)
+            for name in PRE_INSTRUCTION_ATTACHMENT_FIELD_ORDER
+        }
+    return value
+
 
 def canonicalize(body: dict) -> dict:
     """Fixed key order, `x_` extras preserved at the end of their own object."""
@@ -1297,7 +1588,10 @@ def canonicalize(body: dict) -> dict:
     }
     out["steps"] = [
         {
-            **{field: step.get(field) for field in STEP_FIELD_ORDER},
+            **{
+                field: _canonical_step_value(step, field)
+                for field in STEP_FIELD_ORDER
+            },
             **{k: v for k, v in step.items() if str(k).startswith("x_")},
         }
         for step in (body.get("steps") or [])
@@ -1356,7 +1650,11 @@ def plan_path_for_doc(doc: dict):
 
 # ── Reading a stored plan (P0009 §4.4 / §4.5) ────────────────────────────────
 
-def load_body(path, project_id: Optional[str] = None) -> dict:
+def load_body(
+    path,
+    project_id: Optional[str] = None,
+    doc_id: Optional[str] = None,
+) -> dict:
     """Read + validate a canonical file. Raises WorkPlanUnreadable, never a 500.
 
     0429 T0004: project_id now reaches validate() so a project's own countable-type
@@ -1381,7 +1679,12 @@ def load_body(path, project_id: Optional[str] = None) -> dict:
     try:
         # 0411 T0004: reads do not re-ask about provider scope. The save already did, and if a
         # deleted provider blocked the plan from opening, the "vanished provider" marker could never be seen.
-        return validate(parsed, project_id=project_id, enforce_provider_scope=False)
+        return validate(
+            parsed,
+            project_id=project_id,
+            doc_id=doc_id,
+            enforce_provider_scope=False,
+        )
     except WorkPlanValidationError as exc:
         first = render_errors(exc.errors, FALLBACK_LOCALE)[0]
         raise WorkPlanUnreadable(
@@ -1707,11 +2010,14 @@ TEMPLATE_RULES = {
         "steps 는 quantities 에서 펼쳐지는 목록과 순서까지 같아야 합니다.",
         f"steps[].note 는 그 단계를 맡을 AI에게 줄 한 줄 지시입니다. TSR 외 단계는 null이어도 되지만, 값을 채우면 한 줄로 {NOTE_MAX_CHARS}자 이내여야 하며 줄바꿈과 탭은 쓰지 않습니다.",
         "수량은 근거(부모 R/B, workflow_type_counts, group_documents)에서 산정하고, 근거가 없으면 counted_types/quantities에 키를 남긴 채 0으로 둡니다. 1을 기본값으로 추측하지 않습니다.",
-        "defaults.note 는 모든 단계에 공통으로 붙일 한 줄입니다. 요청 멘트의 '작업계획 맡길 범위' 절에 '전달 멘트'가 있으면 그 값을 그대로 옮겨 적습니다.",
+        "defaults.note 는 모든 단계에 공통으로 붙일 한 줄입니다. 요청 멘트의 '작업계획 맡길 범위' 절에 '전달 멘트'가 있으면 그것을 입력 삼아 이 한 줄을 새로 작성합니다(그대로 옮겨 적지 않습니다).",
         "steps[].provider_id 는 provider_candidates 안의 값이거나 이 프로젝트에 등록된 공급자여야 하며, 고를 것이 없으면 비워 둡니다.",
         "공급자를 지정하지 않는다는 뜻은 steps[].provider_id 와 steps[].provider_display_name 을 둘 다 null 로 두는 것입니다. provider_id 가 null 인데 provider_display_name 만 채우는 것은 허용되지 않습니다(validate() 가 거부합니다).",
         "defaults.provider_id 는 provider_candidates 안의 값이거나 null 입니다. 요청 멘트의 '실행 프로바이더'는 그 멘트를 실행 중인 공급자일 뿐이므로 여기에 옮겨 적지 않습니다.",
-        "TSR 단계에는 공급자와 멘트를 적지 않습니다.",
+        "TSR 단계에는 공급자·멘트·검수 설정·사전지시를 적지 않습니다.",
+        "review_count 는 0, 현재 유한 선택지, -1 중 하나이며 0이면 reviewer 두 필드는 null 입니다.",
+        f"pre_instruction_text 는 instruction/single 단계에만 쓰며 여러 줄·탭을 허용하고 NFC 기준 {PRE_INSTRUCTION_TEXT_MAX_CHARS}자까지입니다.",
+        "AI 작성 경로에서는 pre_instruction_attachment 를 항상 null 로 둡니다.",
         "item_seq(실제 단계 번호)는 적지 않습니다.",
         "binding 은 항상 advisory 입니다.",
         "steps[].pair_role 은 instruction/result/single 중 하나입니다. N/T/TS 같은 세트형 타입은 instruction·result 한 쌍을 이루고, DS/D/P/L/DB 같은 시트형 타입은 single 하나입니다.",
@@ -1725,11 +2031,14 @@ TEMPLATE_RULES = {
         "steps must equal the list expanded from quantities, in the same order.",
         f"steps[].note is a one-line instruction for the AI assigned to that step; non-TSR steps may leave it null, but a non-null note must be one line, within {NOTE_MAX_CHARS} characters, and without newlines or tabs.",
         "Quantities are derived from evidence (the parent R/B, workflow_type_counts, group_documents); when there is no basis, keep the key in counted_types/quantities with count 0. Never guess 1 as a default.",
-        "defaults.note is the one-line instruction shared by every step; when the request mention carries a Delivery note in its work-plan scope section, copy that value verbatim.",
+        "defaults.note is the one-line instruction shared by every step; when the request mention carries a Delivery note in its work-plan scope section, use it as input to write this one line fresh (never copy it verbatim).",
         "steps[].provider_id must be one of provider_candidates or a provider registered in this project; leave it empty when there is nothing to choose.",
         "Provider-unspecified means BOTH steps[].provider_id and steps[].provider_display_name are null. Leaving provider_id null while still filling provider_display_name is rejected by validate().",
         "defaults.provider_id is one of provider_candidates or null. The mention's Execution provider is merely the provider running that mention, so never copy it here.",
-        "A TSR step carries no provider and no note.",
+        "A TSR step carries no provider, note, review setting, or pre-instruction.",
+        "review_count is 0, a current finite choice, or -1; when it is 0 both reviewer fields are null.",
+        f"pre_instruction_text is allowed only on instruction/single steps, permits multiline text and tabs, and is limited to {PRE_INSTRUCTION_TEXT_MAX_CHARS} NFC characters.",
+        "AI-authored plans always set pre_instruction_attachment to null.",
         "Never write item_seq (the real workflow step number).",
         "binding is always advisory.",
         "steps[].pair_role is one of instruction/result/single. Set types like N/T/TS form an instruction+result pair; sheet types like DS/D/P/L/DB use single.",
@@ -1743,11 +2052,14 @@ TEMPLATE_RULES = {
         "steps は quantities から展開されるリストと順序まで一致していなければなりません。",
         f"steps[].note はその段階を担当するAIへの一行指示です。TSR以外の段階は null でも構いませんが、値を入れる場合は一行・{NOTE_MAX_CHARS}文字以内、改行・タブなしとします。",
         "数量は根拠(親 R/B、workflow_type_counts、group_documents)から算定し、根拠がなければ counted_types/quantities にキーを残したまま 0 とします。1 を既定値として推測しません。",
-        "defaults.note は全段階に共通する一行指示です。要求メモの「作業計画を任せる範囲」節に「伝達メモ」があれば、その値をそのまま書き写します。",
+        "defaults.note は全段階に共通する一行指示です。要求メモの「作業計画を任せる範囲」節に「伝達メモ」があれば、それを入力としてこの一行を新たに書きます(そのまま書き写しません)。",
         "steps[].provider_id は provider_candidates 内の値、またはこのプロジェクトに登録された提供者でなければならず、選べるものが無ければ空欄にします。",
         "提供者を指定しないとは steps[].provider_id と steps[].provider_display_name の両方を null にすることです。provider_id が null なのに provider_display_name だけ値を入れることは validate() が拒否します。",
         "defaults.provider_id は provider_candidates 内の値または null です。要求メモの「実行プロバイダー」はそのメモを実行中の提供者にすぎないため、ここに書き写しません。",
-        "TSR 段階には提供者と一行メモを書きません。",
+        "TSR 段階には提供者・一行メモ・レビュー設定・事前指示を書きません。",
+        "review_count は 0、現在の有限選択肢、-1 のいずれかで、0 の場合 reviewer の2項目は null です。",
+        f"pre_instruction_text は instruction/single 段階のみで、複数行とタブを許可し、NFC 基準 {PRE_INSTRUCTION_TEXT_MAX_CHARS} 文字までです。",
+        "AI作成経路では pre_instruction_attachment を常に null にします。",
         "item_seq(実際の段階番号)は書きません。",
         "binding は常に advisory です。",
         "steps[].pair_role は instruction/result/single のいずれかです。N/T/TS のようなセット型は instruction・result の一対を成し、DS/D/P/L/DB のようなシート型は single 一つです。",
@@ -1850,7 +2162,11 @@ def request_work_plan_fill(
     )
     if path is None:
         raise ValueError(f"work_plan_body_not_found:{doc_id}")
-    body = load_body(path, project_id=doc.get("project_id"))
+    body = load_body(
+        path,
+        project_id=doc.get("project_id"),
+        doc_id=doc.get("doc_id"),
+    )
     issued = token_service.issue(
         project=doc.get("project_id") or "",
         group_id=group_id,

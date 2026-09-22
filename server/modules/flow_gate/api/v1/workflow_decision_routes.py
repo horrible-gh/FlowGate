@@ -176,6 +176,11 @@ class EditSequenceItem(BaseModel):
     source_revision_no: Optional[int] = None
     provider_id: Optional[str] = None
     provider_display_name: Optional[str] = None
+    review_count: Optional[int] = None
+    reviewer_provider_id: Optional[str] = None
+    reviewer_provider_display_name: Optional[str] = None
+    pre_instruction_text: Optional[str] = None
+    pre_instruction_attachment: Optional[dict] = None
 
 
 class EditSequenceBodyRequest(BaseModel):
@@ -933,7 +938,7 @@ def patch_workflow_sequence_endpoint(body: EditSequenceBodyRequest, request: Req
     try:
         result = edit_workflow_pending(
             doc_id=body.doc_id,
-            new_items=[item.model_dump() for item in body.items],
+            new_items=[item.model_dump(exclude_unset=True) for item in body.items],
             force_encoding_reason=body.force_encoding_reason,
             expected_workflow_tag=body.expected_workflow_tag,
             expected_plan=body.expected_plan,

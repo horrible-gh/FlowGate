@@ -183,8 +183,8 @@ def test_f3_a_poured_save_is_written_into_the_plans_application_journal(wired):
     assert row["mode"] == "replace_after"
     assert row["workflow_doc_id"] == OWNER_DOC_ID
     assert row["workflow_tag_before"] != row["workflow_tag_after"]
-    # 이 계획이 만든 줄이 어느 자리인지까지 남는다.
-    assert row["poured_item_seqs"] == [6]
+    # 이 계획이 만든 줄이 어느 자리인지까지 남는다 — T 뒤에 자동 붙는 TR도 같은 근원이다.
+    assert row["poured_item_seqs"] == [6, 7]
 
 
 def test_f3_an_ordinary_edit_writes_no_application_row(wired):

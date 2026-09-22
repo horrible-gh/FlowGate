@@ -12,9 +12,19 @@
 // What survives here is the boundary — a stored row still names its stored provider, and an
 // EXPLICIT force-all names one effective provider per row, once.
 //
-// The second half is 0444 §4-5's other decision, untouched: `touchedSeqs` was ONE set for both
-// the mention input and the provider select, so typing a sentence also froze that row's
-// provider against the next plan re-read. It is two sets now.
+// The second half is 0444 §4-5's other decision, but it no longer holds AS WRITTEN: `touchedSeqs`
+// was ONE set for both the mention input and the provider select, so typing a sentence also
+// froze that row's provider against the next plan re-read — the fix was splitting it into two
+// sets. 0554 T0012 (880712d, this same group's own prior step) then removed the plan re-read
+// itself: "apply is the snapshot boundary. A later run reads the saved sequence and must not
+// silently re-project a newer WP revision into an already approved workflow" (see
+// ContinuousWorkDialog.provider.0408.spec.ts's "reads the durable sequence snapshot" block,
+// which pins `expect(postRequest).not.toHaveBeenCalled()` on the very same instructionMode
+// switch these two tests exercise). Two independent override maps (`overrides` / `messageOverrides`)
+// still mean a note edit never touches a provider edit or vice versa — that half of 0444's
+// finding is still true and still tested below — but it is no longer demonstrated by racing a
+// stale plan value; nothing re-reads the plan at all, in or out of preset, so both a typed
+// mention and a picked provider simply persist unchanged across a mode switch.
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
@@ -98,14 +108,6 @@ function selects() {
 function messageInputs() {
   return document.querySelectorAll('.cwd-override-message-input') as NodeListOf<HTMLInputElement>
 }
-function planFill(notes: Record<number, string>, providers: Record<number, string>) {
-  return {
-    data: {
-      wp_doc_id: WP_DOC, wp_revision_no: 8,
-      fill_preview: { note_overrides: notes, provider_overrides: providers },
-    },
-  }
-}
 
 beforeEach(() => {
   i18n.global.locale.value = 'en'
@@ -185,13 +187,14 @@ describe('ContinuousWorkDialog provider disclosure (0451 T0007 rev1)', () => {
   })
 })
 
-describe('ContinuousWorkDialog note/provider touch sets are separate (0444 T0007 §5-3)', () => {
-  it('re-syncs the provider of a row whose mention was typed by hand', async () => {
-    postRequest.mockReset().mockResolvedValue(planFill({ 1: 'plan sentence A' }, { 1: 'other' }))
+describe('ContinuousWorkDialog note/provider touch sets are separate (0444 T0007 §5-3 / 0554 T0012)', () => {
+  it('keeps a hand-typed mention through a mode switch, without a plan read touching its row provider', async () => {
     mountDialog()
     await flushPromises()
     await openProviders()
-    expect(selects()[0].value).toBe('other')
+    // No plan fill ever ran (0554 T0012): the row shows its OWN stored provider, never a value
+    // sourced from /work-plan/apply/preview.
+    expect(selects()[0].value).toBe('stored')
 
     await openMessages()
     const input = messageInputs()[0]
@@ -199,19 +202,17 @@ describe('ContinuousWorkDialog note/provider touch sets are separate (0444 T0007
     input.dispatchEvent(new Event('input'))
     await flushPromises()
 
-    // The plan moved again while the dialog was open, and the mode switch re-reads it.
-    postRequest.mockResolvedValue(planFill({ 1: 'plan sentence B' }, { 1: 'third' }))
     await switchInstructionMode('ai_direct')
     await flushPromises()
 
     await openMessages()
     expect(messageInputs()[0].value).toBe('typed by hand')
     await openProviders()
-    expect(selects()[0].value).toBe('third')
+    expect(selects()[0].value).toBe('stored')
+    expect(postRequest).not.toHaveBeenCalled()
   })
 
-  it('keeps a provider the person chose, however often the plan is re-read', async () => {
-    postRequest.mockReset().mockResolvedValue(planFill({ 1: 'plan sentence A' }, { 1: 'other' }))
+  it('keeps a provider the person chose through a mode switch, without touching the row mention', async () => {
     mountDialog()
     await flushPromises()
     await openProviders()
@@ -221,13 +222,14 @@ describe('ContinuousWorkDialog note/provider touch sets are separate (0444 T0007
     await flushPromises()
     expect(selects()[0].value).toBe('third')
 
-    postRequest.mockResolvedValue(planFill({ 1: 'plan sentence B' }, { 1: 'other' }))
     await switchInstructionMode('ai_direct')
     await flushPromises()
 
     await openProviders()
     expect(selects()[0].value).toBe('third')
     await openMessages()
-    expect(messageInputs()[0].value).toBe('plan sentence B')
+    // Untouched note: still the row's own stored sentence, not a plan value (0554 T0012).
+    expect(messageInputs()[0].value).toBe('stored sentence')
+    expect(postRequest).not.toHaveBeenCalled()
   })
 })

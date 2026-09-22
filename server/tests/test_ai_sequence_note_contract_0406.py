@@ -277,14 +277,26 @@ def test_unrelated_single_retry_prompt_is_byte_identical(monkeypatch, scope):
 
 
 def test_stored_note_lookup_failure_is_swallowed(monkeypatch):
+    # 0554 T0014 §5 rework (rej_01M338WJ83A3JTZJ finding 1): get_sequence_for_member_doc is no
+    # longer JUST the note's own lookup — _inject_hop_notes also uses it to learn which
+    # sequence row's pre-instruction must be checked before the AI is allowed to start.
+    # Swallowing this exception used to mean "best effort, carry on with no note" for BOTH
+    # concerns at once, so a real stored pre-instruction sat unchecked behind a transient DB
+    # failure and the hop launched anyway. admission.resolve_stored_step_note (a narrower,
+    # note-only lookup that never affects whether the pre-instruction check runs) keeps its
+    # own independent "degrade to no note" contract — untouched by this change.
+    from modules.flow_gate.services import work_plan_attachment_service
+
     monkeypatch.setattr(
         ai_svc.db_wfseq, "get_sequence_for_member_doc",
         lambda doc: (_ for _ in ()).throw(RuntimeError("boom")),
     )
-    assert ai_svc._inject_hop_notes(
-        BASE_MENTION, ROOT, default_note=None, note_overrides=None,
-        instruction_mode=None, locale="ko", fold_worker_item_seq=False,
-    ) == BASE_MENTION
+    with pytest.raises(work_plan_attachment_service.PreInstructionAttachmentError) as caught:
+        ai_svc._inject_hop_notes(
+            BASE_MENTION, ROOT, default_note=None, note_overrides=None,
+            instruction_mode=None, locale="ko", fold_worker_item_seq=False,
+        )
+    assert caught.value.code == "pre_instruction_sequence_lookup_failed"
 
 
 def test_pause_json_round_trip_preserves_blank_tombstone_key():

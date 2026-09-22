@@ -103,21 +103,20 @@ class TestNormalization:
         assert wds.normalize_continuation_reviewer_overrides({3: "aip_rev"}, counts) == {
             "3": "aip_rev"}
 
-    def test_zero_counts_and_their_orphan_reviewers_fold_to_none(self):
-        """P0007 [엣지] 값이 전부 0: the dialog's untouched defaults must produce exactly
-        what "sent no maps at all" produces — one representation of "no selection"."""
+    def test_explicit_zero_counts_survive_for_sequence_baseline_override(self):
         counts = wds.normalize_continuation_review_count_overrides(
             {"1": 0, "3": 0, "5": 0, "7": 0})
-        assert counts is None
-        reviewers = wds.normalize_continuation_reviewer_overrides(
-            {"1": "aip_rev", "3": "aip_rev", "5": "aip_rev", "7": "aip_rev"}, counts)
-        assert reviewers is None
+        assert counts == {"1": 0, "3": 0, "5": 0, "7": 0}
 
-    def test_a_zero_step_drops_only_its_own_reviewer(self):
+    def test_zero_and_reviewer_only_overrides_are_independent(self):
         counts = wds.normalize_continuation_review_count_overrides({"3": 0, "5": 2})
-        assert counts == {"5": 2}
+        assert counts == {"3": 0, "5": 2}
         assert wds.normalize_continuation_reviewer_overrides(
-            {"3": "aip_rev", "5": "aip_step5"}, counts) == {"5": "aip_step5"}
+            {"3": "aip_rev", "5": "aip_step5"}, counts
+        ) == {"3": "aip_rev", "5": "aip_step5"}
+        assert wds.normalize_continuation_reviewer_overrides(
+            {"5": "aip_step5"}, None
+        ) == {"5": "aip_step5"}
 
     def test_empty_and_missing_maps_are_none(self):
         assert wds.normalize_continuation_review_count_overrides(None) is None
@@ -321,9 +320,14 @@ class TestRouteContract:
             continuation_review_count_overrides={"1": 1, 3: 2, "5": 0},
             continuation_reviewer_overrides={"1": "aip_rev", "5": "aip_step5"})
         assert status == 200
-        assert route_env["continuation_review_count_overrides"] == {"1": 1, "3": 2}
-        # "5" had count 0, so its reviewer is an orphan and never reaches the engine.
-        assert route_env["continuation_reviewer_overrides"] == {"1": "aip_rev"}
+        # Explicit 0 is a runtime tombstone: it disables a non-zero sequence baseline.
+        assert route_env["continuation_review_count_overrides"] == {
+            "1": 1, "3": 2, "5": 0,
+        }
+        # Reviewer-only overrides are independent and survive even beside an explicit 0.
+        assert route_env["continuation_reviewer_overrides"] == {
+            "1": "aip_rev", "5": "aip_step5",
+        }
 
     def test_bad_value_is_one_validation_failed_envelope(self, route_env):
         status, payload = _post(continuation_review_count_overrides={"5": 4})
@@ -777,6 +781,30 @@ class TestValueResolution:
         assert svc.resolve_review_count(None, 5) == 0
         assert svc.resolve_review_count({"5": 2}, 7) == 0
         assert svc.resolve_review_count({"5": 2}, None) == 0
+
+    def test_runtime_zero_and_reviewer_only_override_sequence_baseline(
+        self, monkeypatch, world,
+    ):
+        monkeypatch.setattr(
+            svc.db_wfseq, "get_sequence_for_member_doc", lambda _doc: {"id": 77},
+        )
+        monkeypatch.setattr(
+            svc.db_wfseq,
+            "get_sequence_items",
+            lambda _seq: [{
+                "item_seq": 5,
+                "review_count": 2,
+                "reviewer_provider_id": "aip_rev",
+            }],
+        )
+
+        assert svc.resolve_review_count(None, 5, SPINE) == 2
+        assert svc.resolve_review_count({"5": 0}, 5, SPINE) == 0
+        assert svc.resolve_review_count({}, 5, SPINE) == 2
+        assert svc.resolve_reviewer(None, 5, "flowgate", SPINE) == "aip_rev"
+        assert svc.resolve_reviewer(
+            {"5": "aip_step5"}, 5, "flowgate", SPINE
+        ) == "aip_step5"
 
     def test_a_hand_edited_out_of_range_count_reads_as_no_review(self):
         """The write path is 422-guarded, so this can only come from an edited row; it must
@@ -3070,7 +3098,7 @@ class TestOmittedMapsAreUnchanged:
         """The chain-preservation change must not move a run that names no chain."""
         import inspect
 
-        source = inspect.getsource(svc.start_run)
+        source = inspect.getsource(svc._admission_start_run)
         assert "chain_id = chain_id or run_id" in source
         assert "chain_id = run_id\n" not in source
 

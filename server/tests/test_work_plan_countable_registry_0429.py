@@ -251,9 +251,9 @@ def test_get_suggest_and_sequence_candidates_pass_the_document_project_id(seed, 
     seen: list[Optional[str]] = []
     real_load_body = wp_router.wp.load_body
 
-    def _spy(path, project_id=None):
+    def _spy(path, project_id=None, doc_id=None):
         seen.append(project_id)
-        return real_load_body(path, project_id=project_id)
+        return real_load_body(path, project_id=project_id, doc_id=doc_id)
 
     # sequence-candidates reads workflow_sequences through the dialect query files
     # (_sql), which the module store deliberately refuses outside this borrow window —
@@ -284,9 +284,9 @@ def test_apply_preview_and_apply_pass_the_document_project_id(seed, storage_root
     seen: list[Optional[str]] = []
     real_load_body = wp_router.wp.load_body
 
-    def _spy(path, project_id=None):
+    def _spy(path, project_id=None, doc_id=None):
         seen.append(project_id)
-        return real_load_body(path, project_id=project_id)
+        return real_load_body(path, project_id=project_id, doc_id=doc_id)
 
     with patch.object(wp_router.wp, "load_body", side_effect=_spy), \
          patch.object(wp_router.wpa, "preview", return_value={"ok": True}), \
@@ -316,9 +316,9 @@ def test_fill_token_issuance_passes_the_document_project_id(seed, storage_root, 
     seen: list[Optional[str]] = []
     real_load_body = wp.load_body
 
-    def _spy(path, project_id=None):
+    def _spy(path, project_id=None, doc_id=None):
         seen.append(project_id)
-        return real_load_body(path, project_id=project_id)
+        return real_load_body(path, project_id=project_id, doc_id=doc_id)
 
     monkeypatch.setattr(wp, "load_body", _spy)
     monkeypatch.setattr(token_service, "issue", lambda **kwargs: {

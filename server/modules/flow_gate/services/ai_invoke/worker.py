@@ -32,6 +32,7 @@ from modules.flow_gate.services import api_server_tools
 from modules.flow_gate.services import q_service
 from modules.flow_gate.services import register_binding
 from modules.flow_gate.services import token_service
+from modules.flow_gate.services import work_plan_attachment_service
 from modules.flow_gate.settings import ai_settings_service
 from modules.flow_gate.utils.api_key_crypto import ApiKeyCryptoError
 
@@ -856,6 +857,18 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
         return None
     try:
         issue = admission._call_issue_builder(issue_builder, run["run_id"])
+    except work_plan_attachment_service.PreInstructionAttachmentError:
+        # 0554 T0014 §5 (review rej_01M334Z5Y72GK6BW finding 2): a rework issue_builder
+        # (issue_rework_request) that raises this directly has already revoked the token
+        # it minted before re-raising (invoke_mention_service.issue_rework_request). The
+        # broad `except Exception` below used to catch this too, folding it into the
+        # generic "reissue failed" log + None — which erased the specific code and, at
+        # the review-loop call site, surfaced only as a generic
+        # document_review_loop_transition_failed. Re-raising here lets it reach the
+        # same fail-closed handling every other mid-run PreInstructionAttachmentError
+        # gets: propagate out of _worker's outer try/except (end_reason="worker_error",
+        # full exception logged) rather than a new bespoke stop_reason.
+        raise
     except Exception:
         logger.warning("ai-invoke retry token reissue failed for %s",
                        run["run_id"], exc_info=True)
@@ -867,17 +880,39 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
         run.get("mode") == "single" and run.get("action_scope") == "new"
     ):
         retry_audit: dict = {}
-        mention = admission._inject_hop_notes(
-            mention,
-            run["doc_ref"],
-            default_note=run.get("continuation_default_note"),
-            note_overrides=run.get("continuation_note_overrides"),
-            instruction_mode=run.get("continuation_instruction_mode"),
-            auto_approve_item_seqs=run.get("continuation_auto_approve_item_seqs"),
-            fold_worker_item_seq=(run.get("mode") == "continuous"),
-            locale=run.get("continuation_locale"),
-            audit=retry_audit,
-        )
+        try:
+            mention = admission._inject_hop_notes(
+                mention,
+                run["doc_ref"],
+                default_note=run.get("continuation_default_note"),
+                note_overrides=run.get("continuation_note_overrides"),
+                instruction_mode=run.get("continuation_instruction_mode"),
+                auto_approve_item_seqs=run.get("continuation_auto_approve_item_seqs"),
+                fold_worker_item_seq=(run.get("mode") == "continuous"),
+                locale=run.get("continuation_locale"),
+                audit=retry_audit,
+            )
+        except work_plan_attachment_service.PreInstructionAttachmentError:
+            # 0554 T0014 §5 (review finding 2): unlike issue_rework_request above, this
+            # builder (a plain 'new'-scope issuer) already minted and returned a live
+            # token before this call ever runs, and run["token_id"]/run["raw_token"] are
+            # not updated to it until AFTER this block succeeds (below). Without this
+            # revoke the new token would never be recorded on the run and never revoked
+            # either — an orphan the finalizer can't see because it only knows the OLD
+            # token_id. Revoke it by its own id (never `token_id`, the stale variable
+            # still bound to the PREVIOUS attempt's token) before propagating.
+            new_token_id = issue.get("token_id")
+            if new_token_id:
+                try:
+                    token_service.revoke(
+                        new_token_id, reason="ai_invoke_pre_instruction_attachment_invalid"
+                    )
+                except Exception:
+                    logger.warning(
+                        "orphaned retry token revoke failed for %s (run %s)",
+                        new_token_id, run["run_id"], exc_info=True,
+                    )
+            raise
         # 0406 T0022 item 5: a retry rebuilds the prompt from scratch, so the audit must
         # point at THAT prompt — otherwise attempt 1's hash gets attached to attempt 2's
         # run while still claiming "the note went in".

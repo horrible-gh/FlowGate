@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 
 os.environ.setdefault("TESTING", "1")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
@@ -354,16 +355,24 @@ class TestPromptInjectionEndToEnd:
 
 class TestNoteInjectionFailureIsSwallowed:
     def test_note_resolution_exception_does_not_stall_the_hop(self, note_env, monkeypatch):
+        # 0554 T0014 §5 rework (rej_01M338WJ83A3JTZJ finding 1): get_effective_head is no
+        # longer JUST the note's own lookup — it is also how _inject_hop_notes learns which
+        # sequence row's pre-instruction it must check before letting the AI start. Swallowing
+        # this exception used to mean "the note is best-effort, carry on" for BOTH concerns
+        # at once, so a real stored pre-instruction sat unchecked behind a transient DB hiccup
+        # and the hop launched anyway — exactly the silent gap the review flagged. The note's
+        # own contract ("must not stall the hop") still holds for note-only failures
+        # (test_stored_note_lookup_failure_is_swallowed in test_ai_sequence_note_contract_0406.py
+        # keeps covering that), but a lookup failure THIS early — before item_seq is even
+        # known — cannot be scoped to "notes only" anymore: it now fails closed, the same as
+        # a validated-but-bad pre-instruction attachment reference does.
         def _boom(_s):
             raise RuntimeError("boom")
         monkeypatch.setattr(svc.db_wfseq, "get_effective_head", _boom)
-        res, outfile = _start(note_env, MENTION, note_overrides={"4": "x"}, default_note="y")
-        run = _wait_finished(res["run_id"])
-        assert run["end_reason"] == "exited"
-        # The default note still applies (its own strip/append never touches db_wfseq); only
-        # the per-step lookup — the one that failed — is skipped.
-        expected = invoke_mention_service.prepend_messages_section(MENTION, ["y"], "ko")
-        assert _read(outfile).decode("utf-8") == expected
+        with pytest.raises(HTTPException) as caught:
+            _start(note_env, MENTION, note_overrides={"4": "x"}, default_note="y")
+        assert caught.value.status_code == 409
+        assert caught.value.detail["code"] == "pre_instruction_sequence_lookup_failed"
 
 
 class TestNotesStayInsideThePause:

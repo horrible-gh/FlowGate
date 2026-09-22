@@ -187,6 +187,14 @@ class FakeWfseq:
     def get_sequence_items(self, seq_id):
         return list(self.items)
 
+    def get_effective_head(self, seq_id):
+        # Mirrors db.workflow_sequences.get_effective_head's own contract closely enough for
+        # this fixture's decided-sequence fixtures: the first slot still missing a result doc.
+        for item in self.items:
+            if not item.get("result_doc_id"):
+                return dict(item)
+        return None
+
 
 class FakeDocs:
     def __init__(self, baseline_seq=1):
@@ -217,6 +225,7 @@ def fake_env(monkeypatch, tmp_path):
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", wfseq.get_sequence_for_member_doc)
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_by_doc_id", wfseq.get_sequence_by_doc_id)
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_items", wfseq.get_sequence_items)
+    monkeypatch.setattr(svc.db_wfseq, "get_effective_head", wfseq.get_effective_head)
     monkeypatch.setattr(
         svc.db_wfseq,
         "get_sequence_snapshots_for_member_docs",
@@ -565,7 +574,8 @@ class TestStartRunValidationMessages:
 def _seed_paused(fake_env, target=3, base_provider_id=None, provider_pinned=None, overrides=None,
                  default_note=None, note_overrides=None,
                  instruction_mode=None, auto_approve_item_seqs=None,
-                 step_timeout_sec=None):
+                 step_timeout_sec=None, review_count_overrides=None,
+                 reviewer_overrides=None):
     fake_env["paused"].upsert(
         group_id=GROUP, doc_ref=DOC_REF, paused_by="usr_admin",
         paused_at="2026-07-17T00:00:00+09:00",
@@ -579,6 +589,8 @@ def _seed_paused(fake_env, target=3, base_provider_id=None, provider_pinned=None
         continuation_instruction_mode=instruction_mode,
         continuation_auto_approve_item_seqs=auto_approve_item_seqs,
         continuation_step_timeout_sec=step_timeout_sec,
+        continuation_review_count_overrides=review_count_overrides,
+        continuation_reviewer_overrides=reviewer_overrides,
     )
 
 
@@ -752,6 +764,29 @@ class TestResumeChain:
         assert res == {"ok": True, "run_id": "aiv_fake"}
         assert captured["continuation_instruction_mode"] == "ai_direct"
         assert captured["continuation_auto_approve_item_seqs"] == [3]
+
+    def test_resume_preserves_explicit_zero_and_reviewer_override(self, fake_env, monkeypatch):
+        counts = {"3": 0}
+        reviewers = {"3": "aip_picked"}
+        _seed_paused(
+            fake_env,
+            review_count_overrides=counts,
+            reviewer_overrides=reviewers,
+        )
+        fake_env["chain"]["providers"] = [_provider('"true"', pid="aip_picked")]
+        captured = {}
+
+        def _fake_start_run(**kw):
+            captured.update(kw)
+            return {"ok": True, "run_id": "aiv_fake"}
+        monkeypatch.setattr(svc, "start_run", _fake_start_run)
+
+        res = svc.resume_chain(
+            group_id=GROUP, user_id="usr_admin", api_base_url="http://x/api/v1"
+        )
+        assert res == {"ok": True, "run_id": "aiv_fake"}
+        assert captured["continuation_review_count_overrides"] == counts
+        assert captured["continuation_reviewer_overrides"] == reviewers
 
     def test_resume_forwards_step_timeout_to_start_run(self, fake_env, monkeypatch):
         # flowgate.default.0400 M0005: the per-hop budget pick is exactly as perishable as
