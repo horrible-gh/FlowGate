@@ -383,8 +383,22 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
             "group_id": group_id, **_NONE_STATE, "base_remote_behind_count": None,
         }}
 
-    status = state.get("status") or "none"
-    if not state.get("worktree_registered") and status not in _gs.CLEANUP_STATUSES:
+    persisted_status = state.get("status") or "none"
+    stored_clean_retry = approval_intent.clean_retry_of_state(state)
+    retry_status = (stored_clean_retry or {}).get("terminal_status")
+    retry_matches_state = (
+        retry_status in {"merged", "pushed"} and retry_status == persisted_status
+    ) or (
+        retry_status in {"discarded", "archived", "stashed"}
+        and persisted_status == "none"
+    )
+    clean_retry = stored_clean_retry if retry_matches_state else None
+    status = retry_status if clean_retry is not None else persisted_status
+    if (
+        not state.get("worktree_registered")
+        and persisted_status not in _gs.CLEANUP_STATUSES
+        and clean_retry is None
+    ):
         return {"ok": True, "state": {
             "group_id": group_id, **_NONE_STATE, "base_remote_behind_count": None,
         }}
@@ -497,7 +511,7 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         # Local-ref-only measurement: state polling never fetches the network.
         "base_remote_behind_count": base_remote_behind,
         "merge_id": group_update_merge_id or state.get("merge_id"),
-        "merge_commit": state.get("merge_commit"),
+        "merge_commit": (clean_retry or {}).get("merge_commit") or state.get("merge_commit"),
         "review_state": review_state,
         "reconciliation_kind": reconciliation_kind,
         # 0555 T0008 §10 / D0005 §3.11: the coupling marker. True means this
@@ -508,8 +522,8 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         "final_approval_bound": approval_intent.group_is_final_approval_bound(group_id),
         # A11/B8: terminal Git with an unconsumed intent is approval-only retry.
         "approval_pending": (
-            display_status in {"merged", "pushed", DISCARDED_STATUS, "stashed"}
-            and approval_intent.find_intent_session(group_id)[1] is not None
+            display_status in approval_intent.CLEAN_TERMINAL_STATUSES
+            and (clean_retry is not None or approval_intent.find_intent_session(group_id)[1] is not None)
         ),
         "commit_message": commit_message,
         # True only for the display-only pre-approval preview (0197 T0004 §B);
@@ -794,6 +808,11 @@ def finalize(
     if approval_context is None and status == "none" and root_wf_done:
         _gs._set_status(group_id, "awaiting_choice")
         status = "awaiting_choice"
+    if approval_context is not None and approval_intent.clean_retry_of_state(state) is not None:
+        raise GitServiceError(
+            409, "approval_retry_pending",
+            "terminal Git already belongs to an approval-only retry; resend without git_action",
+        )
     if status in ("merged", "pushed"):
         if approval_context is not None:
             return _terminal_retry_result(state, action)
@@ -866,6 +885,23 @@ def finalize(
                 resolved_subject = provided_subject or _gs.resolve_commit_message(group_id)[0]
             return resolved_subject
 
+        def record_clean_approval_retry(status: str, merge_commit: Optional[str]) -> None:
+            if approval_context is None or not approval_context.approval_intent_id:
+                return
+            intent = approval_intent.build_intent(
+                approval_intent_id=approval_context.approval_intent_id,
+                group_id=group_id,
+                ac_doc_id=approval_context.doc_id,
+                requested_by=approval_context.actor_user_id,
+                git_action=action,
+            )
+            approval_intent.record_clean_retry(
+                group_id=group_id,
+                intent=intent,
+                terminal_status=status,
+                merge_commit=merge_commit,
+            )
+
         if not wt_path.is_dir():
             raise GitServiceError(409, "invalid_state", "group worktree directory is missing")
 
@@ -934,6 +970,8 @@ def finalize(
                     "action": action, "status": DISCARDED_STATUS, "merge_commit": None,
                     **_artifact_payload(excluded_artifacts, staged_new_file_count),
                 })
+            else:
+                record_clean_approval_retry(DISCARDED_STATUS, None)
             return {"ok": True, "result": {
                 "action": action, "status": DISCARDED_STATUS, "merge_commit": None,
                 "pushed": False, "merge_id": None, "conflict_files": [],
@@ -955,7 +993,10 @@ def finalize(
             )
             if proc.returncode != 0:
                 raise GitServiceError(500, "push_rejected", "Git push was rejected", diagnostic=_gs._last_line(proc.stderr))
-            _gs._set_status(group_id, "pushed")
+            if approval_context is not None:
+                record_clean_approval_retry("pushed", None)
+            else:
+                _gs._set_status(group_id, "pushed")
             # Approval keeps the terminal ledger and slot intact until its DB
             # transaction decides; manual finalize preserves immediate cleanup.
             if approval_context is None:
@@ -1026,7 +1067,10 @@ def finalize(
                     raise GitServiceError(500, "push_rejected", "Git push was rejected", diagnostic=_gs._last_line(push.stderr))
             head = _gs._run_git(["rev-parse", "--short", "HEAD"], cwd=base_root)
             merge_commit = (head.stdout or "").strip() or None
-            _gs._set_status(group_id, "merged", merge_commit=merge_commit)
+            if approval_context is not None:
+                record_clean_approval_retry("merged", merge_commit)
+            else:
+                _gs._set_status(group_id, "merged", merge_commit=merge_commit)
             # Approval owns cleanup/notification after its atomic DB commit.
             if approval_context is None:
                 _gs._cleanup_group_slot(project_id, group_id)
@@ -1447,6 +1491,7 @@ def complete_approve_git_action(
                 _gs._set_status(group_id, "none")
             elif status in ("merged", "pushed"):
                 _gs._cleanup_group_slot(project_id, group_id)
+        _gs._emit_pending_changed(project_id, group_id, status)
         _gs._emit("git_finalize_done", project_id, group_id, {
             "project": project_id,
             "group_id": group_id,

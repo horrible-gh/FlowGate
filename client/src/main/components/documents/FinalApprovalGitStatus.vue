@@ -16,7 +16,7 @@ import AppIcon from '@shared/AppIcon.vue'
 interface GitState { branch?: string | null; base_branch?: string | null; status: string; ahead_count?: number; behind_count?: number; merge_commit?: string | null; approval_pending?: boolean }
 const props = defineProps<{ groupId: string; completed: boolean }>()
 const state = ref<GitState | null>(null)
-const terminal = computed(() => ['merged', 'pushed', 'archived', 'stashed'].includes(state.value?.status || ''))
+const terminal = computed(() => ['merged', 'pushed', 'discarded', 'archived', 'stashed'].includes(state.value?.status || ''))
 const aheadBehind = computed(() => state.value ? `${state.value.base_branch || 'base'} 기준 ahead ${Number(state.value.ahead_count || 0)} · behind ${Number(state.value.behind_count || 0)}` : '')
 async function fetchState() {
   if (!props.groupId) return

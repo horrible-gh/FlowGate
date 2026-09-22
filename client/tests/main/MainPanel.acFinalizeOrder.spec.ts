@@ -120,6 +120,22 @@ describe('MainPanel — AC has one final-approval execution owner (0555 T#3)', (
     expect(wrapper.text()).not.toContain('[실행]')
   })
 
+  it('shows terminal Git plus approval-pending without adding an execute surface', async () => {
+    getRequest.mockImplementation((url: string) =>
+      url.includes('/git/finalize')
+        ? Promise.resolve({ data: { state: {
+          branch: 'group-branch', base_branch: 'main', status: 'merged',
+          ahead_count: 0, behind_count: 0, merge_commit: 'abc123',
+          approval_pending: true,
+        } } })
+        : Promise.resolve({ data: { questions: [] } }),
+    )
+    const wrapper = await mountAc('pending_review')
+    expect(wrapper.text()).toContain('Git 완료 · 승인 미완료')
+    expect(wrapper.find('.git-fin-stub').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('[실행]')
+  })
+
   for (const status of ['approved', 'wf_done']) {
     it(`after final approval (${status}) keeps the AC status-only`, async () => {
       const wrapper = await mountAc(status)

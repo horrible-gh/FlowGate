@@ -1215,6 +1215,19 @@ def _git_finalize_with_archive(
         )
         if approval_context is not None:
             archive = outcome.get("result") or {}
+            intent = _git_archive_service.approval_intent.build_intent(
+                approval_intent_id=approval_context.approval_intent_id,
+                group_id=group_id,
+                ac_doc_id=approval_context.doc_id,
+                requested_by=approval_context.actor_user_id,
+                git_action="stash",
+            )
+            _git_archive_service.approval_intent.record_clean_retry(
+                group_id=group_id,
+                intent=intent,
+                terminal_status="stashed",
+                merge_commit=None,
+            )
             return {"ok": True, "result": {
                 "action": "stash",
                 "status": "stashed",

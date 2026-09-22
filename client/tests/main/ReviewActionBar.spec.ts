@@ -682,6 +682,66 @@ describe('ReviewActionBar', () => {
     }
   })
 
+  it('A11 terminal approval retry keeps the chooser hidden and sends no git_action', async () => {
+    getRequest.mockImplementation((url: string) =>
+      url.includes('/git/finalize')
+        ? Promise.resolve({
+          data: {
+            ok: true,
+            state: {
+              branch: 'flowgate_default_0170',
+              status: 'merged',
+              default_action: 'merge',
+              choices: [],
+              approval_pending: true,
+            },
+          },
+        })
+        : Promise.resolve({ data: {} }),
+    )
+    postRequest.mockResolvedValueOnce({
+      data: {
+        document: { doc_review_status: 'approved' },
+        approval: { approved: true, document_status: 'approved', root_status: 'wf_done' },
+        git: {
+          ok: true,
+          terminal: true,
+          result: { status: 'merged', approval_retry: true, retry_source: 'group_state' },
+        },
+      },
+    })
+    const wrapper = mount(ReviewActionBar, {
+      props: {
+        ...defaultProps,
+        docId: 'flowgate.default.0170.0005-AC',
+        projectId: 'flowgate',
+        groupId: 'flowgate.default.0170',
+        docRef: 'flowgate.default.0170.0005-AC',
+        docType: 'AC',
+        reviewStatus: 'pending_review',
+        mode: 'review',
+      },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    expect((wrapper.vm as any).showGitFinalizeBlock).toBe(false)
+    await (wrapper.vm as any).doApprove()
+    await flushPromises()
+
+    const approveCall = postRequest.mock.calls.find(([url]) =>
+      String(url).includes('/documents/review_transitions/approve'),
+    )
+    expect(approveCall).toBeDefined()
+    expect(approveCall?.[1]).toEqual({
+      doc_id: 'flowgate.default.0170.0005-AC',
+      comment: null,
+    })
+    expect(approveCall?.[1]).not.toHaveProperty('git_action')
+    expect(wrapper.emitted('approve')?.[0]).toEqual(['approved'])
+    wrapper.unmount()
+  })
+
   it('AC approval with terminal git result refreshes the Git button without opening the panel', async () => {
     postRequest.mockResolvedValueOnce({
       data: {

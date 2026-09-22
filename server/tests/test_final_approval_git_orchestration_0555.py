@@ -45,6 +45,7 @@ def _install_orchestration_fakes(monkeypatch, outcome, commit, events, parked=No
     monkeypatch.setattr(
         workflow.git_service, "approval_intent",
         SimpleNamespace(
+            find_clean_retry=lambda group_id: (None, None),
             find_intent_session=lambda group_id: parked or (None, None),
             consume_intent=lambda merge_id, intent_id: events.append(
                 f"consume:{merge_id}:{intent_id}") or True,
@@ -139,7 +140,7 @@ def test_approval_commit_failure_preserves_terminal_git_for_retry(monkeypatch):
     assert body["git"]["terminal"] is True
     assert body["git"]["result"]["terminal_retry"] is True
     assert body["approval"]["stage"] == "approval_commit"
-    assert events == ["precheck", "lock", "git", "approval", "release"]
+    assert events == ["precheck", "lock", "git", "approval", "complete", "release"]
 
 
 def test_terminal_retry_consumes_the_intent_its_own_conflict_parked(monkeypatch):

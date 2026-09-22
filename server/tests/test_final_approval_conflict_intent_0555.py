@@ -45,7 +45,7 @@ def project(patch_store, tmp_db):
     yield
 
 
-@pytest.fixture(scope="class")
+@pytest.fixture(scope="module")
 def origin_repo(project):
     """A bare origin with one commit on main, plus an enabled git config."""
     import shutil
@@ -803,3 +803,270 @@ class TestFinalApprovalConflictIntent0555:
         assert approval_intent.find_intent_session(self.GROUP) == (None, None)
         assert _review_status(ac_id) == "pending_review"
         assert db_git.get_lock(PROJECT) is None
+
+
+@needs_git
+class TestFinalApprovalCleanA11Retry0555:
+    """A11-C1..C7 against a real clean merge and durable group-state evidence."""
+
+    GROUP = f"{PROJECT}.default.0150"
+
+    def test_clean_terminal_failure_refresh_and_approval_only_retry(
+        self, origin_repo, monkeypatch,
+    ):
+        from fastapi import HTTPException
+
+        from modules.flow_gate.db import connection as conn_mod
+        from modules.flow_gate.db import documents as db_docs
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services.git import approval_intent
+        from modules.flow_gate.storage.paths import src_root
+        from modules.flow_gate.workflow import pipeline_service
+
+        # The preceding atomic-session failure test intentionally interrupts a
+        # conflict after Git has entered MERGE_HEAD. Restore this module fixture's
+        # scratch base checkout before starting the independent clean-A11 case.
+        base_root = src_root(PROJECT_NAME, "main")
+        subprocess.run(
+            ["git", "merge", "--abort"], cwd=base_root,
+            capture_output=True, text=True, check=False,
+        )
+        _git(["reset", "--hard", "HEAD"], cwd=base_root)
+
+        root_id, ac_id = _seed_final_approval_group(self.GROUP)
+        assert svc.ensure_worktree(PROJECT, "default", self.GROUP) == "ok"
+        branch = self.GROUP.replace(".", "_")
+        (src_root(PROJECT_NAME, branch) / "a11_clean.py").write_text(
+            'A11 = "clean terminal retry"\n', encoding="utf-8",
+        )
+
+        events: list[tuple[str, dict, str, str]] = []
+        original_emit = svc._emit
+
+        def _watched_emit(event, project_id, group_id, payload):
+            events.append((event, payload, _review_status(ac_id), _review_status(root_id)))
+            return original_emit(event, project_id, group_id, payload)
+
+        original_cas = pipeline_service.db_docs.update_review_status_cas
+
+        def _failing_cas(doc_id, expected, nxt):
+            if nxt == "wf_done":
+                raise RuntimeError("injected clean approval transaction failure")
+            return original_cas(doc_id, expected, nxt)
+
+        monkeypatch.setattr(svc, "_emit", _watched_emit)
+        monkeypatch.setattr(pipeline_service.db_docs, "update_review_status_cas", _failing_cas)
+        status, payload = _final_approve(ac_id)
+        monkeypatch.undo()
+
+        assert status == 500, payload
+        assert payload["error"]["code"] == "approval_commit_failed"
+        assert payload["git"]["terminal"] is True
+        assert payload["git"]["result"]["status"] == "merged"
+        assert payload["approval"]["stage"] == "approval_commit"
+        terminal_head = _origin_head(origin_repo)
+        commits_after_terminal = int(_git(
+            ["rev-list", "--count", "main"], cwd=origin_repo["bare"],
+        ).strip())
+
+        state, retry = approval_intent.find_clean_retry(self.GROUP)
+        assert state["status"] == "merged"
+        assert retry["source"] == "clean_final_approval"
+        assert retry["terminal_status"] == "merged"
+        assert retry["merge_commit"] == payload["git"]["result"]["merge_commit"]
+        assert retry["approval_completed"] is False
+        assert retry["intent"]["group_id"] == self.GROUP
+        assert retry["intent"]["ac_doc_id"] == ac_id
+        assert retry["intent"]["approval_intent_id"] == payload["approval"]["approval_intent_id"]
+        assert retry["intent"]["git_action"] == "merge"
+        assert db_git.get_open_session_by_group(self.GROUP) is None
+        assert _review_status(ac_id) == "pending_review"
+        assert _review_status(root_id) == "wf_in_progress"
+        assert db_git.get_lock(PROJECT) is None
+
+        # Both terminal refresh signals are emitted after the failed transaction
+        # has rolled back, so subscribers see Git terminal + approval pending.
+        pending_events = [e for e in events if e[0] == "git_pending_changed"]
+        done_events = [e for e in events if e[0] == "git_finalize_done"]
+        assert pending_events and done_events
+        assert pending_events[-1][1]["status"] == "merged"
+        assert pending_events[-1][2:] == ("pending_review", "wf_in_progress")
+        assert done_events[-1][1]["approval"]["approved"] is False
+        assert done_events[-1][2:] == ("pending_review", "wf_in_progress")
+
+        # A fresh request context reconstructs every retry field from SQLite.
+        conn_mod._request_cache.invalidate()
+        fresh_state = svc.get_finalize_state(self.GROUP, preview_ac=True)["state"]
+        assert fresh_state["status"] == "merged"
+        assert fresh_state["approval_pending"] is True
+        assert fresh_state["choices"] == []
+        project_status = svc.project_git_status(PROJECT)["status"]
+        assert self.GROUP not in {row["group_id"] for row in project_status["pending"]}
+
+        # Another real AC in the same group cannot borrow this retry capability.
+        other_ac_id = f"{self.GROUP}.0003-AC"
+        db_docs.create({
+            "doc_id": other_ac_id, "project_id": PROJECT, "module": "default",
+            "group_id": self.GROUP, "type_code": "AC", "seq": 3,
+            "title": "other final approval", "target_id": root_id,
+        })
+        db_docs.update(other_ac_id, {
+            "doc_review_status": "pending_review", "target_id": root_id,
+        })
+        mismatch_status, mismatch_payload = _final_approve(other_ac_id, git_action=None)
+        assert mismatch_status == 409
+        assert mismatch_payload["error"]["code"] == "final_approval_retry_mismatch"
+        assert _review_status(other_ac_id) == "pending_review"
+        assert _review_status(ac_id) == "pending_review"
+
+        # Tampered group identity is also fail-closed and leaves the valid AC pending.
+        tampered = json.loads(json.dumps(retry))
+        tampered["intent"]["group_id"] = f"{PROJECT}.default.9999"
+        db_git.set_final_approval_retry(self.GROUP, tampered)
+        mismatch_status, mismatch_payload = _final_approve(ac_id, git_action=None)
+        assert mismatch_status == 409
+        assert mismatch_payload["error"]["code"] == "final_approval_retry_mismatch"
+        assert _review_status(ac_id) == "pending_review"
+        db_git.set_final_approval_retry(self.GROUP, retry)
+
+        # The real UI retry request carries no git_action. Prove the orchestrator
+        # never re-enters finalize and no history-producing command runs.
+        git_commands: list[list[str]] = []
+        original_run_git = svc._run_git
+
+        def _watched_run_git(args, **kwargs):
+            git_commands.append(list(args))
+            return original_run_git(args, **kwargs)
+
+        monkeypatch.setattr(svc, "_run_git", _watched_run_git)
+        status2, payload2 = _final_approve(ac_id, git_action=None)
+        monkeypatch.undo()
+
+        assert status2 == 200, payload2
+        assert payload2["approval"]["approved"] is True
+        assert payload2["git"]["result"]["approval_retry"] is True
+        assert payload2["git"]["result"]["retry_source"] == "group_state"
+        assert _origin_head(origin_repo) == terminal_head
+        assert int(_git(
+            ["rev-list", "--count", "main"], cwd=origin_repo["bare"],
+        ).strip()) == commits_after_terminal
+        history_commands = {
+            command[0] for command in git_commands if command
+            and command[0] in {"merge", "commit", "push", "stash"}
+        }
+        assert history_commands == set()
+        assert _review_status(ac_id) == "approved"
+        assert _review_status(root_id) == "wf_done"
+        assert approval_intent.find_clean_retry(self.GROUP)[1] is None
+        assert svc.get_finalize_state(self.GROUP)["state"]["approval_pending"] is False
+
+        # A duplicate resend follows the existing already-approved/stale contract;
+        # neither the approval transaction nor Git gets another chance to run.
+        monkeypatch.setattr(
+            pipeline_service, "commit_final_approval",
+            lambda **kw: pytest.fail("duplicate retry must not commit approval"),
+        )
+        with pytest.raises(HTTPException) as duplicate:
+            _final_approve(ac_id, git_action=None)
+        monkeypatch.undo()
+        assert duplicate.value.status_code in {409, 422}
+        assert _origin_head(origin_repo) == terminal_head
+        assert approval_intent.find_clean_retry(self.GROUP)[1] is None
+
+    def test_stash_terminal_failure_refresh_and_approval_only_retry(
+        self, origin_repo, monkeypatch,
+    ):
+        from modules.flow_gate.api import inbox_routes
+        from modules.flow_gate.db import connection as conn_mod
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services.git import approval_intent
+        from modules.flow_gate.storage.paths import src_root
+        from modules.flow_gate.workflow import pipeline_service
+
+        group_id = f"{PROJECT}.default.0151"
+        root_id, ac_id = _seed_final_approval_group(group_id)
+        assert svc.ensure_worktree(PROJECT, "default", group_id) == "ok"
+        branch = group_id.replace(".", "_")
+        worktree = src_root(PROJECT_NAME, branch)
+        (worktree / "a11_archive.txt").write_text(
+            "preserve this uncommitted archive payload\n", encoding="utf-8",
+        )
+
+        original_cas = pipeline_service.db_docs.update_review_status_cas
+
+        def _failing_cas(doc_id, expected, nxt):
+            if nxt == "wf_done":
+                raise RuntimeError("injected archive approval transaction failure")
+            return original_cas(doc_id, expected, nxt)
+
+        monkeypatch.setattr(
+            pipeline_service.db_docs, "update_review_status_cas", _failing_cas,
+        )
+        status, payload = _final_approve(ac_id, git_action="stash")
+        monkeypatch.undo()
+
+        assert status == 500, payload
+        assert payload["error"]["code"] == "approval_commit_failed"
+        assert payload["git"]["terminal"] is True
+        assert payload["git"]["result"]["status"] == "stashed"
+        archive_before = inbox_routes._git_archive_record(group_id)
+        assert archive_before is not None
+        assert archive_before["status"] == "archived"
+        assert archive_before["changed_file_count"] >= 1
+
+        state, retry = approval_intent.find_clean_retry(group_id)
+        assert state["status"] == "none"
+        assert bool(state["worktree_registered"]) is True
+        assert retry["source"] == "clean_final_approval"
+        assert retry["terminal_status"] == "stashed"
+        assert retry["terminal_git_action"] == "stash"
+        assert retry["intent"]["ac_doc_id"] == ac_id
+        assert retry["intent"]["approval_intent_id"] == payload["approval"]["approval_intent_id"]
+        assert retry["approval_completed"] is False
+        assert _review_status(ac_id) == "pending_review"
+        assert _review_status(root_id) == "wf_in_progress"
+
+        # Simulate refresh/restart: all admission facts must be reconstructed from DB.
+        conn_mod._request_cache.invalidate()
+        fresh = svc.get_finalize_state(group_id, preview_ac=True)["state"]
+        assert fresh["status"] == "stashed"
+        assert fresh["approval_pending"] is True
+        assert fresh["choices"] == []
+
+        # The no-git_action retry may only commit approval. Re-entering either the
+        # generic finalize seam or archive implementation is a test failure.
+        monkeypatch.setattr(
+            svc, "run_approve_git_action",
+            lambda *args, **kwargs: pytest.fail("approval-only retry re-entered finalize"),
+        )
+        monkeypatch.setattr(
+            inbox_routes, "_archive_group_git",
+            lambda *args, **kwargs: pytest.fail("approval-only retry re-ran archive"),
+        )
+        git_commands: list[list[str]] = []
+        original_run_git = svc._run_git
+
+        def _watched_run_git(args, **kwargs):
+            git_commands.append(list(args))
+            return original_run_git(args, **kwargs)
+
+        monkeypatch.setattr(svc, "_run_git", _watched_run_git)
+        status2, payload2 = _final_approve(ac_id, git_action=None)
+        monkeypatch.undo()
+
+        assert status2 == 200, payload2
+        assert payload2["approval"]["approved"] is True
+        assert payload2["git"]["result"]["approval_retry"] is True
+        assert payload2["git"]["result"]["retry_source"] == "group_state"
+        assert payload2["git"]["result"]["status"] == "stashed"
+        assert not [cmd for cmd in git_commands if cmd and cmd[0] == "stash"]
+        assert inbox_routes._git_archive_record(group_id) == archive_before
+        assert _review_status(ac_id) == "approved"
+        assert _review_status(root_id) == "wf_done"
+        assert approval_intent.find_clean_retry(group_id)[1] is None
+        final_state = svc.get_finalize_state(group_id)["state"]
+        assert final_state.get("approval_pending", False) is False
+        assert final_state["status"] == "none"
+        stored_final, _ = approval_intent.find_clean_retry(group_id)
+        assert not bool(stored_final["worktree_registered"])

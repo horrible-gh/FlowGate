@@ -382,20 +382,50 @@ async def document_review_transition_rpc(
 
     git_action = body.git_action
     if git_action is None and action == "approve" and guarded_doc.get("type_code") == "AC":
-        # 0555 T#4 A11/B8: terminal Git may have succeeded while the coupled
-        # approval transaction failed. Re-approving the same pending AC consumes
-        # that parked intent only; it must never start finalize again.
+        # 0555 A11/B8: a terminal Git result may outlive its coupled approval
+        # transaction. Clean attempts live on group_git_state; conflict attempts
+        # keep using their closed merge-session context. Both paths only retry the
+        # approval and revalidate the exact AC/group under the project Git lock.
         group_id = guarded_doc.get("group_id") or ""
+        git_state, clean_retry = git_service.approval_intent.find_clean_retry(group_id)
+        git_state = git_state or {}
         parked_session, parked_intent = git_service.approval_intent.find_intent_session(group_id)
-        git_state = git_service.db_git.get_state(group_id) or {}
-        terminal_status = git_state.get("status")
-        terminal_retry = (
-            parked_session is not None
-            and parked_intent is not None
-            and parked_intent.get("ac_doc_id") == body.doc_id
-            and terminal_status in {"merged", "pushed", "archived", "stashed"}
-        )
-        if terminal_retry:
+        retry_source = None
+        retry_intent = None
+        terminal_status = None
+        merge_commit = None
+        mismatch_reason = None
+
+        if clean_retry is not None:
+            _retry_doc, mismatch_reason = git_service.approval_intent.validate_clean_retry(
+                clean_retry, group_id=group_id, expected_ac_doc_id=body.doc_id,
+            )
+            if mismatch_reason is None:
+                retry_source = "group_state"
+                retry_intent = clean_retry.get("intent") or {}
+                terminal_status = clean_retry.get("terminal_status")
+                merge_commit = clean_retry.get("merge_commit")
+        elif parked_intent is not None:
+            terminal_status = git_state.get("status")
+            if (
+                parked_session is not None
+                and parked_intent.get("ac_doc_id") == body.doc_id
+                and terminal_status in {"merged", "pushed", "archived", "stashed"}
+            ):
+                retry_source = "merge_session"
+                retry_intent = parked_intent
+                merge_commit = git_state.get("merge_commit")
+            else:
+                mismatch_reason = "intent_document_or_terminal_mismatch"
+
+        if mismatch_reason is not None:
+            error = {
+                "code": "final_approval_retry_mismatch",
+                "message": mismatch_reason,
+            }
+            return JSONResponse(status_code=409, content={"ok": False, "error": error})
+
+        if retry_source is not None:
             def _retry_terminal_approval() -> tuple[int, dict]:
                 user_permissions = _get_user_permissions(current_user)
                 locale = (request.headers.get("x-locale") if request is not None else None) or "ko"
@@ -415,19 +445,25 @@ async def document_review_transition_rpc(
                     error = {"code": "git_busy", "message": "Another git operation is in progress"}
                     return 409, {"ok": False, "error": error}
                 try:
-                    approval = git_service.approval_intent.commit_deferred_approval(
-                        group_id, int(parked_session["merge_id"]), parked_intent
-                    )
+                    if retry_source == "group_state":
+                        approval = git_service.approval_intent.commit_clean_retry(
+                            group_id, clean_retry
+                        )
+                    else:
+                        approval = git_service.approval_intent.commit_deferred_approval(
+                            group_id, int(parked_session["merge_id"]), parked_intent
+                        )
                 finally:
                     git_service.db_git.release_lock(project_id, holder)
                 result = {
                     "status": terminal_status,
-                    "merge_commit": git_state.get("merge_commit"),
+                    "merge_commit": merge_commit,
                     "approval_retry": True,
+                    "retry_source": retry_source,
                 }
                 git = {"ok": True, "terminal": True, "result": result}
                 git_service.complete_approve_git_action(
-                    group_id, parked_intent.get("git_action") or "merge", git,
+                    group_id, retry_intent.get("git_action") or "merge", git,
                     approved=bool(approval.get("approved")),
                 )
                 if approval.get("approved"):
@@ -439,7 +475,8 @@ async def document_review_transition_rpc(
                 error = approval.get("error") or {
                     "code": "approval_commit_failed", "message": "approval retry failed"
                 }
-                return 500, {"ok": False, "error": error, "git": git, "approval": approval}
+                status = 409 if approval.get("stage") == "intent_mismatch" else 500
+                return status, {"ok": False, "error": error, "git": git, "approval": approval}
 
             status_code, payload = await anyio.to_thread.run_sync(_retry_terminal_approval)
             return JSONResponse(status_code=status_code, content=payload)
@@ -526,20 +563,54 @@ async def document_review_transition_rpc(
                     merge_id=(outcome.get("result") or {}).get("merge_id"),
                 )
                 return 200, {"ok": True, "git": outcome, "approval": pending}
-            # §9 / D0005 §3.9: a retry of an approval whose Git already reached
-            # terminal finds the intent its own conflict parked earlier and consumes
-            # THAT one, in this transaction. Without this the re-approval would approve
-            # the document while leaving a live intent behind, and the next merge review
-            # to close that session would try to approve it a second time.
+            # A clean terminal result has already parked its intent in
+            # group_git_state. Consume that exact snapshot in the same transaction
+            # as AC/root approval. Conflict retries retain their session-backed hook.
+            _clean_state, clean_retry = git_service.approval_intent.find_clean_retry(group_id)
             parked_session, parked_intent = git_service.approval_intent.find_intent_session(group_id)
             consume_hook = None
-            if parked_intent is not None and parked_intent.get("ac_doc_id") == body.doc_id:
+            retry_source = None
+            if clean_retry is not None:
+                clean_intent = clean_retry.get("intent") or {}
+                _retry_doc, retry_reason = git_service.approval_intent.validate_clean_retry(
+                    clean_retry, group_id=group_id, expected_ac_doc_id=body.doc_id,
+                )
+                if (
+                    retry_reason is not None
+                    or clean_intent.get("approval_intent_id") != approval_intent_id
+                ):
+                    pending.update(stage="intent_mismatch", approval_intent_id=approval_intent_id)
+                    error = {
+                        "code": "final_approval_retry_mismatch",
+                        "message": retry_reason or "approval request identity mismatch",
+                    }
+                    git_service.complete_approve_git_action(
+                        group_id, git_action, outcome, approved=False,
+                    )
+                    return 409, {
+                        "ok": False, "error": error, "git": outcome, "approval": pending,
+                    }
+                clean_id = clean_intent["approval_intent_id"]
+
+                def consume_hook(_doc, _root, _intent_id=clean_id):
+                    return git_service.approval_intent.consume_clean_retry(
+                        group_id, _intent_id
+                    )
+
+                retry_source = "group_state"
+            elif parked_intent is not None and parked_intent.get("ac_doc_id") == body.doc_id:
                 parked_merge_id = int(parked_session["merge_id"])
                 parked_id = parked_intent["approval_intent_id"]
 
                 def consume_hook(_doc, _root, _merge_id=parked_merge_id, _intent_id=parked_id):
                     return git_service.approval_intent.consume_intent(_merge_id, _intent_id)
 
+                retry_source = "merge_session"
+
+            pending.update(
+                approval_intent_id=approval_intent_id,
+                retry_source=retry_source,
+            )
             try:
                 committed = commit_final_approval(
                     doc_id=body.doc_id,
@@ -551,6 +622,11 @@ async def document_review_transition_rpc(
             except Exception as exc:
                 pending["stage"] = "approval_commit"
                 error = {"code": "approval_commit_failed", "message": str(exc)}
+                # Git is already terminal. Publish that durable fact even though
+                # the approval transaction rolled back and its retry stays live.
+                git_service.complete_approve_git_action(
+                    group_id, git_action, outcome, approved=False,
+                )
                 return 500, {"ok": False, "error": error, "git": outcome, "approval": pending}
         finally:
             git_service.db_git.release_lock(project_id, holder)
