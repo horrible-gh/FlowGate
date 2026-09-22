@@ -4,6 +4,9 @@ GET/PUT/DELETE /api/v1/projects/{project_id}/git/config
 POST           /api/v1/projects/{project_id}/git/test-connection
 GET/POST       /api/v1/projects/{project_id}/git/provision   (0161 P0004)
 GET            /api/v1/projects/{project_id}/git/status       (0162 P §2)
+GET            /api/v1/projects/{project_id}/git/branches     (0594 T0010)
+POST           /api/v1/projects/{project_id}/git/branches     (0594 T0010)
+DELETE         /api/v1/projects/{project_id}/git/branches/{name:path} (0594 T0010)
 POST           /api/v1/projects/{project_id}/git/fetch        (0162 P §3-1)
 POST           /api/v1/projects/{project_id}/git/push         (0162 P §3-2)
 POST           /api/v1/projects/{project_id}/git/cleanup      (0182 NR0003 §5)
@@ -184,6 +187,50 @@ def post_git_provision(
     # a provisioning failure is a 200 with result.status="failed", not an error.
     try:
         return git_service.provision_manual(project_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+# ── Project branches (0594 T0010) ────────────────────────────────────────────
+
+class BranchCreateBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    source_branch: str
+
+
+@router.get("/projects/{project_id}/git/branches")
+def get_git_branches(
+    project_id: str,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    try:
+        return git_service.list_branches(project_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/projects/{project_id}/git/branches")
+def post_git_branch(
+    project_id: str,
+    body: BranchCreateBody,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    try:
+        return git_service.create_branch(project_id, body.name, body.source_branch)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.delete("/projects/{project_id}/git/branches/{name:path}")
+def delete_git_branch(
+    project_id: str,
+    name: str,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    try:
+        return git_service.delete_branch(project_id, name)
     except GitServiceError as exc:
         return _guard(exc)
 

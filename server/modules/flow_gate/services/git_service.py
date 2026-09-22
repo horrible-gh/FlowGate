@@ -268,6 +268,16 @@ from .git.lock import (
 
 
 
+from .git.branches import (
+    check_branch_delete,
+    create_branch,
+    delete_branch,
+    internal_slot_owner,
+    list_branches,
+    validate_new_branch_name,
+)
+
+
 from .git.config import (
     PROVIDER_VALUES,
     DEFAULT_FINALIZE_ACTION_VALUES,

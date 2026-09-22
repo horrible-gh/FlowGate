@@ -438,14 +438,11 @@ def test_the_seam_scan_itself_is_not_vacuous():
 
     # 2. The A-side (test corpus) scan found a believable inventory, not an empty set
     #    from a broken alias/AST walk.
-    # 0578 T0006: re-measured to 366. The count was 363 when 0550 wrote it and had
-    # already drifted to 365 before this group touched anything (two files added by
-    # other merged groups without updating this number); T0006 adds
-    # tests/test_review_turn_messages_0578.py, the third. Measured with
+    # 0594 T0010: re-measured after adding test_git_branches_0594.py. Measured with
     # `len(tuple(sorted(_TESTS_DIR.glob("**/*.py"))))`, not estimated.
     test_paths = tuple(sorted(_TESTS_DIR.glob("**/*.py")))
-    assert len(test_paths) == 366, (
-        f"expected 366 test files, found {len(test_paths)}"
+    assert len(test_paths) == 380, (
+        f"expected 380 test files, found {len(test_paths)}"
     )
     test_patched, _test_sites, test_unresolved = _scan_test_corpus()
     operational, operational_sites, operational_unresolved = _scan_operational_modules()
