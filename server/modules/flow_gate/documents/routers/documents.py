@@ -1285,6 +1285,15 @@ def create_next_empty_document(
                     asker_kind="ai",
                     project_id=body.project_id,
                 )
+            if is_work_plan:
+                # 0599 T#2: next-empty has no later body synthesis. Snapshot the
+                # canonical JSON written above, inside the creation transaction.
+                _wp.ensure_revision_snapshot(
+                    doc,
+                    doc_file_path,
+                    created_by=current_user["user_id"],
+                    revision_no=0,
+                )
     except Exception:
         try:
             doc_file_path.unlink(missing_ok=True)

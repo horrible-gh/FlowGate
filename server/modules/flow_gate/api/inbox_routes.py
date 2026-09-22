@@ -4456,7 +4456,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     _origin_run_id = token_rec.get("ai_run_id")
     _origin_provider_name = _resolve_origin_provider_name(_origin_run_id)
     try:
-        db_docs.create({
+        created_doc = db_docs.create({
             "doc_id": canonical_doc_id,
             "project_id": project,
             "module": module,
@@ -4488,6 +4488,15 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 asker_kind="ai",
                 project_id=project,
                 notify_audience=actor_user_id,
+            )
+        if wp_plan is not None:
+            # 0599 T#2: persist the exact canonical AI-created bytes as r0 only
+            # after the document row and any attached questions are registered.
+            work_plan_service.ensure_revision_snapshot(
+                created_doc,
+                stored_path,
+                created_by=actor_user_id,
+                revision_no=0,
             )
     except Exception as exc:
         # storage/DB rollback: q_service validation failures must not leave a half-created
