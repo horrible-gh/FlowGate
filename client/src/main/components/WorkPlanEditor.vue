@@ -15,7 +15,7 @@
         <button
           class="btn btn-secondary btn-sm"
           type="button"
-          :disabled="loading || !!unreadable || dirty || downloading || hasPendingCapabilityWarning"
+          :disabled="loading || dirty || downloading || hasPendingCapabilityWarning || (!plan && !unreadable?.raw)"
           :title="dirty ? t('main.work_plan.upload_needs_save') : undefined"
           @click="downloadWorkPlan"
         >
@@ -37,7 +37,7 @@
           hidden
           @change="onWorkPlanFileSelected"
         />
-        <button class="btn btn-secondary btn-sm" type="button" :disabled="loading || !!unreadable" @click="rawViewOpen = true">
+        <button class="btn btn-secondary btn-sm" type="button" :disabled="loading || (!plan && !unreadable?.raw)" @click="rawViewOpen = true">
           <AppIcon name="code" /> {{ t('main.work_plan.raw_view') }}
         </button>
         <button
@@ -63,8 +63,11 @@
         <div v-if="unreadable.revisions?.length" class="wp-unreadable-revisions">
           <p class="wp-unreadable-revisions-title">{{ t('main.work_plan.revisions_title') }}</p>
           <ul>
-            <li v-for="rev in unreadable.revisions" :key="rev.revision_no">
-              r{{ rev.revision_no }} — {{ rev.created_by }} · {{ rev.created_at }}
+            <li v-for="rev in unreadable.revisions" :key="rev.revision_no" class="wp-revision-row">
+              <span>r{{ rev.revision_no }} — {{ rev.created_by }} · {{ rev.created_at }}</span>
+              <button class="btn btn-outline btn-sm" type="button" :disabled="!rev.restorable || restoringRevision !== null || isLocked" :title="rev.restorable ? undefined : t(`main.work_plan.restore_unavailable_${rev.restore_unavailable_reason || 'unknown'}`)" @click="restoreRevision(rev.revision_no)">
+                {{ rev.restorable ? t('main.work_plan.restore_revision') : t('main.work_plan.restore_unavailable') }}
+              </button>
             </li>
           </ul>
         </div>
@@ -529,6 +532,7 @@ const aiRunId = ref<string | null>(null)
 const rawViewOpen = ref(false)
 const downloading = ref(false)
 const uploading = ref(false)
+const restoringRevision = ref<number | null>(null)
 const workPlanFileInput = ref<HTMLInputElement | null>(null)
 
 const plan = ref<WPBody | null>(null)
@@ -576,7 +580,7 @@ const stepErrors = computed(() => {
   }
   return rendered
 })
-const unreadable = ref<{ message: string; detail: string; raw: string | null; revisions: { revision_no: number; created_by: string; created_at: string }[] } | null>(null)
+const unreadable = ref<{ message: string; detail: string; raw: string | null; revision_no: number; revisions: { revision_no: number; created_by: string; created_at: string; restorable: boolean; restore_unavailable_reason: string | null }[] } | null>(null)
 
 
 // D0007 §3.2 decision 4: a value-bearing step that a lower quantity would drop stays
@@ -845,6 +849,7 @@ async function fetchPlan(): Promise<boolean> {
         message: data.message,
         detail: data.detail ?? '',
         raw: data.raw ?? null,
+        revision_no: Number(data.revision_no) || 0,
         revisions: data.revisions ?? [],
       }
     } else {
@@ -1332,7 +1337,7 @@ function canonicalBody(): WPBody {
   return body
 }
 
-const rawJson = computed(() => (plan.value ? JSON.stringify(canonicalBody(), null, 2) : ''))
+const rawJson = computed(() => unreadable.value?.raw ?? (plan.value ? JSON.stringify(canonicalBody(), null, 2) : ''))
 
 async function copyRaw() {
   const ok = await copyToClipboard(rawJson.value)
@@ -1471,11 +1476,11 @@ function fallbackWorkPlanFilename(docId: string): string {
 // `canonicalBody()` only lists the fixed fields the editor knows, so a top-level `x_*`
 // extension the server preserves would silently vanish from the downloaded file.
 async function downloadWorkPlan() {
-  if (loading.value || !!unreadable.value || dirty.value || downloading.value) return
+  if (loading.value || dirty.value || downloading.value || (!plan.value && !unreadable.value?.raw)) return
   downloading.value = true
   try {
-    const res = await getRequest<any>(`/api/v1/documents/${encodeURIComponent(props.docId)}/work-plan`)
-    const json = `${JSON.stringify(res.data.body, null, 2)}\n`
+    const res = unreadable.value ? null : await getRequest<any>(`/api/v1/documents/${encodeURIComponent(props.docId)}/work-plan`)
+    const json = unreadable.value?.raw ?? `${JSON.stringify(res!.data.body, null, 2)}\n`
     const blob = new Blob([json], { type: 'application/json;charset=utf-8' })
     const href = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
@@ -1489,6 +1494,23 @@ async function downloadWorkPlan() {
     showToast(e?.response?.data?.message || e?.response?.data?.detail || t('main.work_plan.download_failed'), 'danger')
   } finally {
     downloading.value = false
+  }
+}
+
+async function restoreRevision(revision: number) {
+  const state = unreadable.value
+  if (!state || restoringRevision.value !== null || isLocked.value) return
+  restoringRevision.value = revision
+  try {
+    await postRequest(`/api/v1/documents/${encodeURIComponent(props.docId)}/work-plan/revisions/${revision}/restore`, {
+      base_revision_no: state.revision_no,
+    })
+    await fetchPlan()
+    showToast(t('main.work_plan.restore_success'), 'success')
+  } catch (e: any) {
+    showToast(e?.response?.data?.message || e?.response?.data?.detail || t('main.work_plan.restore_failed'), 'danger')
+  } finally {
+    restoringRevision.value = null
   }
 }
 
@@ -1782,6 +1804,7 @@ watch(() => props.docId, () => { void fetchPlan() })
 .wp-unreadable-title { font-weight: 700; }
 .wp-unreadable-desc, .wp-unreadable-detail { font-size: .8rem; color: var(--text-m); margin: 0; }
 .wp-unreadable-revisions { margin-top: 8px; font-size: .76rem; color: var(--text-m); text-align: left; }
+.wp-revision-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0; }
 .wp-unreadable-raw { margin-top: 10px; width: 100%; max-height: 200px; overflow: auto; background: #0f172a; color: #e2e8f0; padding: 10px; border-radius: var(--r, 6px); font-size: .7rem; text-align: left; }
 /* The overlay, the box and the title row belong to the common dialog layer now (T0018);
    only the raw JSON block is still this component's, and it is unchanged. `surface="sheet"`

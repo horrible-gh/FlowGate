@@ -75,6 +75,10 @@ class WorkPlanSave(BaseModel):
     capability_warning_acks: list[str] = Field(default_factory=list)
 
 
+class WorkPlanRestore(BaseModel):
+    base_revision_no: int
+
+
 class WorkPlanSuggest(BaseModel):
     base_revision_no: Optional[int] = None
     scope: Optional[dict[str, list[str]]] = None
@@ -138,19 +142,41 @@ def _providers(project_id: str) -> list[dict]:
     return list(effective.get("providers") or [])
 
 
-def _revisions_brief(doc_id: str, limit: int = 20) -> list[dict]:
+def _revision_backup(doc: dict, row: dict) -> tuple[Optional[Any], Optional[dict], Optional[str]]:
+    """Resolve and validate a revision without ever exposing its storage path."""
+    stored = str(row.get("backup_path") or "").strip()
+    if not stored:
+        return None, None, "backup_path_missing"
+    path = storage_paths.resolve_storage_path(
+        stored, doc.get("project_id"), branch=doc.get("branch") or "main",
+    )
+    if path is None:
+        return None, None, "backup_unavailable"
     try:
-        rows = db_revisions.list_by_doc(doc_id)
-    except Exception:  # noqa: BLE001
+        body = wp.load_body(path, project_id=doc.get("project_id"))
+    except wp.WorkPlanUnreadable as exc:
+        return path, None, exc.reason
+    except OSError:
+        return None, None, "backup_unavailable"
+    return path, body, None
+
+
+def _revisions_brief(doc: dict, limit: int = 20) -> list[dict]:
+    try:
+        rows = db_revisions.list_by_doc(doc.get("doc_id") or "")
+    except Exception:  # noqa: BLE001 — history failure must not hide the raw recovery view
         return []
-    return [
-        {
+    result = []
+    for row in rows[:limit]:
+        _path, _body, reason = _revision_backup(doc, row)
+        result.append({
             "revision_no": row.get("revision_no"),
             "created_at": row.get("created_at"),
             "created_by": row.get("created_by"),
-        }
-        for row in rows[:limit]
-    ]
+            "restorable": reason is None,
+            "restore_unavailable_reason": reason,
+        })
+    return result
 
 
 def _last_editor(doc: dict) -> Optional[str]:
@@ -175,7 +201,8 @@ def _unreadable_response(doc: dict, exc: wp.WorkPlanUnreadable, locale: str) -> 
         "message": copy.get(locale, copy["ko"]),
         "reason": exc.reason,
         "detail": exc.detail,
-        "revisions": _revisions_brief(doc.get("doc_id") or ""),
+        "revision_no": doc.get("revision_no", 0),
+        "revisions": _revisions_brief(doc),
     }
     if exc.raw is not None:
         content["raw"] = exc.raw
@@ -660,6 +687,101 @@ def get_work_plan(
         if body is None:
             return _unreadable_response(doc, exc, locale)
     return _read_view(doc, body)
+
+
+# ── Revision recovery ─────────────────────────────────────────────────────────
+
+@router.post("/{doc_id}/work-plan/revisions/{revision_no}/restore")
+@require_permission("perm_document_update")
+def restore_work_plan_revision(
+    request: Request,
+    doc_id: str,
+    revision_no: int,
+    body: WorkPlanRestore,
+    current_user: dict = Depends(get_current_user),
+):
+    locale = _locale(request)
+    doc = _load_doc(doc_id)
+    from modules.flow_gate.documents.routers.documents import (
+        _reject_if_group_ai_running,
+        _reject_if_group_disposed,
+    )
+    _reject_if_group_disposed(doc)
+    _reject_if_group_ai_running(doc)
+    final_approved = document_service.is_final_approved(doc)
+    if not document_service.is_document_editable(doc, final_approved=final_approved):
+        raise HTTPException(status_code=422, detail="Modification not allowed after final approval." if final_approved else f"Modification not allowed for status: {doc.get('status')}")
+
+    row = next((item for item in db_revisions.list_by_doc(doc_id)
+                if item.get("revision_no") == revision_no), None)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Work plan revision not found.")
+    _source_path, restored_body, unavailable = _revision_backup(doc, row)
+    if unavailable or restored_body is None:
+        return JSONResponse(status_code=422, content={
+            "code": "wp_revision_not_restorable",
+            "message": "The selected work plan revision cannot be restored.",
+            "reason": unavailable,
+        })
+
+    with _plan_save_lock(doc_id):
+        fresh = db_docs.get_by_id(doc_id) or doc
+        current_revision = fresh.get("revision_no", 0) or 0
+        if body.base_revision_no != current_revision:
+            return _revision_conflict_response(fresh, locale, body.base_revision_no, current_revision)
+        path = _plan_path(fresh)
+        if not path.exists():
+            raise HTTPException(status_code=422, detail="Current work plan body is missing.")
+        revisions_dir = path.parent / "revisions"
+        try:
+            revisions_dir.mkdir(parents=True, exist_ok=True)
+            before = revisions_dir / f"{doc_id}.r{current_revision}{path.suffix or '.json'}"
+            before.write_bytes(path.read_bytes())
+            before_rel = storage_paths.to_storage_relative(before, doc.get("project_id"))
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
+
+        now = now_iso()
+        store = get_store()
+        store._execute(
+            "UPDATE documents SET revision_no = revision_no + 1, updated_at = ? WHERE doc_id = ? AND revision_no = ?",
+            [now, doc_id, current_revision],
+        )
+        refreshed = db_docs.get_by_id(doc_id)
+        if refreshed is None or refreshed.get("revision_no") != current_revision + 1:
+            return _revision_conflict_response(refreshed or fresh, locale, body.base_revision_no, current_revision)
+        try:
+            wp.write_body_atomically(path, restored_body)
+        except OSError as exc:
+            store._execute(
+                "UPDATE documents SET revision_no = ?, updated_at = ? WHERE doc_id = ? AND revision_no = ?",
+                [current_revision, fresh.get("updated_at"), doc_id, current_revision + 1],
+            )
+            raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
+
+    db_revisions.create({
+        "doc_id": doc_id,
+        "revision_no": current_revision,
+        "backup_path": before_rel,
+        # document_revisions.edit_reason is a constrained document-edit category;
+        # the restore-specific provenance remains in the event metadata below.
+        "edit_reason": "user_comment",
+        "linked_doc_id": None,
+        "created_by": current_user["user_id"],
+        "created_at": now,
+    })
+    try:
+        db_events.create({
+            "event_type": "doc_edited", "project_id": doc.get("project_id"),
+            "group_id": doc.get("group_id"), "document_id": None,
+            "actor_user_id": current_user["user_id"], "from_state": None, "to_state": None,
+            "metadata": _json.dumps({"doc_id": doc_id, "edit_reason": "work_plan_revision_restore", "restored_revision_no": revision_no, "revision_no": current_revision + 1}),
+        })
+    except Exception:  # noqa: BLE001 — restore is already durable
+        pass
+    refreshed = db_docs.get_by_id(doc_id) or refreshed
+    _emit(refreshed, "updated", {"doc_id": doc_id, "type": WORK_PLAN_TYPE, "revision_no": current_revision + 1}, current_user["user_id"])
+    return _read_view(refreshed, restored_body)
 
 
 # ── Save (P0009 §4.6 ~ §4.8) ─────────────────────────────────────────────────
