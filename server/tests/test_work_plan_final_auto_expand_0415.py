@@ -182,3 +182,77 @@ def test_approval_hook_returns_success_when_final_expansion_fails(monkeypatch):
         "status": "failed", "reason": "SequenceChanged",
     }
     assert stored["doc_review_status"] == "approved"
+
+def test_final_expansion_snapshots_each_instruction_on_its_paired_worker(monkeypatch):
+    """The approval path persists T/N pre-instruction only on the TR/NR worker rows."""
+    attachments = {
+        "T#1": {"doc_id": WP_ID, "filename": "t.txt", "content_sha256": "a" * 64},
+        "T#2": {"doc_id": WP_ID, "filename": "t2.txt", "content_sha256": "b" * 64},
+        "N#1": {"doc_id": WP_ID, "filename": "n.txt", "content_sha256": "c" * 64},
+    }
+    steps = []
+    for instruction, result, text in (
+        ("T#1", "TR#1", "first task"),
+        ("T#2", "TR#2", "second task"),
+        ("N#1", "NR#1", "research task"),
+    ):
+        instruction_type = instruction.split("#", 1)[0]
+        result_type = result.split("#", 1)[0]
+        steps.extend([
+            {
+                "key": instruction, "type": instruction_type, "pair_key": result,
+                "pair_role": "instruction", "note": "", "pre_instruction_text": text,
+                "pre_instruction_attachment": attachments[instruction],
+            },
+            {
+                "key": result, "type": result_type, "pair_key": instruction,
+                "pair_role": "result", "note": "",
+            },
+        ])
+
+    monkeypatch.setattr(wpseq.db_wfseq, "get_sequence_by_doc_id", lambda _id: {"id": 11})
+    monkeypatch.setattr(wpseq.db_wfseq, "get_sequence_items", lambda _id: [])
+    monkeypatch.setattr(wpseq.db_wfseq, "get_item_by_result_doc_id", lambda _id: None)
+    monkeypatch.setattr(wpseq, "provider_view_of", lambda _project_id: {"readable": False})
+    seen = {}
+    monkeypatch.setattr(
+        wds, "edit_workflow_pending",
+        lambda _owner, rows, **kwargs: seen.update(rows=rows, kwargs=kwargs) or {"status": "updated"},
+    )
+
+    result = wpseq.expand_final_work_plan(doc=DOC, plan={"steps": steps})
+
+    assert result["status"] == "expanded"
+    rows = seen["rows"]
+    assert [row["type"] for row in rows] == ["T", "TR", "T", "TR", "N", "NR"]
+    assert [row["pre_instruction_text"] for row in rows] == [
+        None, "first task", None, "second task", None, "research task",
+    ]
+    assert [row["pre_instruction_attachment"] for row in rows] == [
+        None, attachments["T#1"], None, attachments["T#2"], None, attachments["N#1"],
+    ]
+    assert all(row["source_doc_id"] == WP_ID for row in rows)
+    assert all(row["source_revision_no"] == DOC["revision_no"] for row in rows)
+
+def test_auto_row_pre_instruction_snapshot_is_idempotent():
+    attachment = {"doc_id": WP_ID, "filename": "brief.txt", "content_sha256": "d" * 64}
+    rows, _dropped, uid = wpseq.plan_to_rows(
+        {"steps": [
+            {
+                "key": "T#1", "type": "T", "pair_key": "TR#1",
+                "pair_role": "instruction", "pre_instruction_text": "durable",
+                "pre_instruction_attachment": attachment,
+            },
+            {"key": "TR#1", "type": "TR", "pair_key": "T#1", "pair_role": "result"},
+        ]},
+        WP_ID,
+        DOC["revision_no"],
+    )
+
+    once, uid = wpseq.attach_auto_rows(rows, next_uid=uid)
+    twice, _uid = wpseq.attach_auto_rows(once, next_uid=uid)
+
+    assert once == twice
+    assert once[0]["pre_instruction_text"] is None
+    assert once[1]["pre_instruction_text"] == "durable"
+    assert once[1]["pre_instruction_attachment"] == attachment

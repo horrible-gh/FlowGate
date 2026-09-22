@@ -520,12 +520,31 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
     for row in rows:
         if row.get("is_auto"):
             continue
-        out.append(row)
         want = AUTO_ROW_MAP.get(row["type"]) if row["type"] in INSTRUCTION_TYPES else None
+        # WorkPlan T/N remains the canonical owner, but auto-approved execution runs the
+        # paired TR/NR row.  Move an immutable snapshot onto that worker and keep the
+        # server-assembled instruction slot empty, matching work_plan_apply_service.project().
+        worker_pre_instruction = row["type"] in {"T", "N"} and bool(want)
+        old = by_parent.get(row["uid"])
+        old_matches = old is not None and old.get("type") == want
+        pre_instruction_text = (
+            row.get("pre_instruction_text")
+            if worker_pre_instruction and row.get("pre_instruction_text") is not None
+            else old.get("pre_instruction_text") if worker_pre_instruction and old_matches else None
+        )
+        attachment = (
+            row.get("pre_instruction_attachment")
+            if worker_pre_instruction and isinstance(row.get("pre_instruction_attachment"), dict)
+            else old.get("pre_instruction_attachment") if worker_pre_instruction and old_matches else None
+        )
+        pre_instruction_attachment = dict(attachment) if isinstance(attachment, dict) else None
+        if worker_pre_instruction:
+            row["pre_instruction_text"] = None
+            row["pre_instruction_attachment"] = None
+        out.append(row)
         if not want:
             continue
-        old = by_parent.get(row["uid"])
-        if old is not None and old.get("type") == want:
+        if old_matches:
             auto_uid = old["uid"]
             status = old.get("status", "pending")
             locked = bool(old.get("locked"))
@@ -583,9 +602,9 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
                     or row.get("reviewer_provider_display_name")
                 )
             ),
-            # Pre-instruction belongs only to the instruction worker and is never folded.
-            pre_instruction_text=None,
-            pre_instruction_attachment=None,
+            # T/N is server-assembled in auto-approved mode; TR/NR is the actual worker.
+            pre_instruction_text=pre_instruction_text,
+            pre_instruction_attachment=pre_instruction_attachment,
             status=status,
             locked=locked,
             item_seq_before=item_seq_before,
