@@ -534,7 +534,31 @@ def build_rework_mention(
     )
     if not base:
         return None
-    return section + "\n" + base if section else base
+    mention = section + "\n" + base if section else base
+    # 0554 T0014 §9: rework re-applies the same item's WorkPlan pre-instruction — the
+    # reviewer never sees this (its own prompt is a different assembly, review_mention.py),
+    # only the worker being asked to fix the document does. May raise
+    # PreInstructionAttachmentError (fail-closed, T0014 §5); the caller decides cleanup.
+    pre = _resolve_rework_pre_instruction(doc_id)
+    if pre:
+        mention = prepend_pre_instruction_section(
+            mention, text=pre.get("text"), attachment=pre.get("attachment"), locale=locale,
+        )
+    return mention
+
+
+def _resolve_rework_pre_instruction(doc_id: str) -> Optional[dict]:
+    """The pre-instruction stored on the sequence slot ``doc_id`` itself occupies.
+
+    A rework hop's ``doc_id`` is always a result document already sitting in a slot
+    (``result_doc_id``), never the sequence root — so the reverse lookup used by note
+    resolution's fold (D0004) is unnecessary here: the slot IS the row to read.
+    """
+    from modules.flow_gate.db import workflow_sequences as db_wfseq
+    from modules.flow_gate.services import work_plan_attachment_service
+
+    item = db_wfseq.get_item_by_result_doc_id(doc_id)
+    return work_plan_attachment_service.resolve_pre_instruction(item)
 
 
 def issue_rework_request(
@@ -577,16 +601,26 @@ def issue_rework_request(
         issued_to=issued_to,
         ai_run_id=ai_run_id,
     )
-    mention = build_rework_mention(
-        doc_id=doc_id,
-        group_id=group_id,
-        project_id=project_id,
-        scratch_dir=issued["scratch_dir"],
-        raw_token=issued["raw_token"],
-        api_base_url=api_base_url,
-        locale=locale,
-        reject_reason=reject_reason,
-    )
+    try:
+        mention = build_rework_mention(
+            doc_id=doc_id,
+            group_id=group_id,
+            project_id=project_id,
+            scratch_dir=issued["scratch_dir"],
+            raw_token=issued["raw_token"],
+            api_base_url=api_base_url,
+            locale=locale,
+            reject_reason=reject_reason,
+        )
+    except Exception:
+        # 0554 T0014 §5: fail-closed means the token this call already minted must not be
+        # left behind unrevoked — the caller (admission.start_run) only learns of this
+        # failure through the exception, never through a token id it could clean up itself.
+        try:
+            token_service.revoke(issued["token_id"], reason="ai_invoke_pre_instruction_attachment_invalid")
+        except Exception:  # noqa: BLE001 — revocation must not mask the original failure
+            pass
+        raise
     return {
         "raw_token": issued["raw_token"],
         "token_id": issued["token_id"],
@@ -602,6 +636,69 @@ def prepend_messages_section(mention_text: str, messages: list[str], locale: Opt
         return mention_text
     header = _MM_SECTION_HEADER[_locale(locale)]
     section = f"## {header}\n---\n{body}"
+    if not mention_text:
+        return section
+    return section + SECTION_SEPARATOR + mention_text
+
+
+# 0554 T0014 §2: the WorkPlan pre-instruction section header — deliberately its own
+# constant, not _MM_SECTION_HEADER, so this section can never merge with the step note
+# (a different provenance per D0007 §3.1) into one indistinguishable block (T0014 §14).
+_PRE_INSTRUCTION_SECTION_HEADER = {
+    "ko": "WorkPlan 사전지시",
+    "en": "WorkPlan pre-instruction",
+    "ja": "WorkPlan 事前指示",
+}
+
+_PRE_INSTRUCTION_ATTACHMENT_LINES = {
+    "ko": (
+        "이 단계에는 WorkPlan 사전지시 첨부 파일이 1개 있습니다.\n"
+        "- 원래 파일명: {original}\n"
+        "- 읽어야 할 대상: 문서 {doc_id}의 첨부 \"{filename}\""
+        " (도움말 document_attachments의 읽기 경로로 읽으세요)"
+    ),
+    "en": (
+        "This step has one WorkPlan pre-instruction attachment.\n"
+        "- Original filename: {original}\n"
+        "- Read target: attachment \"{filename}\" on document {doc_id}"
+        " (use the read path from the document_attachments help item)"
+    ),
+    "ja": (
+        "このステップには WorkPlan 事前指示の添付ファイルが1つあります。\n"
+        "- 元のファイル名: {original}\n"
+        "- 読み取り対象: 文書 {doc_id} の添付 \"{filename}\""
+        " (document_attachments のヘルプ項目の読み取り経路を使用してください)"
+    ),
+}
+
+
+def prepend_pre_instruction_section(
+    mention_text: str,
+    *,
+    text: Optional[str],
+    attachment: Optional[dict],
+    locale: Optional[str],
+) -> str:
+    """Prepend the WorkPlan pre-instruction as its own section (0554 T0014 §2/§4).
+
+    ``attachment`` must already be a validated reference — callers resolve it through
+    :func:`modules.flow_gate.services.work_plan_attachment_service.resolve_pre_instruction`,
+    which raises rather than returning an invalid one (T0014 §5). This function only formats.
+    """
+    loc = _locale(locale)
+    parts: list[str] = []
+    if text and text.strip():
+        parts.append(text.strip())
+    if attachment:
+        parts.append(_PRE_INSTRUCTION_ATTACHMENT_LINES[loc].format(
+            original=attachment.get("original_filename"),
+            doc_id=attachment.get("doc_id"),
+            filename=attachment.get("filename"),
+        ))
+    body = "\n\n".join(parts)
+    if not body:
+        return mention_text
+    section = f"## {_PRE_INSTRUCTION_SECTION_HEADER[loc]}\n---\n{body}"
     if not mention_text:
         return section
     return section + SECTION_SEPARATOR + mention_text

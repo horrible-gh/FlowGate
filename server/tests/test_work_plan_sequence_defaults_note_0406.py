@@ -156,4 +156,9 @@ def test_candidates_publish_note_source_keep_the_row_contract_and_clear_note_mis
         "type", "label", "status", "locked", "poured", "note", "note_source",
         "origin", "plan_key", "source_doc_id", "source_revision_no",
         "provider_id", "provider_display_name", "provider_registered",
+        # 880712d: work plan execution settings (review/reviewer/pre-instruction) and
+        # plan-revision freshness now ride on the same public row contract.
+        "review_count", "reviewer_provider_id", "reviewer_provider_display_name",
+        "pre_instruction_text", "pre_instruction_attachment",
+        "source_freshness", "source_current_revision_no",
     }

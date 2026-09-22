@@ -42,7 +42,19 @@ def test_tc_1_final_wp_expands_through_shared_edit_ssot(monkeypatch):
     monkeypatch.setattr(wds, "edit_workflow_pending", lambda *args, **kwargs: seen.update(args=args, kwargs=kwargs) or {"status": "updated"})
     result = wpseq.expand_final_work_plan(doc=DOC, plan={"steps": []})
     assert result["status"] == "expanded"
-    assert seen["args"] == (OWNER_ID, [{key: value for key, value in CANDIDATE["rows"][0].items() if key != "status"}])
+    # 880712d: expand_final_work_plan now forwards the work plan execution-setting keys
+    # (review_count/reviewer/pre-instruction) alongside the original row shape, defaulting
+    # to None for a candidate row that never set them.
+    expected_row = {
+        key: CANDIDATE["rows"][0].get(key)
+        for key in (
+            "type", "label", "note", "source_doc_id", "source_revision_no",
+            "provider_id", "provider_display_name", "review_count",
+            "reviewer_provider_id", "reviewer_provider_display_name",
+            "pre_instruction_text", "pre_instruction_attachment",
+        )
+    }
+    assert seen["args"] == (OWNER_ID, [expected_row])
     assert seen["kwargs"]["expected_workflow_tag"] == "before-tag"
     assert seen["kwargs"]["expected_plan"] == {"wp_doc_id": WP_ID, "wp_revision_no": 2}
     assert seen["kwargs"]["applied_by"] == "wp_final_auto_expand"

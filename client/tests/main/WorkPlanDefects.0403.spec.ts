@@ -290,6 +290,10 @@ describe('붓기 저장이 보내는 것 (NR0004 F2)', () => {
           sort_order: 0, status: 'pending', note: '남아 있던 멘트',
           source_doc_id: WP_DOC_ID, source_revision_no: 1,
           provider_id: null, provider_display_name: null, provider_registered: null,
+          // 0554 T#3 (880712d): metaContractMissing treats a row without these as a
+          // legacy-shaped response and blocks save() outright.
+          review_count: 0, reviewer_provider_id: null, reviewer_provider_display_name: null,
+          pre_instruction_text: null, pre_instruction_attachment: null,
         }],
       },
     })

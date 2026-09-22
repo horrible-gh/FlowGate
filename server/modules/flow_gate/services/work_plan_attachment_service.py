@@ -104,6 +104,60 @@ def reference_status(doc_id: str, reference: Optional[dict]) -> dict:
     }
 
 
+class PreInstructionAttachmentError(Exception):
+    """A sequence item's pre-instruction attachment reference failed validation.
+
+    0554 T0014 §5: the hop must stop before the AI is invoked rather than run without it —
+    unlike a stored step note, a bad reference here is never silently dropped.
+    """
+
+    def __init__(self, code: str, source_doc_id: Optional[str] = None):
+        self.code = code
+        self.source_doc_id = source_doc_id
+        super().__init__(code)
+
+
+def resolve_pre_instruction(item: Optional[dict]) -> Optional[dict]:
+    """Return one sequence item's pre-instruction ``{"text", "attachment"}``, or None.
+
+    None means the row carries neither a text nor an attachment reference — the ordinary
+    case for every step that is not the exact worker-executed row a WorkPlan projected
+    pre-instruction onto (0554 D0007 §3.5 already keeps it off paired/auto-approved rows,
+    so no such check is repeated here).
+
+    Raises :class:`PreInstructionAttachmentError` when an attachment reference is stored
+    but does not validate (missing file, wrong document, digest mismatch, stale reference,
+    reserved-namespace violation, ...) — see T0014 §5's fail-closed list.
+    """
+    if not item:
+        return None
+    from modules.flow_gate.db import workflow_sequences as db_wfseq
+
+    text = (item.get("pre_instruction_text") or "").strip() or None
+    raw_json = item.get("pre_instruction_attachment_json")
+    if db_wfseq.pre_instruction_attachment_json_malformed(raw_json):
+        # 0554 T0014 §5 (review rej_01M334Z5Y72GK6BW finding 1): a non-empty column that
+        # cannot decode to a reference dict is a corrupted reference, not "no attachment".
+        # decode_pre_instruction_attachment alone cannot tell the two apart (both return
+        # None), which used to let this fall through to the text-only/no-instruction path
+        # below and start the AI without ever surfacing the corruption — the exact silent
+        # drop §5's fail-closed list forbids.
+        raise PreInstructionAttachmentError(
+            "pre_instruction_attachment_decode_failed", item.get("source_doc_id")
+        )
+    raw_attachment = db_wfseq.decode_pre_instruction_attachment(raw_json)
+    if not text and raw_attachment is None:
+        return None
+    attachment: Optional[dict] = None
+    if raw_attachment is not None:
+        source_doc_id = item.get("source_doc_id")
+        code = validate_reference(source_doc_id, raw_attachment)
+        if code is not None:
+            raise PreInstructionAttachmentError(code, source_doc_id)
+        attachment = raw_attachment
+    return {"text": text, "attachment": attachment}
+
+
 def _stored_reference(doc_id: str, row: dict) -> dict:
     return {
         "doc_id": doc_id,

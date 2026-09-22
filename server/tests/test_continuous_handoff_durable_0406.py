@@ -196,6 +196,14 @@ def test_startup_marks_memory_lost_handoff_resumable(monkeypatch):
 def test_prompt_audit_records_source_length_and_hash(monkeypatch):
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", lambda _d: {"id": 7})
     monkeypatch.setattr(svc.db_wfseq, "get_effective_head", lambda _sid: {"item_seq": 3, "type": "TR"})
+    # This item_seq carries no pre-instruction of its own (0554 T0014 §5's fail-closed check
+    # needs a real row to read, not an unmocked store, to reach that "no pre-instruction"
+    # conclusion instead of a lookup-failure error).
+    monkeypatch.setattr(
+        svc.db_wfseq, "get_sequence_items",
+        lambda _sid: [{"item_seq": 3, "type": "TR", "pre_instruction_text": None,
+                        "pre_instruction_attachment_json": None}],
+    )
     monkeypatch.setattr(
         svc.invoke_mention_service,
         "prepend_messages_section",

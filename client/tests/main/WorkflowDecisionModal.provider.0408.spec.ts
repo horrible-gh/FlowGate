@@ -15,26 +15,38 @@ vi.mock('@main/components/common/useToast', () => ({ useToast: () => ({ showToas
 import WorkflowDecisionModal from '@main/components/WorkflowDecisionModal.vue'
 
 const DOC_ID = 'flowgate.default.0408.0001-B'
+// 0554 T#3 (880712d) added review_count/reviewer_provider_id/reviewer_provider_display_name/
+// pre_instruction_text/pre_instruction_attachment to the meta-contract every pending row must
+// carry (WorkflowDecisionModal.vue's metaContractMissing check) — a fixture missing any of
+// them is read as a legacy-shaped response and blocks save() entirely.
+const META_CONTRACT_DEFAULTS = {
+  review_count: 0, reviewer_provider_id: null, reviewer_provider_display_name: null,
+  pre_instruction_text: null, pre_instruction_attachment: null,
+}
 const rows = [
   {
     id: 1, item_seq: 1, type: 'D', label: 'Design', status: 'pending', sort_order: 1,
     note: 'keep', source_doc_id: 'flowgate.default.0408.0004-WP', source_revision_no: 8,
     provider_id: 'active', provider_display_name: 'Active Provider', provider_registered: true,
+    ...META_CONTRACT_DEFAULTS,
   },
   {
     id: 2, item_seq: 2, type: 'P', label: 'Protocol', status: 'pending', sort_order: 2,
     note: '', source_doc_id: null, source_revision_no: null,
     provider_id: null, provider_display_name: null, provider_registered: null,
+    ...META_CONTRACT_DEFAULTS,
   },
   {
     id: 3, item_seq: 3, type: 'M', label: 'Memo', status: 'pending', sort_order: 3,
     note: '', source_doc_id: null, source_revision_no: null,
     provider_id: 'deleted', provider_display_name: 'Deleted Snapshot', provider_registered: false,
+    ...META_CONTRACT_DEFAULTS,
   },
   {
     id: 4, item_seq: 4, type: 'WP', label: 'Unknown status', status: 'pending', sort_order: 4,
     note: '', source_doc_id: null, source_revision_no: null,
     provider_id: 'unreadable', provider_display_name: 'Unreadable Snapshot', provider_registered: null,
+    ...META_CONTRACT_DEFAULTS,
   },
 ]
 
@@ -148,6 +160,7 @@ describe('WorkflowDecisionModal provider persistence contract (0408)', () => {
         id: 6, item_seq: 6, type: 'TR', label: 'Task report', status: 'pending', sort_order: 6,
         note: 'TR note', source_doc_id: null, source_revision_no: null,
         provider_id: 'active', provider_display_name: 'Active Provider', provider_registered: true,
+        ...META_CONTRACT_DEFAULTS,
       },
     ]
     getRequest.mockImplementation((url: string) => Promise.resolve(

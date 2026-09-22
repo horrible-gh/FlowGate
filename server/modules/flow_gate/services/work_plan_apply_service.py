@@ -776,12 +776,16 @@ def apply(*, doc: dict, owner_doc: dict, plan: dict, plan_path: Path, providers:
     # Apply and preview share the projection above.  Snapshot it onto every still-pending
     # effective row, including rows that already existed before this apply.  The auto-handled
     # instruction source is included in execution_item_seqs so stale metadata is cleared there
-    # while its review policy lands on the paired result.
+    # while its review policy lands on the paired result.  Rows just inserted above already
+    # carry the same projected values from insert_sequence_item, so they are excluded here —
+    # both to avoid a redundant second write and because a freshly-inserted row's `id` is only
+    # guaranteed once it is truly re-read back from storage.
+    added_seqs = {_int(x.get("item_seq")) for x in added}
     snapshot_seqs = (
         set(projection["execution_item_seqs"])
         | {int(value) for value in projection["provider_overrides"]}
         | {int(value) for value in projection["note_overrides"]}
-    )
+    ) - added_seqs
     if sequence is not None and snapshot_seqs:
         with get_store().transaction():
             for item in current:

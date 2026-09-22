@@ -31,6 +31,27 @@ def decode_pre_instruction_attachment(raw) -> Optional[dict]:
     return value if isinstance(value, dict) else None
 
 
+def pre_instruction_attachment_json_malformed(raw) -> bool:
+    """True when ``raw`` holds non-empty stored content that decode_pre_instruction_attachment
+    cannot turn into a usable reference dict (0554 T0014 §5 rework, review rej_01M334Z5Y72GK6BW).
+
+    An empty/absent column (``None``, blank string) means "no attachment" and is NOT malformed
+    — that is the ordinary case for most rows. This exists so a caller that must fail-closed
+    (work_plan_attachment_service.resolve_pre_instruction) can tell "nothing was ever stored"
+    apart from "something was stored but it decoded to nothing", which decode's own return
+    value (``None`` either way) deliberately does not distinguish for its display-only callers.
+    """
+    if isinstance(raw, dict):
+        return False
+    if not isinstance(raw, str) or not raw.strip():
+        return False
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return True
+    return not isinstance(value, dict)
+
+
 # ── Sequence header ───────────────────────────────────────────────────────────
 
 def get_sequence_by_doc_id(doc_id: str) -> Optional[dict]:

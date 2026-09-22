@@ -18,8 +18,14 @@ P0004 [멘트 본문 — 범위와 작성법이 함께 실린 전문] 이 "이�
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
+
+os.environ.setdefault("TESTING", "1")
+os.environ.setdefault("ALLOWED_ORIGIN", "http://localhost")
+os.environ.setdefault("CONTEXT", "/flowgate")
+os.environ.setdefault("DB_TYPE", "sqlite")
 
 from tests.test_work_plan_0395 import (  # noqa: F401 — module fixtures are used by name
     GROUP,

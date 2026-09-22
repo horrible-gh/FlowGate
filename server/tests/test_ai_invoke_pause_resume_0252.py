@@ -181,6 +181,14 @@ class FakeWfseq:
     def get_sequence_items(self, seq_id):
         return list(self.items)
 
+    def get_effective_head(self, seq_id):
+        # Mirrors db.workflow_sequences.get_effective_head's own contract closely enough for
+        # this fixture's decided-sequence fixtures: the first slot still missing a result doc.
+        for item in self.items:
+            if not item.get("result_doc_id"):
+                return dict(item)
+        return None
+
 
 class FakeDocs:
     def __init__(self, baseline_seq=1):
@@ -211,6 +219,7 @@ def fake_env(monkeypatch, tmp_path):
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", wfseq.get_sequence_for_member_doc)
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_by_doc_id", wfseq.get_sequence_by_doc_id)
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_items", wfseq.get_sequence_items)
+    monkeypatch.setattr(svc.db_wfseq, "get_effective_head", wfseq.get_effective_head)
     monkeypatch.setattr(
         svc.db_wfseq,
         "get_sequence_snapshots_for_member_docs",
