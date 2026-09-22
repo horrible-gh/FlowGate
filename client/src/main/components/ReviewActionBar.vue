@@ -1107,11 +1107,23 @@ async function doApprove() {
         },
       }))
     }
-    // Pass the server-confirmed status up so DocHeader can optimistically flip the
-    // strip/action bar before the refetch round-trip (gap D, NR0003 §6 item 2).
-    const updated = (res.data as any)?.document ?? (res.data as any)?.data ?? res.data
+    // 0555 T#4: HTTP 200 is not itself an approval verdict. A conflict is a
+    // successful deferred Git transition while the AC and root remain pending.
+    // Only an explicit approved verdict (or the legacy approved document shape)
+    // may pin this bar and publish the approved transition.
+    const payload = res.data as any
+    const approval = payload?.approval
+    const updated = payload?.document ?? payload?.data ?? payload
+    const approved = approval?.approved === true
+      || (approval == null && updated?.doc_review_status === 'approved')
+    if (!approved) {
+      // Keep the button available for the same AC. The Git refresh/open event
+      // above moves conflict sessions to their recovery surface and terminal
+      // approval failures to the approval-only retry state.
+      return
+    }
     approvedDocId.value = props.docId
-    emit('approve', updated?.doc_review_status ?? 'approved')
+    emit('approve', updated?.doc_review_status ?? approval?.document_status ?? 'approved')
     if (props.afterApprove) {
       try { await props.afterApprove(updated ?? {}) } catch { /* approval is already durable */ }
     }

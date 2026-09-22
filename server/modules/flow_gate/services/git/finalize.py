@@ -506,6 +506,11 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         # same fact the finalize() guard above rejects on, so the screen and the
         # server never disagree about it.
         "final_approval_bound": approval_intent.group_is_final_approval_bound(group_id),
+        # A11/B8: terminal Git with an unconsumed intent is approval-only retry.
+        "approval_pending": (
+            display_status in {"merged", "pushed", DISCARDED_STATUS, "stashed"}
+            and approval_intent.find_intent_session(group_id)[1] is not None
+        ),
         "commit_message": commit_message,
         # True only for the display-only pre-approval preview (0197 T0004 §B);
         # the persisted status is still 'none'. Advisory for the FE.

@@ -17,6 +17,7 @@
         <p class="ac-fa-title">{{ t('main.final_approval.panel_title') }}</p>
         <p class="ac-fa-desc">{{ t('main.final_approval.panel_desc') }}</p>
       </template>
+      <FinalApprovalGitStatus :group-id="groupId" :completed="completed" />
     </div>
   </div>
 </template>
@@ -24,9 +25,11 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import AppIcon from '@shared/AppIcon.vue'
+import FinalApprovalGitStatus from './FinalApprovalGitStatus.vue'
 
 defineProps<{
   completed: boolean
+  groupId: string
 }>()
 
 const { t } = useI18n()

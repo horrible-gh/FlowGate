@@ -648,7 +648,7 @@ describe('ReviewActionBar', () => {
   it('AC approval with a git conflict opens the Git status panel event path', async () => {
     postRequest.mockResolvedValueOnce({
       data: {
-        document: { doc_review_status: 'approved' },
+        approval: { approved: false, deferred: true, document_status: 'pending_review', root_status: 'wf_in_progress' },
         git: { ok: true, result: { status: 'conflict', conflict_files: ['client/a.ts'] } },
       },
     })
@@ -675,7 +675,7 @@ describe('ReviewActionBar', () => {
       expect(events).toEqual([
         { project: 'flowgate', group_id: 'flowgate.default.0170', status: 'conflict' },
       ])
-      expect(wrapper.emitted('approve')?.[0]).toEqual(['approved'])
+      expect(wrapper.emitted('approve')).toBeUndefined()
     } finally {
       window.removeEventListener('fg:git_status_open', onOpen)
       wrapper.unmount()

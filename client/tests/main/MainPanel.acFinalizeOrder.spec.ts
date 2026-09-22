@@ -4,6 +4,7 @@
 // and recovery, but no GitFinalizePanel is mounted inside FinalApprovalBody.
 
 import { defineComponent, h } from 'vue'
+import { flushPromises } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { mountMainPanel } from '../helpers/mountMainPanel'
@@ -80,6 +81,7 @@ function baseStubs(status: string) {
   return {
     DocHeader: docHeaderStub(status),
     GitFinalizePanel: GitFinalizePanelStub,
+    FinalApprovalGitStatus: false,
   }
 }
 
@@ -91,15 +93,22 @@ const AC_TAB = {
   typeCode: 'AC',
 }
 
-function mountAc(status: string) {
-  return mountMainPanel({ tabs: [AC_TAB], stubs: baseStubs(status) })
+async function mountAc(status: string) {
+  const wrapper = await mountMainPanel({ tabs: [AC_TAB], stubs: baseStubs(status) })
+  await flushPromises()
+  return wrapper
 }
 
 beforeEach(() => {
   setActivePinia(createPinia())
   localStorage.clear()
   delete (window as any).__accessToken__
-  getRequest.mockClear()
+  getRequest.mockReset()
+  getRequest.mockImplementation((url: string) =>
+    url.includes('/git/finalize')
+      ? Promise.resolve({ data: { state: { branch: 'group-branch', base_branch: 'main', status: 'merged', ahead_count: 0, behind_count: 0, merge_commit: 'abc123' } } })
+      : Promise.resolve({ data: { questions: [] } }),
+  )
 })
 
 describe('MainPanel — AC has one final-approval execution owner (0555 T#3)', () => {
@@ -107,6 +116,8 @@ describe('MainPanel — AC has one final-approval execution owner (0555 T#3)', (
     const wrapper = await mountAc('pending_review')
     expect(wrapper.find('.ac-final-approval-body').exists()).toBe(true)
     expect(wrapper.find('.git-fin-stub').exists()).toBe(false)
+    expect(wrapper.find('[data-test="ac-git-status"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('[실행]')
   })
 
   for (const status of ['approved', 'wf_done']) {
@@ -114,6 +125,8 @@ describe('MainPanel — AC has one final-approval execution owner (0555 T#3)', (
       const wrapper = await mountAc(status)
       expect(wrapper.find('.ac-final-approval-body').exists()).toBe(true)
       expect(wrapper.find('.git-fin-stub').exists()).toBe(false)
+    expect(wrapper.find('[data-test="ac-git-status"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('[실행]')
     })
   }
 })

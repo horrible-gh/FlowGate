@@ -381,6 +381,68 @@ async def document_review_transition_rpc(
     _guard_group_not_ai_running(guarded_doc, body.doc_id)
 
     git_action = body.git_action
+    if git_action is None and action == "approve" and guarded_doc.get("type_code") == "AC":
+        # 0555 T#4 A11/B8: terminal Git may have succeeded while the coupled
+        # approval transaction failed. Re-approving the same pending AC consumes
+        # that parked intent only; it must never start finalize again.
+        group_id = guarded_doc.get("group_id") or ""
+        parked_session, parked_intent = git_service.approval_intent.find_intent_session(group_id)
+        git_state = git_service.db_git.get_state(group_id) or {}
+        terminal_status = git_state.get("status")
+        terminal_retry = (
+            parked_session is not None
+            and parked_intent is not None
+            and parked_intent.get("ac_doc_id") == body.doc_id
+            and terminal_status in {"merged", "pushed", "archived", "stashed"}
+        )
+        if terminal_retry:
+            def _retry_terminal_approval() -> tuple[int, dict]:
+                user_permissions = _get_user_permissions(current_user)
+                locale = (request.headers.get("x-locale") if request is not None else None) or "ko"
+                try:
+                    precheck_document_review_transition(
+                        doc_id=body.doc_id, action="approve",
+                        actor_user_id=current_user["user_id"],
+                        user_permissions=user_permissions, comment=body.comment, locale=locale,
+                    )
+                except (TransitionError, WFPermissionError, ValueError) as exc:
+                    status = 403 if isinstance(exc, WFPermissionError) else 409
+                    error = {"code": "approval_precheck_failed", "message": str(exc)}
+                    return status, {"ok": False, "error": error}
+                project_id = git_service._project_of_group(group_id)
+                holder = f"approval-retry:{body.doc_id}:{uuid.uuid4()}"
+                if not git_service._acquire_lock(project_id, holder, wait_sec=0):
+                    error = {"code": "git_busy", "message": "Another git operation is in progress"}
+                    return 409, {"ok": False, "error": error}
+                try:
+                    approval = git_service.approval_intent.commit_deferred_approval(
+                        group_id, int(parked_session["merge_id"]), parked_intent
+                    )
+                finally:
+                    git_service.db_git.release_lock(project_id, holder)
+                result = {
+                    "status": terminal_status,
+                    "merge_commit": git_state.get("merge_commit"),
+                    "approval_retry": True,
+                }
+                git = {"ok": True, "terminal": True, "result": result}
+                git_service.complete_approve_git_action(
+                    group_id, parked_intent.get("git_action") or "merge", git,
+                    approved=bool(approval.get("approved")),
+                )
+                if approval.get("approved"):
+                    git_service.realize_wf_done_transition(group_id)
+                    return 200, {
+                        "ok": True, "document": db_docs.get_by_id(body.doc_id),
+                        "git": git, "approval": approval,
+                    }
+                error = approval.get("error") or {
+                    "code": "approval_commit_failed", "message": "approval retry failed"
+                }
+                return 500, {"ok": False, "error": error, "git": git, "approval": approval}
+
+            status_code, payload = await anyio.to_thread.run_sync(_retry_terminal_approval)
+            return JSONResponse(status_code=status_code, content=payload)
     if git_action is None:
         return await document_review_transition_endpoint(
             body.doc_id,

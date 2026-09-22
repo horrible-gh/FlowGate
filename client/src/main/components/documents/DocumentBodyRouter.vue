@@ -2,6 +2,7 @@
   <FinalApprovalBody
     v-if="tab.typeCode === 'AC'"
     :completed="completed"
+    :group-id="tab.id.split('.').slice(0, -1).join('.')"
   />
   <DiscardBody v-else-if="tab.typeCode === 'DC'" />
   <!-- CH keeps a single ConversationView instance across the full-view move, so everything

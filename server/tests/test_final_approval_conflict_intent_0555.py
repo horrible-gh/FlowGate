@@ -140,7 +140,7 @@ def _make_conflict_material(group_id: str, origin, path: str, ours: str, theirs:
     _git(["push", "origin", "main"], cwd=seedwt)
 
 
-def _final_approve(doc_id: str, git_action: str = "merge") -> tuple[int, dict]:
+def _final_approve(doc_id: str, git_action: str | None = "merge") -> tuple[int, dict]:
     """Drive the real final-approval orchestrator (the only public entry point)."""
     from modules.flow_gate.workflow.routers import workflow
 
@@ -540,10 +540,10 @@ class TestFinalApprovalConflictIntent0555:
         # §9 recovery: approve again. No git re-run, no new merge commit — the
         # surviving intent is what the transaction consumes this time.
         merges_before = _git(["rev-list", "--count", "main"], cwd=origin_repo["bare"]).strip()
-        status2, payload2 = _final_approve(ac_id)
+        status2, payload2 = _final_approve(ac_id, git_action=None)
         assert status2 == 200, payload2
         assert payload2["approval"]["approved"] is True
-        assert payload2["git"]["result"].get("terminal_retry") is True
+        assert payload2["git"]["result"].get("approval_retry") is True
         assert _origin_head(origin_repo) == merged_head
         assert _git(["rev-list", "--count", "main"], cwd=origin_repo["bare"]).strip() == merges_before
         assert _review_status(ac_id) == "approved"
