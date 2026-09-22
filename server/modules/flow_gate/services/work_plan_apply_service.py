@@ -273,9 +273,10 @@ def project(plan_steps: Iterable[dict], step_map: Iterable[dict], items: Iterabl
             instruction_mode: str, provider_registry: Any) -> dict:
     """Project every execution setting through the same logical-step mapping.
 
-    Provider/note and review policy follow the effective worker target.  Pre-instruction is
-    deliberately different: an auto-assembled instruction has no worker, so its text/file is
-    reported as unapplied instead of leaking into the paired result prompt.
+    Every execution setting follows the effective worker target.  For an auto-assembled
+    instruction, the WorkPlan instruction step remains the canonical owner while its
+    pre-instruction is snapshotted onto the paired result row that the worker actually fills.
+    A server-assembled instruction with no paired worker target remains explicitly unapplied.
     """
     mode = instruction_mode if instruction_mode in INSTRUCTION_MODES else "auto_approved"
     rows = list(step_map or [])
@@ -296,15 +297,9 @@ def project(plan_steps: Iterable[dict], step_map: Iterable[dict], items: Iterabl
             continue
         source_seq = _int(mapped.get("item_seq"))
         target_seq, is_folded = source_seq, False
+        allow_pre_instruction = True
         code = str(step.get("type") or "").upper()
         if mode == "auto_approved" and code in INSTRUCTION_AUTO_TYPES:
-            if step.get("pre_instruction_text") or step.get("pre_instruction_attachment"):
-                unfilled.append({
-                    "key": key,
-                    "field": "pre_instruction",
-                    "item_seq": source_seq,
-                    "reason": "instruction_step_is_server_assembled_no_worker_target",
-                })
             target = _first_pair_after(items, source_seq, AUTO_REPORT_MAP.get(code, ""))
             if target:
                 target_seq, is_folded = _int(target.get("item_seq")), True
@@ -313,7 +308,18 @@ def project(plan_steps: Iterable[dict], step_map: Iterable[dict], items: Iterabl
                     "from_key": key, "to_key": to_map.get("key"),
                     "to_item_seq": target_seq, "reason": "auto_approved_instruction",
                 })
-        (tucked if is_folded else own).append((step, target_seq, source_seq))
+            else:
+                allow_pre_instruction = False
+                if step.get("pre_instruction_text") or step.get("pre_instruction_attachment"):
+                    unfilled.append({
+                        "key": key,
+                        "field": "pre_instruction",
+                        "item_seq": source_seq,
+                        "reason": "instruction_step_is_server_assembled_no_worker_target",
+                    })
+        (tucked if is_folded else own).append(
+            (step, target_seq, source_seq, allow_pre_instruction)
+        )
 
     provider_out: dict[str, str] = {}
     note_out: dict[str, str] = {}
@@ -364,13 +370,15 @@ def project(plan_steps: Iterable[dict], step_map: Iterable[dict], items: Iterabl
             if isinstance(attachment, dict) and (not absent_only or target not in pre_instruction_attachment_out):
                 pre_instruction_attachment_out[target] = dict(attachment)
 
-    for step, target, _source in own:  # own values win
-        put(step, target, False, allow_pre_instruction=True)
-    for step, target, source in sorted(tucked, key=lambda row: row[2], reverse=True):
-        # Clear any stale baseline on the server-assembled instruction slot. Review policy
-        # folds to the paired result; pre-instruction never does.
+    for step, target, _source, allow_pre_instruction in own:  # own values win
+        put(step, target, False, allow_pre_instruction=allow_pre_instruction)
+    for step, target, source, _allow_pre_instruction in sorted(
+        tucked, key=lambda row: row[2], reverse=True
+    ):
+        # Clear any stale baseline on the server-assembled instruction slot.  Every setting,
+        # including pre-instruction, is carried by the paired row the worker actually fills.
         execution_item_seqs.add(int(source))
-        put(step, target, True, allow_pre_instruction=False)
+        put(step, target, True, allow_pre_instruction=True)
 
     filled = sorted(
         {int(x) for x in provider_out}

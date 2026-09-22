@@ -5,7 +5,7 @@ Covers:
     worker receives on stdin (mirrors test_ai_invoke_continuation_note_0346.py's harness for
     the sibling `note` feature, since pre-instruction is injected at the exact same
     admission._inject_hop_notes convergence point, D0007 §3.5/T0014 §2).
-  • the report-row fold never receives the instruction row's own pre-instruction (I4/I5).
+  • auto-approved instruction pre-instruction reaches only its paired result worker.
   • a stored-but-invalid attachment reference stops the hop before any worker spawns,
     revoking the token it already minted (T0014 §5 fail-closed contract).
   • note + pre-instruction coexist as two distinct sections (T0014 §14).
@@ -492,10 +492,12 @@ class TestPreInstructionEndToEnd:
             conn_mod.STORE = original_store
             conn.close()
 
-    def test_report_row_never_receives_the_instruction_rows_pre_instruction(self, pre_env):
-        # 0554 T0014 §5/I4-I5: auto_approved folds T@3's note/provider/review onto the report
-        # slot TR@4 (D0007 §3.5), but pre-instruction is deliberately NOT folded — TR@4's own
-        # pre_instruction_text stays None even though T@3 (the source instruction) carries one.
+    def test_auto_approved_instruction_bundle_reaches_only_the_paired_worker(
+        self, pre_env, monkeypatch,
+    ):
+        # The WorkPlan T step remains the logical owner.  Its durable execution snapshot is
+        # copied onto TR@4 because that is the row auto_approved actually runs; unrelated
+        # N/NR rows carry no copy.
         pre_env["wfseq"].head_item_seq = 3
         pre_env["wfseq"].items = [
             {"item_seq": 1, "type": "N", "result_doc_id": "d-0002-N"},
@@ -503,19 +505,21 @@ class TestPreInstructionEndToEnd:
             {
                 "item_seq": 3, "type": "T", "result_doc_id": None,
                 "source_doc_id": ATTACHMENT["doc_id"], "pre_instruction_text": PRE_TEXT,
-                "pre_instruction_attachment_json": None,
+                "pre_instruction_attachment_json": _attachment_json(),
             },
             {
                 "item_seq": 4, "type": "TR", "result_doc_id": None,
-                "source_doc_id": None, "pre_instruction_text": None,
-                "pre_instruction_attachment_json": None,
+                "source_doc_id": ATTACHMENT["doc_id"], "pre_instruction_text": PRE_TEXT,
+                "pre_instruction_attachment_json": _attachment_json(),
             },
         ]
+        monkeypatch.setattr(wpa_svc, "validate_reference", lambda doc_id, reference: None)
         res, outfile = _start(pre_env, MENTION, target_seq=4, instruction_mode="auto_approved")
         _wait_finished(res["run_id"])
         got = _read(outfile).decode("utf-8")
-        assert "WorkPlan 사전지시" not in got
-        assert PRE_TEXT not in got
+        assert got.count("## WorkPlan 사전지시") == 1
+        assert PRE_TEXT in got
+        assert ATTACHMENT["original_filename"] in got
 
     def test_ai_direct_instruction_row_gets_its_own_pre_instruction(self, pre_env):
         # Contrast case: under ai_direct the worker fills T@3 itself (no fold), so T@3's own
@@ -542,14 +546,30 @@ class TestPreInstructionEndToEnd:
 
 
 class TestPreInstructionFailClosed:
-    def test_invalid_attachment_stops_the_hop_before_the_worker_is_spawned(self, pre_env, monkeypatch):
-        pre_env["wfseq"].items[0]["pre_instruction_attachment_json"] = _attachment_json()
+    def test_invalid_paired_attachment_stops_before_the_worker_is_spawned(
+        self, pre_env, monkeypatch,
+    ):
+        pre_env["wfseq"].head_item_seq = 3
+        pre_env["wfseq"].items = [
+            {
+                "item_seq": 3, "type": "T", "result_doc_id": None,
+                "source_doc_id": ATTACHMENT["doc_id"],
+                "pre_instruction_text": PRE_TEXT,
+                "pre_instruction_attachment_json": _attachment_json(),
+            },
+            {
+                "item_seq": 4, "type": "TR", "result_doc_id": None,
+                "source_doc_id": ATTACHMENT["doc_id"],
+                "pre_instruction_text": PRE_TEXT,
+                "pre_instruction_attachment_json": _attachment_json(),
+            },
+        ]
         monkeypatch.setattr(
             wpa_svc, "validate_reference",
             lambda doc_id, reference: "pre_instruction_attachment_digest_mismatch",
         )
         with pytest.raises(HTTPException) as caught:
-            _start(pre_env, MENTION)
+            _start(pre_env, MENTION, target_seq=4)
         assert caught.value.status_code == 409
         assert caught.value.detail["code"] == "pre_instruction_attachment_digest_mismatch"
         assert caught.value.detail["source_doc_id"] == ATTACHMENT["doc_id"]
@@ -938,9 +958,24 @@ class TestRetryRebuildsPreInstruction:
             "expires_at": "2000-01-01T00:00:00+00:00",
         })
 
-    def test_reissued_retry_mention_carries_the_same_pre_instruction(
+    def test_reissued_retry_reads_the_auto_approved_paired_worker_snapshot(
         self, pre_env, monkeypatch, tmp_path,
     ):
+        pre_env["wfseq"].head_item_seq = 3
+        pre_env["wfseq"].items = [
+            {
+                "item_seq": 3, "type": "T", "result_doc_id": None,
+                "source_doc_id": ATTACHMENT["doc_id"],
+                "pre_instruction_text": "source-row stale sentinel",
+                "pre_instruction_attachment_json": None,
+            },
+            {
+                "item_seq": 4, "type": "TR", "result_doc_id": None,
+                "source_doc_id": ATTACHMENT["doc_id"],
+                "pre_instruction_text": PRE_TEXT,
+                "pre_instruction_attachment_json": None,
+            },
+        ]
         self._force_reissue(monkeypatch)
 
         def _issue(ai_run_id=None):
@@ -955,6 +990,7 @@ class TestRetryRebuildsPreInstruction:
         got = prepared["mention"]
         assert got.count("WorkPlan 사전지시") == 1
         assert PRE_TEXT in got
+        assert "source-row stale sentinel" not in got
 
     def test_each_reissue_re_reads_the_row_instead_of_replaying_a_stale_copy(
         self, pre_env, monkeypatch, tmp_path,
@@ -1469,17 +1505,22 @@ class TestConnectedFlowFullEffectiveBundle:
         WORKER_PROVIDER = "aip_worker_x"
         REVIEWER_PROVIDER = "aip_reviewer_x"
         WP_DOC_ID = f"{GROUP_ID}.9000-WP"
-        RESULT_DOC_ID = f"{GROUP_ID}.9002-T"
+        RESULT_DOC_ID = f"{GROUP_ID}.9002-TR"
 
-        # ---- 1. WP step -> sequence row through the REAL apply() (steps 1-10).
-        # type "D": an N/T head auto-folds onto its paired report row under auto_approved
-        # (§3/I4-I5, already proven above) — a fold this test does not need, so a plain
-        # worker-executed type keeps docs_target/provider resolution unentangled with it.
+        # ---- 1. WP T step -> paired TR worker row through the REAL apply() (steps 1-10).
+        # The canonical pre-instruction remains on T#1 in the WorkPlan while apply() must
+        # snapshot the whole effective bundle onto TR@2, the row auto_approved executes.
         plan_step = {
-            "key": "D#1", "type": "D", "ordinal": 1, "locked": False,
+            "key": "T#1", "type": "T", "ordinal": 1, "locked": False,
             "provider_id": WORKER_PROVIDER, "note": "계획 단계 개별 메모",
             "review_count": 2, "reviewer_provider_id": REVIEWER_PROVIDER,
             "pre_instruction_text": PRE_TEXT, "pre_instruction_attachment": ATTACHMENT,
+        }
+        result_step = {
+            "key": "TR#1", "type": "TR", "ordinal": 1, "locked": False,
+            "provider_id": None, "note": "",
+            "review_count": 0, "reviewer_provider_id": None,
+            "pre_instruction_text": None, "pre_instruction_attachment": None,
         }
         provider_registry = [
             {"id": WORKER_PROVIDER, "name": "Worker CLI", "enabled": True},
@@ -1506,7 +1547,7 @@ class TestConnectedFlowFullEffectiveBundle:
                 "target_id": ROOT_DOC,
             },
             owner_doc={"doc_id": ROOT_DOC, "type_code": "R"},
-            plan={"steps": [plan_step], "defaults": {"note": ""}},
+            plan={"steps": [plan_step, result_step], "defaults": {"note": ""}},
             plan_path=env["tmp"] / "wp_plan.json",
             providers=provider_registry,
             instruction_mode="auto_approved",
@@ -1517,16 +1558,26 @@ class TestConnectedFlowFullEffectiveBundle:
         )
         assert result["ok"] is True
         assert result["workflow_changed"] is True
-        assert result["fill"]["provider_overrides"]["1"] == WORKER_PROVIDER
-        assert result["fill"]["review_count_overrides"]["1"] == 2
-        assert result["fill"]["reviewer_overrides"]["1"] == REVIEWER_PROVIDER
-        assert result["fill"]["pre_instruction_texts"]["1"] == PRE_TEXT
-        assert result["fill"]["pre_instruction_attachments"]["1"] == ATTACHMENT
+        assert result["fill"]["provider_overrides"]["2"] == WORKER_PROVIDER
+        assert result["fill"]["review_count_overrides"]["2"] == 2
+        assert result["fill"]["reviewer_overrides"]["2"] == REVIEWER_PROVIDER
+        assert result["fill"]["pre_instruction_texts"]["2"] == PRE_TEXT
+        assert result["fill"]["pre_instruction_attachments"]["2"] == ATTACHMENT
+        assert not any(
+            entry.get("reason") == "instruction_step_is_server_assembled_no_worker_target"
+            for entry in result["fill"]["unfilled"]
+        )
 
         # The row this asserts against was written by apply() itself — read back through the
         # SAME db_wfseq.get_sequence_items() every other real function in this test uses,
         # never hand-authored.
-        row = next(i for i in env["wfseq"].get_sequence_items(1) if i["item_seq"] == 1)
+        source_row = next(
+            i for i in env["wfseq"].get_sequence_items(1) if i["item_seq"] == 1
+        )
+        row = next(i for i in env["wfseq"].get_sequence_items(1) if i["item_seq"] == 2)
+        assert source_row["type"] == "T"
+        assert source_row["pre_instruction_text"] is None
+        assert row["type"] == "TR"
         assert row["provider_id"] == WORKER_PROVIDER
         assert row["note"] == "계획 단계 개별 메모"
         assert row["review_count"] == 2
@@ -1551,7 +1602,7 @@ class TestConnectedFlowFullEffectiveBundle:
             _provider(pid=REVIEWER_PROVIDER, cmd=_reviewer_cmd(reviewer_round1_outfile)),
         ]
         env["chain"]["registered_count"] = 2
-        before, _ = _start(env, MENTION, target_seq=1, cmd=worker_cmd, outfile=worker_outfile)
+        before, _ = _start(env, MENTION, target_seq=2, cmd=worker_cmd, outfile=worker_outfile)
 
         out = svc.pause_run(before["run_id"], "usr_admin")
         assert out["status"] == "pause_requested"
@@ -1594,9 +1645,9 @@ class TestConnectedFlowFullEffectiveBundle:
         # resolve_reviewer all read the row apply() actually wrote (step 1), and the reject
         # transition below is the real pipeline_service.transition_document_review, not a
         # hand-set doc_review_status.
-        env["wfseq"].items[0]["result_doc_id"] = RESULT_DOC_ID
+        env["wfseq"].items[1]["result_doc_id"] = RESULT_DOC_ID
         docs = _DocWorld(
-            RESULT_DOC_ID, group_id=GROUP_ID, project_id="flowgate", type_code="D",
+            RESULT_DOC_ID, group_id=GROUP_ID, project_id="flowgate", type_code="TR",
             doc_review_status="pending_review", revision_no=0, rejection_history=None,
         )
         monkeypatch.setattr(svc.db_docs, "get_by_id", docs.get_by_id)
@@ -1617,7 +1668,7 @@ class TestConnectedFlowFullEffectiveBundle:
 
         def _gate_bundle(**overrides):
             base = {
-                "doc_ref": ROOT_DOC, "target_seq": 1, "issued_to": "usr_admin",
+                "doc_ref": ROOT_DOC, "target_seq": 2, "issued_to": "usr_admin",
                 "api_base_url": "http://127.0.0.1:1/flowgate/api/v1", "locale": "ko",
                 "instruction_mode": "auto_approved", "chain_id": None,
             }

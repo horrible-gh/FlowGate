@@ -122,8 +122,8 @@ def resolve_pre_instruction(item: Optional[dict]) -> Optional[dict]:
 
     None means the row carries neither a text nor an attachment reference — the ordinary
     case for every step that is not the exact worker-executed row a WorkPlan projected
-    pre-instruction onto (0554 D0007 §3.5 already keeps it off paired/auto-approved rows,
-    so no such check is repeated here).
+    pre-instruction onto.  In auto-approved instruction/result pairs, that execution
+    snapshot lives on the paired result row while the instruction step remains canonical.
 
     Raises :class:`PreInstructionAttachmentError` when an attachment reference is stored
     but does not validate (missing file, wrong document, digest mismatch, stale reference,
