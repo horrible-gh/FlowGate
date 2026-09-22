@@ -887,3 +887,84 @@ describe('WorkPlanEditor canonical title synchronization (0591 T#2)', () => {
     wrapper.unmount()
   })
 })
+
+describe('unreadable revision recovery (0597 T0004)', () => {
+  const UNREADABLE = {
+    code: 'wp_unreadable',
+    message: 'This plan cannot be read.',
+    reason: 'wp_version_unsupported',
+    detail: 'wp_version=2',
+    revision_no: 5,
+    raw: '{"wp_version":2}\n',
+    revisions: [
+      { revision_no: 4, created_by: 'wpuser', created_at: '2026-09-22', restorable: true, restore_unavailable_reason: null },
+      { revision_no: 3, created_by: 'wpuser', created_at: '2026-09-21', restorable: false, restore_unavailable_reason: 'wp_version_unsupported' },
+    ],
+  }
+
+  function routeUnreadable() {
+    getRequest.mockImplementation((url: string) => {
+      if (url.includes('/document-types')) return Promise.resolve({ data: { data: TYPES, work_plan_countable_types: TYPES_WP } })
+      if (url.includes('/ai-invoke/providers')) return Promise.resolve({ data: { providers: [], default_provider_id: null } })
+      if (url.includes('/work-plan')) return Promise.reject({ response: { status: 409, data: structuredClone(UNREADABLE) } })
+      return Promise.reject(new Error(`unexpected url: ${url}`))
+    })
+  }
+
+  it('keeps raw/download enabled, locks editing, and localizes restore availability', async () => {
+    routeUnreadable()
+    i18n.global.locale.value = 'en'
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    expect(wrapper.find('.wp-unreadable').exists()).toBe(true)
+    expect(wrapper.find('.wp-step-row').exists()).toBe(false)
+    const buttons = wrapper.findAll('button')
+    expect(buttons.find((b) => b.text().includes('View Raw'))?.attributes('disabled')).toBeUndefined()
+    expect(buttons.find((b) => b.text().includes('Download'))?.attributes('disabled')).toBeUndefined()
+    expect(buttons.find((b) => b.text() === 'Save')?.attributes('disabled')).toBeDefined()
+    expect(buttons.find((b) => b.text() === 'Upload')?.attributes('disabled')).toBeDefined()
+    expect(buttons.find((b) => b.text() === 'Restore')).toBeTruthy()
+    const unavailable = buttons.find((b) => b.text() === 'Cannot restore')!
+    expect(unavailable.attributes('disabled')).toBeDefined()
+    expect(unavailable.attributes('title')).toContain('unsupported work-plan version')
+    expect(wrapper.text()).toContain('{"wp_version":2}')
+  })
+
+  it('posts CAS restore and re-enters table mode after a successful refetch', async () => {
+    routeUnreadable()
+    const wrapper = mountEditor()
+    await flushPromises()
+    postRequest.mockResolvedValue({ data: { ok: true } })
+    getRequest.mockImplementation((url: string) => {
+      if (url.includes('/document-types')) return Promise.resolve({ data: { data: TYPES, work_plan_countable_types: TYPES_WP } })
+      if (url.includes('/ai-invoke/providers')) return Promise.resolve({ data: { providers: REGISTERED_PROVIDERS, default_provider_id: 'aip_opus' } })
+      if (url.includes('/work-plan')) return Promise.resolve({ data: structuredClone(READ_RESPONSE) })
+      return Promise.reject(new Error(`unexpected url: ${url}`))
+    })
+
+    await wrapper.findAll('button').find((b) => b.text() === '복원')!.trigger('click')
+    await flushPromises()
+
+    expect(postRequest).toHaveBeenCalledWith(
+      '/api/v1/documents/flowgate.default.0402.0002-WP/work-plan/revisions/4/restore',
+      { base_revision_no: 5 },
+    )
+    expect(wrapper.find('.wp-unreadable').exists()).toBe(false)
+    expect(wrapper.find('.wp-step-row').exists()).toBe(true)
+  })
+
+  it('keeps unreadable raw/history and shows a localized error when restore fails', async () => {
+    routeUnreadable()
+    const wrapper = mountEditor()
+    await flushPromises()
+    postRequest.mockRejectedValue(new Error('network'))
+
+    await wrapper.findAll('button').find((b) => b.text() === '복원')!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.wp-unreadable').exists()).toBe(true)
+    expect(wrapper.text()).toContain('{"wp_version":2}')
+    expect(wrapper.text()).toContain('r4')
+  })
+})
