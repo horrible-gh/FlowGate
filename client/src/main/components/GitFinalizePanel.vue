@@ -18,7 +18,7 @@
     <div class="card-bd pad">
       <p v-if="aheadBehindText" class="git-fin-meta">{{ aheadBehindText }}</p>
 
-      <template v-if="state.status === 'awaiting_choice' || state.status === 'waiting'">
+      <template v-if="(state.status === 'awaiting_choice' || state.status === 'waiting') && !state.final_approval_bound">
         <!-- 0331 T0006: the approved v4 layout — two axes instead of a card list.
              `action_axes` is additive, so a server that predates it still gets
              the original cards below. -->
@@ -352,6 +352,9 @@ interface GitFinState {
   // human approval gate is waiting instead (the review dialog).
   review_state?: string | null
   reconciliation_kind?: string | null
+  // Server-owned coupling marker: a waiting final approval already owns this
+  // finalize. Root/document panels may observe and recover it, never start it again.
+  final_approval_bound?: boolean
   commit_message?: GitCommitMessage | null
 }
 
@@ -417,7 +420,7 @@ const commitSourceLabel = computed(() =>
   commitSource.value ? t(`main.git_finalize.commit_source.${commitSource.value}`) : '',
 )
 const runDisabled = computed(
-  () => busy.value || (
+  () => busy.value || !!state.value?.final_approval_bound || (
     !archiveSelected.value
     && (!chosen.value || (showCommitInput.value && commitMessageBlank.value))
   ),
@@ -624,7 +627,7 @@ async function copyConflictMention() {
 }
 
 async function runFinalize() {
-  if (!props.groupId) return
+  if (!props.groupId || state.value?.final_approval_bound) return
   if (!archiveSelected.value && !chosen.value) return
   if (showCommitInput.value && commitMessageBlank.value) return
   busy.value = true

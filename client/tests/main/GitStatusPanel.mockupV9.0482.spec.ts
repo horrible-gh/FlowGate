@@ -162,6 +162,29 @@ describe('GitStatusPanel mockup v9 rendered contract (0482 T#1)', () => {
     expect(postRequest.mock.calls.some(([url]) => String(url).endsWith('/git/finalize'))).toBe(true)
   })
 
+  it('keeps a final-approval-bound pending row monitoring-only', async () => {
+    const value: any = status()
+    value.pending = [{
+      group_id: `${GROUP}-bound`,
+      branch: 'bound',
+      status: 'awaiting_choice',
+      default_action: 'merge',
+      merge_id: 99,
+      final_approval_bound: true,
+    }]
+    value.pending_count = 1
+
+    const wrapper = await render(value)
+    const row = wrapper.get('.git-status-row')
+    expect(row.find('select').exists()).toBe(false)
+    expect(row.find('.git-status-commit').exists()).toBe(false)
+    expect(row.find('.btn-secondary').exists()).toBe(true)
+
+    postRequest.mockClear()
+    await (wrapper.vm as any).execute(value.pending[0])
+    expect(postRequest).not.toHaveBeenCalled()
+  })
+
   it('shows merge-now inside base detail after a parked merge has no tracked files', async () => {
     const value: any = status()
     postRequest.mockImplementation(async (url: string) => {

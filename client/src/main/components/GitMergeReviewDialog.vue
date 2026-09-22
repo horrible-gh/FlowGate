@@ -1006,6 +1006,15 @@ watch(awaitingReply, (isAwaiting) => {
  * stays on screen until the next attempt; the refresh afterwards is a BACKGROUND
  * one so it cannot blank the dialog (or the box) the way rev1's full reload did.
  */
+function refreshTerminalSurfaces(status: string) {
+  if (typeof window === 'undefined') return
+  const detail = { group_id: props.groupId, status }
+  // One terminal review result invalidates all three views of the same server truth:
+  // the group finalize state, the project pending list, and any open AC/root document.
+  window.dispatchEvent(new CustomEvent('fg:git_status_refresh', { detail }))
+  window.dispatchEvent(new CustomEvent('fg:open_docs_refresh', { detail }))
+}
+
 async function approve() {
   if (!review.value || busy.value) return
   busy.value = true
@@ -1016,8 +1025,9 @@ async function approve() {
       { attempt_id: attemptId.value, review_fingerprint: review.value.review_fingerprint },
     )
     const status = String(data.result?.status ?? '')
-    if (status === 'completed' || status === 'merged' || status === 'already_applied') {
+    if (status === 'completed' || status === 'merged' || status === 'pushed' || status === 'already_applied') {
       showToast(t('main.git_review.approved_toast'), 'success')
+      refreshTerminalSurfaces(status)
       emit('resolved')
       emit('close')
       return

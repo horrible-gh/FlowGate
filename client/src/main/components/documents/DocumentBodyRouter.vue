@@ -2,10 +2,6 @@
   <FinalApprovalBody
     v-if="tab.typeCode === 'AC'"
     :completed="completed"
-    :group-id="groupId"
-    :read-only="readOnly"
-    @open-archive="emit('open-archive', $event)"
-    @archived="emit('archived', $event)"
   />
   <DiscardBody v-else-if="tab.typeCode === 'DC'" />
   <!-- CH keeps a single ConversationView instance across the full-view move, so everything
@@ -77,7 +73,6 @@ defineProps<{
   tab: Tab
   readOnly: boolean
   completed: boolean
-  groupId: string
   canEdit: boolean
   editDropdownOpen: boolean
   textWrapEnabled: boolean
@@ -104,8 +99,6 @@ const emit = defineEmits<{
   'update:text-wrap-enabled': [enabled: boolean]
   'bind-md-viewer': [instance: unknown]
   'bind-text-viewer': [instance: unknown]
-  'open-archive': [groupId: string]
-  archived: [groupId: string]
   'copy-mention': [opts?: { auto?: boolean }]
   'manual-copy-dismiss': []
   'bind-conversation-view': [instance: unknown]

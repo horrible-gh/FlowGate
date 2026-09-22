@@ -278,8 +278,9 @@
               {{ t('main.git_status.resolve_inline') }}
             </button>
 
-            <!-- actionable: pick merge / push / wait, then run -->
-            <template v-else>
+            <!-- Unbound rows remain actionable. A final-approval-bound row is
+                 already owned by ReviewActionBar and stays monitoring-only here. -->
+            <template v-else-if="!p.final_approval_bound">
               <label class="git-action-lbl">{{ t('main.git_status.action_label') }}</label>
               <select
                 class="git-action-sel"
@@ -326,7 +327,7 @@
           <!-- Commit-subject confirmation for merge/push (0173 parity, B0001 F1): the
                header control panel now lets the user review/edit the absorb-commit
                subject without opening the R document. Blank = server auto-resolves. -->
-          <div v-if="p.status !== 'conflict' && actionOf(p) !== 'wait'" class="git-status-commit">
+          <div v-if="p.status !== 'conflict' && !p.final_approval_bound && actionOf(p) !== 'wait'" class="git-status-commit">
             <div class="git-commit-msg-hd">
               <label class="git-commit-msg-label" :for="`gsc-${p.group_id}`">
                 {{ t('main.git_finalize.commit_message_label') }}
@@ -721,6 +722,9 @@ interface Pending {
   // human approval gate is waiting instead (the review dialog).
   review_state?: string | null
   reconciliation_kind?: string | null
+  // True when ReviewActionBar's final-approval request owns this session.
+  // Header controls stay available for observation/recovery, not a new finalize.
+  final_approval_bound?: boolean
 }
 interface GitStatus {
   enabled: boolean
@@ -1229,7 +1233,7 @@ async function ensureCommitDraft(groupId: string) {
 // Hydrate drafts for every actionable merge/push row (once each; guarded by flags).
 function syncCommitDrafts() {
   for (const p of status.value?.pending || []) {
-    if (p.status !== 'conflict' && actionOf(p) !== 'wait') ensureCommitDraft(p.group_id)
+    if (p.status !== 'conflict' && !p.final_approval_bound && actionOf(p) !== 'wait') ensureCommitDraft(p.group_id)
   }
 }
 
@@ -1307,8 +1311,15 @@ const cleanupStatusLabel = computed(() => {
   })
 })
 
+function refreshFinalizeSurfaces(groupId: string, status: string | null = null) {
+  if (typeof window === 'undefined') return
+  const detail = { project: props.projectId, group_id: groupId, status }
+  window.dispatchEvent(new CustomEvent('fg:git_status_refresh', { detail }))
+  window.dispatchEvent(new CustomEvent('fg:open_docs_refresh', { detail }))
+}
+
 async function execute(item: Pending) {
-  if (busy.value) return
+  if (busy.value || item.final_approval_bound) return
   const action = actionOf(item)
   // Attach the confirmed commit subject for merge/push (B0001 F1). Blank →
   // omit the field so git_service resolves the subject on the unmanned path.
@@ -1366,8 +1377,14 @@ async function runFinalize(groupId: string, payload: { action: string; commit_me
     } else if (r?.status === 'waiting') {
       showToast(t('main.git_finalize.waiting_toast'), 'success')
     }
+    if (r?.status === 'merged' || r?.status === 'pushed' || r?.status === 'already_applied') {
+      refreshFinalizeSurfaces(groupId, r.status)
+    }
   } catch (e: any) {
     const err = e?.response?.data?.error
+    if (e?.response?.status === 409 && ['final_approval_bound', 'invalid_state', 'git_busy'].includes(err?.code)) {
+      refreshFinalizeSurfaces(groupId, null)
+    }
     if (!handleBaseDirty(groupId, payload, err)) {
       showToast(resolveGitError(err, t, 'main.git_finalize.failed'), 'danger')
     }

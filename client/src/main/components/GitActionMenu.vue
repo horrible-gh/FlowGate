@@ -58,7 +58,7 @@
           <AppIcon name="warning" /> {{ t('main.git_status.resolve_inline') }}
         </button>
         <button
-          v-else
+          v-else-if="!p.final_approval_bound"
           class="btn btn-sm btn-primary"
           :disabled="busy || groupBusy(p.group_id)"
           :title="groupBusy(p.group_id) ? busyHint : undefined"
@@ -136,6 +136,8 @@ interface Pending {
   // 0182 NR0003 §4: the group's final-approval doc (pending implies wf_done) —
   // [open] targets it instead of the R root, which the git flow no longer needs.
   ac_doc_id?: string | null
+  // Server truth: ReviewActionBar already owns this final-approval finalize.
+  final_approval_bound?: boolean
 }
 interface GitStatus {
   enabled: boolean
@@ -227,6 +229,7 @@ function openGroup(groupId: string) {
 }
 
 async function execute(item: Pending) {
+  if (item.final_approval_bound) return
   if (busy.value || groupBusy(item.group_id)) {
     if (groupBusy(item.group_id)) showToast(busyHint.value, 'danger')
     return
@@ -238,6 +241,13 @@ async function execute(item: Pending) {
     busy.value = false
     await fetchStatus()
   }
+}
+
+function refreshFinalizeSurfaces(groupId: string, status: string | null = null) {
+  if (typeof window === 'undefined') return
+  const detail = { project: projectId.value, group_id: groupId, status }
+  window.dispatchEvent(new CustomEvent('fg:git_status_refresh', { detail }))
+  window.dispatchEvent(new CustomEvent('fg:open_docs_refresh', { detail }))
 }
 
 async function runFinalize(item: Pending, retried: boolean): Promise<void> {
@@ -262,10 +272,16 @@ async function runFinalize(item: Pending, retried: boolean): Promise<void> {
       } else if (r?.status === 'waiting') {
         showToast(t('main.git_finalize.waiting_toast'), 'success')
       }
+      if (r?.status === 'merged' || r?.status === 'pushed' || r?.status === 'already_applied') {
+        refreshFinalizeSurfaces(item.group_id, r.status)
+      }
     }
   } catch (e: any) {
     const err = e?.response?.data?.error
     if (!retried && (await handleFinalizeConflict(err))) return runFinalize(item, true)
+    if (e?.response?.status === 409 && ['final_approval_bound', 'invalid_state', 'git_busy'].includes(err?.code)) {
+      refreshFinalizeSurfaces(item.group_id, null)
+    }
     showToast(resolveGitError(err, t, 'main.git_finalize.failed'), 'danger')
   }
 }

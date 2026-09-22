@@ -86,6 +86,23 @@ describe('GitFinalizePanel × base_untracked_conflict (0350 T0004)', () => {
     wrapper.unmount()
   })
 
+  it('keeps a final-approval-bound root panel monitoring-only', async () => {
+    getRequest.mockResolvedValue({
+      data: { ok: true, state: { ...finalizeState(), final_approval_bound: true } },
+    })
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(wrapper.find('.git-fin-card').exists()).toBe(true)
+    expect(wrapper.find('.git-choice-row').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain(i18n.global.t('main.git_finalize.execute'))
+
+    postRequest.mockClear()
+    await (wrapper.vm as any).runFinalize()
+    expect(postRequest).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('retries the finalize exactly once after the operator deletes from the dialog', async () => {
     let cleared = false
     postRequest.mockImplementation(async (url: string) => {
