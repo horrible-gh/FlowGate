@@ -2235,3 +2235,131 @@ def test_title_body_revision_and_locale_move_as_one_state(seed, storage_root):
     for field in ("revision_no", "updated_at", "file_path", "title", "meta"):
         assert after_failure[field] == before_failure[field]
     assert (storage_root / after_failure["file_path"]).read_text(encoding="utf-8") == before_file
+
+
+# ── flowgate.default.0599 T#1: durable r0 recovery contract ──────────────────
+
+def test_r0_snapshot_survives_first_save_without_duplicate_or_overwrite(seed, storage_root):
+    from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.services import work_plan_service as wp
+    from modules.flow_gate.storage import paths as storage_paths
+
+    doc_id = f"{GROUP}-WP0599"
+    canonical = storage_root / "r0-contract" / "document.json"
+    initial = _plan()
+    wp.write_body_atomically(canonical, initial)
+    db_docs.create({
+        "doc_id": doc_id,
+        "project_id": PROJECT,
+        "type_code": "WP",
+        "seq": 599,
+        "title": "R0 contract",
+        "group_id": GROUP,
+        "module": "__ALL__",
+        "owner_id": "usr_wp_001",
+        "file_path": storage_paths.to_storage_relative(canonical, PROJECT),
+    })
+    doc = db_docs.get_by_id(doc_id)
+    initial_bytes = canonical.read_bytes()
+
+    first = wp.ensure_revision_snapshot(
+        doc,
+        canonical,
+        created_by="usr_wp_001",
+    )
+    second = wp.ensure_revision_snapshot(
+        doc,
+        canonical,
+        created_by="usr_wp_001",
+    )
+    assert second["id"] == first["id"]
+    rows = db_revisions.list_by_doc_revision(doc_id, 0)
+    assert len(rows) == 1
+    baseline = wp.resolve_revision_snapshot(rows[0], project_id=PROJECT, doc_id=doc_id)
+    assert baseline.read_bytes() == initial_bytes
+    assert baseline.resolve() != canonical.resolve()
+
+    changed = _plan()
+    changed["quantities"]["D"]["count"] = 3
+    changed["steps"] = wp.expand_steps(changed["counted_types"], changed["quantities"])
+    saved = _client().put(
+        f"/api/v1/documents/{doc_id}/work-plan",
+        json={"base_revision_no": 0, "body": changed},
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["revision_no"] == 1
+
+    rows = db_revisions.list_by_doc_revision(doc_id, 0)
+    assert len(rows) == 1
+    assert rows[0]["id"] == first["id"]
+    assert baseline.read_bytes() == initial_bytes
+    assert canonical.read_bytes() != initial_bytes
+
+    # Calling the creation contract after the canonical changed still returns the
+    # original r0. It must never recalculate or overwrite the recovery source.
+    again = wp.ensure_revision_snapshot(
+        db_docs.get_by_id(doc_id),
+        canonical,
+        created_by="usr_wp_001",
+    )
+    assert again["id"] == first["id"]
+    assert baseline.read_bytes() == initial_bytes
+
+
+def test_revision_snapshot_fails_closed_for_missing_corrupt_and_ambiguous(seed, storage_root):
+    from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db.connection import get_store, now_iso
+    from modules.flow_gate.services import work_plan_service as wp
+    from modules.flow_gate.storage import paths as storage_paths
+
+    def make_doc(suffix: str, seq: int):
+        doc_id = f"{GROUP}-WP0599{suffix}"
+        canonical = storage_root / f"r0-contract-{suffix}" / "document.json"
+        wp.write_body_atomically(canonical, _plan())
+        db_docs.create({
+            "doc_id": doc_id,
+            "project_id": PROJECT,
+            "type_code": "WP",
+            "seq": seq,
+            "title": f"R0 contract {suffix}",
+            "group_id": GROUP,
+            "module": "__ALL__",
+            "owner_id": "usr_wp_001",
+            "file_path": storage_paths.to_storage_relative(canonical, PROJECT),
+        })
+        doc = db_docs.get_by_id(doc_id)
+        row = wp.ensure_revision_snapshot(
+            doc, canonical, created_by="usr_wp_001",
+        )
+        return doc, canonical, row
+
+    missing_doc, _missing_canonical, missing_row = make_doc("M", 600)
+    missing_path = storage_root / missing_row["backup_path"]
+    missing_path.unlink()
+    with pytest.raises(wp.RevisionSnapshotError):
+        wp.resolve_revision_snapshot(
+            missing_row, project_id=PROJECT, doc_id=missing_doc["doc_id"],
+        )
+
+    corrupt_doc, _corrupt_canonical, corrupt_row = make_doc("C", 601)
+    corrupt_path = storage_root / corrupt_row["backup_path"]
+    corrupt_path.write_text("{not-json", encoding="utf-8")
+    with pytest.raises(wp.RevisionSnapshotError):
+        wp.resolve_revision_snapshot(
+            corrupt_row, project_id=PROJECT, doc_id=corrupt_doc["doc_id"],
+        )
+
+    ambiguous_doc, _ambiguous_canonical, ambiguous_row = make_doc("A", 602)
+    get_store()._execute(
+        "INSERT INTO document_revisions "
+        "(doc_id, revision_no, backup_path, edit_reason, linked_doc_id, created_by, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+            ambiguous_doc["doc_id"], 0, ambiguous_row["backup_path"],
+            "user_comment", None, "usr_wp_001", now_iso(),
+        ],
+    )
+    with pytest.raises(db_revisions.RevisionAmbiguityError):
+        db_revisions.get_single_by_doc_revision(ambiguous_doc["doc_id"], 0)

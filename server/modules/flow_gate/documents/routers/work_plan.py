@@ -15,6 +15,7 @@ workflow sequence and belong to the next task set. Nothing here starts a run (P0
 from __future__ import annotations
 
 import json as _json
+import os
 import re as _re
 import threading
 from functools import partial
@@ -741,12 +742,30 @@ def save_work_plan(
         )
         path = _plan_path(fresh)
         backup_rel: Optional[str] = None
-        if path.exists():
+        try:
+            existing_revision = db_revisions.get_single_by_doc_revision(
+                doc_id, current_revision,
+            )
+        except db_revisions.RevisionAmbiguityError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        if existing_revision is not None:
+            try:
+                wp.resolve_revision_snapshot(
+                    existing_revision,
+                    project_id=doc.get("project_id"),
+                    doc_id=doc_id,
+                )
+            except wp.RevisionSnapshotError as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+        elif path.exists():
             revisions_dir = path.parent / "revisions"
             try:
                 revisions_dir.mkdir(parents=True, exist_ok=True)
                 backup = revisions_dir / f"{doc_id}.r{current_revision}{path.suffix or '.json'}"
-                backup.write_bytes(path.read_bytes())
+                with backup.open("xb") as backup_fh:
+                    backup_fh.write(path.read_bytes())
+                    backup_fh.flush()
+                    os.fsync(backup_fh.fileno())
                 backup_rel = storage_paths.to_storage_relative(backup, doc.get("project_id"))
             except OSError as exc:
                 raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
