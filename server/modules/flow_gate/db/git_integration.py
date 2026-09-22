@@ -176,6 +176,78 @@ def set_status(
     )
 
 
+def final_approval_retry_context(state: Optional[dict]) -> Optional[dict]:
+    """Decode the durable clean-finalize retry snapshot (0555 A11).
+
+    Invalid or legacy values fail closed: callers see no retry capability and
+    therefore cannot approve an AC by guessing from terminal Git state alone.
+    """
+    raw = (state or {}).get("final_approval_retry")
+    if not raw:
+        return None
+    if isinstance(raw, dict):
+        parsed = raw
+    else:
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return None
+    intent = parsed.get("intent") if isinstance(parsed, dict) else None
+    if not isinstance(intent, dict) or not intent.get("approval_intent_id"):
+        return None
+    return parsed
+
+
+def set_final_approval_retry(group_id: str, retry: dict) -> None:
+    """Persist a retry snapshot without changing the ledger status.
+
+    Used by the no-work/discarded terminal result, whose public label is not a
+    value accepted by group_git_state.status.
+    """
+    get_store()._execute(
+        "UPDATE group_git_state SET final_approval_retry = ?, updated_at = ? "
+        "WHERE group_id = ?",
+        [json.dumps(retry, ensure_ascii=False), now_iso(), group_id],
+    )
+
+
+def set_status_with_final_approval_retry(
+    group_id: str,
+    status: str,
+    retry: dict,
+    *,
+    merge_id: Optional[int] = None,
+    merge_commit: Optional[str] = None,
+) -> None:
+    """Record terminal Git and its approval retry evidence in one DB write."""
+    if status not in STATE_VALUES:
+        raise ValueError(f"invalid git state: {status!r}")
+    get_store()._execute(
+        "UPDATE group_git_state SET status = ?, merge_id = ?, merge_commit = ?, "
+        "final_approval_retry = ?, updated_at = ? WHERE group_id = ?",
+        [
+            status, merge_id, merge_commit,
+            json.dumps(retry, ensure_ascii=False), now_iso(), group_id,
+        ],
+    )
+
+
+def consume_final_approval_retry(group_id: str, approval_intent_id: str) -> bool:
+    """CAS-clear exactly one retry snapshot inside the caller's transaction."""
+    state = get_state(group_id)
+    retry = final_approval_retry_context(state)
+    intent = (retry or {}).get("intent") or {}
+    if intent.get("approval_intent_id") != approval_intent_id:
+        return False
+    raw = (state or {}).get("final_approval_retry")
+    affected = get_store()._execute_affected(
+        "UPDATE group_git_state SET final_approval_retry = NULL, updated_at = ? "
+        "WHERE group_id = ? AND final_approval_retry = ?",
+        [now_iso(), group_id, raw],
+    )
+    return affected == 1
+
+
 def list_states_by_status(statuses: list[str]) -> list[dict]:
     if not statuses:
         return []
@@ -324,6 +396,36 @@ def close_session(merge_id: int, status: str) -> None:
         "UPDATE git_merge_session SET status = ?, closed_at = ? WHERE merge_id = ?",
         [status, now_iso(), merge_id],
     )
+
+
+def sessions_by_group(group_id: str) -> list[dict]:
+    """Every session ever opened for a group, newest first.
+
+    The open-session accessors above answer "what is this group doing now".  A
+    deferred final approval also has to find the session it was parked on AFTER
+    that session closed (0555 D0005 §3.9 re-approval), so the closed rows have to
+    be reachable too.
+    """
+    return get_store()._fetch_all(
+        "SELECT * FROM git_merge_session WHERE group_id = ? ORDER BY merge_id DESC",
+        [group_id],
+    )
+
+
+def cas_session_context(merge_id: int, expected_raw: Any, context: dict) -> bool:
+    """Replace a session's `context` only if the stored text is still `expected_raw`.
+
+    :func:`set_session_context` is a blind write and `_execute` reports no rowcount
+    (see [[store-execute-has-no-rowcount]]).  A final approval consuming its intent
+    has to know whether THIS call was the one that consumed it, so it goes through
+    the affected-row boundary with the previous text as the CAS condition.  Run
+    inside a transaction the caller owns and the consume shares that unit of work.
+    """
+    affected = get_store()._execute_affected(
+        "UPDATE git_merge_session SET context = ? WHERE merge_id = ? AND context = ?",
+        [json.dumps(context or {}, ensure_ascii=False), merge_id, expected_raw],
+    )
+    return affected == 1
 
 
 def set_session_context(merge_id: int, context: dict) -> None:

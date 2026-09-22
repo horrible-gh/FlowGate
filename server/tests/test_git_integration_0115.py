@@ -105,8 +105,24 @@ class _MockTxn:
         self._cur = None
 
     def execute(self, sql, params=None):
+        # No commit here: a transaction that commits every statement cannot roll
+        # anything back, and then an atomic unit of work (0555 D0005 INV-6: AC
+        # approval + root completion + intent consume, all or nothing) silently
+        # tests as "each write landed on its own". begin_transaction below owns
+        # the commit/rollback.
         self._cur = self._conn.execute(sql, params or [])
-        self._conn.commit()
+
+    @property
+    def cursor(self):
+        """The live cursor, so `_execute_affected` can read a real rowcount.
+
+        FlowGateStore._execute_affected reads the affected-row count off the
+        transaction's cursor (that is the one portable place all three real
+        adapters expose it). A mock that hides its cursor makes every CAS write
+        raise "database driver did not expose affected row count" — a harness
+        gap, not a product one (0555 T0008).
+        """
+        return self._cur
 
     def fetchone(self):
         row = self._cur.fetchone() if self._cur else None
@@ -135,7 +151,13 @@ class _MockDB:
 
     @contextmanager
     def begin_transaction(self):
-        yield _MockTxn(self._conn)
+        txn = _MockTxn(self._conn)
+        try:
+            yield txn
+        except BaseException:
+            self._conn.rollback()
+            raise
+        self._conn.commit()
 
     def close(self):
         self._conn.close()
@@ -758,8 +780,11 @@ class TestFinalizeActionContract0331:
         from modules.flow_gate.services import git_service as svc
 
         doc = {"type_code": "AC", "group_id": git_active_group}
-        for action in ("commit_push", "commit_only"):
-            assert svc.precheck_approve_git_action(doc, action) == git_active_group
+        assert svc.precheck_approve_git_action(doc, "commit_push") == git_active_group
+        for action in ("commit_only", "wait"):
+            with pytest.raises(svc.GitServiceError) as denied:
+                svc.precheck_approve_git_action(doc, action)
+            assert (denied.value.status, denied.value.code) == (422, "invalid_request")
         with pytest.raises(svc.GitServiceError) as exc:
             svc.precheck_approve_git_action(doc, "commit_rebase")
         assert exc.value.status == 422
@@ -4125,16 +4150,18 @@ class TestGitActions0162:
         _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
         db_git.set_status(group, "awaiting_choice")
 
-        # precheck passes for an AC doc of this git-active group
-        gid = svc.precheck_approve_git_action(
-            {"type_code": "AC", "group_id": group}, "wait"
-        )
-        assert gid == group
+        # Final approval rejects wait, while the already-approved manual finalize
+        # surface retains its historical wait -> merge workflow.
+        with pytest.raises(svc.GitServiceError) as denied:
+            svc.precheck_approve_git_action(
+                {"type_code": "AC", "group_id": group}, "wait"
+            )
+        assert (denied.value.status, denied.value.code) == (422, "invalid_request")
 
-        waited = svc.run_approve_git_action(group, "wait")
+        waited = svc.finalize(group, "wait")
         assert waited["ok"] is True and waited["result"]["status"] == "waiting"
 
-        merged = svc.run_approve_git_action(group, "merge")
+        merged = svc.finalize(group, "merge")
         assert merged["ok"] is True and merged["result"]["status"] == "merged"
         files = _git(["ls-tree", "--name-only", "main"], cwd=act_origin["bare"]).split()
         assert "work.txt" in files
@@ -4918,12 +4945,12 @@ class TestNoWorkFinalizeSurfaces0548:
         svc.realize_wf_done_transition(group)
         assert db_git.get_state(group)["worktree_registered"] == 0
 
-        # 3) 경고 토스트 / 깃 다이얼로그 — even if a ride-along action still arrives
-        #    (another tab, or a dialog opened before the discard), the failure it
-        #    hits is only "there was nothing to finalize", so it is reported quiet.
+        # 3) A stale ride-along is an honest Git failure now; it can no longer be
+        #    hidden as a quiet success after approval has already stood.
         out = svc.run_approve_git_action(group, "merge")
-        assert out["ok"] is False           # honest: nothing was finalized
-        assert out["quiet"] is True         # …and nothing is shown for it
+        assert out["ok"] is False
+        assert out["terminal"] is False
+        assert out.get("quiet") is None
         assert out["error"]["code"] == "invalid_state"
 
         # 4) 문서에 머지 섹션 — GitFinalizePanel renders only on status != 'none'.

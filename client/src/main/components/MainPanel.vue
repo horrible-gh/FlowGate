@@ -151,7 +151,6 @@
             :tab="tab"
             :read-only="aiRunDocumentLocked"
             :completed="isCompletedDoc(tab.id)"
-            :group-id="exposedValue(docHeaderRefs[tab.id]?.groupId) ?? ''"
             :can-edit="canEditTab(tab)"
             :edit-dropdown-open="editDropdownTabId === tab.id"
             :text-wrap-enabled="textWrapEnabled"
@@ -179,8 +178,6 @@
             @copy-mention="onConversationCopyMention(tab.id, $event)"
             @manual-copy-dismiss="setConvManualCopy(tab.id, null)"
             @q-status-changed="onQStatusChanged"
-            @open-archive="openGitArchive"
-            @archived="onGitArchived"
           />
           </template>
           </div><!-- doc-main -->

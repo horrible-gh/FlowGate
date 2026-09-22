@@ -165,17 +165,33 @@ describe('GitMergeReviewDialog approve outcome (0481 T0010 rev3)', () => {
     expect(wrapper.find('.fg-dialog-footer__actions').exists()).toBe(true)
   })
 
-  it('closes on a real merge and says nothing was blocked', async () => {
-    postRequest.mockResolvedValue({
-      data: { ok: true, result: { status: 'merged', review_state: 'completed', merge_commit: '03cdd70', pushed: true } },
-    })
-    const wrapper = mountDialog()
-    await flushPromises()
+  it.each(['merged', 'pushed', 'already_applied'])(
+    'closes on terminal %s and refreshes finalize, project status, and open documents',
+    async (status) => {
+      postRequest.mockResolvedValue({
+        data: { ok: true, result: { status, review_state: 'completed', merge_commit: '03cdd70', pushed: true } },
+      })
+      const dispatch = vi.spyOn(window, 'dispatchEvent')
+      const wrapper = mountDialog()
+      await flushPromises()
 
-    await approve(wrapper)
+      await approve(wrapper)
 
-    expect(wrapper.find('[data-test="gmr-approve-outcome"]').exists()).toBe(false)
-    expect(wrapper.emitted('resolved')).toBeTruthy()
-    expect(wrapper.emitted('close')).toBeTruthy()
-  })
+      expect(wrapper.find('[data-test="gmr-approve-outcome"]').exists()).toBe(false)
+      expect(wrapper.emitted('resolved')).toBeTruthy()
+      expect(wrapper.emitted('close')).toBeTruthy()
+      const refreshEvents = dispatch.mock.calls
+        .map(([event]) => event as CustomEvent)
+        .filter((event) => event.type === 'fg:git_status_refresh' || event.type === 'fg:open_docs_refresh')
+      expect(refreshEvents.map((event) => event.type)).toEqual([
+        'fg:git_status_refresh',
+        'fg:open_docs_refresh',
+      ])
+      expect(refreshEvents[0].detail).toMatchObject({
+        group_id: 'test2.default.0009',
+        status,
+      })
+      dispatch.mockRestore()
+    },
+  )
 })

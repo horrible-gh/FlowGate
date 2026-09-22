@@ -14,6 +14,7 @@ used. The dependency on the TR059 stub status is explicitly documented.
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any, Optional
 
 import anyio.to_thread
@@ -40,7 +41,9 @@ from modules.flow_gate.services.mutation_policy import MutationPolicyError
 from ..pipeline_service import (
     PermissionError as WFPermissionError,
     TransitionError,
+    commit_final_approval,
     create_group,
+    precheck_document_review_transition,
     WorkflowSlotConflictError,
     enrich_rejection_history_provenance,
     register_workflow_result,
@@ -372,11 +375,6 @@ async def document_review_transition_rpc(
     current_user: dict = Depends(get_current_user),
     request: Request = None,
 ):
-    # flowgate.default.0162 §1 — an optional git_action rides along on the AC
-    # final approval. The pre-check runs BEFORE the approval so a violation
-    # rejects WITHOUT approving (L §2.1 step 1 / §4.2). The git finalize runs
-    # AFTER the approval commits and NEVER turns a git failure into an approval
-    # failure (D §3.1) — git failures surface as {git: {ok: false}} at HTTP 200.
     guarded_doc = db_docs.get_by_id(body.doc_id)
     if guarded_doc is None:
         raise HTTPException(status_code=404, detail=f"Document not found: {body.doc_id}")
@@ -384,43 +382,269 @@ async def document_review_transition_rpc(
     _guard_group_not_ai_running(guarded_doc, body.doc_id)
 
     git_action = body.git_action
-    group_id: Optional[str] = None
-    if git_action is not None:
-        if action != "approve":
-            return JSONResponse(
-                status_code=422,
-                content={"ok": False, "error": {
-                    "code": "invalid_request",
-                    "message": "git_action is only accepted on an approve transition",
-                }},
+    if git_action is None and action == "approve" and guarded_doc.get("type_code") == "AC":
+        # 0555 A11/B8: a terminal Git result may outlive its coupled approval
+        # transaction. Clean attempts live on group_git_state; conflict attempts
+        # keep using their closed merge-session context. Both paths only retry the
+        # approval and revalidate the exact AC/group under the project Git lock.
+        group_id = guarded_doc.get("group_id") or ""
+        git_state, clean_retry = git_service.approval_intent.find_clean_retry(group_id)
+        git_state = git_state or {}
+        parked_session, parked_intent = git_service.approval_intent.find_intent_session(group_id)
+        retry_source = None
+        retry_intent = None
+        terminal_status = None
+        merge_commit = None
+        mismatch_reason = None
+
+        if clean_retry is not None:
+            _retry_doc, mismatch_reason = git_service.approval_intent.validate_clean_retry(
+                clean_retry, group_id=group_id, expected_ac_doc_id=body.doc_id,
             )
-        try:
-            # 0275 T0007 (NR0003 cause 2): the git precheck/finalize run sync
-            # subprocess + DB work — keep them off the event loop.
-            group_id = await anyio.to_thread.run_sync(
-                lambda: git_service.precheck_approve_git_action(
-                    db_docs.get_by_id(body.doc_id), git_action
+            if mismatch_reason is None:
+                retry_source = "group_state"
+                retry_intent = clean_retry.get("intent") or {}
+                terminal_status = clean_retry.get("terminal_status")
+                merge_commit = clean_retry.get("merge_commit")
+        elif parked_intent is not None:
+            terminal_status = git_state.get("status")
+            if (
+                parked_session is not None
+                and parked_intent.get("ac_doc_id") == body.doc_id
+                and terminal_status in {"merged", "pushed", "archived", "stashed"}
+            ):
+                retry_source = "merge_session"
+                retry_intent = parked_intent
+                merge_commit = git_state.get("merge_commit")
+            else:
+                mismatch_reason = "intent_document_or_terminal_mismatch"
+
+        if mismatch_reason is not None:
+            error = {
+                "code": "final_approval_retry_mismatch",
+                "message": mismatch_reason,
+            }
+            return JSONResponse(status_code=409, content={"ok": False, "error": error})
+
+        if retry_source is not None:
+            def _retry_terminal_approval() -> tuple[int, dict]:
+                user_permissions = _get_user_permissions(current_user)
+                locale = (request.headers.get("x-locale") if request is not None else None) or "ko"
+                try:
+                    precheck_document_review_transition(
+                        doc_id=body.doc_id, action="approve",
+                        actor_user_id=current_user["user_id"],
+                        user_permissions=user_permissions, comment=body.comment, locale=locale,
+                    )
+                except (TransitionError, WFPermissionError, ValueError) as exc:
+                    status = 403 if isinstance(exc, WFPermissionError) else 409
+                    error = {"code": "approval_precheck_failed", "message": str(exc)}
+                    return status, {"ok": False, "error": error}
+                project_id = git_service._project_of_group(group_id)
+                holder = f"approval-retry:{body.doc_id}:{uuid.uuid4()}"
+                if not git_service._acquire_lock(project_id, holder, wait_sec=0):
+                    error = {"code": "git_busy", "message": "Another git operation is in progress"}
+                    return 409, {"ok": False, "error": error}
+                try:
+                    if retry_source == "group_state":
+                        approval = git_service.approval_intent.commit_clean_retry(
+                            group_id, clean_retry
+                        )
+                    else:
+                        approval = git_service.approval_intent.commit_deferred_approval(
+                            group_id, int(parked_session["merge_id"]), parked_intent
+                        )
+                finally:
+                    git_service.db_git.release_lock(project_id, holder)
+                result = {
+                    "status": terminal_status,
+                    "merge_commit": merge_commit,
+                    "approval_retry": True,
+                    "retry_source": retry_source,
+                }
+                git = {"ok": True, "terminal": True, "result": result}
+                git_service.complete_approve_git_action(
+                    group_id, retry_intent.get("git_action") or "merge", git,
+                    approved=bool(approval.get("approved")),
                 )
-            )
-        except GitServiceError as exc:
-            return JSONResponse(
-                status_code=exc.status,
-                content={"ok": False, "error": {"code": exc.code, "message": exc.message}},
-            )
+                if approval.get("approved"):
+                    git_service.realize_wf_done_transition(group_id)
+                    return 200, {
+                        "ok": True, "document": db_docs.get_by_id(body.doc_id),
+                        "git": git, "approval": approval,
+                    }
+                error = approval.get("error") or {
+                    "code": "approval_commit_failed", "message": "approval retry failed"
+                }
+                status = 409 if approval.get("stage") == "intent_mismatch" else 500
+                return status, {"ok": False, "error": error, "git": git, "approval": approval}
 
-    response = await document_review_transition_endpoint(
-        body.doc_id,
-        action,
-        DocumentTransitionRequest(comment=body.comment),
-        current_user,
-        request,
-    )
-
-    if git_action is not None and group_id:
-        response["git"] = await anyio.to_thread.run_sync(
-            lambda: git_service.run_approve_git_action(group_id, git_action)
+            status_code, payload = await anyio.to_thread.run_sync(_retry_terminal_approval)
+            return JSONResponse(status_code=status_code, content=payload)
+    if git_action is None:
+        return await document_review_transition_endpoint(
+            body.doc_id,
+            action,
+            DocumentTransitionRequest(comment=body.comment),
+            current_user,
+            request,
         )
-    return response
+    if action != "approve":
+        return JSONResponse(status_code=422, content={"ok": False, "error": {
+            "code": "invalid_request",
+            "message": "git_action is only accepted on an approve transition",
+        }})
+
+    def _orchestrate_final_approval() -> tuple[int, dict]:
+        user_permissions = _get_user_permissions(current_user)
+        locale = (request.headers.get("x-locale") if request is not None else None) or "ko"
+        pending = {
+            "approved": False,
+            "document_status": "pending_review",
+            "root_status": "wf_in_progress",
+            "stage": "precheck",
+            "deferred": False,
+        }
+        try:
+            precheck_document_review_transition(
+                doc_id=body.doc_id,
+                action="approve",
+                actor_user_id=current_user["user_id"],
+                user_permissions=user_permissions,
+                comment=body.comment,
+                locale=locale,
+            )
+            fresh_doc = db_docs.get_by_id(body.doc_id)
+            group_id = git_service.precheck_approve_git_action(fresh_doc, git_action)
+        except (GitServiceError, TransitionError, WFPermissionError, ValueError) as exc:
+            status = exc.status if isinstance(exc, GitServiceError) else (
+                403 if isinstance(exc, WFPermissionError) else 409
+            )
+            code = exc.code if isinstance(exc, GitServiceError) else "approval_precheck_failed"
+            error = {"code": code, "message": str(getattr(exc, "message", exc))}
+            pending["stage"] = "precheck"
+            return status, {"ok": False, "error": error, "git": {"ok": False, "error": error}, "approval": pending}
+
+        project_id = git_service._project_of_group(group_id)
+        holder = f"approval:{body.doc_id}:{uuid.uuid4()}"
+        if not git_service._acquire_lock(project_id, holder, wait_sec=0):
+            error = {"code": "git_busy", "message": f"Another git operation is in progress for project '{project_id}'"}
+            pending["stage"] = "lock"
+            return 409, {"ok": False, "error": error, "git": {"ok": False, "error": error}, "approval": pending}
+
+        outcome: dict = {}
+        # 0555 T0008 §2 / D0005 §3.8: one-shot per REQUEST, minted before Git runs so
+        # a conflict can park it in the very INSERT that opens the merge session. It is
+        # not the merge session id: a session says what is being merged, an intent says
+        # which approval that merge finishes.
+        approval_intent_id = str(uuid.uuid4())
+        try:
+            context = git_service.ApprovalFinalizeContext(
+                doc_id=body.doc_id,
+                group_id=group_id,
+                actor_user_id=current_user["user_id"],
+                lock_holder=holder,
+                approval_intent_id=approval_intent_id,
+            )
+            outcome = git_service.run_approve_git_action(
+                group_id, git_action, approval_context=context
+            )
+            if not outcome.get("ok"):
+                pending["stage"] = "git_finalize"
+                error = outcome.get("error") or {"code": "git_error", "message": "Git finalize failed"}
+                return int(outcome.get("http_status") or 500), {
+                    "ok": False, "error": error, "git": outcome, "approval": pending,
+                }
+            if outcome.get("deferred") or not outcome.get("terminal"):
+                # A10/B1: not a failure — the approval is now owned by the conflict
+                # review and will be committed by _complete_merge_review.
+                pending.update(
+                    stage="git_finalize", deferred=True,
+                    approval_intent_id=approval_intent_id,
+                    merge_id=(outcome.get("result") or {}).get("merge_id"),
+                )
+                return 200, {"ok": True, "git": outcome, "approval": pending}
+            # A clean terminal result has already parked its intent in
+            # group_git_state. Consume that exact snapshot in the same transaction
+            # as AC/root approval. Conflict retries retain their session-backed hook.
+            _clean_state, clean_retry = git_service.approval_intent.find_clean_retry(group_id)
+            parked_session, parked_intent = git_service.approval_intent.find_intent_session(group_id)
+            consume_hook = None
+            retry_source = None
+            if clean_retry is not None:
+                clean_intent = clean_retry.get("intent") or {}
+                _retry_doc, retry_reason = git_service.approval_intent.validate_clean_retry(
+                    clean_retry, group_id=group_id, expected_ac_doc_id=body.doc_id,
+                )
+                if (
+                    retry_reason is not None
+                    or clean_intent.get("approval_intent_id") != approval_intent_id
+                ):
+                    pending.update(stage="intent_mismatch", approval_intent_id=approval_intent_id)
+                    error = {
+                        "code": "final_approval_retry_mismatch",
+                        "message": retry_reason or "approval request identity mismatch",
+                    }
+                    git_service.complete_approve_git_action(
+                        group_id, git_action, outcome, approved=False,
+                    )
+                    return 409, {
+                        "ok": False, "error": error, "git": outcome, "approval": pending,
+                    }
+                clean_id = clean_intent["approval_intent_id"]
+
+                def consume_hook(_doc, _root, _intent_id=clean_id):
+                    return git_service.approval_intent.consume_clean_retry(
+                        group_id, _intent_id
+                    )
+
+                retry_source = "group_state"
+            elif parked_intent is not None and parked_intent.get("ac_doc_id") == body.doc_id:
+                parked_merge_id = int(parked_session["merge_id"])
+                parked_id = parked_intent["approval_intent_id"]
+
+                def consume_hook(_doc, _root, _merge_id=parked_merge_id, _intent_id=parked_id):
+                    return git_service.approval_intent.consume_intent(_merge_id, _intent_id)
+
+                retry_source = "merge_session"
+
+            pending.update(
+                approval_intent_id=approval_intent_id,
+                retry_source=retry_source,
+            )
+            try:
+                committed = commit_final_approval(
+                    doc_id=body.doc_id,
+                    actor_user_id=current_user["user_id"],
+                    user_permissions=user_permissions,
+                    locale=locale,
+                    consume_hook=consume_hook,
+                )
+            except Exception as exc:
+                pending["stage"] = "approval_commit"
+                error = {"code": "approval_commit_failed", "message": str(exc)}
+                # Git is already terminal. Publish that durable fact even though
+                # the approval transaction rolled back and its retry stays live.
+                git_service.complete_approve_git_action(
+                    group_id, git_action, outcome, approved=False,
+                )
+                return 500, {"ok": False, "error": error, "git": outcome, "approval": pending}
+        finally:
+            git_service.db_git.release_lock(project_id, holder)
+
+        approval = {
+            "approved": True,
+            "document_status": "approved",
+            "root_status": "wf_done",
+            "stage": "complete",
+            "deferred": False,
+        }
+        git_service.complete_approve_git_action(group_id, git_action, outcome, approved=True)
+        git_service.realize_wf_done_transition(group_id)
+        return 200, {"ok": True, "document": committed["document"], "git": outcome, "approval": approval}
+
+    status_code, payload = await anyio.to_thread.run_sync(_orchestrate_final_approval)
+    return JSONResponse(status_code=status_code, content=payload)
 
 
 # 0275 T0007 (NR0003 cause 2): sync DB/git work only — plain `def` runs in the
@@ -737,6 +961,20 @@ async def document_review_transition_endpoint(
 
         _guard_group_not_disposed(prev_doc, doc_id)
         _guard_group_not_ai_running(prev_doc, doc_id)
+
+        # Git-active AC approval is owned by the RPC orchestrator above.  The
+        # path-shaped legacy endpoint has no git_action field and must not bypass
+        # finalize-before-approval by approving the document directly.
+        if action == "approve" and str((prev_doc or {}).get("type_code") or "").upper() == "AC":
+            group_id = (prev_doc or {}).get("group_id") or ""
+            project_id = group_id.split(".", 1)[0] if group_id else ""
+            cfg = git_service.db_git.get_config(project_id) if project_id else None
+            state = git_service.db_git.get_state(group_id) if group_id else None
+            if cfg and cfg.get("enabled") and state and state.get("worktree_registered"):
+                raise HTTPException(
+                    status_code=422,
+                    detail="git_action is required for final approval of a git-active group",
+                )
 
         try:
             result = transition_document_review(

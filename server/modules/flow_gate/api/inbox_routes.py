@@ -720,6 +720,7 @@ def _archive_group_git(
     group_id: str,
     reason: Optional[str] = None,
     actor_user_id: Optional[str] = None,
+    approval_context: Optional[Any] = None,
 ) -> dict:
     """Pin branch/worktree state to named refs, then release and hide the slot."""
     from modules.flow_gate.services import git_service
@@ -734,11 +735,19 @@ def _archive_group_git(
             409, "invalid_state",
             f"git integration is not enabled for project '{project_id}'",
         )
+    borrowed_lock = approval_context is not None
+    if approval_context is not None:
+        git_service._validate_approval_context(
+            approval_context, group_id, project_id
+        )
 
     existing = _git_archive_record(group_id)
     state = git_service.db_git.get_state(group_id)
     if existing and existing.get("status") == "archived":
-        if state is not None and state.get("worktree_registered"):
+        if (
+            state is not None and state.get("worktree_registered")
+            and not borrowed_lock
+        ):
             _git_archive_error(
                 409,
                 "archive_already_exists",
@@ -757,22 +766,36 @@ def _archive_group_git(
     # A fresh request must be a real finalize choice.  An interrupted request
     # already has durable refs and resumes below without taking a second stash.
     if existing is None:
-        finalized = _GIT_ARCHIVE_ORIGINAL_GET_FINALIZE(group_id)
-        current = (finalized.get("state") or {}).get("status")
-        if current not in ("awaiting_choice", "waiting"):
+        if borrowed_lock:
+            current = (state or {}).get("status") or "none"
+        else:
+            finalized = _GIT_ARCHIVE_ORIGINAL_GET_FINALIZE(group_id)
+            current = (finalized.get("state") or {}).get("status")
+        allowed = (
+            ("none", "awaiting_choice", "waiting")
+            if borrowed_lock else ("awaiting_choice", "waiting")
+        )
+        if current not in allowed:
             _git_archive_error(
                 409, "invalid_state",
                 f"group '{group_id}' cannot be archived from git state '{current or 'none'}'",
             )
 
-    holder = f"archive:{uuid.uuid4()}"
-    if not git_service._acquire_lock(project_id, holder):
+    holder = (
+        approval_context.lock_holder
+        if approval_context is not None
+        else f"archive:{uuid.uuid4()}"
+    )
+    if not borrowed_lock and not git_service._acquire_lock(project_id, holder):
         _git_archive_error(409, "git_busy", "another Git operation is in progress")
     try:
         record = _git_archive_record(group_id)
         state = git_service.db_git.get_state(group_id)
         if record and record.get("status") == "archived":
-            if state is not None and state.get("worktree_registered"):
+            if (
+                state is not None and state.get("worktree_registered")
+                and not borrowed_lock
+            ):
                 _git_archive_error(
                     409,
                     "archive_already_exists",
@@ -894,7 +917,11 @@ def _archive_group_git(
         # Existing cleanup handles live, missing, and half-removed worktrees.  It
         # is safe to force-discard because the named refs now own every byte.
         state = git_service.db_git.get_state(group_id)
-        if state is not None and state.get("worktree_registered"):
+        if (
+            not borrowed_lock
+            and state is not None
+            and state.get("worktree_registered")
+        ):
             if not git_service._cleanup_group_slot(
                 project_id, group_id, force_discard=True
             ):
@@ -903,10 +930,9 @@ def _archive_group_git(
                     "the archive refs are safe, but the worktree could not be released; retry",
                 )
 
-        # An archived slot is inactive. Keeping awaiting_choice here made an AC
-        # approval race a stale git_action into the precheck and fail with 422.
-        # The pre-archive status is retained in the archive record for restore.
-        if git_service.db_git.get_state(group_id) is not None:
+        # Approval-coupled archive keeps its slot until the AC/root commit. Manual
+        # archive preserves the existing immediate teardown and neutral status.
+        if not borrowed_lock and git_service.db_git.get_state(group_id) is not None:
             git_service.db_git.set_status(group_id, "none")
 
         # Do not soft-delete the group row. The document tree fetches project
@@ -917,9 +943,11 @@ def _archive_group_git(
         record["status"] = "archived"
         _save_git_archive_record(record, actor_user_id)
     finally:
-        git_service.db_git.release_lock(project_id, holder)
+        if not borrowed_lock:
+            git_service.db_git.release_lock(project_id, holder)
 
-    _emit_git_archive_refresh(project_id, group_id, "archived")
+    if not borrowed_lock:
+        _emit_git_archive_refresh(project_id, group_id, "archived")
     return {"ok": True, "result": record}
 
 
@@ -1172,11 +1200,94 @@ def _git_finalize_with_archive(
     group_id: str,
     action: Optional[str],
     commit_message: Optional[str] = None,
+    *,
+    approval_context: Optional[Any] = None,
 ) -> dict:
     if action == "stash":
         # Direct API callers may use commit_message as the optional archive reason.
-        return _archive_group_git(group_id, reason=commit_message)
-    return _GIT_ARCHIVE_ORIGINAL_FINALIZE(group_id, action, commit_message)
+        outcome = _archive_group_git(
+            group_id,
+            reason=commit_message,
+            actor_user_id=(
+                approval_context.actor_user_id if approval_context is not None else None
+            ),
+            approval_context=approval_context,
+        )
+        if approval_context is not None:
+            archive = outcome.get("result") or {}
+            intent = _git_archive_service.approval_intent.build_intent(
+                approval_intent_id=approval_context.approval_intent_id,
+                group_id=group_id,
+                ac_doc_id=approval_context.doc_id,
+                requested_by=approval_context.actor_user_id,
+                git_action="stash",
+            )
+            _git_archive_service.approval_intent.record_clean_retry(
+                group_id=group_id,
+                intent=intent,
+                terminal_status="stashed",
+                merge_commit=None,
+            )
+            return {"ok": True, "result": {
+                "action": "stash",
+                "status": "stashed",
+                "merge_commit": None,
+                "pushed": False,
+                "merge_id": None,
+                "conflict_files": [],
+                "archive": archive,
+                "terminal_retry": bool(archive.get("idempotent")),
+            }}
+        return outcome
+    return _GIT_ARCHIVE_ORIGINAL_FINALIZE(
+        group_id,
+        action,
+        commit_message,
+        approval_context=approval_context,
+    )
+
+
+def _complete_approve_git_action_with_archive(
+    group_id: str,
+    git_action: str,
+    outcome: dict,
+    *,
+    approved: bool,
+) -> None:
+    if git_action != "stash":
+        _GIT_ARCHIVE_ORIGINAL_COMPLETE(
+            group_id, git_action, outcome, approved=approved
+        )
+        return
+    from modules.flow_gate.services import git_service
+
+    try:
+        project_id = git_service._project_of_group(group_id)
+        if approved:
+            state = git_service.db_git.get_state(group_id)
+            if state is not None and state.get("worktree_registered"):
+                git_service._cleanup_group_slot(
+                    project_id, group_id, force_discard=True
+                )
+            if git_service.db_git.get_state(group_id) is not None:
+                git_service.db_git.set_status(group_id, "none")
+            _emit_git_archive_refresh(project_id, group_id, "archived")
+        else:
+            git_service._emit("git_finalize_done", project_id, group_id, {
+                "project": project_id,
+                "group_id": group_id,
+                "action": "stash",
+                "status": "stashed",
+                "approval": {
+                    "approved": False,
+                    "document_status": "pending_review",
+                    "root_status": "wf_in_progress",
+                    "stage": "approval_commit",
+                    "deferred": False,
+                },
+            })
+    except Exception:
+        pass
 
 
 def _precheck_approve_git_action_with_archive(doc: Optional[dict], git_action: str) -> str:
@@ -1214,14 +1325,17 @@ def _install_git_archive_finalize_extension() -> None:
         git_service.finalize = _git_finalize_with_archive
         git_service.get_finalize_state = _git_finalize_state_with_archive
         git_service.precheck_approve_git_action = _precheck_approve_git_action_with_archive
+        git_service.complete_approve_git_action = _complete_approve_git_action_with_archive
         return
     git_service._flowgate_git_archive_installed = True
     git_service._flowgate_git_archive_original_finalize = git_service.finalize
     git_service._flowgate_git_archive_original_get_finalize = git_service.get_finalize_state
     git_service._flowgate_git_archive_original_precheck = git_service.precheck_approve_git_action
+    git_service._flowgate_git_archive_original_complete = git_service.complete_approve_git_action
     git_service.finalize = _git_finalize_with_archive
     git_service.get_finalize_state = _git_finalize_state_with_archive
     git_service.precheck_approve_git_action = _precheck_approve_git_action_with_archive
+    git_service.complete_approve_git_action = _complete_approve_git_action_with_archive
 
 
 from modules.flow_gate.services import git_service as _git_archive_service
@@ -1242,6 +1356,11 @@ _GIT_ARCHIVE_ORIGINAL_PRECHECK = getattr(
     _git_archive_service,
     "_flowgate_git_archive_original_precheck",
     _git_archive_service.precheck_approve_git_action,
+)
+_GIT_ARCHIVE_ORIGINAL_COMPLETE = getattr(
+    _git_archive_service,
+    "_flowgate_git_archive_original_complete",
+    _git_archive_service.complete_approve_git_action,
 )
 _install_git_archive_finalize_extension()
 

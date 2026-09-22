@@ -49,6 +49,7 @@ from modules.flow_gate.db import terminal_cleanup_snapshots as db_terminal_clean
 from modules.flow_gate.db import tr_commit_ledger as db_tr_ledger
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.services import path_exclusion_rules
+from modules.flow_gate.services.git import approval_intent
 from modules.flow_gate.services.git import review_messages
 from modules.flow_gate.storage.paths import get_storage_root, src_root
 
@@ -236,14 +237,21 @@ def _set_status(
     *,
     merge_id: Optional[int] = None,
     merge_commit: Optional[str] = None,
+    emit: bool = True,
 ) -> None:
     """Record a group's git status AND broadcast git_pending_changed (L §2.3).
 
     Single convergence point so no transition can silently skip the badge
     update. The transient "merging" state is recorded but not broadcast.
+
+    ``emit=False`` lets a caller that still has a decision pending on top of this
+    same status change (0555 T0008 §12: the deferred final approval) record the
+    status now and broadcast it itself once that decision is known — never
+    broadcasting a "merged" a subscriber could refresh on before the approval
+    transaction it is coupled to has even run.
     """
     db_git.set_status(group_id, status, merge_id=merge_id, merge_commit=merge_commit)
-    if status not in TRANSIENT_STATUSES:
+    if emit and status not in TRANSIENT_STATUSES:
         _emit_pending_changed(_project_of_group(group_id), group_id, status)
 
 
@@ -653,6 +661,8 @@ def effective_src_root(project_id: Optional[str], group_id: Optional[str]) -> Op
 
 from .git.finalize import (
     ACTION_VALUES,
+    APPROVAL_FINALIZE_ACTIONS,
+    ApprovalFinalizeContext,
     DISCARDED_STATUS,
     FINALIZE_AUX_CHOICES,
     FINALIZE_MAIN_CHOICES,
@@ -670,6 +680,7 @@ from .git.finalize import (
     _groups_root_wf_done,
     _tracked_merge_blockers,
     _untracked_merge_blockers,
+    _validate_approval_context,
     finalize,
     get_finalize_state,
     group_update_untracked_recover,
@@ -679,6 +690,7 @@ from .git.finalize import (
     realize_wf_done_transition,
     reopen_group_git,
     run_approve_git_action,
+    complete_approve_git_action,
     unmerge,
     update_from_base,
 )
@@ -2640,8 +2652,13 @@ def _refreeze_for_re_review(
         # an unrelated concurrent change (the common case) auto-merges cleanly and
         # the approved resolution is preserved instead of being thrown away.
         old_merge_commit = context.get("merge_commit")
+        # _GIT_IDENT: a `--no-ff` merge validates the committer identity before it
+        # touches anything, so without it this redo cannot even start and the retry
+        # collapses into reconciling/push_remote_third on a server with no ambient
+        # git config — see the same fix on the rejection restore below.
         redo = _run_git(
-            ["-c", "merge.conflictStyle=zdiff3", "merge", "--no-commit", "--no-ff", old_merge_commit],
+            [*_GIT_IDENT, "-c", "merge.conflictStyle=zdiff3",
+             "merge", "--no-commit", "--no-ff", old_merge_commit],
             cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC,
         )
         if redo.returncode != 0 and _unmerged_paths(base_root):
@@ -2686,19 +2703,45 @@ def _refreeze_for_re_review(
 def _complete_merge_review(
     group_id: str, merge_id: int, project_id: str, context: dict, *, pushed: bool,
 ) -> dict:
+    # 0555 T0008 §5/§12 (D0005 §3.6 B7/B8): a final approval that a conflict parked
+    # on this session is finished HERE — after the merge is really terminal, still
+    # inside the project Git lock approve_merge_review holds, and BEFORE the
+    # completion event goes out. Emitting first would let the refresh that event
+    # triggers see "merged, but the document is still pending_review" and redraw the
+    # finalize button this whole design exists to remove.
+    intent = approval_intent.intent_of_context(context)
     context["review_state"] = REVIEW_STATE_COMPLETED
     context["apply_phase"] = "completed"
     db_git.set_session_context(merge_id, context)
     merge_commit = context.get("merge_commit") or ""
     merge_commit_short = merge_commit[:7] or None
     db_git.close_session(merge_id, "done")
-    _set_status(group_id, "merged", merge_commit=merge_commit_short)
-    _cleanup_group_slot(project_id, group_id)
-    _emit("git_finalize_done", project_id, group_id, {
+    # emit=False: the status row is written now (Git really is terminal), but the
+    # git_pending_changed broadcast waits until the approval decision below is
+    # known — otherwise a subscriber's refresh could land between this write and
+    # commit_deferred_approval and see "merged" next to an AC still pending_review.
+    _set_status(group_id, "merged", merge_commit=merge_commit_short, emit=False)
+    approval = (
+        approval_intent.commit_deferred_approval(group_id, merge_id, intent)
+        if intent is not None else None
+    )
+    # INV-4: the merge is never undone. When the approval transaction fails the slot
+    # stays registered too, because the §3.9 re-approval runs against exactly this
+    # state — Git already terminal, approval still owed.
+    if approval is None or approval.get("approved"):
+        _cleanup_group_slot(project_id, group_id)
+    _emit_pending_changed(project_id, group_id, "merged")
+    event = {
         "project": project_id, "group_id": group_id,
         "action": context.get("finalize_action") or SESSION_ACTION_DEFAULT,
         "status": "merged", "merge_commit": merge_commit_short, "pushed": pushed,
-    })
+    }
+    if approval is not None:
+        # D0005 §3.12: the Git completion is announced either way (it really
+        # happened), but "Git finished" and "the approval finished" are two facts
+        # and the payload says which of them is true.
+        event["approval"] = approval
+    _emit("git_finalize_done", project_id, group_id, event)
     # "merged" (not "completed") on the top-level `status` — the pre-existing
     # external contract every caller of resolve_conflicts/resolve-token already
     # matches on (git_routes.py's token-consume check, the resolver dialog, the
@@ -2706,10 +2749,13 @@ def _complete_merge_review(
     # reconciling/re_review vocabulary lives; `status` keeps meaning what it
     # always meant to keep this a non-breaking extension (T0008 completion
     # criteria: existing TR/group-update flows unaffected).
-    return {"ok": True, "result": {
+    result = {
         "status": "merged", "review_state": REVIEW_STATE_COMPLETED,
         "merge_commit": merge_commit_short, "pushed": pushed,
-    }}
+    }
+    if approval is not None:
+        result["approval"] = approval
+    return {"ok": True, "result": result}
 
 
 def _enter_reconciling(merge_id: int, context: dict, kind: str, *, schedule_retry: bool) -> dict:
@@ -3012,8 +3058,15 @@ def reject_merge_review(
         state = db_git.get_state(group_id) or {}
         branch = (state.get("branch")
                   or worktree_branch_name(project_id, _module_of(group_id), group_id))
+        # _GIT_IDENT for the same reason finalize()'s original merge carries it:
+        # `git merge` refuses with "Committer identity unknown" before it does any
+        # work when the checkout has no user.name/user.email, and FlowGate never
+        # relies on ambient git config. Without it a rejection could only ever end
+        # at restoration_verification_failed on a server that has none — the merge
+        # never ran, so no marker could come back (0555 T0008 §7).
         redo = _run_git(
-            ["-c", "merge.conflictStyle=zdiff3", "merge", "--no-commit", "--no-ff", branch],
+            [*_GIT_IDENT, "-c", "merge.conflictStyle=zdiff3",
+             "merge", "--no-commit", "--no-ff", branch],
             cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC,
         )
         remaining = _unmerged_paths(base_root)
@@ -3514,19 +3567,16 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
         merge_commit = context.get("merge_commit")
         expected = context.get("expected_remote_head")
         if observed is not None and merge_commit and observed == merge_commit:
-            context["review_state"] = REVIEW_STATE_COMPLETED
-            context["apply_phase"] = "completed"
+            # The push this reconciles landed on the remote (T0008 §5/§7/§9): a
+            # merge review this session was final-approval-bound to terminates HERE,
+            # exactly like the direct-completion path, so it has to go through the
+            # same common completer. Duplicating the close/status/cleanup here and
+            # skipping commit_deferred_approval() is exactly how this branch used to
+            # produce the D0005 §3.5 orphan (AC left pending_review, Git already
+            # merged, intent never consumed).
             context.pop("reconciliation_kind", None)
             context.pop("reconcile_next_at", None)
-            db_git.set_session_context(merge_id, context)
-            db_git.close_session(merge_id, "done")
-            _set_status(group_id, "merged", merge_commit=merge_commit[:7])
-            _cleanup_group_slot(project_id, group_id)
-            _emit("git_finalize_done", project_id, group_id, {
-                "project": project_id, "group_id": group_id, "status": "merged",
-                "merge_commit": merge_commit[:7], "pushed": True,
-            })
-            return {"ok": True, "result": {"status": "completed"}}
+            return _complete_merge_review(group_id, merge_id, project_id, context, pushed=True)
         if observed is not None and observed == expected:
             _run_git(["reset", "--hard", "ORIG_HEAD"], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC)
             context["approval_attempt_id"] = None
