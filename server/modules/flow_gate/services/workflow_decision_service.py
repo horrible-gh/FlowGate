@@ -816,7 +816,7 @@ def _auto_complete_instruction_heads(
 
     Loops while the effective head is an instruction type AND is_auto_handled_step says this
     exact head is server-handled: create + approve it via
-    ``documents.create_next_approved_core`` (the same mechanics as the managed auto-approved-document
+    ``documents.materialize_work_plan_instruction`` (which delegates legacy rows to the managed auto-approved-document
     button) so the head advances to its paired report step. Stops at the first head that is
     either a report/non-instruction type, or an ai_direct N/T NOT in the user's auto-approve
     selection — which the caller (advance_workflow) then mints the worker token + mention for.
@@ -829,11 +829,11 @@ def _auto_complete_instruction_heads(
     Permission source = the SAME resolver the live approve button and the inbox self-chain
     use (workflow._get_user_permissions, the is_admin stub), not permission_service (which
     returns ∅ on the live system with unpopulated RBAC tables — the bug fixed in 0086). If
-    the actor genuinely lacks document.approve, create_next_approved_core raises (403) and
+    the actor genuinely lacks document.approve, the materializer/core raises (403) and
     we re-raise as ValueError so the chain pauses honestly (P0005 §4 — approve never bypassed).
     """
     from modules.flow_gate.documents.routers.documents import (
-        create_next_approved_core,
+        materialize_work_plan_instruction,
         NextApprovedError,
     )
 
@@ -890,12 +890,13 @@ def _auto_complete_instruction_heads(
             break
         prev_item_seq = item_seq
         try:
-            create_next_approved_core(
+            created = materialize_work_plan_instruction(
                 project_id=project_id,
                 group_id=group_id,
                 module=module,
                 prev_doc_id=spine_doc_id,
-                type_code=head_type,
+                sequence_id=seq["id"],
+                head=head,
                 actor_user_id=actor_user_id,
                 approver_perms=_approver_perms(),
                 locale=locale,
@@ -905,7 +906,11 @@ def _auto_complete_instruction_heads(
                 f"instruction_auto_complete_failed:{head_type}:{exc.detail}"
             ) from exc
         if item_seq is not None:
-            completed.append(int(item_seq))
+            current = db_wfseq.get_effective_head(seq["id"])
+            if current is None or current.get("item_seq") != item_seq:
+                completed.append(int(item_seq))
+            else:
+                break
     return completed
 
 
