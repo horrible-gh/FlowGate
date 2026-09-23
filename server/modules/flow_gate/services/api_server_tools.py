@@ -13,11 +13,12 @@ from pathlib import Path
 from typing import Any
 
 from modules.flow_gate.db import documents as db_documents
-from modules.flow_gate.services import git_service, help_catalog, process_runner, remote_tool_service, snapshot_request_service, test_command_service, token_service, tool_registry
+from modules.flow_gate.services import git_service, help_catalog, process_runner, remote_tool_service, snapshot_access_service, snapshot_request_service, test_command_service, token_service, tool_registry
 from modules.flow_gate.utils.help_url import help_url
 
 DOCUMENT_SCOPES = frozenset({"new", "edit", "review", "test_run"})
-BASE_NAMES = ("read_document", "read_help", "create_question", "request_source_snapshot", "register_document")
+BASE_NAMES = ("read_document", "read_help", "create_question", "register_document")
+SNAPSHOT_NAMES = ("request_source_snapshot", "access_source_snapshot", "run_source_snapshot")
 SOURCE_NAMES = ("read_source_file", "search_source", "glob_source", "stat_source", "diff_source", "log_source", "show_commit_source", "merge_preview_source", "patch_source_file", "write_source_file", "remove_source_file", "run_test")
 # Provider names are stable aliases; every source operation dispatches through the HTTP remote service.
 SOURCE_OPS = {
@@ -93,6 +94,26 @@ SCHEMAS = {
     "read_help": READ_HELP_SCHEMA,
     "create_question": _obj({"questions": {"type": "array", "minItems": 1, "items": _obj({"title": {"type": "string"}, "body": {"type": "string", "minLength": 1}, "options": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 200}, "maxItems": 10}}, ["body"])}}, ["questions"]),
     "request_source_snapshot": _obj({"reason":{"type":"string","minLength":1},"scope":{"type":"string","enum":["single_file","selected_files","directory","whole_source"]},"requested_paths":{"type":"array","items":{"type":"string","minLength":1}},"purpose":{"type":"string","minLength":1},"source_kind":{"type":"string","enum":["current_worktree"]}},["reason","scope","requested_paths","purpose"]),
+    "access_source_snapshot": _obj({
+        "snapshot_id":{"type":"string","minLength":1},
+        "operation":{"type":"string","enum":["status","read","search","glob","stat"]},
+        "path":{"type":"string","minLength":1},
+        "pattern":{"type":"string","minLength":1},
+        "glob":{"type":"string","minLength":1},
+        "ignore_case":{"type":"boolean"},
+        "max_results":{"type":"integer","minimum":1},
+        "max_bytes":{"type":"integer","minimum":0},
+        "offset":{"type":"integer","minimum":0},
+        "length":{"type":"integer","minimum":0},
+        "encoding":{"type":"string","minLength":1},
+    },["snapshot_id","operation"]),
+    "run_source_snapshot": _obj({
+        "snapshot_id":{"type":"string","minLength":1},
+        "task_kind":{"type":"string","enum":["build","test","lint","typecheck","dependency_analysis","static_analysis","temporary_experiment"]},
+        "command":{"type":"string","minLength":1},
+        "timeout_seconds":{"type":"integer","minimum":1},
+        "claim_current_worktree":{"type":"boolean"},
+    },["snapshot_id","task_kind","command"]),
 }
 
 REGISTER_SCHEMAS = {
@@ -104,8 +125,27 @@ REGISTER_SCHEMAS = {
     "test_run": _obj({}),
 }
 
-DESCRIPTIONS = {name: name.replace("_", " ") for name in (*BASE_NAMES, *SOURCE_NAMES)}
-DESCRIPTIONS["request_source_snapshot"] = ("Request a human-approved disposable current-worktree snapshot only when existing FlowGate read/search/git tools are insufficient or a real file tree is required. Prefer those tools and Merge Context Tool for reading, comparison, and merge-conflict analysis; this request never creates files or approves itself.")
+DESCRIPTIONS = {name: name.replace("_", " ") for name in (*BASE_NAMES, *SNAPSHOT_NAMES, *SOURCE_NAMES)}
+DESCRIPTIONS["request_source_snapshot"] = (
+    "Request only; never approve, materialize, or return a locator. Use this only when a real "
+    "filesystem tree is required for build/test/lint/typecheck/dependency/static analysis or "
+    "an isolated temporary experiment. Prefer FlowGate read/search/git and Merge Context Tool for "
+    "single-file reads, grep/glob/stat, ref comparison, diffs, history, and merge analysis. "
+    "This request never creates files. whole_source is not the default and requires an explicit "
+    "reason and purpose."
+)
+DESCRIPTIONS["access_source_snapshot"] = (
+    "Read status/locator or read/search/glob/stat inside a human-approved current-worktree "
+    "snapshot. Stale data remains readable but is marked ACTIVE SNAPSHOT IS STALE and cannot "
+    "be reported as current-worktree validation. Deleted and failed snapshots are explicit."
+)
+DESCRIPTIONS["run_source_snapshot"] = (
+    "Run build/test/lint/typecheck/dependency/static analysis or a temporary experiment inside "
+    "an approved disposable snapshot. There is no promotion, upload, commit, merge, or sync-back; "
+    "persistent edits must use canonical FlowGate source mutation tools. FlowGate constrains the "
+    "working directory, temporary directory, timeout, and captured output, but cannot fully inspect "
+    "every child command; commands must stay inside the snapshot and must not access live source."
+)
 DESCRIPTIONS["read_help"] = (
     "Read personalized help without HTTP. Empty input returns the help index; "
     "item returns one item; item plus child returns one child. child requires item."
@@ -143,6 +183,8 @@ def definitions_for_run(run: dict) -> list[dict]:
     # the authorized root, so advertisement must not reject a valid non-Git project fallback.
     kind, _reason = tool_registry.kind_for_step(scope, step_type)
     allowed_ops = set(tool_registry.tool_names(kind, scope))
+    if kind in ("read", "read_write"):
+        names += list(SNAPSHOT_NAMES)
     names += [name for name, op in SOURCE_OPS.items() if op in allowed_ops]
     if kind == "read_write":
         names.append("run_test")
@@ -243,17 +285,69 @@ def read_help(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     return 200, {**envelope, **body}
 
 
-def request_source_snapshot(run: dict, tool_input: dict) -> tuple[int, dict]:
-    data = dict(tool_input)
-    data.update({"project_id":run.get("project_id"),"group_id":run.get("group_id"),"run_id":run.get("run_id"),"token_id":run.get("token_id"),"provider_id":run.get("provider_id")})
+def _snapshot_token(run: dict, raw_token: str) -> dict:
     try:
-        row = snapshot_request_service.create_request(data, str(run.get("issued_to") or "ai-worker"))
+        token = token_service.verify(raw_token)
+        snapshot_request_service.validate_request_authority(token, run)
+        return token
     except snapshot_request_service.SnapshotRequestError as exc:
         raise ToolError(exc.status, exc.code, exc.message) from exc
-    return 201, {"ok":True,"request":row,"materialized":False,"requires_human_decision":True}
+    except Exception as exc:
+        raise ToolError(403, "snapshot_request_forbidden", "a live AI run/token is required") from exc
+
+
+def request_source_snapshot(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
+    token = _snapshot_token(run, raw_token)
+    data = dict(tool_input)
+    data.update({
+        "project_id":run.get("project_id"), "group_id":run.get("group_id"),
+        "run_id":run.get("run_id"), "token_id":token.get("token_id"),
+        "provider_id":run.get("provider_id"),
+    })
+    try:
+        row = snapshot_request_service.create_request(data, str(token.get("issued_to") or "ai-worker"))
+    except snapshot_request_service.SnapshotRequestError as exc:
+        raise ToolError(exc.status, exc.code, exc.message) from exc
+    public = {key: row.get(key) for key in (
+        "snapshot_id", "status", "scope", "requested_paths", "source_kind",
+        "project_id", "group_id", "run_id", "token_id", "provider_id", "requested_at",
+    )}
+    return 201, {
+        "ok":True, "request_id":row.get("snapshot_id"), "status":"requested",
+        "request":public, "materialized":False, "requires_human_decision":True,
+    }
+
+
+def access_source_snapshot(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
+    _snapshot_token(run, raw_token)
+    try:
+        status, payload = snapshot_access_service.access(run, tool_input)
+        if 200 <= status < 300:
+            run["snapshot_reads"] = int(run.get("snapshot_reads") or 0) + 1
+        return status, payload
+    except snapshot_access_service.SnapshotAccessError as exc:
+        return exc.status, exc.payload(str(tool_input.get("operation") or "access"))
+
+
+def run_source_snapshot(
+    run: dict, raw_token: str, tool_input: dict, remaining_sec: float,
+) -> tuple[int, dict]:
+    _snapshot_token(run, raw_token)
+    try:
+        return snapshot_access_service.execute(
+            run, tool_input, remaining_sec=remaining_sec,
+            source_tool_calls=int(run.get("source_tool_calls") or 0),
+            snapshot_reads=int(run.get("snapshot_reads") or 0),
+        )
+    except snapshot_access_service.SnapshotAccessError as exc:
+        return exc.status, exc.payload("execute")
 
 
 def source_call(run: dict, raw_token: str, name: str, tool_input: dict) -> tuple[int, dict]:
+    try:
+        snapshot_access_service.guard_promotion(run, name, tool_input)
+    except snapshot_access_service.SnapshotAccessError as exc:
+        return exc.status, exc.payload(name)
     # remote_tool_service is the sole live-token/root authority.  In particular, it
     # preserves worktree fail-closed mutation gates while allowing approved base-root
     # fallback projects; the API adapter must not second-guess that selection.

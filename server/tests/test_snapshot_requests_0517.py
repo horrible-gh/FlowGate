@@ -78,9 +78,14 @@ def test_worker_token_http_route_uses_live_token_metadata(monkeypatch):
  token={
   "token_id":"tok_live", "project":"flowgate", "group_id":"flowgate.default.0517",
   "ai_run_id":"run_live", "provider_id":"provider_live", "issued_to":"worker_user",
+  "action_scope":"new", "doc_ref":"flowgate.default.0517.0014-T",
  }
+ run={"run_id":"run_live","token_id":"tok_live","project_id":"flowgate",
+      "group_id":"flowgate.default.0517","action_scope":"new",
+      "doc_ref":"flowgate.default.0517.0014-T"}
  monkeypatch.setattr(snapshot_routes.token_service,"verify",lambda raw:token)
- monkeypatch.setattr(snapshot_routes.ai_invoke_runs,"get",lambda run_id:None)
+ monkeypatch.setattr(snapshot_routes.ai_invoke_runs,"get",lambda run_id:run)
+ monkeypatch.setattr(service.db_documents,"get_by_id",lambda doc_id:{"type_code":"T"})
  monkeypatch.setattr(snapshot_routes.service,"create_request",lambda data,actor:captured.update(data=data,actor=actor) or data)
  request=type("WorkerRequest",(),{"headers":{"Authorization":"Bearer live-token"}})()
  body=snapshot_routes.RequestIn(
@@ -146,6 +151,41 @@ def test_broadcast_failure_never_breaks_the_decision(monkeypatch):
  monkeypatch.setattr(service.workflow_events,"create",lambda data:data)
  row=service.create_request(BASE,"worker_user")
  assert row["snapshot_id"]=="snap_evt2"
+
+
+def test_c16_multiple_requests_keep_independent_decisions(monkeypatch):
+ rows={}
+ events=[]
+ lock=__import__("threading").Lock()
+ monkeypatch.setattr(service,"get_store",lambda:_Store())
+ monkeypatch.setattr(service.workflow_events,"create",events.append)
+ monkeypatch.setattr(service,"_notify",lambda *args:None)
+ def create(data):
+  with lock:
+   row=dict(data)|{"status":"requested","requested_at":"now"}
+   rows[row["snapshot_id"]]=row
+   return dict(row)
+ def transition(snapshot_id,decision,actor):
+  with lock:
+   row=rows.get(snapshot_id)
+   if row is None or row["status"]!="requested": return (dict(row) if row else None),False
+   row["status"]=decision
+   row["approved_by" if decision=="approved" else "rejected_by"]=actor
+   return dict(row),True
+ monkeypatch.setattr(service.db,"create",create)
+ monkeypatch.setattr(service.db,"transition",transition)
+ service.create_request(BASE|{"snapshot_id":"snap_a","requested_paths":["a.py"]},"worker")
+ service.create_request(BASE|{"snapshot_id":"snap_b","requested_paths":["b.py"]},"worker")
+ from concurrent.futures import ThreadPoolExecutor
+ with ThreadPoolExecutor(max_workers=2) as pool:
+  first=pool.submit(service.decide,"snap_a","approved","human-a")
+  second=pool.submit(service.decide,"snap_b","rejected","human-b")
+  assert first.result()["status"]=="approved"
+  assert second.result()["status"]=="rejected"
+ assert rows["snap_a"]["requested_paths"]==["a.py"]
+ assert rows["snap_b"]["requested_paths"]==["b.py"]
+ assert rows["snap_a"]["approved_by"]=="human-a"
+ assert rows["snap_b"]["rejected_by"]=="human-b"
 
 
 def test_active_route_lists_created_and_refreshes_stale_when_group_scoped(monkeypatch):

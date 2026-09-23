@@ -56,6 +56,7 @@ CATALOG_ORDER: tuple[str, ...] = (
     "question",
     "submit",
     "source_tools",
+    "source_snapshots",
     "design_template",
     "authoring_guide",
     "test_commands",
@@ -72,6 +73,7 @@ ITEM_FORM: dict[str, str] = {
     "question": "content",
     "submit": "content",
     "source_tools": "children",
+    "source_snapshots": "content",
     "design_template": "children",
     "authoring_guide": "children",
     "test_commands": "content",
@@ -112,6 +114,7 @@ TITLES: dict[str, dict[str, str]] = {
         "question": "질의(Q) 등록",
         "submit": "결과 제출 방법",
         "source_tools": "소스 도구",
+        "source_snapshots": "AI 소스 스냅샷 사용 정책",
         "design_template": "설계서 템플릿",
         "authoring_guide": "작성 지침",
         "test_commands": "검증된 테스트 명령",
@@ -127,6 +130,7 @@ TITLES: dict[str, dict[str, str]] = {
         "question": "Register a query (Q)",
         "submit": "How to submit",
         "source_tools": "Source tools",
+        "source_snapshots": "AI source snapshot policy",
         "design_template": "Design document template",
         "authoring_guide": "Authoring guide",
         "test_commands": "Verified test commands",
@@ -142,6 +146,7 @@ TITLES: dict[str, dict[str, str]] = {
         "question": "質問(Q)の登録",
         "submit": "結果の提出方法",
         "source_tools": "ソースツール",
+        "source_snapshots": "AIソーススナップショット方針",
         "design_template": "設計書テンプレート",
         "authoring_guide": "作成ガイド",
         "test_commands": "検証済みテストコマンド",
@@ -180,6 +185,7 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "question": "막혔을 때 질의를 등록하는 방법.",
         "submit": "작성한 문서를 등록하는 요청 서식.",
         "source_tools": "이 토큰이 쓸 수 있는 원격 소스 도구 목록.",
+        "source_snapshots": "요청 기준, 승인 경계, stale 경고와 promotion 금지 정책.",
         "design_template": "설계 타입별 표준 템플릿 본문.",
         "authoring_guide": "이 타입의 문서를 쓰는 방법.",
         "test_commands": "이 프로젝트에 등록된, 실행이 확인된 테스트 명령.",
@@ -195,6 +201,7 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "question": "How to register a query when you are blocked.",
         "submit": "Request format that registers the document you wrote.",
         "source_tools": "Remote source tools this token may call.",
+        "source_snapshots": "Request criteria, approval boundary, stale warning, and no-promotion policy.",
         "design_template": "Standard template body per design type.",
         "authoring_guide": "How to write a document of this type.",
         "test_commands": "Test commands registered for this project and verified on this host.",
@@ -210,6 +217,7 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "question": "行き詰まったときに質問を登録する方法。",
         "submit": "作成した文書を登録するリクエスト形式。",
         "source_tools": "このトークンが使えるリモートソースツールの一覧。",
+        "source_snapshots": "要求基準、承認境界、stale警告、昇格禁止ポリシー。",
         "design_template": "設計タイプ別の標準テンプレート本文。",
         "authoring_guide": "このタイプの文書を書く方法。",
         "test_commands": "このプロジェクトに登録され、実行が確認されたテストコマンド。",
@@ -247,6 +255,7 @@ NOTICE_LINES: dict[str, dict[str, str]] = {
         "review_no_modify": "검토 작업에서는 대상 문서를 수정하거나 새 결과 문서를 만들지 말고, 지정된 판정만 제출하십시오.",
         "investigation_only": "이 단계는 조사 전용입니다. 소스 파일을 수정·생성·삭제하지 마십시오.",
         "assigned_scope_only": "이 작업에 배정된 그룹 작업 공간과 파일만 변경하고, 변경 파일은 작업 레포트에 빠짐없이 보고하십시오.",
+        "source_snapshot_policy": "소스 스냅샷은 예외적으로만 요청하십시오. FlowGate read/search/git 도구로 충분하지 않거나 실제 파일 트리가 필요한 경우에만 요청하고, 읽기·비교·병합 충돌 분석에는 기존 도구와 Merge Context Tool을 우선하십시오. 요청에는 사람 승인이 필요하며 파일을 자동 생성하지 않습니다.",
     },
     "en": {
         "continuous_unattended": "This task is part of an UNMANNED continuous work chain. Nobody is watching.",
@@ -256,6 +265,7 @@ NOTICE_LINES: dict[str, dict[str, str]] = {
         "review_no_modify": "In a review step, do not modify the target document or create a new result document — submit only the verdict you were asked for.",
         "investigation_only": "This step is investigation-only. Do not modify, create or delete source files.",
         "assigned_scope_only": "Change only the group workspace and files assigned to this task, and report every changed file in the work report.",
+        "source_snapshot_policy": "Source snapshots are exceptional: request one only when FlowGate read/search/git tools are insufficient or a real file tree is required. Prefer existing tools and Merge Context Tool for reading, comparison, and merge-conflict analysis. A request requires human approval and never creates files automatically.",
     },
     "ja": {
         "continuous_unattended": "この作業は無人(UNMANNED)連続作業チェーンの一部です。人は見ていません。",
@@ -265,6 +275,7 @@ NOTICE_LINES: dict[str, dict[str, str]] = {
         "review_no_modify": "レビュー作業では対象文書を修正したり新しい結果文書を作成したりせず、指定された判定のみを提出してください。",
         "investigation_only": "この段階は調査専用です。ソースファイルを修正・作成・削除しないでください。",
         "assigned_scope_only": "この作業に割り当てられたグループ作業領域とファイルのみ変更し、変更ファイルは作業レポートに漏れなく報告してください。",
+        "source_snapshot_policy": "ソーススナップショットは例外的な場合にのみ要求してください。FlowGate の read/search/git ツールでは不十分な場合、または実際のファイルツリーが必要な場合に限り要求し、読み取り・比較・マージ競合の分析には既存ツールと Merge Context Tool を優先してください。要求には人による承認が必要で、ファイルは自動生成されません。",
     },
 }
 
@@ -546,7 +557,7 @@ def decide_visibility(name: str, ctx: dict) -> Decision:
     if name in ALWAYS_VISIBLE:
         return VISIBLE
 
-    if name == "source_tools":
+    if name in {"source_tools", "source_snapshots"}:
         if ctx.get("source_mode") != "remote":
             return Decision(False, "source_mode_local")
         if ctx.get("tool_kind") == "none":
@@ -720,7 +731,8 @@ def _content_notices(ctx: dict) -> dict:
     # A key requested by two conditions still prints once.
     ordered = list(dict.fromkeys(keys))
     lines = [_copy(NOTICE_LINES, ctx["locale"], key) for key in ordered]
-    lines.append("Source snapshots are exceptional: request one only when FlowGate read/search/git tools are insufficient or a real file tree is required. Prefer existing tools and Merge Context Tool for reading, comparison, and merge-conflict analysis. A request requires human approval and never creates files automatically.")
+    if ctx.get("source_mode") == "remote" and ctx.get("tool_kind") != "none":
+        lines.append(_copy(NOTICE_LINES, ctx["locale"], "source_snapshot_policy"))
     return {"lines": lines}
 
 
@@ -1173,8 +1185,37 @@ def _content_step_verification_format(ctx: dict) -> dict:
     }
 
 
+def _content_source_snapshots(ctx: dict) -> dict:
+    return {
+        "operation": "request_source_snapshot",
+        "request_only": True,
+        "source_kind": "current_worktree",
+        "request_when": [
+            "A build tool, package manager, linter, typechecker, test runner, dependency/static analyzer, or isolated temporary experiment requires a real filesystem tree.",
+        ],
+        "do_not_request_for": [
+            "single-file reads or code search",
+            "grep/glob/stat",
+            "diff/log/show or ref comparison",
+            "main/base/merge-base inspection",
+            "conflict-marker or virtual merge-tree analysis",
+        ],
+        "preferred_tools": ["read", "grep", "glob", "stat", "diff", "log", "show", "merge_preview", "Merge Context Tool"],
+        "whole_source": "Not the default. Narrow the scope whenever possible; reason and purpose are mandatory.",
+        "approval": "The AI can request only. Only a human can approve, and no locator or filesystem tree exists before materialization.",
+        "allowed_after_approval": ["read", "search", "glob", "stat", "build", "test", "lint", "typecheck", "dependency analysis", "static analysis", "temporary experiment"],
+        "execution_limit": "FlowGate constrains cwd, temp files, timeout, and captured output, but cannot fully inspect every child process. Commands must stay inside the snapshot and must not access live source paths.",
+        "prohibited": ["promotion", "upload to worktree", "commit", "merge", "sync-back", "treating the snapshot as source of truth"],
+        "persistent_changes": "Use write_source_file, patch_source_file, or remove_source_file against the canonical group worktree.",
+        "stale": "A stale snapshot remains readable, but every result includes ACTIVE SNAPSHOT IS STALE and cannot be claimed as current-worktree validation.",
+        "terminal_states": ["snapshot_deleted", "snapshot_failed"],
+        "automatic_creation": "Never triggered by continuous-chain, review, rework, retry, or provider fallback orchestration.",
+    }
+
+
 _CONTENT_SUPPLIERS = {
     "notices": _content_notices,
+    "source_snapshots": _content_source_snapshots,
     "group_documents": _content_group_documents,
     "document_access": _content_document_access,
     "document_attachments": _content_document_attachments,

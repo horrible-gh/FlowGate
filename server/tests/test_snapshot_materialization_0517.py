@@ -9,6 +9,9 @@ import pytest
 
 from modules.flow_gate.services import snapshot_materialization_service as materialize
 from modules.flow_gate.services import snapshot_request_service
+from modules.flow_gate.services import snapshot_access_service
+from modules.flow_gate.services import api_server_tools
+from modules.flow_gate.api.v1 import snapshot_routes
 
 
 class _Txn:
@@ -604,3 +607,120 @@ def test_real_symlink_escape_is_not_followed(snapshot_env):
     assert not (snapshot_env.final() / "source" / "dir" / "external").exists()
     manifest = json.loads((snapshot_env.final() / "snapshot.json").read_text(encoding="utf-8"))
     assert {"path": "dir/external", "reason": "symlink_or_reparse"} in manifest["excluded"]["paths"]
+
+
+def test_c1_to_c13_connected_request_pending_approve_read_stale_cleanup(
+    snapshot_env, monkeypatch,
+):
+    snapshot_env.row.update(
+        status="requested", stale=False, stale_detected_at=None,
+        created_at=None, source_revision=None, source_fingerprint=None,
+    )
+    request_events=[]
+    monkeypatch.setattr(snapshot_request_service, "get_store", lambda: _Store())
+    monkeypatch.setattr(
+        snapshot_request_service.workflow_events, "create",
+        lambda event: request_events.append(event) or event,
+    )
+    monkeypatch.setattr(snapshot_request_service, "_notify", lambda *args: None)
+
+    def create(data):
+        snapshot_env.row.update(data)
+        snapshot_env.row.update(
+            snapshot_id="snap_test", status="requested",
+            requested_at="2026-09-23T00:00:00+00:00",
+        )
+        return dict(snapshot_env.row)
+
+    def transition(snapshot_id, decision, actor):
+        if snapshot_env.row["status"] != "requested":
+            return dict(snapshot_env.row), False
+        snapshot_env.row["status"] = decision
+        snapshot_env.row["approved_at" if decision == "approved" else "rejected_at"] = "now"
+        snapshot_env.row["approved_by" if decision == "approved" else "rejected_by"] = actor
+        return dict(snapshot_env.row), True
+
+    monkeypatch.setattr(snapshot_request_service.db, "create", create)
+    monkeypatch.setattr(snapshot_request_service.db, "transition", transition)
+    monkeypatch.setattr(
+        snapshot_routes.db, "list_pending",
+        lambda project_id=None, group_id=None: (
+            [dict(snapshot_env.row)] if snapshot_env.row["status"] == "requested" else []
+        ),
+    )
+    token = {
+        "token_id": "token", "ai_run_id": "run", "project": "project",
+        "group_id": "project.default.0517", "issued_to": "worker",
+    }
+    run = {
+        "token_id": "token", "current_token_id": "token", "run_id": "run",
+        "project_id": "project", "group_id": "project.default.0517",
+        "provider_id": "provider",
+    }
+    monkeypatch.setattr(api_server_tools.token_service, "verify", lambda raw: token)
+    monkeypatch.setattr(
+        snapshot_request_service, "validate_request_authority",
+        lambda candidate, active: candidate,
+    )
+    status, requested = api_server_tools.request_source_snapshot(
+        run, "raw-token",
+        {
+            "reason": "test runner requires a directory",
+            "scope": "single_file",
+            "requested_paths": ["one.txt"],
+            "purpose": "run connected verification",
+        },
+    )
+    assert status == 201
+    assert requested["status"] == "requested"
+    assert not snapshot_env.final().exists()
+    assert snapshot_routes.pending(
+        project_id="project", group_id="project.default.0517", user={"user_id": "human"}
+    )["requests"][0]["snapshot_id"] == "snap_test"
+    detail = snapshot_routes.detail("snap_test", user={"user_id": "human"})
+    assert detail["request"]["status"] == "requested"
+    assert detail["request"]["available"] is False
+
+    approved = snapshot_routes.approve("snap_test", user={"user_id": "human"})
+    assert approved["request"]["status"] == "approved"
+    assert not snapshot_env.final().exists()
+    created = snapshot_routes.materialize_snapshot("snap_test", user={"user_id": "human"})
+    assert created["request"]["status"] == "created"
+    assert created["request"]["snapshot_path"] == str(snapshot_env.final())
+
+    usages=[]
+    monkeypatch.setattr(
+        snapshot_access_service.usage_db, "record",
+        lambda data: usages.append(dict(data)) or dict(data),
+    )
+    access_run = {
+        "project_id": "project", "group_id": "project.default.0517",
+        "run_id": "run", "token_id": "token",
+    }
+    read_status, read_result = snapshot_access_service.access(
+        access_run,
+        {"snapshot_id": "snap_test", "operation": "read", "path": "one.txt"},
+    )
+    assert read_status == 200
+    assert read_result["content"] == "one"
+    assert read_result["snapshot"]["source_kind"] == "current_worktree"
+
+    (snapshot_env.worktree / "one.txt").write_text("changed", encoding="utf-8")
+    stale_status, stale_result = snapshot_access_service.access(
+        access_run,
+        {"snapshot_id": "snap_test", "operation": "read", "path": "one.txt"},
+    )
+    assert stale_status == 200
+    assert stale_result["content"] == "one"
+    assert stale_result["snapshot"]["status"] == "stale"
+    assert stale_result["snapshot"]["warning"] == "ACTIVE SNAPSHOT IS STALE"
+
+    deleted = snapshot_routes.cleanup_snapshot("snap_test", user={"user_id": "human"})
+    assert deleted["request"]["status"] == "deleted"
+    assert not snapshot_env.final().exists()
+    with pytest.raises(snapshot_access_service.SnapshotAccessError) as caught:
+        snapshot_access_service.access(
+            access_run, {"snapshot_id": "snap_test", "operation": "status"}
+        )
+    assert caught.value.code == "snapshot_deleted"
+    assert usages and usages[0]["snapshot_id"] == "snap_test"

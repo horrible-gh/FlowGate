@@ -3,6 +3,8 @@ import json
 from pathlib import PurePosixPath, PureWindowsPath
 from modules.flow_gate.db import snapshot_requests as db
 from modules.flow_gate.db import workflow_events
+from modules.flow_gate.db import documents as db_documents
+from modules.flow_gate.services import tool_registry
 from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.api.v1.events.event_types import EventType
 from modules.flow_gate.api.v1.events.publisher import FlowEvent, broadcast_event_threadsafe
@@ -51,6 +53,30 @@ def _notify(row,status):
   ))
  except Exception:
   pass
+
+def validate_request_authority(token: dict, run: dict) -> dict:
+ if not token.get("ai_run_id") or not run:
+  raise SnapshotRequestError(403,"snapshot_request_forbidden","a live AI run/token is required")
+ axes=(
+  ("project_id", token.get("project") or token.get("project_id"), run.get("project_id")),
+  ("group_id", token.get("group_id"), run.get("group_id")),
+  ("run_id", token.get("ai_run_id"), run.get("run_id")),
+ )
+ if any(not left or str(left)!=str(right or "") for _name,left,right in axes):
+  raise SnapshotRequestError(403,"snapshot_request_forbidden","AI run/token scope does not match")
+ token_id=str(token.get("token_id") or "")
+ current_token_id=str(run.get("current_token_id") or run.get("token_id") or "")
+ if not token_id or (current_token_id and token_id!=current_token_id):
+  raise SnapshotRequestError(403,"snapshot_request_forbidden","AI token is not current for this run")
+ action_scope=str(token.get("action_scope") or run.get("action_scope") or "")
+ if action_scope not in {"new","edit","review","test_run"}:
+  raise SnapshotRequestError(403,"snapshot_request_capability_required","request_snapshot capability is not granted")
+ doc=db_documents.get_by_id(run.get("doc_ref") or token.get("doc_ref"))
+ step_type=str((doc or {}).get("type_code") or (doc or {}).get("type") or "").upper()
+ kind,_reason=tool_registry.kind_for_step(action_scope,step_type)
+ if kind not in {"read","read_write"}:
+  raise SnapshotRequestError(403,"snapshot_source_read_required","source read authority is required")
+ return token
 
 def create_request(data,actor):
  n=validate_request(data)

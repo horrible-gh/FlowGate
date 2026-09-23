@@ -17,8 +17,10 @@ def request_snapshot(body:RequestIn,request:Request):
  try: token=token_service.verify(raw)
  except Exception: raise HTTPException(403,"snapshot requests require an AI worker token")
  run=ai_invoke_runs.get(token.get("ai_run_id")) or {}
- data=body.model_dump()|{"project_id":token.get("project") or token.get("project_id") or run.get("project_id"),"group_id":token.get("group_id") or run.get("group_id"),"run_id":token.get("ai_run_id"),"token_id":token.get("token_id"),"provider_id":token.get("provider_id") or run.get("provider_id")}
- try: return {"ok":True,"request":service.create_request(data,token["issued_to"])}
+ try:
+  service.validate_request_authority(token,run)
+  data=body.model_dump()|{"project_id":token.get("project") or token.get("project_id") or run.get("project_id"),"group_id":token.get("group_id") or run.get("group_id"),"run_id":token.get("ai_run_id"),"token_id":token.get("token_id"),"provider_id":token.get("provider_id") or run.get("provider_id")}
+  return {"ok":True,"request":service.create_request(data,token["issued_to"])}
  except service.SnapshotRequestError as exc: _error(exc)
 @router.get("/pending")
 def pending(project_id:str|None=None,group_id:str|None=None,user=Depends(get_current_user)):
