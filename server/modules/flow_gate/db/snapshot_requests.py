@@ -114,6 +114,49 @@ def transition(snapshot_id, decision, actor):
     return get(snapshot_id), changed == 1
 
 
+def list_unmaterialized(*, run_id=None, group_id=None):
+    """List lifecycle-close candidates so callers can lock each snapshot first."""
+    where = ["status IN ('requested','approved')"]
+    params = []
+    if run_id:
+        where.append("run_id=?")
+        params.append(run_id)
+    if group_id:
+        where.append("group_id=?")
+        params.append(group_id)
+    return [
+        _decode(row) for row in get_store()._fetch_all(
+            "SELECT * FROM snapshot_requests WHERE " + " AND ".join(where)
+            + " ORDER BY requested_at ASC",
+            params,
+        )
+    ]
+
+
+def close_unmaterialized_for_run(run_id, actor):
+    """Make terminal requested/approved rows non-actionable while retaining history."""
+    stamp = now_iso()
+    rows = list_unmaterialized(run_id=run_id)
+    get_store()._execute_affected(
+        "UPDATE snapshot_requests SET status='rejected',rejected_at=?,rejected_by=? "
+        "WHERE run_id=? AND status IN ('requested','approved')",
+        [stamp, actor, run_id],
+    )
+    return [get(row["snapshot_id"]) for row in rows]
+
+
+def close_unmaterialized_for_group(group_id, actor):
+    """Group-terminal equivalent of close_unmaterialized_for_run."""
+    stamp = now_iso()
+    rows = list_unmaterialized(group_id=group_id)
+    get_store()._execute_affected(
+        "UPDATE snapshot_requests SET status='rejected',rejected_at=?,rejected_by=? "
+        "WHERE group_id=? AND status IN ('requested','approved')",
+        [stamp, actor, group_id],
+    )
+    return [get(row["snapshot_id"]) for row in rows]
+
+
 def mark_created(snapshot_id, created_at, expires_at, revision, fingerprint,
                  copied_file_count, copied_byte_size):
     changed = get_store()._execute_affected(

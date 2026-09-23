@@ -54,7 +54,11 @@ def cleanup_snapshot(snapshot_id:str,user=Depends(get_current_user)):
  return {"ok":True,"request":row}
 @router.post("/{snapshot_id}/approve")
 def approve(snapshot_id:str,user=Depends(get_current_user)):
- try: return {"ok":True,"request":service.decide(snapshot_id,"approved",user["user_id"])}
+ try:
+  # The human decision endpoint is the production trigger: approval is not complete
+  # until the approved request has been materialized (or a precise failure is returned).
+  service.decide(snapshot_id,"approved",user["user_id"])
+  return {"ok":True,"request":materialization.materialize(snapshot_id,user["user_id"])}
  except service.SnapshotRequestError as exc: _error(exc)
 @router.post("/{snapshot_id}/reject")
 def reject(snapshot_id:str,user=Depends(get_current_user)):

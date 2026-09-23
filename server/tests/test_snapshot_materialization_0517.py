@@ -91,6 +91,15 @@ class _State:
     def list_materialization_candidates(self):
         return [dict(self.row)] if self.row["status"] in {"approved", "created"} else []
 
+    def list_unmaterialized(self, run_id=None, group_id=None):
+        if self.row["status"] not in {"requested", "approved"}:
+            return []
+        if run_id and self.row["run_id"] != run_id:
+            return []
+        if group_id and self.row["group_id"] != group_id:
+            return []
+        return [dict(self.row)]
+
 
 @pytest.fixture
 def snapshot_env(tmp_path, monkeypatch):
@@ -142,6 +151,7 @@ def snapshot_env(tmp_path, monkeypatch):
     monkeypatch.setattr(
         materialize.db, "list_materialization_candidates", state.list_materialization_candidates
     )
+    monkeypatch.setattr(materialize.db, "list_unmaterialized", state.list_unmaterialized)
     monkeypatch.setattr(materialize.workflow_events, "create", state.events.append)
     monkeypatch.setattr(
         materialize.db_groups, "get_by_id",
@@ -340,7 +350,9 @@ def test_delete_failure_warns_audits_and_retry_succeeds(snapshot_env, monkeypatc
     assert second["status"] == "deleted"
 
 
-def test_ttl_run_and_group_cleanup_entry_points(snapshot_env):
+def test_ttl_run_and_group_cleanup_entry_points(snapshot_env, monkeypatch):
+    monkeypatch.setattr(materialize.db, "close_unmaterialized_for_run", lambda *args: [])
+    monkeypatch.setattr(materialize.db, "close_unmaterialized_for_group", lambda *args: [])
     materialize.materialize("snap_test", "human")
     snapshot_env.row["expires_at"] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
     summary = materialize.sweep_expired()
@@ -564,6 +576,71 @@ def test_sqlite_lifecycle_state_machine_queries(tmp_path, monkeypatch):
     connection.close()
 
 
+@pytest.mark.parametrize(
+    ("cleanup_scope", "close_name"),
+    [
+        ("run", "close_unmaterialized_for_run"),
+        ("group", "close_unmaterialized_for_group"),
+    ],
+)
+def test_lifecycle_close_waits_for_inflight_publish_and_deletes(
+    snapshot_env, monkeypatch, cleanup_scope, close_name,
+):
+    published = threading.Event()
+    release_commit = threading.Event()
+    cleanup_done = threading.Event()
+    errors = []
+    real_mark_created = snapshot_env.state.mark_created
+
+    def blocked_mark_created(*args):
+        assert snapshot_env.final().is_dir()
+        published.set()
+        assert release_commit.wait(5)
+        return real_mark_created(*args)
+
+    def close_unmaterialized(owner_id, actor):
+        expected = "run" if cleanup_scope == "run" else "project.default.0517"
+        assert owner_id == expected
+        if snapshot_env.row["status"] not in {"requested", "approved"}:
+            return []
+        snapshot_env.row.update(status="rejected", rejected_at="now", rejected_by=actor)
+        return [dict(snapshot_env.row)]
+
+    monkeypatch.setattr(materialize.db, "mark_created", blocked_mark_created)
+    monkeypatch.setattr(materialize.db, close_name, close_unmaterialized)
+
+    def create():
+        try:
+            materialize.materialize("snap_test", "human")
+        except Exception as exc:
+            errors.append(exc)
+
+    def close():
+        try:
+            if cleanup_scope == "run":
+                materialize.cleanup_for_run("run")
+            else:
+                materialize.cleanup_for_group("project.default.0517")
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            cleanup_done.set()
+
+    creator = threading.Thread(target=create)
+    cleaner = threading.Thread(target=close)
+    creator.start()
+    assert published.wait(5)
+    cleaner.start()
+    assert not cleanup_done.wait(0.1)
+    release_commit.set()
+    creator.join()
+    cleaner.join()
+
+    assert not errors
+    assert snapshot_env.row["status"] == "deleted"
+    assert not snapshot_env.final().exists()
+
+
 def test_materialize_cleanup_race_converges_to_deleted(snapshot_env, monkeypatch):
     entered = threading.Event()
     release = threading.Event()
@@ -681,10 +758,17 @@ def test_c1_to_c13_connected_request_pending_approve_read_stale_cleanup(
     assert detail["request"]["status"] == "requested"
     assert detail["request"]["available"] is False
 
-    approved = snapshot_routes.approve("snap_test", user={"user_id": "human"})
-    assert approved["request"]["status"] == "approved"
-    assert not snapshot_env.final().exists()
-    created = snapshot_routes.materialize_snapshot("snap_test", user={"user_id": "human"})
+    # Cross the real HTTP/UI-facing production boundary. One human [approve] request
+    # must perform decide -> materialize and return the durable created row.
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from modules.flow_gate.auth.middleware import get_current_user
+    app = FastAPI()
+    app.include_router(snapshot_routes.router)
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": "human"}
+    approved = TestClient(app).post("/api/v1/snapshots/snap_test/approve", json={})
+    assert approved.status_code == 200
+    created = approved.json()
     assert created["request"]["status"] == "created"
     assert created["request"]["snapshot_path"] == str(snapshot_env.final())
 
@@ -724,3 +808,44 @@ def test_c1_to_c13_connected_request_pending_approve_read_stale_cleanup(
         )
     assert caught.value.code == "snapshot_deleted"
     assert usages and usages[0]["snapshot_id"] == "snap_test"
+
+@pytest.mark.parametrize("initial_status", ["requested", "approved"])
+def test_run_finish_closes_unmaterialized_and_late_http_approval_cannot_create(
+    snapshot_env, monkeypatch, initial_status,
+):
+    snapshot_env.row.update(status=initial_status, created_at=None)
+    events = []
+
+    def close_for_run(run_id, actor):
+        assert run_id == "run"
+        assert actor == "snapshot-run-cleanup"
+        if snapshot_env.row["status"] not in {"requested", "approved"}:
+            return []
+        snapshot_env.row.update(
+            status="rejected", rejected_at="now", rejected_by=actor,
+        )
+        return [dict(snapshot_env.row)]
+
+    monkeypatch.setattr(materialize.db, "close_unmaterialized_for_run", close_for_run)
+    monkeypatch.setattr(materialize, "_record_event", lambda *args, **kwargs: events.append((args, kwargs)))
+    monkeypatch.setattr(materialize.db, "list_created", lambda **kwargs: [])
+
+    result = materialize.cleanup_for_run("run")
+    assert result == {"matched": 1, "closed": 1, "deleted": 0, "cleanup_failed": 0}
+    assert snapshot_env.row["status"] == "rejected"
+    assert not snapshot_env.final().exists()
+    assert events[0][1]["reason"] == "owner_lifecycle_finished"
+
+    monkeypatch.setattr(snapshot_request_service, "get_store", lambda: _Store())
+    monkeypatch.setattr(snapshot_request_service.db, "transition", lambda *args: (dict(snapshot_env.row), False))
+    monkeypatch.setattr(snapshot_request_service, "_notify", lambda *args: None)
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from modules.flow_gate.auth.middleware import get_current_user
+    app = FastAPI()
+    app.include_router(snapshot_routes.router)
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": "late-human"}
+    response = TestClient(app).post("/api/v1/snapshots/snap_test/approve", json={})
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "snapshot_not_approved"
+    assert not snapshot_env.final().exists()

@@ -100,7 +100,10 @@ def test_worker_token_http_route_uses_live_token_metadata(monkeypatch):
  assert captured["actor"]=="worker_user"
 
 
-def test_approval_does_not_materialize_until_explicit_endpoint(monkeypatch):
+def test_human_approval_http_endpoint_materializes_to_created(monkeypatch):
+ from fastapi import FastAPI
+ from fastapi.testclient import TestClient
+ from modules.flow_gate.auth.middleware import get_current_user
  captured=[]
  approved=BASE|{"snapshot_id":"snap_route","status":"approved"}
  monkeypatch.setattr(snapshot_routes.service,"decide",lambda *args:approved)
@@ -108,11 +111,11 @@ def test_approval_does_not_materialize_until_explicit_endpoint(monkeypatch):
   snapshot_routes.materialization,"materialize",
   lambda snapshot_id,actor:captured.append((snapshot_id,actor)) or approved|{"status":"created"},
  )
- result=snapshot_routes.approve("snap_route",user={"user_id":"human"})
- assert result["request"]["status"]=="approved"
- assert captured==[]
- created=snapshot_routes.materialize_snapshot("snap_route",user={"user_id":"human"})
- assert created["request"]["status"]=="created"
+ app=FastAPI(); app.include_router(snapshot_routes.router)
+ app.dependency_overrides[get_current_user]=lambda:{"user_id":"human"}
+ response=TestClient(app).post("/api/v1/snapshots/snap_route/approve",json={})
+ assert response.status_code==200
+ assert response.json()["request"]["status"]=="created"
  assert captured==[("snap_route","human")]
 
 

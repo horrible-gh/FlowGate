@@ -10,6 +10,7 @@ import shutil
 import stat
 import threading
 import uuid
+from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Iterable
@@ -915,21 +916,54 @@ def _cleanup_failed(row: dict, actor: str, trigger: str, exc: Exception) -> dict
     return updated
 
 
+def _close_unmaterialized(rows: list[dict], actor: str, trigger: str) -> None:
+    for row in rows:
+        _record_event(
+            "snapshot_rejected", row, actor, "requested_or_approved", "rejected",
+            trigger=trigger, reason="owner_lifecycle_finished",
+        )
+
+
+def _close_unmaterialized_locked(*, actor: str, trigger: str,
+                                 run_id: str | None = None,
+                                 group_id: str | None = None) -> list[dict]:
+    candidates = db.list_unmaterialized(run_id=run_id, group_id=group_id)
+    # Acquire in a stable order so overlapping run/group cleanup cannot deadlock.
+    with ExitStack() as locks:
+        for snapshot_id in sorted(row["snapshot_id"] for row in candidates):
+            locks.enter_context(_operation_lock(snapshot_id))
+        with get_store().transaction():
+            if run_id is not None:
+                closed = db.close_unmaterialized_for_run(run_id, actor)
+            else:
+                closed = db.close_unmaterialized_for_group(group_id, actor)
+            _close_unmaterialized(closed, actor, trigger)
+    return closed
+
+
 def cleanup_for_run(run_id: str, actor: str = "snapshot-run-cleanup") -> dict:
+    closed = _close_unmaterialized_locked(
+        run_id=run_id, actor=actor, trigger="run_finished",
+    )
     rows = db.list_created(run_id=run_id)
     results = [cleanup(row["snapshot_id"], actor, trigger="run_finished") for row in rows]
     return {
-        "matched": len(rows),
+        "matched": len(closed) + len(rows),
+        "closed": len(closed),
         "deleted": sum(row.get("status") == "deleted" for row in results),
         "cleanup_failed": sum(bool(row.get("cleanup_failed")) for row in results),
     }
 
 
 def cleanup_for_group(group_id: str, actor: str = "snapshot-group-cleanup") -> dict:
+    closed = _close_unmaterialized_locked(
+        group_id=group_id, actor=actor, trigger="group_finished",
+    )
     rows = db.list_created(group_id=group_id)
     results = [cleanup(row["snapshot_id"], actor, trigger="group_finished") for row in rows]
     return {
-        "matched": len(rows),
+        "matched": len(closed) + len(rows),
+        "closed": len(closed),
         "deleted": sum(row.get("status") == "deleted" for row in results),
         "cleanup_failed": sum(bool(row.get("cleanup_failed")) for row in results),
     }

@@ -131,7 +131,7 @@ describe('Snapshot approval UX (flowgate.default.0517 T0012)', () => {
   it('C4: approval is reachable only through [자세히] → detail dialog → [승인]', async () => {
     const target = row({ snapshot_id: 's4' })
     vi.mocked(getRequest).mockResolvedValue({ data: { ok: true, requests: [target] } } as any)
-    vi.mocked(postRequest).mockResolvedValue({ data: { ok: true, request: { ...target, status: 'approved' } } } as any)
+    vi.mocked(postRequest).mockResolvedValue({ data: { ok: true, request: { ...target, status: 'created' } } } as any)
     const wrapper = mountCenter()
     await flushPromises()
     await openPendingPanel(wrapper)
