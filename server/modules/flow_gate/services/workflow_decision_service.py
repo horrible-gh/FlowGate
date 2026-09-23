@@ -890,7 +890,7 @@ def _auto_complete_instruction_heads(
             break
         prev_item_seq = item_seq
         try:
-            materialize_work_plan_instruction(
+            created = materialize_work_plan_instruction(
                 project_id=project_id,
                 group_id=group_id,
                 module=module,
@@ -906,7 +906,11 @@ def _auto_complete_instruction_heads(
                 f"instruction_auto_complete_failed:{head_type}:{exc.detail}"
             ) from exc
         if item_seq is not None:
-            completed.append(int(item_seq))
+            current = db_wfseq.get_effective_head(seq["id"])
+            if current is None or current.get("item_seq") != item_seq:
+                completed.append(int(item_seq))
+            else:
+                break
     return completed
 
 

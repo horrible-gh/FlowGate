@@ -600,19 +600,19 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
             provider_display_name=provider_name,
             review_count=(
                 0 if server_assembled else (
-                    row.get("pair_review_count") or row.get("review_count") or 0
+                    row.get("pair_review_count") if row.get("source_doc_id") else (row.get("pair_review_count") or row.get("review_count") or 0)
                 )
             ),
             reviewer_provider_id=(
                 None if server_assembled else (
                     row.get("pair_reviewer_provider_id")
-                    or row.get("reviewer_provider_id")
+                    or (None if row.get("source_doc_id") else row.get("reviewer_provider_id"))
                 )
             ),
             reviewer_provider_display_name=(
                 None if server_assembled else (
                     row.get("pair_reviewer_provider_display_name")
-                    or row.get("reviewer_provider_display_name")
+                    or (None if row.get("source_doc_id") else row.get("reviewer_provider_display_name"))
                 )
             ),
             # WP-materialized N/T keeps this empty; legacy rows may still snapshot here.

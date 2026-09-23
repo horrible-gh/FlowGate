@@ -209,3 +209,54 @@ def test_wp_instruction_auto_approval_moves_head_to_paired_report(monkeypatch):
 def test_ts_stays_outside_nt_materializer():
     assert "TS" not in workflow.INSTRUCTION_AUTO_TYPES
     assert docs._work_plan_instruction_descriptor(9, _head("TS")) is None
+
+def test_wp_instruction_reviewer_stops_materializer_before_approve(monkeypatch):
+    head = _head()
+    head["reviewer_provider_id"] = "reviewer-T"
+    seen = {}
+    monkeypatch.setattr(
+        docs, "_work_plan_instruction_descriptor",
+        lambda _sid, _head: {"source_wp_doc_id": WP_ID, "source_wp_revision_no": 7,
+                             "source_wp_step_key": "T#1", "idempotency_key": f"{WP_ID}:7:T#1"},
+    )
+    monkeypatch.setattr(
+        docs, "create_next_approved_core",
+        lambda **kwargs: seen.update(kwargs) or {"doc_id": "instruction-T", "data": {"doc_review_status": "pending_review"}},
+    )
+
+    result = docs.materialize_work_plan_instruction(
+        project_id="flowgate", group_id="flowgate.default.0600", module="default",
+        prev_doc_id="flowgate.default.0600.0001-B", sequence_id=9, head=head,
+        actor_user_id="pm", approver_perms={"document.approve"},
+    )
+
+    assert result["data"]["doc_review_status"] == "pending_review"
+    assert seen["_approve_immediately"] is False
+
+
+def test_pending_instruction_does_not_count_as_auto_handled_or_start_pair(monkeypatch):
+    from modules.flow_gate.db import users as db_users
+
+    head = _head()
+    head["reviewer_provider_id"] = "reviewer-T"
+    head["result_doc_id"] = None
+    state = {"head": head}
+    monkeypatch.setattr(db_users, "get_by_id", lambda user_id: {"user_id": user_id, "is_admin": 1})
+    monkeypatch.setattr(workflow.db_wfseq, "get_effective_head", lambda _sid: state["head"])
+
+    def materialize(**_kwargs):
+        state["head"] = {**head, "result_doc_id": "instruction-T",
+                         "result_doc_review_status": "pending_review"}
+        return {"doc_id": "instruction-T", "data": {"doc_review_status": "pending_review"},
+                "idempotent_reuse": False}
+
+    monkeypatch.setattr(docs, "materialize_work_plan_instruction", materialize)
+    completed = workflow._auto_complete_instruction_heads(
+        spine_doc={"doc_id": "root", "project_id": "flowgate",
+                   "group_id": "flowgate.default.0600", "module": "default"},
+        seq={"id": 9}, actor_user_id="pm", locale="ko", target_seq=2,
+    )
+
+    assert completed == []
+    assert state["head"]["type"] == "T"
+    assert state["head"]["result_doc_review_status"] == "pending_review"

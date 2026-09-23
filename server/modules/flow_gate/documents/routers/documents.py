@@ -1519,6 +1519,7 @@ def materialize_work_plan_instruction(
         approver_perms=approver_perms,
         locale=locale,
         _work_plan_materialization=materialization,
+        _approve_immediately=not bool(head.get("reviewer_provider_id")),
     )
     created["materialization"] = materialization
     created["idempotent_reuse"] = False
@@ -1536,6 +1537,7 @@ def create_next_approved_core(
     approver_perms: set,
     locale: str = "ko",
     _work_plan_materialization: Optional[dict] = None,
+    _approve_immediately: bool = True,
 ) -> dict:
     """Create + approve an instruction document (N | T) for the current head.
 
@@ -1722,15 +1724,17 @@ def create_next_approved_core(
                 user_permissions={"document.update"},
                 locale=locale,
             )
-            # pending_review → approved. approve is an approval action, enforced with
-            # the caller's REAL permission set (P0005 §4 — the asymmetry vs submit).
-            transition_document_review(
-                doc_id=doc["doc_id"],
-                action="approve",
-                actor_user_id=actor_user_id,
-                user_permissions=approver_perms,
-                locale=locale,
-            )
+            # WP-materialized instructions with their own reviewer stop here. The existing
+            # document review gate owns pass/reject/rework and advances only after approval.
+            # Legacy instructions and reviewer-less WP instructions retain the fast path.
+            if _approve_immediately:
+                transition_document_review(
+                    doc_id=doc["doc_id"],
+                    action="approve",
+                    actor_user_id=actor_user_id,
+                    user_permissions=approver_perms,
+                    locale=locale,
+                )
             refreshed = _db_docs.get_by_id(doc["doc_id"])
             if refreshed is not None:
                 doc = refreshed
