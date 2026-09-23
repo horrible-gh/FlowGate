@@ -241,7 +241,7 @@ def test_final_expansion_keeps_each_instruction_payload_on_its_own_row(monkeypat
     assert all(row["source_doc_id"] == WP_ID for row in rows)
     assert all(row["source_revision_no"] == DOC["revision_no"] for row in rows)
 
-def test_auto_row_pre_instruction_snapshot_is_idempotent():
+def test_c6_auto_row_instruction_snapshot_is_idempotent():
     attachment = {"doc_id": WP_ID, "filename": "brief.txt", "content_sha256": "d" * 64}
     rows, _dropped, uid = wpseq.plan_to_rows(
         {"steps": [
@@ -335,7 +335,7 @@ def connected_sequence_store(migrated_sqlite_db):
         store._conn.close()
 
 
-def test_final_expansion_persists_pairs_and_builds_real_worker_prompts(
+def test_c1_c5_c7_final_approval_persists_nt_payload_only_on_instruction_rows(
     connected_sequence_store, monkeypatch,
 ):
     """Run final expansion through real sequence SQL, then production worker prompt assembly."""

@@ -492,12 +492,11 @@ class TestPreInstructionEndToEnd:
             conn_mod.STORE = original_store
             conn.close()
 
-    def test_auto_approved_instruction_bundle_reaches_only_the_paired_worker(
+    def test_wp_materialized_instruction_is_not_folded_into_paired_result_worker(
         self, pre_env, monkeypatch,
     ):
-        # The WorkPlan T step remains the logical owner.  Its durable execution snapshot is
-        # copied onto TR@4 because that is the row auto_approved actually runs; unrelated
-        # N/NR rows carry no copy.
+        # WP-backed T is materialized as its own canonical document. TR@4 must not retain
+        # a hidden copy of the WorkPlan payload; the approved T document is the only SSOT.
         pre_env["wfseq"].head_item_seq = 3
         pre_env["wfseq"].items = [
             {"item_seq": 1, "type": "N", "result_doc_id": "d-0002-N"},
@@ -509,17 +508,17 @@ class TestPreInstructionEndToEnd:
             },
             {
                 "item_seq": 4, "type": "TR", "result_doc_id": None,
-                "source_doc_id": ATTACHMENT["doc_id"], "pre_instruction_text": PRE_TEXT,
-                "pre_instruction_attachment_json": _attachment_json(),
+                "source_doc_id": ATTACHMENT["doc_id"], "pre_instruction_text": None,
+                "pre_instruction_attachment_json": None,
             },
         ]
         monkeypatch.setattr(wpa_svc, "validate_reference", lambda doc_id, reference: None)
         res, outfile = _start(pre_env, MENTION, target_seq=4, instruction_mode="auto_approved")
         _wait_finished(res["run_id"])
         got = _read(outfile).decode("utf-8")
-        assert got.count("## WorkPlan 사전지시") == 1
-        assert PRE_TEXT in got
-        assert ATTACHMENT["original_filename"] in got
+        assert "## WorkPlan 사전지시" not in got
+        assert PRE_TEXT not in got
+        assert ATTACHMENT["original_filename"] not in got
 
     def test_ai_direct_instruction_row_gets_its_own_pre_instruction(self, pre_env):
         # Contrast case: under ai_direct the worker fills T@3 itself (no fold), so T@3's own

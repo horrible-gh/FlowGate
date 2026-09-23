@@ -1509,6 +1509,14 @@ def materialize_work_plan_instruction(
                 "idempotent_reuse": True,
             }
         raise NextApprovedError(409, "Workflow slot is occupied by a different document.")
+    # 0600 TR0010 rev5 (human rejection): review necessity is the effective review_count,
+    # NOT reviewer_provider_id presence. A WorkPlan row may carry review_count > 0 with
+    # reviewer_provider_id = null — "use the project default reviewer" — and
+    # resolve_reviewer() already falls back to that default when no reviewer is stored.
+    # Gating on reviewer_provider_id here skipped instruction review entirely for that
+    # valid configuration.
+    from modules.flow_gate.services.ai_invoke import review as review_gate
+
     created = create_next_approved_core(
         project_id=project_id,
         group_id=group_id,
@@ -1519,7 +1527,7 @@ def materialize_work_plan_instruction(
         approver_perms=approver_perms,
         locale=locale,
         _work_plan_materialization=materialization,
-        _approve_immediately=not bool(head.get("reviewer_provider_id")),
+        _approve_immediately=review_gate.normalize_review_count(head.get("review_count")) == 0,
     )
     created["materialization"] = materialization
     created["idempotent_reuse"] = False

@@ -189,6 +189,22 @@ def _map_contains(mapping: Optional[dict], item_seq: Optional[int]) -> bool:
     return item_seq in mapping or str(item_seq) in mapping
 
 
+def normalize_review_count(raw) -> int:
+    """Normalize a raw stored ``review_count`` value into a valid budget.
+
+    The single source of truth for "is this step reviewed at all" — used by the sequence
+    baseline lookup below AND by the WP pre-gate materializer (0600 TR0010 rev5 human
+    rejection): review necessity is this normalized count being non-zero, never
+    ``reviewer_provider_id`` presence. A row can validly carry ``review_count > 0`` with
+    ``reviewer_provider_id = null`` — "use the project default reviewer" — which
+    :func:`resolve_reviewer` already honours by falling back to the project default.
+    """
+    choices = ai_execution_policy_service.repeat_count_choices(allow_zero=True)
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw not in choices:
+        return REVIEW_COUNT_DEFAULT
+    return raw
+
+
 def _stored_review_policy_for_item_seq(
     doc_ref: Optional[str], item_seq: Optional[int],
 ) -> tuple[int, Optional[str]]:
@@ -205,11 +221,7 @@ def _stored_review_policy_for_item_seq(
         ), None)
         if row is None:
             return REVIEW_COUNT_DEFAULT, None
-        count = row.get("review_count")
-        choices = ai_execution_policy_service.repeat_count_choices(allow_zero=True)
-        if isinstance(count, bool) or not isinstance(count, int) or count not in choices:
-            count = REVIEW_COUNT_DEFAULT
-        return count, row.get("reviewer_provider_id")
+        return normalize_review_count(row.get("review_count")), row.get("reviewer_provider_id")
     except Exception:  # noqa: BLE001 — a damaged baseline must not stall a running chain
         logger.warning("review gate sequence baseline lookup failed for %s", doc_ref,
                        exc_info=True)
@@ -1002,12 +1014,69 @@ def _spawn_rework_hop(group_id: str, bundle: dict, gate: dict) -> dict:
     )
 
 
+def _materialize_work_plan_instruction_before_gate(bundle: dict) -> list[int]:
+    """Expose a server-materialized N/T to the review gate at this handoff boundary.
+
+    The continuous handoff used to resolve the gate first and call advance_workflow
+    afterwards. A WorkPlan-backed instruction with a reviewer was therefore created as
+    pending_review only after the gate had concluded that there was nothing to review;
+    the subsequent advance then stopped on head_in_progress. Materializing through the
+    same production helper before gate resolution makes the pending instruction the current
+    slot, while no-review instructions retain their existing auto-approve behaviour.
+    """
+    from modules.flow_gate.services import workflow_decision_service
+
+    if not bundle.get("materialize_instruction_before_gate"):
+        return []
+    doc_ref = bundle.get("doc_ref")
+    spine_doc = db_docs.get_by_id(doc_ref) if doc_ref else None
+    seq = db_wfseq.get_sequence_for_member_doc(doc_ref) if doc_ref else None
+    issued_to = bundle.get("issued_to")
+    if not spine_doc or not seq or not issued_to:
+        return []
+    head = db_wfseq.get_effective_head(seq["id"])
+    if not head or (head.get("type") or "").upper() not in {"N", "T"}:
+        return []
+    if not head.get("source_doc_id") or head.get("source_revision_no") is None:
+        return []
+    # A WP head whose effective review_count is 0 auto-approves in the SAME breath
+    # materialize_work_plan_instruction writes it (documents.py:
+    # `_approve_immediately=normalize_review_count(head.get("review_count")) == 0`), so
+    # advance_workflow's own internal _auto_complete_instruction_heads loop already carries
+    # it straight through to the next real step with no gate decision involved — there is
+    # no head_in_progress dead end to pre-empt here, and a WP head that a resumed hop is
+    # still actively producing (start_run's very first hop never runs the materializer at
+    # all — only advance_workflow does) must reach that worker unmodified. Only a head
+    # whose effective review_count != 0 can strand the gate on "work" the way this helper
+    # exists to prevent.
+    #
+    # reviewer_provider_id presence is NOT that signal (0600 TR0010 rev5 human rejection):
+    # a WP row can validly carry review_count > 0 with reviewer_provider_id = null — "use
+    # the project default reviewer" — which resolve_reviewer() already honours downstream
+    # when the review hop is actually spawned. Gating this pre-materialize step on
+    # reviewer_provider_id alone skipped instruction review entirely for that
+    # configuration.
+    if normalize_review_count(head.get("review_count")) == 0:
+        return []
+
+    return list(workflow_decision_service._auto_complete_instruction_heads(
+        spine_doc=spine_doc,
+        seq=seq,
+        actor_user_id=issued_to,
+        locale=bundle.get("locale") or "ko",
+        target_seq=bundle.get("target_seq"),
+        instruction_mode=bundle.get("instruction_mode"),
+        auto_approve_item_seqs=bundle.get("auto_approve_item_seqs"),
+    ) or [])
+
+
 def run_review_gate(group_id: str, bundle: dict, run: dict) -> bool:
     """Derive the gate and act on it (L0008 §2.4). True when a next hop actually started.
 
     False means the chain was parked (a durable row + a released lease), so the caller must
     NOT clear the handoff row it wrote — that row is now the [이어서 진행] card.
     """
+    _materialize_work_plan_instruction_before_gate(bundle)
     gate = resolve_review_gate(bundle)
     slot = gate.get("slot")
 
