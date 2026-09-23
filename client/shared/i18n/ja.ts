@@ -3115,6 +3115,20 @@ export default {
       chunk_selection: '選択: {selection}',
       line_suffix: '行',
       origin_flag_title: '競合に由来する範囲',
+      // 0604 D0005 §6 — 解決者の上位集合(supersede)宣言。折りたたまない。
+      supersede_title: '上位集合の宣言',
+      supersede_badge: '宣言',
+      supersede_statement: {
+        ours: '現在側が取り込み側の変更を含むと解決者が宣言しました',
+        theirs: '取り込み側が現在側の変更を含むと解決者が宣言しました',
+      },
+      supersede_reason: '理由: {reason}',
+      supersede_chunk: '元の {start}–{end} 行の競合チャンク · そのまま残った行 {preserved} 件',
+      supersede_replaced: {
+        ours: '置き換えられた現在側の行 ({n})',
+        theirs: '置き換えられた取り込み側の行 ({n})',
+      },
+      supersede_replaced_none: '置き換えられた行はありません — 反対側の行はすべてそのまま残っています。',
       conversation_title: 'AIとの会話',
       awaiting_reply: '返信待ち',
       waiting_in_place: '{provider} が回答を作成中です · {elapsed} 経過 — この画面で待てば返信はここに届きます。',

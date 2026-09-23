@@ -2542,6 +2542,8 @@ def get_merge_review(group_id: str, merge_id: int) -> dict:
             "snapshot_tree": context.get("snapshot_tree"),
             "changes": context.get("changes") or [],
             "conflict_origins": context.get("conflict_origins") or [],
+            # 0604 D0005 §4/§6 — resolver `supersede` declarations, shown in full.
+            "conflict_supersedes": context.get("conflict_supersedes") or [],
             "conversation": context.get("conversation") or [],
             "held_test_operations": context.get("held_test_operations") or [],
             # 0481 T0010 rev1 — non-null while a chat turn's run is still working, so
@@ -2843,6 +2845,12 @@ def approve_merge_review(
         context = db_git.session_context(session)
         if authority == "automatic" and not context.get("auto_authority"):
             raise GitServiceError(403, "human_authority_required", "auto_authority was not recorded for this session")
+        if authority == "automatic" and context.get("conflict_supersedes"):
+            # 0604 D0005 §3.4 — a supersede declaration always needs a person's approval.
+            raise GitServiceError(
+                403, "human_authority_required",
+                "a supersede declaration was recorded; a person must approve this merge",
+            )
         if context.get("approval_attempt_id") == attempt_id and context.get("merge_commit"):
             state = context.get("review_state")
             if state == REVIEW_STATE_COMPLETED:

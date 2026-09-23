@@ -4,6 +4,7 @@ Extracted from git_service.py (flowgate.default.0550 T0015, D0006 §3.2/부록 A
 """
 from __future__ import annotations
 
+import difflib
 import hashlib
 import logging
 import re
@@ -23,6 +24,17 @@ TR_CONFLICT_REVIEW_RESOLVED = "resolved"
 
 _CONFLICT_SEP_RE = re.compile(r"^={7}$")
 _CONFLICT_BASE_RE = re.compile(r"^\|{7}( |$)")
+_CONFLICT_CHUNK_GROUP_MAX_COMMON_LINES = 3
+_SUPERSEDE_SIDES = ("ours", "theirs")
+# A dropped line counts as "changed in place" only when the kept side's replacement
+# run holds an edited version of it (difflib ratio). This pairs lines; it never admits
+# a chunk by an overall inclusion rate (D0005 §3.4 / T0008 §10).
+_SUPERSEDE_CHANGED_LINE_MIN_RATIO = 0.6
+_SUPERSEDE_HINT = (
+    "Use a per-file `supersede` declaration ({\"side\": \"ours|theirs\", \"reason\": \"...\"}) "
+    "ONLY when the side you kept already contains the other side's changes; otherwise merge "
+    "both sides' changes into the chunk."
+)
 
 def _revert_in_flight(wt_path: Path) -> bool:
     """Is a `revert --no-commit` still open in this worktree?
@@ -495,46 +507,200 @@ def _anchor_chunk_selections(segments: list[dict], submitted_lines: list[str]) -
         })
     return results
 
-def _conflict_side_dropped(original: str, submitted: str) -> bool:
-    """True if a base-having chunk where BOTH sides changed something over the common
-    ancestor resolved to an exact, whole-side selection of just one of them.
+def _chunk_original_ranges(segments: list[dict]) -> list[tuple[int, int]]:
+    """1-based inclusive line range each chunk's marker block occupies in the original."""
+    ranges: list[tuple[int, int]] = []
+    line = 1
+    for segment in segments:
+        if segment["type"] == "common":
+            line += len(segment["lines"])
+            continue
+        size = 3 + len(segment["ours"]) + len(segment["theirs"])
+        if segment["base"] is not None:
+            size += 1 + len(segment["base"])
+        ranges.append((line, line + size - 1))
+        line += size
+    return ranges
 
-    Classification is chunk-local, anchored by the unedited common context around each
-    chunk rather than a whole-file line-membership test or an unbounded scan (see
-    :func:`_anchor_chunk_selections`, shared with :func:`_classify_conflict_chunks`'s
-    ours/theirs/both/manual labelling): a manual/synthesized resolution that rewrites
-    both sides' intent into a new line is ``manual``, not ``ours``/``theirs``, and is not
-    rejected here — nothing was dropped in the sense this check exists for. Because each
-    chunk's search window is bracketed by the common text immediately before and after
-    it, the same text sitting anywhere else in the file — in ordinary unedited context,
-    before the chunk, after it, or claimed by a neighboring chunk's own window — cannot
-    stand in for a side this chunk actually dropped, and cannot hide a side it actually
-    kept either.
 
-    Chunks without a base (no common ancestor available) are still walked — to keep the
-    anchor aligned with later chunks — but never trigger rejection: there is nothing to
-    diff against. A chunk where only one side actually changed anything over base is also
-    exempt: keeping the changed side and dropping the unchanged one is a normal, correct
-    resolution.
+def _conflict_side_violations(original: str, submitted: str) -> list[dict]:
+    """Every chunk :func:`_conflict_side_dropped` would reject, in file order.
+
+    Each item is ``{"chunk": <0-based chunk index>, "start_line", "end_line"`` (the
+    marker block's range in the original), ``"side"`` (the side selected verbatim),
+    ``"dropped_side"``, ``"entry"`` (the anchored selection)}.
+
+    Per-chunk selections remain owned by :func:`_anchor_chunk_selections` and are shared
+    unchanged with :func:`_classify_conflict_chunks`.  Base-having conflict chunks are
+    grouped when each intervening common segment has at most
+    ``_CONFLICT_CHUNK_GROUP_MAX_COMMON_LINES`` lines.  A group is considered synthesized
+    only when at least one chunk where both sides changed over base resolves as ``manual``
+    or ``both``; exact-side selections elsewhere in that same nearby group are then part
+    of the synthesis instead of independent side drops.
+
+    A base-less chunk still participates in anchoring, but belongs to no group and breaks
+    grouping on both sides.  A chunk where only one side changed cannot make a group
+    synthesized.  Consequently all-ours, all-theirs, and alternating exact-side choices
+    remain rejected when no genuinely synthesized both-changed chunk exists.
     """
     segments = _split_content_segments(original)
     if segments is None:
-        return False
+        return []
     chunks = [s for s in segments if s["type"] == "chunk"]
     if not chunks:
-        return False
-    submitted_lines = (submitted or "").splitlines()
-    for entry in _anchor_chunk_selections(segments, submitted_lines):
-        chunk = entry["chunk"]
-        base = chunk.get("base")
-        ours, theirs = chunk["ours"], chunk["theirs"]
-        both_changed = False
-        if base is not None:
-            both_changed = bool(_chunk_added_lines(ours, base)) and bool(_chunk_added_lines(theirs, base))
-        if both_changed and entry["selection"] in ("ours", "theirs"):
-            return True
-    return False
+        return []
 
+    submitted_lines = (submitted or "").splitlines()
+    anchored = _anchor_chunk_selections(segments, submitted_lines)
+    ranges = _chunk_original_ranges(segments)
+    groups: list[list[tuple[int, dict]]] = []
+    group: list[tuple[int, dict]] = []
+    for segment_index in range(1, len(segments), 2):
+        chunk_index = (segment_index - 1) // 2
+        entry = anchored[chunk_index]
+        if entry["chunk"].get("base") is None:
+            if group:
+                groups.append(group)
+                group = []
+            continue
+        if group and len(segments[segment_index - 1]["lines"]) > _CONFLICT_CHUNK_GROUP_MAX_COMMON_LINES:
+            groups.append(group)
+            group = []
+        group.append((chunk_index, entry))
+    if group:
+        groups.append(group)
+
+    violations: list[dict] = []
+    for entries in groups:
+        both_changed_entries = []
+        for chunk_index, entry in entries:
+            chunk = entry["chunk"]
+            base = chunk["base"]
+            if bool(_chunk_added_lines(chunk["ours"], base)) and bool(
+                _chunk_added_lines(chunk["theirs"], base)
+            ):
+                both_changed_entries.append((chunk_index, entry))
+        if any(entry["selection"] in ("manual", "both") for _i, entry in both_changed_entries):
+            continue
+        for chunk_index, entry in both_changed_entries:
+            if entry["selection"] not in _SUPERSEDE_SIDES:
+                continue
+            start_line, end_line = ranges[chunk_index]
+            violations.append({
+                "chunk": chunk_index, "start_line": start_line, "end_line": end_line,
+                "side": entry["selection"],
+                "dropped_side": "theirs" if entry["selection"] == "ours" else "ours",
+                "entry": entry,
+            })
+    return violations
+
+
+def _conflict_side_dropped(original: str, submitted: str) -> bool:
+    """True if an unmerged nearby chunk group selects exactly one changed side.
+
+    The boolean view of :func:`_conflict_side_violations` (0604 T0008 split it out so
+    the resolve path can report every violating chunk and check `supersede` against
+    each one); the verdict itself is unchanged.
+    """
+    return bool(_conflict_side_violations(original, submitted))
+
+
+def _supersede_evidence(kept: list[str], dropped: list[str], base: list[str]) -> dict:
+    """0604 D0005 §3.4 condition 3·4 — does ``kept`` really carry ``dropped``'s changes?
+
+    Only the dropped side's own meaningful additions over ``base`` are evidence
+    subjects. They are aligned against the kept side of THE SAME chunk, in order
+    (``difflib`` opcodes, stripped comparison), so a copy elsewhere in the file never
+    counts. Each such line is ``preserved`` (inside an ``equal`` run), ``changed`` (inside
+    the ``replace`` run that took its place, paired in order with a kept line at least
+    ``_SUPERSEDE_CHANGED_LINE_MIN_RATIO`` similar — an edited version of THAT line), or
+    ``removed`` (a ``delete`` run, or no such counterpart: its place is gone). Pairing by
+    similarity rather than by offset keeps a block of brand-new kept lines from
+    absorbing dropped lines as "changed".
+    """
+    added = {line.strip() for line in _chunk_added_lines(dropped, base) if line.strip()}
+    matcher = difflib.SequenceMatcher(
+        None, [line.strip() for line in dropped], [line.strip() for line in kept], autojunk=False,
+    )
+    preserved: list[str] = []
+    changed: list[dict] = []
+    removed: list[str] = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "insert":
+            continue
+        cursor = j1
+        for line in dropped[i1:i2]:
+            if line.strip() not in added:
+                continue
+            if tag == "equal":
+                preserved.append(line)
+                continue
+            counterpart = None
+            if tag == "replace":
+                counterpart = next((
+                    k for k in range(cursor, j2)
+                    if difflib.SequenceMatcher(
+                        None, line.strip(), kept[k].strip(), autojunk=False,
+                    ).ratio() >= _SUPERSEDE_CHANGED_LINE_MIN_RATIO
+                ), None)
+            if counterpart is None:
+                removed.append(line)
+            else:
+                changed.append({"line": line, "replacement": kept[counterpart]})
+                cursor = counterpart + 1
+    return {"preserved": preserved, "changed": changed, "removed": removed}
+
+
+def _supersede_findings(path: str, supersede, violations: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Check one file's ``supersede`` declaration against its violating chunks.
+
+    Returns ``(problems, records)``: ``problems`` is empty only when the declaration is
+    valid for EVERY violating chunk; ``records`` is then the per-chunk evidence to keep.
+    A declaration is never a bypass: it can only excuse chunks the checker already
+    rejects, only the side actually kept, and only with in-place evidence.
+    """
+    if not isinstance(supersede, dict):
+        return [{"path": path, "chunk": None, "side": None, "condition": "malformed"}], []
+    side = supersede.get("side")
+    reason = supersede.get("reason")
+    problems: list[dict] = []
+    if side not in _SUPERSEDE_SIDES:
+        problems.append({"path": path, "chunk": None, "side": side, "condition": "side_invalid"})
+    if not isinstance(reason, str) or not reason.strip():
+        problems.append({"path": path, "chunk": None, "side": side, "condition": "reason_empty"})
+    if not violations:
+        problems.append({"path": path, "chunk": None, "side": side, "condition": "no_violation"})
+    if problems:
+        return problems, []
+    records: list[dict] = []
+    for violation in violations:
+        where = {
+            "path": path, "chunk": violation["chunk"], "side": side,
+            "start_line": violation["start_line"], "end_line": violation["end_line"],
+        }
+        if violation["side"] != side:
+            problems.append({**where, "condition": "side_mismatch", "selected_side": violation["side"]})
+            continue
+        chunk = violation["entry"]["chunk"]
+        evidence = _supersede_evidence(chunk[side], chunk[violation["dropped_side"]], chunk["base"])
+        counts = {
+            "preserved": len(evidence["preserved"]), "changed": len(evidence["changed"]),
+            "removed": len(evidence["removed"]),
+        }
+        if evidence["removed"]:
+            problems.append({**where, "condition": "dropped_lines_removed", **counts,
+                             "removed_lines": evidence["removed"]})
+        elif not evidence["preserved"] or len(evidence["preserved"]) <= len(evidence["changed"]):
+            problems.append({**where, "condition": "insufficient_preserved", **counts})
+        else:
+            records.append({
+                "chunk": violation["chunk"],
+                "start_line": violation["start_line"], "end_line": violation["end_line"],
+                "kept_side": side, "dropped_side": violation["dropped_side"],
+                "preserved_lines": evidence["preserved"],
+                "changed_lines": evidence["changed"],
+            })
+    return problems, records
 
 def _classify_conflict_chunks(path: str, original: str, submitted: str) -> list[dict]:
     """D0006 §3.3 / L0007 §2.4 — per-chunk selection the review screen overlays on
@@ -667,7 +833,13 @@ def resolve_conflicts(
     session_paths = {row["path"] for row in _gs.db_git.session_files(merge_id)}
 
     # Validate EVERYTHING before writing anything (E12 — all-or-nothing).
+    # 0604 T0008: side-drop and supersede failures are collected across ALL files and
+    # reported in one 422, instead of stopping at the first failing file.
     staged: list[tuple[str, Path, str]] = []
+    side_dropped: list[dict] = []
+    supersede_invalid: list[dict] = []
+    supersedes: list[dict] = []
+    evaluated_paths: set[str] = set()
     for f in files or []:
         path = f.get("path")
         content = f.get("content")
@@ -697,15 +869,53 @@ def resolve_conflicts(
                 original = (root / path).read_text(encoding="utf-8", errors="replace")
             except OSError:
                 original = ""
-            if _gs.has_conflict_markers(original) and _conflict_side_dropped(original, content):
-                raise GitServiceError(
-                    422, "conflict_side_dropped",
-                    f"'{path}' dropped one whole side of a resolved conflict chunk",
-                )
+            violations = []
+            if _gs.has_conflict_markers(original):
+                evaluated_paths.add(path)
+                violations = _conflict_side_violations(original, content)
+            # 0604 D0005 §3.4 — an explicit, evidence-checked declaration is the only
+            # thing that can excuse a violating chunk; it never touches a clean one.
+            supersede = f.get("supersede")
+            if supersede is not None:
+                problems, records = _supersede_findings(path, supersede, violations)
+                if problems:
+                    supersede_invalid.extend(problems)
+                else:
+                    supersedes.append({
+                        "path": path, "side": supersede["side"],
+                        "reason": supersede["reason"].strip(), "chunks": records,
+                    })
+            elif violations:
+                side_dropped.append({
+                    "path": path,
+                    "chunks": [
+                        {key: v[key] for key in ("chunk", "start_line", "end_line", "side", "dropped_side")}
+                        for v in violations
+                    ],
+                })
         target = resolve_in_root(root, path)
         if target is None:
             raise GitServiceError(422, "invalid_request", f"unsafe path: '{path}'")
         staged.append((path, target, content, original))
+
+    if side_dropped:
+        details = {"files": side_dropped, "hint": _SUPERSEDE_HINT}
+        if supersede_invalid:
+            details["supersede_invalid"] = supersede_invalid
+        names = ", ".join(f"'{row['path']}'" for row in side_dropped)
+        raise GitServiceError(
+            422, "conflict_side_dropped",
+            f"{names} dropped one whole side of a resolved conflict chunk. {_SUPERSEDE_HINT}",
+            details,
+        )
+    if supersede_invalid:
+        names = ", ".join(sorted({f"'{row['path']}'" for row in supersede_invalid}))
+        raise GitServiceError(
+            422, "conflict_supersede_invalid",
+            f"supersede declaration rejected for {names}; see details.files for the failed "
+            "condition of each chunk",
+            {"files": supersede_invalid},
+        )
 
     for path, target, content, _original in staged:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -714,6 +924,21 @@ def resolve_conflicts(
         if proc.returncode != 0:
             raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
         _gs.db_git.mark_file_resolved(merge_id, path)
+
+    if staged:
+        # 0604 D0005 §3.4 — the declaration record lives next to conflict_origins in
+        # the session context (no schema). A path re-checked against its conflict
+        # markers replaces its own record (dropping it when the new submission needs no
+        # declaration). A marker-less rewrite of an already-written path was never
+        # re-checked, so it cannot erase a declaration and win back auto-approval.
+        context = _gs.db_git.session_context(session)
+        previous = context.get("conflict_supersedes") or []
+        if supersedes or any(row.get("path") in evaluated_paths for row in previous):
+            context["conflict_supersedes"] = [
+                row for row in previous if row.get("path") not in evaluated_paths
+            ] + supersedes
+            _gs.db_git.set_session_context(merge_id, context)
+            session = _gs.db_git.get_session(merge_id)
 
     if staged and _gs.db_git.session_kind(session) == _gs.db_git.SESSION_KIND_MERGE:
         # D0006 §3.3 / L0007 §2.4: record which side each conflict chunk resolved to
@@ -812,7 +1037,9 @@ def resolve_conflicts(
         context["resolver_provider"] = provider_name or provider_id
         context.setdefault("conversation", [])
         _gs.db_git.set_session_context(merge_id, context)
-        automatic = bool(context.get("auto_authority"))
+        # 0604 D0005 §3.4: a session carrying any `supersede` declaration always
+        # stops for a person — the replaced lines must be read before the merge.
+        automatic = bool(context.get("auto_authority")) and not context.get("conflict_supersedes")
     finally:
         _gs.db_git.release_lock(project_id, holder)
 

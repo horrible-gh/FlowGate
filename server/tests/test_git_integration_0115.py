@@ -1061,9 +1061,967 @@ class TestConflictSideDroppedChunkLocal0602:
         assert _conflict_side_dropped(original, submitted) is True
 
 
+class TestConflictSideDroppedAdjacentGroups0604:
+    """0604 T0006 — only genuinely synthesized nearby conflict groups are exempt."""
+
+    @staticmethod
+    def _marker(ours: str, base: Optional[str], theirs: str) -> str:
+        text = "<<<<<<< ours\n" + ours
+        if base is not None:
+            text += "||||||| base\n" + base
+        return text + "=======\n" + theirs + ">>>>>>> theirs\n"
+
+    @staticmethod
+    def _gap(count: int, prefix: str = "gap") -> str:
+        return "".join(f"{prefix}-{index}\n" for index in range(count))
+
+    @classmethod
+    def _two_chunk_original(cls, gap: int) -> str:
+        return (
+            "head\n"
+            + cls._marker("first ours\n", "first base\n", "first theirs\n")
+            + cls._gap(gap)
+            + cls._marker("second ours\n", "second base\n", "second theirs\n")
+            + "tail\n"
+        )
+
+    @classmethod
+    def _two_chunk_submission(cls, first: str, gap: int, second: str) -> str:
+        return "head\n" + first + cls._gap(gap) + second + "tail\n"
+
+    @pytest.mark.parametrize("gap", [1, 2, 3])
+    def test_manual_merge_unlocks_exact_side_only_through_three_common_lines(self, gap):
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        original = self._two_chunk_original(gap)
+        submitted = self._two_chunk_submission("first combined\n", gap, "second theirs\n")
+        assert _conflict_side_dropped(original, submitted) is False
+
+    @pytest.mark.parametrize("side", ["ours", "theirs"])
+    def test_all_one_side_is_still_rejected_inside_a_nearby_group(self, side):
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        submitted = self._two_chunk_submission(
+            f"first {side}\n", 2, f"second {side}\n",
+        )
+        assert _conflict_side_dropped(self._two_chunk_original(2), submitted) is True
+
+    def test_alternating_ours_and_theirs_without_synthesis_is_rejected(self):
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        submitted = self._two_chunk_submission("first ours\n", 2, "second theirs\n")
+        assert _conflict_side_dropped(self._two_chunk_original(2), submitted) is True
+
+    def test_four_common_lines_break_the_group(self):
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        submitted = self._two_chunk_submission("first combined\n", 4, "second theirs\n")
+        assert _conflict_side_dropped(self._two_chunk_original(4), submitted) is True
+
+    def test_baseless_chunk_breaks_group_and_does_not_hide_adjacent_drop(self):
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        original = (
+            "head\n"
+            + self._marker("legacy ours\n", None, "legacy theirs\n")
+            + self._gap(1)
+            + self._marker("normal ours\n", "normal base\n", "normal theirs\n")
+            + "tail\n"
+        )
+        submitted = "head\nlegacy combined\n" + self._gap(1) + "normal ours\ntail\n"
+        assert _conflict_side_dropped(original, submitted) is True
+
+    def test_baseless_chunk_keeps_later_manual_chunk_anchored(self):
+        from modules.flow_gate.services.git.conflict import (
+            _classify_conflict_chunks,
+            _conflict_side_dropped,
+        )
+
+        original = (
+            "head\n"
+            + self._marker("legacy ours\n", None, "legacy theirs\n")
+            + self._gap(1)
+            + self._marker("normal ours\n", "normal base\n", "normal theirs\n")
+            + "tail\n"
+        )
+        submitted = "head\nlegacy combined\n" + self._gap(1) + "normal combined\ntail\n"
+        assert _conflict_side_dropped(original, submitted) is False
+        assert [row["selection"] for row in _classify_conflict_chunks(
+            "baseless.py", original, submitted,
+        )] == ["manual", "manual"]
+
+    def test_one_side_changed_manual_chunk_cannot_unlock_neighbor(self):
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        original = (
+            "head\n"
+            + self._marker("one changed\n", "one base\n", "one base\n")
+            + self._gap(1)
+            + self._marker("both ours\n", "both base\n", "both theirs\n")
+            + "tail\n"
+        )
+        submitted = "head\none manual\n" + self._gap(1) + "both ours\ntail\n"
+        assert _conflict_side_dropped(original, submitted) is True
+
+    def test_three_chunk_chain_is_one_group(self):
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        original = (
+            "head\n"
+            + self._marker("zero ours\n", "zero base\n", "zero theirs\n")
+            + self._gap(2, "gap-a")
+            + self._marker("one ours\n", "one base\n", "one theirs\n")
+            + self._gap(3, "gap-b")
+            + self._marker("two ours\n", "two base\n", "two theirs\n")
+            + "tail\n"
+        )
+        submitted = (
+            "head\nzero combined\n" + self._gap(2, "gap-a")
+            + "one ours\n" + self._gap(3, "gap-b") + "two theirs\ntail\n"
+        )
+        assert _conflict_side_dropped(original, submitted) is False
+
+    @classmethod
+    def _work_plan_0599_reduction(cls) -> tuple[str, dict[str, str]]:
+        """Reduced from real zdiff3 chunks 0..3; common gaps remain exactly 1, 2, 2."""
+        chunks = [
+            ("ever exposing\n", "def _revisions_brief(doc_id)\n", "without exposing\ndoc_id = doc['doc_id']\n"),
+            ("rows = list_by_doc(doc.get('doc_id'))\n", "rows = list_by_doc(doc_id)\nexcept old\n", "rows = list_by_doc(doc_id)\n"),
+            ("result = []\nrevision_no = row.get('revision_no')\n", "return legacy list\n", "result: list[dict] = []\nrevision_no = int(row['revision_no'])\n"),
+            ("restorable = reason is None\n", "legacy result\n", "restorable = selected is not None and reason is None\nif len(result) >= limit:\n    break\n"),
+        ]
+        gaps = [
+            "    try:\n",
+            "    except Exception:  # history failure\n        return []\n",
+            "            created_at = row.get('created_at')\n            created_by = row.get('created_by')\n",
+        ]
+        original = "head\n"
+        for index, (ours, base, theirs) in enumerate(chunks):
+            original += cls._marker(ours, base, theirs)
+            if index < len(gaps):
+                original += gaps[index]
+        original += "    return result\n"
+        submissions = {
+            "merged": (
+                "head\nresolved helper synthesis\n" + gaps[0]
+                + "resolved guarded history lookup\n" + gaps[1]
+                + "resolved de-duplicated result\n" + gaps[2]
+                + chunks[3][2] + "    return result\n"
+            ),
+            "ours": "head\n" + chunks[0][0] + gaps[0] + chunks[1][0] + gaps[1]
+                    + chunks[2][0] + gaps[2] + chunks[3][0] + "    return result\n",
+            "theirs": "head\n" + chunks[0][2] + gaps[0] + chunks[1][2] + gaps[1]
+                      + chunks[2][2] + gaps[2] + chunks[3][2] + "    return result\n",
+        }
+        return original, submissions
+
+    def test_real_work_plan_0599_reduction_passes_without_changing_labels(self):
+        from modules.flow_gate.services.git.conflict import (
+            _classify_conflict_chunks,
+            _conflict_side_dropped,
+        )
+
+        original, submissions = self._work_plan_0599_reduction()
+        assert _conflict_side_dropped(original, submissions["merged"]) is False
+        assert [row["selection"] for row in _classify_conflict_chunks(
+            "server/modules/flow_gate/documents/routers/work_plan.py",
+            original,
+            submissions["merged"],
+        )] == ["manual", "manual", "manual", "theirs"]
+
+    @pytest.mark.parametrize("side", ["ours", "theirs"])
+    def test_real_work_plan_0599_reduction_still_rejects_all_one_side(self, side):
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        original, submissions = self._work_plan_0599_reduction()
+        assert _conflict_side_dropped(original, submissions[side]) is True
+
+    def test_existing_workplaneditor_and_i18n_syntheses_stay_accepted(self):
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        i18n = self._marker("restore old\n", "no restore\n", "restore new\n")
+        assert _conflict_side_dropped(i18n, "restore combined wording\n") is False
+
+        editor = (
+            "head\n"
+            + self._marker("disabled = ours\n", "disabled = base\n", "disabled = theirs\n")
+            + self._gap(2)
+            + self._marker("comment added\n", "comment base\n", "comment base\n")
+            + "tail\n"
+        )
+        submitted = "head\ndisabled = combined\n" + self._gap(2) + "comment added\ntail\n"
+        assert _conflict_side_dropped(editor, submitted) is False
+
+class TestConflictSupersede0604:
+    """0604 T0008 (D0005 §3.4) — the `supersede` declaration is checked chunk by chunk
+    against real evidence; it can only excuse a chunk the checker already rejects."""
+
+    _marker = staticmethod(TestConflictSideDroppedAdjacentGroups0604._marker)
+
+    # Reduced from the real 0599 test_work_plan_0395.py chunk: theirs keeps every line
+    # ours added, rewrites three of them in place (wp_version 2→3, == 1 →
+    # WP_VERSION_SUPPORTED, the table row) and appends its own new test.
+    OURS_0395 = (
+        "def test_restore_rejects_future_version(client, wp_client):\n"
+        "    future_raw = '{\"wp_version\":2,\"binding\":\"advisory\"}\\n'\n"
+        "    restored = wp_client.post('/restore', data=future_raw)\n"
+        "    assert restored.status_code == 422\n"
+        "    assert restored.headers['x-wp'] == 'v'\n"
+        "    assert restored.json()[\"body\"][\"wp_version\"] == 1\n"
+        "    assert restored.json()[\"error\"] == 'wp_version_unsupported'\n"
+        "    (11, bad_dir / \"future.json\", '{\"wp_version\":2}\\n', \"wp_version_unsupported\"),\n"
+    )
+    THEIRS_0395 = (
+        "from modules.flow_gate.services import work_plan_service as wp\n"
+        "def test_restore_rejects_future_version(client, wp_client):\n"
+        "    future_raw = '{\"wp_version\":3,\"binding\":\"advisory\"}\\n'\n"
+        "    restored = wp_client.post('/restore', data=future_raw)\n"
+        "    assert restored.status_code == 422\n"
+        "    assert restored.headers['x-wp'] == 'v'\n"
+        "    assert restored.json()[\"body\"][\"wp_version\"] == wp.WP_VERSION_SUPPORTED\n"
+        "    assert restored.json()[\"error\"] == 'wp_version_unsupported'\n"
+        "    (11, bad_dir / \"future.json\", '{\"wp_version\":3}\\n', \"wp_version_unsupported\"),\n"
+        "\n"
+        "def test_connected_recovery_added_by_theirs():\n"
+        "    assert wp.WP_VERSION_SUPPORTED == 2\n"
+    )
+    BASE_0395 = "import pytest\n"
+
+    @classmethod
+    def _original(cls, ours: str, theirs: str, base: Optional[str] = None) -> str:
+        base = cls.BASE_0395 if base is None else base
+        return "head\n" + cls._marker(base + ours, base, base + theirs) + "tail\n"
+
+    @staticmethod
+    def _submitted(side_text: str, base: str = "import pytest\n") -> str:
+        return "head\n" + base + side_text + "tail\n"
+
+    @staticmethod
+    def _check(path: str, original: str, submitted: str, supersede):
+        from modules.flow_gate.services.git.conflict import (
+            _conflict_side_violations,
+            _supersede_findings,
+        )
+
+        return _supersede_findings(path, supersede, _conflict_side_violations(original, submitted))
+
+    def test_violations_list_every_rejected_chunk_with_original_line_range(self):
+        from modules.flow_gate.services.git.conflict import (
+            _conflict_side_dropped,
+            _conflict_side_violations,
+        )
+
+        original = (
+            "head\n"
+            + self._marker("a ours\n", "a base\n", "a theirs\n")
+            + "".join(f"gap-{i}\n" for i in range(5))
+            + self._marker("b ours\n", "b base\n", "b theirs\n")
+            + "tail\n"
+        )
+        submitted = "head\na theirs\n" + "".join(f"gap-{i}\n" for i in range(5)) + "b ours\ntail\n"
+        violations = _conflict_side_violations(original, submitted)
+        assert [(v["chunk"], v["start_line"], v["end_line"], v["side"], v["dropped_side"])
+                for v in violations] == [(0, 2, 8, "theirs", "ours"), (1, 14, 20, "ours", "theirs")]
+        lines = original.splitlines()
+        assert lines[1].startswith("<<<<<<<") and lines[7].startswith(">>>>>>>")
+        assert lines[13].startswith("<<<<<<<") and lines[19].startswith(">>>>>>>")
+        assert _conflict_side_dropped(original, submitted) is True
+        assert _conflict_side_violations(original, "head\na both\n" + "".join(
+            f"gap-{i}\n" for i in range(5)) + "b both\ntail\n") == []
+
+    def test_0395_reduction_theirs_exact_without_declaration_is_a_violation(self):
+        from modules.flow_gate.services.git.conflict import _conflict_side_violations
+
+        original = self._original(self.OURS_0395, self.THEIRS_0395)
+        violations = _conflict_side_violations(original, self._submitted(self.THEIRS_0395))
+        assert [v["side"] for v in violations] == ["theirs"]
+
+    def test_0395_reduction_valid_theirs_declaration_passes_with_evidence(self):
+        original = self._original(self.OURS_0395, self.THEIRS_0395)
+        problems, records = self._check(
+            "server/tests/test_work_plan_0395.py", original, self._submitted(self.THEIRS_0395),
+            {"side": "theirs", "reason": "theirs already carries every ours test"},
+        )
+        assert problems == []
+        assert len(records) == 1
+        record = records[0]
+        assert (record["kept_side"], record["dropped_side"]) == ("theirs", "ours")
+        assert len(record["preserved_lines"]) == 5
+        assert [row["line"].strip() for row in record["changed_lines"]] == [
+            "future_raw = '{\"wp_version\":2,\"binding\":\"advisory\"}\\n'",
+            "assert restored.json()[\"body\"][\"wp_version\"] == 1",
+            "(11, bad_dir / \"future.json\", '{\"wp_version\":2}\\n', \"wp_version_unsupported\"),",
+        ]
+        assert [row["replacement"].strip() for row in record["changed_lines"]][1] == (
+            "assert restored.json()[\"body\"][\"wp_version\"] == wp.WP_VERSION_SUPPORTED"
+        )
+
+    def test_0395_reduction_ours_declaration_is_rejected_because_theirs_lines_vanish(self):
+        original = self._original(self.OURS_0395, self.THEIRS_0395)
+        problems, records = self._check(
+            "t.py", original, self._submitted(self.OURS_0395),
+            {"side": "ours", "reason": "ours is enough"},
+        )
+        assert records == []
+        assert [p["condition"] for p in problems] == ["dropped_lines_removed"]
+        assert "from modules.flow_gate.services import work_plan_service as wp" in [
+            line.strip() for line in problems[0]["removed_lines"]
+        ]
+
+    def test_line_removed_from_its_place_rejects_the_declaration(self):
+        # theirs no longer has ours' `error` assertion anywhere in the chunk.
+        theirs = self.THEIRS_0395.replace(
+            "    assert restored.json()[\"error\"] == 'wp_version_unsupported'\n", "",
+        )
+        original = self._original(self.OURS_0395, theirs)
+        problems, _records = self._check(
+            "t.py", original, self._submitted(theirs), {"side": "theirs", "reason": "r"},
+        )
+        assert [p["condition"] for p in problems] == ["dropped_lines_removed"]
+        assert problems[0]["removed"] == 1
+
+    def test_same_text_elsewhere_in_the_file_is_not_evidence(self):
+        # The dropped ours line survives only OUTSIDE the chunk (in common text) — that
+        # is not "kept in place", so the declaration still fails.
+        ours = "keep me\nours only line\n"
+        theirs = "keep me\ntheirs line one\ntheirs line two\n"
+        original = "ours only line\n" + self._marker(ours, "", theirs) + "tail\n"
+        submitted = "ours only line\n" + theirs + "tail\n"
+        problems, _records = self._check("t.py", original, submitted, {"side": "theirs", "reason": "r"})
+        assert [p["condition"] for p in problems] == ["dropped_lines_removed"]
+
+    @pytest.mark.parametrize("ours,theirs", [
+        ("x = 1\ny = 2\n", "x = 1\ny = 3\n"),                  # preserved 1 == changed 1
+        ("x = 1\ny = 2\nz = 2\n", "x = 1\ny = 3\nz = 3\n"),    # preserved 1 <  changed 2
+        ("y = 2\n", "y = 3\n"),                                # preserved 0
+    ])
+    def test_preserved_must_outnumber_changed(self, ours, theirs):
+        original = self._original(ours, theirs, base="")
+        problems, records = self._check(
+            "t.py", original, self._submitted(theirs, base=""), {"side": "theirs", "reason": "r"},
+        )
+        assert records == []
+        assert [p["condition"] for p in problems] == ["insufficient_preserved"]
+
+    def test_declared_side_must_match_the_side_actually_kept(self):
+        original = self._original(self.OURS_0395, self.THEIRS_0395)
+        problems, _records = self._check(
+            "t.py", original, self._submitted(self.THEIRS_0395), {"side": "ours", "reason": "r"},
+        )
+        assert [(p["condition"], p["selected_side"]) for p in problems] == [("side_mismatch", "theirs")]
+
+    def test_declaration_on_a_file_without_violation_is_rejected(self):
+        # T#1 synthesized group: already passes, so a declaration is never needed there.
+        original, submissions = TestConflictSideDroppedAdjacentGroups0604._work_plan_0599_reduction()
+        problems, _records = self._check(
+            "work_plan.py", original, submissions["merged"], {"side": "theirs", "reason": "r"},
+        )
+        assert [p["condition"] for p in problems] == ["no_violation"]
+
+    @pytest.mark.parametrize("supersede,conditions", [
+        ({"side": "both", "reason": "r"}, ["side_invalid"]),
+        ({"side": "theirs", "reason": "   "}, ["reason_empty"]),
+        ("theirs", ["malformed"]),
+    ])
+    def test_malformed_declaration_is_rejected(self, supersede, conditions):
+        original = self._original(self.OURS_0395, self.THEIRS_0395)
+        problems, _records = self._check(
+            "t.py", original, self._submitted(self.THEIRS_0395), supersede,
+        )
+        assert [p["condition"] for p in problems] == conditions
+
+    def test_one_declaration_must_hold_for_every_violating_chunk(self):
+        # Two independent chunks, both theirs-exact: the second has no evidence.
+        original = (
+            "head\n"
+            + self._marker(self.OURS_0395, "", self.THEIRS_0395)
+            + "".join(f"gap-{i}\n" for i in range(5))
+            + self._marker("value = 'ours'\n", "value = 'base'\n", "value = 'theirs'\n")
+            + "tail\n"
+        )
+        submitted = "head\n" + self.THEIRS_0395 + "".join(f"gap-{i}\n" for i in range(5)) + "value = 'theirs'\ntail\n"
+        problems, _records = self._check("t.py", original, submitted, {"side": "theirs", "reason": "r"})
+        assert [(p["chunk"], p["condition"]) for p in problems] == [(1, "insufficient_preserved")]
+
+    def test_classify_labels_are_unchanged_by_a_declaration(self):
+        from modules.flow_gate.services.git.conflict import _classify_conflict_chunks
+
+        original = self._original(self.OURS_0395, self.THEIRS_0395)
+        rows = _classify_conflict_chunks("t.py", original, self._submitted(self.THEIRS_0395))
+        assert [row["selection"] for row in rows] == ["theirs"]
+
+
+class TestSupersedeTransport0604:
+    """0604 T0008 §11.8 / §11.10 — `supersede` reaches resolve_conflicts from both
+    routes and the API worker, and the resolver is told how (and when) to use it."""
+
+    DECL = {"side": "theirs", "reason": "theirs contains ours"}
+
+    def _client(self, monkeypatch):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from modules.flow_gate.api.v1 import git_routes
+        from modules.flow_gate.auth.middleware import get_current_user
+
+        captured: list = []
+
+        def fake_resolve(group_id, merge_id, files, complete, **kwargs):
+            captured.append({"files": files, "complete": complete})
+            return {"ok": True, "result": {"status": "conflict", "remaining_conflicts": ["x"]}}
+
+        monkeypatch.setattr(git_routes.git_service, "resolve_conflicts", fake_resolve)
+        monkeypatch.setattr(git_routes, "_has_permission", lambda *a, **k: True)
+        monkeypatch.setattr(
+            git_routes, "verify_bearer",
+            lambda request: {
+                "action_scope": "resolve_conflict", "group_id": "gitprj.default.0690",
+                "merge_id": 7, "token_id": "tok_transport_0604", "project": "gitprj",
+            },
+        )
+        app = FastAPI()
+        app.include_router(git_routes.router)
+        app.dependency_overrides[get_current_user] = lambda: {"user_id": "usr_admin"}
+        return TestClient(app, raise_server_exceptions=False), captured
+
+    @pytest.mark.parametrize("route", ["resolve", "resolve-token"])
+    def test_route_forwards_supersede_to_resolve_conflicts(self, monkeypatch, route):
+        client, captured = self._client(monkeypatch)
+        response = client.post(
+            f"/api/v1/groups/gitprj.default.0690/git/merge/7/{route}",
+            json={"files": [
+                {"path": "a.py", "content": "x\n", "supersede": self.DECL},
+                {"path": "b.py", "content": "y\n"},
+            ], "complete": False},
+            headers={"Authorization": "Bearer test"},
+        )
+        assert response.status_code == 200, response.text
+        files = captured[0]["files"]
+        assert files[0]["supersede"] == self.DECL
+        assert files[1].get("supersede") is None
+
+    @pytest.mark.parametrize("route", ["resolve", "resolve-token"])
+    def test_unknown_supersede_key_and_top_level_extra_stay_forbidden(self, monkeypatch, route):
+        client, captured = self._client(monkeypatch)
+        base = f"/api/v1/groups/gitprj.default.0690/git/merge/7/{route}"
+        bad_decl = client.post(base, json={"files": [
+            {"path": "a.py", "content": "x\n", "supersede": {**self.DECL, "force": True}},
+        ]}, headers={"Authorization": "Bearer test"})
+        assert bad_decl.status_code == 422
+        extra = client.post(base, json={"files": [], "approve": True},
+                            headers={"Authorization": "Bearer test"})
+        assert extra.status_code == 422
+        assert captured == []
+
+    def test_api_worker_forwards_supersede_verbatim(self, monkeypatch):
+        import io
+        import json as _json
+
+        from modules.flow_gate.services.ai_invoke import worker
+
+        sent: list = []
+
+        class _Resp(io.BytesIO):
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def fake_urlopen(req, timeout=None):
+            sent.append(_json.loads(req.data.decode("utf-8")))
+            return _Resp(b'{"ok": true}')
+
+        monkeypatch.setattr(worker.urllib.request, "urlopen", fake_urlopen)
+        monkeypatch.setattr(worker.provider_api, "_resolve_transport_api_base", lambda run: "http://x/api/v1")
+        monkeypatch.setattr(worker.provider_api, "_sanitize_diagnostic_base", lambda base: base)
+        files = [{"path": "a.py", "content": "x\n", "supersede": self.DECL}]
+        status, _body = worker._resolve_conflict(
+            {"group_id": "g", "merge_id": 1}, "tok", {"files": files, "complete": True},
+        )
+        assert status == 200
+        assert sent[0]["files"] == files
+
+    def test_resolve_tool_schema_declares_optional_supersede(self):
+        from modules.flow_gate.services.ai_invoke.runtime import _RESOLVE_TOOL_SCHEMA
+
+        item = _RESOLVE_TOOL_SCHEMA["properties"]["files"]["items"]
+        assert item["required"] == ["path", "content"]
+        supersede = item["properties"]["supersede"]
+        assert supersede["properties"]["side"]["enum"] == ["ours", "theirs"]
+        assert supersede["required"] == ["side", "reason"]
+        assert "conflict_side_dropped" in supersede["description"]
+
+    def test_conflict_mention_explains_supersede_conditions(self, monkeypatch):
+        # token_routes reaches config.Settings(), which requires these (same values as
+        # test_scratch_sentinel_cross_surface_0506.py).
+        monkeypatch.setenv("ALLOWED_ORIGIN", "http://localhost")
+        monkeypatch.setenv("CONTEXT", "/flowgate")
+        monkeypatch.setenv("DB_TYPE", "sqlite")
+        from modules.flow_gate.api import token_routes
+
+        monkeypatch.setattr(token_routes.git_service, "list_conflicts", lambda g, m: {
+            "ok": True, "merge_id": m, "branch": "b", "base_branch": "main", "kind": "merge",
+            "tr_conflict": None,
+            "files": [{"path": "a.py", "content": "<<<<<<< a\nx\n=======\ny\n>>>>>>> b\n", "conflict_count": 1}],
+        })
+        mention = token_routes._build_conflict_mention(
+            group_id="gitprj.default.0690", project_id="gitprj", merge_id=7,
+            scratch_dir="/tmp/scratch", raw_token="tok", api_base_url="http://x/api/v1",
+        )
+        section = mention.split("## Superset declaration (`supersede`)", 1)[1].split("## ", 1)[0]
+        assert '"supersede": {"side": "ours|theirs"' in section
+        for needle in ("conflict_side_dropped", "conflict_supersede_invalid", "ALREADY contains",
+                       "never auto-approved", "Do not invent lines"):
+            assert needle in section
+        assert "Normally the fix is to merge both sides" in section
+
 @needs_git
 class TestGitEndToEnd:
     GROUP = "gitprj.default.0100"
+
+    def test_adjacent_chunk_group_resolve_token_end_to_end(self, origin_repo, monkeypatch):
+        """Real zdiff3 two-chunk merge: all-side rejects, synthesis reaches review."""
+        from fastapi import FastAPI, Request
+        from fastapi.responses import JSONResponse
+        from fastapi.testclient import TestClient
+
+        from modules.flow_gate.api.v1 import git_routes
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services.git_service import GitServiceError
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0604"
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        base_text = (
+            "def adjacent():\n"
+            "    first = 'base'\n"
+            "    bridge_1 = 1\n"
+            "    bridge_2 = 2\n"
+            "    bridge_3 = 3\n"
+            "    second = 'base'\n"
+        )
+        ours_text = base_text.replace("'base'", "'ours'")
+        theirs_text = base_text.replace("'base'", "'theirs'")
+        (seedwt / "adjacent.py").write_text(base_text, encoding="utf-8")
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "add adjacent chunk base"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0604")
+        (wt / "adjacent.py").write_text(theirs_text, encoding="utf-8")
+        (seedwt / "adjacent.py").write_text(ours_text, encoding="utf-8")
+        _git(["commit", "-am", "change adjacent chunks on main"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        finalized = svc.finalize(group, "merge")
+        assert finalized["result"]["status"] == "conflict"
+        merge_id = finalized["result"]["merge_id"]
+        conflict = svc.list_conflicts(group, merge_id)["files"][0]["content"]
+        assert conflict.count("<<<<<<<") == 2
+        conflict_root = svc.resolve_conflict_src_root(group, merge_id)
+        before = (conflict_root / "adjacent.py").read_bytes()
+
+        app = FastAPI()
+        app.include_router(git_routes.router)
+
+        @app.exception_handler(GitServiceError)
+        async def _handler(request: Request, exc: GitServiceError):  # noqa: ANN202
+            error = {"code": exc.code, "message": exc.message}
+            if exc.details:
+                error["details"] = exc.details
+            return JSONResponse(status_code=exc.status, content={"ok": False, "error": error})
+
+        monkeypatch.setattr(
+            git_routes, "verify_bearer",
+            lambda request: {
+                "action_scope": "resolve_conflict", "group_id": group,
+                "merge_id": merge_id, "token_id": "tok_adjacent_0604", "project": "gitprj",
+            },
+        )
+        client = TestClient(app, raise_server_exceptions=False)
+        endpoint = f"/api/v1/groups/{group}/git/merge/{merge_id}/resolve-token"
+
+        for one_side in (ours_text, theirs_text):
+            response = client.post(endpoint, json={
+                "files": [{"path": "adjacent.py", "content": one_side}],
+                "complete": True,
+            }, headers={"Authorization": "Bearer test"})
+            assert response.status_code == 422, response.text
+            assert response.json()["error"]["code"] == "conflict_side_dropped"
+            assert (conflict_root / "adjacent.py").read_bytes() == before
+
+        combined = (
+            "def adjacent():\n"
+            "    first = 'ours+theirs'\n"
+            "    bridge_1 = 1\n"
+            "    bridge_2 = 2\n"
+            "    bridge_3 = 3\n"
+            "    second = 'theirs'\n"
+        )
+        accepted = client.post(endpoint, json={
+            "files": [{"path": "adjacent.py", "content": combined}],
+            "complete": True,
+        }, headers={"Authorization": "Bearer test"})
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["result"]["status"] == "resolved_pending_review"
+        review = svc.get_merge_review(group, merge_id)["result"]
+        origins = [row for row in review["conflict_origins"] if row["path"] == "adjacent.py"]
+        assert [row["selection"] for row in origins] == ["manual", "theirs"]
+
+        aborted = svc.abort_merge(group, merge_id)
+        assert aborted["result"]["status"] == "waiting"
+
+    @staticmethod
+    def _resolve_token_client_0604(monkeypatch, group: str, merge_id: int):
+        """Real git_routes router + GitServiceError envelope; only verify_bearer stubbed."""
+        from fastapi import FastAPI, Request
+        from fastapi.responses import JSONResponse
+        from fastapi.testclient import TestClient
+
+        from modules.flow_gate.api.v1 import git_routes
+        from modules.flow_gate.services.git_service import GitServiceError
+
+        app = FastAPI()
+        app.include_router(git_routes.router)
+
+        @app.exception_handler(GitServiceError)
+        async def _handler(request: Request, exc: GitServiceError):  # noqa: ANN202
+            error = {"code": exc.code, "message": exc.message}
+            if exc.details:
+                error["details"] = exc.details
+            return JSONResponse(status_code=exc.status, content={"ok": False, "error": error})
+
+        monkeypatch.setattr(
+            git_routes, "verify_bearer",
+            lambda request: {
+                "action_scope": "resolve_conflict", "group_id": group,
+                "merge_id": merge_id, "token_id": f"tok_{group}", "project": "gitprj",
+            },
+        )
+        client = TestClient(app, raise_server_exceptions=False)
+        endpoint = f"/api/v1/groups/{group}/git/merge/{merge_id}/resolve-token"
+
+        def post(files, complete=True):
+            return client.post(endpoint, json={"files": files, "complete": complete},
+                               headers={"Authorization": "Bearer test"})
+        return post
+
+    def test_supersede_declaration_resolve_token_end_to_end(self, origin_repo, monkeypatch):
+        """0604 T0008 §11.1~§11.7: a real zdiff3 session through the resolve-token route."""
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services.git_service import GitServiceError
+        from modules.flow_gate.storage.paths import src_root
+
+        sup = TestConflictSupersede0604
+        group = "gitprj.default.0605"
+        texts = {
+            "sup.py": (sup.BASE_0395, sup.BASE_0395 + sup.OURS_0395, sup.BASE_0395 + sup.THEIRS_0395),
+            "other.py": ("value = 'base'\n", "value = 'ours'\n", "value = 'theirs'\n"),
+            "clean.py": ("flag = 'base'\n", "flag = 'ours'\n", "flag = 'theirs'\n"),
+        }
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        for path, (base, _ours, _theirs) in texts.items():
+            (seedwt / path).write_text(base, encoding="utf-8")
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "add supersede bases"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0605")
+        for path, (_base, ours, theirs) in texts.items():
+            (wt / path).write_text(theirs, encoding="utf-8")
+            (seedwt / path).write_text(ours, encoding="utf-8")
+        _git(["commit", "-am", "change supersede files on main"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        finalized = svc.finalize(group, "merge")
+        assert finalized["result"]["status"] == "conflict"
+        merge_id = finalized["result"]["merge_id"]
+        assert sorted(f["path"] for f in svc.list_conflicts(group, merge_id)["files"]) == sorted(texts)
+        root = svc.resolve_conflict_src_root(group, merge_id)
+        before = {path: (root / path).read_bytes() for path in texts}
+        post = self._resolve_token_client_0604(monkeypatch, group, merge_id)
+
+        def unchanged():
+            return all((root / path).read_bytes() == raw for path, raw in before.items())
+
+        ours = {path: t[1] for path, t in texts.items()}
+        theirs = {path: t[2] for path, t in texts.items()}
+        merged = {"other.py": "value = 'ours+theirs'\n", "clean.py": "flag = 'ours+theirs'\n"}
+        decl = {"side": "theirs", "reason": "theirs already carries every test ours added"}
+
+        # §11.1 + §11.7: two violating files in ONE 422, with the supersede hint; nothing written.
+        response = post([
+            {"path": "sup.py", "content": theirs["sup.py"]},
+            {"path": "other.py", "content": ours["other.py"]},
+            {"path": "clean.py", "content": merged["clean.py"]},
+        ])
+        assert response.status_code == 422, response.text
+        error = response.json()["error"]
+        assert error["code"] == "conflict_side_dropped"
+        assert [row["path"] for row in error["details"]["files"]] == ["sup.py", "other.py"]
+        first = error["details"]["files"][0]["chunks"][0]
+        assert (first["chunk"], first["side"], first["dropped_side"]) == (0, "theirs", "ours")
+        assert first["start_line"] >= 1 and first["end_line"] > first["start_line"]
+        assert "supersede" in error["message"] and "supersede" in error["details"]["hint"]
+        assert unchanged()
+
+        # §11.5 side mismatch, §11.3 dropped lines removed, §11.6 no violation.
+        cases = [
+            ([{"path": "sup.py", "content": theirs["sup.py"], "supersede": {**decl, "side": "ours"}}],
+             "side_mismatch"),
+            ([{"path": "sup.py", "content": ours["sup.py"], "supersede": {**decl, "side": "ours"}}],
+             "dropped_lines_removed"),
+            ([{"path": "other.py", "content": theirs["other.py"], "supersede": decl}],
+             "insufficient_preserved"),
+            ([{"path": "clean.py", "content": merged["clean.py"], "supersede": decl}],
+             "no_violation"),
+        ]
+        for files, condition in cases:
+            response = post(files)
+            assert response.status_code == 422, response.text
+            error = response.json()["error"]
+            assert error["code"] == "conflict_supersede_invalid"
+            assert [row["condition"] for row in error["details"]["files"]] == [condition]
+            assert error["details"]["files"][0]["path"] == files[0]["path"]
+            assert unchanged()
+
+        # §11.2: a valid theirs declaration passes, is recorded, and blocks auto-approval.
+        svc.record_auto_authority(group, merge_id, True)
+        accepted = post([
+            {"path": "sup.py", "content": theirs["sup.py"], "supersede": decl},
+            {"path": "other.py", "content": merged["other.py"]},
+            {"path": "clean.py", "content": merged["clean.py"]},
+        ])
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["result"]["status"] == "resolved_pending_review"
+        assert (root / "sup.py").read_text(encoding="utf-8") == theirs["sup.py"]
+        context = db_git.session_context(db_git.get_session(merge_id))
+        assert context["auto_authority"] is True
+        records = context["conflict_supersedes"]
+        assert [(r["path"], r["side"], r["reason"]) for r in records] == [("sup.py", "theirs", decl["reason"])]
+        chunk = records[0]["chunks"][0]
+        assert (len(chunk["preserved_lines"]), len(chunk["changed_lines"])) == (5, 3)
+        review = svc.get_merge_review(group, merge_id)["result"]
+        assert review["conflict_supersedes"] == records
+        assert [o["selection"] for o in review["conflict_origins"] if o["path"] == "sup.py"] == ["theirs"]
+        with pytest.raises(GitServiceError) as denied:
+            svc.approve_merge_review(
+                group, merge_id, attempt_id="auto-0605",
+                review_fingerprint=review["review_fingerprint"], authority="automatic",
+            )
+        assert denied.value.code == "human_authority_required"
+
+        aborted = svc.abort_merge(group, merge_id)
+        assert aborted["result"]["status"] == "waiting"
+
+    _MERGE_0599 = {
+        "base": "c1949e69c86f99ddf77b3f2fc946e4ce4b88e493",
+        "ours": "691fbc7",
+        "theirs": "d1318024",
+        "paths": [
+            "client/shared/i18n/en.ts",
+            "client/shared/i18n/ja.ts",
+            "client/shared/i18n/ko.ts",
+            "client/src/main/components/WorkPlanEditor.vue",
+            "server/modules/flow_gate/documents/routers/work_plan.py",
+            "server/tests/test_work_plan_0395.py",
+        ],
+    }
+
+    @classmethod
+    def _merge_0599_inputs(cls) -> tuple[dict, dict, dict, dict]:
+        """(base, ours, theirs, resolved) bytes per path for the real 0599 merge.
+
+        base/ours/theirs are read from this repository's own history (691fbc7 = main at
+        the time, d1318024 = the 0599 group head). The resolution is theirs + the 0599
+        resolver's patch (fixtures/merge_0599_resolution.patch); test_work_plan_0395.py is
+        theirs verbatim — the superset case the declaration exists for.
+        """
+        repo = Path(__file__).resolve().parents[2]
+        spec = cls._MERGE_0599
+        blobs: dict[str, dict[str, bytes]] = {}
+        for label in ("base", "ours", "theirs"):
+            probe = subprocess.run(["git", "cat-file", "-e", f"{spec[label]}^{{commit}}"],
+                                   cwd=repo, capture_output=True)
+            if probe.returncode != 0:
+                pytest.fail(f"0599 E2E needs commit {spec[label]} in {repo} (full clone required)")
+            blobs[label] = {
+                path: subprocess.run(["git", "show", f"{spec[label]}:{path}"], cwd=repo,
+                                     capture_output=True, check=True).stdout
+                for path in spec["paths"]
+            }
+        scratch = Path(tempfile.mkdtemp(prefix="fg-0599-resolution-"))
+        try:
+            _git(["init", "-b", "main", str(scratch)])
+            for path, raw in blobs["theirs"].items():
+                (scratch / path).parent.mkdir(parents=True, exist_ok=True)
+                (scratch / path).write_bytes(raw)
+            patch = Path(__file__).resolve().parent / "fixtures" / "merge_0599_resolution.patch"
+            _git(["apply", "--whitespace=nowarn", str(patch)], cwd=scratch)
+            resolved = {path: (scratch / path).read_bytes() for path in spec["paths"]}
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
+        assert resolved["server/tests/test_work_plan_0395.py"] == blobs["theirs"]["server/tests/test_work_plan_0395.py"]
+        return blobs["base"], blobs["ours"], blobs["theirs"], resolved
+
+    def test_0599_six_files_resolve_in_one_resolve_token_call(self, origin_repo, monkeypatch):
+        """0604 T0008 §11.12 (완료 조건): the real 0599 merge, reproduced by zdiff3 in a
+        throwaway repo, resolves all six files in ONE resolve-token call; all-ours and
+        all-theirs stay rejected with or without declarations."""
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        base, ours, theirs, resolved = self._merge_0599_inputs()
+        paths = self._MERGE_0599["paths"]
+        group = "gitprj.default.0606"
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        for path in paths:
+            (seedwt / path).parent.mkdir(parents=True, exist_ok=True)
+            (seedwt / path).write_bytes(base[path])
+        # The real repository runs with core.autocrlf=false. git-for-Windows' system
+        # config turns it on, which renormalizes WorkPlanEditor.vue's mixed line endings
+        # and changes git's chunk layout (7 chunks instead of the real 8). `-text` keeps
+        # these six paths byte-exact under any autocrlf, as in the real repository.
+        (seedwt / ".gitattributes").write_text(
+            "".join(f"{path} -text\n" for path in paths), encoding="utf-8",
+        )
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "0599 merge base (c1949e69)"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0606")
+        for path in paths:
+            (wt / path).write_bytes(theirs[path])
+            (seedwt / path).write_bytes(ours[path])
+        _git(["commit", "-am", "0599 main side (691fbc7)"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        finalized = svc.finalize(group, "merge")
+        assert finalized["result"]["status"] == "conflict"
+        merge_id = finalized["result"]["merge_id"]
+        conflicts = {f["path"]: f for f in svc.list_conflicts(group, merge_id)["files"]}
+        assert sorted(conflicts) == sorted(paths)
+        # Same chunk layout as the live session 97 (D0005 V1).
+        assert [conflicts[p]["conflict_count"] for p in paths] == [1, 1, 1, 8, 5, 1]
+        root = svc.resolve_conflict_src_root(group, merge_id)
+        before = {path: (root / path).read_bytes() for path in paths}
+        post = self._resolve_token_client_0604(monkeypatch, group, merge_id)
+        decl_0395 = {
+            "side": "theirs",
+            "reason": "theirs keeps every ours test and only moves wp_version expectations "
+                      "to WP_VERSION_SUPPORTED=2 of the merged tree",
+        }
+
+        def text(raw: bytes) -> str:
+            return raw.decode("utf-8")
+
+        def pick(raw: bytes, side: str) -> str:
+            """Resolve every chunk of the real marker file to one side (EOLs kept)."""
+            out, state = [], "common"
+            for line in raw.decode("utf-8").splitlines(keepends=True):
+                bare = line.rstrip("\r\n")
+                if state == "common" and bare.startswith("<<<<<<<"):
+                    state = "ours"
+                elif state == "ours" and bare.startswith("|||||||"):
+                    state = "base"
+                elif state in ("ours", "base") and bare == "=======":
+                    state = "theirs"
+                elif state == "theirs" and bare.startswith(">>>>>>>"):
+                    state = "common"
+                elif state in ("common", side):
+                    out.append(line)
+            return "".join(out)
+
+        # §11.12 / D0005 완료 조건 3: all-ours and all-theirs are rejected with or
+        # without declarations, and nothing is written. (a) one side picked in EVERY
+        # chunk of the real markers: every file is a violation, listed in one 422.
+        for label in ("ours", "theirs"):
+            for declare in (False, True):
+                files = [{"path": p, "content": pick(before[p], label)} for p in paths]
+                if declare:
+                    for row in files:
+                        row["supersede"] = {"side": label, "reason": f"all {label}"}
+                response = post(files)
+                assert response.status_code == 422, (label, declare, response.text)
+                error = response.json()["error"]
+                listed = [row["path"] for row in error["details"]["files"]]
+                if declare:
+                    assert error["code"] == "conflict_supersede_invalid"
+                    assert {
+                        "client/src/main/components/WorkPlanEditor.vue",
+                        "server/modules/flow_gate/documents/routers/work_plan.py",
+                    } <= set(listed)
+                else:
+                    assert error["code"] == "conflict_side_dropped"
+                    assert listed == paths
+                assert all((root / p).read_bytes() == before[p] for p in paths)
+        # (b) whole side blobs (`git checkout --ours/--theirs`): also refused as a request.
+        for label, side_blobs in (("ours", ours), ("theirs", theirs)):
+            for declare in (False, True):
+                files = [{"path": p, "content": text(side_blobs[p])} for p in paths]
+                if declare:
+                    for row in files:
+                        row["supersede"] = {"side": label, "reason": f"all {label}"}
+                response = post(files)
+                assert response.status_code == 422, (label, declare, response.text)
+                assert response.json()["error"]["code"] in (
+                    "conflict_side_dropped", "conflict_supersede_invalid",
+                )
+                assert all((root / p).read_bytes() == before[p] for p in paths)
+
+        # The 0599 resolution without the declaration: only 0395 is still rejected.
+        files = [{"path": p, "content": text(resolved[p])} for p in paths]
+        response = post(files)
+        assert response.status_code == 422, response.text
+        assert [row["path"] for row in response.json()["error"]["details"]["files"]] == [
+            "server/tests/test_work_plan_0395.py",
+        ]
+
+        # ONE call: six files, 0395 carrying its theirs declaration → resolved_pending_review.
+        svc.record_auto_authority(group, merge_id, True)
+        files[-1]["supersede"] = decl_0395
+        accepted = post(files)
+        assert accepted.status_code == 200, accepted.text
+        result = accepted.json()["result"]
+        assert result["status"] == "resolved_pending_review"
+        assert result["remaining_conflicts"] == []
+        assert all(row["resolved"] for row in db_git.session_files(merge_id))
+        # CR-insensitive: resolve_conflicts' write_text follows the platform newline.
+        assert all(
+            (root / p).read_bytes().replace(b"\r", b"") == resolved[p].replace(b"\r", b"")
+            for p in paths
+        )
+        review = svc.get_merge_review(group, merge_id)["result"]
+        assert review["review_state"] == svc.REVIEW_STATE_PENDING
+        (record,) = review["conflict_supersedes"]
+        assert (record["path"], record["side"]) == ("server/tests/test_work_plan_0395.py", "theirs")
+        (chunk,) = record["chunks"]
+        assert (len(chunk["preserved_lines"]), len(chunk["changed_lines"])) == (151, 3)
+        assert [
+            o["selection"] for o in review["conflict_origins"]
+            if o["path"] == "server/modules/flow_gate/documents/routers/work_plan.py"
+        ][:4] == ["manual", "manual", "manual", "theirs"]
+
+        aborted = svc.abort_merge(group, merge_id)
+        assert aborted["result"]["status"] == "waiting"
 
     def test_connection_ok(self, origin_repo):
         from modules.flow_gate.services import git_service as svc

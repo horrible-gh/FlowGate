@@ -3129,6 +3129,20 @@ export default {
       chunk_selection: 'Selected: {selection}',
       line_suffix: '',
       origin_flag_title: 'Range originating from a conflict',
+      // 0604 D0005 §6 — the resolver's superset (supersede) declaration. Never collapsed.
+      supersede_title: 'Superset declaration',
+      supersede_badge: 'Declared',
+      supersede_statement: {
+        ours: 'The resolver declared that the current side contains the incoming side\'s changes',
+        theirs: 'The resolver declared that the incoming side contains the current side\'s changes',
+      },
+      supersede_reason: 'Reason: {reason}',
+      supersede_chunk: 'Conflict chunk at original lines {start}–{end} · {preserved} lines kept verbatim',
+      supersede_replaced: {
+        ours: 'Replaced current-side lines ({n})',
+        theirs: 'Replaced incoming-side lines ({n})',
+      },
+      supersede_replaced_none: 'No replaced lines — every line of the other side was kept verbatim.',
       conversation_title: 'Conversation with AI',
       awaiting_reply: 'Awaiting reply',
       waiting_in_place: '{provider} is writing an answer · {elapsed} elapsed — stay on this screen and the reply arrives here.',

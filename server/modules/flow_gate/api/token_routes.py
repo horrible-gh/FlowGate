@@ -1172,6 +1172,27 @@ def _build_review_conversation_mention(
     )
 
 
+_SUPERSEDE_MENTION_SECTION = (
+    # 0604 D0005 §3.4 — the one case where the correct result equals one side verbatim.
+    # Worded as a narrow exception with server-side evidence, never as a shortcut.
+    "## Superset declaration (`supersede`)\n"
+    "---\n"
+    "A chunk resolved to exactly one side's text, where BOTH sides changed it, is rejected "
+    "with 422 `conflict_side_dropped` (the response lists every such file, chunk and line range). "
+    "Normally the fix is to merge both sides' changes into that chunk.\n"
+    "Only when the side you kept ALREADY contains the other side's changes (each line the "
+    "other side added over `base` is still there verbatim, or was changed in the same place) "
+    "may you declare it on that file:\n\n"
+    "{\"path\": \"...\", \"content\": \"...\", "
+    "\"supersede\": {\"side\": \"ours|theirs\", \"reason\": \"<why the kept side contains the other side>\"}}\n\n"
+    "The server checks the evidence and rejects a false declaration with 422 "
+    "`conflict_supersede_invalid` (declared side not the one kept, a line of the other side "
+    "removed outright, fewer lines kept than changed, or no rejected chunk in that file). "
+    "A declared merge is never auto-approved: a person reads the replaced lines before approving. "
+    "Do not invent lines to make a one-side resolution look merged.\n\n"
+)
+
+
 def _build_conflict_mention(
     *,
     group_id: str,
@@ -1235,6 +1256,7 @@ def _build_conflict_mention(
         "  \"complete\": true\n"
         "}\n\n"
         "The bearer token is bound to exactly this group_id and merge_id. Other git/config/finalize endpoints are not authorized.\n\n"
+        + _SUPERSEDE_MENTION_SECTION
         + write_plan_section
         + "## Conflict session\n"
         "---\n"
