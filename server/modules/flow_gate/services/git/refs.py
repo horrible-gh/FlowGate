@@ -38,6 +38,67 @@ def _ahead_of_base(base_root: Path, base_branch: str, branch: str) -> Optional[i
         return None
 
 
+def _is_ancestor(repo: Path, ancestor: str, descendant: str) -> Optional[bool]:
+    """``merge-base --is-ancestor``: True/False, None when git cannot answer."""
+    from modules.flow_gate.services import git_service as _gs
+    proc = _gs._run_git(["merge-base", "--is-ancestor", ancestor, descendant], cwd=repo)
+    if proc.returncode == 0:
+        return True
+    if proc.returncode == 1:
+        return False
+    return None
+
+
+def _unpushed_local_merge_of(
+    base_root: Path, base_branch: str, branch: str
+) -> Optional[str]:
+    """The local, not-yet-pushed merge commit that brought ``branch`` into base.
+
+    flowgate.default.0607 T0004 §3.3 (NR0003 §3/§9.5 F3): ``base..branch == 0`` has
+    two meanings. The branch may simply have nothing (no work — discard it), or its
+    work may already sit in LOCAL base through a merge commit that never reached
+    origin (a merge whose command result was lost, then a retry). Reading the second
+    as the first is how 0600 was torn down without a push.
+
+    Returns the full sha of that merge commit, or None when there is none to find
+    (branch already on origin, no origin ref, git cannot answer). A commit is only
+    this branch's merge when it sits on base's first-parent line above origin, its
+    SECOND parent contains the branch tip and its FIRST parent does not — so a fresh,
+    work-less branch cut from an unpushed local base (other groups' merges above
+    origin) is never mistaken for merged work of its own.
+    """
+    from modules.flow_gate.services import git_service as _gs
+    origin_ref = f"refs/remotes/origin/{base_branch}"
+    branch_ref = f"refs/heads/{branch}"
+    # One call answers the common case: a branch already contained in origin (or an
+    # origin/branch git cannot resolve) has no unpushed merge to find.
+    beyond_origin = _gs._run_git(
+        ["rev-list", "--count", f"{origin_ref}..{branch_ref}"], cwd=base_root,
+    )
+    if beyond_origin.returncode != 0 or (beyond_origin.stdout or "").strip() in ("", "0"):
+        return None
+    tip = _rev_parse(base_root, branch_ref)
+    if not tip:
+        return None
+    merges = _gs._run_git(
+        ["rev-list", "--merges", "--first-parent", f"{origin_ref}..refs/heads/{base_branch}"],
+        cwd=base_root,
+    )
+    if merges.returncode != 0:
+        return None
+    for merge in (merges.stdout or "").split():
+        second = _rev_parse(base_root, f"{merge}^2")
+        first = _rev_parse(base_root, f"{merge}^1")
+        if not second or not first:
+            continue
+        if second != tip and _is_ancestor(base_root, tip, second) is not True:
+            continue
+        if _is_ancestor(base_root, tip, first) is not False:
+            continue
+        return merge
+    return None
+
+
 def _parse_name_status_z(stdout: str) -> list[str]:
     """``git diff --name-status -M -z`` → changed paths (renames → new path only).
 

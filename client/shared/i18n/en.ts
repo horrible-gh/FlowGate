@@ -1876,6 +1876,11 @@ export default {
       mark_revised_confirm_message: 'Move this document back to pending review. Continue?',
       error_approve_failed_log: '[ReviewActionBar] Approval failed',
       toast_approve_failed: 'Approval failed: {detail}',
+      // 0607 T0004 §3.6 — shown while the server's Git result is being confirmed after a lost approve response.
+      git_settle_in_progress: 'The server is still running Git for this approval. Approve stays locked until the result is confirmed.',
+      git_settle_deferred: 'The Git merge stopped on a conflict. Continue from the conflict resolution screen.',
+      git_settle_retry: 'Git finished but the approval was not recorded. Approve again to record it without running Git again.',
+      git_settle_unknown: 'The server has not reported the Git result yet. Check the Git status in a moment, then try again.',
       // 0332 D0005 §6.5 — TR approval notices. Both start from "approved".
       tr_commit_toast: 'Approved — commit {commit} recorded',
       tr_commit_failed_toast: 'Approved — could not commit ({reason})',

@@ -352,7 +352,12 @@
                v3 screen 1. -->
 
           <!-- Approve -->
-          <button class="btn btn-success btn-sm" :disabled="!canApprove || isActionBarBusy" @click="onApproveClick">
+          <button
+            class="btn btn-success btn-sm"
+            :disabled="!canApprove || isActionBarBusy"
+            :title="gitSettling ? t('main.review_action_bar.git_settle_in_progress') : undefined"
+            @click="onApproveClick"
+          >
             <AppIcon name="check" /> {{ t('main.review_action_bar.btn_approve') }}
           </button>
 
@@ -628,6 +633,12 @@ interface GitFinState {
   action_axes?: FinalizeAxes | null
   // 0339: separate overlay, deliberately not a fourth scope.
   archive_action?: 'stash' | null
+  // 0555: terminal Git whose approval still has to be committed (approval-only retry).
+  approval_pending?: boolean
+  // 0607 T0004 §3.6 (rev1): this group's final approval is still running Git on
+  // the server. `null`/missing means the server could not confirm either way
+  // (lock probe failure) — treat that the same as `true`, never as `false`.
+  approval_in_flight?: boolean | null
 }
 const gitFin = ref<GitFinState | null>(null)
 const gitNormalChoice = ref<string>('')
@@ -990,6 +1001,82 @@ function isGitInvalidRequest(e: any): boolean {
   )
 }
 
+// flowgate.default.0607 T0004 §3.6 (NR0003 §3/§6): when an approve that carried a
+// git_action fails without a verdict (axios timeout, dropped connection, gateway
+// 5xx), the server may still be merging — Axios giving up never stops it. 0600's
+// button came back at 30s, the second click reached a server that had already
+// merged, and that click discarded the slot unpushed. So the button stays locked
+// and the SERVER is asked, not a timer: the approval lock this group's approval
+// holds (`approval_in_flight`), then the document, then the Git slot. Only once
+// the server has stopped working does this settle into one of four outcomes.
+type GitApproveSettle = 'approved' | 'deferred' | 'retry' | 'failed' | 'unknown'
+const GIT_SETTLE_POLL_MS = 3_000
+// Past the whole server-side Git budget (see GIT_APPROVAL_TIMEOUT_MS) twice over.
+// Reaching it is said out loud ('unknown'), never a silent give-up.
+const GIT_SETTLE_MAX_MS = 11 * 60_000
+const gitSettling = ref(false)
+let approveGeneration = 0
+
+watch(() => props.docId, () => { approveGeneration += 1 })
+onBeforeUnmount(() => { approveGeneration += 1 })
+
+async function fetchGitFinLive(): Promise<GitFinState | null> {
+  if (!props.groupId) return null
+  try {
+    const { data } = await getRequest<{ ok: boolean; state: GitFinState }>(
+      `/api/v1/groups/${props.groupId}/git/finalize?context=approval`,
+    )
+    return data?.state ?? null
+  } catch {
+    return null
+  }
+}
+
+async function settleGitApproval(generation: number): Promise<GitApproveSettle | null> {
+  const started = Date.now()
+  let announced = false
+  for (;;) {
+    if (generation !== approveGeneration) return null
+    const git = await fetchGitFinLive()
+    if (generation !== approveGeneration) return null
+    // rev1 (human rejection): `approval_in_flight` is only trustworthy when it is
+    // an explicit `false`. A failed finalize GET (`fetchGitFinLive` → null), a
+    // response missing the field, or the server's own lock probe failing all
+    // surface here as `undefined`/`null` — none of those are "no approval is
+    // running", so only `=== false` may unlock the button and read the doc.
+    if (git?.approval_in_flight === false) {
+      // Read the document only AFTER the server explicitly confirmed the lock is
+      // free: the approval commits before the lock is released, so an approved
+      // request is visible here.
+      const serverStatus = await fetchServerReviewStatus()
+      if (serverStatus === 'approved') return 'approved'
+      if (git?.status === 'conflict') return 'deferred'
+      if (git?.approval_pending) return 'retry'
+      return 'failed'
+    }
+    // Either confirmed in flight, or unknown — both keep the button locked and
+    // keep polling instead of re-POSTing.
+    if (!announced) {
+      announced = true
+      gitSettling.value = true
+      showToast(t('main.review_action_bar.git_settle_in_progress'), 'info')
+    }
+    if (Date.now() - started >= GIT_SETTLE_MAX_MS) return 'unknown'
+    await new Promise((resolve) => setTimeout(resolve, GIT_SETTLE_POLL_MS))
+  }
+}
+
+function requestGitStatusRefresh() {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent('fg:git_status_refresh', {
+    detail: {
+      project: props.projectId || null,
+      group_id: props.groupId || null,
+      status: null,
+    },
+  }))
+}
+
 async function postApproveWithGitRetry(body: Record<string, unknown>) {
   const url = `/api/v1/documents/review_transitions/approve`
   try {
@@ -1013,6 +1100,8 @@ function onApproveClick() {
 async function doApprove() {
   if (!canApprove.value) return
   approving.value = true
+  const generation = ++approveGeneration
+  let sentGitAction = false
   try {
     if (props.beforeApprove && !(await props.beforeApprove())) return
     // §3.1: the git finalize choice rides on the approve request only when the
@@ -1023,6 +1112,7 @@ async function doApprove() {
     if (showGitFinalizeBlock.value && (gitArchiveSelected.value || gitNormalChoice.value)) {
       body.git_action = gitArchiveSelected.value ? 'stash' : gitNormalChoice.value
     }
+    sentGitAction = !!body.git_action
     const res = await postApproveWithGitRetry(body)
     const git = (res.data as any)?.git
     if (git?.quiet) {
@@ -1128,7 +1218,35 @@ async function doApprove() {
       try { await props.afterApprove(updated ?? {}) } catch { /* approval is already durable */ }
     }
   } catch (e: any) {
-    const detail = e?.response?.data?.detail ?? e
+    const detail = e?.response?.data?.detail ?? e?.response?.data?.error?.message ?? e
+    if (sentGitAction) {
+      // 0607 T0004 §3.6 — see settleGitApproval. No new approve is sent from here.
+      const settled = await settleGitApproval(generation)
+      if (settled === null) return // this bar moved to another document meanwhile
+      if (settled === 'approved') {
+        approvedDocId.value = props.docId
+        emit('approve', 'approved')
+        requestGitStatusRefresh()
+        return
+      }
+      requestGitStatusRefresh()
+      if (settled === 'deferred') {
+        showToast(t('main.review_action_bar.git_settle_deferred'), 'warning')
+        return
+      }
+      if (settled === 'retry') {
+        await fetchGitFin()
+        showToast(t('main.review_action_bar.git_settle_retry'), 'warning')
+        return
+      }
+      if (settled === 'unknown') {
+        showToast(t('main.review_action_bar.git_settle_unknown'), 'warning')
+        return
+      }
+      console.error(t('main.review_action_bar.error_approve_failed_log'), detail)
+      showToast(t('main.review_action_bar.toast_approve_failed', { detail }), 'danger')
+      return
+    }
     // 0257 NR0003 §3: the server refusing approve on an already-approved doc is correct and
     // stays untouched. Re-read the document rather than pattern-matching that message — the
     // wording is not an API contract. If the server says it is already approved, this click
@@ -1143,6 +1261,7 @@ async function doApprove() {
     console.error(t('main.review_action_bar.error_approve_failed_log'), detail)
     showToast(t('main.review_action_bar.toast_approve_failed', { detail }), 'danger')
   } finally {
+    gitSettling.value = false
     approving.value = false
   }
 }

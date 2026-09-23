@@ -186,6 +186,21 @@ const LONG_RUNNING_PATHS = [
   /\/groups\/tree/,
 ]
 
+// flowgate.default.0607 T0004 §3.5 (NR0003 §6): a final approval that carries a
+// `git_action` runs the whole Git finalize inside the request — fetch (≤120s),
+// ff-only + merge (≤30s each), push (≤120s) — before it answers, so the 30s default
+// abandoned healthy merges mid-flight. Only that request gets this ceiling; a plain
+// approve on the same path keeps the default. Decided on path + body here so a new
+// call site cannot forget it.
+export const GIT_APPROVAL_TIMEOUT_MS = 330_000
+const GIT_APPROVAL_PATH = /\/documents\/review_transitions\/approve(?:$|\?)/
+
+function carriesGitAction(data: unknown): boolean {
+  if (!data || typeof data !== 'object') return false
+  const action = (data as Record<string, unknown>).git_action
+  return typeof action === 'string' && action.length > 0
+}
+
 const api: AxiosInstance = axios.create({
   baseURL: getBaseUrl(),
   headers: { 'Content-Type': 'application/json' },
@@ -199,7 +214,9 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   // Raise the ceiling for known-slow endpoints unless the caller set its own timeout.
   if (config.timeout === DEFAULT_TIMEOUT_MS) {
     const path = config.url || ''
-    if (LONG_RUNNING_PATHS.some((re) => re.test(path))) {
+    if (GIT_APPROVAL_PATH.test(path) && carriesGitAction(config.data)) {
+      config.timeout = GIT_APPROVAL_TIMEOUT_MS
+    } else if (LONG_RUNNING_PATHS.some((re) => re.test(path))) {
       config.timeout = LONG_TIMEOUT_MS
     }
   }
