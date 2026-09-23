@@ -742,7 +742,12 @@ def restore_work_plan_revision(
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
     final_approved = document_service.is_final_approved(doc)
-    if not document_service.is_document_editable(doc, final_approved=final_approved):
+    if (
+        doc.get("status") == "closed"
+        or not document_service.is_document_editable(
+            doc, final_approved=final_approved,
+        )
+    ):
         raise HTTPException(
             status_code=422,
             detail="Modification not allowed after final approval."
@@ -920,7 +925,12 @@ def save_work_plan(
     _reject_if_group_ai_running(doc)
 
     final_approved = document_service.is_final_approved(doc)
-    if not document_service.is_document_editable(doc, final_approved=final_approved):
+    if (
+        doc.get("status") == "closed"
+        or not document_service.is_document_editable(
+            doc, final_approved=final_approved,
+        )
+    ):
         raise HTTPException(
             status_code=422,
             detail="Modification not allowed after final approval."

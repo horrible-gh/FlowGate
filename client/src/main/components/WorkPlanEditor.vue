@@ -15,7 +15,7 @@
         <button
           class="btn btn-secondary btn-sm"
           type="button"
-          :disabled="loading || !!unreadable || dirty || downloading || hasPendingCapabilityWarning"
+          :disabled="loading || (!!unreadable && unreadable.raw === null) || dirty || downloading || hasPendingCapabilityWarning"
           :title="dirty ? t('main.work_plan.upload_needs_save') : undefined"
           @click="downloadWorkPlan"
         >
@@ -64,11 +64,29 @@
           <p class="wp-unreadable-revisions-title">{{ t('main.work_plan.revisions_title') }}</p>
           <ul>
             <li v-for="rev in unreadable.revisions" :key="rev.revision_no">
-              r{{ rev.revision_no }} — {{ rev.created_by }} · {{ rev.created_at }}
+              <span>r{{ rev.revision_no }} — {{ rev.created_by }} · {{ rev.created_at }}</span>
+              <button
+                v-if="rev.restorable"
+                type="button"
+                class="btn btn-primary btn-sm wp-restore-btn"
+                :disabled="restoringRevision !== null || aiRunLocked"
+                @click="restoreRevision(rev.revision_no)"
+              >
+                {{ restoringRevision === rev.revision_no
+                  ? t('main.work_plan.restoring')
+                  : t('main.work_plan.restore') }}
+              </button>
+              <span v-else class="wp-restore-unavailable">
+                {{ t('main.work_plan.restore_unavailable') }}
+              </span>
             </li>
           </ul>
         </div>
-        <pre v-if="unreadable.raw" class="wp-unreadable-raw">{{ unreadable.raw }}</pre>
+        <p v-else class="wp-unreadable-no-baseline">
+          {{ t('main.work_plan.legacy_no_baseline') }}
+        </p>
+        <p v-if="restoreError" class="wp-restore-error" role="alert">{{ restoreError }}</p>
+        <pre v-if="unreadable.raw !== null" class="wp-unreadable-raw">{{ unreadable.raw }}</pre>
       </div>
 
       <template v-else-if="plan">
@@ -576,7 +594,24 @@ const stepErrors = computed(() => {
   }
   return rendered
 })
-const unreadable = ref<{ message: string; detail: string; raw: string | null; revisions: { revision_no: number; created_by: string; created_at: string }[] } | null>(null)
+interface WPRevisionCandidate {
+  revision_no: number
+  created_by: string | null
+  created_at: string | null
+  restorable: boolean
+  restore_unavailable_reason: string | null
+}
+interface WPUnreadable {
+  message: string
+  detail: string
+  raw: string | null
+  revisionNo: number
+  revisions: WPRevisionCandidate[]
+}
+
+const unreadable = ref<WPUnreadable | null>(null)
+const restoringRevision = ref<number | null>(null)
+const restoreError = ref<string | null>(null)
 
 
 // D0007 §3.2 decision 4: a value-bearing step that a lower quantity would drop stays
@@ -775,11 +810,53 @@ function reexpand(
   return { result, removalCandidates }
 }
 
-// ── Fetch ─────────────────────────────────────────────────────────────────
+// ── Fetch / recovery ──────────────────────────────────────────────────────
+
+function applyReadView(data: any) {
+  if (typeof data.title === 'string' && data.title) {
+    tabsStore.setTabTitle(props.docId, data.title)
+  }
+  serverRegisteredProvidersKnown.value = Array.isArray(data.registered_providers)
+  serverRegisteredProviders.value = serverRegisteredProvidersKnown.value
+    ? data.registered_providers
+    : []
+  plan.value = data.body as WPBody
+  const allCodes = typeOrder(Array.from(new Set([
+    ...plan.value.counted_types,
+    ...docTypeStore.countableTypes.map((item) => item.code),
+  ])))
+  const quantities = { ...plan.value.quantities }
+  for (const code of allCodes) {
+    if (quantities[code]) continue
+    const unit = docTypeStore.countableTypes.find((item) => item.code === code)?.unit ?? 'sheet'
+    quantities[code] = { unit: unit === 'set' ? 'set' : 'sheet', count: 0 }
+  }
+  plan.value.counted_types = allCodes
+  plan.value.quantities = quantities
+  providerStatuses.value = data.provider_status ?? []
+  assignmentSummary.value = data.assignment_summary ?? []
+  unassignedStepCount.value = data.unassigned_step_count ?? 0
+  revisionNo.value = data.revision_no
+  noteMaxChars.value = Number(data.limits?.note_max_chars) || 1000
+  preInstructionMaxChars.value = Number(data.limits?.pre_instruction_text_max_chars) || 20000
+  preInstructionAttachmentMaxBytes.value = Number(data.limits?.pre_instruction_attachment_max_bytes) || 0
+  reviewCountChoices.value = Array.isArray(data.review_count_choices) && data.review_count_choices.length
+    ? data.review_count_choices
+    : [0]
+  docReviewStatus.value = data.doc_review_status
+  editable.value = data.editable === undefined ? true : !!data.editable
+  editLockedReason.value = data.edit_locked_reason ?? null
+  dirty.value = false
+  totals.value = data.totals ?? { design_sheets: 0, work_sets: 0, steps: plan.value.steps.length }
+  staleAfterUpload.value = false
+  unreadable.value = null
+  restoreError.value = null
+}
 
 async function fetchPlan(): Promise<boolean> {
   loading.value = true
   unreadable.value = null
+  restoreError.value = null
   conflict.value = null
   capabilityWarnings.value = []
   pendingCapabilityBody.value = null
@@ -797,45 +874,7 @@ async function fetchPlan(): Promise<boolean> {
     if (!docTypeStore.loaded) await Promise.all([docTypeStore.loadLabels(locale.value), providerLoad])
     else await providerLoad
     const res = await getRequest<any>(`/api/v1/documents/${encodeURIComponent(props.docId)}/work-plan`)
-    if (typeof res.data.title === 'string' && res.data.title) {
-      tabsStore.setTabTitle(props.docId, res.data.title)
-    }
-    serverRegisteredProvidersKnown.value = Array.isArray(res.data.registered_providers)
-    serverRegisteredProviders.value = serverRegisteredProvidersKnown.value
-      ? res.data.registered_providers
-      : []
-    plan.value = res.data.body as WPBody
-    const allCodes = typeOrder(Array.from(new Set([
-      ...plan.value.counted_types,
-      ...docTypeStore.countableTypes.map((item) => item.code),
-    ])))
-    const quantities = { ...plan.value.quantities }
-    for (const code of allCodes) {
-      if (quantities[code]) continue
-      const unit = docTypeStore.countableTypes.find((item) => item.code === code)?.unit ?? 'sheet'
-      quantities[code] = { unit: unit === 'set' ? 'set' : 'sheet', count: 0 }
-    }
-    plan.value.counted_types = allCodes
-    plan.value.quantities = quantities
-    providerStatuses.value = res.data.provider_status ?? []
-    assignmentSummary.value = res.data.assignment_summary ?? []
-    unassignedStepCount.value = res.data.unassigned_step_count ?? 0
-    revisionNo.value = res.data.revision_no
-    noteMaxChars.value = Number(res.data.limits?.note_max_chars) || 1000
-    preInstructionMaxChars.value = Number(res.data.limits?.pre_instruction_text_max_chars) || 20000
-    preInstructionAttachmentMaxBytes.value = Number(res.data.limits?.pre_instruction_attachment_max_bytes) || 0
-    reviewCountChoices.value = Array.isArray(res.data.review_count_choices) && res.data.review_count_choices.length
-      ? res.data.review_count_choices
-      : [0]
-    docReviewStatus.value = res.data.doc_review_status
-    // 0403 NR0004 F7: use the value the server judged, as-is. If it's absent from the
-    // response (old response · mock), leave it open — only the server knows whether to
-    // lock, and the bug was the screen guessing and locking on its own.
-    editable.value = res.data.editable === undefined ? true : !!res.data.editable
-    editLockedReason.value = res.data.edit_locked_reason ?? null
-    dirty.value = false
-    totals.value = res.data.totals ?? { design_sheets: 0, work_sets: 0, steps: plan.value.steps.length }
-    staleAfterUpload.value = false
+    applyReadView(res.data)
     return true
   } catch (e: any) {
     const status = e?.response?.status
@@ -845,6 +884,7 @@ async function fetchPlan(): Promise<boolean> {
         message: data.message,
         detail: data.detail ?? '',
         raw: data.raw ?? null,
+        revisionNo: Number(data.revision_no) || 0,
         revisions: data.revisions ?? [],
       }
     } else {
@@ -858,6 +898,32 @@ async function fetchPlan(): Promise<boolean> {
 
 async function reload() {
   await fetchPlan()
+}
+
+async function restoreRevision(sourceRevisionNo: number) {
+  const state = unreadable.value
+  if (!state || restoringRevision.value !== null || aiRunLocked.value) return
+  const candidate = state.revisions.find((item) =>
+    item.revision_no === sourceRevisionNo && item.restorable,
+  )
+  if (!candidate) return
+  restoringRevision.value = sourceRevisionNo
+  restoreError.value = null
+  try {
+    const res = await postRequest<any>(
+      `/api/v1/documents/${encodeURIComponent(props.docId)}/work-plan/revisions/${sourceRevisionNo}/restore`,
+      { base_revision_no: state.revisionNo },
+    )
+    applyReadView(res.data)
+    showToast(t('main.work_plan.restore_success'), 'success')
+  } catch (e: any) {
+    const data = e?.response?.data
+    const message = data?.message || data?.detail || t('main.work_plan.restore_failed')
+    restoreError.value = message
+    showToast(message, 'danger')
+  } finally {
+    restoringRevision.value = null
+  }
 }
 
 // Pouring/applying this plan into the workflow sequence happens in the sibling
@@ -1470,21 +1536,35 @@ function fallbackWorkPlanFilename(docId: string): string {
 // NR0003 §3.1 — the download source is a fresh GET of the canonical body, never `rawJson`.
 // `canonicalBody()` only lists the fixed fields the editor knows, so a top-level `x_*`
 // extension the server preserves would silently vanish from the downloaded file.
+function downloadBlob(content: string, type: string, filename: string) {
+  const blob = new Blob([content], { type })
+  const href = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = href
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(href)
+}
+
 async function downloadWorkPlan() {
-  if (loading.value || !!unreadable.value || dirty.value || downloading.value) return
+  if (loading.value || dirty.value || downloading.value) return
+  const unreadableRaw = unreadable.value?.raw
+  if (unreadable.value && unreadableRaw === null) return
   downloading.value = true
   try {
+    if (unreadable.value) {
+      downloadBlob(
+        unreadableRaw ?? '',
+        'text/plain;charset=utf-8',
+        `${props.docId}.work-plan.unreadable.raw.txt`,
+      )
+      return
+    }
     const res = await getRequest<any>(`/api/v1/documents/${encodeURIComponent(props.docId)}/work-plan`)
     const json = `${JSON.stringify(res.data.body, null, 2)}\n`
-    const blob = new Blob([json], { type: 'application/json;charset=utf-8' })
-    const href = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-    anchor.href = href
-    anchor.download = fallbackWorkPlanFilename(props.docId)
-    document.body.appendChild(anchor)
-    anchor.click()
-    anchor.remove()
-    URL.revokeObjectURL(href)
+    downloadBlob(json, 'application/json;charset=utf-8', fallbackWorkPlanFilename(props.docId))
   } catch (e: any) {
     showToast(e?.response?.data?.message || e?.response?.data?.detail || t('main.work_plan.download_failed'), 'danger')
   } finally {
@@ -1781,7 +1861,12 @@ watch(() => props.docId, () => { void fetchPlan() })
 .wp-unreadable-icon { font-size: 2rem; color: var(--danger, #dc2626); }
 .wp-unreadable-title { font-weight: 700; }
 .wp-unreadable-desc, .wp-unreadable-detail { font-size: .8rem; color: var(--text-m); margin: 0; }
-.wp-unreadable-revisions { margin-top: 8px; font-size: .76rem; color: var(--text-m); text-align: left; }
+.wp-unreadable-revisions { margin-top: 8px; width: min(640px, 100%); font-size: .76rem; color: var(--text-m); text-align: left; }
+.wp-unreadable-revisions ul { margin: 6px 0 0; padding: 0; list-style: none; }
+.wp-unreadable-revisions li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
+.wp-restore-btn { flex: 0 0 auto; }
+.wp-restore-unavailable, .wp-unreadable-no-baseline { font-size: .74rem; color: var(--text-m); }
+.wp-restore-error { margin: 6px 0 0; color: var(--danger, #dc2626); font-size: .78rem; }
 .wp-unreadable-raw { margin-top: 10px; width: 100%; max-height: 200px; overflow: auto; background: #0f172a; color: #e2e8f0; padding: 10px; border-radius: var(--r, 6px); font-size: .7rem; text-align: left; }
 /* The overlay, the box and the title row belong to the common dialog layer now (T0018);
    only the raw JSON block is still this component's, and it is unchanged. `surface="sheet"`
