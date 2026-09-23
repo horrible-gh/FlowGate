@@ -423,6 +423,21 @@ _RESOLVE_TOOL_SCHEMA = {
                 "properties": {
                     "path": {"type": "string"},
                     "content": {"type": "string"},
+                    # 0604 D0005 §3.4 — optional; the worker forwards `files` verbatim.
+                    "supersede": {
+                        "type": "object",
+                        "description": (
+                            "Only when the server rejected this file with conflict_side_dropped "
+                            "AND the side you kept already contains every change of the other "
+                            "side (kept verbatim or changed in place). Never use it to skip a "
+                            "merge; a person reviews every declaration."
+                        ),
+                        "properties": {
+                            "side": {"type": "string", "enum": ["ours", "theirs"]},
+                            "reason": {"type": "string"},
+                        },
+                        "required": ["side", "reason"],
+                    },
                 },
                 "required": ["path", "content"],
             },

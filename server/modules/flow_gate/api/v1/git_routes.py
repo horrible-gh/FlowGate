@@ -540,9 +540,23 @@ def get_merge_conflicts(group_id: str, merge_id: int, user=Depends(get_current_u
         return _guard(exc)
 
 
+class ResolveSupersede(BaseModel):
+    # 0604 D0005 §3.4 / §5: the resolver's explicit "the kept side already carries the
+    # other side's changes" declaration. Checked (and recorded) by resolve_conflicts;
+    # `side`/`reason` stay plain strings so a bad value comes back as that service's
+    # 422 conflict_supersede_invalid instead of a generic validation error.
+    model_config = ConfigDict(extra="forbid")
+
+    side: str
+    reason: str
+
+
 class ResolveFile(BaseModel):
     path: str
     content: str
+    # Must stay a declared field: ResolveFile is not extra="forbid", so an undeclared
+    # `supersede` would be dropped silently before reaching resolve_conflicts.
+    supersede: Optional[ResolveSupersede] = None
 
 
 class ResolveBody(BaseModel):

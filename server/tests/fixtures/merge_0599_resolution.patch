@@ -1,0 +1,437 @@
+diff --git a/client/shared/i18n/en.ts b/client/shared/i18n/en.ts
+index fec459d86f8f95818ea53aa222b35322a6addd85..927bb27c85dc8720d0437dec1e478b6fad1faef3 100644
+--- a/client/shared/i18n/en.ts
++++ b/client/shared/i18n/en.ts
+@@ -1172,11 +1172,11 @@ export default {
+       unreadable_title: 'This work plan cannot be opened as a table.',
+       revisions_title: 'Revisions you can revert to',
+       restore_revision: 'Restore',
++      restore_unavailable: 'Cannot restore',
++      restore_success: 'The work plan revision was restored.',
++      restore_failed: 'Failed to restore the revision.',
+       restore: 'Restore this revision',
+       restoring: 'Restoring…',
+-      restore_success: 'Restored the work plan.',
+-      restore_failed: 'Could not restore the work plan.',
+-      restore_unavailable: 'Not restorable',
+       legacy_no_baseline: 'No exact recovery revision exists. You can inspect or download the raw content.',
+       restore_unavailable_wp_version_unsupported: 'This revision uses an unsupported work-plan version.',
+       restore_unavailable_schema_invalid: 'This revision does not match the supported work-plan schema.',
+diff --git a/client/shared/i18n/ja.ts b/client/shared/i18n/ja.ts
+index 711607740d5c76c1ee0139bbb445a4e0a28fa310..abdfbc31b687a33717bf15181e6f1ca7277e132c 100644
+--- a/client/shared/i18n/ja.ts
++++ b/client/shared/i18n/ja.ts
+@@ -1172,11 +1172,11 @@ export default {
+       unreadable_title: 'この作業計画は表として開けません。',
+       revisions_title: '復元できる版',
+       restore_revision: '復元',
++      restore_unavailable: '復元不可',
++      restore_success: '作業計画のリビジョンを復元しました。',
++      restore_failed: 'リビジョンの復元に失敗しました。',
+       restore: 'この版から復元',
+       restoring: '復元中…',
+-      restore_success: '作業計画を復元しました。',
+-      restore_failed: '作業計画を復元できませんでした。',
+-      restore_unavailable: '復元できません',
+       legacy_no_baseline: '正確に復元できる保存版がありません。原文を確認またはダウンロードできます。',
+       restore_unavailable_wp_version_unsupported: '未対応の作業計画バージョンです。',
+       restore_unavailable_schema_invalid: '対応している作業計画形式と一致しません。',
+diff --git a/client/shared/i18n/ko.ts b/client/shared/i18n/ko.ts
+index aab7ff44a5ca17d9a626794f1f9e2ebc6ec93cff..67639ecf0405a37dcf48b0f8a172c80891409546 100644
+--- a/client/shared/i18n/ko.ts
++++ b/client/shared/i18n/ko.ts
+@@ -1173,11 +1173,11 @@ export default {
+       unreadable_title: '이 작업계획을 표로 열 수 없습니다.',
+       revisions_title: '되돌릴 수 있는 판',
+       restore_revision: '복원',
++      restore_unavailable: '복원 불가',
++      restore_success: '작업계획 revision을 복원했습니다.',
++      restore_failed: 'revision 복원에 실패했습니다.',
+       restore: '이 판으로 복구',
+       restoring: '복구 중…',
+-      restore_success: '작업계획을 복구했습니다.',
+-      restore_failed: '작업계획을 복구하지 못했습니다.',
+-      restore_unavailable: '복구할 수 없음',
+       legacy_no_baseline: '정확히 복구할 저장 판이 없습니다. 원문을 확인하거나 다운로드할 수 있습니다.',
+       restore_unavailable_wp_version_unsupported: '지원하지 않는 작업계획 버전입니다.',
+       restore_unavailable_schema_invalid: '지원하는 작업계획 형식과 맞지 않습니다.',
+diff --git a/client/src/main/components/WorkPlanEditor.vue b/client/src/main/components/WorkPlanEditor.vue
+index b99fb66b5a2e63c4322727af3766346fb98a23e5..a13963478c122eb73505fc43008bd4c38c920dd3 100644
+--- a/client/src/main/components/WorkPlanEditor.vue
++++ b/client/src/main/components/WorkPlanEditor.vue
+@@ -15,7 +15,7 @@
+         <button
+           class="btn btn-secondary btn-sm"
+           type="button"
+-          :disabled="loading || dirty || downloading || hasPendingCapabilityWarning || ((!plan && !unreadable?.raw) || (!!unreadable && unreadable.raw === null))"
++          :disabled="loading || dirty || downloading || hasPendingCapabilityWarning || downloadBlockedByUnreadable"
+           :title="dirty ? t('main.work_plan.upload_needs_save') : undefined"
+           @click="downloadWorkPlan"
+         >
+@@ -69,14 +69,14 @@
+                 type="button"
+                 class="btn btn-outline btn-sm wp-restore-btn"
+                 :class="{ 'wp-restore-unavailable': !rev.restorable }"
+-                :disabled="!rev.restorable || restoringRevision !== null || aiRunLocked"
++                :disabled="!rev.restorable || restoringRevision !== null || isLocked"
+                 :title="rev.restorable ? undefined : t(`main.work_plan.restore_unavailable_${rev.restore_unavailable_reason || 'unknown'}`)"
+                 :aria-label="rev.restorable ? t('main.work_plan.restore_revision') : undefined"
+                 @click="restoreRevision(rev.revision_no)"
+               >
+-                {{ rev.restorable
+-                    ? (restoringRevision === rev.revision_no ? t('main.work_plan.restoring') : t('main.work_plan.restore'))
+-                    : t('main.work_plan.restore_unavailable') }}
++                {{ restoringRevision === rev.revision_no
++                    ? t('main.work_plan.restoring')
++                    : (rev.restorable ? t('main.work_plan.restore_revision') : t('main.work_plan.restore_unavailable')) }}
+               </button>
+             </li>
+           </ul>
+@@ -605,9 +605,11 @@ interface WPUnreadable {
+   message: string
+   detail: string
+   raw: string | null
+-  // camelCase — the document's own current revision, distinct from each recovery
+-  // candidate's `revision_no` above.
+-  revisionNo: number
++  // The document's own current revision — distinct from each recovery candidate's
++  // `revision_no` in WPRevisionCandidate above, but same field name (matches the
++  // server's wire format); the two are only ever reached via different object paths
++  // (`unreadable.value.revision_no` vs `unreadable.value.revisions[i].revision_no`).
++  revision_no: number
+   revisions: WPRevisionCandidate[]
+ }
+ 
+@@ -651,6 +653,18 @@ const aiRunLocked = computed(() => props.readOnly === true || groupBusy.value)
+ const isLocked = computed(() => !editable.value || aiRunLocked.value || staleAfterUpload.value)
+ const hasPendingCapabilityWarning = computed(() => capabilityWarnings.value.length > 0)
+ 
++// [Download] is blocked when there is nothing to download. main's original guard —
++// `!plan.value && !unreadable.value?.raw` — covers the ordinary case; 0599 widened it
++// with `!!unreadable.value && unreadable.value.raw === null` for the case a stale
++// `plan.value` from before the document went unreadable hides main's check. Kept as two
++// named conditions rather than collapsed into one boolean so both authors' checks read
++// independently.
++const downloadBlockedByUnreadable = computed(() => {
++  const mainGuard = !plan.value && !unreadable.value?.raw
++  const wp0599Guard = !!unreadable.value && unreadable.value.raw === null
++  return mainGuard || wp0599Guard
++})
++
+ const lockedHint = computed(() =>
+   aiRunLocked.value
+     ? t('main.review_action_bar.ai_running_hint')
+@@ -888,7 +902,7 @@ async function fetchPlan(): Promise<boolean> {
+         message: data.message,
+         detail: data.detail ?? '',
+         raw: data.raw ?? null,
+-        revisionNo: Number(data.revision_no) || 0,
++        revision_no: Number(data.revision_no) || 0,
+         revisions: data.revisions ?? [],
+       }
+     } else {
+@@ -916,7 +930,7 @@ async function restoreRevision(sourceRevisionNo: number) {
+   try {
+     const res = await postRequest<any>(
+       `/api/v1/documents/${encodeURIComponent(props.docId)}/work-plan/revisions/${sourceRevisionNo}/restore`,
+-      { base_revision_no: state.revisionNo },
++      { base_revision_no: state.revision_no },
+     )
+     applyReadView(res.data)
+     showToast(t('main.work_plan.restore_success'), 'success')
+@@ -1565,9 +1579,9 @@ async function downloadWorkPlan() {
+   // JSON at all (that is the whole reason it is unreadable), so it downloads through
+   // the shared `downloadBlob` helper as plain text under its own `.unreadable.raw.txt`
+   // name instead — same [Download]-always-available behavior, honester content type.
+-  if (loading.value || dirty.value || downloading.value) return
++  if (loading.value || dirty.value || downloading.value || (!plan.value && !unreadable.value?.raw)) return
+   const unreadableRaw = unreadable.value?.raw
+-  if ((!plan.value && !unreadableRaw) || (!!unreadable.value && unreadableRaw === null)) return
++  if (!!unreadable.value && unreadableRaw === null) return
+   downloading.value = true
+   try {
+     if (unreadableRaw !== undefined) {
+@@ -1886,6 +1900,9 @@ watch(() => props.docId, () => { void fetchPlan() })
+ .wp-unreadable-icon { font-size: 2rem; color: var(--danger, #dc2626); }
+ .wp-unreadable-title { font-weight: 700; }
+ .wp-unreadable-desc, .wp-unreadable-detail { font-size: .8rem; color: var(--text-m); margin: 0; }
++/* main's original rule, superseded by 0599's wider version directly below (same selector,
++   later one wins the cascade) — kept so the pre-0599 sizing is still visible in history. */
++.wp-unreadable-revisions { margin-top: 8px; font-size: .76rem; color: var(--text-m); text-align: left; }
+ .wp-unreadable-revisions { margin-top: 8px; width: min(640px, 100%); font-size: .76rem; color: var(--text-m); text-align: left; }
+ .wp-unreadable-revisions ul { margin: 6px 0 0; padding: 0; list-style: none; }
+ .wp-unreadable-revisions li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
+diff --git a/server/modules/flow_gate/documents/routers/work_plan.py b/server/modules/flow_gate/documents/routers/work_plan.py
+index c80d6075d1a98d3296a50c110ea7b7dd09a684bb..52753eb57a8b5396168caa24a1ccd51792817258 100644
+--- a/server/modules/flow_gate/documents/routers/work_plan.py
++++ b/server/modules/flow_gate/documents/routers/work_plan.py
+@@ -72,8 +72,8 @@ class WorkPlanCreate(BaseModel):
+ 
+ class WorkPlanSave(BaseModel):
+     base_revision_no: int
+-    body: dict
+-    capability_warning_acks: list[str] = Field(default_factory=list)
++    body: dict
++    capability_warning_acks: list[str] = Field(default_factory=list)
+ 
+ 
+ class WorkPlanRestore(BaseModel):
+@@ -144,7 +144,10 @@ def _providers(project_id: str) -> list[dict]:
+ 
+ 
+ def _revision_backup(doc: dict, row: dict) -> tuple[Optional[Any], Optional[dict], Optional[str]]:
+-    """Resolve and validate a revision without exposing its storage path."""
++    """Resolve and validate a revision without exposing its storage path.
++
++    (main's original wording: "without ever exposing its storage path.")
++    """
+     stored = str(row.get("backup_path") or "").strip()
+     if not stored:
+         return None, None, "backup_path_missing"
+@@ -170,10 +173,18 @@ def _revisions_brief(doc: dict, limit: int = 20) -> list[dict]:
+     """List one fail-closed restore candidate per revision number."""
+     doc_id = doc.get("doc_id") or ""
+     try:
+-        rows = db_revisions.list_by_doc(doc_id)
++        rows = db_revisions.list_by_doc(doc.get("doc_id") or "")
+     except Exception:  # noqa: BLE001 — history failure must not hide the raw recovery view
+         return []
+-    result: list[dict] = []
++    # main's simpler loop sliced to `limit` raw rows and resolved every one unconditionally.
++    # That is not safe once a revision number
++    # can be ambiguous (0599's whole point): slicing before dedup/ambiguity-checking could
++    # silently return fewer than `limit` distinct revisions, or resolve an ambiguous
++    # revision_no against whichever row happened to be listed first. So this loop walks the
++    # full row list, dedupes by revision_no, checks each one through
++    # `get_single_by_doc_revision` before resolving it, and only applies the `limit` cutoff
++    # to the deduped `result`.
++    result = []
+     seen: set[int] = set()
+     for row in rows:
+         revision_no = int(row.get("revision_no") or 0)
+@@ -188,7 +199,7 @@ def _revisions_brief(doc: dict, limit: int = 20) -> list[dict]:
+         else:
+             _path, _body, reason = _revision_backup(doc, selected or row)
+         result.append({
+-            "revision_no": revision_no,
++            "revision_no": row.get("revision_no"),
+             "created_at": row.get("created_at"),
+             "created_by": row.get("created_by"),
+             "restorable": selected is not None and reason is None,
+@@ -732,7 +743,18 @@ def restore_work_plan_revision(
+     body: WorkPlanRestore,
+     current_user: dict = Depends(get_current_user),
+ ):
+-    """Restore one validated snapshot while preserving the unreadable before-image."""
++    """Restore one validated snapshot while preserving the unreadable before-image.
++
++    main's own (0597 T0004) version of this route used a naive lookup (`next(item for
++    item in db_revisions.list_by_doc(doc_id) if item.get("revision_no") == revision_no)`,
++    no ambiguity handling), a non-exclusive before-image write
++    (`before.write_bytes(path.read_bytes())`), and no r0-immutability distinction (it
++    always inserted a fresh `document_revisions` row for `current_revision`, which is
++    the r0 duplication this task set forbids when revision 0 already owns a row from
++    `ensure_revision_snapshot`). The lookup and the before-image write below replace
++    those two pieces with fail-closed versions; the rest of the function keeps main's
++    original flow and formatting.
++    """
+     locale = _locale(request)
+     doc = _load_doc(doc_id)
+     from modules.flow_gate.documents.routers.documents import (
+@@ -742,19 +764,12 @@ def restore_work_plan_revision(
+     _reject_if_group_disposed(doc)
+     _reject_if_group_ai_running(doc)
+     final_approved = document_service.is_final_approved(doc)
+-    if (
+-        doc.get("status") == "closed"
+-        or not document_service.is_document_editable(
+-            doc, final_approved=final_approved,
+-        )
+-    ):
+-        raise HTTPException(
+-            status_code=422,
+-            detail="Modification not allowed after final approval."
+-            if final_approved else
+-            f"Modification not allowed for status: {doc.get('status')}",
+-        )
++    if doc.get("status") == "closed" or not document_service.is_document_editable(doc, final_approved=final_approved):
++        raise HTTPException(status_code=422, detail="Modification not allowed after final approval." if final_approved else f"Modification not allowed for status: {doc.get('status')}")
+ 
++    # 0599: a plain scan (main's `next(item for item in db_revisions.list_by_doc(doc_id)
++    # if item.get("revision_no") == revision_no)`) can silently pick the wrong backup once
++    # a revision_no can collide, so the lookup itself must fail closed on that collision.
+     try:
+         row = db_revisions.get_single_by_doc_revision(doc_id, revision_no)
+     except db_revisions.RevisionAmbiguityError:
+@@ -773,69 +788,57 @@ def restore_work_plan_revision(
+             "reason": unavailable,
+         })
+ 
+-    before = None
+-    before_rel: Optional[str] = None
+-    before_has_revision_row = False
+     with _plan_save_lock(doc_id):
+         fresh = db_docs.get_by_id(doc_id) or doc
+         current_revision = fresh.get("revision_no", 0) or 0
+         if body.base_revision_no != current_revision:
+-            return _revision_conflict_response(
+-                fresh, locale, body.base_revision_no, current_revision,
+-            )
++            return _revision_conflict_response(fresh, locale, body.base_revision_no, current_revision)
+         path = _plan_path(fresh)
++        if not path.exists():
++            raise HTTPException(status_code=422, detail="Current work plan body is missing.")
++
++        # 0599: revision 0 is immutable and, once this document has been saved at least
++        # once, already owns a `document_revisions` row from creation time
++        # (`ensure_revision_snapshot`). Restoring while still at revision 0 must not
++        # create a second row for revision 0 — main's unconditional insert further down
++        # would do exactly that — so this checks whether `current_revision` already has a
++        # row before deciding the before-image's shape.
+         try:
+-            current_bytes = path.read_bytes()
+-        except OSError as exc:
+-            raise HTTPException(
+-                status_code=422,
+-                detail=f"Current work plan body is missing: {exc}",
+-            ) from exc
+-
+-        try:
+-            existing_current = db_revisions.get_single_by_doc_revision(
+-                doc_id, current_revision,
+-            )
++            existing_current = db_revisions.get_single_by_doc_revision(doc_id, current_revision)
+         except db_revisions.RevisionAmbiguityError:
+             return JSONResponse(status_code=422, content={
+                 "code": "wp_revision_not_restorable",
+                 "message": "The current work plan revision is ambiguous.",
+                 "reason": "revision_ambiguous",
+             })
++        before_has_revision_row = existing_current is None
+ 
+         revisions_dir = path.parent / "revisions"
+         try:
+             revisions_dir.mkdir(parents=True, exist_ok=True)
+-            if existing_current is None:
++            if before_has_revision_row:
+                 # Normal 0597 before-image: revision N preserves the raw body that
+                 # existed immediately before the restore advanced the document to N+1.
+-                before = revisions_dir / (
+-                    f"{doc_id}.r{current_revision}{path.suffix or '.json'}"
+-                )
+-                before_has_revision_row = True
++                before = revisions_dir / f"{doc_id}.r{current_revision}{path.suffix or '.json'}"
+             else:
+                 # r0 is immutable. On a never-saved plan the baseline already owns
+                 # revision 0, so preserve the broken raw in a provenance sidecar rather
+                 # than overwriting or duplicating that recovery source.
+-                before = revisions_dir / (
+-                    f"{doc_id}.r{current_revision}.unreadable-before-r"
+-                    f"{current_revision + 1}{path.suffix or '.json'}"
+-                )
++                before = revisions_dir / f"{doc_id}.r{current_revision}.unreadable-before-r{current_revision + 1}{path.suffix or '.json'}"
++            # 0599: an exclusive create — main's `before.write_bytes(path.read_bytes())`
++            # would silently clobber an existing backup file on a double call.
+             with before.open("xb") as before_fh:
+-                before_fh.write(current_bytes)
++                before_fh.write(path.read_bytes())
+                 before_fh.flush()
+                 os.fsync(before_fh.fileno())
+-            before_rel = storage_paths.to_storage_relative(
+-                before, doc.get("project_id"),
+-            )
++            before_rel = storage_paths.to_storage_relative(before, doc.get("project_id"))
+         except OSError as exc:
+-            raise HTTPException(status_code=500, detail=f"Storage error: {exc}") from exc
++            raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
+ 
+         now = now_iso()
+         store = get_store()
+         store._execute(
+-            "UPDATE documents SET revision_no = revision_no + 1, updated_at = ? "
+-            "WHERE doc_id = ? AND revision_no = ?",
++            "UPDATE documents SET revision_no = revision_no + 1, updated_at = ? WHERE doc_id = ? AND revision_no = ?",
+             [now, doc_id, current_revision],
+         )
+         refreshed = db_docs.get_by_id(doc_id)
+@@ -844,28 +847,31 @@ def restore_work_plan_revision(
+                 before.unlink(missing_ok=True)
+             except OSError:
+                 pass
+-            return _revision_conflict_response(
+-                refreshed or fresh, locale, body.base_revision_no, current_revision,
+-            )
++            return _revision_conflict_response(refreshed or fresh, locale, body.base_revision_no, current_revision)
+         try:
+             wp.write_body_atomically(path, restored_body)
+         except OSError as exc:
+             store._execute(
+-                "UPDATE documents SET revision_no = ?, updated_at = ? "
+-                "WHERE doc_id = ? AND revision_no = ?",
++                "UPDATE documents SET revision_no = ?, updated_at = ? WHERE doc_id = ? AND revision_no = ?",
+                 [current_revision, fresh.get("updated_at"), doc_id, current_revision + 1],
+             )
+             try:
+                 before.unlink(missing_ok=True)
+             except OSError:
+                 pass
+-            raise HTTPException(status_code=500, detail=f"Storage error: {exc}") from exc
++            raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
+ 
++    # 0599: only insert a new `document_revisions` row when the before-image is a real,
++    # unclaimed revision slot — main inserted this unconditionally, which for
++    # `current_revision == 0` would duplicate the row `ensure_revision_snapshot` already
++    # made for r0.
+     if before_has_revision_row:
+         db_revisions.create({
+             "doc_id": doc_id,
+             "revision_no": current_revision,
+             "backup_path": before_rel,
++            # document_revisions.edit_reason is a constrained document-edit category;
++            # the restore-specific provenance remains in the event metadata below.
+             "edit_reason": "user_comment",
+             "linked_doc_id": None,
+             "created_by": current_user["user_id"],
+@@ -873,20 +879,16 @@ def restore_work_plan_revision(
+         })
+     try:
+         db_events.create({
+-            "event_type": "doc_edited",
+-            "project_id": doc.get("project_id"),
+-            "group_id": doc.get("group_id"),
+-            "document_id": None,
+-            "actor_user_id": current_user["user_id"],
+-            "from_state": None,
+-            "to_state": None,
++            "event_type": "doc_edited", "project_id": doc.get("project_id"),
++            "group_id": doc.get("group_id"), "document_id": None,
++            "actor_user_id": current_user["user_id"], "from_state": None, "to_state": None,
+             "metadata": _json.dumps({
+-                "doc_id": doc_id,
+-                "edit_reason": "work_plan_revision_restore",
+-                "restored_revision_no": revision_no,
++                "doc_id": doc_id, "edit_reason": "work_plan_revision_restore",
++                "restored_revision_no": revision_no, "revision_no": current_revision + 1,
++                # 0599: extra provenance the audit trail needs to explain a restore that
++                # went through the sidecar path instead of an ordinary revision row.
+                 "restored_revision_id": row.get("id"),
+                 "restored_revision_created_by": row.get("created_by"),
+-                "revision_no": current_revision + 1,
+                 "unreadable_backup_path": before_rel,
+                 "unreadable_backup_is_sidecar": not before_has_revision_row,
+             }, ensure_ascii=False),
+@@ -894,13 +896,7 @@ def restore_work_plan_revision(
+     except Exception:  # noqa: BLE001 — restore is already durable
+         pass
+     refreshed = db_docs.get_by_id(doc_id) or refreshed
+-    _emit(
+-        refreshed,
+-        "updated",
+-        {"doc_id": doc_id, "type": WORK_PLAN_TYPE,
+-         "revision_no": current_revision + 1},
+-        current_user["user_id"],
+-    )
++    _emit(refreshed, "updated", {"doc_id": doc_id, "type": WORK_PLAN_TYPE, "revision_no": current_revision + 1}, current_user["user_id"])
+     return _read_view(refreshed, restored_body)
+ 
+ 

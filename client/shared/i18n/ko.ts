@@ -3133,6 +3133,21 @@ export default {
       chunk_selection: '{selection} 선택',
       line_suffix: '행',
       origin_flag_title: '충돌에서 유래한 구간',
+      // 0604 D0005 §6 — 해결자의 상위집합(supersede) 선언. 버려진 줄을 사람이 반드시 보게
+      // 하는 안전장치라 접거나 숨기지 않는다.
+      supersede_title: '상위집합 선언',
+      supersede_badge: '선언',
+      supersede_statement: {
+        ours: '현재 쪽이 들어오는 쪽 변경을 포함한다고 해결자가 선언함',
+        theirs: '들어오는 쪽이 현재 쪽 변경을 포함한다고 해결자가 선언함',
+      },
+      supersede_reason: '사유: {reason}',
+      supersede_chunk: '원본 {start}–{end}행 충돌 청크 · 그대로 남은 줄 {preserved}개',
+      supersede_replaced: {
+        ours: '대체된 현재 쪽 줄 ({n})',
+        theirs: '대체된 들어오는 쪽 줄 ({n})',
+      },
+      supersede_replaced_none: '대체된 줄 없음 — 반대쪽 줄이 모두 그대로 남았습니다.',
       conversation_title: 'AI와 대화',
       awaiting_reply: '응답 대기',
       // 0481 T0010 rev1 — 채팅을 보낸 뒤 이 화면에서 기다리면 답이 여기로 온다는 것을
