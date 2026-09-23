@@ -92,6 +92,21 @@ def upsert_config(project_id: str, data: dict[str, Any]) -> dict:
     return get_config(project_id)  # type: ignore[return-value]
 
 
+def set_default_merge_target(project_id: str, branch: Optional[str]) -> None:
+    """Persist the project's suggested finalize target (T0016 §2.2) without
+    disturbing any other git config field. A non-base integration branch that a
+    finalize actually merged into becomes this project's suggested default for
+    the NEXT group's finalize dialog, instead of resetting to base_branch every
+    time. ``None``/blank clears the suggestion back to "none"."""
+    if _get_config_db(project_id) is None:
+        return
+    get_store()._execute(
+        "UPDATE project_git_config SET default_merge_target = ? WHERE project_id = ?",
+        [branch or None, project_id],
+    )
+    meta_cache.invalidate_git_config(project_id)
+
+
 def delete_config(project_id: str) -> bool:
     if _get_config_db(project_id) is None:
         return False

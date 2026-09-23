@@ -457,6 +457,21 @@ def raise_if_retarget(group_id: str, requested: Optional[str]) -> Optional[Merge
     return fixed
 
 
+def set_project_default_target(project_id: str, requested: Optional[str]) -> dict:
+    """Directly set/clear the project's suggested finalize target (T0016 §3.2's
+    "merge target 지정/변경" action, distinct from actually running a branch
+    merge). Reuses the same server-side allow-list a finalize attempt is
+    checked against — never trusts the UI's filtered branch list alone."""
+    from modules.flow_gate.services import git_service as _gs
+    branch = normalize_requested_target(requested)
+    if branch is None:
+        _gs.db_git.set_default_merge_target(project_id, None)
+        return {"ok": True, "default_merge_target": None}
+    validate_target_branch(project_id, _gs._base_root_of(project_id), branch)
+    _gs.db_git.set_default_merge_target(project_id, branch)
+    return {"ok": True, "default_merge_target": branch}
+
+
 def plan_finalize_target(
     group_id: str, project_id: str, cfg: dict, requested: Optional[str],
 ) -> MergeTargetContext:
@@ -599,11 +614,30 @@ def record_merge_inputs(
     }})
 
 
+def _remember_default_target(ctx: MergeTargetContext) -> None:
+    """T0016 §2.2: a non-base integration branch (e.g. "flowgate-v0.2") that a
+    finalize actually merged into becomes the project's suggested default target
+    for the NEXT group's finalize dialog, instead of resetting to base_branch
+    every time this dialog opens. The base branch itself is never remembered
+    here — it is already the fallback default when nothing is suggested."""
+    if ctx.is_project_base:
+        return
+    from modules.flow_gate.services import git_service as _gs
+    try:
+        _gs.db_git.set_default_merge_target(ctx.project_id, ctx.target_branch)
+    except Exception:
+        _log.warning(
+            "could not persist default merge target for project %s", ctx.project_id,
+            exc_info=True,
+        )
+
+
 def complete_attempt(ctx: MergeTargetContext, *, merge_commit: Optional[str], pushed: bool) -> None:
     assert ctx.merge_id is not None
     close_attempt(ctx.merge_id, ATTEMPT_COMPLETED,
                   result={"merge_commit": merge_commit, "pushed": pushed})
     release_workspace(ctx)
+    _remember_default_target(ctx)
 
 
 def fail_attempt(ctx: MergeTargetContext, error: dict) -> None:
@@ -887,6 +921,7 @@ def _finish_landed_merge(
         "merge_commit": merge_commit, "pushed": pushed, "recovered": True,
     })
     release_workspace(ctx)
+    _remember_default_target(ctx)
     try:
         _gs._cleanup_group_slot(ctx.project_id, group_id)
     except Exception:

@@ -240,7 +240,7 @@ def create_branch(project_id: str, name: str, source_branch: str) -> dict:
 
 def _delete_guard(project_id: str, name: str) -> tuple[Optional[str], dict]:
     from modules.flow_gate.services import git_service as _gs
-    _, base_root, base_branch = _branch_context(project_id)
+    cfg, base_root, base_branch = _branch_context(project_id)
     if not _gs._ref_exists(base_root, f"refs/heads/{name}"):
         return "branch_not_found", {}
     if name == base_branch:
@@ -248,6 +248,12 @@ def _delete_guard(project_id: str, name: str) -> tuple[Optional[str], dict]:
     owner = internal_slot_owner(project_id, name)
     if owner is not None:
         return "branch_is_internal_slot", {"connected_group_id": owner.get("group_id")}
+    # T0016 §6.1: the branch currently pinned as this project's merge-target
+    # suggestion cannot be deleted out from under it — it must be retargeted
+    # or cleared (mt.set_project_default_target) first, same as base/internal
+    # slot above.
+    if (cfg or {}).get("default_merge_target") == name:
+        return "branch_is_default_merge_target", {}
 
     # 0594 T0012: every open finalize attempt pins its target (base or not), and a
     # non-base attempt no longer shows up as the base checkout's blocking session —
@@ -281,6 +287,9 @@ _DELETE_ERRORS = {
     "branch_not_found": (404, "local branch was not found"),
     "branch_is_base": (409, "base branch cannot be deleted"),
     "branch_is_internal_slot": (409, "registered group worktree branch cannot be deleted"),
+    "branch_is_default_merge_target": (
+        409, "branch set as the current integration target cannot be deleted",
+    ),
     "branch_in_use": (409, "branch is in use by an open merge"),
 }
 
@@ -368,7 +377,7 @@ def _ahead_behind(base_root: Path, base_branch: str, name: str) -> tuple[Optiona
 def list_branches(project_id: str) -> dict:
     """Return local branches plus read-only remote-only tracking refs."""
     from modules.flow_gate.services import git_service as _gs
-    _, base_root, base_branch = _branch_context(project_id)
+    cfg, base_root, base_branch = _branch_context(project_id)
     local_proc = _gs._run_git(
         ["for-each-ref", "--format=%(refname:short)%09%(objectname)", "refs/heads"],
         cwd=base_root,
@@ -435,4 +444,14 @@ def list_branches(project_id: str) -> dict:
             "create_source_blocked_reason": "remote_only",
             "has_remote_counterpart": True,
         })
-    return {"ok": True, "base_branch": base_branch, "branches": branches}
+    # T0016 §2.2 — the last non-base target a finalize actually merged into,
+    # surfaced only while it still names a real local branch (never a dangling
+    # suggestion for a branch that was since deleted).
+    suggested_target = (cfg or {}).get("default_merge_target")
+    default_merge_target = suggested_target if suggested_target in locals_by_name else None
+    return {
+        "ok": True,
+        "base_branch": base_branch,
+        "default_merge_target": default_merge_target,
+        "branches": branches,
+    }

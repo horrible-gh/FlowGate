@@ -404,3 +404,27 @@ describe('deck 4543n0ab v9 shape parity (0482 R0001 rev2)', () => {
     expect(conflict.findAll('button')).toHaveLength(2)
   })
 })
+
+// flowgate.default.0594 T0016 §4.1 / 완료 조건 6 — a Branch Control Center catalog
+// failure must never blank out this panel's own Git finalize UI (pending list etc.).
+describe('branch catalog failure isolation (T0016 §4.1)', () => {
+  it('a /git/branches failure only shows inside the branch manager section; the pending list stays intact', async () => {
+    getRequest.mockImplementation((url: string) => {
+      if (url.endsWith('/conflicts')) return Promise.resolve({ data: { ok: true, files: [] } })
+      if (url.endsWith('/git/finalize')) return Promise.resolve({ data: { state: { commit_message: { suggested: 'merge work', source: 'auto_title' } } } })
+      if (url.includes('/git/branches')) return Promise.reject({ response: { data: { error: { message: 'branch catalog down' } } } })
+      return Promise.resolve({ data: { ok: true, status: status() } })
+    })
+    const wrapper = mount(GitStatusPanel, {
+      props: { projectId: 'flowgate' },
+      global: { plugins: [i18n], stubs: { AppIcon: true, GitConflictResolverDialog: true } },
+    })
+    await flushPromises()
+
+    // the surrounding finalize UI (pending list) is unaffected
+    expect(wrapper.text()).toContain('flowgate.default.0482-pending')
+    expect(wrapper.findAll('.git-status-row').length).toBeGreaterThan(0)
+    // the failure is isolated to the branch manager's own error slot
+    expect(wrapper.find('[data-test="branch-manager"] .branch-error').text()).toBe('branch catalog down')
+  })
+})

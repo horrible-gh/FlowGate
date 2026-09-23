@@ -1196,3 +1196,144 @@ def test_target_carrier_through_route_and_approval_seam(proj):
     assert outcome["result"]["target_branch"] == "release"
     assert "r2.txt" in proj.origin_files("release")
     assert "r1.txt" not in proj.origin_files("main") and "r2.txt" not in proj.origin_files("main")
+
+
+# ── N ────────────────────────────────────────────────────────────────────────
+# flowgate.default.0594 T0016 §8.2 — a v0.2-style integration branch is not a
+# one-shot target: several DIFFERENT groups finalize into it in turn, and each
+# later merge builds on what the previous one just pushed, never touching main.
+
+@needs_git
+def test_N_sequential_groups_grow_the_same_integration_branch(proj):
+    from modules.flow_gate.services import git_service as svc
+
+    g_a = proj.group(1)
+    proj.local_branch("integration-v2")
+    (proj.wt(g_a) / "a.txt").write_text("a\n", encoding="utf-8")
+    proj.ready(g_a)
+    out_a = svc.finalize(g_a, "merge", target_branch="integration-v2")
+    assert out_a["result"]["status"] == "merged"
+    assert not proj.workspace("integration-v2").exists()
+
+    g_b = proj.group(2)
+    (proj.wt(g_b) / "b.txt").write_text("b\n", encoding="utf-8")
+    proj.ready(g_b)
+    out_b = svc.finalize(g_b, "merge", target_branch="integration-v2")
+    assert out_b["result"]["status"] == "merged"
+    assert not proj.workspace("integration-v2").exists()
+
+    g_c = proj.group(3)
+    (proj.wt(g_c) / "c.txt").write_text("c\n", encoding="utf-8")
+    proj.ready(g_c)
+    out_c = svc.finalize(g_c, "merge", target_branch="integration-v2")
+    assert out_c["result"]["status"] == "merged"
+    assert not proj.workspace("integration-v2").exists()
+
+    files = proj.origin_files("integration-v2")
+    assert "a.txt" in files and "b.txt" in files and "c.txt" in files
+    main_files = proj.origin_files("main")
+    assert "a.txt" not in main_files and "b.txt" not in main_files and "c.txt" not in main_files
+    assert proj.base_head_branch() == "main"
+
+
+# ── O ────────────────────────────────────────────────────────────────────────
+# T0016 §2.2/§3.2 — the last non-base target a finalize actually merged into
+# becomes this project's persisted suggestion for the NEXT finalize dialog
+# (surfaced through list_branches), and the same setting can be changed or
+# cleared directly (a distinct action from running an actual branch merge).
+
+@needs_git
+def test_O_default_merge_target_persists_and_is_settable_directly(proj):
+    from modules.flow_gate.db import git_integration as db_git
+    from modules.flow_gate.services import git_service as svc
+    from modules.flow_gate.services.git import merge_target as mt
+
+    assert (db_git.get_config(proj.pid) or {}).get("default_merge_target") is None
+
+    gid = proj.group(1)
+    assert svc.list_branches(proj.pid)["default_merge_target"] is None
+    proj.local_branch("integration-v2")
+    (proj.wt(gid) / "a.txt").write_text("a\n", encoding="utf-8")
+    proj.ready(gid)
+    out = svc.finalize(gid, "merge", target_branch="integration-v2")
+    assert out["result"]["status"] == "merged"
+    assert db_git.get_config(proj.pid)["default_merge_target"] == "integration-v2"
+    assert svc.list_branches(proj.pid)["default_merge_target"] == "integration-v2"
+
+    # T0016 §3.2's own action: set/clear the suggestion directly, no merge involved.
+    proj.local_branch("integration-v3")
+    result = mt.set_project_default_target(proj.pid, "integration-v3")
+    assert result == {"ok": True, "default_merge_target": "integration-v3"}
+    assert db_git.get_config(proj.pid)["default_merge_target"] == "integration-v3"
+
+    # server-side allow-list still applies — never trusts the caller.
+    with pytest.raises(svc.GitServiceError) as caught:
+        mt.set_project_default_target(proj.pid, "does-not-exist")
+    assert caught.value.code == "merge_target_not_found"
+
+    cleared = mt.set_project_default_target(proj.pid, None)
+    assert cleared == {"ok": True, "default_merge_target": None}
+    assert db_git.get_config(proj.pid)["default_merge_target"] is None
+
+    # T0016 §6.1 — the branch currently pinned as the merge-target suggestion
+    # is itself undeletable, both through the guard and the catalog's can_delete
+    # flag, until it is retargeted or cleared.
+    mt.set_project_default_target(proj.pid, "integration-v3")
+    assert svc.check_branch_delete(proj.pid, "integration-v3") == "branch_is_default_merge_target"
+    row = next(b for b in svc.list_branches(proj.pid)["branches"] if b["name"] == "integration-v3")
+    assert row["can_delete"] is False
+    assert row["delete_blocked_reason"] == "branch_is_default_merge_target"
+    with pytest.raises(svc.GitServiceError) as caught:
+        svc.delete_branch(proj.pid, "integration-v3")
+    assert caught.value.code == "branch_is_default_merge_target"
+    assert svc.list_branches(proj.pid)["default_merge_target"] == "integration-v3"
+
+    # clearing the suggestion first unblocks the delete.
+    mt.set_project_default_target(proj.pid, None)
+    svc.delete_branch(proj.pid, "integration-v3")
+    assert svc.list_branches(proj.pid)["default_merge_target"] is None
+
+    # defense in depth: even if a dangling suggestion occurred by some other
+    # path (e.g. the branch ref removed outside this API), the catalog must
+    # never surface it as the current target.
+    proj.local_branch("integration-v4")
+    mt.set_project_default_target(proj.pid, "integration-v4")
+    _git(["branch", "-D", "integration-v4"], cwd=proj.base)
+    assert svc.list_branches(proj.pid)["default_merge_target"] is None
+
+
+@needs_git
+def test_P_default_merge_target_route(proj):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from modules.flow_gate.api.v1 import git_routes
+    from modules.flow_gate.auth.middleware import get_current_user
+
+    proj.group(1)
+    proj.local_branch("integration-v2")
+    app = FastAPI()
+    app.include_router(git_routes.router)
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": "admin", "is_admin": True}
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.put(
+        f"/api/v1/projects/{proj.pid}/git/branches/default-target",
+        json={"branch": "integration-v2"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["default_merge_target"] == "integration-v2"
+    catalog = client.get(f"/api/v1/projects/{proj.pid}/git/branches")
+    assert catalog.json()["default_merge_target"] == "integration-v2"
+
+    bad = client.put(
+        f"/api/v1/projects/{proj.pid}/git/branches/default-target",
+        json={"branch": "does-not-exist"},
+    )
+    assert bad.status_code == 404, bad.text
+
+    cleared = client.put(
+        f"/api/v1/projects/{proj.pid}/git/branches/default-target", json={},
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["default_merge_target"] is None

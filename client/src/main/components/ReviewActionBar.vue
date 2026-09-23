@@ -458,7 +458,7 @@
         </template>
 
         <div class="ab-git-target">
-          <label for="ab-git-target">Target branch</label>
+          <label for="ab-git-target">{{ t('main.git_finalize.merge_target_label') }}</label>
           <select
             id="ab-git-target"
             v-model="gitTargetBranch"
@@ -467,8 +467,8 @@
           >
             <option v-for="branch in gitTargetCandidates" :key="branch" :value="branch">{{ branch }}</option>
           </select>
-          <p v-if="gitActionMerges && gitFin.base_branch && gitTargetBranch !== gitFin.base_branch" class="ab-git-retarget" role="status">
-            Working base: {{ gitFin.base_branch }} · New merge target: {{ gitTargetBranch }}
+          <p v-if="gitActionMerges && gitFin.base_branch && gitTargetBranch !== gitFin.base_branch" class="ab-git-retarget" role="status" data-test="finalize-retarget-notice">
+            {{ t('main.git_finalize.retarget_notice', { base: gitFin.base_branch, target: gitTargetBranch }) }}
           </p>
         </div>
 
@@ -670,6 +670,7 @@ async function fetchGitFin() {
     gitFin.value = null
     return
   }
+  let state: GitFinState
   try {
     // context=approval → the server returns a display-only preliminary
     // awaiting_choice so the choice block renders in THIS confirm dialog, before
@@ -679,19 +680,39 @@ async function fetchGitFin() {
     const { data } = await getRequest<{ ok: boolean; state: GitFinState }>(
       `/api/v1/groups/${props.groupId}/git/finalize?context=approval`,
     )
-    gitFin.value = data.state
-    gitNormalChoice.value = data.state.default_action || 'wait'
-    const catalog = await getRequest<any>(`/api/v1/projects/${props.projectId}/git/branches`)
-    gitTargetCandidates.value = (catalog.data.branches || [])
-      .filter((branch: any) => (branch.kind === 'local' || branch.kind === 'base') && branch.name !== data.state.branch)
-      .map((branch: any) => branch.name)
-    const defaultTarget = data.state.finalize_target?.target_branch || data.state.base_branch || catalog.data.base_branch || ''
-    gitTargetBranch.value = gitTargetCandidates.value.includes(defaultTarget)
-      ? defaultTarget : (gitTargetCandidates.value[0] || '')
-    gitArchiveSelected.value = false
-    gitAuxOpen.value = !!data.state.aux_choices?.includes(gitNormalChoice.value)
+    state = data.state
   } catch {
     gitFin.value = null // 403/404/500 — no git block, plain approve
+    return
+  }
+  gitFin.value = state
+  gitNormalChoice.value = state.default_action || 'wait'
+  gitArchiveSelected.value = false
+  gitAuxOpen.value = !!state.aux_choices?.includes(gitNormalChoice.value)
+  // T0016 §4.1 — the branch catalog / merge-target suggestion is a separate,
+  // best-effort enrichment of the finalize UI above, not a precondition for it.
+  // A 403/404/500 here must fall back to the pinned/base target instead of
+  // wiping out the finalize block this dialog already has.
+  gitTargetCandidates.value = []
+  gitTargetBranch.value = state.finalize_target?.target_branch || state.base_branch || ''
+  try {
+    const catalog = await getRequest<any>(`/api/v1/projects/${props.projectId}/git/branches`)
+    gitTargetCandidates.value = (catalog.data.branches || [])
+      .filter((branch: any) => (branch.kind === 'local' || branch.kind === 'base') && branch.name !== state.branch)
+      .map((branch: any) => branch.name)
+    // T0016 §2.2: an already-pinned open attempt always wins (never silently
+    // retargeted); otherwise prefer the project's persisted integration branch
+    // over resetting to base every time this dialog opens.
+    const defaultTarget = state.finalize_target?.target_branch
+      || catalog.data.default_merge_target
+      || state.base_branch
+      || catalog.data.base_branch
+      || ''
+    gitTargetBranch.value = gitTargetCandidates.value.includes(defaultTarget)
+      ? defaultTarget : (gitTargetCandidates.value[0] || '')
+  } catch {
+    // catalog read failed — keep the finalize/base fallback set above and
+    // leave gitFin untouched so the approval Git block stays visible.
   }
 }
 
@@ -1639,8 +1660,8 @@ onBeforeUnmount(() => {
   margin: 0;
   padding: 7px 9px;
   border-radius: 6px;
-  background: #fff7d6;
-  color: #92400e;
+  background: var(--warning-l, #fef3c7);
+  color: var(--warning, #d97706);
   font-size: .72rem;
 }
 .ab-git-aux {
