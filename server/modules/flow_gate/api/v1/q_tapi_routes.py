@@ -373,8 +373,7 @@ def post_register_answer_by_path(
     user_id, forced_kind, ai_run_id = auth
     if forced_kind is not None:
         body.author_kind = forced_kind
-    return _register_answer_response(doc_id, item_id, body, user_id, ai_run_id=ai_run_id)
-    return _register_answer_response(doc_id, item_id, body, user_id, request)
+    return _register_answer_response(doc_id, item_id, body, user_id, request, ai_run_id=ai_run_id)
 
 
 @router.post("/q/{doc_id}/items/{item_id}/answers")
@@ -394,8 +393,7 @@ def post_register_answer(
     user_id, forced_kind, ai_run_id = auth
     if forced_kind is not None:
         body.author_kind = forced_kind
-    return _register_answer_response(doc_id, item_id, body, user_id, ai_run_id=ai_run_id)
-    return _register_answer_response(doc_id, item_id, body, user_id, request)
+    return _register_answer_response(doc_id, item_id, body, user_id, request, ai_run_id=ai_run_id)
 
 
 # ── Answer hand-off — give one query item to an AI worker ────────────────────────────
