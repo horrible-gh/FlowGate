@@ -266,22 +266,35 @@ def abort_tr_conflict(group_id: str, merge_id: int) -> dict:
     }
 
 
-def _split_conflict_chunks_with_base(content: str) -> Optional[list[dict]]:
-    """Parse marker-delimited chunks out of ``content``, or ``None`` if malformed.
+def _split_content_segments(content: str) -> Optional[list[dict]]:
+    """Parse ``content`` into ordered segments alternating common text and marker
+    chunks: ``{"type": "common", "lines": [...]}`` or ``{"type": "chunk", "ours": [...],
+    "base": [...] | None, "theirs": [...]}`` — ``base`` is ``None`` when the chunk has no
+    ``|||||||`` section (pre-zdiff3 sessions, or a merge that could not produce a common
+    ancestor). Returns ``None`` if malformed (unbalanced or nested markers).
 
-    Each chunk is ``{"ours": [...], "base": [...] | None, "theirs": [...]}`` — ``base`` is
-    ``None`` when the chunk has no ``|||||||`` section (pre-zdiff3 sessions, or a merge that
-    could not produce a common ancestor).
+    Segments always alternate common/chunk/common/chunk/.../common — a leading or
+    trailing common segment may be empty, but it is always there, so a chunk segment
+    always has a common segment immediately before and after it in this list. That is
+    what lets a chunk's resolution be found by ANCHOR instead of by scanning the whole
+    file: the text immediately around a chunk is unedited context, so locating where
+    THAT landed in the submitted file brackets exactly where this chunk's own resolution
+    must sit (0602 T0004 rev2 review finding — see :func:`_anchor_chunk_selections`).
     """
     from modules.flow_gate.services import git_service as _gs
-    chunks: list[dict] = []
+    segments: list[dict] = []
+    common: list[str] = []
     state = "COMMON"
     chunk: Optional[dict] = None
     for line in (content or "").splitlines():
         if state == "COMMON":
             if _gs._CONFLICT_OPEN_RE.match(line):
+                segments.append({"type": "common", "lines": common})
+                common = []
                 chunk = {"ours": [], "base": None, "theirs": []}
                 state = "OURS"
+            else:
+                common.append(line)
         elif state == "OURS":
             if _CONFLICT_BASE_RE.match(line):
                 chunk["base"] = []
@@ -301,7 +314,7 @@ def _split_conflict_chunks_with_base(content: str) -> Optional[list[dict]]:
                 chunk["base"].append(line)
         elif state == "THEIRS":
             if _gs._CONFLICT_CLOSE_RE.match(line):
-                chunks.append(chunk)
+                segments.append({"type": "chunk", **chunk})
                 chunk = None
                 state = "COMMON"
             elif (
@@ -314,41 +327,27 @@ def _split_conflict_chunks_with_base(content: str) -> Optional[list[dict]]:
                 chunk["theirs"].append(line)
     if state != "COMMON":
         return None
-    return chunks
+    segments.append({"type": "common", "lines": common})
+    return segments
+
+
+def _split_conflict_chunks_with_base(content: str) -> Optional[list[dict]]:
+    """The chunk segments from :func:`_split_content_segments`, common text dropped —
+    ``{"ours": [...], "base": [...] | None, "theirs": [...]}`` per chunk, or ``None`` if
+    malformed. Kept as its own name for callers that only need chunk identity, not the
+    surrounding-context anchors.
+    """
+    segments = _split_content_segments(content)
+    if segments is None:
+        return None
+    return [{"ours": s["ours"], "base": s["base"], "theirs": s["theirs"]}
+            for s in segments if s["type"] == "chunk"]
 
 
 def _chunk_added_lines(side: list[str], base: list[str]) -> list[str]:
     """Lines in ``side`` that are not in ``base`` (trimmed comparison — E12 note in T0012)."""
     base_set = {line.strip() for line in base}
     return [line for line in side if line.strip() not in base_set]
-
-
-def _conflict_side_dropped(original: str, submitted: str) -> bool:
-    """True if ``submitted`` lost every line one side added over the common ancestor.
-
-    ``original`` is the pre-resolution working-tree content (still carrying markers);
-    ``submitted`` is the resolver's proposed replacement (already marker-free). Chunks
-    without a base (no common ancestor available) are skipped — there is nothing to diff
-    against. A chunk where only one side actually changed anything is also skipped: keeping
-    the changed side and dropping the unchanged one is a normal, correct resolution.
-    """
-    chunks = _split_conflict_chunks_with_base(original)
-    if not chunks:
-        return False
-    submitted_lines = {line.strip() for line in (submitted or "").splitlines()}
-    for ch in chunks:
-        base = ch.get("base")
-        if base is None:
-            continue
-        ours_added = _chunk_added_lines(ch["ours"], base)
-        theirs_added = _chunk_added_lines(ch["theirs"], base)
-        if not ours_added or not theirs_added:
-            continue
-        ours_present = any(line.strip() in submitted_lines for line in ours_added)
-        theirs_present = any(line.strip() in submitted_lines for line in theirs_added)
-        if not ours_present or not theirs_present:
-            return True
-    return False
 
 
 def _find_subsequence(haystack: list[str], needle: list[str], start: int) -> Optional[int]:
@@ -362,50 +361,210 @@ def _find_subsequence(haystack: list[str], needle: list[str], start: int) -> Opt
     return None
 
 
+def _find_subsequence_window(haystack: list[str], needle: list[str], start: int, end: int) -> Optional[int]:
+    """Like :func:`_find_subsequence`, but the match must fit entirely inside
+    ``[start, end)`` — a chunk's anchored window — so a candidate cannot spill past the
+    common context that brackets it."""
+    if not needle:
+        return None
+    n = len(needle)
+    limit = min(end, len(haystack)) - n
+    if limit < start:
+        return None
+    for i in range(start, limit + 1):
+        if haystack[i:i + n] == needle:
+            return i
+    return None
+
+
+def _select_conflict_chunk(
+    submitted_lines: list[str], start: int, end: int, ours: list[str], theirs: list[str],
+) -> tuple[str, Optional[int], Optional[int]]:
+    """Classify one chunk's resolution against ``submitted_lines[start:end]`` — its own
+    ANCHORED window, bracketed by the common context that :func:`_split_content_segments`
+    found immediately before and after it in the original (see
+    :func:`_anchor_chunk_selections`) — as an exact ``ours``/``theirs``/``both``
+    selection, or ``manual`` if nothing inside the window matches. Returns
+    ``(selection, start_line, end_line)``, a 1-based inclusive line range, or
+    ``("manual", None, None)``.
+
+    Chunk-local by construction: a candidate can only match inside ``[start, end)``, so a
+    piece of common text elsewhere in the file that happens to equal ``ours`` or
+    ``theirs`` verbatim — before this chunk, after it, or belonging to a neighboring
+    chunk's own window — can never stand in for this chunk's actual resolution (0602
+    T0004 rev2 review finding: an unbounded, cursor-forward search over the WHOLE
+    remaining file let a coincidental match sitting in ordinary, unedited context
+    outrank — or hide — the chunk's real resolved text).
+
+    Classification compares the ENTIRE anchored window with each candidate.  A side's
+    original text merely appearing as a subsequence is not a one-side selection: any
+    additional resolved text makes the window ``manual`` so synthesized resolutions can
+    proceed to review.  ``both`` is checked first only to handle an identical/empty-side
+    overlap consistently; hard rejection remains limited to a whole-window exact
+    ``ours`` or ``theirs`` selection.
+    """
+    window = submitted_lines[start:end]
+    ranked = [(ours + theirs, "both"), (theirs + ours, "both"), (ours, "ours"), (theirs, "theirs")]
+    for candidate_lines, label in ranked:
+        if candidate_lines and window == candidate_lines:
+            return label, start + 1, end
+    return "manual", None, None
+
+
+def _all_subsequence_positions(haystack: list[str], needle: list[str]) -> list[int]:
+    """Every start position where ``needle`` occurs in ``haystack``."""
+    if not needle:
+        return []
+    n = len(needle)
+    return [i for i in range(len(haystack) - n + 1) if haystack[i:i + n] == needle]
+
+
+def _anchor_chunk_selections(segments: list[dict], submitted_lines: list[str]) -> list[dict]:
+    """Align all common segments and conflict resolutions as one ordered sequence.
+
+    A greedy "first next-common match" is not a stable boundary: the same text can occur
+    inside the resolution.  Instead, dynamic programming considers every order-preserving
+    placement of the surviving common segments.  Paths first maximize preserved common
+    context and then the amount of exact conflict-side text explained inside the resulting
+    windows.  The latter tie-break selects the real second ``tail`` as common in
+    ``ours=tail; common=tail; submitted=tail,tail``: it leaves the first ``tail`` available
+    to classify as ``ours`` rather than creating an empty, falsely-manual window.
+
+    If a non-empty common segment has no usable verbatim occurrence, it contributes no
+    context score and falls back to the end of the remaining submitted text, preserving
+    the previous best-effort wide window for submissions that also edited common context.
+    """
+    chunks = [segments[i] for i in range(1, len(segments), 2)]
+    commons = [segments[i]["lines"] for i in range(0, len(segments), 2)]
+    if not chunks:
+        return []
+
+    # Each state is end_cursor -> (score, anchor placements).  score is lexicographic:
+    # matched common lines, exact side lines explained, then earlier total anchor starts.
+    first = commons[0]
+    first_positions = _all_subsequence_positions(submitted_lines, first)
+    if not first:
+        states = {0: ((0, 0, 0), [(0, 0)])}
+    elif first_positions:
+        states = {
+            pos + len(first): ((len(first), 0, -pos), [(pos, pos + len(first))])
+            for pos in first_positions
+        }
+    else:
+        states = {0: ((0, 0, 0), [(0, 0)])}
+
+    for chunk_index, chunk in enumerate(chunks):
+        following = commons[chunk_index + 1]
+        positions = _all_subsequence_positions(submitted_lines, following)
+        next_states: dict[int, tuple[tuple[int, int, int], list[tuple[int, int]]]] = {}
+        for cursor, (score, anchors) in states.items():
+            candidates = [p for p in positions if p >= cursor]
+            if not following:
+                candidates = [len(submitted_lines)]
+            elif not candidates:
+                candidates = [len(submitted_lines)]
+            for start in candidates:
+                selection, start_line, end_line = _select_conflict_chunk(
+                    submitted_lines, cursor, start, chunk["ours"], chunk["theirs"],
+                )
+                exact_lines = 0 if start_line is None else end_line - start_line + 1
+                matched_common = len(following) if start in positions else 0
+                end = start + matched_common
+                candidate_score = (
+                    score[0] + matched_common,
+                    score[1] + exact_lines,
+                    score[2] - start,
+                )
+                previous = next_states.get(end)
+                placement = anchors + [(start, end)]
+                if previous is None or candidate_score > previous[0]:
+                    next_states[end] = (candidate_score, placement)
+        states = next_states
+
+    _score, anchors = max(states.values(), key=lambda item: item[0])
+    results: list[dict] = []
+    for idx, chunk in enumerate(chunks):
+        window_start = anchors[idx][1]
+        window_end = anchors[idx + 1][0]
+        selection, start_line, end_line = _select_conflict_chunk(
+            submitted_lines, window_start, window_end, chunk["ours"], chunk["theirs"],
+        )
+        results.append({
+            "chunk": chunk, "selection": selection,
+            "start_line": start_line, "end_line": end_line,
+        })
+    return results
+
+def _conflict_side_dropped(original: str, submitted: str) -> bool:
+    """True if a base-having chunk where BOTH sides changed something over the common
+    ancestor resolved to an exact, whole-side selection of just one of them.
+
+    Classification is chunk-local, anchored by the unedited common context around each
+    chunk rather than a whole-file line-membership test or an unbounded scan (see
+    :func:`_anchor_chunk_selections`, shared with :func:`_classify_conflict_chunks`'s
+    ours/theirs/both/manual labelling): a manual/synthesized resolution that rewrites
+    both sides' intent into a new line is ``manual``, not ``ours``/``theirs``, and is not
+    rejected here — nothing was dropped in the sense this check exists for. Because each
+    chunk's search window is bracketed by the common text immediately before and after
+    it, the same text sitting anywhere else in the file — in ordinary unedited context,
+    before the chunk, after it, or claimed by a neighboring chunk's own window — cannot
+    stand in for a side this chunk actually dropped, and cannot hide a side it actually
+    kept either.
+
+    Chunks without a base (no common ancestor available) are still walked — to keep the
+    anchor aligned with later chunks — but never trigger rejection: there is nothing to
+    diff against. A chunk where only one side actually changed anything over base is also
+    exempt: keeping the changed side and dropping the unchanged one is a normal, correct
+    resolution.
+    """
+    segments = _split_content_segments(original)
+    if segments is None:
+        return False
+    chunks = [s for s in segments if s["type"] == "chunk"]
+    if not chunks:
+        return False
+    submitted_lines = (submitted or "").splitlines()
+    for entry in _anchor_chunk_selections(segments, submitted_lines):
+        chunk = entry["chunk"]
+        base = chunk.get("base")
+        ours, theirs = chunk["ours"], chunk["theirs"]
+        both_changed = False
+        if base is not None:
+            both_changed = bool(_chunk_added_lines(ours, base)) and bool(_chunk_added_lines(theirs, base))
+        if both_changed and entry["selection"] in ("ours", "theirs"):
+            return True
+    return False
+
+
 def _classify_conflict_chunks(path: str, original: str, submitted: str) -> list[dict]:
     """D0006 §3.3 / L0007 §2.4 — per-chunk selection the review screen overlays on
     the real diff: which conflict chunk resolved to ``ours``/``theirs``/``both``/
     ``manual``, and (best-effort) where that ended up in the submitted text.
 
-    Priority mirrors L0007 §2.4: an exact match of ``ours`` wins, then ``theirs``,
-    then either concatenation order of both, else ``manual``. Line ranges are found
-    by a left-to-right subsequence search advancing a cursor per chunk (chunks are
-    resolved in original document order) rather than L0007's stricter "unique
-    match only" rule — a pragmatic narrowing for this pass; an ambiguous/no-match
-    chunk still gets a selection label, just no line range.
+    Shares its chunk-local, context-anchored match with :func:`_conflict_side_dropped`
+    via :func:`_anchor_chunk_selections` — the priority order in
+    :func:`_select_conflict_chunk` mirrors L0007 §2.4, with the same pragmatic narrowing
+    noted there: a left-to-right search within the anchored window rather than L0007's
+    stricter "unique match only" rule, so an ambiguous/no-match chunk still gets a
+    selection label, just no line range.
     """
-    chunks = _split_conflict_chunks_with_base(original)
-    if not chunks:
+    segments = _split_content_segments(original)
+    if segments is None:
+        return []
+    if not any(s["type"] == "chunk" for s in segments):
         return []
     submitted_lines = (submitted or "").splitlines()
-    cursor = 0
     results: list[dict] = []
-    for idx, chunk in enumerate(chunks):
-        ours, theirs = chunk["ours"], chunk["theirs"]
-        ours_text, theirs_text = "\n".join(ours), "\n".join(theirs)
+    for idx, entry in enumerate(_anchor_chunk_selections(segments, submitted_lines)):
+        chunk = entry["chunk"]
+        ours_text, theirs_text = "\n".join(chunk["ours"]), "\n".join(chunk["theirs"])
         chunk_id = hashlib.sha256(
             "\x00".join((path, str(idx), ours_text, theirs_text)).encode("utf-8", errors="surrogateescape")
         ).hexdigest()
-        # "both" combinations are checked BEFORE the bare single-side texts: a bare
-        # `ours` is a byte-prefix of `ours + theirs`, so checking single-side first
-        # would report "ours" for a chunk the human plainly combined — the longer,
-        # more specific match should win (a deliberate reordering from L0007 §2.4's
-        # literal ours-then-theirs-then-both listing, kept because in practice it
-        # is what makes a genuinely-combined resolution show up as "both" at all).
-        candidates = [(ours + theirs, "both"), (theirs + ours, "both"), (ours, "ours"), (theirs, "theirs")]
-        selection, start_line, end_line = "manual", None, None
-        for candidate_lines, label in candidates:
-            if not candidate_lines:
-                continue
-            found_at = _find_subsequence(submitted_lines, candidate_lines, cursor)
-            if found_at is not None:
-                selection, start_line, end_line = label, found_at + 1, found_at + len(candidate_lines)
-                cursor = found_at + len(candidate_lines)
-                break
         results.append({
-            "path": path, "chunk_id": chunk_id, "selection": selection,
-            "start_line": start_line, "end_line": end_line,
-            "range_ambiguous": start_line is None,
+            "path": path, "chunk_id": chunk_id, "selection": entry["selection"],
+            "start_line": entry["start_line"], "end_line": entry["end_line"],
+            "range_ambiguous": entry["start_line"] is None,
         })
     return results
 
