@@ -626,7 +626,7 @@ def fail_attempt(ctx: MergeTargetContext, error: dict) -> None:
         release_workspace(ctx)
 
 
-def prepare_workspace(ctx: MergeTargetContext) -> None:
+def prepare_workspace(ctx: MergeTargetContext, *, detached: bool = False) -> None:
     """Materialize the managed worktree for a non-base attempt (under the lock).
 
     The marker is written BEFORE the worktree so a crash never leaves an unowned
@@ -643,9 +643,11 @@ def prepare_workspace(ctx: MergeTargetContext) -> None:
         _remove_workspace(ctx.workspace_dir, base_root)
     _write_owner_marker(ctx)
     _gs._run_git(["worktree", "prune"], cwd=base_root)
-    proc = _gs._run_git(
-        ["worktree", "add", str(ctx.root), ctx.target_branch], cwd=base_root,
-    )
+    add_args = ["worktree", "add"]
+    if detached:
+        add_args.append("--detach")
+    add_args.extend([str(ctx.root), ctx.target_branch])
+    proc = _gs._run_git(add_args, cwd=base_root)
     if proc.returncode != 0 or not ctx.root.is_dir():
         raise _target_error(
             409, "merge_target_checkout_failed",

@@ -72,6 +72,140 @@ def _validate_create_source(project_id: str, base_root: Path, source_branch: str
         )
 
 
+def _validate_merge_branch(
+    project_id: str, base_root: Path, branch: str, role: str,
+) -> None:
+    """Validate a local ordinary branch at the branch-merge execution boundary."""
+    from modules.flow_gate.services import git_service as _gs
+    if not _gs._ref_exists(base_root, f"refs/heads/{branch}"):
+        remote_only = _gs._ref_exists(base_root, f"refs/remotes/origin/{branch}")
+        code = f"branch_merge_{role}_remote_only" if remote_only else f"branch_merge_{role}_not_found"
+        raise GitServiceError(
+            409 if remote_only else 404, code,
+            f"{role} branch is not an allowed local branch",
+        )
+    owner = internal_slot_owner(project_id, branch)
+    if owner is not None:
+        raise GitServiceError(
+            409, f"branch_merge_{role}_internal_slot",
+            f"registered group worktree branch cannot be the merge {role}",
+            {"connected_group_id": owner.get("group_id")},
+        )
+
+
+def merge_branches(project_id: str, source_branch: str, target_branch: str) -> dict:
+    """Merge and publish one ordinary local branch into another.
+
+    Conflicts are terminal: collect paths, abort, clean the managed target
+    worktree, and return branch_merge_conflict without a finalize session.
+    """
+    from modules.flow_gate.services import git_service as _gs
+    from . import merge_target
+
+    cfg, base_root, base_branch = _branch_context(project_id)
+    if source_branch == target_branch:
+        raise GitServiceError(409, "branch_merge_same_branch", "source and target must differ")
+    _validate_merge_branch(project_id, base_root, source_branch, "source")
+    _validate_merge_branch(project_id, base_root, target_branch, "target")
+
+    holder = f"op:{uuid.uuid4()}"
+    if not _gs._acquire_lock(project_id, holder):
+        raise GitServiceError(409, "git_busy", "another Git operation is in progress")
+    owner = f"branch-merge:{uuid.uuid4()}"
+    wdir = merge_target.workspace_dir(project_id, target_branch)
+    ctx = merge_target.MergeTargetContext(
+        project_id=project_id, base_branch=base_branch, target_branch=target_branch,
+        is_project_base=False, root=wdir / merge_target.WORKSPACE_TREE,
+        workspace_dir=wdir, workspace_key=merge_target.workspace_key(target_branch),
+        merge_id=owner, owner=owner, lock_holder=holder,
+    )
+    prepared = False
+    try:
+        if source_branch == target_branch:
+            raise GitServiceError(409, "branch_merge_same_branch", "source and target must differ")
+        _validate_merge_branch(project_id, base_root, source_branch, "source")
+        _validate_merge_branch(project_id, base_root, target_branch, "target")
+        merge_target.raise_if_workspace_unavailable(project_id, target_branch)
+        # Git refuses a second checkout of the project base. A detached managed
+        # worktree preserves the shared checkout while HEAD is pushed explicitly.
+        merge_target.prepare_workspace(ctx, detached=target_branch == base_branch)
+        prepared = True
+        username = cfg.get("username")
+        secret = _gs._load_secret_for(cfg) or ""
+        fetch = _gs._run_git(
+            ["fetch", "origin"], cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC,
+            username=username, secret=secret,
+        )
+        if fetch.returncode != 0:
+            raise GitServiceError(500, "git_error", "Git fetch failed", diagnostic=_one_line(fetch.stderr))
+        if _gs._ref_exists(ctx.root, f"refs/remotes/origin/{target_branch}"):
+            update = _gs._run_git(["merge", "--ff-only", f"origin/{target_branch}"], cwd=ctx.root)
+            if update.returncode != 0:
+                raise GitServiceError(
+                    409, "branch_merge_target_diverged",
+                    "target branch cannot fast-forward to its remote counterpart",
+                    diagnostic=_one_line(update.stderr),
+                )
+        source_before = _gs._rev_parse(base_root, f"refs/heads/{source_branch}")
+        target_before = _gs._rev_parse(ctx.root, "HEAD")
+        merged = _gs._run_git(
+            [*_gs._GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "merge", "--no-ff",
+             "-m", f"Merge branch '{source_branch}' into {target_branch}", source_branch],
+            cwd=ctx.root,
+        )
+        if merged.returncode != 0:
+            files_proc = _gs._run_git(["diff", "--name-only", "--diff-filter=U"], cwd=ctx.root)
+            files = [line for line in (files_proc.stdout or "").splitlines() if line]
+            aborted = _gs._run_git(["merge", "--abort"], cwd=ctx.root)
+            if aborted.returncode != 0:
+                raise GitServiceError(
+                    500, "branch_merge_abort_failed",
+                    "branch merge conflicted and Git could not abort it",
+                    {"conflict_files": files}, diagnostic=_one_line(aborted.stderr),
+                )
+            if not merge_target.release_workspace(ctx):
+                prepared = False
+                raise GitServiceError(
+                    500, "branch_merge_cleanup_failed",
+                    "branch merge conflicted but its managed workspace could not be cleaned",
+                    {"conflict_files": files},
+                )
+            prepared = False
+            raise GitServiceError(
+                409, "branch_merge_conflict", "branch merge has conflicts",
+                {"source_branch": source_branch, "target_branch": target_branch,
+                 "conflict_files": files},
+            )
+        pushed = _gs._run_git(
+            ["push", "origin", f"HEAD:{target_branch}"], cwd=ctx.root,
+            timeout=_gs.GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
+        )
+        if pushed.returncode != 0:
+            _gs._run_git(["reset", "--hard", target_before], cwd=ctx.root)
+            raise GitServiceError(
+                500, "branch_merge_push_failed", "Git push was rejected",
+                diagnostic=_one_line(pushed.stderr),
+            )
+        target_after = _gs._rev_parse(ctx.root, "HEAD")
+        if not merge_target.release_workspace(ctx):
+            prepared = False
+            raise GitServiceError(
+                500, "branch_merge_cleanup_failed",
+                "branch merge was pushed but its managed workspace could not be cleaned",
+                {"target_branch": target_branch, "target_head": target_after},
+            )
+        prepared = False
+        return {
+            "ok": True, "source_branch": source_branch, "target_branch": target_branch,
+            "source_head": source_before, "target_before": target_before,
+            "target_head": target_after, "pushed": True, "workspace_cleaned": True,
+        }
+    finally:
+        if prepared:
+            merge_target.release_workspace(ctx)
+        _gs.db_git.release_lock(project_id, holder)
+
+
 def create_branch(project_id: str, name: str, source_branch: str) -> dict:
     """Create one local branch. This operation intentionally never publishes it."""
     from modules.flow_gate.services import git_service as _gs

@@ -349,8 +349,8 @@ def test_B_non_base_clean_finalize_uses_managed_workspace(proj, monkeypatch):
     seen = {}
     real_prepare = mt.prepare_workspace
 
-    def spy(ctx):
-        real_prepare(ctx)
+    def spy(ctx, **kwargs):
+        real_prepare(ctx, **kwargs)
         seen["root"] = ctx.root
         seen["exists"] = ctx.root.is_dir()
         seen["base_branch_during"] = proj.base_head_branch()
@@ -385,6 +385,14 @@ def test_B_non_base_clean_finalize_uses_managed_workspace(proj, monkeypatch):
     done = mt.completed_target_of_state(db_git.get_state(gid))
     assert done.target_branch == "develop" and not done.is_project_base
     assert svc.get_finalize_state(gid)["state"]["finalize_target"]["target_branch"] == "develop"
+
+    # T0014 connected edge: the result just pushed by group finalize is then
+    # promoted through the real ordinary-branch merge service into main.
+    promoted = svc.merge_branches(proj.pid, "develop", "main")
+    assert promoted["pushed"] is True and promoted["workspace_cleaned"] is True
+    assert "feature.txt" in proj.origin_files("main")
+    assert not proj.workspace("main").exists()
+    assert proj.base_head_branch() == "main"
 
 
 # ── C ────────────────────────────────────────────────────────────────────────

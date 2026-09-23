@@ -586,6 +586,7 @@
         </div>
       </div>
       <div class="git-status-sect"><div class="git-ra-placeholder">{{ t('main.git_status.ra_placeholder') }}</div></div>
+      <GitBranchManager :project-id="projectId" />
     </div>
   </div>
 
@@ -627,6 +628,7 @@ import {
 } from '../composables/useConflictChunks'
 import GitConflictResolverDialog from './GitConflictResolverDialog.vue'
 import GitMergeReviewDialog from './GitMergeReviewDialog.vue'
+import GitBranchManager from './GitBranchManager.vue'
 
 const props = defineProps<{ projectId: string }>()
 const emit = defineEmits<{ 'open-group': [groupId: string] }>()

@@ -35,9 +35,18 @@ def repo(tmp_path, monkeypatch):
     (root / "README.md").write_text("base\n", encoding="utf-8")
     subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
     subprocess.run(["git", "commit", "-m", "base"], cwd=root, check=True, capture_output=True)
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+    subprocess.run(["git", "remote", "add", "origin", str(remote)], cwd=root, check=True)
+    subprocess.run(["git", "push", "-u", "origin", "main"], cwd=root, check=True, capture_output=True)
 
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    monkeypatch.setattr(git_service, "get_storage_root", lambda: storage)
     states = [{"project_id": "flowgate", "group_id": "flowgate.default.1", "branch": "slot-live"}]
     monkeypatch.setattr(branch_service, "_branch_context", lambda project_id: ({"enabled": 1}, root, "main"))
+    monkeypatch.setattr(git_service, "_base_root_of", lambda project_id: root)
+    monkeypatch.setattr(git_service, "_load_secret_for", lambda cfg: "")
     monkeypatch.setattr(git_service, "_acquire_lock", lambda project_id, holder: True)
     monkeypatch.setattr(git_service.db_git, "release_lock", lambda project_id, holder: None)
     monkeypatch.setattr(git_service.db_git, "list_states_of_project", lambda project_id: list(states))
@@ -155,6 +164,70 @@ def test_delete_unmerged_reports_commit_preview(repo):
     assert caught.value.code == "branch_unmerged_commits"
     assert caught.value.details["commits"][0]["subject"] == "unmerged work"
     assert _git(repo, "show-ref", "--verify", "refs/heads/unmerged").returncode == 0
+
+
+def test_branch_merge_clean_pushes_target_without_switching_base(repo):
+    _git(repo, "branch", "develop")
+    _git(repo, "checkout", "-b", "feature")
+    (repo / "feature.txt").write_text("feature\n", encoding="utf-8")
+    _git(repo, "add", "feature.txt")
+    _git(repo, "commit", "-m", "feature")
+    source_head = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    _git(repo, "checkout", "main")
+    base_head = _git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    result = git_service.merge_branches("flowgate", "feature", "develop")
+
+    assert result["pushed"] is True
+    assert result["workspace_cleaned"] is True
+    assert _git(repo, "branch", "--show-current").stdout.strip() == "main"
+    assert _git(repo, "rev-parse", "HEAD").stdout.strip() == base_head
+    assert _git(repo, "rev-parse", "feature").stdout.strip() == source_head
+    assert _git(repo, "show", "develop:feature.txt").stdout == "feature\n"
+    assert _git(repo, "ls-remote", "--exit-code", "origin", "refs/heads/develop").returncode == 0
+
+
+def test_branch_merge_rejects_self_remote_and_actual_slots(repo):
+    sha = _git(repo, "rev-parse", "main").stdout.strip()
+    _git(repo, "update-ref", "refs/remotes/origin/remote-only", sha)
+    for source, target, code in [
+        ("main", "main", "branch_merge_same_branch"),
+        ("remote-only", "main", "branch_merge_source_remote_only"),
+        ("main", "remote-only", "branch_merge_target_remote_only"),
+        ("slot-live", "main", "branch_merge_source_internal_slot"),
+        ("main", "slot-live", "branch_merge_target_internal_slot"),
+    ]:
+        with pytest.raises(GitServiceError) as caught:
+            git_service.merge_branches("flowgate", source, target)
+        assert caught.value.code == code
+
+
+def test_branch_merge_conflict_aborts_cleans_and_creates_no_session(repo, monkeypatch):
+    _git(repo, "checkout", "-b", "target")
+    (repo / "same.txt").write_text("target\n", encoding="utf-8")
+    _git(repo, "add", "same.txt")
+    _git(repo, "commit", "-m", "target")
+    target_before = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    _git(repo, "checkout", "main")
+    _git(repo, "checkout", "-b", "source")
+    (repo / "same.txt").write_text("source\n", encoding="utf-8")
+    _git(repo, "add", "same.txt")
+    _git(repo, "commit", "-m", "source")
+    _git(repo, "checkout", "main")
+    created = []
+    monkeypatch.setattr(git_service.db_git, "create_session", lambda *a, **k: created.append((a, k)))
+
+    with pytest.raises(GitServiceError) as caught:
+        git_service.merge_branches("flowgate", "source", "target")
+
+    assert caught.value.code == "branch_merge_conflict"
+    assert caught.value.details["conflict_files"] == ["same.txt"]
+    assert _git(repo, "rev-parse", "target").stdout.strip() == target_before
+    assert created == []
+    storage = git_service.get_storage_root()
+    assert not (storage / "git_merge_targets").exists() or not any(
+        (storage / "git_merge_targets").rglob("tree")
+    )
 
 
 def _client(*, is_admin=True):

@@ -457,6 +457,21 @@
         </div>
         </template>
 
+        <div class="ab-git-target">
+          <label for="ab-git-target">Target branch</label>
+          <select
+            id="ab-git-target"
+            v-model="gitTargetBranch"
+            data-test="finalize-target-selector"
+            :disabled="gitArchiveSelected || !gitActionMerges"
+          >
+            <option v-for="branch in gitTargetCandidates" :key="branch" :value="branch">{{ branch }}</option>
+          </select>
+          <p v-if="gitActionMerges && gitFin.base_branch && gitTargetBranch !== gitFin.base_branch" class="ab-git-retarget" role="status">
+            Working base: {{ gitFin.base_branch }} · New merge target: {{ gitTargetBranch }}
+          </p>
+        </div>
+
         <!-- sqyjx6bt v4: archive is outside the two axes and disables them when
              selected. The approval dialog intentionally keeps the compact form. -->
         <section v-if="gitFin.archive_action" class="ab-git-keep-zone">
@@ -619,6 +634,8 @@ async function onReleaseLeaseClick(): Promise<void> {
 // block, its default, and the pre-check on the server all read one source of truth.
 interface GitFinState {
   branch: string | null
+  base_branch?: string | null
+  finalize_target?: { target_branch?: string | null } | null
   status: string
   default_action: string | null
   choices: string[]
@@ -632,6 +649,9 @@ interface GitFinState {
 const gitFin = ref<GitFinState | null>(null)
 const gitNormalChoice = ref<string>('')
 const gitArchiveSelected = ref(false)
+const gitTargetBranch = ref('')
+const gitTargetCandidates = ref<string[]>([])
+const gitActionMerges = computed(() => ['merge', 'merge_only'].includes(gitNormalChoice.value))
 const isAcDoc = computed(() => (props.docType ?? '').toUpperCase() === 'AC')
 // Show the choice only for an AC doc whose group slot is still actionable —
 // awaiting_choice / waiting with real choices offered. Terminal (merged/pushed),
@@ -661,6 +681,13 @@ async function fetchGitFin() {
     )
     gitFin.value = data.state
     gitNormalChoice.value = data.state.default_action || 'wait'
+    const catalog = await getRequest<any>(`/api/v1/projects/${props.projectId}/git/branches`)
+    gitTargetCandidates.value = (catalog.data.branches || [])
+      .filter((branch: any) => (branch.kind === 'local' || branch.kind === 'base') && branch.name !== data.state.branch)
+      .map((branch: any) => branch.name)
+    const defaultTarget = data.state.finalize_target?.target_branch || data.state.base_branch || catalog.data.base_branch || ''
+    gitTargetBranch.value = gitTargetCandidates.value.includes(defaultTarget)
+      ? defaultTarget : (gitTargetCandidates.value[0] || '')
     gitArchiveSelected.value = false
     gitAuxOpen.value = !!data.state.aux_choices?.includes(gitNormalChoice.value)
   } catch {
@@ -1022,6 +1049,9 @@ async function doApprove() {
     const body: Record<string, unknown> = { doc_id: props.docId, comment: null }
     if (showGitFinalizeBlock.value && (gitArchiveSelected.value || gitNormalChoice.value)) {
       body.git_action = gitArchiveSelected.value ? 'stash' : gitNormalChoice.value
+      if (!gitArchiveSelected.value && gitActionMerges.value && gitTargetBranch.value) {
+        body.git_target_branch = gitTargetBranch.value
+      }
     }
     const res = await postApproveWithGitRetry(body)
     const git = (res.data as any)?.git
@@ -1591,6 +1621,27 @@ onBeforeUnmount(() => {
 }
 .ab-git-choice--aux {
   margin-top: 8px;
+}
+.ab-git-target {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+}
+.ab-git-target label {
+  color: var(--text-m);
+  font-size: .72rem;
+  font-weight: 700;
+}
+.ab-git-target select {
+  width: 100%;
+}
+.ab-git-retarget {
+  margin: 0;
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: #fff7d6;
+  color: #92400e;
+  font-size: .72rem;
 }
 .ab-git-aux {
   margin-top: 2px;

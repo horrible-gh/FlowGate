@@ -275,6 +275,7 @@ from .git.branches import (
     delete_branch,
     internal_slot_owner,
     list_branches,
+    merge_branches,
     validate_new_branch_name,
 )
 

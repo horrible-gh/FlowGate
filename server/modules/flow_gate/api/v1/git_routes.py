@@ -200,6 +200,13 @@ class BranchCreateBody(BaseModel):
     source_branch: str
 
 
+class BranchMergeBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_branch: str
+    target_branch: str
+
+
 @router.get("/projects/{project_id}/git/branches")
 def get_git_branches(
     project_id: str,
@@ -219,6 +226,18 @@ def post_git_branch(
 ):
     try:
         return git_service.create_branch(project_id, body.name, body.source_branch)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/projects/{project_id}/git/branches/merge")
+def post_git_branch_merge(
+    project_id: str,
+    body: BranchMergeBody,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    try:
+        return git_service.merge_branches(project_id, body.source_branch, body.target_branch)
     except GitServiceError as exc:
         return _guard(exc)
 
