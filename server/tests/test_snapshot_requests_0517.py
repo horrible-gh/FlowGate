@@ -109,3 +109,60 @@ def test_approval_does_not_materialize_until_explicit_endpoint(monkeypatch):
  created=snapshot_routes.materialize_snapshot("snap_route",user={"user_id":"human"})
  assert created["request"]["status"]=="created"
  assert captured==[("snap_route","human")]
+
+
+# T0012 §12/§13 — the client's Pending badge/list and the auto-open dialog have nothing
+# to refresh on without a signal; §17 allows a small connection fix within T#3's scope.
+def test_create_and_approve_broadcast_refresh_signal_not_the_list_itself(monkeypatch):
+ events=[]
+ monkeypatch.setattr(service,"broadcast_event_threadsafe",lambda event:events.append(event) or 1)
+ monkeypatch.setattr(service,"get_store",lambda:_Store())
+ monkeypatch.setattr(service.db,"create",lambda n:BASE|{"snapshot_id":"snap_evt","status":"requested"})
+ monkeypatch.setattr(service.workflow_events,"create",lambda data:data)
+ row=service.create_request(BASE,"worker_user")
+ assert len(events)==1
+ assert events[0].event_type=="snapshot_request_updated"
+ assert events[0].payload=={"snapshot_id":"snap_evt","group_id":"p.m.0001","status":"requested"}
+ assert events[0].project=="p" and events[0].group_id=="p.m.0001"
+ assert "reason" not in events[0].payload and "purpose" not in events[0].payload
+
+ approved=BASE|{"snapshot_id":"snap_evt","status":"approved"}
+ monkeypatch.setattr(service.db,"transition",lambda *args:(approved,True))
+ service.decide("snap_evt","approved","human")
+ assert len(events)==2
+ assert events[1].payload["status"]=="approved"
+
+ # A no-op decision (already-decided request) changes nothing and must not re-broadcast.
+ monkeypatch.setattr(service.db,"transition",lambda *args:(approved,False))
+ service.decide("snap_evt","approved","human")
+ assert len(events)==2
+
+
+def test_broadcast_failure_never_breaks_the_decision(monkeypatch):
+ def _boom(event): raise RuntimeError("no subscribers reachable")
+ monkeypatch.setattr(service,"broadcast_event_threadsafe",_boom)
+ monkeypatch.setattr(service,"get_store",lambda:_Store())
+ monkeypatch.setattr(service.db,"create",lambda n:BASE|{"snapshot_id":"snap_evt2","status":"requested"})
+ monkeypatch.setattr(service.workflow_events,"create",lambda data:data)
+ row=service.create_request(BASE,"worker_user")
+ assert row["snapshot_id"]=="snap_evt2"
+
+
+def test_active_route_lists_created_and_refreshes_stale_when_group_scoped(monkeypatch):
+ created_row=BASE|{"snapshot_id":"snap_active","status":"created","stale":False}
+ calls=[]
+ monkeypatch.setattr(snapshot_routes.db,"list_created",lambda project_id,group_id:[created_row])
+ monkeypatch.setattr(
+  snapshot_routes.materialization,"refresh_stale",
+  lambda snapshot_id,actor:calls.append((snapshot_id,actor)) or created_row|{"stale":True},
+ )
+ result=snapshot_routes.active(project_id="p",group_id="p.m.0001",user={"user_id":"human"})
+ assert result["ok"] is True
+ assert result["requests"][0]["stale"] is True
+ assert calls==[("snap_active","human")]
+
+ # No group scope: the cheap path — no per-row live refresh.
+ calls.clear()
+ result=snapshot_routes.active(project_id="p",group_id=None,user={"user_id":"human"})
+ assert result["requests"]==[created_row]
+ assert calls==[]

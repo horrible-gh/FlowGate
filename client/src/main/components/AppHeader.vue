@@ -31,6 +31,12 @@
     <div class="hdr-actions">
       <GitActionMenu />
       <div class="hdr-div"></div>
+      <!-- flowgate.default.0517 T0012 §8: a second, independent header entry point next
+           to the notification bell — reuses its `.notif-bell`/`.notif-badge` classes
+           rather than a merged tab inside NotificationCenter, since its feed endpoint
+           has no snapshot-request section of its own. -->
+      <SnapshotPendingCenter />
+      <div class="hdr-div"></div>
       <NotificationCenter />
     </div>
     <div class="hdr-div"></div>
@@ -105,6 +111,7 @@ import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 import ProjectSelector from './ProjectSelector.vue'
 import NotificationCenter from './NotificationCenter.vue'
+import SnapshotPendingCenter from './SnapshotPendingCenter.vue'
 import GitActionMenu from './GitActionMenu.vue'
 import AiInvokeMiniplayer from './AiInvokeMiniplayer.vue'
 import AppIcon from '@shared/AppIcon.vue'

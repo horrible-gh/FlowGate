@@ -23,6 +23,16 @@ def request_snapshot(body:RequestIn,request:Request):
 @router.get("/pending")
 def pending(project_id:str|None=None,group_id:str|None=None,user=Depends(get_current_user)):
  return {"ok":True,"requests":db.list_pending(project_id,group_id)}
+@router.get("/active")
+def active(project_id:str|None=None,group_id:str|None=None,user=Depends(get_current_user)):
+ # T0012 §13: small read-model connection this UX needs and T#1/T#2 did not expose —
+ # db.list_created() already existed for T#2's own use, nothing new is written here.
+ # group_id-scoped calls refresh staleness live (bounded to one group's rows) so the
+ # warning reflects the current worktree, not a value cached at materialize time.
+ rows=db.list_created(project_id,group_id)
+ if group_id:
+  rows=[materialization.refresh_stale(row["snapshot_id"],actor=user["user_id"]) for row in rows]
+ return {"ok":True,"requests":rows}
 @router.get("/{snapshot_id}")
 def detail(snapshot_id:str,user=Depends(get_current_user)):
  try: row=materialization.refresh_stale(snapshot_id,actor=user["user_id"])
