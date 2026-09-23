@@ -1873,6 +1873,11 @@ export default {
       mark_revised_confirm_message: '검수 대기 상태로 전환합니다. 진행하시겠습니까?',
       error_approve_failed_log: '[ReviewActionBar] 승인 처리 실패',
       toast_approve_failed: '승인 처리 실패: {detail}',
+      // 0607 T0004 §3.6 — Git 을 동반한 승인이 응답 없이 끊겼을 때 서버 상태를 확인하는 동안의 안내.
+      git_settle_in_progress: '서버가 Git 작업을 아직 처리하고 있습니다. 결과가 확인될 때까지 승인 버튼을 잠급니다.',
+      git_settle_deferred: 'Git 병합이 충돌로 보류되었습니다. 충돌 해결 화면에서 이어서 진행하세요.',
+      git_settle_retry: 'Git 작업은 끝났지만 승인이 반영되지 않았습니다. 승인을 다시 누르면 Git 작업 없이 승인만 반영합니다.',
+      git_settle_unknown: '서버의 Git 작업 결과를 아직 확인하지 못했습니다. 잠시 뒤 Git 상태를 확인한 다음 다시 시도하세요.',
       // 0332 D0005 §6.5 — TR 승인 알림. 둘 다 승인은 성공했다는 말로 시작한다.
       tr_commit_toast: '승인했습니다 — 커밋 {commit} 을 남겼습니다',
       tr_commit_failed_toast: '승인했습니다 — 커밋하지 못했습니다 ({reason})',
