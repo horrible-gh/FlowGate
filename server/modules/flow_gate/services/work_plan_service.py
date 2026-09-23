@@ -24,8 +24,10 @@ import os
 import re
 import tempfile
 import unicodedata
+from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from modules.flow_gate.db import document_revisions as db_revisions
 from modules.flow_gate.db import templates as db_templates
 from modules.flow_gate.documents.constants import (
     STEP_NOTE_MAX_CHARS,
@@ -165,6 +167,10 @@ class WorkPlanUnreadable(Exception):
         self.detail = detail
         self.raw = raw
         super().__init__(f"{reason}: {detail}")
+
+
+class RevisionSnapshotError(RuntimeError):
+    """A revision snapshot is missing, unsafe, corrupt, or ambiguous."""
 
 
 # ── Copy (P0009 §1.3: message/msg follow the request locale) ─────────────────
@@ -1709,6 +1715,125 @@ def write_body_atomically(path, body: dict) -> None:
     except BaseException:
         try:
             os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+def resolve_revision_snapshot(
+    row: dict,
+    *,
+    project_id: Optional[str],
+    doc_id: Optional[str] = None,
+) -> Path:
+    """Resolve and validate one stored WP recovery source, or fail closed."""
+    from modules.flow_gate.storage import paths as storage_paths
+
+    if doc_id is not None and row.get("doc_id") != doc_id:
+        raise RevisionSnapshotError("revision snapshot belongs to another document")
+    stored = str(row.get("backup_path") or "").strip()
+    resolved = storage_paths.resolve_storage_path(stored, project_id)
+    if resolved is None:
+        raise RevisionSnapshotError("revision snapshot path is missing or outside storage")
+    try:
+        load_body(resolved, project_id=project_id, doc_id=doc_id)
+    except WorkPlanUnreadable as exc:
+        raise RevisionSnapshotError(
+            f"revision snapshot is not a readable work plan: {exc.reason}"
+        ) from exc
+    return resolved
+
+
+def ensure_revision_snapshot(
+    doc: dict,
+    canonical_path,
+    *,
+    created_by: str,
+    revision_no: int = 0,
+    edit_reason: str = "user_comment",
+) -> dict:
+    """Preserve the exact canonical WP bytes as one durable revision snapshot.
+
+    Repeated calls return the existing row after validating its path and body. They
+    never rewrite its file, even when the live canonical has since changed. An
+    unexplained file at the deterministic destination is not adopted as a baseline.
+    """
+    from modules.flow_gate.storage import paths as storage_paths
+
+    doc_id = str(doc.get("doc_id") or "")
+    project_id = doc.get("project_id")
+    canonical = Path(canonical_path).resolve(strict=False)
+    if (
+        not doc_id
+        or not canonical.is_file()
+        or not storage_paths.within_allowed_roots(canonical, project_id)
+    ):
+        raise RevisionSnapshotError("canonical work plan path is missing or outside storage")
+
+    try:
+        existing = db_revisions.get_single_by_doc_revision(doc_id, int(revision_no))
+    except db_revisions.RevisionAmbiguityError as exc:
+        raise RevisionSnapshotError(str(exc)) from exc
+    if existing is not None:
+        resolve_revision_snapshot(existing, project_id=project_id, doc_id=doc_id)
+        return existing
+
+    suffix = canonical.suffix or ".json"
+    revisions_dir = canonical.parent / "revisions"
+    destination = revisions_dir / f"{doc_id}.r{int(revision_no)}{suffix}"
+    if not storage_paths.within_allowed_roots(destination, project_id):
+        raise RevisionSnapshotError("revision snapshot destination is outside storage")
+
+    try:
+        source_bytes = canonical.read_bytes()
+        revisions_dir.mkdir(parents=True, exist_ok=True)
+        destination = destination.resolve(strict=False)
+        if not storage_paths.within_allowed_roots(destination, project_id):
+            raise RevisionSnapshotError("revision snapshot destination is outside storage")
+        with destination.open("xb") as fh:
+            fh.write(source_bytes)
+            fh.flush()
+            os.fsync(fh.fileno())
+    except FileExistsError as exc:
+        raise RevisionSnapshotError(
+            "revision snapshot file exists without an unambiguous database row"
+        ) from exc
+    except RevisionSnapshotError:
+        raise
+    except (OSError, UnicodeError) as exc:
+        raise RevisionSnapshotError(f"revision snapshot write failed: {exc}") from exc
+
+    try:
+        # Validate the bytes that were actually made durable, not a regenerated body.
+        try:
+            load_body(destination, project_id=project_id, doc_id=doc_id)
+        except WorkPlanUnreadable as exc:
+            raise RevisionSnapshotError(
+                f"revision snapshot is not a readable work plan: {exc.reason}"
+            ) from exc
+        row, created = db_revisions.create_once({
+            "doc_id": doc_id,
+            "revision_no": int(revision_no),
+            "backup_path": storage_paths.to_storage_relative(destination, project_id),
+            "edit_reason": edit_reason,
+            "linked_doc_id": None,
+            "created_by": created_by,
+        })
+        if not created:
+            # A competing process won the DB identity. Its source is authoritative;
+            # this call's unreferenced file must not become a second candidate.
+            winner = resolve_revision_snapshot(
+                row, project_id=project_id, doc_id=doc_id,
+            )
+            if winner.resolve(strict=False) != destination:
+                try:
+                    destination.unlink()
+                except OSError:
+                    pass
+        return row
+    except BaseException:
+        try:
+            destination.unlink()
         except OSError:
             pass
         raise

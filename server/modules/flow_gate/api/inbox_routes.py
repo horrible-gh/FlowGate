@@ -4575,7 +4575,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     _origin_run_id = token_rec.get("ai_run_id")
     _origin_provider_name = _resolve_origin_provider_name(_origin_run_id)
     try:
-        db_docs.create({
+        created_doc = db_docs.create({
             "doc_id": canonical_doc_id,
             "project_id": project,
             "module": module,
@@ -4607,6 +4607,15 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 asker_kind="ai",
                 project_id=project,
                 notify_audience=actor_user_id,
+            )
+        if wp_plan is not None:
+            # 0599 T#2: persist the exact canonical AI-created bytes as r0 only
+            # after the document row and any attached questions are registered.
+            work_plan_service.ensure_revision_snapshot(
+                created_doc,
+                stored_path,
+                created_by=actor_user_id,
+                revision_no=0,
             )
     except Exception as exc:
         # storage/DB rollback: q_service validation failures must not leave a half-created
@@ -5409,7 +5418,28 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # backup_path_rel is the relative value persisted to document_revisions.
     backup_path_str: Optional[str] = None
     backup_path_rel: Optional[str] = None
-    if stored_path and stored_path.exists():
+    existing_wp_revision: Optional[dict] = None
+    if wp_plan is not None:
+        try:
+            existing_wp_revision = db_revisions.get_single_by_doc_revision(
+                doc_id, current_revision_no,
+            )
+        except db_revisions.RevisionAmbiguityError as exc:
+            return _fail(500, str(exc))
+        if existing_wp_revision is not None:
+            try:
+                existing_wp_path = work_plan_service.resolve_revision_snapshot(
+                    existing_wp_revision,
+                    project_id=project,
+                    doc_id=doc_id,
+                )
+                # Reuse the immutable source for CAS rollback/change summary without
+                # copying over it or registering a second row.
+                backup_path_str = str(existing_wp_path)
+                backup_path_rel = existing_wp_revision.get("backup_path")
+            except work_plan_service.RevisionSnapshotError as exc:
+                return _fail(500, str(exc))
+    if existing_wp_revision is None and stored_path and stored_path.exists():
         revisions_dir = stored_path.parent / "revisions"
         revisions_dir.mkdir(parents=True, exist_ok=True)
         # The backup uses the same extension as the original. A work plan's canonical
@@ -5418,7 +5448,13 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         backup_filename = f"{doc_id}.r{current_revision_no}{stored_path.suffix or '.md'}"
         backup_path = revisions_dir / backup_filename
         try:
-            shutil.copy2(str(stored_path), str(backup_path))
+            if wp_plan is not None:
+                with stored_path.open("rb") as source_fh, backup_path.open("xb") as backup_fh:
+                    shutil.copyfileobj(source_fh, backup_fh)
+                    backup_fh.flush()
+                    os.fsync(backup_fh.fileno())
+            else:
+                shutil.copy2(str(stored_path), str(backup_path))
             backup_path_str = str(backup_path)
             backup_path_rel = to_storage_relative(backup_path, project)
         except OSError as exc:

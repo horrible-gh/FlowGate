@@ -15,6 +15,7 @@ workflow sequence and belong to the next task set. Nothing here starts a run (P0
 from __future__ import annotations
 
 import json as _json
+import os
 import re as _re
 import threading
 from functools import partial
@@ -73,6 +74,10 @@ class WorkPlanSave(BaseModel):
     base_revision_no: int
     body: dict
     capability_warning_acks: list[str] = Field(default_factory=list)
+
+
+class WorkPlanRestore(BaseModel):
+    base_revision_no: int
 
 
 class WorkPlanRestore(BaseModel):
@@ -143,7 +148,10 @@ def _providers(project_id: str) -> list[dict]:
 
 
 def _revision_backup(doc: dict, row: dict) -> tuple[Optional[Any], Optional[dict], Optional[str]]:
-    """Resolve and validate a revision without ever exposing its storage path."""
+    """Resolve and validate a revision without exposing its storage path.
+
+    (main's original wording: "Resolve and validate a revision without ever exposing its storage path.")
+    """
     stored = str(row.get("backup_path") or "").strip()
     if not stored:
         return None, None, "backup_path_missing"
@@ -153,7 +161,11 @@ def _revision_backup(doc: dict, row: dict) -> tuple[Optional[Any], Optional[dict
     if path is None:
         return None, None, "backup_unavailable"
     try:
-        body = wp.load_body(path, project_id=doc.get("project_id"))
+        body = wp.load_body(
+            path,
+            project_id=doc.get("project_id"),
+            doc_id=doc.get("doc_id"),
+        )
     except wp.WorkPlanUnreadable as exc:
         return path, None, exc.reason
     except OSError:
@@ -162,20 +174,47 @@ def _revision_backup(doc: dict, row: dict) -> tuple[Optional[Any], Optional[dict
 
 
 def _revisions_brief(doc: dict, limit: int = 20) -> list[dict]:
+    """List one fail-closed restore candidate per revision number."""
+    doc_id = doc.get("doc_id") or ""
     try:
         rows = db_revisions.list_by_doc(doc.get("doc_id") or "")
     except Exception:  # noqa: BLE001 — history failure must not hide the raw recovery view
         return []
+    # main's simpler loop, replaced below:
+    #     result = []
+    #     for row in rows[:limit]:
+    #         _path, _body, reason = _revision_backup(doc, row)
+    # sliced to `limit` raw rows and resolved every one unconditionally.
+    # That is not safe once a revision number
+    # can be ambiguous (0599's whole point): slicing before dedup/ambiguity-checking could
+    # silently return fewer than `limit` distinct revisions, or resolve an ambiguous
+    # revision_no against whichever row happened to be listed first. So this loop walks the
+    # full row list, dedupes by revision_no, checks each one through
+    # `get_single_by_doc_revision` before resolving it, and only applies the `limit` cutoff
+    # to the deduped `result`.
     result = []
-    for row in rows[:limit]:
-        _path, _body, reason = _revision_backup(doc, row)
+    seen: set[int] = set()
+    for row in rows:
+        revision_no = int(row.get("revision_no") or 0)
+        if revision_no in seen:
+            continue
+        seen.add(revision_no)
+        try:
+            selected = db_revisions.get_single_by_doc_revision(doc_id, revision_no)
+        except db_revisions.RevisionAmbiguityError:
+            selected = None
+            reason = "revision_ambiguous"
+        else:
+            _path, _body, reason = _revision_backup(doc, selected or row)
         result.append({
             "revision_no": row.get("revision_no"),
             "created_at": row.get("created_at"),
             "created_by": row.get("created_by"),
-            "restorable": reason is None,
+            "restorable": selected is not None and reason is None,
             "restore_unavailable_reason": reason,
         })
+        if len(result) >= limit:
+            break
     return result
 
 
@@ -527,10 +566,22 @@ def create_work_plan(
             "updated_at": now,
             "meta": _json.dumps({"work_plan": {"origin": "human", "title_locale": title_locale}}, ensure_ascii=False),
         }, actor_user_id=current_user["user_id"])
-    except Exception as exc:  # noqa: BLE001 — roll the file back, never leave an orphan
+        # 0599 T#2: creation succeeds only after the exact canonical bytes have a
+        # durable r0 recovery source. This never regenerates a body from settings.
+        wp.ensure_revision_snapshot(
+            doc,
+            path,
+            created_by=current_user["user_id"],
+            revision_no=0,
+        )
+    except Exception as exc:  # noqa: BLE001 — roll the file and row back, never leave an orphan
         try:
             path.unlink(missing_ok=True)
         except OSError:
+            pass
+        try:
+            db_docs.delete(doc_id)
+        except Exception:
             pass
         raise HTTPException(status_code=500, detail=f"DB registration error: {exc}")
 
@@ -700,6 +751,18 @@ def restore_work_plan_revision(
     body: WorkPlanRestore,
     current_user: dict = Depends(get_current_user),
 ):
+    """Restore one validated snapshot while preserving the unreadable before-image.
+
+    main's own (0597 T0004) version of this route used a naive lookup (`next(item for
+    item in db_revisions.list_by_doc(doc_id) if item.get("revision_no") == revision_no)`,
+    no ambiguity handling), a non-exclusive before-image write
+    (`before.write_bytes(path.read_bytes())`), and no r0-immutability distinction (it
+    always inserted a fresh `document_revisions` row for `current_revision`, which is
+    the r0 duplication this task set forbids when revision 0 already owns a row from
+    `ensure_revision_snapshot`). The lookup and the before-image write below replace
+    those two pieces with fail-closed versions; the rest of the function keeps main's
+    original flow and formatting.
+    """
     locale = _locale(request)
     doc = _load_doc(doc_id)
     from modules.flow_gate.documents.routers.documents import (
@@ -709,11 +772,20 @@ def restore_work_plan_revision(
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
     final_approved = document_service.is_final_approved(doc)
-    if not document_service.is_document_editable(doc, final_approved=final_approved):
+    if doc.get("status") == "closed" or not document_service.is_document_editable(doc, final_approved=final_approved):
         raise HTTPException(status_code=422, detail="Modification not allowed after final approval." if final_approved else f"Modification not allowed for status: {doc.get('status')}")
 
-    row = next((item for item in db_revisions.list_by_doc(doc_id)
-                if item.get("revision_no") == revision_no), None)
+    # 0599: a plain scan (main's `next(item for item in db_revisions.list_by_doc(doc_id)
+    # if item.get("revision_no") == revision_no)`) can silently pick the wrong backup once
+    # a revision_no can collide, so the lookup itself must fail closed on that collision.
+    try:
+        row = db_revisions.get_single_by_doc_revision(doc_id, revision_no)
+    except db_revisions.RevisionAmbiguityError:
+        return JSONResponse(status_code=422, content={
+            "code": "wp_revision_not_restorable",
+            "message": "The selected work plan revision cannot be restored.",
+            "reason": "revision_ambiguous",
+        })
     if row is None:
         raise HTTPException(status_code=404, detail="Work plan revision not found.")
     _source_path, restored_body, unavailable = _revision_backup(doc, row)
@@ -732,11 +804,41 @@ def restore_work_plan_revision(
         path = _plan_path(fresh)
         if not path.exists():
             raise HTTPException(status_code=422, detail="Current work plan body is missing.")
+
+        # 0599: revision 0 is immutable and, once this document has been saved at least
+        # once, already owns a `document_revisions` row from creation time
+        # (`ensure_revision_snapshot`). Restoring while still at revision 0 must not
+        # create a second row for revision 0 — main's unconditional insert further down
+        # would do exactly that — so this checks whether `current_revision` already has a
+        # row before deciding the before-image's shape.
+        try:
+            existing_current = db_revisions.get_single_by_doc_revision(doc_id, current_revision)
+        except db_revisions.RevisionAmbiguityError:
+            return JSONResponse(status_code=422, content={
+                "code": "wp_revision_not_restorable",
+                "message": "The current work plan revision is ambiguous.",
+                "reason": "revision_ambiguous",
+            })
+        before_has_revision_row = existing_current is None
+
         revisions_dir = path.parent / "revisions"
         try:
             revisions_dir.mkdir(parents=True, exist_ok=True)
-            before = revisions_dir / f"{doc_id}.r{current_revision}{path.suffix or '.json'}"
-            before.write_bytes(path.read_bytes())
+            if before_has_revision_row:
+                # Normal 0597 before-image: revision N preserves the raw body that
+                # existed immediately before the restore advanced the document to N+1.
+                before = revisions_dir / f"{doc_id}.r{current_revision}{path.suffix or '.json'}"
+            else:
+                # r0 is immutable. On a never-saved plan the baseline already owns
+                # revision 0, so preserve the broken raw in a provenance sidecar rather
+                # than overwriting or duplicating that recovery source.
+                before = revisions_dir / f"{doc_id}.r{current_revision}.unreadable-before-r{current_revision + 1}{path.suffix or '.json'}"
+            # 0599: an exclusive create — main's `before.write_bytes(path.read_bytes())`
+            # would silently clobber an existing backup file on a double call.
+            with before.open("xb") as before_fh:
+                before_fh.write(path.read_bytes())
+                before_fh.flush()
+                os.fsync(before_fh.fileno())
             before_rel = storage_paths.to_storage_relative(before, doc.get("project_id"))
         except OSError as exc:
             raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
@@ -749,6 +851,10 @@ def restore_work_plan_revision(
         )
         refreshed = db_docs.get_by_id(doc_id)
         if refreshed is None or refreshed.get("revision_no") != current_revision + 1:
+            try:
+                before.unlink(missing_ok=True)
+            except OSError:
+                pass
             return _revision_conflict_response(refreshed or fresh, locale, body.base_revision_no, current_revision)
         try:
             wp.write_body_atomically(path, restored_body)
@@ -757,25 +863,43 @@ def restore_work_plan_revision(
                 "UPDATE documents SET revision_no = ?, updated_at = ? WHERE doc_id = ? AND revision_no = ?",
                 [current_revision, fresh.get("updated_at"), doc_id, current_revision + 1],
             )
+            try:
+                before.unlink(missing_ok=True)
+            except OSError:
+                pass
             raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
 
-    db_revisions.create({
-        "doc_id": doc_id,
-        "revision_no": current_revision,
-        "backup_path": before_rel,
-        # document_revisions.edit_reason is a constrained document-edit category;
-        # the restore-specific provenance remains in the event metadata below.
-        "edit_reason": "user_comment",
-        "linked_doc_id": None,
-        "created_by": current_user["user_id"],
-        "created_at": now,
-    })
+    # 0599: only insert a new `document_revisions` row when the before-image is a real,
+    # unclaimed revision slot — main inserted this unconditionally, which for
+    # `current_revision == 0` would duplicate the row `ensure_revision_snapshot` already
+    # made for r0.
+    if before_has_revision_row:
+        db_revisions.create({
+            "doc_id": doc_id,
+            "revision_no": current_revision,
+            "backup_path": before_rel,
+            # document_revisions.edit_reason is a constrained document-edit category;
+            # the restore-specific provenance remains in the event metadata below.
+            "edit_reason": "user_comment",
+            "linked_doc_id": None,
+            "created_by": current_user["user_id"],
+            "created_at": now,
+        })
     try:
         db_events.create({
             "event_type": "doc_edited", "project_id": doc.get("project_id"),
             "group_id": doc.get("group_id"), "document_id": None,
             "actor_user_id": current_user["user_id"], "from_state": None, "to_state": None,
-            "metadata": _json.dumps({"doc_id": doc_id, "edit_reason": "work_plan_revision_restore", "restored_revision_no": revision_no, "revision_no": current_revision + 1}),
+            "metadata": _json.dumps({
+                "doc_id": doc_id, "edit_reason": "work_plan_revision_restore",
+                "restored_revision_no": revision_no, "revision_no": current_revision + 1,
+                # 0599: extra provenance the audit trail needs to explain a restore that
+                # went through the sidecar path instead of an ordinary revision row.
+                "restored_revision_id": row.get("id"),
+                "restored_revision_created_by": row.get("created_by"),
+                "unreadable_backup_path": before_rel,
+                "unreadable_backup_is_sidecar": not before_has_revision_row,
+            }, ensure_ascii=False),
         })
     except Exception:  # noqa: BLE001 — restore is already durable
         pass
@@ -805,7 +929,12 @@ def save_work_plan(
     _reject_if_group_ai_running(doc)
 
     final_approved = document_service.is_final_approved(doc)
-    if not document_service.is_document_editable(doc, final_approved=final_approved):
+    if (
+        doc.get("status") == "closed"
+        or not document_service.is_document_editable(
+            doc, final_approved=final_approved,
+        )
+    ):
         raise HTTPException(
             status_code=422,
             detail="Modification not allowed after final approval."
@@ -863,12 +992,30 @@ def save_work_plan(
         )
         path = _plan_path(fresh)
         backup_rel: Optional[str] = None
-        if path.exists():
+        try:
+            existing_revision = db_revisions.get_single_by_doc_revision(
+                doc_id, current_revision,
+            )
+        except db_revisions.RevisionAmbiguityError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        if existing_revision is not None:
+            try:
+                wp.resolve_revision_snapshot(
+                    existing_revision,
+                    project_id=doc.get("project_id"),
+                    doc_id=doc_id,
+                )
+            except wp.RevisionSnapshotError as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+        elif path.exists():
             revisions_dir = path.parent / "revisions"
             try:
                 revisions_dir.mkdir(parents=True, exist_ok=True)
                 backup = revisions_dir / f"{doc_id}.r{current_revision}{path.suffix or '.json'}"
-                backup.write_bytes(path.read_bytes())
+                with backup.open("xb") as backup_fh:
+                    backup_fh.write(path.read_bytes())
+                    backup_fh.flush()
+                    os.fsync(backup_fh.fileno())
                 backup_rel = storage_paths.to_storage_relative(backup, doc.get("project_id"))
             except OSError as exc:
                 raise HTTPException(status_code=500, detail=f"Storage error: {exc}")
