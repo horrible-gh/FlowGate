@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+from modules.flow_gate.api import inbox_routes
 from modules.flow_gate.documents.routers import documents as docs
 from modules.flow_gate.services import workflow_decision_service as workflow
 from modules.flow_gate.services import work_plan_sequence_service as wpseq
@@ -656,3 +657,61 @@ def test_c11_wp_t_review_count_positive_reviewer_null_uses_project_default_revie
     assert hops[-1] == ("work", "TR")
     assert state["revision_no"] == 1
     assert state["review_status"] == "approved"
+
+
+def test_c1_c9_inbox_result_boundary_uses_spine_baseline_like_admission(monkeypatch):
+    """The production inbox boundary resolves the same durable row admission resolves."""
+    spine = "flowgate.default.0600.0001-B"
+    result_doc = "flowgate.default.0600.0007-TR"
+    group = "flowgate.default.0600"
+    queued = []
+    looked_up = []
+
+    monkeypatch.setattr(
+        review.db_wfseq,
+        "get_item_by_result_doc_id",
+        lambda doc_id: {"item_seq": 2} if doc_id == result_doc else None,
+    )
+    monkeypatch.setattr(review.db_wfseq, "get_sequence_for_member_doc",
+                        lambda doc_ref: looked_up.append(doc_ref) or {"id": 9})
+    monkeypatch.setattr(
+        review.db_wfseq,
+        "get_sequence_items",
+        lambda _sid: [{"item_seq": 2, "review_count": 2,
+                       "reviewer_provider_id": "sequence-reviewer"}],
+    )
+    monkeypatch.setattr(chain._svc(), "is_active_run_to_end", lambda _group: False)
+    monkeypatch.setattr(chain._svc(), "has_active_run", lambda _group: True)
+    monkeypatch.setattr(chain._svc(), "active_review_selection", lambda _group: ({}, {}))
+    monkeypatch.setattr(chain._svc(), "get_active_status", lambda _group: {})
+    monkeypatch.setattr(
+        chain._svc(), "request_auto_resume",
+        lambda _group, bundle: queued.append(bundle),
+    )
+    monkeypatch.setattr(
+        chain._svc(), "stamp_chain_stop",
+        lambda envelope, stop_code, **_kwargs: {
+            **envelope, "continuation_stop_code": stop_code,
+        },
+    )
+
+    class Request:
+        headers = {}
+        base_url = "http://testserver/"
+
+    result = inbox_routes._continuation_self_chain(
+        Request(),
+        {"continuation_target_seq": 3, "continuation_review_mode": False,
+         "continuation_instruction_mode": "auto_approved", "doc_ref": spine,
+         "issued_to": "pm", "group_id": group, "token_id": "tok_0600",
+         "continuation_auto_approve_item_seqs": []},
+        "flowgate", result_doc, "TR",
+    )
+
+    assert result["continuation_review_pending"] is True
+    assert result["continuation_stop_code"] == "hop_handoff"
+    assert queued and queued[0]["doc_ref"] == spine
+    assert looked_up == [spine]
+    assert review.resolve_review_count({}, 2, spine) == 2
+    assert review.resolve_review_count({"2": 0}, 2, spine) == 0
+    assert review.resolve_review_count({"2": 3}, 2, spine) == 3

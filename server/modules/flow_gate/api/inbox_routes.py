@@ -3890,7 +3890,9 @@ def _continuation_self_chain(
     _review_counts, _reviewer_overrides = _ai_invoke.active_review_selection(chain_group)
     if (
         _ai_invoke.has_active_run(chain_group)
-        and _ai_invoke.resolve_review_count(_review_counts, completed_seq) != 0
+        and _ai_invoke.resolve_review_count(
+            _review_counts, completed_seq, spine_doc_ref
+        ) != 0
     ):
         return _hand_off_to_engine(review_pending=True)
 
