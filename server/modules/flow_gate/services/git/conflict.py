@@ -23,6 +23,7 @@ TR_CONFLICT_REVIEW_RESOLVED = "resolved"
 
 _CONFLICT_SEP_RE = re.compile(r"^={7}$")
 _CONFLICT_BASE_RE = re.compile(r"^\|{7}( |$)")
+_CONFLICT_CHUNK_GROUP_MAX_COMMON_LINES = 3
 
 def _revert_in_flight(wt_path: Path) -> bool:
     """Is a `revert --no-commit` still open in this worktree?
@@ -496,26 +497,20 @@ def _anchor_chunk_selections(segments: list[dict], submitted_lines: list[str]) -
     return results
 
 def _conflict_side_dropped(original: str, submitted: str) -> bool:
-    """True if a base-having chunk where BOTH sides changed something over the common
-    ancestor resolved to an exact, whole-side selection of just one of them.
+    """True if an unmerged nearby chunk group selects exactly one changed side.
 
-    Classification is chunk-local, anchored by the unedited common context around each
-    chunk rather than a whole-file line-membership test or an unbounded scan (see
-    :func:`_anchor_chunk_selections`, shared with :func:`_classify_conflict_chunks`'s
-    ours/theirs/both/manual labelling): a manual/synthesized resolution that rewrites
-    both sides' intent into a new line is ``manual``, not ``ours``/``theirs``, and is not
-    rejected here — nothing was dropped in the sense this check exists for. Because each
-    chunk's search window is bracketed by the common text immediately before and after
-    it, the same text sitting anywhere else in the file — in ordinary unedited context,
-    before the chunk, after it, or claimed by a neighboring chunk's own window — cannot
-    stand in for a side this chunk actually dropped, and cannot hide a side it actually
-    kept either.
+    Per-chunk selections remain owned by :func:`_anchor_chunk_selections` and are shared
+    unchanged with :func:`_classify_conflict_chunks`.  Base-having conflict chunks are
+    grouped when each intervening common segment has at most
+    ``_CONFLICT_CHUNK_GROUP_MAX_COMMON_LINES`` lines.  A group is considered synthesized
+    only when at least one chunk where both sides changed over base resolves as ``manual``
+    or ``both``; exact-side selections elsewhere in that same nearby group are then part
+    of the synthesis instead of independent side drops.
 
-    Chunks without a base (no common ancestor available) are still walked — to keep the
-    anchor aligned with later chunks — but never trigger rejection: there is nothing to
-    diff against. A chunk where only one side actually changed anything over base is also
-    exempt: keeping the changed side and dropping the unchanged one is a normal, correct
-    resolution.
+    A base-less chunk still participates in anchoring, but belongs to no group and breaks
+    grouping on both sides.  A chunk where only one side changed cannot make a group
+    synthesized.  Consequently all-ours, all-theirs, and alternating exact-side choices
+    remain rejected when no genuinely synthesized both-changed chunk exists.
     """
     segments = _split_content_segments(original)
     if segments is None:
@@ -523,18 +518,39 @@ def _conflict_side_dropped(original: str, submitted: str) -> bool:
     chunks = [s for s in segments if s["type"] == "chunk"]
     if not chunks:
         return False
+
     submitted_lines = (submitted or "").splitlines()
-    for entry in _anchor_chunk_selections(segments, submitted_lines):
-        chunk = entry["chunk"]
-        base = chunk.get("base")
-        ours, theirs = chunk["ours"], chunk["theirs"]
-        both_changed = False
-        if base is not None:
-            both_changed = bool(_chunk_added_lines(ours, base)) and bool(_chunk_added_lines(theirs, base))
-        if both_changed and entry["selection"] in ("ours", "theirs"):
+    anchored = _anchor_chunk_selections(segments, submitted_lines)
+    groups: list[list[dict]] = []
+    group: list[dict] = []
+    for segment_index in range(1, len(segments), 2):
+        entry = anchored[(segment_index - 1) // 2]
+        if entry["chunk"].get("base") is None:
+            if group:
+                groups.append(group)
+                group = []
+            continue
+        if group and len(segments[segment_index - 1]["lines"]) > _CONFLICT_CHUNK_GROUP_MAX_COMMON_LINES:
+            groups.append(group)
+            group = []
+        group.append(entry)
+    if group:
+        groups.append(group)
+
+    for entries in groups:
+        both_changed_entries = []
+        for entry in entries:
+            chunk = entry["chunk"]
+            base = chunk["base"]
+            if bool(_chunk_added_lines(chunk["ours"], base)) and bool(
+                _chunk_added_lines(chunk["theirs"], base)
+            ):
+                both_changed_entries.append(entry)
+        if any(entry["selection"] in ("manual", "both") for entry in both_changed_entries):
+            continue
+        if any(entry["selection"] in ("ours", "theirs") for entry in both_changed_entries):
             return True
     return False
-
 
 def _classify_conflict_chunks(path: str, original: str, submitted: str) -> list[dict]:
     """D0006 §3.3 / L0007 §2.4 — per-chunk selection the review screen overlays on

@@ -1061,10 +1061,297 @@ class TestConflictSideDroppedChunkLocal0602:
         assert _conflict_side_dropped(original, submitted) is True
 
 
+class TestConflictSideDroppedAdjacentGroups0604:
+    """0604 T0006 — only genuinely synthesized nearby conflict groups are exempt."""
+
+    @staticmethod
+    def _marker(ours: str, base: Optional[str], theirs: str) -> str:
+        text = "<<<<<<< ours\n" + ours
+        if base is not None:
+            text += "||||||| base\n" + base
+        return text + "=======\n" + theirs + ">>>>>>> theirs\n"
+
+    @staticmethod
+    def _gap(count: int, prefix: str = "gap") -> str:
+        return "".join(f"{prefix}-{index}\n" for index in range(count))
+
+    @classmethod
+    def _two_chunk_original(cls, gap: int) -> str:
+        return (
+            "head\n"
+            + cls._marker("first ours\n", "first base\n", "first theirs\n")
+            + cls._gap(gap)
+            + cls._marker("second ours\n", "second base\n", "second theirs\n")
+            + "tail\n"
+        )
+
+    @classmethod
+    def _two_chunk_submission(cls, first: str, gap: int, second: str) -> str:
+        return "head\n" + first + cls._gap(gap) + second + "tail\n"
+
+    @pytest.mark.parametrize("gap", [1, 2, 3])
+    def test_manual_merge_unlocks_exact_side_only_through_three_common_lines(self, gap):
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        original = self._two_chunk_original(gap)
+        submitted = self._two_chunk_submission("first combined\n", gap, "second theirs\n")
+        assert _conflict_side_dropped(original, submitted) is False
+
+    @pytest.mark.parametrize("side", ["ours", "theirs"])
+    def test_all_one_side_is_still_rejected_inside_a_nearby_group(self, side):
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        submitted = self._two_chunk_submission(
+            f"first {side}\n", 2, f"second {side}\n",
+        )
+        assert _conflict_side_dropped(self._two_chunk_original(2), submitted) is True
+
+    def test_alternating_ours_and_theirs_without_synthesis_is_rejected(self):
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        submitted = self._two_chunk_submission("first ours\n", 2, "second theirs\n")
+        assert _conflict_side_dropped(self._two_chunk_original(2), submitted) is True
+
+    def test_four_common_lines_break_the_group(self):
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        submitted = self._two_chunk_submission("first combined\n", 4, "second theirs\n")
+        assert _conflict_side_dropped(self._two_chunk_original(4), submitted) is True
+
+    def test_baseless_chunk_breaks_group_and_does_not_hide_adjacent_drop(self):
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        original = (
+            "head\n"
+            + self._marker("legacy ours\n", None, "legacy theirs\n")
+            + self._gap(1)
+            + self._marker("normal ours\n", "normal base\n", "normal theirs\n")
+            + "tail\n"
+        )
+        submitted = "head\nlegacy combined\n" + self._gap(1) + "normal ours\ntail\n"
+        assert _conflict_side_dropped(original, submitted) is True
+
+    def test_baseless_chunk_keeps_later_manual_chunk_anchored(self):
+        from modules.flow_gate.services.git.conflict import (
+            _classify_conflict_chunks,
+            _conflict_side_dropped,
+        )
+
+        original = (
+            "head\n"
+            + self._marker("legacy ours\n", None, "legacy theirs\n")
+            + self._gap(1)
+            + self._marker("normal ours\n", "normal base\n", "normal theirs\n")
+            + "tail\n"
+        )
+        submitted = "head\nlegacy combined\n" + self._gap(1) + "normal combined\ntail\n"
+        assert _conflict_side_dropped(original, submitted) is False
+        assert [row["selection"] for row in _classify_conflict_chunks(
+            "baseless.py", original, submitted,
+        )] == ["manual", "manual"]
+
+    def test_one_side_changed_manual_chunk_cannot_unlock_neighbor(self):
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        original = (
+            "head\n"
+            + self._marker("one changed\n", "one base\n", "one base\n")
+            + self._gap(1)
+            + self._marker("both ours\n", "both base\n", "both theirs\n")
+            + "tail\n"
+        )
+        submitted = "head\none manual\n" + self._gap(1) + "both ours\ntail\n"
+        assert _conflict_side_dropped(original, submitted) is True
+
+    def test_three_chunk_chain_is_one_group(self):
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        original = (
+            "head\n"
+            + self._marker("zero ours\n", "zero base\n", "zero theirs\n")
+            + self._gap(2, "gap-a")
+            + self._marker("one ours\n", "one base\n", "one theirs\n")
+            + self._gap(3, "gap-b")
+            + self._marker("two ours\n", "two base\n", "two theirs\n")
+            + "tail\n"
+        )
+        submitted = (
+            "head\nzero combined\n" + self._gap(2, "gap-a")
+            + "one ours\n" + self._gap(3, "gap-b") + "two theirs\ntail\n"
+        )
+        assert _conflict_side_dropped(original, submitted) is False
+
+    @classmethod
+    def _work_plan_0599_reduction(cls) -> tuple[str, dict[str, str]]:
+        """Reduced from real zdiff3 chunks 0..3; common gaps remain exactly 1, 2, 2."""
+        chunks = [
+            ("ever exposing\n", "def _revisions_brief(doc_id)\n", "without exposing\ndoc_id = doc['doc_id']\n"),
+            ("rows = list_by_doc(doc.get('doc_id'))\n", "rows = list_by_doc(doc_id)\nexcept old\n", "rows = list_by_doc(doc_id)\n"),
+            ("result = []\nrevision_no = row.get('revision_no')\n", "return legacy list\n", "result: list[dict] = []\nrevision_no = int(row['revision_no'])\n"),
+            ("restorable = reason is None\n", "legacy result\n", "restorable = selected is not None and reason is None\nif len(result) >= limit:\n    break\n"),
+        ]
+        gaps = [
+            "    try:\n",
+            "    except Exception:  # history failure\n        return []\n",
+            "            created_at = row.get('created_at')\n            created_by = row.get('created_by')\n",
+        ]
+        original = "head\n"
+        for index, (ours, base, theirs) in enumerate(chunks):
+            original += cls._marker(ours, base, theirs)
+            if index < len(gaps):
+                original += gaps[index]
+        original += "    return result\n"
+        submissions = {
+            "merged": (
+                "head\nresolved helper synthesis\n" + gaps[0]
+                + "resolved guarded history lookup\n" + gaps[1]
+                + "resolved de-duplicated result\n" + gaps[2]
+                + chunks[3][2] + "    return result\n"
+            ),
+            "ours": "head\n" + chunks[0][0] + gaps[0] + chunks[1][0] + gaps[1]
+                    + chunks[2][0] + gaps[2] + chunks[3][0] + "    return result\n",
+            "theirs": "head\n" + chunks[0][2] + gaps[0] + chunks[1][2] + gaps[1]
+                      + chunks[2][2] + gaps[2] + chunks[3][2] + "    return result\n",
+        }
+        return original, submissions
+
+    def test_real_work_plan_0599_reduction_passes_without_changing_labels(self):
+        from modules.flow_gate.services.git.conflict import (
+            _classify_conflict_chunks,
+            _conflict_side_dropped,
+        )
+
+        original, submissions = self._work_plan_0599_reduction()
+        assert _conflict_side_dropped(original, submissions["merged"]) is False
+        assert [row["selection"] for row in _classify_conflict_chunks(
+            "server/modules/flow_gate/documents/routers/work_plan.py",
+            original,
+            submissions["merged"],
+        )] == ["manual", "manual", "manual", "theirs"]
+
+    @pytest.mark.parametrize("side", ["ours", "theirs"])
+    def test_real_work_plan_0599_reduction_still_rejects_all_one_side(self, side):
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        original, submissions = self._work_plan_0599_reduction()
+        assert _conflict_side_dropped(original, submissions[side]) is True
+
+    def test_existing_workplaneditor_and_i18n_syntheses_stay_accepted(self):
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        i18n = self._marker("restore old\n", "no restore\n", "restore new\n")
+        assert _conflict_side_dropped(i18n, "restore combined wording\n") is False
+
+        editor = (
+            "head\n"
+            + self._marker("disabled = ours\n", "disabled = base\n", "disabled = theirs\n")
+            + self._gap(2)
+            + self._marker("comment added\n", "comment base\n", "comment base\n")
+            + "tail\n"
+        )
+        submitted = "head\ndisabled = combined\n" + self._gap(2) + "comment added\ntail\n"
+        assert _conflict_side_dropped(editor, submitted) is False
+
 @needs_git
 class TestGitEndToEnd:
     GROUP = "gitprj.default.0100"
 
+    def test_adjacent_chunk_group_resolve_token_end_to_end(self, origin_repo, monkeypatch):
+        """Real zdiff3 two-chunk merge: all-side rejects, synthesis reaches review."""
+        from fastapi import FastAPI, Request
+        from fastapi.responses import JSONResponse
+        from fastapi.testclient import TestClient
+
+        from modules.flow_gate.api.v1 import git_routes
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services.git_service import GitServiceError
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0604"
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        base_text = (
+            "def adjacent():\n"
+            "    first = 'base'\n"
+            "    bridge_1 = 1\n"
+            "    bridge_2 = 2\n"
+            "    bridge_3 = 3\n"
+            "    second = 'base'\n"
+        )
+        ours_text = base_text.replace("'base'", "'ours'")
+        theirs_text = base_text.replace("'base'", "'theirs'")
+        (seedwt / "adjacent.py").write_text(base_text, encoding="utf-8")
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "add adjacent chunk base"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0604")
+        (wt / "adjacent.py").write_text(theirs_text, encoding="utf-8")
+        (seedwt / "adjacent.py").write_text(ours_text, encoding="utf-8")
+        _git(["commit", "-am", "change adjacent chunks on main"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        finalized = svc.finalize(group, "merge")
+        assert finalized["result"]["status"] == "conflict"
+        merge_id = finalized["result"]["merge_id"]
+        conflict = svc.list_conflicts(group, merge_id)["files"][0]["content"]
+        assert conflict.count("<<<<<<<") == 2
+        conflict_root = svc.resolve_conflict_src_root(group, merge_id)
+        before = (conflict_root / "adjacent.py").read_bytes()
+
+        app = FastAPI()
+        app.include_router(git_routes.router)
+
+        @app.exception_handler(GitServiceError)
+        async def _handler(request: Request, exc: GitServiceError):  # noqa: ANN202
+            error = {"code": exc.code, "message": exc.message}
+            if exc.details:
+                error["details"] = exc.details
+            return JSONResponse(status_code=exc.status, content={"ok": False, "error": error})
+
+        monkeypatch.setattr(
+            git_routes, "verify_bearer",
+            lambda request: {
+                "action_scope": "resolve_conflict", "group_id": group,
+                "merge_id": merge_id, "token_id": "tok_adjacent_0604", "project": "gitprj",
+            },
+        )
+        client = TestClient(app, raise_server_exceptions=False)
+        endpoint = f"/api/v1/groups/{group}/git/merge/{merge_id}/resolve-token"
+
+        for one_side in (ours_text, theirs_text):
+            response = client.post(endpoint, json={
+                "files": [{"path": "adjacent.py", "content": one_side}],
+                "complete": True,
+            }, headers={"Authorization": "Bearer test"})
+            assert response.status_code == 422, response.text
+            assert response.json()["error"]["code"] == "conflict_side_dropped"
+            assert (conflict_root / "adjacent.py").read_bytes() == before
+
+        combined = (
+            "def adjacent():\n"
+            "    first = 'ours+theirs'\n"
+            "    bridge_1 = 1\n"
+            "    bridge_2 = 2\n"
+            "    bridge_3 = 3\n"
+            "    second = 'theirs'\n"
+        )
+        accepted = client.post(endpoint, json={
+            "files": [{"path": "adjacent.py", "content": combined}],
+            "complete": True,
+        }, headers={"Authorization": "Bearer test"})
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["result"]["status"] == "resolved_pending_review"
+        review = svc.get_merge_review(group, merge_id)["result"]
+        origins = [row for row in review["conflict_origins"] if row["path"] == "adjacent.py"]
+        assert [row["selection"] for row in origins] == ["manual", "theirs"]
+
+        aborted = svc.abort_merge(group, merge_id)
+        assert aborted["result"]["status"] == "waiting"
     def test_connection_ok(self, origin_repo):
         from modules.flow_gate.services import git_service as svc
 
