@@ -965,12 +965,22 @@ async def document_review_transition_endpoint(
         # Git-active AC approval is owned by the RPC orchestrator above.  The
         # path-shaped legacy endpoint has no git_action field and must not bypass
         # finalize-before-approval by approving the document directly.
+        #
+        # 0609 T0004: git-active alone used to be enough to demand git_action, which
+        # blocked approval for groups whose worktree is still registered but that
+        # provably have nothing left to merge/push (no-work / already-applied).
+        # group_finalize_is_noop() is the same real-Git-state judgment the finalize
+        # panel/gate already use (flowgate.default.0548 T0004) -- only require
+        # git_action when there is an actual pending choice.
         if action == "approve" and str((prev_doc or {}).get("type_code") or "").upper() == "AC":
             group_id = (prev_doc or {}).get("group_id") or ""
             project_id = group_id.split(".", 1)[0] if group_id else ""
             cfg = git_service.db_git.get_config(project_id) if project_id else None
             state = git_service.db_git.get_state(group_id) if group_id else None
-            if cfg and cfg.get("enabled") and state and state.get("worktree_registered"):
+            if (
+                cfg and cfg.get("enabled") and state and state.get("worktree_registered")
+                and not git_service.group_finalize_is_noop(group_id)
+            ):
                 raise HTTPException(
                     status_code=422,
                     detail="git_action is required for final approval of a git-active group",
