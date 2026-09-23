@@ -15,7 +15,7 @@
         <button
           class="btn btn-secondary btn-sm"
           type="button"
-          :disabled="loading || (!!unreadable && unreadable.raw === null) || dirty || downloading || hasPendingCapabilityWarning"
+          :disabled="loading || dirty || downloading || hasPendingCapabilityWarning || ((!plan && !unreadable?.raw) || (!!unreadable && unreadable.raw === null))"
           :title="dirty ? t('main.work_plan.upload_needs_save') : undefined"
           @click="downloadWorkPlan"
         >
@@ -37,7 +37,7 @@
           hidden
           @change="onWorkPlanFileSelected"
         />
-        <button class="btn btn-secondary btn-sm" type="button" :disabled="loading || !!unreadable" @click="rawViewOpen = true">
+        <button class="btn btn-secondary btn-sm" type="button" :disabled="loading || (!plan && !unreadable?.raw)" @click="rawViewOpen = true">
           <AppIcon name="code" /> {{ t('main.work_plan.raw_view') }}
         </button>
         <button
@@ -63,22 +63,21 @@
         <div v-if="unreadable.revisions?.length" class="wp-unreadable-revisions">
           <p class="wp-unreadable-revisions-title">{{ t('main.work_plan.revisions_title') }}</p>
           <ul>
-            <li v-for="rev in unreadable.revisions" :key="rev.revision_no">
+            <li v-for="rev in unreadable.revisions" :key="rev.revision_no" class="wp-revision-row">
               <span>r{{ rev.revision_no }} — {{ rev.created_by }} · {{ rev.created_at }}</span>
               <button
-                v-if="rev.restorable"
                 type="button"
-                class="btn btn-primary btn-sm wp-restore-btn"
-                :disabled="restoringRevision !== null || aiRunLocked"
+                class="btn btn-outline btn-sm wp-restore-btn"
+                :class="{ 'wp-restore-unavailable': !rev.restorable }"
+                :disabled="!rev.restorable || restoringRevision !== null || aiRunLocked"
+                :title="rev.restorable ? undefined : t(`main.work_plan.restore_unavailable_${rev.restore_unavailable_reason || 'unknown'}`)"
+                :aria-label="rev.restorable ? t('main.work_plan.restore_revision') : undefined"
                 @click="restoreRevision(rev.revision_no)"
               >
-                {{ restoringRevision === rev.revision_no
-                  ? t('main.work_plan.restoring')
-                  : t('main.work_plan.restore') }}
+                {{ rev.restorable
+                    ? (restoringRevision === rev.revision_no ? t('main.work_plan.restoring') : t('main.work_plan.restore'))
+                    : t('main.work_plan.restore_unavailable') }}
               </button>
-              <span v-else class="wp-restore-unavailable">
-                {{ t('main.work_plan.restore_unavailable') }}
-              </span>
             </li>
           </ul>
         </div>
@@ -547,6 +546,7 @@ const aiRunId = ref<string | null>(null)
 const rawViewOpen = ref(false)
 const downloading = ref(false)
 const uploading = ref(false)
+const restoringRevision = ref<number | null>(null)
 const workPlanFileInput = ref<HTMLInputElement | null>(null)
 
 const plan = ref<WPBody | null>(null)
@@ -605,12 +605,13 @@ interface WPUnreadable {
   message: string
   detail: string
   raw: string | null
+  // camelCase — the document's own current revision, distinct from each recovery
+  // candidate's `revision_no` above.
   revisionNo: number
   revisions: WPRevisionCandidate[]
 }
 
 const unreadable = ref<WPUnreadable | null>(null)
-const restoringRevision = ref<number | null>(null)
 const restoreError = ref<string | null>(null)
 
 
@@ -844,6 +845,9 @@ function applyReadView(data: any) {
     ? data.review_count_choices
     : [0]
   docReviewStatus.value = data.doc_review_status
+  // 0403 NR0004 F7: use the value the server judged, as-is. If it's absent from the
+  // response (old response · mock), leave it open — only the server knows whether to
+  // lock, and the bug was the screen guessing and locking on its own.
   editable.value = data.editable === undefined ? true : !!data.editable
   editLockedReason.value = data.edit_locked_reason ?? null
   dirty.value = false
@@ -925,6 +929,12 @@ async function restoreRevision(sourceRevisionNo: number) {
     restoringRevision.value = null
   }
 }
+
+// flowgate.default.0576 had its own restore implementation here (full refetch via
+// fetchPlan(), then a toast). Superseded by `restoreRevision` above, which applies the
+// server's read view directly and tracks `restoreError` inline instead of a second
+// round trip — a strict improvement, not an independent behavior, so it is not kept
+// alongside it.
 
 // Pouring/applying this plan into the workflow sequence happens in the sibling
 // DocWorkflow strip, not here. That save never touched this component, so
@@ -1398,7 +1408,7 @@ function canonicalBody(): WPBody {
   return body
 }
 
-const rawJson = computed(() => (plan.value ? JSON.stringify(canonicalBody(), null, 2) : ''))
+const rawJson = computed(() => unreadable.value?.raw ?? (plan.value ? JSON.stringify(canonicalBody(), null, 2) : ''))
 
 async function copyRaw() {
   const ok = await copyToClipboard(rawJson.value)
@@ -1549,12 +1559,18 @@ function downloadBlob(content: string, type: string, filename: string) {
 }
 
 async function downloadWorkPlan() {
+  // flowgate.default.0576 kept [Download] enabled for an unreadable canonical body by
+  // reading `plan.value`/`unreadable.value?.raw` inline and reusing the ordinary
+  // `.json` `fallbackWorkPlanFilename`. Here the raw text is not necessarily valid
+  // JSON at all (that is the whole reason it is unreadable), so it downloads through
+  // the shared `downloadBlob` helper as plain text under its own `.unreadable.raw.txt`
+  // name instead — same [Download]-always-available behavior, honester content type.
   if (loading.value || dirty.value || downloading.value) return
   const unreadableRaw = unreadable.value?.raw
-  if (unreadable.value && unreadableRaw === null) return
+  if ((!plan.value && !unreadableRaw) || (!!unreadable.value && unreadableRaw === null)) return
   downloading.value = true
   try {
-    if (unreadable.value) {
+    if (unreadableRaw !== undefined) {
       downloadBlob(
         unreadableRaw ?? '',
         'text/plain;charset=utf-8',
@@ -1562,9 +1578,18 @@ async function downloadWorkPlan() {
       )
       return
     }
-    const res = await getRequest<any>(`/api/v1/documents/${encodeURIComponent(props.docId)}/work-plan`)
-    const json = `${JSON.stringify(res.data.body, null, 2)}\n`
-    downloadBlob(json, 'application/json;charset=utf-8', fallbackWorkPlanFilename(props.docId))
+    // flowgate.default.0576's original combined expression, verbatim.
+    const res = unreadable.value ? null : await getRequest<any>(`/api/v1/documents/${encodeURIComponent(props.docId)}/work-plan`)
+    const json = unreadable.value?.raw ?? `${JSON.stringify(res!.data.body, null, 2)}\n`
+    const blob = new Blob([json], { type: 'application/json;charset=utf-8' })
+    const href = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = href
+    anchor.download = fallbackWorkPlanFilename(props.docId)
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(href)
   } catch (e: any) {
     showToast(e?.response?.data?.message || e?.response?.data?.detail || t('main.work_plan.download_failed'), 'danger')
   } finally {
@@ -1864,6 +1889,9 @@ watch(() => props.docId, () => { void fetchPlan() })
 .wp-unreadable-revisions { margin-top: 8px; width: min(640px, 100%); font-size: .76rem; color: var(--text-m); text-align: left; }
 .wp-unreadable-revisions ul { margin: 6px 0 0; padding: 0; list-style: none; }
 .wp-unreadable-revisions li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
+/* flowgate.default.0576's row rule, kept alongside 0599's `li` rule above — the row still
+   carries both this class and that ancestor, so both authors' spacing choices apply. */
+.wp-revision-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0; }
 .wp-restore-btn { flex: 0 0 auto; }
 .wp-restore-unavailable, .wp-unreadable-no-baseline { font-size: .74rem; color: var(--text-m); }
 .wp-restore-error { margin: 6px 0 0; color: var(--danger, #dc2626); font-size: .78rem; }

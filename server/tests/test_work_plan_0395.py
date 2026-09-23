@@ -2777,3 +2777,174 @@ def test_restore_bad_r0_backup_fails_closed_without_partial_mutation(
     assert not list(revisions_dir.glob(
         f"{doc_id}.r0.unreadable-before-r1*",
     ))
+
+
+# ── 0597 T0004: unreadable revision restore regression ───────────────────────
+
+def test_unreadable_revision_restore_contract(seed, storage_root):
+    """Connected regression: unreadable listing -> CAS restore -> N+1 history."""
+    from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db.connection import now_iso
+    from modules.flow_gate.services import work_plan_service as wp
+
+    client = _client()
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0990-WP",
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "counted_types": ["D"],
+            "provider_candidates": [],
+            "quantities": {"D": 1},
+        })
+    assert created.status_code == 201, created.text
+    payload = created.json()
+    doc_id = payload["doc_id"]
+    canonical = storage_root / payload["stored_path"]
+    valid_raw = canonical.read_text(encoding="utf-8")
+
+    # Make a normal save so r0 is a genuine server-created, readable backup.
+    saved_body = payload["body"]
+    saved_body["steps"][0]["note"] = "restorable revision"
+    saved = client.put(
+        f"/api/v1/documents/{doc_id}/work-plan",
+        json={"base_revision_no": 0, "body": saved_body},
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["revision_no"] == 1
+
+    # Simulate a future writer. The current reader must fail closed but retain raw/history.
+    # wp_version 3 is genuinely beyond WP_VERSION_SUPPORTED (2 in this branch); 2 itself
+    # now parses as a supported-but-incomplete body (schema_invalid), not this reason.
+    future_raw = '{"wp_version":3,"binding":"advisory"}\n'
+    canonical.write_text(future_raw, encoding="utf-8")
+    unreadable = client.get(f"/api/v1/documents/{doc_id}/work-plan")
+    assert unreadable.status_code == 409
+    unreadable_body = unreadable.json()
+    assert unreadable_body["code"] == "wp_unreadable"
+    assert unreadable_body["reason"] == "wp_version_unsupported"
+    assert unreadable_body["raw"] == future_raw
+    r0 = next(row for row in unreadable_body["revisions"] if row["revision_no"] == 0)
+    assert r0["restorable"] is True
+    assert r0["restore_unavailable_reason"] is None
+    assert "backup_path" not in r0
+
+    restored = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+        json={"base_revision_no": 1},
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["revision_no"] == 2  # never rewind to r0
+    assert restored.json()["body"]["wp_version"] == wp.WP_VERSION_SUPPORTED
+    assert canonical.read_text(encoding="utf-8") == valid_raw
+    rows = db_revisions.list_by_doc(doc_id)
+    current_backup = next(row for row in rows if row["revision_no"] == 1)
+    assert current_backup["edit_reason"] == "user_comment"
+    assert (storage_root / current_backup["backup_path"]).read_text(encoding="utf-8") == future_raw
+
+    # The restore endpoint must preserve the existing final-approval edit guard.
+    # Exercise the connected HTTP route while the real is_document_editable() decides.
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.document_service.is_final_approved",
+        return_value=True,
+    ):
+        final_approved = client.post(
+            f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+            json={"base_revision_no": 2},
+        )
+    assert final_approved.status_code == 422
+    assert final_approved.json()["detail"] == "Modification not allowed after final approval."
+    assert db_docs.get_by_id(doc_id)["revision_no"] == 2
+    assert canonical.read_text(encoding="utf-8") == valid_raw
+
+    # A revision number belonging only to another document is indistinguishable from
+    # missing: the route scopes lookup to this doc and never accepts a foreign row.
+    db_revisions.create({
+        "doc_id": ROOT_DOC,
+        "revision_no": 77,
+        "backup_path": payload["stored_path"],
+        "edit_reason": "user_comment",
+        "created_by": "usr_wp_001",
+        "created_at": now_iso(),
+    })
+    foreign = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/revisions/77/restore",
+        json={"base_revision_no": 2},
+    )
+    assert foreign.status_code == 404
+
+    # Missing revision, stale CAS, missing backup, unsupported backup, and schema-invalid
+    # backup all refuse without changing the canonical body or current revision.
+    missing = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/revisions/999/restore",
+        json={"base_revision_no": 2},
+    )
+    assert missing.status_code == 404
+    stale = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+        json={"base_revision_no": 1},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["code"] == "wp_revision_conflict"
+
+    bad_dir = canonical.parent / "revisions"
+    cases = [
+        (10, bad_dir / "missing.json", None, "backup_unavailable"),
+        (11, bad_dir / "future.json", '{"wp_version":3}\n', "wp_version_unsupported"),
+        (12, bad_dir / "invalid.json", '{"wp_version":1}\n', "schema_invalid"),
+    ]
+    for revision_no, backup, raw, reason in cases:
+        if raw is not None:
+            backup.write_text(raw, encoding="utf-8")
+        db_revisions.create({
+            "doc_id": doc_id,
+            "revision_no": revision_no,
+            "backup_path": str(backup.relative_to(storage_root)).replace("\\", "/"),
+            "edit_reason": "user_comment",
+            "created_by": "usr_wp_001",
+            "created_at": now_iso(),
+        })
+        response = client.post(
+            f"/api/v1/documents/{doc_id}/work-plan/revisions/{revision_no}/restore",
+            json={"base_revision_no": 2},
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == "wp_revision_not_restorable"
+        assert response.json()["reason"] == reason
+        assert db_docs.get_by_id(doc_id)["revision_no"] == 2
+        assert canonical.read_text(encoding="utf-8") == valid_raw
+
+
+def test_revision_brief_fails_closed_for_untrusted_backup(seed, storage_root):
+    """An out-of-root backup is listed as unavailable and its path never leaks."""
+    from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.db.connection import now_iso
+
+    doc_id = "wpprj-__ALL__-0402.0990-WP"
+    db_revisions.create({
+        "doc_id": doc_id,
+        "revision_no": 13,
+        "backup_path": "../outside.json",
+        "edit_reason": "user_comment",
+        "created_by": "usr_wp_001",
+        "created_at": now_iso(),
+    })
+    response = _client().get(f"/api/v1/documents/{doc_id}/work-plan")
+    # The canonical is readable after the preceding restore; inspect the helper through a
+    # temporary unreadable current body to exercise the actual HTTP recovery listing.
+    from modules.flow_gate.db import documents as db_docs
+    row = db_docs.get_by_id(doc_id)
+    canonical = storage_root / row["file_path"]
+    original = canonical.read_text(encoding="utf-8")
+    canonical.write_text('{"wp_version":2}\n', encoding="utf-8")
+    try:
+        response = _client().get(f"/api/v1/documents/{doc_id}/work-plan")
+        assert response.status_code == 409
+        listed = next(item for item in response.json()["revisions"] if item["revision_no"] == 13)
+        assert listed["restorable"] is False
+        assert listed["restore_unavailable_reason"] == "backup_unavailable"
+        assert "backup_path" not in listed
+    finally:
+        canonical.write_text(original, encoding="utf-8")
