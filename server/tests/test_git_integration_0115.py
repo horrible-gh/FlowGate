@@ -864,6 +864,203 @@ def origin_repo(seed):
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+class TestConflictSideDroppedChunkLocal0602:
+    """0602 T0004 — _conflict_side_dropped() must judge each conflict chunk on its own
+    resolved text (ours/theirs/both/manual), not on whole-file line membership. Pure-
+    function coverage of C1~C4 and C6 (T0004/NR0003); the real resolve_conflicts()
+    boundary — E12 all-or-nothing, review gate, the actual WorkPlanEditor.vue regression
+    — is covered against real git in TestGitEndToEnd below, not mocked here.
+    """
+
+    @staticmethod
+    def _marker_text(ours: str, base: str, theirs: str) -> str:
+        return (
+            "<<<<<<< ours\n" + ours
+            + "||||||| base\n" + base
+            + "=======\n" + theirs
+            + ">>>>>>> theirs\n"
+        )
+
+    def test_exact_ours_only_is_rejected(self):
+        # C1 — both sides changed the base line; submission keeps only ours.
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        original = self._marker_text("mainline change\n", "base line\n", "group change\n")
+        assert _conflict_side_dropped(original, "mainline change\n") is True
+
+    def test_exact_theirs_only_is_rejected(self):
+        # C2 — the opposite direction: submission keeps only theirs.
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        original = self._marker_text("mainline change\n", "base line\n", "group change\n")
+        assert _conflict_side_dropped(original, "group change\n") is True
+
+    def test_both_sides_kept_passes(self):
+        # C3 — both original lines survive verbatim, either order.
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        original = self._marker_text("mainline change\n", "base line\n", "group change\n")
+        assert _conflict_side_dropped(original, "mainline change\ngroup change\n") is False
+        assert _conflict_side_dropped(original, "group change\nmainline change\n") is False
+
+    def test_synthesized_single_line_merge_passes(self):
+        # C4 — a brand-new line that folds both sides' intent together is neither
+        # side's exact text; it must not be treated as a dropped side.
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        original = self._marker_text(
+            "enabled = ours_rule\n", "enabled = old\n", "enabled = theirs_rule\n",
+        )
+        assert _conflict_side_dropped(original, "enabled = combined_rule\n") is False
+
+    def test_only_one_side_changed_is_exempt(self):
+        # theirs matches base exactly (only ours actually changed over the ancestor) —
+        # keeping ours and dropping the untouched, identical-to-base theirs text is a
+        # normal, correct resolution, not a side drop.
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        original = self._marker_text("mainline change\n", "base line\n", "base line\n")
+        assert _conflict_side_dropped(original, "mainline change\n") is False
+
+    def test_same_line_elsewhere_does_not_hide_a_real_drop(self):
+        # C6 — the chunk itself resolves to ours-only (a real drop of theirs), but
+        # theirs' original text also happens to sit, unrelated, elsewhere in the file.
+        # A whole-file membership check would wrongly call this "both present"; the
+        # chunk-local, cursor-advancing check must still catch the drop.
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        original = (
+            "group change\nnoise1\n"
+            + self._marker_text("mainline change\n", "placeholder\n", "group change\n")
+            + "noise2\n"
+        )
+        submitted = "group change\nnoise1\nmainline change\nnoise2\n"
+        assert _conflict_side_dropped(original, submitted) is True
+
+    def test_rear_coincidental_both_does_not_hide_an_early_one_side_drop(self):
+        # 0602 T0004 rev1 review finding — a later, unrelated ours+theirs pair must not
+        # hide the exact ours-only resolution.  The following common context anchors the
+        # one-line resolution window; the coincidental pair belongs to common text.
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        trailing_common = "noise1\nmainline change\ngroup change\n"
+        original = (
+            self._marker_text("mainline change\n", "base line\n", "group change\n")
+            + trailing_common
+        )
+        submitted = "mainline change\n" + trailing_common
+        assert _conflict_side_dropped(original, submitted) is True
+
+    def test_no_conflict_markers_passes(self):
+        from modules.flow_gate.services.git.conflict import _conflict_side_dropped
+
+        assert _conflict_side_dropped("no markers here\n", "no markers here\n") is False
+
+    def test_classify_labels_manual_for_synthesized_merge(self):
+        # C8 groundwork — the review screen's per-chunk classifier must agree with
+        # _conflict_side_dropped's verdict: a synthesized merge is "manual", not a
+        # side selection, so it can reach resolved_pending_review for human review.
+        from modules.flow_gate.services.git.conflict import _classify_conflict_chunks
+
+        original = self._marker_text(
+            "enabled = ours_rule\n", "enabled = old\n", "enabled = theirs_rule\n",
+        )
+        origins = _classify_conflict_chunks("flags.txt", original, "enabled = combined_rule\n")
+        assert len(origins) == 1
+        assert origins[0]["selection"] == "manual"
+
+    def test_leading_common_context_same_as_ours_does_not_hide_manual_merge(self):
+        # 0602 T0004 rev2 review finding — _select_conflict_chunk() used to search the
+        # WHOLE submitted text for the earliest ours/theirs/both match, including
+        # everything BEFORE the conflict chunk. If the ordinary, unedited common area
+        # preceding the chunk happens to contain the same text as `ours`, that
+        # coincidental, unrelated occurrence used to be picked up as this chunk's
+        # "resolution" — even though the chunk itself was actually resolved manually
+        # (synthesized) further down. The chunk's real resolved region must be anchored
+        # by the common context around it, not searched unbounded from the start of the
+        # file, so this must classify as "manual" and must NOT be rejected as a side
+        # drop.
+        from modules.flow_gate.services.git.conflict import (
+            _classify_conflict_chunks,
+            _conflict_side_dropped,
+        )
+
+        original = (
+            "same line\n"
+            + self._marker_text("same line\n", "base line\n", "theirs line\n")
+            + "tail\n"
+        )
+        submitted = "same line\ncombined line\ntail\n"
+        assert _conflict_side_dropped(original, submitted) is False
+
+        origins = _classify_conflict_chunks("flags.txt", original, submitted)
+        assert len(origins) == 1
+        assert origins[0]["selection"] == "manual"
+
+    def test_leading_common_context_same_as_ours_does_not_hide_both_resolution(self):
+        # Same anchoring bug, the "both kept" direction: the chunk's real resolution
+        # keeps both original lines verbatim (a normal, correct "both" merge), but the
+        # earlier, unrelated common-area occurrence of `ours`' own text must not be
+        # picked up as this chunk's one-sided "ours" match instead of its real,
+        # chunk-local "both". Under the old unanchored search this misclassified as
+        # "ours" and _conflict_side_dropped then wrongly rejected a resolution that
+        # dropped nothing.
+        from modules.flow_gate.services.git.conflict import (
+            _classify_conflict_chunks,
+            _conflict_side_dropped,
+        )
+
+        original = (
+            "same line\n"
+            + self._marker_text("same line\n", "base line\n", "theirs line\n")
+            + "tail\n"
+        )
+        submitted = "same line\nsame line\ntheirs line\ntail\n"
+
+        origins = _classify_conflict_chunks("flags.txt", original, submitted)
+        assert len(origins) == 1
+        assert origins[0]["selection"] == "both"
+        assert _conflict_side_dropped(original, submitted) is False
+
+    def test_side_subsequence_with_extra_text_is_manual(self):
+        # rev4 review finding: preserving ours and adding synthesized text is not an
+        # exact one-side selection.  The entire anchored window must be compared.
+        from modules.flow_gate.services.git.conflict import (
+            _classify_conflict_chunks,
+            _conflict_side_dropped,
+        )
+
+        original = (
+            self._marker_text("main\n", "base\n", "group\n")
+            + "tail\n"
+        )
+        submitted = "main\ncombined extra\ntail\n"
+
+        origins = _classify_conflict_chunks("flags.txt", original, submitted)
+        assert len(origins) == 1
+        assert origins[0]["selection"] == "manual"
+        assert _conflict_side_dropped(original, submitted) is False
+
+    def test_resolution_equal_to_next_common_uses_non_greedy_anchor(self):
+        # rev3 review finding: the first `tail` is the exact ours-only resolution;
+        # the second is the unchanged following common segment.  A greedy first-match
+        # next-common anchor makes the chunk window empty and launders the drop as manual.
+        from modules.flow_gate.services.git.conflict import (
+            _classify_conflict_chunks,
+            _conflict_side_dropped,
+        )
+
+        original = self._marker_text("tail\n", "base\n", "other\n") + "tail\n"
+        submitted = "tail\ntail\n"
+
+        origins = _classify_conflict_chunks("flags.txt", original, submitted)
+        assert len(origins) == 1
+        assert origins[0]["selection"] == "ours"
+        assert origins[0]["start_line"] == 1
+        assert origins[0]["end_line"] == 1
+        assert _conflict_side_dropped(original, submitted) is True
+
+
 @needs_git
 class TestGitEndToEnd:
     GROUP = "gitprj.default.0100"
@@ -1236,6 +1433,281 @@ class TestGitEndToEnd:
         assert still_entry["conflict_count"] == 1
 
         # abort so this session doesn't block later tests' project-level lock
+        svc.abort_merge(group, merge_id)
+
+    def test_resolve_conflicts_rejects_the_opposite_one_sided_drop(self, origin_repo):
+        # 0602 T0004 C2 — same check, opposite direction: dropping THEIRS (the group
+        # side) and keeping only ours must reject too, not just the direction the
+        # neighboring regression above happens to cover.
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0148"
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "sidecheck2.txt").write_text("base line\n", encoding="utf-8")
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "add sidecheck2 base"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0148")
+        (wt / "sidecheck2.txt").write_text("group change\n", encoding="utf-8")
+
+        (seedwt / "sidecheck2.txt").write_text("mainline change\n", encoding="utf-8")
+        _git(["commit", "-am", "mainline change to sidecheck2"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        assert out["result"]["status"] == "conflict"
+        merge_id = out["result"]["merge_id"]
+
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.resolve_conflicts(group, merge_id, [{
+                "path": "sidecheck2.txt",
+                "content": "mainline change\n",  # drops the group ("theirs") side entirely
+            }], True)
+        assert exc.value.code == "conflict_side_dropped"
+        assert exc.value.status == 422
+
+        svc.abort_merge(group, merge_id)
+
+    def test_resolve_conflicts_accepts_synthesized_single_line_merge(self, origin_repo):
+        # 0602 T0004 C4/C8 (NR0003) — a chunk where both sides changed the SAME base
+        # line, resolved into a brand-new line that carries both sides' intent, is
+        # neither an exact ours nor an exact theirs selection. The old whole-file
+        # membership check rejected this as conflict_side_dropped even though nothing
+        # was silently dropped; it must pass through to resolved_pending_review like
+        # any other manual resolution, and the review screen must label the chunk
+        # "manual", not misreport it as a side drop.
+        import uuid
+
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0149"
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "flags.txt").write_text("enabled = old\n", encoding="utf-8")
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "add flags base"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0149")
+        (wt / "flags.txt").write_text("enabled = theirs_rule\n", encoding="utf-8")
+
+        (seedwt / "flags.txt").write_text("enabled = ours_rule\n", encoding="utf-8")
+        _git(["commit", "-am", "ours_rule change to flags"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        assert out["result"]["status"] == "conflict"
+        merge_id = out["result"]["merge_id"]
+
+        out = svc.resolve_conflicts(group, merge_id, [{
+            "path": "flags.txt",
+            "content": "enabled = combined_rule\n",
+        }], True)
+        assert out["result"]["status"] == "resolved_pending_review"
+        fingerprint = out["result"]["review_fingerprint"]
+
+        review = svc.get_merge_review(group, merge_id)["result"]
+        origins = [o for o in review["conflict_origins"] if o["path"] == "flags.txt"]
+        assert len(origins) == 1
+        assert origins[0]["selection"] == "manual"
+
+        approved = svc.approve_merge_review(
+            group, merge_id, attempt_id=str(uuid.uuid4()),
+            review_fingerprint=fingerprint, authority="human",
+        )
+        assert approved["result"]["status"] == "merged"
+
+    def test_resolve_conflicts_accepts_real_workplaneditor_disabled_merge(self, origin_repo):
+        # 0602 T0004 C5 — the exact real-world regression from NR0003 §4: both sides
+        # rewrote the SAME Vue `:disabled` attribute line, and a normal synthesized
+        # resolution that folds both conditions into one attribute must not be
+        # rejected — and must not require writing the attribute twice just to satisfy
+        # the validator (T0004 §5, explicitly forbidden). This stops at
+        # resolved_pending_review + the chunk's "manual" classification: whether the
+        # merge candidate ALSO clears the unrelated .vue real-syntax-check gate in
+        # approve_merge_review depends on client/node_modules being installed in this
+        # worktree, which is outside conflict_side_dropped's scope (T0004 §8 — this
+        # task rewrites the validator, not 0599's WorkPlanEditor.vue merge itself).
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        base_line = (
+            ':disabled="loading || !!unreadable || dirty || downloading || '
+            'hasPendingCapabilityWarning"\n'
+        )
+        ours_line = (
+            ':disabled="loading || dirty || downloading || hasPendingCapabilityWarning '
+            '|| (!plan && !unreadable?.raw)"\n'
+        )
+        theirs_line = (
+            ':disabled="loading || (!!unreadable && unreadable.raw === null) || dirty '
+            '|| downloading || hasPendingCapabilityWarning"\n'
+        )
+        combined_line = (
+            ':disabled="loading || (!!unreadable && unreadable.raw === null) || dirty '
+            '|| downloading || hasPendingCapabilityWarning || (!plan && !unreadable?.raw)"\n'
+        )
+
+        group = "gitprj.default.0150"
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "WorkPlanEditor.vue").write_text(base_line, encoding="utf-8")
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "add WorkPlanEditor base"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0150")
+        (wt / "WorkPlanEditor.vue").write_text(theirs_line, encoding="utf-8")
+
+        (seedwt / "WorkPlanEditor.vue").write_text(ours_line, encoding="utf-8")
+        _git(["commit", "-am", "mainline :disabled change"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        assert out["result"]["status"] == "conflict"
+        merge_id = out["result"]["merge_id"]
+
+        out = svc.resolve_conflicts(group, merge_id, [{
+            "path": "WorkPlanEditor.vue",
+            "content": combined_line,
+        }], True)
+        assert out["result"]["status"] == "resolved_pending_review"
+
+        review = svc.get_merge_review(group, merge_id)["result"]
+        origins = [o for o in review["conflict_origins"] if o["path"] == "WorkPlanEditor.vue"]
+        assert len(origins) == 1
+        assert origins[0]["selection"] == "manual"
+
+        # release the session so it doesn't block later tests' project-level guard;
+        # the point already proved is that resolve_conflicts() accepted the synthesized
+        # merge instead of raising conflict_side_dropped.
+        svc.abort_merge(group, merge_id)
+
+    def test_resolve_conflicts_side_drop_not_hidden_by_same_line_elsewhere(self, origin_repo):
+        # 0602 T0004 C6 — the reverse defect NR0003 §8 flagged in the OLD validator: it
+        # tested whole-file line membership, so a chunk that genuinely dropped one side
+        # could slip through if that side's text happened to also appear, unrelated,
+        # elsewhere in the same file. The check must be chunk-local.
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0151"
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "sidecheck3.txt").write_text(
+            "group change\nnoise1\nplaceholder\nnoise2\n", encoding="utf-8",
+        )
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "add sidecheck3 base"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0151")
+        (wt / "sidecheck3.txt").write_text(
+            "group change\nnoise1\ngroup change\nnoise2\n", encoding="utf-8",
+        )
+
+        (seedwt / "sidecheck3.txt").write_text(
+            "group change\nnoise1\nmainline change\nnoise2\n", encoding="utf-8",
+        )
+        _git(["commit", "-am", "mainline change to sidecheck3"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        assert out["result"]["status"] == "conflict"
+        merge_id = out["result"]["merge_id"]
+
+        conflicts = svc.list_conflicts(group, merge_id)
+        entry = next(f for f in conflicts["files"] if f["path"] == "sidecheck3.txt")
+        assert "|||||||" in entry["content"], "zdiff3 base marker required for this check"
+
+        # drops theirs ("group change") for this chunk, but that exact string also sits
+        # unrelated on line 1 — a whole-file membership check would wrongly see it as
+        # "still present" and let the drop through.
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.resolve_conflicts(group, merge_id, [{
+                "path": "sidecheck3.txt",
+                "content": "group change\nnoise1\nmainline change\nnoise2\n",
+            }], True)
+        assert exc.value.code == "conflict_side_dropped"
+        assert exc.value.status == 422
+
+        svc.abort_merge(group, merge_id)
+
+    def test_resolve_conflicts_rear_coincidental_both_does_not_hide_an_early_drop(
+        self, origin_repo,
+    ):
+        # 0602 T0004 rev1 review finding, through the real resolve_conflicts() boundary:
+        # the file carries static tail lines that happen to spell out ours-then-theirs
+        # back to back, unrelated to the conflict itself. The submitted resolution drops
+        # theirs at the actual chunk (keeps only the mainline "ours" line) — the rear
+        # coincidence must not let that read as "both kept".
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0152"
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "sidecheck4.txt").write_text(
+            "placeholder\nnoise1\nmainline change\ngroup change\n", encoding="utf-8",
+        )
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "add sidecheck4 base"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0152")
+        (wt / "sidecheck4.txt").write_text(
+            "group change\nnoise1\nmainline change\ngroup change\n", encoding="utf-8",
+        )
+
+        (seedwt / "sidecheck4.txt").write_text(
+            "mainline change\nnoise1\nmainline change\ngroup change\n", encoding="utf-8",
+        )
+        _git(["commit", "-am", "mainline change to sidecheck4"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        out = svc.finalize(group, "merge")
+        assert out["result"]["status"] == "conflict"
+        merge_id = out["result"]["merge_id"]
+
+        conflicts = svc.list_conflicts(group, merge_id)
+        entry = next(f for f in conflicts["files"] if f["path"] == "sidecheck4.txt")
+        assert "|||||||" in entry["content"], "zdiff3 base marker required for this check"
+
+        # drops theirs ("group change") for the chunk, keeping only ours ("mainline
+        # change") — the unchanged tail then spells out "mainline change\ngroup change\n"
+        # right after it, a coincidental "both" pair that must not launder the drop.
+        with pytest.raises(svc.GitServiceError) as exc:
+            svc.resolve_conflicts(group, merge_id, [{
+                "path": "sidecheck4.txt",
+                "content": "mainline change\nnoise1\nmainline change\ngroup change\n",
+            }], True)
+        assert exc.value.code == "conflict_side_dropped"
+        assert exc.value.status == 422
+
         svc.abort_merge(group, merge_id)
 
     def test_base_dirty_belongs_to_the_merge_while_a_conflict_is_open(self, origin_repo):
