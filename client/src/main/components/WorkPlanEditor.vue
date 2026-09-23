@@ -15,7 +15,7 @@
         <button
           class="btn btn-secondary btn-sm"
           type="button"
-          :disabled="loading || dirty || downloading || hasPendingCapabilityWarning || ((!plan && !unreadable?.raw) || (!!unreadable && unreadable.raw === null))"
+          :disabled="loading || dirty || downloading || hasPendingCapabilityWarning || downloadBlockedByUnreadable"
           :title="dirty ? t('main.work_plan.upload_needs_save') : undefined"
           @click="downloadWorkPlan"
         >
@@ -69,14 +69,14 @@
                 type="button"
                 class="btn btn-outline btn-sm wp-restore-btn"
                 :class="{ 'wp-restore-unavailable': !rev.restorable }"
-                :disabled="!rev.restorable || restoringRevision !== null || aiRunLocked"
+                :disabled="!rev.restorable || restoringRevision !== null || isLocked"
                 :title="rev.restorable ? undefined : t(`main.work_plan.restore_unavailable_${rev.restore_unavailable_reason || 'unknown'}`)"
                 :aria-label="rev.restorable ? t('main.work_plan.restore_revision') : undefined"
                 @click="restoreRevision(rev.revision_no)"
               >
-                {{ rev.restorable
-                    ? (restoringRevision === rev.revision_no ? t('main.work_plan.restoring') : t('main.work_plan.restore'))
-                    : t('main.work_plan.restore_unavailable') }}
+                {{ restoringRevision === rev.revision_no
+                    ? t('main.work_plan.restoring')
+                    : (rev.restorable ? t('main.work_plan.restore_revision') : t('main.work_plan.restore_unavailable')) }}
               </button>
             </li>
           </ul>
@@ -605,9 +605,11 @@ interface WPUnreadable {
   message: string
   detail: string
   raw: string | null
-  // camelCase — the document's own current revision, distinct from each recovery
-  // candidate's `revision_no` above.
-  revisionNo: number
+  // The document's own current revision — distinct from each recovery candidate's
+  // `revision_no` in WPRevisionCandidate above, but same field name (matches the
+  // server's wire format); the two are only ever reached via different object paths
+  // (`unreadable.value.revision_no` vs `unreadable.value.revisions[i].revision_no`).
+  revision_no: number
   revisions: WPRevisionCandidate[]
 }
 
@@ -650,6 +652,18 @@ watch(
 const aiRunLocked = computed(() => props.readOnly === true || groupBusy.value)
 const isLocked = computed(() => !editable.value || aiRunLocked.value || staleAfterUpload.value)
 const hasPendingCapabilityWarning = computed(() => capabilityWarnings.value.length > 0)
+
+// [Download] is blocked when there is nothing to download. main's original guard —
+// `!plan.value && !unreadable.value?.raw` — covers the ordinary case; 0599 widened it
+// with `!!unreadable.value && unreadable.value.raw === null` for the case a stale
+// `plan.value` from before the document went unreadable hides main's check. Kept as two
+// named conditions rather than collapsed into one boolean so both authors' checks read
+// independently.
+const downloadBlockedByUnreadable = computed(() => {
+  const mainGuard = !plan.value && !unreadable.value?.raw
+  const wp0599Guard = !!unreadable.value && unreadable.value.raw === null
+  return mainGuard || wp0599Guard
+})
 
 const lockedHint = computed(() =>
   aiRunLocked.value
@@ -888,7 +902,7 @@ async function fetchPlan(): Promise<boolean> {
         message: data.message,
         detail: data.detail ?? '',
         raw: data.raw ?? null,
-        revisionNo: Number(data.revision_no) || 0,
+        revision_no: Number(data.revision_no) || 0,
         revisions: data.revisions ?? [],
       }
     } else {
@@ -916,7 +930,7 @@ async function restoreRevision(sourceRevisionNo: number) {
   try {
     const res = await postRequest<any>(
       `/api/v1/documents/${encodeURIComponent(props.docId)}/work-plan/revisions/${sourceRevisionNo}/restore`,
-      { base_revision_no: state.revisionNo },
+      { base_revision_no: state.revision_no },
     )
     applyReadView(res.data)
     showToast(t('main.work_plan.restore_success'), 'success')
@@ -1565,9 +1579,9 @@ async function downloadWorkPlan() {
   // JSON at all (that is the whole reason it is unreadable), so it downloads through
   // the shared `downloadBlob` helper as plain text under its own `.unreadable.raw.txt`
   // name instead — same [Download]-always-available behavior, honester content type.
-  if (loading.value || dirty.value || downloading.value) return
+  if (loading.value || dirty.value || downloading.value || (!plan.value && !unreadable.value?.raw)) return
   const unreadableRaw = unreadable.value?.raw
-  if ((!plan.value && !unreadableRaw) || (!!unreadable.value && unreadableRaw === null)) return
+  if (!!unreadable.value && unreadableRaw === null) return
   downloading.value = true
   try {
     if (unreadableRaw !== undefined) {
@@ -1886,6 +1900,9 @@ watch(() => props.docId, () => { void fetchPlan() })
 .wp-unreadable-icon { font-size: 2rem; color: var(--danger, #dc2626); }
 .wp-unreadable-title { font-weight: 700; }
 .wp-unreadable-desc, .wp-unreadable-detail { font-size: .8rem; color: var(--text-m); margin: 0; }
+/* main's original rule, superseded by 0599's wider version directly below (same selector,
+   later one wins the cascade) — kept so the pre-0599 sizing is still visible in history. */
+.wp-unreadable-revisions { margin-top: 8px; font-size: .76rem; color: var(--text-m); text-align: left; }
 .wp-unreadable-revisions { margin-top: 8px; width: min(640px, 100%); font-size: .76rem; color: var(--text-m); text-align: left; }
 .wp-unreadable-revisions ul { margin: 6px 0 0; padding: 0; list-style: none; }
 .wp-unreadable-revisions li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
