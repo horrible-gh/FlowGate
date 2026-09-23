@@ -3,19 +3,26 @@
        ALL branch lifecycle (create/merge/delete/current-target); it never runs a
        group finalize itself (that stays ReviewActionBar/GitStatusPanel's job, §4.2),
        and a failure loading its own catalog is caught locally (§4.1) so it can
-       never blank out the surrounding Git finalize UI. -->
-  <section class="branch-manager" data-test="branch-manager">
+       never blank out the surrounding Git finalize UI.
+       T0018 — the host panel splits it across tabs through `view`: 'branches' is the
+       read/select side (list + current target + create), 'manage' holds merge and the
+       separate danger zone (delete). 'hidden' renders nothing but stays mounted so the
+       catalog (and the `catalog` summary the host shows up top) survives tab switches.
+       'all' is the standalone stack of every zone. -->
+  <section v-if="view !== 'hidden'" class="branch-manager" data-test="branch-manager">
     <header class="branch-manager-hd">
       <strong><AppIcon name="git-branch" /> {{ t('main.git_branch_manager.title') }}</strong>
-      <button class="btn btn-sm btn-secondary" :disabled="busy" @click="load">
+      <button class="btn btn-sm btn-secondary" type="button" :disabled="busy" data-test="branch-refresh" @click="load">
         <AppIcon name="arrow-clockwise" />{{ t('main.git_branch_manager.refresh') }}
       </button>
     </header>
 
     <p v-if="error" class="branch-error" role="alert">{{ error }}</p>
 
-    <!-- §3.1 — the current target must be identifiable before anything else. -->
-    <div class="branch-summary">
+    <!-- §3.1 — the current target must be identifiable before anything else. Inside the
+         tabbed panel the host's overview already carries it, so only the standalone
+         stack repeats it here. -->
+    <div v-if="view === 'all'" class="branch-summary">
       <div class="branch-summary-item">
         <span class="branch-summary-label">{{ t('main.git_branch_manager.current_target_label') }}</span>
         <span class="branch-summary-value" data-test="current-target-value">
@@ -28,120 +35,168 @@
       </div>
     </div>
 
-    <div class="branch-list">
-      <div v-for="branch in catalog.branches" :key="branch.name" class="branch-row">
-        <span class="branch-name">{{ branch.name }}</span>
-        <span class="badge" :class="kindBadgeClass(branch)">{{ kindLabel(branch) }}</span>
-        <span v-if="branch.name === catalog.default_merge_target" class="badge badge-blue">
-          {{ t('main.git_branch_manager.current_target_badge') }}
-        </span>
-        <span v-if="branch.connected_group_id" class="branch-meta">{{ branch.connected_group_id }}</span>
-        <span v-if="branch.kind !== 'remote_only' && branch.has_remote_counterpart" class="branch-meta">
-          {{ t('main.git_branch_manager.has_remote_badge') }}
-        </span>
-        <span class="branch-spacer"></span>
-        <!-- §3.2 "merge target 지정/변경" — its own action, never a side effect of merge. -->
-        <button
-          v-if="canBeTarget(branch)"
-          class="btn btn-sm btn-secondary"
-          :disabled="busy"
-          @click="setDefaultTarget(branch.name)"
-        >{{ t('main.git_branch_manager.set_target_btn') }}</button>
-        <button
-          v-if="branch.name === catalog.default_merge_target"
-          class="btn btn-sm btn-secondary"
-          :disabled="busy"
-          @click="setDefaultTarget(null)"
-        >{{ t('main.git_branch_manager.clear_target_btn') }}</button>
-        <button
-          v-if="branch.kind !== 'remote_only'"
-          class="btn btn-sm btn-danger"
-          :disabled="busy || !branch.can_delete"
-          :title="deleteReasonText(branch)"
-          @click="confirmDelete(branch)"
-        >{{ t('main.git_branch_manager.delete_btn') }}</button>
+    <!-- Read/select zone: no destructive control lives in these rows (T0018 §3.3). -->
+    <section v-if="showBranches" class="branch-zone" data-test="branch-zone-list">
+      <h4 class="branch-zone-title">{{ t('main.git_branch_manager.list_title') }}</h4>
+      <div class="branch-list">
+        <div v-for="branch in catalog.branches" :key="branch.name" class="branch-row">
+          <span class="branch-name">{{ branch.name }}</span>
+          <span class="badge" :class="kindBadgeClass(branch)">{{ kindLabel(branch) }}</span>
+          <span v-if="branch.name === catalog.default_merge_target" class="badge badge-blue">
+            {{ t('main.git_branch_manager.current_target_badge') }}
+          </span>
+          <span v-if="branch.connected_group_id" class="branch-meta">{{ branch.connected_group_id }}</span>
+          <span v-if="branch.kind !== 'remote_only' && branch.has_remote_counterpart" class="branch-meta">
+            {{ t('main.git_branch_manager.has_remote_badge') }}
+          </span>
+          <span class="branch-spacer"></span>
+          <!-- §3.2 "merge target 지정/변경" — its own action, never a side effect of merge. -->
+          <button
+            v-if="canBeTarget(branch)"
+            class="btn btn-sm btn-secondary"
+            type="button"
+            :disabled="busy"
+            @click="setDefaultTarget(branch.name)"
+          >{{ t('main.git_branch_manager.set_target_btn') }}</button>
+          <button
+            v-if="branch.name === catalog.default_merge_target"
+            class="btn btn-sm btn-secondary"
+            type="button"
+            :disabled="busy"
+            @click="setDefaultTarget(null)"
+          >{{ t('main.git_branch_manager.clear_target_btn') }}</button>
+        </div>
       </div>
-    </div>
+    </section>
 
-    <!-- §3.2 — create / merge live in visually separate action cards. -->
-    <div class="branch-actions">
-      <form class="branch-action-card" @submit.prevent="create">
-        <strong>{{ t('main.git_branch_manager.create_title') }}</strong>
-        <input
-          v-model.trim="newName"
-          :aria-label="t('main.git_branch_manager.create_name_aria')"
-          :placeholder="t('main.git_branch_manager.create_name_placeholder')"
-        />
-        <select v-model="createSource" :aria-label="t('main.git_branch_manager.create_source_aria')">
-          <option v-for="branch in createCandidates" :key="branch.name" :value="branch.name">{{ branch.name }}</option>
-        </select>
-        <button class="btn btn-sm btn-primary" :disabled="busy || !newName || !createSource">
+    <form v-if="showBranches" class="branch-zone branch-action-card" data-test="branch-zone-create" @submit.prevent="create">
+      <h4 class="branch-zone-title">{{ t('main.git_branch_manager.create_title') }}</h4>
+      <div class="branch-form-grid">
+        <label class="branch-field">
+          <span class="branch-field-label">{{ t('main.git_branch_manager.create_name_label') }}</span>
+          <input
+            v-model.trim="newName"
+            class="branch-control"
+            :aria-label="t('main.git_branch_manager.create_name_aria')"
+            :placeholder="t('main.git_branch_manager.create_name_placeholder')"
+          />
+          <small>{{ t('main.git_branch_manager.create_name_hint') }}</small>
+        </label>
+        <label class="branch-field">
+          <span class="branch-field-label">{{ t('main.git_branch_manager.create_source_label') }}</span>
+          <select v-model="createSource" class="branch-control" :aria-label="t('main.git_branch_manager.create_source_aria')">
+            <option v-for="branch in createCandidates" :key="branch.name" :value="branch.name">{{ branch.name }}</option>
+          </select>
+          <small>{{ t('main.git_branch_manager.create_source_hint') }}</small>
+        </label>
+        <button class="btn btn-sm btn-primary branch-create-btn" :disabled="busy || !newName || !createSource">
           {{ t('main.git_branch_manager.create_btn') }}
         </button>
-      </form>
+      </div>
+    </form>
 
-      <form class="branch-action-card" @submit.prevent="confirmMerge">
-        <strong>{{ t('main.git_branch_manager.merge_title') }}</strong>
-        <div class="branch-merge-row">
-          <label>{{ t('main.git_branch_manager.source_label') }}</label>
-          <select v-model="mergeSource" :aria-label="t('main.git_branch_manager.source_label')">
+    <form v-if="showManage" class="branch-zone branch-action-card" data-test="branch-zone-merge" @submit.prevent="confirmMerge">
+      <h4 class="branch-zone-title">{{ t('main.git_branch_manager.merge_title') }}</h4>
+      <p v-if="!hasMergeCandidates" class="branch-empty-state" data-test="merge-empty">
+        {{ t('main.git_branch_manager.merge_empty') }}
+      </p>
+      <template v-else>
+        <label class="branch-field">
+          <span class="branch-field-label">{{ t('main.git_branch_manager.source_label') }}</span>
+          <select v-model="mergeSource" class="branch-control" :aria-label="t('main.git_branch_manager.source_label')">
             <option v-for="branch in sourceCandidates" :key="branch.name" :value="branch.name">{{ branch.name }}</option>
           </select>
-        </div>
-        <div class="branch-merge-row">
-          <label>{{ t('main.git_branch_manager.target_label') }}</label>
-          <select v-model="mergeTarget" :aria-label="t('main.git_branch_manager.target_label')">
+          <small>{{ t('main.git_branch_manager.source_hint') }}</small>
+        </label>
+        <label class="branch-field">
+          <span class="branch-field-label">{{ t('main.git_branch_manager.target_label') }}</span>
+          <select v-model="mergeTarget" class="branch-control" :aria-label="t('main.git_branch_manager.target_label')">
             <option v-for="branch in targetCandidates" :key="branch.name" :value="branch.name">{{ branch.name }}</option>
           </select>
-        </div>
-        <!-- §3.3 — the current selection must also read as a plain sentence. -->
-        <p v-if="mergeSource && mergeTarget" class="branch-merge-summary" data-test="merge-summary">
-          {{ t('main.git_branch_manager.merge_summary', { source: mergeSource, target: mergeTarget }) }}
-        </p>
+          <small>{{ t('main.git_branch_manager.target_hint') }}</small>
+        </label>
+      </template>
+      <!-- §3.3 — the current selection must also read as a plain sentence. -->
+      <p v-if="hasMergeCandidates && mergeSource && mergeTarget" class="branch-merge-summary" data-test="merge-summary">
+        {{ t('main.git_branch_manager.merge_summary', { source: mergeSource, target: mergeTarget }) }}
+      </p>
+      <div class="branch-form-actions">
         <button
           class="btn btn-sm btn-primary"
+          data-test="merge-btn"
           :disabled="busy || !mergeSource || !mergeTarget || mergeSource === mergeTarget"
         >{{ t('main.git_branch_manager.merge_btn') }}</button>
-      </form>
-    </div>
+      </div>
 
-    <div
-      v-if="mergeResult"
-      class="branch-result"
-      :class="{ 'branch-result--error': !!mergeResult.code }"
-      role="status"
-    >
-      <strong>
-        {{ mergeResult.code
-          ? t('main.git_branch_manager.merge_failed_title')
-          : t('main.git_branch_manager.merge_done_title') }}
-      </strong>
-      <span>{{ mergeResult.source }} → {{ mergeResult.target }}</span>
-      <span v-if="mergeResult.code" class="branch-result-code">{{ mergeResult.code }}</span>
-      <span v-if="mergeResult.pushFailed" class="branch-result-push" data-test="merge-push-failed">
-        {{ t('main.git_branch_manager.merge_push_failed') }}
-      </span>
-      <span
-        v-else-if="mergeResult.code && mergeResult.code !== 'branch_merge_conflict' && mergeResult.message"
-        class="branch-result-message"
-        data-test="merge-error-message"
-      >{{ mergeResult.message }}</span>
-      <ul v-if="mergeResult.files?.length">
-        <li v-for="file in mergeResult.files" :key="file">{{ file }}</li>
-      </ul>
-    </div>
+      <div
+        v-if="mergeResult"
+        class="branch-result"
+        :class="{ 'branch-result--error': !!mergeResult.code }"
+        role="status"
+      >
+        <strong>
+          {{ mergeResult.code
+            ? t('main.git_branch_manager.merge_failed_title')
+            : t('main.git_branch_manager.merge_done_title') }}
+        </strong>
+        <span>{{ mergeResult.source }} → {{ mergeResult.target }}</span>
+        <span v-if="mergeResult.code" class="branch-result-code">{{ mergeResult.code }}</span>
+        <span v-if="mergeResult.pushFailed" class="branch-result-push" data-test="merge-push-failed">
+          {{ t('main.git_branch_manager.merge_push_failed') }}
+        </span>
+        <span
+          v-else-if="mergeResult.code && mergeResult.code !== 'branch_merge_conflict' && mergeResult.message"
+          class="branch-result-message"
+          data-test="merge-error-message"
+        >{{ mergeResult.message }}</span>
+        <ul v-if="mergeResult.files?.length">
+          <li v-for="file in mergeResult.files" :key="file">{{ file }}</li>
+        </ul>
+      </div>
+    </form>
 
-    <div
-      v-if="deleteResult"
-      class="branch-result branch-result--error"
-      role="status"
-      data-test="delete-result"
-    >
-      <strong>{{ t('main.git_branch_manager.delete_failed_title') }}</strong>
-      <span>{{ deleteResult.branch }}</span>
-      <span v-if="deleteResult.code" class="branch-result-code">{{ deleteResult.code }}</span>
-      <span class="branch-result-message">{{ deleteResultReasonText(deleteResult) }}</span>
-    </div>
+    <!-- T0018 §3.3 — delete is the one irreversible action here, so it never shares a
+         row with the list; it gets its own zone, one explicit pick, and the confirm. -->
+    <section v-if="showManage" class="branch-zone branch-zone--danger" data-test="branch-zone-danger">
+      <h4 class="branch-zone-title">{{ t('main.git_branch_manager.danger_title') }}</h4>
+      <p class="branch-zone-hint">{{ t('main.git_branch_manager.danger_hint') }}</p>
+      <p v-if="!deleteCandidates.length" class="branch-zone-hint">{{ t('main.git_branch_manager.delete_none') }}</p>
+      <div v-else class="branch-form-row">
+        <select
+          v-model="deleteTarget"
+          class="branch-control"
+          data-test="delete-select"
+          :aria-label="t('main.git_branch_manager.delete_select_aria')"
+        >
+          <option v-for="branch in deleteCandidates" :key="branch.name" :value="branch.name">
+            {{ branch.can_delete ? branch.name : `${branch.name} · ${t('main.git_branch_manager.delete_protected_suffix')}` }}
+          </option>
+        </select>
+        <button
+          class="btn btn-sm btn-danger"
+          type="button"
+          data-test="delete-btn"
+          :disabled="busy || !selectedDelete?.can_delete"
+          :title="selectedDelete ? deleteReasonText(selectedDelete) : undefined"
+          @click="selectedDelete && confirmDelete(selectedDelete)"
+        >{{ t('main.git_branch_manager.delete_btn') }}</button>
+      </div>
+      <p v-if="selectedDelete && !selectedDelete.can_delete" class="branch-zone-hint" data-test="delete-blocked-reason">
+        {{ deleteReasonText(selectedDelete) }}
+      </p>
+
+      <div
+        v-if="deleteResult"
+        class="branch-result branch-result--error"
+        role="status"
+        data-test="delete-result"
+      >
+        <strong>{{ t('main.git_branch_manager.delete_failed_title') }}</strong>
+        <span>{{ deleteResult.branch }}</span>
+        <span v-if="deleteResult.code" class="branch-result-code">{{ deleteResult.code }}</span>
+        <span class="branch-result-message">{{ deleteResultReasonText(deleteResult) }}</span>
+      </div>
+    </section>
   </section>
 </template>
 
@@ -162,7 +217,18 @@ interface BranchRow {
   connected_group_id?: string
   has_remote_counterpart?: boolean
 }
-const props = defineProps<{ projectId: string }>()
+/** What the host panel's overview needs from this catalog — nothing that could
+ *  make a catalog failure reach the host's own finalize UI (§4.1). */
+interface BranchCatalogSummary {
+  state: 'ready' | 'error'
+  base_branch: string | null
+  default_merge_target: string | null
+}
+const props = withDefaults(defineProps<{
+  projectId: string
+  view?: 'all' | 'branches' | 'manage' | 'hidden'
+}>(), { view: 'all' })
+const emit = defineEmits<{ catalog: [summary: BranchCatalogSummary] }>()
 const { t } = useI18n()
 const { showToast } = useToast()
 const catalog = ref<{ base_branch: string | null; default_merge_target: string | null; branches: BranchRow[] }>({
@@ -174,12 +240,20 @@ const newName = ref('')
 const createSource = ref('')
 const mergeSource = ref('')
 const mergeTarget = ref('')
+const deleteTarget = ref('')
 const mergeResult = ref<{ source: string; target: string; code?: string; message?: string; files?: string[]; pushFailed?: boolean } | null>(null)
 const deleteResult = ref<{ branch: string; code?: string; message?: string } | null>(null)
+const showBranches = computed(() => props.view === 'all' || props.view === 'branches')
+const showManage = computed(() => props.view === 'all' || props.view === 'manage')
 const ordinary = computed(() => (catalog.value.branches || []).filter(b => b.kind === 'local' || b.kind === 'base'))
 const createCandidates = computed(() => (catalog.value.branches || []).filter(b => b.can_be_create_source && b.kind !== 'remote_only'))
 const sourceCandidates = computed(() => ordinary.value.filter(b => b.name !== mergeTarget.value))
 const targetCandidates = computed(() => ordinary.value.filter(b => b.name !== mergeSource.value))
+const hasMergeCandidates = computed(() => ordinary.value.length >= 2)
+// Protected branches stay pickable so the zone can say WHY they cannot go; the
+// delete button itself follows the server's can_delete verdict only.
+const deleteCandidates = computed(() => (catalog.value.branches || []).filter(b => b.kind !== 'remote_only'))
+const selectedDelete = computed(() => deleteCandidates.value.find(b => b.name === deleteTarget.value) || null)
 
 function canBeTarget(branch: BranchRow): boolean {
   return branch.kind !== 'remote_only' && branch.kind !== 'internal_slot' && branch.name !== catalog.value.default_merge_target
@@ -212,6 +286,9 @@ function syncSelections() {
   if (!createCandidates.value.some(b => b.name === createSource.value)) createSource.value = catalog.value.base_branch || first
   if (!ordinary.value.some(b => b.name === mergeSource.value)) mergeSource.value = ordinary.value.find(b => b.name !== catalog.value.base_branch)?.name || first
   if (!targetCandidates.value.some(b => b.name === mergeTarget.value)) mergeTarget.value = catalog.value.default_merge_target || catalog.value.base_branch || targetCandidates.value[0]?.name || ''
+  if (!deleteCandidates.value.some(b => b.name === deleteTarget.value)) {
+    deleteTarget.value = deleteCandidates.value.find(b => b.can_delete)?.name || deleteCandidates.value[0]?.name || ''
+  }
 }
 async function load() {
   if (!props.projectId) return
@@ -224,10 +301,12 @@ async function load() {
       branches: Array.isArray(data?.branches) ? data.branches : [],
     }
     syncSelections()
+    emit('catalog', { state: 'ready', base_branch: catalog.value.base_branch, default_merge_target: catalog.value.default_merge_target })
   } catch (e: any) {
     // §4.1 — this catalog's own read failure never reaches (or blanks) the
     // surrounding Git finalize UI; it only shows up in this section.
     error.value = e?.response?.data?.error?.message || t('main.git_branch_manager.load_failed')
+    emit('catalog', { state: 'error', base_branch: catalog.value.base_branch, default_merge_target: catalog.value.default_merge_target })
   }
 }
 async function run(fn: () => Promise<void>) {
@@ -324,29 +403,43 @@ onMounted(loadQuietly)
 </script>
 
 <style scoped>
-.branch-manager { border-top: 1px solid var(--border); padding: 14px 16px; display: grid; gap: 12px; }
+/* T0018 — v0.2 density: zones are separated by spacing and a hairline, not by
+   nested boxes; only the two action forms get a soft surface, and only the danger
+   zone gets a colored edge. */
+.branch-manager { display: grid; gap: 18px; }
 .branch-manager-hd { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.branch-summary { display: flex; gap: 20px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-2, transparent); }
+.branch-summary { display: flex; gap: 20px; flex-wrap: wrap; padding: 8px 10px; border-radius: var(--r); background: var(--surface-h); }
 .branch-summary-item { display: flex; flex-direction: column; gap: 2px; }
 .branch-summary-label { font-size: .72rem; color: var(--text-m); }
 .branch-summary-value { font-weight: 700; }
 .branch-summary-value--mono { font-family: monospace; }
-.branch-list { display: grid; gap: 6px; }
-.branch-row { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 7px; }
-.branch-name { font-family: monospace; font-weight: 700; }
-.branch-meta { color: var(--text-m); font-size: .75rem; }
+.branch-zone { display: grid; gap: 8px; min-width: 0; }
+.branch-zone-title { margin: 0; font-size: .72rem; font-weight: 700; letter-spacing: .03em; color: var(--text-s); }
+.branch-zone-hint { margin: 0; font-size: .78rem; color: var(--text-s); }
+.branch-list { display: grid; }
+.branch-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 7px 2px; border-bottom: 1px solid var(--border); font-size: .82rem; line-height: 1.4; }
+.branch-row:last-child { border-bottom: none; }
+.branch-name { font-family: inherit; font-size: inherit; font-weight: 600; line-height: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.branch-meta { color: var(--text-m); font-size: .75rem; font-weight: 400; }
 .branch-spacer { flex: 1 1 auto; }
-.badge-muted { background: var(--surface-2, #e5e7eb); color: var(--text-m); }
-.branch-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.branch-action-card { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 7px; padding: 10px; }
-.branch-action-card strong { width: 100%; }
-.branch-action-card input, .branch-action-card select { min-width: 0; flex: 1; }
-.branch-merge-row { display: flex; align-items: center; gap: 8px; width: 100%; }
-.branch-merge-row label { min-width: 4.5em; color: var(--text-m); font-size: .82rem; }
-.branch-merge-row select { flex: 1; }
-.branch-merge-summary { width: 100%; margin: 0; font-size: .82rem; color: var(--text-m); }
-.branch-result { display: flex; gap: 8px; flex-wrap: wrap; padding: 9px; border-radius: 7px; background: var(--success-bg, #dcfce7); color: var(--success, #15803d); }
-.branch-result--error, .branch-error { background: var(--danger-bg, #fee2e2); color: var(--danger, #b91c1c); }
+.badge-muted { background: var(--surface-h); color: var(--text-m); }
+.branch-action-card { padding: 12px; border-radius: var(--r-lg); background: var(--surface-h); }
+.branch-form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; gap: 10px; }
+.branch-form-row { display: flex; align-items: center; gap: 8px; }
+.branch-field { display: grid; gap: 4px; min-width: 0; }
+.branch-field-label { color: var(--text-s); font-size: .78rem; font-weight: 600; line-height: 1.35; }
+.branch-field small { color: var(--text-m); font-size: .72rem; line-height: 1.35; }
+.branch-control { box-sizing: border-box; width: 100%; min-width: 0; height: 32px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); color: var(--text); font: inherit; font-size: .82rem; line-height: 1.35; }
+.branch-control:focus { border-color: var(--primary); outline: 2px solid var(--primary-l); outline-offset: 0; }
+.branch-form-row .branch-control { flex: 1; }
+.branch-create-btn { min-height: 32px; }
+.branch-form-actions { display: flex; justify-content: flex-end; }
+.branch-merge-summary { margin: 0; font-size: .82rem; color: var(--text-s); }
+.branch-empty-state { margin: 0; padding: 10px; border-radius: var(--r); background: var(--surface); color: var(--text-s); font-size: .82rem; line-height: 1.4; }
+.branch-zone--danger { padding: 12px; border: 1px solid var(--danger-l); border-left: 3px solid var(--danger); border-radius: var(--r-lg); }
+.branch-zone--danger .branch-zone-title { color: var(--danger); }
+.branch-result { display: flex; gap: 8px; flex-wrap: wrap; padding: 9px; border-radius: var(--r); background: var(--success-l); color: var(--success); }
+.branch-result--error, .branch-error { background: var(--danger-l); color: var(--danger); }
+.branch-error { margin: 0; padding: 8px 10px; border-radius: var(--r); }
 .branch-result ul { width: 100%; margin: 0; }
-@media (max-width: 800px) { .branch-actions { grid-template-columns: 1fr; } }
 </style>

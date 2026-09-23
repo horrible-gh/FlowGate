@@ -693,8 +693,12 @@ async function fetchGitFin() {
   // best-effort enrichment of the finalize UI above, not a precondition for it.
   // A 403/404/500 here must fall back to the pinned/base target instead of
   // wiping out the finalize block this dialog already has.
-  gitTargetCandidates.value = []
-  gitTargetBranch.value = state.finalize_target?.target_branch || state.base_branch || ''
+  const fallbackTarget = state.finalize_target?.target_branch || state.base_branch || ''
+  // Keep the fallback as a real option as well as the model value. A native
+  // select does not display a value that has no matching option, so leaving
+  // candidates empty made the catalog-failure fallback look blank.
+  gitTargetCandidates.value = fallbackTarget ? [fallbackTarget] : []
+  gitTargetBranch.value = fallbackTarget
   try {
     const catalog = await getRequest<any>(`/api/v1/projects/${props.projectId}/git/branches`)
     gitTargetCandidates.value = (catalog.data.branches || [])

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
@@ -5,9 +7,9 @@ import i18n from '@shared/i18n'
 import GitStatusPanel from '@main/components/GitStatusPanel.vue'
 import { useAiInvokeRunsStore } from '@main/stores/aiInvokeRuns'
 
-const { getRequest, postRequest } = vi.hoisted(() => ({ getRequest: vi.fn(), postRequest: vi.fn() }))
+const { getRequest, postRequest, deleteRequest } = vi.hoisted(() => ({ getRequest: vi.fn(), postRequest: vi.fn(), deleteRequest: vi.fn() }))
 vi.mock('@shared/api', () => ({
-  default: { head: vi.fn(), get: vi.fn(), post: vi.fn(), patch: vi.fn() }, getRequest, postRequest,
+  default: { head: vi.fn(), get: vi.fn(), post: vi.fn(), patch: vi.fn() }, getRequest, postRequest, deleteRequest, putRequest: vi.fn(),
 }))
 vi.mock('@main/components/common/useToast', () => ({ useToast: () => ({ showToast: vi.fn() }) }))
 const { dialogConfirm } = vi.hoisted(() => ({
@@ -424,7 +426,138 @@ describe('branch catalog failure isolation (T0016 §4.1)', () => {
     // the surrounding finalize UI (pending list) is unaffected
     expect(wrapper.text()).toContain('flowgate.default.0482-pending')
     expect(wrapper.findAll('.git-status-row').length).toBeGreaterThan(0)
-    // the failure is isolated to the branch manager's own error slot
+    // T0018 — the overview only says the target is unknown; the error text stays out of it
+    expect(wrapper.get('[data-test="overview-target"]').text()).toBe(i18n.global.t('main.git_status.overview_target_unknown'))
+    expect(wrapper.get('[data-test="git-overview"]').text()).not.toContain('branch catalog down')
+    // the failure is isolated to the branch manager's own error slot, inside the branch tabs
+    await wrapper.get('[data-test="git-tab-branches"]').trigger('click')
     expect(wrapper.find('[data-test="branch-manager"] .branch-error').text()).toBe('branch catalog down')
+    await wrapper.get('[data-test="git-tab-manage"]').trigger('click')
+    expect(wrapper.find('[data-test="branch-manager"] .branch-error').text()).toBe('branch catalog down')
+    await wrapper.get('[data-test="git-tab-status"]').trigger('click')
+    expect(wrapper.findAll('.git-status-row').length).toBeGreaterThan(0)
+  })
+})
+
+// flowgate.default.0594 T0018 — the Git dialog is split into an overview + three tabs
+// instead of stacking finalize status, branch list, create, merge and delete in one scroll.
+const BRANCH_CATALOG = {
+  ok: true, base_branch: 'main', default_merge_target: 'flowgate-v0.2',
+  branches: [
+    { name: 'main', kind: 'base', can_delete: false, delete_blocked_reason: 'branch_is_base', can_be_create_source: true },
+    { name: 'flowgate-v0.2', kind: 'local', can_delete: false, delete_blocked_reason: 'branch_is_default_merge_target', can_be_create_source: true },
+    { name: 'stale-feature', kind: 'local', can_delete: true, can_be_create_source: true },
+  ],
+}
+async function renderWithCatalog(catalog: object = BRANCH_CATALOG) {
+  getRequest.mockImplementation((url: string) => {
+    if (url.endsWith('/conflicts')) return Promise.resolve({ data: { ok: true, files: [] } })
+    if (url.endsWith('/git/finalize')) return Promise.resolve({ data: { state: { commit_message: { suggested: 'merge work', source: 'auto_title' } } } })
+    if (url.endsWith('/git/branches')) return Promise.resolve({ data: catalog })
+    return Promise.resolve({ data: { ok: true, status: status() } })
+  })
+  const wrapper = mount(GitStatusPanel, {
+    props: { projectId: 'flowgate' },
+    global: { plugins: [i18n], stubs: { AppIcon: true, GitConflictResolverDialog: true } },
+  })
+  await flushPromises()
+  return wrapper
+}
+const statusOnly = ['.git-status-row', '.git-status-slot-card', '.git-base-dirty-alert', '.git-base-untracked', '.git-unpushed-row', '.git-cleanup-card']
+
+describe('Git panel tabs and overview (T0018)', () => {
+  it('shows base, current integration target and group state first, before any tab content', async () => {
+    const wrapper = await renderWithCatalog()
+    const overview = wrapper.get('[data-test="git-overview"]')
+    expect(overview.get('[data-test="overview-base"]').text()).toBe('main')
+    expect(overview.get('[data-test="overview-target"]').text()).toBe('flowgate-v0.2')
+    expect(overview.get('[data-test="overview-groups"]').text()).toBe('4')
+    expect(overview.get('[data-test="overview-pending"]').text()).toBe('2')
+    // one conflicted pending finalize + one slot with an open TR-revert conflict
+    expect(overview.get('[data-test="overview-conflicts"]').text()).toBe('2')
+    expect(overview.find('.git-overview-item--alert').exists()).toBe(true)
+    // the overview and the tab bar come before the first tab body in document order
+    const html = wrapper.html()
+    expect(html.indexOf('data-test="git-overview"')).toBeLessThan(html.indexOf('data-test="git-tabs"'))
+    expect(html.indexOf('data-test="git-tabs"')).toBeLessThan(html.indexOf('git-base-dirty-alert'))
+  })
+
+  it('an unset target reads as straight-to-base', async () => {
+    const wrapper = await renderWithCatalog({ ...BRANCH_CATALOG, default_merge_target: null })
+    expect(wrapper.get('[data-test="overview-target"]').text()).toBe(i18n.global.t('main.git_status.overview_target_unset'))
+  })
+
+  it('renders exactly three tabs with the status tab selected, and only one tab body at a time', async () => {
+    const wrapper = await renderWithCatalog()
+    const tabs = wrapper.findAll('[role="tab"]')
+    expect(tabs.map((tab) => tab.text())).toEqual([
+      i18n.global.t('main.git_status.tab_status'),
+      i18n.global.t('main.git_status.tab_branches'),
+      i18n.global.t('main.git_status.tab_manage'),
+    ])
+    expect(tabs[0].attributes('aria-selected')).toBe('true')
+    expect(wrapper.find('#git-tabpanel-status[role="tabpanel"]').exists()).toBe(true)
+    // status tab: finalize content only — no branch-lifecycle control is rendered
+    for (const selector of statusOnly) expect(wrapper.find(selector).exists()).toBe(true)
+    expect(wrapper.find('[data-test="branch-manager"]').exists()).toBe(false)
+
+    await wrapper.get('[data-test="git-tab-branches"]').trigger('click')
+    expect(wrapper.get('[data-test="git-tab-branches"]').attributes('aria-selected')).toBe('true')
+    for (const selector of statusOnly) expect(wrapper.find(selector).exists()).toBe(false)
+    expect(wrapper.find('[data-test="branch-zone-list"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="branch-zone-create"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="branch-zone-merge"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="branch-zone-danger"]').exists()).toBe(false)
+
+    await wrapper.get('[data-test="git-tab-manage"]').trigger('click')
+    for (const selector of statusOnly) expect(wrapper.find(selector).exists()).toBe(false)
+    expect(wrapper.find('[data-test="branch-zone-list"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="branch-zone-merge"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="branch-zone-danger"]').exists()).toBe(true)
+    // the overview stays on every tab
+    expect(wrapper.find('[data-test="git-overview"]').exists()).toBe(true)
+  })
+
+  it('merge and delete sit only in the manage tab, apart from the list, and still call the same APIs', async () => {
+    const wrapper = await renderWithCatalog()
+    await wrapper.get('[data-test="git-tab-branches"]').trigger('click')
+    expect(wrapper.findAll('.btn-danger')).toHaveLength(0)
+
+    await wrapper.get('[data-test="git-tab-manage"]').trigger('click')
+    const danger = wrapper.get('[data-test="branch-zone-danger"]')
+    expect(wrapper.findAll('.btn-danger')).toHaveLength(1)
+    expect(danger.find('.btn-danger').exists()).toBe(true)
+
+    postRequest.mockResolvedValueOnce({ data: { ok: true } })
+    const merge = wrapper.get('[data-test="branch-zone-merge"]')
+    await merge.findAll('select')[0].setValue('stale-feature')
+    await merge.findAll('select')[1].setValue('flowgate-v0.2')
+    await merge.trigger('submit'); await flushPromises()
+    expect(postRequest).toHaveBeenCalledWith('/api/v1/projects/flowgate/git/branches/merge', { source_branch: 'stale-feature', target_branch: 'flowgate-v0.2' })
+
+    deleteRequest.mockResolvedValueOnce({ data: { ok: true, deleted: true } })
+    await wrapper.get('[data-test="delete-select"]').setValue('stale-feature')
+    await wrapper.get('[data-test="delete-btn"]').trigger('click'); await flushPromises()
+    expect(deleteRequest).toHaveBeenCalledWith('/api/v1/projects/flowgate/git/branches/stale-feature')
+    // no group finalize is run from the branch tabs
+    expect(postRequest.mock.calls.some(([url]) => String(url).includes('/git/finalize'))).toBe(false)
+  })
+
+  it('switching tabs does not refetch the catalog, and the status tab keeps its finalize controls', async () => {
+    const wrapper = await renderWithCatalog()
+    const catalogCalls = () => getRequest.mock.calls.filter(([url]) => String(url).endsWith('/git/branches')).length
+    expect(catalogCalls()).toBe(1)
+    await wrapper.get('[data-test="git-tab-manage"]').trigger('click')
+    await wrapper.get('[data-test="git-tab-branches"]').trigger('click')
+    await wrapper.get('[data-test="git-tab-status"]').trigger('click')
+    expect(catalogCalls()).toBe(1)
+    expect(wrapper.findAll('.git-status-row')).toHaveLength(2)
+    expect(wrapper.find('.git-status-row-main select').exists()).toBe(true)
+  })
+
+  it('keeps the dialog at its existing width instead of widening it for the extra sections', () => {
+    const dialog = readFileSync(resolve(__dirname, '../../src/main/components/GitStatusPanelDialog.vue'), 'utf8')
+    expect(dialog).toMatch(/\.fg-dialog-surface\.git-panel-dialog\s*\{\s*width:\s*620px;\s*\}/)
+    expect(dialog).toContain('size="lg"')
   })
 })

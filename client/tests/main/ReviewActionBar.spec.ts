@@ -1548,8 +1548,12 @@ describe('ReviewActionBar — finalize target selector (T0016 C8)', () => {
     expect(wrapper.findAll('input[name="ab-git-fin-action"]').length).toBeGreaterThan(0)
     const select = wrapper.find('select#ab-git-target')
     expect(select.exists()).toBe(true)
-    // no catalog candidates loaded, but the target still falls back to the
-    // finalize state's base branch instead of staying stale or empty.
-    expect((wrapper.vm as any).gitTargetBranch).toBe('main')
+    // The fallback must exist in the rendered native select, not merely in an
+    // internal ref: browsers display a blank select when the model has no
+    // matching option.
+    const element = select.element as HTMLSelectElement
+    expect(element.value).toBe('main')
+    expect(Array.from(element.options).map((option) => option.value)).toEqual(['main'])
+    expect(select.text()).toContain('main')
   })
 })
