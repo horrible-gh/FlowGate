@@ -11,6 +11,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from . import merge_target
 from .command import GIT_LOCAL_TIMEOUT_SEC
 from .commit import _release_cancel_lock
 from .credentials import GitServiceError, _author_env_from_cfg
@@ -416,14 +417,23 @@ def _session_context(group_id: str, merge_id: int) -> tuple[dict, dict, str, Pat
     group's own worktree (088). That one value is the entire difference for everything
     downstream — the file list, the resolved writes, the abort — which is why the two kinds
     can share a table, a screen, a set of endpoints and an AI run at all.
+
+    0594 T0012: for a finalize merge the root comes from the attempt's pinned target
+    (``merge_target.resolve_session_target``) — the shared base checkout for a base
+    (or legacy) target, the managed target workspace otherwise. This is the ONLY
+    place a conflict file read/write root is decided.
     """
     from modules.flow_gate.services import git_service as _gs
     session = _gs.db_git.get_session(merge_id)
     if session is None or session.get("group_id") != group_id or session.get("status") != "open":
         raise GitServiceError(404, "not_found", f"merge session {merge_id} not found")
-    cfg, _state, project_id, base_root, wt_path = _gs._finalize_context(group_id)
-    is_worktree_session = _gs.db_git.session_kind(session) in _gs.db_git.WORKTREE_SESSION_KINDS
-    return session, cfg, project_id, (wt_path if is_worktree_session else base_root)
+    cfg, _state, project_id, _base_root, wt_path = _gs._finalize_context(group_id)
+    if _gs.db_git.session_kind(session) in _gs.db_git.WORKTREE_SESSION_KINDS:
+        return session, cfg, project_id, wt_path
+    target = merge_target.resolve_session_target(session)
+    if target.root is None:
+        raise GitServiceError(409, "invalid_state", "target checkout is not available")
+    return session, cfg, project_id, target.root
 
 
 def resolve_conflict_src_root(group_id: str, merge_id: int) -> Path:
@@ -454,11 +464,17 @@ def list_conflicts(group_id: str, merge_id: int) -> dict:
         })
     kind = _gs.db_git.session_kind(session)
     context = _gs.db_git.session_context(session)
+    target_branch = (
+        merge_target.resolve_session_target(session).target_branch
+        if kind == _gs.db_git.SESSION_KIND_MERGE else None
+    )
     return {
         "ok": True,
         "merge_id": merge_id,
         "branch": state.get("branch"),
         "base_branch": (cfg.get("base_branch") or "main"),
+        # 0594 T0012 (additive): the branch this merge lands on ("ours").
+        "target_branch": target_branch,
         "files": files,
         # 088 — the same payload for both kinds, plus what a reader needs to know WHICH
         # question is being asked. "Combine two branches" and "undo this TR's commit" want
@@ -635,7 +651,8 @@ def resolve_conflicts(
     # `record_auto_authority`, never by a field on this request (§2.2 — a worker
     # token cannot self-approve its own resolution).
     base_root = root
-    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    # 0594 T0012: the pinned target branch, never a re-read of project.base_branch.
+    base_branch = merge_target.resolve_session_target(session).target_branch
     holder = f"review:{merge_id}:{uuid.uuid4()}"
     if not _gs._acquire_lock(project_id, holder, wait_sec=_gs.LOCK_WAIT_SEC):
         raise GitServiceError(
@@ -702,13 +719,23 @@ def abort_merge(group_id: str, merge_id: int) -> dict:
     kind = _gs.db_git.session_kind(session)
     if kind in _gs.db_git.TR_SESSION_KINDS:
         return abort_tr_conflict(group_id, merge_id)
-    _gs._run_git(["merge", "--abort"], cwd=root)
+    if kind == _gs.db_git.SESSION_KIND_MERGE:
+        # 0594 T0012 §9.1/§9.3: ownership is proven BEFORE git touches the target
+        # root. A workspace whose marker names another owner keeps its MERGE_HEAD,
+        # index and conflict files, and this session stays open (fail-closed 409).
+        merge_target.raise_if_not_workspace_owner(merge_target.resolve_session_target(session))
+    if root.exists():
+        _gs._run_git(["merge", "--abort"], cwd=root)
     if kind == _gs.db_git.SESSION_KIND_GROUP_UPDATE:
         _gs.db_git.close_session(merge_id, "aborted")
         return {"ok": True, "result": {
             "status": "aborted", "branch_preserved": True,
         }}
-    _gs.db_git.close_session(merge_id, "aborted")
+    # 0594 T0012 §9.3: an attempt records `aborted` and releases only its own
+    # workspace (owner marker match); a legacy row is closed exactly as before.
+    merge_target.close_session_attempt(
+        session, merge_target.ATTEMPT_ABORTED, error={"code": "user_abort"},
+    )
     _gs._set_status(group_id, "waiting")
     _gs.db_git.release_lock(project_id, f"merge:{merge_id}")   # legacy leftover, best-effort
     return {"ok": True, "result": {"status": "waiting", "branch_preserved": True}}

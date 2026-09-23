@@ -49,6 +49,7 @@ from modules.flow_gate.db import terminal_cleanup_snapshots as db_terminal_clean
 from modules.flow_gate.db import tr_commit_ledger as db_tr_ledger
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.services import path_exclusion_rules
+from modules.flow_gate.services.git import merge_target
 from modules.flow_gate.services.git import review_messages
 from modules.flow_gate.storage.paths import get_storage_root, src_root
 
@@ -685,6 +686,7 @@ from .git.finalize import (
     group_update_untracked_recover,
     manual_push,
     precheck_approve_git_action,
+    precheck_approve_git_target,
     raise_if_git_session_blocks_reopen,
     realize_wf_done_transition,
     reopen_group_git,
@@ -2477,7 +2479,12 @@ def _apply_write_plan_locked(
 
 def _merge_review_session(group_id: str, merge_id: int) -> tuple[dict, dict, str, Path, str]:
     """``(session, context, project_id, base_root, base_branch)`` for a general
-    merge review session, or raises 404/409 when this merge_id is not one."""
+    merge review session, or raises 404/409 when this merge_id is not one.
+
+    0594 T0012: ``base_root``/``base_branch`` are the attempt's PINNED target root
+    and branch (``merge_target.resolve_session_target``) — the shared base checkout
+    only for a base/legacy target, the managed workspace otherwise. Every review
+    step (diff, conversation, write plan, reject/re-review, approve) reads them here."""
     session = db_git.get_session(merge_id)
     if session is None or session.get("group_id") != group_id:
         raise GitServiceError(404, "review_not_found", f"merge session {merge_id} not found")
@@ -2485,12 +2492,10 @@ def _merge_review_session(group_id: str, merge_id: int) -> tuple[dict, dict, str
         raise GitServiceError(409, "review_not_ready", "not a general merge review session")
     context = db_git.session_context(session)
     project_id = _project_of_group(group_id)
-    cfg = db_git.get_config(project_id) or {}
-    base_root = _base_root_of(project_id)
-    if base_root is None:
+    target = merge_target.resolve_session_target(session)
+    if target.root is None:
         raise GitServiceError(409, "invalid_state", "base checkout is not provisioned")
-    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-    return session, context, project_id, base_root, base_branch
+    return session, context, project_id, target.root, target.target_branch
 
 
 def record_auto_authority(group_id: str, merge_id: int, requested_auto: bool) -> None:
@@ -2651,7 +2656,7 @@ def _refreeze_for_re_review(
         # the approved resolution is preserved instead of being thrown away.
         old_merge_commit = context.get("merge_commit")
         redo = _run_git(
-            ["-c", "merge.conflictStyle=zdiff3", "merge", "--no-commit", "--no-ff", old_merge_commit],
+            [*_GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "merge", "--no-commit", "--no-ff", old_merge_commit],
             cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC,
         )
         if redo.returncode != 0 and _unmerged_paths(base_root):
@@ -2701,9 +2706,7 @@ def _complete_merge_review(
     db_git.set_session_context(merge_id, context)
     merge_commit = context.get("merge_commit") or ""
     merge_commit_short = merge_commit[:7] or None
-    db_git.close_session(merge_id, "done")
-    _set_status(group_id, "merged", merge_commit=merge_commit_short)
-    _cleanup_group_slot(project_id, group_id)
+    _finish_reviewed_attempt(group_id, merge_id, project_id, merge_commit_short, pushed)
     _emit("git_finalize_done", project_id, group_id, {
         "project": project_id, "group_id": group_id,
         "action": context.get("finalize_action") or SESSION_ACTION_DEFAULT,
@@ -2720,6 +2723,25 @@ def _complete_merge_review(
         "status": "merged", "review_state": REVIEW_STATE_COMPLETED,
         "merge_commit": merge_commit_short, "pushed": pushed,
     }}
+
+
+def _finish_reviewed_attempt(
+    group_id: str, merge_id: int, project_id: str, merge_commit_short: Optional[str],
+    pushed: bool,
+) -> None:
+    """Close a reviewed finalize attempt as completed (0594 T0012 §6.3): the row
+    stays, the group ledger points at it, and only its own workspace is released."""
+    target = merge_target.resolve_merge_id_target(merge_id)
+    # Ledger first: a crash before the close leaves an open row in review_state
+    # `completed`, which startup/sweep finish (merge_target.finish_completed_review).
+    _set_status(group_id, "merged", merge_id=merge_id, merge_commit=merge_commit_short)
+    merge_target.close_attempt(
+        merge_id, merge_target.ATTEMPT_COMPLETED,
+        result={"merge_commit": merge_commit_short, "pushed": pushed},
+    )
+    _cleanup_group_slot(project_id, group_id)
+    if target is not None:
+        merge_target.release_workspace(target)
 
 
 def _enter_reconciling(merge_id: int, context: dict, kind: str, *, schedule_retry: bool) -> dict:
@@ -2825,10 +2847,13 @@ def approve_merge_review(
                 409, "stale_review", "the reviewed target has changed since this fingerprint was shown",
             )
         cfg = db_git.get_config(project_id) or {}
-        base_root = _base_root_of(project_id)
+        # 0594 T0012 §13: approve/commit/push run in the attempt's pinned target
+        # root on its pinned branch — never a fresh read of project.base_branch.
+        target = merge_target.resolve_session_target(session)
+        base_root = target.root
         if base_root is None:
             raise GitServiceError(409, "invalid_state", "base checkout is not provisioned")
-        base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+        base_branch = target.target_branch
 
         pre_apply_review_state = context["review_state"]
         context["review_state"] = REVIEW_STATE_APPLYING
@@ -2997,7 +3022,7 @@ def reject_merge_review(
         merge_head = baseline.get("merge_head")
         if not base_head or not merge_head:
             raise GitServiceError(409, "restoration_verification_failed", "no resolver baseline recorded for this session")
-        if (base_root / ".git" / "MERGE_HEAD").exists():
+        if _merge_in_progress(base_root):
             _run_git(["merge", "--abort"], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC)
         current_head = _rev_parse(base_root, "HEAD")
         if current_head != base_head:
@@ -3023,7 +3048,7 @@ def reject_merge_review(
         branch = (state.get("branch")
                   or worktree_branch_name(project_id, _module_of(group_id), group_id))
         redo = _run_git(
-            ["-c", "merge.conflictStyle=zdiff3", "merge", "--no-commit", "--no-ff", branch],
+            [*_GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "merge", "--no-commit", "--no-ff", branch],
             cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC,
         )
         remaining = _unmerged_paths(base_root)
@@ -3508,8 +3533,10 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
         context["reconcile_attempt_count"] = int(context.get("reconcile_attempt_count") or 0) + 1
         db_git.set_session_context(merge_id, context)
         cfg = db_git.get_config(project_id) or {}
-        base_root = _base_root_of(project_id)
-        base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+        # 0594 T0012 §13: the remote ref asked about is the attempt's pinned target.
+        target = merge_target.resolve_session_target(session)
+        base_root = target.root
+        base_branch = target.target_branch
         if base_root is None:
             return {"ok": True, "result": {"status": "retry_scheduled"}}
 
@@ -3529,9 +3556,7 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
             context.pop("reconciliation_kind", None)
             context.pop("reconcile_next_at", None)
             db_git.set_session_context(merge_id, context)
-            db_git.close_session(merge_id, "done")
-            _set_status(group_id, "merged", merge_commit=merge_commit[:7])
-            _cleanup_group_slot(project_id, group_id)
+            _finish_reviewed_attempt(group_id, merge_id, project_id, merge_commit[:7], True)
             _emit("git_finalize_done", project_id, group_id, {
                 "project": project_id, "group_id": group_id, "status": "merged",
                 "merge_commit": merge_commit[:7], "pushed": True,

@@ -1172,11 +1172,18 @@ def _git_finalize_with_archive(
     group_id: str,
     action: Optional[str],
     commit_message: Optional[str] = None,
+    *,
+    target_branch: Optional[str] = None,
 ) -> dict:
     if action == "stash":
         # Direct API callers may use commit_message as the optional archive reason.
         return _archive_group_git(group_id, reason=commit_message)
-    return _GIT_ARCHIVE_ORIGINAL_FINALIZE(group_id, action, commit_message)
+    if target_branch is None:
+        return _GIT_ARCHIVE_ORIGINAL_FINALIZE(group_id, action, commit_message)
+    # 0594 T0012: the finalize target carrier must survive this seam.
+    return _GIT_ARCHIVE_ORIGINAL_FINALIZE(
+        group_id, action, commit_message, target_branch=target_branch,
+    )
 
 
 def _precheck_approve_git_action_with_archive(doc: Optional[dict], git_action: str) -> str:

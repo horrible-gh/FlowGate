@@ -115,8 +115,17 @@ def _delete_guard(project_id: str, name: str) -> tuple[Optional[str], dict]:
     if owner is not None:
         return "branch_is_internal_slot", {"connected_group_id": owner.get("group_id")}
 
-    session = _gs.open_merge_session_of_project(project_id)
-    if session is not None:
+    # 0594 T0012: every open finalize attempt pins its target (base or not), and a
+    # non-base attempt no longer shows up as the base checkout's blocking session —
+    # scan all of them, plus the one session that holds the base checkout.
+    from .merge_target import open_merge_attempts
+    sessions = list(open_merge_attempts(project_id))
+    base_holder = _gs.open_merge_session_of_project(project_id)
+    if base_holder is not None and all(
+        s.get("merge_id") != base_holder.get("merge_id") for s in sessions
+    ):
+        sessions.append(base_holder)
+    for session in sessions:
         group_id = session.get("group_id")
         state = _gs.db_git.get_state(group_id) if group_id else None
         target = _gs.db_git.session_context(session).get("target_branch")

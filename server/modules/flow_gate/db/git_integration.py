@@ -280,6 +280,21 @@ def create_session(
     return merge_id
 
 
+def add_session_files(merge_id: int, files: list[str]) -> None:
+    """Attach conflict files to an already-open session (flowgate.default.0594 T0012).
+
+    A finalize attempt record is now written BEFORE the merge runs, so its conflict
+    file set is only known afterwards. Same rows ``create_session`` writes."""
+    store = get_store()
+    with store.transaction():
+        for path in files:
+            store._execute(
+                "INSERT INTO git_merge_session_file (merge_id, path, resolved) "
+                "VALUES (?, ?, 0)",
+                [merge_id, path],
+            )
+
+
 def get_session(merge_id: int) -> Optional[dict]:
     return get_store()._fetch_one(
         "SELECT * FROM git_merge_session WHERE merge_id = ?", [merge_id]

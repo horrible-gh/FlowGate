@@ -167,6 +167,9 @@ class DocumentBodyRequest(BaseModel):
     # flowgate.default.0162 §1 — final-approval git ride-along (merge/push/wait).
     # Only honored on approve of a git-active group's AC document.
     git_action: Optional[str] = None
+    # flowgate.default.0594 T0012 — the local branch the git_action's merge lands
+    # on. Omitted → the project base (legacy behavior). Validated server-side.
+    git_target_branch: Optional[str] = None
 
 
 class RejectionReasonBodyRequest(BaseModel):
@@ -384,7 +387,16 @@ async def document_review_transition_rpc(
     _guard_group_not_ai_running(guarded_doc, body.doc_id)
 
     git_action = body.git_action
+    git_target_branch = body.git_target_branch
     group_id: Optional[str] = None
+    if git_target_branch is not None and git_action is None:
+        return JSONResponse(
+            status_code=422,
+            content={"ok": False, "error": {
+                "code": "invalid_request",
+                "message": "git_target_branch is only accepted together with git_action",
+            }},
+        )
     if git_action is not None:
         if action != "approve":
             return JSONResponse(
@@ -402,10 +414,21 @@ async def document_review_transition_rpc(
                     db_docs.get_by_id(body.doc_id), git_action
                 )
             )
+            if git_target_branch is not None and group_id:
+                # 0594 T0012 §10: an invalid/stale target refuses the approval
+                # before it is applied, exactly like an invalid git_action.
+                await anyio.to_thread.run_sync(
+                    lambda: git_service.precheck_approve_git_target(
+                        group_id, git_action, git_target_branch
+                    )
+                )
         except GitServiceError as exc:
+            error = {"code": exc.code, "message": exc.message}
+            if getattr(exc, "details", None):
+                error["details"] = exc.details
             return JSONResponse(
                 status_code=exc.status,
-                content={"ok": False, "error": {"code": exc.code, "message": exc.message}},
+                content={"ok": False, "error": error},
             )
 
     response = await document_review_transition_endpoint(
@@ -418,7 +441,9 @@ async def document_review_transition_rpc(
 
     if git_action is not None and group_id:
         response["git"] = await anyio.to_thread.run_sync(
-            lambda: git_service.run_approve_git_action(group_id, git_action)
+            lambda: git_service.run_approve_git_action(
+                group_id, git_action, git_target_branch
+            )
         )
     return response
 

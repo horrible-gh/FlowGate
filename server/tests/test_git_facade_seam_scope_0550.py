@@ -440,9 +440,11 @@ def test_the_seam_scan_itself_is_not_vacuous():
     #    from a broken alias/AST walk.
     # 0594 T0010: re-measured after adding test_git_branches_0594.py. Measured with
     # `len(tuple(sorted(_TESTS_DIR.glob("**/*.py"))))`, not estimated.
+    # 0594 T0012: re-measured after adding test_git_merge_target_0594.py (380 -> 381);
+    # the patched-name counts below were re-measured too and did not move.
     test_paths = tuple(sorted(_TESTS_DIR.glob("**/*.py")))
-    assert len(test_paths) == 380, (
-        f"expected 380 test files, found {len(test_paths)}"
+    assert len(test_paths) == 381, (
+        f"expected 381 test files, found {len(test_paths)}"
     )
     test_patched, _test_sites, test_unresolved = _scan_test_corpus()
     operational, operational_sites, operational_unresolved = _scan_operational_modules()

@@ -534,6 +534,9 @@ class FinalizeBody(BaseModel):
     # Confirmed commit subject for the absorb commit (0173 P0003 §3). Blank/omitted
     # → the server resolves it (unmanned path); >200 chars (normalized) → 422.
     commit_message: str | None = None
+    # flowgate.default.0594 T0012: the local branch a merge lands on. Omitted -> the
+    # project base (or, while an attempt is open, that attempt's pinned target).
+    git_target_branch: str | None = None
 
 
 @router.post("/groups/{group_id}/git/finalize")
@@ -546,6 +549,11 @@ def post_group_finalize(
     if denied:
         return denied
     try:
+        if body is not None and body.git_target_branch is not None:
+            return git_service.finalize(
+                group_id, body.action, body.commit_message,
+                target_branch=body.git_target_branch,
+            )
         return git_service.finalize(
             group_id,
             body.action if body else None,
