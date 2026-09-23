@@ -1214,8 +1214,12 @@ def _build_conflict_mention(
         chunks_payload.append({
             "path": file.get("path"),
             "conflict_count": file.get("conflict_count"),
+            # 2026-09-23 incident: this used to also carry `raw_content: content` — the
+            # whole file a second time alongside `chunks`, which already isolates the
+            # conflict regions. On a large conflict set that duplication alone produced
+            # a ~3.94M-char prompt every provider rejected as too long. Nothing else reads
+            # `raw_content` (checked: it had no other producer or consumer in this repo).
             "chunks": _split_conflict_chunks(content),
-            "raw_content": content,
         })
     kind = conflicts.get("kind") or "merge"
     tr = conflicts.get("tr_conflict") or {}

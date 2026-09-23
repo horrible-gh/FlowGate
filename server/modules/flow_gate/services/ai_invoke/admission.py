@@ -73,6 +73,16 @@ from .runtime import (
 )
 
 
+# 2026-09-23 incident (flowgate.default.0594 / merge_id=100): a resolve_conflict mention
+# duplicated every conflicted file's full content (chunks + raw_content) with no size cap,
+# reaching ~3.94M chars and getting fast_fail'd by every provider ("Prompt is too long" /
+# Codex's own 1,048,576-char input ceiling) only AFTER a token was spent launching each one.
+# `raw_content` is gone now (token_routes._build_conflict_mention), but a large enough
+# conflict set can still exceed what any provider will accept, so this catches that BEFORE
+# a provider is launched rather than after. Conservative relative to Codex's known hard
+# limit, leaving headroom for the task/instruction sections built around the chunks.
+CONFLICT_MENTION_MAX_CHARS = 500_000
+
 # T0004 work item 6 / NR0003 finding 6: the worktree_unavailable 409 always went out in
 # Korean with no locale branch. It reuses the same locale-dictionary pattern as
 # remote_tool_service._ERROR_MESSAGES / _CUSTOM_ERROR_MESSAGES.
@@ -1260,6 +1270,27 @@ def start_run(
             db_group_ai_leases.release(group_id, run_id, reason="admission_rollback_mention_unavailable")
         raise _http_error(409, "mention_unavailable",
                           "Could not build a worker mention for this document.")
+
+    if action_scope == "resolve_conflict":
+        _mention_chars = len(mention)
+        if _mention_chars > CONFLICT_MENTION_MAX_CHARS:
+            # Refuse before the token is spent on a provider that will only reject it
+            # after launch. No tail truncation here — a silently dropped conflict chunk
+            # would let a resolution look complete while missing part of the merge.
+            try:
+                token_service.revoke(issue["token_id"], reason="ai_invoke_conflict_prompt_too_large")
+            except Exception:
+                logger.warning("token revoke failed after conflict_prompt_too_large", exc_info=True)
+            if not project_scoped:
+                db_group_ai_leases.release(
+                    group_id, run_id, reason="admission_rollback_conflict_prompt_too_large"
+                )
+            raise _http_error(
+                409, "conflict_prompt_too_large",
+                "This merge conflict's resolve prompt is too large for any provider to accept. "
+                "Split the merge into smaller commits or resolve part of it manually, then retry.",
+                prompt_chars=_mention_chars, limit_chars=CONFLICT_MENTION_MAX_CHARS,
+            )
 
     lease = (
         db_group_ai_leases.activate(
