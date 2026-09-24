@@ -965,7 +965,15 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
     if issue.get("worker_document_type"):
         run["worker_document_type"] = issue.get("worker_document_type")
     if issue.get("auto_handled_item_seqs") is not None:
-        run["auto_handled_item_seqs"] = list(issue.get("auto_handled_item_seqs") or [])
+        # 0611 TR0012: a retry re-enters the SAME hop's issuer after its first attempt already
+        # expanded the instruction head, so the retry's own advance finds nothing left and
+        # reports []. Overwriting erased the only record that the server expanded that T/N in
+        # this run; keep what earlier attempts handled and append anything new.
+        handled = list(run.get("auto_handled_item_seqs") or [])
+        for item_seq in issue.get("auto_handled_item_seqs") or []:
+            if item_seq not in handled:
+                handled.append(item_seq)
+        run["auto_handled_item_seqs"] = handled
     return {"mention": mention, "token_id": issue.get("token_id"),
             "token_id_before": before, "reissued": True}
 

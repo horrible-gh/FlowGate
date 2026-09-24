@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from fastapi import HTTPException
 
 os.environ["TESTING"] = "1"
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
@@ -117,7 +118,88 @@ def test_next_approved_happy_creates_approved_doc(monkeypatch, tmp_path):
     assert "조사 가 승인되었습니다." in content
 
 
-@pytest.mark.parametrize("bad_type", ["D", "P", "L", "DB", "AC"])
+def test_next_approved_wp_head_without_instruction_document_is_409(monkeypatch, tmp_path):
+    from modules.flow_gate.documents.routers import documents as routes
+
+    group_id = "proj-main-0611"
+    prev_doc_id = "proj-main-0611-R0001"
+    wp_id = "proj.default.0611.0004-WP"
+    head = {
+        "id": 10, "item_seq": 1, "type": "N", "result_doc_id": None,
+        "source_doc_id": wp_id, "source_revision_no": 7,
+    }
+    created_doc = {
+        "doc_id": "proj-main-0611.0005-N", "project_id": "proj",
+        "group_id": group_id, "type_code": "N", "doc_review_status": None,
+    }
+    _wire_common(
+        monkeypatch, head=head, group_id=group_id, prev_doc_id=prev_doc_id,
+        tmp_path=tmp_path, created_doc=created_doc, refreshed_doc=created_doc,
+        perms={"document.approve", "document.update", "perm_document_create"},
+    )
+    monkeypatch.setattr(
+        routes.document_service, "get_document",
+        lambda doc_id: (
+            {"doc_id": wp_id, "type_code": "WP"} if doc_id == wp_id
+            else {"doc_id": prev_doc_id, "project_id": "proj", "group_id": group_id}
+        ),
+    )
+    with pytest.raises(HTTPException) as exc:
+        routes.create_next_approved_document(
+            routes.NextApprovedDocumentCreate(
+                project_id="proj", group_id=group_id, prev_doc_id=prev_doc_id, type_code="N",
+            ),
+            request=_FakeRequest({"X-Locale": "ko"}),
+            current_user={"user_id": "usr_test"},
+        )
+    assert exc.value.status_code == 409
+    assert "no instruction document" in str(exc.value.detail)
+
+
+def test_next_approved_wp_head_expands_the_step_instruction_text(monkeypatch, tmp_path):
+    """0611 T0011 scenario B at the route: the manual button expands the WP instruction."""
+    from modules.flow_gate.documents.routers import documents as routes
+
+    group_id = "proj-main-0611"
+    prev_doc_id = "proj-main-0611-R0001"
+    wp_id = "proj.default.0611.0004-WP"
+    head = {
+        "id": 10, "item_seq": 1, "type": "N", "result_doc_id": None,
+        "source_doc_id": wp_id, "source_revision_no": 7,
+        "note": "조사지시서를 작성하라", "pre_instruction_text": "# 실제 조사\n\n- 로그를 확인한다.",
+        "pre_instruction_attachment_json": None,
+    }
+    created_doc = {
+        "doc_id": "proj-main-0611.0005-N", "project_id": "proj",
+        "group_id": group_id, "type_code": "N", "doc_review_status": None,
+    }
+    reg, trans = _wire_common(
+        monkeypatch, head=head, group_id=group_id, prev_doc_id=prev_doc_id,
+        tmp_path=tmp_path, created_doc=created_doc, refreshed_doc=created_doc,
+        perms={"document.approve", "document.update", "perm_document_create"},
+    )
+    monkeypatch.setattr(
+        routes.document_service, "get_document",
+        lambda doc_id: (
+            {"doc_id": wp_id, "type_code": "WP"} if doc_id == wp_id
+            else {"doc_id": prev_doc_id, "project_id": "proj", "group_id": group_id}
+        ),
+    )
+    routes.create_next_approved_document(
+        routes.NextApprovedDocumentCreate(
+            project_id="proj", group_id=group_id, prev_doc_id=prev_doc_id, type_code="N",
+        ),
+        request=_FakeRequest({"X-Locale": "ko"}),
+        current_user={"user_id": "usr_test"},
+    )
+    content = (tmp_path / "document.md").read_text(encoding="utf-8")
+    assert "content_source: work_plan_instruction_document" in content
+    assert content.endswith("---\n# 실제 조사\n\n- 로그를 확인한다.\n")
+    assert "조사지시서를 작성하라" not in content
+    reg.assert_called_once()
+    assert [call.kwargs["action"] for call in trans.call_args_list] == ["submit", "approve"]
+
+@pytest.mark.parametrize("bad_type", ["R", "TR", "TS", "AC"])
 def test_next_approved_rejects_non_instruction_types(monkeypatch, bad_type):
     from fastapi import HTTPException
     from modules.flow_gate.documents.routers import documents as routes

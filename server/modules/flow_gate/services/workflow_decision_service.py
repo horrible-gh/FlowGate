@@ -235,12 +235,29 @@ def validate_continuation_auto_approve_item_seqs(
             raise ValueError(f"already_done_auto_approve_item_seq:{item_seq}")
 
 
+def has_work_plan_instruction_document(item: Optional[dict]) -> bool:
+    """True when a sequence row carries a WorkPlan instruction document (text and/or file).
+
+    Presence only -- the server materializer validates and reads the file itself and fails
+    closed on a broken reference, so this predicate never swallows a bad attachment.
+    """
+    if not item:
+        return False
+    if str(item.get("pre_instruction_text") or "").strip():
+        return True
+    if isinstance(item.get("pre_instruction_attachment"), dict):
+        return True
+    return bool(str(item.get("pre_instruction_attachment_json") or "").strip())
+
+
 def is_auto_handled_step(
     *,
     head_type: Optional[str],
     item_seq: Optional[int],
     instruction_mode: Optional[str],
     auto_approve_item_seqs: Optional[list] = None,
+    source_doc_id: Optional[str] = None,
+    has_instruction_document: bool = False,
 ) -> bool:
     """The §2 auto-handling predicate — the single source of truth, reused by ai_invoke_service so the
     provider/note/docs-target accounting never drifts from the auto-complete loop's own
@@ -255,7 +272,22 @@ def is_auto_handled_step(
     eligible = (head_type or "").upper() in INSTRUCTION_AUTO_TYPES
     if not eligible:
         return False
+    # 0611 T0011: a WorkPlan-backed N/T whose step carries its instruction document is
+    # server-materialized from that document exactly like the manual [승인 문서 생성]
+    # path, so the next worker receives the real T/N.  Only a WorkPlan N/T with no
+    # instruction document stays a real authoring hop (0611 T0009) -- there is nothing
+    # the server could expand for it.  Legacy/non-WorkPlan rows keep their contract.
+    # 0611 TR0012 rev2 (final contract): the server expands a WorkPlan instruction document
+    # ONLY under auto_approved.  ai_direct ([지시서 작성 후 진행]) keeps the T/N as a real
+    # authoring hop even when the step carries a document -- the note / pre-instruction
+    # text / attachment go to that authoring worker as input only (admission's
+    # _inject_hop_notes) and its output follows the ordinary review/approval flow.  The
+    # per-step auto-approve selection does not switch a WorkPlan row to server expansion
+    # either; it stays the post-authoring approval policy (0611 T0009).  The manual
+    # [승인지시서 생성] path does not consult this predicate at all.
     mode = normalize_continuation_instruction_mode(instruction_mode)
+    if str(source_doc_id or "").upper().endswith("-WP"):
+        return mode == CONTINUATION_INSTRUCTION_AUTO_APPROVED and bool(has_instruction_document)
     if mode == CONTINUATION_INSTRUCTION_AUTO_APPROVED:
         return True
     if mode == CONTINUATION_INSTRUCTION_AI_DIRECT:
@@ -398,6 +430,8 @@ def validate_continuation_review_item_seqs(
             item_seq=item_seq,
             instruction_mode=instruction_mode,
             auto_approve_item_seqs=auto_approve_item_seqs,
+            source_doc_id=item.get("source_doc_id"),
+            has_instruction_document=has_work_plan_instruction_document(item),
         ):
             raise ValueError(
                 f"ineligible_review_item_seq:{item_seq} — this step has no worker output to review")
@@ -872,6 +906,8 @@ def _auto_complete_instruction_heads(
             item_seq=item_seq,
             instruction_mode=instruction_mode,
             auto_approve_item_seqs=auto_approve_item_seqs,
+            source_doc_id=head.get("source_doc_id"),
+            has_instruction_document=has_work_plan_instruction_document(head),
         ):
             # report / AC / other type, OR an ai_direct N/T not in the auto-approve
             # selection → caller mints the worker mention here.
