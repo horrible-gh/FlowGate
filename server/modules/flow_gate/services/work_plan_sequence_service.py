@@ -521,9 +521,9 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
         if row.get("is_auto"):
             continue
         want = AUTO_ROW_MAP.get(row["type"]) if row["type"] in INSTRUCTION_TYPES else None
-        # WorkPlan T/N remains the canonical owner, but auto-approved execution runs the
-        # paired TR/NR row.  Move an immutable snapshot onto that worker and keep the
-        # server-assembled instruction slot empty, matching work_plan_apply_service.project().
+        # This mode-neutral pour feeds two execution contracts: auto_approved runs the
+        # paired TR/NR row, while ai_direct runs this source N/T row.  Keep the source
+        # metadata for ai_direct and copy an immutable snapshot to the paired worker.
         worker_pre_instruction = row["type"] in {"T", "N"} and bool(want)
         old = by_parent.get(row["uid"])
         old_matches = old is not None and old.get("type") == want
@@ -538,9 +538,6 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
             else old.get("pre_instruction_attachment") if worker_pre_instruction and old_matches else None
         )
         pre_instruction_attachment = dict(attachment) if isinstance(attachment, dict) else None
-        if worker_pre_instruction:
-            row["pre_instruction_text"] = None
-            row["pre_instruction_attachment"] = None
         out.append(row)
         if not want:
             continue

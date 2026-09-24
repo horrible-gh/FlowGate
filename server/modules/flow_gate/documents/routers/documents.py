@@ -1320,6 +1320,32 @@ class NextApprovedError(Exception):
         self.detail = detail
 
 
+# 0611 T#2: the canonical body of a WorkPlan-backed N/T -- and therefore what an instruction
+# reviewer reads first when review_count > 0 -- is this server-owned approval artifact
+# (WP provenance frontmatter + a status-neutral artifact line).  WP execution metadata
+# (steps[].note / pre_instruction_text / pre_instruction_attachment) is never a body source:
+# it stays on the sequence row the worker actually fills and reaches that worker at hop time
+# through admission._inject_hop_notes (the paired NR/TR under auto_approved, the N/T itself
+# under ai_direct).
+WORK_PLAN_INSTRUCTION_CONTENT_SOURCE = "server_approval_artifact"
+_WORK_PLAN_INSTRUCTION_ARTIFACT_BODY = {
+    "ko": "이 문서는 서버가 생성한 {label} 승인 절차 산출물입니다.",
+    "ja": "この文書は、サーバーが生成した {label} の承認手続き用アーティファクトです。",
+    "en": "This document is a server-generated approval workflow artifact for {label}.",
+}
+
+
+def _work_plan_instruction_artifact_body(label: str, locale: str) -> str:
+    """Describe the server artifact without claiming that review has already passed."""
+    from modules.flow_gate.template_provision import normalize_locale
+
+    loc = normalize_locale(locale)
+    template = _WORK_PLAN_INSTRUCTION_ARTIFACT_BODY.get(
+        loc, _WORK_PLAN_INSTRUCTION_ARTIFACT_BODY["ko"]
+    )
+    return template.format(label=label)
+
+
 def _work_plan_instruction_descriptor(sequence_id: int, head: dict) -> Optional[dict]:
     """Return the durable WP instruction snapshot for ``head``, or ``None`` for legacy N/T.
 
@@ -1407,10 +1433,11 @@ def _build_work_plan_instruction_content(
         f"source_wp_revision_no: {int(materialization['source_wp_revision_no'])}",
         f"source_wp_step_key: {_json.dumps(materialization['source_wp_step_key'], ensure_ascii=False)}",
         f"materialization_key: {_json.dumps(materialization['idempotency_key'], ensure_ascii=False)}",
+        f"content_source: {WORK_PLAN_INSTRUCTION_CONTENT_SOURCE}",
     ]
     header = header[:close_at] + "\n".join(provenance_lines) + "\n" + header[close_at:]
     label = get_type_name(type_code, locale)
-    return header + _auto_approved_body(label, locale) + "\n"
+    return header + _work_plan_instruction_artifact_body(label, locale) + "\n"
 
 
 def _materialized_document_matches(doc: dict, materialization: dict) -> bool:
@@ -1442,6 +1469,8 @@ def materialize_work_plan_instruction(
     Idempotency is the logical ``WP doc_id + revision_no + step key`` embedded in the
     canonical document.  Re-entry on an occupied slot reuses that document only when its
     marker matches; a different occupant is a conflict and is never overwritten.
+    A WP result reports ``content_source`` so callers can see the body is the server-owned
+    approval artifact (``WORK_PLAN_INSTRUCTION_CONTENT_SOURCE``), not execution metadata.
     """
     materialization = _work_plan_instruction_descriptor(sequence_id, head)
     if materialization is None:
@@ -1464,6 +1493,7 @@ def materialize_work_plan_instruction(
                 "doc_id": existing.get("doc_id"),
                 "stored_path": existing.get("file_path"),
                 "materialization": materialization,
+                "content_source": WORK_PLAN_INSTRUCTION_CONTENT_SOURCE,
                 "idempotent_reuse": True,
             }
         raise NextApprovedError(409, "Workflow slot is occupied by a different document.")
@@ -1488,6 +1518,7 @@ def materialize_work_plan_instruction(
         _approve_immediately=review_gate.normalize_review_count(head.get("review_count")) == 0,
     )
     created["materialization"] = materialization
+    created["content_source"] = WORK_PLAN_INSTRUCTION_CONTENT_SOURCE
     created["idempotent_reuse"] = False
     return created
 

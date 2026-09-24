@@ -189,7 +189,8 @@ def test_next_approved_wp_head_keeps_provenance_but_not_execution_metadata(
     assert f'source_wp_doc_id: "{wp_id}"' in content
     assert 'source_wp_step_key: "N#1"' in content
     assert f'materialization_key: "{wp_id}:7:N#1"' in content
-    assert "조사 가 승인되었습니다." in content
+    assert "이 문서는 서버가 생성한 조사 승인 절차 산출물입니다." in content
+    assert "승인되었습니다." not in content
     assert note not in content
     assert pre_instruction not in content
     assert attachment["filename"] not in content

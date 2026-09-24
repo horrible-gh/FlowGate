@@ -100,7 +100,12 @@ def test_c7_materialized_instruction_keeps_provenance_but_excludes_execution_met
     assert "source_wp_revision_no: 7" in body
     assert "source_wp_step_key: \"T#1\"" in body
     assert f"materialization_key: \"{WP_ID}:7:T#1\"" in body
-    assert "승인되었습니다." in body
+    # 0611 T#2: the body names its own content source — the server approval artifact.
+    assert f"content_source: {docs.WORK_PLAN_INSTRUCTION_CONTENT_SOURCE}" in body
+    assert "이 문서는 서버가 생성한 T 승인 절차 산출물입니다." in body
+    assert "승인되었습니다." not in body
+    assert "## 지시 내용" not in body
+    assert "## 추가 사전 지시" not in body
     assert "Implement the materializer." not in body
     assert "Keep the original attachment reference." not in body
     assert ATTACHMENT["filename"] not in body
@@ -146,6 +151,7 @@ def test_c6_same_wp_revision_step_reentry_reuses_one_instruction_document(monkey
     assert result["doc_id"] == existing["doc_id"]
     assert result["idempotent_reuse"] is True
     assert result["materialization"]["idempotency_key"] == f"{WP_ID}:7:T#1"
+    assert result["content_source"] == docs.WORK_PLAN_INSTRUCTION_CONTENT_SOURCE
 
 
 def test_c8_legacy_generic_nt_keeps_fixed_template_auto_approval(monkeypatch):
@@ -239,6 +245,8 @@ def test_c2_wp_t_with_reviewer_materializes_pending_instruction(monkeypatch):
 
     assert result["data"]["doc_review_status"] == "pending_review"
     assert seen["_approve_immediately"] is False
+    # The pending document a reviewer reads is the server approval artifact.
+    assert result["content_source"] == docs.WORK_PLAN_INSTRUCTION_CONTENT_SOURCE
 
 
 def test_c2_pending_instruction_stops_auto_completion_without_auto_handled_record(monkeypatch):
@@ -321,13 +329,15 @@ def test_c4_c5_instruction_and_result_provider_reviewer_policies_stay_independen
     assert materialized["provider_id"] == "instruction-executor"
     assert materialized["reviewer_provider_id"] == "instruction-reviewer"
     assert materialized["review_count"] == 2
-    assert materialized["pre_instruction_text"] is None
+    assert materialized["pre_instruction_text"] == "canonical instruction"
+    assert materialized["pre_instruction_attachment"] == ATTACHMENT
     assert paired["type"] == result_type
     assert paired["provider_id"] == "result-worker"
     assert paired["reviewer_provider_id"] == "result-reviewer"
     assert paired["review_count"] == 3
     assert paired["pre_instruction_text"] == "canonical instruction"
     assert paired["pre_instruction_attachment"] == ATTACHMENT
+    assert paired["pre_instruction_attachment"] is not materialized["pre_instruction_attachment"]
 
 
 def test_connected_wp_materialize_review_reject_rework_rereview_pass_handoff(monkeypatch):

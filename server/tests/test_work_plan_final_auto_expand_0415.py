@@ -191,7 +191,7 @@ def test_approval_hook_returns_success_when_final_expansion_fails(monkeypatch):
     assert stored["doc_review_status"] == "approved"
 
 def test_final_expansion_snapshots_each_instruction_on_its_paired_worker(monkeypatch):
-    """The approval path persists T/N pre-instruction only on the TR/NR worker rows."""
+    """The approval path preserves T/N metadata and snapshots it onto TR/NR workers."""
     attachments = {
         "T#1": {"doc_id": WP_ID, "filename": "t.txt", "content_sha256": "a" * 64},
         "T#2": {"doc_id": WP_ID, "filename": "t2.txt", "content_sha256": "b" * 64},
@@ -233,11 +233,19 @@ def test_final_expansion_snapshots_each_instruction_on_its_paired_worker(monkeyp
     rows = seen["rows"]
     assert [row["type"] for row in rows] == ["T", "TR", "T", "TR", "N", "NR"]
     assert [row["pre_instruction_text"] for row in rows] == [
-        None, "first task", None, "second task", None, "research task",
+        "first task", "first task", "second task", "second task",
+        "research task", "research task",
     ]
     assert [row["pre_instruction_attachment"] for row in rows] == [
-        None, attachments["T#1"], None, attachments["T#2"], None, attachments["N#1"],
+        attachments["T#1"], attachments["T#1"],
+        attachments["T#2"], attachments["T#2"],
+        attachments["N#1"], attachments["N#1"],
     ]
+    assert all(
+        rows[index]["pre_instruction_attachment"]
+        is not rows[index + 1]["pre_instruction_attachment"]
+        for index in (0, 2, 4)
+    )
     assert all(row["source_doc_id"] == WP_ID for row in rows)
     assert all(row["source_revision_no"] == DOC["revision_no"] for row in rows)
 
@@ -260,9 +268,11 @@ def test_c6_auto_row_instruction_snapshot_is_idempotent():
     twice, _uid = wpseq.attach_auto_rows(once, next_uid=uid)
 
     assert once == twice
-    assert once[0]["pre_instruction_text"] is None
+    assert once[0]["pre_instruction_text"] == "durable"
+    assert once[0]["pre_instruction_attachment"] == attachment
     assert once[1]["pre_instruction_text"] == "durable"
     assert once[1]["pre_instruction_attachment"] == attachment
+    assert once[0]["pre_instruction_attachment"] is not once[1]["pre_instruction_attachment"]
 
 
 _CONNECTED_GROUP = "flowgate.default.0415"
@@ -334,7 +344,7 @@ def connected_sequence_store(migrated_sqlite_db):
         store._conn.close()
 
 
-def test_c1_c5_c7_final_approval_persists_nt_payload_only_on_instruction_rows(
+def test_c1_c5_c7_final_approval_persists_nt_payload_on_source_and_paired_rows(
     connected_sequence_store, monkeypatch,
 ):
     """Run final expansion through real sequence SQL, then production worker prompt assembly."""
@@ -386,13 +396,16 @@ def test_c1_c5_c7_final_approval_persists_nt_payload_only_on_instruction_rows(
     stored = db_wfseq.get_sequence_items(sequence["id"])
     assert [row["type"] for row in stored] == ["T", "TR", "T", "TR", "N", "NR"]
     assert [row["pre_instruction_text"] for row in stored] == [
-        None, "first task", None, "second task", None, "research task",
+        "first task", "first task", "second task", "second task",
+        "research task", "research task",
     ]
     assert [
         db_wfseq.decode_pre_instruction_attachment(row["pre_instruction_attachment_json"])
         for row in stored
     ] == [
-        None, attachments["T#1"], None, attachments["T#2"], None, attachments["N#1"],
+        attachments["T#1"], attachments["T#1"],
+        attachments["T#2"], attachments["T#2"],
+        attachments["N#1"], attachments["N#1"],
     ]
 
     # Keep reference validation at its attachment-storage boundary. Resolution, row folding,
