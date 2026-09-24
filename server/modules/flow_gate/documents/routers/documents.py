@@ -1323,10 +1323,10 @@ class NextApprovedError(Exception):
 def _work_plan_instruction_descriptor(sequence_id: int, head: dict) -> Optional[dict]:
     """Return the durable WP instruction snapshot for ``head``, or ``None`` for legacy N/T.
 
-    The sequence already stores the WorkPlan document/revision and the instruction payload.
-    The step key is reconstructed from that revision's same-type slot order; WorkPlan keys are
-    canonical ``<type>#<ordinal>`` values.  No live WorkPlan body is read, so a later WP edit
-    cannot change the instruction snapshot that was approved into this sequence.
+    The sequence already stores the WorkPlan document/revision identity independently from
+    execution metadata.  The step key is reconstructed from that revision's same-type slot
+    order; WorkPlan keys are canonical ``<type>#<ordinal>`` values.  No live WorkPlan body is
+    read, so a later WP edit cannot change the approved logical-step identity.
     """
     from modules.flow_gate.db import workflow_sequences as _db_wfseq
 
@@ -1340,16 +1340,6 @@ def _work_plan_instruction_descriptor(sequence_id: int, head: dict) -> Optional[
         return None
     source_doc = document_service.get_document(source_doc_id)
     if source_doc is None or str(source_doc.get("type_code") or "").upper() != WORK_PLAN_TYPE:
-        return None
-
-    note = str(head.get("note") or "").strip()
-    pre_instruction_text = str(head.get("pre_instruction_text") or "").strip()
-    attachment = _db_wfseq.decode_pre_instruction_attachment(
-        head.get("pre_instruction_attachment_json")
-    )
-    if attachment is None and isinstance(head.get("pre_instruction_attachment"), dict):
-        attachment = dict(head["pre_instruction_attachment"])
-    if not note and not pre_instruction_text and attachment is None:
         return None
 
     same_type = []
@@ -1382,9 +1372,6 @@ def _work_plan_instruction_descriptor(sequence_id: int, head: dict) -> Optional[
         "source_wp_revision_no": source_revision_no,
         "source_wp_step_key": step_key,
         "idempotency_key": f"{source_doc_id}:{source_revision_no}:{step_key}",
-        "instruction_note": note,
-        "pre_instruction_text": pre_instruction_text,
-        "pre_instruction_attachment": attachment,
     }
 
 
@@ -1401,8 +1388,8 @@ def _build_work_plan_instruction_content(
     materialization: dict,
     locale: str,
 ) -> str:
-    """Build the canonical Markdown body for a materialized WorkPlan N/T instruction."""
-    from modules.flow_gate.template_provision import normalize_locale
+    """Build a server-owned approval artifact with WP provenance but no execution metadata."""
+    from modules.flow_gate.db.document_type_labels import get_type_name
 
     header = _build_next_empty_content(
         project_id=project_id,
@@ -1421,47 +1408,9 @@ def _build_work_plan_instruction_content(
         f"source_wp_step_key: {_json.dumps(materialization['source_wp_step_key'], ensure_ascii=False)}",
         f"materialization_key: {_json.dumps(materialization['idempotency_key'], ensure_ascii=False)}",
     ]
-    attachment = materialization.get("pre_instruction_attachment")
-    if isinstance(attachment, dict):
-        provenance_lines.append(
-            "source_wp_attachment: "
-            + _json.dumps(attachment, ensure_ascii=False, separators=(",", ":"))
-        )
     header = header[:close_at] + "\n".join(provenance_lines) + "\n" + header[close_at:]
-
-    loc = normalize_locale(locale)
-    labels = {
-        "ko": ("지시 내용", "추가 사전 지시", "출처", "첨부 참조"),
-        "ja": ("指示内容", "追加の事前指示", "出典", "添付参照"),
-        "en": ("Instruction", "Additional pre-instruction", "Provenance", "Attachment reference"),
-    }
-    instruction_label, pre_label, source_label, attachment_label = labels.get(
-        loc, labels["ko"]
-    )
-    note = materialization.get("instruction_note") or ""
-    pre_instruction = materialization.get("pre_instruction_text") or ""
-    primary = note or pre_instruction
-    lines = [f"# {title}", "", f"## {instruction_label}", "", primary]
-    if note and pre_instruction:
-        lines.extend(["", f"## {pre_label}", "", pre_instruction])
-    lines.extend([
-        "",
-        f"## {source_label}",
-        "",
-        f"- WorkPlan: `{materialization['source_wp_doc_id']}`",
-        f"- Revision: `{materialization['source_wp_revision_no']}`",
-        f"- Step: `{materialization['source_wp_step_key']}`",
-    ])
-    if isinstance(attachment, dict):
-        lines.extend([
-            "",
-            f"## {attachment_label}",
-            "",
-            "```json",
-            _json.dumps(attachment, ensure_ascii=False, indent=2, sort_keys=True),
-            "```",
-        ])
-    return header + "\n".join(lines).rstrip() + "\n"
+    label = get_type_name(type_code, locale)
+    return header + _auto_approved_body(label, locale) + "\n"
 
 
 def _materialized_document_matches(doc: dict, materialization: dict) -> bool:

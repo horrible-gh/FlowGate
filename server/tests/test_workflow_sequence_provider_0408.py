@@ -573,7 +573,7 @@ def test_plan_maps_onto_the_rows_it_poured_not_an_older_finished_pair():
     projection = apply_svc.project(PLAN_STEPS_PAIR, mapping, items, "auto_approved", REGISTRY)
     # [자동 승인]: the report row runs, so it keeps its OWN sentence and the instruction's
     # folded value fills nothing.
-    assert projection["note_overrides"] == {"11": "N now", "12": "NR now"}
+    assert projection["note_overrides"] == {"12": "NR now"}
     assert projection["provider_overrides"] == {"12": PROVIDER}
 
 

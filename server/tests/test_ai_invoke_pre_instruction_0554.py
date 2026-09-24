@@ -492,33 +492,33 @@ class TestPreInstructionEndToEnd:
             conn_mod.STORE = original_store
             conn.close()
 
-    def test_wp_materialized_instruction_is_not_folded_into_paired_result_worker(
+    def test_auto_approved_instruction_pre_instruction_reaches_paired_result_worker(
         self, pre_env, monkeypatch,
     ):
-        # WP-backed T is materialized as its own canonical document. TR@4 must not retain
-        # a hidden copy of the WorkPlan payload; the approved T document is the only SSOT.
+        # Under auto approval the T slot has no worker, so its pre-instruction snapshot
+        # belongs to the paired TR worker that actually executes the logical step.
         pre_env["wfseq"].head_item_seq = 3
         pre_env["wfseq"].items = [
             {"item_seq": 1, "type": "N", "result_doc_id": "d-0002-N"},
             {"item_seq": 2, "type": "NR", "result_doc_id": "d-0003-NR"},
             {
                 "item_seq": 3, "type": "T", "result_doc_id": None,
-                "source_doc_id": ATTACHMENT["doc_id"], "pre_instruction_text": PRE_TEXT,
-                "pre_instruction_attachment_json": _attachment_json(),
+                "source_doc_id": ATTACHMENT["doc_id"], "pre_instruction_text": None,
+                "pre_instruction_attachment_json": None,
             },
             {
                 "item_seq": 4, "type": "TR", "result_doc_id": None,
-                "source_doc_id": ATTACHMENT["doc_id"], "pre_instruction_text": None,
-                "pre_instruction_attachment_json": None,
+                "source_doc_id": ATTACHMENT["doc_id"], "pre_instruction_text": PRE_TEXT,
+                "pre_instruction_attachment_json": _attachment_json(),
             },
         ]
         monkeypatch.setattr(wpa_svc, "validate_reference", lambda doc_id, reference: None)
         res, outfile = _start(pre_env, MENTION, target_seq=4, instruction_mode="auto_approved")
         _wait_finished(res["run_id"])
         got = _read(outfile).decode("utf-8")
-        assert "## WorkPlan 사전지시" not in got
-        assert PRE_TEXT not in got
-        assert ATTACHMENT["original_filename"] not in got
+        assert got.count("## WorkPlan 사전지시") == 1
+        assert PRE_TEXT in got
+        assert ATTACHMENT["original_filename"] in got
 
     def test_ai_direct_instruction_row_gets_its_own_pre_instruction(self, pre_env):
         # Contrast case: under ai_direct the worker fills T@3 itself (no fold), so T@3's own
@@ -1560,8 +1560,8 @@ class TestConnectedFlowFullEffectiveBundle:
         assert result["fill"]["provider_overrides"]["2"] == WORKER_PROVIDER
         assert result["fill"]["review_count_overrides"]["2"] == 2
         assert result["fill"]["reviewer_overrides"]["2"] == REVIEWER_PROVIDER
-        assert result["fill"]["pre_instruction_texts"]["1"] == PRE_TEXT
-        assert result["fill"]["pre_instruction_attachments"]["1"] == ATTACHMENT
+        assert result["fill"]["pre_instruction_texts"]["2"] == PRE_TEXT
+        assert result["fill"]["pre_instruction_attachments"]["2"] == ATTACHMENT
         assert not any(
             entry.get("reason") == "instruction_step_is_server_assembled_no_worker_target"
             for entry in result["fill"]["unfilled"]
@@ -1575,13 +1575,13 @@ class TestConnectedFlowFullEffectiveBundle:
         )
         row = next(i for i in env["wfseq"].get_sequence_items(1) if i["item_seq"] == 2)
         assert source_row["type"] == "T"
-        assert source_row["pre_instruction_text"] == PRE_TEXT
+        assert source_row["pre_instruction_text"] is None
         assert row["type"] == "TR"
         assert row["provider_id"] == WORKER_PROVIDER
         assert row["note"] == "계획 단계 개별 메모"
         assert row["review_count"] == 2
         assert row["reviewer_provider_id"] == REVIEWER_PROVIDER
-        assert row["pre_instruction_text"] is None
+        assert row["pre_instruction_text"] == PRE_TEXT
         assert row["source_doc_id"] == WP_DOC_ID
 
         # ---- 2. dialog/start payload -> a real start_run hop (steps 11-13), paused mid-hop
@@ -1610,10 +1610,10 @@ class TestConnectedFlowFullEffectiveBundle:
         assert run["end_reason"] == "user_paused"
         assert GROUP_ID in env["paused"].rows
         before_text = _read(worker_outfile).decode("utf-8")
-        assert "## WorkPlan 사전지시" not in before_text
-        assert PRE_TEXT not in before_text
+        assert before_text.count("## WorkPlan 사전지시") == 1
+        assert PRE_TEXT in before_text
         assert "계획 단계 개별 메모" in before_text
-        assert ATTACHMENT["original_filename"] not in before_text
+        assert ATTACHMENT["original_filename"] in before_text
 
         cmd2, outfile_after = _capture_cmd(env["tmp"])
         monkeypatch.setattr(wds, "advance_workflow", lambda **kw: {
@@ -1726,8 +1726,8 @@ class TestConnectedFlowFullEffectiveBundle:
         assert rework_run is not None
         _wait_finished(rework_run["run_id"])
         rework_text = _read(rework_outfile).decode("utf-8")
-        assert "## WorkPlan 사전지시" not in rework_text
-        assert PRE_TEXT not in rework_text
+        assert rework_text.count("## WorkPlan 사전지시") == 1
+        assert PRE_TEXT in rework_text
         # T0014 §9: rework re-applies the slot's pre-instruction, not `note` — that field is
         # only ever injected on the "new"/continuous path (_inject_hop_notes), which the
         # rework hop structurally never reaches (see the companion rework test above).

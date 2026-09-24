@@ -39,7 +39,7 @@ def _head(type_code="T", *, item_id=11, item_seq=1, result_doc_id=None):
     ("T", 3, "T#2"),
     ("N", 5, "N#1"),
 ])
-def test_descriptor_preserves_wp_revision_step_and_payload(
+def test_descriptor_preserves_wp_revision_step_without_execution_payload(
     monkeypatch, type_code, item_seq, expected_key,
 ):
     head = _head(type_code, item_id=item_seq + 100, item_seq=item_seq)
@@ -53,6 +53,7 @@ def test_descriptor_preserves_wp_revision_step_and_payload(
         _head("N", item_id=105, item_seq=5),
     ]
     head["id"] = next(row["id"] for row in rows if row["item_seq"] == item_seq)
+    head.update(note="", pre_instruction_text=None, pre_instruction_attachment=None)
     monkeypatch.setattr(
         docs.document_service,
         "get_document",
@@ -66,12 +67,12 @@ def test_descriptor_preserves_wp_revision_step_and_payload(
     assert descriptor["source_wp_revision_no"] == 7
     assert descriptor["source_wp_step_key"] == expected_key
     assert descriptor["idempotency_key"] == f"{WP_ID}:7:{expected_key}"
-    assert descriptor["instruction_note"] == head["note"]
-    assert descriptor["pre_instruction_text"] == head["pre_instruction_text"]
-    assert descriptor["pre_instruction_attachment"] == ATTACHMENT
+    assert "instruction_note" not in descriptor
+    assert "pre_instruction_text" not in descriptor
+    assert "pre_instruction_attachment" not in descriptor
 
 
-def test_c7_materialized_instruction_preserves_attachment_and_provenance():
+def test_c7_materialized_instruction_keeps_provenance_but_excludes_execution_metadata():
     materialization = {
         "source_wp_doc_id": WP_ID,
         "source_wp_revision_no": 7,
@@ -99,10 +100,12 @@ def test_c7_materialized_instruction_preserves_attachment_and_provenance():
     assert "source_wp_revision_no: 7" in body
     assert "source_wp_step_key: \"T#1\"" in body
     assert f"materialization_key: \"{WP_ID}:7:T#1\"" in body
-    assert "Implement the materializer." in body
-    assert "Keep the original attachment reference." in body
-    assert ATTACHMENT["filename"] in body
-    assert ATTACHMENT["content_sha256"] in body
+    assert "승인되었습니다." in body
+    assert "Implement the materializer." not in body
+    assert "Keep the original attachment reference." not in body
+    assert ATTACHMENT["filename"] not in body
+    assert ATTACHMENT["content_sha256"] not in body
+    assert "source_wp_attachment:" not in body
 
 
 def test_c6_same_wp_revision_step_reentry_reuses_one_instruction_document(monkeypatch):
@@ -318,13 +321,13 @@ def test_c4_c5_instruction_and_result_provider_reviewer_policies_stay_independen
     assert materialized["provider_id"] == "instruction-executor"
     assert materialized["reviewer_provider_id"] == "instruction-reviewer"
     assert materialized["review_count"] == 2
-    assert materialized["pre_instruction_text"] == "canonical instruction"
+    assert materialized["pre_instruction_text"] is None
     assert paired["type"] == result_type
     assert paired["provider_id"] == "result-worker"
     assert paired["reviewer_provider_id"] == "result-reviewer"
     assert paired["review_count"] == 3
-    assert paired["pre_instruction_text"] is None
-    assert paired["pre_instruction_attachment"] is None
+    assert paired["pre_instruction_text"] == "canonical instruction"
+    assert paired["pre_instruction_attachment"] == ATTACHMENT
 
 
 def test_connected_wp_materialize_review_reject_rework_rereview_pass_handoff(monkeypatch):

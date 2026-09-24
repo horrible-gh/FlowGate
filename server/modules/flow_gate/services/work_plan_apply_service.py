@@ -273,9 +273,10 @@ def project(plan_steps: Iterable[dict], step_map: Iterable[dict], items: Iterabl
             instruction_mode: str, provider_registry: Any) -> dict:
     """Project every execution setting through the same logical-step mapping.
 
-    Provider/review compatibility settings still follow the effective worker target, while
-    WorkPlan-authored instruction note/pre-instruction/attachment stay on the N/T source slot
-    for canonical document materialization.  Result rows retain their own payload.
+    Every execution setting follows the effective worker target.  For an auto-assembled
+    instruction, the WorkPlan instruction step remains the canonical owner while its
+    pre-instruction is snapshotted onto the paired result row that the worker actually fills.
+    A server-assembled instruction with no paired worker target remains explicitly unapplied.
     """
     mode = instruction_mode if instruction_mode in INSTRUCTION_MODES else "auto_approved"
     rows = list(step_map or [])
@@ -308,9 +309,14 @@ def project(plan_steps: Iterable[dict], step_map: Iterable[dict], items: Iterabl
                     "to_item_seq": target_seq, "reason": "auto_approved_instruction",
                 })
             else:
-                # No paired worker does not make the WorkPlan instruction payload invalid:
-                # it remains materializable on the N/T slot itself.
-                allow_pre_instruction = True
+                allow_pre_instruction = False
+                if step.get("pre_instruction_text") or step.get("pre_instruction_attachment"):
+                    unfilled.append({
+                        "key": key,
+                        "field": "pre_instruction",
+                        "item_seq": source_seq,
+                        "reason": "instruction_step_is_server_assembled_no_worker_target",
+                    })
         (tucked if is_folded else own).append(
             (step, target_seq, source_seq, allow_pre_instruction)
         )
@@ -369,21 +375,10 @@ def project(plan_steps: Iterable[dict], step_map: Iterable[dict], items: Iterabl
     for step, target, source, _allow_pre_instruction in sorted(
         tucked, key=lambda row: row[2], reverse=True
     ):
-        # The provider/review compatibility projection remains on the paired worker until
-        # instruction-review gating is introduced, but the WorkPlan-authored payload belongs
-        # to the N/T source slot.  This snapshot is what the instruction materializer reads.
-        source_key = str(source)
-        source_note = _usable_note(step)
-        if source_note is not None:
-            note_out[source_key] = source_note
-        text = step.get("pre_instruction_text")
-        attachment = step.get("pre_instruction_attachment")
-        if text is not None and str(text):
-            pre_instruction_text_out[source_key] = str(text)
-        if isinstance(attachment, dict):
-            pre_instruction_attachment_out[source_key] = dict(attachment)
+        # Clear any stale baseline on the server-assembled instruction slot.  Every setting,
+        # including pre-instruction, is carried by the paired row the worker actually fills.
         execution_item_seqs.add(int(source))
-        put(step, target, True, allow_pre_instruction=False)
+        put(step, target, True, allow_pre_instruction=True)
 
     filled = sorted(
         {int(x) for x in provider_out}

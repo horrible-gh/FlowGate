@@ -521,23 +521,10 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
         if row.get("is_auto"):
             continue
         want = AUTO_ROW_MAP.get(row["type"]) if row["type"] in INSTRUCTION_TYPES else None
-        # A provenance-bearing WorkPlan N/T owns its payload because that row is
-        # materialized into the canonical instruction document. Only legacy rows
-        # without that provenance retain snapshot-to-paired-worker behavior.
-        work_plan_instruction = (
-            row["type"] in {"T", "N"}
-            and bool(want)
-            and bool(row.get("source_doc_id"))
-            and row.get("source_revision_no") is not None
-            and bool(
-                str(row.get("note") or "").strip()
-                or str(row.get("pre_instruction_text") or "").strip()
-                or isinstance(row.get("pre_instruction_attachment"), dict)
-            )
-        )
-        worker_pre_instruction = (
-            row["type"] in {"T", "N"} and bool(want) and not work_plan_instruction
-        )
+        # WorkPlan T/N remains the canonical owner, but auto-approved execution runs the
+        # paired TR/NR row.  Move an immutable snapshot onto that worker and keep the
+        # server-assembled instruction slot empty, matching work_plan_apply_service.project().
+        worker_pre_instruction = row["type"] in {"T", "N"} and bool(want)
         old = by_parent.get(row["uid"])
         old_matches = old is not None and old.get("type") == want
         pre_instruction_text = (
@@ -615,7 +602,7 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
                     or (None if row.get("source_doc_id") else row.get("reviewer_provider_display_name"))
                 )
             ),
-            # WP-materialized N/T keeps this empty; legacy rows may still snapshot here.
+            # In auto-approved mode the execution metadata belongs to the paired worker.
             pre_instruction_text=pre_instruction_text,
             pre_instruction_attachment=pre_instruction_attachment,
             status=status,
