@@ -34,10 +34,11 @@ export function isAdminFromToken(): boolean {
   return !!p?.is_admin
 }
 
-// T0005 §5: the only allow-listed internal prefix a post-login `next` query param may
-// point at. Anything outside this (external origin, protocol-relative, or a path this
-// list doesn't cover) is rejected so /login never becomes an open redirect.
-const SAFE_RETURN_PREFIXES = ['/app']
+// T0005 §5 / T0009 §6: the only allow-listed internal prefixes a post-login `next`
+// query param (or a GUI-generation switch) may point at. Anything outside this
+// (external origin, protocol-relative, or a path this list doesn't cover) is rejected
+// so /login never becomes an open redirect.
+const SAFE_RETURN_PREFIXES = ['/app', '/main', '/settings']
 
 /**
  * Validate a post-login return target carried in `next`. Returns the original value

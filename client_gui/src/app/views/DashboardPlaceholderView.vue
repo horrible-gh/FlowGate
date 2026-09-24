@@ -39,7 +39,9 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 100vh;
+  /* App.vue now renders a persistent Topbar (T0009 §8) above every route, so full
+     100vh here would push this card below the fold. */
+  min-height: calc(100vh - var(--hdr-h, 52px));
   padding: 24px;
   box-sizing: border-box;
 }

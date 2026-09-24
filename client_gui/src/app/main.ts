@@ -1,5 +1,6 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
+import { isNavigationFailure, NavigationFailureType } from 'vue-router'
 import i18n from '@shared/i18n'
 import router from './router'
 import '@shared/variables.css'
@@ -39,7 +40,16 @@ async function initializeApp() {
 
   // Wait for the router (and its auth guard) to resolve before mounting, so an
   // unauthenticated deep-link never flashes the placeholder before redirecting.
-  await router.isReady()
+  try {
+    await router.isReady()
+  } catch (error) {
+    // Logged out: the auth guard has already handed the browser to /login (full-page
+    // redirect in flight) and aborted this initial navigation, so isReady() rejects with
+    // an `aborted` NavigationFailure. Nothing to mount — don't let it surface as an
+    // "Uncaught (in promise) Error" in the console on every logged-out /app visit.
+    if (isNavigationFailure(error, NavigationFailureType.aborted)) return
+    throw error
+  }
 
   app.mount('#app')
 }

@@ -1,9 +1,19 @@
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
 const require = createRequire(import.meta.url)
+// Alias target = the package DIRECTORY, never `require.resolve(name)`. The latter returns
+// the CommonJS/Node entry (vue/index.js -> vue.cjs.prod.js with the template compiler,
+// vue-i18n/index.js -> vue-i18n.prod.cjs, axios -> dist/node/axios.cjs). Aliasing onto a
+// file skips Vite's own package-entry resolution (browser/module/exports conditions), so
+// the /app production bundle shipped axios's Node build: axios.cjs -> https-proxy-agent@5
+// -> agent-base@6 `class Agent extends require('events').EventEmitter`, where 'events' is
+// Vite's empty __vite-browser-external stub -> "Class extends value undefined is not a
+// constructor or null" at module init and a blank /app (T0009 TR0010 rev2). A directory
+// alias still pins the single client_gui copy but lets Vite pick the browser ESM entry.
+const pkgDir = (name: string) => dirname(require.resolve(`${name}/package.json`))
 
 // T0005 §3: v0.2 is a single SPA served under /app, with its own hashed assets under
 // /app/assets/* so a rebuild can never collide with v0.1's /assets/* (server/routers/main.py).
@@ -35,8 +45,9 @@ export default defineConfig({
       // (package.json) precisely so it never needs client/ installed first or a
       // shared/hoisted node_modules — these aliases just force every importer inside
       // THIS build (client_gui/src and the @shared files it pulls in) onto client_gui's
-      // own single copy of each, resolved with plain `require.resolve` so this keeps
-      // working whatever the installed version actually is (no hardcoded path/version).
+      // own single copy of each, located with `require.resolve` of its package.json (see
+      // pkgDir above) so this keeps working whatever the installed version actually is
+      // (no hardcoded path/version).
       //
       // axios needs the same treatment as vue/vue-i18n even though it has no
       // provide/inject-style singleton requirement: client/shared/api.ts does a bare
@@ -49,9 +60,9 @@ export default defineConfig({
       // one alone, dropping vue-tsc/vite out to a broken build. Aliasing it here — like
       // vue/vue-i18n above — makes the resolution explicit instead of relying on
       // whatever happens to be installed as a side effect under client/.
-      vue: require.resolve('vue'),
-      'vue-i18n': require.resolve('vue-i18n'),
-      axios: require.resolve('axios'),
+      vue: pkgDir('vue'),
+      'vue-i18n': pkgDir('vue-i18n'),
+      axios: pkgDir('axios'),
     },
   },
   build: {
