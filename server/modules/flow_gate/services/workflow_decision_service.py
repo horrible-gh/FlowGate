@@ -241,6 +241,7 @@ def is_auto_handled_step(
     item_seq: Optional[int],
     instruction_mode: Optional[str],
     auto_approve_item_seqs: Optional[list] = None,
+    source_doc_id: Optional[str] = None,
 ) -> bool:
     """The §2 auto-handling predicate — the single source of truth, reused by ai_invoke_service so the
     provider/note/docs-target accounting never drifts from the auto-complete loop's own
@@ -254,6 +255,12 @@ def is_auto_handled_step(
     """
     eligible = (head_type or "").upper() in INSTRUCTION_AUTO_TYPES
     if not eligible:
+        return False
+    # 0611 T0009: a WorkPlan-backed N/T is always a real authoring hop.  "auto_approved"
+    # controls the post-authoring approval policy; it must never replace authoring with the
+    # old one-line server artifact. Legacy/non-WorkPlan instruction rows retain the managed
+    # server-materialization contract.
+    if str(source_doc_id or "").upper().endswith("-WP"):
         return False
     mode = normalize_continuation_instruction_mode(instruction_mode)
     if mode == CONTINUATION_INSTRUCTION_AUTO_APPROVED:
@@ -398,6 +405,7 @@ def validate_continuation_review_item_seqs(
             item_seq=item_seq,
             instruction_mode=instruction_mode,
             auto_approve_item_seqs=auto_approve_item_seqs,
+            source_doc_id=item.get("source_doc_id"),
         ):
             raise ValueError(
                 f"ineligible_review_item_seq:{item_seq} — this step has no worker output to review")
@@ -872,6 +880,7 @@ def _auto_complete_instruction_heads(
             item_seq=item_seq,
             instruction_mode=instruction_mode,
             auto_approve_item_seqs=auto_approve_item_seqs,
+            source_doc_id=head.get("source_doc_id"),
         ):
             # report / AC / other type, OR an ai_direct N/T not in the auto-approve
             # selection → caller mints the worker mention here.

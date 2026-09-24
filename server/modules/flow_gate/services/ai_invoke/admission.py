@@ -572,6 +572,7 @@ def _continuation_docs_target(
             item_seq=item_seq,
             instruction_mode=continuation_instruction_mode,
             auto_approve_item_seqs=continuation_auto_approve_item_seqs,
+            source_doc_id=item.get("source_doc_id"),
         ):
             continue
         count += 1
@@ -2233,6 +2234,7 @@ def _resolve_continuation_hop_provider(
             item_seq=head.get("item_seq"),
             instruction_mode=continuation_instruction_mode,
             auto_approve_item_seqs=continuation_auto_approve_item_seqs,
+            source_doc_id=head.get("source_doc_id"),
         )
         worker_type = AUTO_REPORT_MAP.get(head_type, head_type) if fold_to_report else head_type
         # Preserve the legacy auto-approved preference: report assignment first, raw N/T
@@ -2297,6 +2299,7 @@ def _hop_worker_item_seq(
         item_seq=head_item_seq,
         instruction_mode=continuation_instruction_mode,
         auto_approve_item_seqs=continuation_auto_approve_item_seqs,
+        source_doc_id=head.get("source_doc_id"),
     )
     if not fold_to_report or head_item_seq is None:
         return head_item_seq

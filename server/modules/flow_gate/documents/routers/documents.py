@@ -1327,11 +1327,11 @@ class NextApprovedError(Exception):
 # it stays on the sequence row the worker actually fills and reaches that worker at hop time
 # through admission._inject_hop_notes (the paired NR/TR under auto_approved, the N/T itself
 # under ai_direct).
-WORK_PLAN_INSTRUCTION_CONTENT_SOURCE = "server_approval_artifact"
+WORK_PLAN_INSTRUCTION_CONTENT_SOURCE = "deprecated_server_materialization"
 _WORK_PLAN_INSTRUCTION_ARTIFACT_BODY = {
-    "ko": "이 문서는 서버가 생성한 {label} 승인 절차 산출물입니다.",
-    "ja": "この文書は、サーバーが生成した {label} の承認手続き用アーティファクトです。",
-    "en": "This document is a server-generated approval workflow artifact for {label}.",
+    "ko": "WorkPlan 지시문서는 AI 작성 경로를 통해 생성해야 합니다: {label}",
+    "ja": "WorkPlan 指示文書は AI 作成経路で生成する必要があります: {label}",
+    "en": "WorkPlan instructions must be produced through the AI authoring path: {label}",
 }
 
 
@@ -1484,6 +1484,14 @@ def materialize_work_plan_instruction(
             approver_perms=approver_perms,
             locale=locale,
         )
+    # 0611 T0009: WorkPlan-backed instructions are authored by their N/T worker.  The
+    # managed server materializer is deliberately unavailable here so a one-line stub can
+    # never become the canonical document or the review target.
+    raise NextApprovedError(
+        409,
+        "WorkPlan-backed instructions require the AI authoring path; server materialization is disabled.",
+    )
+
     result_doc_id = head.get("result_doc_id")
     if result_doc_id:
         existing = document_service.get_document(str(result_doc_id))
@@ -1621,8 +1629,13 @@ def create_next_approved_core(
         step_key = str(materialization.get("source_wp_step_key") or "")
         if not step_key.startswith(type_code + "#"):
             raise NextApprovedError(422, "WorkPlan materialization type/step mismatch.")
-        gen_title = f"{label} — {step_key}"
-        gen_body = None
+        # 0611 T0009: managed creation cannot author a WorkPlan instruction. The real N/T
+        # worker must consume note/text/file and submit its Markdown through the ordinary
+        # inbox path; that document then owns this workflow slot and any review lifecycle.
+        raise NextApprovedError(
+            409,
+            "WorkPlan-backed instructions require the AI authoring path; server materialization is disabled.",
+        )
     else:
         gen_title = _auto_approved_title(label, locale)
         gen_body = _auto_approved_body(label, locale)

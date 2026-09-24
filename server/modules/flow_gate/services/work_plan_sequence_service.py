@@ -497,11 +497,8 @@ def plan_to_rows(
         if default_note and row["note"] == "":
             row["note"] = default_note
             row["note_source"] = "defaults"
-        # The automatic row is a step of its own (and the only one an auto-approved run hands
-        # to a worker), so the plan's common note reaches it on the same terms.
-        if default_note and row["type"] in INSTRUCTION_TYPES and not row.get("pair_note"):
-            row["pair_note"] = default_note
-            row["pair_note_source"] = "defaults"
+        # defaults.note is authoring context for this WorkPlan row only.  A result step
+        # reaches its automatic NR/TR exclusively through _carry_note_to_pair above.
     return rows, dropped, uid
 
 
@@ -521,10 +518,12 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
         if row.get("is_auto"):
             continue
         want = AUTO_ROW_MAP.get(row["type"]) if row["type"] in INSTRUCTION_TYPES else None
-        # This mode-neutral pour feeds two execution contracts: auto_approved runs the
-        # paired TR/NR row, while ai_direct runs this source N/T row.  Keep the source
-        # metadata for ai_direct and copy an immutable snapshot to the paired worker.
-        worker_pre_instruction = row["type"] in {"T", "N"} and bool(want)
+        # WorkPlan-backed N/T metadata belongs exclusively to the source authoring hop.
+        # Rebuilding auto rows also scrubs snapshots left by older pours.  Legacy callers
+        # without WorkPlan provenance keep their historical paired-row projection.
+        worker_pre_instruction = (
+            row["type"] in {"T", "N"} and bool(want) and not row.get("source_doc_id")
+        )
         old = by_parent.get(row["uid"])
         old_matches = old is not None and old.get("type") == want
         pre_instruction_text = (
@@ -557,7 +556,15 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
         # (0434 T0004 F1) moved only the provider half of it, so the note this function refuses
         # to write was being written on the decision/edit path.
         server_assembled = want in SERVER_ASSEMBLED_REPORT_TYPES
-        pair_note = "" if server_assembled else (row.get("pair_note") or "")
+        stale_work_plan_default_pair_note = (
+            row["type"] in {"T", "N"}
+            and bool(row.get("source_doc_id"))
+            and row.get("pair_note_source") == "defaults"
+        )
+        pair_note = (
+            "" if server_assembled or stale_work_plan_default_pair_note
+            else (row.get("pair_note") or "")
+        )
         pair_note_source = row.get("pair_note_source") if pair_note else None
         if server_assembled:
             provider_id, provider_name = None, None
@@ -599,7 +606,8 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
                     or (None if row.get("source_doc_id") else row.get("reviewer_provider_display_name"))
                 )
             ),
-            # In auto-approved mode the execution metadata belongs to the paired worker.
+            # WorkPlan-backed rows pass None here: N/T authoring metadata must not leak
+            # into the later paired NR/TR worker. Legacy rows retain the projection above.
             pre_instruction_text=pre_instruction_text,
             pre_instruction_attachment=pre_instruction_attachment,
             status=status,

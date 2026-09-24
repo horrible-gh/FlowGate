@@ -5,7 +5,7 @@ Covers:
     worker receives on stdin (mirrors test_ai_invoke_continuation_note_0346.py's harness for
     the sibling `note` feature, since pre-instruction is injected at the exact same
     admission._inject_hop_notes convergence point, D0007 §3.5/T0014 §2).
-  • auto-approved instruction pre-instruction reaches only its paired result worker.
+  • WorkPlan auto-approved pre-instruction reaches its source authoring worker only.
   • a stored-but-invalid attachment reference stops the hop before any worker spawns,
     revoking the token it already minted (T0014 §5 fail-closed contract).
   • note + pre-instruction coexist as two distinct sections (T0014 §14).
@@ -492,24 +492,24 @@ class TestPreInstructionEndToEnd:
             conn_mod.STORE = original_store
             conn.close()
 
-    def test_auto_approved_instruction_pre_instruction_reaches_paired_result_worker(
+    def test_auto_approved_instruction_pre_instruction_reaches_source_authoring_worker_only(
         self, pre_env, monkeypatch,
     ):
-        # Under auto approval the T slot has no worker, so its pre-instruction snapshot
-        # belongs to the paired TR worker that actually executes the logical step.
+        # 0611 T0009: auto_approved controls approval after authoring; a WorkPlan-backed
+        # T remains the worker hop and consumes its own text/file context.
         pre_env["wfseq"].head_item_seq = 3
         pre_env["wfseq"].items = [
             {"item_seq": 1, "type": "N", "result_doc_id": "d-0002-N"},
             {"item_seq": 2, "type": "NR", "result_doc_id": "d-0003-NR"},
             {
                 "item_seq": 3, "type": "T", "result_doc_id": None,
-                "source_doc_id": ATTACHMENT["doc_id"], "pre_instruction_text": None,
-                "pre_instruction_attachment_json": None,
+                "source_doc_id": ATTACHMENT["doc_id"], "pre_instruction_text": PRE_TEXT,
+                "pre_instruction_attachment_json": _attachment_json(),
             },
             {
                 "item_seq": 4, "type": "TR", "result_doc_id": None,
-                "source_doc_id": ATTACHMENT["doc_id"], "pre_instruction_text": PRE_TEXT,
-                "pre_instruction_attachment_json": _attachment_json(),
+                "source_doc_id": ATTACHMENT["doc_id"], "pre_instruction_text": None,
+                "pre_instruction_attachment_json": None,
             },
         ]
         monkeypatch.setattr(wpa_svc, "validate_reference", lambda doc_id, reference: None)
@@ -545,7 +545,7 @@ class TestPreInstructionEndToEnd:
 
 
 class TestPreInstructionFailClosed:
-    def test_invalid_paired_attachment_stops_before_the_worker_is_spawned(
+    def test_invalid_source_attachment_stops_before_the_worker_is_spawned(
         self, pre_env, monkeypatch,
     ):
         pre_env["wfseq"].head_item_seq = 3
@@ -559,8 +559,8 @@ class TestPreInstructionFailClosed:
             {
                 "item_seq": 4, "type": "TR", "result_doc_id": None,
                 "source_doc_id": ATTACHMENT["doc_id"],
-                "pre_instruction_text": PRE_TEXT,
-                "pre_instruction_attachment_json": _attachment_json(),
+                "pre_instruction_text": None,
+                "pre_instruction_attachment_json": None,
             },
         ]
         monkeypatch.setattr(
@@ -957,7 +957,7 @@ class TestRetryRebuildsPreInstruction:
             "expires_at": "2000-01-01T00:00:00+00:00",
         })
 
-    def test_reissued_retry_reads_the_auto_approved_paired_worker_snapshot(
+    def test_reissued_retry_reads_the_auto_approved_source_authoring_context(
         self, pre_env, monkeypatch, tmp_path,
     ):
         pre_env["wfseq"].head_item_seq = 3
@@ -965,13 +965,13 @@ class TestRetryRebuildsPreInstruction:
             {
                 "item_seq": 3, "type": "T", "result_doc_id": None,
                 "source_doc_id": ATTACHMENT["doc_id"],
-                "pre_instruction_text": "source-row stale sentinel",
+                "pre_instruction_text": PRE_TEXT,
                 "pre_instruction_attachment_json": None,
             },
             {
                 "item_seq": 4, "type": "TR", "result_doc_id": None,
                 "source_doc_id": ATTACHMENT["doc_id"],
-                "pre_instruction_text": PRE_TEXT,
+                "pre_instruction_text": "paired-row stale sentinel",
                 "pre_instruction_attachment_json": None,
             },
         ]
@@ -1484,11 +1484,11 @@ class TestConnectedFlowFullEffectiveBundle:
          document_review, real rejection_history) and then REAL review._spawn_rework_hop,
          with the reviewer's OWN provider still live in the chain but never invoked (R6).
       6. the finite review_count=2 baseline apply() wrote is confirmed to still demand a
-         second review round after the rework lands (R2), and only a "pass" verdict on that
-         round settles the gate instead of reworking again (최종 pass).
+         second review round after the rework lands (R2); the final pass then runs the REAL
+         settlement, approves the canonical T, hands off to TR, and executes that worker.
     """
 
-    def test_apply_start_pause_resume_review_reject_rework_and_pass_share_one_chain(
+    def test_apply_start_pause_resume_review_reject_rework_pass_settle_and_handoff(
         self, paused_env, monkeypatch,
     ):
         from modules.flow_gate.services import work_plan_apply_service as apply_svc
@@ -1504,11 +1504,11 @@ class TestConnectedFlowFullEffectiveBundle:
         WORKER_PROVIDER = "aip_worker_x"
         REVIEWER_PROVIDER = "aip_reviewer_x"
         WP_DOC_ID = f"{GROUP_ID}.9000-WP"
-        RESULT_DOC_ID = f"{GROUP_ID}.9002-TR"
+        RESULT_DOC_ID = f"{GROUP_ID}.9001-T"
 
-        # ---- 1. WP T step -> paired TR worker row through the REAL apply() (steps 1-10).
-        # The canonical pre-instruction remains on T#1 in the WorkPlan while apply() must
-        # snapshot the whole effective bundle onto TR@2, the row auto_approved executes.
+        # ---- 1. WP T step -> source T authoring row through the REAL apply() (steps 1-10).
+        # The canonical pre-instruction remains on T#1, the row auto_approved now executes;
+        # the later TR row must not receive an authoring-context snapshot.
         plan_step = {
             "key": "T#1", "type": "T", "ordinal": 1, "locked": False,
             "provider_id": WORKER_PROVIDER, "note": "계획 단계 개별 메모",
@@ -1557,11 +1557,11 @@ class TestConnectedFlowFullEffectiveBundle:
         )
         assert result["ok"] is True
         assert result["workflow_changed"] is True
-        assert result["fill"]["provider_overrides"]["2"] == WORKER_PROVIDER
-        assert result["fill"]["review_count_overrides"]["2"] == 2
-        assert result["fill"]["reviewer_overrides"]["2"] == REVIEWER_PROVIDER
-        assert result["fill"]["pre_instruction_texts"]["2"] == PRE_TEXT
-        assert result["fill"]["pre_instruction_attachments"]["2"] == ATTACHMENT
+        assert result["fill"]["provider_overrides"]["1"] == WORKER_PROVIDER
+        assert result["fill"]["review_count_overrides"]["1"] == 2
+        assert result["fill"]["reviewer_overrides"]["1"] == REVIEWER_PROVIDER
+        assert result["fill"]["pre_instruction_texts"]["1"] == PRE_TEXT
+        assert result["fill"]["pre_instruction_attachments"]["1"] == ATTACHMENT
         assert not any(
             entry.get("reason") == "instruction_step_is_server_assembled_no_worker_target"
             for entry in result["fill"]["unfilled"]
@@ -1575,14 +1575,14 @@ class TestConnectedFlowFullEffectiveBundle:
         )
         row = next(i for i in env["wfseq"].get_sequence_items(1) if i["item_seq"] == 2)
         assert source_row["type"] == "T"
-        assert source_row["pre_instruction_text"] is None
+        assert source_row["provider_id"] == WORKER_PROVIDER
+        assert source_row["note"] == "계획 단계 개별 메모"
+        assert source_row["review_count"] == 2
+        assert source_row["reviewer_provider_id"] == REVIEWER_PROVIDER
+        assert source_row["pre_instruction_text"] == PRE_TEXT
+        assert source_row["source_doc_id"] == WP_DOC_ID
         assert row["type"] == "TR"
-        assert row["provider_id"] == WORKER_PROVIDER
-        assert row["note"] == "계획 단계 개별 메모"
-        assert row["review_count"] == 2
-        assert row["reviewer_provider_id"] == REVIEWER_PROVIDER
-        assert row["pre_instruction_text"] == PRE_TEXT
-        assert row["source_doc_id"] == WP_DOC_ID
+        assert row["pre_instruction_text"] is None
 
         # ---- 2. dialog/start payload -> a real start_run hop (steps 11-13), paused mid-hop
         # (worker 실행 전 pause/resume) and resumed through the real pause/resume APIs (E4).
@@ -1644,10 +1644,20 @@ class TestConnectedFlowFullEffectiveBundle:
         # resolve_reviewer all read the row apply() actually wrote (step 1), and the reject
         # transition below is the real pipeline_service.transition_document_review, not a
         # hand-set doc_review_status.
-        env["wfseq"].items[1]["result_doc_id"] = RESULT_DOC_ID
+        env["wfseq"].items[0]["result_doc_id"] = RESULT_DOC_ID
+        canonical_path = env["tmp"] / "canonical-t.md"
+        canonical_path.write_text(
+            "# 실제 작업지시\n\n작성 worker가 만든 canonical T 본문입니다.\n",
+            encoding="utf-8",
+        )
         docs = _DocWorld(
-            RESULT_DOC_ID, group_id=GROUP_ID, project_id="flowgate", type_code="TR",
+            RESULT_DOC_ID, group_id=GROUP_ID, project_id="flowgate", type_code="T",
             doc_review_status="pending_review", revision_no=0, rejection_history=None,
+            file_path=str(canonical_path),
+        )
+        monkeypatch.setattr(
+            pipeline_service.storage_paths, "resolve_storage_path",
+            lambda *_args, **_kwargs: canonical_path,
         )
         monkeypatch.setattr(svc.db_docs, "get_by_id", docs.get_by_id)
         monkeypatch.setattr(db_documents, "get_by_id", docs.get_by_id)
@@ -1656,7 +1666,7 @@ class TestConnectedFlowFullEffectiveBundle:
         monkeypatch.setattr(db_users, "get_by_id", lambda uid: {"user_id": uid, "is_admin": 1})
         monkeypatch.setattr(
             workflow_router, "_get_user_permissions",
-            lambda actor: {"document.reject", "document.update"},
+            lambda actor: {"document.reject", "document.update", "document.approve"},
         )
         monkeypatch.setattr(pipeline_service, "log_state_changed", lambda **kw: None)
         review_rows: list = []
@@ -1694,8 +1704,21 @@ class TestConnectedFlowFullEffectiveBundle:
         assert active_review_run is not None
         _wait_finished(active_review_run["run_id"])
         # The real reviewer subprocess actually ran — this is exactly the gap the rev2
-        # version left open.
+        # version left open. Wait for its post-process handoff to park before injecting the
+        # verdict; status="finished" is published before that terminal phase completes.
         assert reviewer_round1_outfile.exists()
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            parked = env["paused"].get_by_group(GROUP_ID)
+            if (
+                parked is not None
+                and parked.get("stop_kind") == "system"
+                and svc.peek_auto_resume(GROUP_ID) is None
+            ):
+                break
+            time.sleep(0.01)
+        else:
+            raise AssertionError("reviewer terminal handoff did not settle")
 
         # ---- 5. reject -> rework through the REAL run_review_gate (reject_first ->
         # review._auto_reject -> real pipeline_service.transition_document_review -> real
@@ -1742,9 +1765,40 @@ class TestConnectedFlowFullEffectiveBundle:
         assert mid_gate["stage"] == review_module.REVIEW_HOP_KIND
         assert mid_gate["round_no"] == 2
 
-        # ---- 7. final pass (최종 pass) — round 2's verdict settles instead of reworking.
+        # ---- 7. final pass (최종 pass) — run the actual settlement rather than stopping
+        # at resolve_review_gate(). The fake sequence view derives its next head from the
+        # canonical T's real approval state, mirroring the production SQL effective-head join.
         review_rows.append({"id": 2, "verdict": "pass", "revision_no": 1,
                             "comment": None, "findings": "[]"})
         final_gate = review_module.resolve_review_gate(_gate_bundle())
         assert final_gate["stage"] == review_module.WORK_HOP_KIND
         assert final_gate.get("approve_first") is True
+
+        def _approval_aware_head(_sequence_id):
+            next_seq = 2 if docs.get_by_id(RESULT_DOC_ID)["doc_review_status"] == "approved" else 1
+            return next(
+                dict(item) for item in env["wfseq"].items if item["item_seq"] == next_seq
+            )
+
+        monkeypatch.setattr(svc.db_wfseq, "get_effective_head", _approval_aware_head)
+        handoff_cmd, handoff_outfile = _capture_cmd(env["tmp"])
+        env["chain"]["providers"] = [
+            _provider(pid=WORKER_PROVIDER, cmd=handoff_cmd),
+            _provider(pid=REVIEWER_PROVIDER, cmd=_reviewer_cmd(reviewer_reject_check_outfile)),
+        ]
+        env["chain"]["registered_count"] = 2
+
+        handoff_started = review_module.run_review_gate(
+            GROUP_ID, _gate_bundle(), {"run_id": None},
+        )
+        assert handoff_started is True
+        assert docs.get_by_id(RESULT_DOC_ID)["doc_review_status"] == "approved"
+        assert _approval_aware_head(1)["type"] == "TR"
+
+        handoff_run = svc._active_run_for_group(GROUP_ID)
+        assert handoff_run is not None
+        _wait_finished(handoff_run["run_id"])
+        handoff_text = _read(handoff_outfile).decode("utf-8")
+        assert "WorkPlan 사전지시" not in handoff_text
+        assert PRE_TEXT not in handoff_text
+        assert ATTACHMENT["original_filename"] not in handoff_text

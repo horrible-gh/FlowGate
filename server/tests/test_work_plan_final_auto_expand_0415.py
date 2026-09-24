@@ -190,8 +190,8 @@ def test_approval_hook_returns_success_when_final_expansion_fails(monkeypatch):
     }
     assert stored["doc_review_status"] == "approved"
 
-def test_final_expansion_snapshots_each_instruction_on_its_paired_worker(monkeypatch):
-    """The approval path preserves T/N metadata and snapshots it onto TR/NR workers."""
+def test_final_expansion_keeps_instruction_metadata_off_paired_workers(monkeypatch):
+    """The approval path preserves T/N metadata only on its source authoring rows."""
     attachments = {
         "T#1": {"doc_id": WP_ID, "filename": "t.txt", "content_sha256": "a" * 64},
         "T#2": {"doc_id": WP_ID, "filename": "t2.txt", "content_sha256": "b" * 64},
@@ -233,23 +233,19 @@ def test_final_expansion_snapshots_each_instruction_on_its_paired_worker(monkeyp
     rows = seen["rows"]
     assert [row["type"] for row in rows] == ["T", "TR", "T", "TR", "N", "NR"]
     assert [row["pre_instruction_text"] for row in rows] == [
-        "first task", "first task", "second task", "second task",
-        "research task", "research task",
+        "first task", None, "second task", None,
+        "research task", None,
     ]
     assert [row["pre_instruction_attachment"] for row in rows] == [
-        attachments["T#1"], attachments["T#1"],
-        attachments["T#2"], attachments["T#2"],
-        attachments["N#1"], attachments["N#1"],
+        attachments["T#1"], None,
+        attachments["T#2"], None,
+        attachments["N#1"], None,
     ]
-    assert all(
-        rows[index]["pre_instruction_attachment"]
-        is not rows[index + 1]["pre_instruction_attachment"]
-        for index in (0, 2, 4)
-    )
+    assert all(rows[index]["pre_instruction_attachment"] is None for index in (1, 3, 5))
     assert all(row["source_doc_id"] == WP_ID for row in rows)
     assert all(row["source_revision_no"] == DOC["revision_no"] for row in rows)
 
-def test_c6_auto_row_instruction_snapshot_is_idempotent():
+def test_c6_source_only_instruction_metadata_is_idempotent():
     attachment = {"doc_id": WP_ID, "filename": "brief.txt", "content_sha256": "d" * 64}
     rows, _dropped, uid = wpseq.plan_to_rows(
         {"steps": [
@@ -270,15 +266,23 @@ def test_c6_auto_row_instruction_snapshot_is_idempotent():
     assert once == twice
     assert once[0]["pre_instruction_text"] == "durable"
     assert once[0]["pre_instruction_attachment"] == attachment
-    assert once[1]["pre_instruction_text"] == "durable"
-    assert once[1]["pre_instruction_attachment"] == attachment
-    assert once[0]["pre_instruction_attachment"] is not once[1]["pre_instruction_attachment"]
+    assert once[1]["pre_instruction_text"] is None
+    assert once[1]["pre_instruction_attachment"] is None
+
+    # Re-pouring a row written by the old contract must scrub its paired snapshot too.
+    stale = [dict(row) for row in once]
+    stale[1]["pre_instruction_text"] = "legacy paired snapshot"
+    stale[1]["pre_instruction_attachment"] = dict(attachment)
+    scrubbed, _uid = wpseq.attach_auto_rows(stale, next_uid=uid)
+    assert scrubbed == once
 
 
 _CONNECTED_GROUP = "flowgate.default.0415"
 _COMPLETED_DOCS = tuple(
     f"{_CONNECTED_GROUP}.{seq:04d}-{type_}"
-    for seq, type_ in ((101, "T"), (102, "TR"), (103, "T"), (104, "TR"))
+    for seq, type_ in (
+        (101, "T"), (102, "TR"), (103, "T"), (104, "TR"), (105, "N"), (106, "NR"),
+    )
 )
 _CONNECTED_SEED_SQL = f"""
 INSERT OR IGNORE INTO projects(project_id, project_name, is_active, created_at, updated_at)
@@ -300,7 +304,11 @@ INSERT OR IGNORE INTO documents(
           ('{_COMPLETED_DOCS[2]}', 'flowgate', 'default', '{_CONNECTED_GROUP}', 'T', 103,
            'completed T2', 'open', 'approved', 0, datetime('now'), datetime('now')),
           ('{_COMPLETED_DOCS[3]}', 'flowgate', 'default', '{_CONNECTED_GROUP}', 'TR', 104,
-           'completed TR2', 'open', 'approved', 0, datetime('now'), datetime('now'));
+           'completed TR2', 'open', 'approved', 0, datetime('now'), datetime('now')),
+          ('{_COMPLETED_DOCS[4]}', 'flowgate', 'default', '{_CONNECTED_GROUP}', 'N', 105,
+           'completed N1', 'open', 'approved', 0, datetime('now'), datetime('now')),
+          ('{_COMPLETED_DOCS[5]}', 'flowgate', 'default', '{_CONNECTED_GROUP}', 'NR', 106,
+           'completed NR1', 'open', 'approved', 0, datetime('now'), datetime('now'));
 """
 
 
@@ -344,10 +352,11 @@ def connected_sequence_store(migrated_sqlite_db):
         store._conn.close()
 
 
-def test_c1_c5_c7_final_approval_persists_nt_payload_on_source_and_paired_rows(
+def test_c1_c5_c7_final_approval_persists_nt_authoring_context_on_source_rows_only(
     connected_sequence_store, monkeypatch,
 ):
     """Run final expansion through real sequence SQL, then production worker prompt assembly."""
+    default_note = "N/T 작성에만 쓰는 공통 작성 지시"
     attachments = {
         "T#1": {
             "doc_id": WP_ID, "filename": "__wp_pre_instruction__T-1__first.txt",
@@ -387,7 +396,8 @@ def test_c1_c5_c7_final_approval_persists_nt_payload_on_source_and_paired_rows(
     monkeypatch.setattr(wpseq, "provider_view_of", lambda _project_id: {"readable": False})
     monkeypatch.setattr(wds, "_record_plan_application", lambda **_kwargs: True)
     result = wpseq.expand_final_work_plan(
-        doc={**DOC, "project_id": "flowgate"}, plan={"steps": steps},
+        doc={**DOC, "project_id": "flowgate"},
+        plan={"steps": steps, "defaults": {"note": default_note}},
     )
 
     assert result["status"] == "expanded"
@@ -395,44 +405,73 @@ def test_c1_c5_c7_final_approval_persists_nt_payload_on_source_and_paired_rows(
     sequence = db_wfseq.get_sequence_by_doc_id(OWNER_ID)
     stored = db_wfseq.get_sequence_items(sequence["id"])
     assert [row["type"] for row in stored] == ["T", "TR", "T", "TR", "N", "NR"]
+    # note_source is a projection-only diagnostic; the durable contract is the note itself.
+    assert [row["note"] for row in stored] == [
+        default_note, "", default_note, "", default_note, "",
+    ]
     assert [row["pre_instruction_text"] for row in stored] == [
-        "first task", "first task", "second task", "second task",
-        "research task", "research task",
+        "first task", None, "second task", None,
+        "research task", None,
     ]
     assert [
         db_wfseq.decode_pre_instruction_attachment(row["pre_instruction_attachment_json"])
         for row in stored
     ] == [
-        attachments["T#1"], attachments["T#1"],
-        attachments["T#2"], attachments["T#2"],
-        attachments["N#1"], attachments["N#1"],
+        attachments["T#1"], None,
+        attachments["T#2"], None,
+        attachments["N#1"], None,
     ]
 
-    # Keep reference validation at its attachment-storage boundary. Resolution, row folding,
-    # section formatting, and final prompt composition below are all production functions.
+    # Keep reference validation at its attachment-storage boundary. Resolution, row
+    # selection, section formatting, and final prompt composition are production functions.
     monkeypatch.setattr(wpa_svc, "validate_reference", lambda _doc_id, _reference: None)
     base_prompt = "## 지시\n작업을 수행하세요.\n"
+    t_prompt = admission._inject_hop_notes(
+        base_prompt, OWNER_ID, default_note=None, note_overrides=None,
+        instruction_mode="auto_approved", locale="ko",
+    )
+    assert default_note in t_prompt
+    assert "first task" in t_prompt
+    assert attachments["T#1"]["filename"] in t_prompt
+    assert "second task" not in t_prompt and "research task" not in t_prompt
+
+    # Approving the source T advances to its paired TR. The authoring-only metadata must
+    # not be re-injected into that later report worker.
+    db_wfseq.set_item_result_doc_id(stored[0]["id"], _COMPLETED_DOCS[0])
+    assert db_wfseq.get_effective_head(sequence["id"])["item_seq"] == stored[1]["item_seq"]
     tr_prompt = admission._inject_hop_notes(
         base_prompt, OWNER_ID, default_note=None, note_overrides=None,
         instruction_mode="auto_approved", locale="ko",
     )
-    assert "first task" in tr_prompt
-    assert attachments["T#1"]["filename"] in tr_prompt
-    assert "second task" not in tr_prompt and "research task" not in tr_prompt
-    assert attachments["T#2"]["filename"] not in tr_prompt
-    assert attachments["N#1"]["filename"] not in tr_prompt
+    assert tr_prompt == base_prompt
+    assert default_note not in tr_prompt
+    assert "first task" not in tr_prompt
+    assert attachments["T#1"]["filename"] not in tr_prompt
 
-    # Advance the real DB head past both completed T/TR pairs, then build the N->NR prompt.
-    for row, result_doc_id in zip(stored[:4], _COMPLETED_DOCS):
+    # Advance past the paired TR and second T/TR, then build the source N authoring prompt.
+    for row, result_doc_id in zip(stored[1:4], _COMPLETED_DOCS[1:]):
         db_wfseq.set_item_result_doc_id(row["id"], result_doc_id)
     assert db_wfseq.get_effective_head(sequence["id"])["item_seq"] == stored[4]["item_seq"]
 
+    n_prompt = admission._inject_hop_notes(
+        base_prompt, OWNER_ID, default_note=None, note_overrides=None,
+        instruction_mode="auto_approved", locale="ko",
+    )
+    assert default_note in n_prompt
+    assert "research task" in n_prompt
+    assert attachments["N#1"]["filename"] in n_prompt
+    assert "first task" not in n_prompt and "second task" not in n_prompt
+    assert attachments["T#1"]["filename"] not in n_prompt
+    assert attachments["T#2"]["filename"] not in n_prompt
+
+    # The same defaults.note boundary applies to N/NR after the source N is approved.
+    db_wfseq.set_item_result_doc_id(stored[4]["id"], _COMPLETED_DOCS[4])
+    assert db_wfseq.get_effective_head(sequence["id"])["item_seq"] == stored[5]["item_seq"]
     nr_prompt = admission._inject_hop_notes(
         base_prompt, OWNER_ID, default_note=None, note_overrides=None,
         instruction_mode="auto_approved", locale="ko",
     )
-    assert "research task" in nr_prompt
-    assert attachments["N#1"]["filename"] in nr_prompt
-    assert "first task" not in nr_prompt and "second task" not in nr_prompt
-    assert attachments["T#1"]["filename"] not in nr_prompt
-    assert attachments["T#2"]["filename"] not in nr_prompt
+    assert nr_prompt == base_prompt
+    assert default_note not in nr_prompt
+    assert "research task" not in nr_prompt
+    assert attachments["N#1"]["filename"] not in nr_prompt

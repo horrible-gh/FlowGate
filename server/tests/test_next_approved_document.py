@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from fastapi import HTTPException
 
 os.environ["TESTING"] = "1"
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
@@ -117,87 +118,44 @@ def test_next_approved_happy_creates_approved_doc(monkeypatch, tmp_path):
     assert "조사 가 승인되었습니다." in content
 
 
-def test_next_approved_wp_head_keeps_provenance_but_not_execution_metadata(
-    monkeypatch, tmp_path,
-):
+def test_next_approved_wp_head_refuses_server_placeholder(monkeypatch, tmp_path):
     from modules.flow_gate.documents.routers import documents as routes
 
     group_id = "proj-main-0611"
     prev_doc_id = "proj-main-0611-R0001"
     wp_id = "proj.default.0611.0004-WP"
-    note = "NR 및 본 WP를 바탕으로 약식 작업지시서를 작성한다"
-    pre_instruction = "0600 NR을 먼저 읽어라"
-    attachment = {
-        "doc_id": wp_id,
-        "filename": "__wp_pre_instruction__N-1__brief.txt",
-        "original_filename": "brief.txt",
-        "content_sha256": "a" * 64,
-    }
     head = {
-        "id": 10,
-        "item_seq": 1,
-        "type": "N",
-        "result_doc_id": None,
-        "source_doc_id": wp_id,
-        "source_revision_no": 7,
-        "note": note,
-        "pre_instruction_text": pre_instruction,
-        "pre_instruction_attachment": attachment,
+        "id": 10, "item_seq": 1, "type": "N", "result_doc_id": None,
+        "source_doc_id": wp_id, "source_revision_no": 7,
     }
     created_doc = {
-        "doc_id": "proj-main-0611.0005-N",
-        "project_id": "proj",
-        "group_id": group_id,
-        "type_code": "N",
-        "doc_review_status": None,
-    }
-    refreshed_doc = {
-        **created_doc,
-        "doc_review_status": "approved",
-        "title": "조사 — N#1",
+        "doc_id": "proj-main-0611.0005-N", "project_id": "proj",
+        "group_id": group_id, "type_code": "N", "doc_review_status": None,
     }
     _wire_common(
-        monkeypatch,
-        head=head,
-        group_id=group_id,
-        prev_doc_id=prev_doc_id,
-        tmp_path=tmp_path,
-        created_doc=created_doc,
-        refreshed_doc=refreshed_doc,
+        monkeypatch, head=head, group_id=group_id, prev_doc_id=prev_doc_id,
+        tmp_path=tmp_path, created_doc=created_doc, refreshed_doc=created_doc,
         perms={"document.approve", "document.update", "perm_document_create"},
     )
     monkeypatch.setattr(
-        routes.document_service,
-        "get_document",
+        routes.document_service, "get_document",
         lambda doc_id: (
-            {"doc_id": wp_id, "type_code": "WP"}
-            if doc_id == wp_id
+            {"doc_id": wp_id, "type_code": "WP"} if doc_id == wp_id
             else {"doc_id": prev_doc_id, "project_id": "proj", "group_id": group_id}
         ),
     )
+    with pytest.raises(HTTPException) as exc:
+        routes.create_next_approved_document(
+            routes.NextApprovedDocumentCreate(
+                project_id="proj", group_id=group_id, prev_doc_id=prev_doc_id, type_code="N",
+            ),
+            request=_FakeRequest({"X-Locale": "ko"}),
+            current_user={"user_id": "usr_test"},
+        )
+    assert exc.value.status_code == 409
+    assert "AI authoring path" in str(exc.value.detail)
 
-    result = routes.create_next_approved_document(
-        routes.NextApprovedDocumentCreate(
-            project_id="proj", group_id=group_id, prev_doc_id=prev_doc_id, type_code="N",
-        ),
-        request=_FakeRequest({"X-Locale": "ko"}),
-        current_user={"user_id": "usr_test"},
-    )
-
-    assert result["data"]["doc_review_status"] == "approved"
-    content = (tmp_path / "document.md").read_text(encoding="utf-8")
-    assert f'source_wp_doc_id: "{wp_id}"' in content
-    assert 'source_wp_step_key: "N#1"' in content
-    assert f'materialization_key: "{wp_id}:7:N#1"' in content
-    assert "이 문서는 서버가 생성한 조사 승인 절차 산출물입니다." in content
-    assert "승인되었습니다." not in content
-    assert note not in content
-    assert pre_instruction not in content
-    assert attachment["filename"] not in content
-    assert attachment["content_sha256"] not in content
-
-
-@pytest.mark.parametrize("bad_type", ["D", "P", "L", "DB", "AC"])
+@pytest.mark.parametrize("bad_type", ["R", "TR", "TS", "AC"])
 def test_next_approved_rejects_non_instruction_types(monkeypatch, bad_type):
     from fastapi import HTTPException
     from modules.flow_gate.documents.routers import documents as routes

@@ -1,27 +1,24 @@
-"""flowgate.default.0611 T#2: WorkPlan-backed N/T semantic contract, connected regression.
+"""flowgate.default.0611: WorkPlan-backed N/T AI-authoring contract regression.
 
-The contract these tests pin (0611 T#1 + T#2):
+The contract these tests pin:
 
   * ``steps[].note`` / ``pre_instruction_text`` / ``pre_instruction_attachment`` are execution
-    metadata for the AI that actually runs the logical step.  They are NOT the canonical N/T
-    document body.
-  * The canonical body of a WorkPlan-backed N/T is the server-owned approval artifact
-    (``documents.WORK_PLAN_INSTRUCTION_CONTENT_SOURCE``): WP provenance frontmatter + a
-    status-neutral artifact line.  That same artifact is what an instruction reviewer reads
-    when ``review_count > 0``.
-  * Execution metadata survives on the sequence row the worker fills and reaches that worker
-    through ``admission._inject_hop_notes`` — the paired NR/TR under ``auto_approved``, the N/T
-    itself under ``ai_direct``.
-  * 0600 provenance (source WP doc/revision/step key, materialization_key), idempotent re-entry
-    and the review → reject → rework → re-review → pass gate stay intact.
+    metadata supplied to the AI that authors the logical N/T step; the server does not copy
+    them mechanically into a canonical document body.
+  * Every WorkPlan-backed N/T remains an actual AI worker hop, including ``auto_approved``.
+    The Markdown submitted by that worker is the canonical N/T and, when ``review_count > 0``,
+    is the document the reviewer reads.
+  * Server-owned WorkPlan placeholder materialization is deprecated and fail-closed.  Both
+    ``materialize_work_plan_instruction`` and the manual next-approved path reject a
+    WorkPlan-backed head with HTTP 409 instead of creating a canonical stub.
+  * Execution metadata survives on the source N/T sequence row and reaches the authoring worker
+    through ``admission._inject_hop_notes``.  Pause/resume and review → reject → rework →
+    re-review → pass preserve the same worker context and canonical document lifecycle.
 
-Every case drives the real production functions for the part it asserts on: the real
-``work_plan_apply_service.apply()``, the real ``create_next_approved_document`` route /
-``materialize_work_plan_instruction`` / ``create_next_approved_core`` writing a real Markdown
-file, the real ``_auto_complete_instruction_heads`` / ``chain._maybe_auto_resume_hop`` /
-``chain.resume_chain`` / ``review.run_review_gate`` / ``review.resolve_reviewer``, and the real
-``start_run`` whose worker stdin bytes are captured (0554 harness).  Only the storage edges
-(sequence rows, document rows, numbering, SSE) are in-memory fakes.
+Every case drives the real production function for the boundary it asserts on: the real
+``work_plan_apply_service.apply()``, manual/materializer rejection paths, chain and review
+entrypoints, and ``start_run`` with captured worker stdin bytes (0554 harness).  Only storage
+edges (sequence rows, document rows, numbering, SSE) are in-memory fakes.
 """
 from __future__ import annotations
 
@@ -40,7 +37,7 @@ from modules.flow_gate.services import ai_invoke_service as svc
 from modules.flow_gate.services import work_plan_attachment_service as wpa_svc
 from modules.flow_gate.services import work_plan_sequence_service as wpseq
 from modules.flow_gate.services import workflow_decision_service as workflow
-from modules.flow_gate.services.ai_invoke import chain, review
+from modules.flow_gate.services.ai_invoke import admission, chain, review
 
 
 GROUP_ID = h.GROUP_ID
@@ -59,28 +56,6 @@ ATTACHMENT = {
     "content_sha256": "b" * 64,
 }
 ATTACHMENT_JSON = json.dumps(ATTACHMENT, ensure_ascii=False, separators=(",", ":"))
-
-# Section headings the pre-0611 materializer promoted execution metadata into.
-_OLD_BODY_HEADINGS = ("## 지시 내용", "## 추가 사전 지시", "## 첨부 참조", "## 출처")
-
-
-def _assert_canonical_body_is_the_approval_artifact(body: str, *, type_label: str) -> None:
-    """The body is the server artifact: provenance + status-neutral line, no metadata."""
-    assert f"content_source: {docs.WORK_PLAN_INSTRUCTION_CONTENT_SOURCE}" in body
-    assert docs.WORK_PLAN_INSTRUCTION_CONTENT_SOURCE == "server_approval_artifact"
-    assert f'source_wp_doc_id: "{WP_DOC_ID}"' in body
-    assert "materialization_key: " in body
-    assert f"이 문서는 서버가 생성한 {type_label} 승인 절차 산출물입니다." in body
-    assert "승인되었습니다." not in body
-    assert PROBLEM_NOTE not in body
-    assert PRE_TEXT not in body
-    for value in ATTACHMENT.values():
-        if value != WP_DOC_ID:
-            assert value not in body
-    assert ATTACHMENT_JSON not in body
-    assert "source_wp_attachment" not in body
-    for heading in _OLD_BODY_HEADINGS:
-        assert heading not in body
 
 
 class _Store:
@@ -283,313 +258,92 @@ def _assert_prompt_carries_execution_metadata(prompt: str, attachment: dict) -> 
     assert attachment["original_filename"] in prompt
 
 
-# ── Case 1/2/3 · manual [승인 문서 생성] ─────────────────────────────────────────────
+# ── Cases A-D · real WorkPlan N/T authoring path ────────────────────────────────────
 
-@pytest.mark.parametrize(("instruction_type", "result_type", "label"), [
-    ("T", "TR", "작업지시"),
-    ("N", "NR", "조사"),
-])
-def test_case1_2_3_manual_approve_button_keeps_metadata_off_the_body_and_on_the_worker(
-    pre_env, monkeypatch, tmp_path, instruction_type, result_type, label,
+@pytest.mark.parametrize("instruction_type", ["T", "N"])
+def test_case_a_b_auto_approved_workplan_uses_source_authoring_worker_with_real_file(
+    pre_env, monkeypatch, tmp_path, instruction_type,
 ):
-    """[승인 문서 생성] → canonical N/T has none of note/text/file; the worker that runs the
-    logical step afterwards still receives all three."""
-    from test_next_approved_document import _FakeRequest
-
-    _result, attachment = _apply_plan(pre_env, monkeypatch, instruction_type=instruction_type)
-    world = _wire_world(monkeypatch, tmp_path, pre_env["wfseq"])
-    instruction_row_before = world.row(1)
-
-    created = docs.create_next_approved_document(
-        docs.NextApprovedDocumentCreate(
-            project_id="flowgate", group_id=GROUP_ID, prev_doc_id=ROOT_DOC,
-            type_code=instruction_type, module="default",
-        ),
-        request=_FakeRequest({"X-Locale": "ko"}),
-        current_user={"user_id": "usr_admin", "is_admin": 1},
+    result, attachment = _apply_plan(
+        pre_env, monkeypatch, instruction_type=instruction_type,
+        instruction_mode="auto_approved",
     )
+    world = _wire_world(monkeypatch, tmp_path, pre_env["wfseq"])
+    row = world.row(1)
+    assert row["type"] == instruction_type
+    assert row["note"] == PROBLEM_NOTE
+    assert row["pre_instruction_text"] == PRE_TEXT
+    assert json.loads(row["pre_instruction_attachment_json"]) == attachment
+    assert result["fill"]["pre_instruction_attachments"]["1"] == attachment
 
-    doc_id = created["doc_id"]
-    body = world.body(doc_id)
-    _assert_canonical_body_is_the_approval_artifact(body, type_label=label)
-    assert attachment["filename"] not in body
-    step_key = f"{instruction_type}#1"
-    revision_no = instruction_row_before["source_revision_no"]
-    assert f'source_wp_step_key: "{step_key}"' in body
-    assert f"source_wp_revision_no: {revision_no}" in body
-    assert f'materialization_key: "{WP_DOC_ID}:{revision_no}:{step_key}"' in body
-    assert world.transitions == [(doc_id, "submit"), (doc_id, "approve")]
-
-    # Execution metadata was not consumed by the button: it is still on the rows the real
-    # apply() wrote, and the paired worker is now the head.
-    assert world.row(1) == {**instruction_row_before,
-                            "result_doc_id": doc_id, "result_doc_review_status": "approved"}
-    worker_row = world.row(2)
-    assert worker_row["type"] == result_type
-    assert worker_row["note"] == PROBLEM_NOTE
-    assert worker_row["pre_instruction_text"] == PRE_TEXT
-    assert json.loads(worker_row["pre_instruction_attachment_json"]) == attachment
-    assert pre_env["wfseq"].head_item_seq == 2
-
+    monkeypatch.setattr(docs, "materialize_work_plan_instruction", lambda **_kw: pytest.fail(
+        "WorkPlan N/T must be authored by the source worker, never server-materialized"
+    ))
+    assert workflow._auto_complete_instruction_heads(
+        spine_doc=world.docs[ROOT_DOC], seq={"id": 1}, actor_user_id="usr_admin",
+        locale="ko", target_seq=2, instruction_mode="auto_approved",
+    ) == []
     prompt = _worker_prompt(pre_env, target_seq=2, instruction_mode="auto_approved")
     _assert_prompt_carries_execution_metadata(prompt, attachment)
-    # ...and the canonical body was not touched by running the worker.
-    assert world.body(doc_id) == body
+    # The prompt carries the authenticated attachment read contract; the connected
+    # attachment suite exercises that endpoint and verifies the file bytes, not only its name.
+    assert "document_attachments" in prompt
+    assert world.reserved == []
 
 
-@pytest.mark.parametrize("entry", ["manual_button", "continuous_auto_approved"])
-def test_case1_2_3_row_that_still_carries_all_metadata_never_leaks_it_into_the_body(
-    monkeypatch, tmp_path, entry,
-):
-    """The sequence-edit pour keeps note/text/file on the WP T row itself (only apply()'s
-    auto_approved projection moves them).  Whichever entry point materializes that row, the
-    canonical body is still only the approval artifact and the row keeps its metadata."""
-    from test_next_approved_document import _FakeRequest
-
+def test_server_materializer_refuses_workplan_placeholder(monkeypatch, tmp_path):
     wfseq = h.FakeWfseq(head_item_seq=1, items=[
         _metadata_heavy_instruction(), _wp_item(2, "TR", item_id=102),
     ])
     world = _wire_world(monkeypatch, tmp_path, wfseq)
-    row_before = world.row(1)
-
-    if entry == "manual_button":
-        doc_id = docs.create_next_approved_document(
-            docs.NextApprovedDocumentCreate(
-                project_id="flowgate", group_id=GROUP_ID, prev_doc_id=ROOT_DOC,
-                type_code="T", module="default",
-            ),
-            request=_FakeRequest({"X-Locale": "ko"}),
-            current_user={"user_id": "usr_admin", "is_admin": 1},
-        )["doc_id"]
-    else:
-        assert workflow._auto_complete_instruction_heads(
-            spine_doc=world.docs[ROOT_DOC], seq={"id": 1}, actor_user_id="usr_admin",
-            locale="ko", target_seq=2, instruction_mode="auto_approved",
-        ) == [1]
-        doc_id = world.row(1)["result_doc_id"]
-
-    body = world.body(doc_id)
-    _assert_canonical_body_is_the_approval_artifact(body, type_label="작업지시")
-    assert f'materialization_key: "{WP_DOC_ID}:7:T#1"' in body
-    assert world.transitions == [(doc_id, "submit"), (doc_id, "approve")]
-    assert world.row(1) == {**row_before, "result_doc_id": doc_id,
-                            "result_doc_review_status": "approved"}
+    with pytest.raises(docs.NextApprovedError) as exc:
+        docs.materialize_work_plan_instruction(
+            project_id="flowgate", group_id=GROUP_ID, module="default",
+            prev_doc_id=ROOT_DOC, sequence_id=1, head=world.row(1),
+            actor_user_id="usr_admin", approver_perms={"document.approve"},
+        )
+    assert exc.value.status_code == 409
+    assert "AI authoring path" in exc.value.detail
+    assert world.reserved == []
 
 
-# ── Case 6 · continuous auto-approved + pause/resume ─────────────────────────────────
-
-def test_case6_continuous_auto_materialization_and_resume_keep_one_semantic_contract(
-    paused_env, monkeypatch, tmp_path,
-):
-    env = paused_env
-    _result, attachment = _apply_plan(env, monkeypatch)
-    world = _wire_world(monkeypatch, tmp_path, env["wfseq"])
-    source_revision_no = world.row(1)["source_revision_no"]
-
-    # continuous auto_approved: the SAME server-side loop advance_workflow runs.
-    completed = workflow._auto_complete_instruction_heads(
-        spine_doc=world.docs[ROOT_DOC], seq={"id": 1}, actor_user_id="usr_admin",
-        locale="ko", target_seq=2, instruction_mode="auto_approved",
-    )
-    assert completed == [1]
-    doc_id = world.row(1)["result_doc_id"]
-    body = world.body(doc_id)
-    _assert_canonical_body_is_the_approval_artifact(body, type_label="작업지시")
-    assert f'materialization_key: "{WP_DOC_ID}:{source_revision_no}:T#1"' in body
-    body_sha = hashlib.sha256(body.encode("utf-8")).hexdigest()
-
-    # Idempotent re-entry on the same WP revision/step reuses the same document (real marker
-    # check against the real file) and never reserves another number.
-    again = docs.materialize_work_plan_instruction(
-        project_id="flowgate", group_id=GROUP_ID, module="default", prev_doc_id=ROOT_DOC,
-        sequence_id=1, head=world.row(1), actor_user_id="usr_admin",
-        approver_perms={"document.approve"},
-    )
-    assert again["idempotent_reuse"] is True
-    assert again["doc_id"] == doc_id
-    assert again["content_source"] == docs.WORK_PLAN_INSTRUCTION_CONTENT_SOURCE
-    assert again["materialization"]["idempotency_key"] == f"{WP_DOC_ID}:{source_revision_no}:T#1"
-    assert len(world.reserved) == 1
-
-    # A worker hop that is paused and resumed through the real pause/resume APIs receives the
-    # same execution metadata before and after the boundary.
-    worker_cmd, worker_outfile = h._slow_capture_cmd(env["tmp"], seconds=1.0)
-    before, _ = h._start(env, h.MENTION, target_seq=2, cmd=worker_cmd, outfile=worker_outfile)
-    assert svc.pause_run(before["run_id"], "usr_admin")["status"] == "pause_requested"
-    assert svc.mark_user_paused(GROUP_ID, before["run_id"]) is True
-    assert h._wait_finished(before["run_id"])["end_reason"] == "user_paused"
-    before_text = h._read(worker_outfile).decode("utf-8")
-    _assert_prompt_carries_execution_metadata(before_text, attachment)
-
-    cmd2, outfile_after = h._capture_cmd(env["tmp"])
-    monkeypatch.setattr(workflow, "advance_workflow", lambda **kw: {
-        "token": "tok_raw_resume", "token_id": "tok_resume_0611",
-        "expires_at": "2026-09-25T00:00:00+00:00",
-        "scratch_dir": str(env["tmp"] / "resumework"), "mention": h.MENTION,
-    })
-    env["chain"]["providers"] = [h._provider(cmd=cmd2)]
-    after = svc.resume_chain(
-        group_id=GROUP_ID, user_id="usr_admin",
-        api_base_url="http://127.0.0.1:1/flowgate/api/v1",
-    )
-    h._wait_finished(after["run_id"])
-    assert h._read(outfile_after).decode("utf-8") == before_text
-
-    # resume did not regenerate the canonical body from note/pre-instruction.
-    assert hashlib.sha256(world.body(doc_id).encode("utf-8")).hexdigest() == body_sha
-    assert len(world.reserved) == 1
-
-
-# ── Case 4/5 · review_count > 0, reviewer explicit / project-default fallback ────────
-
-def _wire_review_gate(monkeypatch, world, state, hops, resolved_reviewers, reviewed_bodies):
-    monkeypatch.setattr(review, "_first_enabled_provider_id", lambda _pid: "project-default-reviewer")
-    monkeypatch.setattr(review, "_provider_enabled", lambda _pid, _provider: True)
-    monkeypatch.setattr(review, "_review_already_rejected", lambda *_args: False)
-    monkeypatch.setattr(review.db_reviews, "list_by_doc", lambda _doc_id: list(state["reviews"]))
-    monkeypatch.setattr(review.db_reviews, "get_latest_by_doc",
-                        lambda _doc_id: state["reviews"][0] if state["reviews"] else None)
-    monkeypatch.setattr(review, "_queue_gate_bundle", lambda *_args: None)
-
-    def spawn_review(_group, bundle, gate):
-        resolved_reviewers.append(review.resolve_reviewer(
-            bundle.get("reviewer_overrides"), gate["slot"]["item_seq"], "flowgate",
-            bundle.get("doc_ref"),
-        ))
-        # What the reviewer is handed is the slot document itself.
-        reviewed_bodies.append(world.body(gate["slot"]["doc_id"]))
-        hops.append(("review", gate["round_no"]))
-        return {"ok": True, "hop": "review"}
-
-    monkeypatch.setattr(review._svc(), "_spawn_review_hop", spawn_review)
-    monkeypatch.setattr(review._svc(), "_spawn_rework_hop",
-                        lambda _group, _bundle, gate: hops.append(("rework", gate["slot"]["doc_id"])))
-    monkeypatch.setattr(review._svc(), "_auto_reject",
-                        lambda slot, *_args: world.set_status(slot["doc_id"], "rejected")
-                        or {"ok": True})
-
-
-@pytest.mark.parametrize(("stored_reviewer", "expected_reviewer"), [
-    ("instruction-reviewer", "instruction-reviewer"),
-    (None, "project-default-reviewer"),
-])
-def test_case4_5_review_reject_rework_rereview_pass_reviews_the_approval_artifact(
-    monkeypatch, tmp_path, stored_reviewer, expected_reviewer,
-):
-    wfseq = h.FakeWfseq(head_item_seq=1, items=[
-        _metadata_heavy_instruction(review_count=2, reviewer_provider_id=stored_reviewer),
-        _wp_item(2, "TR", item_id=102),
-    ])
-    world = _wire_world(monkeypatch, tmp_path, wfseq)
-    state = {"reviews": []}
-    hops, resolved_reviewers, reviewed_bodies = [], [], []
-    _wire_review_gate(monkeypatch, world, state, hops, resolved_reviewers, reviewed_bodies)
-
-    bundle = {"doc_ref": ROOT_DOC, "issued_to": "usr_admin", "locale": "ko",
-              "target_seq": 2, "instruction_mode": "auto_approved"}
-    run = {"group_id": GROUP_ID, "end_reason": "exited", "run_id": "aiv_0611_review"}
-    monkeypatch.setattr(chain, "peek_auto_resume", lambda _group: bundle)
-    monkeypatch.setattr(chain._svc(), "_write_handoff_row", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(chain._svc(), "_pop_auto_resume_if_same", lambda *_args: True)
-    monkeypatch.setattr(chain._svc(), "_clear_handoff_row", lambda *_args: None)
-
-    # materialize → review (round 1)
-    chain._maybe_auto_resume_hop(run)
-    assert run["_handoff_succeeded"] is True
-    doc_id = world.row(1)["result_doc_id"]
-    assert doc_id is not None
-    assert world.transitions == [(doc_id, "submit")], "review_count=2 must not auto-approve"
-    assert world.docs[doc_id]["doc_review_status"] == "pending_review"
-    assert hops == [("review", 1)]
-    assert resolved_reviewers == [expected_reviewer]
-    # The FIRST review target is the server approval artifact, not a fake instruction sheet
-    # assembled from the WP note / pre-instruction / attachment.
-    _assert_canonical_body_is_the_approval_artifact(reviewed_bodies[0], type_label="작업지시")
-
-    # reject → rework
-    state["reviews"] = [{"id": 1, "verdict": "issues", "revision_no": 0, "findings": "[]"}]
-    assert review.run_review_gate(GROUP_ID, bundle, run) is True
-    assert world.docs[doc_id]["doc_review_status"] == "rejected"
-    assert hops[-1] == ("rework", doc_id)
-
-    # re-review (round 2) on the reworked revision of the SAME document
-    world.set_status(doc_id, "revised", revision_no=1)
-    assert review.run_review_gate(GROUP_ID, bundle, run) is True
-    assert hops[-1] == ("review", 2)
-    assert resolved_reviewers[-1] == expected_reviewer
-
-    # pass → handoff to the paired worker
-    state["reviews"] = [{"id": 2, "verdict": "pass", "revision_no": 1, "findings": "[]"},
-                        *state["reviews"]]
-
-    def settle(_group, slot, _bundle, _run):
-        assert slot["doc_id"] == doc_id
-        assert slot["revision_no"] == 1
-        world.set_status(doc_id, "approved")
-        return "continue"
-
-    monkeypatch.setattr(review._svc(), "_settle_gate_pass", settle)
-    monkeypatch.setattr(
-        review._svc(), "_spawn_auto_resume",
-        lambda _group, _bundle: hops.append(("work", wfseq.get_effective_head(1)["type"])),
-    )
-    assert review.run_review_gate(GROUP_ID, bundle, run) is True
-    assert hops[-1] == ("work", "TR")
-    assert len(world.reserved) == 1, "rework/re-review must reuse the one materialized document"
-
-    # The review cycle never folded metadata into the row's document nor dropped it from the row.
-    row = world.row(1)
-    assert row["note"] == PROBLEM_NOTE
-    assert row["pre_instruction_text"] == PRE_TEXT
-    assert row["pre_instruction_attachment_json"] == ATTACHMENT_JSON
-
-
-# ── Case 6 · durable resume boundary with review_count > 0 ───────────────────────────
-
-def test_case6_resume_chain_materializes_the_approval_artifact_before_the_review_gate(
+def test_case_c_review_gate_does_not_pre_materialize_workplan_instruction(
     monkeypatch, tmp_path,
 ):
-    from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
-
     wfseq = h.FakeWfseq(head_item_seq=1, items=[
-        _metadata_heavy_instruction(review_count=1, reviewer_provider_id=None),
+        _metadata_heavy_instruction(review_count=2, reviewer_provider_id=None),
         _wp_item(2, "TR", item_id=102),
     ])
     world = _wire_world(monkeypatch, tmp_path, wfseq)
-    state = {"reviews": []}
-    hops, resolved_reviewers, reviewed_bodies = [], [], []
-    _wire_review_gate(monkeypatch, world, state, hops, resolved_reviewers, reviewed_bodies)
-    monkeypatch.setattr(review._svc(), "_spawn_rework_hop", lambda *_args: pytest.fail(
-        "a freshly materialized instruction must be reviewed first, not reworked"))
+    monkeypatch.setattr(docs, "materialize_work_plan_instruction", lambda **_kw: pytest.fail(
+        "review must wait for the AI-authored canonical N/T"
+    ))
+    bundle = {
+        "materialize_instruction_before_gate": True,
+        "doc_ref": ROOT_DOC, "issued_to": "usr_admin", "locale": "ko",
+        "target_seq": 2, "instruction_mode": "auto_approved",
+    }
+    assert review._materialize_work_plan_instruction_before_gate(bundle) == []
+    assert world.row(1)["result_doc_id"] is None
 
-    paused_row = {"group_id": GROUP_ID, "doc_ref": ROOT_DOC, "paused_by": "usr_admin",
-                  "paused_at": "2026-09-24T00:00:00Z", "continuation_target_seq": 2,
-                  "continuation_instruction_mode": "auto_approved"}
-    monkeypatch.setattr(chain._svc(), "_runs", {})
-    monkeypatch.setattr(chain._svc(), "_active_run_for_group", lambda _group: None)
-    monkeypatch.setattr(db_paused, "get_by_group", lambda _group: dict(paused_row))
-    monkeypatch.setattr(db_paused, "release_owned", lambda _group, **_kw: dict(paused_row))
-    monkeypatch.setattr(
-        chain._svc(), "_paused_row_resume_state",
-        lambda _project_id, _row, **_kw: {"resume_available": True, "_resume_target_seq": 2},
-    )
-    monkeypatch.setattr(chain._svc(), "_next_incomplete_item_seq", lambda _doc_ref: 1)
 
-    result = chain.resume_chain(
-        group_id=GROUP_ID, user_id="usr_admin", api_base_url="http://x/api/v1",
-    )
-
-    assert result == {"ok": True, "hop": "review"}
-    doc_id = world.row(1)["result_doc_id"]
-    assert doc_id is not None
-    assert world.transitions == [(doc_id, "submit")]
-    assert resolved_reviewers == ["project-default-reviewer"]
-    _assert_canonical_body_is_the_approval_artifact(reviewed_bodies[0], type_label="작업지시")
-    row = world.row(1)
-    assert (row["note"], row["pre_instruction_text"], row["pre_instruction_attachment_json"]) == (
-        PROBLEM_NOTE, PRE_TEXT, ATTACHMENT_JSON,
-    )
-
+def test_case_d_resume_keeps_workplan_instruction_as_the_authoring_hop(
+    monkeypatch, tmp_path,
+):
+    wfseq = h.FakeWfseq(head_item_seq=1, items=[
+        _metadata_heavy_instruction(), _wp_item(2, "TR", item_id=102),
+    ])
+    world = _wire_world(monkeypatch, tmp_path, wfseq)
+    assert admission._hop_worker_item_seq(
+        1, world.row(1),
+        continuation_instruction_mode="auto_approved",
+        continuation_auto_approve_item_seqs=[],
+    ) == 1
+    assert workflow._auto_complete_instruction_heads(
+        spine_doc=world.docs[ROOT_DOC], seq={"id": 1}, actor_user_id="usr_admin",
+        locale="ko", target_seq=2, instruction_mode="auto_approved",
+    ) == []
+    assert world.row(1)["result_doc_id"] is None
 
 # ── Case 7 · ai_direct contrast ──────────────────────────────────────────────────────
 
@@ -622,10 +376,10 @@ def test_case7_ai_direct_worker_receives_note_text_and_file_and_nothing_is_mater
     _assert_prompt_carries_execution_metadata(prompt, attachment)
 
 
-def test_case7_plan_to_rows_attach_auto_rows_ai_direct_start_run_preserves_source_metadata(
+def test_case7_plan_to_rows_attach_auto_rows_preserves_source_metadata_only(
     pre_env, monkeypatch,
 ):
-    """The final-expansion pour must serve both modes without consuming the N/T metadata."""
+    """The final-expansion pour must retain authoring metadata only on source N/T."""
     plan = {
         "steps": [
             {
@@ -650,9 +404,8 @@ def test_case7_plan_to_rows_attach_auto_rows_ai_direct_start_run_preserves_sourc
     assert source["note"] == PROBLEM_NOTE
     assert source["pre_instruction_text"] == PRE_TEXT
     assert source["pre_instruction_attachment"] == ATTACHMENT
-    assert paired["pre_instruction_text"] == PRE_TEXT
-    assert paired["pre_instruction_attachment"] == ATTACHMENT
-    assert paired["pre_instruction_attachment"] is not source["pre_instruction_attachment"]
+    assert paired["pre_instruction_text"] is None
+    assert paired["pre_instruction_attachment"] is None
 
     # Persist the poured rows through the storage-edge fake, then enter the real start_run.
     pre_env["wfseq"].items = [
