@@ -1320,30 +1320,69 @@ class NextApprovedError(Exception):
         self.detail = detail
 
 
-# 0611 T#2: the canonical body of a WorkPlan-backed N/T -- and therefore what an instruction
-# reviewer reads first when review_count > 0 -- is this server-owned approval artifact
-# (WP provenance frontmatter + a status-neutral artifact line).  WP execution metadata
-# (steps[].note / pre_instruction_text / pre_instruction_attachment) is never a body source:
-# it stays on the sequence row the worker actually fills and reaches that worker at hop time
-# through admission._inject_hop_notes (the paired NR/TR under auto_approved, the N/T itself
-# under ai_direct).
-WORK_PLAN_INSTRUCTION_CONTENT_SOURCE = "deprecated_server_materialization"
-_WORK_PLAN_INSTRUCTION_ARTIFACT_BODY = {
-    "ko": "WorkPlan 지시문서는 AI 작성 경로를 통해 생성해야 합니다: {label}",
-    "ja": "WorkPlan 指示文書は AI 作成経路で生成する必要があります: {label}",
-    "en": "WorkPlan instructions must be produced through the AI authoring path: {label}",
+# 0611 T0011: a WorkPlan N/T step carries its instruction document as the step's
+# pre-instruction -- the attached Markdown file and/or the directly written text.  Both the
+# automatic AI-invoke path (advance_workflow -> _auto_complete_instruction_heads) and the
+# manual [승인 문서 생성] path expand exactly that document into the canonical N/T body.
+# steps[].note is the one-line message for the AI of that step and is never a body source
+# (0611 B0001: copying the note produced "a work order that says: write a work order").
+# A WorkPlan N/T step with no instruction document has nothing to expand; its canonical
+# document is written by the N/T authoring worker instead (0611 T0009).
+WORK_PLAN_INSTRUCTION_CONTENT_SOURCE = "work_plan_instruction_document"
+_WORK_PLAN_INSTRUCTION_EXTRA_HEADING = {
+    "ko": "추가 지시",
+    "ja": "追加指示",
+    "en": "Additional instruction",
 }
+_LEADING_FRONTMATTER_RE = _re.compile(r"\A---[ \t]*\n.*?\n---[ \t]*(?:\n|\Z)", _re.DOTALL)
 
 
-def _work_plan_instruction_artifact_body(label: str, locale: str) -> str:
-    """Describe the server artifact without claiming that review has already passed."""
+def _work_plan_instruction_document(head: dict) -> Optional[dict]:
+    """Resolve the instruction document a WorkPlan N/T row carries, or ``None``.
+
+    The attachment reference is validated through the same fail-closed resolver the worker
+    hop uses (0554 T0014 §5) and then read from the attachment jail; a broken reference is a
+    409 rather than a silently shorter instruction.
+    """
+    from modules.flow_gate.services import work_plan_attachment_service as _wpa
+
+    try:
+        pre = _wpa.resolve_pre_instruction(head)
+        if not pre:
+            return None
+        attachment = pre.get("attachment")
+        attachment_text = _wpa.read_reference_text(attachment) if attachment else None
+    except _wpa.PreInstructionAttachmentError as exc:
+        raise NextApprovedError(409, f"WorkPlan instruction file is not readable: {exc.code}") from exc
+    document = {
+        "text": (pre.get("text") or "").strip(),
+        "attachment": dict(attachment) if isinstance(attachment, dict) else None,
+        "attachment_markdown": "",
+    }
+    if attachment_text is not None:
+        normalized = attachment_text.replace("\r\n", "\n").replace("\r", "\n")
+        document["attachment_markdown"] = _LEADING_FRONTMATTER_RE.sub("", normalized, count=1).strip()
+    if not document["text"] and not document["attachment_markdown"]:
+        return None
+    return document
+
+
+def _work_plan_instruction_body(title: str, document: dict, locale: str) -> str:
+    """Compose the canonical Markdown: the instruction file first, then the written text."""
     from modules.flow_gate.template_provision import normalize_locale
 
-    loc = normalize_locale(locale)
-    template = _WORK_PLAN_INSTRUCTION_ARTIFACT_BODY.get(
-        loc, _WORK_PLAN_INSTRUCTION_ARTIFACT_BODY["ko"]
-    )
-    return template.format(label=label)
+    file_md = document.get("attachment_markdown") or ""
+    text = document.get("text") or ""
+    if file_md and text:
+        heading = _WORK_PLAN_INSTRUCTION_EXTRA_HEADING.get(
+            normalize_locale(locale), _WORK_PLAN_INSTRUCTION_EXTRA_HEADING["ko"]
+        )
+        body = f"{file_md}\n\n## {heading}\n\n{text}"
+    else:
+        body = file_md or text
+    if not body.lstrip().startswith("#"):
+        body = f"# {title}\n\n{body}"
+    return body.rstrip() + "\n"
 
 
 def _work_plan_instruction_descriptor(sequence_id: int, head: dict) -> Optional[dict]:
@@ -1412,11 +1451,10 @@ def _build_work_plan_instruction_content(
     target_id: str,
     next_type: str,
     materialization: dict,
+    instruction_document: dict,
     locale: str,
 ) -> str:
-    """Build a server-owned approval artifact with WP provenance but no execution metadata."""
-    from modules.flow_gate.db.document_type_labels import get_type_name
-
+    """Build the canonical N/T: WP provenance header + the step's own instruction document."""
     header = _build_next_empty_content(
         project_id=project_id,
         module=module,
@@ -1435,9 +1473,14 @@ def _build_work_plan_instruction_content(
         f"materialization_key: {_json.dumps(materialization['idempotency_key'], ensure_ascii=False)}",
         f"content_source: {WORK_PLAN_INSTRUCTION_CONTENT_SOURCE}",
     ]
+    attachment = instruction_document.get("attachment")
+    if isinstance(attachment, dict):
+        provenance_lines.append(
+            "source_wp_attachment: "
+            + _json.dumps(attachment, ensure_ascii=False, separators=(",", ":"))
+        )
     header = header[:close_at] + "\n".join(provenance_lines) + "\n" + header[close_at:]
-    label = get_type_name(type_code, locale)
-    return header + _work_plan_instruction_artifact_body(label, locale) + "\n"
+    return header + _work_plan_instruction_body(title, instruction_document, locale)
 
 
 def _materialized_document_matches(doc: dict, materialization: dict) -> bool:
@@ -1469,8 +1512,8 @@ def materialize_work_plan_instruction(
     Idempotency is the logical ``WP doc_id + revision_no + step key`` embedded in the
     canonical document.  Re-entry on an occupied slot reuses that document only when its
     marker matches; a different occupant is a conflict and is never overwritten.
-    A WP result reports ``content_source`` so callers can see the body is the server-owned
-    approval artifact (``WORK_PLAN_INSTRUCTION_CONTENT_SOURCE``), not execution metadata.
+    A WP result reports ``content_source`` (``WORK_PLAN_INSTRUCTION_CONTENT_SOURCE``): the
+    body is the step's WorkPlan instruction document, never its one-line note.
     """
     materialization = _work_plan_instruction_descriptor(sequence_id, head)
     if materialization is None:
@@ -1484,14 +1527,6 @@ def materialize_work_plan_instruction(
             approver_perms=approver_perms,
             locale=locale,
         )
-    # 0611 T0009: WorkPlan-backed instructions are authored by their N/T worker.  The
-    # managed server materializer is deliberately unavailable here so a one-line stub can
-    # never become the canonical document or the review target.
-    raise NextApprovedError(
-        409,
-        "WorkPlan-backed instructions require the AI authoring path; server materialization is disabled.",
-    )
-
     result_doc_id = head.get("result_doc_id")
     if result_doc_id:
         existing = document_service.get_document(str(result_doc_id))
@@ -1629,13 +1664,18 @@ def create_next_approved_core(
         step_key = str(materialization.get("source_wp_step_key") or "")
         if not step_key.startswith(type_code + "#"):
             raise NextApprovedError(422, "WorkPlan materialization type/step mismatch.")
-        # 0611 T0009: managed creation cannot author a WorkPlan instruction. The real N/T
-        # worker must consume note/text/file and submit its Markdown through the ordinary
-        # inbox path; that document then owns this workflow slot and any review lifecycle.
-        raise NextApprovedError(
-            409,
-            "WorkPlan-backed instructions require the AI authoring path; server materialization is disabled.",
-        )
+        # 0611 T0011: expand the step's own instruction document (file + written text).
+        # Without one there is nothing to expand -- that step is written by its N/T
+        # authoring worker (0611 T0009) -- so refuse rather than invent a body.
+        instruction_document = _work_plan_instruction_document(head)
+        if instruction_document is None:
+            raise NextApprovedError(
+                409,
+                f"WorkPlan step {step_key} has no instruction document "
+                "(pre-instruction text or file) to expand; run the AI authoring hop for it.",
+            )
+        gen_title = f"{label} — {step_key}"
+        gen_body = None
     else:
         gen_title = _auto_approved_title(label, locale)
         gen_body = _auto_approved_body(label, locale)
@@ -1672,6 +1712,7 @@ def create_next_approved_core(
             target_id=prev_doc_id,
             next_type=next_type,
             materialization=materialization,
+            instruction_document=instruction_document,
             locale=locale,
         )
     else:

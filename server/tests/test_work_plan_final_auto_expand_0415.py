@@ -422,41 +422,57 @@ def test_c1_c5_c7_final_approval_persists_nt_authoring_context_on_source_rows_on
         attachments["N#1"], None,
     ]
 
+    # 0611 TR0012 rev2: the head row the REAL effective-head SQL returns carries the
+    # instruction document, and the shared predicate expands it on the server ONLY under
+    # auto_approved; under ai_direct it stays the authoring hop.
+    head = db_wfseq.get_effective_head(sequence["id"])
+    assert head["item_seq"] == stored[0]["item_seq"]
+    assert wds.has_work_plan_instruction_document(head) is True
+    for mode, expanded in (("auto_approved", True), ("ai_direct", False)):
+        assert wds.is_auto_handled_step(
+            head_type=head["type"], item_seq=head["item_seq"], instruction_mode=mode,
+            auto_approve_item_seqs=[], source_doc_id=head["source_doc_id"],
+            has_instruction_document=wds.has_work_plan_instruction_document(head),
+        ) is expanded
+
     # Keep reference validation at its attachment-storage boundary. Resolution, row
     # selection, section formatting, and final prompt composition are production functions.
     monkeypatch.setattr(wpa_svc, "validate_reference", lambda _doc_id, _reference: None)
     base_prompt = "## 지시\n작업을 수행하세요.\n"
-    t_prompt = admission._inject_hop_notes(
-        base_prompt, OWNER_ID, default_note=None, note_overrides=None,
-        instruction_mode="auto_approved", locale="ko",
-    )
+
+    def _prompt(mode):
+        return admission._inject_hop_notes(
+            base_prompt, OWNER_ID, default_note=None, note_overrides=None,
+            instruction_mode=mode, locale="ko",
+        )
+
+    # auto_approved: the server expands T#1 and the hop folds to the paired TR, which
+    # carries none of the source row's authoring context.
+    assert _prompt("auto_approved") == base_prompt
+    # ai_direct: the T authoring worker receives the source row's context as input.
+    t_prompt = _prompt("ai_direct")
     assert default_note in t_prompt
     assert "first task" in t_prompt
     assert attachments["T#1"]["filename"] in t_prompt
     assert "second task" not in t_prompt and "research task" not in t_prompt
 
     # Approving the source T advances to its paired TR. The authoring-only metadata must
-    # not be re-injected into that later report worker.
+    # not be re-injected into that later report worker, in either mode.
     db_wfseq.set_item_result_doc_id(stored[0]["id"], _COMPLETED_DOCS[0])
     assert db_wfseq.get_effective_head(sequence["id"])["item_seq"] == stored[1]["item_seq"]
-    tr_prompt = admission._inject_hop_notes(
-        base_prompt, OWNER_ID, default_note=None, note_overrides=None,
-        instruction_mode="auto_approved", locale="ko",
-    )
-    assert tr_prompt == base_prompt
-    assert default_note not in tr_prompt
-    assert "first task" not in tr_prompt
-    assert attachments["T#1"]["filename"] not in tr_prompt
+    for mode in ("auto_approved", "ai_direct"):
+        tr_prompt = _prompt(mode)
+        assert tr_prompt == base_prompt
+        assert default_note not in tr_prompt
+        assert "first task" not in tr_prompt
+        assert attachments["T#1"]["filename"] not in tr_prompt
 
-    # Advance past the paired TR and second T/TR, then build the source N authoring prompt.
+    # Advance past the paired TR and second T/TR, then the source N head.
     for row, result_doc_id in zip(stored[1:4], _COMPLETED_DOCS[1:]):
         db_wfseq.set_item_result_doc_id(row["id"], result_doc_id)
     assert db_wfseq.get_effective_head(sequence["id"])["item_seq"] == stored[4]["item_seq"]
-
-    n_prompt = admission._inject_hop_notes(
-        base_prompt, OWNER_ID, default_note=None, note_overrides=None,
-        instruction_mode="auto_approved", locale="ko",
-    )
+    assert _prompt("auto_approved") == base_prompt
+    n_prompt = _prompt("ai_direct")
     assert default_note in n_prompt
     assert "research task" in n_prompt
     assert attachments["N#1"]["filename"] in n_prompt
@@ -467,11 +483,9 @@ def test_c1_c5_c7_final_approval_persists_nt_authoring_context_on_source_rows_on
     # The same defaults.note boundary applies to N/NR after the source N is approved.
     db_wfseq.set_item_result_doc_id(stored[4]["id"], _COMPLETED_DOCS[4])
     assert db_wfseq.get_effective_head(sequence["id"])["item_seq"] == stored[5]["item_seq"]
-    nr_prompt = admission._inject_hop_notes(
-        base_prompt, OWNER_ID, default_note=None, note_overrides=None,
-        instruction_mode="auto_approved", locale="ko",
-    )
-    assert nr_prompt == base_prompt
-    assert default_note not in nr_prompt
-    assert "research task" not in nr_prompt
-    assert attachments["N#1"]["filename"] not in nr_prompt
+    for mode in ("auto_approved", "ai_direct"):
+        nr_prompt = _prompt(mode)
+        assert nr_prompt == base_prompt
+        assert default_note not in nr_prompt
+        assert "research task" not in nr_prompt
+        assert attachments["N#1"]["filename"] not in nr_prompt

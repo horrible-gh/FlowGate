@@ -1,7 +1,8 @@
-"""WorkPlan instruction materialization regression after 0611 T0009.
+"""WorkPlan instruction materialization regression after 0611 T0011.
 
-WorkPlan-backed N/T is authored by its AI worker. The managed server materializer remains
-available only for legacy rows and must never expose a one-line canonical WP instruction.
+A WorkPlan-backed N/T is expanded from the step's own instruction document (pre-instruction
+file and/or text); a step without one stays the N/T authoring worker hop.  The managed
+server materializer never exposes a one-line or note-copied canonical WP instruction.
 """
 from __future__ import annotations
 
@@ -42,23 +43,46 @@ def test_descriptor_preserves_wp_revision_step_without_execution_payload(
     assert "pre_instruction_attachment" not in descriptor
 
 
-def test_workplan_materializer_refuses_placeholder(monkeypatch):
+def test_workplan_materializer_delegates_with_descriptor_and_review_policy(monkeypatch):
+    descriptor = {
+        "source_wp_doc_id": WP_ID, "source_wp_revision_no": 7,
+        "source_wp_step_key": "T#1", "idempotency_key": f"{WP_ID}:7:T#1",
+    }
+    monkeypatch.setattr(docs, "_work_plan_instruction_descriptor", lambda _sid, _head: descriptor)
+    seen = {}
     monkeypatch.setattr(
-        docs, "_work_plan_instruction_descriptor",
-        lambda _sid, _head: {
-            "source_wp_doc_id": WP_ID, "source_wp_revision_no": 7,
-            "source_wp_step_key": "T#1", "idempotency_key": f"{WP_ID}:7:T#1",
-        },
+        docs, "create_next_approved_core",
+        lambda **kwargs: seen.update(kwargs) or {"doc_id": "wp-T"},
     )
-    with pytest.raises(docs.NextApprovedError) as exc:
-        docs.materialize_work_plan_instruction(
-            project_id="flowgate", group_id="flowgate.default.0600", module="default",
-            prev_doc_id="flowgate.default.0600.0001-B", sequence_id=9,
-            head={"type": "T", "source_doc_id": WP_ID, "source_revision_no": 7},
-            actor_user_id="pm", approver_perms={"document.approve"},
-        )
-    assert exc.value.status_code == 409
-    assert "AI authoring path" in exc.value.detail
+    result = docs.materialize_work_plan_instruction(
+        project_id="flowgate", group_id="flowgate.default.0600", module="default",
+        prev_doc_id="flowgate.default.0600.0001-B", sequence_id=9,
+        head={"type": "T", "source_doc_id": WP_ID, "source_revision_no": 7, "review_count": 2},
+        actor_user_id="pm", approver_perms={"document.approve"},
+    )
+    assert seen["_work_plan_materialization"] == descriptor
+    assert seen["_approve_immediately"] is False
+    assert result["content_source"] == docs.WORK_PLAN_INSTRUCTION_CONTENT_SOURCE
+    assert result["idempotent_reuse"] is False
+
+
+def test_instruction_body_is_file_then_text_and_never_the_note():
+    body = docs._work_plan_instruction_body(
+        "작업지시 — T#1",
+        {"text": "written half", "attachment": None, "attachment_markdown": "# Real\n\n- do it"},
+        "ko",
+    )
+    assert body == "# Real\n\n- do it\n\n## 추가 지시\n\nwritten half\n"
+    assert docs._work_plan_instruction_body(
+        "작업지시 — T#1", {"text": "only text", "attachment": None, "attachment_markdown": ""}, "en",
+    ) == "# 작업지시 — T#1\n\nonly text\n"
+
+
+def test_instruction_document_is_none_without_text_or_file():
+    assert docs._work_plan_instruction_document(
+        {"note": "one-line message", "pre_instruction_text": "  ",
+         "pre_instruction_attachment_json": None, "source_doc_id": WP_ID}
+    ) is None
 
 
 def test_legacy_instruction_still_delegates_to_managed_core(monkeypatch):
@@ -75,10 +99,10 @@ def test_legacy_instruction_still_delegates_to_managed_core(monkeypatch):
     assert result == {"doc_id": "legacy-T", "type_code": "T"}
 
 
-def test_auto_approved_workplan_head_is_real_authoring_hop(monkeypatch):
+def test_auto_approved_workplan_head_without_instruction_document_is_authoring_hop(monkeypatch):
     head = {
         "id": 11, "item_seq": 1, "type": "T", "source_doc_id": WP_ID,
-        "source_revision_no": 7, "result_doc_id": None,
+        "source_revision_no": 7, "result_doc_id": None, "note": "write it",
     }
     monkeypatch.setattr(workflow.db_wfseq, "get_effective_head", lambda _sid: head)
     monkeypatch.setattr(docs, "materialize_work_plan_instruction", lambda **_kw: pytest.fail(

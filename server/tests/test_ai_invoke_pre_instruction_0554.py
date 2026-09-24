@@ -5,7 +5,11 @@ Covers:
     worker receives on stdin (mirrors test_ai_invoke_continuation_note_0346.py's harness for
     the sibling `note` feature, since pre-instruction is injected at the exact same
     admission._inject_hop_notes convergence point, D0007 §3.5/T0014 §2).
-  • WorkPlan auto-approved pre-instruction reaches its source authoring worker only.
+  • 0611 TR0012 rev2 contract: a WorkPlan N/T with an instruction document is server-expanded
+    ONLY under auto_approved, so the paired result worker gets the canonical T/N, not a
+    second copy of the pre-instruction.  Under ai_direct the N/T stays an authoring hop and
+    that worker receives the step's note / text / file as its input.  A WorkPlan single step
+    (D) is written by its own worker, which receives its own text/file in either mode.
   • a stored-but-invalid attachment reference stops the hop before any worker spawns,
     revoking the token it already minted (T0014 §5 fail-closed contract).
   • note + pre-instruction coexist as two distinct sections (T0014 §14).
@@ -492,11 +496,12 @@ class TestPreInstructionEndToEnd:
             conn_mod.STORE = original_store
             conn.close()
 
-    def test_auto_approved_instruction_pre_instruction_reaches_source_authoring_worker_only(
+    def test_auto_approved_wp_instruction_document_is_not_refolded_into_paired_worker(
         self, pre_env, monkeypatch,
     ):
-        # 0611 T0009: auto_approved controls approval after authoring; a WorkPlan-backed
-        # T remains the worker hop and consumes its own text/file context.
+        # 0611 TR0012 rev2: under auto_approved a WorkPlan T that carries its instruction
+        # document is expanded by the server into the canonical T; the hop folds to TR@4,
+        # which must not receive a hidden second copy of that document.
         pre_env["wfseq"].head_item_seq = 3
         pre_env["wfseq"].items = [
             {"item_seq": 1, "type": "N", "result_doc_id": "d-0002-N"},
@@ -516,38 +521,65 @@ class TestPreInstructionEndToEnd:
         res, outfile = _start(pre_env, MENTION, target_seq=4, instruction_mode="auto_approved")
         _wait_finished(res["run_id"])
         got = _read(outfile).decode("utf-8")
-        assert got.count("## WorkPlan 사전지시") == 1
-        assert PRE_TEXT in got
-        assert ATTACHMENT["original_filename"] in got
+        assert "## WorkPlan 사전지시" not in got
+        assert PRE_TEXT not in got
+        assert ATTACHMENT["original_filename"] not in got
 
-    def test_ai_direct_instruction_row_gets_its_own_pre_instruction(self, pre_env):
-        # Contrast case: under ai_direct the worker fills T@3 itself (no fold), so T@3's own
-        # pre-instruction DOES apply — proving the fold is what suppressed it above, not a
-        # blanket "T never gets one" rule.
+    def test_ai_direct_instruction_row_gets_its_own_pre_instruction(self, pre_env, monkeypatch):
+        # 0611 TR0012 rev2: under ai_direct the server does NOT expand T@3 even though it
+        # carries its instruction document -- the worker authors T@3 itself (no fold), and the
+        # step's note, written text and attached file reach that worker as its input.
         pre_env["wfseq"].head_item_seq = 3
         pre_env["wfseq"].items = [
             {
                 "item_seq": 3, "type": "T", "result_doc_id": None,
                 "source_doc_id": ATTACHMENT["doc_id"], "pre_instruction_text": PRE_TEXT,
-                "pre_instruction_attachment_json": None,
+                "pre_instruction_attachment_json": _attachment_json(),
+                "note": "T 단계 메모 0611",
             },
             {
                 "item_seq": 4, "type": "TR", "result_doc_id": None,
-                "source_doc_id": None, "pre_instruction_text": None,
+                "source_doc_id": ATTACHMENT["doc_id"], "pre_instruction_text": None,
                 "pre_instruction_attachment_json": None,
             },
         ]
+        monkeypatch.setattr(wpa_svc, "validate_reference", lambda doc_id, reference: None)
         res, outfile = _start(pre_env, MENTION, target_seq=4, instruction_mode="ai_direct")
-        _wait_finished(res["run_id"])
+        run = _wait_finished(res["run_id"])
+        assert run["hop_item_seq"] == 3
         got = _read(outfile).decode("utf-8")
-        assert got.count("WorkPlan 사전지시") == 1
+        assert got.count("## WorkPlan 사전지시") == 1
         assert PRE_TEXT in got
+        assert ATTACHMENT["original_filename"] in got
+        assert "T 단계 메모 0611" in got
+
+    def test_single_step_row_gets_its_own_pre_instruction_in_either_mode(self, pre_env):
+        # Contrast case: a WP single step (D) has no server expansion, so the worker that
+        # writes D@3 still receives D@3's own pre-instruction — proving the expansion is what
+        # suppressed it above, not a blanket "no pre-instruction" rule.
+        for mode in ("ai_direct", "auto_approved"):
+            pre_env["wfseq"].head_item_seq = 3
+            pre_env["wfseq"].items = [
+                {
+                    "item_seq": 3, "type": "D", "result_doc_id": None,
+                    "source_doc_id": ATTACHMENT["doc_id"], "pre_instruction_text": PRE_TEXT,
+                    "pre_instruction_attachment_json": None,
+                },
+            ]
+            res, outfile = _start(pre_env, MENTION, target_seq=3, instruction_mode=mode)
+            _wait_finished(res["run_id"])
+            got = _read(outfile).decode("utf-8")
+            assert got.count("WorkPlan 사전지시") == 1
+            assert PRE_TEXT in got
 
 
 class TestPreInstructionFailClosed:
     def test_invalid_source_attachment_stops_before_the_worker_is_spawned(
         self, pre_env, monkeypatch,
     ):
+        # 0611 TR0012 rev2: under ai_direct the T authoring worker consumes its own file, so
+        # a broken reference must stop that hop (auto_approved reads the file in the server
+        # expansion instead, which fails closed on its own -- 0611 broken-file case).
         pre_env["wfseq"].head_item_seq = 3
         pre_env["wfseq"].items = [
             {
@@ -568,7 +600,7 @@ class TestPreInstructionFailClosed:
             lambda doc_id, reference: "pre_instruction_attachment_digest_mismatch",
         )
         with pytest.raises(HTTPException) as caught:
-            _start(pre_env, MENTION, target_seq=4)
+            _start(pre_env, MENTION, target_seq=4, instruction_mode="ai_direct")
         assert caught.value.status_code == 409
         assert caught.value.detail["code"] == "pre_instruction_attachment_digest_mismatch"
         assert caught.value.detail["source_doc_id"] == ATTACHMENT["doc_id"]
@@ -957,9 +989,11 @@ class TestRetryRebuildsPreInstruction:
             "expires_at": "2000-01-01T00:00:00+00:00",
         })
 
-    def test_reissued_retry_reads_the_auto_approved_source_authoring_context(
+    def test_reissued_retry_reads_the_ai_direct_source_authoring_context(
         self, pre_env, monkeypatch, tmp_path,
     ):
+        # 0611 TR0012 rev2: under ai_direct the WP T is authored by the worker, so a reissued
+        # retry must re-read T@3's own context (auto_approved expands it on the server).
         pre_env["wfseq"].head_item_seq = 3
         pre_env["wfseq"].items = [
             {
@@ -983,13 +1017,15 @@ class TestRetryRebuildsPreInstruction:
                 "scratch_dir": str(tmp_path / "new"),
             }
 
-        run = self._run(tmp_path, issue_builder=_issue)
+        run = self._run(
+            tmp_path, issue_builder=_issue, continuation_instruction_mode="ai_direct",
+        )
         prepared = svc._prepare_retry_token(run)
         assert prepared["reissued"] is True
         got = prepared["mention"]
         assert got.count("WorkPlan 사전지시") == 1
         assert PRE_TEXT in got
-        assert "source-row stale sentinel" not in got
+        assert "paired-row stale sentinel" not in got
 
     def test_each_reissue_re_reads_the_row_instead_of_replaying_a_stale_copy(
         self, pre_env, monkeypatch, tmp_path,
@@ -1507,8 +1543,10 @@ class TestConnectedFlowFullEffectiveBundle:
         RESULT_DOC_ID = f"{GROUP_ID}.9001-T"
 
         # ---- 1. WP T step -> source T authoring row through the REAL apply() (steps 1-10).
-        # The canonical pre-instruction remains on T#1, the row auto_approved now executes;
-        # the later TR row must not receive an authoring-context snapshot.
+        # 0611 TR0012 rev2: under ai_direct a WorkPlan T that carries its instruction document
+        # is NOT expanded by the server; the T authoring worker consumes it as input and its
+        # T then goes through the ordinary review/approval flow pinned below. The canonical
+        # pre-instruction remains on T#1; the later TR row must not receive a snapshot of it.
         plan_step = {
             "key": "T#1", "type": "T", "ordinal": 1, "locked": False,
             "provider_id": WORKER_PROVIDER, "note": "계획 단계 개별 메모",
@@ -1549,7 +1587,7 @@ class TestConnectedFlowFullEffectiveBundle:
             plan={"steps": [plan_step, result_step], "defaults": {"note": ""}},
             plan_path=env["tmp"] / "wp_plan.json",
             providers=provider_registry,
-            instruction_mode="auto_approved",
+            instruction_mode="ai_direct",
             change_workflow=True,
             workflow_tag=before_tag,
             wp_revision_no=1,
@@ -1601,7 +1639,10 @@ class TestConnectedFlowFullEffectiveBundle:
             _provider(pid=REVIEWER_PROVIDER, cmd=_reviewer_cmd(reviewer_round1_outfile)),
         ]
         env["chain"]["registered_count"] = 2
-        before, _ = _start(env, MENTION, target_seq=2, cmd=worker_cmd, outfile=worker_outfile)
+        before, _ = _start(
+            env, MENTION, target_seq=2, instruction_mode="ai_direct",
+            cmd=worker_cmd, outfile=worker_outfile,
+        )
 
         out = svc.pause_run(before["run_id"], "usr_admin")
         assert out["status"] == "pause_requested"
@@ -1679,7 +1720,7 @@ class TestConnectedFlowFullEffectiveBundle:
             base = {
                 "doc_ref": ROOT_DOC, "target_seq": 2, "issued_to": "usr_admin",
                 "api_base_url": "http://127.0.0.1:1/flowgate/api/v1", "locale": "ko",
-                "instruction_mode": "auto_approved", "chain_id": None,
+                "instruction_mode": "ai_direct", "chain_id": None,
             }
             base.update(overrides)
             return base
