@@ -1919,8 +1919,18 @@ class TestGitEndToEnd:
         merge_id = finalized["result"]["merge_id"]
         conflicts = {f["path"]: f for f in svc.list_conflicts(group, merge_id)["files"]}
         assert sorted(conflicts) == sorted(paths)
-        # Same chunk layout as the live session 97 (D0005 V1).
-        assert [conflicts[p]["conflict_count"] for p in paths] == [1, 1, 1, 8, 5, 1]
+        # Same chunk layout as the live session 97 (D0005 V1), except WorkPlanEditor.vue:
+        # its ours side carries 23 stray LF lines in a CRLF file, and since 0608 T0005
+        # the finalize merge re-merges such a file on normalised line endings, which
+        # drops the one chunk that was only that line-ending difference (8 → 7).
+        # work_plan.py (two stray CRLF lines) is re-merged too, keeping its 5 chunks.
+        assert [conflicts[p]["conflict_count"] for p in paths] == [1, 1, 1, 7, 5, 1]
+        context = db_git.session_context(db_git.get_session(merge_id))
+        assert context["eol_renormalized_paths"] == [
+            "client/src/main/components/WorkPlanEditor.vue",
+            "server/modules/flow_gate/documents/routers/work_plan.py",
+        ]
+        assert context["eol_only_paths"] == []
         root = svc.resolve_conflict_src_root(group, merge_id)
         before = {path: (root / path).read_bytes() for path in paths}
         post = self._resolve_token_client_0604(monkeypatch, group, merge_id)
@@ -2004,11 +2014,20 @@ class TestGitEndToEnd:
         assert result["status"] == "resolved_pending_review"
         assert result["remaining_conflicts"] == []
         assert all(row["resolved"] for row in db_git.session_files(merge_id))
-        # CR-insensitive: resolve_conflicts' write_text follows the platform newline.
-        assert all(
-            (root / p).read_bytes().replace(b"\r", b"") == resolved[p].replace(b"\r", b"")
-            for p in paths
-        )
+        # 0608 T0005: byte-exact, in each file's own line ending (the base branch's).
+        # Until then this compared CR-insensitively because resolve_conflicts wrote in
+        # text mode — which is how the real 0599 merge (6132cf58) turned the three LF
+        # i18n files, work_plan.py and test_work_plan_0395.py CRLF, and WorkPlanEditor.vue
+        # "\r\r\n", on the Windows server.
+        for p in paths:
+            want = resolved[p].replace(b"\r\n", b"\n")
+            if ours[p].count(b"\r\n") * 2 > ours[p].count(b"\n"):
+                want = want.replace(b"\n", b"\r\n")
+            got = (root / p).read_bytes()
+            assert got == want, p
+            assert b"\r\r\n" not in got, p
+        for p in paths[:3] + paths[4:]:
+            assert b"\r" not in (root / p).read_bytes(), p
         review = svc.get_merge_review(group, merge_id)["result"]
         assert review["review_state"] == svc.REVIEW_STATE_PENDING
         (record,) = review["conflict_supersedes"]
@@ -2019,6 +2038,81 @@ class TestGitEndToEnd:
             o["selection"] for o in review["conflict_origins"]
             if o["path"] == "server/modules/flow_gate/documents/routers/work_plan.py"
         ][:4] == ["manual", "manual", "manual", "theirs"]
+
+        aborted = svc.abort_merge(group, merge_id)
+        assert aborted["result"]["status"] == "waiting"
+
+    def test_eol_only_conflict_is_separated_and_lf_survives_resolution_0608(self, origin_repo, monkeypatch):
+        """0608 T0005, connected: a real finalize whose main side flipped one file to CRLF
+        (the 6132cf58 shape) opens a session in which that file is already merged and
+        marked resolved; the mention lists only the real conflict, by location; and the
+        LF file resolved through the resolve-token route stays LF."""
+        monkeypatch.setenv("ALLOWED_ORIGIN", "http://localhost")
+        monkeypatch.setenv("CONTEXT", "/flowgate")
+        monkeypatch.setenv("DB_TYPE", "sqlite")
+        import json
+
+        from modules.flow_gate.api import token_routes
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        group = "gitprj.default.0608"
+        lines = [f"msg_{i}: 'text {i}',\n" for i in range(40)]
+        base = "".join(lines).encode()
+        seedwt = origin_repo["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+        (seedwt / "i18n_en.ts").write_bytes(base)
+        (seedwt / "real.py").write_bytes(b"x = 1\n")
+        # byte-exact under this host's autocrlf=true, as in the real repository
+        (seedwt / ".gitattributes").write_text("i18n_en.ts -text\nreal.py -text\n", encoding="utf-8")
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", "0608 base"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        assert svc.ensure_worktree("gitprj", "default", group) == "ok"
+        wt = src_root("GitProj", "gitprj_default_0608")
+        theirs = lines[:]
+        theirs[5] = "msg_5: 'text 5 (group)',\n"
+        (wt / "i18n_en.ts").write_bytes("".join(theirs).encode())
+        (wt / "real.py").write_bytes(b"x = 2\n")
+        (seedwt / "i18n_en.ts").write_bytes(base.replace(b"\n", b"\r\n"))   # EOL flip only
+        (seedwt / "real.py").write_bytes(b"x = 3\n")
+        _git(["commit", "-am", "main flips i18n to CRLF"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+
+        _seed_wf_done_root(group, project_id=group.split(".", 1)[0])
+        db_git.set_status(group, "awaiting_choice")
+        finalized = svc.finalize(group, "merge")
+        assert finalized["result"]["status"] == "conflict"
+        assert finalized["result"]["conflict_files"] == ["i18n_en.ts", "real.py"]
+        merge_id = finalized["result"]["merge_id"]
+        root = svc.resolve_conflict_src_root(group, merge_id)
+
+        # the EOL-only file: merged on normalised text, in ours' (CRLF) line ending, staged
+        assert db_git.remaining_conflicts(merge_id) == ["real.py"]
+        listed = svc.list_conflicts(group, merge_id)
+        assert listed["eol_only_paths"] == ["i18n_en.ts"]
+        assert {f["path"]: f["conflict_count"] for f in listed["files"]} == {"i18n_en.ts": 0, "real.py": 1}
+        assert (root / "i18n_en.ts").read_bytes() == "".join(theirs).encode().replace(b"\n", b"\r\n")
+        unmerged = _git(["diff", "--name-only", "--diff-filter=U"], cwd=root).split()
+        assert unmerged == ["real.py"]
+
+        mention = token_routes._build_conflict_mention(
+            group_id=group, project_id="gitprj", merge_id=merge_id,
+            scratch_dir="/tmp/scratch", raw_token="tok", api_base_url="http://x/api/v1",
+        )
+        session = json.loads(mention.split("```json\n", 1)[1].rsplit("\n```", 1)[0])
+        assert [f["path"] for f in session["files"]] == ["real.py"]
+        assert session["resolved_files"] == [{"path": "i18n_en.ts", "reason": "eol_only"}]
+        assert "POST http://x/api/v1/remote/read" in mention
+        assert "msg_5" not in mention                       # the EOL-only file is not re-sent
+
+        post = self._resolve_token_client_0604(monkeypatch, group, merge_id)
+        accepted = post([{"path": "real.py", "content": "x = 23\n"}])
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["result"]["status"] == "resolved_pending_review"
+        assert (root / "real.py").read_bytes() == b"x = 23\n"   # LF kept (was CRLF on Windows)
 
         aborted = svc.abort_merge(group, merge_id)
         assert aborted["result"]["status"] == "waiting"

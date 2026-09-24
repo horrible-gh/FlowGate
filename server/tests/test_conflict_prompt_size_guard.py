@@ -21,6 +21,10 @@ Two independent fixes, tested at two levels:
      original ~3.94M by more than half, but this specific merge is still well over both Codex's
      1,048,576-char ceiling and the 500,000-char guard, so it is exactly the case work item 4
      says the guard (not a batch resolver) must catch in this T.
+
+0608 T0005: the mention is now tool-driven past a small size (chunk locations, text read
+through /remote/read), so that 0594-scale set no longer reaches the guard; the guard itself
+is unchanged — see the last test.
 """
 from __future__ import annotations
 
@@ -262,13 +266,16 @@ class TestConflictMentionMaxCharsIsConservativeVsKnownProviderLimits:
         CODEX_INPUT_CEILING = 1_048_576
         assert admission.CONFLICT_MENTION_MAX_CHARS < CODEX_INPUT_CEILING
 
-    def test_0594_merge_id_100_scale_conflict_still_exceeds_the_guard_after_dedup(self):
-        """Work item 4: raw_content removal alone is not enough for every conflict set.
-        This is a hermetic stand-in (not a live git call) for the real reconstructed
-        merge_id=100 conflict, which measured 1,809,923 chars post-fix — comfortably
-        above both Codex's 1,048,576-char ceiling and this guard's 500,000-char budget.
-        A future batch resolver is what actually lands this merge; today's contract is
-        that it fails closed and explicitly instead of silently wasting a provider call.
+    def test_0594_merge_id_100_scale_conflict_no_longer_scales_the_mention(self):
+        """This used to assert the opposite: after the raw_content dedup the 0594-scale
+        stand-in still built a mention over the 500,000-char guard (the real merge_id=100
+        conflict measured 1,809,923 chars), and the guard was what caught it.
+
+        0608 T0005 replaced that with the tool-driven mention: once the chunk text is past
+        CONFLICT_INLINE_CHUNKS_MAX_CHARS the mention carries each chunk's location and the
+        worker reads the text through /remote/read. The same 10 × 16,000-line stand-in now
+        stays under 10,000 chars — without touching the guard, which stays at 500,000 as
+        the backstop (the real 0594 replay: test_conflict_eol_separation_0608.py).
         """
         files = []
         # Sized to land in the same order of magnitude as the real 10-file merge_id=100
@@ -293,4 +300,9 @@ class TestConflictMentionMaxCharsIsConservativeVsKnownProviderLimits:
                 scratch_dir="/scratch/x", raw_token="tok_raw_test",
                 api_base_url="http://127.0.0.1:8089/flowgate/api/v1", locale="ko",
             )
-        assert len(mention) > admission.CONFLICT_MENTION_MAX_CHARS
+        assert admission.CONFLICT_MENTION_MAX_CHARS == 500_000
+        assert len(mention) < 10_000
+        assert "ours 0\n" not in mention and '"ours": [' not in mention
+        payload = json.loads(mention.split("```json\n", 1)[1].rsplit("\n```", 1)[0])
+        assert payload["chunk_text"] == "omitted"
+        assert [len(f["chunks"]) for f in payload["files"]] == [1] * 10

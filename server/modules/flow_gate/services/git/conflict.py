@@ -7,7 +7,10 @@ from __future__ import annotations
 import difflib
 import hashlib
 import logging
+import os
 import re
+import subprocess
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -35,6 +38,201 @@ _SUPERSEDE_HINT = (
     "ONLY when the side you kept already contains the other side's changes; otherwise merge "
     "both sides' changes into the chunk."
 )
+
+
+# ── 0608 T0005: line endings of conflict files ────────────────────────────────────
+#
+# 0599 merge 98 wrote its six resolved files through `Path.write_text`, which on the
+# Windows server turns every "\n" into "\r\n": the LF i18n files and two LF server files
+# came out CRLF and the CRLF WorkPlanEditor.vue came out "\r\r\n" (6132cf58). From then on
+# every group touching those files met a whole-file EOL conflict — 0594's ten conflict
+# files were 83% EOL noise. Two things below stop that: a resolution is written in the
+# file's own line ending (`_write_resolved_file`), and a conflict that is only a line-ending
+# difference is merged on LF-normalised text and taken out of the resolver's hands
+# (`separate_eol_conflicts`).
+
+_EOL_ATTR_RE = re.compile(r": eol: (lf|crlf)\s*$")
+
+
+def _git_bytes(args: list[str], cwd: Path) -> Optional[bytes]:
+    """Raw stdout of a read-only git command (``_run_git`` decodes text, which would fold
+    the very line endings this has to see). None on any failure."""
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        proc = subprocess.run(
+            ["git", *args], cwd=str(cwd), capture_output=True, env=env,
+            timeout=GIT_LOCAL_TIMEOUT_SEC,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def _majority_eol(data: bytes) -> str:
+    return "crlf" if data.count(b"\r\n") * 2 > data.count(b"\n") else "lf"
+
+
+def _path_eol(root: Path, path: str, fallback: Optional[bytes] = None) -> str:
+    """The line ending a resolved ``path`` is written in: the repo's ``eol`` attribute when
+    it names one, otherwise whatever the checked-out HEAD version uses (so the resolution
+    adds no line-ending churn to the branch it lands on), otherwise ``fallback``'s, else LF.
+    """
+    from modules.flow_gate.services import git_service as _gs
+
+    attr = _gs._run_git(["check-attr", "eol", "--", path], cwd=root)
+    match = _EOL_ATTR_RE.search((attr.stdout or "").strip()) if attr.returncode == 0 else None
+    if match:
+        return match.group(1)
+    head = _git_bytes(["cat-file", "blob", f"HEAD:{path}"], root)
+    if head is not None:
+        return _majority_eol(head)
+    if fallback is not None:
+        return _majority_eol(fallback)
+    return "lf"
+
+
+def _encode_eol(content: str, eol: str) -> bytes:
+    text = content.replace("\r\n", "\n")
+    if eol == "crlf":
+        text = text.replace("\n", "\r\n")
+    return text.encode("utf-8", errors="surrogateescape")
+
+
+def _write_resolved_file(root: Path, path: str, target: Path, content: str) -> None:
+    """Write a resolution in bytes, in the file's own line ending — never text mode."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(_encode_eol(content, _path_eol(root, path)))
+
+
+def _marker_labels(text: str) -> tuple[str, str, str]:
+    """``(ours, base, theirs)`` labels of the first conflict chunk git wrote, so a
+    re-merged file carries the same marker lines the original merge produced."""
+    ours = base = theirs = None
+    for line in text.splitlines():
+        if ours is None and line.startswith("<<<<<<< "):
+            ours = line[8:].strip()
+        elif base is None and _CONFLICT_BASE_RE.match(line):
+            base = line[8:].strip()
+        elif theirs is None and line.startswith(">>>>>>> "):
+            theirs = line[8:].strip()
+        if ours is not None and base is not None and theirs is not None:
+            break
+    return ours or "HEAD", base or "merged common ancestors", theirs or "theirs"
+
+
+# `git merge-file` reports the number of conflicts as its exit status, capped at 127.
+_MERGE_FILE_MAX_CONFLICT_EXIT = 127
+
+
+def _eol_normalized_merge(root: Path, path: str) -> Optional[tuple[int, bytes]]:
+    """Re-run the 3-way merge of an unmerged ``path`` with every stage's CRLF folded to LF.
+
+    Returns ``(conflict_count, merged_bytes)`` — ``merged_bytes`` already in the path's
+    own line ending — or None when this does not apply: a stage is missing (add/add,
+    modify/delete), a stage is binary, or no stage has a CR (so the git conflict is
+    already free of line-ending noise).
+    """
+    stages = [_git_bytes(["cat-file", "blob", f":{n}:{path}"], root) for n in (2, 1, 3)]
+    if any(stage is None for stage in stages):
+        return None
+    if any(b"\x00" in stage for stage in stages) or not any(b"\r" in stage for stage in stages):
+        return None
+    try:
+        current = (root / path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        current = ""
+    ours_label, base_label, theirs_label = _marker_labels(current)
+    with tempfile.TemporaryDirectory(prefix="fg-eol-merge-") as tmp:
+        names = []
+        for name, stage in zip(("ours", "base", "theirs"), stages):
+            p = Path(tmp) / name
+            p.write_bytes(stage.replace(b"\r\n", b"\n"))
+            names.append(str(p))
+        try:
+            proc = subprocess.run(
+                ["git", "merge-file", "-p", "--zdiff3",
+                 "-L", ours_label, "-L", base_label, "-L", theirs_label, *names],
+                capture_output=True, timeout=GIT_LOCAL_TIMEOUT_SEC,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+    # git merge-file exits with the conflict count (0..127); anything else — a negative
+    # error, 129 for a usage error, 128 for a fatal — is a failure whose stdout is not a
+    # merge. Treating it as a count would overwrite the conflicted file with that stdout.
+    if not 0 <= proc.returncode <= _MERGE_FILE_MAX_CONFLICT_EXIT:
+        return None
+    if proc.returncode > 0 and b"<<<<<<<" not in proc.stdout:
+        return None
+    merged = proc.stdout.decode("utf-8", errors="surrogateescape")
+    return proc.returncode, _encode_eol(merged, _path_eol(root, path, fallback=stages[0]))
+
+
+def separate_eol_conflicts(root: Path, paths: list[str]) -> dict:
+    """Take line-ending noise out of an in-flight merge's conflicts (0608 T0005).
+
+    For each unmerged path whose stages differ in CRLF/LF, merge again on LF-normalised
+    text. A path that then merges cleanly is an **EOL-only** conflict: it is written in its
+    own line ending, staged, and reported under ``eol_only`` — nothing is left for a
+    resolver to decide there, and handing it over would mean re-typing the whole file.
+    A path that still conflicts gets the normalised merge's (smaller, real) conflict
+    markers written in place of the whole-file one git produced, under ``renormalized``;
+    it stays unmerged, so the ordinary resolve contract and its validation apply as-is.
+    """
+    from modules.flow_gate.services import git_service as _gs
+    from modules.flow_gate.storage.safe_path import resolve_in_root
+
+    eol_only: list[str] = []
+    renormalized: list[str] = []
+    for path in paths:
+        target = resolve_in_root(root, path)
+        if target is None:
+            continue
+        result = _eol_normalized_merge(root, path)
+        if result is None:
+            continue
+        conflicts, merged = result
+        try:
+            before = target.read_bytes()
+        except OSError:
+            before = b""
+        if conflicts == 0:
+            target.write_bytes(merged)
+            proc = _gs._run_git(["add", "--", path], cwd=root)
+            if proc.returncode != 0:
+                _log.warning("eol-only conflict %s could not be staged: %s",
+                             path, _gs._last_line(proc.stderr))
+                target.write_bytes(before)
+                continue
+            eol_only.append(path)
+        elif merged != before:
+            target.write_bytes(merged)
+            renormalized.append(path)
+    return {"eol_only": eol_only, "renormalized": renormalized}
+
+
+def apply_eol_separation(merge_id: int, root: Path) -> dict:
+    """``separate_eol_conflicts`` over a session's files, recorded on the session: an
+    EOL-only file is marked resolved and listed in ``context["eol_only_paths"]`` so the
+    screen, the AI mention and the reviewer can all say why it needs no resolution.
+    Best-effort — a failure here leaves the ordinary git conflict exactly as it was."""
+    from modules.flow_gate.services import git_service as _gs
+
+    try:
+        paths = [row["path"] for row in _gs.db_git.session_files(merge_id)]
+        outcome = separate_eol_conflicts(root, paths)
+        for path in outcome["eol_only"]:
+            _gs.db_git.mark_file_resolved(merge_id, path)
+        session = _gs.db_git.get_session(merge_id)
+        context = _gs.db_git.session_context(session)
+        context["eol_only_paths"] = outcome["eol_only"]
+        context["eol_renormalized_paths"] = outcome["renormalized"]
+        _gs.db_git.set_session_context(merge_id, context)
+        return outcome
+    except Exception:
+        _log.warning("eol separation failed for merge %s", merge_id, exc_info=True)
+        return {"eol_only": [], "renormalized": []}
+
 
 def _revert_in_flight(wt_path: Path) -> bool:
     """Is a `revert --no-commit` still open in this worktree?
@@ -124,6 +322,7 @@ def open_tr_conflict_session(
             group_id, exc_info=True,
         )
         return None
+    apply_eol_separation(merge_id, wt_path)
     _gs._set_status(group_id, "conflict", merge_id=merge_id)
     return {"merge_id": int(merge_id), "files": paths}
 
@@ -780,12 +979,22 @@ def list_conflicts(group_id: str, merge_id: int) -> dict:
         })
     kind = _gs.db_git.session_kind(session)
     context = _gs.db_git.session_context(session)
+    baseline = context.get("resolver_baseline") or {}
     return {
         "ok": True,
         "merge_id": merge_id,
         "branch": state.get("branch"),
         "base_branch": (cfg.get("base_branch") or "main"),
         "files": files,
+        # 0608 T0005: session files that differed only in line endings and were already
+        # merged on normalised text (apply_eol_separation) — nothing to resolve there.
+        "eol_only_paths": list(context.get("eol_only_paths") or []),
+        # The two commits a finalize merge joined, for reading either side's whole file
+        # (`/remote/read` with `ref`). None for a TR session, which has no MERGE_HEAD.
+        "refs": (
+            {"ours": baseline.get("base_head"), "theirs": baseline.get("merge_head")}
+            if baseline.get("base_head") and baseline.get("merge_head") else None
+        ),
         # 088 — the same payload for both kinds, plus what a reader needs to know WHICH
         # question is being asked. "Combine two branches" and "undo this TR's commit" want
         # very different resolutions out of the same conflict markers, and the editor, the
@@ -918,8 +1127,9 @@ def resolve_conflicts(
         )
 
     for path, target, content, _original in staged:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        # 0608 T0005: bytes in the file's own line ending. `write_text` here is what
+        # turned 0599's LF files CRLF (and a CRLF file CR-CR-LF) on the Windows server.
+        _write_resolved_file(root, path, target, content)
         proc = _gs._run_git(["add", "--", path], cwd=root)
         if proc.returncode != 0:
             raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))

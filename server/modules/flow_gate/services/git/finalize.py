@@ -661,6 +661,8 @@ def update_from_base(group_id: str) -> dict:
                     context={"prev_status": state.get("status") or "none",
                              "branch": state.get("branch")},
                 )
+                # 0608 T0005: line-ending-only conflicts need no resolver.
+                _gs.apply_eol_separation(merge_id, wt_path)
                 return {"ok": True, "result": {
                     "status": "conflict", "merge_id": merge_id,
                     "conflict_files": conflicts,
@@ -1254,6 +1256,11 @@ def finalize(
         merge_id = _gs.db_git.create_session(
             group_id, files, finalize_action=action, context=session_context,
         )
+        # 0608 T0005 (NR0003 §2.2): a file whose sides differ only in CRLF/LF merges
+        # cleanly on normalised text — it is resolved here, before any resolver sees it,
+        # and a real conflict keeps only its real chunks. 0594: 10 files / 28 chunks
+        # became 6 / 24.
+        _gs.apply_eol_separation(merge_id, base_root)
         _gs._set_status(group_id, "conflict", merge_id=merge_id)
         # 0205 L §2.1: DO NOT transfer the lock to the session. The conflict wait
         # is expressed by the persistent 'conflict' state + open session. Manual
