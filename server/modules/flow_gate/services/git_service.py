@@ -858,9 +858,13 @@ def _is_hidden_source_path(path: str) -> bool:
     genuinely edited ``client/src/.eslintrc.json`` is still cross-checked, but the
     explorer must not serve a secret-shaped file through the blob/write endpoints.
     That direction is safe — it never hides debris the check would then demand.
+    The repository's own policy files (``.gitattributes`` …) are not secret-shaped and
+    are committed by ``git add -u``, so they stay visible (0608 TR0006).
     """
     if path_exclusion_rules.is_excluded_path(path):
         return True
+    if path_exclusion_rules.is_repo_config_file(path):
+        return False
     return path.split("/")[-1].startswith(".")
 
 
@@ -1583,11 +1587,13 @@ from .git.conflict import (
     _split_conflict_chunks_with_base,
     abort_merge,
     abort_tr_conflict,
+    apply_eol_separation,
     commit_tr_conflict,
     list_conflicts,
     open_tr_conflict_session,
     resolve_conflict_src_root,
     resolve_conflicts,
+    separate_eol_conflicts,
     tr_conflict_session,
 )
 
@@ -3116,6 +3122,9 @@ def reject_merge_review(
         })
         context["conversation"] = conversation[-MAX_CHAT_TURNS:]
         db_git.set_session_context(merge_id, context)
+        # 0608 T0005: the redo merge brought back the same line-ending-only conflicts
+        # the session opened with; take them out again exactly as finalize did.
+        apply_eol_separation(merge_id, base_root)
     finally:
         db_git.release_lock(project_id, holder)
 

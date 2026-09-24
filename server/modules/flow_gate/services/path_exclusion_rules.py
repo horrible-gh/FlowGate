@@ -13,6 +13,10 @@ screen filter calls the same function.
 There are four categories (inherited from 0299 D0004 §3.3, with one added in 0382).
 
 1) Top-level entries starting with a dot — ``.git/``, ``.venv/``, ``.env`` and so on.
+   The repository's own tracked policy files (``.gitattributes``, ``.gitignore`` …, see
+   ``REPO_CONFIG_FILENAMES``) are the exception (0608 TR0006): they are work, not debris,
+   and ``git add -u`` commits an edit to them anyway, so hiding them from the manifest
+   would let a repository policy change ride the commit unseen.
 2) **Dot directories mid-path** (added in 0382) — this is what catches ``server/.test-tmp-0313/...``.
    The final segment (the filename) is deliberately exempt, so a genuinely edited config file
    like ``client/src/.eslintrc.json`` cannot vanish silently (0299's original judgement stands).
@@ -55,6 +59,14 @@ _EXCLUDED_DIR_SEGMENTS = frozenset({
 })
 _EXCLUDED_DIR_PREFIXES = ("pytest-cache-files-", TEST_SCRATCH_PREFIX)
 
+# 0608 TR0006: dot-named files that are the repository's own configuration. The finalize/TR
+# commit stages every tracked change (``git add -u``), so an edited ``.gitattributes`` is
+# committed whatever the rule says — the rule must therefore show it, or the reviewed
+# manifest and the commit disagree. Secrets (``.env``…) are deliberately not listed.
+REPO_CONFIG_FILENAMES = frozenset({
+    ".gitattributes", ".gitignore", ".dockerignore", ".editorconfig",
+})
+
 
 def normalize_repo_path(path: str) -> str:
     """Repo-relative path with empty and current-directory (``.``) segments removed before comparison."""
@@ -65,13 +77,21 @@ def normalize_repo_path(path: str) -> str:
     )
 
 
+def is_repo_config_file(path: str) -> bool:
+    """Is the final segment one of the repository's own tracked policy files?"""
+    normalized = normalize_repo_path(path)
+    return bool(normalized) and normalized.split("/")[-1] in REPO_CONFIG_FILENAMES
+
+
 def exclusion_reason(path: str) -> Optional[str]:
     """The reason, if this path is debris left by a tool or the environment rather than work output; else None."""
     normalized = normalize_repo_path(path)
     if not normalized:
         return REASON_EMPTY
     segments = normalized.split("/")
-    if segments[0].startswith("."):
+    if segments[0].startswith(".") and not (
+        len(segments) == 1 and segments[0] in REPO_CONFIG_FILENAMES
+    ):
         return REASON_DOT_TOPLEVEL
     # Drop the last segment since it may be a filename — only directory segments are examined.
     if any(seg.startswith(".") for seg in segments[:-1]):

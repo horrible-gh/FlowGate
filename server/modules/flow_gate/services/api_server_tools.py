@@ -17,6 +17,10 @@ from modules.flow_gate.services import git_service, help_catalog, process_runner
 from modules.flow_gate.utils.help_url import help_url
 
 DOCUMENT_SCOPES = frozenset({"new", "edit", "review", "test_run"})
+CONFLICT_SCOPE = "resolve_conflict"
+# 0608 T0007: a conflict resolver changes files only through the bound resolve endpoint,
+# which validates every chunk. Whatever the registry grows into, these never reach it.
+_CONFLICT_NEVER_OPS = frozenset({"write", "patch", "remove"})
 BASE_NAMES = ("read_document", "read_help", "create_question", "register_document")
 SOURCE_NAMES = ("read_source_file", "search_source", "glob_source", "stat_source", "diff_source", "log_source", "show_commit_source", "merge_preview_source", "patch_source_file", "write_source_file", "remove_source_file", "run_test")
 # Provider names are stable aliases; every source operation dispatches through the HTTP remote service.
@@ -77,7 +81,9 @@ def normalize_read_help_input(value: Any) -> dict:
     return dict(value)
 
 SCHEMAS = {
-    "read_source_file": _obj({"path": {"type": "string", "minLength": 1}, "max_bytes": {"type": "integer", "minimum": 0}, "offset": {"type": "integer", "minimum": 0}, "length": {"type": "integer", "minimum": 0}, "encoding": {"type": "string"}, "ref": {"type": "string"}}, ["path"]),
+    # start_line/end_line (0608 T0007, NR0003 §3.5): the /remote/read line selector the
+    # HTTP tool always had -- how a conflict chunk's advertised range is read back.
+    "read_source_file": _obj({"path": {"type": "string", "minLength": 1}, "max_bytes": {"type": "integer", "minimum": 0}, "offset": {"type": "integer", "minimum": 0}, "length": {"type": "integer", "minimum": 0}, "start_line": {"type": "integer", "minimum": 1}, "end_line": {"type": "integer", "minimum": 1}, "encoding": {"type": "string"}, "ref": {"type": "string"}}, ["path"]),
     "search_source": _obj({"pattern": {"type": "string", "minLength": 1}, "path": {"type": "string"}, "glob": {"type": "string"}, "ignore_case": {"type": "boolean"}, "max_results": {"type": "integer", "minimum": 0}, "ref": {"type": "string"}}, ["pattern"]),
     "glob_source": _obj({"pattern": {"type": "string", "minLength": 1}, "path": {"type": "string"}, "ref": {"type": "string"}}, ["pattern"]),
     "stat_source": _obj({"path": {"type": "string", "minLength": 1}, "ref": {"type": "string"}}, ["path"]),
@@ -114,7 +120,8 @@ DESCRIPTIONS["read_help"] = (
 # these descriptions lets a provider discover that link from the tool definition alone,
 # without a separate read_help round trip.
 DESCRIPTIONS["read_source_file"] = (
-    "Read a file. Omit ref to read the current worktree (including uncommitted changes); "
+    "Read a file, or only lines start_line..end_line of it (1-based, inclusive; both together, "
+    "not with offset/length/max_bytes). Omit ref to read the current worktree (including uncommitted changes); "
     "set ref to a commit/tree/ref to read that committed tree instead. Feed merge_preview_source's "
     "head/target_sha/merge_base/merge_tree into ref to inspect each side of a merge."
 )
@@ -183,6 +190,32 @@ def definitions_for_run(run: dict) -> list[dict]:
         schema = REGISTER_SCHEMAS[scope] if name == "register_document" else SCHEMAS[name]
         result.append({"name": name, "description": DESCRIPTIONS[name], "schema": schema, "completion": name == "register_document"})
     return result
+
+
+def conflict_tool_definitions() -> list[dict]:
+    """The tools a resolve_conflict API run may call besides ``resolve_git_conflict``.
+
+    0608 T0007: the same judgment as everywhere else -- ``tool_registry.kind_for_step``
+    gives resolve_conflict the ``read`` kind, ``tool_names`` turns it into the operations
+    the conflict mention's Remote source section lists, and ``remote_tool_service`` grants
+    that same kind (read/grep scopes) to the run's token at call time and binds it to the
+    conflict session's root. Plus ``read_help``, which the API prompt points to in place of
+    the mention's help URL. Write/patch/remove are excluded even if a kind ever allowed them.
+    """
+    kind, _reason = tool_registry.kind_for_step(CONFLICT_SCOPE)
+    allowed_ops = set(tool_registry.tool_names(kind, CONFLICT_SCOPE)) - _CONFLICT_NEVER_OPS
+    names = ["read_help"] + [name for name, op in SOURCE_OPS.items() if op in allowed_ops]
+    return [
+        {"name": name, "description": DESCRIPTIONS[name], "schema": SCHEMAS[name], "completion": False}
+        for name in names
+    ]
+
+
+def open_conflict_counts(run: dict) -> tuple[int, int]:
+    """``(files, chunks)`` still carrying conflict markers in the run's merge session."""
+    conflicts = git_service.list_conflicts(run["group_id"], int(run["merge_id"]))
+    counts = [int(f.get("conflict_count") or 0) for f in conflicts.get("files") or []]
+    return sum(1 for n in counts if n > 0), sum(counts)
 
 
 def validate(schema: dict, value: Any, path: str = "input") -> None:

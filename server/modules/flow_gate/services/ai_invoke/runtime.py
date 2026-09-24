@@ -73,6 +73,26 @@ SOURCE_DIRTY_FILES_LIMIT = 20
 
 API_MAX_TURNS_PER_DOC = 4        # API agent loop cap = docs_target × 4
 
+# 0608 T0007: a resolve_conflict API run reads its chunks through the read tools
+# (the mention stops carrying their text past 4,000 chars) and submits file by file, so
+# its budget follows the conflict instead of the flat 4 turns a one-shot submit needed:
+# 4 + 2 per open chunk (read, then resolve) + 1 per open file (its submit), never above
+# the cap below. 0594's real conflicts (6 files, 24 chunks) come to 58.
+API_CONFLICT_TURNS_PER_CHUNK = 2
+API_CONFLICT_MAX_TURNS = 60
+# Read-tool calls a resolve_conflict run may make in total, per budgeted turn. A model
+# can ask for several reads in one turn; past this the call is refused (not run).
+API_CONFLICT_SOURCE_CALLS_PER_TURN = 3
+# Output ceiling of one model reply in a resolve_conflict run (Anthropic max_tokens; the
+# OpenAI-compatible call sends none). A `chunks` submission of 0594's largest file
+# (finalize.py, 10 chunks) is up to ~22k chars when both sides are kept -- past 8,192
+# tokens once JSON-escaped -- while the whole file would be 111,807 chars.
+API_CONFLICT_MAX_TOKENS = 16384
+# A read-tool result longer than this is refused with result_too_large in a
+# resolve_conflict run instead of being cut mid-JSON (the same 16,000 every other tool
+# result is truncated to).
+API_TOOL_RESULT_MAX_CHARS = 16000
+
 # A model API may hit a resolver/socket blip before its first usable response. Keep
 # retries inside that provider invocation so they neither consume provider-fallback
 # attempts nor alter pin/sequence selection. Two retries means three calls maximum.
@@ -409,8 +429,12 @@ _DECIDE_TOOL_SCHEMA = {
 _RESOLVE_TOOL_NAME = "resolve_git_conflict"
 
 _RESOLVE_TOOL_DESC = (
-    "Submit complete resolved file contents for the bound git merge conflict session. "
-    "All conflict markers must be removed and complete must be true when every file is resolved."
+    "Submit resolved files for the bound git merge conflict session: per file either its "
+    "complete `content`, or `chunks` -- every conflict chunk of that file (numbered as in the "
+    "conflict session) with the lines that replace its whole marker block. The server rebuilds "
+    "and validates the file either way. Send some files with complete=false and the result "
+    "lists remaining_conflicts; set complete=true when none remain. All conflict markers must "
+    "be removed."
 )
 
 _RESOLVE_TOOL_SCHEMA = {
@@ -423,6 +447,20 @@ _RESOLVE_TOOL_SCHEMA = {
                 "properties": {
                     "path": {"type": "string"},
                     "content": {"type": "string"},
+                    # 0608 T0007 — instead of content: every chunk of the file, resolved.
+                    "chunks": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "chunk": {"type": "integer", "minimum": 1},
+                                "content": {"type": "string"},
+                            },
+                            "required": ["chunk", "content"],
+                            "additionalProperties": False,
+                        },
+                    },
                     # 0604 D0005 §3.4 — optional; the worker forwards `files` verbatim.
                     "supersede": {
                         "type": "object",
@@ -439,7 +477,8 @@ _RESOLVE_TOOL_SCHEMA = {
                         "required": ["side", "reason"],
                     },
                 },
-                "required": ["path", "content"],
+                # content or chunks -- resolve_conflicts answers 422 unless exactly one is sent.
+                "required": ["path"],
             },
         },
         "complete": {"type": "boolean"},
