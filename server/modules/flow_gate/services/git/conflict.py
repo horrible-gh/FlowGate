@@ -722,6 +722,61 @@ def _chunk_original_ranges(segments: list[dict]) -> list[tuple[int, int]]:
     return ranges
 
 
+def _content_from_chunk_resolutions(path: str, original: str, chunks) -> str:
+    """0608 T0007: the whole-file submission a per-chunk resolution stands for.
+
+    An API model's single reply is capped (NR0003 §8): 0594's finalize.py is 111,807
+    chars as a file but its 10 chunks are at most ~22k chars even when both sides are
+    kept. So a file may be sent as ``chunks: [{"chunk": n, "content": "<lines that
+    replace the whole marker block n>"}]`` instead of ``content``. The chunks are
+    numbered 1.. in file order, exactly as the conflict mention lists them.
+
+    This only ASSEMBLES the file: every chunk not listed keeps its marker block
+    verbatim, so the caller's existing ``conflict_markers_remain`` check rejects it, and
+    the assembled text then goes through the same side-drop / supersede validation as a
+    whole-file submission. Nothing is written or staged here.
+    """
+    segments = _split_content_segments(original) if original else None
+    ranges = _chunk_original_ranges(segments) if segments else []
+    if not ranges:
+        raise GitServiceError(
+            422, "invalid_request",
+            f"'{path}' has no conflict chunks left to resolve by number; send content instead",
+        )
+    if not isinstance(chunks, list) or not chunks:
+        raise GitServiceError(422, "invalid_request", f"'{path}': chunks must be a non-empty list")
+    resolutions: dict[int, str] = {}
+    for item in chunks:
+        number = item.get("chunk") if isinstance(item, dict) else None
+        text = item.get("content") if isinstance(item, dict) else None
+        if isinstance(number, bool) or not isinstance(number, int) or not isinstance(text, str):
+            raise GitServiceError(
+                422, "invalid_request",
+                f"'{path}': each chunk needs an integer chunk number and a content string",
+            )
+        if not 1 <= number <= len(ranges):
+            raise GitServiceError(
+                422, "invalid_request",
+                f"'{path}': chunk {number} does not exist (this file has chunks 1..{len(ranges)})",
+            )
+        if number in resolutions:
+            raise GitServiceError(422, "invalid_request", f"'{path}': chunk {number} was sent twice")
+        resolutions[number] = text
+    lines = original.splitlines()
+    assembled: list[str] = []
+    cursor = 1
+    for number, (start, end) in enumerate(ranges, start=1):
+        assembled.extend(lines[cursor - 1:start - 1])
+        if number in resolutions:
+            assembled.extend(resolutions[number].splitlines())
+        else:
+            assembled.extend(lines[start - 1:end])
+        cursor = end + 1
+    assembled.extend(lines[cursor - 1:])
+    trailing = "\n" if original.endswith(("\n", "\r")) else ""
+    return "\n".join(assembled) + trailing
+
+
 def _conflict_side_violations(original: str, submitted: str) -> list[dict]:
     """Every chunk :func:`_conflict_side_dropped` would reject, in file order.
 
@@ -1052,12 +1107,25 @@ def resolve_conflicts(
     for f in files or []:
         path = f.get("path")
         content = f.get("content")
-        if not isinstance(path, str) or not isinstance(content, str):
-            raise GitServiceError(422, "invalid_request", "each file needs path and content")
+        chunks = f.get("chunks")
+        if not isinstance(path, str) or (chunks is None and not isinstance(content, str)):
+            raise GitServiceError(422, "invalid_request", "each file needs path and content (or chunks)")
+        if chunks is not None and content is not None:
+            raise GitServiceError(
+                422, "invalid_request", f"'{path}': send either content or chunks, not both",
+            )
         if path not in session_paths:
             raise GitServiceError(
                 422, "invalid_request", f"'{path}' is not part of merge session {merge_id}"
             )
+        if chunks is not None:
+            # 0608 T0007: per-chunk resolutions become the whole-file submission right
+            # here, so everything below validates them exactly like `content`.
+            try:
+                current = (root / path).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                current = ""
+            content = _content_from_chunk_resolutions(path, current, chunks)
         if _gs.has_conflict_markers(content):
             line_no = next(
                 (i for i, l in enumerate(content.splitlines(), start=1)

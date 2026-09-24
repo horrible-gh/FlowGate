@@ -551,9 +551,22 @@ class ResolveSupersede(BaseModel):
     reason: str
 
 
+class ResolveChunk(BaseModel):
+    # 0608 T0007: one chunk's resolution -- the lines that replace marker block `chunk`
+    # (1-based, file order, as the conflict mention numbers them). resolve_conflicts
+    # assembles the file from these and validates it like a whole-file `content`.
+    model_config = ConfigDict(extra="forbid")
+
+    chunk: int
+    content: str
+
+
 class ResolveFile(BaseModel):
     path: str
-    content: str
+    # Exactly one of `content` (the whole resolved file) and `chunks` (every chunk of
+    # the file, resolved) -- resolve_conflicts enforces the pairing with a 422.
+    content: Optional[str] = None
+    chunks: Optional[list[ResolveChunk]] = None
     # Must stay a declared field: ResolveFile is not extra="forbid", so an undeclared
     # `supersede` would be dropped silently before reaching resolve_conflicts.
     supersede: Optional[ResolveSupersede] = None

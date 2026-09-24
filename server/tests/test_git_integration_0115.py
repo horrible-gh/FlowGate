@@ -1548,7 +1548,9 @@ class TestSupersedeTransport0604:
         from modules.flow_gate.services.ai_invoke.runtime import _RESOLVE_TOOL_SCHEMA
 
         item = _RESOLVE_TOOL_SCHEMA["properties"]["files"]["items"]
-        assert item["required"] == ["path", "content"]
+        # 0608 T0007: content OR chunks (resolve_conflicts 422s unless exactly one is sent)
+        assert item["required"] == ["path"]
+        assert item["properties"]["chunks"]["items"]["required"] == ["chunk", "content"]
         supersede = item["properties"]["supersede"]
         assert supersede["properties"]["side"]["enum"] == ["ours", "theirs"]
         assert supersede["required"] == ["side", "reason"]
@@ -3100,10 +3102,14 @@ class TestGitEndToEnd:
         # turn 1: the worker drops the mainline side entirely (same payload as (i) above,
         # this time submitted through the real HTTP tool the worker actually calls).
         # turn 2: the worker retries with both sides kept, exactly the (ii) shape.
+        # 0608 T0007: the model is offered the read tools plus resolve_git_conflict (a
+        # list of specs, not one forced name) and picks resolve_git_conflict itself.
         attempts: list[str] = []
+        offered: list[list[str]] = []
 
         def fake_model(*args):
-            tool_name = args[5]
+            offered.append([spec["name"] for spec in args[5]])
+            tool_name = ai_svc._RESOLVE_TOOL_NAME
             attempts.append(tool_name)
             if len(attempts) == 1:
                 payload = {
@@ -3156,6 +3162,8 @@ class TestGitEndToEnd:
         # non-2xx resolve failure — tool_result + continue, no special-cased short-circuit —
         # and the worker's second, corrected attempt was retried and accepted.
         assert attempts == [ai_svc._RESOLVE_TOOL_NAME, ai_svc._RESOLVE_TOOL_NAME]
+        assert offered[0][-1] == ai_svc._RESOLVE_TOOL_NAME and "read_source_file" in offered[0]
+        assert not {"write_source_file", "patch_source_file", "remove_source_file"} & set(offered[0])
         assert len(tool_results) == 2
         assert "Conflict resolve failed (HTTP 422)" in tool_results[0]
         assert "conflict_side_dropped" in tool_results[0]
@@ -7410,3 +7418,645 @@ class TestTerminalReopenReprovision0532:
             project_id, "default", group,
             trigger="timemachine_reopen", start_point=orphan,
         ) == "failed"
+
+
+# ── 0608 T0007: the API provider's tool-driven conflict loop, connected ─────────────
+#
+# T0005 stopped putting chunk text into a large conflict's mention; these runs prove an
+# API provider can still resolve one. Everything between the model and git is real: the
+# finalize that opens the session (with its EOL separation), the mention, `_api_execute`'s
+# tool loop, `api_server_tools` -> `remote_tool_service.handle` for every read (only the
+# token lookup, the grant row, the history log and the root lookup are stubbed -- the
+# root is the real `resolve_conflict_src_root`), and the resolve-token route into
+# `resolve_conflicts`. Only the model is scripted, and it can only learn a chunk's text by
+# reading it through the tools.
+
+_API_0594_PATHS = [
+    "client/shared/i18n/en.ts",
+    "client/shared/i18n/ja.ts",
+    "client/shared/i18n/ko.ts",
+    "client/src/main/components/ReviewActionBar.vue",
+    "server/modules/flow_gate/api/inbox_routes.py",
+    "server/modules/flow_gate/services/git/conflict.py",
+    "server/modules/flow_gate/services/git/finalize.py",
+    "server/modules/flow_gate/services/git_service.py",
+    "server/modules/flow_gate/workflow/routers/workflow.py",
+    "server/tests/test_git_facade_seam_scope_0550.py",
+]
+_API_0594_OURS = "e40a3ae0"        # main when 0594's last session (103) opened
+_API_0594_THEIRS = "1a968388"      # flowgate_default_0594 head
+
+
+def _checkout_0608() -> Path:
+    """This repository, for its history only (read-only)."""
+    return Path(__file__).resolve().parents[2]
+
+
+def _history_blob_0608(rev: str, path: str) -> bytes:
+    proc = subprocess.run(["git", "cat-file", "blob", f"{rev}:{path}"], cwd=str(_checkout_0608()),
+                          capture_output=True)
+    assert proc.returncode == 0, (rev, path, proc.stderr)
+    return proc.stdout
+
+
+def _session_json_0608(text: str) -> dict:
+    import json
+    return json.loads(text.split("```json\n", 1)[1].rsplit("\n```", 1)[0])
+
+
+def _chunk_sides_0608(block: str) -> tuple[list[str], list[str]]:
+    """ours / theirs lines of one whole `<<<<<<<` .. `>>>>>>>` block as read back."""
+    lines = block.splitlines()
+    assert lines[0].startswith("<<<<<<<") and lines[-1].startswith(">>>>>>>"), (lines[:1], lines[-1:])
+    ours, theirs, state = [], [], "ours"
+    for line in lines[1:-1]:
+        if state == "ours" and line.startswith("|||||||"):
+            state = "base"
+        elif state in ("ours", "base") and line == "=======":
+            state = "theirs"
+        elif state == "ours":
+            ours.append(line)
+        elif state == "theirs":
+            theirs.append(line)
+    return ours, theirs
+
+
+class _ScriptedConflictModel0608:
+    """An API model stand-in that resolves every chunk by keeping both sides.
+
+    It sees exactly what a real model sees -- the first user message (guidance +
+    mention) and the tool results -- and nothing else. With `chunk_text: omitted` it
+    cannot know a chunk until it has read the block's full range; a first piece that is
+    deliberately short, and any `result_too_large` refusal, make it read again. It
+    submits one file per call as `chunks`, `complete` only on the last file.
+    """
+
+    def __init__(self, *, first_piece_lines: int = 3, probe_ref: bool = True):
+        import json
+        self._json = json
+        self.first_piece_lines = first_piece_lines
+        self.probe_ref = probe_ref
+        self.turns: list[list[str]] = []
+        self.offered: Optional[list[str]] = None
+        self.max_tokens: list = []
+        self.prompt = ""
+        self.session: dict = {}
+        self.files: list[dict] = []
+        self.file_idx = 0
+        self.pending: dict[str, tuple] = {}
+        self.todo: list[tuple] = []
+        self.pieces: dict[tuple, dict] = {}
+        self.covered: dict[tuple, list] = {}
+        self.need: dict[tuple, tuple] = {}
+        self.reads: list[dict] = []
+        self.read_failures: list[str] = []
+        self.submits: list[dict] = []
+        self.submit_results: list[str] = []
+        self.help_result: Optional[dict] = None
+        self.ref_result: Optional[dict] = None
+        self.stopped = False
+        self._seq = 0
+
+    # the provider adapter's signature (`_call_anthropic`)
+    def __call__(self, _url, _model, _key, conversation, _timeout, tool_specs, _desc, _schema,
+                 _force=False, max_tokens=None):
+        self.max_tokens.append(max_tokens)
+        if self.offered is None:
+            self.offered = [spec["name"] for spec in tool_specs]
+            self.prompt = conversation[1]["content"]
+            self.session = _session_json_0608(self.prompt)
+            self.files = self.session["files"]
+            self._queue_file()
+        self._absorb(conversation)
+        calls = [] if self.stopped else self._next_calls()
+        self.turns.append([call["name"] for call in calls])
+        content = [{"type": "tool_use", "id": c["id"], "name": c["name"], "input": c["input"]} for c in calls]
+        return None, calls, {"role": "assistant", "content": content}
+
+    def _call(self, name: str, tool_input: dict, request: tuple) -> dict:
+        self._seq += 1
+        call_id = f"tu_{self._seq}"
+        self.pending[call_id] = request
+        return {"id": call_id, "name": name, "input": tool_input}
+
+    def _queue_file(self) -> None:
+        entry = self.files[self.file_idx]
+        for index, chunk in enumerate(entry["chunks"]):
+            start, end = chunk["start_line"], chunk["end_line"]
+            self.need[(entry["path"], chunk["chunk"])] = (start, end)
+            stop = end
+            if self.file_idx == 0 and index == 0 and self.first_piece_lines:
+                stop = min(end, start + self.first_piece_lines - 1)
+            self.todo.append((entry["path"], chunk["chunk"], start, stop, end))
+
+    def _absorb(self, conversation) -> None:
+        for msg in conversation:
+            content = msg.get("content")
+            if msg.get("role") != "user" or not isinstance(content, list):
+                continue
+            for block in content:
+                if block.get("type") != "tool_result":
+                    continue
+                request = self.pending.pop(block.get("tool_use_id"), None)
+                if request is not None:
+                    self._take(request, block.get("content") or "")
+
+    def _take(self, request: tuple, text: str) -> None:
+        kind = request[0]
+        if kind == "submit":
+            self.submit_results.append(text)
+            head = text.split("\n", 1)[0]
+            if text.startswith("Conflict resolve failed") or '"ok": false' in head:
+                self.stopped = True
+                return
+            status = self._json.loads(head)["result"]["status"]
+            if status == "conflict":
+                self.file_idx += 1
+                if self.file_idx < len(self.files):
+                    self._queue_file()
+            else:
+                self.stopped = True
+            return
+        result = self._json.loads(text)
+        if kind == "help":
+            self.help_result = result
+            return
+        if kind == "ref":
+            self.ref_result = result
+            return
+        _kind, path, number, start, stop, end = request
+        if not result.get("ok"):
+            error = result.get("error") or {}
+            reason = (error.get("details") or {}).get("reason") or error.get("code")
+            if reason == "result_too_large" and stop > start:
+                middle = (start + stop) // 2
+                self.todo += [(path, number, start, middle, end), (path, number, middle + 1, stop, end)]
+                return
+            # any other failed read: nothing is guessed -- the model stops here.
+            self.read_failures.append(reason)
+            self.stopped = True
+            return
+        self.pieces.setdefault((path, number), {})[start] = result["content"]
+        self.covered.setdefault((path, number), []).append((start, result["returned_end_line"]))
+        in_flight = (
+            any(req[0] == "read" and req[1:3] == (path, number) for req in self.pending.values())
+            or any(item[:2] == (path, number) for item in self.todo)
+        )
+        if not in_flight:
+            chunk_start, chunk_end = self.need[(path, number)]
+            position = chunk_start
+            for got_start, got_end in sorted(self.covered[(path, number)]):
+                if got_start > position:
+                    break
+                position = max(position, got_end + 1)
+            if position <= chunk_end:
+                self.todo.append((path, number, position, chunk_end, chunk_end))
+
+    def _chunk_text(self, path: str, number: int) -> Optional[str]:
+        pieces = self.pieces.get((path, number)) or {}
+        text = "".join(pieces[key] for key in sorted(pieces))
+        lines = text.splitlines()
+        if not lines or not lines[-1].startswith(">>>>>>>"):
+            return None
+        return text
+
+    def _next_calls(self) -> list[dict]:
+        calls: list[dict] = []
+        if len(self.turns) == 0:
+            calls.append(self._call("read_help", {}, ("help",)))
+            refs = self.session.get("refs") or {}
+            if self.probe_ref and refs.get("ours"):
+                calls.append(self._call("read_source_file", {
+                    "path": self.files[0]["path"], "ref": refs["ours"], "start_line": 1, "end_line": 3,
+                }, ("ref",)))
+        if self.pending:
+            return calls
+        if self.todo:
+            batch, self.todo = self.todo, []
+            for path, number, start, stop, end in batch:
+                self.reads.append({"path": path, "chunk": number, "start_line": start, "end_line": stop})
+                calls.append(self._call("read_source_file", {
+                    "path": path, "start_line": start, "end_line": stop,
+                }, ("read", path, number, start, stop, end)))
+            return calls
+        entry = self.files[self.file_idx]
+        resolved = []
+        for chunk in entry["chunks"]:
+            text = self._chunk_text(entry["path"], chunk["chunk"])
+            assert text is not None, (entry["path"], chunk["chunk"], "read incomplete")
+            ours, theirs = _chunk_sides_0608(text)
+            both = ours + theirs
+            resolved.append({"chunk": chunk["chunk"], "content": "\n".join(both) + ("\n" if both else "")})
+        payload = {"files": [{"path": entry["path"], "chunks": resolved}],
+                   "complete": self.file_idx == len(self.files) - 1}
+        self.submits.append(payload)
+        calls.append(self._call("resolve_git_conflict", payload, ("submit",)))
+        return calls
+
+
+def _resolve_token_over_urlopen_0608(monkeypatch, group: str, merge_id: int) -> list:
+    """`urllib.request.urlopen` -> the real resolve-token route (verify_bearer stubbed)."""
+    import io
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    from fastapi import FastAPI, Request
+    from fastapi.responses import JSONResponse
+    from fastapi.testclient import TestClient
+
+    from modules.flow_gate.api.v1 import git_routes
+    from modules.flow_gate.services.git_service import GitServiceError
+
+    app = FastAPI()
+    app.include_router(git_routes.router)
+
+    @app.exception_handler(GitServiceError)
+    async def _handler(request: Request, exc: GitServiceError):  # noqa: ANN202
+        error: dict = {"code": exc.code, "message": exc.message}
+        if exc.details:
+            error["details"] = exc.details
+        return JSONResponse(status_code=exc.status, content={"ok": False, "error": error})
+
+    client = TestClient(app, raise_server_exceptions=False)
+    monkeypatch.setattr(git_routes, "verify_bearer", lambda request: {
+        "action_scope": "resolve_conflict", "group_id": group, "merge_id": merge_id,
+        "token_id": f"tok_{group}", "project": "gitapiprj",
+    })
+    calls: list = []
+
+    class _Resp:
+        def __init__(self, status, body):
+            self.status, self._body = status, body
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+    def fake_urlopen(req, timeout=120):
+        import json
+        parsed = urllib.parse.urlsplit(req.full_url)
+        assert parsed.path.endswith(f"/git/merge/{merge_id}/resolve-token"), parsed.path
+        resp = client.post(parsed.path, content=req.data, headers=dict(req.header_items()))
+        calls.append((resp.status_code, json.loads(req.data), resp.json()))
+        if 200 <= resp.status_code < 300:
+            return _Resp(resp.status_code, resp.content)
+        raise urllib.error.HTTPError(req.full_url, resp.status_code, "", resp.headers, io.BytesIO(resp.content))
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    return calls
+
+
+def _real_reads_for_conflict_0608(monkeypatch, group: str, merge_id: int) -> list:
+    """Wire the run's read tools to the real remote pipeline, bound to the session root.
+
+    Stubbed: token -> grant lookup, the grant's scope row (filled from the real
+    tool_registry -> remote scope mapping for resolve_conflict), the history log and the
+    token -> root lookup (answered by the real `resolve_conflict_src_root`)."""
+    from modules.flow_gate.services import api_server_tools
+    from modules.flow_gate.services import git_service as svc
+    from modules.flow_gate.services import remote_tool_service as remote
+    from modules.flow_gate.services import tool_registry
+
+    kind, _ = tool_registry.kind_for_step("resolve_conflict")
+    grant = {"grant_id": 608, "project": "gitapiprj", "module": "default", "group_id": group}
+    ops: list = []
+    real_handle = remote.handle
+
+    def handle(op, raw, body):
+        ops.append((op, dict(body or {})))
+        return real_handle(op, raw, body)
+
+    monkeypatch.setattr(remote, "_authenticate", lambda raw: grant)
+    monkeypatch.setattr(remote.db_grants, "get_scopes", lambda grant_id: set(remote._SCOPES_BY_KIND[kind]))
+    monkeypatch.setattr(remote, "_resolve_src_root", lambda g, op="read": svc.resolve_conflict_src_root(group, merge_id))
+    monkeypatch.setattr(remote, "_log", lambda *a, **kw: None)
+    monkeypatch.setattr(remote, "_locale_for_grant", lambda g: "en")
+    monkeypatch.setattr(remote, "handle", handle)
+    monkeypatch.setattr(api_server_tools.token_service, "verify", lambda raw: {
+        "action_scope": "resolve_conflict", "project": "gitapiprj", "group_id": group,
+        "merge_id": merge_id, "continuation_locale": "en",
+    })
+    return ops
+
+
+def _api_conflict_run_0608(group: str, merge_id: int, run_id: str) -> tuple[dict, dict]:
+    import threading
+    import time
+    run = {
+        "project_id": "gitapiprj", "chain_source": "system", "run_id": run_id,
+        "docs_target": 0, "raw_token": f"tok_{run_id}", "action_scope": "resolve_conflict",
+        "mode": "single", "group_id": group, "merge_id": merge_id,
+        "api_base_url": "http://fake-host/api/v1",
+        "cancel_event": threading.Event(), "started_mono": time.monotonic(), "timeout_sec": 300,
+    }
+    provider = {"id": "aip_api_0608", "exec_type": "api", "kind": "claude",
+                "api_base_url": "http://fake-host", "api_model": "test-model"}
+    return run, provider
+
+
+def _unmerged_0608(root: Path) -> list[str]:
+    return sorted(_git(["diff", "--name-only", "--diff-filter=U"], cwd=root).split())
+
+
+def _index_conflict_stages_0608(root: Path) -> str:
+    return _git(["ls-files", "-u"], cwd=root)
+
+
+@pytest.fixture(scope="class")
+def api_conflict_origin_0608(seed):
+    """A dedicated project + bare origin (the terminal_reopen_origin shape): the shared
+    `gitprj` base checkout still points at the first class's origin, so a second
+    `origin_repo` for that project cannot provision a worktree."""
+    from modules.flow_gate.db import projects
+    from modules.flow_gate.services import git_service as svc
+
+    projects.create({"project_id": "gitapiprj", "project_name": "GitApiProj"})
+    tmp = Path(tempfile.mkdtemp(prefix="fg-git-0608-api-"))
+    bare = tmp / "origin.git"
+    seedwt = tmp / "seedwt"
+    _git(["init", "--bare", "-b", "main", str(bare)])
+    _git(["init", "-b", "main", str(seedwt)])
+    (seedwt / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(["add", "-A"], cwd=seedwt)
+    _git(["commit", "-m", "init"], cwd=seedwt)
+    _git(["remote", "add", "origin", str(bare)], cwd=seedwt)
+    _git(["push", "origin", "main"], cwd=seedwt)
+    svc.save_config("gitapiprj", {
+        "repo_url": bare.as_uri(),
+        "provider": "generic",
+        "base_branch": "main",
+        "default_finalize_action": "merge",
+        "enabled": True,
+    })
+    yield {"bare": bare, "seedwt": seedwt, "tmp": tmp}
+    svc.delete_config("gitapiprj")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+@needs_git
+class TestApiConflictToolLoop0608:
+    """0608 T0007 -- Cases A~F of the work order, against a real finalize session."""
+
+    def _open_session(self, api_conflict_origin_0608, group: str, files: dict, attrs: str = "") -> tuple[int, Path]:
+        """``files``: path -> (base, ours=main, theirs=group) bytes; finalize conflicts."""
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.storage.paths import src_root
+
+        seedwt = api_conflict_origin_0608["seedwt"]
+        _git(["pull", "origin", "main"], cwd=seedwt)
+
+        def put(root: Path, which: int) -> None:
+            for path, sides in files.items():
+                target = root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(sides[which])
+
+        # byte-exact under this host's autocrlf=true, as in the real repository
+        (seedwt / ".gitattributes").write_text(
+            attrs or "".join(f"{path} -text\n" for path in files), encoding="utf-8")
+        put(seedwt, 0)
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", f"{group} base"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+        assert svc.ensure_worktree("gitapiprj", "default", group) == "ok"
+        put(src_root("GitApiProj", group.replace(".", "_")), 2)
+        put(seedwt, 1)
+        _git(["add", "-A"], cwd=seedwt)
+        _git(["commit", "-m", f"{group} main side"], cwd=seedwt)
+        _git(["push", "origin", "main"], cwd=seedwt)
+        _seed_wf_done_root(group, project_id="gitapiprj")
+        db_git.set_status(group, "awaiting_choice")
+        finalized = svc.finalize(group, "merge")
+        assert finalized["result"]["status"] == "conflict", finalized
+        merge_id = finalized["result"]["merge_id"]
+        return merge_id, svc.resolve_conflict_src_root(group, merge_id)
+
+    def test_0594_scale_conflict_is_read_and_resolved_through_the_api_tool_loop(
+        self, api_conflict_origin_0608, monkeypatch,
+    ):
+        """Cases A, B, C and E: 0594's real blobs, a location-only mention, reads through
+        the real remote pipeline, six partial submits, `resolved_pending_review`."""
+        import json
+
+        monkeypatch.setenv("ALLOWED_ORIGIN", "http://localhost")
+        monkeypatch.setenv("CONTEXT", "/flowgate")
+        monkeypatch.setenv("DB_TYPE", "sqlite")
+        from modules.flow_gate.api import token_routes
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import ai_invoke_service as ai_svc
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services.git import conflict as git_conflict
+
+        for rev in (_API_0594_OURS, _API_0594_THEIRS):
+            probe = subprocess.run(["git", "cat-file", "-e", f"{rev}^{{commit}}"],
+                                   cwd=str(_checkout_0608()), capture_output=True)
+            if probe.returncode:
+                pytest.fail(f"0594 replay needs commit {rev} in {_checkout_0608()} (full clone required)")
+        base_rev = subprocess.run(["git", "merge-base", _API_0594_OURS, _API_0594_THEIRS],
+                                  cwd=str(_checkout_0608()), capture_output=True, text=True).stdout.strip()
+        files = {
+            path: (_history_blob_0608(base_rev, path), _history_blob_0608(_API_0594_OURS, path),
+                   _history_blob_0608(_API_0594_THEIRS, path))
+            for path in _API_0594_PATHS
+        }
+        group = "gitapiprj.default.0681"
+        merge_id, root = self._open_session(api_conflict_origin_0608, group, files)
+        try:
+            self._resolve_0594(monkeypatch, group, merge_id, root, files)
+        finally:
+            svc.abort_merge(group, merge_id)
+
+    def _resolve_0594(self, monkeypatch, group, merge_id, root, files):
+        import json
+
+        from modules.flow_gate.api import token_routes
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import ai_invoke_service as ai_svc
+        from modules.flow_gate.services import git_service as svc
+        from modules.flow_gate.services.git import conflict as git_conflict
+
+        # Case E: the four EOL-only files were merged and marked resolved by the server.
+        eol_only = sorted(svc.list_conflicts(group, merge_id)["eol_only_paths"])
+        assert eol_only == sorted(_API_0594_PATHS[:4])
+        open_paths = sorted(_API_0594_PATHS[4:])
+        assert _unmerged_0608(root) == open_paths
+        assert sorted(db_git.remaining_conflicts(merge_id)) == open_paths
+
+        # Case A: the real mention -- small, location only, read-tool driven.
+        mention = token_routes._build_conflict_mention(
+            group_id=group, project_id="gitapiprj", merge_id=merge_id,
+            scratch_dir="/scratch/x", raw_token="tok_raw", api_base_url="http://fake-host/api/v1",
+        )
+        assert len(mention) <= 10_000, len(mention)
+        session = _session_json_0608(mention)
+        assert session["chunk_text"] == "omitted"
+        assert sum(len(f["chunks"]) for f in session["files"]) == 24
+        assert [f["path"] for f in session["files"]] == open_paths
+        assert sorted(r["path"] for r in session["resolved_files"] if r["reason"] == "eol_only") == eol_only
+
+        remote_ops = _real_reads_for_conflict_0608(monkeypatch, group, merge_id)
+        resolve_calls = _resolve_token_over_urlopen_0608(monkeypatch, group, merge_id)
+        model = _ScriptedConflictModel0608()
+        monkeypatch.setattr(ai_svc, "_call_anthropic", model)
+        monkeypatch.setattr(ai_svc.ai_settings_service, "get_provider_secret", lambda scope, pid: "key")
+        run, provider = _api_conflict_run_0608(group, merge_id, "aiv_conflict_0594_0608")
+
+        result = ai_svc._api_execute(provider, mention, run)
+        assert result == ("started_ok", None)
+
+        # tool surface: the mention's read tools + read_help + the bound submit, nothing that writes
+        assert model.offered == [
+            "read_help", "read_source_file", "search_source", "glob_source", "stat_source",
+            "diff_source", "log_source", "show_commit_source", "merge_preview_source",
+            "resolve_git_conflict",
+        ]
+        assert "`read_source_file`" in model.prompt and "GET http://fake-host/api/v1/help" not in model.prompt
+        assert len(model.prompt) <= 10_000, len(model.prompt)     # guidance + mention, as the API model gets it
+        assert run["api_turn_budget"] == 4 + 2 * 24 + 6 == 58
+        from modules.flow_gate.services.ai_invoke.runtime import API_CONFLICT_MAX_TOKENS
+        assert set(model.max_tokens) == {API_CONFLICT_MAX_TOKENS}
+
+        # the reads really happened, through the real pipeline, before any submit
+        assert model.help_result and model.help_result["ok"] is True
+        assert model.ref_result["ok"] is True
+        assert model.ref_result["content"].encode() == b"".join(
+            _history_blob_0608(_API_0594_OURS, session["files"][0]["path"]).splitlines(keepends=True)[:3])
+        read_ops = [body for op, body in remote_ops if op == "read"]
+        assert all(body["path"] in open_paths for body in read_ops)        # never an EOL-only file
+        assert not [op for op, _ in remote_ops if op in ("write", "patch", "remove")]
+        first_submit_turn = next(i for i, names in enumerate(model.turns) if "resolve_git_conflict" in names)
+        assert "read_source_file" in model.turns[0] and first_submit_turn > 0
+        # Case B: the first chunk took more than one read (a short first piece, then the rest),
+        # and every chunk was read over its full marker range before it was resolved.
+        first = session["files"][0]
+        first_reads = [r for r in model.reads if (r["path"], r["chunk"]) == (first["path"], 1)]
+        assert len(first_reads) >= 2
+        assert not model.read_failures
+        for entry in session["files"]:
+            for chunk in entry["chunks"]:
+                covered = sorted((r["start_line"], r["end_line"]) for r in model.reads
+                                 if (r["path"], r["chunk"]) == (entry["path"], chunk["chunk"]))
+                assert covered[0][0] == chunk["start_line"] and max(e for _, e in covered) == chunk["end_line"]
+
+        # Case C: one file per submit -- five accepted partials, then the complete one
+        assert [status for status, _body, _resp in resolve_calls] == [200] * 6
+        statuses = [resp["result"]["status"] for _s, _b, resp in resolve_calls]
+        assert statuses == ["conflict"] * 5 + ["resolved_pending_review"]
+        remaining_after = [sorted(resp["result"]["remaining_conflicts"]) for _s, _b, resp in resolve_calls]
+        assert remaining_after == [open_paths[index + 1:] for index in range(5)] + [[]]
+        assert [len(body["files"]) for _s, body, _r in resolve_calls] == [1] * 6
+        assert all("chunks" in body["files"][0] and "content" not in body["files"][0]
+                   for _s, body, _r in resolve_calls)
+        assert [body["complete"] for _s, body, _r in resolve_calls] == [False] * 5 + [True]
+        assert run["conflict_partial_submits"] == 5
+        assert db_git.remaining_conflicts(merge_id) == []
+        assert _unmerged_0608(root) == []
+        context = db_git.session_context(db_git.get_session(merge_id))
+        assert context["review_state"] == svc.REVIEW_STATE_PENDING
+        # the largest reply (finalize.py's 10 chunks, both sides kept) vs. the whole file
+        biggest = max(len(json.dumps(body)) for _s, body, _r in resolve_calls)
+        assert biggest < len(files["server/modules/flow_gate/services/git/finalize.py"][1]) // 3
+
+        # every resolved file: markers gone (these sources quote marker strings, so only a
+        # whole marker line counts), written in ours' line ending
+        for path in open_paths:
+            data = (root / path).read_bytes()
+            assert not svc.has_conflict_markers(data.decode("utf-8")), path
+            assert b"\r\r\n" not in data
+            assert git_conflict._majority_eol(data) == git_conflict._majority_eol(files[path][1])
+        for path in eol_only:
+            assert not svc.has_conflict_markers((root / path).read_bytes().decode("utf-8")), path
+
+    def test_small_conflict_stays_inline_and_the_validators_still_decide(self, api_conflict_origin_0608, monkeypatch):
+        """Cases D and F: an inline mention needs no read, and a `chunks` submission that
+        drops a side, leaves a chunk out, or declares an unwarranted supersede is refused
+        by the existing codes -- leaving file, index and session untouched -- until a
+        correct one is accepted."""
+        monkeypatch.setenv("ALLOWED_ORIGIN", "http://localhost")
+        monkeypatch.setenv("CONTEXT", "/flowgate")
+        monkeypatch.setenv("DB_TYPE", "sqlite")
+        from modules.flow_gate.api import token_routes
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import ai_invoke_service as ai_svc
+
+        base = b"head = 0\nfirst = 'base'\nmid_a = 1\nmid_b = 2\nmid_c = 3\nmid_d = 4\nsecond = 'base'\ntail = 9\n"
+        ours = base.replace(b"first = 'base'", b"first = 'main'").replace(b"second = 'base'", b"second = 'main'")
+        theirs = base.replace(b"first = 'base'", b"first = 'group'").replace(b"second = 'base'", b"second = 'group'")
+        group = "gitapiprj.default.0682"
+        merge_id, root = self._open_session(api_conflict_origin_0608, group, {"small.py": (base, ours, theirs)})
+        try:
+            self._resolve_small(monkeypatch, group, merge_id, root)
+        finally:
+            from modules.flow_gate.services import git_service as svc
+            svc.abort_merge(group, merge_id)
+
+    def _resolve_small(self, monkeypatch, group, merge_id, root):
+        from modules.flow_gate.api import token_routes
+        from modules.flow_gate.db import git_integration as db_git
+        from modules.flow_gate.services import ai_invoke_service as ai_svc
+
+        mention = token_routes._build_conflict_mention(
+            group_id=group, project_id="gitapiprj", merge_id=merge_id,
+            scratch_dir="/scratch/x", raw_token="tok_raw", api_base_url="http://fake-host/api/v1",
+        )
+        session = _session_json_0608(mention)
+        assert session["chunk_text"] == "inline"
+        chunks = session["files"][0]["chunks"]
+        assert [c["ours"] for c in chunks] == [["first = 'main'"], ["second = 'main'"]]
+        assert [c["theirs"] for c in chunks] == [["first = 'group'"], ["second = 'group'"]]
+
+        both = [{"chunk": 1, "content": "first = 'main'\nfirst = 'group'\n"},
+                {"chunk": 2, "content": "second = 'main'\nsecond = 'group'\n"}]
+        attempts = [
+            # drops the group side of chunk 1
+            [{"path": "small.py", "chunks": [{"chunk": 1, "content": "first = 'main'\n"}, both[1]]}],
+            # chunk 2 not sent: its marker block stays in the rebuilt file
+            [{"path": "small.py", "chunks": [both[0]]}],
+            # a supersede declaration with no dropped side to excuse
+            [{"path": "small.py", "chunks": both, "supersede": {"side": "ours", "reason": "main wins"}}],
+            [{"path": "small.py", "chunks": both}],
+        ]
+        before = ((root / "small.py").read_bytes(), _index_conflict_stages_0608(root))
+        snapshots = []
+        offered = []
+
+        def model(_u, _m, _k, conversation, _t, tool_specs, _d, _s, _f=False, max_tokens=None):
+            offered.append([spec["name"] for spec in tool_specs])
+            if len(offered) > 1:
+                snapshots.append(((root / "small.py").read_bytes(), _index_conflict_stages_0608(root),
+                                  db_git.remaining_conflicts(merge_id)))
+            files = attempts[len(offered) - 1]
+            call = {"id": f"tu{len(offered)}", "name": "resolve_git_conflict",
+                    "input": {"files": files, "complete": True}}
+            return None, [call], {"role": "assistant", "content": [
+                {"type": "tool_use", "id": call["id"], "name": call["name"], "input": call["input"]}]}
+
+        resolve_calls = _resolve_token_over_urlopen_0608(monkeypatch, group, merge_id)
+        remote_ops = _real_reads_for_conflict_0608(monkeypatch, group, merge_id)
+        monkeypatch.setattr(ai_svc, "_call_anthropic", model)
+        monkeypatch.setattr(ai_svc.ai_settings_service, "get_provider_secret", lambda scope, pid: "key")
+        run, provider = _api_conflict_run_0608(group, merge_id, "aiv_conflict_small_0608")
+
+        assert ai_svc._api_execute(provider, mention, run) == ("started_ok", None)
+
+        assert run["api_turn_budget"] == 4 + 2 * 2 + 1
+        assert remote_ops == []                          # nothing forced a read
+        codes = [resp.get("error", {}).get("code") for _s, _b, resp in resolve_calls[:3]]
+        assert [s for s, _b, _r in resolve_calls] == [422, 422, 422, 200]
+        assert codes == ["conflict_side_dropped", "conflict_markers_remain", "conflict_supersede_invalid"]
+        # each refusal left the conflicted file, the index stages and the session as they were
+        for data, stages, remaining in snapshots[:3]:
+            assert (data, stages) == before
+            assert remaining == ["small.py"]
+        assert resolve_calls[3][2]["result"]["status"] == "resolved_pending_review"
+        assert (root / "small.py").read_bytes() == (
+            b"head = 0\nfirst = 'main'\nfirst = 'group'\nmid_a = 1\nmid_b = 2\nmid_c = 3\nmid_d = 4\n"
+            b"second = 'main'\nsecond = 'group'\ntail = 9\n")
+        assert db_git.remaining_conflicts(merge_id) == []

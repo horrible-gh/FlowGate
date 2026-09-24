@@ -715,6 +715,13 @@ def _build_mention_for_token(
     )
 
 
+# 0608 T0007: the marker patterns resolve_conflicts' own parser uses
+# (git_service._CONFLICT_OPEN_RE/_CLOSE_RE, git/conflict.py _CONFLICT_BASE_RE/_SEP_RE), so
+# chunk N in the mention is chunk N when a `chunks` submission is assembled.
+_CHUNK_BASE_RE = re.compile(r"^\|{7}( |$)")
+_CHUNK_SEP_RE = re.compile(r"^={7}$")
+
+
 def _split_conflict_chunks(content: str) -> list[dict]:
     chunks: list[dict] = []
     state: Optional[str] = None
@@ -725,20 +732,20 @@ def _split_conflict_chunks(content: str) -> list[dict]:
     # Line numbers count the way `/remote/read` start_line/end_line do (str.splitlines),
     # so a chunk's range can be read back as-is (0608 T0005).
     for line_no, line in enumerate(content.splitlines(), start=1):
-        if line.startswith("<<<<<<<"):
+        if git_service._CONFLICT_OPEN_RE.match(line):
             state = "ours"
             current = {"ours": [], "base": [], "theirs": []}
             ours_label = line[7:].strip()
             theirs_label = ""
             start_line = line_no
             continue
-        if state == "ours" and line.startswith("|||||||"):
+        if state == "ours" and _CHUNK_BASE_RE.match(line):
             state = "base"
             continue
-        if state in ("ours", "base") and line.startswith("======="):
+        if state in ("ours", "base") and _CHUNK_SEP_RE.match(line):
             state = "theirs"
             continue
-        if state == "theirs" and line.startswith(">>>>>>>"):
+        if state == "theirs" and git_service._CONFLICT_CLOSE_RE.match(line):
             theirs_label = line[7:].strip()
             chunks.append({
                 "ours_label": ours_label,
@@ -785,8 +792,9 @@ def _conflict_task_section(kind: str, tr: dict) -> str:
             "Before you decide a chunk, read the whole file and the surrounding code with the "
             "read/grep/glob/diff/log/show tools — a chunk resolved correctly in isolation can "
             "still leave a name undefined, an import dropped or a branch unreachable.\n"
-            "Do not ask the user to choose chunks. Produce complete file contents with all "
-            "conflict markers removed, then call the bound resolve endpoint.\n"
+            "Do not ask the user to choose chunks. Produce each resolved file -- its complete "
+            "contents, or every one of its chunks resolved -- with all conflict markers "
+            "removed, then call the bound resolve endpoint.\n"
             "Your call ends at `resolved_pending_review`, not at a commit: a person reads the "
             "whole candidate diff and presses the approve button. Leave the tree in the state "
             "you would want them to read, and say in your final message which chunks you were unsure "
@@ -1285,6 +1293,10 @@ def _build_conflict_mention(
         "  ],\n"
         "  \"complete\": true\n"
         "}\n\n"
+        "Instead of `content`, a file may carry `chunks`: one object for every chunk of that "
+        "file, with `chunk` (its number in the conflict session below) and `content` (the lines "
+        "that replace its whole marker block). The server rebuilds the file from them and checks "
+        "it exactly like `content`.\n\n"
         "The bearer token is bound to exactly this group_id and merge_id. Other git/config/finalize endpoints are not authorized.\n\n"
         + _SUPERSEDE_MENTION_SECTION
         + write_plan_section
@@ -1387,8 +1399,10 @@ def _conflict_reading_section(
         "endpoint is the only way to change a file, and it validates every chunk.",
         "- Build each resolved file with a script in your scratch directory "
         "(FLOWGATE_SCRATCH): fetch the conflicted file, replace each chunk, and let the script "
-        "JSON-encode the request body. Do not type a large file into JSON by hand. You may "
-        "send files one at a time with \"complete\": false and set \"complete\": true on the last.",
+        "JSON-encode the request body. Do not type a large file into JSON by hand; sending "
+        "`chunks` instead of `content` keeps the body to the resolved chunks. You may "
+        "send files one at a time with \"complete\": false and set \"complete\": true on the last. "
+        "Each accepted call answers with `remaining_conflicts`.",
         "- `resolved_files` need nothing from you. `eol_only` means both sides differed only "
         "in CRLF/LF and the file was already merged on normalised line endings.",
     ]
