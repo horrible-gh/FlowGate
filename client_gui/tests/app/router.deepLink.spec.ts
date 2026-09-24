@@ -29,9 +29,9 @@ describe('/app router deep-link round trip', () => {
 
     expect(router.currentRoute.value.fullPath).toBe('/projects?tab=x')
     expect(window.location.pathname + window.location.search).toBe('/app/projects?tab=x')
-    // The catch-all matched (not the '/' route) and resolved to the T#1 placeholder,
-    // not an empty/unknown record.
-    expect(router.currentRoute.value.matched.length).toBeGreaterThan(0)
+    // T0011: resolved to the /app/projects placeholder route (not the '/' Dashboard and
+    // not the not-found catch-all).
+    expect(router.currentRoute.value.name).toBe('projects')
   })
 
   it('preserves a nested deep path for refresh-style direct navigation identically', async () => {
@@ -46,5 +46,7 @@ describe('/app router deep-link round trip', () => {
 
     expect(router.currentRoute.value.fullPath).toBe('/projects/nested/refresh')
     expect(window.location.pathname).toBe('/app/projects/nested/refresh')
+    // A path below a section stays in that section (Sidebar keeps it highlighted).
+    expect(router.currentRoute.value.name).toBe('projects')
   })
 })

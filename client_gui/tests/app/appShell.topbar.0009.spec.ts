@@ -4,8 +4,11 @@ import { mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import App from '@/app/App.vue'
+import { registerAppMessages } from '@/app/i18n'
 
 const APP_VUE_SRC = readFileSync(resolve(__dirname, '../../src/app/App.vue'), 'utf8')
+
+registerAppMessages(i18n)
 
 // T0009 §8: App.vue (the App Shell) owns the Topbar, not any per-view component, so
 // every /app/* route rendered through RouterView gets the switch for free. This mounts
@@ -37,8 +40,9 @@ describe('client_gui App Shell renders a persistent Topbar (T0009 §8)', () => {
     await router.isReady()
 
     expect(wrapper.find('.app-header .gui-switch-btn').exists()).toBe(true)
-    // The route content (placeholder view) still renders beneath/alongside the shell.
-    expect(wrapper.find('.app-placeholder').exists()).toBe(true)
+    // The route content (T0011: the /app/projects "준비 중" placeholder) still renders
+    // beneath/alongside the shell, inside the shell's content area.
+    expect(wrapper.find('.gui-route-content .gui-coming-soon').exists()).toBe(true)
 
     wrapper.unmount()
   })
@@ -47,10 +51,10 @@ describe('client_gui App Shell renders a persistent Topbar (T0009 §8)', () => {
   // client/shared/app.css, whose grid is `grid-template-columns: var(--sdb-w) 1fr` for
   // v0.1's sidebar layout. Only `.app-header` (the Topbar) carries `grid-column: 1/-1`
   // there, so `RouterView`'s route root had no grid-column of its own and CSS grid
-  // auto-placed it into the 280px sidebar cell instead of the full width — v0.2 has no
-  // sidebar yet. jsdom doesn't run real grid layout, so this asserts the source contract
-  // directly: the shell root must not opt into the shared 2-column class, and its own
-  // grid must declare a single content column.
+  // auto-placed it into the 280px sidebar cell instead of the full width. jsdom doesn't
+  // run real grid layout, so this asserts the source contract directly: the shell root
+  // must not opt into the shared 2-column class, and its own grid must declare a single
+  // content column (T0011 puts the sidebar/content split in the body's own grid instead).
   it('does not confine the routed view to the shared sidebar column (T0009 §10/§12)', () => {
     expect(rootShellClass(APP_VUE_SRC)).not.toBe('app-shell')
 

@@ -15,11 +15,23 @@ const require = createRequire(import.meta.url)
 // alias still pins the single client_gui copy but lets Vite pick the browser ESM entry.
 const pkgDir = (name: string) => dirname(require.resolve(`${name}/package.json`))
 
+// Sidebar version block (T0011 §7): "Build YYYY.MM.DD" is the day this bundle was built,
+// not a hand-kept constant that goes stale.
+const buildDate = new Date()
+const BUILD_STAMP = [
+  buildDate.getFullYear(),
+  String(buildDate.getMonth() + 1).padStart(2, '0'),
+  String(buildDate.getDate()).padStart(2, '0'),
+].join('.')
+
 // T0005 §3: v0.2 is a single SPA served under /app, with its own hashed assets under
 // /app/assets/* so a rebuild can never collide with v0.1's /assets/* (server/routers/main.py).
 export default defineConfig({
   base: '/app/',
   plugins: [vue()],
+  define: {
+    __FG_GUI_BUILD__: JSON.stringify(BUILD_STAMP),
+  },
   resolve: {
     // Windows: the source tree can live on a drive letter mapped to a UNC share.
     // Vite's realpath pass rewrites resolved ids onto whichever drive letter

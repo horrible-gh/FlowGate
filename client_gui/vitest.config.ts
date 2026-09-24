@@ -9,6 +9,10 @@ const pkgDir = (name: string) => dirname(require.resolve(`${name}/package.json`)
 
 export default defineConfig({
   plugins: [vue()],
+  // vite.config.ts injects the real build date; tests pin a fixed value.
+  define: {
+    __FG_GUI_BUILD__: JSON.stringify('test-build'),
+  },
   test: {
     environment: 'jsdom',
     globals: true,

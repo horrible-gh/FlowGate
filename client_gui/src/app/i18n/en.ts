@@ -1,0 +1,93 @@
+export default {
+  brand: {
+    tagline: 'Turn Ideas into Working Flow',
+    home_aria: 'Go to the FlowGate dashboard',
+  },
+  topbar: {
+    search_placeholder: 'Search projects, groups, files, settings...',
+    search_aria: 'Search (coming soon)',
+    search_unavailable: 'Search is not available yet.',
+    notifications_aria: 'Notifications (coming soon)',
+    switch_aria: 'Switch GUI',
+    user_role_admin: 'Administrator',
+    user_role_member: 'Member',
+  },
+  nav: {
+    aria: 'Main screens',
+    dashboard: { title: 'Dashboard', sub: 'Back to home' },
+    projects: { title: 'Projects', sub: 'Manage projects' },
+    designer: { title: 'Designer', sub: 'Groups · flow design' },
+    git: { title: 'Git', sub: 'Repository management' },
+    ai: { title: 'AI Settings', sub: 'AI groups and policies' },
+    settings: { title: 'Settings', sub: 'Workspace settings' },
+  },
+  sidebar: {
+    help: 'Help',
+    help_unavailable: 'Help is not available yet.',
+    version: 'FlowGate v0.2',
+    build: 'Build {build}',
+  },
+  dashboard: {
+    greeting_line1: 'Have a good day.',
+    greeting_line2: 'Carry your next possibility forward.',
+    lead: 'FlowGate is where ideas turn into real work.',
+    quote: '“Even a small idea,\nonce it meets the right flow,\nmakes a big change.”',
+    quote_by: '— FlowGate',
+    cards_aria: 'Screen shortcuts',
+    unavailable: 'Coming soon',
+    cards: {
+      projects: {
+        title: 'Projects',
+        desc: 'Open a recent project\nor load an existing one\nand keep working.',
+        action: 'Open projects',
+      },
+      designer: {
+        title: 'Designer',
+        desc: 'Design the flow of groups and work\nand build workflows visually.',
+        action: 'Go to Designer',
+      },
+      git: {
+        title: 'Git',
+        desc: 'Connect repositories and\nsync branches and changes.',
+        action: 'Manage Git',
+      },
+      ai: {
+        title: 'AI Settings',
+        desc: 'Configure and manage AI groups,\nroles, providers and policies.',
+        action: 'Open AI settings',
+      },
+      settings: {
+        title: 'Settings',
+        desc: 'Manage workspace and\nuser settings.',
+        action: 'Open settings',
+      },
+      quick: {
+        title: 'Quick start',
+        desc: 'Jump straight into\nthe tasks you use most.',
+        action: 'Start now',
+      },
+    },
+    tip_label: 'Quick tip',
+    tip_text: 'Search (Ctrl + K) is not available yet. For now, use the left menu or the cards above to reach each screen.',
+    tip_close: 'Dismiss tip',
+    side_aria: 'Work summary',
+    panels: {
+      recent_projects: 'Recent projects',
+      recent_groups: 'Recent groups',
+      attention: 'Needs attention',
+      notices: 'System notices',
+    },
+    panel_empty: 'Not connected yet. A follow-up task will fill this with real data.',
+    footer_mark: 'Build the Flow, Not Just the Document.',
+  },
+  placeholder: {
+    badge: 'Coming soon',
+    body: 'This screen is not implemented in FlowGate v0.2 yet.',
+    legacy_hint: 'If you need this feature now, use the [{label}] button at the top to open the v0.1 screens.',
+    back: 'Back to dashboard',
+  },
+  not_found: {
+    title: 'Screen not found',
+    body: 'There is no v0.2 screen for {path}.',
+  },
+}

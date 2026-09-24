@@ -1,23 +1,28 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { installAuthGuard } from '@/core/router/guard'
-import DashboardPlaceholderView from '../views/DashboardPlaceholderView.vue'
+import DashboardView from '../dashboard/DashboardView.vue'
+import { PLACEHOLDER_NAV_KEYS } from '../navigation'
+import ComingSoonView from '../views/ComingSoonView.vue'
+import NotFoundView from '../views/NotFoundView.vue'
 
-// T#1 scope only (T0005 §7): a single placeholder route to prove /app bootstrap,
-// routing, and auth guard work end to end. Real screens (Project/Designer/Git/AI/
-// Environment/Dashboard) are out of scope until T#2 and later.
+// T0011 §8/§12: /app is the Dashboard; /app/projects, /designer, /git, /ai and /settings
+// exist as honest "준비 중" placeholders. Each placeholder also owns everything below it
+// (`/projects/...`), so a deep link keeps its section highlighted in the Sidebar.
 //
-// The catch-all RENDERS the placeholder directly instead of `redirect: '/'`: a
-// `redirect` rewrites the URL bar, so an authenticated deep-link like
-// `/app/projects?tab=x` would flash to `/app/` the instant the router resolved it —
-// breaking the "복귀 경로 그대로 유지" contract (T0005 §5/§9) for every path except the
-// bare root. Matching the same component on both routes keeps the requested /app/*
-// URL intact while T#1's placeholder still satisfies "직접 접근 시 안전하게 처리".
-const routes = [
-  {
-    path: '/',
-    component: DashboardPlaceholderView,
-  },
-  { path: '/:pathMatch(.*)*', component: DashboardPlaceholderView },
+// Nothing here redirects: a `redirect` rewrites the URL bar, and the T#1 contract is that an
+// authenticated deep link (e.g. `/app/projects?tab=x`) and a browser refresh keep exactly the
+// URL that was requested. Unknown paths render NotFoundView in place for the same reason.
+const placeholderRoutes: RouteRecordRaw[] = PLACEHOLDER_NAV_KEYS.map((key) => ({
+  path: `/${key}/:rest(.*)*`,
+  name: key,
+  component: ComingSoonView,
+  meta: { navKey: key },
+}))
+
+const routes: RouteRecordRaw[] = [
+  { path: '/', name: 'dashboard', component: DashboardView, meta: { navKey: 'dashboard' } },
+  ...placeholderRoutes,
+  { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFoundView },
 ]
 
 const router = createRouter({

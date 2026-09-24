@@ -3,10 +3,11 @@ import { createPinia } from 'pinia'
 import { isNavigationFailure, NavigationFailureType } from 'vue-router'
 import i18n from '@shared/i18n'
 import router from './router'
-import '@shared/variables.css'
-import '@shared/app.css'
+import { registerAppMessages } from './i18n'
+import './styles/theme.css'
 import App from './App.vue'
-import { getRequest, ensureValidAccessToken, startTokenAutoRefresh } from '@shared/api'
+import { ensureValidAccessToken, startTokenAutoRefresh } from '@shared/api'
+import { loadCurrentUser, setCurrentUser } from '@/core/auth/currentUser'
 
 // Mirrors client/src/main/main.ts's bootstrap exactly (T0005 §5: auth reuse, not a
 // second policy): recover the access token for an F5 refresh, rotate it up-front if
@@ -24,14 +25,18 @@ async function initializeApp() {
     await ensureValidAccessToken()
 
     try {
-      await getRequest('/auth/me')
+      // The /auth/me validation request also tells the Topbar who is signed in.
+      await loadCurrentUser()
       startTokenAutoRefresh()
     } catch {
       // Token is invalid/expired — clear it so the router guard sends us to /login.
+      setCurrentUser(null)
       sessionStorage.removeItem('fg_access_token')
       delete window.__accessToken__
     }
   }
+
+  registerAppMessages(i18n)
 
   const app = createApp(App)
   app.use(createPinia())
