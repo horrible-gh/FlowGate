@@ -2,6 +2,7 @@ import { isAxiosError } from 'axios'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { postRequest, getRequest } from '@shared/api'
+import { resolveSafeReturnPath } from '@shared/auth'
 
 export type AuthState =
   | 'IDLE'
@@ -79,7 +80,17 @@ const getErrorDetail = (error: unknown): string => {
 }
 
 export const authRedirect = {
-  toDashboard: () => window.location.replace('/main'),
+  // T0005 §5: an /app deep-link that bounced here carries ?next=<path>. Only an
+  // allow-listed internal path is honored (resolveSafeReturnPath); everything else,
+  // including plain /main visits with no next param, keeps the original v0.1 target so
+  // existing /main users are never redirected anywhere new.
+  toDashboard: () => {
+    const next =
+      typeof window !== 'undefined'
+        ? resolveSafeReturnPath(new URLSearchParams(window.location.search).get('next'))
+        : null
+    window.location.replace(next ?? '/main')
+  },
 }
 
 export const useAuthStore = defineStore('auth', () => {
