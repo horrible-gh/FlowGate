@@ -170,6 +170,9 @@ class DocumentBodyRequest(BaseModel):
     # flowgate.default.0162 §1 — final-approval git ride-along (merge/push/wait).
     # Only honored on approve of a git-active group's AC document.
     git_action: Optional[str] = None
+    # flowgate.default.0594 T0012 — the local branch the git_action's merge lands
+    # on. Omitted → the project base (legacy behavior). Validated server-side.
+    git_target_branch: Optional[str] = None
 
 
 class RejectionReasonBodyRequest(BaseModel):
@@ -382,6 +385,16 @@ async def document_review_transition_rpc(
     _guard_group_not_ai_running(guarded_doc, body.doc_id)
 
     git_action = body.git_action
+    # flowgate.default.0594 T0012: the merge target rides along with git_action only.
+    git_target_branch = body.git_target_branch
+    if git_target_branch is not None and git_action is None:
+        return JSONResponse(
+            status_code=422,
+            content={"ok": False, "error": {
+                "code": "invalid_request",
+                "message": "git_target_branch is only accepted together with git_action",
+            }},
+        )
     if git_action is None and action == "approve" and guarded_doc.get("type_code") == "AC":
         # 0555 A11/B8: a terminal Git result may outlive its coupled approval
         # transaction. Clean attempts live on group_git_state; conflict attempts
@@ -516,12 +529,21 @@ async def document_review_transition_rpc(
             )
             fresh_doc = db_docs.get_by_id(body.doc_id)
             group_id = git_service.precheck_approve_git_action(fresh_doc, git_action)
+            if git_target_branch is not None and group_id:
+                # 0594 T0012 §10: an invalid/stale target refuses the approval
+                # before it is applied, exactly like an invalid git_action.
+                git_service.precheck_approve_git_target(
+                    group_id, git_action, git_target_branch
+                )
         except (GitServiceError, TransitionError, WFPermissionError, ValueError) as exc:
             status = exc.status if isinstance(exc, GitServiceError) else (
                 403 if isinstance(exc, WFPermissionError) else 409
             )
             code = exc.code if isinstance(exc, GitServiceError) else "approval_precheck_failed"
             error = {"code": code, "message": str(getattr(exc, "message", exc))}
+            if isinstance(exc, GitServiceError) and getattr(exc, "details", None):
+                # 0594 T0012: a refused target names itself (target_branch/action).
+                error["details"] = exc.details
             pending["stage"] = "precheck"
             return status, {"ok": False, "error": error, "git": {"ok": False, "error": error}, "approval": pending}
 
@@ -546,9 +568,15 @@ async def document_review_transition_rpc(
                 lock_holder=holder,
                 approval_intent_id=approval_intent_id,
             )
-            outcome = git_service.run_approve_git_action(
-                group_id, git_action, approval_context=context
-            )
+            if git_target_branch is None:
+                outcome = git_service.run_approve_git_action(
+                    group_id, git_action, approval_context=context
+                )
+            else:
+                # 0594 T0012: the approved merge lands on the carried target.
+                outcome = git_service.run_approve_git_action(
+                    group_id, git_action, git_target_branch, approval_context=context
+                )
             if not outcome.get("ok"):
                 pending["stage"] = "git_finalize"
                 error = outcome.get("error") or {"code": "git_error", "message": "Git finalize failed"}

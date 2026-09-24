@@ -592,5 +592,14 @@ def _local_commit_count(base_root: Optional[Path]) -> Optional[int]:
 
 def _merge_in_progress(base_root: Path) -> bool:
     """True while a conflict session holds the base checkout mid-merge — commit
-    and revert must not touch that intermediate state (resolve/abort only)."""
-    return (base_root / ".git" / "MERGE_HEAD").exists()
+    and revert must not touch that intermediate state (resolve/abort only).
+
+    0594 T0012: a managed merge-target workspace is a LINKED worktree whose ``.git``
+    is a file pointing at ``<repo>/.git/worktrees/<name>`` — ask git there. The
+    shared base checkout (a real ``.git`` directory) keeps the direct file check."""
+    git_path = base_root / ".git"
+    if git_path.is_file():
+        from modules.flow_gate.services import git_service as _gs
+        proc = _gs._run_git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], cwd=base_root)
+        return proc.returncode == 0
+    return (git_path / "MERGE_HEAD").exists()

@@ -4,6 +4,9 @@ GET/PUT/DELETE /api/v1/projects/{project_id}/git/config
 POST           /api/v1/projects/{project_id}/git/test-connection
 GET/POST       /api/v1/projects/{project_id}/git/provision   (0161 P0004)
 GET            /api/v1/projects/{project_id}/git/status       (0162 P §2)
+GET            /api/v1/projects/{project_id}/git/branches     (0594 T0010)
+POST           /api/v1/projects/{project_id}/git/branches     (0594 T0010)
+DELETE         /api/v1/projects/{project_id}/git/branches/{name:path} (0594 T0010)
 POST           /api/v1/projects/{project_id}/git/fetch        (0162 P §3-1)
 POST           /api/v1/projects/{project_id}/git/push         (0162 P §3-2)
 POST           /api/v1/projects/{project_id}/git/cleanup      (0182 NR0003 §5)
@@ -51,6 +54,7 @@ from modules.flow_gate.services import (
 from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.services.git_service import GitServiceError
 from modules.flow_gate.services.git.credentials import git_error_envelope
+from modules.flow_gate.services.git import merge_target as git_merge_target
 
 router = APIRouter(prefix="/api/v1", tags=["Git"])
 
@@ -184,6 +188,90 @@ def post_git_provision(
     # a provisioning failure is a 200 with result.status="failed", not an error.
     try:
         return git_service.provision_manual(project_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+# ── Project branches (0594 T0010) ────────────────────────────────────────────
+
+class BranchCreateBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    source_branch: str
+
+
+class BranchMergeBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_branch: str
+    target_branch: str
+
+
+@router.get("/projects/{project_id}/git/branches")
+def get_git_branches(
+    project_id: str,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    try:
+        return git_service.list_branches(project_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/projects/{project_id}/git/branches")
+def post_git_branch(
+    project_id: str,
+    body: BranchCreateBody,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    try:
+        return git_service.create_branch(project_id, body.name, body.source_branch)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/projects/{project_id}/git/branches/merge")
+def post_git_branch_merge(
+    project_id: str,
+    body: BranchMergeBody,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    try:
+        return git_service.merge_branches(project_id, body.source_branch, body.target_branch)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.delete("/projects/{project_id}/git/branches/{name:path}")
+def delete_git_branch(
+    project_id: str,
+    name: str,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    try:
+        return git_service.delete_branch(project_id, name)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+class DefaultMergeTargetBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # None/omitted clears the suggestion back to the project base branch.
+    branch: Optional[str] = None
+
+
+@router.put("/projects/{project_id}/git/branches/default-target")
+def put_git_default_merge_target(
+    project_id: str,
+    body: DefaultMergeTargetBody,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    """T0016 §3.2 — set/clear the project's persistent integration branch
+    directly, as its own action (separate from running an actual branch merge)."""
+    try:
+        return git_merge_target.set_project_default_target(project_id, body.branch)
     except GitServiceError as exc:
         return _guard(exc)
 
@@ -487,6 +575,9 @@ class FinalizeBody(BaseModel):
     # Confirmed commit subject for the absorb commit (0173 P0003 §3). Blank/omitted
     # → the server resolves it (unmanned path); >200 chars (normalized) → 422.
     commit_message: str | None = None
+    # flowgate.default.0594 T0012: the local branch a merge lands on. Omitted -> the
+    # project base (or, while an attempt is open, that attempt's pinned target).
+    git_target_branch: str | None = None
 
 
 @router.post("/groups/{group_id}/git/finalize")
@@ -499,6 +590,11 @@ def post_group_finalize(
     if denied:
         return denied
     try:
+        if body is not None and body.git_target_branch is not None:
+            return git_service.finalize(
+                group_id, body.action, body.commit_message,
+                target_branch=body.git_target_branch,
+            )
         return git_service.finalize(
             group_id,
             body.action if body else None,

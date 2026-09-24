@@ -92,6 +92,21 @@ def upsert_config(project_id: str, data: dict[str, Any]) -> dict:
     return get_config(project_id)  # type: ignore[return-value]
 
 
+def set_default_merge_target(project_id: str, branch: Optional[str]) -> None:
+    """Persist the project's suggested finalize target (T0016 §2.2) without
+    disturbing any other git config field. A non-base integration branch that a
+    finalize actually merged into becomes this project's suggested default for
+    the NEXT group's finalize dialog, instead of resetting to base_branch every
+    time. ``None``/blank clears the suggestion back to "none"."""
+    if _get_config_db(project_id) is None:
+        return
+    get_store()._execute(
+        "UPDATE project_git_config SET default_merge_target = ? WHERE project_id = ?",
+        [branch or None, project_id],
+    )
+    meta_cache.invalidate_git_config(project_id)
+
+
 def delete_config(project_id: str) -> bool:
     if _get_config_db(project_id) is None:
         return False
@@ -350,6 +365,21 @@ def create_session(
                 [merge_id, path],
             )
     return merge_id
+
+
+def add_session_files(merge_id: int, files: list[str]) -> None:
+    """Attach conflict files to an already-open session (flowgate.default.0594 T0012).
+
+    A finalize attempt record is now written BEFORE the merge runs, so its conflict
+    file set is only known afterwards. Same rows ``create_session`` writes."""
+    store = get_store()
+    with store.transaction():
+        for path in files:
+            store._execute(
+                "INSERT INTO git_merge_session_file (merge_id, path, resolved) "
+                "VALUES (?, ?, 0)",
+                [merge_id, path],
+            )
 
 
 def get_session(merge_id: int) -> Optional[dict]:

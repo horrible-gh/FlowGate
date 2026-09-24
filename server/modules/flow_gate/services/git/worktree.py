@@ -502,16 +502,26 @@ def _abort_disposed_merge_session(project_id: str, group_id: str, base_root: Pat
     checkout's MERGE_HEAD/index), close the session, and release that lock so slot
     teardown can proceed. Best-effort; idempotent (no open session → no-op)."""
     from modules.flow_gate.services import git_service as _gs
+    from .merge_target import release_workspace, resolve_session_target
     try:
         session = _gs.db_git.get_open_session_by_group(group_id)
         if session is None:
             return
-        if (base_root / ".git" / "MERGE_HEAD").exists():
-            _gs._run_git(["merge", "--abort"], cwd=base_root)
+        # 0594 T0012: the merge lives in the attempt's pinned target root — the
+        # managed workspace for a non-base target, never the base checkout then.
+        target = (
+            resolve_session_target(session)
+            if _gs.db_git.session_kind(session) == _gs.db_git.SESSION_KIND_MERGE else None
+        )
+        root = target.root if target is not None and target.root is not None else base_root
+        if root.exists() and _gs._merge_in_progress(root):
+            _gs._run_git(["merge", "--abort"], cwd=root)
         merge_id = session.get("merge_id")
         if merge_id is not None:
             _gs.db_git.close_session(int(merge_id), "aborted")
             _gs.db_git.release_lock(project_id, f"merge:{merge_id}")
+        if target is not None:
+            release_workspace(target)
     except Exception:
         _log.warning("disposed merge-session abort failed for %s", group_id, exc_info=True)
 
@@ -653,6 +663,21 @@ def _cleanup_group_slot(
                 proc = _gs._run_git(["branch", "-D", branch], cwd=base_root)
             elif status == "merged":
                 proc = _gs._run_git(["branch", "-d", branch], cwd=base_root)
+                if proc.returncode != 0:
+                    # 0594 T0012: a merge into a NON-base target is not reachable
+                    # from the base HEAD, so `-d` refuses it. Force-delete only when
+                    # the ledger's completed attempt proves the branch is fully
+                    # contained in that target; otherwise keep the ref.
+                    from .merge_target import completed_target_of_state
+                    done = completed_target_of_state(state)
+                    if done is not None and not done.is_project_base:
+                        contained = _gs._run_git(
+                            ["merge-base", "--is-ancestor", branch,
+                             f"refs/heads/{done.target_branch}"],
+                            cwd=base_root,
+                        )
+                        if contained.returncode == 0:
+                            proc = _gs._run_git(["branch", "-D", branch], cwd=base_root)
             elif _gs._ref_exists(base_root, f"refs/remotes/origin/{branch}"):
                 # pushed: origin retains the content, the local ref is disposable.
                 proc = _gs._run_git(["branch", "-D", branch], cwd=base_root)

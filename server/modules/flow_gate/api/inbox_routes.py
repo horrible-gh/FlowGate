@@ -1202,6 +1202,7 @@ def _git_finalize_with_archive(
     commit_message: Optional[str] = None,
     *,
     approval_context: Optional[Any] = None,
+    target_branch: Optional[str] = None,
 ) -> dict:
     if action == "stash":
         # Direct API callers may use commit_message as the optional archive reason.
@@ -1239,11 +1240,20 @@ def _git_finalize_with_archive(
                 "terminal_retry": bool(archive.get("idempotent")),
             }}
         return outcome
+    if target_branch is None:
+        return _GIT_ARCHIVE_ORIGINAL_FINALIZE(
+            group_id,
+            action,
+            commit_message,
+            approval_context=approval_context,
+        )
+    # 0594 T0012: the finalize target carrier must survive this seam.
     return _GIT_ARCHIVE_ORIGINAL_FINALIZE(
         group_id,
         action,
         commit_message,
         approval_context=approval_context,
+        target_branch=target_branch,
     )
 
 

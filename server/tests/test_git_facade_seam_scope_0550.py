@@ -442,11 +442,15 @@ def test_the_seam_scan_itself_is_not_vacuous():
     # already drifted to 374 before this group touched anything — eight files added by
     # other merged groups that did not re-measure, which is why this assertion was
     # already failing on the branch base. T0008 adds
-    # tests/test_final_approval_conflict_intent_0555.py, the ninth. Measured with
+    # tests/test_final_approval_conflict_intent_0555.py, the ninth.
+    # 0594 T0010: re-measured after adding test_git_branches_0594.py. Measured with
     # `len(tuple(sorted(_TESTS_DIR.glob("**/*.py"))))`, not estimated.
+    # 0594 T0012: re-measured after adding test_git_merge_target_0594.py (380 -> 381);
+    # the patched-name counts below were re-measured too and did not move.
     test_paths = tuple(sorted(_TESTS_DIR.glob("**/*.py")))
-    assert len(test_paths) == 375, (
-        f"expected 375 test files, found {len(test_paths)}"
+    # merge 104 (main + 0594): re-measured on the merged tree — 391.
+    assert len(test_paths) == 391, (
+        f"expected 391 test files, found {len(test_paths)}"
     )
     test_patched, _test_sites, test_unresolved = _scan_test_corpus()
     operational, operational_sites, operational_unresolved = _scan_operational_modules()
@@ -461,11 +465,14 @@ def test_the_seam_scan_itself_is_not_vacuous():
     # (D0005 §3.12). `_emit` is defined in git_service.py itself, not in a git/*
     # module, so `test_no_facade_patch_target_is_reached_bare_inside_its_module` has
     # nothing to say about it -- this is an inventory count, not a new seam.
-    assert len(test_patched) == 72, (
-        f"expected 72 test facade-patched names, found {len(test_patched)}"
+    # merge 104 (main + 0594): re-measured on the merged tree, 76 / 79 -- the exact
+    # union of both sides (main measured 75 / 78, 0594 measured 72 / 74); the one name
+    # 0594 adds over main is `get_storage_root` (tests/test_git_branches_0594.py).
+    assert len(test_patched) == 76, (
+        f"expected 76 test facade-patched names, found {len(test_patched)}"
     )
-    assert len(patched) == 75, (
-        f"expected 75 combined facade seam names, found {len(patched)}: {sorted(patched)}"
+    assert len(patched) == 79, (
+        f"expected 79 combined facade seam names, found {len(patched)}: {sorted(patched)}"
     )
     for expected in ("finalize", "get_finalize_state", "precheck_approve_git_action"):
         assert expected in operational, (
