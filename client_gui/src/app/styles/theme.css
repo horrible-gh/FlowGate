@@ -1,0 +1,125 @@
+/* FlowGate v0.2 (/app) design tokens and document base (T0011 §11).
+ *
+ * Values come from the approved MirageGlass mockup 01-dashboard.html (deck 1jnmunhp v1).
+ * This SPA deliberately does NOT load v0.1's client/shared/variables.css or app.css: those
+ * are v0.1's global light-theme rules (body, *, .app-header, .hdr-btn, ...), and sharing
+ * global selectors between the two GUIs is what T0011 §11 forbids. Every token here is
+ * `--fg2-` prefixed so it can never shadow a v0.1 variable, and all component styling
+ * lives in each component's own <style scoped> block — this file only holds tokens, the
+ * html/body base, scrollbars and the focus ring.
+ */
+:root {
+  --fg2-bg: #07111d;
+  --fg2-panel: #0d1a28;
+  --fg2-line: rgba(154, 181, 210, 0.15);
+  --fg2-line-strong: rgba(154, 181, 210, 0.26);
+  --fg2-text: #eef5ff;
+  --fg2-muted: #91a4bb;
+  --fg2-muted-2: #6f8196;
+  --fg2-blue: #4ba3ff;
+  --fg2-cyan: #49dfd0;
+  --fg2-purple: #9b72ff;
+  --fg2-violet: #8168ff;
+  --fg2-orange: #ffae57;
+  --fg2-yellow: #ffd65c;
+  --fg2-focus: #7cc0ff;
+  --fg2-topbar-h: 84px;
+  --fg2-sidebar-w: 250px;
+  --fg2-rightbar-w: 390px;
+  --fg2-font: Inter, Pretendard, 'Noto Sans KR', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
+  color-scheme: dark;
+}
+
+@media (min-width: 1800px) {
+  :root {
+    --fg2-rightbar-w: 410px;
+  }
+}
+
+@media (max-width: 1380px) {
+  :root {
+    --fg2-rightbar-w: 330px;
+    --fg2-sidebar-w: 220px;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--fg2-text);
+  background:
+    radial-gradient(1000px 520px at 56% -10%, rgba(40, 86, 140, 0.14), transparent 65%),
+    linear-gradient(180deg, #07111c 0%, #08131f 55%, #07111b 100%);
+  background-color: var(--fg2-bg);
+  font-family: var(--fg2-font);
+  letter-spacing: -0.02em;
+  overflow: hidden;
+}
+
+/* Below 1120px the mockup stops pinning the shell to the viewport and lets the page scroll. */
+@media (max-width: 1120px) {
+  body {
+    overflow: auto;
+  }
+}
+
+html {
+  scrollbar-color: rgba(91, 122, 159, 0.9) rgba(10, 21, 34, 0.95);
+  scrollbar-width: thin;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(91, 122, 159, 0.88) rgba(10, 21, 34, 0.85);
+}
+
+*::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+*::-webkit-scrollbar-track {
+  background: rgba(12, 24, 38, 0.88);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(88, 120, 158, 0.92), rgba(57, 81, 108, 0.92));
+  border-radius: 999px;
+  border: 2px solid rgba(10, 21, 34, 0.96);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(111, 151, 198, 0.98), rgba(67, 97, 130, 0.96));
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* T0011 §14: keyboard focus must never disappear on the dark theme. */
+:focus-visible {
+  outline: 2px solid var(--fg2-focus);
+  outline-offset: 2px;
+}

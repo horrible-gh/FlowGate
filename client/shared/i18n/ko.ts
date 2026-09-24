@@ -33,6 +33,8 @@ export default {
     files: '파일 익스플로러',
     groups: '문서 익스플로러',
     settings: '설정',
+    switch_to_app: 'v0.2로 전환',
+    switch_to_legacy: 'v0.1로 전환',
   },
   doc: {
     type: {
