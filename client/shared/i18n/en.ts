@@ -780,6 +780,7 @@ export default {
       base_branch: 'Base branch ({branch})',
       readonly_badge: 'Viewing group {group} branch (read-only — no worktree)',
       worktree_badge: 'Editing group {group} worktree',
+      local_branch_readonly_badge: 'Viewing local branch {branch} (committed content only — read-only)',
       binary_file: 'Binary file — preview not available.',
       truncated_file: 'File is large; showing the beginning only.',
       git_ahead: 'Ahead of base by {n} commit(s)',

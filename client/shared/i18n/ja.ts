@@ -780,6 +780,7 @@ export default {
       base_branch: '基準ブランチ ({branch})',
       readonly_badge: 'グループ {group} ブランチを閲覧中（作業ツリーなし・読み取り専用）',
       worktree_badge: 'グループ {group} の作業ツリーを編集中',
+      local_branch_readonly_badge: 'ローカルブランチ {branch} を閲覧中（コミット済みの内容のみ・読み取り専用）',
       binary_file: 'バイナリファイル — プレビューできません。',
       truncated_file: 'ファイルが大きいため、先頭のみ表示しています。',
       git_ahead: '基準ブランチより {n} コミット先行',

@@ -58,6 +58,7 @@
         :project-id="projectId"
         :readonly="readonly"
         :group-id="groupId"
+        :local-branch="localBranch"
         @open="$emit('open', $event)"
         @open-diff="$emit('open-diff', $event)"
         @tree-changed="$emit('tree-changed')"
@@ -134,8 +135,10 @@
         {{ t('main.file_tree_node.copy_link') }}
       </ContextMenuItem>
       <!-- 0327 T0004 (NR0003 recommendation 3): downloading is a read and is offered in every
-           view; a group context downloads that group's worktree copy, not the base one. -->
-      <ContextMenuItem v-if="!isDeleted" icon="download-simple" @click="downloadNode">
+           view; a group context downloads that group's worktree copy, not the base one.
+           0615 T0004: no branch-aware download endpoint exists yet -- hidden here rather
+           than silently serving base-checkout bytes for an ordinary local branch file. -->
+      <ContextMenuItem v-if="!isDeleted && !localBranch" icon="download-simple" @click="downloadNode">
         {{ t('main.file_tree_node.download') }}
       </ContextMenuItem>
       <ContextMenuItem
@@ -201,6 +204,11 @@ const props = defineProps<{
   // so only groups WITHOUT one (finalized, disposed, never provisioned) are read-only.
   readonly?: boolean
   groupId?: string | null
+  // 0615 T0004 -- an ordinary local branch (Branch Manager), mutually exclusive
+  // with groupId. Always readonly=true when set; gates the group-only dirty/new
+  // channels off (no base-dirty fallback either -- a local branch has no worktree
+  // to compare) and hides the download action (no branch-aware download endpoint).
+  localBranch?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -289,6 +297,10 @@ const canDelete = computed(() => !props.readonly && !isDeleted.value)
 // is described by that group's own change channels whether or not it is still
 // writable; only the base checkout (groupId == null) reads the base channels.
 const isDirty = computed(() => {
+  // 0615 T0004 -- an ordinary local branch has no diff/changes concept (NR SS5.3):
+  // never fall through to the base checkout's dirty channel, which describes a
+  // completely different tree than the one on screen.
+  if (props.localBranch) return false
   if (props.groupId) {
     return props.node.type === 'folder'
       ? explorerStore.isGroupChangedDir(props.projectId, props.groupId, props.node.path)
@@ -312,6 +324,9 @@ const isDirty = computed(() => {
 // new badge wins so the newly added file is never hidden — the whole point of B0001.
 // 0333 T0004 (B0001): same `groupId`-only gate as isDirty above — see that comment.
 const isNew = computed(() => {
+  // 0615 T0004 -- same gate as isDirty above: no untracked/new-file concept for
+  // an ordinary local branch (committed-tree only, no live worktree behind it).
+  if (props.localBranch) return false
   if (props.groupId) {
     return props.node.type === 'folder'
       ? explorerStore.isGroupUntrackedDir(props.projectId, props.groupId, props.node.path)

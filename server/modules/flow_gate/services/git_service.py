@@ -284,6 +284,9 @@ from .git.branches import (
     internal_slot_owner,
     list_branches,
     merge_branches,
+    read_local_branch_blob,
+    read_local_branch_tree,
+    resolve_local_branch_ref,
     validate_new_branch_name,
 )
 
