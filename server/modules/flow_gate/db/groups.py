@@ -34,12 +34,14 @@ def create(data: dict[str, Any]) -> dict:
     now = now_iso()
     store._execute(
         "INSERT INTO groups (group_id, project_id, module, parent_id, title, priority, "
-        "status, created_at, updated_at, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "status, created_at, updated_at, closed_at, work_base_ref) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             data["group_id"], data["project_id"], data.get("module", "none"),
             data.get("parent_id"), data["title"], data.get("priority"),
             data.get("status", "OPEN"), data.get("created_at", now),
             data.get("updated_at", now), data.get("closed_at"),
+            data.get("work_base_ref"),
         ],
     )
     return get_by_id(data["group_id"])  # type: ignore[return-value]
@@ -156,15 +158,48 @@ def get_groups_by_projects(project_ids: list) -> list[dict]:
     )
 
 
-def insert_group(group_id: str, project: str, module: str,
-                 title: str, priority: str = None) -> None:
-    """Create a group with status OPEN."""
+def insert_group(
+    group_id: str, project: str, module: str, title: str,
+    priority: str = None, work_base_ref: str = None,
+) -> None:
+    """Create a group with status OPEN and an optional durable work base."""
     now = datetime.now().isoformat()
     get_store()._execute(
         "INSERT INTO groups"
-        " (group_id, project_id, module, title, priority, status, created_at, updated_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [group_id, project, module, title, priority, "OPEN", now, now],
+        " (group_id, project_id, module, title, priority, status, created_at, updated_at, work_base_ref)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [group_id, project, module, title, priority, "OPEN", now, now, work_base_ref],
+    )
+
+
+def update_work_base_ref(group_id: str, work_base_ref: str) -> None:
+    """Persist a new durable Base Branch for an already-existing group.
+
+    flowgate.default.0613 TR0014 rev2: callers must already have confirmed the
+    group is not locked (git.group_work_base.group_work_base_locked) -- this is
+    a plain, unconditional write.
+    """
+    get_store()._execute(
+        "UPDATE groups SET work_base_ref = ?, updated_at = ? WHERE group_id = ?",
+        [work_base_ref, datetime.now().isoformat(), group_id],
+    )
+
+
+def list_open_groups_by_work_base(project_id: str, work_base_ref: str) -> list[dict]:
+    """Groups of ``project_id`` that still pin ``work_base_ref`` for their lifecycle.
+
+    flowgate.default.0613 T0013: a stored work base is re-read by worktree
+    provisioning, H1/H2 retry, restart/reprovision and terminal reopen, so it
+    stays referenced until the group reaches a terminal status (CLOSED /
+    DISCARDED, or the legacy CANCELLED) or is soft-deleted. NULL rows are legacy
+    groups that resolve through the project base and never match here.
+    """
+    return get_store()._fetch_all(
+        "SELECT group_id, status FROM groups"
+        " WHERE project_id = ? AND work_base_ref = ? AND deleted_at IS NULL"
+        " AND UPPER(COALESCE(status, 'OPEN')) NOT IN ('CLOSED', 'DISCARDED', 'CANCELLED')"
+        " ORDER BY group_id",
+        [project_id, work_base_ref],
     )
 
 

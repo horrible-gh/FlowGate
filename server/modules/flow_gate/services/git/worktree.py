@@ -19,7 +19,7 @@ from modules.flow_gate.storage.paths import get_storage_root
 
 from .base_slot import _record_attempt
 from .command import GIT_LOCAL_TIMEOUT_SEC
-from .config import base_branch_for
+
 from .credentials import GitServiceError, _scrub
 from .refs import _commits_present, _untracked_files
 
@@ -127,8 +127,12 @@ def _ensure_worktree_locked(
     trigger: str = "remote_access", start_point: Optional[str] = None,
 ) -> str:
     from modules.flow_gate.services import git_service as _gs
-    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-    base_root = _gs.src_root(project_name, base_branch)
+    project_base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    base_root = _gs.src_root(project_name, project_base_branch)
+    work_base_ref = (
+        _gs.resolve_group_work_base_ref(project_id, group_id, config=cfg)
+        or project_base_branch
+    )
     wt_path = _gs.src_root(project_name, branch)
     username = cfg.get("username")
     secret = _gs._load_secret_for(cfg) or ""
@@ -157,7 +161,7 @@ def _ensure_worktree_locked(
             return "failed"
         _gs.db_git.clear_provision_failure(group_id)   # a stale marker must not linger (L §2.4)
         _gs._emit_worktree_ready(
-            project_id, group_id, branch, base_branch, wt_path,
+            project_id, group_id, branch, work_base_ref, wt_path,
             created=False, base_root=base_root,
         )
         return "ok"
@@ -207,7 +211,7 @@ def _ensure_worktree_locked(
             # from that tip instead — C1's content stays in history either way.
             # If the tip does NOT contain C1, this base/history relationship
             # cannot be trusted; fail closed rather than guess (T0007 §11).
-            base_tip = _worktree_start_point(base_root, base_branch)
+            base_tip = _worktree_start_point(base_root, work_base_ref)
             contains_c1 = _gs._run_git(
                 ["merge-base", "--is-ancestor", start_point, base_tip], cwd=base_root,
             )
@@ -226,7 +230,7 @@ def _ensure_worktree_locked(
     else:
         proc = _gs._run_git(
             ["worktree", "add", "-b", branch, str(wt_path),
-             _worktree_start_point(base_root, base_branch)],
+             _worktree_start_point(base_root, work_base_ref)],
             cwd=base_root,
         )
     if proc.returncode != 0:
@@ -236,7 +240,7 @@ def _ensure_worktree_locked(
     _gs.db_git.register_worktree(group_id, project_id, branch)
     _gs.db_git.clear_provision_failure(group_id)   # success clears the failure marker (L §2.4)
     _gs._emit_worktree_ready(
-        project_id, group_id, branch, base_branch, wt_path,
+        project_id, group_id, branch, work_base_ref, wt_path,
         created=True, base_root=base_root,
     )
     return "ok"
@@ -439,12 +443,23 @@ def ensure_initial_group_source_sync(project_id: str, module: str, group_id: str
                     return {"performed": False, "reason": "marker_persist_failed", "sha": None}
                 return {"performed": False, "reason": "legacy_source_history", "sha": legacy_sha}
 
-            base_branch = base_branch_for(project_id) or "main"
-            base_root = _gs.src_root(project_name, base_branch)
-            head_proc = _gs._run_git(["rev-parse", "HEAD"], cwd=base_root)
-            if head_proc.returncode != 0:
+            # Reset to the group's frozen fork point, not the work-base branch's current
+            # tip.  This still removes any pre-admission commits/debris (0511 contract),
+            # while a later movement of the selected source branch cannot rebaseline an
+            # already-created group.  The resolver supplies the durable group value and
+            # legacy groups naturally fall back to the project base.
+            work_base_ref = (
+                _gs.resolve_group_work_base_ref(project_id, group_id, config=cfg)
+                or (cfg.get("base_branch") or "main").strip()
+                or "main"
+            )
+            fork_proc = _gs._run_git(
+                ["merge-base", "HEAD", work_base_ref], cwd=wt_path,
+                timeout=GIT_LOCAL_TIMEOUT_SEC,
+            )
+            if fork_proc.returncode != 0 or not fork_proc.stdout.strip():
                 return {"performed": False, "reason": "reset_failed", "sha": None}
-            base_sha = head_proc.stdout.strip()
+            base_sha = fork_proc.stdout.strip()
 
             reset_proc = _gs._run_git(
                 ["reset", "--hard", base_sha], cwd=wt_path, timeout=GIT_LOCAL_TIMEOUT_SEC,

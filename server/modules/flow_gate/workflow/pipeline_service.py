@@ -153,6 +153,7 @@ def create_group(
     user_permissions: set[str],
     group_id: str,
     priority: str | None = None,
+    work_base_ref: str | None = None,
 ) -> dict:
     """Create a new group and register it in draft state (D017 r1 Step 1).
 
@@ -163,6 +164,12 @@ def create_group(
     """
     if not check_permission(user_permissions, ("project.group.manage",)):
         raise PermissionError("Permission 'project.group.manage' is required.")
+
+    if work_base_ref is not None:
+        from modules.flow_gate.services import git_service
+        work_base_ref = git_service.validate_group_work_base_ref(
+            project_id, work_base_ref
+        )
 
     now = now_iso()
     return db_groups.create(
@@ -175,6 +182,7 @@ def create_group(
             "status": "draft",
             "created_at": now,
             "updated_at": now,
+            "work_base_ref": work_base_ref,
         }
     )
 

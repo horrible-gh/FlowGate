@@ -1,7 +1,7 @@
 """Initial AI source-access worktree sync — git mechanics (flowgate.default.0511 T0004).
 
 git_service.ensure_initial_group_source_sync() is the ONE forced reset+clean of a
-group worktree to the current configured base HEAD, performed exactly once per
+group worktree to its durable work-base fork point, performed exactly once per
 group. These tests drive real git repositories (a real `git worktree add`, so the
 worktree shares the base repo's object store exactly like production) and a real
 sqlite-migration-backed store, so the reset/clean/verify/marker-persist sequence
@@ -77,6 +77,10 @@ def _wire(monkeypatch, fx: _Fixture, *, enabled=True, base_branch="main",
     )
     monkeypatch.setattr(git_service, "_project_name", lambda _pid: project_name)
     monkeypatch.setattr(
+        git_service, "resolve_group_work_base_ref",
+        lambda _pid, _gid, **_kwargs: base_branch if enabled else None,
+    )
+    monkeypatch.setattr(
         git_service, "src_root",
         lambda name, br: fx.base if br == base_branch else fx.wt,
     )
@@ -94,7 +98,7 @@ def test_git_disabled_is_a_no_op(monkeypatch, tmp_path):
     assert _git(fx.wt, "rev-parse", "HEAD").stdout.strip() == fx.fork_head
 
 
-def test_first_sync_resets_and_cleans_to_base_head(monkeypatch, tmp_path):
+def test_first_sync_resets_and_cleans_to_frozen_fork_point(monkeypatch, tmp_path):
     fx = _Fixture(tmp_path)
     _wire(monkeypatch, fx)
     # Simulate pre-sync AI/TR debris in the stale worktree: a local tracked commit
@@ -111,12 +115,12 @@ def test_first_sync_resets_and_cleans_to_base_head(monkeypatch, tmp_path):
 
     result = git_service.ensure_initial_group_source_sync("p", "default", "g")
 
-    assert result == {"performed": True, "reason": "ok", "sha": fx.base_head}
-    assert _git(fx.wt, "rev-parse", "HEAD").stdout.strip() == fx.base_head
-    assert (fx.wt / "advance.txt").exists()          # base's new file is now present
+    assert result == {"performed": True, "reason": "ok", "sha": fx.fork_head}
+    assert _git(fx.wt, "rev-parse", "HEAD").stdout.strip() == fx.fork_head
+    assert not (fx.wt / "advance.txt").exists()      # later base movement is not imported
     assert not (fx.wt / "untracked.txt").exists()     # untracked debris discarded
     assert (fx.wt / "seed.txt").read_text(encoding="utf-8") == "seed\n"  # tracked edit discarded
-    assert persisted == {"group_id": "g", "sha": fx.base_head}
+    assert persisted == {"group_id": "g", "sha": fx.fork_head}
 
 
 def test_configured_base_branch_is_honored_not_hardcoded_main(monkeypatch, tmp_path):
@@ -132,8 +136,8 @@ def test_configured_base_branch_is_honored_not_hardcoded_main(monkeypatch, tmp_p
     result = git_service.ensure_initial_group_source_sync("p", "default", "g")
 
     assert result["performed"] is True
-    assert result["sha"] == fx.base_head
-    assert _git(fx.wt, "rev-parse", "HEAD").stdout.strip() == fx.base_head
+    assert result["sha"] == fx.fork_head
+    assert _git(fx.wt, "rev-parse", "HEAD").stdout.strip() == fx.fork_head
 
 
 def test_ignored_files_are_not_forced_out(monkeypatch, tmp_path):
@@ -189,7 +193,7 @@ def test_retry_after_transient_marker_failure_does_not_double_reset_in_a_way_tha
     assert first["reason"] == "marker_persist_failed"
 
     second = git_service.ensure_initial_group_source_sync("p", "default", "g")
-    assert second == {"performed": True, "reason": "ok", "sha": fx.base_head}
+    assert second == {"performed": True, "reason": "ok", "sha": fx.fork_head}
     assert calls["n"] == 2
 
 
@@ -226,7 +230,7 @@ def test_marker_persist_failure_still_reports_the_reset(monkeypatch, tmp_path):
 
     assert result == {"performed": False, "reason": "marker_persist_failed", "sha": None}
     # The git-level work still landed — only the marker failed to persist.
-    assert _git(fx.wt, "rev-parse", "HEAD").stdout.strip() == fx.base_head
+    assert _git(fx.wt, "rev-parse", "HEAD").stdout.strip() == fx.fork_head
 
 
 def test_head_mismatch_blocks_the_marker(monkeypatch, tmp_path):

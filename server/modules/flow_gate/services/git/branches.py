@@ -254,6 +254,13 @@ def _delete_guard(project_id: str, name: str) -> tuple[Optional[str], dict]:
     # slot above.
     if (cfg or {}).get("default_merge_target") == name:
         return "branch_is_default_merge_target", {}
+    # flowgate.default.0613 T0013: a group's durable work base is re-read for the
+    # whole group lifecycle (provisioning, retry, reprovision, reopen); deleting it
+    # would strand that group, so it is protected until the group is terminal.
+    from .group_work_base import groups_pinning_work_base
+    pinning = groups_pinning_work_base(project_id, name)
+    if pinning:
+        return "branch_is_group_work_base", {"connected_group_ids": pinning}
 
     # 0594 T0012: every open finalize attempt pins its target (base or not), and a
     # non-base attempt no longer shows up as the base checkout's blocking session —
@@ -289,6 +296,9 @@ _DELETE_ERRORS = {
     "branch_is_internal_slot": (409, "registered group worktree branch cannot be deleted"),
     "branch_is_default_merge_target": (
         409, "branch set as the current integration target cannot be deleted",
+    ),
+    "branch_is_group_work_base": (
+        409, "branch is the work base of an active group and cannot be deleted",
     ),
     "branch_in_use": (409, "branch is in use by an open merge"),
 }

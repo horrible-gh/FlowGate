@@ -459,6 +459,16 @@ from .git.base_slot import (
 
 
 
+from .git.group_work_base import (
+    apply_group_work_base_ref,
+    group_work_base_locked,
+    list_group_work_base_options,
+    locked_group_ids,
+    resolve_group_work_base_ref,
+    validate_group_work_base_ref,
+)
+
+
 from .git.worktree import (
     BRANCH_MAX_LEN,
     GIT_WORKTREE_RM_TIMEOUT_SEC,
