@@ -16,6 +16,7 @@ from modules.flow_gate.services import snapshot_access_service as access
 from modules.flow_gate.services.ai_invoke import provider_api
 
 from test_snapshot_materialization_0517 import _Store, snapshot_env  # noqa: F401,E402
+from test_snapshot_materialization_0517 import _disguise_same_size_same_mtime  # noqa: E402
 
 
 @pytest.fixture
@@ -760,3 +761,459 @@ def test_lineage_authorization_rejects_forged_axes(access_env):
                 {"snapshot_id": "snap_access", "operation": "status"},
             )
         assert caught.value.status == 403
+
+
+# ---------------------------------------------------------------------------
+# 0517 T0022: no worker-facing boundary may carry a server-internal absolute path,
+# including the live FlowGate worktree path an OSError names on materialize.
+# ---------------------------------------------------------------------------
+
+
+def _path_spellings(path) -> set[str]:
+    """Every way a path can be spelled in worker-visible text: native, '/', '\\', the
+    doubled backslashes of an OSError/repr() rendering, and the JSON-escaped body form."""
+    raw = str(path)
+    windows = raw.replace("/", "\\")
+    spellings = {raw, raw.replace("\\", "/"), windows, windows.replace("\\", "\\\\")}
+    spellings |= {json.dumps(item)[1:-1] for item in list(spellings)}
+    return {item for item in spellings if item}
+
+
+def _assert_no_raw_path(blob, *paths) -> None:
+    text = blob if isinstance(blob, str) else json.dumps(blob, ensure_ascii=False)
+    haystack = text.casefold() if sys.platform == "win32" else text
+    for path in paths:
+        for spelling in _path_spellings(path):
+            needle = spelling.casefold() if sys.platform == "win32" else spelling
+            assert needle not in haystack, f"raw path leaked: {spelling!r} in {text[:600]!r}"
+
+
+def _cli_client(snapshot_env, monkeypatch):
+    from modules.flow_gate.services import ai_invoke_service
+
+    run = {
+        "project_id": "project", "group_id": "project.default.0517",
+        "run_id": "run", "token_id": "token", "current_token_id": "token",
+        "provider_id": "provider", "action_scope": "edit",
+    }
+    token = {
+        "token_id": "token", "ai_run_id": "run", "project": "project",
+        "group_id": "project.default.0517", "action_scope": "edit", "issued_to": "worker",
+    }
+    monkeypatch.setattr(snapshot_routes.token_service, "verify", lambda raw: token)
+    monkeypatch.setattr(api_server_tools.token_service, "verify", lambda raw: token)
+    monkeypatch.setattr(
+        snapshot_routes.service, "validate_request_authority", lambda candidate, active: candidate,
+    )
+    monkeypatch.setattr(ai_invoke_service, "get_run_record", lambda run_id: run)
+    monkeypatch.setattr(access.usage_db, "record", lambda data: dict(data))
+    # workflow_events.create stays the fixture's recorder so audit rows can be inspected.
+    app = FastAPI()
+    app.include_router(snapshot_routes.router)
+    from modules.flow_gate.auth.middleware import get_current_user
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": "human"}
+    return TestClient(app), {"Authorization": "Bearer raw-cli-token"}, run
+
+
+def test_t0022_live_worktree_oserror_on_materialize_never_reaches_a_worker(
+    snapshot_env, monkeypatch,
+):
+    """Real reproduction: the requested file disappears between the scope scan and the
+    copy, so os.open() raises a genuine FileNotFoundError whose str() names the live
+    FlowGate worktree path. Before T0022 that text was stored verbatim in failure_reason
+    (the old sanitizer only knew the token scratch root) and re-served on every
+    status/access/run call; CLI materialize surfaced it as an unhandled exception.
+    """
+    client, headers, run = _cli_client(snapshot_env, monkeypatch)
+    worktree = snapshot_env.worktree
+    live_file = worktree / "one.txt"
+
+    real_collect = access.materialization._collect_scope
+
+    def scan_then_lose_file(row, root):
+        scanned = real_collect(row, root)
+        live_file.unlink()
+        return scanned
+
+    raised = []
+    real_copy = access.materialization._copy_and_hash
+
+    def spy_copy(source, target, expected):
+        try:
+            return real_copy(source, target, expected)
+        except OSError as exc:
+            raised.append(exc)
+            raise
+
+    monkeypatch.setattr(access.materialization, "_collect_scope", scan_then_lose_file)
+    monkeypatch.setattr(access.materialization, "_copy_and_hash", spy_copy)
+
+    materialized = client.post("/api/v1/snapshots/cli/snap_test/materialize", headers=headers)
+
+    # Precondition: the OS really produced an error naming the live worktree file.
+    assert len(raised) == 1 and isinstance(raised[0], FileNotFoundError)
+    assert str(live_file) in str(raised[0]) or str(live_file).replace("\\", "\\\\") in str(raised[0])
+
+    # 1) CLI materialize response: a precise, scrubbed 409 instead of raw exception text.
+    assert materialized.status_code == 409, materialized.text
+    detail = materialized.json()["detail"]
+    assert detail["code"] == "snapshot_create_failed"
+    assert detail["message"].startswith("FileNotFoundError:")
+    assert access.materialization.WORKTREE_REDACTION in detail["message"]
+    assert "one.txt" in detail["message"]  # relative suffix survives for diagnosis
+    _assert_no_raw_path(materialized.text, worktree, live_file, snapshot_env.scratch)
+
+    # 2) The durable failure_reason and its audit event are stored already scrubbed.
+    assert snapshot_env.row["status"] == "failed"
+    stored = snapshot_env.row["failure_reason"]
+    assert access.materialization.WORKTREE_REDACTION in stored
+    _assert_no_raw_path(stored, worktree, live_file)
+    failure_event = [e for e in snapshot_env.state.events if e["event_type"] == "state_changed"][-1]
+    _assert_no_raw_path(failure_event["metadata"], worktree, live_file)
+
+    # 3) Every later worker-facing read of the failed snapshot: CLI status/access/run
+    #    and the API tool-call functions.
+    responses = [
+        client.get("/api/v1/snapshots/cli/snap_test/status", headers=headers),
+        client.post("/api/v1/snapshots/cli/snap_test/access", headers=headers, json={"operation": "status"}),
+        client.post("/api/v1/snapshots/cli/snap_test/run", headers=headers,
+                    json={"task_kind": "test", "command": "echo x"}),
+    ]
+    for response in responses:
+        assert response.status_code in (200, 409), response.text
+        _assert_no_raw_path(response.text, worktree, live_file, snapshot_env.scratch)
+    access_body = responses[1].json()["detail"]
+    assert access_body["error"]["code"] == "snapshot_failed"
+    assert access.materialization.WORKTREE_REDACTION in access_body["error"]["message"]
+
+    api_access = api_server_tools.access_source_snapshot(run, "raw", {"snapshot_id": "snap_test", "operation": "status"})
+    api_run = api_server_tools.run_source_snapshot(
+        run, "raw", {"snapshot_id": "snap_test", "task_kind": "test", "command": "echo x"}, 30.0,
+    )
+    for status, payload in (api_access, api_run):
+        assert status == 409
+        assert payload["error"]["code"] == "snapshot_failed"
+        _assert_no_raw_path(payload, worktree, live_file, snapshot_env.scratch)
+
+
+def test_t0022_legacy_stored_worktree_path_is_scrubbed_on_read(snapshot_env, monkeypatch):
+    """A failure_reason persisted before T0022 (raw OSError text naming the worktree, in
+    the doubled-backslash repr spelling) is still scrubbed when it is re-served."""
+    client, headers, run = _cli_client(snapshot_env, monkeypatch)
+    leaked = snapshot_env.worktree / "dir" / "a.txt"
+    snapshot_env.row.update(
+        status="failed", failure_code="snapshot_create_failed",
+        failure_reason=f"[Errno 13] Permission denied: {str(leaked)!r}",
+    )
+    response = client.post("/api/v1/snapshots/cli/snap_test/access", headers=headers, json={"operation": "status"})
+    assert response.status_code == 409
+    message = response.json()["detail"]["error"]["message"]
+    assert access.materialization.WORKTREE_REDACTION in message
+    _assert_no_raw_path(response.text, snapshot_env.worktree, leaked)
+    status, payload = api_server_tools.access_source_snapshot(run, "raw", {"snapshot_id": "snap_test", "operation": "status"})
+    assert status == 409
+    _assert_no_raw_path(payload, snapshot_env.worktree, leaked)
+
+
+def test_t0022_real_oserror_inside_run_is_scrubbed_on_cli_and_api(snapshot_env, monkeypatch):
+    """execute() creating its TEMP dir hits a real FileExistsError naming the snapshot
+    scratch path. Previously that escaped both boundaries as an unhandled exception."""
+    client, headers, run = _cli_client(snapshot_env, monkeypatch)
+    access.materialization.materialize("snap_test", "human")
+    blocker = snapshot_env.final() / ".flowgate-tmp"
+    blocker.write_text("not a directory", encoding="utf-8")
+
+    response = client.post("/api/v1/snapshots/cli/snap_test/run", headers=headers,
+                           json={"task_kind": "test", "command": "echo x"})
+    assert response.status_code == 409, response.text
+    error = response.json()["detail"]["error"]
+    assert error["code"] == "snapshot_io_failed"
+    assert "FileExistsError" in error["message"]
+    assert access.SNAPSHOT_PATH_REDACTION in error["message"]
+    _assert_no_raw_path(response.text, snapshot_env.scratch, blocker, snapshot_env.worktree)
+
+    status, payload = api_server_tools.run_source_snapshot(
+        run, "raw", {"snapshot_id": "snap_test", "task_kind": "test", "command": "echo x"}, 30.0,
+    )
+    assert status == 409
+    assert payload["error"]["code"] == "snapshot_io_failed"
+    _assert_no_raw_path(payload, snapshot_env.scratch, blocker, snapshot_env.worktree)
+
+
+def test_t0022_success_payloads_redact_the_live_worktree_path_too(snapshot_env, monkeypatch):
+    """A snapshot file (or a command's output) that mentions the live worktree path must
+    not hand it to the worker; before T0022 only the scratch root was redacted."""
+    client, headers, run = _cli_client(snapshot_env, monkeypatch)
+    snapshot_env.worktree.joinpath("one.txt").write_text(
+        f"root={snapshot_env.worktree}\n", encoding="utf-8", newline="\n",
+    )
+    access.materialization.materialize("snap_test", "human")
+    read = client.post("/api/v1/snapshots/cli/snap_test/access", headers=headers,
+                       json={"operation": "read", "path": "one.txt"})
+    assert read.status_code == 200, read.text
+    assert read.json()["content"] == f"root={access.materialization.WORKTREE_REDACTION}\n"
+    _assert_no_raw_path(read.text, snapshot_env.worktree)
+
+    echo = f'"{sys.executable}" -c "print(open(\'one.txt\').read().strip())"'
+    status, payload = api_server_tools.run_source_snapshot(
+        run, "raw", {"snapshot_id": "snap_test", "task_kind": "test", "command": echo}, 30.0,
+    )
+    assert status == 200, payload
+    assert access.materialization.WORKTREE_REDACTION in payload["stdout"]
+    _assert_no_raw_path(payload, snapshot_env.worktree, snapshot_env.scratch)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (r"denied: 'D:\\elsewhere\\secret.txt'", "denied: '<redacted-path>'"),
+        ("denied: 'D:/elsewhere/secret.txt'", "denied: '<redacted-path>'"),
+        (r"at \\fileserver\share\flowgate\x.py", "at <redacted-path>"),
+        ("open /opt/flowgate/work/tok/x failed", "open <redacted-path> failed"),
+        ("requested path does not exist: dir/sub/b.txt", "requested path does not exist: dir/sub/b.txt"),
+        ("see http://127.0.0.1:8089/flowgate/api/v1/help", "see http://127.0.0.1:8089/flowgate/api/v1/help"),
+        ("snapshot-to-worktree/main promotion is prohibited", "snapshot-to-worktree/main promotion is prohibited"),
+    ],
+)
+def test_t0022_error_text_drops_unknown_absolute_paths_but_keeps_relative_text(text, expected):
+    assert access.materialization.redact_error_text(text, ()) == expected
+
+
+def test_t0023_cli_status_rechecks_content_freshness_over_http(snapshot_env, monkeypatch):
+    """The dedicated CLI status route used to render the stored row: a same-size,
+    restored-mtime edit made after creation came back ``active`` with current-worktree
+    validation allowed. It must run the same content refresh as access/run."""
+    client, headers, _run = _cli_client(snapshot_env, monkeypatch)
+    access.materialization.materialize("snap_test", "human")
+    before = client.get("/api/v1/snapshots/cli/snap_test/status", headers=headers)
+    assert before.status_code == 200, before.text
+    assert before.json()["snapshot"]["status"] == "active"
+    assert before.json()["snapshot"]["current_worktree_validation_allowed"] is True
+
+    _disguise_same_size_same_mtime(snapshot_env.worktree / "one.txt", "ONE")
+    assert snapshot_env.row["stale"] is False  # nothing has re-checked yet
+
+    after = client.get("/api/v1/snapshots/cli/snap_test/status", headers=headers)
+    assert after.status_code == 200, after.text
+    snapshot = after.json()["snapshot"]
+    assert snapshot["status"] == "stale"
+    assert snapshot["stale"] is True
+    assert snapshot["current_worktree_validation_allowed"] is False
+    assert snapshot["warning"] == access.STALE_WARNING
+    assert snapshot_env.row["stale"] is True
+    stale_events = [e for e in snapshot_env.state.events if e["event_type"] == "snapshot_stale"]
+    assert len(stale_events) == 1
+    assert json.loads(stale_events[0]["metadata"])["stale_reason"] == "scope_fingerprint_changed"
+    _assert_no_raw_path(after.text, snapshot_env.worktree, snapshot_env.scratch)
+
+
+def test_t0023_cli_status_of_created_snapshot_with_missing_tree_is_not_validatable(
+    snapshot_env, monkeypatch,
+):
+    client, headers, _run = _cli_client(snapshot_env, monkeypatch)
+    access.materialization.materialize("snap_test", "human")
+    import shutil
+    shutil.rmtree(snapshot_env.final())
+    response = client.get("/api/v1/snapshots/cli/snap_test/status", headers=headers)
+    assert response.status_code == 200, response.text
+    snapshot = response.json()["snapshot"]
+    assert snapshot["available"] is False
+    assert snapshot["integrity_error"] == "snapshot_missing"
+    assert snapshot["current_worktree_validation_allowed"] is False
+    _assert_no_raw_path(response.text, snapshot_env.worktree, snapshot_env.scratch)
+
+
+def test_t0023_namespace_preparation_failure_is_recorded_as_create_failure(
+    snapshot_env, monkeypatch,
+):
+    """A real OSError: the namespace name is occupied by a regular file, so
+    ``mkdir(exist_ok=True)`` fails before the claim. It used to escape the failure
+    recorder and leave the request ``approved``."""
+    client, headers, _run = _cli_client(snapshot_env, monkeypatch)
+    (snapshot_env.scratch / access.materialization.SNAPSHOT_NAMESPACE).write_text("x", encoding="utf-8")
+
+    response = client.post("/api/v1/snapshots/cli/snap_test/materialize", headers=headers)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "snapshot_scratch_unavailable"
+    _assert_no_raw_path(response.text, snapshot_env.worktree, snapshot_env.scratch)
+    assert snapshot_env.row["status"] == "failed"
+    assert snapshot_env.row["failure_code"] == "snapshot_create_failed"
+    failure = [e for e in snapshot_env.state.events if e["event_type"] == "state_changed"][-1]
+    metadata = json.loads(failure["metadata"])
+    assert metadata["failure_stage"] == "snapshot_scratch_unavailable"
+    assert (failure["from_state"], failure["to_state"]) == ("approved", "failed")
+
+    status = client.get("/api/v1/snapshots/cli/snap_test/status", headers=headers)
+    assert status.status_code == 200
+    assert status.json()["snapshot"]["status"] == "failed"
+
+
+def test_t0023_claim_permission_error_is_recorded_and_scrubbed(snapshot_env, monkeypatch):
+    """A non-FileExists OSError creating the claim (here PermissionError naming the
+    scratch path) used to skip the failure recorder and reach the CLI as a 500
+    ``snapshot_materialize_failed``."""
+    client, headers, _run = _cli_client(snapshot_env, monkeypatch)
+    real_mkdir = Path.mkdir
+
+    def deny_claim(self, *args, **kwargs):
+        if self.name.endswith(".materializing"):
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", deny_claim)
+    response = client.post("/api/v1/snapshots/cli/snap_test/materialize", headers=headers)
+    monkeypatch.setattr(Path, "mkdir", real_mkdir)
+
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "snapshot_create_failed"
+    assert detail["message"].startswith("PermissionError:")
+    _assert_no_raw_path(response.text, snapshot_env.worktree, snapshot_env.scratch)
+    assert snapshot_env.row["status"] == "failed"
+    assert snapshot_env.row["failure_code"] == "snapshot_create_failed"
+    _assert_no_raw_path(snapshot_env.row["failure_reason"], snapshot_env.scratch)
+    failure = [e for e in snapshot_env.state.events if e["event_type"] == "state_changed"][-1]
+    assert json.loads(failure["metadata"])["failure_stage"] == "PermissionError"
+    assert not snapshot_env.final().exists()
+
+
+def test_t0023_busy_claim_stays_a_conflict_without_failing_the_request(
+    snapshot_env, monkeypatch,
+):
+    client, headers, _run = _cli_client(snapshot_env, monkeypatch)
+    namespace = snapshot_env.scratch / access.materialization.SNAPSHOT_NAMESPACE
+    namespace.mkdir()
+    (namespace / ".snap_test.materializing").mkdir()
+
+    response = client.post("/api/v1/snapshots/cli/snap_test/materialize", headers=headers)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "snapshot_materialization_busy"
+    assert snapshot_env.row["status"] == "approved"
+    assert not [e for e in snapshot_env.state.events if e["event_type"] == "state_changed"]
+    # The other owner's claim is left untouched.
+    assert (namespace / ".snap_test.materializing").is_dir()
+
+
+def _leave_invalid_final(snapshot_env, damage: str) -> Path:
+    """A ``snap_<id>`` directory left under the namespace (e.g. a crash or a manual
+    copy) whose manifest is missing or corrupt, while the DB row is still approved."""
+    final = snapshot_env.final()
+    (final / "source").mkdir(parents=True)
+    (final / "README.md").write_text("readme", encoding="utf-8")
+    if damage == "corrupt":
+        (final / "snapshot.json").write_text("{not json", encoding="utf-8")
+    return final
+
+
+@pytest.mark.parametrize("damage", ["missing", "corrupt"])
+def test_t0023_invalid_existing_final_is_recorded_as_create_failure_over_http(
+    snapshot_env, monkeypatch, damage,
+):
+    """The existing-final branch (``_recover_published``) used to raise
+    ``snapshot_integrity_error`` outside the failure recorder: the CLI got a 409 but the
+    request stayed ``approved`` with no event, and every later materialize hit the same
+    wall. An unrecoverable final is now an approved->failed creation failure."""
+    client, headers, _run = _cli_client(snapshot_env, monkeypatch)
+    _leave_invalid_final(snapshot_env, damage)
+
+    response = client.post("/api/v1/snapshots/cli/snap_test/materialize", headers=headers)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "snapshot_integrity_error"
+    _assert_no_raw_path(response.text, snapshot_env.worktree, snapshot_env.scratch)
+    assert snapshot_env.row["status"] == "failed"
+    assert snapshot_env.row["failure_code"] == "snapshot_create_failed"
+    _assert_no_raw_path(snapshot_env.row["failure_reason"], snapshot_env.worktree, snapshot_env.scratch)
+    failures = [e for e in snapshot_env.state.events if e["event_type"] == "state_changed"]
+    assert len(failures) == 1
+    assert (failures[0]["from_state"], failures[0]["to_state"]) == ("approved", "failed")
+    assert json.loads(failures[0]["metadata"])["failure_stage"] == "snapshot_integrity_error"
+    assert not [e for e in snapshot_env.state.events if e["event_type"] == "snapshot_created"]
+
+    again = client.post("/api/v1/snapshots/cli/snap_test/materialize", headers=headers)
+    assert again.status_code == 409, again.text
+    assert again.json()["detail"]["code"] == "snapshot_not_approved"
+    status = client.get("/api/v1/snapshots/cli/snap_test/status", headers=headers)
+    assert status.status_code == 200, status.text
+    assert status.json()["snapshot"]["status"] == "failed"
+    assert status.json()["snapshot"]["current_worktree_validation_allowed"] is False
+    # Not a destructive cleanup path: the leftover tree stays for the explicit cleanup.
+    assert snapshot_env.final().is_dir()
+
+
+def test_t0023_startup_recovery_of_invalid_final_fails_the_request(snapshot_env):
+    _leave_invalid_final(snapshot_env, "missing")
+    access.materialization.cleanup_orphans(startup=True)
+    assert snapshot_env.row["status"] == "failed"
+    assert snapshot_env.row["failure_code"] == "snapshot_create_failed"
+    failure = [e for e in snapshot_env.state.events if e["event_type"] == "state_changed"][-1]
+    assert json.loads(failure["metadata"])["failure_stage"] == "snapshot_integrity_error"
+
+
+def _link_directory(link: Path, target: Path) -> None:
+    """A real directory link: an NTFS junction on Windows (no privilege needed), a
+    symlink elsewhere. Never skipped: a skip here would be a false green."""
+    if sys.platform == "win32":
+        import _winapi
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        link.symlink_to(target, target_is_directory=True)
+
+
+def test_t0023_cli_status_closes_a_source_root_swapped_for_a_link(snapshot_env, monkeypatch):
+    """``_load_manifest`` checked ``source.is_dir()``, which follows links, so a
+    ``source`` replaced by a junction/symlink to another directory still looked healthy:
+    the CLI status said ``active`` with current-worktree validation allowed while
+    access/run rejected the same snapshot as ``snapshot_locator_invalid``."""
+    client, headers, _run = _cli_client(snapshot_env, monkeypatch)
+    access.materialization.materialize("snap_test", "human")
+    before = client.get("/api/v1/snapshots/cli/snap_test/status", headers=headers)
+    assert before.status_code == 200, before.text
+    assert before.json()["snapshot"]["available"] is True
+    assert before.json()["snapshot"]["current_worktree_validation_allowed"] is True
+
+    source = snapshot_env.final() / "source"
+    elsewhere = snapshot_env.scratch.parent / "elsewhere"
+    source.rename(elsewhere)
+    _link_directory(source, elsewhere)
+    assert access.materialization._is_reparse_or_symlink(source)
+    assert source.is_dir()  # the link resolves: only a non-following check catches it
+
+    status = client.get("/api/v1/snapshots/cli/snap_test/status", headers=headers)
+    assert status.status_code == 200, status.text
+    snapshot = status.json()["snapshot"]
+    assert snapshot["available"] is False
+    assert snapshot["integrity_error"] == "snapshot_integrity_error"
+    assert snapshot["current_worktree_validation_allowed"] is False
+    assert snapshot["status"] != "active"
+    _assert_no_raw_path(status.text, snapshot_env.worktree, snapshot_env.scratch)
+
+    # access/run agree with status: the same snapshot is not usable.
+    read = client.post(
+        "/api/v1/snapshots/cli/snap_test/access", headers=headers,
+        json={"operation": "read", "path": "one.txt"},
+    )
+    assert read.status_code == 409, read.text
+    assert read.json()["detail"]["error"]["code"] == "snapshot_failed"
+    assert read.json()["detail"]["error"]["details"]["reason"] == "snapshot_integrity_error"
+    ran = client.post(
+        "/api/v1/snapshots/cli/snap_test/run", headers=headers,
+        json={"task_kind": "test", "command": "echo x"},
+    )
+    assert ran.status_code == 409, ran.text
+    assert ran.json()["detail"]["error"]["code"] == "snapshot_failed"
+    # The link target is never touched.
+    assert (elsewhere / "one.txt").read_text(encoding="utf-8") == "one"
+
+
+def test_t0022_known_roots_keep_marker_and_relative_suffix(tmp_path):
+    root = tmp_path / "work" / "proj" / "tok_x"
+    roots = ((str(root), access.SNAPSHOT_PATH_REDACTION),)
+    target = str(root / "source-snapshots" / "snap_1" / "source" / "a.py")
+    windows = target.replace("/", "\\")
+    for spelling in (target, target.replace("\\", "/"), windows, windows.replace("\\", "\\\\")):
+        redacted = access.materialization.redact_error_text(f"x '{spelling}' y", roots)
+        assert redacted.startswith(f"x '{access.SNAPSHOT_PATH_REDACTION}")
+        assert "a.py' y" in redacted
+    # A sibling directory sharing the prefix is not mistaken for the root.
+    sibling = str(root) + "-other"
+    assert access.materialization.redact_locators(sibling, roots) == sibling

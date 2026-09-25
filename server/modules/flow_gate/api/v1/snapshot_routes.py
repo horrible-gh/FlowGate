@@ -92,9 +92,10 @@ def cli_request_snapshot(body:RequestIn,request:Request):
 @router.get("/cli/{snapshot_id}/status")
 def cli_snapshot_status(snapshot_id:str,request:Request):
  _raw,_token,run=_cli_context(request)
+ # Re-verifies content freshness for a created snapshot; the stored stale flag alone
+ # would report a disguised edit as active with current-worktree validation allowed.
  try:
-  row=snapshot_access._authorize(run,snapshot_id)
-  return {"ok":True,"snapshot":snapshot_access._metadata(row)}
+  return {"ok":True,"snapshot":snapshot_access.status_metadata(run,snapshot_id)}
  except snapshot_access.SnapshotAccessError as exc:
   raise HTTPException(exc.status,detail=exc.payload("status"))
 
@@ -107,7 +108,13 @@ def cli_materialize_snapshot(snapshot_id:str,request:Request):
   return {"ok":True,"snapshot":snapshot_access._metadata(row)}
  except snapshot_access.SnapshotAccessError as exc:
   raise HTTPException(exc.status,detail=exc.payload("materialize"))
- except service.SnapshotRequestError as exc: _error(exc)
+ # Worker-facing: a materialize error message may be built from exception text naming the
+ # live worktree or scratch path, so it passes the same scrub as every snapshot error.
+ except service.SnapshotRequestError as exc:
+  raise HTTPException(exc.status,detail={"code":exc.code,"message":snapshot_access.public_error_text(exc.message,snapshot_id)})
+ except Exception as exc:
+  raise HTTPException(500,detail={"code":"snapshot_materialize_failed","message":snapshot_access.public_error_text(
+   f"snapshot materialize failed ({type(exc).__name__}: {exc})",snapshot_id)}) from exc
 
 @router.post("/cli/{snapshot_id}/access")
 def cli_access_snapshot(snapshot_id:str,body:dict,request:Request):

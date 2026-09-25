@@ -37,64 +37,53 @@ MUTATION_TOOL_NAMES = frozenset({
 MAX_READ_BYTES = 1024 * 1024
 MAX_SEARCH_FILE_BYTES = 2 * 1024 * 1024
 MAX_RESULTS = 500
-SNAPSHOT_PATH_REDACTION = "<flowgate-snapshot-scratch>"
+SNAPSHOT_PATH_REDACTION = materialization.SCRATCH_REDACTION
 
 
-def _scratch_root_for(row: dict | None) -> Path | None:
-    """The token scratch directory a snapshot's final/source/temp locators all live under.
-
-    ``<scratch>/source-snapshots/<snapshot_id>`` is the final locator, ``.../source`` is
-    the read/search/run root, and ``.../.flowgate-tmp`` is the run TEMP/TMP directory — all
-    three nest under this one root, so redacting this single prefix closes all of them at
-    once. Computed straight from project_id/token_id (not from a materialized path) so it
-    is available even when materialization never published anything, e.g. a stored
-    ``failure_reason``. Best-effort: any failure here must never break a real response.
-    """
-    if not row:
-        return None
-    project_id = str(row.get("project_id") or "")
-    token_id = str(row.get("token_id") or "")
-    if not project_id or not token_id:
-        return None
-    try:
-        return Path(materialization.token_service.scratch_dir_path(project_id, token_id)).resolve()
-    except Exception:
-        return None
+def _public_roots(row: dict | None) -> tuple[tuple[str, str], ...]:
+    """Every server-internal root this snapshot's text may name: token scratch (final,
+    source, and .flowgate-tmp all nest under it), live group worktree, storage root, and
+    server root. Derived from project/token/group ids, not a materialized path, so a
+    failed snapshot's stored reason is covered too."""
+    return materialization.locator_roots(row)
 
 
-def _redact_text(value: str, roots: tuple[Path | None, ...]) -> str:
-    needles: set[str] = set()
-    for root in roots:
-        if root is None:
-            continue
-        resolved = str(root)
-        needles.update({resolved, resolved.replace("\\", "/"), resolved.replace("/", "\\")})
-    if not needles:
-        return value
-    flags = re.IGNORECASE if os.name == "nt" else 0
-    for needle in sorted((item for item in needles if item), key=len, reverse=True):
-        value = re.sub(re.escape(needle), SNAPSHOT_PATH_REDACTION, value, flags=flags)
-    return value
-
-
-def sanitize_public(value: Any, roots: tuple[Path | None, ...]) -> Any:
-    """Recursively redact runtime scratch/snapshot paths from a worker-facing payload.
+def sanitize_public(value: Any, roots: tuple[tuple[str, str], ...], *, error: bool = False) -> Any:
+    """Recursively redact server-internal absolute paths from a worker-facing payload.
 
     This is the single sanitizer both the API tool-call path (api_server_tools.py) and
     the CLI HTTP path (snapshot_routes.py ``/cli/...``) rely on: ``access()``, ``execute()``,
     and ``SnapshotAccessError.payload()`` all route their return value through here before
-    it leaves this module, so a raw locator can never surface through content, search
-    matches, stdout/stderr, or an error message/detail on either boundary.
+    it leaves this module. Content/stdout keep unrelated text and only lose the known
+    roots; ``error=True`` (messages/details built from exception text) also removes any
+    other absolute path, since that text is diagnostic and never file content.
     """
     if isinstance(value, str):
-        return _redact_text(value, roots)
+        if error:
+            return materialization.redact_error_text(value, roots)
+        return materialization.redact_locators(value, roots)
     if isinstance(value, dict):
-        return {key: sanitize_public(item, roots) for key, item in value.items()}
+        return {key: sanitize_public(item, roots, error=error) for key, item in value.items()}
     if isinstance(value, list):
-        return [sanitize_public(item, roots) for item in value]
+        return [sanitize_public(item, roots, error=error) for item in value]
     if isinstance(value, tuple):
-        return tuple(sanitize_public(item, roots) for item in value)
+        return tuple(sanitize_public(item, roots, error=error) for item in value)
     return value
+
+
+def _row_or_none(snapshot_id: str | None) -> dict | None:
+    if not snapshot_id:
+        return None
+    try:
+        return request_db.get(snapshot_id)
+    except Exception:
+        return None
+
+
+def public_error_text(text: str, snapshot_id: str | None = None) -> str:
+    """Scrub one error message for a worker-facing boundary outside SnapshotAccessError
+    (e.g. a SnapshotRequestError the CLI materialize route renders)."""
+    return materialization.redact_error_text(str(text), _public_roots(_row_or_none(snapshot_id)))
 
 
 class SnapshotAccessError(ValueError):
@@ -127,17 +116,11 @@ class SnapshotAccessError(ValueError):
             },
         }
         # message/details can carry a stored failure_reason or exception text that leaked
-        # a raw scratch path (e.g. an OSError str()); this is the one place every error
-        # this module raises funnels through before an API or CLI caller renders it, so it
-        # must redact even when the raise site itself never touched a materialized path.
-        row = None
-        if self.snapshot_id:
-            try:
-                row = request_db.get(self.snapshot_id)
-            except Exception:
-                row = None
-        roots = (_scratch_root_for(row),) if row else ()
-        return sanitize_public(result, roots)
+        # a raw scratch/worktree path (e.g. an OSError str()); this is the one place every
+        # error this module raises funnels through before an API or CLI caller renders it,
+        # so it must redact even when the raise site itself never touched a path. Error
+        # mode also drops absolute paths under no known root.
+        return sanitize_public(result, _public_roots(_row_or_none(self.snapshot_id)), error=True)
 
 
 def _run_axis(run: dict, key: str) -> str:
@@ -380,7 +363,62 @@ def _audit(event_type: str, row: dict, run: dict, **extra: Any) -> None:
     })
 
 
+def _unexpected(exc: Exception, tool_input: dict, operation: str) -> SnapshotAccessError:
+    """An exception no raise site authored (OSError from open/stat/mkdir/Popen, decoding,
+    etc.) must not escape as raw text: its str() names the snapshot or worktree path."""
+    snapshot_id = str(tool_input.get("snapshot_id") or "") or None
+    if isinstance(exc, OSError):
+        return SnapshotAccessError(
+            409, "snapshot_io_failed",
+            f"snapshot {operation} failed ({type(exc).__name__}: {exc})",
+            snapshot_id=snapshot_id,
+        )
+    return SnapshotAccessError(
+        500, "snapshot_operation_failed",
+        f"snapshot {operation} failed ({type(exc).__name__}: {exc})",
+        snapshot_id=snapshot_id,
+    )
+
+
 def access(run: dict, tool_input: dict) -> tuple[int, dict]:
+    try:
+        return _access(run, tool_input)
+    except SnapshotAccessError:
+        raise
+    except Exception as exc:
+        raise _unexpected(exc, tool_input, "access") from exc
+
+
+def status_metadata(run: dict, snapshot_id: str) -> dict:
+    """Metadata for the worker-facing CLI status route.
+
+    A created snapshot is re-checked against the live source content (the same
+    ``refresh_stale`` every access/run goes through) before its state is reported, so a
+    disguised edit (same size, restored mtime) is ``stale`` here too instead of the DB's
+    last verdict. Non-created requests (requested/approved/failed/...) report as stored.
+    """
+    row = _authorize(run, snapshot_id)
+    if row.get("status") != "created":
+        return _metadata(row)
+    try:
+        refreshed = materialization.refresh_stale(
+            snapshot_id, actor=f"ai-run:{_run_axis(run, 'run_id')}"
+        )
+    except Exception as exc:
+        raise SnapshotAccessError(
+            409, "snapshot_failed", "snapshot freshness check failed",
+            state="failed", snapshot_id=snapshot_id,
+            details={"reason": getattr(exc, "code", type(exc).__name__)},
+        ) from exc
+    meta = _metadata(refreshed)
+    meta["available"] = bool(refreshed.get("available"))
+    if not meta["available"]:
+        meta["integrity_error"] = refreshed.get("integrity_error") or "snapshot_unavailable"
+        meta["current_worktree_validation_allowed"] = False
+    return meta
+
+
+def _access(run: dict, tool_input: dict) -> tuple[int, dict]:
     operation = str(tool_input.get("operation") or "")
     if operation not in ACCESS_OPERATIONS:
         raise SnapshotAccessError(422, "snapshot_operation_invalid", "unsupported snapshot access operation")
@@ -490,10 +528,25 @@ def access(run: dict, tool_input: dict) -> tuple[int, dict]:
         payload.update({"matches": matches, "total": len(matches), "truncated": len(matches) >= maximum})
 
     _record_usage(run, row, access_kind="access", operation=operation)
-    return 200, sanitize_public(payload, (_scratch_root_for(row),))
+    return 200, sanitize_public(payload, _public_roots(row))
 
 
 def execute(
+    run: dict, tool_input: dict, *, remaining_sec: float,
+    source_tool_calls: int = 0, snapshot_reads: int = 0,
+) -> tuple[int, dict]:
+    try:
+        return _execute(
+            run, tool_input, remaining_sec=remaining_sec,
+            source_tool_calls=source_tool_calls, snapshot_reads=snapshot_reads,
+        )
+    except SnapshotAccessError:
+        raise
+    except Exception as exc:
+        raise _unexpected(exc, tool_input, "execute") from exc
+
+
+def _execute(
     run: dict, tool_input: dict, *, remaining_sec: float,
     source_tool_calls: int = 0, snapshot_reads: int = 0,
 ) -> tuple[int, dict]:
@@ -583,7 +636,7 @@ def execute(
     if after_meta.get("stale"):
         payload["warning"] = STALE_WARNING
         payload["validation_claim"] = STALE_EXPLANATION
-    roots = (_scratch_root_for(row),)
+    roots = _public_roots(row)
     if claim and after_meta.get("stale"):
         _audit(
             "snapshot_misuse_blocked", after, run,

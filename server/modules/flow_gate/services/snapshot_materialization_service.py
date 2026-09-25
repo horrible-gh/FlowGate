@@ -21,6 +21,7 @@ from modules.flow_gate.db import workflow_events
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.services import git_service, token_service
 from modules.flow_gate.services.snapshot_request_service import SnapshotRequestError
+from modules.flow_gate.storage import paths as storage_paths
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,22 @@ INTERNAL_GARBAGE_NAMES = frozenset({
     "build", "dist", "htmlcov", "coverage", "coverage_html_report", "tmp", "temp",
 })
 
+# Worker-facing text (API tool results, CLI HTTP bodies, and the durable failure_reason /
+# cleanup_last_error columns they re-surface) must never carry a server-internal absolute
+# path. Known locator roots are replaced by a marker that keeps the relative suffix for
+# diagnosis; error text is additionally scrubbed of any remaining absolute path.
+SCRATCH_REDACTION = "<flowgate-snapshot-scratch>"
+WORKTREE_REDACTION = "<flowgate-worktree>"
+STORAGE_REDACTION = "<flowgate-storage>"
+SERVER_REDACTION = "<flowgate-server>"
+PATH_REDACTION = "<redacted-path>"
+_SERVER_ROOT = Path(__file__).resolve().parents[3]
+_ABSOLUTE_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9])[A-Za-z]:[\\/][^\s'\"<>|]*"          # C:\x, C:/x, and repr C:\\x
+    r"|(?<![^\s'\"(\[=,])(?:\\){2,4}[^\\/\s'\"<>|]+[\\/]+[^\s'\"<>|]*"  # UNC and \\?\ forms, at a token start
+    r"|(?<![\w.~:/\\>-])/[^\s'\"<>/\\]+/[^\s'\"<>]*"      # /abs/path (two or more segments)
+)
+
 _ID_RE = re.compile(r"\Asnap_[A-Za-z0-9_-]+\Z")
 _operations_guard = threading.Lock()
 _operations: dict[str, threading.RLock] = {}
@@ -81,6 +98,92 @@ def _parse_time(value: object) -> datetime | None:
         return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
     except (TypeError, ValueError):
         return None
+
+
+def locator_roots(row: dict | None) -> tuple[tuple[str, str], ...]:
+    """(absolute root, marker) pairs whose prefixes must never reach an AI worker.
+
+    Covers the token scratch root (snapshot final/source/.flowgate-tmp all nest under it),
+    the live group worktree the snapshot copies from, the storage root that holds every
+    scratch and worktree, and the server install root. Raw and resolved spellings are both
+    kept (8.3 short names, junctioned roots). Best-effort: a lookup that fails only drops
+    that root, and the error-text path still falls back to the generic absolute-path scrub.
+    """
+    roots: list[tuple[str, str]] = []
+
+    def add(value: object, marker: str) -> None:
+        if not value:
+            return
+        path = Path(str(value))
+        candidates = [path]
+        try:
+            candidates.append(path.resolve())
+        except (OSError, RuntimeError):
+            pass
+        for candidate in candidates:
+            # Never redact a bare drive or a top-level directory such as /data.
+            if candidate.is_absolute() and len(candidate.parts) >= 3:
+                roots.append((str(candidate), marker))
+
+    row = row or {}
+    project_id = str(row.get("project_id") or "")
+    token_id = str(row.get("token_id") or "")
+    group_id = str(row.get("group_id") or "")
+    if project_id and token_id:
+        try:
+            add(token_service.scratch_dir_path(project_id, token_id), SCRATCH_REDACTION)
+        except Exception:
+            pass
+    if project_id and group_id:
+        try:
+            worktree, _reason = git_service.effective_src_root_ex(project_id, group_id)
+            add(worktree, WORKTREE_REDACTION)
+        except Exception:
+            pass
+    try:
+        add(storage_paths.get_storage_root(project_id or None), STORAGE_REDACTION)
+    except Exception:
+        pass
+    add(_SERVER_ROOT, SERVER_REDACTION)
+    return tuple(dict.fromkeys(roots))
+
+
+def redact_locators(text: str, roots: Iterable[tuple[str, str]]) -> str:
+    """Replace every spelling of each root prefix: native, '/', '\\', and the doubled
+    backslashes an OSError/repr() rendering produces. Longest root wins, so the scratch
+    marker survives even though the scratch lives under the storage root."""
+    pairs: dict[str, str] = {}
+    for root, marker in roots:
+        base = str(root or "")
+        if not base:
+            continue
+        windows = base.replace("/", "\\")
+        for needle in (base, base.replace("\\", "/"), windows, windows.replace("\\", "\\\\")):
+            pairs.setdefault(needle, marker)
+    flags = re.IGNORECASE if os.name == "nt" else 0
+    for needle in sorted(pairs, key=len, reverse=True):
+        marker = pairs[needle]
+        text = re.sub(re.escape(needle) + r"(?![\w-])", lambda _m, marker=marker: marker, text, flags=flags)
+    return text
+
+
+def redact_error_text(text: str, roots: Iterable[tuple[str, str]]) -> str:
+    """Error/diagnostic text: known roots get markers, any other absolute path is removed."""
+    return _ABSOLUTE_PATH_RE.sub(PATH_REDACTION, redact_locators(str(text), roots))
+
+
+def public_failure_reason(exc: BaseException, row: dict | None) -> str:
+    """The only form of an exception that may be stored in failure_reason/cleanup_last_error.
+
+    Authored SnapshotRequestError messages keep their text; any other exception (the
+    PermissionError/OSError a copy, scan, or rmtree raises embeds the live worktree or
+    scratch path in str(exc)) is reduced to its type plus a path-scrubbed message.
+    """
+    if isinstance(exc, SnapshotRequestError):
+        text = str(exc.message)
+    else:
+        text = f"{type(exc).__name__}: {exc}"
+    return redact_error_text(text, locator_roots(row))[:1000]
 
 
 def _operation_lock(snapshot_id: str) -> threading.RLock:
@@ -159,7 +262,10 @@ def _snapshot_namespace(row: dict, *, create: bool) -> Path:
         raise SnapshotRequestError(409, "snapshot_scratch_unavailable", "token scratch directory is not a normal directory")
     namespace = token_resolved / SNAPSHOT_NAMESPACE
     if create:
-        namespace.mkdir(exist_ok=True)
+        try:
+            namespace.mkdir(exist_ok=True)
+        except OSError as exc:
+            raise SnapshotRequestError(409, "snapshot_scratch_unavailable", "snapshot namespace could not be created") from exc
     if namespace.exists():
         if not namespace.is_dir() or _is_reparse_or_symlink(namespace):
             raise SnapshotRequestError(409, "snapshot_scratch_unavailable", "snapshot namespace is unsafe")
@@ -375,19 +481,20 @@ def _fingerprint(entries: Iterable[dict]) -> str:
     return digest.hexdigest()
 
 
-def _current_fingerprint(root: Path, row: dict, baseline: list[dict] | None = None) -> tuple[str, list[dict]]:
+def _current_fingerprint(root: Path, row: dict) -> tuple[str, list[dict]]:
+    """Content fingerprint of the requested scope in the live worktree.
+
+    Every file is re-read and re-hashed on every call. Stat metadata (size, mtime) is not
+    evidence of unchanged content: a same-length edit followed by an mtime restore keeps
+    both identical, so reusing a baseline hash on a stat match would miss a real change
+    and report a stale snapshot as active.
+    """
     _, files, _ = _collect_scope(row, root)
     _check_limits(files)
-    known = {item["path"]: item for item in (baseline or [])}
     entries: list[dict] = []
     total = 0
     for relative, st in files:
-        old = known.get(relative)
-        if old and int(old.get("size", -1)) == int(st.st_size) and int(old.get("mtime_ns", -1)) == int(st.st_mtime_ns):
-            sha = str(old["sha256"])
-            size = int(st.st_size)
-        else:
-            sha, size = _read_hash(root / PurePosixPath(relative), st)
+        sha, size = _read_hash(root / PurePosixPath(relative), st)
         total += size
         if total > SNAPSHOT_MAX_TOTAL_BYTES:
             raise SnapshotRequestError(413, "snapshot_total_size_limit", "snapshot exceeds total byte limit")
@@ -523,7 +630,15 @@ def _load_manifest(path: Path, row: dict) -> dict:
     }
     if any(manifest.get(key) != value for key, value in expected.items()):
         raise SnapshotRequestError(409, "snapshot_integrity_error", "snapshot manifest ownership does not match")
-    if not (resolved / "source").is_dir() or not (resolved / "README.md").is_file():
+    # The payload roots are checked without following links: a ``source`` swapped for a
+    # symlink/junction to another directory would otherwise pass here (is_dir() follows
+    # it) and let freshness/status report a tree that access/run reject as
+    # ``snapshot_locator_invalid``.
+    source = resolved / "source"
+    readme = resolved / "README.md"
+    if _is_reparse_or_symlink(source) or _is_reparse_or_symlink(readme):
+        raise SnapshotRequestError(409, "snapshot_integrity_error", "snapshot payload root is a link/reparse point")
+    if not source.is_dir() or not readme.is_file():
         raise SnapshotRequestError(409, "snapshot_integrity_error", "snapshot payload is incomplete")
     return manifest
 
@@ -564,7 +679,7 @@ def _record_event(event_type: str, row: dict, actor: str, from_state: str | None
 
 
 def _record_create_failure(row: dict, actor: str, exc: Exception) -> dict:
-    reason = getattr(exc, "message", str(exc))[:1000]
+    reason = public_failure_reason(exc, row)
     stage = getattr(exc, "code", type(exc).__name__)
     with get_store().transaction():
         failed, changed = db.mark_failed(row["snapshot_id"], "snapshot_create_failed", reason)
@@ -576,17 +691,50 @@ def _record_create_failure(row: dict, actor: str, exc: Exception) -> dict:
     return failed
 
 
+def _fail_creation(row: dict, actor: str, exc: BaseException):
+    """Persist approved->failed for a materialization that did not publish, then raise.
+
+    Every pre-publish failure (namespace preparation, claim creation, scan, copy, verify)
+    goes through here so the request never stays ``approved`` and non-request
+    exceptions reach callers as the same scrubbed 409 ``snapshot_create_failed``.
+    """
+    try:
+        _record_create_failure(row, actor, exc)
+    except Exception:
+        logger.exception("snapshot %s creation failure could not be persisted", row.get("snapshot_id"))
+    if isinstance(exc, SnapshotRequestError):
+        raise exc
+    # The raw OSError text names the live worktree/scratch path; callers
+    # (human approve, CLI materialize) get the same scrubbed reason as the DB.
+    raise SnapshotRequestError(
+        409, "snapshot_create_failed", public_failure_reason(exc, row),
+    ) from exc
+
+
 def _recover_published(row: dict, final: Path, actor: str) -> dict:
-    manifest = _load_manifest(final, row)
-    created_at = str(manifest["created_at"])
-    expires_at = str(manifest.get("expires_at") or (
-        (_parse_time(created_at) or _utcnow()) + timedelta(hours=SNAPSHOT_TTL_HOURS)
-    ).isoformat())
-    with get_store().transaction():
-        updated, changed = db.mark_created(
-            row["snapshot_id"], created_at, expires_at,
+    """Finish the DB half of a tree that was published before its DB update.
+
+    Only a valid published tree is recoverable. An existing ``final`` whose manifest or
+    payload fails integrity (missing/corrupt ``snapshot.json``, link/reparse roots,
+    ownership mismatch, unusable fields) can never become ``created``: it is an
+    unrecoverable creation failure and goes through ``_fail_creation`` (approved->failed
+    event + scrubbed error). A failing DB update stays outside so the retry is kept.
+    """
+    try:
+        manifest = _load_manifest(final, row)
+        created_at = str(manifest["created_at"])
+        expires_at = str(manifest.get("expires_at") or (
+            (_parse_time(created_at) or _utcnow()) + timedelta(hours=SNAPSHOT_TTL_HOURS)
+        ).isoformat())
+        published = (
             str(manifest["source_revision"]), str(manifest["worktree_fingerprint"]),
             int(manifest["copied_file_count"]), int(manifest["copied_byte_size"]),
+        )
+    except Exception as exc:
+        _fail_creation(row, actor, exc)
+    with get_store().transaction():
+        updated, changed = db.mark_created(
+            row["snapshot_id"], created_at, expires_at, *published,
         )
         if changed:
             _record_event(
@@ -610,7 +758,10 @@ def materialize(snapshot_id: str, actor: str) -> dict:
         if row["status"] != "approved":
             raise SnapshotRequestError(409, "snapshot_not_approved", "only an approved snapshot can be materialized")
 
-        namespace = _snapshot_namespace(row, create=True)
+        try:
+            namespace = _snapshot_namespace(row, create=True)
+        except Exception as exc:
+            _fail_creation(row, actor, exc)
         final = namespace / snapshot_id
         if final.exists() or final.is_symlink():
             return _recover_published(row, final, actor)
@@ -621,7 +772,10 @@ def materialize(snapshot_id: str, actor: str) -> dict:
         try:
             claim.mkdir()
         except FileExistsError as exc:
+            # Another materializer owns the claim: not a creation failure of this request.
             raise SnapshotRequestError(409, "snapshot_materialization_busy", "snapshot materialization is already running") from exc
+        except Exception as exc:
+            _fail_creation(row, actor, exc)
 
         try:
             root = _resolve_source_root(row)
@@ -654,7 +808,7 @@ def materialize(snapshot_id: str, actor: str) -> dict:
                 })
 
             fingerprint = _fingerprint(entries)
-            current_fingerprint, _ = _current_fingerprint(root, row, entries)
+            current_fingerprint, _ = _current_fingerprint(root, row)
             if current_fingerprint != fingerprint:
                 raise SnapshotRequestError(409, "snapshot_source_changed", "source changed while snapshot was being built")
             revision_after, _ = _git_identity(root, row)
@@ -702,10 +856,7 @@ def materialize(snapshot_id: str, actor: str) -> dict:
             if not published:
                 if stage.exists() and not _is_reparse_or_symlink(stage):
                     shutil.rmtree(stage, ignore_errors=True)
-                try:
-                    _record_create_failure(row, actor, exc)
-                except Exception:
-                    logger.exception("snapshot %s creation failure could not be persisted", snapshot_id)
+                _fail_creation(row, actor, exc)
             raise
         finally:
             if claim.exists() and not _is_reparse_or_symlink(claim):
@@ -771,10 +922,9 @@ def refresh_stale(snapshot_id: str, actor: str = "snapshot-freshness") -> dict:
         root = _resolve_source_root(row)
         current_revision, _ = _git_identity(root, row)
         fingerprint_data = manifest.get("fingerprint") or {}
-        baseline = fingerprint_data.get("entries")
-        if not isinstance(baseline, list):
+        if not isinstance(fingerprint_data.get("entries"), list):
             raise SnapshotRequestError(409, "snapshot_integrity_error", "fingerprint entries are missing")
-        current_fingerprint, _ = _current_fingerprint(root, row, baseline)
+        current_fingerprint, _ = _current_fingerprint(root, row)
         if current_fingerprint == row.get("source_fingerprint"):
             result["current_source_revision"] = current_revision
             return result
@@ -852,7 +1002,7 @@ def cleanup(snapshot_id: str, actor: str, *, trigger: str = "explicit") -> dict:
             except Exception as exc:
                 logger.warning("terminal snapshot %s orphan cleanup failed", snapshot_id, exc_info=True)
                 result = dict(row)
-                result["cleanup_warning"] = str(exc)
+                result["cleanup_warning"] = public_failure_reason(exc, row)
                 return result
             return row
 
@@ -889,7 +1039,7 @@ def _finish_deleted(row: dict, actor: str, trigger: str, garbage: dict,
 
 
 def _cleanup_failed(row: dict, actor: str, trigger: str, exc: Exception) -> dict:
-    reason = getattr(exc, "message", str(exc))[:1000]
+    reason = public_failure_reason(exc, row)
     current_attempt = int(row.get("cleanup_attempts") or 0) + 1
     delay = min(3600, 60 * (2 ** max(0, current_attempt - 1)))
     next_at = (_utcnow() + timedelta(seconds=delay)).isoformat()

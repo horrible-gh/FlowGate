@@ -474,8 +474,13 @@ def test_copy_failure_removes_staging_and_never_publishes(snapshot_env, monkeypa
         return real_copy(*args)
 
     monkeypatch.setattr(materialize, "_copy_and_hash", fail_second)
-    with pytest.raises(OSError):
+    # 0517 T0022: an unauthored exception leaves materialize() only as the same scrubbed
+    # SnapshotRequestError that was stored, never as raw OSError text.
+    with pytest.raises(snapshot_request_service.SnapshotRequestError) as caught:
         materialize.materialize("snap_test", "human")
+    assert caught.value.code == "snapshot_create_failed"
+    assert caught.value.message == "OSError: copy interrupted"
+    assert snapshot_env.row["failure_reason"] == "OSError: copy interrupted"
     namespace = snapshot_env.scratch / materialize.SNAPSHOT_NAMESPACE
     assert snapshot_env.row["status"] == "failed"
     assert not snapshot_env.final().exists()
@@ -886,3 +891,102 @@ def test_run_finish_closes_unmaterialized_and_late_http_approval_cannot_create(
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "snapshot_not_approved"
     assert not snapshot_env.final().exists()
+
+
+# ---------------------------------------------------------------------------
+# 0517 T0022: stale detection must be a content contract, not a stat heuristic.
+# ---------------------------------------------------------------------------
+
+
+def _disguise_same_size_same_mtime(path: Path, new_text: str) -> None:
+    """Rewrite ``path`` with same-length different content, then restore its mtime."""
+    before = path.stat()
+    assert len(new_text.encode("utf-8")) == before.st_size
+    path.write_text(new_text, encoding="utf-8", newline="")
+    materialize.os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    after = path.stat()
+    # The disguise must actually hold, or the regression below proves nothing.
+    assert (after.st_size, after.st_mtime_ns) == (before.st_size, before.st_mtime_ns)
+    assert path.read_text(encoding="utf-8") == new_text
+
+
+@pytest.mark.parametrize(
+    ("scope", "paths", "target"),
+    [
+        ("single_file", ["one.txt"], "one.txt"),
+        ("directory", ["dir"], "dir/sub/b.txt"),
+        ("whole_source", [], "other.txt"),
+    ],
+)
+def test_t0022_same_size_restored_mtime_content_change_is_stale(
+    snapshot_env, monkeypatch, scope, paths, target,
+):
+    snapshot_env.row.update(scope=scope, requested_paths=paths)
+    materialize.materialize("snap_test", "human")
+    manifest = json.loads((snapshot_env.final() / "snapshot.json").read_text(encoding="utf-8"))
+    entry = next(item for item in manifest["fingerprint"]["entries"] if item["path"] == target)
+    assert materialize.refresh_stale("snap_test")["stale"] is False
+
+    live = snapshot_env.worktree / target
+    original = live.read_text(encoding="utf-8")
+    _disguise_same_size_same_mtime(live, original.swapcase() if original.swapcase() != original else "Z" * len(original))
+    # Exactly the stat tuple the snapshot recorded — only the bytes differ.
+    assert live.stat().st_size == entry["size"]
+    assert live.stat().st_mtime_ns == entry["mtime_ns"]
+
+    result = materialize.refresh_stale("snap_test")
+    assert result["stale"] is True
+    stale_events = [e for e in snapshot_env.state.events if e["event_type"] == "snapshot_stale"]
+    assert len(stale_events) == 1
+    assert json.loads(stale_events[0]["metadata"])["stale_reason"] == "scope_fingerprint_changed"
+
+    # The worker-facing access boundary reports the same verdict through the real refresh.
+    monkeypatch.setattr(snapshot_access_service.usage_db, "record", lambda data: dict(data))
+    monkeypatch.setattr(snapshot_access_service.workflow_events, "create", lambda data: data)
+    run = {"project_id": "project", "group_id": "project.default.0517", "run_id": "run", "token_id": "token"}
+    status, payload = snapshot_access_service.access(run, {"snapshot_id": "snap_test", "operation": "status"})
+    assert status == 200
+    assert payload["snapshot"]["status"] == "stale"
+    assert payload["snapshot"]["current_worktree_validation_allowed"] is False
+
+
+def test_t0022_unchanged_content_with_touched_mtime_stays_active(snapshot_env):
+    """The content contract also means a pure touch (same bytes, new mtime) is not stale."""
+    materialize.materialize("snap_test", "human")
+    live = snapshot_env.worktree / "one.txt"
+    stamp = live.stat().st_mtime_ns + 5_000_000_000
+    materialize.os.utime(live, ns=(stamp, stamp))
+    assert materialize.refresh_stale("snap_test")["stale"] is False
+
+
+def test_t0022_disguised_change_during_build_fails_materialize(snapshot_env, monkeypatch):
+    """The post-copy verification inside materialize() used the same stat-reuse shortcut;
+    a same-size, restored-mtime edit between copy and verify must still fail closed."""
+    real_copy = materialize._copy_and_hash
+
+    def copy_then_disguise(source, target, expected):
+        result = real_copy(source, target, expected)
+        _disguise_same_size_same_mtime(source, "ONE")
+        return result
+
+    monkeypatch.setattr(materialize, "_copy_and_hash", copy_then_disguise)
+    with pytest.raises(snapshot_request_service.SnapshotRequestError) as caught:
+        materialize.materialize("snap_test", "human")
+    assert caught.value.code == "snapshot_source_changed"
+    assert snapshot_env.row["status"] == "failed"
+    assert not snapshot_env.final().exists()
+
+
+def test_t0022_fingerprint_never_reuses_a_stat_matched_hash(snapshot_env, monkeypatch):
+    """Pin the contract itself: every refresh re-reads every in-scope file."""
+    snapshot_env.row.update(scope="selected_files", requested_paths=["one.txt", "other.txt"])
+    materialize.materialize("snap_test", "human")
+    reads = []
+    real_read_hash = materialize._read_hash
+    monkeypatch.setattr(
+        materialize, "_read_hash",
+        lambda path, expected: reads.append(path.name) or real_read_hash(path, expected),
+    )
+    materialize.refresh_stale("snap_test")
+    materialize.refresh_stale("snap_test")
+    assert sorted(reads) == ["one.txt", "one.txt", "other.txt", "other.txt"]
