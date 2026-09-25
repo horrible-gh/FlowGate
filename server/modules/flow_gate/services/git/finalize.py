@@ -656,7 +656,8 @@ def update_from_base(group_id: str) -> dict:
         )
         before = _gs._run_git(["rev-parse", "HEAD"], cwd=wt_path)
         proc = _gs._run_git(
-            ["merge", "--no-ff", base_branch, "-m",
+            [*_gs._GIT_IDENT,
+             "merge", "--no-ff", base_branch, "-m",
              f"Merge base '{base_branch}' into '{state['branch']}'"],
             cwd=wt_path, author_env=_author_env_from_cfg(cfg),
         )
