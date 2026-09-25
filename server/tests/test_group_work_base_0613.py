@@ -211,6 +211,40 @@ def test_migration_is_additive_and_present_for_all_dialects(migrated_sqlite_db):
         assert "ALTER TABLE groups ADD COLUMN work_base_ref TEXT" in text
 
 
+def test_project_choices_expose_git_state_without_branch_catalog_calls(monkeypatch):
+    monkeypatch.setattr(
+        process_service.db,
+        "get_allowed_projects",
+        lambda: [
+            {"project": "git-project", "module": "default"},
+            {"project": "git-project", "module": "admin"},
+            {"project": "plain-project", "module": "core"},
+        ],
+    )
+    configs = {
+        "git-project": {"enabled": 1, "base_branch": "release"},
+        "plain-project": None,
+    }
+    monkeypatch.setattr(
+        git_service.db_git, "get_config", lambda project_id: configs[project_id]
+    )
+
+    assert process_service.get_projects_with_modules() == [
+        {
+            "project": "git-project",
+            "modules": ["admin", "default"],
+            "git_enabled": True,
+            "base_branch": "release",
+        },
+        {
+            "project": "plain-project",
+            "modules": ["core"],
+            "git_enabled": False,
+            "base_branch": None,
+        },
+    ]
+
+
 def test_existing_contracts_remain_separate():
     worktree_params = inspect.signature(git_service.ensure_worktree).parameters
     resolver_params = inspect.signature(

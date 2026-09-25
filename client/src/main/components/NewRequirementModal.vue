@@ -48,7 +48,7 @@
         <form @submit.prevent="submit">
           <div class="form-group">
             <label class="form-label req">{{ $t('main.new_requirement_modal.project_label') }}</label>
-            <select v-model="form.project" class="form-ctrl" @change="onProjectChange">
+            <select v-model="form.project" class="form-ctrl" data-test="project-select" @change="onProjectChange">
               <option value="" disabled>{{ $t('main.new_requirement_modal.select_project') }}</option>
               <option v-for="p in projects" :key="p.project" :value="p.project">
                 {{ p.project }}
@@ -56,11 +56,58 @@
             </select>
           </div>
 
-          <div v-if="currentModules.length > 0" class="form-group">
-            <label class="form-label">{{ $t('main.new_requirement_modal.module_label') }}</label>
-            <select v-model="form.module" class="form-ctrl">
-              <option v-for="m in currentModules" :key="m.id" :value="m.id">{{ m.label }}</option>
-            </select>
+          <div
+            v-if="currentModules.length > 0"
+            class="project-context-row"
+            :class="{ 'project-context-row--git': selectedProjectGitEnabled }"
+          >
+            <div class="form-group project-context-cell" data-test="module-cell">
+              <label class="form-label">{{ $t('main.new_requirement_modal.module_label') }}</label>
+              <select v-model="form.module" class="form-ctrl" data-test="module-select">
+                <option v-for="m in currentModules" :key="m.id" :value="m.id">{{ m.label }}</option>
+              </select>
+            </div>
+
+            <div
+              v-if="selectedProjectGitEnabled"
+              class="form-group project-context-cell"
+              data-test="base-branch-cell"
+            >
+              <label class="form-label base-branch-label">
+                {{ $t('main.new_requirement_modal.base_branch_label') }}
+                <span class="base-branch-git-badge">Git</span>
+              </label>
+              <select
+                v-if="groupMode === 'new'"
+                v-model="form.workBaseRef"
+                class="form-ctrl"
+                data-test="base-branch-select"
+                :disabled="branchCatalogLoading || !!branchCatalogError"
+              >
+                <option v-if="branchCatalogLoading" value="">
+                  {{ $t('main.new_requirement_modal.base_branch_loading') }}
+                </option>
+                <option v-else-if="branchCatalogError" value="">
+                  {{ $t('main.new_requirement_modal.base_branch_unavailable') }}
+                </option>
+                <option v-for="branch in branchOptions" :key="branch.name" :value="branch.name">
+                  {{ branch.name }}
+                </option>
+              </select>
+              <input
+                v-else
+                class="form-ctrl base-branch-readonly"
+                data-test="base-branch-readonly"
+                type="text"
+                :value="existingGroupWorkBaseRef"
+                :placeholder="$t('main.new_requirement_modal.base_branch_unavailable')"
+                readonly
+              />
+              <p v-if="branchCatalogError" class="form-hint base-branch-error" data-test="base-branch-error">
+                {{ branchCatalogError }}
+              </p>
+
+            </div>
           </div>
 
           <div class="form-group">
@@ -85,7 +132,7 @@
             </div>
 
             <div v-if="groupMode === 'existing'">
-              <select v-model="form.groupId" class="form-ctrl">
+              <select v-model="form.groupId" class="form-ctrl" data-test="group-select">
                 <option
                   v-for="group in groupOptions"
                   :key="group.id"
@@ -180,7 +227,7 @@
     <template #footer>
       <DialogFooter :actions="[
         { id: 'action-0', role: 'cancel', label: $t('common.cancel'), onSelect: () => { $emit('close') } },
-        { id: 'submit-1', role: 'primary', label: $t('main.new_requirement_modal.create_button'), onSelect: () => submit(), disabled: submitting || targetGroupBusy }
+        { id: 'submit-1', role: 'primary', label: $t('main.new_requirement_modal.create_button'), onSelect: () => submit(), disabled: submitting || targetGroupBusy || baseBranchBlocked }
       ]">
         <template #action-action-0>
           {{ $t('common.cancel') }}
@@ -224,6 +271,20 @@ interface ModuleItem {
 interface ProjectItem {
   project: string
   modules: ModuleItem[]
+  gitEnabled: boolean
+  baseBranch: string | null
+}
+
+interface BranchItem {
+  name: string
+  kind: string
+  can_be_create_source?: boolean
+}
+
+interface GroupWorkBase {
+  group_id: string
+  work_base_ref?: string | null
+  effective_work_base_ref?: string | null
 }
 
 const props = defineProps<{
@@ -247,12 +308,17 @@ function isGroupBusy(groupId: string): boolean {
 
 const projects = ref<ProjectItem[]>([])
 const currentModules = ref<Array<{ id: string; label: string }>>([])
+const branchOptions = ref<BranchItem[]>([])
+const branchCatalogLoading = ref(false)
+const branchCatalogError = ref('')
+const groupWorkBases = ref<Record<string, GroupWorkBase>>({})
 const submitting = ref(false)
 const flashMessage = ref('')
 const flashOk = ref(false)
 const groupMode = ref<'existing' | 'new'>('new')
 const rootTypes = ['R', 'B'] as const
 const rootType = ref<(typeof rootTypes)[number]>('R')
+let projectContextGeneration = 0
 
 const form = ref({
   project: '',
@@ -264,12 +330,13 @@ const form = ref({
   owner: 'admin',
   template: 'default',
   openAfter: true,
+  workBaseRef: '',
 })
 
 const owners = ['admin', 'copilot', 'reviewer']
 
 const groupOptions = computed(() => {
-  const pid = projectStore.currentProjectId
+  const pid = form.value.project || projectStore.currentProjectId
   // 0454 T0006 §4.2 — full variant. The "group without an R/B yet" judgement below reads the
   // group's sibling documents; on a pruned tree a hidden group and its documents are both
   // absent, so the filter would silently answer over a smaller universe than it means to.
@@ -297,6 +364,22 @@ const targetGroupBusy = computed(() =>
   groupMode.value === 'existing' && !!form.value.groupId && isGroupBusy(form.value.groupId),
 )
 
+const selectedProjectGitEnabled = computed(() =>
+  projects.value.find((project) => project.project === form.value.project)?.gitEnabled ?? false,
+)
+
+const existingGroupWorkBaseRef = computed(() => {
+  if (groupMode.value !== 'existing' || !form.value.groupId) return ''
+  const group = groupWorkBases.value[form.value.groupId]
+  return group?.effective_work_base_ref || group?.work_base_ref || ''
+})
+
+const baseBranchBlocked = computed(() =>
+  selectedProjectGitEnabled.value
+  && groupMode.value === 'new'
+  && (branchCatalogLoading.value || !!branchCatalogError.value || !form.value.workBaseRef),
+)
+
 // Group title to drop into the title field. Existing-group mode → the selected
 // group's pure title; new-group mode → the name the user is typing. '' hides the
 // button (no group list / nothing selected / empty new-group name).
@@ -315,6 +398,22 @@ function applyGroupNameToTitle() {
   form.value.title = name
 }
 
+function firstWorkflowRootError(errors: unknown): string | null {
+  if (!Array.isArray(errors) || errors.length === 0) return null
+  const first = errors[0]
+  if (typeof first === 'string') return first
+  if (first && typeof first === 'object') {
+    const message = (first as { message?: unknown }).message
+    if (typeof message === 'string' && message) return message
+  }
+  return null
+}
+
+function workflowRootErrorMessage(error: unknown, fallback: string): string {
+  const errors = (error as { response?: { data?: { errors?: unknown } } })?.response?.data?.errors
+  return firstWorkflowRootError(errors) || extractApiErrorMessage(error, fallback)
+}
+
 function getGroupModule(group: { id: string; parent_id: string | null }, nodes: Array<{ id: string; label: string }>): string {
   const parent = group.parent_id ? nodes.find((node) => node.id === group.parent_id) : null
   if (parent?.label) return parent.label
@@ -330,6 +429,66 @@ function applyInitialGroup() {
   form.value.groupId = matched.id
   form.value.module = matched.module || ''
   return true
+}
+
+async function refreshProjectContext(projectId: string) {
+  const generation = ++projectContextGeneration
+  const project = projects.value.find((item) => item.project === projectId)
+
+  branchOptions.value = []
+  branchCatalogError.value = ''
+  branchCatalogLoading.value = false
+  groupWorkBases.value = {}
+  form.value.workBaseRef = ''
+
+  if (!projectId) return
+
+  const treeRequest = explorerStore.fetchGroupTree(projectId, false, true).catch(() => [])
+  if (!project?.gitEnabled) {
+    await treeRequest
+    return
+  }
+
+  branchCatalogLoading.value = true
+  const [catalogResult, groupsResult] = await Promise.allSettled([
+    getRequest<{ base_branch?: string; branches?: BranchItem[] }>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/git/branches`,
+    ),
+    getRequest<{ groups?: GroupWorkBase[] }>(
+      `/api/v1/groups?project_id=${encodeURIComponent(projectId)}`,
+    ),
+  ])
+  await treeRequest
+
+  if (generation !== projectContextGeneration) return
+  branchCatalogLoading.value = false
+
+  if (groupsResult.status === 'fulfilled') {
+    const groups = Array.isArray(groupsResult.value.data.groups) ? groupsResult.value.data.groups : []
+    groupWorkBases.value = Object.fromEntries(groups.map((group) => [group.group_id, group]))
+  }
+
+  if (catalogResult.status === 'rejected') {
+    branchCatalogError.value = extractApiErrorMessage(
+      catalogResult.reason,
+      t('main.new_requirement_modal.base_branch_load_error'),
+    )
+    return
+  }
+
+  const catalog = catalogResult.value.data
+  branchOptions.value = (Array.isArray(catalog.branches) ? catalog.branches : []).filter((branch) =>
+    branch.can_be_create_source !== false
+    && branch.kind !== 'remote_only'
+    && branch.kind !== 'internal_slot',
+  )
+  const defaultBranch = catalog.base_branch || project.baseBranch || ''
+  form.value.workBaseRef = branchOptions.value.some((branch) => branch.name === defaultBranch)
+    ? defaultBranch
+    : ''
+  if (!form.value.workBaseRef) {
+    branchCatalogError.value = t('main.new_requirement_modal.base_branch_default_missing')
+  }
 }
 
 onMounted(async () => {
@@ -358,6 +517,8 @@ onMounted(async () => {
               typeof m === 'string' ? { id: m, label: m } : { id: (m.name ?? '') as string, label: ((m.title || m.name) ?? '') as string }
             )
           : [],
+        gitEnabled: it.git_enabled === true || it.git_enabled === 1,
+        baseBranch: typeof it.base_branch === 'string' && it.base_branch ? it.base_branch : null,
       }
     }).filter((p) => p.project !== '__SYSTEM__')
 
@@ -376,13 +537,8 @@ onMounted(async () => {
     projects.value = []
   }
 
-  const pid = projectStore.currentProjectId
-  if (pid) {
-    try {
-      await explorerStore.fetchGroupTree(pid, false, true)
-    } catch {
-      /* Group list is supplementary UI info; do not block the creation flow. */
-    }
+  if (form.value.project) {
+    await refreshProjectContext(form.value.project)
   }
 })
 
@@ -402,10 +558,12 @@ watch(groupOptions, (groups) => {
   }
 }, { immediate: true })
 
-function onProjectChange() {
+async function onProjectChange() {
   const found = projects.value.find((p) => p.project === form.value.project)
   currentModules.value = found?.modules ?? []
   form.value.module = currentModules.value[0]?.id ?? ''
+  form.value.groupId = ''
+  await refreshProjectContext(form.value.project)
 }
 
 async function submit() {
@@ -431,14 +589,29 @@ async function submit() {
     return
   }
 
+  if (baseBranchBlocked.value) {
+    flashOk.value = false
+    flashMessage.value = branchCatalogError.value || t('main.new_requirement_modal.error_select_base_branch')
+    return
+  }
+
   const groupPayload: Record<string, string> = groupMode.value === 'existing'
     ? { group_id: form.value.groupId }
-    : { new_group_name: form.value.newGroupName.trim() || form.value.title.trim() }
+    : {
+        new_group_name: form.value.newGroupName.trim() || form.value.title.trim(),
+        ...(selectedProjectGitEnabled.value && form.value.workBaseRef
+          ? { work_base_ref: form.value.workBaseRef }
+          : {}),
+      }
 
   submitting.value = true
   flashMessage.value = ''
   try {
-    const response = await postUrlEncoded<{ ok: boolean; errors?: string[]; result?: unknown }>(
+    const response = await postUrlEncoded<{
+      ok: boolean
+      errors?: Array<string | { code?: string; message?: string }>
+      result?: unknown
+    }>(
       '/api/v1/outbox/create',
       {
         project: form.value.project,
@@ -455,7 +628,7 @@ async function submit() {
     )
     if (!response.data.ok) {
       flashOk.value = false
-      flashMessage.value = response.data.errors?.[0] || t('main.requirement.create.error')
+      flashMessage.value = firstWorkflowRootError(response.data.errors) || t('main.requirement.create.error')
       return
     }
     const result = response.data.result as { doc_id?: string } | undefined
@@ -465,7 +638,7 @@ async function submit() {
     emit('created', { docId, openAfter: form.value.openAfter })
   } catch (error: unknown) {
     flashOk.value = false
-    const message = extractApiErrorMessage(error, t('main.requirement.create.error'))
+    const message = workflowRootErrorMessage(error, t('main.requirement.create.error'))
     // surface server error via toast only — no inline .alert-danger in .modal-ft
     try {
       // show toast above modal (teleport ensures visibility)
@@ -480,6 +653,53 @@ async function submit() {
 </script>
 
 <style scoped>
+.project-context-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+.project-context-row--git {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.project-context-cell {
+  min-width: 0;
+}
+
+.base-branch-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.base-branch-git-badge {
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--surface);
+  font-size: .62rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.base-branch-readonly {
+  background: var(--bg);
+  color: var(--text-s);
+  cursor: not-allowed;
+}
+
+.base-branch-error {
+  color: var(--danger, #dc2626);
+}
+
+@media (max-width: 640px) {
+  .project-context-row--git {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+}
+
 .root-tabs {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

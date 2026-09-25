@@ -2384,7 +2384,9 @@ def get_modules_for_project(project: str) -> list[str]:
 
 
 def get_projects_with_modules() -> list[dict]:
-    """Build the module list by project."""
+    """Build the module list and creation-time Git context by project."""
+    from .db import git_integration as db_git
+
     allowed = db.get_allowed_projects()
     project_map: dict[str, list[str]] = {}
     for row in allowed:
@@ -2394,10 +2396,20 @@ def get_projects_with_modules() -> list[dict]:
             project_map.setdefault(p, [])
             if m:
                 project_map[p].append(m)
-    return [
-        {"project": p, "modules": sorted(set(ms))}
-        for p, ms in sorted(project_map.items())
-    ]
+
+    projects = []
+    for project_id, modules in sorted(project_map.items()):
+        config = db_git.get_config(project_id)
+        git_enabled = bool(config and config.get("enabled"))
+        projects.append({
+            "project": project_id,
+            "modules": sorted(set(modules)),
+            "git_enabled": git_enabled,
+            "base_branch": (
+                (config.get("base_branch") or "main") if git_enabled and config else None
+            ),
+        })
+    return projects
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
