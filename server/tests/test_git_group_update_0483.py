@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 
@@ -306,3 +307,141 @@ def test_group_update_conflicts_go_through_facade_seam(tmp_path, monkeypatch):
     assert calls[0]["files"] == ["sentinel.txt"]
 
     subprocess.run(["git", "merge", "--abort"], cwd=wt_path, text=True, capture_output=True)
+
+
+def _repo_pair_no_identity(tmp_path: Path) -> tuple[Path, Path]:
+    """Same shape as _repo_pair (base checkout + origin remote + a separate group
+    worktree) but neither checkout gets a local git identity; setup commits use
+    one-shot GIT_AUTHOR_*/GIT_COMMITTER_* env vars scoped only to the seed
+    subprocess calls, never left in repo config or os.environ. base and group each
+    touch a DIFFERENT new file so the --no-ff merge needs a real merge commit
+    without a content conflict.
+
+    flowgate.default.0619 T0004/NR0003: reproduces the reported failure host, where
+    the server account has no global git user.name/user.email either.
+    """
+    seed_env = dict(os.environ)
+    seed_env.update({
+        "GIT_AUTHOR_NAME": "Seed", "GIT_AUTHOR_EMAIL": "seed@example.invalid",
+        "GIT_COMMITTER_NAME": "Seed", "GIT_COMMITTER_EMAIL": "seed@example.invalid",
+    })
+
+    def _git_seed(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args], cwd=repo, text=True, capture_output=True, check=True,
+            env=seed_env,
+        )
+
+    origin = tmp_path / "origin.git"
+    subprocess.run(
+        ["git", "init", "--bare", "-b", "main", str(origin)],
+        cwd=tmp_path, text=True, capture_output=True, check=True,
+    )
+    base_root = tmp_path / "base"
+    subprocess.run(
+        ["git", "clone", str(origin), str(base_root)],
+        cwd=tmp_path, text=True, capture_output=True, check=True,
+    )
+    (base_root / "seed.txt").write_text("seed\n", encoding="utf-8")
+    _git_seed(base_root, "add", "seed.txt")
+    _git_seed(base_root, "commit", "-m", "seed")
+    _git_seed(base_root, "push", "origin", "main")
+    _git_seed(base_root, "branch", "group/test")
+
+    wt_path = tmp_path / "group"
+    _git_seed(base_root, "worktree", "add", str(wt_path), "group/test")
+
+    (wt_path / "group.txt").write_text("group content\n", encoding="utf-8")
+    _git_seed(wt_path, "add", "group.txt")
+    _git_seed(wt_path, "commit", "-m", "group adds group.txt")
+
+    (base_root / "base.txt").write_text("base content\n", encoding="utf-8")
+    _git_seed(base_root, "add", "base.txt")
+    _git_seed(base_root, "commit", "-m", "base adds base.txt")
+    _git_seed(base_root, "push", "origin", "main")
+
+    assert _git_seed(base_root, "status", "--porcelain").stdout == ""
+    assert _git_seed(wt_path, "status", "--porcelain").stdout == ""
+    return base_root, wt_path
+
+
+def _no_host_identity_env(tmp_path: Path, monkeypatch) -> None:
+    """Strip every source of git committer identity this test process could hand
+    the child `git` subprocess: global/system config location and author/committer
+    env vars. Only _GIT_IDENT (passed as merge argv) may supply one afterwards."""
+    empty_home = tmp_path / "empty_home"
+    empty_home.mkdir(exist_ok=True)
+    monkeypatch.setenv("HOME", str(empty_home))
+    monkeypatch.setenv("USERPROFILE", str(empty_home))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty_home / "nonexistent.gitconfig"))
+    for key in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"):
+        monkeypatch.delenv(key, raising=False)
+
+
+def test_update_from_base_succeeds_without_host_git_identity(tmp_path, monkeypatch):
+    """T0004 §4A / §6.1: update_from_base must not depend on the server host's
+    global/local git identity. Before the fix this reproduced NR0003's exact
+    failure: 'fatal: unable to auto-detect email address'."""
+    _no_host_identity_env(tmp_path, monkeypatch)
+    base_root, wt_path = _repo_pair_no_identity(tmp_path)
+
+    cfg = {"base_branch": "main"}
+    state = {"branch": "group/test", "status": "none"}
+    calls: list[dict] = []
+    _patch_group_update(monkeypatch, cfg, state, "demo", base_root, wt_path, calls)
+
+    result = git_service.update_from_base("demo.default.0001")
+
+    assert result["ok"] is True
+    assert result["result"]["status"] == "updated"
+
+    parents = subprocess.run(
+        ["git", "log", "-1", "--pretty=%P"], cwd=wt_path, text=True, capture_output=True, check=True,
+    ).stdout.split()
+    assert len(parents) == 2, "expected a real --no-ff merge commit, not a fast-forward"
+
+
+def test_update_from_base_merge_commit_committer_is_flowgate_identity(tmp_path, monkeypatch):
+    """T0004 §4B / §6.3: the merge commit's committer must be the FlowGate default,
+    regardless of host git identity."""
+    _no_host_identity_env(tmp_path, monkeypatch)
+    base_root, wt_path = _repo_pair_no_identity(tmp_path)
+
+    cfg = {"base_branch": "main"}
+    state = {"branch": "group/test", "status": "none"}
+    calls: list[dict] = []
+    _patch_group_update(monkeypatch, cfg, state, "demo", base_root, wt_path, calls)
+
+    git_service.update_from_base("demo.default.0001")
+
+    committer = subprocess.run(
+        ["git", "log", "-1", "--pretty=%cn <%ce>"], cwd=wt_path, text=True, capture_output=True, check=True,
+    ).stdout.strip()
+    assert committer == "FlowGate <flowgate@localhost>"
+
+
+def test_update_from_base_keeps_configured_author_with_flowgate_committer(tmp_path, monkeypatch):
+    """T0004 §4C / §6.4: a project-configured author_name/author_email must still be
+    used as the merge commit's author while the committer stays the FlowGate identity."""
+    _no_host_identity_env(tmp_path, monkeypatch)
+    base_root, wt_path = _repo_pair_no_identity(tmp_path)
+
+    cfg = {
+        "base_branch": "main",
+        "author_name": "Project Author", "author_email": "author@example.invalid",
+    }
+    state = {"branch": "group/test", "status": "none"}
+    calls: list[dict] = []
+    _patch_group_update(monkeypatch, cfg, state, "demo", base_root, wt_path, calls)
+
+    git_service.update_from_base("demo.default.0001")
+
+    author = subprocess.run(
+        ["git", "log", "-1", "--pretty=%an <%ae>"], cwd=wt_path, text=True, capture_output=True, check=True,
+    ).stdout.strip()
+    committer = subprocess.run(
+        ["git", "log", "-1", "--pretty=%cn <%ce>"], cwd=wt_path, text=True, capture_output=True, check=True,
+    ).stdout.strip()
+    assert author == "Project Author <author@example.invalid>"
+    assert committer == "FlowGate <flowgate@localhost>"
