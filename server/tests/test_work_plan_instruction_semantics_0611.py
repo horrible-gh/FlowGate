@@ -23,9 +23,18 @@ Final contract (rej_01M3AVQVHD6PSTBE), each path pinned by its own test below:
     flow, the next [AI 호출] goes to the TR/NR worker -- still with no server expansion.
   * Path 3: the real ``POST /next-approved`` handler expands the same real T/N Markdown with
     no AI call at all, whatever instruction mode the WP was poured with.
-  * A WorkPlan N/T with no instruction document has nothing to expand: it stays the N/T
-    authoring worker hop (0611 T0009) in either mode and the manual path answers 409 instead
-    of inventing a body.  A broken instruction file fails closed.
+  * 0611 historical contract (rej_01M3AVQVHD6PSTBE, superseded below by 0614 T0004): a
+    WorkPlan N/T with no instruction document had nothing to expand, so it stayed the N/T
+    authoring worker hop (0611 T0009) in either mode and the manual path answered 409
+    instead of inventing a body.
+  * 0614 T0004 (explicit human override, NOT a regression fix -- the user re-confirmed the
+    0611 B0001 self-referential-document risk and asked for it anyway): under manual and
+    auto_approved, a WorkPlan N/T with no instruction document now falls back to its
+    steps[].note as the canonical body, and falls back further to the legacy generated
+    instruction only when the note is empty too. ai_direct is untouched -- it still never
+    server-expands a WorkPlan step, document or not. When an instruction document IS
+    present, its content still wins outright and the note is never merged into it. A broken
+    instruction file still fails closed.
   * review_count > 0 exposes the real expanded document as ``pending_review`` to the gate,
     and re-entry reuses it through the provenance/idempotency marker.
 
@@ -692,12 +701,13 @@ def test_text_only_instruction_document_gets_a_title_heading(pre_env, monkeypatc
     assert PROBLEM_NOTE not in body
 
 
-# ── A WorkPlan N/T with no instruction document keeps the authoring hop ─────────────
+# ── A WorkPlan N/T with no instruction document: ai_direct keeps the authoring hop,
+# auto_approved/manual now fall back to the note (0614 T0004 override) ─────────────
 
-@pytest.mark.parametrize("instruction_mode", ["auto_approved", "ai_direct"])
-def test_note_only_workplan_step_stays_authoring_hop_and_manual_path_refuses(
-    pre_env, monkeypatch, tmp_path, instruction_mode,
-):
+def test_note_only_workplan_step_ai_direct_keeps_authoring_hop(pre_env, monkeypatch, tmp_path):
+    """0611 T0009 contract retained for ai_direct: 0614 T0004 only changes manual and
+    auto_approved -- ai_direct still never server-expands a WorkPlan step, document or not."""
+    instruction_mode = "ai_direct"
     monkeypatch.setattr(wpa_svc, "validate_reference", lambda doc_id, reference: None)
     _apply_plan(pre_env, monkeypatch, attachment=None, pre_text=None,
                 instruction_mode=instruction_mode)
@@ -706,7 +716,7 @@ def test_note_only_workplan_step_stays_authoring_hop_and_manual_path_refuses(
     assert not workflow.has_work_plan_instruction_document(world.row(1))
 
     monkeypatch.setattr(docs, "materialize_work_plan_instruction", lambda **_kw: pytest.fail(
-        "a WorkPlan N/T without an instruction document has nothing to expand"
+        "ai_direct must never server-expand a WorkPlan step"
     ))
     assert workflow._auto_complete_instruction_heads(
         spine_doc=world.docs[ROOT_DOC], seq={"id": 1}, actor_user_id="usr_admin",
@@ -721,14 +731,279 @@ def test_note_only_workplan_step_stays_authoring_hop_and_manual_path_refuses(
                             instruction_mode=instruction_mode)
     assert PROBLEM_NOTE in prompt
 
-    with pytest.raises(docs.NextApprovedError) as exc:
-        docs.create_next_approved_core(
-            project_id="flowgate", group_id=GROUP_ID, module="default", prev_doc_id=ROOT_DOC,
-            type_code="T", actor_user_id="usr_admin", approver_perms={"document.approve"},
-        )
-    assert exc.value.status_code == 409
-    assert "no instruction document" in exc.value.detail
+
+def test_note_only_workplan_step_auto_approved_materializes_from_note(
+    pre_env, monkeypatch, tmp_path,
+):
+    """0614 T0004 human override of the 0611 rej_01M3AVQVHD6PSTBE final contract: with no
+    instruction file/pre_instruction_text, auto_approved now server-materializes the step
+    from its note instead of leaving it an authoring hop. The B0001 self-reference risk is
+    accepted deliberately here -- this is not the bug B0001 fixed, it is a later, explicit
+    override of the fix's fallback rule."""
+    instruction_mode = "auto_approved"
+    monkeypatch.setattr(wpa_svc, "validate_reference", lambda doc_id, reference: None)
+    _apply_plan(pre_env, monkeypatch, attachment=None, pre_text=None,
+                instruction_mode=instruction_mode)
+    world = _wire_world(monkeypatch, tmp_path, pre_env["wfseq"])
+    assert world.row(1)["note"] == PROBLEM_NOTE
+    assert not workflow.has_work_plan_instruction_document(world.row(1))
+    assert workflow.is_auto_handled_step(
+        head_type="T", item_seq=1, instruction_mode=instruction_mode,
+        auto_approve_item_seqs=[], source_doc_id=world.row(1)["source_doc_id"],
+        has_instruction_document=False,
+    ) is True
+
+    completed = workflow._auto_complete_instruction_heads(
+        spine_doc=world.docs[ROOT_DOC], seq={"id": 1}, actor_user_id="usr_admin",
+        locale="ko", target_seq=2, instruction_mode=instruction_mode,
+    )
+    assert completed == [1]
+    canonical_id = f"{GROUP_ID}.0005-T"
+    assert world.row(1)["result_doc_id"] == canonical_id
+    body = world.body(canonical_id)
+    frontmatter, _sep, markdown = body.partition("\n---\n")
+    assert f"content_source: {docs.WORK_PLAN_STEP_NOTE_CONTENT_SOURCE}" in frontmatter
+    assert markdown == f"# 작업지시 — T#1\n\n{PROBLEM_NOTE}\n"
+    assert "source_wp_attachment" not in body
+
+
+def test_manual_no_file_no_note_creates_legacy_generic_instruction(pre_env, monkeypatch, tmp_path):
+    """0614 T0004 §4 case A: manual [승인지시서 생성] no longer 409s when a WorkPlan step
+    carries neither an instruction document nor a note -- it creates the same legacy generic
+    approval instruction a non-WorkPlan auto-approved document would (the 409 this test used
+    to pin is the 0611 rej_01M3AVQVHD6PSTBE contract 0614 T0004 explicitly supersedes)."""
+    monkeypatch.setattr(wpa_svc, "validate_reference", lambda doc_id, reference: None)
+    _apply_plan(pre_env, monkeypatch, attachment=None, pre_text=None, note="")
+    world = _wire_world(monkeypatch, tmp_path, pre_env["wfseq"])
+    assert world.row(1)["note"] == ""
+    assert not workflow.has_work_plan_instruction_document(world.row(1))
+
+    created = docs.create_next_approved_core(
+        project_id="flowgate", group_id=GROUP_ID, module="default", prev_doc_id=ROOT_DOC,
+        type_code="T", actor_user_id="usr_admin", approver_perms={"document.approve"},
+    )
+    canonical_id = f"{GROUP_ID}.0005-T"
+    assert created["doc_id"] == canonical_id
+    assert created["content_source"] == docs.WORK_PLAN_LEGACY_CONTENT_SOURCE
+    body = world.body(canonical_id)
+    frontmatter, _sep, _markdown = body.partition("\n---\n")
+    assert f"content_source: {docs.WORK_PLAN_LEGACY_CONTENT_SOURCE}" in frontmatter
+    assert "source_wp_doc_id" in frontmatter
+    assert world.reserved == ["0005-T"]
+
+
+def test_manual_no_file_note_present_creates_note_body(pre_env, monkeypatch, tmp_path):
+    """0614 T0004 §4 case B: no instruction document, note present -> note becomes the body."""
+    monkeypatch.setattr(wpa_svc, "validate_reference", lambda doc_id, reference: None)
+    _apply_plan(pre_env, monkeypatch, attachment=None, pre_text=None)
+    world = _wire_world(monkeypatch, tmp_path, pre_env["wfseq"])
+    assert world.row(1)["note"] == PROBLEM_NOTE
+
+    created = docs.create_next_approved_core(
+        project_id="flowgate", group_id=GROUP_ID, module="default", prev_doc_id=ROOT_DOC,
+        type_code="T", actor_user_id="usr_admin", approver_perms={"document.approve"},
+    )
+    canonical_id = f"{GROUP_ID}.0005-T"
+    assert created["content_source"] == docs.WORK_PLAN_STEP_NOTE_CONTENT_SOURCE
+    body = world.body(canonical_id)
+    markdown = body.partition("\n---\n")[2]
+    assert markdown == f"# 작업지시 — T#1\n\n{PROBLEM_NOTE}\n"
+
+
+# ── 0614 T0004 §10.1-10.3 A/B/C/D matrix: the cells rej_01M3BS9K16YGAMXR found missing.
+# Case A = no file/no note, case C = file present/no note. Case B (note-only) and case D
+# (file+note) are already pinned above (test_note_only_workplan_step_*, test_path1/2/3) --
+# this block adds the remaining cells: case A through the REAL route in auto_approved
+# (legacy body + no separate authoring token) and the authoring hop in ai_direct, and case C
+# (a clean "file only" reading with no note to merge, distinct from test_path1/3's default
+# fixture which pours attachment + pre_instruction_text + note together and is case D, not
+# C) through manual, auto_approved and ai_direct. ──────────────────────────────────────────
+
+def test_case_a_auto_approved_ai_invoke_route_materializes_legacy_and_skips_authoring_token(
+    pre_env, monkeypatch, tmp_path,
+):
+    """0614 T0004 §4 case A through the REAL ``POST /api/v1/ai-invoke/start`` route: with
+    neither an instruction document nor a note, auto_approved server-materializes the
+    legacy generic body (content_source=work_plan_legacy_generated) -- exactly like case D
+    (test_path1) except no ``body_builder`` call, since there is no document to expand --
+    and, like every other cell of this matrix, issues no separate T authoring token: only
+    the next TR worker's token is ever minted."""
+    instruction_mode = "auto_approved"
+    _apply_plan(pre_env, monkeypatch, attachment=None, instruction_type="T",
+               instruction_mode=instruction_mode, pre_text=None, note="")
+    world = _wire_world(monkeypatch, tmp_path, pre_env["wfseq"])
+    assert world.row(1)["note"] == ""
+    assert workflow.has_work_plan_instruction_document(world.row(1)) is False
+
+    events: list = []
+    out = _post_ai_invoke(pre_env, monkeypatch, events, instruction_mode=instruction_mode)
+
+    canonical_id = f"{GROUP_ID}.0005-T"
+    assert out["run"]["attempts_used"] == 2
+    # No "body_builder" entry: the legacy branch never calls _work_plan_instruction_body.
+    assert events == [
+        "advance_workflow",
+        f"auto_complete:{instruction_mode}",
+        "materialize:T:has_doc=False",
+        "core",
+        "instruction_document:False",
+        "auto_complete_done:[1]",
+        f"token_issue:{ROOT_DOC}",
+        # attempt 2: the head is already the TR, so nothing is expanded or numbered again.
+        "advance_workflow",
+        f"auto_complete:{instruction_mode}",
+        "auto_complete_done:[]",
+        f"token_issue:{ROOT_DOC}",
+    ]
+    # Only ROOT_DOC's continuation token is ever issued -- no separate T authoring token.
+    assert [i["doc_ref"] for i in out["issued"]] == [ROOT_DOC, ROOT_DOC]
+    assert world.reserved == [f"0005-T"]
+    assert world.row(1)["result_doc_id"] == canonical_id
+    assert world.docs[canonical_id]["doc_review_status"] == "approved"
+    body = world.body(canonical_id)
+    frontmatter, _sep, _markdown = body.partition("\n---\n")
+    assert f"content_source: {docs.WORK_PLAN_LEGACY_CONTENT_SOURCE}" in frontmatter
+    assert "작업지시 가 승인되었습니다." in body
+    assert PROBLEM_NOTE not in body
+    run = out["run"]
+    assert run["worker_document_type"] == "TR"
+    assert run["auto_handled_item_seqs"] == [1]
+    prompt = out["prompt"]
+    assert PROBLEM_NOTE not in prompt
+
+
+def test_case_a_ai_direct_keeps_authoring_hop_with_no_file_and_no_note(
+    pre_env, monkeypatch, tmp_path,
+):
+    """0614 T0004 §4 case A under ai_direct: with neither an instruction document nor a
+    note, ai_direct still never server-materializes -- the first worker stays the T
+    authoring hop, exactly as the 0611 T0009 contract for a documentless step. This is
+    distinct from test_note_only_workplan_step_ai_direct_keeps_authoring_hop (case B: no
+    file, but a note IS present) -- here neither source exists at all."""
+    instruction_mode = "ai_direct"
+    _apply_plan(pre_env, monkeypatch, attachment=None, pre_text=None, note="",
+               instruction_mode=instruction_mode)
+    world = _wire_world(monkeypatch, tmp_path, pre_env["wfseq"])
+    assert world.row(1)["note"] == ""
+    assert not workflow.has_work_plan_instruction_document(world.row(1))
+
+    monkeypatch.setattr(docs, "materialize_work_plan_instruction", lambda **_kw: pytest.fail(
+        "ai_direct must never server-expand a WorkPlan step"
+    ))
+    assert workflow._auto_complete_instruction_heads(
+        spine_doc=world.docs[ROOT_DOC], seq={"id": 1}, actor_user_id="usr_admin",
+        locale="ko", target_seq=2, instruction_mode=instruction_mode,
+    ) == []
+    assert admission._hop_worker_item_seq(
+        1, world.row(1), continuation_instruction_mode=instruction_mode,
+        continuation_auto_approve_item_seqs=[],
+    ) == 1
+    # No note/section is injected when the step carries neither a file nor a note -- the
+    # fixed mention passes through _inject_hop_notes untouched (only its unrelated runtime
+    # boilerplate footer is appended, same as any other single-hop prompt).
+    prompt = _worker_prompt(pre_env, mention=h.MENTION, target_seq=2,
+                            instruction_mode=instruction_mode)
+    assert prompt.startswith(h.MENTION)
+    assert "## WorkPlan 사전지시" not in prompt
+    assert PROBLEM_NOTE not in prompt
+
+
+def test_case_c_manual_file_no_note_uses_file_only(pre_env, monkeypatch, tmp_path):
+    """0614 T0004 §4 case C: instruction file present, steps[].note absent. The file wins
+    outright -- same as case D (file+note) -- but this reading is a clean "file only" case
+    with no note and no pre_instruction_text at all, unlike test_path1/test_path3 which
+    always pour attachment + pre_instruction_text + note together via _apply_plan()'s
+    defaults (case D)."""
+    attachment, _path = _install_instruction_file(monkeypatch, tmp_path)
+    _apply_plan(pre_env, monkeypatch, attachment=attachment, pre_text=None, note="")
+    monkeypatch.setattr(wpa_svc, "validate_reference", _REAL_VALIDATE_REFERENCE)
+    world = _wire_world(monkeypatch, tmp_path, pre_env["wfseq"])
+    assert world.row(1)["note"] == ""
+    assert workflow.has_work_plan_instruction_document(world.row(1)) is True
+
+    created = docs.create_next_approved_core(
+        project_id="flowgate", group_id=GROUP_ID, module="default", prev_doc_id=ROOT_DOC,
+        type_code="T", actor_user_id="usr_admin", approver_perms={"document.approve"},
+    )
+    canonical_id = f"{GROUP_ID}.0005-T"
+    assert created["content_source"] == docs.WORK_PLAN_INSTRUCTION_CONTENT_SOURCE
+    body = world.body(canonical_id)
+    frontmatter, _sep, markdown = body.partition("\n---\n")
+    assert markdown == f"# 결제 모듈 회귀 수정\n\n## 요구사항\n\n- {FILE_DIRECTIVE}\n"
+    assert "## 추가 지시" not in markdown
+    assert PROBLEM_NOTE not in body
+
+
+def test_case_c_auto_approved_ai_invoke_route_expands_file_only_and_skips_authoring_token(
+    pre_env, monkeypatch, tmp_path,
+):
+    """0614 T0004 §4 case C through the REAL AI-invoke route: the file wins with no note to
+    merge, and -- like every other cell -- no separate T authoring token is issued."""
+    instruction_mode = "auto_approved"
+    attachment, _path = _install_instruction_file(monkeypatch, tmp_path, "T")
+    _apply_plan(pre_env, monkeypatch, attachment=attachment, instruction_type="T",
+               instruction_mode=instruction_mode, pre_text=None, note="")
+    monkeypatch.setattr(wpa_svc, "validate_reference", _REAL_VALIDATE_REFERENCE)
+    world = _wire_world(monkeypatch, tmp_path, pre_env["wfseq"])
+    assert workflow.has_work_plan_instruction_document(world.row(1)) is True
+    assert world.row(1)["note"] == ""
+
+    events: list = []
+    out = _post_ai_invoke(pre_env, monkeypatch, events, instruction_mode=instruction_mode)
+
+    canonical_id = f"{GROUP_ID}.0005-T"
+    assert events == [
+        "advance_workflow",
+        f"auto_complete:{instruction_mode}",
+        "materialize:T:has_doc=True",
+        "core",
+        "instruction_document:True",
+        "body_builder",
+        "auto_complete_done:[1]",
+        f"token_issue:{ROOT_DOC}",
+        "advance_workflow",
+        f"auto_complete:{instruction_mode}",
+        "auto_complete_done:[]",
+        f"token_issue:{ROOT_DOC}",
+    ]
+    assert [i["doc_ref"] for i in out["issued"]] == [ROOT_DOC, ROOT_DOC]
+    body = world.body(canonical_id)
+    frontmatter, _sep, markdown = body.partition("\n---\n")
+    assert markdown == f"# 결제 모듈 회귀 수정\n\n## 요구사항\n\n- {FILE_DIRECTIVE}\n"
+    assert "## 추가 지시" not in markdown
+    assert PROBLEM_NOTE not in body
+    prompt = out["prompt"]
+    assert PROBLEM_NOTE not in prompt
+    assert FILE_DIRECTIVE not in prompt
+
+
+def test_case_c_ai_direct_ai_invoke_route_starts_authoring_ai_with_file_input_and_no_note(
+    pre_env, monkeypatch, tmp_path,
+):
+    """0614 T0004 §4 case C under ai_direct: unaffected by the new source resolution -- the
+    authoring AI still receives the file as input and the server never expands it."""
+    attachment, _path = _install_instruction_file(monkeypatch, tmp_path, "T")
+    _apply_plan(pre_env, monkeypatch, attachment=attachment, instruction_type="T",
+               instruction_mode="ai_direct", pre_text=None, note="")
+    monkeypatch.setattr(wpa_svc, "validate_reference", _REAL_VALIDATE_REFERENCE)
+    world = _wire_world(monkeypatch, tmp_path, pre_env["wfseq"])
+    assert workflow.has_work_plan_instruction_document(world.row(1)) is True
+    assert world.row(1)["note"] == ""
+
+    events: list = []
+    out = _post_ai_invoke(pre_env, monkeypatch, events, instruction_mode="ai_direct")
+
+    assert events == [
+        "advance_workflow", "auto_complete:ai_direct", "auto_complete_done:[]",
+        f"token_issue:{ROOT_DOC}",
+        "advance_workflow", "auto_complete:ai_direct", "auto_complete_done:[]",
+        f"token_issue:{ROOT_DOC}",
+    ]
     assert world.reserved == []
+    prompt = out["prompt"]
+    assert prompt.count("## WorkPlan 사전지시") == 1
+    assert attachment["original_filename"] in prompt
+    assert PROBLEM_NOTE not in prompt
 
 
 def test_broken_instruction_file_fails_closed_before_numbering(pre_env, monkeypatch, tmp_path):
@@ -820,9 +1095,12 @@ def test_workplan_instruction_document_is_server_expanded_only_under_auto_approv
         # ai_direct -> authoring AI, even when the step is in the per-step selection.
         assert handled(row, "ai_direct") is False
         assert handled(row, "ai_direct", [1]) is False
-    # Nothing to expand without an instruction document, in either mode.
-    for mode in ("auto_approved", "ai_direct"):
-        assert handled(note_only_t, mode) is False
+    # 0614 T0004 (human override of 0611 rej_01M3AVQVHD6PSTBE): a WorkPlan row with no
+    # instruction document is now ALWAYS server-materialized under auto_approved --
+    # documents.py's source resolution falls back to steps[].note or the legacy generated
+    # instruction instead of an authoring hop. ai_direct is untouched.
+    assert handled(note_only_t, "auto_approved") is True
+    assert handled(note_only_t, "ai_direct") is False
     # Legacy (non-WorkPlan) rows keep the 0352 mode contract untouched.
     assert handled(legacy_t, "auto_approved") is True
     assert handled(legacy_t, "ai_direct") is False

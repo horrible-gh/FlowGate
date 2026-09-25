@@ -274,20 +274,27 @@ def is_auto_handled_step(
         return False
     # 0611 T0011: a WorkPlan-backed N/T whose step carries its instruction document is
     # server-materialized from that document exactly like the manual [승인 문서 생성]
-    # path, so the next worker receives the real T/N.  Only a WorkPlan N/T with no
-    # instruction document stays a real authoring hop (0611 T0009) -- there is nothing
-    # the server could expand for it.  Legacy/non-WorkPlan rows keep their contract.
-    # 0611 TR0012 rev2 (final contract): the server expands a WorkPlan instruction document
-    # ONLY under auto_approved.  ai_direct ([지시서 작성 후 진행]) keeps the T/N as a real
-    # authoring hop even when the step carries a document -- the note / pre-instruction
-    # text / attachment go to that authoring worker as input only (admission's
+    # path, so the next worker receives the real T/N.  Legacy/non-WorkPlan rows keep their
+    # contract below.
+    # 0611 TR0012 rev2 (historical final contract, rej_01M3AVQVHD6PSTBE): a WorkPlan N/T
+    # with NO instruction document used to stay a real authoring hop under auto_approved
+    # too, because copying steps[].note into the canonical body produced a self-referential
+    # document (0611 B0001: "a work order that says: write a work order"). That was a
+    # deliberate, human-approved contract, not a bug.
+    # 0614 T0004 (explicit human override, NOT a regression fix): the user re-confirmed the
+    # B0001 risk and asked steps[].note to become a real fallback body source, so under
+    # auto_approved a WorkPlan N/T is ALWAYS server-materialized regardless of whether it
+    # carries an instruction document -- documents.py's source resolution (instruction
+    # file/pre_instruction_text > steps[].note > legacy generated instruction) decides what
+    # the body actually contains. ``has_instruction_document`` is kept in the signature for
+    # every existing caller's compatibility but no longer gates this branch.  ai_direct is
+    # untouched: it keeps the T/N as a real authoring hop even when the step carries a
+    # document or a note -- those go to that authoring worker as input only (admission's
     # _inject_hop_notes) and its output follows the ordinary review/approval flow.  The
-    # per-step auto-approve selection does not switch a WorkPlan row to server expansion
-    # either; it stays the post-authoring approval policy (0611 T0009).  The manual
-    # [승인지시서 생성] path does not consult this predicate at all.
+    # manual [승인지시서 생성] path does not consult this predicate at all.
     mode = normalize_continuation_instruction_mode(instruction_mode)
     if str(source_doc_id or "").upper().endswith("-WP"):
-        return mode == CONTINUATION_INSTRUCTION_AUTO_APPROVED and bool(has_instruction_document)
+        return mode == CONTINUATION_INSTRUCTION_AUTO_APPROVED
     if mode == CONTINUATION_INSTRUCTION_AUTO_APPROVED:
         return True
     if mode == CONTINUATION_INSTRUCTION_AI_DIRECT:
