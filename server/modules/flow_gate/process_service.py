@@ -19,6 +19,7 @@ from . import linter
 from .numbering import numbering_service
 from .storage import paths as storage_paths
 from .db.document_type_labels import get_type_name, get_type_names_map
+from .services.git.credentials import GitServiceError
 import LogAssist.log as perf_log
 
 logger = logging.getLogger(__name__)
@@ -642,10 +643,11 @@ def create_workflow_root(
     doc_type: str = "R",
     template: str = "default",
     locale: str = "en",
+    work_base_ref: str = "",
 ) -> dict:
     """Create an R/B workflow-root document and reserve its group/document ID."""
     # Validate input values
-    errors: list[str] = []
+    errors: list[Any] = []
     doc_type = (doc_type or "R").strip().upper()
     if doc_type not in WORKFLOW_ROOT_TYPES:
         errors.append(f"Invalid workflow root type: '{doc_type}'")
@@ -680,9 +682,27 @@ def create_workflow_root(
     # Group-related validation
     group_id = (group_id or "").strip()
     new_group_name = (new_group_name or "").strip()
+    requested_work_base_ref = work_base_ref if isinstance(work_base_ref, str) else ""
+    stored_work_base_ref = None
 
     if group_id and new_group_name:
         errors.append("Please specify either an existing group or a new group, not both.")
+    if group_id and requested_work_base_ref:
+        errors.append({
+            "code": "group_work_base_existing_group",
+            "message": "work_base_ref is only accepted when creating a new group",
+        })
+    elif requested_work_base_ref:
+        try:
+            from .services import git_service
+            stored_work_base_ref = git_service.validate_group_work_base_ref(
+                project, requested_work_base_ref
+            )
+        except GitServiceError as exc:
+            error = {"code": exc.code, "message": exc.message}
+            if exc.details:
+                error["details"] = exc.details
+            errors.append(error)
 
     if errors:
         return {"status": "error", "errors": errors}
@@ -695,7 +715,10 @@ def create_workflow_root(
         try:
             group_code = numbering_service.reserve_group(project, module or "none")
             final_group_id = f"{project}.{module or 'none'}.{group_code}"
-            db.insert_group(final_group_id, project, module or "none", new_group_name, priority)
+            db.insert_group(
+                final_group_id, project, module or "none", new_group_name, priority,
+                stored_work_base_ref,
+            )
         except Exception as e:
             return {"status": "error", "errors": [str(e)]}
     elif group_id:
@@ -720,7 +743,10 @@ def create_workflow_root(
         try:
             group_code = numbering_service.reserve_group(project, module or "none")
             final_group_id = f"{project}.{module or 'none'}.{group_code}"
-            db.insert_group(final_group_id, project, module or "none", title, priority)
+            db.insert_group(
+                final_group_id, project, module or "none", title, priority,
+                stored_work_base_ref,
+            )
         except Exception as e:
             return {"status": "error", "errors": [str(e)]}
 
@@ -842,6 +868,7 @@ def create_requirement(
     doc_type: str = "R",
     template: str = "default",
     locale: str = "en",
+    work_base_ref: str = "",
 ) -> dict:
     """Backward-compatible entry point for workflow-root creation."""
     return create_workflow_root(
@@ -857,6 +884,7 @@ def create_requirement(
         doc_type=doc_type,
         template=template,
         locale=locale,
+        work_base_ref=work_base_ref,
     )
 
 
@@ -2191,6 +2219,7 @@ def create_group(
     module: str = "none",
     parent_id: str | None = None,
     priority: str | None = None,
+    work_base_ref: str | None = None,
 ) -> dict:
     """Create a group and return {group_id, created_at}."""
     project_id = (project_id or "").strip()
@@ -2207,6 +2236,22 @@ def create_group(
         if parent is None:
             return {"status": "error", "message": f"Parent group not found: {parent_id}"}
 
+    stored_work_base_ref = None
+    if work_base_ref is not None:
+        try:
+            from .services import git_service
+            stored_work_base_ref = git_service.validate_group_work_base_ref(
+                project_id, work_base_ref
+            )
+        except GitServiceError as exc:
+            return {
+                "status": "error",
+                "http_status": exc.status,
+                "code": exc.code,
+                "message": exc.message,
+                "details": exc.details,
+            }
+
     group_code = numbering_service.reserve_group(project_id, module)
     group_id = f"{project_id}.{module}.{group_code}"
     now = db.now_iso()
@@ -2220,11 +2265,17 @@ def create_group(
         "status": "draft",
         "created_at": now,
         "updated_at": now,
+        "work_base_ref": stored_work_base_ref,
     })
+    from .services import git_service
     return {
         "status": "success",
         "group_id": group["group_id"],
         "created_at": group["created_at"],
+        "work_base_ref": group.get("work_base_ref"),
+        "effective_work_base_ref": git_service.resolve_group_work_base_ref(
+            project_id, group["group_id"], group=group
+        ),
     }
 
 

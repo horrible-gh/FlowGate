@@ -34,12 +34,14 @@ def create(data: dict[str, Any]) -> dict:
     now = now_iso()
     store._execute(
         "INSERT INTO groups (group_id, project_id, module, parent_id, title, priority, "
-        "status, created_at, updated_at, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "status, created_at, updated_at, closed_at, work_base_ref) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             data["group_id"], data["project_id"], data.get("module", "none"),
             data.get("parent_id"), data["title"], data.get("priority"),
             data.get("status", "OPEN"), data.get("created_at", now),
             data.get("updated_at", now), data.get("closed_at"),
+            data.get("work_base_ref"),
         ],
     )
     return get_by_id(data["group_id"])  # type: ignore[return-value]
@@ -156,15 +158,17 @@ def get_groups_by_projects(project_ids: list) -> list[dict]:
     )
 
 
-def insert_group(group_id: str, project: str, module: str,
-                 title: str, priority: str = None) -> None:
-    """Create a group with status OPEN."""
+def insert_group(
+    group_id: str, project: str, module: str, title: str,
+    priority: str = None, work_base_ref: str = None,
+) -> None:
+    """Create a group with status OPEN and an optional durable work base."""
     now = datetime.now().isoformat()
     get_store()._execute(
         "INSERT INTO groups"
-        " (group_id, project_id, module, title, priority, status, created_at, updated_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [group_id, project, module, title, priority, "OPEN", now, now],
+        " (group_id, project_id, module, title, priority, status, created_at, updated_at, work_base_ref)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [group_id, project, module, title, priority, "OPEN", now, now, work_base_ref],
     )
 
 
