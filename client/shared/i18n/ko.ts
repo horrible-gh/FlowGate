@@ -1338,6 +1338,7 @@ export default {
       section_general: '일반',
       section_ai: 'AI',
       section_qa: '질의응답',
+      section_snapshot: '승인 대기',
       filters_label: '일반 알림 필터',
       ai_empty: '완료된 AI 호출이 없습니다.',
       ai_load_failed: 'AI 호출 목록을 불러오지 못했습니다.',
@@ -3329,6 +3330,63 @@ export default {
       // 아냐?". 해결 제출이 승인 대기로 넘어가면 화면이 직접 그 자리로 넘어간다. 이 문장은
       // 길 안내가 아니라 이미 일어난 이동의 보고다.
       resolved_pending_opened: '충돌을 해결하고 승인 대기 화면을 열었습니다. 내용을 확인한 뒤 승인하세요.',
+    },
+    // flowgate.default.0517 T0012 — AI Scratch Source Snapshot 승인 UX.
+    // 시안: MirageGlass deck yoylzrdu v3. D0007 §6.4의 의도적 차이 둘(항상 current_worktree
+    // 단일값, reason과 분리된 purpose 필드)은 결함이 아니라 이 화면의 계약이다.
+    snapshot_approval: {
+      pending_entry_label: 'Snapshot Pending',
+      dialog_title: 'Snapshot 승인 요청',
+      dialog_title_whole_source: 'Snapshot 승인 요청 — 전체 소스',
+      field_requested_ai: '요청 AI',
+      field_group: '대상 group',
+      field_requested_at: '요청 시각',
+      field_source: 'source',
+      source_value: 'current worktree',
+      field_scope: '범위',
+      scope_single_file: '단일 파일',
+      scope_selected_files: '선택한 여러 파일',
+      scope_directory: '디렉터리',
+      scope_whole_source: '전체 소스',
+      field_paths: '요청 경로',
+      field_reason: '요청 이유',
+      field_purpose: '예상 용도',
+      unknown_provider: '알 수 없는 provider',
+      // whole_source일 때만: R §14 · 0003-NR §12가 근거인 경고 + 사유 필수 표시.
+      whole_source_warning_title: '전체 소스 요청입니다',
+      whole_source_warning_body: '전체 소스는 기본 범위가 아닙니다. 단순 조회·비교·머지 충돌 분석이 목적이라면 승인 대신 기존 read/grep/glob 도구나 Merge Context Tool을 먼저 권장하세요.',
+      whole_source_reason_required: '(전체 소스는 사유 필수)',
+      reject: '거절',
+      approve: '승인',
+      approve_failed: '승인 처리에 실패했습니다. 다시 시도하세요.',
+      reject_failed: '거절 처리에 실패했습니다. 다시 시도하세요.',
+      // 시안 ①/③ 하단 "이 외에 대기 중인 요청이 N건 더 있습니다" 안내.
+      more_pending: '이 외에 대기 중인 snapshot 요청이 {n}건 더 있습니다.',
+      more_pending_link: 'Pending 목록에서 함께 확인 →',
+      // Pending 목록 (NR0005 rev1: 목록에는 [승인]을 두지 않는다 — 승인은 상세 dialog뿐).
+      pending_panel_title: 'Scratch Snapshot 승인 대기 ({n})',
+      pending_panel_hint: '목록에서는 승인할 수 없습니다 — [자세히]에서 전체 내용을 확인한 뒤 승인하세요.',
+      pending_item_meta: '{group} · {time} 요청 · current worktree',
+      pending_path_more: '{first} 외 {n}건',
+      pending_empty: '대기 중인 snapshot 요청이 없습니다',
+      pending_load_failed: '목록을 불러오지 못했습니다',
+      pending_retry: '다시 시도',
+      pending_whole_source_warning: '전체 소스 요청은 목록에서 승인할 수 없습니다. [자세히]에서 경고와 사유를 확인하세요.',
+      pending_details: '자세히',
+      pending_reject: '거절',
+      // T0026: 알림 종 배지에 합쳐진 승인 대기 건수 안내 + [거절] 반려사유 입력 창.
+      bell_pending_hint: '승인 대기 중인 snapshot 요청 {n}건',
+      reject_dialog_title: 'Snapshot 요청 거절',
+      reject_reason_label: '반려사유',
+      reject_reason_placeholder: '요청한 AI가 무엇을 바꿔서 다시 요청해야 하는지 적어 주세요',
+      reject_reason_hint: '요청한 AI가 상태 조회에서 이 사유를 그대로 읽습니다. 반려사유 없이는 거절할 수 없습니다.',
+      reject_confirm: '거절 확정',
+      reject_discard_title: '작성한 반려사유를 버릴까요?',
+      reject_discard_message: '창을 닫으면 입력한 사유가 사라지고, 요청은 승인 대기 상태로 남습니다.',
+      reject_discard_ok: '버리기',
+      // 활성(생성된) snapshot이 낡았을 때의 경고 — D0007 §3.5, T0012 §13.
+      stale_title: 'ACTIVE SNAPSHOT IS STALE',
+      stale_body: '이 그룹의 승인된 snapshot 사본이 만들어진 뒤 작업 워크트리가 바뀌었습니다. 사본은 읽을 수 있지만, 거기서 나온 결과를 현재 소스의 검증 결과로 보고할 수 없습니다.',
     },
     git_menu: {
       tooltip: 'Git 마무리',

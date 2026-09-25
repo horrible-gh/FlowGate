@@ -11,6 +11,21 @@
 
         
         <div class="dialog-feature-body">
+          <!--
+            flowgate.default.0517 T0012 §13: stale warning for this group's active
+            (`created`) AI Scratch Source Snapshot, if any. D0007 §3.5 — stale is a
+            warning, not an error: the copy is still readable, it just cannot stand in
+            for a fresh verification of the current worktree. Reuses `.alert-warning`
+            rather than a new banner component or a modal of its own (T0012 §13
+            "불필요한 새 modal을 띄우지 않는다").
+          -->
+          <div v-if="staleSnapshot" class="alert alert-warning snap-stale-alert" data-test="snap-stale-warning">
+            <AppIcon name="warning" />
+            <div>
+              <strong>{{ t('main.snapshot_approval.stale_title') }}</strong>
+              <p>{{ t('main.snapshot_approval.stale_body') }}</p>
+            </div>
+          </div>
           <div class="gi-id-row">
             <span class="gi-id-badge">{{ groupId }}</span>
           </div>
@@ -60,11 +75,13 @@
 </template>
 
 <script setup lang="ts">
+import { ref, watch } from 'vue'
 import DialogShell from './dialogs/DialogShell.vue'
 import DialogHeader from './dialogs/DialogHeader.vue'
 import DialogFooter from './dialogs/DialogFooter.vue'
 import AppIcon from '@shared/AppIcon.vue'
 import { useI18n } from 'vue-i18n'
+import { getRequest } from '@shared/api'
 
 export interface GroupInfoDoc {
   id: string
@@ -75,8 +92,9 @@ export interface GroupInfoDoc {
   originAiRunId?: string | null
 }
 
-defineProps<{
+const props = defineProps<{
   visible: boolean
+  projectId?: string
   groupId: string
   groupName: string
   documents: GroupInfoDoc[]
@@ -92,6 +110,57 @@ const { t } = useI18n()
 function close() {
   emit('update:visible', false)
 }
+
+interface ActiveSnapshotRow {
+  snapshot_id: string
+  status: string
+  stale: boolean
+}
+
+// T0012 §13: fetched fresh every time the modal opens for a group — GET .../active
+// live-refreshes staleness for that group's rows (snapshot_routes.active), so this never
+// shows a value cached at materialize time.
+//
+// Stale-response guard (rejection round 2): `staleFetchSeq` is bumped on every visibility
+// change (open AND close), and the request that started it captures projectId/groupId at
+// call time. A response is only applied if it is still the most-recently-ISSUED call
+// (`seq === staleFetchSeq`) AND the modal is still open for the SAME project/group it was
+// requested for — otherwise a slow response from a group the user has since closed or
+// switched away from could overwrite (or resurrect) the warning for a different group's
+// screen. Mirrors the fetchSeq/activeProjectId pattern in stores/snapshotRequests.ts.
+const staleSnapshot = ref(false)
+let staleFetchSeq = 0
+watch(
+  () => props.visible,
+  async (visible) => {
+    const seq = ++staleFetchSeq
+    if (!visible) {
+      staleSnapshot.value = false
+      return
+    }
+    const projectId = props.projectId
+    const groupId = props.groupId
+    if (!projectId || !groupId) return
+    const stillCurrent = () =>
+      seq === staleFetchSeq &&
+      props.visible &&
+      props.projectId === projectId &&
+      props.groupId === groupId
+    try {
+      const response = await getRequest<{ ok: boolean; requests: ActiveSnapshotRow[] }>(
+        '/api/v1/snapshots/active',
+        { project_id: projectId, group_id: groupId },
+      )
+      if (!stillCurrent()) return
+      staleSnapshot.value = (response.data?.requests ?? []).some(
+        (row) => row.status === 'created' && row.stale === true,
+      )
+    } catch {
+      if (!stillCurrent()) return
+      staleSnapshot.value = false
+    }
+  },
+)
 
 // origin_provider_name is a nullable snapshot taken at document-creation time (NR0003 /
 // WP0005) — it is never re-looked-up, so an empty/whitespace-only value is treated the
@@ -122,6 +191,8 @@ function aiBadgeTitle(d: GroupInfoDoc): string | undefined {
   gap: 8px;
   color: var(--primary);
 }
+.snap-stale-alert { align-items: flex-start; }
+.snap-stale-alert p { margin: 4px 0 0; }
 .gi-id-row {
   display: flex;
   align-items: center;

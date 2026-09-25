@@ -1505,9 +1505,18 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 run["tool_calls_executed"] = run.get("tool_calls_executed", 0) + 1
                 try:
                     if call["name"] in api_server_tools.SOURCE_OPS:
+                        run["source_tool_calls"] = int(run.get("source_tool_calls") or 0) + 1
                         _status, resp = api_server_tools.source_call(run, current_token, call["name"], call["input"])
                     elif call["name"] == "run_test":
                         _status, resp = api_server_tools.run_test(run, call["input"], _svc()._remaining_sec(run))
+                    elif call["name"] == "request_source_snapshot":
+                        _status, resp = api_server_tools.request_source_snapshot(run, current_token, call["input"])
+                    elif call["name"] == "access_source_snapshot":
+                        _status, resp = api_server_tools.access_source_snapshot(run, current_token, call["input"])
+                    elif call["name"] == "run_source_snapshot":
+                        _status, resp = api_server_tools.run_source_snapshot(
+                            run, current_token, call["input"], _svc()._remaining_sec(run)
+                        )
                     elif call["name"] == "read_document":
                         _status, resp = _svc()._api_read_document(run, current_token, call["input"])
                     elif call["name"] == "read_help":
@@ -1539,7 +1548,10 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 # other three branches above (SOURCE_OPS, run_test, read_help) are direct
                 # in-process handlers, never self-HTTP, and stay out of last_tool_name
                 # entirely (DB0005 2 scope note).
-                if call["name"] not in api_server_tools.SOURCE_OPS and call["name"] not in ("run_test", "read_help"):
+                if (
+                    call["name"] not in api_server_tools.SOURCE_OPS
+                    and call["name"] not in ("run_test", "read_help", *api_server_tools.SNAPSHOT_NAMES)
+                ):
                     run["last_tool_name"] = "api_bound_request"
                     run["last_tool_status"] = _status
                     run["last_tool_error"] = (
