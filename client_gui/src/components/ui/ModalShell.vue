@@ -13,6 +13,7 @@
         class="ui-modal-surface"
         :class="`ui-modal-surface--${size}`"
         :style="{ zIndex: surfaceZIndex }"
+        :data-modal-focus-scope="instanceId"
         :role="role"
         aria-modal="true"
         :aria-label="ariaLabelAttr"
@@ -82,7 +83,11 @@ const descriptionId = `${instanceId}-description`
 const overlayRef = ref<HTMLElement | null>(null)
 const surfaceRef = ref<HTMLElement | null>(null)
 const overlayZIndex = ref(0)
-const surfaceZIndex = computed(() => overlayZIndex.value + 1)
+// A real second counter tick, not `overlayZIndex + 1`: the latter only reserves a value
+// one-above without ever telling the shared counter it was used, so the very next
+// unrelated allocation (e.g. a ContextMenu opened from inside this modal, T0010 §10)
+// could land on that same "+1" value and tie with this surface instead of clearing it.
+const surfaceZIndex = ref(0)
 
 /* ───────────────────────────────── ARIA ─────────────────────────────────── */
 // Detected rather than assumed: a caller that skips the header slot (or renders a
@@ -145,6 +150,19 @@ function onSurfaceKeydown(event: KeyboardEvent): void {
   }
 }
 
+/** Teleported child overlays are outside the modal surface in the DOM, so containment
+ *  alone cannot identify them. They must explicitly carry the focus-scope id of the modal
+ *  that opened them. A later, higher-z unrelated overlay (for example ToastHost) has no
+ *  such ownership marker and therefore cannot bypass this blocking modal's focus trap. */
+function isOwnedChildOverlay(node: Node): boolean {
+  let el: HTMLElement | null = node instanceof HTMLElement ? node : node.parentElement
+  while (el) {
+    if (el.dataset.overlayFocusOwner === instanceId) return true
+    el = el.parentElement
+  }
+  return false
+}
+
 /** Pulls focus back inside if it escapes the trap by any means other than Tab (e.g. a
  *  caller's own `.focus()` call on background content). Only the topmost modal in the
  *  open stack does this: with two modals open, a lower one's root never contains focus
@@ -156,6 +174,7 @@ function onDocumentFocusIn(event: FocusEvent): void {
   if (root == null) return
   const target = event.target
   if (target instanceof Node && root.contains(target)) return
+  if (target instanceof Node && isOwnedChildOverlay(target)) return
   const fallback = focusableElementsIn(root)[0] ?? root
   try {
     fallback.focus()
@@ -221,6 +240,7 @@ watch(
     if (isOpen && !wasOpen) {
       triggerElement = captureFocusedElement()
       overlayZIndex.value = allocateOverlayZIndex()
+      surfaceZIndex.value = allocateOverlayZIndex()
       pushOpenModal(instanceId)
       lockBodyScroll()
       attachListeners()

@@ -249,4 +249,21 @@ describe('components/ui/ModalShell (T0006)', () => {
     wrapper.unmount()
     trigger.remove()
   })
+  it('pulls focus back from an unrelated overlay even when it has a higher z-index', async () => {
+    const wrapper = mountModal()
+    await wrapper.vm.$nextTick()
+    const surface = document.querySelector('.ui-modal-surface') as HTMLElement
+    const unrelated = document.createElement('button')
+    unrelated.className = 'unrelated-overlay-action'
+    unrelated.style.zIndex = String(Number(surface.style.zIndex) + 100)
+    document.body.appendChild(unrelated)
+
+    unrelated.focus()
+    await wrapper.vm.$nextTick()
+
+    expect(surface.contains(document.activeElement)).toBe(true)
+    expect(document.activeElement).not.toBe(unrelated)
+    unrelated.remove()
+    wrapper.unmount()
+  })
 })

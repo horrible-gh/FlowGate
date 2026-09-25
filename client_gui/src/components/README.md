@@ -31,4 +31,20 @@ T0008에서 구현한 3차 상태/피드백 Primitive입니다: `Toast`(비차�
 border만, ErrorState가 fg만 함께 재사용합니다(`../app/styles/theme.css`, T0008 §11).
 Badge의 neutral tone은 dashed/투명 칩 모양이 이 체계와 달라 토큰화하지 않았습니다.
 
-SplitPane/ResizablePane/ContextMenu는 마지막 공통부품 T로 남아 있습니다.
+T0010에서 구현한 4차(마지막) 공통부품입니다: `SplitPane`(두 영역 사이 경계를 드래그/화살표키로
+움직이는 레이아웃 primitive, `#first`/`#second` 슬롯, `direction="horizontal|vertical"`),
+`ResizablePane`(단일 패널의 한쪽 edge만 움직이는 독립 primitive, 상대 영역의 의미를 모름),
+`ContextMenu`(우클릭/키보드로 포인터 위치에 여는 비차단 메뉴, Dropdown과 달리 trigger element가
+아니라 pointer 좌표 기준). 셋 다 어떤 pane/menu 항목이 Designer Explorer인지 Git history인지
+알지 못하며, 자기 크기/위치를 localStorage나 API에 저장하지 않습니다. SplitPane과
+ResizablePane의 드래그+키보드 스텝+min/max clamp+listener 수명주기는 실제로 동일한 코드였으므로
+`../core/interaction/axisResize.ts`로 뺐고(둘의 API 자체는 T0010 §7에 따라 하나로 합치지
+않았습니다), 드래그 핸들의 두께/hover/active 색도 `--fg2-splitter-*` 공유 토큰으로 뺐습니다
+(`../app/styles/theme.css`). ContextMenu는 `core/overlay/zIndex.ts`의 `allocateOverlayZIndex()`를
+그대로 재사용합니다 — 이 과정에서 `ModalShell`이 surface z-index를 `overlayZIndex + 1`로
+로컬 계산만 하고 공유 카운터를 실제로 두 번 소비하지 않던 것을 발견해, ModalShell도 surface에
+대해 카운터를 한 번 더 호출하도록 최소 수정했습니다(그 전에는 Modal 내부에서 연 ContextMenu가
+같은 값으로 계산되어 surface와 동일 z-index로 겹칠 수 있었습니다). 같은 이유로 ModalShell의
+document `focusin` 트랩도, 포커스 대상이 이 모달보다 높은 z-index 아래에 있으면(=이 모달이
+열린 뒤에 allocateOverlayZIndex()로 할당된 무언가, 즉 Modal 안에서 연 ContextMenu) 다시
+끌어오지 않도록 예외를 추가했습니다.

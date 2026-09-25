@@ -78,6 +78,13 @@
   --fg2-status-danger-fg: #ff96a6;
   --fg2-status-danger-border: rgba(255, 100, 120, 0.45);
   --fg2-status-danger-bg: rgba(255, 100, 120, 0.1);
+
+  /* Shared drag-handle tokens (T0010 §11/§12): SplitPane's splitter and ResizablePane's
+     edge handle are both a thin draggable strip with the same hover/active feedback, so
+     the two real duplicates share one set of values instead of each hardcoding it. */
+  --fg2-splitter-size: 6px;
+  --fg2-splitter-hover-bg: rgba(124, 192, 255, 0.16);
+  --fg2-splitter-active-bg: rgba(124, 192, 255, 0.28);
 }
 
 @media (min-width: 1800px) {
