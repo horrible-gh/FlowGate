@@ -1,8 +1,12 @@
 """WorkPlan instruction materialization regression after 0611 T0011.
 
 A WorkPlan-backed N/T is expanded from the step's own instruction document (pre-instruction
-file and/or text); a step without one stays the N/T authoring worker hop.  The managed
-server materializer never exposes a one-line or note-copied canonical WP instruction.
+file and/or text). 0614 T0004 overrides the 0611 rej_01M3AVQVHD6PSTBE fallback (historical
+contract, still pinned in test_work_plan_instruction_semantics_0611.py's module docstring):
+a step without an instruction document now falls back to server-materializing steps[].note
+under manual/auto_approved, and only falls back further to the legacy generated instruction
+when the note is empty too. ai_direct is unaffected -- it still never server-expands a
+WorkPlan step, document or not.
 """
 from __future__ import annotations
 
@@ -99,19 +103,39 @@ def test_legacy_instruction_still_delegates_to_managed_core(monkeypatch):
     assert result == {"doc_id": "legacy-T", "type_code": "T"}
 
 
-def test_auto_approved_workplan_head_without_instruction_document_is_authoring_hop(monkeypatch):
+def test_auto_approved_workplan_head_without_instruction_document_is_now_server_materialized(
+    monkeypatch,
+):
+    """0614 T0004 (human override of the 0611 rej_01M3AVQVHD6PSTBE final contract this file
+    used to pin as `..._is_authoring_hop`): a WorkPlan-backed N/T with no instruction
+    document is no longer left as an authoring hop under auto_approved -- it is
+    server-materialized from steps[].note (or the legacy generated instruction when the note
+    is empty too). ai_direct is unaffected -- see test_work_plan_instruction_semantics_0611.py
+    for the mode-split coverage."""
     head = {
         "id": 11, "item_seq": 1, "type": "T", "source_doc_id": WP_ID,
         "source_revision_no": 7, "result_doc_id": None, "note": "write it",
     }
-    monkeypatch.setattr(workflow.db_wfseq, "get_effective_head", lambda _sid: head)
-    monkeypatch.setattr(docs, "materialize_work_plan_instruction", lambda **_kw: pytest.fail(
-        "WorkPlan-backed N/T must not be server-materialized"
-    ))
+    heads = iter([head, None])
+    monkeypatch.setattr(workflow.db_wfseq, "get_effective_head", lambda _sid: next(heads, None))
+    from modules.flow_gate.db import users as db_users
+    from modules.flow_gate.workflow.routers import workflow as workflow_router
+    monkeypatch.setattr(db_users, "get_by_id", lambda uid: {"user_id": uid, "is_admin": 1})
+    monkeypatch.setattr(
+        workflow_router, "_get_user_permissions", lambda _user: {"document.approve"},
+    )
+    calls = []
+
+    def materialize(**kwargs):
+        calls.append(kwargs["head"])
+        return {"doc_id": "wp-T", "content_source": docs.WORK_PLAN_STEP_NOTE_CONTENT_SOURCE}
+
+    monkeypatch.setattr(docs, "materialize_work_plan_instruction", materialize)
     completed = workflow._auto_complete_instruction_heads(
         spine_doc={"doc_id": "root", "project_id": "flowgate", "group_id": "g",
                    "module": "default"},
         seq={"id": 9}, actor_user_id="pm", locale="ko", target_seq=2,
         instruction_mode="auto_approved",
     )
-    assert completed == []
+    assert completed == [1]
+    assert calls == [head]
