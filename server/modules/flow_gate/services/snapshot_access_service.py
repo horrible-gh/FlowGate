@@ -167,6 +167,16 @@ def _authorize(run: dict, snapshot_id: str) -> dict:
     return row
 
 
+def _public_rejection_reason(row: dict) -> str | None:
+    """The human's rejection reason as a worker may see it (T0026 §2). It is typed text,
+    so it passes the same error-mode scrub as every other worker-facing message: known
+    server roots become markers and any other absolute path is dropped."""
+    reason = row.get("rejection_reason")
+    if not reason:
+        return None
+    return sanitize_public(str(reason), _public_roots(row), error=True)
+
+
 def _public_state(row: dict) -> str:
     if row.get("status") == "created":
         return "stale" if bool(row.get("stale")) else "active"
@@ -197,6 +207,9 @@ def _metadata(row: dict) -> dict:
         "stale": bool(row.get("stale")),
         "status": state,
     }
+    if state == "rejected":
+        result["rejected_at"] = row.get("rejected_at")
+        result["rejection_reason"] = _public_rejection_reason(row)
     if state == "stale":
         result["warning"] = STALE_WARNING
         result["validation_claim"] = STALE_EXPLANATION
@@ -226,6 +239,10 @@ def _refresh_available(run: dict, snapshot_id: str) -> tuple[dict, Path, dict]:
             409, "snapshot_not_ready",
             "snapshot is not materialized; human approval and materialization are required",
             state=state, snapshot_id=snapshot_id,
+            details=(
+                {"rejection_reason": _public_rejection_reason(row)}
+                if state == "rejected" else None
+            ),
         )
     try:
         refreshed = materialization.refresh_stale(

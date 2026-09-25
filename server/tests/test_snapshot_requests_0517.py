@@ -168,7 +168,7 @@ def test_c16_multiple_requests_keep_independent_decisions(monkeypatch):
    row=dict(data)|{"status":"requested","requested_at":"now"}
    rows[row["snapshot_id"]]=row
    return dict(row)
- def transition(snapshot_id,decision,actor):
+ def transition(snapshot_id,decision,actor,rejection_reason=None):
   with lock:
    row=rows.get(snapshot_id)
    if row is None or row["status"]!="requested": return (dict(row) if row else None),False
@@ -182,7 +182,7 @@ def test_c16_multiple_requests_keep_independent_decisions(monkeypatch):
  from concurrent.futures import ThreadPoolExecutor
  with ThreadPoolExecutor(max_workers=2) as pool:
   first=pool.submit(service.decide,"snap_a","approved","human-a")
-  second=pool.submit(service.decide,"snap_b","rejected","human-b")
+  second=pool.submit(service.decide,"snap_b","rejected","human-b","scope too wide")
   assert first.result()["status"]=="approved"
   assert second.result()["status"]=="rejected"
  assert rows["snap_a"]["requested_paths"]==["a.py"]

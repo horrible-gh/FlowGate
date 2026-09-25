@@ -171,9 +171,10 @@ const otherPendingCount = computed(() => {
   return store.pending.filter((row) => row.snapshot_id !== current).length
 })
 
-// Mockup ①/③ footer note's link — opens the Pending list (SnapshotPendingCenter owns the
-// dropdown's own `open` state, so this only asks for it via a window signal, mirroring
-// the other `fg:*` bridges this feature already uses).
+// Mockup ①/③ footer note's link — opens the Pending list, which is the notification
+// panel's [승인 대기] section since T0026 (NotificationCenter owns the panel's own `open`
+// state, so this only asks for it via a window signal, mirroring the other `fg:*` bridges
+// this feature already uses).
 function openPendingList() {
   store.closeDetail()
   if (typeof window !== 'undefined') {
@@ -183,7 +184,7 @@ function openPendingList() {
 
 // T0012 §7/§10: X/ESC leaves the request `requested` — no approve/reject call here.
 function onRequestClose(_reason: DialogCloseReason) {
-  if (busy.value) return
+  if (busy.value || store.rejectOpen) return
   store.closeDetail()
 }
 
@@ -200,17 +201,13 @@ async function approve() {
   }
 }
 
-async function reject() {
+// T0026 §2: [거절] never decides on the spot — it opens the reason prompt, which nests on
+// the common stack above this dialog. A successful rejection there closes both (the store
+// drops this dialog's target when the decision settles); cancelling it returns here.
+function reject() {
   const target = request.value
   if (!target) return
-  busy.value = true
-  try {
-    await store.reject(target.snapshot_id)
-  } catch {
-    showToast(t('main.snapshot_approval.reject_failed'), 'danger')
-  } finally {
-    busy.value = false
-  }
+  store.openReject(target)
 }
 
 // T0012 §3 footer: [거절] danger / [승인] primary — no cancel action at all.

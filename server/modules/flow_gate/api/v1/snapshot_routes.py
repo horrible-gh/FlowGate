@@ -11,6 +11,10 @@ router=APIRouter(prefix="/api/v1/snapshots",tags=["Snapshots"])
 class RequestIn(BaseModel):
  reason:str; scope:Literal["single_file","selected_files","directory","whole_source"]
  requested_paths:list[str]; purpose:str; source_kind:Literal["current_worktree"]="current_worktree"
+class RejectIn(BaseModel):
+ # T0026: named after the column (documents.rejection_reason) — `reason` is already the
+ # AI's own request reason on the same row.
+ rejection_reason:str|None=None
 def _error(exc): raise HTTPException(exc.status,detail={"code":exc.code,"message":exc.message})
 @router.post("")
 def request_snapshot(body:RequestIn,request:Request):
@@ -64,8 +68,9 @@ def approve(snapshot_id:str,user=Depends(get_current_user)):
   return {"ok":True,"request":materialization.materialize(snapshot_id,user["user_id"])}
  except service.SnapshotRequestError as exc: _error(exc)
 @router.post("/{snapshot_id}/reject")
-def reject(snapshot_id:str,user=Depends(get_current_user)):
- try: return {"ok":True,"request":service.decide(snapshot_id,"rejected",user["user_id"])}
+def reject(snapshot_id:str,body:RejectIn|None=None,user=Depends(get_current_user)):
+ reason=body.rejection_reason if body else None
+ try: return {"ok":True,"request":service.decide(snapshot_id,"rejected",user["user_id"],reason)}
  except service.SnapshotRequestError as exc: _error(exc)
 
 def _cli_context(request:Request):

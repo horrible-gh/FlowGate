@@ -10,6 +10,8 @@ from modules.flow_gate.api.v1.events.event_types import EventType
 from modules.flow_gate.api.v1.events.publisher import FlowEvent, broadcast_event_threadsafe
 SCOPES={"single_file","selected_files","directory","whole_source"}
 SOURCE_KIND="current_worktree"
+# Same cap the merge-review reject prompt uses for its typed reason (GitMergeRejectDialog).
+REJECTION_REASON_MAX=4000
 class SnapshotRequestError(ValueError):
  def __init__(self,status,code,message): self.status,self.code,self.message=status,code,message; super().__init__(message)
 
@@ -39,7 +41,7 @@ def validate_request(data):
  return n
 
 def _meta(row):
- keys=("snapshot_id","run_id","chain_id","group_id","provider_id","reason","purpose","scope","requested_paths","source_kind","requested_at","approved_by")
+ keys=("snapshot_id","run_id","chain_id","group_id","provider_id","reason","purpose","scope","requested_paths","source_kind","requested_at","approved_by","rejection_reason")
  return json.dumps({k:row.get(k) for k in keys},ensure_ascii=False,sort_keys=True)
 
 def _notify(row,status):
@@ -87,10 +89,30 @@ def create_request(data,actor):
  _notify(row,"requested")
  return row
 
-def decide(snapshot_id,decision,actor):
+def clean_rejection_reason(value):
+ """The human's own text only: trimmed, never composed with server-side detail."""
+ text=str(value or "").strip()
+ if len(text)>REJECTION_REASON_MAX:
+  raise SnapshotRequestError(422,"rejection_reason_too_long",f"rejection_reason must be at most {REJECTION_REASON_MAX} characters")
+ return text or None
+
+def decide(snapshot_id,decision,actor,rejection_reason=None):
  event="snapshot_approved" if decision=="approved" else "snapshot_rejected"
+ reason=None
+ if decision=="rejected":
+  reason=clean_rejection_reason(rejection_reason)
+  if reason is None:
+   # T0026 §2: a human rejection carries a reason (FlowGate's document reject and merge
+   # reject both refuse an empty one). Only a request still awaiting a decision needs it —
+   # an already-decided/terminal request keeps answering exactly as before (idempotent).
+   current=db.get(snapshot_id)
+   if current is None: raise SnapshotRequestError(404,"not_found","snapshot request not found")
+   if current.get("status")=="requested":
+    raise SnapshotRequestError(422,"rejection_reason_required","a rejection reason is required")
  with get_store().transaction():
-  row,changed=db.transition(snapshot_id,decision,actor)
+  # The approve call is left exactly as it was; only a rejection carries the reason.
+  row,changed=(db.transition(snapshot_id,decision,actor,reason) if decision=="rejected"
+               else db.transition(snapshot_id,decision,actor))
   if row is None: raise SnapshotRequestError(404,"not_found","snapshot request not found")
   if changed: workflow_events.create({"event_type":event,"project_id":row["project_id"],"group_id":row["group_id"],"actor_user_id":actor,"from_state":"requested","to_state":decision,"metadata":_meta(row)})
  if changed: _notify(row,decision)

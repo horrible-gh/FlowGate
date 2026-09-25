@@ -95,23 +95,26 @@ def list_materialization_candidates():
     ]
 
 
-def transition(snapshot_id, decision, actor):
+def transition(snapshot_id, decision, actor, rejection_reason=None):
     if decision not in ("approved", "rejected"):
         raise ValueError("invalid decision")
     store = get_store()
     stamp = now_iso()
-    time_column, actor_column = (
-        ("approved_at", "approved_by")
+    columns = (
+        ["approved_at", "approved_by"]
         if decision == "approved"
-        else ("rejected_at", "rejected_by")
+        else ["rejected_at", "rejected_by", "rejection_reason"]
     )
+    values = [stamp, actor] + ([rejection_reason] if decision == "rejected" else [])
     row = get(snapshot_id)
     if row is None or row["status"] != "requested":
+        # Terminal/decided rows keep their first decision, reason included — a repeated
+        # reject never overwrites the reason the first human wrote.
         return row, False
     changed = store._execute_affected(
-        f"UPDATE snapshot_requests SET status=?,{time_column}=?,{actor_column}=? "
-        "WHERE snapshot_id=? AND status='requested'",
-        [decision, stamp, actor, snapshot_id],
+        "UPDATE snapshot_requests SET status=?," + ",".join(f"{c}=?" for c in columns)
+        + " WHERE snapshot_id=? AND status='requested'",
+        [decision, *values, snapshot_id],
     )
     return get(snapshot_id), changed == 1
 

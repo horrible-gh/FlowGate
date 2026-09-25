@@ -23,6 +23,9 @@ export interface SnapshotRequestRow {
   source_kind: 'current_worktree'
   status: string
   requested_at: string
+  // T0026 §2: set once a human rejects the request (null for lifecycle closes).
+  rejection_reason?: string | null
+  rejected_at?: string | null
 }
 
 export const useSnapshotRequestsStore = defineStore('snapshotRequests', () => {
@@ -56,6 +59,11 @@ export const useSnapshotRequestsStore = defineStore('snapshotRequests', () => {
   const detailTarget = ref<SnapshotRequestRow | null>(null)
   const detailOpen = computed(() => detailTarget.value !== null)
 
+  // T0026 §2: [거절] (from the Pending list or the detail dialog) opens the reason prompt
+  // for this row instead of rejecting on the spot. One target, so one prompt at a time.
+  const rejectTarget = ref<SnapshotRequestRow | null>(null)
+  const rejectOpen = computed(() => rejectTarget.value !== null)
+
   const pendingCount = computed(() => pending.value.length)
 
   function anyDialogOpen(): boolean {
@@ -73,6 +81,15 @@ export const useSnapshotRequestsStore = defineStore('snapshotRequests', () => {
   // drops the client-side "currently showing" pointer (T0012 §7/§10).
   function closeDetail(): void {
     detailTarget.value = null
+  }
+
+  function openReject(row: SnapshotRequestRow): void {
+    rejectTarget.value = row
+  }
+
+  // Cancel/X/ESC on the reason prompt: nothing is sent, the request stays `requested`.
+  function closeReject(): void {
+    rejectTarget.value = null
   }
 
   function maybeAutoOpen(rows: SnapshotRequestRow[]): void {
@@ -126,10 +143,15 @@ export const useSnapshotRequestsStore = defineStore('snapshotRequests', () => {
   // server — never just drop the row locally. A row already removed by the POST is
   // simply absent from the re-fetch; the optimistic removal is a fallback for when the
   // owning project can no longer be determined (defensive, not the primary path).
-  async function settleDecision(snapshotId: string, path: 'approve' | 'reject'): Promise<void> {
+  async function settleDecision(
+    snapshotId: string,
+    path: 'approve' | 'reject',
+    body: Record<string, string> = {},
+  ): Promise<void> {
     const projectId = pending.value.find((row) => row.snapshot_id === snapshotId)?.project_id
-    await postRequest(`/api/v1/snapshots/${encodeURIComponent(snapshotId)}/${path}`, {})
+    await postRequest(`/api/v1/snapshots/${encodeURIComponent(snapshotId)}/${path}`, body)
     if (detailTarget.value?.snapshot_id === snapshotId) detailTarget.value = null
+    if (rejectTarget.value?.snapshot_id === snapshotId) rejectTarget.value = null
     // A decision's own re-fetch must not resurrect a project the user has since switched
     // away from: `activeProjectId` only changes via an explicit `fetchPending`/`reset()`
     // call, so if it no longer matches the project this decision belongs to, a switch (which
@@ -143,8 +165,9 @@ export const useSnapshotRequestsStore = defineStore('snapshotRequests', () => {
     await settleDecision(snapshotId, 'approve')
   }
 
-  async function reject(snapshotId: string): Promise<void> {
-    await settleDecision(snapshotId, 'reject')
+  // The reason is the human's own text; the server refuses an empty one (T0026 §2).
+  async function reject(snapshotId: string, rejectionReason: string): Promise<void> {
+    await settleDecision(snapshotId, 'reject', { rejection_reason: rejectionReason })
   }
 
   function reset(): void {
@@ -158,10 +181,11 @@ export const useSnapshotRequestsStore = defineStore('snapshotRequests', () => {
     seenIds.clear()
     initialized = false
     detailTarget.value = null
+    rejectTarget.value = null
   }
 
   return {
-    pending, loading, error, pendingCount, detailTarget, detailOpen,
-    fetchPending, approve, reject, openDetail, closeDetail, reset,
+    pending, loading, error, pendingCount, detailTarget, detailOpen, rejectTarget, rejectOpen,
+    fetchPending, approve, reject, openDetail, closeDetail, openReject, closeReject, reset,
   }
 })
