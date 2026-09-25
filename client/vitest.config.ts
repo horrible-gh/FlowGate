@@ -1,6 +1,6 @@
 import { resolve } from 'node:path'
 import vue from '@vitejs/plugin-vue'
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 
 export default defineConfig({
   plugins: [vue()],
@@ -11,6 +11,10 @@ export default defineConfig({
     // were opening XHRs at the dev server's address and passing only because nothing
     // answered; see tests/setup/blockNetwork.ts.
     setupFiles: ['./tests/setup/blockNetwork.ts'],
+    // 0615 T0004 rev2 — tests/integration/** is the one deliberate exception (a real
+    // client+server connected regression), run separately via vitest.integration.config.ts
+    // / `npm run test:integration` so it never silently joins the default blocked-network run.
+    exclude: [...configDefaults.exclude, 'tests/integration/**'],
   },
   resolve: {
     // Windows: the source tree can live on a drive letter mapped to a UNC share.

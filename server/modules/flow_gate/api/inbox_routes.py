@@ -44,6 +44,7 @@ from modules.flow_gate.rbac.decorators import _has_permission, require_permissio
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services import register_binding
+from modules.flow_gate.services import snapshot_access_service
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import tool_registry
 from modules.flow_gate.services import step_verification_service
@@ -4135,6 +4136,11 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         body_for_guards, normalizations = _normalize_submission_body(
             _raw_submission_text, where="new"
         )
+    snapshot_provenance: list[dict] = []
+    if doc_type.upper() == "TR" and body_for_guards is not None:
+        body_for_guards, snapshot_provenance = snapshot_access_service.inject_tr_provenance(
+            body_for_guards, str(token_rec.get("ai_run_id") or "")
+        )
     _new_locale_for_guard = template_provision.normalize_locale(
         token_rec.get("continuation_locale") or request.headers.get("x-locale") or "ko"
     )
@@ -4564,6 +4570,8 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # collapses it anyway.
     if tr_scope_result is not None:
         meta_payload["tr_scope"] = _tr_scope_meta(tr_scope_result)
+    if snapshot_provenance:
+        meta_payload["scratch_snapshot_provenance"] = snapshot_provenance
     # 0391 T0005 §5-6: record the corruption/fingerprint bypass reason for audit purposes
     # (no new column/migration).
     _force_encoding_reason = str(body.get("force_encoding_reason") or "").strip()
@@ -4644,6 +4652,14 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
             return _fail(exc.status_code, detail)
         return _fail(500, f"DB registration error: {exc}")
+
+    if snapshot_provenance:
+        try:
+            snapshot_access_service.attach_tr(
+                str(token_rec.get("ai_run_id") or ""), canonical_doc_id
+            )
+        except Exception:
+            pass
 
     db_events.create({
         "event_type": "action_taken",
@@ -5134,6 +5150,16 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         edit_body_for_guards, edit_normalizations = _normalize_submission_body(
             _edit_raw_submission_text, where="edit"
         )
+    edit_snapshot_provenance: list[dict] = []
+    if (
+        str(existing_doc.get("type_code") or "").upper() == "TR"
+        and edit_body_for_guards is not None
+    ):
+        edit_body_for_guards, edit_snapshot_provenance = (
+            snapshot_access_service.inject_tr_provenance(
+                edit_body_for_guards, str(token_rec.get("ai_run_id") or "")
+            )
+        )
     _edit_locale_for_guard = template_provision.normalize_locale(
         token_rec.get("continuation_locale") or request.headers.get("x-locale") or "ko"
     )
@@ -5539,6 +5565,14 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         return _fail(409, "Concurrent modification conflict. Please retry.")
 
     new_revision_no: int = refreshed["revision_no"]
+
+    if edit_snapshot_provenance:
+        try:
+            snapshot_access_service.attach_tr(
+                str(token_rec.get("ai_run_id") or ""), doc_id
+            )
+        except Exception:
+            pass
 
     # ── Step 7.1: Persist body fingerprint (NR0003 §4-2) ─────────────────────────────
     # The dup-body guard can only catch a twin whose meta carries content_sha256.

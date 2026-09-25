@@ -61,6 +61,9 @@ const props = defineProps<{
   // (checkout-free, read-only) instead of the base checkout.
   gitGroupId?: string | null
   gitCommit?: string | null
+  // 0615 T0004 — when set instead of gitGroupId, read from an ordinary local
+  // branch's committed tree (same checkout-free contract, always read-only).
+  gitBranch?: string | null
   readOnly?: boolean
 }>()
 const { t } = useI18n()
@@ -198,6 +201,15 @@ async function loadContent(): Promise<boolean> {
         const data = await explorerStore.fetchGroupBranchBlob(props.projectId, props.gitGroupId, path)
         content.value = data.binary ? '' : (data.content ?? '')
         hasLinkedSource.value = true
+      } else if (props.projectId && props.gitBranch) {
+        // 0615 T0004 — ordinary local-branch read: same checkout-free contract.
+        // gitCommit pins the read to the commit this tab was opened against, so a
+        // remount (browser restore, or the explorer advancing to a newer commit
+        // while this tab stays open) never silently reads a different commit than
+        // what the tab/tree snapshot on screen implies.
+        const data = await explorerStore.fetchLocalBranchBlob(props.projectId, props.gitBranch, path, props.gitCommit)
+        content.value = data.binary ? '' : (data.content ?? '')
+        hasLinkedSource.value = true
       } else if (props.projectId) {
         const url = `/api/v1/projects/${encodeURIComponent(props.projectId)}/files/src-content?path=${encodeURIComponent(path)}`
         const res = await api.get<string>(url, { responseType: 'text' })
@@ -249,7 +261,7 @@ function onDocumentContentChanged(e: Event) {
 }
 
 watch(
-  () => [props.path, props.docId, props.contentOverride, props.projectId, props.gitGroupId, props.gitCommit],
+  () => [props.path, props.docId, props.contentOverride, props.projectId, props.gitGroupId, props.gitBranch, props.gitCommit],
   loadContent,
   { immediate: true },
 )

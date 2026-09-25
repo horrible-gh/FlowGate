@@ -144,6 +144,9 @@ class GroupCreateRequest(BaseModel):
     group_id: Optional[str] = None   # Auto-reserved when omitted
     parent_id: Optional[str] = None
     priority: Optional[str] = None
+    # Durable first-worktree source. Immutable after group creation; omitted
+    # legacy callers resolve through project_git_config.base_branch.
+    work_base_ref: Optional[str] = None
 
 
 class GroupUpdateRequest(BaseModel):
@@ -205,7 +208,21 @@ def list_groups_endpoint(
     if "document.read" not in user_permissions:
         raise HTTPException(status_code=403, detail="document.read permission required.")
     groups = db_groups.list_groups(project_id=project_id, module=module, status=status)
-    return {"groups": groups, "total": len(groups)}
+    config = git_service.db_git.get_config(project_id)
+    # flowgate.default.0613 TR0014 rev2: one batch lookup for the whole project
+    # (never one per group) so the requirement dialog can tell an editable
+    # existing-group Base Branch from one that Git work has already locked.
+    locked_ids = git_service.locked_group_ids(project_id)
+    enriched = []
+    for group in groups:
+        row = dict(group)
+        row["work_base_ref"] = row.get("work_base_ref")
+        row["effective_work_base_ref"] = git_service.resolve_group_work_base_ref(
+            project_id, row["group_id"], group=row, config=config
+        )
+        row["work_base_locked"] = row["group_id"] in locked_ids
+        enriched.append(row)
+    return {"groups": enriched, "total": len(enriched)}
 
 
 @router.post("/groups", status_code=201)
@@ -228,10 +245,23 @@ def create_group_endpoint(
         module=body.module,
         parent_id=body.parent_id,
         priority=body.priority,
+        work_base_ref=body.work_base_ref,
     )
     if result.get("status") == "error":
-        raise HTTPException(status_code=400, detail=result.get("message"))
-    return {"group_id": result["group_id"], "created_at": result["created_at"]}
+        detail: Any = result.get("message")
+        if result.get("code"):
+            detail = {
+                "code": result["code"],
+                "message": result.get("message"),
+                "details": result.get("details") or {},
+            }
+        raise HTTPException(status_code=result.get("http_status", 400), detail=detail)
+    return {
+        "group_id": result["group_id"],
+        "created_at": result["created_at"],
+        "work_base_ref": result.get("work_base_ref"),
+        "effective_work_base_ref": result.get("effective_work_base_ref"),
+    }
 
 
 @router.put("/groups/{group_id}")

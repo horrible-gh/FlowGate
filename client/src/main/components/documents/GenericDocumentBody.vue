@@ -72,6 +72,7 @@
         :doc-id="isFileTab(tab) ? null : tab.id"
         :project-id="tab.projectId ?? null"
         :git-group-id="tab.gitGroupId ?? null"
+        :git-branch="tab.gitBranch ?? null"
         :git-commit="tab.gitCommit ?? null"
         :read-only="readOnly"
       />
@@ -103,6 +104,7 @@
         :project-id="tab.projectId ?? null"
         :wrap-lines="textWrapEnabled"
         :git-group-id="tab.gitGroupId ?? null"
+        :git-branch="tab.gitBranch ?? null"
         :git-commit="tab.gitCommit ?? null"
       />
     </div>

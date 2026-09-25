@@ -287,3 +287,49 @@ def base_src_root(
     from modules.flow_gate.services import git_service as _gs
     branch = base_branch_for(project_id) or (fallback_branch or "main").strip() or "main"
     return _gs.src_root(project_name, branch)
+
+
+# ── Origin/config invariant for network Git entry points (flowgate.default.0361
+# NR0003 §7/§16) ──────────────────────────────────────────────────────────────
+# save_config() only ever updates the DB row (above); it never touches an
+# existing checkout's actual `origin` remote. A checkout adopted/cloned under an
+# OLDER repo_url therefore keeps pointing at the old remote even after the
+# operator repoints the project at a new one — every fetch/push that follows
+# silently keeps talking to the stale remote. `_adopt()` already gets this right
+# for its own one-time entry (it wires origin before its first fetch); every
+# other network Git entry point must reach the same state on every call, not
+# only on first adoption.
+def ensure_origin_matches_config(base_root: Path, repo_url: str) -> None:
+    """Sync ``base_root``'s `origin` remote to the current config `repo_url`.
+
+    Call this immediately before any `fetch`/`push` against `origin` — including
+    one issued from a group worktree of the same repository, since a worktree's
+    remotes live in the shared `.git` directory and this needs only a path inside
+    that repository, not specifically the base checkout root.
+
+    Local-only: this never performs network I/O and never touches the working
+    tree, index or HEAD — only the `origin` remote's URL. A blank ``repo_url``
+    is a no-op (nothing to compare against). On success, git's own "same value"
+    check makes an already-matching origin a no-op too (NR0003 §12 test I).
+
+    Raises GitServiceError if the `git remote` command itself fails, so a caller
+    that has not yet started its fetch/push does not proceed against an origin
+    that may still be stale (NR0003 §11 failure policy).
+    """
+    from modules.flow_gate.services import git_service as _gs
+    expected = (repo_url or "").strip()
+    if not expected:
+        return
+    proc = _gs._run_git(["remote", "get-url", "origin"], cwd=base_root)
+    if proc.returncode != 0:
+        proc = _gs._run_git(["remote", "add", "origin", expected], cwd=base_root)
+    elif (proc.stdout or "").strip() != expected:
+        proc = _gs._run_git(["remote", "set-url", "origin", expected], cwd=base_root)
+    else:
+        return
+    if proc.returncode != 0:
+        raise GitServiceError(
+            500, "git_error",
+            "failed to sync base checkout origin with the configured repo_url",
+            diagnostic=_gs._last_line(proc.stderr),
+        )

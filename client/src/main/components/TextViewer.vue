@@ -90,6 +90,9 @@ const props = defineProps<{
   // (checkout-free, read-only) with gitCommit pinning the point-in-time.
   gitGroupId?: string | null
   gitCommit?: string | null
+  // 0615 T0004 — when set instead of gitGroupId, read from an ordinary local
+  // branch's committed tree (same checkout-free contract, always read-only).
+  gitBranch?: string | null
 }>()
 
 const { t } = useI18n()
@@ -153,6 +156,14 @@ async function loadContent() {
       binaryFile.value = data.binary
       truncated.value = data.truncated
       content.value = data.binary ? '' : (data.content ?? '')
+    } else if (props.gitBranch) {
+      // gitCommit pins the read to the commit this tab was opened against (see
+      // MdViewer's identical fetchLocalBranchBlob call for why the store's mutable
+      // currentLocalBranchCommit alone is not enough).
+      const data = await explorerStore.fetchLocalBranchBlob(props.projectId, props.gitBranch, props.path, props.gitCommit)
+      binaryFile.value = data.binary
+      truncated.value = data.truncated
+      content.value = data.binary ? '' : (data.content ?? '')
     } else {
       const url = `/api/v1/projects/${encodeURIComponent(props.projectId)}/files/src-content?path=${encodeURIComponent(props.path)}`
       const res = await api.get<string>(url, { responseType: 'text' })
@@ -166,7 +177,7 @@ async function loadContent() {
   }
 }
 
-watch(() => [props.path, props.projectId, props.gitGroupId, props.gitCommit], loadContent, { immediate: true })
+watch(() => [props.path, props.projectId, props.gitGroupId, props.gitBranch, props.gitCommit], loadContent, { immediate: true })
 
 defineExpose({ loadContent })
 </script>

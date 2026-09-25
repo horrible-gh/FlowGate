@@ -194,6 +194,7 @@
   </ContextMenu>
   <GroupInfoModal
     v-model:visible="showGroupInfo"
+    :project-id="doc?.project_id ?? ''"
     :group-id="doc?.group_id ?? ''"
     :group-name="groupName"
     :documents="groupDocuments"
