@@ -21,10 +21,10 @@
 
     <div class="gui-sidebar-bottom">
       <!-- No v0.2 help destination exists yet: shown as a disabled control, not a dead link. -->
-      <button type="button" class="gui-help" disabled :title="t('gui.sidebar.help_unavailable')">
+      <Button variant="ghost" size="lg" class="gui-help" disabled :title="t('gui.sidebar.help_unavailable')">
         <span class="gui-help-mark" aria-hidden="true">?</span>
         <span>{{ t('gui.sidebar.help') }}</span>
-      </button>
+      </Button>
       <div class="gui-version">
         {{ t('gui.sidebar.version') }}<br />{{ t('gui.sidebar.build', { build: BUILD_STAMP }) }}
       </div>
@@ -36,6 +36,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute } from 'vue-router'
+import Button from '@/components/ui/Button.vue'
 import { APP_NAV_ITEMS, type AppNavKey } from '../navigation'
 import NavGlyph from './NavGlyph.vue'
 
@@ -137,6 +138,7 @@ const activeKey = computed(() => (route.meta.navKey as AppNavKey | undefined) ??
 .gui-help {
   width: 100%;
   display: flex;
+  justify-content: flex-start;
   gap: 12px;
   align-items: center;
   padding: 10px 12px;
@@ -146,6 +148,17 @@ const activeKey = computed(() => (route.meta.navKey as AppNavKey | undefined) ??
   font-size: 14px;
   text-align: left;
   cursor: not-allowed;
+}
+
+/* Button's own `.ui-btn` (font-weight: 650) and `:disabled` (dimmed opacity) rules would
+   otherwise leak into this always-disabled control, which HEAD never bolded or dimmed.
+   Combined selectors guarantee the override wins regardless of build order. */
+.gui-help.ui-btn {
+  font-weight: normal;
+}
+
+.gui-help.ui-btn:disabled {
+  opacity: 1;
 }
 
 .gui-help-mark {

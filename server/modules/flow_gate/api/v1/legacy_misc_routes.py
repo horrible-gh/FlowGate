@@ -33,6 +33,7 @@ from starlette.requests import Request
 
 from modules.flow_gate import db as _db
 from modules.flow_gate import service, process_service
+from modules.flow_gate.services import git_service
 
 router = APIRouter(prefix="/api/v1", tags=["LegacyMisc"])
 
@@ -103,7 +104,12 @@ def api_get_group(group_id: str):
             status_code=404,
             content={"status": "error", "message": f"Group not found: {group_id}"},
         )
-    return JSONResponse(content={"status": "success", "group": group})
+    row = dict(group)
+    row["work_base_ref"] = row.get("work_base_ref")
+    row["effective_work_base_ref"] = git_service.resolve_group_work_base_ref(
+        row["project_id"], group_id, group=row
+    )
+    return JSONResponse(content={"status": "success", "group": row})
 
 
 @router.post("/storage/folder", response_class=JSONResponse)
@@ -174,6 +180,7 @@ def api_outbox_create(
     owner: str = Form("admin"),
     group_id: str = Form(""),
     new_group_name: str = Form(""),
+    work_base_ref: str = Form(""),
     doc_type: str = Form("R"),
     template: str = Form("default"),
 ):
@@ -188,6 +195,7 @@ def api_outbox_create(
         owner=owner.strip(),
         group_id=group_id.strip(),
         new_group_name=new_group_name.strip(),
+        work_base_ref=work_base_ref,
         doc_type=doc_type.strip(),
         template=template.strip(),
         locale=request.headers.get("x-locale") or "ko",

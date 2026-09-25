@@ -4,13 +4,18 @@
       <span class="sdb-ph-title">{{ t('main.explorer.files') }}</span>
       <div class="sdb-ph-acts">
         <select
-          v-if="groupSlots.length"
-          v-model="selectedGroup"
+          v-if="groupSlots.length || localBranchOptions.length"
+          v-model="branchSelectValue"
           class="fx-group-select"
           :aria-label="t('main.explorer.group_select')"
-          @change="onGroupChange"
+          @change="onBranchSelectionChange"
         >
           <option :value="null">{{ t('main.explorer.base_branch', { branch: baseBranch }) }}</option>
+          <option
+            v-for="b in localBranchOptions"
+            :key="'local:' + b.name"
+            :value="'local:' + b.name"
+          >{{ b.name }}</option>
           <option v-for="s in groupSlots" :key="s.group_id" :value="s.group_id">{{ groupLabel(s) }}</option>
         </select>
         <button class="sdb-act-btn" :aria-label="t('main.explorer.retry')" @click="reload">
@@ -64,6 +69,10 @@
           :class="{ 'fx-git-behind--danger': behindDanger, 'fx-git-behind--unknown': behindUnknown }"
           :title="behindUnknown ? t('main.explorer.git_behind_unmeasured') : t('main.explorer.git_behind_tip', { n: groupGitState?.behind_count })"
         >{{ behindUnknown ? '⇣ ?' : behindDanger ? `⚠ ${groupGitState?.behind_count}` : `⇣ ${groupGitState?.behind_count}` }}</span>
+      </div>
+      <div v-else-if="selectedLocalBranch" class="fx-readonly-badge" data-test="local-branch-readonly-badge">
+        <AppIcon name="eye" />
+        <span>{{ t('main.explorer.local_branch_readonly_badge', { branch: selectedLocalBranch }) }}</span>
       </div>
       <div v-if="showUpdateRow" class="fx-git-update-row" :class="{ 'fx-git-update-row--warning': behindDanger }">
         <button
@@ -127,6 +136,7 @@
                 :project-id="projectId ?? ''"
                 :readonly="!canMutate"
                 :group-id="selectedGroup"
+                :local-branch="selectedLocalBranch"
                 @open="openFile"
                 @open-diff="openDiff"
                 @tree-changed="reload"
@@ -198,7 +208,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useExplorerStore, type FileNode } from '../stores/explorer'
+import { useExplorerStore, type FileNode, type BranchCatalog } from '../stores/explorer'
 import { useProjectStore } from '../stores/project'
 import { useLayoutStore } from '../stores/layout'
 import { useTabsStore } from '../stores/tabs'
@@ -257,10 +267,52 @@ const groupSlots = ref<Array<{ group_id: string; branch: string; status: string;
 // tree in view instead of silently reverting to base (L0006 §2.4, 0186 finding 3).
 // A genuine project switch clears it (watch guard + loadGroupSlots safety net).
 const selectedGroup = ref<string | null>(explorerStore.activeGroupBranch)
+// 0615 T0004 -- an ordinary local branch created by the Branch Manager (kind=local
+// in GET .../git/branches), mutually exclusive with selectedGroup. Unlike
+// selectedGroup this is not restored from the store on an SSE remount: a local
+// branch has no group lifecycle to preserve across it, so a remount simply falls
+// back to base (a safe default, never a crash).
+const selectedLocalBranch = ref<string | null>(null)
+const branchCatalog = ref<BranchCatalog>({ base_branch: null, default_merge_target: null, branches: [] })
+const localBranchOptions = computed(() => branchCatalog.value.branches.filter((b) => b.kind === 'local'))
+// 0615 T0004 rev2 -- tracks which source (base / group / local branch) the
+// currently-rendered `nodes` actually came from, independent of what
+// selectedGroup/selectedLocalBranch say right now. A reload() whose target
+// differs from this must not treat the existing `nodes` as safely
+// preservable on failure: they belong to a branch/group that is no longer
+// selected, and showing them under a selector/badge for the NEW source is
+// the exact stale-tree bug rejected in rev1 (delete fallback, §5/§7).
+type TreeSource = { kind: 'base' | 'group' | 'local'; key: string | null }
+const renderedSource = ref<TreeSource>({ kind: 'base', key: null })
+function currentTargetSource(): TreeSource {
+  if (selectedLocalBranch.value) return { kind: 'local', key: selectedLocalBranch.value }
+  if (selectedGroup.value) return { kind: 'group', key: selectedGroup.value }
+  return { kind: 'base', key: null }
+}
+function sameSource(a: TreeSource, b: TreeSource): boolean {
+  return a.kind === b.kind && a.key === b.key
+}
+// Single <select> value encoding: null = base, a bare group_id = that group slot
+// (unchanged from before this T, so existing tests keep working against the raw
+// group_id), 'local:<name>' = an ordinary local branch.
+const branchSelectValue = computed<string | null>({
+  get: () => (selectedLocalBranch.value ? `local:${selectedLocalBranch.value}` : selectedGroup.value),
+  set: (val) => {
+    if (val && val.startsWith('local:')) {
+      selectedLocalBranch.value = val.slice('local:'.length)
+      selectedGroup.value = null
+    } else {
+      selectedLocalBranch.value = null
+      selectedGroup.value = val
+    }
+  },
+})
 const fileTreeDegraded = computed(() => !selectedGroup.value
+  && !selectedLocalBranch.value
   && !!props.projectId
   && explorerStore.isFileTreeDegraded(props.projectId))
 const groupCommit = ref<string | null>(null)
+const localBranchCommit = ref<string | null>(null)
 // P0005 §9 — group Git status badge (reuses the finalize GET, no new field).
 type GroupGitState = {
   branch: string | null
@@ -323,8 +375,11 @@ const selectedGroupBusy = computed(() => {
 })
 
 // The single gate for the structural mutations (new folder / new file / upload).
+// 0615 T0004 SS4.2: an ordinary local branch is committed-tree read-only, always --
+// there is no live worktree behind it to write into, unlike a group branch.
 const canMutate = computed(() =>
-  (!selectedGroup.value || groupWritable.value) && !selectedGroupBusy.value,
+  !selectedLocalBranch.value
+  && (!selectedGroup.value || groupWritable.value) && !selectedGroupBusy.value,
 )
 
 watch(selectedGroupBusy, (busy) => {
@@ -367,6 +422,119 @@ async function loadGroupSlots(pid: string): Promise<boolean> {
     selectedGroup.value = null
   }
   return true
+}
+
+// 0615 T0004 SS2/SS5 -- the ordinary local-branch catalog is purely additive display
+// data for the selector: unlike loadGroupSlots it never blocks or replaces whichever
+// tree is already on screen. A transient failure here just means the selector keeps
+// showing whatever local branches it already knew about until the next success.
+//
+// rev2 -- multiple callers can have a loadBranchCatalog in flight at once (mount,
+// a manual reload, and Branch Manager's create/delete broadcast can all overlap).
+// Without a generation guard, whichever response happens to land LAST wins even if
+// it was issued first: a slow catalog fetch from mount resolving after a create's
+// own fetch could silently erase the just-created branch again, or resolving after
+// a delete's fetch could resurrect the just-deleted one. The same slow response
+// could also land after the user has switched projects. `seq` plus the live
+// `props.projectId` check discard any response that is no longer the latest
+// word for the project currently on screen.
+let branchCatalogRequestSeq = 0
+async function loadBranchCatalog(pid: string): Promise<void> {
+  const seq = ++branchCatalogRequestSeq
+  let fetched: BranchCatalog
+  try {
+    fetched = await explorerStore.fetchBranchCatalog(pid)
+  } catch {
+    return
+  }
+  if (seq !== branchCatalogRequestSeq || pid !== props.projectId) return
+  branchCatalog.value = fetched
+  if (
+    selectedLocalBranch.value
+    && !localBranchOptions.value.some((b) => b.name === selectedLocalBranch.value)
+  ) {
+    selectedLocalBranch.value = null
+  }
+}
+
+// T0004 SS5 delete -- Branch Manager dispatches this after a successful create/delete
+// (GitBranchManager.vue). A create just needs a fresh catalog for the selector; a
+// delete of the CURRENTLY SELECTED local branch must also fall back to base and make
+// sure no stale tree from the deleted branch stays on screen.
+function onBranchCatalogMaybeChanged(e: Event) {
+  const detail = (e as CustomEvent).detail as
+    { project?: string | null; action?: 'create' | 'delete'; branch?: string } | undefined
+  if (detail?.project && props.projectId && detail.project !== props.projectId) return
+  if (!props.projectId) return
+  // rev4 -- invalidate any loadBranchCatalog() already in flight the instant this
+  // event arrives, BEFORE the synchronous filter below and before this handler
+  // kicks off its own fresh fetch. Without this, a catalog GET issued earlier
+  // (mount, a manual reload) can still be holding the seq it captured when it
+  // started; if it resolves after the filter below but before -- or in place of
+  // -- this handler's own fetch (e.g. that fetch then fails and is swallowed),
+  // it still reads as "the latest word" and reapplies the pre-delete catalog,
+  // undoing the filter and resurrecting the just-deleted branch as a ghost
+  // option with no further event to clear it.
+  branchCatalogRequestSeq += 1
+  // rev3 -- strip the deleted branch out of branchCatalog itself, right here,
+  // independent of whatever the follow-up loadBranchCatalog() below does. That
+  // fetch preserves the existing catalog on failure (T0004 SS2/SS5's intentional
+  // soft-fail for a merely transient error), so without this the selector would
+  // keep showing the just-deleted branch as a ghost option even after the
+  // selection/tree itself has already fallen back to base below.
+  if (detail?.action === 'delete' && detail.branch != null) {
+    const deletedBranch = detail.branch
+    if (branchCatalog.value.branches.some((b) => b.name === deletedBranch)) {
+      branchCatalog.value = {
+        ...branchCatalog.value,
+        branches: branchCatalog.value.branches.filter((b) => b.name !== deletedBranch),
+      }
+    }
+  }
+  // final -- the create mirror of the delete filter above. The branch already
+  // exists server-side (Branch Manager only dispatches after the POST
+  // succeeded), and a Branch Manager create is always an ordinary refs/heads
+  // branch, i.e. kind=local. Without this, the seq bump above discards any
+  // older in-flight catalog response, and if the fresh fetch below then fails
+  // the just-created branch would stay missing from the selector until some
+  // later reload. The next successful catalog fetch replaces this placeholder
+  // with the server's own entry.
+  if (
+    detail?.action === 'create' && detail.branch
+    && !branchCatalog.value.branches.some((b) => b.name === detail.branch)
+  ) {
+    branchCatalog.value = {
+      ...branchCatalog.value,
+      branches: [...branchCatalog.value.branches, {
+        name: detail.branch,
+        kind: 'local',
+        oid: null,
+        ahead_of_base: null,
+        behind_base: null,
+        can_delete: false,
+        delete_blocked_reason: null,
+        can_be_create_source: false,
+        create_source_blocked_reason: null,
+        has_remote_counterpart: false,
+      }],
+    }
+  }
+  // rev2 -- when the event names the exact branch just deleted and it matches the
+  // one on screen, invalidate the selection RIGHT HERE, synchronously, instead of
+  // only after loadBranchCatalog below resolves. That fetch can fail on its own
+  // (rev1's finding): this path no longer depends on it succeeding. reload() then
+  // falls back to base, and renderedSource (see currentTargetSource) makes sure a
+  // failure fetching the base tree clears the old branch's nodes rather than
+  // leaving them on screen under a base selector/badge.
+  if (detail?.action === 'delete' && detail.branch != null && detail.branch === selectedLocalBranch.value) {
+    selectedLocalBranch.value = null
+    reload()
+    return
+  }
+  const before = selectedLocalBranch.value
+  void loadBranchCatalog(props.projectId).then(() => {
+    if (before && !selectedLocalBranch.value) reload()
+  })
 }
 
 // P0005 §9 — fetch the group's finalize state for the header status badge
@@ -503,7 +671,9 @@ async function updateFromBase() {
   }
 }
 
-async function onGroupChange() {
+async function onBranchSelectionChange() {
+  // branchSelectValue's setter already reconciled selectedGroup/selectedLocalBranch
+  // from the raw <select> value by the time this @change handler runs.
   explorerStore.activeGroupBranch = selectedGroup.value
   explorerStore.selectedFileNodeId = null
   await reload()
@@ -528,10 +698,15 @@ onMounted(() => {
     rootFolderInputRef.value.setAttribute('webkitdirectory', '')
   }
   window.addEventListener('fg:git_pending_changed', onGitSlotsMaybeChanged)
+  // 0615 T0004 SS5 -- Branch Manager dispatches this after a successful ordinary
+  // local-branch create/delete (GitBranchManager.vue), separate from
+  // fg:git_pending_changed which is FlowGate group-slot lifecycle only.
+  window.addEventListener('fg:git_branches_changed', onBranchCatalogMaybeChanged)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('fg:git_pending_changed', onGitSlotsMaybeChanged)
+  window.removeEventListener('fg:git_branches_changed', onBranchCatalogMaybeChanged)
 })
 
 const rootNodes = computed(() => nodes.value.filter((n) => n.parent_id === null))
@@ -565,16 +740,58 @@ function normPath(p: string): string {
   return p.replace(/\\/g, '/')
 }
 
+// rev4 -- reload() itself had no generation guard: an OLD reload (e.g. one
+// started for a local branch just before it got deleted) could still be
+// awaiting its own tree fetch while a NEWER reload (the delete's base
+// fallback) starts, runs to completion, and renders base. When the old
+// fetch then resolves late, nothing stopped it from overwriting `nodes`
+// with the stale local-branch tree -- and worse, if it re-derived its
+// render target via currentTargetSource() AFTER the fact, it could record
+// that stale tree as though it were a base render (selectedLocalBranch had
+// already gone back to null by then). `seq` marks every reload() call's
+// slot; `stale()` lets a call still in flight discover a newer one has
+// since taken over and abandon before touching any screen state.
+//
+// final -- ONE counter for every tree load: reload() AND the project-switch
+// watcher below both take a slot from it. With separate counters neither
+// invalidated the other: a reload for project A still awaiting its tree
+// could land after the switch to B had already rendered B (A's nodes on B's
+// screen), and a reload the user started while the watcher's first load was
+// still in flight (e.g. picking a local branch) could be overwritten by that
+// watcher's late base tree while the selector showed the branch. `pid` is
+// captured once so every request in this call targets the same project, and
+// a project change also marks the call stale.
+let treeLoadSeq = 0
+
 async function reload() {
   if (!props.projectId) return
+  const pid = props.projectId
+  const seq = ++treeLoadSeq
+  const stale = () => seq !== treeLoadSeq || pid !== props.projectId
   // 0192 T0005 §2-a: the manual ↻ (and every tree-changed reload) must also
   // re-fetch the group slot dropdown. Previously only a mount/remount called
   // loadGroupSlots, so pressing refresh left removed/stale groups in the select
   // and never surfaced newly-created ones. loadGroupSlots also clears a
   // selectedGroup that has since vanished, so the branch/base decision below
   // reads the reconciled value.
-  const silent = nodes.value.length > 0
-  const slotsOk = await loadGroupSlots(props.projectId)
+  //
+  // rev2 -- "silent" (preserve the rendered tree across a failed refresh) is only
+  // correct when this reload is refreshing the SAME source that produced the tree
+  // already on screen. When the source itself is changing (e.g. a delete-fallback
+  // reload switching from the deleted local branch to base), the existing `nodes`
+  // belong to a branch/group that is no longer selected -- preserving them on a
+  // failure would leave that stale content on screen under a selector/badge that
+  // now reads as something else (rev1's rejected bug). currentTargetSource() reads
+  // selectedGroup/selectedLocalBranch as they stand at the START of this reload
+  // (before loadGroupSlots/loadBranchCatalog below can reconcile them further).
+  const reloadTarget = currentTargetSource()
+  const silent = nodes.value.length > 0 && sameSource(reloadTarget, renderedSource.value)
+  const slotsOk = await loadGroupSlots(pid)
+  if (stale()) return
+  // 0615 T0004 -- purely additive selector data; never gates the tree fetch below
+  // the way slotsOk does (see loadBranchCatalog's docstring).
+  await loadBranchCatalog(pid)
+  if (stale()) return
   if (!silent) loading.value = true
   else error.value = false
   // 0449 TR0005 rev1 — the slot fetch is part of the refresh, not a free prelude to it.
@@ -597,17 +814,43 @@ async function reload() {
     loading.value = false
     return
   }
+  // rev4 -- decided once, right here (after loadGroupSlots/loadBranchCatalog have
+  // had their chance to reconcile selectedGroup/selectedLocalBranch), and reused
+  // verbatim for both the fetch call below and the renderedSource write at the
+  // end. Re-reading currentTargetSource() again AFTER the fetch's own await would
+  // pick up whatever a newer, superseding reload (or the delete/create handler)
+  // has since done to the selection -- exactly how a late local-branch tree
+  // response ended up mislabelled as a base render before this guard existed.
+  const fetchTarget = currentTargetSource()
   try {
-    if (selectedGroup.value) {
-      const r = await explorerStore.fetchGroupBranchTree(props.projectId, selectedGroup.value)
+    if (fetchTarget.kind === 'local') {
+      // T0004 SS3.1/SS8 -- checkout-free read of an ordinary local branch's committed
+      // tree; no group changes/badge concept applies here (no worktree, no finalize).
+      const r = await explorerStore.fetchLocalBranchTree(pid, fetchTarget.key!)
+      if (stale()) return
+      nodes.value = r.nodes
+      localBranchCommit.value = r.commit
+      groupCommit.value = null
+      groupGitState.value = null
+      renderedSource.value = fetchTarget
+    } else if (fetchTarget.kind === 'group') {
+      const r = await explorerStore.fetchGroupBranchTree(pid, fetchTarget.key!)
+      if (stale()) return
       nodes.value = r.nodes
       groupCommit.value = r.commit
-      await explorerStore.fetchGroupBranchChanges(props.projectId, selectedGroup.value)
-      await loadGroupGitBadge(selectedGroup.value)
+      localBranchCommit.value = null
+      await explorerStore.fetchGroupBranchChanges(pid, fetchTarget.key!)
+      if (stale()) return
+      await loadGroupGitBadge(fetchTarget.key!)
+      if (stale()) return
+      renderedSource.value = fetchTarget
     } else {
       groupCommit.value = null
       groupGitState.value = null
-      nodes.value = await explorerStore.fetchFileTree(props.projectId, true)
+      localBranchCommit.value = null
+      const treeNodes = await explorerStore.fetchFileTree(pid, true)
+      if (stale()) return
+      nodes.value = treeNodes
       // pendingSelectFilePath is only produced by base-checkout edits/creates.
       if (explorerStore.pendingSelectFilePath) {
         const target = normPath(explorerStore.pendingSelectFilePath)
@@ -615,15 +858,17 @@ async function reload() {
         if (found) explorerStore.selectedFileNodeId = found.id
         explorerStore.pendingSelectFilePath = null
       }
+      renderedSource.value = fetchTarget
     }
     error.value = false
     refreshError.value = false
   } catch {
+    if (stale()) return
     // Already-rendered tree survives a failed refresh; only an empty explorer blocks.
     if (silent) refreshError.value = true
     else error.value = true
   } finally {
-    loading.value = false
+    if (!stale()) loading.value = false
   }
 }
 
@@ -669,6 +914,22 @@ async function openFile(node: FileNode) {
     })
     return
   }
+  // T0004 SS3.2/SS4.2 -- an ordinary local branch is committed-tree read-only,
+  // always: no live worktree exists to make it editable.
+  if (selectedLocalBranch.value) {
+    tabsStore.openTab({
+      id: `branch:${selectedLocalBranch.value}:${node.id}`,
+      title: node.label,
+      path: node.path,
+      type,
+      mdPath: type === 'md' ? node.path : null,
+      projectId,
+      gitBranch: selectedLocalBranch.value,
+      gitCommit: localBranchCommit.value,
+      readonly: true,
+    })
+    return
+  }
   try {
     const url = `/api/v1/projects/${encodeURIComponent(projectId)}/files/src-content?path=${encodeURIComponent(node.path)}`
     const res = await api.head(url)
@@ -696,7 +957,10 @@ async function openFile(node: FileNode) {
 // hits the group endpoint pinned to the tree snapshot the file was opened from.
 function openDiff(node: FileNode) {
   const projectId = props.projectId
-  if (!projectId) return
+  // T0004 NR SS5.3 -- diff is out of scope for an ordinary local branch; the
+  // per-node menu already hides "변경 내용 보기" whenever one is selected
+  // (FileTreeNode's isDirty/isNew are false under local-branch), this is defensive.
+  if (!projectId || selectedLocalBranch.value) return
   const group = selectedGroup.value
   tabsStore.openTab({
     id: group ? `diff:${group}:${node.id}` : `diff:${node.id}`,
@@ -805,7 +1069,17 @@ async function onRootFolderSelected(e: Event) {
   input.value = ''
 }
 
+// rev2 -- guards the whole project-switch load below against a slow response for a
+// PREVIOUS project landing after a newer switch has already started (or finished).
+// Without this, a project A tree/catalog fetch resolving after the user has already
+// moved to project B would apply straight to `nodes`/`branchCatalog` (this watcher
+// closes over the OLD `pid`, not the current `props.projectId`), overwriting
+// whatever B's own load already rendered. final -- the slot comes from the same
+// treeLoadSeq as reload(), so a switch also abandons any in-flight reload and a
+// reload started during this load abandons this one (see treeLoadSeq).
 watch(() => props.projectId, async (pid, prevPid) => {
+  const seq = ++treeLoadSeq
+  const stale = () => seq !== treeLoadSeq
   // A genuine in-place project switch drops any group selection — group branches
   // are project-scoped. A remount with the same project (fresh instance from the
   // SSE-driven explorerRefreshKey bump → prevPid === undefined) instead PRESERVES
@@ -815,13 +1089,22 @@ watch(() => props.projectId, async (pid, prevPid) => {
   // new project's slots and is cleared there.
   if (prevPid !== undefined && prevPid !== pid) {
     selectedGroup.value = null
+    // 0615 T0004 -- an ordinary local branch selection is project-scoped exactly
+    // like a group selection; it never survives a genuine project switch either.
+    selectedLocalBranch.value = null
     explorerStore.activeGroupBranch = null
     // The previous project's slots are not this one's, and since rev2 the catch below no
     // longer empties them, so a failing git/status must not leave them in the dropdown.
     groupSlots.value = []
+    branchCatalog.value = { base_branch: null, default_merge_target: null, branches: [] }
   }
   groupCommit.value = null
   groupGitState.value = null
+  localBranchCommit.value = null
+  // rev2 -- a genuine project switch always starts from a clean slate: the next
+  // successful fetch below (whichever source it lands on) is the only thing
+  // allowed to set this again, never a stale response from the PREVIOUS project.
+  renderedSource.value = { kind: 'base', key: null }
   if (!pid) { nodes.value = []; groupSlots.value = []; refreshError.value = false; return }
   // Project switch = initial load for the new project: blocking loading/error is correct.
   nodes.value = []
@@ -836,25 +1119,43 @@ watch(() => props.projectId, async (pid, prevPid) => {
     // that had preserved `activeGroupBranch` lost the group's badge, dropdown and write gate
     // with it. A first load has no rendered tree to keep, so the honest state is the blocking
     // error and its retry — the initial-load half of item 1.2's split.
-    if (!await loadGroupSlots(pid)) {
+    const slotsOk = await loadGroupSlots(pid)
+    if (stale()) return
+    if (!slotsOk) {
       error.value = true
       return
     }
-    if (selectedGroup.value) {
+    // 0615 T0004 -- purely additive selector data, never gates the first load either.
+    await loadBranchCatalog(pid)
+    if (stale()) return
+    if (selectedLocalBranch.value) {
+      const r = await explorerStore.fetchLocalBranchTree(pid, selectedLocalBranch.value)
+      if (stale()) return
+      nodes.value = r.nodes
+      localBranchCommit.value = r.commit
+      renderedSource.value = currentTargetSource()
+    } else if (selectedGroup.value) {
       explorerStore.activeGroupBranch = selectedGroup.value
       const r = await explorerStore.fetchGroupBranchTree(pid, selectedGroup.value)
+      if (stale()) return
       nodes.value = r.nodes
       groupCommit.value = r.commit
       await explorerStore.fetchGroupBranchChanges(pid, selectedGroup.value)
       await loadGroupGitBadge(selectedGroup.value)
+      if (stale()) return
+      renderedSource.value = currentTargetSource()
     } else {
       explorerStore.activeGroupBranch = null
-      nodes.value = await explorerStore.fetchFileTree(pid)
+      const treeNodes = await explorerStore.fetchFileTree(pid)
+      if (stale()) return
+      nodes.value = treeNodes
+      renderedSource.value = currentTargetSource()
     }
   } catch {
+    if (stale()) return
     error.value = true
   } finally {
-    loading.value = false
+    if (!stale()) loading.value = false
   }
 }, { immediate: true })
 

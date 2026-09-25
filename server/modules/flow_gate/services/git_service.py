@@ -284,6 +284,9 @@ from .git.branches import (
     internal_slot_owner,
     list_branches,
     merge_branches,
+    read_local_branch_blob,
+    read_local_branch_tree,
+    resolve_local_branch_ref,
     validate_new_branch_name,
 )
 
@@ -299,6 +302,7 @@ from .git.config import (
     base_branch_for,
     base_src_root,
     delete_config,
+    ensure_origin_matches_config,
     get_config_view,
     save_config,
 )
@@ -457,6 +461,16 @@ from .git.base_slot import (
 
 
 
+
+
+from .git.group_work_base import (
+    apply_group_work_base_ref,
+    group_work_base_locked,
+    list_group_work_base_options,
+    locked_group_ids,
+    resolve_group_work_base_ref,
+    validate_group_work_base_ref,
+)
 
 
 from .git.worktree import (
@@ -2657,6 +2671,10 @@ def _refreeze_for_re_review(
         # before falling through to the ordinary freeze below.
         project_id = _project_of_group(group_id)
         cfg = db_git.get_config(project_id) or {}
+        # flowgate.default.0361 NR0003 §8.1: this recovery fetch must target the
+        # currently configured remote, not whatever `origin` happened to point at
+        # when the base checkout was adopted/cloned.
+        ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
         fetch = _run_git(
             ["fetch", "origin"], cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC,
             username=cfg.get("username"), secret=_load_secret_for(cfg) or "",
@@ -2855,6 +2873,12 @@ def _conditionally_push_or_reconcile(
         return _complete_merge_review(group_id, merge_id, project_id, context, pushed=False)
     expected = context.get("expected_remote_head") or ""
     lease = f"{base_branch}:{expected}" if expected else base_branch
+    # flowgate.default.0361 NR0003 §7/§16: the review may have sat waiting for
+    # approval long enough for the operator to repoint repo_url at a different
+    # remote — this push must land on the CURRENTLY configured origin, not
+    # whatever `origin` happened to point at when the base checkout was
+    # provisioned. Raises (never pushes) if the sync itself fails.
+    ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
     push = _run_git(
         ["push", f"--force-with-lease={lease}", "origin", base_branch],
         cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC,

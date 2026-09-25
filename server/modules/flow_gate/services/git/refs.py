@@ -467,8 +467,20 @@ def _ignored_paths(repo: Path, paths: list[str]) -> list[str]:
 def _query_remote_ref(base_root: Path, cfg: dict, base_branch: str) -> Optional[str]:
     """Best-effort, network ``ls-remote`` read of the real current position of the
     remote base ref (D0006 §3.6 / L0007 §2.8.1) — ``None`` when the query itself
-    fails (unreachable/timeout), which the caller must NOT treat as "not found"."""
+    fails (unreachable/timeout), which the caller must NOT treat as "not found".
+
+    flowgate.default.0361 NR0003 §7/§16: a stuck ``reconciling`` session can sit
+    long enough for the operator to repoint ``repo_url`` at a different remote
+    before this reconciliation read runs — this must ask the CURRENTLY configured
+    origin, not whatever ``origin`` happened to point at when the base checkout
+    was provisioned. A sync failure folds into the existing "query failed" ``None``
+    contract instead of running ``ls-remote`` against a possibly-stale origin.
+    """
     from modules.flow_gate.services import git_service as _gs
+    try:
+        _gs.ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
+    except GitServiceError:
+        return None
     proc = _gs._run_git(
         ["ls-remote", "origin", f"refs/heads/{base_branch}"],
         cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC,

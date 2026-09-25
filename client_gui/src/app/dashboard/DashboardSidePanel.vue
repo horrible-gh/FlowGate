@@ -2,7 +2,7 @@
   <section class="dash-sidepanel" :data-panel-key="panel" :aria-labelledby="headingId">
     <div class="dash-panel-head">
       <h2 :id="headingId" class="dash-panel-title">{{ t(`gui.dashboard.panels.${panel}`) }}</h2>
-      <span class="dash-panel-status">{{ t('gui.dashboard.unavailable') }}</span>
+      <Badge class="dash-panel-status" tone="neutral" size="sm">{{ t('gui.dashboard.unavailable') }}</Badge>
     </div>
     <p class="dash-panel-empty">{{ t('gui.dashboard.panel_empty') }}</p>
   </section>
@@ -14,6 +14,7 @@
 // keeps its place and heading and states plainly that it is not connected.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import Badge from '@/components/ui/Badge.vue'
 import type { DashboardPanelKey } from './dashboardContent'
 
 const props = defineProps<{ panel: DashboardPanelKey }>()
@@ -52,6 +53,13 @@ const headingId = computed(() => `dash-panel-${props.panel}`)
   border-radius: 999px;
   font-size: 11px;
   color: #95a8bd;
+}
+
+/* Badge's own `.ui-badge` rule (font-weight: 600) would otherwise leak in; HEAD's plain
+   span never bolded this label. Combined selector guarantees the override wins regardless
+   of build order. */
+.dash-panel-status.ui-badge {
+  font-weight: normal;
 }
 
 .dash-panel-empty {

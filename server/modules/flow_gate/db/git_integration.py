@@ -125,6 +125,19 @@ def get_state(group_id: str) -> Optional[dict]:
     )
 
 
+def get_state_by_branch(project_id: str, branch: str) -> Optional[dict]:
+    """Return any durable FlowGate owner of a group worktree branch.
+
+    Unlike ``list_states_of_project``, this intentionally includes unregistered
+    historical/failure rows: a stale internal branch must never become another
+    group's work base merely because its worktree is currently absent.
+    """
+    return get_store()._fetch_one(
+        "SELECT * FROM group_git_state WHERE project_id = ? AND branch = ?",
+        [project_id, branch],
+    )
+
+
 def register_worktree(group_id: str, project_id: str, branch: str) -> dict:
     """Record a group's worktree in the ledger (idempotent upsert)."""
     now = now_iso()

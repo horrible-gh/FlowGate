@@ -422,7 +422,7 @@ def test_legacy_get_route_returns_note_source_and_provider_contract(monkeypatch,
     assert (row["provider_id"], row["provider_registered"]) == (PROVIDER, True)
 
 
-def test_plan_pour_gives_every_row_its_own_note_and_a_provider():
+def test_plan_pour_keeps_defaults_note_on_instruction_rows_only_and_provider_on_every_row():
     plan = {
         "provider_candidates": [{"provider_id": PROVIDER, "display_name": PROVIDER_NAME}],
         "defaults": {"provider_id": PROVIDER, "note": "Default handoff"},
@@ -435,16 +435,18 @@ def test_plan_pour_gives_every_row_its_own_note_and_a_provider():
     rows, _ = plan_svc.attach_auto_rows(rows, next_uid=uid)
     by_type = {row["type"]: row for row in rows}
 
-    # 0408 M0019 재반려 2: the report rows are steps of their own. With nothing written for
-    # them in the plan they take the common note — never the instruction's sentence.
+    # defaults.note is source authoring context. A report row gets a note only from its
+    # explicit NR/TR step, while provider fallback remains shared execution configuration.
     assert {code: by_type[code]["note"] for code in ("N", "NR", "T", "TR")} == {
-        "N": "N plan handoff", "NR": "Default handoff",
-        "T": "Default handoff", "TR": "Default handoff",
+        "N": "N plan handoff", "NR": "",
+        "T": "Default handoff", "TR": "",
     }
     assert {code: by_type[code]["provider_id"] for code in ("N", "NR", "T", "TR")} == {
         "N": PROVIDER, "NR": PROVIDER, "T": PROVIDER, "TR": PROVIDER,
     }
     assert by_type["T"]["note_source"] == "defaults"
+    assert by_type["NR"]["note_source"] is None
+    assert by_type["TR"]["note_source"] is None
 
 
 def wire_hop_note_rows(monkeypatch, rows, *, head_seq=1):
@@ -573,7 +575,7 @@ def test_plan_maps_onto_the_rows_it_poured_not_an_older_finished_pair():
     projection = apply_svc.project(PLAN_STEPS_PAIR, mapping, items, "auto_approved", REGISTRY)
     # [자동 승인]: the report row runs, so it keeps its OWN sentence and the instruction's
     # folded value fills nothing.
-    assert projection["note_overrides"] == {"11": "N now", "12": "NR now"}
+    assert projection["note_overrides"] == {"12": "NR now"}
     assert projection["provider_overrides"] == {"12": PROVIDER}
 
 

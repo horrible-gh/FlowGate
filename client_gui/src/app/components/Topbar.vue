@@ -13,7 +13,7 @@
     <div class="gui-search-wrap">
       <div class="gui-search" role="search" :title="t('gui.topbar.search_unavailable')">
         <NavGlyph name="search" class="gui-search-icon" />
-        <input
+        <Input
           type="search"
           class="gui-search-input"
           :placeholder="t('gui.topbar.search_placeholder')"
@@ -30,15 +30,16 @@
       <nav class="header-nav" :aria-label="t('gui.topbar.switch_aria')">
         <GuiGenerationSwitch target="legacy" />
       </nav>
-      <button
-        type="button"
+      <IconButton
         class="gui-bell"
+        size="sm"
+        variant="ghost"
         disabled
-        :aria-label="t('gui.topbar.notifications_aria')"
+        :label="t('gui.topbar.notifications_aria')"
         :title="t('gui.topbar.notifications_aria')"
       >
         <NavGlyph name="bell" :stroke-width="1.6" />
-      </button>
+      </IconButton>
       <div v-if="user" class="gui-user">
         <span class="gui-avatar" aria-hidden="true">{{ initial }}</span>
         <span class="gui-user-meta">
@@ -56,6 +57,8 @@ import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 import GuiGenerationSwitch from '@shared/GuiGenerationSwitch.vue'
 import { useCurrentUser } from '@/core/auth/currentUser'
+import IconButton from '@/components/ui/IconButton.vue'
+import Input from '@/components/ui/Input.vue'
 import NavGlyph from './NavGlyph.vue'
 
 const { t } = useI18n()
@@ -180,6 +183,14 @@ const roleLabel = computed(() =>
   opacity: 1;
 }
 
+/* Input's own `.ui-input:disabled` rule dims opacity (T0004 §5.3 base); this field was
+   always disabled and never dimmed before the Primitive swap, so pin it back to HEAD's
+   baseline. The combined selector guarantees it wins regardless of scoped-style
+   injection order, unlike a same-specificity single-class override. */
+.gui-search-input.ui-input:disabled {
+  opacity: 1;
+}
+
 /* The mockup's `.search span { flex: 1 }` also matches its kbd span, so the shortcut
    box shares the bar's width with the placeholder — reproduced as drawn. */
 .gui-kbd {
@@ -243,6 +254,18 @@ const roleLabel = computed(() =>
   background: none;
   color: #b8c6d8;
   cursor: not-allowed;
+}
+
+/* IconButton's own `.ui-icon-btn--sm`/`:disabled` rules (size 28x28, dimmed opacity) would
+   otherwise win over the plain `.gui-bell` selector above on specificity or build-order
+   grounds. Pin size and opacity back to HEAD's baseline (24x24, never dimmed) explicitly. */
+.gui-bell.ui-icon-btn {
+  width: 24px;
+  height: 24px;
+}
+
+.gui-bell.ui-icon-btn:disabled {
+  opacity: 1;
 }
 
 .gui-bell svg {

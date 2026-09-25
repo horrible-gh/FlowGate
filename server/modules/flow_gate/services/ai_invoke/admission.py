@@ -547,7 +547,10 @@ def _continuation_docs_target(
     ``target_item_seq=None`` means "no upper bound" (to-end).
     Returns None when the doc has no decided workflow sequence.
     """
-    from modules.flow_gate.services.workflow_decision_service import is_auto_handled_step
+    from modules.flow_gate.services.workflow_decision_service import (
+        has_work_plan_instruction_document,
+        is_auto_handled_step,
+    )
 
     # Internal request-scope callers may pass the sequence snapshot they already
     # read. None remains the default sentinel, so ordinary calls always read
@@ -572,6 +575,8 @@ def _continuation_docs_target(
             item_seq=item_seq,
             instruction_mode=continuation_instruction_mode,
             auto_approve_item_seqs=continuation_auto_approve_item_seqs,
+            source_doc_id=item.get("source_doc_id"),
+            has_instruction_document=has_work_plan_instruction_document(item),
         ):
             continue
         count += 1
@@ -2225,6 +2230,7 @@ def _resolve_continuation_hop_provider(
         head_type = (head.get("type") or "").upper()
         from modules.flow_gate.services.workflow_decision_service import (
             AUTO_REPORT_MAP,
+            has_work_plan_instruction_document,
             is_auto_handled_step,
         )
 
@@ -2233,6 +2239,8 @@ def _resolve_continuation_hop_provider(
             item_seq=head.get("item_seq"),
             instruction_mode=continuation_instruction_mode,
             auto_approve_item_seqs=continuation_auto_approve_item_seqs,
+            source_doc_id=head.get("source_doc_id"),
+            has_instruction_document=has_work_plan_instruction_document(head),
         )
         worker_type = AUTO_REPORT_MAP.get(head_type, head_type) if fold_to_report else head_type
         # Preserve the legacy auto-approved preference: report assignment first, raw N/T
@@ -2289,6 +2297,7 @@ def _hop_worker_item_seq(
     head_type = (head.get("type") or "").upper()
     from modules.flow_gate.services.workflow_decision_service import (
         AUTO_REPORT_MAP,
+        has_work_plan_instruction_document,
         is_auto_handled_step,
     )
 
@@ -2297,6 +2306,8 @@ def _hop_worker_item_seq(
         item_seq=head_item_seq,
         instruction_mode=continuation_instruction_mode,
         auto_approve_item_seqs=continuation_auto_approve_item_seqs,
+        source_doc_id=head.get("source_doc_id"),
+        has_instruction_document=has_work_plan_instruction_document(head),
     )
     if not fold_to_report or head_item_seq is None:
         return head_item_seq

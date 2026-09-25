@@ -3,13 +3,14 @@
     <span class="dash-tip-mark" aria-hidden="true">💡</span>
     <strong>{{ t('gui.dashboard.tip_label') }}</strong>
     <span class="dash-tip-text">{{ t('gui.dashboard.tip_text') }}</span>
-    <button type="button" class="dash-tip-close" :aria-label="t('gui.dashboard.tip_close')" @click="visible = false">×</button>
+    <IconButton class="dash-tip-close" size="sm" variant="ghost" :label="t('gui.dashboard.tip_close')" @click="visible = false">×</IconButton>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import IconButton from '@/components/ui/IconButton.vue'
 
 const { t } = useI18n()
 // Dismissal is per page view; nothing is persisted.
@@ -55,5 +56,13 @@ const visible = ref(true)
   font-size: 22px;
   line-height: 1;
   cursor: pointer;
+}
+
+/* IconButton's own `.ui-icon-btn--sm` rule fixes a 28x28 box; HEAD's plain button had no
+   forced size and sized itself from the glyph + padding above. Combined selector guarantees
+   the override wins regardless of build order. */
+.dash-tip-close.ui-icon-btn {
+  width: auto;
+  height: auto;
 }
 </style>

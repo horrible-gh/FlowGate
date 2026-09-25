@@ -42,6 +42,7 @@ from modules.flow_gate.api.v1.git_routes import router as _git_router
 from modules.flow_gate.api.v1.conversation_routes import router as _conversation_worker_router
 from modules.flow_gate.api.v1.chat_settings_routes import router as _chat_settings_router
 from modules.flow_gate.api.v1.ui_settings_routes import router as _ui_settings_router
+from modules.flow_gate.api.v1.snapshot_routes import router as _snapshot_router
 from modules.flow_gate.api.request_scope_middleware import RequestScopeMiddleware
 from modules.flow_gate.services.git_service import GitServiceError
 from modules.flow_gate.services.git.credentials import git_error_envelope
@@ -84,6 +85,11 @@ async def lifespan(app: FastAPI):
     app.state.shutdown_event = asyncio.Event()
     yield                  # ← server running
     app.state.shutdown_event.set()
+    try:
+        from modules.flow_gate.services import snapshot_materialization_service
+        snapshot_materialization_service.shutdown()
+    except Exception:
+        logger.warning("snapshot cleanup shutdown failed", exc_info=True)
 
 
 app = FastAPI(lifespan=lifespan)
@@ -175,6 +181,7 @@ app.include_router(_git_router, prefix=f"{CONTEXT}", tags=["Git"])
 app.include_router(_conversation_worker_router, prefix=f"{CONTEXT}", tags=["Conversation"])
 app.include_router(_chat_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["ChatSettings"])
 app.include_router(_ui_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["UiSettings"])
+app.include_router(_snapshot_router, prefix=f"{CONTEXT}", tags=["Snapshots"])
 app.include_router(_files_router.router, prefix="/api", tags=["Files"])
 # Every mutation route must carry an inventory classification. Group routes also name
 # the standard resolver used by GroupMutationPolicyMiddleware.

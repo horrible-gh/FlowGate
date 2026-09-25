@@ -965,7 +965,15 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
     if issue.get("worker_document_type"):
         run["worker_document_type"] = issue.get("worker_document_type")
     if issue.get("auto_handled_item_seqs") is not None:
-        run["auto_handled_item_seqs"] = list(issue.get("auto_handled_item_seqs") or [])
+        # 0611 TR0012: a retry re-enters the SAME hop's issuer after its first attempt already
+        # expanded the instruction head, so the retry's own advance finds nothing left and
+        # reports []. Overwriting erased the only record that the server expanded that T/N in
+        # this run; keep what earlier attempts handled and append anything new.
+        handled = list(run.get("auto_handled_item_seqs") or [])
+        for item_seq in issue.get("auto_handled_item_seqs") or []:
+            if item_seq not in handled:
+                handled.append(item_seq)
+        run["auto_handled_item_seqs"] = handled
     return {"mention": mention, "token_id": issue.get("token_id"),
             "token_id_before": before, "reissued": True}
 
@@ -1497,9 +1505,18 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 run["tool_calls_executed"] = run.get("tool_calls_executed", 0) + 1
                 try:
                     if call["name"] in api_server_tools.SOURCE_OPS:
+                        run["source_tool_calls"] = int(run.get("source_tool_calls") or 0) + 1
                         _status, resp = api_server_tools.source_call(run, current_token, call["name"], call["input"])
                     elif call["name"] == "run_test":
                         _status, resp = api_server_tools.run_test(run, call["input"], _svc()._remaining_sec(run))
+                    elif call["name"] == "request_source_snapshot":
+                        _status, resp = api_server_tools.request_source_snapshot(run, current_token, call["input"])
+                    elif call["name"] == "access_source_snapshot":
+                        _status, resp = api_server_tools.access_source_snapshot(run, current_token, call["input"])
+                    elif call["name"] == "run_source_snapshot":
+                        _status, resp = api_server_tools.run_source_snapshot(
+                            run, current_token, call["input"], _svc()._remaining_sec(run)
+                        )
                     elif call["name"] == "read_document":
                         _status, resp = _svc()._api_read_document(run, current_token, call["input"])
                     elif call["name"] == "read_help":
@@ -1531,7 +1548,10 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 # other three branches above (SOURCE_OPS, run_test, read_help) are direct
                 # in-process handlers, never self-HTTP, and stay out of last_tool_name
                 # entirely (DB0005 2 scope note).
-                if call["name"] not in api_server_tools.SOURCE_OPS and call["name"] not in ("run_test", "read_help"):
+                if (
+                    call["name"] not in api_server_tools.SOURCE_OPS
+                    and call["name"] not in ("run_test", "read_help", *api_server_tools.SNAPSHOT_NAMES)
+                ):
                     run["last_tool_name"] = "api_bound_request"
                     run["last_tool_status"] = _status
                     run["last_tool_error"] = (
