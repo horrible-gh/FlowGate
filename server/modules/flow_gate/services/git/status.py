@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional
@@ -70,12 +72,25 @@ def test_connection(project_id: str, override: Optional[dict] = None) -> dict:
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
     repo_url = (cfg.get("repo_url") or "").strip()
     t0 = time.monotonic()
-    proc = _gs._run_git(
-        ["ls-remote", "--symref", repo_url, "HEAD", f"refs/heads/{base_branch}"],
-        timeout=_gs.GIT_TEST_TIMEOUT_SEC,
-        username=cfg.get("username"),
-        secret=secret if secret is not None else "",
-    )
+    # flowgate.default.0617 T0004 (NR0003 §5/§7): ls-remote needs no local checkout,
+    # so it must not inherit the server process's own cwd via _run_git(cwd=None).
+    # That cwd is FlowGate's own deployment/session concern, not this probe's, and
+    # its .git metadata can be transiently broken (a linked worktree's gitdir
+    # pointer copied over a plain directory by unrelated preview tooling, NR0003
+    # §3) without the probe having any way to know. A throwaway temp directory has
+    # no .git of its own, so git's repository discovery can only ever reach the
+    # remote, never fail on unrelated local state first.
+    probe_dir = Path(tempfile.mkdtemp(prefix="fg-gitprobe-"))
+    try:
+        proc = _gs._run_git(
+            ["ls-remote", "--symref", repo_url, "HEAD", f"refs/heads/{base_branch}"],
+            cwd=probe_dir,
+            timeout=_gs.GIT_TEST_TIMEOUT_SEC,
+            username=cfg.get("username"),
+            secret=secret if secret is not None else "",
+        )
+    finally:
+        shutil.rmtree(probe_dir, ignore_errors=True)
     elapsed_ms = int((time.monotonic() - t0) * 1000)
 
     if proc.returncode == 0:
