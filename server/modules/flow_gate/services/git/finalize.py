@@ -630,6 +630,9 @@ def update_from_base(group_id: str) -> dict:
         base_branch = (cfg.get("base_branch") or "main").strip() or "main"
         username = cfg.get("username")
         secret = _gs._load_secret_for(cfg) or ""
+        # flowgate.default.0361 NR0003 §5.3/§8.1: the operator-facing "update from
+        # base" action is exactly the surface that must reflect a repo_url change.
+        _gs.ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
         proc = _gs._run_git(
             ["fetch", "origin"], cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC,
             username=username, secret=secret,
@@ -957,6 +960,11 @@ def finalize(
             f"Another git operation is in progress for project '{project_id}' (try again shortly)",
         )
     try:
+        # flowgate.default.0361 NR0003 §5.3/§8.1: every fetch/push this attempt may
+        # issue below (unpushed-merge recovery fetch/push, the pinned-attempt merge
+        # fetch, the work-branch push) shares this one repository's `origin` — sync
+        # it once, up front, before any of them run.
+        _gs.ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
         if action in merge_target.MERGE_ACTIONS:
             # 0594 T0012 §4/§9.2 (2nd check — the real guard): re-resolve the target,
             # re-validate the branch and re-read workspace ownership now that the
@@ -1578,6 +1586,10 @@ def manual_push(project_id: str, branch: Optional[str]) -> dict:
     try:
         if pushes_base:
             _gs.guard_base_free(project_id)   # 2nd gate (race close, after lock)
+        # flowgate.default.0361 NR0003 §8.1: `cwd` may be a group worktree rather
+        # than the base checkout, but its `origin` remote lives in the shared
+        # `.git` directory either way, so syncing through `cwd` is sufficient.
+        _gs.ensure_origin_matches_config(cwd, (cfg.get("repo_url") or "").strip())
         proc = _gs._run_git(
             ["push", "origin", branch],
             cwd=cwd, timeout=_gs.GIT_NET_TIMEOUT_SEC,

@@ -851,9 +851,22 @@ def _flag_manual_reconciliation(merge_id: int, reason: str, observed: Optional[s
 
 
 def _query_target_remote(ctx: MergeTargetContext) -> tuple[bool, Optional[str]]:
-    """``(reachable, sha)`` of ``refs/heads/<target>`` on origin; sha None = absent."""
+    """``(reachable, sha)`` of ``refs/heads/<target>`` on origin; sha None = absent.
+
+    flowgate.default.0361 NR0003 §7/§16: this backs crash/startup recovery of an
+    interrupted finalize attempt — if ``repo_url`` was repointed at a different
+    remote after the merge/push that this call is trying to settle, reading a
+    stale ``origin`` could close the attempt as pushed, undo a landed merge
+    commit, or route it to manual reconciliation on the WRONG remote's data. Sync
+    origin to the current config first; a sync failure is treated the same as an
+    unreachable remote (``ls-remote`` never runs against a possibly-stale origin).
+    """
     from modules.flow_gate.services import git_service as _gs
     cfg = _gs.db_git.get_config(ctx.project_id) or {}
+    try:
+        _gs.ensure_origin_matches_config(ctx.root, (cfg.get("repo_url") or "").strip())
+    except GitServiceError:
+        return False, None
     proc = _gs._run_git(
         ["ls-remote", "origin", f"refs/heads/{ctx.target_branch}"],
         cwd=ctx.root, timeout=_gs.GIT_NET_TIMEOUT_SEC,

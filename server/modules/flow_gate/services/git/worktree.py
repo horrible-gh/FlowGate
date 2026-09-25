@@ -171,6 +171,16 @@ def _ensure_worktree_locked(
         _gs._fail_worktree(project_id, group_id, branch, "worktree_path_occupied")
         return "failed"
 
+    try:
+        # flowgate.default.0361 NR0003 §5.2/§8.1: without this, a new group worktree
+        # created straight after a repo_url change (no manual fetch in between)
+        # fetches the OLD remote — B0001 §4's "신규 group worktree가 오래된 base에서
+        # 생성될 수 있음" scenario.
+        _gs.ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
+    except GitServiceError as exc:
+        _gs._fail_worktree(project_id, group_id, branch, exc.code)
+        return "failed"
+
     proc = _gs._run_git(
         ["fetch", "origin"],
         cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
@@ -706,11 +716,19 @@ def _cleanup_group_slot(
         if status == "merged" and _gs._ref_exists(base_root, f"refs/remotes/origin/{branch}"):
             # Work branches pushed before the 0172 fix were never meant to be
             # published; retro-delete best-effort (failure is not a cleanup failure).
-            _gs._run_git(
-                ["push", "origin", "--delete", branch],
-                cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC,
-                username=cfg.get("username"), secret=_gs._load_secret_for(cfg) or "",
-            )
+            try:
+                # flowgate.default.0361 NR0003 §8.1: this is the one origin push in
+                # this module, so it needs the same invariant as the fetch above —
+                # kept best-effort like the push itself (a sync failure here must
+                # not block the branch/ledger teardown below).
+                _gs.ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
+                _gs._run_git(
+                    ["push", "origin", "--delete", branch],
+                    cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC,
+                    username=cfg.get("username"), secret=_gs._load_secret_for(cfg) or "",
+                )
+            except GitServiceError:
+                pass
 
         _gs.db_git.unregister_worktree(group_id)
         return True

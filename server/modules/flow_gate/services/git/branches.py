@@ -132,6 +132,10 @@ def merge_branches(project_id: str, source_branch: str, target_branch: str) -> d
         prepared = True
         username = cfg.get("username")
         secret = _gs._load_secret_for(cfg) or ""
+        # flowgate.default.0361 NR0003 §5.4/§8.1: a cross-branch merge fetches and
+        # later pushes through this same repository's `origin` — sync it first so
+        # a repo_url change is not silently ignored by this entry point either.
+        _gs.ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
         fetch = _gs._run_git(
             ["fetch", "origin"], cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC,
             username=username, secret=secret,
