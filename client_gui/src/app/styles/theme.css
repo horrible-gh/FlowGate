@@ -56,6 +56,28 @@
      duplicates share one value instead of each hardcoding it. */
   --fg2-overlay-radius: 12px;
   --fg2-overlay-shadow: 0 24px 64px rgba(2, 6, 12, 0.55);
+
+  /* Shared status/feedback tone tokens (T0008 §11, TR0009 rework): the info/success/
+     warning/danger fg+border+bg triplet is a real duplicate between Toast (T0008 §5) and
+     Badge (T0004 §5.7 -- the component these color values were originally lifted from);
+     both need the full triplet per tone, so both consume these tokens instead of each
+     keeping its own literal copy. Alert (T0008 §6) reuses only the border channel and
+     ErrorState (T0008 §9, danger/warning tones only) reuses only the fg channel on top
+     of that. There is no neutral variant here: Badge's neutral tone is its own dashed/
+     transparent chip look (not shared with anything else), so no
+     --fg2-status-neutral-* token exists. */
+  --fg2-status-info-fg: #7cc0ff;
+  --fg2-status-info-border: rgba(75, 163, 255, 0.4);
+  --fg2-status-info-bg: rgba(75, 163, 255, 0.1);
+  --fg2-status-success-fg: #4fe0d3;
+  --fg2-status-success-border: rgba(73, 223, 208, 0.4);
+  --fg2-status-success-bg: rgba(73, 223, 208, 0.1);
+  --fg2-status-warning-fg: #ffc072;
+  --fg2-status-warning-border: rgba(255, 174, 87, 0.45);
+  --fg2-status-warning-bg: rgba(255, 174, 87, 0.1);
+  --fg2-status-danger-fg: #ff96a6;
+  --fg2-status-danger-border: rgba(255, 100, 120, 0.45);
+  --fg2-status-danger-bg: rgba(255, 100, 120, 0.1);
 }
 
 @media (min-width: 1800px) {

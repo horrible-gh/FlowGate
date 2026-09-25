@@ -45,32 +45,37 @@ withDefaults(
 }
 
 .ui-badge--neutral {
+  /* Own dashed/transparent chip look -- not shared with any other component, so this
+     stays a literal instead of a --fg2-status-neutral-* token (T0008 §13 rework). */
   border-style: dashed;
   color: #95a8bd;
   background: transparent;
 }
 
+/* info/success/warning/danger reuse the same --fg2-status-* triplet Toast consumes
+   (theme.css T0008 §11 rework) -- these are the values this component originally
+   established, now shared instead of duplicated. */
 .ui-badge--info {
-  border-color: rgba(75, 163, 255, 0.4);
-  color: #7cc0ff;
-  background: rgba(75, 163, 255, 0.1);
+  border-color: var(--fg2-status-info-border);
+  color: var(--fg2-status-info-fg);
+  background: var(--fg2-status-info-bg);
 }
 
 .ui-badge--success {
-  border-color: rgba(73, 223, 208, 0.4);
-  color: #4fe0d3;
-  background: rgba(73, 223, 208, 0.1);
+  border-color: var(--fg2-status-success-border);
+  color: var(--fg2-status-success-fg);
+  background: var(--fg2-status-success-bg);
 }
 
 .ui-badge--warning {
-  border-color: rgba(255, 174, 87, 0.45);
-  color: #ffc072;
-  background: rgba(255, 174, 87, 0.1);
+  border-color: var(--fg2-status-warning-border);
+  color: var(--fg2-status-warning-fg);
+  background: var(--fg2-status-warning-bg);
 }
 
 .ui-badge--danger {
-  border-color: rgba(255, 100, 120, 0.45);
-  color: #ff96a6;
-  background: rgba(255, 100, 120, 0.1);
+  border-color: var(--fg2-status-danger-border);
+  color: var(--fg2-status-danger-fg);
+  background: var(--fg2-status-danger-bg);
 }
 </style>
