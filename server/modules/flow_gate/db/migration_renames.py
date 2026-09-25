@@ -199,6 +199,14 @@ RENAMES: tuple[tuple[str, str], ...] = (
         "104_tokens_failure_origin_review_scope.sql",
         "107_tokens_failure_origin_review_scope.sql",
     ),
+    # flowgate.default.0613 T0013: this group authored its work-base migration as 118 against
+    # a main whose newest file was 117. The unmerged sibling flowgate.default.0517 already
+    # carries 118_snapshot_lineage.sql in all three dialects, so this file takes the next
+    # ordinal free on both sides -- the same "later arrival takes the next free number" rule
+    # 0413 T0007, 0332, 0482 T0016 and 0503 T0014 applied. The MySQL/postgres ADD COLUMN
+    # carries no IF NOT EXISTS, so a checkout that already ran this branch under 118 (the
+    # preview slot, a developer database) would fail to boot without this line.
+    ("118_group_work_base_ref.sql", "119_group_work_base_ref.sql"),
 )
 
 

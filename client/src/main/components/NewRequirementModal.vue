@@ -78,8 +78,8 @@
                 <span class="base-branch-git-badge">Git</span>
               </label>
               <select
-                v-if="groupMode === 'new'"
-                v-model="form.workBaseRef"
+                v-if="groupMode === 'new' || existingGroupWorkBaseEditable"
+                v-model="activeWorkBaseRef"
                 class="form-ctrl"
                 data-test="base-branch-select"
                 :disabled="branchCatalogLoading || !!branchCatalogError"
@@ -268,23 +268,30 @@ interface ModuleItem {
   label: string
 }
 
+// 0613 TR0014: GET /projects (the plain project-list contract this dialog's other
+// consumers share) never carried git_enabled/base_branch, only project + modules.
+// Git status for the dialog comes solely from work-base-options below.
 interface ProjectItem {
   project: string
   modules: ModuleItem[]
-  gitEnabled: boolean
-  baseBranch: string | null
 }
 
+// 0613 T0013 — shape of GET /projects/{id}/git/work-base-options. The server already
+// narrows the list to names a new group may store, so nothing is filtered here.
 interface BranchItem {
   name: string
-  kind: string
-  can_be_create_source?: boolean
+  is_project_base?: boolean
 }
 
 interface GroupWorkBase {
   group_id: string
   work_base_ref?: string | null
   effective_work_base_ref?: string | null
+  // 0613 TR0014 rev2: true once real Git work has locked this group's stored Base
+  // Branch (server-computed; see git/group_work_base.group_work_base_locked). A
+  // group missing from this response, or predating the field, is treated as locked
+  // -- fail safe rather than exposing an editable field on stale/incomplete data.
+  work_base_locked?: boolean
 }
 
 const props = defineProps<{
@@ -312,6 +319,7 @@ const branchOptions = ref<BranchItem[]>([])
 const branchCatalogLoading = ref(false)
 const branchCatalogError = ref('')
 const groupWorkBases = ref<Record<string, GroupWorkBase>>({})
+const projectGitEnabled = ref(false)
 const submitting = ref(false)
 const flashMessage = ref('')
 const flashOk = ref(false)
@@ -331,6 +339,7 @@ const form = ref({
   template: 'default',
   openAfter: true,
   workBaseRef: '',
+  existingWorkBaseRef: '',
 })
 
 const owners = ['admin', 'copilot', 'reviewer']
@@ -364,9 +373,9 @@ const targetGroupBusy = computed(() =>
   groupMode.value === 'existing' && !!form.value.groupId && isGroupBusy(form.value.groupId),
 )
 
-const selectedProjectGitEnabled = computed(() =>
-  projects.value.find((project) => project.project === form.value.project)?.gitEnabled ?? false,
-)
+// 0613 TR0014: driven by work-base-options' own git_enabled, not a /projects field
+// that the real server never returns (see refreshProjectContext).
+const selectedProjectGitEnabled = computed(() => projectGitEnabled.value)
 
 const existingGroupWorkBaseRef = computed(() => {
   if (groupMode.value !== 'existing' || !form.value.groupId) return ''
@@ -374,11 +383,56 @@ const existingGroupWorkBaseRef = computed(() => {
   return group?.effective_work_base_ref || group?.work_base_ref || ''
 })
 
-const baseBranchBlocked = computed(() =>
+// 0613 TR0014 rev2: the prior rejection's "existing group = readonly, no exceptions"
+// rule is removed. A selected group only stays readonly once the server reports its
+// Base Branch as locked by real Git work (see GroupWorkBase.work_base_locked above) --
+// missing/unloaded group data fails safe as locked.
+const existingGroupWorkBaseLocked = computed(() => {
+  if (groupMode.value !== 'existing' || !form.value.groupId) return true
+  return groupWorkBases.value[form.value.groupId]?.work_base_locked !== false
+})
+
+const existingGroupWorkBaseEditable = computed(() =>
   selectedProjectGitEnabled.value
-  && groupMode.value === 'new'
-  && (branchCatalogLoading.value || !!branchCatalogError.value || !form.value.workBaseRef),
+  && groupMode.value === 'existing'
+  && !!form.value.groupId
+  && !existingGroupWorkBaseLocked.value,
 )
+
+// One <select> element serves both the new-group and unlocked-existing-group cases;
+// this proxy routes its v-model to whichever form field the current mode owns.
+const activeWorkBaseRef = computed<string>({
+  get: () => (groupMode.value === 'existing' ? form.value.existingWorkBaseRef : form.value.workBaseRef),
+  set: (value: string) => {
+    if (groupMode.value === 'existing') form.value.existingWorkBaseRef = value
+    else form.value.workBaseRef = value
+  },
+})
+
+watch(
+  [groupMode, () => form.value.groupId, existingGroupWorkBaseLocked, branchOptions],
+  () => {
+    if (groupMode.value !== 'existing' || existingGroupWorkBaseLocked.value) {
+      form.value.existingWorkBaseRef = ''
+      return
+    }
+    const current = existingGroupWorkBaseRef.value
+    form.value.existingWorkBaseRef = branchOptions.value.some((branch) => branch.name === current)
+      ? current
+      : ''
+  },
+)
+
+const baseBranchBlocked = computed(() => {
+  if (!selectedProjectGitEnabled.value) return false
+  if (groupMode.value === 'new') {
+    return branchCatalogLoading.value || !!branchCatalogError.value || !form.value.workBaseRef
+  }
+  if (existingGroupWorkBaseEditable.value) {
+    return branchCatalogLoading.value || !!branchCatalogError.value || !form.value.existingWorkBaseRef
+  }
+  return false
+})
 
 // Group title to drop into the title field. Existing-group mode → the selected
 // group's pure title; new-group mode → the name the user is typing. '' hides the
@@ -433,26 +487,29 @@ function applyInitialGroup() {
 
 async function refreshProjectContext(projectId: string) {
   const generation = ++projectContextGeneration
-  const project = projects.value.find((item) => item.project === projectId)
 
   branchOptions.value = []
   branchCatalogError.value = ''
   branchCatalogLoading.value = false
   groupWorkBases.value = {}
   form.value.workBaseRef = ''
+  projectGitEnabled.value = false
 
   if (!projectId) return
 
   const treeRequest = explorerStore.fetchGroupTree(projectId, false, true).catch(() => [])
-  if (!project?.gitEnabled) {
-    await treeRequest
-    return
-  }
 
+  // 0613 TR0014: GET /projects carries no Git config, so work-base-options is queried
+  // for every project and its own git_enabled decides the Base Branch UI. A disabled
+  // or absent integration answers 200 with git_enabled:false (group_work_base.py), so
+  // this call is cheap and permission-safe even for non-Git projects.
   branchCatalogLoading.value = true
   const [catalogResult, groupsResult] = await Promise.allSettled([
-    getRequest<{ base_branch?: string; branches?: BranchItem[] }>(
-      `/api/v1/projects/${encodeURIComponent(projectId)}/git/branches`,
+    // 0613 T0013 — not the Branch Manager catalog (/git/branches, project.settings.read):
+    // a requirement author holds the document-create permission, which is what this
+    // read-only options boundary checks.
+    getRequest<{ git_enabled?: boolean; base_branch?: string | null; branches?: BranchItem[] }>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/git/work-base-options`,
     ),
     getRequest<{ groups?: GroupWorkBase[] }>(
       `/api/v1/groups?project_id=${encodeURIComponent(projectId)}`,
@@ -469,6 +526,10 @@ async function refreshProjectContext(projectId: string) {
   }
 
   if (catalogResult.status === 'rejected') {
+    // The disabled path always resolves with 200 (never rejects), so a rejection here
+    // can only mean a Git-enabled project hit a real problem (checkout unavailable,
+    // permission, etc.) — surface it instead of silently hiding the section.
+    projectGitEnabled.value = true
     branchCatalogError.value = extractApiErrorMessage(
       catalogResult.reason,
       t('main.new_requirement_modal.base_branch_load_error'),
@@ -477,12 +538,11 @@ async function refreshProjectContext(projectId: string) {
   }
 
   const catalog = catalogResult.value.data
-  branchOptions.value = (Array.isArray(catalog.branches) ? catalog.branches : []).filter((branch) =>
-    branch.can_be_create_source !== false
-    && branch.kind !== 'remote_only'
-    && branch.kind !== 'internal_slot',
-  )
-  const defaultBranch = catalog.base_branch || project.baseBranch || ''
+  projectGitEnabled.value = catalog.git_enabled === true
+  if (!projectGitEnabled.value) return
+
+  branchOptions.value = Array.isArray(catalog.branches) ? catalog.branches : []
+  const defaultBranch = catalog.base_branch || ''
   form.value.workBaseRef = branchOptions.value.some((branch) => branch.name === defaultBranch)
     ? defaultBranch
     : ''
@@ -517,8 +577,6 @@ onMounted(async () => {
               typeof m === 'string' ? { id: m, label: m } : { id: (m.name ?? '') as string, label: ((m.title || m.name) ?? '') as string }
             )
           : [],
-        gitEnabled: it.git_enabled === true || it.git_enabled === 1,
-        baseBranch: typeof it.base_branch === 'string' && it.base_branch ? it.base_branch : null,
       }
     }).filter((p) => p.project !== '__SYSTEM__')
 
@@ -596,7 +654,16 @@ async function submit() {
   }
 
   const groupPayload: Record<string, string> = groupMode.value === 'existing'
-    ? { group_id: form.value.groupId }
+    ? {
+        group_id: form.value.groupId,
+        // 0613 TR0014 rev2: only sent while the server itself reports this group's
+        // Base Branch as still editable -- a locked group never sends the field, so
+        // the server-side lock check in git_service.apply_group_work_base_ref is the
+        // actual guard, not this client condition.
+        ...(existingGroupWorkBaseEditable.value && form.value.existingWorkBaseRef
+          ? { work_base_ref: form.value.existingWorkBaseRef }
+          : {}),
+      }
     : {
         new_group_name: form.value.newGroupName.trim() || form.value.title.trim(),
         ...(selectedProjectGitEnabled.value && form.value.workBaseRef

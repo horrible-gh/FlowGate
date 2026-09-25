@@ -687,12 +687,13 @@ def create_workflow_root(
 
     if group_id and new_group_name:
         errors.append("Please specify either an existing group or a new group, not both.")
-    if group_id and requested_work_base_ref:
-        errors.append({
-            "code": "group_work_base_existing_group",
-            "message": "work_base_ref is only accepted when creating a new group",
-        })
-    elif requested_work_base_ref:
+    if requested_work_base_ref and not group_id:
+        # A new group's work_base_ref is validated up front because insert_group()
+        # below needs an already-vetted value. An existing group's ref instead goes
+        # through git_service.apply_group_work_base_ref once that group is confirmed
+        # in the "elif group_id:" branch -- it validates AND checks the group is not
+        # locked by real Git work (flowgate.default.0613 TR0014 rev2; T0013's "no
+        # arbitrary change" reads as "no change once Git history depends on it").
         try:
             from .services import git_service
             stored_work_base_ref = git_service.validate_group_work_base_ref(
@@ -735,6 +736,17 @@ def create_workflow_root(
             group_module = (existing_group.get("module") or "").strip()
             if group_module:
                 module = group_module
+            if requested_work_base_ref:
+                try:
+                    from .services import git_service
+                    git_service.apply_group_work_base_ref(
+                        project, group_id, requested_work_base_ref
+                    )
+                except GitServiceError as exc:
+                    error = {"code": exc.code, "message": exc.message}
+                    if exc.details:
+                        error["details"] = exc.details
+                    errors.append(error)
 
         if errors:
             return {"status": "error", "errors": errors}

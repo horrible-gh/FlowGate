@@ -51,6 +51,10 @@ def repo(tmp_path, monkeypatch):
     monkeypatch.setattr(git_service.db_git, "release_lock", lambda project_id, holder: None)
     monkeypatch.setattr(git_service.db_git, "list_states_of_project", lambda project_id: list(states))
     monkeypatch.setattr(git_service.db_git, "list_open_sessions", lambda: [])
+    # 0613 T0013: the delete guard also asks which live groups pin a branch as their
+    # Base Branch; none do in these catalog/delete scenarios.
+    from modules.flow_gate.db import groups as db_groups
+    monkeypatch.setattr(db_groups, "list_open_groups_by_work_base", lambda project_id, ref: [])
     subprocess.run(["git", "branch", "slot-live"], cwd=root, check=True)
     return root
 

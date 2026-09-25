@@ -3161,6 +3161,7 @@ export default {
         branch_is_base: '기준 브랜치는 삭제할 수 없습니다.',
         branch_is_internal_slot: '등록된 그룹 워크트리 브랜치는 삭제할 수 없습니다.',
         branch_is_default_merge_target: '현재 통합 대상으로 지정된 브랜치는 삭제할 수 없습니다. 먼저 다른 브랜치로 바꾸거나 지정을 해제하세요.',
+        branch_is_group_work_base: '활성 그룹이 작업 기준 브랜치(Base Branch)로 사용하고 있어 삭제할 수 없습니다. 그 그룹이 종료되면 삭제할 수 있습니다.',
         branch_in_use: '진행 중인 머지가 사용하고 있습니다.',
         branch_unmerged_commits: '기준 브랜치에 병합되지 않은 커밋이 있습니다.',
         remote_only: '원격 전용 브랜치는 삭제할 수 없습니다.',

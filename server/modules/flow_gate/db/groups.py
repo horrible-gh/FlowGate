@@ -172,6 +172,37 @@ def insert_group(
     )
 
 
+def update_work_base_ref(group_id: str, work_base_ref: str) -> None:
+    """Persist a new durable Base Branch for an already-existing group.
+
+    flowgate.default.0613 TR0014 rev2: callers must already have confirmed the
+    group is not locked (git.group_work_base.group_work_base_locked) -- this is
+    a plain, unconditional write.
+    """
+    get_store()._execute(
+        "UPDATE groups SET work_base_ref = ?, updated_at = ? WHERE group_id = ?",
+        [work_base_ref, datetime.now().isoformat(), group_id],
+    )
+
+
+def list_open_groups_by_work_base(project_id: str, work_base_ref: str) -> list[dict]:
+    """Groups of ``project_id`` that still pin ``work_base_ref`` for their lifecycle.
+
+    flowgate.default.0613 T0013: a stored work base is re-read by worktree
+    provisioning, H1/H2 retry, restart/reprovision and terminal reopen, so it
+    stays referenced until the group reaches a terminal status (CLOSED /
+    DISCARDED, or the legacy CANCELLED) or is soft-deleted. NULL rows are legacy
+    groups that resolve through the project base and never match here.
+    """
+    return get_store()._fetch_all(
+        "SELECT group_id, status FROM groups"
+        " WHERE project_id = ? AND work_base_ref = ? AND deleted_at IS NULL"
+        " AND UPPER(COALESCE(status, 'OPEN')) NOT IN ('CLOSED', 'DISCARDED', 'CANCELLED')"
+        " ORDER BY group_id",
+        [project_id, work_base_ref],
+    )
+
+
 def update_group_status(group_id: str, new_status: str) -> bool:
     now = datetime.now().isoformat()
     closed_at = now if new_status in ("CLOSED", "DISCARDED") else None

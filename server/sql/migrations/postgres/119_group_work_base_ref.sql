@@ -1,4 +1,4 @@
--- 118_group_work_base_ref.sql
+-- 119_group_work_base_ref.sql
 -- flowgate.default.0613 T#1: the nullable value is the durable branch/ref from
 -- which this group's first worktree must start.  NULL preserves legacy behavior:
 -- resolve through project_git_config.base_branch.  It is intentionally separate

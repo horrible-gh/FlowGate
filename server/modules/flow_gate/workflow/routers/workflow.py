@@ -209,6 +209,10 @@ def list_groups_endpoint(
         raise HTTPException(status_code=403, detail="document.read permission required.")
     groups = db_groups.list_groups(project_id=project_id, module=module, status=status)
     config = git_service.db_git.get_config(project_id)
+    # flowgate.default.0613 TR0014 rev2: one batch lookup for the whole project
+    # (never one per group) so the requirement dialog can tell an editable
+    # existing-group Base Branch from one that Git work has already locked.
+    locked_ids = git_service.locked_group_ids(project_id)
     enriched = []
     for group in groups:
         row = dict(group)
@@ -216,6 +220,7 @@ def list_groups_endpoint(
         row["effective_work_base_ref"] = git_service.resolve_group_work_base_ref(
             project_id, row["group_id"], group=row, config=config
         )
+        row["work_base_locked"] = row["group_id"] in locked_ids
         enriched.append(row)
     return {"groups": enriched, "total": len(enriched)}
 

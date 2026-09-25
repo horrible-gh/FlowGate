@@ -5,6 +5,7 @@ POST           /api/v1/projects/{project_id}/git/test-connection
 GET/POST       /api/v1/projects/{project_id}/git/provision   (0161 P0004)
 GET            /api/v1/projects/{project_id}/git/status       (0162 P §2)
 GET            /api/v1/projects/{project_id}/git/branches     (0594 T0010)
+GET            /api/v1/projects/{project_id}/git/work-base-options (0613 T0013 — perm_document_create)
 POST           /api/v1/projects/{project_id}/git/branches     (0594 T0010)
 DELETE         /api/v1/projects/{project_id}/git/branches/{name:path} (0594 T0010)
 POST           /api/v1/projects/{project_id}/git/fetch        (0162 P §3-1)
@@ -215,6 +216,21 @@ def get_git_branches(
 ):
     try:
         return git_service.list_branches(project_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.get("/projects/{project_id}/git/work-base-options")
+def get_git_work_base_options(
+    project_id: str,
+    user=Depends(require_permission("perm_document_create", "project_id")),
+):
+    """flowgate.default.0613 T0013: Base Branch choices for the requirement (R/B)
+    dialog.  Gated by the project's document-create permission -- the right a
+    requirement author actually holds -- rather than the Branch Manager's
+    ``project.settings.read``, and limited to the names a new group may store."""
+    try:
+        return git_service.list_group_work_base_options(project_id)
     except GitServiceError as exc:
         return _guard(exc)
 

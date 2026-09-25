@@ -3157,6 +3157,7 @@ export default {
         branch_is_base: 'The base branch cannot be deleted.',
         branch_is_internal_slot: 'A registered group worktree branch cannot be deleted.',
         branch_is_default_merge_target: 'The branch set as the current integration target cannot be deleted. Change or clear the target first.',
+        branch_is_group_work_base: 'An active group uses this branch as its Base Branch, so it cannot be deleted until that group is closed.',
         branch_in_use: 'An open merge is using this branch.',
         branch_unmerged_commits: 'This branch has commits not yet merged into the base branch.',
         remote_only: 'A remote-only branch cannot be deleted.',
