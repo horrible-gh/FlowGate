@@ -384,6 +384,95 @@ def _ahead_behind(base_root: Path, base_branch: str, name: str) -> tuple[Optiona
         return None, None
 
 
+def resolve_local_branch_ref(project_id: str, branch: str) -> tuple[Path, str]:
+    """(base_root, commit) for an ordinary local branch (T0004 §3). Pure read: no
+    lock, no worktree, no DB write. Rejects anything that is not a real
+    ``refs/heads/<branch>`` -- a remote-only ref is a distinct 409, everything else
+    (including a typo) is 404."""
+    from modules.flow_gate.services import git_service as _gs
+    _, base_root, _base_branch = _branch_context(project_id)
+    if not _gs._ref_exists(base_root, f"refs/heads/{branch}"):
+        if _gs._ref_exists(base_root, f"refs/remotes/origin/{branch}"):
+            raise GitServiceError(409, "branch_read_remote_only", "remote-only branch is read-only")
+        raise GitServiceError(404, "branch_not_found", "local branch was not found")
+    commit = _gs._rev_parse(base_root, f"refs/heads/{branch}")
+    if not commit:
+        raise GitServiceError(500, "git_error", "Git could not resolve the branch tip")
+    return base_root, commit
+
+
+def read_local_branch_tree(project_id: str, branch: str) -> dict:
+    """Checkout-free recursive tree of an ordinary local branch's HEAD commit
+    (T0004 §3.1). Same hidden-path rule as the group explorer's committed view
+    (dotfiles / *.db). Unlike a group branch this has no live worktree behind it, so
+    there is no untracked channel to merge in -- the tree is exactly what the branch
+    has committed, and base checkout HEAD/index/worktree are never touched."""
+    from modules.flow_gate.services import git_service as _gs
+    base_root, commit = resolve_local_branch_ref(project_id, branch)
+    proc = _gs._run_git(["ls-tree", "-r", "-z", commit], cwd=base_root, timeout=_gs.GIT_READ_TIMEOUT_SEC)
+    if proc.returncode != 0:
+        raise GitServiceError(500, "git_error", "Git tree lookup failed", diagnostic=_one_line(proc.stderr))
+    visible_files: list[str] = []
+    for record in (proc.stdout or "").split("\0"):
+        if not record:
+            continue
+        meta, _, path = record.partition("\t")
+        if not path:
+            continue
+        parts = meta.split()
+        # entry: "<mode> <type> <sha>"; only blobs are files.
+        if len(parts) < 2 or parts[1] != "blob":
+            continue
+        segments = path.split("/")
+        if any(seg.startswith(".") for seg in segments) or segments[-1].lower().endswith(".db"):
+            continue
+        visible_files.append(path)
+    nodes = _gs._build_tree_nodes(visible_files)
+    return {"ok": True, "data": {
+        "branch": branch, "commit": commit, "nodes": nodes, "read_only": True,
+    }}
+
+
+def read_local_branch_blob(
+    project_id: str, branch: str, path: str, ref: Optional[str] = None
+) -> dict:
+    """Checkout-free single-file read from an ordinary local branch (T0004 §3.2).
+    No working-tree fallback: unlike a group branch a local branch has no live
+    worktree, so an untracked (never-committed) file is never exposed here -- it is
+    committed-tree read-only, exactly as T0004 requires."""
+    from modules.flow_gate.services import git_service as _gs
+    _gs._validate_blob_path(path)
+    base_root, head_commit = resolve_local_branch_ref(project_id, branch)
+    commit = head_commit
+    if ref:
+        if not _gs._REF_PIN_RE.match(ref):
+            raise GitServiceError(400, "invalid_ref", "ref must be a full 40-hex commit sha")
+        tproc = _gs._run_git(["cat-file", "-t", ref], cwd=base_root, timeout=_gs.GIT_READ_TIMEOUT_SEC)
+        if tproc.returncode != 0 or (tproc.stdout or "").strip() != "commit":
+            raise GitServiceError(404, "not_found", f"commit '{ref}' not found")
+        commit = ref
+    entry = _gs._ls_tree_entry(base_root, commit, path)
+    if entry is None or entry[0] != "blob":
+        raise GitServiceError(404, "not_found", f"path '{path}' not found in commit {commit}")
+    sha = entry[1]
+    size = _gs._cat_file_size(base_root, sha)
+    head = _gs._cat_file_blob_head(base_root, sha, _gs.BLOB_MAX_RETURN_BYTES)
+    if b"\x00" in head[:_gs.BLOB_BINARY_SNIFF_BYTES]:
+        return {"ok": True, "data": {
+            "branch": branch, "commit": commit, "path": path,
+            "size": size, "binary": True, "truncated": False,
+            "encoding": None, "content": None,
+        }}
+    truncated = size > _gs.BLOB_MAX_RETURN_BYTES
+    body = head[:_gs.BLOB_MAX_RETURN_BYTES] if truncated else head[:size]
+    content = body.decode("utf-8", errors="replace")
+    return {"ok": True, "data": {
+        "branch": branch, "commit": commit, "path": path,
+        "size": size, "binary": False, "truncated": truncated,
+        "encoding": "utf-8", "content": content,
+    }}
+
+
 def list_branches(project_id: str) -> dict:
     """Return local branches plus read-only remote-only tracking refs."""
     from modules.flow_gate.services import git_service as _gs

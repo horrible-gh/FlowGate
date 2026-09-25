@@ -20,6 +20,10 @@ export interface Tab {
   // read so the viewer content matches the tree snapshot the file was opened from.
   gitGroupId?: string | null
   gitCommit?: string | null
+  // 0615 T0004 — when set instead of gitGroupId, the file tab reads from an
+  // ordinary local branch (Branch Manager), same checkout-free/gitCommit-pinned
+  // contract, always read-only (no live worktree exists for a plain local branch).
+  gitBranch?: string | null
 }
 
 function getUserId(): string {
@@ -102,6 +106,7 @@ export const useTabsStore = defineStore('tabs', () => {
         existing.mdPath = tab.mdPath
         existing.projectId = tab.projectId
         existing.gitGroupId = tab.gitGroupId ?? null
+        existing.gitBranch = tab.gitBranch ?? null
         existing.gitCommit = tab.gitCommit ?? null
         existing.readonly = tab.readonly
       } else if (isFileTab(existing)) {

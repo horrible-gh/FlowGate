@@ -105,6 +105,40 @@ export interface GroupBlobData {
   untracked?: boolean
 }
 
+// 0615 T0004 §2/§3 — ordinary local-branch catalog and checkout-free blob read.
+// Unlike a group branch, a local branch has no live worktree behind it: no writable
+// mode, no untracked channel, no diff support.
+export interface BranchCatalogEntry {
+  name: string
+  kind: 'base' | 'local' | 'internal_slot' | 'remote_only'
+  oid: string | null
+  ahead_of_base: number | null
+  behind_base: number | null
+  can_delete: boolean
+  delete_blocked_reason: string | null
+  can_be_create_source: boolean
+  create_source_blocked_reason: string | null
+  has_remote_counterpart: boolean
+  connected_group_id?: string
+}
+
+export interface BranchCatalog {
+  base_branch: string | null
+  default_merge_target: string | null
+  branches: BranchCatalogEntry[]
+}
+
+export interface LocalBranchBlobData {
+  branch: string
+  commit: string
+  path: string
+  size: number
+  binary: boolean
+  truncated: boolean
+  encoding: string | null
+  content: string | null
+}
+
 // 0282 NR0003 finding 3 — response shape of GET /projects/{id}/git/status
 // (git_service.project_git_status). Typed to what the four consumers read;
 // the payload may carry more fields.
@@ -993,6 +1027,111 @@ export const useExplorerStore = defineStore('explorer', () => {
     delete workflowNodeStates.value[docId]
   }
 
+  // T0004 SS2/SS3 -- ordinary local-branch (Branch Manager) checkout-free explorer
+  // caches, keyed by branch HEAD commit exactly like the group-branch caches above.
+  // Unlike a group branch, a local branch has no live worktree: no writable mode,
+  // no untracked channel, no diff support -- so there is no analogue of
+  // groupChangedFiles/groupUntrackedFiles here.
+  const localBranchCommit = ref<Record<string, string>>({})        // `${pid}:${branch}` -> commit
+  const localBranchTreeCache = ref<Record<string, FileNode[]>>({}) // `${pid}:${branch}:${commit}` -> nodes
+  const localBranchBlobCache = ref<Record<string, LocalBranchBlobData>>({}) // `${pid}:${branch}:${commit}:${path}` -> blob
+
+  const localBranchKey = (pid: string, branch: string) => `${pid}:${branch}`
+
+  function purgeLocalBranchCommit(pid: string, branch: string, commit: string) {
+    const prefix = `${localBranchKey(pid, branch)}:${commit}`
+    for (const k of Object.keys(localBranchTreeCache.value)) {
+      if (k === prefix) delete localBranchTreeCache.value[k]
+    }
+    for (const k of Object.keys(localBranchBlobCache.value)) {
+      if (k.startsWith(`${prefix}:`)) delete localBranchBlobCache.value[k]
+    }
+  }
+
+  function currentLocalBranchCommit(pid: string, branch: string): string | undefined {
+    return localBranchCommit.value[localBranchKey(pid, branch)]
+  }
+
+  /** Branch catalog (T0004 SS2.1): base/local/internal_slot/remote_only, straight from
+   *  GET /git/branches. Always hits the server -- a Branch Manager create/delete must
+   *  be visible on the very next fetch -- but this is purely additive display data for
+   *  the file explorer's selector: unlike fetchGitStatus/loadGroupSlots, a failed fetch
+   *  here never blocks or replaces whichever tree is already on screen. */
+  async function fetchBranchCatalog(pid: string): Promise<BranchCatalog> {
+    const res = await getRequest<BranchCatalog & { ok: boolean }>(
+      `/api/v1/projects/${encodeURIComponent(pid)}/git/branches`,
+    )
+    const data = res.data as any
+    return {
+      base_branch: data?.base_branch ?? null,
+      default_merge_target: data?.default_merge_target ?? null,
+      branches: Array.isArray(data?.branches) ? data.branches : [],
+    }
+  }
+
+  /** Checkout-free tree of an ordinary local branch's HEAD commit (T0004 SS3.1).
+   *  Same freshness-first contract as fetchGroupBranchTree: always hits the server,
+   *  and a commit advance purges the previous commit's tree/blob cache entries. */
+  async function fetchLocalBranchTree(
+    pid: string,
+    branch: string,
+  ): Promise<{ branch: string; commit: string; nodes: FileNode[] }> {
+    loadingFile.value = true
+    fileError.value = null
+    try {
+      type LocalBranchTreePayload = { branch: string; commit: string; nodes: FileNode[] }
+      const res = await getTreeWithRetry<{ data: LocalBranchTreePayload }>(
+        `/api/v1/projects/${encodeURIComponent(pid)}/git/branches/tree?branch=${encodeURIComponent(branch)}`,
+      )
+      const data = (res.data as any).data as LocalBranchTreePayload
+      const key = localBranchKey(pid, branch)
+      const prev = localBranchCommit.value[key]
+      if (prev && prev !== data.commit) purgeLocalBranchCommit(pid, branch, prev)
+      localBranchCommit.value = { ...localBranchCommit.value, [key]: data.commit }
+      const nodes = data.nodes.filter((n) => n.permissions.includes('read'))
+      localBranchTreeCache.value[`${key}:${data.commit}`] = nodes
+      return { branch: data.branch, commit: data.commit, nodes }
+    } catch (e) {
+      fileError.value = 'tree_load_failed'
+      throw e
+    } finally {
+      loadingFile.value = false
+    }
+  }
+
+  /** Single file from an ordinary local branch, pinned to the tree's commit so tree
+   *  and blob never disagree on point-in-time (T0004 SS3.2). Cached by
+   *  (pid, branch, commit, path), same shape as fetchGroupBranchBlob.
+   *
+   *  `explicitRef` lets a caller (a tab restored with its own recorded gitCommit)
+   *  pin the read to that exact commit instead of trusting this store's mutable
+   *  `currentLocalBranchCommit`, which reflects only the most recently loaded tree
+   *  and can differ from what a given tab was opened against -- e.g. right after
+   *  browser restore (store commit still empty) or after the explorer has since
+   *  advanced to a newer commit while an older tab is remounted. */
+  async function fetchLocalBranchBlob(
+    pid: string,
+    branch: string,
+    path: string,
+    explicitRef?: string | null,
+  ): Promise<LocalBranchBlobData> {
+    const commit = explicitRef || currentLocalBranchCommit(pid, branch)
+    if (commit) {
+      const cached = localBranchBlobCache.value[`${localBranchKey(pid, branch)}:${commit}:${path}`]
+      if (cached) return cached
+    }
+    const refQ = commit ? `&ref=${encodeURIComponent(commit)}` : ''
+    const res = await getRequest<{ data: LocalBranchBlobData }>(
+      `/api/v1/projects/${encodeURIComponent(pid)}/git/branches/blob` +
+        `?branch=${encodeURIComponent(branch)}&path=${encodeURIComponent(path)}${refQ}`,
+    )
+    const data = (res.data as any).data as LocalBranchBlobData
+    if (data.commit) {
+      localBranchBlobCache.value[`${localBranchKey(pid, branch)}:${data.commit}:${path}`] = data
+    }
+    return data
+  }
+
   return {
     currentBranch,
     fileTreeCache, groupTreeCache, workflowNodeStates,
@@ -1007,6 +1146,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     activeGroupBranch, fetchGroupBranchTree, fetchGroupBranchChanges, fetchGroupBranchBlob,
     fetchGroupBranchChangeSet, fetchGroupBranchDiff,
     currentGroupCommit, groupChangedFiles, groupChangeStatuses,
+    fetchBranchCatalog, fetchLocalBranchTree, fetchLocalBranchBlob, currentLocalBranchCommit,
     groupChangeStatus, isGroupDeletedPath, isGroupChangedPath, isGroupChangedDir,
     groupUntrackedFiles, setGroupUntrackedFiles, isGroupUntrackedPath, isGroupUntrackedDir,
     expandedFileNodes, expandedGroupNodes,

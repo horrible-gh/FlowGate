@@ -8,6 +8,8 @@ GET            /api/v1/projects/{project_id}/git/branches     (0594 T0010)
 GET            /api/v1/projects/{project_id}/git/work-base-options (0613 T0013 — perm_document_create)
 POST           /api/v1/projects/{project_id}/git/branches     (0594 T0010)
 DELETE         /api/v1/projects/{project_id}/git/branches/{name:path} (0594 T0010)
+GET            /api/v1/projects/{project_id}/git/branches/tree (0615 T0004 — checkout-free ordinary local branch)
+GET            /api/v1/projects/{project_id}/git/branches/blob (0615 T0004 — checkout-free ordinary local branch)
 POST           /api/v1/projects/{project_id}/git/fetch        (0162 P §3-1)
 POST           /api/v1/projects/{project_id}/git/push         (0162 P §3-2)
 POST           /api/v1/projects/{project_id}/git/cleanup      (0182 NR0003 §5)
@@ -288,6 +290,42 @@ def put_git_default_merge_target(
     directly, as its own action (separate from running an actual branch merge)."""
     try:
         return git_merge_target.set_project_default_target(project_id, body.branch)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+# ── Ordinary local branch: checkout-free tree/blob (0615 T0004) ──────────────
+# A plain query-parameter shape (rather than /branches/{branch:path}/tree) sidesteps
+# any ambiguity a slash-containing branch name would create against a trailing
+# literal path segment (T0004 §3 permits either; this is the simpler one).
+
+@router.get("/projects/{project_id}/git/branches/tree")
+def get_local_branch_tree(
+    project_id: str,
+    branch: str,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    """Recursive file tree of an ordinary local branch's HEAD commit (read-only,
+    no checkout — T0004 §3.1)."""
+    try:
+        return git_service.read_local_branch_tree(project_id, branch)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.get("/projects/{project_id}/git/branches/blob")
+def get_local_branch_blob(
+    project_id: str,
+    branch: str,
+    path: str,
+    ref: str | None = None,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    """Single-file content from an ordinary local branch (read-only, checkout-free
+    — T0004 §3.2). ``ref`` (optional) pins the read to the tree's commit sha, same
+    contract as the group-branch blob endpoint."""
+    try:
+        return git_service.read_local_branch_blob(project_id, branch, path, ref)
     except GitServiceError as exc:
         return _guard(exc)
 

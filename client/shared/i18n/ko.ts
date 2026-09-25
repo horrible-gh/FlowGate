@@ -780,6 +780,7 @@ export default {
       base_branch: '기준 브랜치 ({branch})',
       readonly_badge: '그룹 {group} 브랜치 열람 중 (작업 폴더 없음 · 읽기전용)',
       worktree_badge: '그룹 {group} 작업 폴더 편집 중',
+      local_branch_readonly_badge: '로컬 브랜치 {branch} 열람 중 (커밋된 내용만 · 읽기전용)',
       binary_file: '바이너리 파일 — 미리보기를 제공하지 않습니다.',
       truncated_file: '파일이 커서 앞부분만 표시합니다.',
       git_ahead: '기준 브랜치보다 {n}커밋 앞섬',

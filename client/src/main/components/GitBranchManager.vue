@@ -315,9 +315,23 @@ async function run(fn: () => Promise<void>) {
   try { await fn() } catch (e: any) { error.value = e?.response?.data?.error?.message || t('main.git_branch_manager.op_failed') } finally { busy.value = false }
 }
 async function create() {
+  const branchName = newName.value
   await run(async () => {
-    await postRequest(`/api/v1/projects/${props.projectId}/git/branches`, { name: newName.value, source_branch: createSource.value })
+    await postRequest(`/api/v1/projects/${props.projectId}/git/branches`, { name: branchName, source_branch: createSource.value })
     newName.value = ''
+    // 0615 T0004 §5 — File Explorer listens for this so a newly created ordinary
+    // local branch appears in its selector immediately, without a full remount.
+    // Dispatched right after the mutation itself succeeds (branch already exists
+    // server-side at this point) and NOT after this panel's own catalog reload:
+    // load() only refreshes this panel's own list and must never gate an
+    // invalidation the server has already made true. A subsequent load() failure
+    // still surfaces in `error` (§4.1) but must not swallow the event.
+    // rev2 — `action`/`branch` let File Explorer act on the mutation itself
+    // (e.g. drop a deleted selection) without waiting on the catalog refetch
+    // below; see confirmDelete for the case that actually depends on it.
+    window.dispatchEvent(new CustomEvent('fg:git_branches_changed', {
+      detail: { project: props.projectId, action: 'create', branch: branchName },
+    }))
     await load()
   })
 }
@@ -346,6 +360,19 @@ async function confirmDelete(branch: BranchRow) {
   await run(async () => {
     try {
       await deleteRequest(`/api/v1/projects/${props.projectId}/git/branches/${encodeURIComponent(branch.name)}`)
+      // 0615 T0004 §5 — File Explorer listens for this to drop the deleted branch
+      // from its selector and, if it was the one on screen, fall back to base.
+      // Dispatched right after the mutation itself succeeds (branch is already
+      // gone server-side) and NOT after this panel's own catalog reload, so a
+      // failure of that follow-up GET can never suppress the invalidation and
+      // leave a stale tree of an already-deleted branch on screen (§7).
+      // rev2 — `action: 'delete'` + `branch` let File Explorer invalidate a
+      // matching selection synchronously, instead of only reacting after its
+      // OWN catalog refetch succeeds (that refetch can fail independently of
+      // this delete, which already landed server-side).
+      window.dispatchEvent(new CustomEvent('fg:git_branches_changed', {
+        detail: { project: props.projectId, action: 'delete', branch: branch.name },
+      }))
       await load()
     } catch (e: any) {
       // §7 delete 실패 — target and the server's protected/in-use reason are
