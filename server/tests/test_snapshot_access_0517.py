@@ -1,15 +1,21 @@
 import inspect
+import json
 import sqlite3
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from modules.flow_gate.api.v1 import snapshot_routes
 from modules.flow_gate.services import api_server_tools
 from modules.flow_gate.services import help_catalog
 from modules.flow_gate.services import snapshot_access_service as access
 from modules.flow_gate.services.ai_invoke import provider_api
+
+from test_snapshot_materialization_0517 import _Store, snapshot_env  # noqa: F401,E402
 
 
 @pytest.fixture
@@ -50,6 +56,10 @@ def access_env(tmp_path, monkeypatch):
 
     monkeypatch.setattr(access.materialization, "refresh_stale", refreshed)
     monkeypatch.setattr(
+        access.materialization.token_service, "scratch_dir_path",
+        lambda project_id, token_id: str(tmp_path),
+    )
+    monkeypatch.setattr(
         access.usage_db, "record",
         lambda data: usages.append(dict(data)) or dict(data),
     )
@@ -65,13 +75,17 @@ def access_env(tmp_path, monkeypatch):
     )
 
 
-def test_c8_active_snapshot_returns_locator_metadata_and_read_search(access_env):
+def test_c8_active_snapshot_returns_no_locator_metadata_and_read_search(access_env):
     status, result = access.access(
         access_env.run,
         {"snapshot_id": "snap_access", "operation": "read", "path": "app.py"},
     )
     assert status == 200
     assert result["content"].startswith("print")
+    # Neither the API tool-call path nor the CLI HTTP path may ever hand the AI a raw
+    # filesystem locator or scratch path — this dict is returned verbatim to both.
+    assert "locator" not in result["snapshot"]
+    assert str(access_env.source.resolve()) not in json.dumps(result)
     assert result["snapshot"] == {
         "snapshot_id": "snap_access",
         "request_id": "snap_access",
@@ -87,7 +101,6 @@ def test_c8_active_snapshot_returns_locator_metadata_and_read_search(access_env)
         "created_at": "2026-09-23T00:00:00+00:00",
         "stale": False,
         "status": "active",
-        "locator": str(access_env.source.resolve()),
         "current_worktree_validation_allowed": True,
     }
     status, searched = access.access(
@@ -148,6 +161,48 @@ def test_c13_c14_deleted_and_failed_are_explicit(access_env, state, code, http_s
     assert caught.value.status == http_status
     assert caught.value.code == code
     assert caught.value.state == state
+
+
+def test_c21_stored_failure_reason_absolute_path_is_redacted_on_api_and_direct_boundary(
+    access_env, monkeypatch,
+):
+    """0517.0021-TR rev4 rejection point 3: a materialization failure can durably store a
+    failure_reason built from raw exception text (e.g. OSError str()), which can contain
+    the real scratch/snapshot absolute path. Later access() calls surface that stored text
+    through SnapshotAccessError.message — this must come out redacted regardless of which
+    worker-facing boundary renders the error payload.
+    """
+    leaked_path = str(access_env.source / "app.py")
+    access_env.row["status"] = "failed"
+    access_env.row["failure_reason"] = (
+        f"copy interrupted: [Errno 13] Permission denied: '{leaked_path}'"
+    )
+
+    with pytest.raises(access.SnapshotAccessError) as caught:
+        access.access(access_env.run, {"snapshot_id": "snap_access", "operation": "status"})
+    direct_payload = caught.value.payload("status")
+    assert access.SNAPSHOT_PATH_REDACTION in direct_payload["error"]["message"]
+    for variant in (leaked_path, leaked_path.replace("\\", "/"), leaked_path.replace("/", "\\")):
+        assert variant not in json.dumps(direct_payload)
+
+    # Same stored failure_reason, rendered through the API tool-call boundary
+    # (api_server_tools.access_source_snapshot), which also just calls exc.payload().
+    token = {
+        "token_id": "tok_access", "ai_run_id": "run_access", "project": "project",
+        "group_id": "project.default.0517", "issued_to": "worker",
+    }
+    monkeypatch.setattr(api_server_tools.token_service, "verify", lambda raw: token)
+    monkeypatch.setattr(
+        api_server_tools.snapshot_request_service, "validate_request_authority",
+        lambda candidate, active: candidate,
+    )
+    status, api_payload = api_server_tools.access_source_snapshot(
+        access_env.run, "raw-token", {"snapshot_id": "snap_access", "operation": "status"},
+    )
+    assert status == 409
+    assert access.SNAPSHOT_PATH_REDACTION in api_payload["error"]["message"]
+    for variant in (leaked_path, leaked_path.replace("\\", "/"), leaked_path.replace("/", "\\")):
+        assert variant not in json.dumps(api_payload)
 
 
 def test_c12_stale_execution_claim_is_blocked_and_audited(access_env, monkeypatch):
@@ -402,3 +457,306 @@ def test_c10_c19_canonical_mutation_and_tr_scope_contracts_remain_separate():
         "promote_source_snapshot", "commit_source_snapshot", "merge_source_snapshot",
         "sync_source_snapshot",
     } & set(api_server_tools.SCHEMAS)
+
+
+def test_cli_request_approve_materialize_access_run_share_one_snapshot(
+    snapshot_env, monkeypatch,
+):
+    """T#2 connected regression (rework of the prior TR0021 rejection): the snapshot the
+    CLI *requests* through the real worker-token HTTP boundary is the exact same
+    snapshot that human approval/materialization publishes and that the CLI later
+    reads/searches/globs/stats and runs a command against — never two disconnected
+    fixture rows. Also pins that no CLI response along the way ever carries the raw
+    filesystem locator or scratch path.
+    """
+    from modules.flow_gate.services import ai_invoke_service
+    from modules.flow_gate.services import snapshot_request_service
+
+    snapshot_env.row.update(
+        status="requested", stale=False, stale_detected_at=None,
+        created_at=None, source_revision=None, source_fingerprint=None,
+    )
+    monkeypatch.setattr(snapshot_request_service, "get_store", lambda: _Store())
+    monkeypatch.setattr(
+        snapshot_request_service.workflow_events, "create", lambda event: event,
+    )
+    monkeypatch.setattr(snapshot_request_service, "_notify", lambda *args: None)
+
+    def create(data):
+        snapshot_env.row.update(data)
+        snapshot_env.row.update(
+            snapshot_id="snap_test", status="requested",
+            requested_at="2026-09-24T00:00:00+00:00",
+        )
+        return dict(snapshot_env.row)
+
+    def transition(snapshot_id, decision, actor):
+        if snapshot_env.row["status"] != "requested":
+            return dict(snapshot_env.row), False
+        snapshot_env.row["status"] = decision
+        snapshot_env.row["approved_by" if decision == "approved" else "rejected_by"] = actor
+        return dict(snapshot_env.row), True
+
+    monkeypatch.setattr(snapshot_request_service.db, "create", create)
+    monkeypatch.setattr(snapshot_request_service.db, "transition", transition)
+    monkeypatch.setattr(
+        snapshot_request_service, "validate_request_authority",
+        lambda candidate, active: candidate,
+    )
+
+    # The one worker identity used from request all the way through run/access below —
+    # nothing here is swapped out for a different snapshot or a different run.
+    run = {
+        "project_id": "project", "group_id": "project.default.0517",
+        "run_id": "run-cli-worker", "token_id": "tok-cli-worker",
+        "provider_id": "provider-cli", "action_scope": "edit",
+        "doc_ref": "flowgate.default.0517.0021-TR",
+    }
+    token = {
+        "token_id": "tok-cli-worker", "ai_run_id": "run-cli-worker",
+        "project": "project", "group_id": "project.default.0517",
+        "action_scope": "edit", "doc_ref": "flowgate.default.0517.0021-TR",
+        "issued_to": "cli-worker",
+    }
+    monkeypatch.setattr(snapshot_routes.token_service, "verify", lambda raw: token)
+    monkeypatch.setattr(ai_invoke_service, "get_run_record", lambda run_id: run)
+    monkeypatch.setattr(access.usage_db, "record", lambda data: dict(data))
+    monkeypatch.setattr(access.workflow_events, "create", lambda data: data)
+
+    app = FastAPI()
+    app.include_router(snapshot_routes.router)
+    from modules.flow_gate.auth.middleware import get_current_user
+    app.dependency_overrides[get_current_user] = lambda: {"user_id": "human"}
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer raw-cli-token"}
+
+    requested = client.post(
+        "/api/v1/snapshots/cli/request", headers=headers,
+        json={"reason": "cli worker needs a real tree", "scope": "single_file",
+              "requested_paths": ["one.txt"], "purpose": "run tests",
+              "source_kind": "current_worktree"},
+    )
+    assert requested.status_code == 200
+    snapshot_id = requested.json()["request"]["snapshot_id"]
+    assert snapshot_id == snapshot_env.row["snapshot_id"]
+    assert "locator" not in requested.text and "snapshot_path" not in requested.text
+
+    # The SAME snapshot_id from the CLI request above is what human approval and the
+    # CLI's OWN materialize call (not the separate human /approve route) publish, and
+    # what every access/run call below operates on.
+    snapshot_request_service.decide(snapshot_id, "approved", "human")
+    assert snapshot_env.row["status"] == "approved"
+
+    materialized = client.post(
+        f"/api/v1/snapshots/cli/{snapshot_id}/materialize", headers=headers,
+    )
+    assert materialized.status_code == 200, materialized.text
+    assert snapshot_env.row["status"] == "created"
+    materialized_body = materialized.json()
+    assert materialized_body["snapshot"]["snapshot_id"] == snapshot_id
+    assert materialized_body["snapshot"]["status"] == "active"
+    assert "locator" not in materialized.text
+    assert "snapshot_path" not in materialized.text
+    assert str(snapshot_env.final()) not in materialized.text
+
+    for operation, extra in (
+        ("read", {"path": "one.txt"}),
+        ("search", {"pattern": "one", "glob": "*.txt"}),
+        ("glob", {"pattern": "*.txt"}),
+        ("stat", {"path": "one.txt"}),
+    ):
+        response = client.post(
+            f"/api/v1/snapshots/cli/{snapshot_id}/access", headers=headers,
+            json={"operation": operation, **extra},
+        )
+        assert response.status_code == 200, response.text
+        assert "locator" not in response.text
+        assert str(snapshot_env.final()) not in response.text
+
+    # Run a REAL child process through the CLI boundary. It prints all three host paths
+    # that execute() itself injects (cwd, TEMP, TMP), covering the leak a mocked Popen
+    # returning only "one" could never observe, AND writes those same paths into a file
+    # inside the snapshot itself (0517.0021-TR rev4 rejection point 5: a leak written to
+    # disk and re-consumed through access read/search must come out redacted too, not
+    # just the directly captured stdout/stderr).
+    print_and_write_runtime_paths = (
+        f'"{sys.executable}" -c "import os,sys;'
+        "open('runtime_paths.txt','w').write(os.getcwd()+chr(10)+str(os.environ.get('TEMP'))"
+        "+chr(10)+str(os.environ.get('TMP'))+chr(10));"
+        "print(os.getcwd());print(os.environ.get('TEMP'));print(os.environ.get('TMP'),file=sys.stderr)\""
+    )
+    executed = client.post(
+        f"/api/v1/snapshots/cli/{snapshot_id}/run", headers=headers,
+        json={"task_kind": "test", "command": print_and_write_runtime_paths},
+    )
+    assert executed.status_code == 200, executed.text
+    executed_body = executed.json()
+    assert executed_body["exit_code"] == 0
+    assert executed_body["snapshot"]["snapshot_id"] == snapshot_id
+    assert access.SNAPSHOT_PATH_REDACTION in executed_body["stdout"]
+    assert access.SNAPSHOT_PATH_REDACTION in executed_body["stderr"]
+    combined_output = executed_body["stdout"] + executed_body["stderr"]
+    raw_locators = (
+        snapshot_env.scratch.resolve(),
+        snapshot_env.final().resolve(),
+        (snapshot_env.final() / "source").resolve(),
+        (snapshot_env.final() / ".flowgate-tmp").resolve(),
+    )
+    for raw_path in raw_locators:
+        raw = str(raw_path)
+        assert raw not in combined_output
+        assert raw.replace("\\", "/") not in combined_output
+        assert raw.replace("/", "\\") not in combined_output
+    assert "locator" not in executed.text
+    assert "snapshot_path" not in executed.text
+    assert str(snapshot_env.final()) not in executed.text
+
+    # Read the file the subprocess just wrote inside the snapshot back through access
+    # read — the raw paths it captured to disk must be redacted on the way out too.
+    read_back = client.post(
+        f"/api/v1/snapshots/cli/{snapshot_id}/access", headers=headers,
+        json={"operation": "read", "path": "runtime_paths.txt"},
+    )
+    assert read_back.status_code == 200, read_back.text
+    assert access.SNAPSHOT_PATH_REDACTION in read_back.json()["content"]
+    for raw_path in raw_locators:
+        raw = str(raw_path)
+        assert raw not in read_back.text
+        assert raw.replace("\\", "/") not in read_back.text
+        assert raw.replace("/", "\\") not in read_back.text
+    assert "locator" not in read_back.text
+
+    # search must redact the same on-disk leak inside matches[].text.
+    search_back = client.post(
+        f"/api/v1/snapshots/cli/{snapshot_id}/access", headers=headers,
+        json={"operation": "search", "pattern": ".+", "glob": "runtime_paths.txt"},
+    )
+    assert search_back.status_code == 200, search_back.text
+    search_body = search_back.json()
+    assert search_body["matches"], "search must find the file execute() wrote inside the snapshot"
+    matched_text = "".join(item["text"] for item in search_body["matches"])
+    assert access.SNAPSHOT_PATH_REDACTION in matched_text
+    for raw_path in raw_locators:
+        raw = str(raw_path)
+        assert raw not in search_back.text
+        assert raw.replace("\\", "/") not in search_back.text
+        assert raw.replace("/", "\\") not in search_back.text
+    assert "locator" not in search_back.text
+
+    # A materialization failure stored with raw exception text (e.g. an OSError's own
+    # str()) must not resurface a real absolute path through this same CLI boundary.
+    snapshot_env.row.update(
+        status="failed",
+        failure_reason=(
+            "copy interrupted: [Errno 13] Permission denied: "
+            f"'{snapshot_env.final() / 'source' / 'one.txt'}'"
+        ),
+    )
+    failed_access = client.post(
+        f"/api/v1/snapshots/cli/{snapshot_id}/access", headers=headers,
+        json={"operation": "status"},
+    )
+    assert failed_access.status_code == 409, failed_access.text
+    assert access.SNAPSHOT_PATH_REDACTION in failed_access.json()["detail"]["error"]["message"]
+    assert str(snapshot_env.final()) not in failed_access.text
+
+
+def test_api_tool_call_boundary_redacts_real_subprocess_file_round_trip(
+    snapshot_env, monkeypatch,
+):
+    """0517.0021-TR rev4 rejection point 6: the API tool-call boundary (api_server_tools.py)
+    must share the exact same redaction contract as the CLI HTTP boundary (proven above by
+    ``test_cli_request_approve_materialize_access_run_share_one_snapshot``) rather than a
+    parallel implementation. Drives a real subprocess through
+    ``api_server_tools.run_source_snapshot`` and reads the file it wrote inside the
+    snapshot back through ``api_server_tools.access_source_snapshot``.
+    """
+    monkeypatch.setattr(access.usage_db, "record", lambda data: dict(data))
+    monkeypatch.setattr(access.workflow_events, "create", lambda data: data)
+    access.materialization.materialize("snap_test", "human")
+
+    token = {
+        "token_id": "token", "ai_run_id": "run", "project": "project",
+        "group_id": "project.default.0517", "issued_to": "worker",
+    }
+    monkeypatch.setattr(api_server_tools.token_service, "verify", lambda raw: token)
+    monkeypatch.setattr(
+        api_server_tools.snapshot_request_service, "validate_request_authority",
+        lambda candidate, active: candidate,
+    )
+    run = {
+        "token_id": "token", "current_token_id": "token", "run_id": "run",
+        "project_id": "project", "group_id": "project.default.0517",
+        "provider_id": "provider",
+    }
+
+    print_and_write_runtime_paths = (
+        f'"{sys.executable}" -c "import os,sys;'
+        "open('runtime_paths.txt','w').write(os.getcwd()+chr(10)+str(os.environ.get('TEMP'))"
+        "+chr(10)+str(os.environ.get('TMP'))+chr(10));"
+        "print(os.getcwd());print(os.environ.get('TEMP'));print(os.environ.get('TMP'),file=sys.stderr)\""
+    )
+    status, result = api_server_tools.run_source_snapshot(
+        run, "raw-token",
+        {"snapshot_id": "snap_test", "task_kind": "test", "command": print_and_write_runtime_paths},
+        remaining_sec=30.0,
+    )
+    assert status == 200, result
+    assert access.SNAPSHOT_PATH_REDACTION in result["stdout"]
+    assert access.SNAPSHOT_PATH_REDACTION in result["stderr"]
+    raw_locators = (
+        snapshot_env.scratch.resolve(),
+        snapshot_env.final().resolve(),
+        (snapshot_env.final() / "source").resolve(),
+        (snapshot_env.final() / ".flowgate-tmp").resolve(),
+    )
+    combined_output = result["stdout"] + result["stderr"]
+    dumped = json.dumps(result)
+    for raw_path in raw_locators:
+        raw = str(raw_path)
+        assert raw not in combined_output
+        assert raw not in dumped
+        assert raw.replace("\\", "/") not in dumped
+        assert raw.replace("/", "\\") not in dumped
+
+    read_status, read_result = api_server_tools.access_source_snapshot(
+        run, "raw-token",
+        {"snapshot_id": "snap_test", "operation": "read", "path": "runtime_paths.txt"},
+    )
+    assert read_status == 200, read_result
+    assert access.SNAPSHOT_PATH_REDACTION in read_result["content"]
+    read_dumped = json.dumps(read_result)
+    for raw_path in raw_locators:
+        assert str(raw_path) not in read_dumped
+
+    search_status, search_result = api_server_tools.access_source_snapshot(
+        run, "raw-token",
+        {
+            "snapshot_id": "snap_test", "operation": "search",
+            "pattern": ".+", "glob": "runtime_paths.txt",
+        },
+    )
+    assert search_status == 200, search_result
+    matched_text = "".join(item["text"] for item in search_result["matches"])
+    assert access.SNAPSHOT_PATH_REDACTION in matched_text
+    search_dumped = json.dumps(search_result)
+    for raw_path in raw_locators:
+        assert str(raw_path) not in search_dumped
+
+
+def test_lineage_authorization_rejects_forged_axes(access_env):
+    access_env.row["chain_id"] = "chain-0517"
+    successor = {**access_env.run, "run_id": "successor", "chain_id": "chain-0517"}
+    assert access.access(
+        successor, {"snapshot_id": "snap_access", "operation": "status"}
+    )[0] == 200
+    for change in (
+        {"chain_id": "forged"}, {"group_id": "other.group"},
+        {"project_id": "other"},
+    ):
+        with pytest.raises(access.SnapshotAccessError) as caught:
+            access.access(
+                {**successor, **change},
+                {"snapshot_id": "snap_access", "operation": "status"},
+            )
+        assert caught.value.status == 403

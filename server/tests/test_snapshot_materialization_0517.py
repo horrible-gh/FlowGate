@@ -525,10 +525,15 @@ def test_sqlite_lifecycle_state_machine_queries(tmp_path, monkeypatch):
         Path(__file__).parents[1] / "sql" / "migrations" / "sqlite"
         / "116_snapshot_materialization.sql"
     ).read_text(encoding="utf-8")
+    lineage_sql = (
+        Path(__file__).parents[1] / "sql" / "migrations" / "sqlite"
+        / "118_snapshot_lineage.sql"
+    ).read_text(encoding="utf-8")
     connection = sqlite3.connect(tmp_path / "lifecycle.sqlite")
     connection.row_factory = sqlite3.Row
     connection.executescript(request_sql)
     connection.executescript(lifecycle_sql)
+    connection.executescript(lineage_sql)
 
     class Store:
         def _execute(self, sql, params):
@@ -731,8 +736,8 @@ def test_c1_to_c13_connected_request_pending_approve_read_stale_cleanup(
     }
     run = {
         "token_id": "token", "current_token_id": "token", "run_id": "run",
-        "project_id": "project", "group_id": "project.default.0517",
-        "provider_id": "provider",
+        "chain_id": "chain-0517", "project_id": "project",
+        "group_id": "project.default.0517", "provider_id": "provider",
     }
     monkeypatch.setattr(api_server_tools.token_service, "verify", lambda raw: token)
     monkeypatch.setattr(
@@ -750,7 +755,12 @@ def test_c1_to_c13_connected_request_pending_approve_read_stale_cleanup(
     )
     assert status == 201
     assert requested["status"] == "requested"
+    assert snapshot_env.row["chain_id"] == "chain-0517"
     assert not snapshot_env.final().exists()
+    # run A exits before approval. The chain capability remains pending for a verified successor.
+    closed = materialize.cleanup_for_run("run")
+    assert closed == {"matched": 0, "closed": 0, "deleted": 0, "cleanup_failed": 0}
+    assert snapshot_env.row["status"] == "requested"
     assert snapshot_routes.pending(
         project_id="project", group_id="project.default.0517", user={"user_id": "human"}
     )["requests"][0]["snapshot_id"] == "snap_test"
@@ -766,7 +776,8 @@ def test_c1_to_c13_connected_request_pending_approve_read_stale_cleanup(
     app = FastAPI()
     app.include_router(snapshot_routes.router)
     app.dependency_overrides[get_current_user] = lambda: {"user_id": "human"}
-    approved = TestClient(app).post("/api/v1/snapshots/snap_test/approve", json={})
+    client = TestClient(app)
+    approved = client.post("/api/v1/snapshots/snap_test/approve", json={})
     assert approved.status_code == 200
     created = approved.json()
     assert created["request"]["status"] == "created"
@@ -777,9 +788,11 @@ def test_c1_to_c13_connected_request_pending_approve_read_stale_cleanup(
         snapshot_access_service.usage_db, "record",
         lambda data: usages.append(dict(data)) or dict(data),
     )
+    # Server-admitted run B carries the same chain; it consumes after run A has ended.
     access_run = {
         "project_id": "project", "group_id": "project.default.0517",
-        "run_id": "run", "token_id": "token",
+        "run_id": "run-successor", "chain_id": "chain-0517",
+        "token_id": "token-successor",
     }
     read_status, read_result = snapshot_access_service.access(
         access_run,
@@ -788,6 +801,30 @@ def test_c1_to_c13_connected_request_pending_approve_read_stale_cleanup(
     assert read_status == 200
     assert read_result["content"] == "one"
     assert read_result["snapshot"]["source_kind"] == "current_worktree"
+
+    # The same delayed-approval successor consumes through the external CLI HTTP boundary.
+    successor_token = {
+        **token, "token_id": "token-successor", "ai_run_id": "run-successor",
+    }
+    monkeypatch.setattr(snapshot_routes.token_service, "verify", lambda raw: successor_token)
+    from modules.flow_gate.services import ai_invoke_service
+    monkeypatch.setattr(ai_invoke_service, "get_run_record", lambda run_id: access_run)
+    cli_read = client.post(
+        "/api/v1/snapshots/cli/snap_test/access",
+        headers={"Authorization": "Bearer successor-token"},
+        json={"operation": "read", "path": "one.txt"},
+    )
+    assert cli_read.status_code == 200
+    assert cli_read.json()["content"] == "one"
+    monkeypatch.setattr(
+        ai_invoke_service, "get_run_record",
+        lambda run_id: {**access_run, "run_id": "unrelated", "chain_id": "other-chain"},
+    )
+    cli_denied = client.get(
+        "/api/v1/snapshots/cli/snap_test/status",
+        headers={"Authorization": "Bearer successor-token"},
+    )
+    assert cli_denied.status_code == 403
 
     (snapshot_env.worktree / "one.txt").write_text("changed", encoding="utf-8")
     stale_status, stale_result = snapshot_access_service.access(

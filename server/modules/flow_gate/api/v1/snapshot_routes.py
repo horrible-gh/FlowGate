@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.services import token_service,snapshot_request_service as service
 from modules.flow_gate.services import snapshot_materialization_service as materialization
+from modules.flow_gate.services import snapshot_access_service as snapshot_access
 from modules.flow_gate.db import snapshot_requests as db, ai_invoke_runs
 router=APIRouter(prefix="/api/v1/snapshots",tags=["Snapshots"])
 class RequestIn(BaseModel):
@@ -16,10 +17,12 @@ def request_snapshot(body:RequestIn,request:Request):
  raw=request.headers.get("Authorization","").removeprefix("Bearer ").strip()
  try: token=token_service.verify(raw)
  except Exception: raise HTTPException(403,"snapshot requests require an AI worker token")
- run=ai_invoke_runs.get(token.get("ai_run_id")) or {}
+ from modules.flow_gate.services import ai_invoke_service
+ run=(ai_invoke_service.get_run_record(str(token.get("ai_run_id") or ""))
+      or ai_invoke_runs.get(token.get("ai_run_id")) or {})
  try:
   service.validate_request_authority(token,run)
-  data=body.model_dump()|{"project_id":token.get("project") or token.get("project_id") or run.get("project_id"),"group_id":token.get("group_id") or run.get("group_id"),"run_id":token.get("ai_run_id"),"token_id":token.get("token_id"),"provider_id":token.get("provider_id") or run.get("provider_id")}
+  data=body.model_dump()|{"project_id":token.get("project") or token.get("project_id") or run.get("project_id"),"group_id":token.get("group_id") or run.get("group_id"),"run_id":token.get("ai_run_id"),"chain_id":run.get("chain_id") or run.get("run_id"),"token_id":token.get("token_id"),"provider_id":token.get("provider_id") or run.get("provider_id")}
   return {"ok":True,"request":service.create_request(data,token["issued_to"])}
  except service.SnapshotRequestError as exc: _error(exc)
 @router.get("/pending")
@@ -64,3 +67,68 @@ def approve(snapshot_id:str,user=Depends(get_current_user)):
 def reject(snapshot_id:str,user=Depends(get_current_user)):
  try: return {"ok":True,"request":service.decide(snapshot_id,"rejected",user["user_id"])}
  except service.SnapshotRequestError as exc: _error(exc)
+
+def _cli_context(request:Request):
+ raw=request.headers.get("Authorization","").removeprefix("Bearer ").strip()
+ try: token=token_service.verify(raw)
+ except Exception: raise HTTPException(403,detail={"code":"snapshot_forbidden","message":"live AI worker token required"})
+ from modules.flow_gate.services import ai_invoke_service
+ run=(ai_invoke_service.get_run_record(str(token.get("ai_run_id") or ""))
+      or ai_invoke_runs.get(token.get("ai_run_id")) or {})
+ try: service.validate_request_authority(token,run)
+ except service.SnapshotRequestError as exc: _error(exc)
+ return raw,token,run
+
+@router.post("/cli/request")
+def cli_request_snapshot(body:RequestIn,request:Request):
+ _raw,token,run=_cli_context(request)
+ data=body.model_dump()|{"project_id":run.get("project_id"),"group_id":run.get("group_id"),
+  "run_id":run.get("run_id"),"chain_id":run.get("chain_id") or run.get("run_id"),
+  "token_id":token.get("token_id"),"provider_id":run.get("provider_id")}
+ try: row=service.create_request(data,str(token.get("issued_to") or "cli-worker"))
+ except service.SnapshotRequestError as exc: _error(exc)
+ return {"ok":True,"request":row,"materialized":False,"requires_human_decision":True}
+
+@router.get("/cli/{snapshot_id}/status")
+def cli_snapshot_status(snapshot_id:str,request:Request):
+ _raw,_token,run=_cli_context(request)
+ try:
+  row=snapshot_access._authorize(run,snapshot_id)
+  return {"ok":True,"snapshot":snapshot_access._metadata(row)}
+ except snapshot_access.SnapshotAccessError as exc:
+  raise HTTPException(exc.status,detail=exc.payload("status"))
+
+@router.post("/cli/{snapshot_id}/materialize")
+def cli_materialize_snapshot(snapshot_id:str,request:Request):
+ _raw,_token,run=_cli_context(request)
+ try:
+  snapshot_access._authorize(run,snapshot_id)
+  row=materialization.materialize(snapshot_id,"ai-run:"+str(run.get("run_id") or ""))
+  return {"ok":True,"snapshot":snapshot_access._metadata(row)}
+ except snapshot_access.SnapshotAccessError as exc:
+  raise HTTPException(exc.status,detail=exc.payload("materialize"))
+ except service.SnapshotRequestError as exc: _error(exc)
+
+@router.post("/cli/{snapshot_id}/access")
+def cli_access_snapshot(snapshot_id:str,body:dict,request:Request):
+ _raw,_token,run=_cli_context(request)
+ tool_input=dict(body); tool_input["snapshot_id"]=snapshot_id
+ try:
+  status,payload=snapshot_access.access(run,tool_input)
+ except snapshot_access.SnapshotAccessError as exc:
+  status,payload=exc.status,exc.payload(str(tool_input.get("operation") or "access"))
+ if status>=400: raise HTTPException(status,detail=payload)
+ return payload
+
+@router.post("/cli/{snapshot_id}/run")
+def cli_run_snapshot(snapshot_id:str,body:dict,request:Request):
+ _raw,_token,run=_cli_context(request)
+ tool_input=dict(body); tool_input["snapshot_id"]=snapshot_id
+ try:
+  status,payload=snapshot_access.execute(run,tool_input,remaining_sec=300.0,
+   source_tool_calls=int(run.get("source_tool_calls") or 0),
+   snapshot_reads=int(run.get("snapshot_reads") or 0))
+ except snapshot_access.SnapshotAccessError as exc:
+  status,payload=exc.status,exc.payload("execute")
+ if status>=400: raise HTTPException(status,detail=payload)
+ return payload

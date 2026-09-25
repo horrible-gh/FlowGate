@@ -37,6 +37,64 @@ MUTATION_TOOL_NAMES = frozenset({
 MAX_READ_BYTES = 1024 * 1024
 MAX_SEARCH_FILE_BYTES = 2 * 1024 * 1024
 MAX_RESULTS = 500
+SNAPSHOT_PATH_REDACTION = "<flowgate-snapshot-scratch>"
+
+
+def _scratch_root_for(row: dict | None) -> Path | None:
+    """The token scratch directory a snapshot's final/source/temp locators all live under.
+
+    ``<scratch>/source-snapshots/<snapshot_id>`` is the final locator, ``.../source`` is
+    the read/search/run root, and ``.../.flowgate-tmp`` is the run TEMP/TMP directory — all
+    three nest under this one root, so redacting this single prefix closes all of them at
+    once. Computed straight from project_id/token_id (not from a materialized path) so it
+    is available even when materialization never published anything, e.g. a stored
+    ``failure_reason``. Best-effort: any failure here must never break a real response.
+    """
+    if not row:
+        return None
+    project_id = str(row.get("project_id") or "")
+    token_id = str(row.get("token_id") or "")
+    if not project_id or not token_id:
+        return None
+    try:
+        return Path(materialization.token_service.scratch_dir_path(project_id, token_id)).resolve()
+    except Exception:
+        return None
+
+
+def _redact_text(value: str, roots: tuple[Path | None, ...]) -> str:
+    needles: set[str] = set()
+    for root in roots:
+        if root is None:
+            continue
+        resolved = str(root)
+        needles.update({resolved, resolved.replace("\\", "/"), resolved.replace("/", "\\")})
+    if not needles:
+        return value
+    flags = re.IGNORECASE if os.name == "nt" else 0
+    for needle in sorted((item for item in needles if item), key=len, reverse=True):
+        value = re.sub(re.escape(needle), SNAPSHOT_PATH_REDACTION, value, flags=flags)
+    return value
+
+
+def sanitize_public(value: Any, roots: tuple[Path | None, ...]) -> Any:
+    """Recursively redact runtime scratch/snapshot paths from a worker-facing payload.
+
+    This is the single sanitizer both the API tool-call path (api_server_tools.py) and
+    the CLI HTTP path (snapshot_routes.py ``/cli/...``) rely on: ``access()``, ``execute()``,
+    and ``SnapshotAccessError.payload()`` all route their return value through here before
+    it leaves this module, so a raw locator can never surface through content, search
+    matches, stdout/stderr, or an error message/detail on either boundary.
+    """
+    if isinstance(value, str):
+        return _redact_text(value, roots)
+    if isinstance(value, dict):
+        return {key: sanitize_public(item, roots) for key, item in value.items()}
+    if isinstance(value, list):
+        return [sanitize_public(item, roots) for item in value]
+    if isinstance(value, tuple):
+        return tuple(sanitize_public(item, roots) for item in value)
+    return value
 
 
 class SnapshotAccessError(ValueError):
@@ -57,7 +115,7 @@ class SnapshotAccessError(ValueError):
         error_details = dict(self.details)
         if self.state:
             error_details["state"] = self.state
-        return {
+        result = {
             "ok": False,
             "op": operation,
             "snapshot_id": self.snapshot_id,
@@ -68,6 +126,18 @@ class SnapshotAccessError(ValueError):
                 "details": error_details,
             },
         }
+        # message/details can carry a stored failure_reason or exception text that leaked
+        # a raw scratch path (e.g. an OSError str()); this is the one place every error
+        # this module raises funnels through before an API or CLI caller renders it, so it
+        # must redact even when the raise site itself never touched a materialized path.
+        row = None
+        if self.snapshot_id:
+            try:
+                row = request_db.get(self.snapshot_id)
+            except Exception:
+                row = None
+        roots = (_scratch_root_for(row),) if row else ()
+        return sanitize_public(result, roots)
 
 
 def _run_axis(run: dict, key: str) -> str:
@@ -75,6 +145,7 @@ def _run_axis(run: dict, key: str) -> str:
         "project_id": ("project_id", "project"),
         "group_id": ("group_id", "group"),
         "run_id": ("run_id", "ai_run_id"),
+        "chain_id": ("chain_id",),
         "token_id": ("token_id", "current_token_id"),
     }
     for alias in aliases[key]:
@@ -91,13 +162,25 @@ def _authorize(run: dict, snapshot_id: str) -> dict:
             404, "snapshot_not_found", "snapshot does not exist",
             state="missing", snapshot_id=snapshot_id,
         )
-    for key in ("project_id", "group_id", "run_id"):
+    for key in ("project_id", "group_id"):
         if str(row.get(key) or "") != _run_axis(run, key):
             raise SnapshotAccessError(
                 403, "snapshot_forbidden",
-                "snapshot belongs to a different project, group, or AI run",
+                "snapshot belongs to a different project, group, or AI run lineage",
                 state="forbidden", snapshot_id=snapshot_id,
             )
+    owner_run = str(row.get("run_id") or "")
+    consumer_run = _run_axis(run, "run_id")
+    owner_chain = str(row.get("chain_id") or "")
+    consumer_chain = _run_axis(run, "chain_id")
+    if owner_run != consumer_run and not (
+        owner_chain and consumer_chain and owner_chain == consumer_chain
+    ):
+        raise SnapshotAccessError(
+            403, "snapshot_forbidden",
+            "snapshot belongs to a different project, group, or AI run lineage",
+            state="forbidden", snapshot_id=snapshot_id,
+        )
     return row
 
 
@@ -107,7 +190,13 @@ def _public_state(row: dict) -> str:
     return str(row.get("status") or "failed")
 
 
-def _metadata(row: dict, *, locator: str | None = None) -> dict:
+def _metadata(row: dict) -> dict:
+    """Public snapshot metadata. Never includes the raw filesystem locator or any
+
+    scratch-directory path: this dict is returned verbatim to AI tool calls (API
+    provider tool results) and CLI HTTP responses, both of which are untrusted
+    consumers of the snapshot boundary.
+    """
     state = _public_state(row)
     result = {
         "snapshot_id": row.get("snapshot_id"),
@@ -125,8 +214,6 @@ def _metadata(row: dict, *, locator: str | None = None) -> dict:
         "stale": bool(row.get("stale")),
         "status": state,
     }
-    if locator is not None:
-        result["locator"] = locator
     if state == "stale":
         result["warning"] = STALE_WARNING
         result["validation_claim"] = STALE_EXPLANATION
@@ -191,7 +278,7 @@ def _refresh_available(run: dict, snapshot_id: str) -> tuple[dict, Path, dict]:
             state="failed", snapshot_id=snapshot_id,
             details={"reason": "snapshot_locator_invalid"},
         )
-    meta = _metadata(refreshed, locator=str(source_resolved))
+    meta = _metadata(refreshed)
     return refreshed, source_resolved, meta
 
 
@@ -251,7 +338,7 @@ def _record_usage(
 ) -> dict:
     return usage_db.record({
         "snapshot_id": row["snapshot_id"],
-        "run_id": row["run_id"],
+        "run_id": _run_axis(run, "run_id"),
         "token_id": _run_axis(run, "token_id") or row.get("token_id"),
         "access_kind": access_kind,
         "operation": operation,
@@ -266,7 +353,9 @@ def _record_usage(
 def _audit(event_type: str, row: dict, run: dict, **extra: Any) -> None:
     metadata = {
         "snapshot_id": row.get("snapshot_id"),
-        "run_id": row.get("run_id"),
+        "run_id": _run_axis(run, "run_id"),
+        "owner_run_id": row.get("run_id"),
+        "chain_id": row.get("chain_id"),
         "group_id": row.get("group_id"),
         "provider_id": row.get("provider_id"),
         "requested_reason": row.get("reason"),
@@ -401,7 +490,7 @@ def access(run: dict, tool_input: dict) -> tuple[int, dict]:
         payload.update({"matches": matches, "total": len(matches), "truncated": len(matches) >= maximum})
 
     _record_usage(run, row, access_kind="access", operation=operation)
-    return 200, payload
+    return 200, sanitize_public(payload, (_scratch_root_for(row),))
 
 
 def execute(
@@ -494,6 +583,7 @@ def execute(
     if after_meta.get("stale"):
         payload["warning"] = STALE_WARNING
         payload["validation_claim"] = STALE_EXPLANATION
+    roots = (_scratch_root_for(row),)
     if claim and after_meta.get("stale"):
         _audit(
             "snapshot_misuse_blocked", after, run,
@@ -508,8 +598,8 @@ def execute(
             "message": STALE_EXPLANATION,
             "details": {"state": "stale", "warning": STALE_WARNING},
         }
-        return 409, payload
-    return 200, payload
+        return 409, sanitize_public(payload, roots)
+    return 200, sanitize_public(payload, roots)
 
 
 def guard_promotion(run: dict, tool_name: str, tool_input: dict) -> None:

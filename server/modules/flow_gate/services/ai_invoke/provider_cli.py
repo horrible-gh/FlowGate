@@ -394,6 +394,13 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     # base (configured setting -> same-host loopback -> operator base).
     operator_api_base = run.get("api_base_url") or ""
     prompt, agent_api_base = _canonicalize_cli_prompt(prompt, operator_api_base)
+    snapshot_api_base = (agent_api_base or operator_api_base).rstrip("/") + "/snapshots/cli"
+    prompt = prompt.rstrip() + (
+        "\n\n## Source Snapshot CLI boundary\n"
+        "Use FLOWGATE_SNAPSHOT_API with Authorization: Bearer $FLOWGATE_TOKEN for "
+        "request, status, materialize, access (read/search/glob/stat), and allowed run calls. "
+        "Never consume a locator or scratch filesystem path directly.\n"
+    )
     # CLI providers authenticate themselves; a configured api_key is deliberately
     # NOT exported (leak prevention, L0006 §2.3).
     env = {
@@ -412,6 +419,7 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         "PIP_CACHE_DIR": str(scratch / "cache" / "pip"),
         "NPM_CONFIG_CACHE": str(scratch / "cache" / "npm"),
         "FLOWGATE_API_BASE": agent_api_base or operator_api_base,
+        "FLOWGATE_SNAPSHOT_API": snapshot_api_base,
     }
     decision, reason = _resolve_cli_launch(provider, run, cmd)
     if decision is None:

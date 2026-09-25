@@ -301,8 +301,8 @@ def request_source_snapshot(run: dict, raw_token: str, tool_input: dict) -> tupl
     data = dict(tool_input)
     data.update({
         "project_id":run.get("project_id"), "group_id":run.get("group_id"),
-        "run_id":run.get("run_id"), "token_id":token.get("token_id"),
-        "provider_id":run.get("provider_id"),
+        "run_id":run.get("run_id"), "chain_id":run.get("chain_id") or run.get("run_id"),
+        "token_id":token.get("token_id"), "provider_id":run.get("provider_id"),
     })
     try:
         row = snapshot_request_service.create_request(data, str(token.get("issued_to") or "ai-worker"))
@@ -310,7 +310,7 @@ def request_source_snapshot(run: dict, raw_token: str, tool_input: dict) -> tupl
         raise ToolError(exc.status, exc.code, exc.message) from exc
     public = {key: row.get(key) for key in (
         "snapshot_id", "status", "scope", "requested_paths", "source_kind",
-        "project_id", "group_id", "run_id", "token_id", "provider_id", "requested_at",
+        "project_id", "group_id", "run_id", "chain_id", "token_id", "provider_id", "requested_at",
     )}
     return 201, {
         "ok":True, "request_id":row.get("snapshot_id"), "status":"requested",

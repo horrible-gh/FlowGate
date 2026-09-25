@@ -35,10 +35,11 @@ def validate_request(data):
  if scope=="selected_files" and not clean: raise SnapshotRequestError(422,"invalid_scope_paths","selected_files requires paths")
  if scope=="whole_source" and clean: raise SnapshotRequestError(422,"invalid_scope_paths","whole_source must not include paths")
  n["requested_paths"]=list(dict.fromkeys(clean)); n["source_kind"]=SOURCE_KIND
+ n["chain_id"]=str(n.get("chain_id") or "").strip() or None
  return n
 
 def _meta(row):
- keys=("snapshot_id","run_id","group_id","provider_id","reason","purpose","scope","requested_paths","source_kind","requested_at","approved_by")
+ keys=("snapshot_id","run_id","chain_id","group_id","provider_id","reason","purpose","scope","requested_paths","source_kind","requested_at","approved_by")
  return json.dumps({k:row.get(k) for k in keys},ensure_ascii=False,sort_keys=True)
 
 def _notify(row,status):

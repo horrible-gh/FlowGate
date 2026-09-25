@@ -928,6 +928,10 @@ def _close_unmaterialized_locked(*, actor: str, trigger: str,
                                  run_id: str | None = None,
                                  group_id: str | None = None) -> list[dict]:
     candidates = db.list_unmaterialized(run_id=run_id, group_id=group_id)
+    if run_id is not None:
+        candidates = [row for row in candidates if not row.get("chain_id")]
+        if not candidates:
+            return []
     # Acquire in a stable order so overlapping run/group cleanup cannot deadlock.
     with ExitStack() as locks:
         for snapshot_id in sorted(row["snapshot_id"] for row in candidates):
@@ -945,7 +949,8 @@ def cleanup_for_run(run_id: str, actor: str = "snapshot-run-cleanup") -> dict:
     closed = _close_unmaterialized_locked(
         run_id=run_id, actor=actor, trigger="run_finished",
     )
-    rows = db.list_created(run_id=run_id)
+    # Chain-bound capabilities outlive one hop; group cleanup/TTL remains authoritative.
+    rows = [row for row in db.list_created(run_id=run_id) if not row.get("chain_id")]
     results = [cleanup(row["snapshot_id"], actor, trigger="run_finished") for row in rows]
     return {
         "matched": len(closed) + len(rows),

@@ -27,12 +27,12 @@ def create(data):
     at = data.get("requested_at") or now_iso()
     get_store()._execute(
         "INSERT INTO snapshot_requests "
-        "(snapshot_id,project_id,group_id,run_id,token_id,provider_id,reason,scope,"
+        "(snapshot_id,project_id,group_id,run_id,chain_id,token_id,provider_id,reason,scope,"
         "requested_paths,purpose,source_kind,status,requested_at,source_revision,source_fingerprint) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
-            sid, data["project_id"], data["group_id"], data["run_id"], data["token_id"],
-            data["provider_id"], data["reason"], data["scope"],
+            sid, data["project_id"], data["group_id"], data["run_id"], data.get("chain_id"),
+            data["token_id"], data["provider_id"], data["reason"], data["scope"],
             json.dumps(data["requested_paths"], ensure_ascii=False), data["purpose"],
             data["source_kind"], "requested", at, data.get("source_revision"),
             data.get("source_fingerprint"),
@@ -65,8 +65,10 @@ def list_pending(project_id=None, group_id=None):
     ]
 
 
-def list_created(project_id=None, group_id=None, run_id=None):
+def list_created(project_id=None, group_id=None, run_id=None, *, include_lineage=True):
     where = ["status='created'"]
+    if not include_lineage:
+        where.append("(chain_id IS NULL OR chain_id='')")
     params = []
     for column, value in (
         ("project_id", project_id), ("group_id", group_id), ("run_id", run_id)
@@ -114,9 +116,11 @@ def transition(snapshot_id, decision, actor):
     return get(snapshot_id), changed == 1
 
 
-def list_unmaterialized(*, run_id=None, group_id=None):
+def list_unmaterialized(*, run_id=None, group_id=None, include_lineage=True):
     """List lifecycle-close candidates so callers can lock each snapshot first."""
     where = ["status IN ('requested','approved')"]
+    if not include_lineage:
+        where.append("(chain_id IS NULL OR chain_id='')")
     params = []
     if run_id:
         where.append("run_id=?")
@@ -134,12 +138,13 @@ def list_unmaterialized(*, run_id=None, group_id=None):
 
 
 def close_unmaterialized_for_run(run_id, actor):
-    """Make terminal requested/approved rows non-actionable while retaining history."""
+    """Close legacy run-bound rows; lineage capabilities survive for a successor."""
     stamp = now_iso()
-    rows = list_unmaterialized(run_id=run_id)
+    rows = list_unmaterialized(run_id=run_id, include_lineage=False)
     get_store()._execute_affected(
         "UPDATE snapshot_requests SET status='rejected',rejected_at=?,rejected_by=? "
-        "WHERE run_id=? AND status IN ('requested','approved')",
+        "WHERE run_id=? AND status IN ('requested','approved') "
+        "AND (chain_id IS NULL OR chain_id='')",
         [stamp, actor, run_id],
     )
     return [get(row["snapshot_id"]) for row in rows]
