@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from modules.flow_gate import process_service
 from modules.flow_gate.db import groups as db_groups
 from modules.flow_gate.services import git_service
-from modules.flow_gate.services.git import group_work_base
+from modules.flow_gate.services.git import group_work_base, worktree as worktree_service
 from modules.flow_gate.services.git.credentials import GitServiceError
 from modules.flow_gate.workflow.routers import workflow
 
@@ -406,3 +406,158 @@ def test_outbox_create_route_forwards_work_base_ref(monkeypatch):
     assert response.status_code == 200
     assert captured["work_base_ref"] == "flowgate-v0.2"
     assert captured["new_group_name"] == "New group"
+
+
+def test_connected_worktree_lifecycle_uses_durable_group_base(
+    repo, monkeypatch, tmp_path
+):
+    """A-H connected Git contract: retry/restart stay pinned and mutations stay local."""
+    # Give the selected source branch content absent from project main, and expose all
+    # refs through a real origin so the production fetch/worktree commands run unchanged.
+    assert _git(repo, "switch", "flowgate-v0.2").returncode == 0
+    (repo / "selected-marker.txt").write_text("selected\n", encoding="utf-8")
+    assert _git(repo, "add", "selected-marker.txt").returncode == 0
+    assert _git(repo, "commit", "-m", "selected base marker").returncode == 0
+    selected_at_creation = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    assert _git(repo, "switch", "main").returncode == 0
+    main_at_creation = _git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    origin = tmp_path / "origin.git"
+    assert _git(tmp_path, "init", "--bare", "-b", "main", str(origin)).returncode == 0
+    assert _git(repo, "remote", "add", "origin", str(origin)).returncode == 0
+    assert _git(repo, "push", "origin", "--all").returncode == 0
+
+    project_id = "connected"
+    project_name = "Connected"
+    selected_group = f"{project_id}.default.0001"
+    fallback_group = f"{project_id}.default.0002"
+    cfg = {
+        "enabled": 1,
+        "base_branch": "main",
+        "default_merge_target": "integration",
+    }
+    rows = {
+        selected_group: {"group_id": selected_group, "work_base_ref": "flowgate-v0.2"},
+        fallback_group: {"group_id": fallback_group, "work_base_ref": None},
+    }
+    states = {}
+    slots = tmp_path / "slots"
+    slots.mkdir()
+
+    monkeypatch.setattr(db_groups, "get_by_id", lambda gid: rows.get(gid))
+    monkeypatch.setattr(git_service.db_git, "get_config", lambda _pid: cfg)
+    monkeypatch.setattr(git_service, "_project_name", lambda _pid: project_name)
+    monkeypatch.setattr(git_service, "git_available", lambda: True)
+    monkeypatch.setattr(git_service, "_acquire_lock", lambda *_args: True)
+    monkeypatch.setattr(git_service.db_git, "release_lock", lambda *_args: None)
+    monkeypatch.setattr(git_service, "_load_secret_for", lambda _cfg: "")
+    monkeypatch.setattr(
+        git_service, "_provision_base_locked",
+        lambda *_args: {"status": "ready", "reason": None},
+    )
+    monkeypatch.setattr(
+        git_service, "src_root",
+        lambda _name, branch: repo if branch == "main" else slots / branch,
+    )
+    monkeypatch.setattr(git_service.db_git, "get_state", lambda gid: states.get(gid))
+
+    def register(gid, pid, branch):
+        states[gid] = {
+            "group_id": gid, "project_id": pid, "branch": branch,
+            "worktree_registered": 1, "initial_source_sync_at": None,
+        }
+
+    monkeypatch.setattr(git_service.db_git, "register_worktree", register)
+    monkeypatch.setattr(git_service.db_git, "clear_provision_failure", lambda _gid: None)
+    monkeypatch.setattr(git_service, "_fail_worktree", lambda *_args: None)
+    monkeypatch.setattr(git_service, "_emit", lambda *_args: None)
+    monkeypatch.setattr(git_service, "_emit_worktree_ready", lambda *_args, **_kwargs: None)
+
+    # H1 can fail before creation; the later H2/source-access retry resolves the same
+    # durable row and starts from the selected branch, never from request-local state.
+    attempts = {"count": 0}
+
+    def provision(*_args):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            return {"status": "failed", "reason": "injected"}
+        return {"status": "ready", "reason": None}
+
+    monkeypatch.setattr(git_service, "_provision_base_locked", provision)
+    assert git_service.ensure_worktree(project_id, "default", selected_group) == "failed"
+    assert git_service.ensure_worktree(project_id, "default", selected_group) == "ok"
+    selected_branch = git_service.worktree_branch_name(project_id, "default", selected_group)
+    selected_wt = slots / selected_branch
+    assert (selected_wt / "selected-marker.txt").read_text(encoding="utf-8") == "selected\n"
+    assert _git(selected_wt, "rev-parse", "HEAD").stdout.strip() == selected_at_creation
+    assert _git(selected_wt, "rev-parse", "HEAD").stdout.strip() != main_at_creation
+
+    # Moving the source branch later cannot move an existing group.  The first-source
+    # clean/reset also targets the group's own frozen HEAD rather than the moving source.
+    assert _git(repo, "switch", "flowgate-v0.2").returncode == 0
+    (repo / "later-source.txt").write_text("later\n", encoding="utf-8")
+    assert _git(repo, "add", "later-source.txt").returncode == 0
+    assert _git(repo, "commit", "-m", "advance selected source").returncode == 0
+    assert _git(repo, "switch", "main").returncode == 0
+    monkeypatch.setattr(
+        worktree_service.db_tr_ledger, "commit_rows_by_group", lambda _gid: [],
+    )
+    monkeypatch.setattr(
+        git_service.db_git,
+        "set_initial_source_sync",
+        lambda gid, sha: states[gid].update(initial_source_sync_at="now", initial_source_sync_sha=sha),
+    )
+    sync = git_service.ensure_initial_group_source_sync(
+        project_id, "default", selected_group
+    )
+    assert sync == {"performed": True, "reason": "ok", "sha": selected_at_creation}
+    assert not (selected_wt / "later-source.txt").exists()
+
+    # Simulated restart/reprovision: delete only the registered worktree; the retained
+    # group branch is reattached at its frozen commit, independent of the moved source.
+    assert _git(repo, "worktree", "remove", "--force", str(selected_wt)).returncode == 0
+    states[selected_group]["worktree_registered"] = 1
+    assert git_service.ensure_worktree(project_id, "default", selected_group) == "ok"
+    assert _git(selected_wt, "rev-parse", "HEAD").stdout.strip() == selected_at_creation
+    assert not (selected_wt / "later-source.txt").exists()
+
+    # Representative mutation is confined to the group worktree.  Neither project main,
+    # the selected source branch, nor the independent finalize target is touched.
+    (selected_wt / "mutation.txt").write_text("group only\n", encoding="utf-8")
+    assert not (repo / "mutation.txt").exists()
+    assert _git(repo, "show", "flowgate-v0.2:mutation.txt").returncode != 0
+    assert cfg["default_merge_target"] == "integration"
+    assert rows[selected_group]["work_base_ref"] == "flowgate-v0.2"
+
+    # Legacy/main fallback is still main, and Git-disabled projects remain a no-op.
+    assert git_service.ensure_worktree(project_id, "default", fallback_group) == "ok"
+    fallback_branch = git_service.worktree_branch_name(project_id, "default", fallback_group)
+    fallback_wt = slots / fallback_branch
+    assert _git(fallback_wt, "rev-parse", "HEAD").stdout.strip() == main_at_creation
+    assert not (fallback_wt / "selected-marker.txt").exists()
+    monkeypatch.setattr(git_service.db_git, "get_config", lambda _pid: {"enabled": 0})
+    assert git_service.ensure_worktree("plain", "default", "plain.default.0001") == "skipped"
+
+
+def test_h1_async_and_h2_share_the_same_durable_resolver(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        git_service, "ensure_worktree",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or "ok",
+    )
+
+    class ImmediateThread:
+        def __init__(self, *, target, args, daemon):
+            self.target, self.args, self.daemon = target, args, daemon
+
+        def start(self):
+            self.target(*self.args)
+
+    import threading
+    monkeypatch.setattr(threading, "Thread", ImmediateThread)
+    git_service.ensure_worktree_async("p", "default", "p.default.1")
+    git_service.ensure_worktree("p", "default", "p.default.1", "remote_access")
+    assert calls == [
+        (("p", "default", "p.default.1", "workflow_decide"), {}),
+        (("p", "default", "p.default.1", "remote_access"), {}),
+    ]
