@@ -66,8 +66,21 @@ describe('v0.2 Dashboard / App Shell structure (T0011)', () => {
     }
   })
 
-  it('components/ (domain-free shared UI) holds nothing domain-specific yet', () => {
+  it('components/ (domain-free shared UI) holds only its README and the T0004 ui/ primitives', () => {
     const files = filesUnder(join(SRC, 'components')).map(rel)
-    expect(files).toEqual(['components/README.md'])
+    expect(files).toContain('components/README.md')
+    for (const file of files) {
+      expect(file === 'components/README.md' || file.startsWith('components/ui/')).toBe(true)
+    }
+  })
+
+  it('components/ui primitives own no feature/API/store/router meaning (T0004 §11)', () => {
+    const UI = filesUnder(join(SRC, 'components/ui')).filter((f) => /\.(ts|vue)$/.test(f))
+    expect(UI.length).toBeGreaterThan(0)
+    for (const file of UI) {
+      for (const spec of importsOf(read(file))) {
+        expect(spec, rel(file)).not.toMatch(/^@shared\/(api|projects|auth)|^axios$|^pinia$|^@\/features\/|^vue-router$/)
+      }
+    }
   })
 })

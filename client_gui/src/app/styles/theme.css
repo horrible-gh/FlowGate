@@ -28,6 +28,28 @@
   --fg2-rightbar-w: 390px;
   --fg2-font: Inter, Pretendard, 'Noto Sans KR', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
   color-scheme: dark;
+
+  /* Shared UI Primitive control/surface/tone tokens (T0004 §7, §5.1-§5.9). One value per
+     visual concept so Button/IconButton/Input/Textarea/Select/Toggle/Badge/Dropdown/Tooltip
+     never hardcode the same color/radius/spacing independently of each other. */
+  --fg2-control-radius: 8px;
+  --fg2-control-radius-sm: 7px;
+  --fg2-control-radius-lg: 9px;
+  --fg2-control-radius-pill: 999px;
+  --fg2-control-h-sm: 28px;
+  --fg2-control-h-md: 36px;
+  --fg2-control-h-lg: 44px;
+  --fg2-control-font-size: 13px;
+  --fg2-control-pad-x: 12px;
+  --fg2-control-surface: linear-gradient(180deg, rgba(18, 31, 47, 0.92), rgba(12, 24, 38, 0.92));
+  --fg2-control-surface-strong: linear-gradient(180deg, rgba(18, 31, 47, 0.98), rgba(12, 24, 38, 0.98));
+  --fg2-control-surface-flat: rgba(12, 24, 38, 0.78);
+  --fg2-control-fg: #c7d5e6;
+  --fg2-control-hover-border: rgba(130, 170, 220, 0.45);
+  --fg2-control-disabled-opacity: 0.75;
+  --fg2-control-disabled-opacity-strong: 0.55;
+  --fg2-control-invalid-border: rgba(255, 100, 120, 0.65);
+  --fg2-overlay-z: 9999;
 }
 
 @media (min-width: 1800px) {
