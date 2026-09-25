@@ -50,6 +50,12 @@
   --fg2-control-disabled-opacity-strong: 0.55;
   --fg2-control-invalid-border: rgba(255, 100, 120, 0.65);
   --fg2-overlay-z: 9999;
+
+  /* Shared Overlay Shell tokens (T0006 S11): ModalShell and ModelessShell both render a
+     floating panel surface with the same corner radius and elevation, so the two real
+     duplicates share one value instead of each hardcoding it. */
+  --fg2-overlay-radius: 12px;
+  --fg2-overlay-shadow: 0 24px 64px rgba(2, 6, 12, 0.55);
 }
 
 @media (min-width: 1800px) {
