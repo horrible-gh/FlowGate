@@ -243,6 +243,7 @@ const mergeTarget = ref('')
 const deleteTarget = ref('')
 const mergeResult = ref<{ source: string; target: string; code?: string; message?: string; files?: string[]; pushFailed?: boolean } | null>(null)
 const deleteResult = ref<{ branch: string; code?: string; message?: string } | null>(null)
+let pendingMergeTarget: string | null | undefined = undefined
 const showBranches = computed(() => props.view === 'all' || props.view === 'branches')
 const showManage = computed(() => props.view === 'all' || props.view === 'manage')
 const ordinary = computed(() => (catalog.value.branches || []).filter(b => b.kind === 'local' || b.kind === 'base'))
@@ -281,11 +282,55 @@ function deleteResultReasonText(result: { code?: string; message?: string }): st
   }
   return result.message || t('main.git_branch_manager.op_failed')
 }
-function syncSelections() {
-  const first = ordinary.value[0]?.name || ''
-  if (!createCandidates.value.some(b => b.name === createSource.value)) createSource.value = catalog.value.base_branch || first
-  if (!ordinary.value.some(b => b.name === mergeSource.value)) mergeSource.value = ordinary.value.find(b => b.name !== catalog.value.base_branch)?.name || first
-  if (!targetCandidates.value.some(b => b.name === mergeTarget.value)) mergeTarget.value = catalog.value.default_merge_target || catalog.value.base_branch || targetCandidates.value[0]?.name || ''
+function syncSelections(preferredMergeTarget: string | null | undefined = undefined) {
+  const rows = ordinary.value
+  const first = rows[0]?.name || ''
+  const hasOrdinary = (name: string | null | undefined) => !!name && rows.some(b => b.name === name)
+  const pickSource = (target: string) =>
+    rows.find(b => b.name !== target && b.name !== catalog.value.base_branch)?.name
+    || rows.find(b => b.name !== target)?.name
+    || ''
+  const pickTarget = (source: string) => {
+    const candidates = rows.filter(b => b.name !== source)
+    const preferred = preferredMergeTarget === null
+      ? catalog.value.base_branch
+      : preferredMergeTarget
+    for (const name of [
+      preferred,
+      mergeTarget.value,
+      catalog.value.default_merge_target,
+      catalog.value.base_branch,
+      candidates[0]?.name,
+    ]) {
+      if (name && candidates.some(b => b.name === name)) return name
+    }
+    return ''
+  }
+
+  if (!createCandidates.value.some(b => b.name === createSource.value)) {
+    createSource.value = catalog.value.base_branch || first
+  }
+
+  if (preferredMergeTarget !== undefined) {
+    mergeTarget.value = preferredMergeTarget || catalog.value.base_branch || ''
+  }
+  if (!hasOrdinary(mergeTarget.value)) {
+    mergeTarget.value =
+      (hasOrdinary(catalog.value.default_merge_target) ? catalog.value.default_merge_target : null)
+      || (hasOrdinary(catalog.value.base_branch) ? catalog.value.base_branch : null)
+      || first
+  }
+
+  if (!hasOrdinary(mergeSource.value) || mergeSource.value === mergeTarget.value) {
+    mergeSource.value = pickSource(mergeTarget.value)
+  }
+  if (!hasOrdinary(mergeTarget.value) || mergeTarget.value === mergeSource.value) {
+    mergeTarget.value = pickTarget(mergeSource.value)
+  }
+  if (!sourceCandidates.value.some(b => b.name === mergeSource.value)) {
+    mergeSource.value = pickSource(mergeTarget.value)
+  }
+
   if (!deleteCandidates.value.some(b => b.name === deleteTarget.value)) {
     deleteTarget.value = deleteCandidates.value.find(b => b.can_delete)?.name || deleteCandidates.value[0]?.name || ''
   }
@@ -300,7 +345,8 @@ async function load() {
       default_merge_target: data?.default_merge_target || null,
       branches: Array.isArray(data?.branches) ? data.branches : [],
     }
-    syncSelections()
+    syncSelections(pendingMergeTarget)
+    pendingMergeTarget = undefined
     emit('catalog', { state: 'ready', base_branch: catalog.value.base_branch, default_merge_target: catalog.value.default_merge_target })
   } catch (e: any) {
     // §4.1 — this catalog's own read failure never reaches (or blanks) the
@@ -344,6 +390,11 @@ async function setDefaultTarget(branch: string | null) {
         : t('main.git_branch_manager.target_cleared_toast'),
       'success',
     )
+    // 0612: a persistent target change must also retarget the merge form.
+    // Without this one-shot preference, load()->syncSelections() preserved a
+    // still-valid stale mergeTarget (often "main"), which then removed main
+    // from sourceCandidates even though the persisted target had changed.
+    pendingMergeTarget = branch
     await load()
   })
 }
