@@ -28,6 +28,11 @@ logger = logging.getLogger(__name__)
 SNAPSHOT_SCHEMA = 1
 SNAPSHOT_OWNER = "flowgate.source-snapshot"
 SNAPSHOT_NAMESPACE = "source-snapshots"
+# Reserved system user seeded by migration 038 (see services/q_service.py AI_SYSTEM_USER);
+# every users(user_id) FK in this environment is guaranteed to resolve it. Snapshot audit
+# events with no real human/AI-run actor record this instead of a free-text label, so
+# workflow_events.actor_user_id (NOT NULL REFERENCES users(user_id)) never rejects the insert.
+SYSTEM_ACTOR_USER_ID = "u-system"
 SNAPSHOT_TTL_HOURS = max(1, int(os.getenv("FLOWGATE_SNAPSHOT_TTL_HOURS", "24")))
 SNAPSHOT_SWEEP_INTERVAL_SECONDS = max(
     60, int(os.getenv("FLOWGATE_SNAPSHOT_SWEEP_INTERVAL_SECONDS", "900"))
@@ -678,7 +683,7 @@ def _record_event(event_type: str, row: dict, actor: str, from_state: str | None
     })
 
 
-def _record_create_failure(row: dict, actor: str, exc: Exception) -> dict:
+def _record_create_failure(row: dict, actor: str, exc: Exception, *, source: str | None = None) -> dict:
     reason = public_failure_reason(exc, row)
     stage = getattr(exc, "code", type(exc).__name__)
     with get_store().transaction():
@@ -687,11 +692,12 @@ def _record_create_failure(row: dict, actor: str, exc: Exception) -> dict:
             _record_event(
                 "state_changed", failed, actor, "approved", "failed",
                 error_code="snapshot_create_failed", failure_stage=stage, failure_reason=reason,
+                source=source,
             )
     return failed
 
 
-def _fail_creation(row: dict, actor: str, exc: BaseException):
+def _fail_creation(row: dict, actor: str, exc: BaseException, *, source: str | None = None):
     """Persist approved->failed for a materialization that did not publish, then raise.
 
     Every pre-publish failure (namespace preparation, claim creation, scan, copy, verify)
@@ -699,7 +705,7 @@ def _fail_creation(row: dict, actor: str, exc: BaseException):
     exceptions reach callers as the same scrubbed 409 ``snapshot_create_failed``.
     """
     try:
-        _record_create_failure(row, actor, exc)
+        _record_create_failure(row, actor, exc, source=source)
     except Exception:
         logger.exception("snapshot %s creation failure could not be persisted", row.get("snapshot_id"))
     if isinstance(exc, SnapshotRequestError):
@@ -731,7 +737,7 @@ def _recover_published(row: dict, final: Path, actor: str) -> dict:
             int(manifest["copied_file_count"]), int(manifest["copied_byte_size"]),
         )
     except Exception as exc:
-        _fail_creation(row, actor, exc)
+        _fail_creation(row, actor, exc, source="snapshot_recovery")
     with get_store().transaction():
         updated, changed = db.mark_created(
             row["snapshot_id"], created_at, expires_at, *published,
@@ -743,6 +749,7 @@ def _recover_published(row: dict, final: Path, actor: str) -> dict:
                 copied_byte_size=manifest["copied_byte_size"],
                 excluded=manifest.get("excluded"),
                 recovery="published_before_db_update",
+                source="snapshot_recovery",
             )
     return updated
 
@@ -866,7 +873,8 @@ def materialize(snapshot_id: str, actor: str) -> dict:
                     logger.warning("snapshot %s materialization claim could not be removed", snapshot_id, exc_info=True)
 
 
-def _mark_stale(row: dict, actor: str, current_revision: str | None, reason: str) -> dict:
+def _mark_stale(row: dict, actor: str, current_revision: str | None, reason: str,
+                *, source: str | None = None) -> dict:
     detected_at = now_iso()
     with get_store().transaction():
         updated, changed = db.mark_stale(row["snapshot_id"], detected_at)
@@ -877,11 +885,12 @@ def _mark_stale(row: dict, actor: str, current_revision: str | None, reason: str
                 current_source_revision=current_revision,
                 stale_detected_at=detected_at,
                 stale_reason=reason,
+                source=source,
             )
     return updated
 
 
-def refresh_stale(snapshot_id: str, actor: str = "snapshot-freshness") -> dict:
+def refresh_stale(snapshot_id: str, actor: str = SYSTEM_ACTOR_USER_ID, *, source: str | None = None) -> dict:
     row = db.get(snapshot_id)
     if row is None:
         raise SnapshotRequestError(404, "not_found", "snapshot request not found")
@@ -902,7 +911,7 @@ def refresh_stale(snapshot_id: str, actor: str = "snapshot-freshness") -> dict:
     try:
         manifest = _load_manifest(final, row)
     except SnapshotRequestError:
-        updated = _mark_stale(row, actor, None, "manifest_unreadable")
+        updated = _mark_stale(row, actor, None, "manifest_unreadable", source=source)
         result = dict(updated)
         result["available"] = False
         result["integrity_error"] = "snapshot_integrity_error"
@@ -928,10 +937,10 @@ def refresh_stale(snapshot_id: str, actor: str = "snapshot-freshness") -> dict:
         if current_fingerprint == row.get("source_fingerprint"):
             result["current_source_revision"] = current_revision
             return result
-        updated = _mark_stale(row, actor, current_revision, "scope_fingerprint_changed")
+        updated = _mark_stale(row, actor, current_revision, "scope_fingerprint_changed", source=source)
     except Exception:
         logger.warning("snapshot %s freshness check failed closed", snapshot_id, exc_info=True)
-        updated = _mark_stale(row, actor, None, "source_unavailable")
+        updated = _mark_stale(row, actor, None, "source_unavailable", source=source)
     try:
         manifest["stale"] = True
         manifest["stale_detected_at"] = updated.get("stale_detected_at")
@@ -977,7 +986,8 @@ def _remaining_count(path: Path) -> int:
     return count
 
 
-def cleanup(snapshot_id: str, actor: str, *, trigger: str = "explicit") -> dict:
+def cleanup(snapshot_id: str, actor: str, *, trigger: str = "explicit",
+           source: str | None = None) -> dict:
     lock = _operation_lock(snapshot_id)
     with lock:
         row = db.get(snapshot_id)
@@ -990,7 +1000,7 @@ def cleanup(snapshot_id: str, actor: str, *, trigger: str = "explicit") -> dict:
         except SnapshotRequestError as exc:
             if row["status"] != "created":
                 return row
-            return _cleanup_failed(row, actor, trigger, exc)
+            return _cleanup_failed(row, actor, trigger, exc, source=source)
 
         if row["status"] != "created":
             if not final.exists() and not final.is_symlink():
@@ -1008,7 +1018,7 @@ def cleanup(snapshot_id: str, actor: str, *, trigger: str = "explicit") -> dict:
 
         garbage = _garbage_summary(final)
         if not final.exists() and not final.is_symlink():
-            return _finish_deleted(row, actor, trigger, garbage, recovery="directory_already_absent")
+            return _finish_deleted(row, actor, trigger, garbage, recovery="directory_already_absent", source=source)
         try:
             if _is_reparse_or_symlink(final):
                 raise SnapshotRequestError(409, "snapshot_cleanup_failed", "snapshot directory became a link/reparse point")
@@ -1018,12 +1028,12 @@ def cleanup(snapshot_id: str, actor: str, *, trigger: str = "explicit") -> dict:
             if final.exists() or final.is_symlink():
                 raise OSError("snapshot directory remains after deletion")
         except Exception as exc:
-            return _cleanup_failed(row, actor, trigger, exc)
-        return _finish_deleted(row, actor, trigger, garbage)
+            return _cleanup_failed(row, actor, trigger, exc, source=source)
+        return _finish_deleted(row, actor, trigger, garbage, source=source)
 
 
 def _finish_deleted(row: dict, actor: str, trigger: str, garbage: dict,
-                    recovery: str | None = None) -> dict:
+                    recovery: str | None = None, *, source: str | None = None) -> dict:
     deleted_at = now_iso()
     with get_store().transaction():
         updated, changed = db.mark_deleted(row["snapshot_id"], deleted_at)
@@ -1034,11 +1044,13 @@ def _finish_deleted(row: dict, actor: str, trigger: str, garbage: dict,
             _record_event(
                 "snapshot_deleted", updated, actor, "created", "deleted",
                 trigger=trigger, lifetime_seconds=lifetime, garbage=garbage, recovery=recovery,
+                source=source,
             )
     return updated
 
 
-def _cleanup_failed(row: dict, actor: str, trigger: str, exc: Exception) -> dict:
+def _cleanup_failed(row: dict, actor: str, trigger: str, exc: Exception,
+                    *, source: str | None = None) -> dict:
     reason = public_failure_reason(exc, row)
     current_attempt = int(row.get("cleanup_attempts") or 0) + 1
     delay = min(3600, 60 * (2 ** max(0, current_attempt - 1)))
@@ -1058,6 +1070,7 @@ def _cleanup_failed(row: dict, actor: str, trigger: str, exc: Exception) -> dict
             retry_limit_reached=attempt >= SNAPSHOT_CLEANUP_MAX_ATTEMPTS,
             remaining_path_count=remaining,
             trigger=trigger,
+            source=source,
         )
     logger.warning(
         "snapshot cleanup failed snapshot_id=%s trigger=%s attempt=%s reason=%s",
@@ -1066,17 +1079,19 @@ def _cleanup_failed(row: dict, actor: str, trigger: str, exc: Exception) -> dict
     return updated
 
 
-def _close_unmaterialized(rows: list[dict], actor: str, trigger: str) -> None:
+def _close_unmaterialized(rows: list[dict], actor: str, trigger: str,
+                          *, source: str | None = None) -> None:
     for row in rows:
         _record_event(
             "snapshot_rejected", row, actor, "requested_or_approved", "rejected",
-            trigger=trigger, reason="owner_lifecycle_finished",
+            trigger=trigger, reason="owner_lifecycle_finished", source=source,
         )
 
 
 def _close_unmaterialized_locked(*, actor: str, trigger: str,
                                  run_id: str | None = None,
-                                 group_id: str | None = None) -> list[dict]:
+                                 group_id: str | None = None,
+                                 source: str | None = None) -> list[dict]:
     candidates = db.list_unmaterialized(run_id=run_id, group_id=group_id)
     if run_id is not None:
         candidates = [row for row in candidates if not row.get("chain_id")]
@@ -1091,17 +1106,24 @@ def _close_unmaterialized_locked(*, actor: str, trigger: str,
                 closed = db.close_unmaterialized_for_run(run_id, actor)
             else:
                 closed = db.close_unmaterialized_for_group(group_id, actor)
-            _close_unmaterialized(closed, actor, trigger)
+            _close_unmaterialized(closed, actor, trigger, source=source)
     return closed
 
 
-def cleanup_for_run(run_id: str, actor: str = "snapshot-run-cleanup") -> dict:
+def cleanup_for_run(run_id: str, actor: str = SYSTEM_ACTOR_USER_ID) -> dict:
+    """``actor`` should be the run's real actor (e.g. the token's ``issued_to``) when the
+    caller has one; it falls back to the reserved system user otherwise. Either way the
+    run-cleanup nature is recorded as ``source``/``trigger`` metadata, never as the actor.
+    """
     closed = _close_unmaterialized_locked(
-        run_id=run_id, actor=actor, trigger="run_finished",
+        run_id=run_id, actor=actor, trigger="run_finished", source="snapshot_run_cleanup",
     )
     # Chain-bound capabilities outlive one hop; group cleanup/TTL remains authoritative.
     rows = [row for row in db.list_created(run_id=run_id) if not row.get("chain_id")]
-    results = [cleanup(row["snapshot_id"], actor, trigger="run_finished") for row in rows]
+    results = [
+        cleanup(row["snapshot_id"], actor, trigger="run_finished", source="snapshot_run_cleanup")
+        for row in rows
+    ]
     return {
         "matched": len(closed) + len(rows),
         "closed": len(closed),
@@ -1110,12 +1132,19 @@ def cleanup_for_run(run_id: str, actor: str = "snapshot-run-cleanup") -> dict:
     }
 
 
-def cleanup_for_group(group_id: str, actor: str = "snapshot-group-cleanup") -> dict:
+def cleanup_for_group(group_id: str, actor: str = SYSTEM_ACTOR_USER_ID) -> dict:
+    """``actor`` should be the real user closing the group when one is known (e.g. a
+    human group-close); it falls back to the reserved system user otherwise. The
+    group-close nature is recorded as ``trigger="group_finished"``/``source`` metadata.
+    """
     closed = _close_unmaterialized_locked(
-        group_id=group_id, actor=actor, trigger="group_finished",
+        group_id=group_id, actor=actor, trigger="group_finished", source="snapshot_group_cleanup",
     )
     rows = db.list_created(group_id=group_id)
-    results = [cleanup(row["snapshot_id"], actor, trigger="group_finished") for row in rows]
+    results = [
+        cleanup(row["snapshot_id"], actor, trigger="group_finished", source="snapshot_group_cleanup")
+        for row in rows
+    ]
     return {
         "matched": len(closed) + len(rows),
         "closed": len(closed),
@@ -1163,23 +1192,25 @@ def cleanup_orphans(*, startup: bool = False) -> int:
         final = namespace / row["snapshot_id"]
         if row["status"] == "approved" and final.exists():
             try:
-                _recover_published(row, final, "snapshot-recovery")
+                _recover_published(row, final, SYSTEM_ACTOR_USER_ID)
             except Exception:
                 logger.warning("snapshot published-directory recovery failed for %s", row["snapshot_id"], exc_info=True)
         elif startup and row["status"] == "approved" and had_orphan and not final.exists():
             try:
                 _record_create_failure(
-                    row, "snapshot-recovery",
+                    row, SYSTEM_ACTOR_USER_ID,
                     SnapshotRequestError(500, "orphan_staging_recovered", "materialization stopped before atomic publish"),
+                    source="snapshot_recovery",
                 )
             except Exception:
                 logger.warning("snapshot interrupted creation recovery failed for %s", row["snapshot_id"], exc_info=True)
         elif row["status"] == "created" and not final.exists():
             try:
                 _finish_deleted(
-                    row, "snapshot-recovery", "recovery",
+                    row, SYSTEM_ACTOR_USER_ID, "recovery",
                     {"categories": [], "path_count": 0, "byte_size": 0},
                     recovery="filesystem_deleted_before_db_update",
+                    source="snapshot_recovery",
                 )
             except Exception:
                 logger.warning("snapshot deleted-state recovery failed for %s", row["snapshot_id"], exc_info=True)
@@ -1203,7 +1234,10 @@ def sweep_expired(now: datetime | None = None) -> dict:
         if attempts >= SNAPSHOT_CLEANUP_MAX_ATTEMPTS or (next_at and next_at > point):
             skipped += 1
             continue
-        result = cleanup(row["snapshot_id"], "snapshot-ttl-cleanup", trigger="ttl_expired")
+        result = cleanup(
+            row["snapshot_id"], SYSTEM_ACTOR_USER_ID,
+            trigger="ttl_expired", source="snapshot_ttl_cleanup",
+        )
         if result.get("status") == "deleted":
             deleted += 1
         elif result.get("cleanup_failed"):

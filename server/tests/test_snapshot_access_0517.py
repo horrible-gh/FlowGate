@@ -50,7 +50,7 @@ def access_env(tmp_path, monkeypatch):
 
     monkeypatch.setattr(access.request_db, "get", lambda sid: dict(row) if sid == row["snapshot_id"] else None)
 
-    def refreshed(snapshot_id, actor):
+    def refreshed(snapshot_id, actor, *, source=None):
         result = dict(row)
         result.update(available=True, snapshot_path=str(final))
         return result
@@ -371,7 +371,7 @@ def test_c18_multiple_used_snapshots_are_stable_and_injected_before_changed_file
     monkeypatch.setattr(access.request_db, "get", lambda snapshot_id: dict(rows[snapshot_id]))
     monkeypatch.setattr(
         access.materialization, "refresh_stale",
-        lambda snapshot_id, actor: {
+        lambda snapshot_id, actor, *, source=None: {
             **rows[snapshot_id], "available": True, "snapshot_path": "/unused",
         },
     )

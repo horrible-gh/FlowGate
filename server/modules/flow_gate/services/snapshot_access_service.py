@@ -246,7 +246,9 @@ def _refresh_available(run: dict, snapshot_id: str) -> tuple[dict, Path, dict]:
         )
     try:
         refreshed = materialization.refresh_stale(
-            snapshot_id, actor=f"ai-run:{_run_axis(run, 'run_id')}"
+            snapshot_id,
+            actor=run.get("issued_to") or materialization.SYSTEM_ACTOR_USER_ID,
+            source="ai_run",
         )
     except Exception as exc:
         raise SnapshotAccessError(
@@ -366,6 +368,7 @@ def _audit(event_type: str, row: dict, run: dict, **extra: Any) -> None:
         "source_revision": row.get("source_revision"),
         "created_at": row.get("created_at"),
         "approved_by": row.get("approved_by"),
+        "source": "ai_run",
     }
     metadata.update(extra)
     workflow_events.create({
@@ -373,7 +376,7 @@ def _audit(event_type: str, row: dict, run: dict, **extra: Any) -> None:
         "project_id": row["project_id"],
         "group_id": row["group_id"],
         "document_id": extra.get("document_id"),
-        "actor_user_id": f"ai-run:{_run_axis(run, 'run_id')}",
+        "actor_user_id": run.get("issued_to") or materialization.SYSTEM_ACTOR_USER_ID,
         "from_state": _public_state(row),
         "to_state": _public_state(row),
         "metadata": json.dumps(metadata, ensure_ascii=False, sort_keys=True),
@@ -419,7 +422,9 @@ def status_metadata(run: dict, snapshot_id: str) -> dict:
         return _metadata(row)
     try:
         refreshed = materialization.refresh_stale(
-            snapshot_id, actor=f"ai-run:{_run_axis(run, 'run_id')}"
+            snapshot_id,
+            actor=run.get("issued_to") or materialization.SYSTEM_ACTOR_USER_ID,
+            source="ai_run",
         )
     except Exception as exc:
         raise SnapshotAccessError(
@@ -721,7 +726,10 @@ def provenance_for_run(run_id: str) -> list[dict]:
             continue
         if row.get("status") == "created":
             try:
-                row = materialization.refresh_stale(snapshot_id, actor="tr-provenance")
+                row = materialization.refresh_stale(
+                    snapshot_id, actor=materialization.SYSTEM_ACTOR_USER_ID,
+                    source="tr_provenance",
+                )
             except Exception:
                 row = dict(row)
                 row["stale"] = True

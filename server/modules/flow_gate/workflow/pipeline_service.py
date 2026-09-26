@@ -251,8 +251,10 @@ def transition_group(
     if str(next_status).lower() == "closed":
         try:
             from modules.flow_gate.services import snapshot_materialization_service
+            # actor_user_id is a real users.user_id FK; the group-close meaning lives in
+            # cleanup_for_group's own trigger="group_finished" metadata, not in the actor.
             snapshot_materialization_service.cleanup_for_group(
-                group_id, actor=f"group-close:{actor_user_id}"
+                group_id, actor=actor_user_id
             )
         except Exception:
             # Group closure is already durable. Snapshot cleanup stays retryable via TTL.

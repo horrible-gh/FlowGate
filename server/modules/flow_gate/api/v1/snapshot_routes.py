@@ -109,7 +109,7 @@ def cli_materialize_snapshot(snapshot_id:str,request:Request):
  _raw,_token,run=_cli_context(request)
  try:
   snapshot_access._authorize(run,snapshot_id)
-  row=materialization.materialize(snapshot_id,"ai-run:"+str(run.get("run_id") or ""))
+  row=materialization.materialize(snapshot_id,run.get("issued_to") or materialization.SYSTEM_ACTOR_USER_ID)
   return {"ok":True,"snapshot":snapshot_access._metadata(row)}
  except snapshot_access.SnapshotAccessError as exc:
   raise HTTPException(exc.status,detail=exc.payload("materialize"))
