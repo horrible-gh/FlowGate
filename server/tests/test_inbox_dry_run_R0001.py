@@ -187,6 +187,74 @@ def test_new_dry_run_validation_failure_not_counted(monkeypatch):
     inc.assert_not_called()
 
 
+def test_new_dry_run_message_follows_x_locale_header_without_continuation_locale(monkeypatch):
+    """T0004 §4.1/§5: a token with no continuation_locale still gets the request's
+    X-Locale in the dry-run message, not the ko fallback _maybe_dry_run used before it
+    received the caller-resolved locale as an argument."""
+    from modules.flow_gate.api import inbox_routes
+    _patch_new_validation(monkeypatch, _token_rec("new", "flowgate.default.0050.0001-R"))
+    _patch_increment(monkeypatch)
+
+    resp = post_inbox(_new_body(dry_run=True), headers={"x-locale": "ja"})
+    data = resp.json()
+
+    assert resp.status_code == 200
+    assert data["message"] == inbox_routes._DRY_RUN_COPY["ja"]["ok"]
+
+
+def test_new_dry_run_message_follows_x_locale_header_en(monkeypatch):
+    from modules.flow_gate.api import inbox_routes
+    _patch_new_validation(monkeypatch, _token_rec("new", "flowgate.default.0050.0001-R"))
+    _patch_increment(monkeypatch)
+
+    resp = post_inbox(_new_body(dry_run=True), headers={"x-locale": "en"})
+    data = resp.json()
+
+    assert resp.status_code == 200
+    assert data["message"] == inbox_routes._DRY_RUN_COPY["en"]["ok"]
+
+
+def test_new_dry_run_continuation_locale_outranks_the_header(monkeypatch):
+    from modules.flow_gate.api import inbox_routes
+    token_rec = _token_rec("new", "flowgate.default.0050.0001-R")
+    token_rec["continuation_locale"] = "ja"
+    _patch_new_validation(monkeypatch, token_rec)
+    _patch_increment(monkeypatch)
+
+    resp = post_inbox(_new_body(dry_run=True), headers={"x-locale": "en"})
+    data = resp.json()
+
+    assert resp.status_code == 200
+    assert data["message"] == inbox_routes._DRY_RUN_COPY["ja"]["ok"]
+
+
+def test_new_dry_run_unsupported_locale_folds_to_ko(monkeypatch):
+    from modules.flow_gate.api import inbox_routes
+    _patch_new_validation(monkeypatch, _token_rec("new", "flowgate.default.0050.0001-R"))
+    _patch_increment(monkeypatch)
+
+    resp = post_inbox(_new_body(dry_run=True), headers={"x-locale": "zh"})
+    data = resp.json()
+
+    assert resp.status_code == 200
+    assert data["message"] == inbox_routes._DRY_RUN_COPY["ko"]["ok"]
+
+
+def test_new_dry_run_limit_message_follows_x_locale_header(monkeypatch):
+    from modules.flow_gate.api import inbox_routes
+    monkeypatch.setenv("FLOWGATE_INBOX_DRYRUN_MAX", "5")
+    _patch_new_validation(
+        monkeypatch, _token_rec("new", "flowgate.default.0050.0001-R", dry_run_count=5)
+    )
+    _patch_increment(monkeypatch)
+
+    resp = post_inbox(_new_body(dry_run=True), headers={"x-locale": "ja"})
+    data = resp.json()
+
+    assert resp.status_code == 429
+    assert data["error_message"] == inbox_routes._DRY_RUN_COPY["ja"]["limit"].format(limit=5)
+
+
 def test_new_dry_run_limit_exceeded(monkeypatch):
     from modules.flow_gate.api import inbox_routes
     monkeypatch.setenv("FLOWGATE_INBOX_DRYRUN_MAX", "5")
@@ -230,6 +298,10 @@ def _patch_edit_validation(monkeypatch, token_rec):
     monkeypatch.setattr(inbox_routes, "has_permission", lambda *a, **k: True)
     monkeypatch.setattr(inbox_routes.db_docs, "get_by_id", lambda _id: {
         "doc_id": _id, "status": "open", "revision_no": 1, "file_path": "x.md",
+        # 0492 T0018: register_binding's group axis resolves the run side straight from
+        # this row's group_id (never parsed out of the doc id) -- omitting it here reads
+        # as "no group", so it mismatches a token that does carry one.
+        "group_id": "flowgate.default.0050",
         "rejection_history": json.dumps([
             {"rejection_id": f"rej-{_id}", "reason": "needs rework"}
         ]),
@@ -263,6 +335,37 @@ def test_edit_dry_run_success(monkeypatch):
     inc.assert_called_once_with("tok-1")
     consume.assert_not_called()
     copy2.assert_not_called()       # no backup/replace side effect
+
+
+def test_edit_dry_run_message_follows_x_locale_header_without_continuation_locale(monkeypatch):
+    """T0004 §4.1/§6.2: same caller-resolved-locale contract as new, through edit."""
+    from modules.flow_gate.api import inbox_routes
+    _patch_edit_validation(monkeypatch, _token_rec("edit", "flowgate.default.0050.0003-NR"))
+    monkeypatch.setattr(inbox_routes.token_service, "consume", MagicMock())
+    monkeypatch.setattr(inbox_routes.shutil, "copy2", MagicMock())
+    _patch_increment(monkeypatch)
+
+    resp = post_inbox(_edit_body(dry_run=True), headers={"x-locale": "ja"})
+    data = resp.json()
+
+    assert resp.status_code == 200
+    assert data["message"] == inbox_routes._DRY_RUN_COPY["ja"]["ok"]
+
+
+def test_edit_dry_run_continuation_locale_outranks_the_header(monkeypatch):
+    from modules.flow_gate.api import inbox_routes
+    token_rec = _token_rec("edit", "flowgate.default.0050.0003-NR")
+    token_rec["continuation_locale"] = "en"
+    _patch_edit_validation(monkeypatch, token_rec)
+    monkeypatch.setattr(inbox_routes.token_service, "consume", MagicMock())
+    monkeypatch.setattr(inbox_routes.shutil, "copy2", MagicMock())
+    _patch_increment(monkeypatch)
+
+    resp = post_inbox(_edit_body(dry_run=True), headers={"x-locale": "ja"})
+    data = resp.json()
+
+    assert resp.status_code == 200
+    assert data["message"] == inbox_routes._DRY_RUN_COPY["en"]["ok"]
 
 
 # ───────────────────────────── review ─────────────────────────────

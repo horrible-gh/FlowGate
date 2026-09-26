@@ -125,7 +125,7 @@ _DRY_RUN_COPY = {
 
 
 def _maybe_dry_run(
-    body: dict, token_rec: dict, would_register: dict
+    body: dict, token_rec: dict, would_register: dict, locale: str
 ) -> Optional[JSONResponse]:
     """Shared dry-run short-circuit for all three inbox handlers (L0007 §3, P0006).
 
@@ -147,7 +147,6 @@ def _maybe_dry_run(
         return None
 
     limit = _dryrun_max()
-    locale = token_rec.get("continuation_locale")
     copy = _DRY_RUN_COPY.get(locale) or _DRY_RUN_COPY["ko"]
     cnt = int(token_rec.get("dry_run_count") or 0)
     if cnt >= limit:
@@ -2641,6 +2640,17 @@ def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSONRespon
     if doc is None:
         return _fail(404, f"Document {doc_id} does not exist")
 
+    # T0004 §10 (flowgate.default.0520 NR0003 rework, flowgate.default.0621 NR0003/T0004):
+    # the worker-token test_run path is the continuous-chain hand-off itself (see the
+    # continuation_target_seq branch below), so it must resolve locale with the same
+    # priority as every other continuation-token consumer (test_run_routes.py's
+    # repair_token branch) — token's own continuation_locale first, then the request's
+    # X-Locale header, then the "ko" service default. This must happen before the
+    # dry-run short-circuit so dry-run and the real test run share one effective_locale.
+    effective_locale = template_provision.normalize_locale(
+        token_rec.get("continuation_locale") or request.headers.get("x-locale")
+    )
+
     dry_resp = _maybe_dry_run(
         body,
         token_rec,
@@ -2649,18 +2659,10 @@ def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSONRespon
             "doc_id": doc_id,
             "checks_passed": ["auth", "context_binding", "permission", "referential_integrity"],
         },
+        effective_locale,
     )
     if dry_resp is not None:
         return dry_resp
-
-    # T0004 §10 (flowgate.default.0520 NR0003 rework): the worker-token test_run path is the
-    # continuous-chain hand-off itself (see the continuation_target_seq branch below), so it
-    # must resolve locale with the same priority as every other continuation-token consumer
-    # (test_run_routes.py's repair_token branch) — token's own continuation_locale first, then
-    # the request's X-Locale header, then the "ko" service default.
-    effective_locale = (
-        token_rec.get("continuation_locale") or request.headers.get("x-locale") or "ko"
-    )
 
     try:
         result = test_run_service.validate_and_create_run(
@@ -4474,7 +4476,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         would_register["worktree_untracked"] = worktree_untracked
     if normalizations:
         would_register["normalizations"] = normalizations
-    dry_resp = _maybe_dry_run(body, token_rec, would_register)
+    dry_resp = _maybe_dry_run(body, token_rec, would_register, _locale)
     if dry_resp is not None:
         return dry_resp
 
@@ -5431,7 +5433,7 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         edit_would_register["worktree_untracked"] = edit_worktree_untracked
     if edit_normalizations:
         edit_would_register["normalizations"] = edit_normalizations
-    dry_resp = _maybe_dry_run(body, token_rec, edit_would_register)
+    dry_resp = _maybe_dry_run(body, token_rec, edit_would_register, _locale)
     if dry_resp is not None:
         return dry_resp
 
