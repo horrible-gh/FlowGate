@@ -1,16 +1,20 @@
 """System settings API router (D018 r1 §A, D-1).
 
 GET   /api/v1/system/settings  — retrieve all K/V settings
+GET   /api/v1/system/settings/storage-root — configured/effective storage root contract
 PATCH /api/v1/system/settings  — update multiple K/V settings
 GET   /api/v1/system/info      — retrieve version and DB status
 """
 from __future__ import annotations
+
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from modules.flow_gate.rbac.decorators import require_permission
 from modules.flow_gate.settings.system_settings_service import get_all, get_system_info, set_values
+from modules.flow_gate.storage.paths import get_storage_root_info
 
 router = APIRouter(prefix="/system", tags=["SystemSettings"])
 
@@ -27,9 +31,36 @@ class SettingsPatch(BaseModel):
     )
 
 
+class StorageRootConfigured(BaseModel):
+    system: str | None
+    project: str | None
+
+
+class StorageRootOverrides(BaseModel):
+    environment: bool
+    project: bool
+
+
+class StorageRootInfo(BaseModel):
+    project_id: str | None
+    configured: StorageRootConfigured
+    effective: str
+    source: Literal["environment", "project", "system", "default"]
+    overrides: StorageRootOverrides
+
+
 @router.get("/settings")
 def list_settings(user=Depends(require_permission("system.settings.manage"))):
     return {"settings": get_all()}
+
+
+@router.get("/settings/storage-root", response_model=StorageRootInfo)
+def storage_root_info(
+    project_id: str | None = None,
+    user=Depends(require_permission("system.settings.manage")),
+):
+    """Return configured values separately from the effective storage root."""
+    return get_storage_root_info(project_id)
 
 
 @router.patch("/settings")
