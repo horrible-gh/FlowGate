@@ -93,11 +93,32 @@ def _validate_merge_branch(
         )
 
 
-def merge_branches(project_id: str, source_branch: str, target_branch: str) -> dict:
-    """Merge and publish one ordinary local branch into another.
+def merge_branches(
+    project_id: str, source_branch: str, target_branch: str, push: bool = True,
+) -> dict:
+    """Merge one ordinary local branch into another, optionally publishing it.
 
     Conflicts are terminal: collect paths, abort, clean the managed target
     worktree, and return branch_merge_conflict without a finalize session.
+
+    T0006: ``push=False`` merges locally only. A non-base target's managed
+    worktree already has the target branch checked out, so its ref advances
+    the instant ``git merge`` lands there. The project base branch has no
+    worktree of its own (it stays checked out at ``base_root``) — that combo
+    runs the merge directly in ``base_root`` instead of a throwaway detached
+    workspace, so the ref and the checked-out working tree land together and
+    an unpublished merge commit is never silently discarded by that
+    workspace's cleanup (see merge_target.release_workspace).
+
+    T0007 rev1: that same base-root combo mutates the base checkout exactly
+    like any other base-mutating op, so it must be blocked while an unresolved
+    merge session elsewhere still holds it (0205 §2.2) — a lock alone does not
+    express that, since the blocking session belongs to a different, already
+    unlocked operation. Every stage that can hit git's own untracked-collision
+    refusal ("untracked working tree files would be overwritten by merge") is
+    treated as that named, non-destructive 409 rather than promoted into an
+    abort failure or misread as real divergence — see
+    ``_gs._untracked_merge_blockers``.
     """
     from modules.flow_gate.services import git_service as _gs
     from . import merge_target
@@ -108,28 +129,45 @@ def merge_branches(project_id: str, source_branch: str, target_branch: str) -> d
     _validate_merge_branch(project_id, base_root, source_branch, "source")
     _validate_merge_branch(project_id, base_root, target_branch, "target")
 
+    is_base_target = target_branch == base_branch
+    merge_in_base_root = is_base_target and not push
+    if merge_in_base_root:
+        _gs.guard_base_free(project_id)   # 0205 §2.2 — 1st gate (before lock)
+
     holder = f"op:{uuid.uuid4()}"
     if not _gs._acquire_lock(project_id, holder):
         raise GitServiceError(409, "git_busy", "another Git operation is in progress")
     owner = f"branch-merge:{uuid.uuid4()}"
-    wdir = merge_target.workspace_dir(project_id, target_branch)
-    ctx = merge_target.MergeTargetContext(
-        project_id=project_id, base_branch=base_branch, target_branch=target_branch,
-        is_project_base=False, root=wdir / merge_target.WORKSPACE_TREE,
-        workspace_dir=wdir, workspace_key=merge_target.workspace_key(target_branch),
-        merge_id=owner, owner=owner, lock_holder=holder,
-    )
+    ctx = None
+    if not merge_in_base_root:
+        wdir = merge_target.workspace_dir(project_id, target_branch)
+        ctx = merge_target.MergeTargetContext(
+            project_id=project_id, base_branch=base_branch, target_branch=target_branch,
+            is_project_base=False, root=wdir / merge_target.WORKSPACE_TREE,
+            workspace_dir=wdir, workspace_key=merge_target.workspace_key(target_branch),
+            merge_id=owner, owner=owner, lock_holder=holder,
+        )
     prepared = False
     try:
         if source_branch == target_branch:
             raise GitServiceError(409, "branch_merge_same_branch", "source and target must differ")
         _validate_merge_branch(project_id, base_root, source_branch, "source")
         _validate_merge_branch(project_id, base_root, target_branch, "target")
-        merge_target.raise_if_workspace_unavailable(project_id, target_branch)
-        # Git refuses a second checkout of the project base. A detached managed
-        # worktree preserves the shared checkout while HEAD is pushed explicitly.
-        merge_target.prepare_workspace(ctx, detached=target_branch == base_branch)
-        prepared = True
+        if merge_in_base_root:
+            _gs.guard_base_free(project_id)   # 0205 §2.2 — 2nd gate (race close, after lock)
+            if _gs._dirty(base_root, include_untracked=False):
+                raise GitServiceError(
+                    409, "branch_merge_target_dirty",
+                    "target branch checkout has uncommitted changes",
+                )
+            merge_root = base_root
+        else:
+            merge_target.raise_if_workspace_unavailable(project_id, target_branch)
+            # Git refuses a second checkout of the project base. A detached managed
+            # worktree preserves the shared checkout while HEAD is pushed explicitly.
+            merge_target.prepare_workspace(ctx, detached=is_base_target)
+            prepared = True
+            merge_root = ctx.root
         username = cfg.get("username")
         secret = _gs._load_secret_for(cfg) or ""
         # flowgate.default.0361 NR0003 §5.4/§8.1: a cross-branch merge fetches and
@@ -142,67 +180,109 @@ def merge_branches(project_id: str, source_branch: str, target_branch: str) -> d
         )
         if fetch.returncode != 0:
             raise GitServiceError(500, "git_error", "Git fetch failed", diagnostic=_one_line(fetch.stderr))
-        if _gs._ref_exists(ctx.root, f"refs/remotes/origin/{target_branch}"):
-            update = _gs._run_git(["merge", "--ff-only", f"origin/{target_branch}"], cwd=ctx.root)
+        if _gs._ref_exists(merge_root, f"refs/remotes/origin/{target_branch}"):
+            update = _gs._run_git(["merge", "--ff-only", f"origin/{target_branch}"], cwd=merge_root)
             if update.returncode != 0:
+                # An untracked collision makes git refuse before touching HEAD at
+                # all — that is not divergence (the branch really could fast-
+                # forward) and there is nothing to abort or clean up.
+                blockers = _gs._untracked_merge_blockers(update.stderr)
+                if blockers is not None:
+                    raise GitServiceError(
+                        409, "branch_merge_untracked_conflict",
+                        "branch merge is blocked by untracked files that collide "
+                        "with the target branch's remote counterpart",
+                        {"source_branch": source_branch, "target_branch": target_branch,
+                         "files": blockers},
+                    )
                 raise GitServiceError(
                     409, "branch_merge_target_diverged",
                     "target branch cannot fast-forward to its remote counterpart",
                     diagnostic=_one_line(update.stderr),
                 )
         source_before = _gs._rev_parse(base_root, f"refs/heads/{source_branch}")
-        target_before = _gs._rev_parse(ctx.root, "HEAD")
+        target_before = _gs._rev_parse(merge_root, "HEAD")
         merged = _gs._run_git(
             [*_gs._GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "merge", "--no-ff",
              "-m", f"Merge branch '{source_branch}' into {target_branch}", source_branch],
-            cwd=ctx.root,
+            cwd=merge_root,
         )
         if merged.returncode != 0:
-            files_proc = _gs._run_git(["diff", "--name-only", "--diff-filter=U"], cwd=ctx.root)
+            files_proc = _gs._run_git(["diff", "--name-only", "--diff-filter=U"], cwd=merge_root)
             files = [line for line in (files_proc.stdout or "").splitlines() if line]
-            aborted = _gs._run_git(["merge", "--abort"], cwd=ctx.root)
+            if not files:
+                # No conflict markers means git never started the merge at all —
+                # an untracked collision refuses BEFORE MERGE_HEAD exists, so the
+                # unconditional abort-or-500 below would misdiagnose this as
+                # branch_merge_abort_failed. `merge --abort` here is a harmless
+                # no-op left for parity with the real-conflict path's cleanup.
+                blockers = _gs._untracked_merge_blockers(merged.stderr)
+                if blockers is not None:
+                    _gs._run_git(["merge", "--abort"], cwd=merge_root)
+                    if not merge_in_base_root:
+                        if not merge_target.release_workspace(ctx):
+                            prepared = False
+                            raise GitServiceError(
+                                500, "branch_merge_cleanup_failed",
+                                "branch merge was blocked by untracked files but its "
+                                "managed workspace could not be cleaned",
+                                {"source_branch": source_branch, "target_branch": target_branch,
+                                 "files": blockers},
+                            )
+                        prepared = False
+                    raise GitServiceError(
+                        409, "branch_merge_untracked_conflict",
+                        "branch merge is blocked by untracked files that collide "
+                        "with the source branch",
+                        {"source_branch": source_branch, "target_branch": target_branch,
+                         "files": blockers},
+                    )
+            aborted = _gs._run_git(["merge", "--abort"], cwd=merge_root)
             if aborted.returncode != 0:
                 raise GitServiceError(
                     500, "branch_merge_abort_failed",
                     "branch merge conflicted and Git could not abort it",
                     {"conflict_files": files}, diagnostic=_one_line(aborted.stderr),
                 )
-            if not merge_target.release_workspace(ctx):
+            if not merge_in_base_root:
+                if not merge_target.release_workspace(ctx):
+                    prepared = False
+                    raise GitServiceError(
+                        500, "branch_merge_cleanup_failed",
+                        "branch merge conflicted but its managed workspace could not be cleaned",
+                        {"conflict_files": files},
+                    )
                 prepared = False
-                raise GitServiceError(
-                    500, "branch_merge_cleanup_failed",
-                    "branch merge conflicted but its managed workspace could not be cleaned",
-                    {"conflict_files": files},
-                )
-            prepared = False
             raise GitServiceError(
                 409, "branch_merge_conflict", "branch merge has conflicts",
                 {"source_branch": source_branch, "target_branch": target_branch,
                  "conflict_files": files},
             )
-        pushed = _gs._run_git(
-            ["push", "origin", f"HEAD:{target_branch}"], cwd=ctx.root,
-            timeout=_gs.GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
-        )
-        if pushed.returncode != 0:
-            _gs._run_git(["reset", "--hard", target_before], cwd=ctx.root)
-            raise GitServiceError(
-                500, "branch_merge_push_failed", "Git push was rejected",
-                diagnostic=_one_line(pushed.stderr),
+        if push:
+            push_proc = _gs._run_git(
+                ["push", "origin", f"HEAD:{target_branch}"], cwd=merge_root,
+                timeout=_gs.GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
             )
-        target_after = _gs._rev_parse(ctx.root, "HEAD")
-        if not merge_target.release_workspace(ctx):
+            if push_proc.returncode != 0:
+                _gs._run_git(["reset", "--hard", target_before], cwd=merge_root)
+                raise GitServiceError(
+                    500, "branch_merge_push_failed", "Git push was rejected",
+                    diagnostic=_one_line(push_proc.stderr),
+                )
+        target_after = _gs._rev_parse(merge_root, "HEAD")
+        if not merge_in_base_root:
+            if not merge_target.release_workspace(ctx):
+                prepared = False
+                raise GitServiceError(
+                    500, "branch_merge_cleanup_failed",
+                    "branch merge succeeded but its managed workspace could not be cleaned",
+                    {"target_branch": target_branch, "target_head": target_after},
+                )
             prepared = False
-            raise GitServiceError(
-                500, "branch_merge_cleanup_failed",
-                "branch merge was pushed but its managed workspace could not be cleaned",
-                {"target_branch": target_branch, "target_head": target_after},
-            )
-        prepared = False
         return {
             "ok": True, "source_branch": source_branch, "target_branch": target_branch,
             "source_head": source_before, "target_before": target_before,
-            "target_head": target_after, "pushed": True, "workspace_cleaned": True,
+            "target_head": target_after, "pushed": push, "workspace_cleaned": True,
         }
     finally:
         if prepared:

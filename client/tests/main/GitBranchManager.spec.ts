@@ -127,7 +127,7 @@ describe('GitBranchManager (T0016 C1-C7)', () => {
     expect(dialogConfirm).toHaveBeenCalled()
     expect(postRequest).toHaveBeenCalledWith(
       '/api/v1/projects/flowgate/git/branches/merge',
-      { source_branch: 'stale-feature', target_branch: 'flowgate-v0.2' },
+      { source_branch: 'stale-feature', target_branch: 'flowgate-v0.2', push: true },
     )
     // refresh after success
     expect(getRequest).toHaveBeenCalledTimes(2)
@@ -474,11 +474,333 @@ describe('GitBranchManager zones and views (T0018)', () => {
     expect(dialogConfirm).toHaveBeenCalled()
     expect(postRequest).toHaveBeenCalledWith(
       '/api/v1/projects/flowgate/git/branches/merge',
-      { source_branch: 'stale-feature', target_branch: 'flowgate-v0.2' },
+      { source_branch: 'stale-feature', target_branch: 'flowgate-v0.2', push: true },
     )
     // the result banner stays inside the merge zone, not in the danger zone
     expect(zone.find('.branch-result').exists()).toBe(true)
     expect(wrapper.get('[data-test="branch-zone-danger"]').find('.branch-result').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})
+
+// flowgate.default.0612 T0004 (source_nr: 0003-NR §12/§13) — merge selection sync
+// regressions. SYNC_CATALOG starts with default_merge_target: null (matching a
+// freshly-provisioned project's real GET response) so mergeSource and mergeTarget
+// land on different branches at mount time. The default CATALOG above cannot be
+// reused for T1/T9: its default_merge_target ('flowgate-v0.2') happens to collide
+// with the branch mergeSource lands on at mount, which masks the defects these
+// tests target.
+const SYNC_CATALOG = {
+  ok: true,
+  base_branch: 'main',
+  default_merge_target: null as string | null,
+  branches: [
+    { name: 'main', kind: 'base', can_delete: false, can_be_create_source: true },
+    { name: 'flowgate-v0.2', kind: 'local', can_delete: true, can_be_create_source: true },
+    { name: 'stale-feature', kind: 'local', can_delete: true, can_be_create_source: true },
+  ],
+}
+
+function mergeSelects(wrapper: ReturnType<typeof mountManager>) {
+  const zone = wrapper.get('[data-test="branch-zone-merge"]')
+  const selects = zone.findAll('select')
+  return { source: selects[0], target: selects[1] }
+}
+
+describe('GitBranchManager merge selection sync (T0004 §3, source_nr 0003-NR §1/§6/§7)', () => {
+  it('T1. setDefaultTarget 이후 Merge 폼 Target도 새 target으로 동기화된다', async () => {
+    getRequest.mockReset()
+    getRequest.mockResolvedValue({ data: SYNC_CATALOG })
+    const wrapper = mountManager()
+    await flushPromises()
+    expect((wrapper.vm as any).mergeSource).toBe('flowgate-v0.2')
+    expect((wrapper.vm as any).mergeTarget).toBe('main')
+
+    putRequest.mockResolvedValueOnce({ data: { ok: true, default_merge_target: 'stale-feature' } })
+    getRequest.mockResolvedValueOnce({ data: { ...SYNC_CATALOG, default_merge_target: 'stale-feature' } })
+    const row = wrapper.findAll('.branch-row').find((r) => r.text().includes('stale-feature'))!
+    await row.find('button.btn-secondary').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="current-target-value"]').text()).toBe('stale-feature')
+    expect((wrapper.vm as any).mergeTarget).toBe('stale-feature')
+    const { target } = mergeSelects(wrapper)
+    expect((target.element as HTMLSelectElement).value).toBe('stale-feature')
+    wrapper.unmount()
+  })
+
+  it('T2. mergeSource/mergeTarget이 동시에 base_branch로 폴백될 때 invariant가 깨지지 않는다', async () => {
+    getRequest.mockReset()
+    getRequest.mockResolvedValue({
+      data: { ...SYNC_CATALOG, default_merge_target: 'stale-feature' },
+    })
+    const wrapper = mountManager()
+    await flushPromises()
+    ;(wrapper.vm as any).mergeSource = 'main'
+    ;(wrapper.vm as any).mergeTarget = 'stale-feature'
+    await flushPromises()
+
+    getRequest.mockResolvedValueOnce({
+      data: {
+        ...SYNC_CATALOG,
+        default_merge_target: 'main',
+        branches: SYNC_CATALOG.branches.filter((b) => b.name !== 'stale-feature'),
+      },
+    })
+    await wrapper.find('[data-test="branch-refresh"]').trigger('click')
+    await flushPromises()
+
+    expect((wrapper.vm as any).mergeSource).not.toBe((wrapper.vm as any).mergeTarget)
+    const { source, target } = mergeSelects(wrapper)
+    expect((source.element as HTMLSelectElement).value).not.toBe('')
+    expect((target.element as HTMLSelectElement).value).not.toBe('')
+    wrapper.unmount()
+  })
+
+  it('T3. main을 source로, 다른 local branch를 target으로 merge할 수 있다 (실제 <select> 조작)', async () => {
+    const wrapper = mountManager()
+    await flushPromises()
+    const { source, target } = mergeSelects(wrapper)
+    await source.setValue('main')
+    await target.setValue('flowgate-v0.2')
+    await flushPromises()
+    expect((source.element as HTMLSelectElement).value).toBe('main')
+    expect((target.element as HTMLSelectElement).value).toBe('flowgate-v0.2')
+    postRequest.mockResolvedValueOnce({ data: { ok: true } })
+    await wrapper.find('[data-test="branch-zone-merge"]').trigger('submit')
+    await flushPromises()
+    expect(postRequest).toHaveBeenCalledWith(
+      '/api/v1/projects/flowgate/git/branches/merge',
+      { source_branch: 'main', target_branch: 'flowgate-v0.2', push: true },
+    )
+    wrapper.unmount()
+  })
+
+  it('T4. 다른 local branch를 source로, main을 target으로 merge할 수 있다 (실제 <select> 조작)', async () => {
+    const wrapper = mountManager()
+    await flushPromises()
+    const { source, target } = mergeSelects(wrapper)
+    await target.setValue('main')
+    await source.setValue('flowgate-v0.2')
+    await flushPromises()
+    expect((source.element as HTMLSelectElement).value).toBe('flowgate-v0.2')
+    expect((target.element as HTMLSelectElement).value).toBe('main')
+    postRequest.mockResolvedValueOnce({ data: { ok: true } })
+    await wrapper.find('[data-test="branch-zone-merge"]').trigger('submit')
+    await flushPromises()
+    expect(postRequest).toHaveBeenCalledWith(
+      '/api/v1/projects/flowgate/git/branches/merge',
+      { source_branch: 'flowgate-v0.2', target_branch: 'main', push: true },
+    )
+    wrapper.unmount()
+  })
+
+  it('T10. 일반 브랜치가 main/test 두 개뿐이어도 실제 <select> 조작만으로 양방향 전환이 가능하다 (rej_01M3E5RFNW2BXG5E)', async () => {
+    getRequest.mockReset()
+    const TWO_BRANCH_CATALOG = {
+      ok: true,
+      base_branch: 'main',
+      default_merge_target: null as string | null,
+      branches: [
+        { name: 'main', kind: 'base', can_delete: false, can_be_create_source: true },
+        { name: 'test', kind: 'local', can_delete: true, can_be_create_source: true },
+      ],
+    }
+    getRequest.mockResolvedValue({ data: TWO_BRANCH_CATALOG })
+    const wrapper = mountManager()
+    await flushPromises()
+
+    // Mount-time default lands on test -> main (this direction always worked).
+    const { source, target } = mergeSelects(wrapper)
+    expect((source.element as HTMLSelectElement).value).toBe('test')
+    expect((target.element as HTMLSelectElement).value).toBe('main')
+
+    // Before the fix, Source's <option> list excluded the current Target
+    // ('main'), so 'main' was never a selectable <option> here at all and
+    // this setValue() could not reach the value it asks for.
+    await source.setValue('main')
+    await flushPromises()
+    expect((source.element as HTMLSelectElement).value).toBe('main')
+    expect((target.element as HTMLSelectElement).value).toBe('test')
+    postRequest.mockResolvedValueOnce({ data: { ok: true } })
+    await wrapper.find('[data-test="branch-zone-merge"]').trigger('submit')
+    await flushPromises()
+    expect(postRequest).toHaveBeenCalledWith(
+      '/api/v1/projects/flowgate/git/branches/merge',
+      { source_branch: 'main', target_branch: 'test', push: true },
+    )
+
+    // And back again, purely through the Source <select>, proving the
+    // direction is not a one-way trapdoor.
+    await source.setValue('test')
+    await flushPromises()
+    expect((source.element as HTMLSelectElement).value).toBe('test')
+    expect((target.element as HTMLSelectElement).value).toBe('main')
+    wrapper.unmount()
+  })
+
+  it('T5. local -> local merge가 가능하다', async () => {
+    const wrapper = mountManager()
+    await flushPromises()
+    ;(wrapper.vm as any).mergeSource = 'stale-feature'
+    ;(wrapper.vm as any).mergeTarget = 'flowgate-v0.2'
+    await flushPromises()
+    postRequest.mockResolvedValueOnce({ data: { ok: true } })
+    await wrapper.find('[data-test="branch-zone-merge"]').trigger('submit')
+    await flushPromises()
+    expect(postRequest).toHaveBeenCalledWith(
+      '/api/v1/projects/flowgate/git/branches/merge',
+      { source_branch: 'stale-feature', target_branch: 'flowgate-v0.2', push: true },
+    )
+    wrapper.unmount()
+  })
+
+  it('T6. source와 target이 같으면 merge 버튼이 비활성화되고 API가 호출되지 않는다', async () => {
+    const wrapper = mountManager()
+    await flushPromises()
+    ;(wrapper.vm as any).mergeSource = 'stale-feature'
+    ;(wrapper.vm as any).mergeTarget = 'stale-feature'
+    await flushPromises()
+    const button = wrapper.find('[data-test="merge-btn"]')
+    expect((button.element as HTMLButtonElement).disabled).toBe(true)
+    await wrapper.find('[data-test="branch-zone-merge"]').trigger('submit')
+    await flushPromises()
+    expect(postRequest).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('T7. internal_slot 브랜치는 merge Source/Target 옵션 목록에 없다', async () => {
+    const wrapper = mountManager()
+    await flushPromises()
+    const { source, target } = mergeSelects(wrapper)
+    const sourceNames = source.findAll('option').map((o) => o.element.value)
+    const targetNames = target.findAll('option').map((o) => o.element.value)
+    expect(sourceNames).not.toContain('flowgate_default_0599')
+    expect(targetNames).not.toContain('flowgate_default_0599')
+    wrapper.unmount()
+  })
+
+  it('T8. remote_only 브랜치는 merge Source/Target 옵션 목록에 없다', async () => {
+    const wrapper = mountManager()
+    await flushPromises()
+    const { source, target } = mergeSelects(wrapper)
+    const sourceNames = source.findAll('option').map((o) => o.element.value)
+    const targetNames = target.findAll('option').map((o) => o.element.value)
+    expect(sourceNames).not.toContain('old-remote')
+    expect(targetNames).not.toContain('old-remote')
+    wrapper.unmount()
+  })
+
+  it('T9. 성공한 일반 refresh는 유효한 수동 Target 선택을 default_merge_target 변경으로 덮어쓰지 않는다', async () => {
+    getRequest.mockReset()
+    getRequest.mockResolvedValue({ data: SYNC_CATALOG })
+    const wrapper = mountManager()
+    await flushPromises()
+    expect((wrapper.vm as any).mergeSource).toBe('flowgate-v0.2')
+    expect((wrapper.vm as any).mergeTarget).toBe('main')
+    ;(wrapper.vm as any).mergeTarget = 'stale-feature'
+    await flushPromises()
+
+    getRequest.mockResolvedValueOnce({ data: { ...SYNC_CATALOG, default_merge_target: 'main' } })
+    await wrapper.find('[data-test="branch-refresh"]').trigger('click')
+    await flushPromises()
+
+    expect((wrapper.vm as any).mergeTarget).toBe('stale-feature')
+    const { target } = mergeSelects(wrapper)
+    expect((target.element as HTMLSelectElement).value).toBe('stale-feature')
+    wrapper.unmount()
+  })
+})
+
+// flowgate.default.0612 T0006 §10 T8/T9 — Branch Manager merge/push separation.
+// merge_branches() now takes an explicit `push`; these cover the checkbox's
+// default, its effect on the request payload and confirm wording, and the
+// pushed/local badge on a successful result. Server-side push=false behavior
+// (local ref preserved, no push call, base-branch target) is covered by
+// server/tests/test_git_branches_0594.py instead of here.
+describe('GitBranchManager merge push selection (T0006)', () => {
+  it('P1. push 체크박스는 기본적으로 켜져 있다', async () => {
+    const wrapper = mountManager()
+    await flushPromises()
+    const checkbox = wrapper.get('[data-test="merge-push-checkbox"]')
+    expect((checkbox.element as HTMLInputElement).checked).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('P2. push 체크박스를 해제하면 merge API에 push:false가 전달된다', async () => {
+    const wrapper = mountManager()
+    await flushPromises()
+    ;(wrapper.vm as any).mergeSource = 'stale-feature'
+    ;(wrapper.vm as any).mergeTarget = 'flowgate-v0.2'
+    await wrapper.get('[data-test="merge-push-checkbox"]').setValue(false)
+    await flushPromises()
+
+    postRequest.mockResolvedValueOnce({
+      data: { ok: true, source_branch: 'stale-feature', target_branch: 'flowgate-v0.2', pushed: false },
+    })
+    await wrapper.find('[data-test="branch-zone-merge"]').trigger('submit')
+    await flushPromises()
+
+    expect(postRequest).toHaveBeenCalledWith(
+      '/api/v1/projects/flowgate/git/branches/merge',
+      { source_branch: 'stale-feature', target_branch: 'flowgate-v0.2', push: false },
+    )
+    wrapper.unmount()
+  })
+
+  it('P3. push 여부에 따라 확인창 문구가 달라진다', async () => {
+    const wrapper = mountManager()
+    await flushPromises()
+    ;(wrapper.vm as any).mergeSource = 'stale-feature'
+    ;(wrapper.vm as any).mergeTarget = 'flowgate-v0.2'
+    await flushPromises()
+
+    postRequest.mockResolvedValueOnce({ data: { ok: true, pushed: true } })
+    await wrapper.find('[data-test="branch-zone-merge"]').trigger('submit')
+    await flushPromises()
+    expect(dialogConfirm).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        message: i18n.global.t('main.git_branch_manager.merge_confirm_message_push', {
+          source: 'stale-feature', target: 'flowgate-v0.2',
+        }),
+      }),
+    )
+
+    await wrapper.get('[data-test="merge-push-checkbox"]').setValue(false)
+    postRequest.mockResolvedValueOnce({ data: { ok: true, pushed: false } })
+    await wrapper.find('[data-test="branch-zone-merge"]').trigger('submit')
+    await flushPromises()
+    expect(dialogConfirm).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        message: i18n.global.t('main.git_branch_manager.merge_confirm_message_no_push', {
+          source: 'stale-feature', target: 'flowgate-v0.2',
+        }),
+      }),
+    )
+    wrapper.unmount()
+  })
+
+  it('P4. 성공 응답의 pushed 값에 따라 결과 배지가 달라진다', async () => {
+    const wrapper = mountManager()
+    await flushPromises()
+    ;(wrapper.vm as any).mergeSource = 'stale-feature'
+    ;(wrapper.vm as any).mergeTarget = 'flowgate-v0.2'
+    await flushPromises()
+
+    postRequest.mockResolvedValueOnce({ data: { ok: true, pushed: true } })
+    await wrapper.find('[data-test="branch-zone-merge"]').trigger('submit')
+    await flushPromises()
+    expect(wrapper.get('[data-test="merge-result-pushed"]').text()).toBe(
+      i18n.global.t('main.git_branch_manager.merge_result_pushed'),
+    )
+
+    await wrapper.get('[data-test="merge-push-checkbox"]').setValue(false)
+    postRequest.mockResolvedValueOnce({ data: { ok: true, pushed: false } })
+    await wrapper.find('[data-test="branch-zone-merge"]').trigger('submit')
+    await flushPromises()
+    expect(wrapper.get('[data-test="merge-result-pushed"]').text()).toBe(
+      i18n.global.t('main.git_branch_manager.merge_result_local'),
+    )
     wrapper.unmount()
   })
 })

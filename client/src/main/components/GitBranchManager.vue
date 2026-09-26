@@ -12,7 +12,7 @@
   <section v-if="view !== 'hidden'" class="branch-manager" data-test="branch-manager">
     <header class="branch-manager-hd">
       <strong><AppIcon name="git-branch" /> {{ t('main.git_branch_manager.title') }}</strong>
-      <button class="btn btn-sm btn-secondary" type="button" :disabled="busy" data-test="branch-refresh" @click="load">
+      <button class="btn btn-sm btn-secondary" type="button" :disabled="busy" data-test="branch-refresh" @click="load()">
         <AppIcon name="arrow-clockwise" />{{ t('main.git_branch_manager.refresh') }}
       </button>
     </header>
@@ -103,17 +103,36 @@
       <template v-else>
         <label class="branch-field">
           <span class="branch-field-label">{{ t('main.git_branch_manager.source_label') }}</span>
-          <select v-model="mergeSource" class="branch-control" :aria-label="t('main.git_branch_manager.source_label')">
+          <select
+            :value="mergeSource"
+            class="branch-control"
+            :aria-label="t('main.git_branch_manager.source_label')"
+            @change="selectMergeSource(($event.target as HTMLSelectElement).value)"
+          >
             <option v-for="branch in sourceCandidates" :key="branch.name" :value="branch.name">{{ branch.name }}</option>
           </select>
           <small>{{ t('main.git_branch_manager.source_hint') }}</small>
         </label>
         <label class="branch-field">
           <span class="branch-field-label">{{ t('main.git_branch_manager.target_label') }}</span>
-          <select v-model="mergeTarget" class="branch-control" :aria-label="t('main.git_branch_manager.target_label')">
+          <select
+            :value="mergeTarget"
+            class="branch-control"
+            :aria-label="t('main.git_branch_manager.target_label')"
+            @change="selectMergeTarget(($event.target as HTMLSelectElement).value)"
+          >
             <option v-for="branch in targetCandidates" :key="branch.name" :value="branch.name">{{ branch.name }}</option>
           </select>
           <small>{{ t('main.git_branch_manager.target_hint') }}</small>
+        </label>
+        <!-- T0006 §3.1 — push defaults ON (compatible with the pre-existing
+             always-push behavior); unchecked runs a local-only merge. -->
+        <label class="branch-field branch-field-check">
+          <span class="branch-field-check-row">
+            <input type="checkbox" v-model="mergePush" data-test="merge-push-checkbox" />
+            <span>{{ t('main.git_branch_manager.merge_push_label') }}</span>
+          </span>
+          <small>{{ t('main.git_branch_manager.merge_push_hint') }}</small>
         </label>
       </template>
       <!-- §3.3 — the current selection must also read as a plain sentence. -->
@@ -140,6 +159,13 @@
             : t('main.git_branch_manager.merge_done_title') }}
         </strong>
         <span>{{ mergeResult.source }} → {{ mergeResult.target }}</span>
+        <!-- T0006 §9 — a successful merge always states whether it reached
+             origin, so a local-only merge is never mistaken for a published one. -->
+        <span v-if="!mergeResult.code" class="branch-result-pushed" data-test="merge-result-pushed">
+          {{ mergeResult.pushed
+            ? t('main.git_branch_manager.merge_result_pushed')
+            : t('main.git_branch_manager.merge_result_local') }}
+        </span>
         <span v-if="mergeResult.code" class="branch-result-code">{{ mergeResult.code }}</span>
         <span v-if="mergeResult.pushFailed" class="branch-result-push" data-test="merge-push-failed">
           {{ t('main.git_branch_manager.merge_push_failed') }}
@@ -240,15 +266,26 @@ const newName = ref('')
 const createSource = ref('')
 const mergeSource = ref('')
 const mergeTarget = ref('')
+// T0006 §3.1 — default ON keeps the pre-existing always-push behavior.
+const mergePush = ref(true)
 const deleteTarget = ref('')
-const mergeResult = ref<{ source: string; target: string; code?: string; message?: string; files?: string[]; pushFailed?: boolean } | null>(null)
+const mergeResult = ref<{ source: string; target: string; pushed?: boolean; code?: string; message?: string; files?: string[]; pushFailed?: boolean } | null>(null)
 const deleteResult = ref<{ branch: string; code?: string; message?: string } | null>(null)
 const showBranches = computed(() => props.view === 'all' || props.view === 'branches')
 const showManage = computed(() => props.view === 'all' || props.view === 'manage')
 const ordinary = computed(() => (catalog.value.branches || []).filter(b => b.kind === 'local' || b.kind === 'base'))
 const createCandidates = computed(() => (catalog.value.branches || []).filter(b => b.can_be_create_source && b.kind !== 'remote_only'))
-const sourceCandidates = computed(() => ordinary.value.filter(b => b.name !== mergeTarget.value))
-const targetCandidates = computed(() => ordinary.value.filter(b => b.name !== mergeSource.value))
+// Both selects always list every ordinary branch — never filtered by the
+// other side's current value. With exactly two ordinary branches, filtering
+// Source by the current Target (and Target by the current Source) leaves
+// each <select> with only one <option>, so once mergeSource/mergeTarget
+// settle on a pair neither <select> ever offers the value needed to flip
+// direction: main -> test becomes permanently unreachable while test -> main
+// still works (human rejection rej_01M3E5RFNW2BXG5E, confirmed live with
+// only main/test present). Picking the value already on the other side now
+// swaps them instead (see selectMergeSource/selectMergeTarget below).
+const sourceCandidates = computed(() => ordinary.value)
+const targetCandidates = computed(() => ordinary.value)
 const hasMergeCandidates = computed(() => ordinary.value.length >= 2)
 // Protected branches stay pickable so the zone can say WHY they cannot go; the
 // delete button itself follows the server's can_delete verdict only.
@@ -281,16 +318,44 @@ function deleteResultReasonText(result: { code?: string; message?: string }): st
   }
   return result.message || t('main.git_branch_manager.op_failed')
 }
-function syncSelections() {
+function syncSelections(opts: { forceTarget?: string | null } = {}) {
   const first = ordinary.value[0]?.name || ''
   if (!createCandidates.value.some(b => b.name === createSource.value)) createSource.value = catalog.value.base_branch || first
-  if (!ordinary.value.some(b => b.name === mergeSource.value)) mergeSource.value = ordinary.value.find(b => b.name !== catalog.value.base_branch)?.name || first
-  if (!targetCandidates.value.some(b => b.name === mergeTarget.value)) mergeTarget.value = catalog.value.default_merge_target || catalog.value.base_branch || targetCandidates.value[0]?.name || ''
+
+  // Target is settled first. setDefaultTarget() passes forceTarget so the new
+  // persistent target always wins here, even if the old mergeTarget is still
+  // technically a valid candidate; an ordinary refresh (no forceTarget) only
+  // touches mergeTarget when it is no longer a valid candidate at all.
+  if ('forceTarget' in opts) {
+    mergeTarget.value =
+      opts.forceTarget ||
+      catalog.value.base_branch ||
+      ordinary.value.find(b => b.name !== mergeSource.value)?.name ||
+      first
+  } else if (!targetCandidates.value.some(b => b.name === mergeTarget.value)) {
+    mergeTarget.value = catalog.value.default_merge_target || catalog.value.base_branch || targetCandidates.value[0]?.name || ''
+  }
+
+  // Source is re-validated against the now-settled target, not just against
+  // `ordinary` — mergeSource must differ from mergeTarget.
+  if (!ordinary.value.some(b => b.name === mergeSource.value) || mergeSource.value === mergeTarget.value) {
+    mergeSource.value =
+      ordinary.value.find(b => b.name !== mergeTarget.value && b.name !== catalog.value.base_branch)?.name ||
+      ordinary.value.find(b => b.name !== mergeTarget.value)?.name ||
+      ''
+  }
+
+  // If settling the source made it collide with the target again (e.g. a
+  // forced target equal to the previous source), separate them one more time.
+  if (mergeTarget.value === mergeSource.value || !ordinary.value.some(b => b.name === mergeTarget.value)) {
+    mergeTarget.value = ordinary.value.find(b => b.name !== mergeSource.value)?.name || ''
+  }
+
   if (!deleteCandidates.value.some(b => b.name === deleteTarget.value)) {
     deleteTarget.value = deleteCandidates.value.find(b => b.can_delete)?.name || deleteCandidates.value[0]?.name || ''
   }
 }
-async function load() {
+async function load(opts: { forceTarget?: string | null } = {}) {
   if (!props.projectId) return
   error.value = ''
   try {
@@ -300,7 +365,7 @@ async function load() {
       default_merge_target: data?.default_merge_target || null,
       branches: Array.isArray(data?.branches) ? data.branches : [],
     }
-    syncSelections()
+    syncSelections(opts)
     emit('catalog', { state: 'ready', base_branch: catalog.value.base_branch, default_merge_target: catalog.value.default_merge_target })
   } catch (e: any) {
     // §4.1 — this catalog's own read failure never reaches (or blanks) the
@@ -344,7 +409,9 @@ async function setDefaultTarget(branch: string | null) {
         : t('main.git_branch_manager.target_cleared_toast'),
       'success',
     )
-    await load()
+    // Explicit target change: force the Merge form to follow the new
+    // persistent target instead of keeping a stale-but-still-valid selection.
+    await load({ forceTarget: branch })
   })
 }
 async function confirmDelete(branch: BranchRow) {
@@ -388,11 +455,17 @@ async function confirmMerge() {
   const source = mergeSource.value
   const target = mergeTarget.value
   if (!source || !target || source === target || busy.value) return
-  // §3.4 — one click both merges and pushes; the confirm names source, target
-  // AND that a push is included, so nothing here is a surprise afterward.
+  const push = mergePush.value
+  // §3.4/§9 — the confirm names source, target AND whether a push is
+  // included, so nothing here is a surprise afterward either way.
   const ok = await confirm({
     title: t('main.git_branch_manager.merge_confirm_title'),
-    message: t('main.git_branch_manager.merge_confirm_message', { source, target }),
+    message: t(
+      push
+        ? 'main.git_branch_manager.merge_confirm_message_push'
+        : 'main.git_branch_manager.merge_confirm_message_no_push',
+      { source, target },
+    ),
     danger: true,
     confirmLabel: t('main.git_branch_manager.merge_btn'),
   })
@@ -401,8 +474,10 @@ async function confirmMerge() {
   deleteResult.value = null
   await run(async () => {
     try {
-      await postRequest(`/api/v1/projects/${props.projectId}/git/branches/merge`, { source_branch: source, target_branch: target })
-      mergeResult.value = { source, target }
+      const { data } = await postRequest<any>(`/api/v1/projects/${props.projectId}/git/branches/merge`, {
+        source_branch: source, target_branch: target, push,
+      })
+      mergeResult.value = { source, target, pushed: !!data?.pushed }
       await load()
     } catch (e: any) {
       // §7 merge 실패 — source/target stay attached to EVERY failure (not just
@@ -427,6 +502,22 @@ async function confirmMerge() {
 function loadQuietly() { void load() }
 watch(() => props.projectId, loadQuietly)
 onMounted(loadQuietly)
+// Picking (via the <select> itself) the branch already on the other side
+// swaps them instead of leaving the pick blocked — this, plus both selects
+// always listing every ordinary branch (sourceCandidates/targetCandidates
+// above), is what makes both directions reachable through the <option>
+// list alone. These are wired to @change rather than v-model so that
+// programmatic writes (syncSelections()'s own invariant repair, and tests
+// that set mergeSource/mergeTarget directly) are never second-guessed —
+// only an actual <select> pick swaps.
+function selectMergeSource(value: string) {
+  if (value && value === mergeTarget.value) mergeTarget.value = mergeSource.value
+  mergeSource.value = value
+}
+function selectMergeTarget(value: string) {
+  if (value && value === mergeSource.value) mergeSource.value = mergeTarget.value
+  mergeTarget.value = value
+}
 </script>
 
 <style scoped>
@@ -461,6 +552,8 @@ onMounted(loadQuietly)
 .branch-form-row .branch-control { flex: 1; }
 .branch-create-btn { min-height: 32px; }
 .branch-form-actions { display: flex; justify-content: flex-end; }
+.branch-field-check { gap: 6px; }
+.branch-field-check-row { display: flex; align-items: center; gap: 6px; font-size: .82rem; color: var(--text); }
 .branch-merge-summary { margin: 0; font-size: .82rem; color: var(--text-s); }
 .branch-empty-state { margin: 0; padding: 10px; border-radius: var(--r); background: var(--surface); color: var(--text-s); font-size: .82rem; line-height: 1.4; }
 .branch-zone--danger { padding: 12px; border: 1px solid var(--danger-l); border-left: 3px solid var(--danger); border-radius: var(--r-lg); }

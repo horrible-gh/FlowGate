@@ -556,7 +556,7 @@ describe('Git panel tabs and overview (T0018)', () => {
     await merge.findAll('select')[0].setValue('stale-feature')
     await merge.findAll('select')[1].setValue('flowgate-v0.2')
     await merge.trigger('submit'); await flushPromises()
-    expect(postRequest).toHaveBeenCalledWith('/api/v1/projects/flowgate/git/branches/merge', { source_branch: 'stale-feature', target_branch: 'flowgate-v0.2' })
+    expect(postRequest).toHaveBeenCalledWith('/api/v1/projects/flowgate/git/branches/merge', { source_branch: 'stale-feature', target_branch: 'flowgate-v0.2', push: true })
 
     deleteRequest.mockResolvedValueOnce({ data: { ok: true, deleted: true } })
     await wrapper.get('[data-test="delete-select"]').setValue('stale-feature')
