@@ -12,7 +12,7 @@
   <section v-if="view !== 'hidden'" class="branch-manager" data-test="branch-manager">
     <header class="branch-manager-hd">
       <strong><AppIcon name="git-branch" /> {{ t('main.git_branch_manager.title') }}</strong>
-      <button class="btn btn-sm btn-secondary" type="button" :disabled="busy" data-test="branch-refresh" @click="load">
+      <button class="btn btn-sm btn-secondary" type="button" :disabled="busy" data-test="branch-refresh" @click="load()">
         <AppIcon name="arrow-clockwise" />{{ t('main.git_branch_manager.refresh') }}
       </button>
     </header>
@@ -103,14 +103,24 @@
       <template v-else>
         <label class="branch-field">
           <span class="branch-field-label">{{ t('main.git_branch_manager.source_label') }}</span>
-          <select v-model="mergeSource" class="branch-control" :aria-label="t('main.git_branch_manager.source_label')">
+          <select
+            :value="mergeSource"
+            class="branch-control"
+            :aria-label="t('main.git_branch_manager.source_label')"
+            @change="selectMergeSource(($event.target as HTMLSelectElement).value)"
+          >
             <option v-for="branch in sourceCandidates" :key="branch.name" :value="branch.name">{{ branch.name }}</option>
           </select>
           <small>{{ t('main.git_branch_manager.source_hint') }}</small>
         </label>
         <label class="branch-field">
           <span class="branch-field-label">{{ t('main.git_branch_manager.target_label') }}</span>
-          <select v-model="mergeTarget" class="branch-control" :aria-label="t('main.git_branch_manager.target_label')">
+          <select
+            :value="mergeTarget"
+            class="branch-control"
+            :aria-label="t('main.git_branch_manager.target_label')"
+            @change="selectMergeTarget(($event.target as HTMLSelectElement).value)"
+          >
             <option v-for="branch in targetCandidates" :key="branch.name" :value="branch.name">{{ branch.name }}</option>
           </select>
           <small>{{ t('main.git_branch_manager.target_hint') }}</small>
@@ -247,8 +257,17 @@ const showBranches = computed(() => props.view === 'all' || props.view === 'bran
 const showManage = computed(() => props.view === 'all' || props.view === 'manage')
 const ordinary = computed(() => (catalog.value.branches || []).filter(b => b.kind === 'local' || b.kind === 'base'))
 const createCandidates = computed(() => (catalog.value.branches || []).filter(b => b.can_be_create_source && b.kind !== 'remote_only'))
-const sourceCandidates = computed(() => ordinary.value.filter(b => b.name !== mergeTarget.value))
-const targetCandidates = computed(() => ordinary.value.filter(b => b.name !== mergeSource.value))
+// Both selects always list every ordinary branch — never filtered by the
+// other side's current value. With exactly two ordinary branches, filtering
+// Source by the current Target (and Target by the current Source) leaves
+// each <select> with only one <option>, so once mergeSource/mergeTarget
+// settle on a pair neither <select> ever offers the value needed to flip
+// direction: main -> test becomes permanently unreachable while test -> main
+// still works (human rejection rej_01M3E5RFNW2BXG5E, confirmed live with
+// only main/test present). Picking the value already on the other side now
+// swaps them instead (see selectMergeSource/selectMergeTarget below).
+const sourceCandidates = computed(() => ordinary.value)
+const targetCandidates = computed(() => ordinary.value)
 const hasMergeCandidates = computed(() => ordinary.value.length >= 2)
 // Protected branches stay pickable so the zone can say WHY they cannot go; the
 // delete button itself follows the server's can_delete verdict only.
@@ -281,16 +300,44 @@ function deleteResultReasonText(result: { code?: string; message?: string }): st
   }
   return result.message || t('main.git_branch_manager.op_failed')
 }
-function syncSelections() {
+function syncSelections(opts: { forceTarget?: string | null } = {}) {
   const first = ordinary.value[0]?.name || ''
   if (!createCandidates.value.some(b => b.name === createSource.value)) createSource.value = catalog.value.base_branch || first
-  if (!ordinary.value.some(b => b.name === mergeSource.value)) mergeSource.value = ordinary.value.find(b => b.name !== catalog.value.base_branch)?.name || first
-  if (!targetCandidates.value.some(b => b.name === mergeTarget.value)) mergeTarget.value = catalog.value.default_merge_target || catalog.value.base_branch || targetCandidates.value[0]?.name || ''
+
+  // Target is settled first. setDefaultTarget() passes forceTarget so the new
+  // persistent target always wins here, even if the old mergeTarget is still
+  // technically a valid candidate; an ordinary refresh (no forceTarget) only
+  // touches mergeTarget when it is no longer a valid candidate at all.
+  if ('forceTarget' in opts) {
+    mergeTarget.value =
+      opts.forceTarget ||
+      catalog.value.base_branch ||
+      ordinary.value.find(b => b.name !== mergeSource.value)?.name ||
+      first
+  } else if (!targetCandidates.value.some(b => b.name === mergeTarget.value)) {
+    mergeTarget.value = catalog.value.default_merge_target || catalog.value.base_branch || targetCandidates.value[0]?.name || ''
+  }
+
+  // Source is re-validated against the now-settled target, not just against
+  // `ordinary` — mergeSource must differ from mergeTarget.
+  if (!ordinary.value.some(b => b.name === mergeSource.value) || mergeSource.value === mergeTarget.value) {
+    mergeSource.value =
+      ordinary.value.find(b => b.name !== mergeTarget.value && b.name !== catalog.value.base_branch)?.name ||
+      ordinary.value.find(b => b.name !== mergeTarget.value)?.name ||
+      ''
+  }
+
+  // If settling the source made it collide with the target again (e.g. a
+  // forced target equal to the previous source), separate them one more time.
+  if (mergeTarget.value === mergeSource.value || !ordinary.value.some(b => b.name === mergeTarget.value)) {
+    mergeTarget.value = ordinary.value.find(b => b.name !== mergeSource.value)?.name || ''
+  }
+
   if (!deleteCandidates.value.some(b => b.name === deleteTarget.value)) {
     deleteTarget.value = deleteCandidates.value.find(b => b.can_delete)?.name || deleteCandidates.value[0]?.name || ''
   }
 }
-async function load() {
+async function load(opts: { forceTarget?: string | null } = {}) {
   if (!props.projectId) return
   error.value = ''
   try {
@@ -300,7 +347,7 @@ async function load() {
       default_merge_target: data?.default_merge_target || null,
       branches: Array.isArray(data?.branches) ? data.branches : [],
     }
-    syncSelections()
+    syncSelections(opts)
     emit('catalog', { state: 'ready', base_branch: catalog.value.base_branch, default_merge_target: catalog.value.default_merge_target })
   } catch (e: any) {
     // §4.1 — this catalog's own read failure never reaches (or blanks) the
@@ -330,7 +377,9 @@ async function setDefaultTarget(branch: string | null) {
         : t('main.git_branch_manager.target_cleared_toast'),
       'success',
     )
-    await load()
+    // Explicit target change: force the Merge form to follow the new
+    // persistent target instead of keeping a stale-but-still-valid selection.
+    await load({ forceTarget: branch })
   })
 }
 async function confirmDelete(branch: BranchRow) {
@@ -400,6 +449,22 @@ async function confirmMerge() {
 function loadQuietly() { void load() }
 watch(() => props.projectId, loadQuietly)
 onMounted(loadQuietly)
+// Picking (via the <select> itself) the branch already on the other side
+// swaps them instead of leaving the pick blocked — this, plus both selects
+// always listing every ordinary branch (sourceCandidates/targetCandidates
+// above), is what makes both directions reachable through the <option>
+// list alone. These are wired to @change rather than v-model so that
+// programmatic writes (syncSelections()'s own invariant repair, and tests
+// that set mergeSource/mergeTarget directly) are never second-guessed —
+// only an actual <select> pick swaps.
+function selectMergeSource(value: string) {
+  if (value && value === mergeTarget.value) mergeTarget.value = mergeSource.value
+  mergeSource.value = value
+}
+function selectMergeTarget(value: string) {
+  if (value && value === mergeSource.value) mergeSource.value = mergeTarget.value
+  mergeTarget.value = value
+}
 </script>
 
 <style scoped>
