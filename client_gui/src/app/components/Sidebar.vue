@@ -8,7 +8,7 @@
           :class="{ active: activeKey === item.key }"
           :aria-current="activeKey === item.key ? 'page' : undefined"
           :data-nav-key="item.key"
-          @click="navigate"
+          @click="onNavClick(item, navigate, $event)"
         >
           <span class="gui-nav-icon" :style="{ color: item.accent }"><NavGlyph :name="item.glyph" /></span>
           <span class="gui-nav-text">
@@ -37,11 +37,13 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute } from 'vue-router'
 import Button from '@/components/ui/Button.vue'
-import { APP_NAV_ITEMS, type AppNavKey } from '../navigation'
+import { useProjectStore } from '@/features/project'
+import { APP_NAV_ITEMS, type AppNavItem, type AppNavKey } from '../navigation'
 import NavGlyph from './NavGlyph.vue'
 
 const { t } = useI18n()
 const route = useRoute()
+const projectStore = useProjectStore()
 
 // Build date injected by vite.config.ts `define` — the real build, not a hand-kept string.
 const BUILD_STAMP = __FG_GUI_BUILD__
@@ -50,6 +52,34 @@ const BUILD_STAMP = __FG_GUI_BUILD__
 // deeper path such as /app/projects/x still highlights its section, and an unknown /app/*
 // path highlights nothing.
 const activeKey = computed(() => (route.meta.navKey as AppNavKey | undefined) ?? null)
+
+// A plain, unmodified left click — the same check vue-router's own <RouterLink> click
+// handler performs before calling preventDefault(). Anything else (ctrl/meta/shift/alt,
+// a non-primary button) must fall through to the native <a href> so opening the /projects
+// placeholder in a new tab still works.
+function isPlainClick(event: MouseEvent): boolean {
+  return (
+    event.button === 0 &&
+    !event.metaKey &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.shiftKey &&
+    !event.defaultPrevented
+  )
+}
+
+// T0010 (T#3) §1/§2: Project has its own Dialog, not a routed /projects screen. Clicking
+// this entry must keep the current route and open the single Project Dialog through the
+// feature's public interface (D0004 §4.1) — not navigate to the /projects "준비 중"
+// placeholder that still exists underneath for direct/deep links.
+function onNavClick(item: AppNavItem, navigate: (e: MouseEvent) => void, event: MouseEvent): void {
+  if (item.key === 'projects' && isPlainClick(event)) {
+    event.preventDefault()
+    projectStore.openDialog()
+    return
+  }
+  navigate(event)
+}
 </script>
 
 <style scoped>

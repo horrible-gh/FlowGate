@@ -26,12 +26,18 @@ describe('v0.2 Dashboard / App Shell structure (T0011)', () => {
     expect(existsSync(join(SRC, 'app/views/DashboardPlaceholderView.vue'))).toBe(false)
   })
 
-  it('app/dashboard pulls in no domain feature, API transport or store (T0011 §9)', () => {
+  it('app/dashboard reaches Project only through its public open interface, else no domain feature/API/store (T0011 §9, T0010/T#3 §1 exception)', () => {
     for (const file of DASHBOARD) {
       for (const spec of importsOf(read(file))) {
+        if (spec === '@/features/project') continue
         expect(spec, rel(file)).not.toMatch(/^@shared\/(api|projects|auth)|^axios$|^pinia$|^@\/features\//)
       }
     }
+  })
+
+  it('only DashboardView (not the presentational DashboardActionCard leaf) reaches the Project public surface (D0004 §4.1)', () => {
+    expect(importsOf(read(join(SRC, 'app/dashboard/DashboardView.vue')))).toContain('@/features/project')
+    expect(importsOf(read(join(SRC, 'app/dashboard/DashboardActionCard.vue')))).not.toContain('@/features/project')
   })
 
   it('no Dashboard file grows into a single do-everything component', () => {
@@ -40,9 +46,14 @@ describe('v0.2 Dashboard / App Shell structure (T0011)', () => {
     }
   })
 
-  it('the App Shell only assembles layout: Topbar, Sidebar and RouterView (T0011 §5)', () => {
+  it('the App Shell only assembles layout: Topbar, Sidebar, RouterView and the Project Dialog mount (T0011 §5, T0010/T#3 §2)', () => {
     const imports = importsOf(read(join(SRC, 'app/App.vue')))
-    expect(imports.sort()).toEqual(['./components/Sidebar.vue', './components/Topbar.vue', 'vue-router'])
+    expect(imports.sort()).toEqual([
+      './components/Sidebar.vue',
+      './components/Topbar.vue',
+      '@/features/project',
+      'vue-router',
+    ].sort())
   })
 
   it('never embeds or imports v0.1 screens (T0011 §8/§10/§16)', () => {

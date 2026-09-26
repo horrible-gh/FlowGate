@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { mount } from '@vue/test-utils'
+import { createPinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import App from '@/app/App.vue'
@@ -35,7 +36,9 @@ describe('client_gui App Shell renders a persistent Topbar (T0009 §8)', () => {
     await router.push('/projects')
 
     const wrapper = mount(App, {
-      global: { plugins: [i18n, router] },
+      // App.vue mounts the Project Dialog (T0010/T#3 §2), which needs an active Pinia
+      // instance to construct, same as main.ts installs one for the real app.
+      global: { plugins: [i18n, router, createPinia()] },
     })
     await router.isReady()
 

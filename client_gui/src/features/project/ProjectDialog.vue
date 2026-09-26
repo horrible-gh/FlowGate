@@ -1,0 +1,278 @@
+<template>
+  <ModalShell :open="store.dialogOpen" size="lg" close-on-backdrop @close="store.closeDialog()">
+    <template #header="{ titleId }">
+      <div class="pd-head">
+        <div class="pd-head-titles">
+          <h2 :id="titleId" class="pd-head-title">프로젝트 열기</h2>
+          <p class="pd-head-sub">기존 프로젝트를 선택하거나 새 프로젝트를 만드세요.</p>
+        </div>
+        <IconButton label="닫기" variant="ghost" @click="store.closeDialog()">✕</IconButton>
+      </div>
+    </template>
+
+    <template #default>
+      <div class="pd-body">
+        <div class="pd-intro">
+          <div class="pd-intro-text">
+            <h3 class="pd-intro-title">프로젝트를 선택하세요.</h3>
+            <p class="pd-intro-desc">아래 목록에서 작업할 프로젝트를 선택하거나, 검색으로 찾아보세요.</p>
+          </div>
+          <Button v-if="isAdmin" type="button" variant="primary" size="sm" @click="createDialogOpen = true">
+            + 새 프로젝트
+          </Button>
+        </div>
+
+        <div class="pd-search">
+          <Input
+            ref="searchInputRef"
+            v-model="searchQuery"
+            type="search"
+            class="pd-search-input"
+            placeholder="프로젝트 검색..."
+            aria-label="프로젝트 검색"
+            autocomplete="off"
+            data-modal-autofocus
+          />
+        </div>
+
+        <ProjectList
+          :projects="filteredProjects"
+          :loading="store.loading"
+          :error="store.error"
+          :has-any-projects="store.projects.length > 0"
+          :selected-id="selectedId"
+          :current-id="store.currentProject?.id ?? null"
+          @retry="store.fetchProjects()"
+          @select="selectProject"
+          @open="openProject"
+        />
+      </div>
+    </template>
+
+    <template #footer>
+      <div class="pd-foot">
+        <span><b>Enter</b> 선택 / 열기</span>
+        <span><b>Esc</b> 닫기</span>
+      </div>
+    </template>
+  </ModalShell>
+
+  <ProjectCreateDialog :open="createDialogOpen" @close="createDialogOpen = false" @created="handleCreated" />
+
+  <ToastHost :toasts="toasts" @dismiss="dismissToast" />
+</template>
+
+<script setup lang="ts">
+// Project Dialog -- Project Feature's top-level Modal (WP0005 T#2 §2.1/§2.2/§3). App
+// never passes an `open` prop here: the store owns Dialog open/close truth already
+// (T#1 §5, D0004 §1.2/§4.1), so opening this Dialog from anywhere (Sidebar/Dashboard in
+// T#3) means calling the public `useProjectStore().openDialog()`, and this component
+// only ever reads `store.dialogOpen` reactively.
+//
+// Dialog-local state lives here, not in the store: `searchQuery` and `selectedId` (the
+// candidate a row-click picks, distinct from `store.currentProject` -- D0004 §2.1/§3.3,
+// T#1 §5 doc-comment). Only an explicit "열기"/double-click ever calls
+// `store.setCurrentProject()` (T#2 §3); a plain row click only ever updates `selectedId`.
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import Button from '../../components/ui/Button.vue'
+import IconButton from '../../components/ui/IconButton.vue'
+import Input from '../../components/ui/Input.vue'
+import ModalShell from '../../components/ui/ModalShell.vue'
+import ToastHost, { type ToastHostItem } from '../../components/ui/ToastHost.vue'
+import { useCurrentUser } from '../../core/auth/currentUser'
+import ProjectCreateDialog from './ProjectCreateDialog.vue'
+import ProjectList from './ProjectList.vue'
+import { useProjectStore } from './store'
+import type { Project } from './types'
+
+const store = useProjectStore()
+const { user } = useCurrentUser()
+
+// Admin-only "+ 새 프로젝트" entry point (D0004 §3.6, T#2 §5).
+const isAdmin = computed(() => user.value?.isAdmin ?? false)
+
+const searchQuery = ref('')
+const selectedId = ref<string | null>(null)
+const createDialogOpen = ref(false)
+const searchInputRef = ref<InstanceType<typeof Input> | null>(null)
+const toasts = ref<ToastHostItem[]>([])
+
+const filteredProjects = computed<Project[]>(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q) return store.projects
+  return store.projects.filter(
+    (p) => p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q) || p.description.toLowerCase().includes(q),
+  )
+})
+
+function pickDefaultSelection(): string | null {
+  const current = store.currentProject
+  if (current && store.projects.some((p) => p.id === current.id)) return current.id
+  return store.projects[0]?.id ?? null
+}
+
+// Every time this Dialog opens, Dialog-local state starts clean and search results are
+// unfiltered again (D0004 §3.1/§3.2) -- closing it never leaves stale search text or a
+// stale selection behind for the next open. Initial focus itself is ModalShell's own
+// concern via `data-modal-autofocus` on the search input above, not duplicated here.
+//
+// Closing also cascades to the create child Modal (T#2 §9 child lifecycle): this parent
+// can close via more than an explicit "취소"/X on the child itself -- Escape, a backdrop
+// click, or a programmatic store.closeDialog() (e.g. from the create-success flow's own
+// caller, or a future outside trigger) can all flip `store.dialogOpen` to false while the
+// child is still open or its own create request still in flight. Forcing
+// `createDialogOpen` closed here too (rather than leaving the early return that used to
+// skip this branch entirely) is what changes the child's own `open` prop, which is what
+// bumps *its* `generation` and invalidates any create response still in flight -- without
+// this, the child Modal is orphaned on top of a Dialog with nothing left rendering behind
+// it, and the same stale child session would still be showing on the next open.
+watch(
+  () => store.dialogOpen,
+  (isOpen) => {
+    if (!isOpen) {
+      createDialogOpen.value = false
+      return
+    }
+    searchQuery.value = ''
+    selectedId.value = null
+  },
+)
+
+// Initial selection is decided once the active list this open session fetched has
+// settled (D0004 §3.2 priority: saved current if still active, else the first Project,
+// else none) -- not on every later mutation of `store.projects`, so a create's list
+// refresh never silently resets a selection the person already changed.
+watch(
+  () => store.loading,
+  (loading, wasLoading) => {
+    if (!wasLoading || loading) return
+    if (!store.dialogOpen || store.error) return
+    if (selectedId.value !== null) return
+    selectedId.value = pickDefaultSelection()
+  },
+)
+
+// A search that hides the current selection candidate must not keep it selected out of
+// sight (D0004 §3.5, T#2 §4).
+watch(filteredProjects, (list) => {
+  if (selectedId.value && !list.some((p) => p.id === selectedId.value)) {
+    selectedId.value = null
+  }
+})
+
+function selectProject(project: Project): void {
+  selectedId.value = project.id
+}
+
+// The only place this component calls into the store's current-Project mutation --
+// picking a row alone (selectProject above) never does (D0004 §3.3/§3.4, T#2 §3).
+function openProject(project: Project): void {
+  store.setCurrentProject(project)
+  store.closeDialog()
+}
+
+function dismissToast(id: string | number): void {
+  toasts.value = toasts.value.filter((t) => t.id !== id)
+}
+
+// "/" jumps focus to search, but only while this Dialog is actually topmost (the create
+// child Modal is not open) and only while focus is not already inside a text field --
+// typing a literal "/" character into the description Textarea, for example, must stay a
+// literal "/" (T#2 §4).
+function onDocumentKeydown(event: KeyboardEvent): void {
+  if (event.key !== '/') return
+  if (!store.dialogOpen || createDialogOpen.value) return
+  const active = document.activeElement
+  if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) return
+  event.preventDefault()
+  // The shared Input primitive does not expose a `focus()` method (it never
+  // defineExpose()s one) -- `$el` is always available on a component's template ref
+  // regardless, and Input's single root element is the native <input> itself.
+  ;(searchInputRef.value?.$el as HTMLInputElement | undefined)?.focus()
+}
+
+onMounted(() => document.addEventListener('keydown', onDocumentKeydown))
+onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown))
+
+// Create success (D0004 §3.6/§5.4, T#2 §6): close the child Modal, let the person see the
+// new Project immediately (clearing search in case active text would hide it), make it
+// the Dialog-local selection candidate, keep this parent Dialog open, and leave
+// `currentProject` untouched -- only an explicit "열기" changes that.
+function handleCreated(project: Project): void {
+  createDialogOpen.value = false
+  searchQuery.value = ''
+  selectedId.value = project.id
+  toasts.value = [...toasts.value, { id: `project-created-${project.id}-${Date.now()}`, message: `${project.name} 프로젝트를 생성했습니다.`, tone: 'success' }]
+}
+</script>
+
+<style scoped>
+.pd-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 24px 0;
+}
+
+.pd-head-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 750;
+  color: var(--fg2-text);
+}
+
+.pd-head-sub {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--fg2-muted);
+}
+
+.pd-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 0;
+}
+
+.pd-intro {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.pd-intro-text {
+  min-width: 0;
+}
+
+.pd-intro-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--fg2-text);
+}
+
+.pd-intro-desc {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--fg2-muted);
+}
+
+.pd-search {
+  flex: none;
+}
+
+.pd-foot {
+  display: flex;
+  gap: 16px;
+  padding: 10px 24px 16px;
+  color: var(--fg2-muted);
+  font-size: 12px;
+}
+
+.pd-foot b {
+  color: var(--fg2-control-fg);
+}
+</style>

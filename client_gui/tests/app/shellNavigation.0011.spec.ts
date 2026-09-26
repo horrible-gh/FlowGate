@@ -1,4 +1,5 @@
 import { mount, type VueWrapper } from '@vue/test-utils'
+import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Router } from 'vue-router'
 import i18n from '@shared/i18n'
@@ -9,12 +10,15 @@ registerAppMessages(i18n)
 
 // T0011 §8/§12: the real App.vue + real /app router. Sidebar active state must follow the
 // router, placeholders must say "준비 중", and no navigation may rewrite the requested URL.
+// App.vue mounts the Project Dialog (T0010/T#3 §2), so a real Pinia instance is required
+// the same way main.ts installs one — this is not the Project feature's own test surface,
+// just what App.vue now needs to mount at all.
 async function mountAt(url: string): Promise<{ wrapper: VueWrapper; router: Router }> {
   window.history.replaceState({}, '', `/app${url}`)
   vi.resetModules()
   const router = (await import('@/app/router/index')).default
   await router.push(url)
-  const wrapper = mount(App, { global: { plugins: [i18n, router] } })
+  const wrapper = mount(App, { global: { plugins: [i18n, router, createPinia()] } })
   await router.isReady()
   return { wrapper, router }
 }

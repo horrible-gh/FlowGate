@@ -1,6 +1,7 @@
 import { mount } from '@vue/test-utils'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { createPinia } from 'pinia'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import i18n from '@shared/i18n'
@@ -54,7 +55,9 @@ function mountWithRouter<T>(component: T) {
     history: createMemoryHistory(),
     routes: [{ path: '/', component: { template: '<div/>' } }, { path: '/:rest(.*)*', component: { template: '<div/>' } }],
   })
-  return mount(component as never, { global: { plugins: [i18n, router] } })
+  // Sidebar's Project entry now calls useProjectStore() (T0010/T#3 §1), so it needs an
+  // active Pinia instance the same way App.vue's real mount gets one from main.ts.
+  return mount(component as never, { global: { plugins: [i18n, router, createPinia()] } })
 }
 
 describe('App Shell / Dashboard: Primitive swap keeps HEAD baseline computed style', () => {

@@ -8,13 +8,18 @@
       </main>
     </div>
   </div>
+  <ProjectDialog />
 </template>
 
 <script setup lang="ts">
-// The v0.2 App Shell (T0011 §5): layout and route assembly only — Topbar, Sidebar and the
-// routed screen. It owns no feature state or API calls; each screen under RouterView
-// brings its own. The GUI-generation switch stays in the Topbar (T0009 §8).
+// The v0.2 App Shell (T0011 §5, extended by T0010/T#3 §2): layout and route assembly only
+// — Topbar, Sidebar, the routed screen, and (T#3) the single Project Dialog mount. It owns
+// no feature state or API calls of its own; each screen under RouterView brings its own,
+// and ProjectDialog is reached only through features/project's public surface (D0004 §4.1)
+// — this file never touches ProjectList/ProjectRow/ProjectCreateDialog or Dialog-local
+// state. The GUI-generation switch stays in the Topbar (T0009 §8).
 import { RouterView } from 'vue-router'
+import { ProjectDialog } from '@/features/project'
 import Sidebar from './components/Sidebar.vue'
 import Topbar from './components/Topbar.vue'
 </script>
