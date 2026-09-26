@@ -860,7 +860,7 @@ def test_run_finish_closes_unmaterialized_and_late_http_approval_cannot_create(
 
     def close_for_run(run_id, actor):
         assert run_id == "run"
-        assert actor == "snapshot-run-cleanup"
+        assert actor == materialize.SYSTEM_ACTOR_USER_ID
         if snapshot_env.row["status"] not in {"requested", "approved"}:
             return []
         snapshot_env.row.update(
