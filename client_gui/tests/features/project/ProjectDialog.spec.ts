@@ -276,6 +276,8 @@ describe('features/project/ProjectDialog', () => {
     await wrapper.vm.$nextTick()
     ;(document.querySelector('#pcd-name') as HTMLInputElement).value = 'New Project'
     ;(document.querySelector('#pcd-name') as HTMLInputElement).dispatchEvent(new Event('input'))
+    ;(document.querySelector('#pcd-id') as HTMLInputElement).value = 'new-project'
+    ;(document.querySelector('#pcd-id') as HTMLInputElement).dispatchEvent(new Event('input'))
     await wrapper.vm.$nextTick()
     ;(document.querySelector('.pcd-actions .ui-btn--primary') as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flushPromises()
@@ -352,6 +354,8 @@ describe('features/project/ProjectDialog', () => {
     await wrapper.vm.$nextTick()
     ;(document.querySelector('#pcd-name') as HTMLInputElement).value = 'Pending'
     ;(document.querySelector('#pcd-name') as HTMLInputElement).dispatchEvent(new Event('input'))
+    ;(document.querySelector('#pcd-id') as HTMLInputElement).value = 'pending'
+    ;(document.querySelector('#pcd-id') as HTMLInputElement).dispatchEvent(new Event('input'))
     await wrapper.vm.$nextTick()
     ;(document.querySelector('.pcd-actions .ui-btn--primary') as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await wrapper.vm.$nextTick()

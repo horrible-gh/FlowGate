@@ -176,7 +176,7 @@ describe('createProject', () => {
     await store.fetchProjects()
     const priorCurrentId = store.currentProject?.id
 
-    const created = await store.createProject({ name: 'New' })
+    const created = await store.createProject({ name: 'New', id: 'new' })
 
     expect(created.id).toBe('new')
     expect(store.projects.map((p) => p.id)).toEqual(['a', 'new'])
@@ -190,7 +190,7 @@ describe('createProject', () => {
     const store = useProjectStore()
     await store.fetchProjects()
 
-    await expect(store.createProject({ name: 'Dup' })).rejects.toThrow('duplicate name')
+    await expect(store.createProject({ name: 'Dup', id: 'dup' })).rejects.toThrow('duplicate name')
     expect(store.error).toBeNull()
   })
 
@@ -207,7 +207,7 @@ describe('createProject', () => {
     await Promise.resolve()
     fetchActiveProjects.mockClear()
 
-    const createCall = store.createProject({ name: 'New' })
+    const createCall = store.createProject({ name: 'New', id: 'new' })
     store.closeDialog()
     resolveCreate(project('new', 'New'))
     await createCall
@@ -227,7 +227,7 @@ describe('createProject', () => {
     const fetchCall = store.fetchProjects()
     expect(store.loading).toBe(true)
 
-    await expect(store.createProject({ name: 'Dup' })).rejects.toThrow('duplicate name')
+    await expect(store.createProject({ name: 'Dup', id: 'dup' })).rejects.toThrow('duplicate name')
     expect(store.loading).toBe(false)
     expect(store.error).toBeNull()
 
@@ -248,7 +248,7 @@ describe('createProject', () => {
     await Promise.resolve()
     await Promise.resolve()
 
-    const createCall = store.createProject({ name: 'New' })
+    const createCall = store.createProject({ name: 'New', id: 'new' })
     store.closeDialog()
     store.openDialog()
     await Promise.resolve()
@@ -279,7 +279,7 @@ describe('createProject', () => {
     await Promise.resolve()
     await Promise.resolve()
 
-    const createCall = store.createProject({ name: 'New' })
+    const createCall = store.createProject({ name: 'New', id: 'new' })
     // let createProjectApi resolve and the post-create refresh reach fetchActiveProjects
     await Promise.resolve()
     await Promise.resolve()
@@ -309,7 +309,7 @@ describe('createProject', () => {
     await Promise.resolve()
     await Promise.resolve()
 
-    const createCall = store.createProject({ name: 'New' })
+    const createCall = store.createProject({ name: 'New', id: 'new' })
     store.closeDialog()
     store.openDialog()
     await Promise.resolve()
@@ -333,7 +333,7 @@ describe('createProject', () => {
     await store.fetchProjects()
     expect(store.currentProject).toBeNull()
 
-    const created = await store.createProject({ name: 'New' })
+    const created = await store.createProject({ name: 'New', id: 'new' })
 
     expect(created?.id).toBe('new')
     expect(store.projects.map((p) => p.id)).toEqual(['new'])

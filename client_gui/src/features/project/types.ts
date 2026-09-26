@@ -24,7 +24,10 @@ export interface Project {
 
 export interface CreateProjectInput {
   name: string
-  id?: string
+  // Required at the v0.2 frontend contract boundary (T0012 §3.3/§3.1) — the v0.1 create
+  // screen never treated this as optional, and the backend's own ability to slugify a
+  // missing project_id is a backend capability only, not grounds to relax this contract.
+  id: string
   description?: string
   color?: string
 }

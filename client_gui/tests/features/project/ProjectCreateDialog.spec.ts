@@ -68,6 +68,7 @@ describe('features/project/ProjectCreateDialog', () => {
 
   it('requires a name before submitting, and never calls the create API for an empty name', async () => {
     const wrapper = mountDialog()
+    setInput('#pcd-id', 'demo')
     click('.pcd-actions .ui-btn--primary')
     await wrapper.vm.$nextTick()
     expect(document.querySelector('.pcd-field-error')?.textContent).toBe('이름을 입력하세요.')
@@ -88,11 +89,68 @@ describe('features/project/ProjectCreateDialog', () => {
     wrapper.unmount()
   })
 
-  it('allows an empty id (backend slugifies from the name) without showing a format error', async () => {
+  it('name filled but id empty cannot submit, and clicking create never calls the API', async () => {
     const wrapper = mountDialog()
     setInput('#pcd-name', 'Demo')
     await wrapper.vm.$nextTick()
+    click('.pcd-actions .ui-btn--primary')
+    await wrapper.vm.$nextTick()
+    expect(createProjectApi).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('shows a required-id error only after a submit attempt, distinct from the format error', async () => {
+    const wrapper = mountDialog()
+    setInput('#pcd-name', 'Demo')
+    await wrapper.vm.$nextTick()
+    // Not yet attempted -- no error shown for an empty id.
     expect(document.querySelector('.pcd-field-error')).toBeNull()
+
+    click('.pcd-actions .ui-btn--primary')
+    await wrapper.vm.$nextTick()
+    expect(document.querySelector('.pcd-field-error')?.textContent).toBe('식별자를 입력하세요.')
+    wrapper.unmount()
+  })
+
+  it('submits successfully once a valid id is filled in after an empty-id submit attempt', async () => {
+    createProjectApi.mockResolvedValue(project('demo'))
+    const wrapper = mountDialog()
+    setInput('#pcd-name', 'Demo')
+    await wrapper.vm.$nextTick()
+    click('.pcd-actions .ui-btn--primary')
+    await wrapper.vm.$nextTick()
+    expect(createProjectApi).not.toHaveBeenCalled()
+
+    setInput('#pcd-id', 'demo')
+    await wrapper.vm.$nextTick()
+    click('.pcd-actions .ui-btn--primary')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+
+    expect(createProjectApi).toHaveBeenCalledWith(expect.objectContaining({ id: 'demo' }))
+    expect(wrapper.emitted('created')?.[0]).toEqual([project('demo')])
+    wrapper.unmount()
+  })
+
+  it('submits successfully once an auto/manual id suggestion fills in a valid id', async () => {
+    vi.useFakeTimers()
+    createProjectApi.mockResolvedValue(project('demo-suggested'))
+    suggestProjectSlug.mockResolvedValue('demo-suggested')
+    const wrapper = mountDialog()
+    setInput('#pcd-name', 'Demo')
+    await wrapper.vm.$nextTick()
+
+    await vi.advanceTimersByTimeAsync(400)
+    await wrapper.vm.$nextTick()
+    expect((document.querySelector('#pcd-id') as HTMLInputElement).value).toBe('demo-suggested')
+
+    vi.useRealTimers()
+    click('.pcd-actions .ui-btn--primary')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+
+    expect(createProjectApi).toHaveBeenCalledWith(expect.objectContaining({ id: 'demo-suggested' }))
+    expect(wrapper.emitted('created')?.[0]).toEqual([project('demo-suggested')])
     wrapper.unmount()
   })
 
@@ -333,6 +391,7 @@ describe('features/project/ProjectCreateDialog', () => {
     createProjectApi.mockImplementation(() => new Promise<Project>((resolve) => { resolveCreate = resolve }))
     const wrapper = mountDialog()
     setInput('#pcd-name', 'Demo')
+    setInput('#pcd-id', 'demo')
     await wrapper.vm.$nextTick()
 
     click('.pcd-actions .ui-btn--primary')
@@ -350,6 +409,7 @@ describe('features/project/ProjectCreateDialog', () => {
     createProjectApi.mockResolvedValue(project('demo'))
     const wrapper = mountDialog()
     setInput('#pcd-name', 'Demo')
+    setInput('#pcd-id', 'demo')
     await wrapper.vm.$nextTick()
 
     click('.pcd-actions .ui-btn--primary')
@@ -365,6 +425,7 @@ describe('features/project/ProjectCreateDialog', () => {
     createProjectApi.mockResolvedValue(null)
     const wrapper = mountDialog()
     setInput('#pcd-name', 'Demo')
+    setInput('#pcd-id', 'demo')
     await wrapper.vm.$nextTick()
 
     click('.pcd-actions .ui-btn--primary')
@@ -379,6 +440,7 @@ describe('features/project/ProjectCreateDialog', () => {
     createProjectApi.mockRejectedValue(new Error('name already exists'))
     const wrapper = mountDialog()
     setInput('#pcd-name', 'Demo')
+    setInput('#pcd-id', 'demo')
     await wrapper.vm.$nextTick()
 
     click('.pcd-actions .ui-btn--primary')
@@ -466,6 +528,7 @@ describe('features/project/ProjectCreateDialog', () => {
     createProjectApi.mockImplementationOnce(() => new Promise<Project>((resolve) => { resolveCreate = resolve }))
     const wrapper = mountDialog()
     setInput('#pcd-name', 'Demo')
+    setInput('#pcd-id', 'demo')
     await wrapper.vm.$nextTick()
     click('.pcd-actions .ui-btn--primary')
     await wrapper.vm.$nextTick()
@@ -491,6 +554,7 @@ describe('features/project/ProjectCreateDialog', () => {
     createProjectApi.mockImplementationOnce(() => new Promise<Project>((_resolve, reject) => { rejectCreate = reject }))
     const wrapper = mountDialog()
     setInput('#pcd-name', 'Demo')
+    setInput('#pcd-id', 'demo')
     await wrapper.vm.$nextTick()
     click('.pcd-actions .ui-btn--primary')
     await wrapper.vm.$nextTick()

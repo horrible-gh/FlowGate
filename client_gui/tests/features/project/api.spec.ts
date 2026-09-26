@@ -85,14 +85,14 @@ describe('createProject', () => {
     expect(created.isActive).toBe(true)
   })
 
-  it('omits an empty project_id so the backend can slugify the name', async () => {
+  it('always sends the given project_id -- never omits it', async () => {
     postRequest.mockResolvedValue({
       data: { project_id: 'auto', project_name: 'Auto', is_active: 1 },
     })
-    await createProject({ name: 'Auto', id: '' })
+    await createProject({ name: 'Auto', id: 'auto' })
     expect(postRequest).toHaveBeenCalledWith('/api/v1/projects', {
       project_name: 'Auto',
-      project_id: undefined,
+      project_id: 'auto',
       description: null,
       color: null,
     })
@@ -101,7 +101,7 @@ describe('createProject', () => {
   it('propagates create errors (e.g. duplicate name / id conflict)', async () => {
     postRequest.mockRejectedValue(new Error('duplicate'))
     extractApiErrorMessage.mockReturnValueOnce('Failed to create project.')
-    await expect(createProject({ name: 'Demo' })).rejects.toThrow('Failed to create project.')
+    await expect(createProject({ name: 'Demo', id: 'demo' })).rejects.toThrow('Failed to create project.')
   })
 })
 

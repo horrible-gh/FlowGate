@@ -29,7 +29,7 @@
         </div>
 
         <div class="pcd-field">
-          <label class="pcd-label" for="pcd-id">식별자 <span class="pcd-optional">(선택, 비우면 이름에서 자동 생성)</span></label>
+          <label class="pcd-label" for="pcd-id">식별자</label>
           <div class="pcd-id-row">
             <Input
               id="pcd-id"
@@ -40,7 +40,8 @@
             />
             <Button type="button" variant="secondary" size="sm" :loading="suggesting" @click="suggestNow">제안</Button>
           </div>
-          <p v-if="showIdError" class="pcd-field-error">영문 소문자, 숫자, -, _ 만 사용할 수 있습니다.</p>
+          <p v-if="showIdEmptyError" class="pcd-field-error">식별자를 입력하세요.</p>
+          <p v-else-if="showIdFormatError" class="pcd-field-error">영문 소문자, 숫자, -, _ 만 사용할 수 있습니다.</p>
         </div>
 
         <div class="pcd-field">
@@ -144,11 +145,18 @@ const attemptedSubmit = ref(false)
 const confirmDiscardOpen = ref(false)
 
 const nameValid = computed(() => name.value.trim() !== '')
-// project_id is optional at the API boundary (backend slugifies from the name when
-// omitted) -- only a non-empty value must match the existing id format contract.
-const idValid = computed(() => id.value.trim() === '' || /^[a-z0-9_-]+$/.test(id.value.trim()))
+// Project ID is a required v0.2 frontend contract (T0012 §3.1) -- backend's own ability
+// to slugify a missing project_id is a backend capability only and is never grounds to
+// treat an empty id as submittable here.
+const idEmpty = computed(() => id.value.trim() === '')
+const idFormatValid = computed(() => /^[a-z0-9_-]+$/.test(id.value.trim()))
+const idValid = computed(() => !idEmpty.value && idFormatValid.value)
 const showNameError = computed(() => attemptedSubmit.value && !nameValid.value)
-const showIdError = computed(() => id.value.trim() !== '' && !idValid.value)
+// Empty-id is only flagged after a submit attempt (matches the name field's contract);
+// a format error shows as soon as a non-empty value fails the pattern.
+const showIdEmptyError = computed(() => attemptedSubmit.value && idEmpty.value)
+const showIdFormatError = computed(() => !idEmpty.value && !idFormatValid.value)
+const showIdError = computed(() => showIdEmptyError.value || showIdFormatError.value)
 const canSubmit = computed(() => nameValid.value && idValid.value && !submitting.value)
 const isDirty = computed(
   () => name.value.trim() !== '' || id.value.trim() !== '' || description.value.trim() !== '' || color.value !== DEFAULT_COLOR,
@@ -325,7 +333,7 @@ async function handleSubmit(): Promise<void> {
   try {
     const created = await store.createProject({
       name: name.value.trim(),
-      id: id.value.trim() || undefined,
+      id: id.value.trim(),
       description: description.value.trim() || undefined,
       color: color.value,
     })

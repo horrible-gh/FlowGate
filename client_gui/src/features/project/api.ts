@@ -73,7 +73,7 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
   try {
     const response = await postRequest<RawProject>('/api/v1/projects', {
       project_name: input.name,
-      project_id: input.id || undefined,
+      project_id: input.id,
       description: input.description ?? null,
       color: input.color ?? null,
     })
