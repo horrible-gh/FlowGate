@@ -1,4 +1,5 @@
 import { mount } from '@vue/test-utils'
+import { createPinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import i18n from '@shared/i18n'
@@ -19,7 +20,10 @@ async function mountDashboard() {
     ],
   })
   await router.push('/')
-  const wrapper = mount(DashboardView, { global: { plugins: [i18n, router] } })
+  // DashboardView owns the Project Feature's public open interface for its Project card
+  // (T0010/T#3 §1, D0004 §4.1), so it needs an active Pinia instance the same way App.vue's
+  // real mount gets one from main.ts -- this is not the Project feature's own test surface.
+  const wrapper = mount(DashboardView, { global: { plugins: [i18n, router, createPinia()] } })
   await router.isReady()
   return { wrapper, router }
 }
@@ -96,6 +100,19 @@ describe('v0.2 Dashboard (T0011)', () => {
     await new Promise((r) => setTimeout(r, 0))
 
     expect(router.currentRoute.value.fullPath).toBe('/designer')
+  })
+
+  it('opens the Project Dialog through the store instead of navigating when the Project card is clicked (T0010/T#3 §1)', async () => {
+    const { wrapper, router } = await mountDashboard()
+    const { useProjectStore } = await import('@/features/project')
+    const store = useProjectStore()
+    expect(store.dialogOpen).toBe(false)
+
+    await wrapper.get('[data-card-key="projects"]').trigger('click')
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(store.dialogOpen).toBe(true)
+    expect(router.currentRoute.value.fullPath).toBe('/')
   })
 
   it('keeps the four right-hand panels but shows no invented rows or counts', async () => {

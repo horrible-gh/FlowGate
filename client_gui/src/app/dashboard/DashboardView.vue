@@ -4,7 +4,12 @@
       <DashboardHero />
 
       <section class="dash-card-grid" :aria-label="t('gui.dashboard.cards_aria')">
-        <DashboardActionCard v-for="card in DASHBOARD_CARDS" :key="card.key" :card="card" />
+        <DashboardActionCard
+          v-for="card in DASHBOARD_CARDS"
+          :key="card.key"
+          :card="card"
+          @open-project="projectStore.openDialog()"
+        />
       </section>
 
       <DashboardTip />
@@ -20,7 +25,12 @@
 <script setup lang="ts">
 // Dashboard page (T0011 §7): composes the hero, the screen shortcut cards, the tip and the
 // right-hand summary panels. Layout only — each part is its own component.
+//
+// The one exception (T0010/T#3 §1, D0004 §4.1): the Project card has nowhere routed to link
+// to any more, so this view (not the presentational DashboardActionCard leaf) owns the
+// Project Feature's public open interface and calls it when that card emits `open-project`.
 import { useI18n } from 'vue-i18n'
+import { useProjectStore } from '@/features/project'
 import DashboardActionCard from './DashboardActionCard.vue'
 import DashboardHero from './DashboardHero.vue'
 import DashboardSidePanel from './DashboardSidePanel.vue'
@@ -28,6 +38,7 @@ import DashboardTip from './DashboardTip.vue'
 import { DASHBOARD_CARDS, DASHBOARD_PANELS } from './dashboardContent'
 
 const { t } = useI18n()
+const projectStore = useProjectStore()
 </script>
 
 <style scoped>
