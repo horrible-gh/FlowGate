@@ -109,6 +109,61 @@ describe('GitBranchManager (T0016 C1-C7)', () => {
     wrapper.unmount()
   })
 
+  it('C2b. changing the persistent target also retargets the merge form and keeps main available as a source', async () => {
+    getRequest.mockReset()
+    getRequest
+      .mockResolvedValueOnce({ data: { ...CATALOG, default_merge_target: null } })
+      .mockResolvedValueOnce({ data: { ...CATALOG, default_merge_target: 'flowgate-v0.2' } })
+
+    const wrapper = mountManager()
+    await flushPromises()
+
+    let zone = wrapper.get('[data-test="branch-zone-merge"]')
+    let selects = zone.findAll('select')
+    expect((selects[0].element as HTMLSelectElement).value).toBe('flowgate-v0.2')
+    expect((selects[1].element as HTMLSelectElement).value).toBe('main')
+
+    putRequest.mockResolvedValueOnce({ data: { ok: true, default_merge_target: 'flowgate-v0.2' } })
+    const targetRow = wrapper.findAll('.branch-row').find((r) => r.text().includes('flowgate-v0.2'))!
+    await targetRow.find('button.btn-secondary').trigger('click')
+    await flushPromises()
+
+    zone = wrapper.get('[data-test="branch-zone-merge"]')
+    selects = zone.findAll('select')
+    const source = selects[0]
+    const target = selects[1]
+    const sourceOptions = source.findAll('option').map((option) => option.attributes('value'))
+    const targetOptions = target.findAll('option').map((option) => option.attributes('value'))
+
+    expect((target.element as HTMLSelectElement).value).toBe('flowgate-v0.2')
+    expect(sourceOptions).toContain('main')
+    expect((source.element as HTMLSelectElement).value).not.toBe((target.element as HTMLSelectElement).value)
+    expect(sourceOptions).toContain((source.element as HTMLSelectElement).value)
+    expect(targetOptions).toContain((target.element as HTMLSelectElement).value)
+    wrapper.unmount()
+  })
+
+  it('C2c. a normal refresh preserves a valid manual merge-target selection', async () => {
+    const wrapper = mountManager()
+    await flushPromises()
+
+    let zone = wrapper.get('[data-test="branch-zone-merge"]')
+    let selects = zone.findAll('select')
+    await selects[1].setValue('main')
+    await flushPromises()
+    expect((selects[1].element as HTMLSelectElement).value).toBe('main')
+
+    getRequest.mockResolvedValueOnce({ data: CATALOG })
+    await wrapper.get('[data-test="branch-refresh"]').trigger('click')
+    await flushPromises()
+
+    zone = wrapper.get('[data-test="branch-zone-merge"]')
+    selects = zone.findAll('select')
+    expect((selects[1].element as HTMLSelectElement).value).toBe('main')
+    expect((selects[0].element as HTMLSelectElement).value).not.toBe('main')
+    wrapper.unmount()
+  })
+
   it('C3. branch merge: confirms, then calls the merge API with the selected source/target and refreshes', async () => {
     const wrapper = mountManager()
     await flushPromises()
