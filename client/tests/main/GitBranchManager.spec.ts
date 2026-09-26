@@ -127,7 +127,7 @@ describe('GitBranchManager (T0016 C1-C7)', () => {
     expect(dialogConfirm).toHaveBeenCalled()
     expect(postRequest).toHaveBeenCalledWith(
       '/api/v1/projects/flowgate/git/branches/merge',
-      { source_branch: 'stale-feature', target_branch: 'flowgate-v0.2' },
+      { source_branch: 'stale-feature', target_branch: 'flowgate-v0.2', push: true },
     )
     // refresh after success
     expect(getRequest).toHaveBeenCalledTimes(2)
@@ -474,7 +474,7 @@ describe('GitBranchManager zones and views (T0018)', () => {
     expect(dialogConfirm).toHaveBeenCalled()
     expect(postRequest).toHaveBeenCalledWith(
       '/api/v1/projects/flowgate/git/branches/merge',
-      { source_branch: 'stale-feature', target_branch: 'flowgate-v0.2' },
+      { source_branch: 'stale-feature', target_branch: 'flowgate-v0.2', push: true },
     )
     // the result banner stays inside the merge zone, not in the danger zone
     expect(zone.find('.branch-result').exists()).toBe(true)
@@ -571,7 +571,7 @@ describe('GitBranchManager merge selection sync (T0004 §3, source_nr 0003-NR §
     await flushPromises()
     expect(postRequest).toHaveBeenCalledWith(
       '/api/v1/projects/flowgate/git/branches/merge',
-      { source_branch: 'main', target_branch: 'flowgate-v0.2' },
+      { source_branch: 'main', target_branch: 'flowgate-v0.2', push: true },
     )
     wrapper.unmount()
   })
@@ -590,7 +590,7 @@ describe('GitBranchManager merge selection sync (T0004 §3, source_nr 0003-NR §
     await flushPromises()
     expect(postRequest).toHaveBeenCalledWith(
       '/api/v1/projects/flowgate/git/branches/merge',
-      { source_branch: 'flowgate-v0.2', target_branch: 'main' },
+      { source_branch: 'flowgate-v0.2', target_branch: 'main', push: true },
     )
     wrapper.unmount()
   })
@@ -627,7 +627,7 @@ describe('GitBranchManager merge selection sync (T0004 §3, source_nr 0003-NR §
     await flushPromises()
     expect(postRequest).toHaveBeenCalledWith(
       '/api/v1/projects/flowgate/git/branches/merge',
-      { source_branch: 'main', target_branch: 'test' },
+      { source_branch: 'main', target_branch: 'test', push: true },
     )
 
     // And back again, purely through the Source <select>, proving the
@@ -650,7 +650,7 @@ describe('GitBranchManager merge selection sync (T0004 §3, source_nr 0003-NR §
     await flushPromises()
     expect(postRequest).toHaveBeenCalledWith(
       '/api/v1/projects/flowgate/git/branches/merge',
-      { source_branch: 'stale-feature', target_branch: 'flowgate-v0.2' },
+      { source_branch: 'stale-feature', target_branch: 'flowgate-v0.2', push: true },
     )
     wrapper.unmount()
   })
@@ -708,6 +708,99 @@ describe('GitBranchManager merge selection sync (T0004 §3, source_nr 0003-NR §
     expect((wrapper.vm as any).mergeTarget).toBe('stale-feature')
     const { target } = mergeSelects(wrapper)
     expect((target.element as HTMLSelectElement).value).toBe('stale-feature')
+    wrapper.unmount()
+  })
+})
+
+// flowgate.default.0612 T0006 §10 T8/T9 — Branch Manager merge/push separation.
+// merge_branches() now takes an explicit `push`; these cover the checkbox's
+// default, its effect on the request payload and confirm wording, and the
+// pushed/local badge on a successful result. Server-side push=false behavior
+// (local ref preserved, no push call, base-branch target) is covered by
+// server/tests/test_git_branches_0594.py instead of here.
+describe('GitBranchManager merge push selection (T0006)', () => {
+  it('P1. push 체크박스는 기본적으로 켜져 있다', async () => {
+    const wrapper = mountManager()
+    await flushPromises()
+    const checkbox = wrapper.get('[data-test="merge-push-checkbox"]')
+    expect((checkbox.element as HTMLInputElement).checked).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('P2. push 체크박스를 해제하면 merge API에 push:false가 전달된다', async () => {
+    const wrapper = mountManager()
+    await flushPromises()
+    ;(wrapper.vm as any).mergeSource = 'stale-feature'
+    ;(wrapper.vm as any).mergeTarget = 'flowgate-v0.2'
+    await wrapper.get('[data-test="merge-push-checkbox"]').setValue(false)
+    await flushPromises()
+
+    postRequest.mockResolvedValueOnce({
+      data: { ok: true, source_branch: 'stale-feature', target_branch: 'flowgate-v0.2', pushed: false },
+    })
+    await wrapper.find('[data-test="branch-zone-merge"]').trigger('submit')
+    await flushPromises()
+
+    expect(postRequest).toHaveBeenCalledWith(
+      '/api/v1/projects/flowgate/git/branches/merge',
+      { source_branch: 'stale-feature', target_branch: 'flowgate-v0.2', push: false },
+    )
+    wrapper.unmount()
+  })
+
+  it('P3. push 여부에 따라 확인창 문구가 달라진다', async () => {
+    const wrapper = mountManager()
+    await flushPromises()
+    ;(wrapper.vm as any).mergeSource = 'stale-feature'
+    ;(wrapper.vm as any).mergeTarget = 'flowgate-v0.2'
+    await flushPromises()
+
+    postRequest.mockResolvedValueOnce({ data: { ok: true, pushed: true } })
+    await wrapper.find('[data-test="branch-zone-merge"]').trigger('submit')
+    await flushPromises()
+    expect(dialogConfirm).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        message: i18n.global.t('main.git_branch_manager.merge_confirm_message_push', {
+          source: 'stale-feature', target: 'flowgate-v0.2',
+        }),
+      }),
+    )
+
+    await wrapper.get('[data-test="merge-push-checkbox"]').setValue(false)
+    postRequest.mockResolvedValueOnce({ data: { ok: true, pushed: false } })
+    await wrapper.find('[data-test="branch-zone-merge"]').trigger('submit')
+    await flushPromises()
+    expect(dialogConfirm).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        message: i18n.global.t('main.git_branch_manager.merge_confirm_message_no_push', {
+          source: 'stale-feature', target: 'flowgate-v0.2',
+        }),
+      }),
+    )
+    wrapper.unmount()
+  })
+
+  it('P4. 성공 응답의 pushed 값에 따라 결과 배지가 달라진다', async () => {
+    const wrapper = mountManager()
+    await flushPromises()
+    ;(wrapper.vm as any).mergeSource = 'stale-feature'
+    ;(wrapper.vm as any).mergeTarget = 'flowgate-v0.2'
+    await flushPromises()
+
+    postRequest.mockResolvedValueOnce({ data: { ok: true, pushed: true } })
+    await wrapper.find('[data-test="branch-zone-merge"]').trigger('submit')
+    await flushPromises()
+    expect(wrapper.get('[data-test="merge-result-pushed"]').text()).toBe(
+      i18n.global.t('main.git_branch_manager.merge_result_pushed'),
+    )
+
+    await wrapper.get('[data-test="merge-push-checkbox"]').setValue(false)
+    postRequest.mockResolvedValueOnce({ data: { ok: true, pushed: false } })
+    await wrapper.find('[data-test="branch-zone-merge"]').trigger('submit')
+    await flushPromises()
+    expect(wrapper.get('[data-test="merge-result-pushed"]').text()).toBe(
+      i18n.global.t('main.git_branch_manager.merge_result_local'),
+    )
     wrapper.unmount()
   })
 })

@@ -125,6 +125,15 @@
           </select>
           <small>{{ t('main.git_branch_manager.target_hint') }}</small>
         </label>
+        <!-- T0006 §3.1 — push defaults ON (compatible with the pre-existing
+             always-push behavior); unchecked runs a local-only merge. -->
+        <label class="branch-field branch-field-check">
+          <span class="branch-field-check-row">
+            <input type="checkbox" v-model="mergePush" data-test="merge-push-checkbox" />
+            <span>{{ t('main.git_branch_manager.merge_push_label') }}</span>
+          </span>
+          <small>{{ t('main.git_branch_manager.merge_push_hint') }}</small>
+        </label>
       </template>
       <!-- §3.3 — the current selection must also read as a plain sentence. -->
       <p v-if="hasMergeCandidates && mergeSource && mergeTarget" class="branch-merge-summary" data-test="merge-summary">
@@ -150,6 +159,13 @@
             : t('main.git_branch_manager.merge_done_title') }}
         </strong>
         <span>{{ mergeResult.source }} → {{ mergeResult.target }}</span>
+        <!-- T0006 §9 — a successful merge always states whether it reached
+             origin, so a local-only merge is never mistaken for a published one. -->
+        <span v-if="!mergeResult.code" class="branch-result-pushed" data-test="merge-result-pushed">
+          {{ mergeResult.pushed
+            ? t('main.git_branch_manager.merge_result_pushed')
+            : t('main.git_branch_manager.merge_result_local') }}
+        </span>
         <span v-if="mergeResult.code" class="branch-result-code">{{ mergeResult.code }}</span>
         <span v-if="mergeResult.pushFailed" class="branch-result-push" data-test="merge-push-failed">
           {{ t('main.git_branch_manager.merge_push_failed') }}
@@ -250,8 +266,10 @@ const newName = ref('')
 const createSource = ref('')
 const mergeSource = ref('')
 const mergeTarget = ref('')
+// T0006 §3.1 — default ON keeps the pre-existing always-push behavior.
+const mergePush = ref(true)
 const deleteTarget = ref('')
-const mergeResult = ref<{ source: string; target: string; code?: string; message?: string; files?: string[]; pushFailed?: boolean } | null>(null)
+const mergeResult = ref<{ source: string; target: string; pushed?: boolean; code?: string; message?: string; files?: string[]; pushFailed?: boolean } | null>(null)
 const deleteResult = ref<{ branch: string; code?: string; message?: string } | null>(null)
 const showBranches = computed(() => props.view === 'all' || props.view === 'branches')
 const showManage = computed(() => props.view === 'all' || props.view === 'manage')
@@ -410,11 +428,17 @@ async function confirmMerge() {
   const source = mergeSource.value
   const target = mergeTarget.value
   if (!source || !target || source === target || busy.value) return
-  // §3.4 — one click both merges and pushes; the confirm names source, target
-  // AND that a push is included, so nothing here is a surprise afterward.
+  const push = mergePush.value
+  // §3.4/§9 — the confirm names source, target AND whether a push is
+  // included, so nothing here is a surprise afterward either way.
   const ok = await confirm({
     title: t('main.git_branch_manager.merge_confirm_title'),
-    message: t('main.git_branch_manager.merge_confirm_message', { source, target }),
+    message: t(
+      push
+        ? 'main.git_branch_manager.merge_confirm_message_push'
+        : 'main.git_branch_manager.merge_confirm_message_no_push',
+      { source, target },
+    ),
     danger: true,
     confirmLabel: t('main.git_branch_manager.merge_btn'),
   })
@@ -423,8 +447,10 @@ async function confirmMerge() {
   deleteResult.value = null
   await run(async () => {
     try {
-      await postRequest(`/api/v1/projects/${props.projectId}/git/branches/merge`, { source_branch: source, target_branch: target })
-      mergeResult.value = { source, target }
+      const { data } = await postRequest<any>(`/api/v1/projects/${props.projectId}/git/branches/merge`, {
+        source_branch: source, target_branch: target, push,
+      })
+      mergeResult.value = { source, target, pushed: !!data?.pushed }
       await load()
     } catch (e: any) {
       // §7 merge 실패 — source/target stay attached to EVERY failure (not just
@@ -499,6 +525,8 @@ function selectMergeTarget(value: string) {
 .branch-form-row .branch-control { flex: 1; }
 .branch-create-btn { min-height: 32px; }
 .branch-form-actions { display: flex; justify-content: flex-end; }
+.branch-field-check { gap: 6px; }
+.branch-field-check-row { display: flex; align-items: center; gap: 6px; font-size: .82rem; color: var(--text); }
 .branch-merge-summary { margin: 0; font-size: .82rem; color: var(--text-s); }
 .branch-empty-state { margin: 0; padding: 10px; border-radius: var(--r); background: var(--surface); color: var(--text-s); font-size: .82rem; line-height: 1.4; }
 .branch-zone--danger { padding: 12px; border: 1px solid var(--danger-l); border-left: 3px solid var(--danger); border-radius: var(--r-lg); }

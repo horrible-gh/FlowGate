@@ -206,6 +206,9 @@ class BranchMergeBody(BaseModel):
 
     source_branch: str
     target_branch: str
+    # T0006: publish the merge result to origin (default True keeps every
+    # existing caller's behavior — an omitted field still pushes).
+    push: bool = True
 
 
 @router.get("/projects/{project_id}/git/branches")
@@ -238,7 +241,9 @@ def post_git_branch_merge(
     user=Depends(require_permission("project.settings.edit", "project_id")),
 ):
     try:
-        return git_service.merge_branches(project_id, body.source_branch, body.target_branch)
+        return git_service.merge_branches(
+            project_id, body.source_branch, body.target_branch, push=body.push,
+        )
     except GitServiceError as exc:
         return _guard(exc)
 
