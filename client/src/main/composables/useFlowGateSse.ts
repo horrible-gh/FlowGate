@@ -5,6 +5,16 @@ import { useProjectStore } from '../stores/project'
 import { useDashboardStore } from '../stores/dashboard'
 import { useTabsStore } from '../stores/tabs'
 import { useToast } from '../components/common/useToast'
+import {
+  beginVisibilityRecoveryTick,
+  recordFanOut,
+  recordReconnectOpened,
+  recordReconnectScheduled,
+  recordScreenRefreshFlushed,
+  recordScreenRefreshScheduled,
+  recordSseEvent,
+  recordVisibilityRecovery,
+} from '@shared/diagnostics/runtimeDiagnostics'
 
 function getSseUrl(project?: string | null): string {
   const base =
@@ -47,7 +57,7 @@ function getOwnUserId(): string | null {
   }
 }
 
-export function useFlowGateSse(refreshAll: () => void) {
+export function useFlowGateSse(refreshAll: (epoch: number | null) => void) {
   const explorerStore = useExplorerStore()
   const projectStore = useProjectStore()
   const dashboardStore = useDashboardStore()
@@ -96,6 +106,14 @@ export function useFlowGateSse(refreshAll: () => void) {
   const LIVENESS_STALE_MS = 75000 // > 2 missed 30s heartbeats + margin
   const LIVENESS_CHECK_MS = 15000
 
+  // T0004 §5.2: when the current reconnect attempt started, so the `open` handler can log
+  // how long the recovery actually took. Diagnostics only — does not gate any behavior.
+  let reconnectStartedAt: number | null = null
+  let reconnectReason: string | null = null
+  // T0004 §5.3: the most recent SSE event name, read by scheduleScreenRefresh() (via
+  // invalidateAndRefresh) as the reason a coalescing window opened/joined.
+  let currentSseEventReason = 'unknown'
+
   function log(msg: string, ...args: unknown[]) {
     // SSE lifecycle diagnostics (NR0003 item 5): connection state + reconnect reason.
     // Debug level so it stays out of the way in normal operation.
@@ -115,6 +133,9 @@ export function useFlowGateSse(refreshAll: () => void) {
     const delay = Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempts, RECONNECT_MAX_MS)
     reconnectAttempts += 1
     log(`scheduling reconnect in ${delay}ms (reason=${reason}, attempt=${reconnectAttempts})`)
+    reconnectStartedAt = Date.now()
+    reconnectReason = reason
+    recordReconnectScheduled(reason, reconnectAttempts)
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null
       connect()
@@ -125,6 +146,9 @@ export function useFlowGateSse(refreshAll: () => void) {
     log(`forced reconnect (reason=${reason})`)
     clearReconnectTimer()
     reconnectAttempts = 0
+    reconnectStartedAt = Date.now()
+    reconnectReason = reason
+    recordReconnectScheduled(reason, 0)
     if (es) {
       try { es.close() } catch { /* ignore */ }
       es = null
@@ -164,9 +188,16 @@ export function useFlowGateSse(refreshAll: () => void) {
     // Tab/computer resumed. A stream parked through a sleep is often a zombie that never
     // fired `error`; if we have not seen a heartbeat within the tolerance window, or the
     // stream is gone, rebuild it now. (R0001 / group 0025 TR)
-    if (es === null || (lastSeenAt !== 0 && Date.now() - lastSeenAt > LIVENESS_STALE_MS)) {
+    const stale = es === null || (lastSeenAt !== 0 && Date.now() - lastSeenAt > LIVENESS_STALE_MS)
+    const generation = beginVisibilityRecoveryTick()
+    if (stale) {
       reconnectNow('visibility_visible')
     }
+    recordVisibilityRecovery('sse', generation, {
+      sseStale: stale,
+      sseReconnect: stale,
+      immediateResync: stale,
+    })
   }
 
   function onOnline() {
@@ -208,8 +239,18 @@ export function useFlowGateSse(refreshAll: () => void) {
     }
   }
 
-  function emitScreenRefresh(pid: string | null, docId: string | null = null) {
-    refreshAll()
+  function emitScreenRefresh(pid: string | null, docId: string | null = null, epoch: number | null = null) {
+    // T0004 §7 / rev2 finding 4: downstream watchers (FileExplorer, GroupExplorer, MainPanel,
+    // DocHeader, NotificationCenter) attribute their own reload to THIS logical screen
+    // refresh via the explicit `epoch` value threaded through here — not by reading
+    // "whatever the current global epoch is" when their own watcher happens to fire, which
+    // could by then belong to a later SSE flush, or to no SSE flush at all (a manual reload
+    // via DashboardView.manualRefresh() / GitActionMenu / GitMergeReviewDialog /
+    // GitStatusPanel / WorkPlanEditor firing fg:open_docs_refresh on their own — those pass
+    // no refresh_epoch, which downstream readers treat as `null`, i.e. "not attributable to
+    // an SSE epoch" rather than silently inheriting a stale one).
+    recordFanOut('dashboard_refresh_all', epoch)
+    refreshAll(epoch)
     // refreshAll() only invalidates the explorer tree. Open document tabs derive
     // their action-bar / workflow-head state from a one-shot fetch on mount, so a
     // sibling doc created or changed out-of-band (e.g. an AI worker via the inbox
@@ -220,14 +261,14 @@ export function useFlowGateSse(refreshAll: () => void) {
     // narrowing" and every open tab in the project refetches as before.
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
-        new CustomEvent('fg:open_docs_refresh', { detail: { project: pid, doc_id: docId } }),
+        new CustomEvent('fg:open_docs_refresh', { detail: { project: pid, doc_id: docId, refresh_epoch: epoch } }),
       )
       // Signal the 🔔 notification center to refetch its persistent inflow feed + unread badge,
       // so document inflow is visible without entering the dashboard (R0001 group 0045 / NR0003
       // option A + option D). The server stays the single source of truth — the center refetches rather than
       // incrementing locally — so live and persisted counts cannot drift.
       window.dispatchEvent(
-        new CustomEvent('fg:notification', { detail: { project: pid } }),
+        new CustomEvent('fg:notification', { detail: { project: pid, refresh_epoch: epoch } }),
       )
     }
   }
@@ -258,13 +299,22 @@ export function useFlowGateSse(refreshAll: () => void) {
   // the emitted `fg:open_docs_refresh` can be scoped to it instead of nudging every
   // open tab in the project.
   let pendingRefreshDocId: string | null | undefined = undefined
+  // T0004 §5.3: how many scheduleScreenRefresh calls joined the current coalescing
+  // window, and the last SSE event type that caused one — diagnostics only.
+  let pendingRefreshEventCount = 0
+  let pendingRefreshLastReason = 'unknown'
 
-  function flushScreenRefresh() {
+  function flushScreenRefresh(immediate: boolean) {
     const pid = pendingRefreshProject
     const docId = pendingRefreshDocId ?? null
+    const coalescedEventCount = pendingRefreshEventCount
+    const reason = pendingRefreshLastReason
     pendingRefreshProject = null
     pendingRefreshDocId = undefined
-    emitScreenRefresh(pid, docId)
+    pendingRefreshEventCount = 0
+    pendingRefreshLastReason = 'unknown'
+    const epoch = recordScreenRefreshFlushed(immediate, reason, coalescedEventCount)
+    emitScreenRefresh(pid, docId, epoch)
   }
 
   function cancelCoalescedRefresh() {
@@ -274,15 +324,20 @@ export function useFlowGateSse(refreshAll: () => void) {
     }
     pendingRefreshProject = null
     pendingRefreshDocId = undefined
+    pendingRefreshEventCount = 0
+    pendingRefreshLastReason = 'unknown'
   }
 
-  function scheduleScreenRefresh(pid: string | null, immediate: boolean, docId?: string | null) {
+  function scheduleScreenRefresh(pid: string | null, immediate: boolean, docId?: string | null, reason = 'unknown') {
     pendingRefreshProject = pid
     if (pendingRefreshDocId === undefined) {
       pendingRefreshDocId = docId ?? null
     } else if (pendingRefreshDocId !== (docId ?? null)) {
       pendingRefreshDocId = null
     }
+    pendingRefreshEventCount += 1
+    pendingRefreshLastReason = reason
+    recordScreenRefreshScheduled(immediate, reason, pendingRefreshEventCount)
     if (immediate) {
       // Reconnect resync (§3-3) and manual-equivalent paths must not be deferred:
       // this re-read is the safety net for events missed while disconnected.
@@ -290,13 +345,13 @@ export function useFlowGateSse(refreshAll: () => void) {
         clearTimeout(coalesceTimer)
         coalesceTimer = null
       }
-      flushScreenRefresh()
+      flushScreenRefresh(true)
       return
     }
     if (coalesceTimer !== null) return
     coalesceTimer = setTimeout(() => {
       coalesceTimer = null
-      flushScreenRefresh()
+      flushScreenRefresh(false)
     }, REFRESH_COALESCE_MS)
   }
 
@@ -314,7 +369,7 @@ export function useFlowGateSse(refreshAll: () => void) {
       return
     }
     if (pid) dashboardStore.invalidate(pid, immediate)
-    scheduleScreenRefresh(pid ?? null, immediate, docId)
+    scheduleScreenRefresh(pid ?? null, immediate, docId, currentSseEventReason)
   }
 
   function onProjectChanged(next: string | null) {
@@ -341,10 +396,26 @@ export function useFlowGateSse(refreshAll: () => void) {
     // window to open before judging it stale.
     markAlive()
 
-    source.addEventListener('open', () => {
+    // T0004 §5.1: every SSE event this stream reacts to gets a ring-buffer entry and sets
+    // the "last event" reason a following scheduleScreenRefresh() attributes itself to.
+    // Diagnostics only — delegates to the real handler unchanged.
+    function on(eventName: string, handler: (e: Event) => void) {
+      source.addEventListener(eventName, (e: Event) => {
+        recordSseEvent(eventName)
+        currentSseEventReason = eventName
+        handler(e)
+      })
+    }
+
+    on('open', () => {
       log('connection open')
       reconnectAttempts = 0
       markAlive()
+      if (reconnectStartedAt !== null) {
+        recordReconnectOpened(reconnectReason ?? 'unknown', Date.now() - reconnectStartedAt)
+        reconnectStartedAt = null
+        reconnectReason = null
+      }
       if (hadPreviousConnection || forceResyncOnOpen) {
         // Recovered from a drop, or re-subscribed under a new project. The server does
         // not replay events emitted while we were disconnected, so force a full resync
@@ -365,7 +436,7 @@ export function useFlowGateSse(refreshAll: () => void) {
 
     // Server heartbeat (every ~30s). Its only job is to prove the stream is alive so the
     // liveness watchdog can distinguish "quiet but healthy" from "silently dead".
-    source.addEventListener('ping', () => {
+    on('ping', () => {
       markAlive()
     })
 
@@ -375,7 +446,7 @@ export function useFlowGateSse(refreshAll: () => void) {
     // (0371 T0012 / NR0007 §4). Reconnecting cannot succeed — every attempt would 401 on
     // the same revoked session — so the normal `error` backoff below would turn into an
     // endless poll. Stop deliberately and say why; the user has to sign in again.
-    source.addEventListener('auth_revoked', (e: Event) => {
+    on('auth_revoked', (e: Event) => {
       let reason = ''
       try { reason = JSON.parse((e as MessageEvent).data)?.reason ?? '' } catch { /* ignore */ }
       log('server ended the stream: authentication revoked', { reason })
@@ -388,7 +459,7 @@ export function useFlowGateSse(refreshAll: () => void) {
       showToast(t('main.notifications.session_revoked'), 'error')
     })
 
-    source.addEventListener('error', () => {
+    on('error', () => {
       log('connection error', { readyState: source.readyState })
       // Ignore errors from a source we have already torn down/replaced.
       if (es !== source) return
@@ -400,14 +471,14 @@ export function useFlowGateSse(refreshAll: () => void) {
       scheduleReconnect('error')
     })
 
-    source.addEventListener('file_explorer_refresh', (e: Event) => {
+    on('file_explorer_refresh', (e: Event) => {
       try {
         const data = JSON.parse((e as MessageEvent).data)
         invalidateAndRefresh(data.project)
       } catch { /* ignore parse errors */ }
     })
 
-    source.addEventListener('document_explorer_refresh', (e: Event) => {
+    on('document_explorer_refresh', (e: Event) => {
       try {
         const data = JSON.parse((e as MessageEvent).data)
         const payload = data.payload ?? {}
@@ -463,7 +534,7 @@ export function useFlowGateSse(refreshAll: () => void) {
     // deliberately no invalidateAndRefresh: a chat message is not an explorer change,
     // and routing it through the tree refresh is what used to re-read the whole
     // document on every line of conversation.
-    source.addEventListener('conversation_turn_appended', (e: Event) => {
+    on('conversation_turn_appended', (e: Event) => {
       try {
         const data = JSON.parse((e as MessageEvent).data)
         const p = data.payload ?? {}
@@ -481,7 +552,7 @@ export function useFlowGateSse(refreshAll: () => void) {
       } catch { /* ignore parse errors */ }
     })
 
-    source.addEventListener('group_view_refresh', (e: Event) => {
+    on('group_view_refresh', (e: Event) => {
       try {
         const data = JSON.parse((e as MessageEvent).data)
         const p = data.payload ?? {}
@@ -510,7 +581,7 @@ export function useFlowGateSse(refreshAll: () => void) {
       } catch { /* ignore parse errors */ }
     })
 
-    source.addEventListener('test_run_started', (e: Event) => {
+    on('test_run_started', (e: Event) => {
       // Start events do not have a paired group_view_refresh from the backend, but open
       // TS tabs need the running embed immediately after a failed re-run starts.
       try {
@@ -519,7 +590,7 @@ export function useFlowGateSse(refreshAll: () => void) {
       } catch { /* ignore parse errors */ }
     })
 
-    source.addEventListener('test_run_finished', (e: Event) => {
+    on('test_run_finished', (e: Event) => {
       // Global test-failure toast (R0001 group 0155 / NR0005 §HOW-4 second signal).
       // The in-context TestFailStrip only surfaces a failure while its own TS document
       // is the active tab, so a run that fails while the user is looking at a *different*
@@ -555,7 +626,7 @@ export function useFlowGateSse(refreshAll: () => void) {
       ['ai_invoke_finished', 'finished'],
     ]
     for (const [eventName, kind] of aiInvokeKinds) {
-      source.addEventListener(eventName, (e: Event) => {
+      on(eventName, (e: Event) => {
         try {
           const data = JSON.parse((e as MessageEvent).data)
           if (typeof window !== 'undefined') {
@@ -567,7 +638,7 @@ export function useFlowGateSse(refreshAll: () => void) {
       })
     }
 
-    source.addEventListener('git_pending_changed', (e: Event) => {
+    on('git_pending_changed', (e: Event) => {
       // Git finalize-pending set changed (flowgate.default.0162 §4-3). The
       // payload carries the server-recomputed absolute pending_count — the
       // action-bar badge and the Git status panel assign it directly and never
@@ -624,18 +695,18 @@ export function useFlowGateSse(refreshAll: () => void) {
         invalidateAndRefresh(payload.project ?? data.project ?? null)
       } catch { /* ignore parse errors */ }
     }
-    source.addEventListener('git_finalize_done', onGitFinalizeDone)
-    source.addEventListener('git_worktree_ready', onGitSlotLifecycle)
-    source.addEventListener('git_merge_conflict', onGitSlotLifecycle)
+    on('git_finalize_done', onGitFinalizeDone)
+    on('git_worktree_ready', onGitSlotLifecycle)
+    on('git_merge_conflict', onGitSlotLifecycle)
     // 0205 P scenarios 4·6·7: a conflict auto-aborted by the sweep/boot recovery
     // (badge clears, group returns to 'waiting') and a persisted provisioning
     // failure ('깃 미추적' warning) both change the slot/pending surface, so they
     // drive the same invalidate+refresh — the panel re-fetches git status and the
     // new conflict_since / provision_failures fields render live (P scenario 8).
-    source.addEventListener('git_merge_auto_aborted', onGitSlotLifecycle)
-    source.addEventListener('git_worktree_failed', onGitSlotLifecycle)
+    on('git_merge_auto_aborted', onGitSlotLifecycle)
+    on('git_worktree_failed', onGitSlotLifecycle)
 
-    source.addEventListener('notification_new_action_candidate', (e: Event) => {
+    on('notification_new_action_candidate', (e: Event) => {
       try {
         const data = JSON.parse((e as MessageEvent).data)
         const title = data.payload?.title ?? data.doc_id ?? ''
@@ -643,14 +714,14 @@ export function useFlowGateSse(refreshAll: () => void) {
       } catch { /* ignore parse errors */ }
     })
 
-    source.addEventListener('edit_marker_added', (e: Event) => {
+    on('edit_marker_added', (e: Event) => {
       try {
         const data = JSON.parse((e as MessageEvent).data)
         invalidateAndRefresh(data.project)
       } catch { /* ignore parse errors */ }
     })
 
-    source.addEventListener('qna_q_registered', (e: Event) => {
+    on('qna_q_registered', (e: Event) => {
       try {
         const data = JSON.parse((e as MessageEvent).data)
         const qDocId = data.payload?.doc_id ?? data.doc_id ?? ''
@@ -671,7 +742,7 @@ export function useFlowGateSse(refreshAll: () => void) {
       } catch { /* ignore parse errors */ }
     })
 
-    source.addEventListener('qna_answer_registered', (e: Event) => {
+    on('qna_answer_registered', (e: Event) => {
       try {
         const data = JSON.parse((e as MessageEvent).data)
         const payload = data.payload ?? {}
@@ -689,7 +760,7 @@ export function useFlowGateSse(refreshAll: () => void) {
       } catch { /* ignore parse errors */ }
     })
 
-    source.addEventListener('doc_review_status_changed', (e: Event) => {
+    on('doc_review_status_changed', (e: Event) => {
       try {
         const data = JSON.parse((e as MessageEvent).data)
         const payload = data.payload ?? {}
@@ -726,13 +797,13 @@ export function useFlowGateSse(refreshAll: () => void) {
     // approved / rejected). Deliberately not the badge/list itself (D0007 §4.1) — the
     // useSnapshotPendingSync re-reads GET /api/v1/snapshots/pending on this signal, same as
     // every other durable-state refresh in this file.
-    source.addEventListener('snapshot_request_updated', () => {
+    on('snapshot_request_updated', () => {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('fg:snapshot_refresh'))
       }
     })
 
-    source.addEventListener('ai_review_arrived', (e: Event) => {
+    on('ai_review_arrived', (e: Event) => {
       try {
         const data = JSON.parse((e as MessageEvent).data)
         const p = data.payload ?? {}

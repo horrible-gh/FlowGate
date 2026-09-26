@@ -240,6 +240,7 @@ import { useToast } from './common/useToast'
 import { MENTION_COPIED_EVENT, type MentionCopiedDetail } from '../composables/useMentionCopy'
 import { copyToClipboard } from '../utils/clipboard'
 import type { Tab } from '../stores/tabs'
+import { recordFanOut } from '@shared/diagnostics/runtimeDiagnostics'
 import { useTabsStore } from '../stores/tabs'
 import { useExplorerStore } from '../stores/explorer'
 import { useDocumentContextStore } from '../stores/documentContext'
@@ -1207,7 +1208,7 @@ function _onOpenDocsRefresh(e: Event) {
   // it live. Stamp lastPullAt so a focus pull landing right after doesn't double-fetch.
   const current = doc.value
   if (!current) return
-  const payload = (e as CustomEvent).detail as { project?: string | null; doc_id?: string | null } | undefined
+  const payload = (e as CustomEvent).detail as { project?: string | null; doc_id?: string | null; refresh_epoch?: number | null } | undefined
   if (payload?.project && current.project_id && payload.project !== current.project_id) return
   // T0004 §3: when the coalesced refresh names one specific document (e.g. an AI
   // review arriving for it), skip tabs that are not that document instead of forcing
@@ -1217,6 +1218,11 @@ function _onOpenDocsRefresh(e: Event) {
   // tab to refresh regardless of which document they name.
   if (payload?.doc_id && payload.doc_id !== current.doc_id) return
   lastPullAt = Date.now()
+  // rev2 finding 4: fg:open_docs_refresh carries the real epoch only when it came from an
+  // SSE screen-refresh flush; other dispatchers (GitActionMenu, GitMergeReviewDialog,
+  // GitStatusPanel, WorkPlanEditor) fire this event on their own and omit the field, which
+  // must read as "not an SSE epoch" (null) rather than borrowing a stale one.
+  recordFanOut('doc_header_refetch', payload?.refresh_epoch ?? null)
   void silentRefetchWithRetry(true)
 }
 

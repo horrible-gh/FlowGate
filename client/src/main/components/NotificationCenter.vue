@@ -284,6 +284,7 @@ import SnapshotApprovalDialog from './SnapshotApprovalDialog.vue'
 import SnapshotRejectDialog from './SnapshotRejectDialog.vue'
 import { useSnapshotRequestsStore, type SnapshotRequestRow } from '../stores/snapshotRequests'
 import { useAiProviderStore } from '../stores/aiProvider'
+import { recordFanOut } from '@shared/diagnostics/runtimeDiagnostics'
 import { useSnapshotPendingSync } from '../composables/useSnapshotPendingSync'
 
 const { t } = useI18n()
@@ -529,11 +530,19 @@ function onKeyDown(e: KeyboardEvent) {
 // Debounced to coalesce bursts (a single workflow step can fire several events). The server stays
 // the single source of truth — we never increment the badge client-side (NR0003 option D).
 let refetchTimer: ReturnType<typeof setTimeout> | null = null
-function onInflow() {
+let pendingInflowEpoch: number | null = null
+function onInflow(e?: Event) {
+  // rev2 finding 4: fg:notification carries the real epoch only when the SSE screen-refresh
+  // flush dispatched it; any other trigger reads as `null` rather than borrowing a stale one.
+  // A later join within the debounce window wins, matching the debounce's own "last call sets
+  // what fires" semantics.
+  const detail = (e as CustomEvent | undefined)?.detail as { refresh_epoch?: number | null } | undefined
+  pendingInflowEpoch = detail?.refresh_epoch ?? null
   if (refetchTimer !== null) clearTimeout(refetchTimer)
   refetchTimer = setTimeout(() => {
     refetchTimer = null
     if (projectStore.currentProjectId && !isOverviewRoute()) {
+      recordFanOut('notification_center_refresh', pendingInflowEpoch)
       void store.fetchFeed(projectStore.currentProjectId)
     }
   }, 300)

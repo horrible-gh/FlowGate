@@ -221,6 +221,7 @@ import ContextMenuItem from './common/ContextMenuItem.vue'
 import CreateFileFolderModal from './CreateFileFolderModal.vue'
 import AppIcon from '@shared/AppIcon.vue'
 import { useToast } from './common/useToast'
+import { recordFanOut } from '@shared/diagnostics/runtimeDiagnostics'
 import GitBaseDirtyDialog from './GitBaseDirtyDialog.vue'
 import GitUntrackedConflictDialog from './GitUntrackedConflictDialog.vue'
 import GitConflictResolverDialog from './GitConflictResolverDialog.vue'
@@ -228,7 +229,7 @@ import {
   useConflictChunks, currentFileContent, isFileResolved, type ConflictFileState,
 } from '../composables/useConflictChunks'
 
-const props = defineProps<{ projectId: string | null; refreshToken?: number }>()
+const props = defineProps<{ projectId: string | null; refreshToken?: number; refreshEpoch?: number | null }>()
 const { t } = useI18n()
 const { showToast } = useToast()
 const explorerStore = useExplorerStore()
@@ -1163,6 +1164,9 @@ watch(() => props.projectId, async (pid, prevPid) => {
 // Keeping the instance alive preserves open create dialogs and their in-progress input.
 watch(() => props.refreshToken, (next, prev) => {
   if (next === prev || !props.projectId) return
+  // rev2 finding 4: attribute this reload to the epoch DashboardView paired with this same
+  // token bump, not to whatever the diagnostics module's global epoch happens to be right now.
+  recordFanOut('file_explorer_reload', props.refreshEpoch ?? null)
   void reload()
 })
 

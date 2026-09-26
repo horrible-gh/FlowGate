@@ -13,6 +13,13 @@ import {
   writeRetentionMirror,
   type UiSettingsResponse,
 } from '@shared/aiFinishedCardRetention'
+import {
+  beginVisibilityRecoveryTick,
+  recordAiRefresh,
+  recordPersist,
+  recordVisibilityRecovery,
+  type AiRefreshSource,
+} from '@shared/diagnostics/runtimeDiagnostics'
 
 export type AiInvokePhase = 'running' | 'pause_requested' | 'paused' | 'finished' | 'lost'
 
@@ -637,30 +644,86 @@ function loadPersistedFinished(): Record<string, AiInvokeRunEntry> {
   }
 }
 
+// Actual UTF-8 byte size of the serialized payload (T0004 §9 asks for payload bytes, not a
+// UTF-16 code-unit count -- `serialized.length` undercounts anything outside the BMP and
+// overcounts nothing, so it is not an acceptable proxy). TextEncoder is best-effort: on the
+// vanishingly small chance it is unavailable, fall back to the char count rather than throw
+// out of a diagnostics path.
+function utf8ByteLength(serialized: string): number {
+  try {
+    return new TextEncoder().encode(serialized).length
+  } catch {
+    return serialized.length
+  }
+}
+
+function isQuotaExceeded(err: unknown): boolean {
+  return (
+    err instanceof DOMException &&
+    (err.name === 'QuotaExceededError' || err.name === 'NS_ERROR_DOM_QUOTA_REACHED' || err.code === 22)
+  )
+}
+
+// One measured stringify+setItem attempt. Always calls recordPersist -- including when
+// setItem throws -- because a failed first attempt on the largest (unfallen-back) payload is
+// itself the persistence cost T0004 §9 asks for; only recording the eventual successful
+// fallback (0616 TR0005 rev0 rejection) hides exactly the number a real quota-pressure
+// investigation needs.
+function attemptPersistFinished(entries: [string, AiInvokeRunEntry][]): boolean {
+  let serialized = ''
+  let stringifyMs = 0
+  let setItemMs = 0
+  let result: 'ok' | 'quota_exceeded' | 'error' = 'ok'
+  let ok = true
+  try {
+    const stringifyStart = performance.now()
+    serialized = JSON.stringify(Object.fromEntries(entries))
+    stringifyMs = performance.now() - stringifyStart
+  } catch {
+    ok = false
+    result = 'error'
+  }
+  if (ok) {
+    const setItemStart = performance.now()
+    try {
+      sessionStorage.setItem(FINISHED_STORAGE_KEY, serialized)
+    } catch (err) {
+      ok = false
+      result = isQuotaExceeded(err) ? 'quota_exceeded' : 'error'
+    } finally {
+      // Measured up to the throw point too: the failed write still spent this time inside
+      // the Web Storage call before rejecting it.
+      setItemMs = performance.now() - setItemStart
+    }
+  }
+  recordPersist(entries.length, utf8ByteLength(serialized), stringifyMs, setItemMs, result)
+  return ok
+}
+
 function persistFinished(finishedByRun: Record<string, AiInvokeRunEntry>): void {
   if (typeof sessionStorage === 'undefined') return
   const entries = Object.entries(finishedByRun).filter(([, entry]) => isFinishedCard(entry))
-  try {
-    if (entries.length === 0) {
+  if (entries.length === 0) {
+    try {
       sessionStorage.removeItem(FINISHED_STORAGE_KEY)
-      return
+    } catch {
+      // best-effort
     }
-    sessionStorage.setItem(FINISHED_STORAGE_KEY, JSON.stringify(Object.fromEntries(entries)))
     return
-  } catch {
-    // Fall through to one bounded retry. Swallowing the quota error outright is what
-    // 0452 L0003 §5 calls out: with 200 cards allowed, the FIRST oversized write used to
-    // leave the key holding the previous snapshot and nobody was told (L0003 §2-7).
   }
-  try {
-    const newest = [...entries]
-      .sort((a, b) => (b[1].finishedAtMs as number) - (a[1].finishedAtMs as number))
-      .slice(0, PERSIST_QUOTA_FALLBACK_CARDS)
-    sessionStorage.setItem(FINISHED_STORAGE_KEY, JSON.stringify(Object.fromEntries(newest)))
-  } catch {
-    // Give up on the WRITE only. The in-memory registry still holds every card, so the
-    // monitor is intact for this tab; only a reload would lose them.
-  }
+
+  if (attemptPersistFinished(entries)) return
+
+  // Bounded retry with a smaller payload. Swallowing the quota error outright is what
+  // 0452 L0003 §5 calls out: with 200 cards allowed, the FIRST oversized write used to
+  // leave the key holding the previous snapshot and nobody was told (L0003 §2-7). The first
+  // (failed) attempt above is now measured in its own recordPersist call regardless.
+  const newest = [...entries]
+    .sort((a, b) => (b[1].finishedAtMs as number) - (a[1].finishedAtMs as number))
+    .slice(0, PERSIST_QUOTA_FALLBACK_CARDS)
+  // Give up on the WRITE only if this also fails. The in-memory registry still holds every
+  // card, so the monitor is intact for this tab; only a reload would lose them.
+  attemptPersistFinished(newest)
 }
 
 export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
@@ -1031,14 +1094,18 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     else if (detail?.kind === 'finished') trackFinished(payload)
   }
 
-  async function refresh(groupId: string): Promise<void> {
+  // Returns whether this call actually issued the per-run status GET (true), as opposed to
+  // being skipped by the single-flight guard or redirected to discover() for a handoff
+  // (both false) — refreshAllRunning uses this to tell "asked the server" from "coalesced
+  // away" without changing either code path (T0004 §6).
+  async function refresh(groupId: string): Promise<boolean> {
     const run = runsByGroup[groupId]
-    if (!run || !ACTIVE_PHASES.includes(run.phase) || refreshingRunIds.has(run.runId)) return
+    if (!run || !ACTIVE_PHASES.includes(run.phase) || refreshingRunIds.has(run.runId)) return false
     if (run.handoffPending) {
       // The old run endpoint can only repeat its finished payload. Group discovery is the
       // recovery path that can see and adopt the replacement run_id.
       await discover(groupId)
-      return
+      return false
     }
     const runId = run.runId
     refreshingRunIds.add(runId)
@@ -1055,36 +1122,59 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
           doc_ref: payload.doc_ref ?? run.docRef,
         })
       }
+      return true
     } catch (error: any) {
       if (error?.response?.status === 404) markLost(groupId, runId)
+      return true
     } finally {
       refreshingRunIds.delete(runId)
     }
   }
 
-  async function refreshAllRunning(): Promise<void> {
-    const activeEntries = Object.entries(runsByGroup)
-      .filter(([, run]) => ACTIVE_PHASES.includes(run.phase))
-    const handoffs = activeEntries
-      .filter(([, run]) => run.handoffPending)
-      .map(([groupId, run]) => [groupId, run.runId] as const)
+  async function refreshAllRunning(source: AiRefreshSource = 'manual_or_other'): Promise<void> {
+    const diagStart = performance.now()
+    // rev2 finding 3: recordAiRefresh() used to fire before the handoff bootstrap()/poll
+    // step ran, so a call with a pending handoff reported a duration smaller than the
+    // function's real cost -- understating exactly the most complex recovery path. Now
+    // measured end-to-end in `finally`, with the handoff/bootstrap portion broken out
+    // separately from the per-run status GET cost.
+    let activeCount = 0
+    let statusGetCount = 0
+    let singleFlightSkipCount = 0
+    let handoffBootstrapMs = 0
+    try {
+      const activeEntries = Object.entries(runsByGroup)
+        .filter(([, run]) => ACTIVE_PHASES.includes(run.phase))
+      activeCount = activeEntries.length
+      const handoffs = activeEntries
+        .filter(([, run]) => run.handoffPending)
+        .map(([groupId, run]) => [groupId, run.runId] as const)
 
-    await Promise.all(
-      activeEntries
-        .filter(([, run]) => !run.handoffPending)
-        .map(([groupId]) => refresh(groupId)),
-    )
-    if (handoffs.length === 0 || !(await bootstrap())) return
+      const results = await Promise.all(
+        activeEntries
+          .filter(([, run]) => !run.handoffPending)
+          .map(([groupId]) => refresh(groupId)),
+      )
+      statusGetCount = results.filter(Boolean).length
+      singleFlightSkipCount = results.length - statusGetCount
+      if (handoffs.length === 0) return
+      const bootstrapStart = performance.now()
+      const bootstrapped = await bootstrap()
+      handoffBootstrapMs = performance.now() - bootstrapStart
+      if (!bootstrapped) return
 
-    // Scheduled 0/250/1000/3000ms checks never close a handoff. Only successful later
-    // polling responses count, and two consecutive misses are required.
-    for (const [groupId, runId] of handoffs) {
-      const current = runsByGroup[groupId]
-      if (!current?.handoffPending || current.runId !== runId) continue
-      if (Date.now() < (handoffPollEligibleAt.get(groupId) ?? 0)) continue
-      const misses = (handoffPollMisses.get(groupId) ?? 0) + 1
-      handoffPollMisses.set(groupId, misses)
-      if (misses >= HANDOFF_FINALIZE_AFTER_POLLS) finalizeHandoff(groupId, runId)
+      // Scheduled 0/250/1000/3000ms checks never close a handoff. Only successful later
+      // polling responses count, and two consecutive misses are required.
+      for (const [groupId, runId] of handoffs) {
+        const current = runsByGroup[groupId]
+        if (!current?.handoffPending || current.runId !== runId) continue
+        if (Date.now() < (handoffPollEligibleAt.get(groupId) ?? 0)) continue
+        const misses = (handoffPollMisses.get(groupId) ?? 0) + 1
+        handoffPollMisses.set(groupId, misses)
+        if (misses >= HANDOFF_FINALIZE_AFTER_POLLS) finalizeHandoff(groupId, runId)
+      }
+    } finally {
+      recordAiRefresh(source, activeCount, statusGetCount, singleFlightSkipCount, performance.now() - diagStart, handoffBootstrapMs)
     }
   }
 
@@ -1535,18 +1625,28 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
 
   // 0552 T0019 C1: document mutations invalidate run state, not account configuration.
   function onOpenDocsRefresh(): void {
-    void refreshAllRunning()
+    void refreshAllRunning('open_docs_refresh')
   }
 
-  function onRecoverySignal(): void {
-    void refreshAllRunning()
+  function onRecoverySignal(source: AiRefreshSource): void {
+    void refreshAllRunning(source)
     // Coming back online or back to the tab is also when a setting saved elsewhere (a tab
     // that was closed, another machine) has to be picked up (L0003 §2-5 row 3).
     void refreshRetentionSetting()
   }
 
+  function onOnlineRecovery(): void {
+    onRecoverySignal('online')
+  }
+
   function onVisibilityChange(): void {
-    if (document.visibilityState === 'visible') onRecoverySignal()
+    if (document.visibilityState !== 'visible') return
+    const generation = beginVisibilityRecoveryTick()
+    recordVisibilityRecovery('ai_invoke', generation, {
+      action: 'refreshAllRunning+refreshRetentionSetting',
+      activeRunCount: Object.values(runsByGroup).filter(run => ACTIVE_PHASES.includes(run.phase)).length,
+    })
+    onRecoverySignal('visibility')
   }
 
   function clockTick(): void {
@@ -1555,7 +1655,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     flushPersist()
     if (now.value - lastPollAt >= POLL_INTERVAL_MS) {
       lastPollAt = now.value
-      void refreshAllRunning()
+      void refreshAllRunning('poll_5s')
     }
   }
 
@@ -1565,7 +1665,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
     window.addEventListener('fg:q_registered', onQRegistered)
     window.addEventListener('fg:q_answered', onQAnswered)
     window.addEventListener('fg:open_docs_refresh', onOpenDocsRefresh)
-    window.addEventListener('online', onRecoverySignal)
+    window.addEventListener('online', onOnlineRecovery)
     window.addEventListener('storage', onRetentionStorage)
     document.addEventListener('visibilitychange', onVisibilityChange)
     clockTimer = setInterval(clockTick, CLOCK_INTERVAL_MS)
@@ -1577,7 +1677,7 @@ export const useAiInvokeRunsStore = defineStore('ai-invoke-runs', () => {
       window.removeEventListener('fg:q_registered', onQRegistered)
       window.removeEventListener('fg:q_answered', onQAnswered)
       window.removeEventListener('fg:open_docs_refresh', onOpenDocsRefresh)
-      window.removeEventListener('online', onRecoverySignal)
+      window.removeEventListener('online', onOnlineRecovery)
       window.removeEventListener('storage', onRetentionStorage)
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
