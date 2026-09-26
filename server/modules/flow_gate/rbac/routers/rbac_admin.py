@@ -20,6 +20,9 @@ Endpoints:
 
   GET    /rbac/projects/{project_id}/my-permissions
                                               Current user's project permission list
+
+  GET    /rbac/system/my-permissions          Current user's System-scope permission list
+                                              (no project_id; additive, read-only)
 """
 from __future__ import annotations
 
@@ -244,3 +247,27 @@ def get_my_permissions(
     user_id: str = current_user["user_id"]
     perms = get_user_permissions(user_id, project_id)
     return {"project_id": project_id, "permissions": sorted(perms), "is_admin": False}
+
+
+@router.get("/system/my-permissions")
+def get_my_system_permissions(
+    current_user: dict = Depends(get_current_user),
+):
+    """List the current user's own System-scope permissions.
+
+    Additive to the project-scoped /rbac/projects/{project_id}/my-permissions
+    above: this one takes no project_id and resolves permission_service's
+    internal "__SYSTEM__" project sentinel on the server side only, so the
+    frontend never needs to know it exists. Non-admins get exactly
+    the permissions granted by their System-scope roles (project-scoped role
+    grants are not mixed in). Admins are treated as holding every permission,
+    matching the existing project-scoped endpoint's policy.
+    """
+    if current_user.get("is_admin"):
+        from modules.flow_gate.db import permissions as db_perms
+        all_perms = [row["permission_id"] for row in db_perms.list_permissions()]
+        return {"permissions": all_perms, "is_admin": True}
+
+    user_id: str = current_user["user_id"]
+    perms = get_user_permissions(user_id, "__SYSTEM__")
+    return {"permissions": sorted(perms), "is_admin": False}
