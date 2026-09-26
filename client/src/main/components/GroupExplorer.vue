@@ -210,8 +210,9 @@ import { useDocumentSearch } from '../composables/useDocumentSearch'
 import GroupTreeNode from './GroupTreeNode.vue'
 import AppIcon from '@shared/AppIcon.vue'
 import { buildTreeIndex, collectDescendantIds } from '../utils/groupTreeIndex'
+import { recordFanOut } from '@shared/diagnostics/runtimeDiagnostics'
 
-const props = defineProps<{ projectId: string | null; refreshToken?: number }>()
+const props = defineProps<{ projectId: string | null; refreshToken?: number; refreshEpoch?: number | null }>()
 defineEmits<{ 'create-requirement': [payload?: { groupId?: string }] }>()
 const { t } = useI18n()
 const explorerStore = useExplorerStore()
@@ -702,6 +703,10 @@ watch(() => props.projectId, async (pid) => {
 // Keeping the instance alive preserves search/filter state and dialogs owned by tree nodes.
 watch(() => props.refreshToken, (next, prev) => {
   if (next === prev || !props.projectId) return
+  // rev2 finding 4: use the epoch DashboardView paired with this token bump, not the
+  // diagnostics module's current global epoch (which could be stale or belong to a
+  // non-SSE manual reload).
+  recordFanOut('group_explorer_reload', props.refreshEpoch ?? null)
   void reload()
 })
 

@@ -934,6 +934,7 @@ import { useProjectStore } from '../stores/project'
 import { useExplorerStore } from '../stores/explorer'
 import { useAiProviderStore } from '../stores/aiProvider'
 import { groupIdFromDocId, isScreenOwnedRun, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
+import { recordFanOut } from '@shared/diagnostics/runtimeDiagnostics'
 import {
   useDashboardStore,
   type DashboardWorkflow,
@@ -1122,11 +1123,13 @@ function formatGitArchiveTime(value: string | null): string {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale.value)
 }
-const props = withDefaults(defineProps<{
-  overviewRefreshToken?: number
-}>(), {
-  overviewRefreshToken: 0,
-})
+const props = withDefaults(defineProps<{
+  overviewRefreshToken?: number
+  overviewRefreshEpoch?: number | null
+}>(), {
+  overviewRefreshToken: 0,
+  overviewRefreshEpoch: null,
+})
 const docTypeStore = useDocTypeStore()
 const { showToast } = useToast()
 const {
@@ -4941,10 +4944,14 @@ watch(() => projectStore.currentProjectId, () => {
 // it fills.
 
 watch(() => props.overviewRefreshToken, () => {
-  if (projectStore.currentProjectId) void fetchQList()
+  if (projectStore.currentProjectId) {
+    recordFanOut('main_panel_fetch_q_list', props.overviewRefreshEpoch ?? null)
+    void fetchQList()
+  }
   // A coalesced screen refresh is also an SSE recovery boundary. The store keeps
   // handoff-pending cards pollable and chooses between adoption and bounded completion.
-  void aiInvokeRunsStore.refreshAllRunning()
+  recordFanOut('ai_refresh_all_running', props.overviewRefreshEpoch ?? null)
+  void aiInvokeRunsStore.refreshAllRunning('overview_refresh')
 })
 
 // T0018 §2.3-4: the `quickInputRef.focus()` half of this watcher is gone with the markup it

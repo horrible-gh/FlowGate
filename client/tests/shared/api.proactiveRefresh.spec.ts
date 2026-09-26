@@ -93,4 +93,28 @@ describe('proactive token refresh (T0004)', () => {
     expect(ok).toBe(true)
     expect(postMock).not.toHaveBeenCalled()
   })
+
+  // 0616 T0004 rev3 finding 3: a plain window focus (jsdom's document.visibilityState stays
+  // 'visible' throughout, exactly like clicking the address bar on an already-visible tab)
+  // must not record a token visibility_recovery entry — only an actual visibilitychange does.
+  // Token rotation itself must still happen identically on both.
+  it('records a token visibility_recovery only for visibilitychange, not for a same-state focus', async () => {
+    const { clearDiagnostics, dumpDiagnostics } = await import('@shared/diagnostics/runtimeDiagnostics')
+    const { startTokenAutoRefresh } = await import('@shared/api')
+    const token = makeJwt(120)
+    ;(window as { __accessToken__?: string }).__accessToken__ = token
+    sessionStorage.setItem('fg_access_token', token)
+    sessionStorage.setItem('fg_refresh_token', 'refresh-1')
+    startTokenAutoRefresh()
+
+    const tokenRecoveryCount = () =>
+      dumpDiagnostics().entries.filter((e) => e.type === 'visibility_recovery' && e.module === 'token').length
+
+    clearDiagnostics()
+    window.dispatchEvent(new Event('focus'))
+    expect(tokenRecoveryCount()).toBe(0)
+
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(tokenRecoveryCount()).toBe(1)
+  })
 })

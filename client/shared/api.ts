@@ -6,6 +6,10 @@ import axios, {
 } from 'axios'
 import i18n from './i18n'
 import { resolveApiErrorWithFallbackText } from './apiErrors'
+import {
+  beginVisibilityRecoveryTick,
+  recordVisibilityRecovery,
+} from './diagnostics/runtimeDiagnostics'
 
 interface RefreshResponse {
   access_token: string
@@ -344,7 +348,13 @@ function scheduleProactiveRefresh() {
   }, delay)
 }
 
-const onVisibilityRefresh = () => {
+// `recordRecovery` distinguishes an actual hidden->visible transition (the visibilitychange
+// listener below, which only reaches this point once `document.visibilityState` has just
+// become 'visible') from a plain window focus that never left the tab hidden (rev3 finding
+// 3) — e.g. clicking the address bar while already visible. Both still rotate/reschedule the
+// token identically; only the diagnostics attribution differs, so this is diagnostics-only
+// and changes no token-refresh behavior.
+const onVisibilityRefresh = (recordRecovery: boolean) => {
   if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
   if (!getStoredRefreshToken()) return
   const token = currentAccessToken()
@@ -352,12 +362,24 @@ const onVisibilityRefresh = () => {
   // setTimeout is throttled/parked while the tab is hidden or the machine sleeps, so on regain
   // the token may already be (near) expired — rotate now to keep the next request and the SSE
   // reconnect off an expired token.
-  if (expMs !== null && expMs - Date.now() <= REFRESH_SKEW_MS) {
+  const nearExpiry = expMs !== null && expMs - Date.now() <= REFRESH_SKEW_MS
+  if (recordRecovery) {
+    // T0004 §8: this module's own independent visibility-recovery listener — diagnostics
+    // only, coalesced under the same generation as the SSE/AI-run recovery entries via the
+    // shared tick. Recorded only for a genuine hidden->visible recovery (see above), not
+    // every focus, so a same-state focus cannot manufacture a duplicate token recovery entry
+    // or generation for a recovery that never actually happened.
+    const generation = beginVisibilityRecoveryTick()
+    recordVisibilityRecovery('token', generation, { action: nearExpiry ? 'refreshed' : 'rescheduled' })
+  }
+  if (nearExpiry) {
     ensureFreshToken().catch(() => clearProactiveRefresh())
   } else {
     scheduleProactiveRefresh()
   }
 }
+const onVisibilityChangeRefresh = () => onVisibilityRefresh(true)
+const onFocusRefresh = () => onVisibilityRefresh(false)
 
 /**
  * Start the proactive refresh loop. Called by the app shell (main.ts) once a valid session
@@ -368,9 +390,9 @@ export const startTokenAutoRefresh = () => {
   if (!autoRefreshStarted) {
     autoRefreshStarted = true
     if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', onVisibilityRefresh)
+      document.addEventListener('visibilitychange', onVisibilityChangeRefresh)
     }
-    window.addEventListener('focus', onVisibilityRefresh)
+    window.addEventListener('focus', onFocusRefresh)
   }
   scheduleProactiveRefresh()
 }
@@ -380,10 +402,10 @@ export const stopTokenAutoRefresh = () => {
   autoRefreshStarted = false
   clearProactiveRefresh()
   if (typeof document !== 'undefined') {
-    document.removeEventListener('visibilitychange', onVisibilityRefresh)
+    document.removeEventListener('visibilitychange', onVisibilityChangeRefresh)
   }
   if (typeof window !== 'undefined') {
-    window.removeEventListener('focus', onVisibilityRefresh)
+    window.removeEventListener('focus', onFocusRefresh)
   }
 }
 
