@@ -58,6 +58,15 @@ def _require_settings_read(user=Depends(get_current_user)):
     return user
 
 
+def _require_settings_edit(user=Depends(get_current_user)):
+    """Env vars/commands have no project_id, so mutation is a system-scoped action:
+    it uses the same system.settings.manage policy as ai_settings/system routers,
+    not the read-only project.settings.read that _require_settings_read checks."""
+    if not _has_permission(user, "system.settings.manage", None):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return user
+
+
 # ── Environment variables ─────────────────────────────────────────────────────
 
 class EnvVarCreate(BaseModel):
@@ -112,7 +121,7 @@ def list_env_vars(
 
 
 @router.post("/env-vars", status_code=201)
-def create_env_var(body: EnvVarCreate, user=Depends(_require_settings_read)):
+def create_env_var(body: EnvVarCreate, user=Depends(_require_settings_edit)):
     # Only user kind is allowed from the admin UI
     if body.kind == "system" and not user.get("is_admin"):
         raise HTTPException(status_code=403, detail="Only admins can create system variables.")
@@ -127,7 +136,7 @@ def create_env_var(body: EnvVarCreate, user=Depends(_require_settings_read)):
 
 
 @router.put("/env-vars/{var_id}")
-def update_env_var(var_id: str, body: EnvVarUpdate, user=Depends(_require_settings_read)):
+def update_env_var(var_id: str, body: EnvVarUpdate, user=Depends(_require_settings_edit)):
     existing = _ev_db.get_by_id(var_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Environment variable not found.")
@@ -145,7 +154,7 @@ def update_env_var(var_id: str, body: EnvVarUpdate, user=Depends(_require_settin
 
 
 @router.delete("/env-vars/{var_id}", status_code=200)
-def delete_env_var(var_id: str, user=Depends(_require_settings_read)):
+def delete_env_var(var_id: str, user=Depends(_require_settings_edit)):
     existing = _ev_db.get_by_id(var_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Environment variable not found.")
@@ -216,7 +225,7 @@ def list_commands(
 
 
 @router.post("/commands", status_code=201)
-def create_command(body: CommandCreate, user=Depends(_require_settings_read)):
+def create_command(body: CommandCreate, user=Depends(_require_settings_edit)):
     if body.kind == "system" and not user.get("is_admin"):
         raise HTTPException(status_code=403, detail="Only admins can create system commands.")
     try:
@@ -230,7 +239,7 @@ def create_command(body: CommandCreate, user=Depends(_require_settings_read)):
 
 
 @router.put("/commands/{command_id}")
-def update_command(command_id: str, body: CommandUpdate, user=Depends(_require_settings_read)):
+def update_command(command_id: str, body: CommandUpdate, user=Depends(_require_settings_edit)):
     existing = _cmd_db.get_by_id(command_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Command not found.")
@@ -248,7 +257,7 @@ def update_command(command_id: str, body: CommandUpdate, user=Depends(_require_s
 
 
 @router.delete("/commands/{command_id}", status_code=200)
-def delete_command(command_id: str, user=Depends(_require_settings_read)):
+def delete_command(command_id: str, user=Depends(_require_settings_edit)):
     existing = _cmd_db.get_by_id(command_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Command not found.")
@@ -270,7 +279,7 @@ def resolve_command(command_id: str, user=Depends(_require_settings_read)):
 def execute_command(
     command_id: str,
     body: Optional[Dict] = Body(default=None),
-    user=Depends(_require_settings_read),
+    user=Depends(_require_settings_edit),
 ):
     cmd = _cmd_db.get_by_id(command_id)
     if cmd is None:
