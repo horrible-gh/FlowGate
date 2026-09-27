@@ -25,9 +25,9 @@ READ_SOURCE_NAMES = tuple(name for name, op in tools.SOURCE_OPS.items() if op in
 
 
 @pytest.mark.parametrize("scope, expected", [
-    ("new", list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES)),
-    ("edit", list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES)),
-    ("review", list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES)),
+    ("new", list(tools.BASE_NAMES) + list(tools.SNAPSHOT_NAMES) + list(READ_SOURCE_NAMES)),
+    ("edit", list(tools.BASE_NAMES) + list(tools.SNAPSHOT_NAMES) + list(READ_SOURCE_NAMES)),
+    ("review", list(tools.BASE_NAMES) + list(tools.SNAPSHOT_NAMES) + list(READ_SOURCE_NAMES)),
     ("test_run", list(tools.BASE_NAMES)),
 ])
 def test_registry_selects_scope_schema_and_tier(monkeypatch, tmp_path, scope, expected):
@@ -44,13 +44,13 @@ def test_registry_selects_scope_schema_and_tier(monkeypatch, tmp_path, scope, ex
 @pytest.mark.parametrize("step_type", ["N", "NR", "CH", "P", "T"])
 def test_non_mutating_types_get_read_tier(monkeypatch, tmp_path, step_type):
     monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": step_type})
-    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + list(READ_SOURCE_NAMES)
+    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + list(tools.SNAPSHOT_NAMES) + list(READ_SOURCE_NAMES)
 
 
 @pytest.mark.parametrize("step_type", ["TR", "TSR", "TS"])
 def test_mutating_types_get_read_write_and_test_tier(monkeypatch, tmp_path, step_type):
     monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": step_type})
-    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + list(tools.SOURCE_OPS) + ["run_test"]
+    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + list(tools.SNAPSHOT_NAMES) + list(tools.SOURCE_OPS) + ["run_test"]
 
 
 @pytest.mark.parametrize("step_type", ["N", "NR", "T", "TR", "TSR", "TS"])
@@ -217,7 +217,7 @@ def test_dispatcher_returns_a_result_for_every_call_id(monkeypatch, tmp_path, ca
 def test_full_remote_source_toolset_is_exposed_without_worktree(monkeypatch, tmp_path):
     monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": "TR"})
     names = [item["name"] for item in tools.definitions_for_run(_run(tmp_path))]
-    assert names == list(tools.BASE_NAMES) + list(tools.SOURCE_NAMES)
+    assert names == list(tools.BASE_NAMES) + list(tools.SNAPSHOT_NAMES) + list(tools.SOURCE_NAMES)
     assert {"read", "grep", "glob", "stat", "diff", "log", "show", "merge_preview", "patch", "write", "remove"} == set(tools.SOURCE_OPS.values())
     for name in tools.SOURCE_OPS:
         assert tools.SCHEMAS[name]["additionalProperties"] is False

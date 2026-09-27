@@ -22,3 +22,7 @@ class EventType(str, Enum):
     # an explorer signal, and a screen showing this conversation appends the single turn
     # instead of re-fetching the whole document.
     CONVERSATION_TURN_APPENDED            = "conversation_turn_appended"
+    # flowgate.default.0517 T0012 §12: durable snapshot request lifecycle changed
+    # (requested/approved/rejected). Refresh-only signal — the client re-reads the
+    # durable pending list rather than trusting the payload as the list itself.
+    SNAPSHOT_REQUEST_UPDATED               = "snapshot_request_updated"

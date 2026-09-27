@@ -228,7 +228,16 @@ def _api_system_prompt() -> str:
         "You are a FlowGate API agent. Use the supplied tools to perform the bound work. "
         "A natural-language claim of completion never registers, replies, decides, or completes "
         "the work: call the required tool with its complete payload. Only use exposed tools and "
-        "their declared JSON schemas."
+        "their declared JSON schemas. A source snapshot is exceptional: request one only when a "
+        "real filesystem tree is required for build, test, lint, typecheck, dependency/static "
+        "analysis, or an isolated temporary experiment. Use ordinary FlowGate read/search/git and "
+        "Merge Context for reads, comparisons, history, and merge analysis. Snapshot requests never "
+        "approve or materialize themselves; only use a locator after human approval/materialization. "
+        "Snapshot changes are temporary and must never be promoted, uploaded, committed, merged, or "
+        "synced back. Persistent edits use canonical source mutation tools. FlowGate cannot fully "
+        "inspect every child process launched by a snapshot command, so keep commands inside the "
+        "snapshot and never access live source paths. If a snapshot is stale, say ACTIVE SNAPSHOT "
+        "IS STALE and never claim its result validates the current worktree."
     )
 
 
@@ -241,6 +250,21 @@ def _api_help_prompt(prompt: str) -> str:
         "the index, item returns one item, and item plus child returns one child."
     )
     return guidance + "\n\n" + "\n".join(lines)
+
+
+def _api_conflict_guidance(tool_names: list[str]) -> str:
+    """0608 T0007: how a resolve_conflict API run reaches what its (CLI-shaped) mention
+    addresses over HTTP. Same contract, tool names instead of URLs."""
+    return (
+        "Here the mention's HTTP addresses are tools; make no HTTP requests: `POST .../remote/read` "
+        "is `read_source_file` (path, start_line/end_line, ref), the other remote source tools are "
+        "the `*_source` tools, the bound resolve endpoint is `resolve_git_conflict`. Tools: "
+        + ", ".join(f"`{name}`" for name in tool_names) + ".\n"
+        "Read only the lines you need; a result over 16,000 characters is refused. Send each file "
+        "as `chunks`, a few files per call with complete=false; the result lists "
+        "remaining_conflicts, and complete=true ends the job. If a read fails, fix it or stop -- "
+        "never resolve a chunk you could not read."
+    )
 
 
 def _is_glm_openai_provider(provider: dict) -> bool:
@@ -302,6 +326,7 @@ def _http_post_json(url: str, headers: dict, body: dict, timeout: float) -> dict
 def _call_anthropic(
     base_url: str, model: str, key: str, conversation: list[dict], timeout: float,
     tool_name: str, tool_desc: str, tool_schema: dict, force_tool: bool = False,
+    max_tokens: Optional[int] = None,
 ) -> tuple[Optional[str], Optional[dict], dict]:
     multi = isinstance(tool_name, list)
     specs = tool_name if multi else [{"name": tool_name, "description": tool_desc, "schema": tool_schema}]
@@ -310,7 +335,7 @@ def _call_anthropic(
         {"x-api-key": key, "anthropic-version": ANTHROPIC_VERSION},
         {
             "model": model,
-            "max_tokens": API_MAX_TOKENS,
+            "max_tokens": max_tokens or API_MAX_TOKENS,
             "messages": conversation,
             "tools": [{"name": spec["name"], "description": spec["description"], "input_schema": spec["schema"]} for spec in specs],
             **({"tool_choice": ({"type": "any"} if multi else {"type": "tool", "name": specs[0]["name"]})} if force_tool else {}),

@@ -92,7 +92,11 @@ afterEach(() => {
 
 describe('SSE invalidateProject ownership (0552 T0011)', () => {
   it('keeps the extracted callback aligned with DashboardView token-only refreshAll', () => {
-    const refreshAllBody = dashboardSource.match(/function refreshAll\(\) \{([\s\S]*?)\n\}/)?.[1] ?? ''
+    // T0004 diagnostics rev2 finding 4: refreshAll now takes the SSE screen-refresh epoch
+    // (passed through to the explorer/overview epoch refs FileExplorer/GroupExplorer/
+    // MainPanel read for fan-out attribution) — signature only, not a behavior change to
+    // what this test actually guards (cache invalidation ownership).
+    const refreshAllBody = dashboardSource.match(/function refreshAll\((?:[^)]*)\) \{([\s\S]*?)\n\}/)?.[1] ?? ''
     expect(refreshAllBody).not.toContain('invalidateProject')
     expect(refreshAllBody.match(/explorerRefreshToken\.value \+= 1/g)).toHaveLength(1)
     expect(refreshAllBody.match(/overviewRefreshToken\.value \+= 1/g)).toHaveLength(1)

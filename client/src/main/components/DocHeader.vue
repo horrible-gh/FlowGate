@@ -194,6 +194,7 @@
   </ContextMenu>
   <GroupInfoModal
     v-model:visible="showGroupInfo"
+    :project-id="doc?.project_id ?? ''"
     :group-id="doc?.group_id ?? ''"
     :group-name="groupName"
     :documents="groupDocuments"
@@ -239,6 +240,7 @@ import { useToast } from './common/useToast'
 import { MENTION_COPIED_EVENT, type MentionCopiedDetail } from '../composables/useMentionCopy'
 import { copyToClipboard } from '../utils/clipboard'
 import type { Tab } from '../stores/tabs'
+import { recordFanOut } from '@shared/diagnostics/runtimeDiagnostics'
 import { useTabsStore } from '../stores/tabs'
 import { useExplorerStore } from '../stores/explorer'
 import { useDocumentContextStore } from '../stores/documentContext'
@@ -1206,7 +1208,7 @@ function _onOpenDocsRefresh(e: Event) {
   // it live. Stamp lastPullAt so a focus pull landing right after doesn't double-fetch.
   const current = doc.value
   if (!current) return
-  const payload = (e as CustomEvent).detail as { project?: string | null; doc_id?: string | null } | undefined
+  const payload = (e as CustomEvent).detail as { project?: string | null; doc_id?: string | null; refresh_epoch?: number | null } | undefined
   if (payload?.project && current.project_id && payload.project !== current.project_id) return
   // T0004 §3: when the coalesced refresh names one specific document (e.g. an AI
   // review arriving for it), skip tabs that are not that document instead of forcing
@@ -1216,11 +1218,21 @@ function _onOpenDocsRefresh(e: Event) {
   // tab to refresh regardless of which document they name.
   if (payload?.doc_id && payload.doc_id !== current.doc_id) return
   lastPullAt = Date.now()
+  // rev2 finding 4: fg:open_docs_refresh carries the real epoch only when it came from an
+  // SSE screen-refresh flush; other dispatchers (GitActionMenu, GitMergeReviewDialog,
+  // GitStatusPanel, WorkPlanEditor) fire this event on their own and omit the field, which
+  // must read as "not an SSE epoch" (null) rather than borrowing a stale one.
+  recordFanOut('doc_header_refetch', payload?.refresh_epoch ?? null)
   void silentRefetchWithRetry(true)
 }
 
 function _onReviewStatusChanged(e: Event) {
-  const payload = (e as CustomEvent).detail as { doc_id?: string; next_status?: string; rejection_reason?: string | null; rejection_history?: Array<{ reason: string; rejected_at: string; rejected_by: string | null }> | null }
+  // 0582 TR0006 rev1: the server now runs every doc_review_status_changed emitter's
+  // rejection_history through the SAME enrich_rejection_history_provenance GET
+  // /document uses (inbox_routes.py / ai_invoke/review.py / workflow.py), so this
+  // payload's shape matches RejectionHistoryItem, provider fields included -- the
+  // whole-array replacement below is safe without a follow-up refetch.
+  const payload = (e as CustomEvent).detail as { doc_id?: string; next_status?: string; rejection_reason?: string | null; rejection_history?: RejectionHistoryItem[] | null }
   if (doc.value && payload.doc_id === doc.value.doc_id && payload.next_status) {
     invalidatePendingDocFetches()
     doc.value.doc_review_status = payload.next_status

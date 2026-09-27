@@ -80,6 +80,7 @@
     <div v-if="expanded && !optimisticRunning" class="fail-strip-detail">
       <div v-if="testRun?.failure_origin" class="fail-origin">
         <div>{{ t('main.test_fail_strip.failure_origin_line', { value: testRun.failure_origin }) }}</div>
+        <div class="fail-origin-provider">{{ failureOriginProviderLabel }}</div>
         <div>{{ t('main.test_fail_strip.code_rework_cycle_line', { current: testRun.code_rework_cycle ?? 0, max: 3 }) }}</div>
       </div>
       <div v-for="(c, idx) in failedCases" :key="idx" class="fail-case">
@@ -144,6 +145,14 @@ const OPTIMISTIC_RUNNING_MS = 1500
 // Only a failed run surfaces the strip. Any other status (passed/running/absent) → null render,
 // so the gate is automatic on every non-failing doc (embed is null unless a run is bound).
 const visible = computed(() => optimisticRunning.value || props.testRun?.status === 'failed')
+
+// A stored name is the durable snapshot. A provider id is a display-only compatibility
+// fallback; a classified legacy row is known to be AI-produced but has no provider proof.
+const failureOriginProviderLabel = computed(() => {
+  const provider = props.testRun?.failure_origin_provider
+  const name = provider?.ai_provider_name || provider?.ai_provider_id
+  return `AI · ${name || t('main.doc_info_panel.ai_provider_unknown')}`
+})
 
 const failedCases = computed<TestRunCase[]>(() =>
   (props.testRun?.cases ?? []).filter((c) => c.result === 'fail' || c.result === 'timeout'),

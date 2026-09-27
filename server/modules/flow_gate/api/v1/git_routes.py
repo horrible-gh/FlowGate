@@ -4,6 +4,12 @@ GET/PUT/DELETE /api/v1/projects/{project_id}/git/config
 POST           /api/v1/projects/{project_id}/git/test-connection
 GET/POST       /api/v1/projects/{project_id}/git/provision   (0161 P0004)
 GET            /api/v1/projects/{project_id}/git/status       (0162 P §2)
+GET            /api/v1/projects/{project_id}/git/branches     (0594 T0010)
+GET            /api/v1/projects/{project_id}/git/work-base-options (0613 T0013 — perm_document_create)
+POST           /api/v1/projects/{project_id}/git/branches     (0594 T0010)
+DELETE         /api/v1/projects/{project_id}/git/branches/{name:path} (0594 T0010)
+GET            /api/v1/projects/{project_id}/git/branches/tree (0615 T0004 — checkout-free ordinary local branch)
+GET            /api/v1/projects/{project_id}/git/branches/blob (0615 T0004 — checkout-free ordinary local branch)
 POST           /api/v1/projects/{project_id}/git/fetch        (0162 P §3-1)
 POST           /api/v1/projects/{project_id}/git/push         (0162 P §3-2)
 POST           /api/v1/projects/{project_id}/git/cleanup      (0182 NR0003 §5)
@@ -51,6 +57,7 @@ from modules.flow_gate.services import (
 from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.services.git_service import GitServiceError
 from modules.flow_gate.services.git.credentials import git_error_envelope
+from modules.flow_gate.services.git import merge_target as git_merge_target
 
 router = APIRouter(prefix="/api/v1", tags=["Git"])
 
@@ -184,6 +191,146 @@ def post_git_provision(
     # a provisioning failure is a 200 with result.status="failed", not an error.
     try:
         return git_service.provision_manual(project_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+# ── Project branches (0594 T0010) ────────────────────────────────────────────
+
+class BranchCreateBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    source_branch: str
+
+
+class BranchMergeBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_branch: str
+    target_branch: str
+    # T0006: publish the merge result to origin (default True keeps every
+    # existing caller's behavior — an omitted field still pushes).
+    push: bool = True
+
+
+@router.get("/projects/{project_id}/git/branches")
+def get_git_branches(
+    project_id: str,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    try:
+        return git_service.list_branches(project_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.get("/projects/{project_id}/git/work-base-options")
+def get_git_work_base_options(
+    project_id: str,
+    user=Depends(require_permission("perm_document_create", "project_id")),
+):
+    """flowgate.default.0613 T0013: Base Branch choices for the requirement (R/B)
+    dialog.  Gated by the project's document-create permission -- the right a
+    requirement author actually holds -- rather than the Branch Manager's
+    ``project.settings.read``, and limited to the names a new group may store."""
+    try:
+        return git_service.list_group_work_base_options(project_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/projects/{project_id}/git/branches")
+def post_git_branch(
+    project_id: str,
+    body: BranchCreateBody,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    try:
+        return git_service.create_branch(project_id, body.name, body.source_branch)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/projects/{project_id}/git/branches/merge")
+def post_git_branch_merge(
+    project_id: str,
+    body: BranchMergeBody,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    try:
+        return git_service.merge_branches(
+            project_id, body.source_branch, body.target_branch, push=body.push,
+        )
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.delete("/projects/{project_id}/git/branches/{name:path}")
+def delete_git_branch(
+    project_id: str,
+    name: str,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    try:
+        return git_service.delete_branch(project_id, name)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+class DefaultMergeTargetBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # None/omitted clears the suggestion back to the project base branch.
+    branch: Optional[str] = None
+
+
+@router.put("/projects/{project_id}/git/branches/default-target")
+def put_git_default_merge_target(
+    project_id: str,
+    body: DefaultMergeTargetBody,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    """T0016 §3.2 — set/clear the project's persistent integration branch
+    directly, as its own action (separate from running an actual branch merge)."""
+    try:
+        return git_merge_target.set_project_default_target(project_id, body.branch)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+# ── Ordinary local branch: checkout-free tree/blob (0615 T0004) ──────────────
+# A plain query-parameter shape (rather than /branches/{branch:path}/tree) sidesteps
+# any ambiguity a slash-containing branch name would create against a trailing
+# literal path segment (T0004 §3 permits either; this is the simpler one).
+
+@router.get("/projects/{project_id}/git/branches/tree")
+def get_local_branch_tree(
+    project_id: str,
+    branch: str,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    """Recursive file tree of an ordinary local branch's HEAD commit (read-only,
+    no checkout — T0004 §3.1)."""
+    try:
+        return git_service.read_local_branch_tree(project_id, branch)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.get("/projects/{project_id}/git/branches/blob")
+def get_local_branch_blob(
+    project_id: str,
+    branch: str,
+    path: str,
+    ref: str | None = None,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    """Single-file content from an ordinary local branch (read-only, checkout-free
+    — T0004 §3.2). ``ref`` (optional) pins the read to the tree's commit sha, same
+    contract as the group-branch blob endpoint."""
+    try:
+        return git_service.read_local_branch_blob(project_id, branch, path, ref)
     except GitServiceError as exc:
         return _guard(exc)
 
@@ -487,6 +634,9 @@ class FinalizeBody(BaseModel):
     # Confirmed commit subject for the absorb commit (0173 P0003 §3). Blank/omitted
     # → the server resolves it (unmanned path); >200 chars (normalized) → 422.
     commit_message: str | None = None
+    # flowgate.default.0594 T0012: the local branch a merge lands on. Omitted -> the
+    # project base (or, while an attempt is open, that attempt's pinned target).
+    git_target_branch: str | None = None
 
 
 @router.post("/groups/{group_id}/git/finalize")
@@ -499,6 +649,11 @@ def post_group_finalize(
     if denied:
         return denied
     try:
+        if body is not None and body.git_target_branch is not None:
+            return git_service.finalize(
+                group_id, body.action, body.commit_message,
+                target_branch=body.git_target_branch,
+            )
         return git_service.finalize(
             group_id,
             body.action if body else None,
@@ -540,9 +695,36 @@ def get_merge_conflicts(group_id: str, merge_id: int, user=Depends(get_current_u
         return _guard(exc)
 
 
+class ResolveSupersede(BaseModel):
+    # 0604 D0005 §3.4 / §5: the resolver's explicit "the kept side already carries the
+    # other side's changes" declaration. Checked (and recorded) by resolve_conflicts;
+    # `side`/`reason` stay plain strings so a bad value comes back as that service's
+    # 422 conflict_supersede_invalid instead of a generic validation error.
+    model_config = ConfigDict(extra="forbid")
+
+    side: str
+    reason: str
+
+
+class ResolveChunk(BaseModel):
+    # 0608 T0007: one chunk's resolution -- the lines that replace marker block `chunk`
+    # (1-based, file order, as the conflict mention numbers them). resolve_conflicts
+    # assembles the file from these and validates it like a whole-file `content`.
+    model_config = ConfigDict(extra="forbid")
+
+    chunk: int
+    content: str
+
+
 class ResolveFile(BaseModel):
     path: str
-    content: str
+    # Exactly one of `content` (the whole resolved file) and `chunks` (every chunk of
+    # the file, resolved) -- resolve_conflicts enforces the pairing with a 422.
+    content: Optional[str] = None
+    chunks: Optional[list[ResolveChunk]] = None
+    # Must stay a declared field: ResolveFile is not extra="forbid", so an undeclared
+    # `supersede` would be dropped silently before reaching resolve_conflicts.
+    supersede: Optional[ResolveSupersede] = None
 
 
 class ResolveBody(BaseModel):

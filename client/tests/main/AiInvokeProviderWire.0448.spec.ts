@@ -66,12 +66,6 @@ function providersResponse() {
   return { data: { ok: true, project: PROJECT, providers: PROVIDERS, default_provider_id: 'aip_default' } }
 }
 
-/** The work-plan apply preview the dialog reads. `providers` is item_seq -> provider_id. */
-function planFill(providers: Record<number, string>) {
-  return { data: { wp_doc_id: WP_DOC, wp_revision_no: 8,
-    fill_preview: { note_overrides: {}, provider_overrides: providers } } }
-}
-
 function startBody() {
   const call = postRequest.mock.calls.find(c => c[0] === '/api/v1/ai-invoke/start')
   expect(call, 'no /ai-invoke/start request was made').toBeTruthy()
@@ -97,14 +91,13 @@ function mountAutoStart(props: Record<string, unknown> = {}) {
   })
 }
 
-/** Mount the continuous dialog against a plan whose values are `fill`, then press [next] and
- *  return the confirm payload the screen actually produced. */
-async function confirmPayloadForPlan(fill: Record<number, string>) {
-  postRequest.mockImplementation((url: string) =>
-    url.includes('/work-plan/apply/preview')
-      ? Promise.resolve(planFill(fill))
-      : Promise.resolve({ data: { run_id: 'aiv_1', status: 'running' } }),
-  )
+/** Mount the continuous dialog, optionally pick a manual per-step provider override on item_seq
+ *  1's row (0554 T0012: apply is the snapshot boundary — the dialog never re-reads the work
+ *  plan on its own anymore, so the ONLY way left to produce a `providerOverrides` entry is a
+ *  person picking one on the [Providers] tab), then press [next] and return the confirm payload
+ *  the screen actually produced. */
+async function confirmPayloadForPlan(manualProviderId: string | null) {
+  postRequest.mockResolvedValue({ data: { run_id: 'aiv_1', status: 'running' } })
   const wrapper = mount(ContinuousWorkDialog, {
     props: {
       visible: true, docRef: ROOT,
@@ -114,6 +107,16 @@ async function confirmPayloadForPlan(fill: Record<number, string>) {
     global: { plugins: [i18n] },
   })
   await flushPromises()
+  if (manualProviderId) {
+    ;(document.querySelectorAll('.cwd-tab')[1] as HTMLButtonElement).click()
+    await flushPromises()
+    const select = document.querySelectorAll(
+      '.cwd-override-select .aip-select-input',
+    )[0] as HTMLSelectElement
+    select.value = manualProviderId
+    select.dispatchEvent(new Event('change'))
+    await flushPromises()
+  }
   ;([...document.querySelectorAll('[data-dialog-action-role="primary"]')][0] as HTMLButtonElement).click()
   await flushPromises()
   const payload = wrapper.emitted('confirm')![0][0] as any
@@ -223,12 +226,19 @@ describe('continuation_provider_overrides wire key (0448 T0005 §5-2 / §7-8)', 
   })
 })
 
-describe('plan value vs sequence value, screen to request (0448 T0005 §7-5 / §7-6)', () => {
-  it('§7-5 plan == sequence: no override is produced, so the request carries no map at all', async () => {
-    // The plan says exactly what the row already stores, so ContinuousWorkDialog.applyPlanFill
-    // creates nothing — and the run must still be the STORED provider, which the server
-    // resolves from the sequence row (test_ai_invoke_provider_selection_0448.py §7-5).
-    const payload = await confirmPayloadForPlan({ 1: 'aip_stored' })
+describe('manual per-step override vs the stored sequence value, screen to request (0448 T0005 §7-5 / §7-6)', () => {
+  // 0554 T0012 (880712d, this same group's own prior step) removed ContinuousWorkDialog's
+  // work-plan re-read: "apply is the snapshot boundary. A later run reads the saved sequence
+  // and must not silently re-project a newer WP revision into an already approved workflow."
+  // §7-5/§7-6 are server-side contracts about how `continuation_provider_overrides` is resolved
+  // once it exists (test_ai_invoke_provider_selection_0448.py) — they say nothing about HOW the
+  // client produces that map. A plan/sequence diff no longer produces one on its own; a manual
+  // pick on the [Providers] tab is the only path left, so these two illustrate the boundary with
+  // that path instead of the retired auto-diff one.
+  it('§7-5 no manual pick: no override is produced, so the request carries no map at all', async () => {
+    // Nobody touched the [Providers] tab, so the run must still be the STORED provider, which
+    // the server resolves from the sequence row (test_ai_invoke_provider_selection_0448.py §7-5).
+    const payload = await confirmPayloadForPlan(null)
     expect(payload.providerOverrides).toEqual({})
 
     await loadedStore()
@@ -243,8 +253,8 @@ describe('plan value vs sequence value, screen to request (0448 T0005 §7-5 / §
     wrapper.unmount()
   })
 
-  it('§7-6 plan != sequence: the item_seq override reaches the request verbatim', async () => {
-    const payload = await confirmPayloadForPlan({ 1: 'aip_plan' })
+  it('§7-6 a manual pick != the stored value: the item_seq override reaches the request verbatim', async () => {
+    const payload = await confirmPayloadForPlan('aip_plan')
     expect(payload.providerOverrides).toEqual({ 1: 'aip_plan' })
 
     await loadedStore()

@@ -30,16 +30,27 @@ def insert(
     author_kind: str = "human",
     author_id: Optional[str] = None,
     selected_options: str = "[]",
+    author_ai_run_id: Optional[str] = None,
+    author_actual_provider_id: Optional[str] = None,
+    author_actual_provider_name: Optional[str] = None,
 ) -> None:
     """answers INSERT (DB0006 §4.2 — author_kind/author_id; author_id NULL for AI).
 
     ``selected_options`` is the serialized JSON array of chosen option ids (DB0007 §2);
     the caller validates it against the item's options (L0008 §2.4).
+
+    The three ``author_*`` columns are the AI run/provider snapshot for an AI answer
+    (0582 T0005 §4/§D) — always None for a human answer, and None for an AI answer
+    whose token carried no bound run (the [Copy Mention] hand-off starts no run by
+    design, so it is legitimately unknown rather than dropped).
     """
     store = get_store()
     store._execute(
         store._sql("answers.insert_answer"),
-        [question_item_id, body, author_kind, author_id, selected_options],
+        [
+            question_item_id, body, author_kind, author_id, selected_options,
+            author_ai_run_id, author_actual_provider_id, author_actual_provider_name,
+        ],
     )
 
 

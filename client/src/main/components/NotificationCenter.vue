@@ -12,8 +12,11 @@
       @click="toggle"
     >
       <AppIcon name="bell" />
-      <span v-if="store.unreadCount > 0" class="notif-badge">
-        {{ store.unreadCount > 99 ? '99+' : store.unreadCount }}
+      <!-- flowgate.default.0517 T0026 §1: Snapshot approvals waiting on a human count here
+           too, since their list moved into this panel ([승인 대기]). Unread inflow clears on
+           open; a pending approval keeps the badge up until someone decides it. -->
+      <span v-if="badgeCount > 0" class="notif-badge" :title="badgeTitle" data-test="notif-badge">
+        {{ badgeCount > 99 ? '99+' : badgeCount }}
       </span>
     </button>
 
@@ -32,7 +35,12 @@
         </button>
       </div>
 
-      <div class="notif-section-tabs" role="tablist" :aria-label="t('main.notif_center.sections_label')">
+      <div
+        class="notif-section-tabs"
+        role="tablist"
+        :aria-label="t('main.notif_center.sections_label')"
+        :style="{ gridTemplateColumns: `repeat(${sections.length}, 1fr)` }"
+      >
         <button
           v-for="section in sections"
           :key="section.key"
@@ -41,6 +49,7 @@
           type="button"
           role="tab"
           :aria-selected="activeSection === section.key"
+          :data-test="`notif-section-${section.key}`"
           @click="activeSection = section.key"
         >
           {{ section.label }}
@@ -161,6 +170,60 @@
           <button class="notif-ai-detail-btn" type="button" @click="openAiDetail(item.run_id, $event)">{{ t('main.notif_center.ai_detail') }}</button>
         </article>
       </div>
+      <!-- flowgate.default.0517 T0026 §1 — the durable Snapshot Pending list (T0012 §9), moved
+           here from its own header icon. Rows keep exactly [거절]/[자세히]; approval lives in
+           the detail dialog only, and [거절] asks for a reason first. -->
+      <div v-else-if="activeSection === 'snapshot'" class="notif-section-body snap-pending-section" data-test="snap-pending-section">
+        <div class="snap-pending-hd">
+          <strong class="snap-pending-title">{{ t('main.snapshot_approval.pending_panel_title', { n: snapshotStore.pendingCount }) }}</strong>
+          <p class="snap-pending-hint">{{ t('main.snapshot_approval.pending_panel_hint') }}</p>
+        </div>
+        <div class="notif-panel-body">
+          <div v-if="snapshotStore.loading && snapshotStore.pending.length === 0" class="notif-empty">
+            <AppIcon name="spinner" spin />
+          </div>
+          <div v-else-if="snapshotStore.error && snapshotStore.pending.length === 0" class="notif-empty">
+            <AppIcon name="warning" />
+            <p>{{ t('main.snapshot_approval.pending_load_failed') }}</p>
+            <button class="btn btn-outline btn-sm" type="button" @click="refreshSnapshots">
+              {{ t('main.snapshot_approval.pending_retry') }}
+            </button>
+          </div>
+          <div v-else-if="snapshotStore.pending.length === 0" class="notif-empty">
+            <AppIcon name="check" />
+            <p>{{ t('main.snapshot_approval.pending_empty') }}</p>
+          </div>
+          <article
+            v-for="row in snapshotStore.pending"
+            v-else
+            :key="row.snapshot_id"
+            class="snap-pending-item"
+            :class="{ 'snap-pending-item--whole': row.scope === 'whole_source' }"
+            data-test="snap-pending-item"
+          >
+            <div class="snap-pending-row1">
+              <span class="snap-pending-provider"><AppIcon name="robot" /> {{ snapshotProviderLabel(row.provider_id) }}</span>
+              <span class="badge" :class="row.scope === 'whole_source' ? 'badge-yellow' : 'badge-gray'">{{ snapshotScopeLabel(row.scope) }}</span>
+            </div>
+            <p class="snap-pending-meta">
+              {{ t('main.snapshot_approval.pending_item_meta', { group: row.group_id, time: formatDashboardTime(row.requested_at) }) }}
+            </p>
+            <p class="snap-pending-paths">{{ snapshotPathSummary(row) }}</p>
+            <p class="snap-pending-reason">{{ row.reason }}</p>
+            <p v-if="row.scope === 'whole_source'" class="snap-pending-warn">
+              <AppIcon name="warning" /> {{ t('main.snapshot_approval.pending_whole_source_warning') }}
+            </p>
+            <div class="snap-pending-actions">
+              <button type="button" class="btn btn-danger btn-sm" data-test="snap-pending-reject" @click="snapshotStore.openReject(row)">
+                {{ t('main.snapshot_approval.pending_reject') }}
+              </button>
+              <button type="button" class="btn btn-primary btn-sm" data-test="snap-pending-details" @click="openSnapshotDetails(row)">
+                {{ t('main.snapshot_approval.pending_details') }}
+              </button>
+            </div>
+          </article>
+        </div>
+      </div>
       <div v-else class="notif-section-body notif-qa-section">
         <div v-if="store.loading" class="notif-loading"><span class="spinner"></span></div>
         <div v-else-if="store.error" class="notif-empty">
@@ -197,6 +260,11 @@
       @close="closeAiDetail"
       @open-document="openDetailDocument"
     />
+    <!-- Snapshot approval (T0012) and its reject-reason prompt (T0026). Mounted with the bell,
+         not the panel: a NEW request auto-opens the detail dialog with the panel closed.
+         Both are driven by the snapshot store's targets, so each exists at most once. -->
+    <SnapshotApprovalDialog />
+    <SnapshotRejectDialog />
   </div>
 </template>
 
@@ -212,6 +280,12 @@ import { useActivityFormat } from '../composables/useActivityFormat'
 import type { DashboardActivity } from '../stores/dashboard'; import type { AiInvokeDetail, AiInvokeNotification } from '../stores/notifications'; import { getRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import NotificationAiDetailDialog from './NotificationAiDetailDialog.vue'
+import SnapshotApprovalDialog from './SnapshotApprovalDialog.vue'
+import SnapshotRejectDialog from './SnapshotRejectDialog.vue'
+import { useSnapshotRequestsStore, type SnapshotRequestRow } from '../stores/snapshotRequests'
+import { useAiProviderStore } from '../stores/aiProvider'
+import { recordFanOut } from '@shared/diagnostics/runtimeDiagnostics'
+import { useSnapshotPendingSync } from '../composables/useSnapshotPendingSync'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -221,6 +295,9 @@ const { openDashboardTarget } = useDashboardNavigation()
 const { requestQaOpen } = useQaOpenIntent()
 const { activityColor, activityActionLabel, formatDashboardTime, reviewTone, reviewBadge } =
   useActivityFormat()
+const snapshotStore = useSnapshotRequestsStore()
+const aiProviderStore = useAiProviderStore()
+const { refresh: refreshSnapshots } = useSnapshotPendingSync()
 
 const open = ref(false)
 const rootEl = ref<HTMLElement | null>(null)
@@ -279,13 +356,75 @@ async function openDetailDocument() {
   await openDashboardTarget({ kind: 'document', doc_id: docRef })
 }
 
-type NotifSection = 'general' | 'ai' | 'qa'
+type NotifSection = 'general' | 'ai' | 'qa' | 'snapshot'
 const activeSection = ref<NotifSection>('general')
+// [승인 대기] only appears while there is something to decide (or while it is the section
+// being looked at, so deciding the last request shows the empty state instead of yanking
+// the view away). With nothing pending the panel is exactly the three sections it was.
+const showSnapshotSection = computed(() => snapshotStore.pendingCount > 0 || activeSection.value === 'snapshot')
 const sections = computed(() => [
   { key: 'general' as const, label: t('main.notif_center.section_general') },
   { key: 'ai' as const, label: t('main.notif_center.section_ai') + ' ' + store.aiItems.length },
   { key: 'qa' as const, label: t('main.notif_center.section_qa') + ' ' + store.qaTotal },
+  ...(showSnapshotSection.value
+    ? [{ key: 'snapshot' as const, label: t('main.notif_center.section_snapshot') + ' ' + snapshotStore.pendingCount }]
+    : []),
 ])
+
+const badgeCount = computed(() => store.unreadCount + snapshotStore.pendingCount)
+const badgeTitle = computed(() =>
+  snapshotStore.pendingCount > 0
+    ? t('main.snapshot_approval.bell_pending_hint', { n: snapshotStore.pendingCount })
+    : undefined,
+)
+
+const SNAPSHOT_SCOPE_LABEL_KEYS: Record<string, string> = {
+  single_file: 'scope_single_file',
+  selected_files: 'scope_selected_files',
+  directory: 'scope_directory',
+  whole_source: 'scope_whole_source',
+}
+function snapshotScopeLabel(scope: string): string {
+  const key = SNAPSHOT_SCOPE_LABEL_KEYS[scope]
+  return key ? t(`main.snapshot_approval.${key}`) : scope
+}
+
+function snapshotProviderLabel(providerId: string): string {
+  const found = aiProviderStore.providers.find((p) => p.id === providerId)
+  return found?.name || providerId || t('main.snapshot_approval.unknown_provider')
+}
+
+// Summary only (T0012 §9/§15) — the full list lives in the detail dialog only.
+// Mockup ② phrasing: "<first path> 외 N건".
+function snapshotPathSummary(row: SnapshotRequestRow): string {
+  if (row.scope === 'whole_source') return t('main.snapshot_approval.scope_whole_source')
+  const [first, ...rest] = row.requested_paths
+  if (!first) return ''
+  return rest.length
+    ? t('main.snapshot_approval.pending_path_more', { first, n: rest.length })
+    : first
+}
+
+// [자세히] hands over to the detail dialog and folds the panel away (T0012 behaviour).
+function openSnapshotDetails(row: SnapshotRequestRow) {
+  snapshotStore.openDetail(row)
+  open.value = false
+}
+
+// The detail dialog's "Pending 목록에서 함께 확인 →" link (fg:snapshot_open_pending_panel).
+function onOpenPendingPanelRequest() {
+  open.value = true
+  activeSection.value = 'snapshot'
+  activeFilter.value = 'all'
+  refresh()
+  refreshSnapshots()
+}
+
+// Snapshot dialogs teleport out of this subtree like the AI detail dialog does, so the
+// panel must neither read their clicks as "outside" nor take their ESC.
+function anySnapshotDialogOpen(): boolean {
+  return snapshotStore.detailOpen || snapshotStore.rejectOpen
+}
 
 // Mockup 3 filter tabs. All = everything; needs attention = rows whose AI verdict flags attention
 // (issues/hold — the "됐다는데 사실 반쪽" cases the mockup surfaces); unread = unread since last open.
@@ -338,9 +477,12 @@ function refresh() {
 function toggle() {
   open.value = !open.value
   if (open.value) {
-    activeSection.value = 'general'
+    // Waiting approvals are the one thing here that blocks an AI run, so the panel opens on
+    // them when there are any — one click to the list, same as the old dedicated icon.
+    activeSection.value = snapshotStore.pendingCount > 0 ? 'snapshot' : 'general'
     activeFilter.value = 'all'
     refresh()
+    refreshSnapshots()
     void markAllRead()
   }
 }
@@ -371,6 +513,7 @@ function onClickOutside(e: MouseEvent) {
   // clicks while the dialog is up keeps the pre-migration behaviour, where the dialog was
   // still a descendant of `rootEl` (T0018 §2.3-6).
   if (detailOpen.value) return
+  if (anySnapshotDialogOpen()) return
   if (rootEl.value && !rootEl.value.contains(e.target as Node)) open.value = false
 }
 
@@ -379,6 +522,7 @@ function onKeyDown(e: KeyboardEvent) {
   // The detail dialog's ESC belongs to the common stack's single document listener now
   // (L0009 §2 "ESC"). Keeping a branch for it here would close it twice.
   if (detailOpen.value) return
+  if (anySnapshotDialogOpen()) return
   if (open.value) open.value = false
 }
 
@@ -386,11 +530,19 @@ function onKeyDown(e: KeyboardEvent) {
 // Debounced to coalesce bursts (a single workflow step can fire several events). The server stays
 // the single source of truth — we never increment the badge client-side (NR0003 option D).
 let refetchTimer: ReturnType<typeof setTimeout> | null = null
-function onInflow() {
+let pendingInflowEpoch: number | null = null
+function onInflow(e?: Event) {
+  // rev2 finding 4: fg:notification carries the real epoch only when the SSE screen-refresh
+  // flush dispatched it; any other trigger reads as `null` rather than borrowing a stale one.
+  // A later join within the debounce window wins, matching the debounce's own "last call sets
+  // what fires" semantics.
+  const detail = (e as CustomEvent | undefined)?.detail as { refresh_epoch?: number | null } | undefined
+  pendingInflowEpoch = detail?.refresh_epoch ?? null
   if (refetchTimer !== null) clearTimeout(refetchTimer)
   refetchTimer = setTimeout(() => {
     refetchTimer = null
     if (projectStore.currentProjectId && !isOverviewRoute()) {
+      recordFanOut('notification_center_refresh', pendingInflowEpoch)
       void store.fetchFeed(projectStore.currentProjectId)
     }
   }, 300)
@@ -407,6 +559,7 @@ watch(() => projectStore.currentProjectId, (pid) => {
 onMounted(() => {
   if (!isOverviewRoute()) refresh()
   window.addEventListener('fg:notification', onInflow)
+  window.addEventListener('fg:snapshot_open_pending_panel', onOpenPendingPanelRequest)
   window.addEventListener('click', onClickOutside, true)
   window.addEventListener('keydown', onKeyDown)
 })
@@ -414,6 +567,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (refetchTimer !== null) clearTimeout(refetchTimer)
   window.removeEventListener('fg:notification', onInflow)
+  window.removeEventListener('fg:snapshot_open_pending_panel', onOpenPendingPanelRequest)
   window.removeEventListener('click', onClickOutside, true)
   window.removeEventListener('keydown', onKeyDown)
 })
@@ -678,4 +832,31 @@ defineExpose({ open })
 .notif-qa-target { min-width: 0; flex: 1; }
 .notif-qa-open { flex: none; white-space: nowrap; color: var(--primary, #2563eb); font-size: .72rem; font-weight: 700; }
 .notif-qa-open:hover { text-decoration: underline; }
+
+/* ── Snapshot Pending section (T0012 §9 rows, moved here by T0026) ── */
+.snap-pending-hd {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+  background: var(--bg, #f0f4f8);
+}
+.snap-pending-title { font-size: .76rem; color: var(--text, #0f172a); }
+.snap-pending-hint { margin: 0; font-size: .72rem; color: var(--text-m, #64748b); }
+.snap-pending-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-subtle, #f1f5f9);
+}
+.snap-pending-item--whole { background: var(--warning-l, #fef3c7); }
+.snap-pending-row1 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.snap-pending-provider { display: inline-flex; align-items: center; gap: 5px; font-size: .78rem; font-weight: 600; color: var(--text); }
+.snap-pending-meta { margin: 0; font-size: .68rem; color: var(--text-m); }
+.snap-pending-paths { margin: 0; font-family: 'JetBrains Mono', monospace; font-size: .72rem; color: var(--text-s); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.snap-pending-reason { margin: 0; font-size: .76rem; color: var(--text-s); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.snap-pending-warn { margin: 0; display: flex; align-items: center; gap: 5px; font-size: .7rem; font-weight: 600; color: var(--warning, #d97706); }
+.snap-pending-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; }
 </style>

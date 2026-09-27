@@ -1,10 +1,4 @@
 <template>
-  <GitFinalizePanel
-    v-if="!readOnly && completed"
-    :group-id="groupId"
-    @open-archive="emit('open-archive', $event)"
-    @archived="emit('archived', $event)"
-  />
   <div class="card md-preview-card">
     <div class="card-hd">
       <span class="card-title">
@@ -23,31 +17,21 @@
         <p class="ac-fa-title">{{ t('main.final_approval.panel_title') }}</p>
         <p class="ac-fa-desc">{{ t('main.final_approval.panel_desc') }}</p>
       </template>
+      <FinalApprovalGitStatus :group-id="groupId" :completed="completed" />
     </div>
   </div>
-  <GitFinalizePanel
-    v-if="!readOnly && !completed"
-    :group-id="groupId"
-    @open-archive="emit('open-archive', $event)"
-    @archived="emit('archived', $event)"
-  />
 </template>
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import AppIcon from '@shared/AppIcon.vue'
-import GitFinalizePanel from '../GitFinalizePanel.vue'
+import FinalApprovalGitStatus from './FinalApprovalGitStatus.vue'
 
 defineProps<{
   completed: boolean
   groupId: string
-  readOnly: boolean
 }>()
 
-const emit = defineEmits<{
-  'open-archive': [groupId: string]
-  archived: [groupId: string]
-}>()
 const { t } = useI18n()
 </script>
 

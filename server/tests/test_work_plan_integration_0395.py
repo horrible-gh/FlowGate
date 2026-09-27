@@ -76,7 +76,13 @@ def test_human_ai_review_apply_conflict_and_history_flow(seed, storage_root, tmp
             plan_step["note"] = f"execute {plan_step['key']} from the approved plan"
         saved_response = client.put(
             f"/api/v1/documents/{doc_id}/work-plan",
-            json={"base_revision_no": read["revision_no"], "body": body},
+            json={
+                "base_revision_no": read["revision_no"],
+                "body": body,
+                "capability_warning_acks": [
+                    step["key"] for step in body["steps"] if step["type"] == "T"
+                ],
+            },
         )
         assert saved_response.status_code == 200, saved_response.text
         saved = saved_response.json()
@@ -122,22 +128,36 @@ def test_human_ai_review_apply_conflict_and_history_flow(seed, storage_root, tmp
         )
         assert first_preview_response.status_code == 200, first_preview_response.text
         first_preview = first_preview_response.json()
-        assert "workflow_not_decided" in {w["code"] for w in first_preview["warnings"]}
-        assert first_preview["workflow"]["workflow_tag"] == "none"
-        assert first_preview["comparison"]["added"]["count"] == 12
+        warning_codes = {w["code"] for w in first_preview["warnings"]}
+        if not first_preview["workflow"]["decided"]:
+            assert "workflow_not_decided" in warning_codes
+            assert first_preview["workflow"]["workflow_tag"] == "none"
+            assert first_preview["comparison"]["added"]["count"] == 12
 
-        # Decide the workflow from the preview response itself, not hard-coded steps.
-        db_wfseq.insert_sequence(ROOT_DOC)
-        sequence = db_wfseq.get_sequence_by_doc_id(ROOT_DOC)
-        for index, item in enumerate(first_preview["comparison"]["added"]["items"], start=1):
-            db_wfseq.insert_sequence_item(
-                sequence_id=sequence["id"],
-                item_seq=index,
-                type_=item["type"],
-                label=item["label"],
-                doc_class="R",
-                sort_order=index,
-            )
+            # Older approval paths leave the workflow undecided. Build it from the preview
+            # response itself, not hard-coded steps.
+            db_wfseq.insert_sequence(ROOT_DOC)
+            sequence = db_wfseq.get_sequence_by_doc_id(ROOT_DOC)
+            for index, item in enumerate(
+                first_preview["comparison"]["added"]["items"], start=1
+            ):
+                db_wfseq.insert_sequence_item(
+                    sequence_id=sequence["id"],
+                    item_seq=index,
+                    type_=item["type"],
+                    label=item["label"],
+                    doc_class="R",
+                    sort_order=index,
+                )
+        else:
+            # Current approval auto-expands the sequence before this preview.
+            assert "workflow_not_decided" not in warning_codes
+            sequence = db_wfseq.get_sequence_by_doc_id(ROOT_DOC)
+            assert sequence is not None
+
+        planned_items = first_preview["comparison"]["added"]["items"]
+        if not planned_items:
+            planned_items = db_wfseq.get_sequence_items(sequence["id"])
 
         decided_preview_response = client.post(
             f"/api/v1/documents/{doc_id}/work-plan/apply/preview",
@@ -167,7 +187,7 @@ def test_human_ai_review_apply_conflict_and_history_flow(seed, storage_root, tmp
         # fresh preview must remap logical keys instead of retaining old numbers.
         old_mapping = {row["key"]: row["item_seq"] for row in auto["step_map"]}
         db_wfseq.delete_pending_items(sequence["id"])
-        for offset, item in enumerate(first_preview["comparison"]["added"]["items"]):
+        for offset, item in enumerate(planned_items):
             item_seq = 21 + offset
             db_wfseq.insert_sequence_item(
                 sequence_id=sequence["id"], item_seq=item_seq,
@@ -207,14 +227,26 @@ def test_human_ai_review_apply_conflict_and_history_flow(seed, storage_root, tmp
         other_body["steps"][0]["note"] = "saved by the other session"
         second_save = client.put(
             f"/api/v1/documents/{doc_id}/work-plan",
-            json={"base_revision_no": revision_one, "body": other_body},
+            json={
+                "base_revision_no": revision_one,
+                "body": other_body,
+                "capability_warning_acks": [
+                    step["key"] for step in other_body["steps"] if step["type"] == "T"
+                ],
+            },
         )
         assert second_save.status_code == 200, second_save.text
         mine = json.loads(json.dumps(current_view["body"]))
         mine["steps"][0]["note"] = "my unsaved screen value"
         stale = client.put(
             f"/api/v1/documents/{doc_id}/work-plan",
-            json={"base_revision_no": revision_one, "body": mine},
+            json={
+                "base_revision_no": revision_one,
+                "body": mine,
+                "capability_warning_acks": [
+                    step["key"] for step in mine["steps"] if step["type"] == "T"
+                ],
+            },
         )
         assert stale.status_code == 409
         assert stale.json()["code"] == "wp_revision_conflict"
@@ -226,8 +258,10 @@ def test_human_ai_review_apply_conflict_and_history_flow(seed, storage_root, tmp
         )
         assert history_response.status_code == 200, history_response.text
         history = history_response.json()
-        assert history["total"] == 2
-        assert [row["instruction_mode"] for row in history["items"]] == [
+        # Approval may already have recorded an automatic expansion application.
+        # The two explicit applications exercised above must remain the newest entries.
+        assert history["total"] >= 2
+        assert [row["instruction_mode"] for row in history["items"][:2]] == [
             "ai_direct", "auto_approved",
         ]
         assert history["items"][0]["workflow_tag_after"] == direct["workflow_tag"]
@@ -262,7 +296,11 @@ def test_unavailable_snapshot_provider_is_readable_and_warned(seed, storage_root
         body["steps"][0]["provider_display_name"] = "Claude Opus"
         saved = client.put(
             f"/api/v1/documents/{doc_id}/work-plan",
-            json={"base_revision_no": created["revision_no"], "body": body},
+            json={
+                "base_revision_no": created["revision_no"],
+                "body": body,
+                "capability_warning_acks": ["T#1"],
+            },
         )
         assert saved.status_code == 200, saved.text
 

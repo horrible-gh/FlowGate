@@ -66,6 +66,7 @@ try {
     }));
     const required = [
       ['.git-branch-badge', 1], ['.git-ab-meta', 1], ['.card-hd .btn-primary', 1], ['.git-refresh-btn', 1],
+      ['.git-overview', 1], ['.git-tabs .git-tab', 3],
       ['.git-base-dirty-alert', 1], ['.git-v9-summary .git-v9-chip', 1], ['.git-v9-summary button', 2], ['.git-base-dirty-filerow', 7],
       ['.git-base-untracked__files', 1], ['.git-base-untracked-row', 20], ['.git-base-untracked__more', 1],
       ['.git-base-untracked .git-base-commit-row button', 2], ['.git-base-untracked-remove-btn', 1],
@@ -81,7 +82,7 @@ try {
       (sum, [selector, count]) => sum + Math.max(0, count - document.querySelectorAll(selector).length), 0,
     );
     const allowedControlSelectors = [
-      '.card-hd .btn-primary', '.git-refresh-btn',
+      '.card-hd .btn-primary', '.git-refresh-btn', '.git-tabs .git-tab',
       '.git-v9-summary button', '.git-base-dirty-filerow button', '#git-base-dirty-files .git-base-commit-row input', '#git-base-dirty-files .git-base-commit-row button',
       '.git-base-untracked-row input', '.git-base-untracked .git-base-commit-row input', '.git-base-untracked .git-base-commit-row button',
       '.git-unpushed-row button', '.git-status-row-main select', '.git-status-row-main button',

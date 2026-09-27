@@ -129,13 +129,21 @@ def set_failure_origin_pending(run_id: str) -> None:
 
 def store_failure_origin(*, run_id: str, reviewer_id: str, classification: str,
                          findings_json: str, comment: Optional[str],
-                         reviewed_at: str) -> None:
+                         reviewed_at: str, ai_run_id: Optional[str] = None,
+                         actual_provider_id: Optional[str] = None,
+                         actual_provider_name: Optional[str] = None) -> None:
+    """Atomically persist the classification and the classifier-run snapshot."""
     get_store()._execute(
         "UPDATE test_runs SET failure_origin = ?, failure_origin_reviewer_id = ?, "
         "failure_origin_findings = ?, failure_origin_comment = ?, "
-        "failure_origin_reviewed_at = ?, error = NULL "
+        "failure_origin_reviewed_at = ?, failure_origin_ai_run_id = ?, "
+        "failure_origin_actual_provider_id = ?, "
+        "failure_origin_actual_provider_name = ?, error = NULL "
         "WHERE run_id = ? AND status = 'failed' AND failure_origin IS NULL",
-        [classification, reviewer_id, findings_json, comment, reviewed_at, run_id],
+        [
+            classification, reviewer_id, findings_json, comment, reviewed_at,
+            ai_run_id, actual_provider_id, actual_provider_name, run_id,
+        ],
     )
 
 

@@ -21,20 +21,28 @@ vi.mock('@main/components/common/useToast', () => ({
   useToast: () => ({ showToast: vi.fn() }),
 }))
 
-function gitStatus(pendingCount = 1) {
+function gitStatus(pendingCount = 1, finalApprovalBound = false) {
   return {
     enabled: true,
     base_branch: 'main',
     pending_count: pendingCount,
     pending: pendingCount > 0
-      ? [{ group_id: 'flowgate.default.0170', branch: 'main', status: 'waiting', default_action: 'push' }]
+      ? [{
+          group_id: 'flowgate.default.0170',
+          branch: 'main',
+          status: 'waiting',
+          default_action: 'push',
+          final_approval_bound: finalApprovalBound,
+        }]
       : [],
   }
 }
 
-function mountMenu(pendingCount = 1) {
+function mountMenu(pendingCount = 1, finalApprovalBound = false) {
   useProjectStore().setCurrentProject('flowgate')
-  getRequest.mockResolvedValue({ data: { ok: true, status: gitStatus(pendingCount) } })
+  getRequest.mockResolvedValue({
+    data: { ok: true, status: gitStatus(pendingCount, finalApprovalBound) },
+  })
   return shallowMount(GitActionMenu, {
     global: {
       plugins: [i18n],
@@ -163,6 +171,21 @@ describe('GitActionMenu approval-result events', () => {
     const execute = wrapper.get('.git-menu-row .btn-primary')
     expect(execute.attributes('disabled')).toBeDefined()
     expect(execute.attributes('title')).toContain('AI run')
+    wrapper.unmount()
+  })
+
+  it('keeps a final-approval-bound header row monitoring-only', async () => {
+    const wrapper = mountMenu(1, true)
+    await flushPromises()
+    await wrapper.get('.git-menu-btn').trigger('click')
+
+    const row = wrapper.get('.git-menu-row')
+    expect(row.find('.btn-primary').exists()).toBe(false)
+    expect(row.find('.btn-secondary').exists()).toBe(true)
+
+    postRequest.mockClear()
+    await (wrapper.vm as any).execute(gitStatus(1, true).pending[0])
+    expect(postRequest).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

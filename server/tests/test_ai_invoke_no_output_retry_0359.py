@@ -35,6 +35,7 @@ sys.path.insert(0, str(_SERVER_DIR))
 from modules.flow_gate.db import ai_invoke_paused_chains as db_paused  # noqa: E402
 from modules.flow_gate.db import ai_invoke_runs as db_runs  # noqa: E402
 from modules.flow_gate.services import ai_invoke_service as svc  # noqa: E402
+from modules.flow_gate.services.ai_invoke import oracle as oracle_module  # noqa: E402
 from modules.flow_gate.services import workflow_decision_service as wds  # noqa: E402
 from modules.flow_gate.workflow import event_logger  # noqa: E402
 
@@ -73,7 +74,12 @@ class FakePausedStore:
                stop_kind="user", stop_code=None, stop_run_id=None,
                stop_last_message_excerpt=None,
                continuation_base_provider_id=None, continuation_provider_pinned=None,
-               continuation_provider_overrides=None, continuation_default_note=None,
+               continuation_provider_overrides=None,
+               # flowgate.default.0596 T0004 (NR0003 rev3): named explicitly like the
+               # [검수] maps below -- a permissive double would silently drop the captured
+               # actual work-hop executor.
+               continuation_work_executor_provider_id=None,
+               continuation_default_note=None,
                continuation_note_overrides=None,
                # 0352 T0004 §3.6: unlike provider/note preferences (not sent on a SYSTEM
                # row unless 0435's explicit provider pin is active), the N/T authoring
@@ -103,6 +109,7 @@ class FakePausedStore:
             "continuation_base_provider_id": continuation_base_provider_id,
             "continuation_provider_pinned": bool(continuation_provider_pinned),
             "continuation_provider_overrides": continuation_provider_overrides,
+            "continuation_work_executor_provider_id": continuation_work_executor_provider_id,
             "continuation_default_note": continuation_default_note,
             "continuation_note_overrides": continuation_note_overrides,
             "continuation_instruction_mode": continuation_instruction_mode,
@@ -692,6 +699,53 @@ class TestRetryEligibility:
         run = _judged_run(mode="single", action_scope="edit", scope_oracle_run=True,
                           completion_oracle=(lambda: False), docs_target=0, outcome="none")
         assert svc._retry_eligible(run) is True
+
+    @pytest.mark.parametrize("overrides, expected", [
+        ({}, True),
+        ({"scope_oracle_run": False}, False),
+        ({"mode": "continuous"}, False),
+        ({"action_scope": "review"}, False),
+        ({"hop_kind": svc.WORK_HOP_KIND}, False),
+        ({"outcome": "complete"}, False),
+    ])
+    def test_rework_queue_exception_has_exact_no_output_signature(self, overrides, expected):
+        shape = {
+            "mode": "single", "action_scope": "edit", "scope_oracle_run": True,
+            "hop_kind": svc.REWORK_HOP_KIND, "outcome": "none",
+        }
+        shape.update(overrides)
+        assert oracle_module._rework_hop_no_output_recovery_open(
+            shape["mode"], shape["action_scope"], shape["scope_oracle_run"],
+            shape["hop_kind"], shape["outcome"],
+        ) is expected
+
+    @pytest.mark.parametrize("outcome, expected", [
+        ("none", True),
+        ("complete", False),
+    ])
+    def test_gate_owned_rework_queue_only_allows_empty_retry(self, env, outcome, expected):
+        svc.request_auto_resume(GROUP, {"doc_ref": DOC_REF, "last_stage": svc.REWORK_HOP_KIND})
+        assert svc.peek_auto_resume(GROUP) is not None
+        run = _judged_run(
+            mode="single", action_scope="edit", hop_kind=svc.REWORK_HOP_KIND,
+            scope_oracle_run=True, completion_oracle=lambda: outcome == "complete",
+            docs_target=0, outcome=outcome, attempts_used=1, attempts_max=2,
+        )
+        assert svc._retry_eligible(run) is expected
+
+    @pytest.mark.parametrize("override", [
+        {"scope_oracle_run": False}, {"mode": "continuous"},
+        {"action_scope": "review"}, {"hop_kind": svc.WORK_HOP_KIND},
+    ])
+    def test_rework_queue_exception_requires_the_exact_gate_signature(self, env, override):
+        svc.request_auto_resume(GROUP, {"doc_ref": DOC_REF, "last_stage": svc.REWORK_HOP_KIND})
+        run = _judged_run(
+            mode="single", action_scope="edit", hop_kind=svc.REWORK_HOP_KIND,
+            scope_oracle_run=True, completion_oracle=lambda: False,
+            docs_target=0, outcome="none", attempts_used=1, attempts_max=2,
+        )
+        run.update(override)
+        assert svc._retry_eligible(run) is False
 
     def test_unwiring_the_scope_oracle_flag_closes_the_fourth_gate_again(self):
         # §5-4's evidence: with `scope_oracle_run` back to False (i.e. §3-1's wiring
@@ -1350,6 +1404,111 @@ class TestSingleReworkNoOutputRecovery0446:
         assert run["scope_oracle_run"] is False
         assert run["stop_code"] is None
         assert env["signals"] == []
+
+
+# ── flowgate.default.0622 T0004: gate-owned rework no-output recovery ────────────────
+class TestReworkHopNoOutputRecoveryIntegratedGate0622:
+    ITEM_SEQ = 5
+
+    def _dispatch(self, env, monkeypatch):
+        """Drive the real gate dispatch, including its pre-spawn auto-resume queue."""
+        monkeypatch.setattr(svc.db_wfseq, "get_sequence_items", lambda seq_id: [
+            {"item_seq": self.ITEM_SEQ, "type": "TR", "result_doc_id": DOC_REF},
+            {"item_seq": self.ITEM_SEQ + 1, "type": "TR", "result_doc_id": None},
+        ])
+        get_doc = env["docs"].get_by_id
+        monkeypatch.setattr(svc.db_docs, "get_by_id", lambda doc_id: {
+            **get_doc(doc_id), "doc_review_status": "rejected", "type_code": "TR",
+        })
+        env["reviews"].add_verdict(
+            DOC_REF, verdict="issues", revision_no=env["docs"].revision_no,
+        )
+        from modules.flow_gate.services import invoke_mention_service
+
+        monkeypatch.setattr(invoke_mention_service, "issue_rework_request",
+                            lambda **kw: {
+                                "raw_token": "raw", "token_id": "tok_rework",
+                                "scratch_dir": str(env["tmp"] / "rework"),
+                                "mention": "Fix the review findings",
+                            })
+        bundle = {
+            "doc_ref": DOC_REF, "issued_to": "usr_admin", "chain_id": "run_chain_rework",
+            "target_seq": self.ITEM_SEQ + 1,
+            "base_provider_id": "aip_1", "provider_pinned": True,
+            "api_base_url": "http://127.0.0.1:1/flowgate/api/v1",
+            "review_count_overrides": {str(self.ITEM_SEQ): 1},
+        }
+        gate = svc.resolve_review_gate(bundle)
+        assert gate["stage"] == svc.REWORK_HOP_KIND
+        queued_during_launch = []
+        execute = svc._cli_execute
+
+        def _with_queue_check(provider, prompt, run):
+            queued = svc.peek_auto_resume(GROUP)
+            queued_during_launch.append(
+                queued is not None and queued.get("last_stage") == svc.REWORK_HOP_KIND
+            )
+            return execute(provider, prompt, run)
+
+        monkeypatch.setattr(svc, "_cli_execute", _with_queue_check)
+        assert svc.run_review_gate(GROUP, bundle, {"run_id": "run_chain_rework"}) is True
+        run_id = next(iter(svc._runs))
+        return run_id, queued_during_launch
+
+    def test_no_output_uses_both_attempts_then_parks_review_stalled(self, env, monkeypatch):
+        launches = _scripted_rework_worker(env, monkeypatch, [
+            ("No revision produced", None),
+            ("Still no revision", None),
+        ])
+        persisted = []
+        write_row = svc._write_handoff_row
+
+        def _record_row(*args, **kwargs):
+            persisted.append(kwargs.get("stop_code"))
+            return write_row(*args, **kwargs)
+
+        monkeypatch.setattr(svc, "_write_handoff_row", _record_row)
+        before = env["docs"].revision_no
+        run_id, queued_during_launch = self._dispatch(env, monkeypatch)
+        run = _wait_finished(run_id)
+        _wait_until(
+            lambda: env["paused"].rows.get(GROUP, {}).get("stop_code")
+            == svc.REVIEW_STALLED_STOP_CODE,
+            message="the rework gate parking after both empty attempts",
+        )
+        assert launches == ["aip_1", "aip_1"]
+        assert queued_during_launch == [True, True]
+        assert run["attempts_used"] == run["attempts_max"] == 2
+        assert run["outcome"] == "none"
+        assert env["docs"].revision_no == before
+        assert persisted[-1] == svc.REVIEW_STALLED_STOP_CODE
+        assert env["paused"].rows[GROUP]["stop_kind"] == "system"
+        assert svc.is_resumable(svc.REVIEW_STALLED_STOP_CODE) is False
+        assert len(svc._runs) == 1
+
+    def test_a_landed_revision_is_not_retried(self, env, monkeypatch):
+        settled = []
+        monkeypatch.setattr(
+            svc, "_settle_gate_pass",
+            lambda group_id, slot, bundle, run: settled.append(slot["doc_id"]) or "continue",
+        )
+        monkeypatch.setattr(svc, "_spawn_auto_resume", lambda group_id, bundle: None)
+        launches = _scripted_rework_worker(env, monkeypatch, [
+            ("Revision saved", "revise"),
+        ])
+        before = env["docs"].revision_no
+        run_id, queued_during_launch = self._dispatch(env, monkeypatch)
+        run = _wait_finished(run_id)
+        _wait_until(lambda: bool(settled), message="the landed rework passing the gate")
+        assert launches == ["aip_1"]
+        assert queued_during_launch == [True]
+        assert run["attempts_used"] == 1
+        assert run["outcome"] == "complete"
+        assert env["docs"].revision_no == before + 1
+        assert settled == [DOC_REF]
+        assert env["paused"].rows.get(GROUP, {}).get("stop_code") != (
+            svc.REVIEW_STALLED_STOP_CODE
+        )
 
 
 # ── flowgate.default.0466 T0007: review-hop no-verdict recovery (A10) ────────────────────

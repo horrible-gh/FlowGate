@@ -1,14 +1,10 @@
-// Group 0265 (R0001 / NR0003) — AC final-approval panel ordering.
-// Requirement: "문서를 최종 승인하면 [Git 반영] 이 [최종 승인] 의 위로 올라오도록".
-// On the AC (final-approval) tab MainPanel mounts two siblings: the [최종 승인]
-// card (.ac-final-approval-body) and the [Git 반영] GitFinalizePanel. Before final
-// approval the approval card leads (approving is the primary action); once the doc
-// is finally approved (docReviewStatus approved | wf_done → isCompletedDoc) the
-// GitFinalizePanel rises ABOVE the card, because merge/push is the remaining action.
-//
-// This guards the DOM order against a regression back to the fixed card-first layout.
+// flowgate.default.0555 T0010 (T#3): the AC document is never a second Git
+// finalize owner. ReviewActionBar owns the pre-approval choice and submission;
+// after approval the AC card is status-only. Root/header panels keep monitoring
+// and recovery, but no GitFinalizePanel is mounted inside FinalApprovalBody.
 
 import { defineComponent, h } from 'vue'
+import { flushPromises } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { mountMainPanel } from '../helpers/mountMainPanel'
@@ -85,6 +81,7 @@ function baseStubs(status: string) {
   return {
     DocHeader: docHeaderStub(status),
     GitFinalizePanel: GitFinalizePanelStub,
+    FinalApprovalGitStatus: false,
   }
 }
 
@@ -96,37 +93,56 @@ const AC_TAB = {
   typeCode: 'AC',
 }
 
-function mountAc(status: string) {
-  return mountMainPanel({ tabs: [AC_TAB], stubs: baseStubs(status) })
+async function mountAc(status: string) {
+  const wrapper = await mountMainPanel({ tabs: [AC_TAB], stubs: baseStubs(status) })
+  await flushPromises()
+  return wrapper
 }
 
 beforeEach(() => {
   setActivePinia(createPinia())
   localStorage.clear()
   delete (window as any).__accessToken__
-  getRequest.mockClear()
+  getRequest.mockReset()
+  getRequest.mockImplementation((url: string) =>
+    url.includes('/git/finalize')
+      ? Promise.resolve({ data: { state: { branch: 'group-branch', base_branch: 'main', status: 'merged', ahead_count: 0, behind_count: 0, merge_commit: 'abc123' } } })
+      : Promise.resolve({ data: { questions: [] } }),
+  )
 })
 
-describe('MainPanel — AC finalize panel ordering (0265)', () => {
-  it('before final approval → [최종 승인] card is above [Git 반영]', async () => {
+describe('MainPanel — AC has one final-approval execution owner (0555 T#3)', () => {
+  it('before final approval renders the approval card without a Git execute panel', async () => {
     const wrapper = await mountAc('pending_review')
-    const html = wrapper.html()
-    const cardIdx = html.indexOf('ac-final-approval-body')
-    const gitIdx = html.indexOf('git-fin-stub')
-    expect(cardIdx).toBeGreaterThanOrEqual(0)
-    expect(gitIdx).toBeGreaterThanOrEqual(0)
-    expect(cardIdx).toBeLessThan(gitIdx)
+    expect(wrapper.find('.ac-final-approval-body').exists()).toBe(true)
+    expect(wrapper.find('.git-fin-stub').exists()).toBe(false)
+    expect(wrapper.find('[data-test="ac-git-status"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('[실행]')
+  })
+
+  it('shows terminal Git plus approval-pending without adding an execute surface', async () => {
+    getRequest.mockImplementation((url: string) =>
+      url.includes('/git/finalize')
+        ? Promise.resolve({ data: { state: {
+          branch: 'group-branch', base_branch: 'main', status: 'merged',
+          ahead_count: 0, behind_count: 0, merge_commit: 'abc123',
+          approval_pending: true,
+        } } })
+        : Promise.resolve({ data: { questions: [] } }),
+    )
+    const wrapper = await mountAc('pending_review')
+    expect(wrapper.text()).toContain('Git 완료 · 승인 미완료')
+    expect(wrapper.find('.git-fin-stub').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('[실행]')
   })
 
   for (const status of ['approved', 'wf_done']) {
-    it(`after final approval (${status}) → [Git 반영] rises above [최종 승인] card`, async () => {
+    it(`after final approval (${status}) keeps the AC status-only`, async () => {
       const wrapper = await mountAc(status)
-      const html = wrapper.html()
-      const cardIdx = html.indexOf('ac-final-approval-body')
-      const gitIdx = html.indexOf('git-fin-stub')
-      expect(cardIdx).toBeGreaterThanOrEqual(0)
-      expect(gitIdx).toBeGreaterThanOrEqual(0)
-      expect(gitIdx).toBeLessThan(cardIdx)
+      expect(wrapper.find('.ac-final-approval-body').exists()).toBe(true)
+      expect(wrapper.find('.git-fin-stub').exists()).toBe(false)
+    expect(wrapper.find('[data-test="ac-git-status"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('[실행]')
     })
   }
 })

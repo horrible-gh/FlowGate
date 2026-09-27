@@ -173,16 +173,21 @@ describe('TestFailStrip', () => {
     expect(assertBlocks[0].text()).toContain('mismatch')
   })
 
-  it('shows failure origin and CODE cycle only when classified', async () => {
+  it('shows failure origin, effective classifier provider, and CODE cycle only when classified', async () => {
     const classified = mount(TestFailStrip, {
       props: {
         docId: 'flowgate.default.0503.0001-TS',
-        testRun: failedRun({ failure_origin: 'product_defect', code_rework_cycle: 2 }),
+        testRun: failedRun({
+          failure_origin: 'product_defect', code_rework_cycle: 2,
+          failure_origin_provider: { ai_run_id: 'aiv_classifier', ai_provider_id: 'aip_good', ai_provider_name: 'GOOD_EFFECTIVE_PROVIDER' },
+        }),
       },
       global: { plugins: [i18n] },
     })
     await classified.find('.fail-strip-bar').trigger('click')
     expect(classified.find('.fail-origin').text()).toContain('failure origin: product_defect')
+    expect(classified.find('.fail-origin-provider').text()).toBe('AI · GOOD_EFFECTIVE_PROVIDER')
+    expect(classified.find('.fail-origin').text()).not.toContain('BAD_REQUESTED_PROVIDER')
     expect(classified.find('.fail-origin').text()).toContain('CODE rework cycle 2/3')
 
     const pending = mount(TestFailStrip, {

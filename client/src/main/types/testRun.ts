@@ -34,6 +34,11 @@ export interface TestRun {
   tsr_doc_id?: string | null
   failure_origin?: 'product_defect' | 'test_defect' | 'hold' | string | null
   failure_origin_comment?: string | null
+  failure_origin_provider?: {
+    ai_run_id?: string | null
+    ai_provider_id?: string | null
+    ai_provider_name?: string | null
+  } | null
   code_rework_cycle?: number | null
   port?: number | null
   started_at?: string | null

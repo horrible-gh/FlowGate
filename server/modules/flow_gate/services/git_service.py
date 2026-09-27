@@ -49,6 +49,8 @@ from modules.flow_gate.db import terminal_cleanup_snapshots as db_terminal_clean
 from modules.flow_gate.db import tr_commit_ledger as db_tr_ledger
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.services import path_exclusion_rules
+from modules.flow_gate.services.git import approval_intent
+from modules.flow_gate.services.git import merge_target
 from modules.flow_gate.services.git import review_messages
 from modules.flow_gate.storage.paths import get_storage_root, src_root
 
@@ -236,14 +238,21 @@ def _set_status(
     *,
     merge_id: Optional[int] = None,
     merge_commit: Optional[str] = None,
+    emit: bool = True,
 ) -> None:
     """Record a group's git status AND broadcast git_pending_changed (L §2.3).
 
     Single convergence point so no transition can silently skip the badge
     update. The transient "merging" state is recorded but not broadcast.
+
+    ``emit=False`` lets a caller that still has a decision pending on top of this
+    same status change (0555 T0008 §12: the deferred final approval) record the
+    status now and broadcast it itself once that decision is known — never
+    broadcasting a "merged" a subscriber could refresh on before the approval
+    transaction it is coupled to has even run.
     """
     db_git.set_status(group_id, status, merge_id=merge_id, merge_commit=merge_commit)
-    if status not in TRANSIENT_STATUSES:
+    if emit and status not in TRANSIENT_STATUSES:
         _emit_pending_changed(_project_of_group(group_id), group_id, status)
 
 
@@ -268,6 +277,20 @@ from .git.lock import (
 
 
 
+from .git.branches import (
+    check_branch_delete,
+    create_branch,
+    delete_branch,
+    internal_slot_owner,
+    list_branches,
+    merge_branches,
+    read_local_branch_blob,
+    read_local_branch_tree,
+    resolve_local_branch_ref,
+    validate_new_branch_name,
+)
+
+
 from .git.config import (
     PROVIDER_VALUES,
     DEFAULT_FINALIZE_ACTION_VALUES,
@@ -279,6 +302,7 @@ from .git.config import (
     base_branch_for,
     base_src_root,
     delete_config,
+    ensure_origin_matches_config,
     get_config_view,
     save_config,
 )
@@ -437,6 +461,16 @@ from .git.base_slot import (
 
 
 
+
+
+from .git.group_work_base import (
+    apply_group_work_base_ref,
+    group_work_base_locked,
+    list_group_work_base_options,
+    locked_group_ids,
+    resolve_group_work_base_ref,
+    validate_group_work_base_ref,
+)
 
 
 from .git.worktree import (
@@ -653,6 +687,8 @@ def effective_src_root(project_id: Optional[str], group_id: Optional[str]) -> Op
 
 from .git.finalize import (
     ACTION_VALUES,
+    APPROVAL_FINALIZE_ACTIONS,
+    ApprovalFinalizeContext,
     DISCARDED_STATUS,
     FINALIZE_AUX_CHOICES,
     FINALIZE_MAIN_CHOICES,
@@ -663,22 +699,27 @@ from .git.finalize import (
     _group_ac_doc_id,
     _group_ac_doc_ids,
     _group_has_changes,
+    _merge_commit_landed,
     _resolve_pending_noop,
+    approval_git_in_flight,
     group_finalize_is_noop,
     NOOP_CONVERGEABLE_STATUSES,
     _group_root_wf_done,
     _groups_root_wf_done,
     _tracked_merge_blockers,
     _untracked_merge_blockers,
+    _validate_approval_context,
     finalize,
     get_finalize_state,
     group_update_untracked_recover,
     manual_push,
     precheck_approve_git_action,
+    precheck_approve_git_target,
     raise_if_git_session_blocks_reopen,
     realize_wf_done_transition,
     reopen_group_git,
     run_approve_git_action,
+    complete_approve_git_action,
     unmerge,
     update_from_base,
 )
@@ -844,9 +885,13 @@ def _is_hidden_source_path(path: str) -> bool:
     genuinely edited ``client/src/.eslintrc.json`` is still cross-checked, but the
     explorer must not serve a secret-shaped file through the blob/write endpoints.
     That direction is safe — it never hides debris the check would then demand.
+    The repository's own policy files (``.gitattributes`` …) are not secret-shaped and
+    are committed by ``git add -u``, so they stay visible (0608 TR0006).
     """
     if path_exclusion_rules.is_excluded_path(path):
         return True
+    if path_exclusion_rules.is_repo_config_file(path):
+        return False
     return path.split("/")[-1].startswith(".")
 
 
@@ -1249,6 +1294,7 @@ from .git.refs import (
     _dirty_files,
     _full_sha_matches,
     _ignored_paths,
+    _is_ancestor,
     _local_commit_count,
     _ls_tree_entry,
     _merge_in_progress,
@@ -1262,6 +1308,7 @@ from .git.refs import (
     _short_head,
     _unmerged_paths,
     _unpushed_commits,
+    _unpushed_local_merge_of,
     _untracked_files,
     _validate_blob_path,
     _worktree_untracked_paths,
@@ -1567,11 +1614,13 @@ from .git.conflict import (
     _split_conflict_chunks_with_base,
     abort_merge,
     abort_tr_conflict,
+    apply_eol_separation,
     commit_tr_conflict,
     list_conflicts,
     open_tr_conflict_session,
     resolve_conflict_src_root,
     resolve_conflicts,
+    separate_eol_conflicts,
     tr_conflict_session,
 )
 
@@ -2467,7 +2516,12 @@ def _apply_write_plan_locked(
 
 def _merge_review_session(group_id: str, merge_id: int) -> tuple[dict, dict, str, Path, str]:
     """``(session, context, project_id, base_root, base_branch)`` for a general
-    merge review session, or raises 404/409 when this merge_id is not one."""
+    merge review session, or raises 404/409 when this merge_id is not one.
+
+    0594 T0012: ``base_root``/``base_branch`` are the attempt's PINNED target root
+    and branch (``merge_target.resolve_session_target``) — the shared base checkout
+    only for a base/legacy target, the managed workspace otherwise. Every review
+    step (diff, conversation, write plan, reject/re-review, approve) reads them here."""
     session = db_git.get_session(merge_id)
     if session is None or session.get("group_id") != group_id:
         raise GitServiceError(404, "review_not_found", f"merge session {merge_id} not found")
@@ -2475,12 +2529,10 @@ def _merge_review_session(group_id: str, merge_id: int) -> tuple[dict, dict, str
         raise GitServiceError(409, "review_not_ready", "not a general merge review session")
     context = db_git.session_context(session)
     project_id = _project_of_group(group_id)
-    cfg = db_git.get_config(project_id) or {}
-    base_root = _base_root_of(project_id)
-    if base_root is None:
+    target = merge_target.resolve_session_target(session)
+    if target.root is None:
         raise GitServiceError(409, "invalid_state", "base checkout is not provisioned")
-    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-    return session, context, project_id, base_root, base_branch
+    return session, context, project_id, target.root, target.target_branch
 
 
 def record_auto_authority(group_id: str, merge_id: int, requested_auto: bool) -> None:
@@ -2530,6 +2582,8 @@ def get_merge_review(group_id: str, merge_id: int) -> dict:
             "snapshot_tree": context.get("snapshot_tree"),
             "changes": context.get("changes") or [],
             "conflict_origins": context.get("conflict_origins") or [],
+            # 0604 D0005 §4/§6 — resolver `supersede` declarations, shown in full.
+            "conflict_supersedes": context.get("conflict_supersedes") or [],
             "conversation": context.get("conversation") or [],
             "held_test_operations": context.get("held_test_operations") or [],
             # 0481 T0010 rev1 — non-null while a chat turn's run is still working, so
@@ -2617,6 +2671,10 @@ def _refreeze_for_re_review(
         # before falling through to the ordinary freeze below.
         project_id = _project_of_group(group_id)
         cfg = db_git.get_config(project_id) or {}
+        # flowgate.default.0361 NR0003 §8.1: this recovery fetch must target the
+        # currently configured remote, not whatever `origin` happened to point at
+        # when the base checkout was adopted/cloned.
+        ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
         fetch = _run_git(
             ["fetch", "origin"], cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC,
             username=cfg.get("username"), secret=_load_secret_for(cfg) or "",
@@ -2640,8 +2698,13 @@ def _refreeze_for_re_review(
         # an unrelated concurrent change (the common case) auto-merges cleanly and
         # the approved resolution is preserved instead of being thrown away.
         old_merge_commit = context.get("merge_commit")
+        # _GIT_IDENT: a `--no-ff` merge validates the committer identity before it
+        # touches anything, so without it this redo cannot even start and the retry
+        # collapses into reconciling/push_remote_third on a server with no ambient
+        # git config — see the same fix on the rejection restore below.
         redo = _run_git(
-            ["-c", "merge.conflictStyle=zdiff3", "merge", "--no-commit", "--no-ff", old_merge_commit],
+            [*_GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "merge",
+             "--no-commit", "--no-ff", old_merge_commit],
             cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC,
         )
         if redo.returncode != 0 and _unmerged_paths(base_root):
@@ -2686,19 +2749,49 @@ def _refreeze_for_re_review(
 def _complete_merge_review(
     group_id: str, merge_id: int, project_id: str, context: dict, *, pushed: bool,
 ) -> dict:
+    # 0555 T0008 §5/§12 (D0005 §3.6 B7/B8): a final approval that a conflict parked
+    # on this session is finished HERE — after the merge is really terminal, still
+    # inside the project Git lock approve_merge_review holds, and BEFORE the
+    # completion event goes out. Emitting first would let the refresh that event
+    # triggers see "merged, but the document is still pending_review" and redraw the
+    # finalize button this whole design exists to remove.
+    intent = approval_intent.intent_of_context(context)
     context["review_state"] = REVIEW_STATE_COMPLETED
     context["apply_phase"] = "completed"
     db_git.set_session_context(merge_id, context)
     merge_commit = context.get("merge_commit") or ""
     merge_commit_short = merge_commit[:7] or None
-    db_git.close_session(merge_id, "done")
-    _set_status(group_id, "merged", merge_commit=merge_commit_short)
-    _cleanup_group_slot(project_id, group_id)
-    _emit("git_finalize_done", project_id, group_id, {
+    # 0594 T0012 §6.3: ledger → the completed attempt, attempt row closed, only its
+    # own workspace released. emit=False: the status row is written now (Git really
+    # is terminal), but the git_pending_changed broadcast waits until the approval
+    # decision below is known — otherwise a subscriber's refresh could land between
+    # this write and commit_deferred_approval and see "merged" next to an AC still
+    # pending_review. The group slot waits for that decision too (INV-4 below).
+    _finish_reviewed_attempt(
+        group_id, merge_id, project_id, merge_commit_short, pushed,
+        emit=False, cleanup_slot=False,
+    )
+    approval = (
+        approval_intent.commit_deferred_approval(group_id, merge_id, intent)
+        if intent is not None else None
+    )
+    # INV-4: the merge is never undone. When the approval transaction fails the slot
+    # stays registered too, because the §3.9 re-approval runs against exactly this
+    # state — Git already terminal, approval still owed.
+    if approval is None or approval.get("approved"):
+        _cleanup_group_slot(project_id, group_id)
+    _emit_pending_changed(project_id, group_id, "merged")
+    event = {
         "project": project_id, "group_id": group_id,
         "action": context.get("finalize_action") or SESSION_ACTION_DEFAULT,
         "status": "merged", "merge_commit": merge_commit_short, "pushed": pushed,
-    })
+    }
+    if approval is not None:
+        # D0005 §3.12: the Git completion is announced either way (it really
+        # happened), but "Git finished" and "the approval finished" are two facts
+        # and the payload says which of them is true.
+        event["approval"] = approval
+    _emit("git_finalize_done", project_id, group_id, event)
     # "merged" (not "completed") on the top-level `status` — the pre-existing
     # external contract every caller of resolve_conflicts/resolve-token already
     # matches on (git_routes.py's token-consume check, the resolver dialog, the
@@ -2706,10 +2799,36 @@ def _complete_merge_review(
     # reconciling/re_review vocabulary lives; `status` keeps meaning what it
     # always meant to keep this a non-breaking extension (T0008 completion
     # criteria: existing TR/group-update flows unaffected).
-    return {"ok": True, "result": {
+    result = {
         "status": "merged", "review_state": REVIEW_STATE_COMPLETED,
         "merge_commit": merge_commit_short, "pushed": pushed,
-    }}
+    }
+    if approval is not None:
+        result["approval"] = approval
+    return {"ok": True, "result": result}
+
+
+def _finish_reviewed_attempt(
+    group_id: str, merge_id: int, project_id: str, merge_commit_short: Optional[str],
+    pushed: bool, *, emit: bool = True, cleanup_slot: bool = True,
+) -> None:
+    """Close a reviewed finalize attempt as completed (0594 T0012 §6.3): the row
+    stays, the group ledger points at it, and only its own workspace is released.
+
+    ``emit``/``cleanup_slot`` let the deferred final approval (0555 T0008 §12)
+    broadcast and tear the slot down itself once its decision is known."""
+    target = merge_target.resolve_merge_id_target(merge_id)
+    # Ledger first: a crash before the close leaves an open row in review_state
+    # `completed`, which startup/sweep finish (merge_target.finish_completed_review).
+    _set_status(group_id, "merged", merge_id=merge_id, merge_commit=merge_commit_short, emit=emit)
+    merge_target.close_attempt(
+        merge_id, merge_target.ATTEMPT_COMPLETED,
+        result={"merge_commit": merge_commit_short, "pushed": pushed},
+    )
+    if cleanup_slot:
+        _cleanup_group_slot(project_id, group_id)
+    if target is not None:
+        merge_target.release_workspace(target)
 
 
 def _enter_reconciling(merge_id: int, context: dict, kind: str, *, schedule_retry: bool) -> dict:
@@ -2754,6 +2873,12 @@ def _conditionally_push_or_reconcile(
         return _complete_merge_review(group_id, merge_id, project_id, context, pushed=False)
     expected = context.get("expected_remote_head") or ""
     lease = f"{base_branch}:{expected}" if expected else base_branch
+    # flowgate.default.0361 NR0003 §7/§16: the review may have sat waiting for
+    # approval long enough for the operator to repoint repo_url at a different
+    # remote — this push must land on the CURRENTLY configured origin, not
+    # whatever `origin` happened to point at when the base checkout was
+    # provisioned. Raises (never pushes) if the sync itself fails.
+    ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
     push = _run_git(
         ["push", f"--force-with-lease={lease}", "origin", base_branch],
         cwd=base_root, timeout=GIT_NET_TIMEOUT_SEC,
@@ -2797,6 +2922,12 @@ def approve_merge_review(
         context = db_git.session_context(session)
         if authority == "automatic" and not context.get("auto_authority"):
             raise GitServiceError(403, "human_authority_required", "auto_authority was not recorded for this session")
+        if authority == "automatic" and context.get("conflict_supersedes"):
+            # 0604 D0005 §3.4 — a supersede declaration always needs a person's approval.
+            raise GitServiceError(
+                403, "human_authority_required",
+                "a supersede declaration was recorded; a person must approve this merge",
+            )
         if context.get("approval_attempt_id") == attempt_id and context.get("merge_commit"):
             state = context.get("review_state")
             if state == REVIEW_STATE_COMPLETED:
@@ -2815,10 +2946,13 @@ def approve_merge_review(
                 409, "stale_review", "the reviewed target has changed since this fingerprint was shown",
             )
         cfg = db_git.get_config(project_id) or {}
-        base_root = _base_root_of(project_id)
+        # 0594 T0012 §13: approve/commit/push run in the attempt's pinned target
+        # root on its pinned branch — never a fresh read of project.base_branch.
+        target = merge_target.resolve_session_target(session)
+        base_root = target.root
         if base_root is None:
             raise GitServiceError(409, "invalid_state", "base checkout is not provisioned")
-        base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+        base_branch = target.target_branch
 
         pre_apply_review_state = context["review_state"]
         context["review_state"] = REVIEW_STATE_APPLYING
@@ -2987,7 +3121,7 @@ def reject_merge_review(
         merge_head = baseline.get("merge_head")
         if not base_head or not merge_head:
             raise GitServiceError(409, "restoration_verification_failed", "no resolver baseline recorded for this session")
-        if (base_root / ".git" / "MERGE_HEAD").exists():
+        if _merge_in_progress(base_root):
             _run_git(["merge", "--abort"], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC)
         current_head = _rev_parse(base_root, "HEAD")
         if current_head != base_head:
@@ -3012,8 +3146,15 @@ def reject_merge_review(
         state = db_git.get_state(group_id) or {}
         branch = (state.get("branch")
                   or worktree_branch_name(project_id, _module_of(group_id), group_id))
+        # _GIT_IDENT for the same reason finalize()'s original merge carries it:
+        # `git merge` refuses with "Committer identity unknown" before it does any
+        # work when the checkout has no user.name/user.email, and FlowGate never
+        # relies on ambient git config. Without it a rejection could only ever end
+        # at restoration_verification_failed on a server that has none — the merge
+        # never ran, so no marker could come back (0555 T0008 §7).
         redo = _run_git(
-            ["-c", "merge.conflictStyle=zdiff3", "merge", "--no-commit", "--no-ff", branch],
+            [*_GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "merge",
+             "--no-commit", "--no-ff", branch],
             cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC,
         )
         remaining = _unmerged_paths(base_root)
@@ -3051,6 +3192,9 @@ def reject_merge_review(
         })
         context["conversation"] = conversation[-MAX_CHAT_TURNS:]
         db_git.set_session_context(merge_id, context)
+        # 0608 T0005: the redo merge brought back the same line-ending-only conflicts
+        # the session opened with; take them out again exactly as finalize did.
+        apply_eol_separation(merge_id, base_root)
     finally:
         db_git.release_lock(project_id, holder)
 
@@ -3498,8 +3642,10 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
         context["reconcile_attempt_count"] = int(context.get("reconcile_attempt_count") or 0) + 1
         db_git.set_session_context(merge_id, context)
         cfg = db_git.get_config(project_id) or {}
-        base_root = _base_root_of(project_id)
-        base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+        # 0594 T0012 §13: the remote ref asked about is the attempt's pinned target.
+        target = merge_target.resolve_session_target(session)
+        base_root = target.root
+        base_branch = target.target_branch
         if base_root is None:
             return {"ok": True, "result": {"status": "retry_scheduled"}}
 
@@ -3514,19 +3660,18 @@ def reconcile_push_session(merge_id: int, trigger: str = "periodic") -> Optional
         merge_commit = context.get("merge_commit")
         expected = context.get("expected_remote_head")
         if observed is not None and merge_commit and observed == merge_commit:
-            context["review_state"] = REVIEW_STATE_COMPLETED
-            context["apply_phase"] = "completed"
+            # The push this reconciles landed on the remote (T0008 §5/§7/§9): a
+            # merge review this session was final-approval-bound to terminates HERE,
+            # exactly like the direct-completion path, so it has to go through the
+            # same common completer. Duplicating the close/status/cleanup here and
+            # skipping commit_deferred_approval() is exactly how this branch used to
+            # produce the D0005 §3.5 orphan (AC left pending_review, Git already
+            # merged, intent never consumed).
             context.pop("reconciliation_kind", None)
             context.pop("reconcile_next_at", None)
-            db_git.set_session_context(merge_id, context)
-            db_git.close_session(merge_id, "done")
-            _set_status(group_id, "merged", merge_commit=merge_commit[:7])
-            _cleanup_group_slot(project_id, group_id)
-            _emit("git_finalize_done", project_id, group_id, {
-                "project": project_id, "group_id": group_id, "status": "merged",
-                "merge_commit": merge_commit[:7], "pushed": True,
-            })
-            return {"ok": True, "result": {"status": "completed"}}
+            # _complete_merge_review → _finish_reviewed_attempt (0594 T0012 §6.3):
+            # the ledger points at the attempt and only its own workspace is released.
+            return _complete_merge_review(group_id, merge_id, project_id, context, pushed=True)
         if observed is not None and observed == expected:
             _run_git(["reset", "--hard", "ORIG_HEAD"], cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC)
             context["approval_attempt_id"] = None

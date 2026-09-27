@@ -105,7 +105,7 @@ def test_index_for_a_design_token_lists_the_template_and_hides_the_task_items(mo
     assert body["version"] == help_catalog.VERSION
     assert _names(body) == [
         "notices", "group_documents", "document_access", "document_attachments", "doc_type",
-        "question", "submit", "source_tools", "design_template",
+        "question", "submit", "source_tools", "source_snapshots", "design_template",
     ]
     assert _hidden(body) == {
         "authoring_guide": "no_guide_for_type",
@@ -309,9 +309,28 @@ def test_notices_lines_follow_the_step_not_the_locale_file(monkeypatch):
 
     attended = _client(monkeypatch, _token(), step_type="P") \
         .get("/api/v1/help/items/notices").json()
-    assert attended["content"]["lines"] == [
-        help_catalog.NOTICE_LINES["ko"]["interactive_query_without_choice"]
-    ]
+    attended_lines = attended["content"]["lines"]
+    assert attended_lines[0] == help_catalog.NOTICE_LINES["ko"]["interactive_query_without_choice"]
+    assert help_catalog.NOTICE_LINES["ko"]["source_snapshot_policy"] in attended_lines
+
+
+def test_snapshot_notice_is_localized_and_hidden_without_source_tools(monkeypatch):
+    localized_policies = {
+        copy["source_snapshot_policy"] for copy in help_catalog.NOTICE_LINES.values()
+    }
+
+    for locale in ("ko", "en", "ja"):
+        remote_lines = _client(monkeypatch, _token(), step_type="P") \
+            .get(f"/api/v1/help/items/notices?locale={locale}").json()["content"]["lines"]
+        assert help_catalog.NOTICE_LINES[locale]["source_snapshot_policy"] in remote_lines
+
+        local_lines = _client(monkeypatch, _token(), step_type="TR", source_mode="local") \
+            .get(f"/api/v1/help/items/notices?locale={locale}").json()["content"]["lines"]
+        assert localized_policies.isdisjoint(local_lines)
+
+        no_scope_lines = _client(monkeypatch, _token("test_run"), step_type="TS") \
+            .get(f"/api/v1/help/items/notices?locale={locale}").json()["content"]["lines"]
+        assert localized_policies.isdisjoint(no_scope_lines)
 
 
 def test_continuous_notices_use_scope_bounded_autonomy_in_every_locale(monkeypatch):
@@ -468,7 +487,7 @@ def test_bulk_of_pure_typos_is_404(monkeypatch):
 
 def test_bulk_over_the_cap_is_422_and_points_at_detail(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="TR")
-    names = ",".join(help_catalog.CATALOG_ORDER)  # 12 > 10
+    names = ",".join(help_catalog.CATALOG_ORDER)  # catalog remains above the bulk limit
     response = client.get(f"/api/v1/help?items={names}")
     assert response.status_code == 422
     assert "detail=true" in response.json()["error_message"]

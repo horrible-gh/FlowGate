@@ -232,6 +232,13 @@ def _serialize_item(
         "note": item.get("note") or "",
         "source_doc_id": item.get("source_doc_id"),
         "source_revision_no": item.get("source_revision_no"),
+        "review_count": int(item.get("review_count") or 0),
+        "reviewer_provider_id": item.get("reviewer_provider_id"),
+        "reviewer_provider_display_name": item.get("reviewer_provider_display_name"),
+        "pre_instruction_text": item.get("pre_instruction_text"),
+        "pre_instruction_attachment": db_wfseq.decode_pre_instruction_attachment(
+            item.get("pre_instruction_attachment_json")
+        ),
         **resolve_row_provider(
             item.get("provider_id"),
             item.get("provider_display_name"),

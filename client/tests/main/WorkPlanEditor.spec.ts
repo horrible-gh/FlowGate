@@ -24,6 +24,18 @@ vi.mock('@shared/api', () => ({
   patchRequest: vi.fn(),
 }))
 
+// D0007 §5.5 — removing a value-bearing step by lowering a quantity goes through the shared
+// imperative confirm() (L0009 §2), not window.confirm. Default to "confirmed" so quantity
+// stepper clicks elsewhere in this file that happen to drop an empty step keep working
+// unattended; the dedicated test below overrides this to check the actual gate.
+const { dialogConfirm } = vi.hoisted(() => ({
+  dialogConfirm: vi.fn(() => Promise.resolve(true)),
+}))
+vi.mock('@main/composables/useDialogStack', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  confirm: dialogConfirm,
+}))
+
 const TYPES = [
   { code: 'D', label: '기본설계', category: 'design', countable: true, unit: 'sheet', sort_order: 1 },
   { code: 'T', label: '작업지시', category: 'instruction', countable: true, unit: 'set', pair_code: 'TR', sort_order: 2 },
@@ -175,6 +187,8 @@ beforeEach(() => {
   getRequest.mockReset()
   postRequest.mockReset()
   putRequest.mockReset()
+  dialogConfirm.mockReset()
+  dialogConfirm.mockImplementation(() => Promise.resolve(true))
   routeGet()
 })
 
@@ -548,15 +562,26 @@ describe('WorkPlanEditor', () => {
     expect(payload.body).toEqual(PLAN_BODY)
   })
 
-  it('lowers a value-bearing quantity immediately and restores its values when raised again', async () => {
+  it('asks for confirmation before lowering a value-bearing quantity, then restores its values when raised again', async () => {
     const wrapper = mountEditor()
     await flushPromises()
 
     const minusButtons = wrapper.findAll('.wp-stepper-btn').filter((button) => button.text() === '−')
+
+    // D0007 §5.5 — cancelling the removal must leave the value-bearing step untouched.
+    dialogConfirm.mockResolvedValueOnce(false)
     await minusButtons[0].trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).not.toContain('입력값이 있는 단계가 빠집니다')
+    expect(dialogConfirm).toHaveBeenCalledTimes(1)
+    expect(dialogConfirm.mock.calls[0][0]).toMatchObject({ danger: true })
+    expect(wrapper.findAll('.wp-step-row')).toHaveLength(3)
+
+    dialogConfirm.mockResolvedValueOnce(true)
+    await minusButtons[0].trigger('click')
+    await flushPromises()
+
+    expect(dialogConfirm).toHaveBeenCalledTimes(2)
     expect(wrapper.findAll('.wp-step-row')).toHaveLength(2)
 
     const plusButtons = wrapper.findAll('.wp-stepper-btn').filter((button) => button.text() === '+')
@@ -795,6 +820,126 @@ describe('WorkPlanEditor', () => {
   })
 })
 
+describe('WorkPlanEditor r0 recovery (0599 T#3)', () => {
+  const raw = '{"wp_version":'
+
+  function useUnreadableResponse(revisions: any[]) {
+    getRequest.mockImplementation((url: string) => {
+      if (url.includes('/document-types')) return Promise.resolve({
+        data: { data: TYPES, work_plan_countable_types: TYPES_WP },
+      })
+      if (url.includes('/ai-invoke/providers')) return Promise.resolve({
+        data: { providers: structuredClone(REGISTERED_PROVIDERS), default_provider_id: 'aip_opus' },
+      })
+      if (url.includes('/work-plan')) return Promise.reject({
+        response: {
+          status: 409,
+          data: {
+            code: 'wp_unreadable',
+            message: '이 작업계획을 표로 열 수 없습니다. 원문 보기로 확인해 주세요.',
+            detail: 'Unexpected end of JSON input',
+            revision_no: 0,
+            raw,
+            revisions,
+          },
+        },
+      })
+      return Promise.reject(new Error(`unexpected url: ${url}`))
+    })
+  }
+
+  it('shows a restorable r0 and returns to the normal table after restore', async () => {
+    useUnreadableResponse([{
+      revision_no: 0,
+      created_by: 'usr_wp_001',
+      created_at: '2026-09-23T08:00:00+09:00',
+      restorable: true,
+      restore_unavailable_reason: null,
+    }])
+    postRequest.mockResolvedValue({
+      data: { ...structuredClone(READ_RESPONSE), revision_no: 1 },
+    })
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    expect(wrapper.get('.wp-unreadable-raw').text()).toBe(raw)
+    const restoreButton = wrapper.get('.wp-restore-btn')
+    expect(restoreButton.text()).toContain('이 판으로 복구')
+    await restoreButton.trigger('click')
+    await flushPromises()
+
+    expect(postRequest).toHaveBeenCalledWith(
+      '/api/v1/documents/flowgate.default.0402.0002-WP/work-plan/revisions/0/restore',
+      { base_revision_no: 0 },
+    )
+    expect(wrapper.find('.wp-unreadable').exists()).toBe(false)
+    expect(wrapper.findAll('.wp-step-row')).toHaveLength(3)
+    expect((wrapper.vm as any).revisionNo).toBe(1)
+  })
+
+  it('keeps the unreadable raw state when restore fails', async () => {
+    useUnreadableResponse([{
+      revision_no: 0,
+      created_by: 'usr_wp_001',
+      created_at: '2026-09-23T08:00:00+09:00',
+      restorable: true,
+      restore_unavailable_reason: null,
+    }])
+    postRequest.mockRejectedValue({
+      response: { status: 422, data: { message: 'The selected revision is corrupt.' } },
+    })
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    await wrapper.get('.wp-restore-btn').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.wp-unreadable-raw').text()).toBe(raw)
+    expect(wrapper.get('.wp-restore-error').text()).toContain('corrupt')
+    expect(wrapper.find('.wp-step-row').exists()).toBe(false)
+  })
+
+  it('keeps legacy no-baseline raw/download only and offers no fabricated restore', async () => {
+    useUnreadableResponse([])
+    const createObjectURL = vi.fn(() => 'blob:legacy-raw')
+    const revokeObjectURL = vi.fn()
+    const originalCreateObjectURL = URL.createObjectURL
+    const originalRevokeObjectURL = URL.revokeObjectURL
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL })
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    try {
+      const wrapper = mountEditor()
+      await flushPromises()
+
+      expect(wrapper.find('.wp-restore-btn').exists()).toBe(false)
+      expect(wrapper.get('.wp-unreadable-no-baseline').text()).toContain('정확히 복구할 저장 판이 없습니다')
+      expect(wrapper.get('.wp-unreadable-raw').text()).toBe(raw)
+      const download = wrapper.findAll('.card-actions button')
+        .find((button) => button.text().includes('다운로드'))!
+      expect(download.attributes('disabled')).toBeUndefined()
+      await download.trigger('click')
+      await flushPromises()
+
+      expect(createObjectURL).toHaveBeenCalledTimes(1)
+      expect((createObjectURL.mock.calls[0][0] as Blob).type).toBe('text/plain;charset=utf-8')
+      expect(click).toHaveBeenCalledTimes(1)
+      expect(postRequest).not.toHaveBeenCalled()
+    } finally {
+      click.mockRestore()
+      Object.defineProperty(URL, 'createObjectURL', {
+        configurable: true,
+        value: originalCreateObjectURL,
+      })
+      Object.defineProperty(URL, 'revokeObjectURL', {
+        configurable: true,
+        value: originalRevokeObjectURL,
+      })
+    }
+  })
+})
+
 describe('approval presave surface', () => {
   function markDirty(wrapper: ReturnType<typeof mountEditor>) {
     return wrapper.findAll('.wp-step-msg')[1].setValue('approval must save this first')
@@ -885,5 +1030,86 @@ describe('WorkPlanEditor canonical title synchronization (0591 T#2)', () => {
 
     window.removeEventListener('fg:open_docs_refresh', onRefresh)
     wrapper.unmount()
+  })
+})
+
+describe('unreadable revision recovery (0597 T0004)', () => {
+  const UNREADABLE = {
+    code: 'wp_unreadable',
+    message: 'This plan cannot be read.',
+    reason: 'wp_version_unsupported',
+    detail: 'wp_version=2',
+    revision_no: 5,
+    raw: '{"wp_version":2}\n',
+    revisions: [
+      { revision_no: 4, created_by: 'wpuser', created_at: '2026-09-22', restorable: true, restore_unavailable_reason: null },
+      { revision_no: 3, created_by: 'wpuser', created_at: '2026-09-21', restorable: false, restore_unavailable_reason: 'wp_version_unsupported' },
+    ],
+  }
+
+  function routeUnreadable() {
+    getRequest.mockImplementation((url: string) => {
+      if (url.includes('/document-types')) return Promise.resolve({ data: { data: TYPES, work_plan_countable_types: TYPES_WP } })
+      if (url.includes('/ai-invoke/providers')) return Promise.resolve({ data: { providers: [], default_provider_id: null } })
+      if (url.includes('/work-plan')) return Promise.reject({ response: { status: 409, data: structuredClone(UNREADABLE) } })
+      return Promise.reject(new Error(`unexpected url: ${url}`))
+    })
+  }
+
+  it('keeps raw/download enabled, locks editing, and localizes restore availability', async () => {
+    routeUnreadable()
+    i18n.global.locale.value = 'en'
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    expect(wrapper.find('.wp-unreadable').exists()).toBe(true)
+    expect(wrapper.find('.wp-step-row').exists()).toBe(false)
+    const buttons = wrapper.findAll('button')
+    expect(buttons.find((b) => b.text().includes('View Raw'))?.attributes('disabled')).toBeUndefined()
+    expect(buttons.find((b) => b.text().includes('Download'))?.attributes('disabled')).toBeUndefined()
+    expect(buttons.find((b) => b.text() === 'Save')?.attributes('disabled')).toBeDefined()
+    expect(buttons.find((b) => b.text() === 'Upload')?.attributes('disabled')).toBeDefined()
+    expect(buttons.find((b) => b.text() === 'Restore')).toBeTruthy()
+    const unavailable = buttons.find((b) => b.text() === 'Cannot restore')!
+    expect(unavailable.attributes('disabled')).toBeDefined()
+    expect(unavailable.attributes('title')).toContain('unsupported work-plan version')
+    expect(wrapper.text()).toContain('{"wp_version":2}')
+  })
+
+  it('posts CAS restore and re-enters table mode after a successful refetch', async () => {
+    routeUnreadable()
+    const wrapper = mountEditor()
+    await flushPromises()
+    postRequest.mockResolvedValue({ data: { ok: true } })
+    getRequest.mockImplementation((url: string) => {
+      if (url.includes('/document-types')) return Promise.resolve({ data: { data: TYPES, work_plan_countable_types: TYPES_WP } })
+      if (url.includes('/ai-invoke/providers')) return Promise.resolve({ data: { providers: REGISTERED_PROVIDERS, default_provider_id: 'aip_opus' } })
+      if (url.includes('/work-plan')) return Promise.resolve({ data: structuredClone(READ_RESPONSE) })
+      return Promise.reject(new Error(`unexpected url: ${url}`))
+    })
+
+    await wrapper.findAll('button').find((b) => b.text() === '복원')!.trigger('click')
+    await flushPromises()
+
+    expect(postRequest).toHaveBeenCalledWith(
+      '/api/v1/documents/flowgate.default.0402.0002-WP/work-plan/revisions/4/restore',
+      { base_revision_no: 5 },
+    )
+    expect(wrapper.find('.wp-unreadable').exists()).toBe(false)
+    expect(wrapper.find('.wp-step-row').exists()).toBe(true)
+  })
+
+  it('keeps unreadable raw/history and shows a localized error when restore fails', async () => {
+    routeUnreadable()
+    const wrapper = mountEditor()
+    await flushPromises()
+    postRequest.mockRejectedValue(new Error('network'))
+
+    await wrapper.findAll('button').find((b) => b.text() === '복원')!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.wp-unreadable').exists()).toBe(true)
+    expect(wrapper.text()).toContain('{"wp_version":2}')
+    expect(wrapper.text()).toContain('r4')
   })
 })

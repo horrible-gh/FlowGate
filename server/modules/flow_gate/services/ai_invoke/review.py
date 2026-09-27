@@ -183,16 +183,61 @@ def _provider_name_of(project_id: Optional[str], provider_id: Optional[str]) -> 
     return provider_id
 
 
-def resolve_review_count(review_count_overrides: Optional[dict], item_seq: Optional[int]) -> int:
-    """How many times this step's output is reviewed (L0008 §2.2).
+def _map_contains(mapping: Optional[dict], item_seq: Optional[int]) -> bool:
+    if not isinstance(mapping, dict) or item_seq is None:
+        return False
+    return item_seq in mapping or str(item_seq) in mapping
 
-    0 for every step the user did not pick — count 0 never reaches storage, because P0007's
-    normalization already dropped it, so "absent" and "0" are the same fact. A value outside
-    the SSOT choice set (flowgate.default.0490 T0005: ai_execution_policy_service.repeat_count_choices,
-    not a fixed literal set) can only come from a hand-edited row (the write path is
-    422-guarded), and is read as "no review" rather than crashing the chain.
+
+def normalize_review_count(raw) -> int:
+    """Normalize a raw stored ``review_count`` value into a valid budget.
+
+    The single source of truth for "is this step reviewed at all" — used by the sequence
+    baseline lookup below AND by the WP pre-gate materializer (0600 TR0010 rev5 human
+    rejection): review necessity is this normalized count being non-zero, never
+    ``reviewer_provider_id`` presence. A row can validly carry ``review_count > 0`` with
+    ``reviewer_provider_id = null`` — "use the project default reviewer" — which
+    :func:`resolve_reviewer` already honours by falling back to the project default.
     """
-    raw = _map_lookup(review_count_overrides, item_seq)
+    choices = ai_execution_policy_service.repeat_count_choices(allow_zero=True)
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw not in choices:
+        return REVIEW_COUNT_DEFAULT
+    return raw
+
+
+def _stored_review_policy_for_item_seq(
+    doc_ref: Optional[str], item_seq: Optional[int],
+) -> tuple[int, Optional[str]]:
+    """Return the durable sequence baseline; malformed legacy values degrade safely."""
+    if not doc_ref or item_seq is None:
+        return REVIEW_COUNT_DEFAULT, None
+    try:
+        seq = db_wfseq.get_sequence_for_member_doc(doc_ref)
+        if seq is None:
+            return REVIEW_COUNT_DEFAULT, None
+        row = next((
+            item for item in (db_wfseq.get_sequence_items(seq["id"]) or [])
+            if item.get("item_seq") == item_seq
+        ), None)
+        if row is None:
+            return REVIEW_COUNT_DEFAULT, None
+        return normalize_review_count(row.get("review_count")), row.get("reviewer_provider_id")
+    except Exception:  # noqa: BLE001 — a damaged baseline must not stall a running chain
+        logger.warning("review gate sequence baseline lookup failed for %s", doc_ref,
+                       exc_info=True)
+        return REVIEW_COUNT_DEFAULT, None
+
+
+def resolve_review_count(
+    review_count_overrides: Optional[dict],
+    item_seq: Optional[int],
+    doc_ref: Optional[str] = None,
+) -> int:
+    """Resolve runtime explicit override (including 0), then sequence baseline, then 0."""
+    if _map_contains(review_count_overrides, item_seq):
+        raw = _map_lookup(review_count_overrides, item_seq)
+    else:
+        raw, _reviewer = _stored_review_policy_for_item_seq(doc_ref, item_seq)
     if isinstance(raw, bool) or not isinstance(raw, int):
         return REVIEW_COUNT_DEFAULT
     if raw not in ai_execution_policy_service.repeat_count_choices(allow_zero=True):
@@ -218,19 +263,16 @@ def review_rounds_remain(rounds_used: int, limit: int) -> bool:
 
 
 def resolve_reviewer(
-    reviewer_overrides: Optional[dict], item_seq: Optional[int], project_id: Optional[str]
+    reviewer_overrides: Optional[dict],
+    item_seq: Optional[int],
+    project_id: Optional[str],
+    doc_ref: Optional[str] = None,
 ) -> Optional[str]:
-    """Who reviews this step (L0008 §2.2): the step's own pick, else the project default.
-
-    The step EXECUTOR's provider tiers are deliberately not consulted — a reviewer is chosen
-    to have the work read by someone else, and folding the executor in here would quietly
-    make that self-review.
-
-    A pick that is no longer enabled degrades to the default rather than removing the review:
-    a chain a person parked must stay resumable (P0007 [엣지] 재개 시 검수자 소멸). The 422
-    that refuses the same pick outright belongs to the fresh-request path only.
-    """
-    provider_id = _map_lookup(reviewer_overrides, item_seq)
+    """Resolve runtime reviewer, then sequence baseline, then project default."""
+    if _map_contains(reviewer_overrides, item_seq):
+        provider_id = _map_lookup(reviewer_overrides, item_seq)
+    else:
+        _count, provider_id = _stored_review_policy_for_item_seq(doc_ref, item_seq)
     if provider_id and _provider_enabled(project_id, provider_id):
         return provider_id
     if provider_id:
@@ -263,9 +305,10 @@ def resolve_step_executor(
 ) -> Optional[str]:
     """Who REWORKS this step (L0008 §2.2) — the step's executor, not its reviewer.
 
-    Priority order: step override → current request/work provider → stored sequence
-    assignment → project default. The rework hop is mode="single", so start_run's own
-    continuous tiers never run for it — this replays the intended order ahead of time.
+    Priority order: step override → actual work-hop executor → header/base selection →
+    stored sequence assignment → project default. The rework hop is mode="single", so
+    start_run's own continuous tiers never run for it — this replays the intended order
+    ahead of time.
 
     The current request/work provider wins over the stored sequence provider regardless
     of `provider_pinned`: that flag only distinguishes an explicit user pick from an
@@ -274,10 +317,39 @@ def resolve_step_executor(
     hold (0508 T0004 — this is the same regression fixed once before in 0389f567 and
     877da308 and lost again in a later merge; do not reintroduce the `provider_pinned`
     gate here).
+
+    flowgate.default.0596 T0004 (NR0003 rev3): `base_provider_id` is the run's header/
+    default selection (`continuation_base_provider_id`), NOT necessarily the provider
+    that actually executed the hop being reworked — a step override or a stored sequence
+    provider can win the per-hop resolution in admission.start_run while the header stays
+    whatever the chain was started with. `bundle["work_executor_provider_id"]` carries the
+    ACTUAL executor of the just-finished work hop (`run["provider_id"]` after any startup
+    fallback — see `_actual_work_executor_provider_id` in runtime.py — NOT the pre-attempt
+    `continuation_selected_provider_id` chain head, which a fallback can leave pointing at
+    a provider that never ran) and must be checked ahead of `base_provider_id`, or a step
+    whose real author was Opus while the header default is Sonnet silently reworks on
+    Sonnet after a GPT rejection. This
+    does not reopen the 0494/0508 regression above: that fix is "the CURRENT selection
+    outranks a stale stored-sequence row", and `work_executor_provider_id` (when present)
+    IS the current selection — a more precise one than the header default ever was,
+    because it reflects the tiers admission.start_run already resolved (step override →
+    force-all → stored sequence → header → doc-type) for THIS hop, not just the header. A
+    reviewer's own provider never reaches this bundle field: chain._handoff_bundle /
+    chain._maybe_auto_resume_hop carry it forward via `_carry_work_executor_provider_id`,
+    which keys "already captured" off KEY PRESENCE, not truthiness — a captured-but-empty
+    value (a pre-migration paused row, or a captured provider since deleted via the FK's
+    `ON DELETE SET NULL`) is preserved as `None` here rather than getting refilled from a
+    later reviewer's own run (human rejection 2026-09-21, rej_01M31D24MZB58B80): `None`
+    falls straight through the `if work_executor_provider_id and ...` check below to
+    `base_provider_id` → stored sequence → default, exactly like "never captured" did
+    before this field existed.
     """
     provider_id = _map_lookup(bundle.get("provider_overrides"), item_seq)
     if provider_id and _provider_enabled(project_id, provider_id):
         return provider_id
+    work_executor_provider_id = bundle.get("work_executor_provider_id")
+    if work_executor_provider_id and _provider_enabled(project_id, work_executor_provider_id):
+        return work_executor_provider_id
     base_provider_id = bundle.get("base_provider_id")
     if base_provider_id and _provider_enabled(project_id, base_provider_id):
         return base_provider_id
@@ -285,6 +357,36 @@ def resolve_step_executor(
     if stored and _provider_enabled(project_id, stored):
         return stored
     return _first_enabled_provider_id(project_id)
+
+
+def resolve_question_responder(
+    reviewer_overrides: Optional[dict],
+    item_seq: Optional[int],
+    base_provider_id: Optional[str],
+    project_id: Optional[str],
+) -> Optional[str]:
+    """Who answers this hop's pending question (NR0003 §11 제안 1, T#1).
+
+    Priority: 1) the step's own reviewer, if still enabled -- the reviewer already reads
+    every document this hop produces, so a question raised while producing it is exactly
+    their business. 2) the run's header/default selected provider
+    (`continuation_base_provider_id`), if still enabled -- the same provider a manual
+    [AI 답변 요청] click would use today (NR0003 §4). 3) neither: return None and let
+    `dispatch_answer_run`'s ordinary provider chain/default policy decide, exactly as a
+    manual [AI 답변 요청] click with no provider chosen already does -- no new
+    default-provider logic is built here.
+
+    Unlike `resolve_reviewer`, an invalid/absent reviewer does NOT fall straight to the
+    project default here: the header pick sits between the two, and reusing
+    `resolve_reviewer`'s own fallback would skip it and silently reorder step 3 ahead of
+    step 2.
+    """
+    reviewer_id = _map_lookup(reviewer_overrides, item_seq)
+    if reviewer_id and _provider_enabled(project_id, reviewer_id):
+        return reviewer_id
+    if base_provider_id and _provider_enabled(project_id, base_provider_id):
+        return base_provider_id
+    return None
 
 
 # doc_review_status values that mean "this output is not through the gate yet".
@@ -416,7 +518,9 @@ def resolve_review_gate(bundle: dict) -> dict:
     if slot is None:
         return {"stage": WORK_HOP_KIND}                      # nothing to review — old flow
 
-    count = resolve_review_count(bundle.get("review_count_overrides"), slot["item_seq"])
+    count = resolve_review_count(
+        bundle.get("review_count_overrides"), slot["item_seq"], bundle.get("doc_ref")
+    )
     if count == 0:
         return {"stage": WORK_HOP_KIND, "approve_first": True, "slot": slot, "count": 0}
 
@@ -748,7 +852,10 @@ def _spawn_review_hop(group_id: str, bundle: dict, gate: dict) -> dict:
     locale = bundle.get("locale") or "ko"
     api_base_url = bundle.get("api_base_url")
     issued_to = bundle.get("issued_to")
-    reviewer_id = resolve_reviewer(bundle.get("reviewer_overrides"), slot["item_seq"], project_id)
+    reviewer_id = resolve_reviewer(
+        bundle.get("reviewer_overrides"), slot["item_seq"], project_id,
+        bundle.get("doc_ref"),
+    )
     executor_id = resolve_step_executor(bundle, slot["item_seq"], project_id, bundle.get("doc_ref"))
     if reviewer_id and reviewer_id == executor_id:
         # Allowed — a person may deliberately pick it — but never silent (L0008 §2.2).
@@ -907,12 +1014,69 @@ def _spawn_rework_hop(group_id: str, bundle: dict, gate: dict) -> dict:
     )
 
 
+def _materialize_work_plan_instruction_before_gate(bundle: dict) -> list[int]:
+    """Expose a server-materialized N/T to the review gate at this handoff boundary.
+
+    The continuous handoff used to resolve the gate first and call advance_workflow
+    afterwards. A WorkPlan-backed instruction with a reviewer was therefore created as
+    pending_review only after the gate had concluded that there was nothing to review;
+    the subsequent advance then stopped on head_in_progress. Materializing through the
+    same production helper before gate resolution makes the pending instruction the current
+    slot, while no-review instructions retain their existing auto-approve behaviour.
+    """
+    from modules.flow_gate.services import workflow_decision_service
+
+    if not bundle.get("materialize_instruction_before_gate"):
+        return []
+    doc_ref = bundle.get("doc_ref")
+    spine_doc = db_docs.get_by_id(doc_ref) if doc_ref else None
+    seq = db_wfseq.get_sequence_for_member_doc(doc_ref) if doc_ref else None
+    issued_to = bundle.get("issued_to")
+    if not spine_doc or not seq or not issued_to:
+        return []
+    head = db_wfseq.get_effective_head(seq["id"])
+    if not head or (head.get("type") or "").upper() not in {"N", "T"}:
+        return []
+    if not head.get("source_doc_id") or head.get("source_revision_no") is None:
+        return []
+    # A WP head whose effective review_count is 0 auto-approves in the SAME breath
+    # materialize_work_plan_instruction writes it (documents.py:
+    # `_approve_immediately=normalize_review_count(head.get("review_count")) == 0`), so
+    # advance_workflow's own internal _auto_complete_instruction_heads loop already carries
+    # it straight through to the next real step with no gate decision involved — there is
+    # no head_in_progress dead end to pre-empt here, and a WP head that a resumed hop is
+    # still actively producing (start_run's very first hop never runs the materializer at
+    # all — only advance_workflow does) must reach that worker unmodified. Only a head
+    # whose effective review_count != 0 can strand the gate on "work" the way this helper
+    # exists to prevent.
+    #
+    # reviewer_provider_id presence is NOT that signal (0600 TR0010 rev5 human rejection):
+    # a WP row can validly carry review_count > 0 with reviewer_provider_id = null — "use
+    # the project default reviewer" — which resolve_reviewer() already honours downstream
+    # when the review hop is actually spawned. Gating this pre-materialize step on
+    # reviewer_provider_id alone skipped instruction review entirely for that
+    # configuration.
+    if normalize_review_count(head.get("review_count")) == 0:
+        return []
+
+    return list(workflow_decision_service._auto_complete_instruction_heads(
+        spine_doc=spine_doc,
+        seq=seq,
+        actor_user_id=issued_to,
+        locale=bundle.get("locale") or "ko",
+        target_seq=bundle.get("target_seq"),
+        instruction_mode=bundle.get("instruction_mode"),
+        auto_approve_item_seqs=bundle.get("auto_approve_item_seqs"),
+    ) or [])
+
+
 def run_review_gate(group_id: str, bundle: dict, run: dict) -> bool:
     """Derive the gate and act on it (L0008 §2.4). True when a next hop actually started.
 
     False means the chain was parked (a durable row + a released lease), so the caller must
     NOT clear the handoff row it wrote — that row is now the [이어서 진행] card.
     """
+    _materialize_work_plan_instruction_before_gate(bundle)
     gate = resolve_review_gate(bundle)
     slot = gate.get("slot")
 
@@ -1438,12 +1602,23 @@ def _checkpoint_document_review_loop_tx(run: dict, *, late_recheck: bool = False
             # an open tab about a rejection that a later failure in this same transaction
             # could still roll back.
             from modules.flow_gate.db import connection as db_connection
+            # 0582 TR0006 rev1: this payload reaches DocHeader's fg:doc_review_status_changed
+            # listener, which REPLACES the open tab's whole (already-enriched, from GET
+            # /document) rejection_history array with whatever this carries -- the raw
+            # parse below used to null out the just-recorded automatic rejection's own
+            # provider (rejection_provider) until the next manual reload. Same enrichment
+            # GET /document runs (pipeline_service.enrich_rejection_history_provenance).
+            from modules.flow_gate.workflow.pipeline_service import (
+                enrich_rejection_history_provenance,
+            )
             _reject_broadcast_payload = {
                 "doc_id": persisted["doc_ref"],
                 "prev_status": slot["review_status"],
                 "next_status": (doc or {}).get("doc_review_status"),
                 "rejection_reason": (doc or {}).get("rejection_reason"),
-                "rejection_history": _parse_rejection_history((doc or {}).get("rejection_history")),
+                "rejection_history": enrich_rejection_history_provenance(
+                    _parse_rejection_history((doc or {}).get("rejection_history"))
+                ),
             }
 
             def _broadcast_reject() -> None:

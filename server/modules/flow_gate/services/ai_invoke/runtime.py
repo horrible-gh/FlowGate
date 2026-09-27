@@ -73,6 +73,26 @@ SOURCE_DIRTY_FILES_LIMIT = 20
 
 API_MAX_TURNS_PER_DOC = 4        # API agent loop cap = docs_target × 4
 
+# 0608 T0007: a resolve_conflict API run reads its chunks through the read tools
+# (the mention stops carrying their text past 4,000 chars) and submits file by file, so
+# its budget follows the conflict instead of the flat 4 turns a one-shot submit needed:
+# 4 + 2 per open chunk (read, then resolve) + 1 per open file (its submit), never above
+# the cap below. 0594's real conflicts (6 files, 24 chunks) come to 58.
+API_CONFLICT_TURNS_PER_CHUNK = 2
+API_CONFLICT_MAX_TURNS = 60
+# Read-tool calls a resolve_conflict run may make in total, per budgeted turn. A model
+# can ask for several reads in one turn; past this the call is refused (not run).
+API_CONFLICT_SOURCE_CALLS_PER_TURN = 3
+# Output ceiling of one model reply in a resolve_conflict run (Anthropic max_tokens; the
+# OpenAI-compatible call sends none). A `chunks` submission of 0594's largest file
+# (finalize.py, 10 chunks) is up to ~22k chars when both sides are kept -- past 8,192
+# tokens once JSON-escaped -- while the whole file would be 111,807 chars.
+API_CONFLICT_MAX_TOKENS = 16384
+# A read-tool result longer than this is refused with result_too_large in a
+# resolve_conflict run instead of being cut mid-JSON (the same 16,000 every other tool
+# result is truncated to).
+API_TOOL_RESULT_MAX_CHARS = 16000
+
 # A model API may hit a resolver/socket blip before its first usable response. Keep
 # retries inside that provider invocation so they neither consume provider-fallback
 # attempts nor alter pin/sequence selection. Two retries means three calls maximum.
@@ -409,8 +429,12 @@ _DECIDE_TOOL_SCHEMA = {
 _RESOLVE_TOOL_NAME = "resolve_git_conflict"
 
 _RESOLVE_TOOL_DESC = (
-    "Submit complete resolved file contents for the bound git merge conflict session. "
-    "All conflict markers must be removed and complete must be true when every file is resolved."
+    "Submit resolved files for the bound git merge conflict session: per file either its "
+    "complete `content`, or `chunks` -- every conflict chunk of that file (numbered as in the "
+    "conflict session) with the lines that replace its whole marker block. The server rebuilds "
+    "and validates the file either way. Send some files with complete=false and the result "
+    "lists remaining_conflicts; set complete=true when none remain. All conflict markers must "
+    "be removed."
 )
 
 _RESOLVE_TOOL_SCHEMA = {
@@ -423,8 +447,38 @@ _RESOLVE_TOOL_SCHEMA = {
                 "properties": {
                     "path": {"type": "string"},
                     "content": {"type": "string"},
+                    # 0608 T0007 — instead of content: every chunk of the file, resolved.
+                    "chunks": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "chunk": {"type": "integer", "minimum": 1},
+                                "content": {"type": "string"},
+                            },
+                            "required": ["chunk", "content"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    # 0604 D0005 §3.4 — optional; the worker forwards `files` verbatim.
+                    "supersede": {
+                        "type": "object",
+                        "description": (
+                            "Only when the server rejected this file with conflict_side_dropped "
+                            "AND the side you kept already contains every change of the other "
+                            "side (kept verbatim or changed in place). Never use it to skip a "
+                            "merge; a person reviews every declaration."
+                        ),
+                        "properties": {
+                            "side": {"type": "string", "enum": ["ours", "theirs"]},
+                            "reason": {"type": "string"},
+                        },
+                        "required": ["side", "reason"],
+                    },
                 },
-                "required": ["path", "content"],
+                # content or chunks -- resolve_conflicts answers 422 unless exactly one is sent.
+                "required": ["path"],
             },
         },
         "complete": {"type": "boolean"},
@@ -946,6 +1000,24 @@ def _note_issued_prompt(run: dict, mention: Optional[str]) -> None:
 
 def _known_run_prompts(run: dict) -> set[str]:
     return {p for p in run.get("_issued_prompts") or () if p}
+
+
+def _actual_work_executor_provider_id(run: dict) -> Optional[str]:
+    """The provider that ACTUALLY ran THIS run's hop — the caller decides whose run it is.
+
+    `run["continuation_selected_provider_id"]` (0435 T0004) is the chain HEAD picked
+    before this attempt ran and is never updated afterward. When startup fell back past
+    that head, `_execute_provider_chain` moved `run["provider_id"]` to whichever provider
+    actually started (worker.py) — that is the one whose output this run's hop produced,
+    so it must win here, with the original head as the only fallback (a run whose hop
+    never reached `_execute_provider_chain` at all, e.g. one still being admitted).
+
+    A review/rework hop's OWN run answers this with ITS OWN provider, not the work hop's —
+    callers that must not let a reviewer's pick leak into the captured work executor (e.g.
+    `chain._handoff_bundle`/`_maybe_auto_resume_hop`) rely on the handoff bundle already
+    holding a captured value and never call this against that later run for that purpose.
+    """
+    return run.get("provider_id") or run.get("continuation_selected_provider_id")
 
 
 def _svc():

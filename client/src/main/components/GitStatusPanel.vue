@@ -36,11 +36,54 @@
         <AppIcon name="cloud-arrow-down" />
       </button>
     </div>
+    <!-- flowgate.default.0594 T0018 — the first thing under the header is a short
+         overview (where group work lands, and what still needs a hand), then tabs
+         that keep the finalize status, the branch list/create side and the
+         merge/delete side from stacking into one long dialog. Tabs only change
+         what is shown: every tab's owner and API path are the same as before
+         (finalize stays here/ReviewActionBar, branch lifecycle stays GitBranchManager). -->
+    <div class="git-overview" data-test="git-overview">
+      <div class="git-overview-item git-overview-item--flow">
+        <span class="git-overview-label">{{ t('main.git_status.overview_flow') }}</span>
+        <span class="git-overview-value git-overview-value--mono">
+          <span data-test="overview-base">{{ status.base_branch }}</span>
+          <span class="git-overview-arrow" aria-hidden="true">→</span>
+          <span data-test="overview-target">{{ overviewTargetText }}</span>
+        </span>
+      </div>
+      <div class="git-overview-item">
+        <span class="git-overview-label">{{ t('main.git_status.overview_groups') }}</span>
+        <span class="git-overview-value" data-test="overview-groups">{{ status.slots.length }}</span>
+      </div>
+      <div class="git-overview-item">
+        <span class="git-overview-label">{{ t('main.git_status.overview_pending') }}</span>
+        <span class="git-overview-value" data-test="overview-pending">{{ status.pending_count }}</span>
+      </div>
+      <div class="git-overview-item" :class="{ 'git-overview-item--alert': overviewConflictCount > 0 }">
+        <span class="git-overview-label">{{ t('main.git_status.overview_conflicts') }}</span>
+        <span class="git-overview-value" data-test="overview-conflicts">{{ overviewConflictCount }}</span>
+      </div>
+    </div>
+    <div class="git-tabs" role="tablist" data-test="git-tabs" :aria-label="t('main.git_status.tabs_label')">
+      <button
+        v-for="tab in GIT_PANEL_TABS"
+        :id="`git-tab-${tab}`"
+        :key="tab"
+        class="git-tab"
+        :class="{ active: activeTab === tab }"
+        type="button"
+        role="tab"
+        :data-test="`git-tab-${tab}`"
+        :aria-selected="activeTab === tab"
+        :aria-controls="`git-tabpanel-${tab}`"
+        @click="activeTab = tab"
+      >{{ t(`main.git_status.tab_${tab}`) }}</button>
+    </div>
     <!-- flowgate.default.0177 L0002 §2.6-b·c — base-checkout edits pending commit.
          The 0176 passive banner became an actionable section: per-file revert, an
          editable commit subject (seeded with the §2.2 default), and — when a merge
          finalize was parked on the base_dirty 409 — commit-then-merge in one go. -->
-    <div v-if="showBaseDirtySection" class="git-base-dirty-alert" role="alert">
+    <div v-if="activeTab === 'status' && showBaseDirtySection" class="git-base-dirty-alert" role="alert">
       <!-- 경고 아이콘은 시안대로 요약 카드(`.git-v9-summary`) 안으로 옮겼다 — 바깥에도
            두면 같은 ⚠ 가 두 번 보인다. -->
       <div class="git-base-dirty-alert__body">
@@ -145,7 +188,7 @@
          is why an agent reports a file as missing while the file explorer plainly
          shows it. Committing here is the only in-app way to hand one to a worker,
          hence the explicit per-file pick — never a blanket `add -A`. -->
-    <div v-if="baseUntrackedFiles.length" class="git-base-untracked" role="note">
+    <div v-if="activeTab === 'status' && baseUntrackedFiles.length" class="git-base-untracked" role="note">
       <AppIcon name="file-plus" />
       <div class="git-base-untracked__body">
         <div class="git-base-untracked__msg">
@@ -217,6 +260,13 @@
       </div>
     </div>
       <div class="card-bd pad">
+      <div
+        v-if="activeTab === 'status'"
+        id="git-tabpanel-status"
+        class="git-tabpanel"
+        role="tabpanel"
+        aria-labelledby="git-tab-status"
+      >
       <!-- Unpushed base-merge list (0202 P0006 scenarios 5-8). -->
       <div v-if="showUnpushedSection" class="git-status-sect git-unpushed-sect">
         <p class="git-status-sub">{{ unpushedBadgeText }}</p>
@@ -278,8 +328,9 @@
               {{ t('main.git_status.resolve_inline') }}
             </button>
 
-            <!-- actionable: pick merge / push / wait, then run -->
-            <template v-else>
+            <!-- Unbound rows remain actionable. A final-approval-bound row is
+                 already owned by ReviewActionBar and stays monitoring-only here. -->
+            <template v-else-if="!p.final_approval_bound">
               <label class="git-action-lbl">{{ t('main.git_status.action_label') }}</label>
               <select
                 class="git-action-sel"
@@ -326,7 +377,7 @@
           <!-- Commit-subject confirmation for merge/push (0173 parity, B0001 F1): the
                header control panel now lets the user review/edit the absorb-commit
                subject without opening the R document. Blank = server auto-resolves. -->
-          <div v-if="p.status !== 'conflict' && actionOf(p) !== 'wait'" class="git-status-commit">
+          <div v-if="p.status !== 'conflict' && !p.final_approval_bound && actionOf(p) !== 'wait'" class="git-status-commit">
             <div class="git-commit-msg-hd">
               <label class="git-commit-msg-label" :for="`gsc-${p.group_id}`">
                 {{ t('main.git_finalize.commit_message_label') }}
@@ -586,6 +637,19 @@
         </div>
       </div>
       <div class="git-status-sect"><div class="git-ra-placeholder">{{ t('main.git_status.ra_placeholder') }}</div></div>
+      </div>
+      <!-- Always mounted (renders nothing on the status tab) so the overview's current
+           target and the branch zones' own state survive tab switches; a catalog
+           failure still only lands inside these branch tabs (T0016 §4.1). -->
+      <div
+        v-show="activeTab !== 'status'"
+        :id="`git-tabpanel-${activeTab === 'status' ? 'branches' : activeTab}`"
+        class="git-tabpanel"
+        role="tabpanel"
+        :aria-labelledby="`git-tab-${activeTab === 'status' ? 'branches' : activeTab}`"
+      >
+        <GitBranchManager :project-id="projectId" :view="branchView" @catalog="onBranchCatalog" />
+      </div>
     </div>
   </div>
 
@@ -627,9 +691,33 @@ import {
 } from '../composables/useConflictChunks'
 import GitConflictResolverDialog from './GitConflictResolverDialog.vue'
 import GitMergeReviewDialog from './GitMergeReviewDialog.vue'
+import GitBranchManager from './GitBranchManager.vue'
 
 const props = defineProps<{ projectId: string }>()
 const emit = defineEmits<{ 'open-group': [groupId: string] }>()
+
+// flowgate.default.0594 T0018 — panel tabs (see the template comment above the overview).
+const GIT_PANEL_TABS = ['status', 'branches', 'manage'] as const
+type GitPanelTab = (typeof GIT_PANEL_TABS)[number]
+const activeTab = ref<GitPanelTab>('status')
+const branchView = computed(() => (activeTab.value === 'status' ? 'hidden' : activeTab.value))
+// Only the overview's summary of the branch catalog is kept here — never its error
+// text, so a catalog failure can't reach this panel's finalize UI (T0016 §4.1).
+const branchCatalog = ref<{ state: 'ready' | 'error'; default_merge_target: string | null } | null>(null)
+function onBranchCatalog(summary: { state: 'ready' | 'error'; default_merge_target: string | null }) {
+  branchCatalog.value = summary
+}
+const overviewTargetText = computed(() => {
+  const summary = branchCatalog.value
+  if (!summary) return '…'
+  if (summary.default_merge_target) return summary.default_merge_target
+  return summary.state === 'error'
+    ? t('main.git_status.overview_target_unknown')
+    : t('main.git_status.overview_target_unset')
+})
+const overviewConflictCount = computed(() =>
+  (status.value?.pending ?? []).filter((p) => p.status === 'conflict').length
+  + (status.value?.slots ?? []).filter((s) => !!trConflictOf(s)).length)
 
 const { t } = useI18n()
 const { showToast } = useToast()
@@ -721,6 +809,9 @@ interface Pending {
   // human approval gate is waiting instead (the review dialog).
   review_state?: string | null
   reconciliation_kind?: string | null
+  // True when ReviewActionBar's final-approval request owns this session.
+  // Header controls stay available for observation/recovery, not a new finalize.
+  final_approval_bound?: boolean
 }
 interface GitStatus {
   enabled: boolean
@@ -1229,7 +1320,7 @@ async function ensureCommitDraft(groupId: string) {
 // Hydrate drafts for every actionable merge/push row (once each; guarded by flags).
 function syncCommitDrafts() {
   for (const p of status.value?.pending || []) {
-    if (p.status !== 'conflict' && actionOf(p) !== 'wait') ensureCommitDraft(p.group_id)
+    if (p.status !== 'conflict' && !p.final_approval_bound && actionOf(p) !== 'wait') ensureCommitDraft(p.group_id)
   }
 }
 
@@ -1307,8 +1398,15 @@ const cleanupStatusLabel = computed(() => {
   })
 })
 
+function refreshFinalizeSurfaces(groupId: string, status: string | null = null) {
+  if (typeof window === 'undefined') return
+  const detail = { project: props.projectId, group_id: groupId, status }
+  window.dispatchEvent(new CustomEvent('fg:git_status_refresh', { detail }))
+  window.dispatchEvent(new CustomEvent('fg:open_docs_refresh', { detail }))
+}
+
 async function execute(item: Pending) {
-  if (busy.value) return
+  if (busy.value || item.final_approval_bound) return
   const action = actionOf(item)
   // Attach the confirmed commit subject for merge/push (B0001 F1). Blank →
   // omit the field so git_service resolves the subject on the unmanned path.
@@ -1366,8 +1464,14 @@ async function runFinalize(groupId: string, payload: { action: string; commit_me
     } else if (r?.status === 'waiting') {
       showToast(t('main.git_finalize.waiting_toast'), 'success')
     }
+    if (r?.status === 'merged' || r?.status === 'pushed' || r?.status === 'already_applied') {
+      refreshFinalizeSurfaces(groupId, r.status)
+    }
   } catch (e: any) {
     const err = e?.response?.data?.error
+    if (e?.response?.status === 409 && ['final_approval_bound', 'invalid_state', 'git_busy'].includes(err?.code)) {
+      refreshFinalizeSurfaces(groupId, null)
+    }
     if (!handleBaseDirty(groupId, payload, err)) {
       showToast(resolveGitError(err, t, 'main.git_finalize.failed'), 'danger')
     }
@@ -2083,6 +2187,70 @@ defineExpose({ fetchStatus })
 <style scoped>
 .git-status-card {
   margin-bottom: 12px;
+}
+/* flowgate.default.0594 T0018 — overview strip + tabs. Tokens only; the overview is
+   one flat row of label/value pairs (no nested boxes), and the tab bar follows the
+   notification center's underline tabs. */
+.git-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--surface-h);
+  border-bottom: 1px solid var(--border);
+}
+.git-overview-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.git-overview-label {
+  font-size: 0.7rem;
+  color: var(--text-s);
+}
+.git-overview-value {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.git-overview-value--mono {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.8rem;
+}
+.git-overview-arrow {
+  margin: 0 4px;
+  color: var(--text-m);
+}
+.git-overview-item--alert .git-overview-value,
+.git-overview-item--alert .git-overview-label {
+  color: var(--danger);
+}
+.git-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+.git-tab {
+  padding: 10px 12px 8px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-s);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.git-tab:hover {
+  color: var(--primary);
+}
+.git-tab.active {
+  border-bottom-color: var(--primary);
+  color: var(--primary);
 }
 .git-status-card .card-hd {
   display: flex;

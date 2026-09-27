@@ -2127,10 +2127,24 @@ def build_mention(
             template_section = ""
 
     source_crud_section = ""
+    snapshot_policy_section = ""
     if _include_remote_source_crud(project):
         source_crud_section = _remote_source_crud_section(
             base, raw_token, scope_type, action_scope=action_scope, locale=locale
         )
+        if source_crud_section:
+            snapshot_policy_section = _section(
+                "AI source snapshot policy",
+                "Request a snapshot only when a real filesystem tree is required for build/test/"
+                "lint/typecheck/dependency or static analysis, or an isolated temporary experiment. "
+                "For reads, searches, comparisons, history, and merge analysis, use the existing "
+                "FlowGate source tools and Merge Context first. A request never approves or creates "
+                "a snapshot; only a human-approved materialized current_worktree snapshot has a "
+                "locator. Snapshot changes are temporary and must never be promoted/uploaded/"
+                "committed/merged/synced back. If stale, report ACTIVE SNAPSHOT IS STALE and do not "
+                "claim current-worktree validation. Full policy: "
+                f"GET {base}/help/items/source_snapshots"
+            )
 
     # ── Assembly ──────────────────────────────────────────────────────────────
     sections = [
@@ -2152,6 +2166,8 @@ def build_mention(
     # where long mentions stop being read.
     if source_crud_section:
         sections.append(source_crud_section)
+    if snapshot_policy_section:
+        sections.append(snapshot_policy_section)
     sections.append(_section(s2_header, s2_body))
     # 0405 P0004 [mention body]: right after '## Instruction to include next document header'
     # and right before '## Document template'. With a non-WP head, or no scope received, nothing

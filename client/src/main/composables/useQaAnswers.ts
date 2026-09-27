@@ -8,6 +8,7 @@
 import { onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getRequest, postRequest } from '@shared/api'
+import type { AiProvenance } from '../types/aiReview'
 
 // group 0243 R0001: a query may carry reference options the answerer can click instead of
 // writing prose. ids are server-assigned and unique within their item; the array order is
@@ -20,6 +21,11 @@ export interface QaAnswer {
   body: string
   author_kind: string
   selected_options?: string[]
+  // 0582 T0005 §D: the AI run/provider that generated this answer (author_kind='ai'
+  // only) — null for a human answer, and null for an AI answer whose token carried no
+  // bound run (the [Copy Mention] hand-off starts no run, so this is legitimately
+  // unknown rather than dropped).
+  author_provider?: AiProvenance | null
 }
 export interface QaItem {
   id: number
@@ -30,6 +36,8 @@ export interface QaItem {
   options?: QaOption[]
   answer_count?: number
   answers?: QaAnswer[]
+  // 0582 T0005 §D: the AI run/provider that raised this question (asker_kind='ai' only).
+  asker_provider?: AiProvenance | null
 }
 
 export function useQaAnswers(docId: Ref<string>) {

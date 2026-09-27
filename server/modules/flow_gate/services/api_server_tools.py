@@ -13,11 +13,16 @@ from pathlib import Path
 from typing import Any
 
 from modules.flow_gate.db import documents as db_documents
-from modules.flow_gate.services import git_service, help_catalog, process_runner, remote_tool_service, test_command_service, token_service, tool_registry
+from modules.flow_gate.services import git_service, help_catalog, process_runner, remote_tool_service, snapshot_access_service, snapshot_request_service, test_command_service, token_service, tool_registry
 from modules.flow_gate.utils.help_url import help_url
 
 DOCUMENT_SCOPES = frozenset({"new", "edit", "review", "test_run"})
+CONFLICT_SCOPE = "resolve_conflict"
+# 0608 T0007: a conflict resolver changes files only through the bound resolve endpoint,
+# which validates every chunk. Whatever the registry grows into, these never reach it.
+_CONFLICT_NEVER_OPS = frozenset({"write", "patch", "remove"})
 BASE_NAMES = ("read_document", "read_help", "create_question", "register_document")
+SNAPSHOT_NAMES = ("request_source_snapshot", "access_source_snapshot", "run_source_snapshot")
 SOURCE_NAMES = ("read_source_file", "search_source", "glob_source", "stat_source", "diff_source", "log_source", "show_commit_source", "merge_preview_source", "patch_source_file", "write_source_file", "remove_source_file", "run_test")
 # Provider names are stable aliases; every source operation dispatches through the HTTP remote service.
 SOURCE_OPS = {
@@ -77,7 +82,9 @@ def normalize_read_help_input(value: Any) -> dict:
     return dict(value)
 
 SCHEMAS = {
-    "read_source_file": _obj({"path": {"type": "string", "minLength": 1}, "max_bytes": {"type": "integer", "minimum": 0}, "offset": {"type": "integer", "minimum": 0}, "length": {"type": "integer", "minimum": 0}, "encoding": {"type": "string"}, "ref": {"type": "string"}}, ["path"]),
+    # start_line/end_line (0608 T0007, NR0003 §3.5): the /remote/read line selector the
+    # HTTP tool always had -- how a conflict chunk's advertised range is read back.
+    "read_source_file": _obj({"path": {"type": "string", "minLength": 1}, "max_bytes": {"type": "integer", "minimum": 0}, "offset": {"type": "integer", "minimum": 0}, "length": {"type": "integer", "minimum": 0}, "start_line": {"type": "integer", "minimum": 1}, "end_line": {"type": "integer", "minimum": 1}, "encoding": {"type": "string"}, "ref": {"type": "string"}}, ["path"]),
     "search_source": _obj({"pattern": {"type": "string", "minLength": 1}, "path": {"type": "string"}, "glob": {"type": "string"}, "ignore_case": {"type": "boolean"}, "max_results": {"type": "integer", "minimum": 0}, "ref": {"type": "string"}}, ["pattern"]),
     "glob_source": _obj({"pattern": {"type": "string", "minLength": 1}, "path": {"type": "string"}, "ref": {"type": "string"}}, ["pattern"]),
     "stat_source": _obj({"path": {"type": "string", "minLength": 1}, "ref": {"type": "string"}}, ["path"]),
@@ -92,6 +99,27 @@ SCHEMAS = {
     "read_document": READ_DOCUMENT_SCHEMA,
     "read_help": READ_HELP_SCHEMA,
     "create_question": _obj({"questions": {"type": "array", "minItems": 1, "items": _obj({"title": {"type": "string"}, "body": {"type": "string", "minLength": 1}, "options": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 200}, "maxItems": 10}}, ["body"])}}, ["questions"]),
+    "request_source_snapshot": _obj({"reason":{"type":"string","minLength":1},"scope":{"type":"string","enum":["single_file","selected_files","directory","whole_source"]},"requested_paths":{"type":"array","items":{"type":"string","minLength":1}},"purpose":{"type":"string","minLength":1},"source_kind":{"type":"string","enum":["current_worktree"]}},["reason","scope","requested_paths","purpose"]),
+    "access_source_snapshot": _obj({
+        "snapshot_id":{"type":"string","minLength":1},
+        "operation":{"type":"string","enum":["status","read","search","glob","stat"]},
+        "path":{"type":"string","minLength":1},
+        "pattern":{"type":"string","minLength":1},
+        "glob":{"type":"string","minLength":1},
+        "ignore_case":{"type":"boolean"},
+        "max_results":{"type":"integer","minimum":1},
+        "max_bytes":{"type":"integer","minimum":0},
+        "offset":{"type":"integer","minimum":0},
+        "length":{"type":"integer","minimum":0},
+        "encoding":{"type":"string","minLength":1},
+    },["snapshot_id","operation"]),
+    "run_source_snapshot": _obj({
+        "snapshot_id":{"type":"string","minLength":1},
+        "task_kind":{"type":"string","enum":["build","test","lint","typecheck","dependency_analysis","static_analysis","temporary_experiment"]},
+        "command":{"type":"string","minLength":1},
+        "timeout_seconds":{"type":"integer","minimum":1},
+        "claim_current_worktree":{"type":"boolean"},
+    },["snapshot_id","task_kind","command"]),
 }
 
 REGISTER_SCHEMAS = {
@@ -103,10 +131,65 @@ REGISTER_SCHEMAS = {
     "test_run": _obj({}),
 }
 
-DESCRIPTIONS = {name: name.replace("_", " ") for name in (*BASE_NAMES, *SOURCE_NAMES)}
+DESCRIPTIONS = {name: name.replace("_", " ") for name in (*BASE_NAMES, *SNAPSHOT_NAMES, *SOURCE_NAMES)}
+DESCRIPTIONS["request_source_snapshot"] = (
+    "Request only; never approve, materialize, or return a locator. Use this only when a real "
+    "filesystem tree is required for build/test/lint/typecheck/dependency/static analysis or "
+    "an isolated temporary experiment. Prefer FlowGate read/search/git and Merge Context Tool for "
+    "single-file reads, grep/glob/stat, ref comparison, diffs, history, and merge analysis. "
+    "This request never creates files. whole_source is not the default and requires an explicit "
+    "reason and purpose."
+)
+DESCRIPTIONS["access_source_snapshot"] = (
+    "Read status/locator or read/search/glob/stat inside a human-approved current-worktree "
+    "snapshot. Stale data remains readable but is marked ACTIVE SNAPSHOT IS STALE and cannot "
+    "be reported as current-worktree validation. Deleted and failed snapshots are explicit."
+)
+DESCRIPTIONS["run_source_snapshot"] = (
+    "Run build/test/lint/typecheck/dependency/static analysis or a temporary experiment inside "
+    "an approved disposable snapshot. There is no promotion, upload, commit, merge, or sync-back; "
+    "persistent edits must use canonical FlowGate source mutation tools. FlowGate constrains the "
+    "working directory, temporary directory, timeout, and captured output, but cannot fully inspect "
+    "every child command; commands must stay inside the snapshot and must not access live source."
+)
 DESCRIPTIONS["read_help"] = (
     "Read personalized help without HTTP. Empty input returns the help index; "
     "item returns one item; item plus child returns one child. child requires item."
+)
+# ref-capable source tools (0514 T0004 §3.3): the bare name.replace("_", " ") default left
+# no hint that ref switches between the working tree and a committed Git tree, or that
+# merge_preview_source's own return values are meant to be fed back in as ref. Overriding
+# these descriptions lets a provider discover that link from the tool definition alone,
+# without a separate read_help round trip.
+DESCRIPTIONS["read_source_file"] = (
+    "Read a file, or only lines start_line..end_line of it (1-based, inclusive; both together, "
+    "not with offset/length/max_bytes). Omit ref to read the current worktree (including uncommitted changes); "
+    "set ref to a commit/tree/ref to read that committed tree instead. Feed merge_preview_source's "
+    "head/target_sha/merge_base/merge_tree into ref to inspect each side of a merge."
+)
+DESCRIPTIONS["search_source"] = (
+    "Search the source tree with a regular expression. Omit ref to search the current worktree "
+    "(including uncommitted changes); set ref to a commit/tree/ref to search that committed tree instead. "
+    "merge_preview_source's head/target_sha/merge_base/merge_tree can be passed as ref."
+)
+DESCRIPTIONS["glob_source"] = (
+    "List file paths matching a glob pattern. Omit ref to list the current worktree (including uncommitted "
+    "changes); set ref to a commit/tree/ref to list that committed tree instead. merge_preview_source's "
+    "head/target_sha/merge_base/merge_tree can be passed as ref."
+)
+DESCRIPTIONS["stat_source"] = (
+    "Inspect whether a path exists and its type/size. Omit ref to inspect the current worktree (including "
+    "uncommitted changes); set ref to a commit/tree/ref to inspect that committed tree instead. "
+    "merge_preview_source's head/target_sha/merge_base/merge_tree can be passed as ref."
+)
+DESCRIPTIONS["merge_preview_source"] = (
+    "Preview a 3-way merge of HEAD onto target_ref without changing anything, and return "
+    "merge_base/head/target_sha/merge_tree -- four committed-tree refs, not the worktree. Pass one of "
+    "them as read_source_file.ref (or search_source/glob_source/stat_source.ref) to inspect that "
+    "committed tree: head for HEAD, target_sha for target/main, merge_base for the common base, or "
+    "merge_tree for the candidate merge result -- merge_tree's conflicted files contain "
+    "<<<<<<< / ======= / >>>>>>> markers. To inspect the current worktree (including uncommitted "
+    "changes) instead, omit ref entirely; none of merge_preview_source's return values represent it."
 )
 
 
@@ -141,6 +224,8 @@ def definitions_for_run(run: dict) -> list[dict]:
     # the authorized root, so advertisement must not reject a valid non-Git project fallback.
     kind, _reason = tool_registry.kind_for_step(scope, step_type)
     allowed_ops = set(tool_registry.tool_names(kind, scope))
+    if kind in ("read", "read_write"):
+        names += list(SNAPSHOT_NAMES)
     names += [name for name, op in SOURCE_OPS.items() if op in allowed_ops]
     if kind == "read_write":
         names.append("run_test")
@@ -149,6 +234,32 @@ def definitions_for_run(run: dict) -> list[dict]:
         schema = REGISTER_SCHEMAS[scope] if name == "register_document" else SCHEMAS[name]
         result.append({"name": name, "description": DESCRIPTIONS[name], "schema": schema, "completion": name == "register_document"})
     return result
+
+
+def conflict_tool_definitions() -> list[dict]:
+    """The tools a resolve_conflict API run may call besides ``resolve_git_conflict``.
+
+    0608 T0007: the same judgment as everywhere else -- ``tool_registry.kind_for_step``
+    gives resolve_conflict the ``read`` kind, ``tool_names`` turns it into the operations
+    the conflict mention's Remote source section lists, and ``remote_tool_service`` grants
+    that same kind (read/grep scopes) to the run's token at call time and binds it to the
+    conflict session's root. Plus ``read_help``, which the API prompt points to in place of
+    the mention's help URL. Write/patch/remove are excluded even if a kind ever allowed them.
+    """
+    kind, _reason = tool_registry.kind_for_step(CONFLICT_SCOPE)
+    allowed_ops = set(tool_registry.tool_names(kind, CONFLICT_SCOPE)) - _CONFLICT_NEVER_OPS
+    names = ["read_help"] + [name for name, op in SOURCE_OPS.items() if op in allowed_ops]
+    return [
+        {"name": name, "description": DESCRIPTIONS[name], "schema": SCHEMAS[name], "completion": False}
+        for name in names
+    ]
+
+
+def open_conflict_counts(run: dict) -> tuple[int, int]:
+    """``(files, chunks)`` still carrying conflict markers in the run's merge session."""
+    conflicts = git_service.list_conflicts(run["group_id"], int(run["merge_id"]))
+    counts = [int(f.get("conflict_count") or 0) for f in conflicts.get("files") or []]
+    return sum(1 for n in counts if n > 0), sum(counts)
 
 
 def validate(schema: dict, value: Any, path: str = "input") -> None:
@@ -241,7 +352,69 @@ def read_help(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     return 200, {**envelope, **body}
 
 
+def _snapshot_token(run: dict, raw_token: str) -> dict:
+    try:
+        token = token_service.verify(raw_token)
+        snapshot_request_service.validate_request_authority(token, run)
+        return token
+    except snapshot_request_service.SnapshotRequestError as exc:
+        raise ToolError(exc.status, exc.code, exc.message) from exc
+    except Exception as exc:
+        raise ToolError(403, "snapshot_request_forbidden", "a live AI run/token is required") from exc
+
+
+def request_source_snapshot(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
+    token = _snapshot_token(run, raw_token)
+    data = dict(tool_input)
+    data.update({
+        "project_id":run.get("project_id"), "group_id":run.get("group_id"),
+        "run_id":run.get("run_id"), "chain_id":run.get("chain_id") or run.get("run_id"),
+        "token_id":token.get("token_id"), "provider_id":run.get("provider_id"),
+    })
+    try:
+        row = snapshot_request_service.create_request(data, str(token.get("issued_to") or "ai-worker"))
+    except snapshot_request_service.SnapshotRequestError as exc:
+        raise ToolError(exc.status, exc.code, exc.message) from exc
+    public = {key: row.get(key) for key in (
+        "snapshot_id", "status", "scope", "requested_paths", "source_kind",
+        "project_id", "group_id", "run_id", "chain_id", "token_id", "provider_id", "requested_at",
+    )}
+    return 201, {
+        "ok":True, "request_id":row.get("snapshot_id"), "status":"requested",
+        "request":public, "materialized":False, "requires_human_decision":True,
+    }
+
+
+def access_source_snapshot(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
+    _snapshot_token(run, raw_token)
+    try:
+        status, payload = snapshot_access_service.access(run, tool_input)
+        if 200 <= status < 300:
+            run["snapshot_reads"] = int(run.get("snapshot_reads") or 0) + 1
+        return status, payload
+    except snapshot_access_service.SnapshotAccessError as exc:
+        return exc.status, exc.payload(str(tool_input.get("operation") or "access"))
+
+
+def run_source_snapshot(
+    run: dict, raw_token: str, tool_input: dict, remaining_sec: float,
+) -> tuple[int, dict]:
+    _snapshot_token(run, raw_token)
+    try:
+        return snapshot_access_service.execute(
+            run, tool_input, remaining_sec=remaining_sec,
+            source_tool_calls=int(run.get("source_tool_calls") or 0),
+            snapshot_reads=int(run.get("snapshot_reads") or 0),
+        )
+    except snapshot_access_service.SnapshotAccessError as exc:
+        return exc.status, exc.payload("execute")
+
+
 def source_call(run: dict, raw_token: str, name: str, tool_input: dict) -> tuple[int, dict]:
+    try:
+        snapshot_access_service.guard_promotion(run, name, tool_input)
+    except snapshot_access_service.SnapshotAccessError as exc:
+        return exc.status, exc.payload(name)
     # remote_tool_service is the sole live-token/root authority.  In particular, it
     # preserves worktree fail-closed mutation gates while allowing approved base-root
     # fallback projects; the API adapter must not second-guess that selection.

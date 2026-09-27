@@ -11,6 +11,7 @@ sqloader rule: no inline SQL. Go through queries.json + the db module.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from typing import Any, Optional, Union
 
@@ -29,6 +30,8 @@ from modules.flow_gate.api.v1.events.publisher import FlowEvent, publish_event_t
 # with no human subject (AI registration / artifact-accompanied) to satisfy the
 # created_by FK and NOT NULL constraints (L0007 §3.1).
 AI_SYSTEM_USER = "u-system"
+
+logger = logging.getLogger(__name__)
 
 QuestionInput = Union[str, dict]
 
@@ -290,11 +293,15 @@ def add_questions(
     created_by: Optional[str] = None,
     project_id: Optional[str] = None,
     notify_audience: Optional[str] = None,
+    asker_provenance: Optional[dict] = None,
 ) -> dict:
     """Add N queries to the document's container (creating the container if absent).
 
     asker_kind: 'human'([+query]) | 'ai' (§3.3/§3.4 AI registration). A done container
     reverts to pending.
+    ``asker_provenance`` (0582 T0005 §D) is the AI run/provider snapshot the caller
+    already resolved via ai_invoke.provenance.resolve_run_provenance — ignored for a
+    human query, and legitimately {} for an AI query whose token carried no bound run.
     Returns {"doc_id", "added_item_ids": [...]}.
     """
     if not questions:
@@ -302,6 +309,7 @@ def add_questions(
     if asker_kind not in ("human", "ai"):
         raise HTTPException(status_code=400, detail="asker_kind must be 'human' or 'ai'")
     normalized = _normalize_questions(questions)
+    _provenance = asker_provenance if asker_kind == "ai" and asker_provenance else {}
 
     target_doc = db_documents.get_by_id(doc_id)
     if target_doc is not None and target_doc.get("type_code") == "CH":
@@ -323,6 +331,9 @@ def add_questions(
             db_question_items.insert(
                 question_pk=qpk, seq=max_seq + offset, body=body,
                 title=title, asker_kind=asker_kind, options=_dump_json(options),
+                asker_ai_run_id=_provenance.get("ai_run_id"),
+                asker_actual_provider_id=_provenance.get("actual_provider_id"),
+                asker_actual_provider_name=_provenance.get("actual_provider_name"),
             )
         # Re-query: revert done → pending (consistent with D0005 §4 "re-query = new item")
         if container.get("status") == "done":
@@ -344,6 +355,125 @@ def add_questions(
     return {"doc_id": doc_id, "added_item_ids": added_ids}
 
 
+# ── Last-answer → paused-chain continuation (flowgate.default.0551 T#2) ────────
+
+def auto_resume_answered_chain(
+    *,
+    doc_id: str,
+    api_base_url: str,
+    locale: str = "ko",
+    responder_run: Optional[dict] = None,
+) -> Optional[dict]:
+    """Resume the durable question_pending chain once the group has no open Q.
+
+    This is orchestration only: ai_invoke_service.resume_chain remains the one
+    resume engine and its group lock + paused-row compare-and-swap remain the one
+    exactly-once boundary. The helper is deliberately best-effort because an answer
+    that was committed must never be rolled back or reported as failed merely because
+    the continuation lost a race to cancel, another answer, or another process.
+
+    It is called both from the answer write path (human answers and restart recovery)
+    and after run finalization (an AI responder still owns the group lease while it
+    POSTs its answer, so that first call is expected to defer until finalization).
+    """
+    try:
+        doc = db_documents.get_by_id(doc_id)
+        group_id = (doc or {}).get("group_id")
+        if not group_id:
+            return None
+
+        from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
+        from modules.flow_gate.db import ai_invoke_runs as db_runs
+        from modules.flow_gate.services import ai_invoke_service
+
+        row = db_paused.get_by_group(group_id)
+        if (
+            row is None
+            or (row.get("stop_kind") or "user") != "system"
+            or row.get("stop_code") != "question_pending"
+        ):
+            return None
+        # A container can be done while another document in the same group still has
+        # an unanswered item. The group-wide query is the final gate.
+        if db_questions.list_open_doc_ids_by_group(group_id):
+            return None
+
+        requester_run_id = row.get("stop_run_id")
+        requester_provider_id = None
+        if requester_run_id:
+            try:
+                requester = db_runs.get(requester_run_id)
+                requester_provider_id = (requester or {}).get("provider_id")
+            except Exception:
+                logger.warning(
+                    "question auto-resume requester lookup failed for %s",
+                    requester_run_id,
+                    exc_info=True,
+                )
+
+        trace = {
+            "requester_run_id": requester_run_id,
+            "requester_provider_id": requester_provider_id,
+            "responder_run_id": (responder_run or {}).get("run_id"),
+            "responder_provider_id": (responder_run or {}).get("provider_id"),
+            "paused_chain_id": row.get("chain_id"),
+            "resumed_run_id": None,
+            "resumed_chain_id": None,
+        }
+        try:
+            resumed = ai_invoke_service.resume_chain(
+                group_id=group_id,
+                # The paused chain belongs to its original requester, not necessarily
+                # to the human/responder that supplied the final answer.
+                user_id=row.get("paused_by"),
+                api_base_url=api_base_url,
+                locale=locale or "ko",
+            )
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            logger.info(
+                "question auto-resume deferred group_id=%s code=%s "
+                "requester_run_id=%s responder_run_id=%s chain_id=%s",
+                group_id,
+                detail.get("code") or exc.status_code,
+                trace["requester_run_id"],
+                trace["responder_run_id"],
+                trace["paused_chain_id"],
+            )
+            return None
+
+        trace["resumed_run_id"] = resumed.get("run_id")
+        trace["resumed_chain_id"] = resumed.get("chain_id")
+        resumed["question_resume_trace"] = trace
+        # Keep the correlation on the live run too, so GET status exposes the same
+        # evidence as the immediate answer response. The structured log remains the
+        # durable audit trail after this process exits.
+        resumed_record = ai_invoke_service.get_run_record(trace["resumed_run_id"])
+        if resumed_record is not None:
+            resumed_record["question_resume_trace"] = dict(trace)
+        logger.info(
+            "question auto-resumed group_id=%s requester_run_id=%s "
+            "requester_provider_id=%s responder_run_id=%s responder_provider_id=%s "
+            "paused_chain_id=%s resumed_run_id=%s resumed_chain_id=%s",
+            group_id,
+            trace["requester_run_id"],
+            trace["requester_provider_id"],
+            trace["responder_run_id"],
+            trace["responder_provider_id"],
+            trace["paused_chain_id"],
+            trace["resumed_run_id"],
+            trace["resumed_chain_id"],
+        )
+        return trace
+    except Exception:
+        logger.warning(
+            "question auto-resume failed for %s (answer remains committed)",
+            doc_id,
+            exc_info=True,
+        )
+        return None
+
+
 # ── Register answer (human/AI bidirectional, atomicity L0007 §3.2/§3.3) ──────────
 
 def register_answer(
@@ -354,6 +484,9 @@ def register_answer(
     author_id: Optional[str] = None,
     selected_option_ids: Optional[list[str]] = None,
     notify_audience: Optional[str] = None,
+    author_provenance: Optional[dict] = None,
+    auto_resume_api_base_url: Optional[str] = None,
+    auto_resume_locale: str = "ko",
 ) -> dict:
     """Register an answer to a query item and transition the container status (atomic).
 
@@ -403,6 +536,7 @@ def register_answer(
     # A body that is already written stays as written: submitting a pick alongside prose
     # keeps the prose as the body and records the pick in selected_options only.
 
+    _provenance = author_provenance if author_kind == "ai" and author_provenance else {}
     q_status = container["status"]
     store = get_store()
     with store.transaction():
@@ -410,6 +544,9 @@ def register_answer(
             question_item_id=item_id, body=body,
             author_kind=author_kind, author_id=author_id,
             selected_options=_dump_json(selected),
+            author_ai_run_id=_provenance.get("ai_run_id"),
+            author_actual_provider_id=_provenance.get("actual_provider_id"),
+            author_actual_provider_name=_provenance.get("actual_provider_name"),
         )
         db_question_items.increment_answer_count(pk=item_id)
         unanswered = db_question_items.list_unanswered(container["id"])
@@ -428,13 +565,22 @@ def register_answer(
         unanswered_count=len(unanswered),
     )
 
-    return {
+    result = {
         "doc_id": doc_id,
         "item_id": item_id,
         "answer_id": answer_id,
         "author_kind": author_kind,
         "status": q_status,
     }
+    if not unanswered and auto_resume_api_base_url:
+        trace = auto_resume_answered_chain(
+            doc_id=doc_id,
+            api_base_url=auto_resume_api_base_url,
+            locale=auto_resume_locale,
+        )
+        if trace is not None:
+            result["question_resume_trace"] = trace
+    return result
 
 
 # ── Lookup ───────────────────────────────────────────────────────────────────────
@@ -451,11 +597,27 @@ def _parse_selected_options(answer: dict) -> list[str]:
     return [o for o in parsed if isinstance(o, str)] if isinstance(parsed, list) else []
 
 
+def _provider_view(run_id: Any, provider_id: Any, provider_name: Any) -> Optional[dict]:
+    """Nest one AI run/provider snapshot into the canonical public shape (0582 T0005 §6).
+
+    None when there is no evidence at all — a human item, or an AI item whose token
+    carried no bound run (legacy row / [Copy Mention] hand-off) — so the UI can render
+    an explicit "external/unconfirmed" label instead of a fabricated provider name.
+    """
+    if not run_id and not provider_id and not provider_name:
+        return None
+    return {"ai_run_id": run_id, "ai_provider_id": provider_id, "ai_provider_name": provider_name}
+
+
 def get_qa_detail(doc_id: str) -> dict:
     """The document's query container + items + answers tree. Empty structure if no container.
 
     Returns {doc_id, status, items: [{...item, options: [{id, label}], answers: [...]}]}.
     options / selected_options are handed to the UI parsed, never as the stored JSON text.
+    Each AI item (asker_kind/author_kind='ai') nests its raw asker_*/author_* columns
+    into ``asker_provider``/``answer.provider`` (0582 T0005 §D) — the same
+    {ai_run_id, ai_provider_id, ai_provider_name} shape every other AI-provenance
+    surface uses, rather than exposing the raw column names to the API.
     """
     container = db_questions.get_container_by_doc(doc_id)
     if container is None:
@@ -468,10 +630,20 @@ def get_qa_detail(doc_id: str) -> dict:
     for item in items:
         item_dict = dict(item)
         item_dict["options"] = _parse_options(item)
+        item_dict["asker_provider"] = _provider_view(
+            item_dict.pop("asker_ai_run_id", None),
+            item_dict.pop("asker_actual_provider_id", None),
+            item_dict.pop("asker_actual_provider_name", None),
+        )
         answers = []
         for answer in db_answers.list_by_question_item(item["id"]):
             answer_dict = dict(answer)
             answer_dict["selected_options"] = _parse_selected_options(answer)
+            answer_dict["author_provider"] = _provider_view(
+                answer_dict.pop("author_ai_run_id", None),
+                answer_dict.pop("author_actual_provider_id", None),
+                answer_dict.pop("author_actual_provider_name", None),
+            )
             answers.append(answer_dict)
         item_dict["answers"] = answers
         result["items"].append(item_dict)

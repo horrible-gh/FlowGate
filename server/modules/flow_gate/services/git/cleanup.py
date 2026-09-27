@@ -12,6 +12,7 @@ from typing import Optional
 
 from modules.flow_gate.db import terminal_cleanup_snapshots as db_terminal_cleanup
 
+from . import merge_target
 from .credentials import GitServiceError
 from .worktree import _abort_disposed_merge_session
 
@@ -143,7 +144,13 @@ def _close_orphan(session: dict, project_id: str) -> None:
     from modules.flow_gate.services import git_service as _gs
     merge_id = int(session["merge_id"])
     group_id = session["group_id"]
-    _gs.db_git.close_session(merge_id, "aborted")
+    # 0594 T0012: an attempt records the outcome and releases only its own
+    # workspace (owner match, §9.3); a legacy row is closed exactly as before.
+    # A workspace owned by someone else leaves the row open as well (§9.1).
+    if not merge_target.close_session_attempt(
+        session, merge_target.ATTEMPT_INTERRUPTED, error={"code": "orphan_recovered"},
+    ):
+        return
     _gs._set_status(group_id, "waiting")
     _gs.db_git.release_lock(project_id, f"merge:{merge_id}")   # legacy leftover, best-effort
     _emit_auto_aborted(project_id, group_id, merge_id, "orphan_recovered")
@@ -166,7 +173,15 @@ def _auto_abort_session(
     if not _gs._acquire_lock(project_id, holder):
         return   # another git op in progress — try again next cycle
     try:
-        if (base_root / ".git" / "MERGE_HEAD").exists():
+        # 0594 T0012: base_root is the attempt's pinned target root (the managed
+        # workspace for a non-base target) — see merge_session_sweep. Ownership is
+        # re-read under the sweep lock BEFORE merge --abort (§9.1/§9.3).
+        if merge_target.session_workspace_ownership(session) != merge_target.OWN_OWNED:
+            _log.warning(
+                "sweep: merge %s target workspace is not its own — left intact", merge_id,
+            )
+            return
+        if _gs._merge_in_progress(base_root):
             proc = _gs._run_git(["merge", "--abort"], cwd=base_root)
             if proc.returncode != 0:
                 _log.warning(
@@ -174,7 +189,10 @@ def _auto_abort_session(
                     group_id, _gs._last_line(proc.stderr),
                 )
                 return   # never force-reset (L §5)
-        _gs.db_git.close_session(merge_id, "aborted")
+        # owner-matched workspace release for an attempt; legacy close unchanged
+        merge_target.close_session_attempt(
+            session, merge_target.ATTEMPT_ABORTED, error={"code": reason},
+        )
         _gs._set_status(group_id, "waiting")
         _gs.db_git.release_lock(project_id, f"merge:{merge_id}")   # legacy leftover, best-effort
         _emit_auto_aborted(project_id, group_id, merge_id, reason)
@@ -273,6 +291,10 @@ def merge_session_sweep(sessions: Optional[list[dict]] = None) -> None:
                 _sweep_tr_session(session, project_id)
                 continue
             review_state = _gs.db_git.session_context(session).get("review_state")
+            if review_state == _gs.REVIEW_STATE_COMPLETED:
+                # 0594 T0012 §6.3: the review finished but the row was never closed.
+                _finish_completed_review(session, project_id)
+                continue
             if review_state in (_gs.REVIEW_STATE_APPLYING, _gs.REVIEW_STATE_RECONCILING):
                 # 0481 T0008: `approve_merge_review` already committed by this point, so
                 # MERGE_HEAD is gone from disk exactly like a normal successful merge —
@@ -288,10 +310,36 @@ def merge_session_sweep(sessions: Optional[list[dict]] = None) -> None:
                             session.get("merge_id"), exc_info=True,
                         )
                 continue
-            base_root = _gs._base_root_of(project_id)
-            if base_root is None or not (base_root / ".git").exists():
-                continue   # checkout gone — do not touch (log only)
-            if not (base_root / ".git" / "MERGE_HEAD").exists():
+            # 0594 T0012 §7: an attempt record exists from BEFORE its merge runs.
+            # A live runner (its lock holder still owns the project lock) is left
+            # alone; one whose runner is gone without ever reaching a conflict is
+            # closed as interrupted. Neither is a conflict session.
+            phase = merge_target.attempt_phase(session)
+            if phase == merge_target.PHASE_IN_PROGRESS:
+                continue
+            if phase == merge_target.PHASE_INTERRUPTED:
+                _recover_interrupted(session, project_id, "interrupted")
+                continue
+            # §9.1/§9.3: a workspace whose marker names another attempt is never
+            # read as this session's orphan/TTL case — row and merge state stay.
+            if merge_target.session_workspace_ownership(session) in (
+                merge_target.OWN_MISMATCH, merge_target.OWN_STALE,
+            ):
+                _log.warning(
+                    "merge session %s: target workspace owned by another attempt — left intact",
+                    session.get("merge_id"),
+                )
+                continue
+            base_root, is_base = merge_target.session_merge_root(session)
+            if is_base:
+                if base_root is None or not (base_root / ".git").exists():
+                    continue   # checkout gone — do not touch (log only)
+            elif base_root is None or not base_root.exists():
+                # The managed workspace is gone: no merge state is left on disk to
+                # protect, so the session is an orphan like a vanished MERGE_HEAD.
+                _gs._close_orphan(session, project_id)
+                continue
+            if not _gs._merge_in_progress(base_root):
                 _gs._close_orphan(session, project_id)
                 continue
             last = session.get("touched_at") or session.get("created_at")
@@ -303,6 +351,41 @@ def merge_session_sweep(sessions: Optional[list[dict]] = None) -> None:
                 "merge session sweep failed for merge %s", session.get("merge_id"),
                 exc_info=True,
             )
+
+
+def _recover_interrupted(session: dict, project_id: str, reason: str) -> None:
+    """Close an interrupted finalize attempt under a short sweep lock (T0012 §6.3)."""
+    from modules.flow_gate.services import git_service as _gs
+    holder = f"sweep:{uuid.uuid4()}"
+    if not _gs._acquire_lock(project_id, holder):
+        return   # another git op in progress — try again next cycle
+    try:
+        fresh = _gs.db_git.get_session(int(session["merge_id"]))
+        if fresh is None or fresh.get("status") != "open":
+            return
+        if merge_target.attempt_phase(fresh) != merge_target.PHASE_INTERRUPTED:
+            return
+        outcome = merge_target.recover_interrupted_attempt(fresh, reason)
+        if outcome == merge_target.ATTEMPT_INTERRUPTED:
+            _emit_auto_aborted(project_id, fresh["group_id"], int(fresh["merge_id"]), reason)
+    finally:
+        _gs.db_git.release_lock(project_id, holder)
+
+
+def _finish_completed_review(session: dict, project_id: str) -> None:
+    """Finish a completed review whose row was left open, under a short sweep lock
+    (a live approve holds the project lock until it has closed the row itself)."""
+    from modules.flow_gate.services import git_service as _gs
+    holder = f"sweep:{uuid.uuid4()}"
+    if not _gs._acquire_lock(project_id, holder):
+        return   # another git op in progress — try again next cycle
+    try:
+        fresh = _gs.db_git.get_session(int(session["merge_id"]))
+        if fresh is None or fresh.get("status") != "open":
+            return
+        merge_target.finish_completed_review(fresh)
+    finally:
+        _gs.db_git.release_lock(project_id, holder)
 
 
 def _start_sweep_daemon() -> None:
@@ -376,6 +459,12 @@ def startup_recovery() -> None:
                     _gs._set_status(group_id, "conflict", merge_id=merge_id)
                     continue
                 review_state = _gs.db_git.session_context(session).get("review_state")
+                if review_state == _gs.REVIEW_STATE_COMPLETED:
+                    # 0594 T0012 §6.3: the review finished (ledger may already say
+                    # merged) but the process died before the row was closed.
+                    merge_target.finish_completed_review(session)
+                    touched.add(int(merge_id))
+                    continue
                 if review_state in (_gs.REVIEW_STATE_APPLYING, _gs.REVIEW_STATE_RECONCILING):
                     # 0481 T0008 / L0007 §2.8.1 item 1: the commit already landed by this
                     # point, so MERGE_HEAD is gone exactly like an ordinary successful
@@ -386,9 +475,33 @@ def startup_recovery() -> None:
                     _gs._set_status(group_id, "conflict", merge_id=merge_id)
                     touched.add(int(merge_id))
                     continue
-                base_root = _gs._base_root_of(project_id)
+                # 0594 T0012 §6.3/§7: every lock is stale at boot, so an attempt that
+                # never reached a conflict was interrupted by the restart itself.
+                # (The pre-restart lock row is still present until the force-release
+                # below, so the live-runner test is skipped here: at boot nothing runs.)
+                if merge_target.attempt_phase(session, at_boot=True) != merge_target.PHASE_CONFLICT:
+                    # A merge that already landed is reconciled to completed; one that
+                    # did not is closed as interrupted; an unprovable one stays open.
+                    outcome = merge_target.recover_interrupted_attempt(session, "interrupted_by_restart")
+                    if outcome == merge_target.ATTEMPT_INTERRUPTED:
+                        _emit_auto_aborted(project_id, group_id, int(merge_id), "interrupted_by_restart")
+                    touched.add(int(merge_id))
+                    continue
+                # §9.1/§9.3: a workspace owned by another attempt is left as it is.
+                if merge_target.session_workspace_ownership(session) in (
+                    merge_target.OWN_MISMATCH, merge_target.OWN_STALE,
+                ):
+                    _log.warning(
+                        "startup: merge %s target workspace owned by another attempt — left intact",
+                        merge_id,
+                    )
+                    continue
+                # The conflict lives where the attempt pinned it: the base checkout
+                # for a base/legacy target, the deterministic managed workspace
+                # (recomputed from the recorded target) otherwise.
+                base_root, _is_base = merge_target.session_merge_root(session)
                 merge_head_exists = bool(
-                    base_root and (base_root / ".git" / "MERGE_HEAD").exists()
+                    base_root and base_root.exists() and _gs._merge_in_progress(base_root)
                 )
                 if merge_head_exists:
                     # Re-affirm the status; do NOT reclaim a merge:{id} lock (§2.6).

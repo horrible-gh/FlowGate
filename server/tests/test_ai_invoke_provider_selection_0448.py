@@ -432,6 +432,127 @@ def test_rework_selection_survives_handoff_bundle_and_resume_resolution(env):
     assert bundle["provider_pinned"] is False
     assert svc.resolve_step_executor(bundle, 2, "flowgate", ROOT) == "aip_header"
 
+
+def test_case_c_the_actual_work_executor_survives_a_handoff_bundle_replay(env):
+    """0596 T0004 (NR0003 rev3): the just-finished WORK hop resolved to aip_opus (a
+    step-level pick) while the run's header/default stayed aip_header -- the handoff
+    bundle that carries the review/rework hand-off forward must preserve aip_opus
+    separately, or resolve_step_executor falls back to the header default."""
+    env["wfseq"].items[1]["provider_id"] = "aip_opus"
+    run = {
+        "continuation_provider_overrides": None,
+        "continuation_base_provider_id": "aip_header",
+        "continuation_selected_provider_id": "aip_opus",
+        "continuation_provider_pinned": False,
+        "continuation_instruction_mode": "auto_approved",
+    }
+    bundle = svc._handoff_bundle(
+        {"doc_ref": ROOT, "target_seq": 4, "issued_to": "usr_admin", "api_base_url": API_BASE},
+        run,
+    )
+    assert bundle["base_provider_id"] == "aip_header"
+    assert bundle["work_executor_provider_id"] == "aip_opus"
+    assert svc.resolve_step_executor(bundle, 2, "flowgate", ROOT) == "aip_opus"
+
+    # A SECOND hand-off (e.g. the review hop's own completion, whose run is mode="single"
+    # and so holds None for continuation_selected_provider_id) must not let that None
+    # overwrite the already-captured value -- the same _carry contract base_provider_id
+    # already relies on.
+    review_run = {
+        "continuation_provider_overrides": None,
+        "continuation_base_provider_id": None,
+        "continuation_selected_provider_id": None,
+        "continuation_provider_pinned": None,
+    }
+    replayed = svc._handoff_bundle(bundle, review_run)
+    assert replayed["work_executor_provider_id"] == "aip_opus"
+    assert svc.resolve_step_executor(replayed, 2, "flowgate", ROOT) == "aip_opus"
+
+
+def test_case_f_a_startup_fallback_actual_executor_outranks_the_selected_head(
+        env, monkeypatch):
+    """Human rejection 2026-09-21 (0596 TR0005 rev2): chain head = aip_1, aip_1 fails to
+    start, aip_2 is the provider that ACTUALLY runs and completes the work, reviewer =
+    aip_3, verdict = issues. `continuation_selected_provider_id` (0435 T0004's finalized
+    chain HEAD, set once at admission and never updated) still names aip_1 after the
+    startup fallback -- only `run["provider_id"]` (set by `_execute_provider_chain`/
+    worker.py as it walks past the failed head) reflects the provider that actually wrote
+    the document. The captured work_executor_provider_id, and therefore the rework
+    executor, must be aip_2, never aip_1 and never the reviewer aip_3."""
+    env["wfseq"].items = [dict(row, provider_id=None, provider_display_name=None) for row in ITEMS]
+    env["chain"]["providers"] = [provider("aip_1"), provider("aip_2"), provider("aip_3")]
+
+    result = start(env, provider_id=None, continuation_provider_overrides=None)
+    assert result["provider"]["id"] == "aip_1"
+    assert result["selected_provider_source"] == "project_default"
+    assert env["worker_chains"][-1] == ["aip_1", "aip_2", "aip_3"]
+
+    run = svc.get_run_record(result["run_id"])
+    assert run["continuation_selected_provider_id"] == "aip_1"
+
+    def _classify(provider_, prompt, run_):
+        if provider_["id"] == "aip_1":
+            return "fast_fail", "simulated startup failure"
+        return "started_ok", None
+
+    monkeypatch.setattr(svc, "_cli_execute", _classify)
+    selected_chain = [provider(pid) for pid in env["worker_chains"][-1]]
+    started = svc._execute_provider_chain(run, selected_chain, "work")
+    svc._classify_end_reason(run, started)
+
+    assert started is True
+    # The chain head is untouched -- 0435 T0004 never rewrites it after admission.
+    assert run["continuation_selected_provider_id"] == "aip_1"
+    # ...but the provider that actually started (and produced the work) is aip_2.
+    assert run["provider_id"] == "aip_2"
+
+    bundle = svc._handoff_bundle(
+        {"doc_ref": ROOT, "target_seq": 4, "issued_to": "usr_admin", "api_base_url": API_BASE},
+        run,
+    )
+    assert bundle["work_executor_provider_id"] == "aip_2"
+
+    executor_id = svc.resolve_step_executor(
+        {**bundle, "reviewer_overrides": {"2": "aip_3"}}, 2, "flowgate", ROOT,
+    )
+    assert executor_id == "aip_2"
+    assert executor_id != "aip_1"
+    assert executor_id != "aip_3"
+
+
+def test_case_g_a_captured_none_survives_the_reviewers_own_completed_run(env):
+    """Human rejection 2026-09-21 (0596 TR0005 rev4, rej_01M31D24MZB58B80): work_executor_
+    provider_id=None (an existing pre-migration paused row, or a captured provider since
+    deleted via the FK's ON DELETE SET NULL) IS a captured value -- "already captured" is
+    decided by KEY PRESENCE, not `is not None`. Reviewer = aip_gpt, review hop completes,
+    verdict = issues: the review hop's OWN run reports provider_id=aip_gpt, but the handoff
+    bundle must not treat the stored None as "never captured" and refill it from that run --
+    doing so would hand the rework to the reviewer instead of the base -> stored -> default
+    fallback the field's absence always used to mean."""
+    pending = {
+        "doc_ref": ROOT, "target_seq": 4, "issued_to": "usr_admin", "api_base_url": API_BASE,
+        "base_provider_id": "aip_header",
+        "work_executor_provider_id": None,
+    }
+    reviewer_run = {
+        "provider_id": "aip_gpt",
+        "continuation_selected_provider_id": "aip_gpt",
+        "continuation_provider_overrides": None,
+        "continuation_base_provider_id": None,
+        "continuation_provider_pinned": None,
+    }
+    bundle = svc._handoff_bundle(pending, reviewer_run)
+    assert "work_executor_provider_id" in bundle
+    assert bundle["work_executor_provider_id"] is None
+
+    executor_id = svc.resolve_step_executor(
+        {**bundle, "reviewer_overrides": {"2": "aip_gpt"}}, 2, "flowgate", ROOT,
+    )
+    assert executor_id != "aip_gpt"
+    # base -> stored -> default fallback applies exactly as it did before this field existed.
+    assert executor_id == "aip_header"
+
+
 def test_a_disabled_explicit_step_override_fails_visible_without_default_fallback(env):
     """A bound explicit pick cannot silently become the stored or project-default provider."""
     env["chain"]["providers"] = [provider(pid) for pid in ALL_PROVIDER_IDS if pid != "aip_step"]

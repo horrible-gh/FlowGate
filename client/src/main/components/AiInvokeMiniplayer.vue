@@ -681,9 +681,15 @@ async function openDoc(entry: AiInvokeRunEntry): Promise<void> {
       d.doc_id,
       { switchProject: true },
     )
-    // 0563 T#2: opening a document is not confirming or deleting a finished card anymore
-    // -- reading a result is not the same act as clearing it. finished/lost cards stay
-    // until an explicit per-card remove or dismissAllFinished(); only the popover closes.
+    // 0592 T0004: opening succeeded, so apply the exact same lifecycle policy as
+    // [목록에서 제거]. Keep this in its own catch: a durable-card removal failure must
+    // leave the already-open document alone and use the remove-card error contract.
+    try {
+      await store.removeCard(entry)
+    } catch (error: any) {
+      if (isNonResumableSystemStop(entry)) showReleaseError(error)
+      else showRemoveCardError(error)
+    }
   } catch {
     showToast(t('main.ai_miniplayer.error_open_failed'), 'danger')
   }

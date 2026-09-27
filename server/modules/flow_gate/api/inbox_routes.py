@@ -44,6 +44,7 @@ from modules.flow_gate.rbac.decorators import _has_permission, require_permissio
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services import register_binding
+from modules.flow_gate.services import snapshot_access_service
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import tool_registry
 from modules.flow_gate.services import step_verification_service
@@ -124,7 +125,7 @@ _DRY_RUN_COPY = {
 
 
 def _maybe_dry_run(
-    body: dict, token_rec: dict, would_register: dict
+    body: dict, token_rec: dict, would_register: dict, locale: str
 ) -> Optional[JSONResponse]:
     """Shared dry-run short-circuit for all three inbox handlers (L0007 §3, P0006).
 
@@ -146,7 +147,6 @@ def _maybe_dry_run(
         return None
 
     limit = _dryrun_max()
-    locale = token_rec.get("continuation_locale")
     copy = _DRY_RUN_COPY.get(locale) or _DRY_RUN_COPY["ko"]
     cnt = int(token_rec.get("dry_run_count") or 0)
     if cnt >= limit:
@@ -720,6 +720,7 @@ def _archive_group_git(
     group_id: str,
     reason: Optional[str] = None,
     actor_user_id: Optional[str] = None,
+    approval_context: Optional[Any] = None,
 ) -> dict:
     """Pin branch/worktree state to named refs, then release and hide the slot."""
     from modules.flow_gate.services import git_service
@@ -734,11 +735,19 @@ def _archive_group_git(
             409, "invalid_state",
             f"git integration is not enabled for project '{project_id}'",
         )
+    borrowed_lock = approval_context is not None
+    if approval_context is not None:
+        git_service._validate_approval_context(
+            approval_context, group_id, project_id
+        )
 
     existing = _git_archive_record(group_id)
     state = git_service.db_git.get_state(group_id)
     if existing and existing.get("status") == "archived":
-        if state is not None and state.get("worktree_registered"):
+        if (
+            state is not None and state.get("worktree_registered")
+            and not borrowed_lock
+        ):
             _git_archive_error(
                 409,
                 "archive_already_exists",
@@ -757,22 +766,36 @@ def _archive_group_git(
     # A fresh request must be a real finalize choice.  An interrupted request
     # already has durable refs and resumes below without taking a second stash.
     if existing is None:
-        finalized = _GIT_ARCHIVE_ORIGINAL_GET_FINALIZE(group_id)
-        current = (finalized.get("state") or {}).get("status")
-        if current not in ("awaiting_choice", "waiting"):
+        if borrowed_lock:
+            current = (state or {}).get("status") or "none"
+        else:
+            finalized = _GIT_ARCHIVE_ORIGINAL_GET_FINALIZE(group_id)
+            current = (finalized.get("state") or {}).get("status")
+        allowed = (
+            ("none", "awaiting_choice", "waiting")
+            if borrowed_lock else ("awaiting_choice", "waiting")
+        )
+        if current not in allowed:
             _git_archive_error(
                 409, "invalid_state",
                 f"group '{group_id}' cannot be archived from git state '{current or 'none'}'",
             )
 
-    holder = f"archive:{uuid.uuid4()}"
-    if not git_service._acquire_lock(project_id, holder):
+    holder = (
+        approval_context.lock_holder
+        if approval_context is not None
+        else f"archive:{uuid.uuid4()}"
+    )
+    if not borrowed_lock and not git_service._acquire_lock(project_id, holder):
         _git_archive_error(409, "git_busy", "another Git operation is in progress")
     try:
         record = _git_archive_record(group_id)
         state = git_service.db_git.get_state(group_id)
         if record and record.get("status") == "archived":
-            if state is not None and state.get("worktree_registered"):
+            if (
+                state is not None and state.get("worktree_registered")
+                and not borrowed_lock
+            ):
                 _git_archive_error(
                     409,
                     "archive_already_exists",
@@ -894,7 +917,11 @@ def _archive_group_git(
         # Existing cleanup handles live, missing, and half-removed worktrees.  It
         # is safe to force-discard because the named refs now own every byte.
         state = git_service.db_git.get_state(group_id)
-        if state is not None and state.get("worktree_registered"):
+        if (
+            not borrowed_lock
+            and state is not None
+            and state.get("worktree_registered")
+        ):
             if not git_service._cleanup_group_slot(
                 project_id, group_id, force_discard=True
             ):
@@ -903,10 +930,9 @@ def _archive_group_git(
                     "the archive refs are safe, but the worktree could not be released; retry",
                 )
 
-        # An archived slot is inactive. Keeping awaiting_choice here made an AC
-        # approval race a stale git_action into the precheck and fail with 422.
-        # The pre-archive status is retained in the archive record for restore.
-        if git_service.db_git.get_state(group_id) is not None:
+        # Approval-coupled archive keeps its slot until the AC/root commit. Manual
+        # archive preserves the existing immediate teardown and neutral status.
+        if not borrowed_lock and git_service.db_git.get_state(group_id) is not None:
             git_service.db_git.set_status(group_id, "none")
 
         # Do not soft-delete the group row. The document tree fetches project
@@ -917,9 +943,11 @@ def _archive_group_git(
         record["status"] = "archived"
         _save_git_archive_record(record, actor_user_id)
     finally:
-        git_service.db_git.release_lock(project_id, holder)
+        if not borrowed_lock:
+            git_service.db_git.release_lock(project_id, holder)
 
-    _emit_git_archive_refresh(project_id, group_id, "archived")
+    if not borrowed_lock:
+        _emit_git_archive_refresh(project_id, group_id, "archived")
     return {"ok": True, "result": record}
 
 
@@ -1172,11 +1200,104 @@ def _git_finalize_with_archive(
     group_id: str,
     action: Optional[str],
     commit_message: Optional[str] = None,
+    *,
+    approval_context: Optional[Any] = None,
+    target_branch: Optional[str] = None,
 ) -> dict:
     if action == "stash":
         # Direct API callers may use commit_message as the optional archive reason.
-        return _archive_group_git(group_id, reason=commit_message)
-    return _GIT_ARCHIVE_ORIGINAL_FINALIZE(group_id, action, commit_message)
+        outcome = _archive_group_git(
+            group_id,
+            reason=commit_message,
+            actor_user_id=(
+                approval_context.actor_user_id if approval_context is not None else None
+            ),
+            approval_context=approval_context,
+        )
+        if approval_context is not None:
+            archive = outcome.get("result") or {}
+            intent = _git_archive_service.approval_intent.build_intent(
+                approval_intent_id=approval_context.approval_intent_id,
+                group_id=group_id,
+                ac_doc_id=approval_context.doc_id,
+                requested_by=approval_context.actor_user_id,
+                git_action="stash",
+            )
+            _git_archive_service.approval_intent.record_clean_retry(
+                group_id=group_id,
+                intent=intent,
+                terminal_status="stashed",
+                merge_commit=None,
+            )
+            return {"ok": True, "result": {
+                "action": "stash",
+                "status": "stashed",
+                "merge_commit": None,
+                "pushed": False,
+                "merge_id": None,
+                "conflict_files": [],
+                "archive": archive,
+                "terminal_retry": bool(archive.get("idempotent")),
+            }}
+        return outcome
+    if target_branch is None:
+        return _GIT_ARCHIVE_ORIGINAL_FINALIZE(
+            group_id,
+            action,
+            commit_message,
+            approval_context=approval_context,
+        )
+    # 0594 T0012: the finalize target carrier must survive this seam.
+    return _GIT_ARCHIVE_ORIGINAL_FINALIZE(
+        group_id,
+        action,
+        commit_message,
+        approval_context=approval_context,
+        target_branch=target_branch,
+    )
+
+
+def _complete_approve_git_action_with_archive(
+    group_id: str,
+    git_action: str,
+    outcome: dict,
+    *,
+    approved: bool,
+) -> None:
+    if git_action != "stash":
+        _GIT_ARCHIVE_ORIGINAL_COMPLETE(
+            group_id, git_action, outcome, approved=approved
+        )
+        return
+    from modules.flow_gate.services import git_service
+
+    try:
+        project_id = git_service._project_of_group(group_id)
+        if approved:
+            state = git_service.db_git.get_state(group_id)
+            if state is not None and state.get("worktree_registered"):
+                git_service._cleanup_group_slot(
+                    project_id, group_id, force_discard=True
+                )
+            if git_service.db_git.get_state(group_id) is not None:
+                git_service.db_git.set_status(group_id, "none")
+            _emit_git_archive_refresh(project_id, group_id, "archived")
+        else:
+            git_service._emit("git_finalize_done", project_id, group_id, {
+                "project": project_id,
+                "group_id": group_id,
+                "action": "stash",
+                "status": "stashed",
+                "approval": {
+                    "approved": False,
+                    "document_status": "pending_review",
+                    "root_status": "wf_in_progress",
+                    "stage": "approval_commit",
+                    "deferred": False,
+                },
+            })
+    except Exception:
+        pass
 
 
 def _precheck_approve_git_action_with_archive(doc: Optional[dict], git_action: str) -> str:
@@ -1214,14 +1335,17 @@ def _install_git_archive_finalize_extension() -> None:
         git_service.finalize = _git_finalize_with_archive
         git_service.get_finalize_state = _git_finalize_state_with_archive
         git_service.precheck_approve_git_action = _precheck_approve_git_action_with_archive
+        git_service.complete_approve_git_action = _complete_approve_git_action_with_archive
         return
     git_service._flowgate_git_archive_installed = True
     git_service._flowgate_git_archive_original_finalize = git_service.finalize
     git_service._flowgate_git_archive_original_get_finalize = git_service.get_finalize_state
     git_service._flowgate_git_archive_original_precheck = git_service.precheck_approve_git_action
+    git_service._flowgate_git_archive_original_complete = git_service.complete_approve_git_action
     git_service.finalize = _git_finalize_with_archive
     git_service.get_finalize_state = _git_finalize_state_with_archive
     git_service.precheck_approve_git_action = _precheck_approve_git_action_with_archive
+    git_service.complete_approve_git_action = _complete_approve_git_action_with_archive
 
 
 from modules.flow_gate.services import git_service as _git_archive_service
@@ -1242,6 +1366,11 @@ _GIT_ARCHIVE_ORIGINAL_PRECHECK = getattr(
     _git_archive_service,
     "_flowgate_git_archive_original_precheck",
     _git_archive_service.precheck_approve_git_action,
+)
+_GIT_ARCHIVE_ORIGINAL_COMPLETE = getattr(
+    _git_archive_service,
+    "_flowgate_git_archive_original_complete",
+    _git_archive_service.complete_approve_git_action,
 )
 _install_git_archive_finalize_extension()
 
@@ -2441,12 +2570,26 @@ def _handle_failure_origin_review(
     if run.get("failure_origin") is not None:
         return _fail(409, "failure_origin_already_classified")
 
+    # 0582 T0007: classifier provenance comes only from the verified token-bound run.
+    # Keep the actor in failure_origin_reviewer_id and persist this independent provider
+    # snapshot in the same UPDATE as the classification.
+    from modules.flow_gate.services.ai_invoke.provenance import (
+        resolve_run_provenance,
+        to_api_payload,
+    )
+    failure_origin_provenance = resolve_run_provenance(
+        token_rec.get("ai_run_id"), doc_id=doc_id,
+        allowed_action_scopes=("failure_origin_review",),
+    )
     reviewed_at = now_iso()
     db_test_runs.store_failure_origin(
         run_id=run_id, reviewer_id=actor_user_id, classification=classification,
         findings_json=json.dumps(findings, ensure_ascii=False),
         comment=comment if comment is None or isinstance(comment, str) else str(comment),
         reviewed_at=reviewed_at,
+        ai_run_id=failure_origin_provenance.get("ai_run_id"),
+        actual_provider_id=failure_origin_provenance.get("actual_provider_id"),
+        actual_provider_name=failure_origin_provenance.get("actual_provider_name"),
     )
     saved = db_test_runs.get_run(run_id) or {}
     if saved.get("failure_origin_reviewed_at") != reviewed_at:
@@ -2458,7 +2601,9 @@ def _handle_failure_origin_review(
     return JSONResponse(status_code=200, content={
         "ok": True, "action": "failure_origin_review", "run_id": run_id,
         "doc_id": doc_id, "classification": classification,
-        "failure_origin_reviewed_at": reviewed_at, "continuation": branch,
+        "failure_origin_reviewed_at": reviewed_at,
+        "failure_origin_provider": to_api_payload(failure_origin_provenance),
+        "continuation": branch,
     })
 
 
@@ -2495,6 +2640,17 @@ def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSONRespon
     if doc is None:
         return _fail(404, f"Document {doc_id} does not exist")
 
+    # T0004 §10 (flowgate.default.0520 NR0003 rework, flowgate.default.0621 NR0003/T0004):
+    # the worker-token test_run path is the continuous-chain hand-off itself (see the
+    # continuation_target_seq branch below), so it must resolve locale with the same
+    # priority as every other continuation-token consumer (test_run_routes.py's
+    # repair_token branch) — token's own continuation_locale first, then the request's
+    # X-Locale header, then the "ko" service default. This must happen before the
+    # dry-run short-circuit so dry-run and the real test run share one effective_locale.
+    effective_locale = template_provision.normalize_locale(
+        token_rec.get("continuation_locale") or request.headers.get("x-locale")
+    )
+
     dry_resp = _maybe_dry_run(
         body,
         token_rec,
@@ -2503,18 +2659,10 @@ def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSONRespon
             "doc_id": doc_id,
             "checks_passed": ["auth", "context_binding", "permission", "referential_integrity"],
         },
+        effective_locale,
     )
     if dry_resp is not None:
         return dry_resp
-
-    # T0004 §10 (flowgate.default.0520 NR0003 rework): the worker-token test_run path is the
-    # continuous-chain hand-off itself (see the continuation_target_seq branch below), so it
-    # must resolve locale with the same priority as every other continuation-token consumer
-    # (test_run_routes.py's repair_token branch) — token's own continuation_locale first, then
-    # the request's X-Locale header, then the "ko" service default.
-    effective_locale = (
-        token_rec.get("continuation_locale") or request.headers.get("x-locale") or "ko"
-    )
 
     try:
         result = test_run_service.validate_and_create_run(
@@ -2638,7 +2786,7 @@ def _review_receipt_failure(reason: str, locale: str) -> JSONResponse:
     })
 
 
-def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
+def _review_provenance_impl(token_rec: dict, doc_id: str) -> dict[str, Any]:
     """Server-owned provider evidence for one review submission (0535 T0007 §2).
 
     The three states of ``fallback_used`` are decided ONLY from the ai-invoke run
@@ -2736,6 +2884,57 @@ def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
             "fallback_used": fallback_used,
         })
         return provenance
+    except Exception:
+        return {}
+
+
+def _review_provenance(token_rec: dict, doc_id: str) -> dict[str, Any]:
+    """Public entry point for review provenance (0582 T0005 / TR0012).
+
+    ``_review_provenance_impl`` above is main's own 0583 review-round-aware body, kept
+    byte-for-byte as main has it so this file merges against main without conflict.
+    Its own early guard is blind to one shape ``effective_action_scope`` (the common
+    0582 provenance helper) already knows how to read: a document_review_loop hop can
+    rewrite ``hop_kind`` to "review"/"rework" without leaving a ``document_review_loop``
+    record behind to read a ``current_stage`` from, and the impl's guard treats that as
+    a plain non-review run, returning ``{}`` before it ever looks at the provider ids.
+
+    This wrapper only re-derives provenance through the common helper
+    (``resolve_run_provenance``) when the impl came back empty -- an ordinary
+    submission (impl succeeds on its own) still calls ``get_run_record`` exactly once.
+    """
+    provenance = _review_provenance_impl(token_rec, doc_id)
+    if provenance:
+        return provenance
+    run_id = token_rec.get("ai_run_id")
+    if not run_id:
+        return {}
+    try:
+        from modules.flow_gate.services.ai_invoke.provenance import (
+            effective_action_scope,
+            resolve_run_provenance,
+        )
+        from modules.flow_gate.services.ai_invoke.runtime import get_run_record
+
+        review_run = get_run_record(run_id)
+        if not review_run or review_run.get("doc_ref") != doc_id:
+            return {}
+        if effective_action_scope(review_run) != "review":
+            return {}
+        loop = review_run.get("document_review_loop") or {}
+        requested_id = loop.get("reviewer_provider_id") or review_run.get("requested_provider_id")
+        run_for_resolve = {**review_run, "requested_provider_id": requested_id}
+        snapshot = resolve_run_provenance(run_id, doc_id=doc_id, run=run_for_resolve)
+        result: dict[str, Any] = {"review_run_id": run_id}
+        review_intent = review_run.get("review_intent")
+        if review_intent in ("normal", "rerun"):
+            result["review_intent"] = review_intent
+            superseded_id = review_run.get("review_admission_superseded_review_id")
+            if review_intent == "rerun" and superseded_id is not None:
+                result["superseded_review_id"] = int(superseded_id)
+        if snapshot:
+            result.update({k: v for k, v in snapshot.items() if k != "ai_run_id"})
+        return result
     except Exception:
         return {}
 
@@ -3704,7 +3903,9 @@ def _continuation_self_chain(
     _review_counts, _reviewer_overrides = _ai_invoke.active_review_selection(chain_group)
     if (
         _ai_invoke.has_active_run(chain_group)
-        and _ai_invoke.resolve_review_count(_review_counts, completed_seq) != 0
+        and _ai_invoke.resolve_review_count(
+            _review_counts, completed_seq, spine_doc_ref
+        ) != 0
     ):
         return _hand_off_to_engine(review_pending=True)
 
@@ -3937,6 +4138,11 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         body_for_guards, normalizations = _normalize_submission_body(
             _raw_submission_text, where="new"
         )
+    snapshot_provenance: list[dict] = []
+    if doc_type.upper() == "TR" and body_for_guards is not None:
+        body_for_guards, snapshot_provenance = snapshot_access_service.inject_tr_provenance(
+            body_for_guards, str(token_rec.get("ai_run_id") or "")
+        )
     _new_locale_for_guard = template_provision.normalize_locale(
         token_rec.get("continuation_locale") or request.headers.get("x-locale") or "ko"
     )
@@ -4007,7 +4213,10 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             )
         try:
             wp_plan = work_plan_service.validate(
-                wp_parsed, project_id=project, action="create",
+                wp_parsed,
+                project_id=project,
+                action="create",
+                allow_pre_instruction_attachments=False,
             )
         except work_plan_service.WorkPlanValidationError as exc:
             return _fail(
@@ -4267,7 +4476,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         would_register["worktree_untracked"] = worktree_untracked
     if normalizations:
         would_register["normalizations"] = normalizations
-    dry_resp = _maybe_dry_run(body, token_rec, would_register)
+    dry_resp = _maybe_dry_run(body, token_rec, would_register, _locale)
     if dry_resp is not None:
         return dry_resp
 
@@ -4363,6 +4572,8 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # collapses it anyway.
     if tr_scope_result is not None:
         meta_payload["tr_scope"] = _tr_scope_meta(tr_scope_result)
+    if snapshot_provenance:
+        meta_payload["scratch_snapshot_provenance"] = snapshot_provenance
     # 0391 T0005 §5-6: record the corruption/fingerprint bypass reason for audit purposes
     # (no new column/migration).
     _force_encoding_reason = str(body.get("force_encoding_reason") or "").strip()
@@ -4386,7 +4597,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     _origin_run_id = token_rec.get("ai_run_id")
     _origin_provider_name = _resolve_origin_provider_name(_origin_run_id)
     try:
-        db_docs.create({
+        created_doc = db_docs.create({
             "doc_id": canonical_doc_id,
             "project_id": project,
             "module": module,
@@ -4419,6 +4630,15 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 project_id=project,
                 notify_audience=actor_user_id,
             )
+        if wp_plan is not None:
+            # 0599 T#2: persist the exact canonical AI-created bytes as r0 only
+            # after the document row and any attached questions are registered.
+            work_plan_service.ensure_revision_snapshot(
+                created_doc,
+                stored_path,
+                created_by=actor_user_id,
+                revision_no=0,
+            )
     except Exception as exc:
         # storage/DB rollback: q_service validation failures must not leave a half-created
         # document, and their client-facing 4xx status must survive this route boundary.
@@ -4434,6 +4654,14 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
             return _fail(exc.status_code, detail)
         return _fail(500, f"DB registration error: {exc}")
+
+    if snapshot_provenance:
+        try:
+            snapshot_access_service.attach_tr(
+                str(token_rec.get("ai_run_id") or ""), canonical_doc_id
+            )
+        except Exception:
+            pass
 
     db_events.create({
         "event_type": "action_taken",
@@ -4854,6 +5082,19 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         target["responded_at"] = now_iso()
         target["response_recorded_by"] = actor_user_id
         target["response_revision_no"] = existing_doc.get("revision_no", 0) + 1
+        # 0582 T0005 SSC: snapshot THIS rework submission's own effective run/provider --
+        # never the review's (a different run) and never a prior response's (a stale
+        # snapshot). action_scope="edit" matches how this very token was admitted;
+        # doc_id=None because a rejected resubmission may answer on behalf of a document
+        # whose doc_ref the run recorded before any anchor/rename, and a legacy/external
+        # token with no bound run degrades to {} exactly like _review_provenance does.
+        from modules.flow_gate.services.ai_invoke.provenance import resolve_run_provenance
+        _response_provenance = resolve_run_provenance(
+            token_rec.get("ai_run_id"), doc_id=None, allowed_action_scopes=("edit",)
+        )
+        target["response_ai_run_id"] = _response_provenance.get("ai_run_id")
+        target["response_actual_provider_id"] = _response_provenance.get("actual_provider_id")
+        target["response_actual_provider_name"] = _response_provenance.get("actual_provider_name")
         rejection_history_update = json.dumps(history, ensure_ascii=False)
 
     if linked_doc_id and db_docs.get_by_id(linked_doc_id) is None:
@@ -4910,6 +5151,16 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if _edit_raw_submission_text is not None:
         edit_body_for_guards, edit_normalizations = _normalize_submission_body(
             _edit_raw_submission_text, where="edit"
+        )
+    edit_snapshot_provenance: list[dict] = []
+    if (
+        str(existing_doc.get("type_code") or "").upper() == "TR"
+        and edit_body_for_guards is not None
+    ):
+        edit_body_for_guards, edit_snapshot_provenance = (
+            snapshot_access_service.inject_tr_provenance(
+                edit_body_for_guards, str(token_rec.get("ai_run_id") or "")
+            )
         )
     _edit_locale_for_guard = template_provision.normalize_locale(
         token_rec.get("continuation_locale") or request.headers.get("x-locale") or "ko"
@@ -4980,7 +5231,11 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             )
         try:
             wp_plan = work_plan_service.validate(
-                wp_parsed, project_id=project, action="save",
+                wp_parsed,
+                project_id=project,
+                doc_id=existing_doc.get("doc_id"),
+                action="save",
+                allow_pre_instruction_attachments=False,
             )
         except work_plan_service.WorkPlanValidationError as exc:
             return _fail(
@@ -5178,7 +5433,7 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         edit_would_register["worktree_untracked"] = edit_worktree_untracked
     if edit_normalizations:
         edit_would_register["normalizations"] = edit_normalizations
-    dry_resp = _maybe_dry_run(body, token_rec, edit_would_register)
+    dry_resp = _maybe_dry_run(body, token_rec, edit_would_register, _locale)
     if dry_resp is not None:
         return dry_resp
 
@@ -5203,7 +5458,28 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # backup_path_rel is the relative value persisted to document_revisions.
     backup_path_str: Optional[str] = None
     backup_path_rel: Optional[str] = None
-    if stored_path and stored_path.exists():
+    existing_wp_revision: Optional[dict] = None
+    if wp_plan is not None:
+        try:
+            existing_wp_revision = db_revisions.get_single_by_doc_revision(
+                doc_id, current_revision_no,
+            )
+        except db_revisions.RevisionAmbiguityError as exc:
+            return _fail(500, str(exc))
+        if existing_wp_revision is not None:
+            try:
+                existing_wp_path = work_plan_service.resolve_revision_snapshot(
+                    existing_wp_revision,
+                    project_id=project,
+                    doc_id=doc_id,
+                )
+                # Reuse the immutable source for CAS rollback/change summary without
+                # copying over it or registering a second row.
+                backup_path_str = str(existing_wp_path)
+                backup_path_rel = existing_wp_revision.get("backup_path")
+            except work_plan_service.RevisionSnapshotError as exc:
+                return _fail(500, str(exc))
+    if existing_wp_revision is None and stored_path and stored_path.exists():
         revisions_dir = stored_path.parent / "revisions"
         revisions_dir.mkdir(parents=True, exist_ok=True)
         # The backup uses the same extension as the original. A work plan's canonical
@@ -5212,7 +5488,13 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         backup_filename = f"{doc_id}.r{current_revision_no}{stored_path.suffix or '.md'}"
         backup_path = revisions_dir / backup_filename
         try:
-            shutil.copy2(str(stored_path), str(backup_path))
+            if wp_plan is not None:
+                with stored_path.open("rb") as source_fh, backup_path.open("xb") as backup_fh:
+                    shutil.copyfileobj(source_fh, backup_fh)
+                    backup_fh.flush()
+                    os.fsync(backup_fh.fileno())
+            else:
+                shutil.copy2(str(stored_path), str(backup_path))
             backup_path_str = str(backup_path)
             backup_path_rel = to_storage_relative(backup_path, project)
         except OSError as exc:
@@ -5285,6 +5567,14 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
         return _fail(409, "Concurrent modification conflict. Please retry.")
 
     new_revision_no: int = refreshed["revision_no"]
+
+    if edit_snapshot_provenance:
+        try:
+            snapshot_access_service.attach_tr(
+                str(token_rec.get("ai_run_id") or ""), doc_id
+            )
+        except Exception:
+            pass
 
     # ── Step 7.1: Persist body fingerprint (NR0003 §4-2) ─────────────────────────────
     # The dup-body guard can only catch a twin whose meta carries content_sha256.
@@ -5497,7 +5787,10 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 edited_doc = db_docs.get_by_id(doc_id)
                 if edited_doc and edited_doc.get("doc_review_status") == "revised":
                     from modules.flow_gate.api.v1.events.publisher import broadcast_event_threadsafe
-                    from modules.flow_gate.workflow.pipeline_service import parse_rejection_history
+                    from modules.flow_gate.workflow.pipeline_service import (
+                        enrich_rejection_history_provenance,
+                        parse_rejection_history,
+                    )
                     # flowgate.default.0561 T0004: the rework response (ai_response /
                     # responded_at / response_revision_no) is already written into
                     # rejection_history atomically with the revision CAS above (T0007),
@@ -5506,6 +5799,15 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
                     # doc.rejection_history when the key is PRESENT on the payload, so
                     # omitting it here left the sidebar's AI response thread blank until
                     # a manual reload/reopen even though the row was already saved.
+                    #
+                    # 0582 TR0006 rev1: GET /document already runs this same list through
+                    # enrich_rejection_history_provenance (document_routes.py /
+                    # documents/routers/documents.py) before a browser ever sees it. This
+                    # broadcast is the OTHER path a browser's rejection_history can come
+                    # from, and DocHeader's listener replaces its whole enriched array with
+                    # whatever this payload carries -- an un-enriched list here showed the
+                    # just-recorded response's provider as undefined ("AI · 외부/미확인")
+                    # until the next manual GET.
                     broadcast_event_threadsafe(FlowEvent(
                         event_type=EventType.DOC_REVIEW_STATUS_CHANGED,
                         payload={
@@ -5513,8 +5815,8 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
                             "prev_status": "rejected",
                             "next_status": "revised",
                             "rejection_reason": None,
-                            "rejection_history": parse_rejection_history(
-                                edited_doc.get("rejection_history")
+                            "rejection_history": enrich_rejection_history_provenance(
+                                parse_rejection_history(edited_doc.get("rejection_history"))
                             ),
                         },
                         audience="*",

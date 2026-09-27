@@ -539,25 +539,12 @@ const presetActive = ref(false)
 const presetTargetSeq = ref<number | null>(null)
 const editedSeqs = ref(new Set<number>())
 const prefilledMessageSeqs = ref(new Set<number>())
-// 0408 M0019 3rd re-rejection ("문서에서 멘트와 프로바이더를 변경했는데 왜 다이얼로그에 적용되지 않는거지?"):
-// the sequence rows are a SNAPSHOT of the work plan, taken when somebody last poured it. The
-// plan kept moving afterwards, so the dialog was showing sentences and providers the person
-// had already replaced in the document. These hold the plan's values as they are right now.
-const planFill = ref<{
-  wpDocId: string
-  wpRevisionNo: number | null
-  notes: Record<number, string>
-  providers: Record<number, string>
-} | null>(null)
-// Steps the person edited by hand in THIS dialog. A later plan read never overwrites them —
-// the newest word about a step is the one its owner just typed.
-// 0444 T0007 (NR0003 §4-5): two sets, not one. They used to share a single set, so typing a
-// sentence into a row also froze that row's PROVIDER against every later plan re-read — which
-// is a large part of why the provider looked stuck to the person who reported this.
-// A hand-typed value is only protected from the plan on the field it was actually typed in.
+// Fields touched in this dialog remain runtime overrides. Work-plan values are not re-read here:
+// apply is the durable snapshot boundary, and every untouched value comes from the sequence row.
 const touchedNoteSeqs = ref(new Set<number>())
 const touchedProviderSeqs = ref(new Set<number>())
-let planFillToken = 0
+const touchedReviewCountSeqs = ref(new Set<number>())
+const touchedReviewerSeqs = ref(new Set<number>())
 const presetRefreshMessage = ref('')
 let initializingPreset = false
 const presetUnsetCount = computed(() => (
@@ -640,24 +627,32 @@ const reviewRows = providerRows
 const defaultReviewerId = computed(() => props.providers?.[0]?.id ?? '')
 
 function reviewCountValue(item: WorkflowStepItem): number {
-  return reviewCountOverrides.value[item.item_seq] ?? REVIEW_COUNT_DEFAULT
+  return reviewCountOverrides.value[item.item_seq]
+    ?? item.review_count
+    ?? REVIEW_COUNT_DEFAULT
 }
 
 function reviewerValue(item: WorkflowStepItem): string {
-  return reviewerOverrides.value[item.item_seq] ?? defaultReviewerId.value
+  return reviewerOverrides.value[item.item_seq]
+    ?? item.reviewer_provider_id
+    ?? defaultReviewerId.value
 }
 
 function onReviewCountChange(item: WorkflowStepItem, value: string) {
+  touchedReviewCountSeqs.value = new Set([...touchedReviewCountSeqs.value, item.item_seq])
   const count = Number(value)
   const next = { ...reviewCountOverrides.value }
-  if (!REVIEW_COUNT_OPTIONS.value.includes(count) || count === REVIEW_COUNT_DEFAULT) delete next[item.item_seq]
+  const baseline = item.review_count ?? REVIEW_COUNT_DEFAULT
+  if (!REVIEW_COUNT_OPTIONS.value.includes(count) || count === baseline) delete next[item.item_seq]
   else next[item.item_seq] = count
   reviewCountOverrides.value = next
 }
 
 function onReviewerChange(item: WorkflowStepItem, value: string) {
+  touchedReviewerSeqs.value = new Set([...touchedReviewerSeqs.value, item.item_seq])
   const next = { ...reviewerOverrides.value }
-  if (!value || value === defaultReviewerId.value) delete next[item.item_seq]
+  const baseline = item.reviewer_provider_id ?? defaultReviewerId.value
+  if (!value || value === baseline) delete next[item.item_seq]
   else next[item.item_seq] = value
   reviewerOverrides.value = next
 }
@@ -706,68 +701,6 @@ function applySequenceNotePrefill(steps: WorkflowStepItem[]) {
   // value from the row (or its pair); only a real edit below creates an override entry.
   messageOverrides.value = {}
   prefilledMessageSeqs.value = new Set(filled)
-}
-
-// 0405 L0010 §2.6 `project()` already answers exactly this question on the server — which
-// plan step's provider/mention belongs to which sequence row, folded the way the chosen
-// execution mode folds it (N/T -> NR/TR under [Auto-approve], own value wins over the folded one). It is
-// the same call the work-plan apply preview makes; this reads it for a sequence that was
-// poured earlier, so the document stays the thing a person edits and the dialog stops
-// showing a stale copy of it.
-async function loadPlanFill() {
-  const wpDocId = sequenceSourceDocId.value
-  if (presetActive.value || !wpDocId) {
-    planFill.value = null
-    return
-  }
-  const token = ++planFillToken
-  try {
-    const res = await postRequest<any>(
-      '/api/v1/documents/' + encodeURIComponent(wpDocId) + '/work-plan/apply/preview',
-      { instruction_mode: instructionMode.value },
-    )
-    if (token !== planFillToken) return
-    const fill = res.data?.fill_preview ?? {}
-    planFill.value = {
-      wpDocId,
-      wpRevisionNo: res.data?.wp_revision_no ?? null,
-      notes: Object.fromEntries(
-        Object.entries(fill.note_overrides ?? {}).map(([seq, note]) => [Number(seq), String(note)]),
-      ),
-      providers: Object.fromEntries(
-        Object.entries(fill.provider_overrides ?? {}).map(([seq, id]) => [Number(seq), String(id)]),
-      ),
-    }
-    applyPlanFill()
-  } catch {
-    // Best effort: an unreadable plan leaves every stored value exactly where it was. The
-    // dialog must still open and still be usable without it.
-    if (token === planFillToken) {
-      planFill.value = null
-    }
-  }
-}
-
-/** Write the plan's current values in, for every step the person has not typed into. */
-function applyPlanFill() {
-  const fill = planFill.value
-  if (!fill || presetActive.value) return
-  const steps = picker.value.steps ?? []
-  const nextNotes = { ...messageOverrides.value }
-  const nextProviders = { ...overrides.value }
-  for (const item of steps) {
-    const seq = item.item_seq
-    const planNote = fill.notes[seq]
-    if (!touchedNoteSeqs.value.has(seq) && planNote !== undefined && planNote !== ownStoredMessage(item)) {
-      nextNotes[seq] = planNote
-    }
-    const planProvider = fill.providers[seq]
-    if (!touchedProviderSeqs.value.has(seq) && planProvider !== undefined && planProvider !== (item.provider_id ?? '')) {
-      nextProviders[seq] = planProvider
-    }
-  }
-  messageOverrides.value = nextNotes
-  overrides.value = nextProviders
 }
 
 async function revertSequenceNotes() {
@@ -977,17 +910,17 @@ function onProceed() {
   }
   const validAutoApprove = inRangeAutoApproveCandidates.value
   const autoApproveOut = autoApproveItemSeqs.value.filter(seq => validAutoApprove.has(seq))
-  // 0414 T0012 / P0007: 검수 횟수 0 은 "안 함"이자 기본값이라 요청에 실을 것이 없다. 실리는
-  // 행에는 반드시 검수자를 짝지어 담아 두 맵의 키 공간을 일치시킨다 — 횟수 없는 검수자
-  // 항목은 서버 정규화가 떨어뜨리는 고아이고, 화면이 만들 이유가 없다. `executionSteps` 를
-  // 훑으므로 fromDecision(아직 item_seq 가 없는 상태)에서는 둘 다 빈 맵이다.
+  // Only genuine runtime differences ride the request. Explicit 0 is retained because it
+  // disables a non-zero sequence baseline; reviewer-only overrides remain valid when that
+  // baseline enables review. A pre-decision run still has no item_seq and therefore sends none.
   const reviewCountOverridesOut: Record<number, number> = {}
   const reviewerOverridesOut: Record<number, string> = {}
   for (const item of executionSteps.value) {
-    const count = reviewCountValue(item)
-    if (count === REVIEW_COUNT_DEFAULT || !REVIEW_COUNT_OPTIONS.value.includes(count)) continue
-    reviewCountOverridesOut[item.item_seq] = count
-    const reviewer = reviewerValue(item)
+    const count = reviewCountOverrides.value[item.item_seq]
+    if (count !== undefined && REVIEW_COUNT_OPTIONS.value.includes(count)) {
+      reviewCountOverridesOut[item.item_seq] = count
+    }
+    const reviewer = reviewerOverrides.value[item.item_seq]
     if (reviewer) reviewerOverridesOut[item.item_seq] = reviewer
   }
   emit('confirm', {
@@ -1050,13 +983,12 @@ function installPreset(value: WorkPlanFillPreset | null | undefined) {
   prefilledMessageSeqs.value = new Set()
   touchedNoteSeqs.value = new Set()
   touchedProviderSeqs.value = new Set()
-  planFill.value = null
-  planFillToken += 1
-  // 0414 T0012: 작업계획 프리셋에는 검수 필드가 없다. 프리셋이 있든 없든 검수 상태는 늘
-  // 이번 열기의 기본값(횟수 0 · 기본 검수자)에서 시작하며, 이전 실행의 선택을 물려받거나
-  // provider/message 프리셋에 얹혀 영속화되지 않는다.
-  reviewCountOverrides.value = {}
-  reviewerOverrides.value = {}
+  touchedReviewCountSeqs.value = new Set()
+  touchedReviewerSeqs.value = new Set()
+  // Runtime maps are session-scoped. With no legacy preset they start empty and the
+  // controls read the durable sequence baseline; a preset may explicitly seed run overrides.
+  reviewCountOverrides.value = value ? { ...(value.reviewCountOverrides ?? {}) } : {}
+  reviewerOverrides.value = value ? { ...(value.reviewerOverrides ?? {}) } : {}
   if (value) {
     presetActive.value = true
     instructionMode.value = value.instructionMode
@@ -1096,13 +1028,29 @@ async function refreshPresetForMode() {
     const incomingMessages: Record<number, string> = Object.fromEntries(
       Object.entries(fill.note_overrides ?? {}).map(([key, value]) => [Number(key), String(value)]),
     )
+    const incomingReviewCounts: Record<number, number> = Object.fromEntries(
+      Object.entries(fill.review_count_overrides ?? {}).map(([key, value]) => [Number(key), Number(value)]),
+    )
+    const incomingReviewers: Record<number, string> = Object.fromEntries(
+      Object.entries(fill.reviewer_overrides ?? {}).map(([key, value]) => [Number(key), String(value)]),
+    )
     const keepEdited = editedSeqs.value
     for (const seq of keepEdited) {
       if (overrides.value[seq] !== undefined) incomingProviders[seq] = overrides.value[seq]
       if (messageOverrides.value[seq] !== undefined) incomingMessages[seq] = messageOverrides.value[seq]
     }
+    for (const seq of touchedReviewCountSeqs.value) {
+      if (reviewCountOverrides.value[seq] !== undefined) incomingReviewCounts[seq] = reviewCountOverrides.value[seq]
+      else delete incomingReviewCounts[seq]
+    }
+    for (const seq of touchedReviewerSeqs.value) {
+      if (reviewerOverrides.value[seq] !== undefined) incomingReviewers[seq] = reviewerOverrides.value[seq]
+      else delete incomingReviewers[seq]
+    }
     overrides.value = incomingProviders
     messageOverrides.value = incomingMessages
+    reviewCountOverrides.value = incomingReviewCounts
+    reviewerOverrides.value = incomingReviewers
     presetTargetSeq.value = fill.target_seq ?? presetTargetSeq.value
     presetRefreshMessage.value = t('main.continuous_work.preset_mode_refreshed', { n: keepEdited.size })
   } catch (e: any) {
@@ -1137,7 +1085,6 @@ watch(instructionMode, (value, previous) => {
   // 0405 L0010 §2.6: which row a plan step lands on depends on the mode (auto-approved folds
   // N/T onto NR/TR), so the projection is read again rather than re-keyed here.
   if (presetActive.value) void refreshPresetForMode()
-  else void loadPlanFill()
 })
 
 // 0399 T0018: re-seed from the sequence's own stored notes each time a fresh /workflow/sequence
@@ -1149,7 +1096,6 @@ watch(
   (steps, prevSteps) => {
     if (!steps || steps === prevSteps) return
     applySequenceNotePrefill(steps)
-    void loadPlanFill()
   },
 )
 // Reverting an unsaved preset (installPreset(null)) hands the field back to the sequence's own

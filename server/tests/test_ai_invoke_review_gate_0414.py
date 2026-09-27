@@ -103,21 +103,20 @@ class TestNormalization:
         assert wds.normalize_continuation_reviewer_overrides({3: "aip_rev"}, counts) == {
             "3": "aip_rev"}
 
-    def test_zero_counts_and_their_orphan_reviewers_fold_to_none(self):
-        """P0007 [엣지] 값이 전부 0: the dialog's untouched defaults must produce exactly
-        what "sent no maps at all" produces — one representation of "no selection"."""
+    def test_explicit_zero_counts_survive_for_sequence_baseline_override(self):
         counts = wds.normalize_continuation_review_count_overrides(
             {"1": 0, "3": 0, "5": 0, "7": 0})
-        assert counts is None
-        reviewers = wds.normalize_continuation_reviewer_overrides(
-            {"1": "aip_rev", "3": "aip_rev", "5": "aip_rev", "7": "aip_rev"}, counts)
-        assert reviewers is None
+        assert counts == {"1": 0, "3": 0, "5": 0, "7": 0}
 
-    def test_a_zero_step_drops_only_its_own_reviewer(self):
+    def test_zero_and_reviewer_only_overrides_are_independent(self):
         counts = wds.normalize_continuation_review_count_overrides({"3": 0, "5": 2})
-        assert counts == {"5": 2}
+        assert counts == {"3": 0, "5": 2}
         assert wds.normalize_continuation_reviewer_overrides(
-            {"3": "aip_rev", "5": "aip_step5"}, counts) == {"5": "aip_step5"}
+            {"3": "aip_rev", "5": "aip_step5"}, counts
+        ) == {"3": "aip_rev", "5": "aip_step5"}
+        assert wds.normalize_continuation_reviewer_overrides(
+            {"5": "aip_step5"}, None
+        ) == {"5": "aip_step5"}
 
     def test_empty_and_missing_maps_are_none(self):
         assert wds.normalize_continuation_review_count_overrides(None) is None
@@ -321,9 +320,14 @@ class TestRouteContract:
             continuation_review_count_overrides={"1": 1, 3: 2, "5": 0},
             continuation_reviewer_overrides={"1": "aip_rev", "5": "aip_step5"})
         assert status == 200
-        assert route_env["continuation_review_count_overrides"] == {"1": 1, "3": 2}
-        # "5" had count 0, so its reviewer is an orphan and never reaches the engine.
-        assert route_env["continuation_reviewer_overrides"] == {"1": "aip_rev"}
+        # Explicit 0 is a runtime tombstone: it disables a non-zero sequence baseline.
+        assert route_env["continuation_review_count_overrides"] == {
+            "1": 1, "3": 2, "5": 0,
+        }
+        # Reviewer-only overrides are independent and survive even beside an explicit 0.
+        assert route_env["continuation_reviewer_overrides"] == {
+            "1": "aip_rev", "5": "aip_step5",
+        }
 
     def test_bad_value_is_one_validation_failed_envelope(self, route_env):
         status, payload = _post(continuation_review_count_overrides={"5": 4})
@@ -778,6 +782,30 @@ class TestValueResolution:
         assert svc.resolve_review_count({"5": 2}, 7) == 0
         assert svc.resolve_review_count({"5": 2}, None) == 0
 
+    def test_runtime_zero_and_reviewer_only_override_sequence_baseline(
+        self, monkeypatch, world,
+    ):
+        monkeypatch.setattr(
+            svc.db_wfseq, "get_sequence_for_member_doc", lambda _doc: {"id": 77},
+        )
+        monkeypatch.setattr(
+            svc.db_wfseq,
+            "get_sequence_items",
+            lambda _seq: [{
+                "item_seq": 5,
+                "review_count": 2,
+                "reviewer_provider_id": "aip_rev",
+            }],
+        )
+
+        assert svc.resolve_review_count(None, 5, SPINE) == 2
+        assert svc.resolve_review_count({"5": 0}, 5, SPINE) == 0
+        assert svc.resolve_review_count({}, 5, SPINE) == 2
+        assert svc.resolve_reviewer(None, 5, "flowgate", SPINE) == "aip_rev"
+        assert svc.resolve_reviewer(
+            {"5": "aip_step5"}, 5, "flowgate", SPINE
+        ) == "aip_step5"
+
     def test_a_hand_edited_out_of_range_count_reads_as_no_review(self):
         """The write path is 422-guarded, so this can only come from an edited row; it must
         degrade rather than crash an unmanned chain."""
@@ -854,6 +882,45 @@ class TestValueResolution:
         assert svc.resolve_step_executor(
             bundle(provider_overrides=None, provider_pinned=False), 7, "flowgate",
             SPINE) == "aip_default"
+
+    # flowgate.default.0596 T0004 (NR0003 rev3): base_provider_id is the run's header/
+    # default selection, not necessarily the provider that actually executed the hop being
+    # reworked -- a step-level resolution (override / stored sequence) can win the per-hop
+    # pick while the header stays whatever the chain was started with. work_executor_
+    # provider_id carries that ACTUAL executor and must outrank base_provider_id.
+    def test_case_a_the_actual_step_executor_outranks_the_header_default(self, world):
+        """header/base = aip_default, but the step's actual work hop resolved to aip_step5
+        (e.g. via the stored sequence tier) -- GPT (aip_rev) reviews and rejects, and the
+        rework must go back to aip_step5, not silently to the header default."""
+        b = bundle(provider_overrides=None, base_provider_id="aip_default",
+                   work_executor_provider_id="aip_step5", reviewer_overrides={"5": "aip_rev"})
+        assert svc.resolve_step_executor(b, 5, "flowgate", SPINE) == "aip_step5"
+
+    def test_case_b_the_actual_executor_still_outranks_a_stale_stored_row(self, world):
+        """0494/0508 regression contract, restated with work_executor_provider_id populated:
+        the step ACTUALLY executed on the header default (aip_default) even though the
+        sequence row still stores aip_step5 -- rework must stay on aip_default, never fall
+        back to the stale stored row."""
+        b = bundle(provider_overrides=None, base_provider_id="aip_default",
+                   work_executor_provider_id="aip_default")
+        assert svc.resolve_step_executor(b, 5, "flowgate", SPINE) == "aip_default"
+
+    def test_case_d_the_reviewer_selection_never_becomes_the_rework_executor(self, world):
+        """resolve_step_executor must not read reviewer_overrides at all -- a reviewer
+        (aip_rev) picked for this step can never leak into the rework executor."""
+        b = bundle(provider_overrides=None, base_provider_id="aip_default",
+                   work_executor_provider_id="aip_step5", reviewer_overrides={"5": "aip_rev"})
+        executor = svc.resolve_step_executor(b, 5, "flowgate", SPINE)
+        assert executor == "aip_step5"
+        assert executor != "aip_rev"
+
+    def test_case_e_a_disabled_captured_executor_falls_through_without_a_silent_swap(self, world):
+        """The captured executor is no longer enabled (deleted/disabled) by rework time --
+        this must fall through the SAME explicit tiers (base -> stored -> default), never
+        silently substitute an unrelated provider."""
+        b = bundle(provider_overrides=None, base_provider_id="aip_default",
+                   work_executor_provider_id="aip_removed")
+        assert svc.resolve_step_executor(b, 5, "flowgate", SPINE) == "aip_default"
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════
@@ -3031,7 +3098,7 @@ class TestOmittedMapsAreUnchanged:
         """The chain-preservation change must not move a run that names no chain."""
         import inspect
 
-        source = inspect.getsource(svc.start_run)
+        source = inspect.getsource(svc._admission_start_run)
         assert "chain_id = chain_id or run_id" in source
         assert "chain_id = run_id\n" not in source
 

@@ -70,6 +70,10 @@ class FakePausedStore:
                stop_last_message_excerpt=None,
                continuation_base_provider_id=None, continuation_provider_pinned=None,
                continuation_provider_overrides=None,
+               # flowgate.default.0596 T0004 (NR0003 rev3): the ACTUAL work-hop executor,
+               # named explicitly like the [검수] maps below -- a permissive double would
+               # pass while the real upsert silently dropped the captured executor.
+               continuation_work_executor_provider_id=None,
                continuation_default_note=None, continuation_note_overrides=None,
                # 0352 T0004 §3.6: the N/T authoring mode + its per-item_seq auto-approve
                # selection — the pause->resume mode-loss bug fix under test in this file.
@@ -102,6 +106,8 @@ class FakePausedStore:
             "continuation_provider_pinned": bool(continuation_provider_pinned),
             "continuation_provider_overrides": db_paused.dump_json_map(
                 continuation_provider_overrides),
+            "continuation_work_executor_provider_id": (
+                continuation_work_executor_provider_id or None),
             "continuation_default_note": (continuation_default_note or "").strip() or None,
             "continuation_note_overrides": db_paused.dump_json_map(
                 continuation_note_overrides),
@@ -181,6 +187,14 @@ class FakeWfseq:
     def get_sequence_items(self, seq_id):
         return list(self.items)
 
+    def get_effective_head(self, seq_id):
+        # Mirrors db.workflow_sequences.get_effective_head's own contract closely enough for
+        # this fixture's decided-sequence fixtures: the first slot still missing a result doc.
+        for item in self.items:
+            if not item.get("result_doc_id"):
+                return dict(item)
+        return None
+
 
 class FakeDocs:
     def __init__(self, baseline_seq=1):
@@ -211,6 +225,7 @@ def fake_env(monkeypatch, tmp_path):
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_for_member_doc", wfseq.get_sequence_for_member_doc)
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_by_doc_id", wfseq.get_sequence_by_doc_id)
     monkeypatch.setattr(svc.db_wfseq, "get_sequence_items", wfseq.get_sequence_items)
+    monkeypatch.setattr(svc.db_wfseq, "get_effective_head", wfseq.get_effective_head)
     monkeypatch.setattr(
         svc.db_wfseq,
         "get_sequence_snapshots_for_member_docs",
@@ -559,7 +574,8 @@ class TestStartRunValidationMessages:
 def _seed_paused(fake_env, target=3, base_provider_id=None, provider_pinned=None, overrides=None,
                  default_note=None, note_overrides=None,
                  instruction_mode=None, auto_approve_item_seqs=None,
-                 step_timeout_sec=None):
+                 step_timeout_sec=None, review_count_overrides=None,
+                 reviewer_overrides=None):
     fake_env["paused"].upsert(
         group_id=GROUP, doc_ref=DOC_REF, paused_by="usr_admin",
         paused_at="2026-07-17T00:00:00+09:00",
@@ -573,6 +589,8 @@ def _seed_paused(fake_env, target=3, base_provider_id=None, provider_pinned=None
         continuation_instruction_mode=instruction_mode,
         continuation_auto_approve_item_seqs=auto_approve_item_seqs,
         continuation_step_timeout_sec=step_timeout_sec,
+        continuation_review_count_overrides=review_count_overrides,
+        continuation_reviewer_overrides=reviewer_overrides,
     )
 
 
@@ -747,6 +765,29 @@ class TestResumeChain:
         assert captured["continuation_instruction_mode"] == "ai_direct"
         assert captured["continuation_auto_approve_item_seqs"] == [3]
 
+    def test_resume_preserves_explicit_zero_and_reviewer_override(self, fake_env, monkeypatch):
+        counts = {"3": 0}
+        reviewers = {"3": "aip_picked"}
+        _seed_paused(
+            fake_env,
+            review_count_overrides=counts,
+            reviewer_overrides=reviewers,
+        )
+        fake_env["chain"]["providers"] = [_provider('"true"', pid="aip_picked")]
+        captured = {}
+
+        def _fake_start_run(**kw):
+            captured.update(kw)
+            return {"ok": True, "run_id": "aiv_fake"}
+        monkeypatch.setattr(svc, "start_run", _fake_start_run)
+
+        res = svc.resume_chain(
+            group_id=GROUP, user_id="usr_admin", api_base_url="http://x/api/v1"
+        )
+        assert res == {"ok": True, "run_id": "aiv_fake"}
+        assert captured["continuation_review_count_overrides"] == counts
+        assert captured["continuation_reviewer_overrides"] == reviewers
+
     def test_resume_forwards_step_timeout_to_start_run(self, fake_env, monkeypatch):
         # flowgate.default.0400 M0005: the per-hop budget pick is exactly as perishable as
         # the provider/note selections above — the paused row is the only place it survives
@@ -897,6 +938,61 @@ class TestPauseIdentityAndRestoreRegression:
         finally:
             svc.cancel_run(res["run_id"])
             _wait_finished(res["run_id"])
+
+    def test_pause_apply_stop_row_resume_round_trip_preserves_work_executor(
+            self, fake_env, monkeypatch):
+        # flowgate.default.0596 TR0005 rev1: full pause_run -> _apply_stop_row
+        # (user_paused refresh) -> resume_chain round trip. The refresh upsert that
+        # ALWAYS runs right after a user pause previously omitted
+        # continuation_work_executor_provider_id, so its default (None) immediately
+        # wiped the value pause_run had just written -- a resumed rework would then
+        # silently fall back to the header/default provider instead of the provider
+        # that actually produced the reworked step (review.py resolve_step_executor
+        # priority order).
+        # _start() always overwrites fake_env["chain"]["providers"] with a default-pid
+        # provider, so this run is started directly through svc.start_run to keep the
+        # distinctive "aip_opus" id observable in the paused row.
+        fake_env["chain"]["providers"] = [_provider(_slow_cmd(1), pid="aip_opus")]
+        res = svc.start_run(
+            project_id="flowgate", module="default", group_id=GROUP, doc_ref=DOC_REF,
+            action_scope="new", mode="continuous", continuation_target_seq=3,
+            continuation_review_mode=False, continuation_instruction_mode=None,
+            continuation_locale=None, issued_to="usr_admin",
+            api_base_url="http://127.0.0.1:1/flowgate/api/v1",
+            mention_builder=lambda raw, scratch: "## prompt\n",
+        )
+        svc.pause_run(res["run_id"], "usr_admin")
+        assert (fake_env["paused"].rows[GROUP]["continuation_work_executor_provider_id"]
+                == "aip_opus")
+
+        # The in-flight hop completes after the pause request but before the boundary
+        # stop -- the exact refresh upsert the rejection flagged runs here.
+        fake_env["docs"].docs.append({
+            "doc_id": f"{GROUP}.0002-P", "seq": 2, "status": "open",
+        })
+        assert svc.mark_user_paused(GROUP, res["run_id"]) is True
+        run = _wait_finished(res["run_id"])
+        assert run["end_reason"] == "user_paused"
+        row = fake_env["paused"].rows[GROUP]
+        assert row["continuation_work_executor_provider_id"] == "aip_opus"
+
+        # resume_chain must read the surviving value back and carry it into the
+        # review-gate bundle so a pending rework step resolves to the real work
+        # executor, not the header/default selection.
+        from modules.flow_gate.services.ai_invoke import chain as chain_module
+        captured: dict = {}
+
+        def _fake_resolve_gate(bundle):
+            captured.update(bundle)
+            return {"stage": "new"}
+        monkeypatch.setattr(chain_module.review, "resolve_review_gate", _fake_resolve_gate)
+        _patch_advance(monkeypatch, fake_env["tmp"])
+
+        result = svc.resume_chain(group_id=GROUP, user_id="usr_admin",
+                                  api_base_url="http://x/api/v1")
+        assert captured.get("work_executor_provider_id") == "aip_opus"
+        assert result["ok"] is True
+        _wait_finished(result["run_id"])
 
 
 # ── /resume HTTP route (T0005 §3 item 2 / §4 item 2) ──────────────────────────

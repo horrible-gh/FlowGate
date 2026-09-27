@@ -92,6 +92,21 @@ def upsert_config(project_id: str, data: dict[str, Any]) -> dict:
     return get_config(project_id)  # type: ignore[return-value]
 
 
+def set_default_merge_target(project_id: str, branch: Optional[str]) -> None:
+    """Persist the project's suggested finalize target (T0016 §2.2) without
+    disturbing any other git config field. A non-base integration branch that a
+    finalize actually merged into becomes this project's suggested default for
+    the NEXT group's finalize dialog, instead of resetting to base_branch every
+    time. ``None``/blank clears the suggestion back to "none"."""
+    if _get_config_db(project_id) is None:
+        return
+    get_store()._execute(
+        "UPDATE project_git_config SET default_merge_target = ? WHERE project_id = ?",
+        [branch or None, project_id],
+    )
+    meta_cache.invalidate_git_config(project_id)
+
+
 def delete_config(project_id: str) -> bool:
     if _get_config_db(project_id) is None:
         return False
@@ -107,6 +122,19 @@ def delete_config(project_id: str) -> bool:
 def get_state(group_id: str) -> Optional[dict]:
     return get_store()._fetch_one(
         "SELECT * FROM group_git_state WHERE group_id = ?", [group_id]
+    )
+
+
+def get_state_by_branch(project_id: str, branch: str) -> Optional[dict]:
+    """Return any durable FlowGate owner of a group worktree branch.
+
+    Unlike ``list_states_of_project``, this intentionally includes unregistered
+    historical/failure rows: a stale internal branch must never become another
+    group's work base merely because its worktree is currently absent.
+    """
+    return get_store()._fetch_one(
+        "SELECT * FROM group_git_state WHERE project_id = ? AND branch = ?",
+        [project_id, branch],
     )
 
 
@@ -174,6 +202,78 @@ def set_status(
         "updated_at = ? WHERE group_id = ?",
         [status, merge_id, merge_commit, now_iso(), group_id],
     )
+
+
+def final_approval_retry_context(state: Optional[dict]) -> Optional[dict]:
+    """Decode the durable clean-finalize retry snapshot (0555 A11).
+
+    Invalid or legacy values fail closed: callers see no retry capability and
+    therefore cannot approve an AC by guessing from terminal Git state alone.
+    """
+    raw = (state or {}).get("final_approval_retry")
+    if not raw:
+        return None
+    if isinstance(raw, dict):
+        parsed = raw
+    else:
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return None
+    intent = parsed.get("intent") if isinstance(parsed, dict) else None
+    if not isinstance(intent, dict) or not intent.get("approval_intent_id"):
+        return None
+    return parsed
+
+
+def set_final_approval_retry(group_id: str, retry: dict) -> None:
+    """Persist a retry snapshot without changing the ledger status.
+
+    Used by the no-work/discarded terminal result, whose public label is not a
+    value accepted by group_git_state.status.
+    """
+    get_store()._execute(
+        "UPDATE group_git_state SET final_approval_retry = ?, updated_at = ? "
+        "WHERE group_id = ?",
+        [json.dumps(retry, ensure_ascii=False), now_iso(), group_id],
+    )
+
+
+def set_status_with_final_approval_retry(
+    group_id: str,
+    status: str,
+    retry: dict,
+    *,
+    merge_id: Optional[int] = None,
+    merge_commit: Optional[str] = None,
+) -> None:
+    """Record terminal Git and its approval retry evidence in one DB write."""
+    if status not in STATE_VALUES:
+        raise ValueError(f"invalid git state: {status!r}")
+    get_store()._execute(
+        "UPDATE group_git_state SET status = ?, merge_id = ?, merge_commit = ?, "
+        "final_approval_retry = ?, updated_at = ? WHERE group_id = ?",
+        [
+            status, merge_id, merge_commit,
+            json.dumps(retry, ensure_ascii=False), now_iso(), group_id,
+        ],
+    )
+
+
+def consume_final_approval_retry(group_id: str, approval_intent_id: str) -> bool:
+    """CAS-clear exactly one retry snapshot inside the caller's transaction."""
+    state = get_state(group_id)
+    retry = final_approval_retry_context(state)
+    intent = (retry or {}).get("intent") or {}
+    if intent.get("approval_intent_id") != approval_intent_id:
+        return False
+    raw = (state or {}).get("final_approval_retry")
+    affected = get_store()._execute_affected(
+        "UPDATE group_git_state SET final_approval_retry = NULL, updated_at = ? "
+        "WHERE group_id = ? AND final_approval_retry = ?",
+        [now_iso(), group_id, raw],
+    )
+    return affected == 1
 
 
 def list_states_by_status(statuses: list[str]) -> list[dict]:
@@ -280,6 +380,21 @@ def create_session(
     return merge_id
 
 
+def add_session_files(merge_id: int, files: list[str]) -> None:
+    """Attach conflict files to an already-open session (flowgate.default.0594 T0012).
+
+    A finalize attempt record is now written BEFORE the merge runs, so its conflict
+    file set is only known afterwards. Same rows ``create_session`` writes."""
+    store = get_store()
+    with store.transaction():
+        for path in files:
+            store._execute(
+                "INSERT INTO git_merge_session_file (merge_id, path, resolved) "
+                "VALUES (?, ?, 0)",
+                [merge_id, path],
+            )
+
+
 def get_session(merge_id: int) -> Optional[dict]:
     return get_store()._fetch_one(
         "SELECT * FROM git_merge_session WHERE merge_id = ?", [merge_id]
@@ -324,6 +439,36 @@ def close_session(merge_id: int, status: str) -> None:
         "UPDATE git_merge_session SET status = ?, closed_at = ? WHERE merge_id = ?",
         [status, now_iso(), merge_id],
     )
+
+
+def sessions_by_group(group_id: str) -> list[dict]:
+    """Every session ever opened for a group, newest first.
+
+    The open-session accessors above answer "what is this group doing now".  A
+    deferred final approval also has to find the session it was parked on AFTER
+    that session closed (0555 D0005 §3.9 re-approval), so the closed rows have to
+    be reachable too.
+    """
+    return get_store()._fetch_all(
+        "SELECT * FROM git_merge_session WHERE group_id = ? ORDER BY merge_id DESC",
+        [group_id],
+    )
+
+
+def cas_session_context(merge_id: int, expected_raw: Any, context: dict) -> bool:
+    """Replace a session's `context` only if the stored text is still `expected_raw`.
+
+    :func:`set_session_context` is a blind write and `_execute` reports no rowcount
+    (see [[store-execute-has-no-rowcount]]).  A final approval consuming its intent
+    has to know whether THIS call was the one that consumed it, so it goes through
+    the affected-row boundary with the previous text as the CAS condition.  Run
+    inside a transaction the caller owns and the consume shares that unit of work.
+    """
+    affected = get_store()._execute_affected(
+        "UPDATE git_merge_session SET context = ? WHERE merge_id = ? AND context = ?",
+        [json.dumps(context or {}, ensure_ascii=False), merge_id, expected_raw],
+    )
+    return affected == 1
 
 
 def set_session_context(merge_id: int, context: dict) -> None:

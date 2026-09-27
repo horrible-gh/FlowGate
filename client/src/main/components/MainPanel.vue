@@ -151,12 +151,12 @@
             :tab="tab"
             :read-only="aiRunDocumentLocked"
             :completed="isCompletedDoc(tab.id)"
-            :group-id="exposedValue(docHeaderRefs[tab.id]?.groupId) ?? ''"
             :can-edit="canEditTab(tab)"
             :edit-dropdown-open="editDropdownTabId === tab.id"
             :text-wrap-enabled="textWrapEnabled"
             :download-available="exposedValue(docHeaderRefs[tab.id]?.downloadAvailable) === true"
             :download-busy="exposedValue(docHeaderRefs[tab.id]?.markdownDownloadBusy) === true"
+            :upload-busy="markdownUploadBusy[tab.id] === true"
             :conversation-read-only="aiRunDocumentLocked && !activeChatOwnRun"
             :conversation-manual-copy-text="convManualCopy[tab.id] ?? null"
             :conversation-full-view-host="convFullViewHost"
@@ -169,6 +169,7 @@
             @open-full-view="openFullView(tab)"
             @toggle-edit-dropdown="toggleEditDropdown(tab.id)"
             @download-markdown="docHeaderRefs[tab.id]?.downloadMarkdown?.()"
+            @upload-markdown="uploadMarkdownContent(tab.id, $event)"
             @update:text-wrap-enabled="textWrapEnabled = $event"
             @bind-md-viewer="bindActiveRef(mdViewerRefs, tab.id, $event)"
             @bind-text-viewer="bindActiveRef(textViewerRefs, tab.id, $event)"
@@ -177,8 +178,6 @@
             @copy-mention="onConversationCopyMention(tab.id, $event)"
             @manual-copy-dismiss="setConvManualCopy(tab.id, null)"
             @q-status-changed="onQStatusChanged"
-            @open-archive="openGitArchive"
-            @archived="onGitArchived"
           />
           </template>
           </div><!-- doc-main -->
@@ -191,7 +190,7 @@
             :reject-reason="exposedValue(docHeaderRefs[tab.id]?.rejectionReason) ?? null"
             :rejection-history="exposedValue(docHeaderRefs[tab.id]?.rejectionHistory) ?? []"
             :ai-review="exposedValue(docHeaderRefs[tab.id]?.aiReview) ?? null"
-            :ai-review-history="exposedValue(docHeaderRefs[tab.id]?.aiReviewHistory) ?? []"
+            :ai-review-history="exposedValue(docHeaderRefs[tab.id]?.aiReviewHistory) ?? []"
             :tr-scope="exposedValue(docHeaderRefs[tab.id]?.trScope) ?? null"
             :q-status="qStatuses[tab.id] ?? null"
             :workflow-steps="exposedValue(docHeaderRefs[tab.id]?.workflowSteps) ?? null"
@@ -935,6 +934,7 @@ import { useProjectStore } from '../stores/project'
 import { useExplorerStore } from '../stores/explorer'
 import { useAiProviderStore } from '../stores/aiProvider'
 import { groupIdFromDocId, isScreenOwnedRun, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
+import { recordFanOut } from '@shared/diagnostics/runtimeDiagnostics'
 import {
   useDashboardStore,
   type DashboardWorkflow,
@@ -1123,11 +1123,13 @@ function formatGitArchiveTime(value: string | null): string {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale.value)
 }
-const props = withDefaults(defineProps<{
-  overviewRefreshToken?: number
-}>(), {
-  overviewRefreshToken: 0,
-})
+const props = withDefaults(defineProps<{
+  overviewRefreshToken?: number
+  overviewRefreshEpoch?: number | null
+}>(), {
+  overviewRefreshToken: 0,
+  overviewRefreshEpoch: null,
+})
 const docTypeStore = useDocTypeStore()
 const { showToast } = useToast()
 const {
@@ -1166,6 +1168,10 @@ const textViewerRefs = reactive<Record<string, any>>({})
 const stepVerificationCardRefs = reactive<Record<string, any>>({})
 const convViewRefs = reactive<Record<string, any>>({})
 const workPlanEditorRefs = reactive<Record<string, any>>({})
+// T0004 — generic-document Markdown upload busy state, keyed by tab id. Not owned by
+// DocHeader (NR0003 §19: DocHeader stays the download-only fetch/blob owner), so it lives
+// here alongside the orchestration that drives the upload.
+const markdownUploadBusy = reactive<Record<string, boolean>>({})
 
 // Only WP approval needs to coordinate with its table editor. A failed save leaves the
 // editor's existing validation/conflict/error UI in place and prevents the approval POST.
@@ -4621,6 +4627,49 @@ async function saveEditContent() {
     editSaving.value = false
   }
 }
+
+// T0004 §5/§9/§10 — mirrors the WP upload contract (WorkPlanEditor.vue's
+// readFileAsText/onWorkPlanFileSelected): read the file, strip a leading UTF-8 BOM, PATCH
+// the same content path saveEditContent uses, and only refresh after that PATCH succeeds.
+// A failed read or a failed save leaves the current viewer untouched — the uploaded text is
+// never shown until the server has confirmed it as the new canonical body.
+function readUploadedFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(reader.error ?? new Error('file read error'))
+    reader.readAsText(file)
+  })
+}
+
+async function uploadMarkdownContent(tabId: string, file: File) {
+  if (markdownUploadBusy[tabId]) return
+  markdownUploadBusy[tabId] = true
+  try {
+    let text: string
+    try {
+      text = await readUploadedFileAsText(file)
+    } catch {
+      showToast(t('main.document_preview.upload_read_error'), 'danger')
+      return
+    }
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1)
+    try {
+      await patchRequest('/api/v1/documents/content', {
+        doc_id: tabId,
+        content: text,
+      })
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail ?? e?.message ?? t('main.document_preview.save_failed'), 'danger')
+      return
+    }
+    await mdViewerRefs[tabId]?.loadContent?.()
+    await stepVerificationCardRefs[tabId]?.fetchData?.()
+    showToast(t('main.document_preview.upload_success'), 'success')
+  } finally {
+    markdownUploadBusy[tabId] = false
+  }
+}
 const activeProjects = computed(() =>
   projectStore.projects.filter((p) => p.is_active === 1).length || '—',
 )
@@ -4895,10 +4944,14 @@ watch(() => projectStore.currentProjectId, () => {
 // it fills.
 
 watch(() => props.overviewRefreshToken, () => {
-  if (projectStore.currentProjectId) void fetchQList()
+  if (projectStore.currentProjectId) {
+    recordFanOut('main_panel_fetch_q_list', props.overviewRefreshEpoch ?? null)
+    void fetchQList()
+  }
   // A coalesced screen refresh is also an SSE recovery boundary. The store keeps
   // handoff-pending cards pollable and chooses between adoption and bounded completion.
-  void aiInvokeRunsStore.refreshAllRunning()
+  recordFanOut('ai_refresh_all_running', props.overviewRefreshEpoch ?? null)
+  void aiInvokeRunsStore.refreshAllRunning('overview_refresh')
 })
 
 // T0018 §2.3-4: the `quickInputRef.focus()` half of this watcher is gone with the markup it
