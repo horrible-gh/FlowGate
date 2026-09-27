@@ -169,10 +169,10 @@ def verify_id_widths(project_id: str) -> ValidationReport:
         file_path: Optional[str] = doc.get("file_path")
 
         # Width validation: the seq portion of the final doc_code in doc_id
-        import re
-        m = re.match(r'^.*\.(\d+)-[A-Za-z]+$', doc_id)
+        from modules.flow_gate.documents.type_code import DOC_ID_TAIL_RE
+        m = DOC_ID_TAIL_RE.search(doc_id.upper())
         if m:
-            numeric = m.group(1)
+            numeric = m['seq']
             if len(numeric) != widths["document"]:
                 report.width_mismatches.append(
                     ("document", doc_id, widths["document"], len(numeric))

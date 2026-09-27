@@ -149,6 +149,18 @@ def get_max_item_seq(sequence_id: int) -> int:
 
 # ── result_doc_id helpers ─────────────────────────────────────────────────────
 
+def get_paired_instruction_item(result_doc_id: str, instruction_type: str) -> Optional[dict]:
+    """Find the instruction slot paired to a result slot by sequence and item_seq."""
+    result = get_item_by_result_doc_id(result_doc_id)
+    if result is None:
+        return None
+    candidates = get_sequence_items(result["sequence_id"])
+    earlier = [item for item in candidates
+               if (item.get("sort_order") or 0) < (result.get("sort_order") or 0)]
+    previous = max(earlier, key=lambda item: item.get("sort_order") or 0) if earlier else None
+    return previous if previous and previous.get("type") == instruction_type else None
+
+
 def get_item_by_result_doc_id(result_doc_id: str) -> Optional[dict]:
     """Return the workflow slot holding ``result_doc_id`` — the earliest one (reverse lookup).
 

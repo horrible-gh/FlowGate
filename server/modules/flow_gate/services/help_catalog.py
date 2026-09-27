@@ -90,7 +90,7 @@ ALWAYS_VISIBLE = frozenset({
 USER_SESSION_VISIBLE = frozenset({"document_access", "doc_type"})
 
 AUTHORING_SCOPES = frozenset({"new", "edit"})
-GUIDE_TYPES = frozenset({"N", "T", "TR", "TS"})
+GUIDE_TYPES = frozenset({"N", "T", "T2", "TR", "TR2", "TS"})
 INVESTIGATION_TYPES = frozenset({"N", "NR"})
 # Mutating types come from the registry that already gates the write tools, so the
 # "you may write source" judgment and the "you must report changed files" judgment
@@ -397,10 +397,10 @@ _TR_AUTHORING_GUIDE: dict[str, str] = {
 }
 
 _AUTHORING_GUIDE_TITLES: dict[str, dict[str, str]] = {
-    "ko": {"N": "조사지시 작성", "T": "작업지시 작성", "TR": "작업레포트 작성", "TS": "테스트시나리오 작성"},
+    "ko": {"N": "조사지시 작성", "T": "작업지시 작성", "T2": "변경제안 지시 작성", "TR": "작업레포트 작성", "TR2": "변경제안 작성", "TS": "테스트시나리오 작성"},
     "en": {"N": "Writing an investigation instruction", "T": "Writing a work instruction",
-           "TR": "Writing a work report", "TS": "Writing a test scenario"},
-    "ja": {"N": "調査指示の作成", "T": "作業指示の作成", "TR": "作業レポートの作成", "TS": "テストシナリオの作成"},
+           "T2": "Writing a change proposal instruction", "TR": "Writing a work report", "TR2": "Writing a change proposal", "TS": "Writing a test scenario"},
+    "ja": {"N": "調査指示の作成", "T": "作業指示の作成", "T2": "変更提案指示の作成", "TR": "作業レポートの作成", "TR2": "変更提案の作成", "TS": "テストシナリオの作成"},
 }
 
 
@@ -1332,12 +1332,25 @@ def _authoring_guide_body(type_code: str, locale: str) -> str:
     # module scope would drag the whole mention assembly into every help request.
     from modules.flow_gate.services import mention_service
 
+    if type_code == "T2":
+        return {
+            "ko": "TR2가 edit-spec으로 표현할 수 있는 소스 변경을 지시하는 Markdown 지시서를 작성합니다.",
+            "en": "Write a Markdown instruction for source changes expressible as a TR2 edit-spec.",
+            "ja": "TR2 の edit-spec で表現できるソース変更を Markdown で指示します.",
+        }.get(locale, "TR2가 edit-spec으로 표현할 수 있는 소스 변경을 지시하는 Markdown 지시서를 작성합니다.")
+    if type_code == "TR2":
+        return {
+            "ko": "본문은 Markdown이 아닌 canonical JSON(document.json)입니다. tr2_version=1, source_t2_doc_id, edit_spec의 termination/edits/deferred/gate를 제출하세요. source는 읽기 전용입니다. 직접 수정하지 말고 edit/create_file로 제안하세요. baseline_fingerprint는 서버가 계산합니다. ready_to_apply에는 edit가 한 건 이상 있어야 하고 gate.apply는 false입니다.",
+            "en": "Submit canonical JSON (document.json), not Markdown: tr2_version=1, source_t2_doc_id, edit_spec with termination, edits, deferred, gate. Source is read-only; propose edit/create_file entries. The server computes baseline_fingerprint. ready_to_apply needs at least one edit; gate.apply must be false.",
+            "ja": "本文は Markdown ではなく canonical JSON(document.json) です。tr2_version=1、source_t2_doc_id、termination/edits/deferred/gate を含む edit_spec を提出します。ソースは読み取り専用です。変更は edit/create_file で提案します。baseline_fingerprint はサーバーが計算します。ready_to_apply には一件以上の edit が必要で、gate.apply は false です。",
+        }.get(locale, "TR2 canonical JSON(document.json): tr2_version=1, source_t2_doc_id, edit_spec; source read-only; gate.apply=false.")
     if type_code == "TS":
         return mention_service._ts_authoring_section(locale)
     if type_code in {"N", "T"}:
         return mention_service._nt_authoring_section(type_code, locale)
-    # TR is the one guide type the mention never carried a block for.
-    return _TR_AUTHORING_GUIDE.get(locale, _TR_AUTHORING_GUIDE[FALLBACK_LOCALE])
+    if type_code == "TR":
+        return _TR_AUTHORING_GUIDE.get(locale, _TR_AUTHORING_GUIDE[FALLBACK_LOCALE])
+    raise ValueError(f"Unknown authoring guide type: {type_code}")
 
 
 def _child_authoring_guide(child: str, ctx: dict) -> dict:

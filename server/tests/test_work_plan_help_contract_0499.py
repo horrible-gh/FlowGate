@@ -58,7 +58,7 @@ def test_help_payload_publishes_pairing_and_single_step_rules(seed):
 
     payload = help_catalog.build_child("design_template", "WP", _wp_help_ctx())
     contract = payload["content"]["contract"]
-    assert contract["pair_map"] == {"N": "NR", "T": "TR", "TS": "TSR"}
+    assert contract["pair_map"] == {"N": "NR", "T": "TR", "T2": "TR2", "TS": "TSR"}
     assert contract["single_types"] == ["DS", "D", "P", "L", "DB"]
     example = payload["content"]["example"]
     single = next(s for s in example["steps"] if s["pair_role"] == "single")

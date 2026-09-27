@@ -33,6 +33,7 @@ from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.documents import document_service
 from modules.flow_gate.documents.constants import WORK_PLAN_TYPE
+from modules.flow_gate.documents.type_code import doc_code_seq_text
 from modules.flow_gate.numbering import numbering_service
 from modules.flow_gate.services import work_plan_service as wp
 from modules.flow_gate.services import work_plan_apply_service as wpa
@@ -423,8 +424,8 @@ def create_work_plan(
         raise HTTPException(status_code=503, detail=f"Numbering lock timeout: {exc}")
 
     doc_id = f"{group_id}.{doc_code}"
-    match = _re.match(r"^(\d+)-[A-Za-z]+$", doc_code)
-    seq = int(match.group(1)) if match else 0
+    numeric = doc_code_seq_text(doc_code)
+    seq = int(numeric) if numeric is not None else 0
     branch = _project_branch(project_id)
     path = storage_paths.document_path(
         project_id=project_id,

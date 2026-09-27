@@ -524,7 +524,7 @@ def _determine_action_scope(doc_ref_raw: Optional[str]) -> str:
 
 # ── M020 mention helpers ──────────────────────────────────────────────────────
 
-_DOC_CODE_RE = re.compile(r'([A-Z]+\d+)$')
+from modules.flow_gate.documents.type_code import DOC_ID_TAIL_RE as _DOC_CODE_RE
 
 
 def _derive_status(result_doc_id, result_review: str | None) -> str:

@@ -30,6 +30,7 @@ from modules.flow_gate.db import conversation_turns as conv_turn_store
 from modules.flow_gate.db import mention_copies as db_mention_copies
 from modules.flow_gate.documents import attachments
 from modules.flow_gate.documents import document_service, document_types, template_service
+from modules.flow_gate.documents.type_code import doc_code_seq_text
 from modules.flow_gate.documents.constants import (
     AUTO_COMPLETE_TYPES,
     WORK_PLAN_TYPE,
@@ -1010,8 +1011,8 @@ def create_related_document(
     doc_id = f"{body.group_id}.{doc_code}"
 
     # seq is the numeric part of doc_code
-    m = _re.match(r'^(\d+)-[A-Za-z]+$', doc_code)
-    seq = int(m.group(1)) if m else 0
+    numeric = doc_code_seq_text(doc_code)
+    seq = int(numeric) if numeric is not None else 0
 
     # Create markdown file
     slug = _slugify_title(title)
@@ -1159,8 +1160,8 @@ def create_next_empty_document(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    m = _re.match(r"^(\d+)-[A-Za-z]+$", doc_code)
-    seq_no = int(m.group(1)) if m else 0
+    numeric = doc_code_seq_text(doc_code)
+    seq_no = int(numeric) if numeric is not None else 0
     doc_id = f"{body.group_id}.{doc_code}"
     next_type = _next_workflow_type(seq["id"], head["id"])
     # 0395 T0026 rework: a work plan's canonical form is JSON, not Markdown (P0009 §2.6 decision 2).
@@ -1336,7 +1337,7 @@ def create_next_approved_core(
     # (G1) Type whitelist — stronger than next-empty's blacklist (P0005 §5).
     # AC is excluded naturally (AC ∉ {N,T}, D0004 §3-3). TS removed (group 0121 R0001):
     # a test-scenario directive is token-issued (AI authors it), never auto-approved.
-    if type_code not in {"N", "T"}:
+    if type_code not in {"N", "T", "T2"}:
         raise NextApprovedError(422, f"Auto-approved document not allowed for type: {type_code}")
 
     # (G2) Shared guards — replicated from next-empty (documents.py next-empty path)
@@ -1387,8 +1388,8 @@ def create_next_approved_core(
     except ValueError as exc:
         raise NextApprovedError(400, str(exc)) from exc
 
-    m = _re.match(r"^(\d+)-[A-Za-z]+$", doc_code)
-    seq_no = int(m.group(1)) if m else 0
+    numeric = doc_code_seq_text(doc_code)
+    seq_no = int(numeric) if numeric is not None else 0
     doc_id = f"{group_id}.{doc_code}"
     next_type = _next_workflow_type(seq["id"], head["id"])
     doc_file_path = storage_paths.document_path(
@@ -1696,8 +1697,8 @@ def open_final_approval(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    m = _re.match(r"^(\d+)-[A-Za-z]+$", doc_code)
-    seq_no = int(m.group(1)) if m else 0
+    numeric = doc_code_seq_text(doc_code)
+    seq_no = int(numeric) if numeric is not None else 0
     new_id = f"{group_id}.{doc_code}"
 
     data: dict[str, Any] = {
@@ -2071,8 +2072,8 @@ def _create_next_empty_document_for_auto_draft(
     except ValueError:
         return None
 
-    m = _re.match(r"^(\d+)-[A-Za-z]+$", doc_code)
-    seq_no = int(m.group(1)) if m else 0
+    numeric = doc_code_seq_text(doc_code)
+    seq_no = int(numeric) if numeric is not None else 0
     doc_id = f"{group_id}.{doc_code}"
     next_type = _next_workflow_type(seq["id"], head["id"])
     doc_file_path = storage_paths.document_path(

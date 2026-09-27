@@ -52,7 +52,7 @@ ERRORS_REPORTED_MAX = 50
 BINDING_ADVISORY = "advisory"
 LOCKED_REASON_SERVER_ASSEMBLED = "server_assembled"
 
-KEY_PATTERN = re.compile(r"^([A-Z]{1,3})#([1-9][0-9]*)$")
+from modules.flow_gate.documents.type_code import STEP_KEY_RE as KEY_PATTERN
 PROVIDER_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 # L0010 §1.1 note_forbidden_chars: C0 controls plus DEL. Newlines and tabs are
 # included on purpose — a one-line note never legitimately holds them, and

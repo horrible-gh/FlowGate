@@ -4,10 +4,12 @@ from __future__ import annotations
 import re
 from datetime import date
 
+from modules.flow_gate.utils.id_validators import DOC_ID
+
 VALID_TYPES = {
     "R", "B", "Q", "A", "AR", "DS",
     "D", "DB", "P", "L", "DC",
-    "N", "NR", "T", "TR",
+    "N", "NR", "T", "TR", "T2", "TR2",
     "TV", "TVR",
     "V", "VR",
     "M", "AC", "RJ",
@@ -31,9 +33,9 @@ LIST_BLOCK_KEYS = {"approved_files", "refs"}
 DICT_BLOCK_KEYS = {"clear_scope"}
 
 TITLE_MAX_LEN = 100
-INBOX_TARGET_TYPES = {"Q", "AR", "DS", "D", "DB", "P", "L", "DC", "N", "NR", "T", "TR", "TV", "TVR", "V", "VR"}
+INBOX_TARGET_TYPES = {"Q", "AR", "DS", "D", "DB", "P", "L", "DC", "N", "NR", "T", "TR", "T2", "TR2", "TV", "TVR", "V", "VR"}
 NEXT_REQUIRED_TYPES = {"AR", "DS"}
-NEXT_VALID_VALUES = {"D", "P", "L", "N", "T"}
+NEXT_VALID_VALUES = {"D", "P", "L", "N", "T", "T2"}
 GROUP_REQUIRED_EXEMPT = {"R"}
 GROUP_SEQ_DIGITS = 4
 TARGET_ID_DOC_ID_PATTERN = re.compile(r"^[A-Za-z0-9_]+-[A-Za-z0-9_]*-[A-Z]{1,2}[0-9]{3}$")
@@ -649,7 +651,8 @@ def lint_header(
         target_id = (header.get("target_id") or "").strip()
         if not target_id:
             errors.append(f"{doc_type} type requires a target_id field")
-        elif not TARGET_ID_DOC_ID_PATTERN.match(target_id):
+        elif (not DOC_ID.fullmatch(target_id) if doc_type in {"T2", "TR2"}
+              else not TARGET_ID_DOC_ID_PATTERN.match(target_id)):
             errors.append(
                 "target_id format error: {project}-{module}-{TYPE}{seq} (e.g. server-test-R001)"
             )
@@ -703,7 +706,7 @@ def lint_header(
             errors.append(f"{doc_type} type requires a next field")
         elif next_val not in NEXT_VALID_VALUES:
             errors.append(
-                f"Invalid next: '{next_val}' (allowed: D, P, L, N, T)"
+                f"Invalid next: '{next_val}' (allowed: {', '.join(sorted(NEXT_VALID_VALUES))})"
             )
 
     # Allowed project set — skip validation when empty

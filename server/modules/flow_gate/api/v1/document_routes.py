@@ -30,6 +30,7 @@ from modules.flow_gate.utils.id_validators import (
     validate_group_id,
     validate_doc_id,
 )
+from modules.flow_gate.documents.type_code import DOC_ID_TAIL_RE, doc_code_seq_text
 import LogAssist.log as logger
 
 router = APIRouter(prefix="/api/v1", tags=["OutboundDocument"])
@@ -127,7 +128,7 @@ def _download_available(doc: dict) -> bool:
 
 
 def _document_filename(doc_id: str) -> str:
-    if _re.search(r"(?:^|[.-])(\d{4})-([A-Z]+)$", doc_id) is None:
+    if DOC_ID_TAIL_RE.search(doc_id) is None:
         raise ValueError(f"doc_id format is invalid: {doc_id!r}")
     return f"{doc_id}.md"
 
@@ -834,8 +835,8 @@ def _doc_seq(row: dict) -> int:
         return int(str(seq))
     except (TypeError, ValueError):
         pass
-    m = _re.search(r"(\d+)-[A-Za-z]+$", row.get("doc_id") or "")
-    return int(m.group(1)) if m else 0
+    numeric = doc_code_seq_text((row.get("doc_id") or "").rsplit(".", 1)[-1])
+    return int(numeric) if numeric is not None else 0
 
 
 def _workflow_item_brief(item: Optional[dict]) -> Optional[dict]:

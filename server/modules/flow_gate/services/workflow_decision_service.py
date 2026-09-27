@@ -32,7 +32,7 @@ from modules.flow_gate.settings import ai_execution_policy_service
 #     reports entirely because the expansion only existed in the client).
 # Mirrors the client AUTO_MAP (N→NR, T→TR, TS→TSR). V→VR is intentionally excluded: VR
 # is not a registered document_type, so attaching it would create an unprocessable step.
-AUTO_REPORT_MAP = {"N": "NR", "T": "TR", "TS": "TSR"}
+AUTO_REPORT_MAP = {"N": "NR", "T": "TR", "T2": "TR2", "TS": "TSR"}
 
 # 0444 T0007 (NR0003 §4-2 / §2-7): report types the SERVER assembles by itself. A TSR is built
 # from a test run's result, not from an instruction a person handed down the chain, so neither
@@ -141,7 +141,7 @@ def resolve_row_provider(
 # differs from AUTO_REPORT_MAP, which still pairs TS→TSR for sequence STRUCTURE (TS remains a
 # decided step whose report is auto-attached) — only the auto-APPROVAL of TS is removed.
 # DS likewise excluded — it is neither here nor in AUTO_REPORT_MAP.
-INSTRUCTION_AUTO_TYPES = {"N", "T"}
+INSTRUCTION_AUTO_TYPES = {"N", "T", "T2"}
 CONTINUATION_INSTRUCTION_AUTO_APPROVED = "auto_approved"
 CONTINUATION_INSTRUCTION_AI_DIRECT = "ai_direct"
 CONTINUATION_INSTRUCTION_MODES = {

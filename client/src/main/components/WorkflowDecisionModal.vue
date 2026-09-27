@@ -580,10 +580,11 @@ const invokingAi = ref(false)
 const AUTO_MAP: Record<string, string[]> = {
   N:  ['NR'],
   T:  ['TR'],
+  T2: ['TR2'],
   TS: ['TSR'],
 }
 
-const AUTO_TYPES = new Set(['NR', 'TR', 'TSR'])
+const AUTO_TYPES = new Set(['NR', 'TR', 'TR2', 'TSR'])
 
 const CATEGORIES = [
   {
@@ -612,6 +613,7 @@ const CATEGORIES = [
       { type: 'DS', autoHintKey: '' },
       { type: 'N',  autoHintKey: 'auto_hint_NR' },
       { type: 'T',  autoHintKey: 'auto_hint_TR' },
+      { type: 'T2', autoHintKey: '' },
       { type: 'TS', autoHintKey: 'auto_hint_TSR' },
     ],
   },
@@ -632,6 +634,7 @@ const CATEGORIES = [
 const AUTO_ONLY = [
   { type: 'NR',  hintKey: 'auto_only_hint_NR' },
   { type: 'TR',  hintKey: 'auto_only_hint_TR' },
+  { type: 'TR2', hintKey: 'auto_only_hint_TR2' },
   { type: 'TSR', hintKey: 'auto_only_hint_TSR' },
 ]
 
