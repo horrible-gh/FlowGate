@@ -75,3 +75,95 @@ def test_detail_online_requires_current_credential_heartbeat_and_ttl():
  "last_protocol_rejection_at":None,"os":"linux","architecture":"amd64"}
  assert ar.detail(row,n)["online_status"]=="online"
  assert ar.detail(row,n+timedelta(seconds=1))["online_status"]=="offline"
+
+
+@pytest.fixture
+def heartbeat_api(monkeypatch):
+ from contextlib import contextmanager
+ from fastapi import FastAPI
+ from fastapi.testclient import TestClient
+
+ db=sqlite3.connect(":memory:",check_same_thread=False)
+ db.execute("PRAGMA foreign_keys=ON")
+ db.executescript((MIG/"sqlite"/"121_agent_registry.sql").read_text())
+ agent(db)
+ raw="agc_test-credential"
+ db.execute("INSERT INTO agent_credentials(credential_id,agent_id,credential_digest,pepper_id,issued_at) VALUES(?,?,?,?,?)",
+  ("cred_x","agt_x",ar.digest("agent_credential",raw),"test","2026-01-01T00:00:00Z"))
+ db.commit()
+
+ class Store:
+  @contextmanager
+  def transaction(self):
+   with db:
+    yield self
+  def _fetch_one(self,sql,params):
+   cursor=db.execute(sql,params)
+   row=cursor.fetchone()
+   return dict(zip([col[0] for col in cursor.description],row)) if row else None
+  def _execute(self,sql,params):
+   return db.execute(sql,params)
+
+ monkeypatch.setattr(routes,"svc",lambda: ar.AgentService(Store()))
+ app=FastAPI()
+ app.include_router(routes.router,prefix="/flowgate/api/v1")
+ with TestClient(app) as client:
+  yield client,db,raw
+ db.close()
+
+
+def heartbeat_body(**overrides):
+ body={"agent_id":"agt_x","protocol_version":1,"agent_version":"1.2.3",
+  "os":"linux","architecture":"amd64",
+  "reported_capabilities":{"ai_cli":True,"ai_api":False,"storage":True}}
+ body.update(overrides)
+ return body
+
+
+def test_heartbeat_api_success_contract_and_runtime_state(heartbeat_api):
+ client,db,raw=heartbeat_api
+ response=client.post("/flowgate/api/v1/agent/heartbeat",
+  headers={"Authorization":"Bearer "+raw},json=heartbeat_body())
+ assert response.status_code==200
+ payload=response.json()
+ assert set(payload)=={"accepted","agent_id","server_time","protocol_version",
+  "heartbeat_interval_seconds","online_ttl_seconds"}
+ assert payload["accepted"] is True
+ assert payload["agent_id"]=="agt_x"
+ assert type(payload["protocol_version"]) is int and payload["protocol_version"]==1
+ assert payload["heartbeat_interval_seconds"]==30
+ assert payload["online_ttl_seconds"]==90
+ assert datetime.fromisoformat(payload["server_time"].replace("Z","+00:00")).tzinfo is not None
+ row=db.execute("SELECT last_seen_at,agent_version,protocol_version,os,architecture,"
+  "reported_ai_cli,reported_ai_api,reported_storage,protocol_compatibility "
+  "FROM agents WHERE agent_id='agt_x'").fetchone()
+ assert row==(payload["server_time"],"1.2.3",1,"linux","amd64",1,0,1,"compatible")
+ assert db.execute("SELECT last_heartbeat_at FROM agent_credentials WHERE credential_id='cred_x'").fetchone()[0]==payload["server_time"]
+
+
+@pytest.mark.parametrize(("headers","body","setup","status","code"),[
+ ({},heartbeat_body(),None,401,"unauthorized"),
+ (None,heartbeat_body(), "disable",403,"agent_disabled"),
+ (None,heartbeat_body(agent_id="agt_other"),None,403,"agent_identity_mismatch"),
+ (None,heartbeat_body(protocol_version=2),None,409,"protocol_incompatible"),
+ (None,{"agent_id":"agt_x"},None,422,None),
+])
+def test_heartbeat_api_failure_contract(heartbeat_api,headers,body,setup,status,code):
+ client,db,raw=heartbeat_api
+ if setup=="disable":
+  db.execute("UPDATE agents SET enabled=0 WHERE agent_id='agt_x'")
+  db.commit()
+ response=client.post("/flowgate/api/v1/agent/heartbeat",
+  headers=headers if headers is not None else {"Authorization":"Bearer "+raw},json=body)
+ assert response.status_code==status
+ if code:
+  assert response.json()["ok"] is False
+  assert response.json()["error"]["code"]==code
+ if status==409:
+  row=db.execute("SELECT last_seen_at,agent_version,protocol_version,"
+   "reported_ai_cli,reported_ai_api,reported_storage,protocol_compatibility,"
+   "last_rejected_protocol_version,last_protocol_rejection_at FROM agents WHERE agent_id='agt_x'").fetchone()
+  assert row[:6]==(None,)*6
+  assert row[6:8]==("incompatible",2)
+  assert row[8] is not None
+  assert db.execute("SELECT last_heartbeat_at FROM agent_credentials WHERE credential_id='cred_x'").fetchone()[0] is None
