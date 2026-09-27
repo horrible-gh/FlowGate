@@ -178,8 +178,13 @@ def _conflict_resolved(run: dict) -> bool:
     merge_id = run.get("merge_id")
     if merge_id is None:
         return False
+    # 0630 T0005: a branch merge's run carries only the synthetic project-scoped key, so
+    # its session is addressed by project instead of by group.
+    owner_group, owner_project = git_service.merge_session_owner_args(merge_id, run["group_id"])
     try:
-        conflicts = git_service.list_conflicts(run["group_id"], int(merge_id))
+        conflicts = git_service.list_conflicts(
+            owner_group, int(merge_id), **({"project_id": owner_project} if owner_project else {}),
+        )
     except GitServiceError as exc:
         # A successful complete=true resolve closes the merge session; list_conflicts
         # then returns not_found. Treat closed/missing as terminal for this scoped oracle.

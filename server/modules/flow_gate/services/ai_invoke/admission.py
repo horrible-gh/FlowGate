@@ -209,9 +209,23 @@ def _is_group_worktree(project_id: str, group_id: str, root: Optional[Path]) -> 
 PROJECT_SCOPED_ACTION_SCOPES = frozenset({"resolve_base_dirty"})
 
 
+def _is_project_scoped_run(action_scope: Optional[str], merge_id: Optional[int] = None) -> bool:
+    """flowgate.default.0630 T0005: besides resolve_base_dirty, a resolve_conflict run for
+    an ordinary Branch Manager merge (owner branch_merge) has no group either. It takes no
+    group lease, demands no group worktree, and its token is minted group-less and bound
+    to project + merge_id; the run keeps the synthetic `<project>.none.0000` key only as
+    the row key, exactly like resolve_base_dirty."""
+    if action_scope in PROJECT_SCOPED_ACTION_SCOPES:
+        return True
+    if action_scope == "resolve_conflict" and merge_id is not None:
+        _owner_group, owner_project = git_service.merge_session_owner_args(merge_id)
+        return bool(owner_project)
+    return False
+
+
 def _require_group_worktree(
     project_id: str, module: str, group_id: str, branch: str, locale: Optional[str] = None,
-    action_scope: Optional[str] = None,
+    action_scope: Optional[str] = None, merge_id: Optional[int] = None,
 ) -> None:
     """Refuse to launch a run that would execute in the base tree (0299 R0001).
 
@@ -232,7 +246,7 @@ def _require_group_worktree(
     # A project-scoped run works in the base checkout on purpose — there is no group
     # worktree to demand, and demanding one either invents a junk group or blocks the
     # press outright (0481 T0010 #1).
-    if action_scope in PROJECT_SCOPED_ACTION_SCOPES:
+    if _is_project_scoped_run(action_scope, merge_id):
         return
     try:
         cfg = db_git.get_config(project_id)
@@ -326,6 +340,7 @@ def _worker_source_kind(token_rec: dict) -> str:
 def _ensure_initial_source_sync(
     project_id: str, module: str, group_id: str,
     action_scope: str, doc_ref: Optional[str], locale: Optional[str] = None,
+    merge_id: Optional[int] = None,
 ) -> None:
     """Force the group worktree to the current base HEAD exactly once, before
     the group's FIRST raw source-capable (read/read_write) AI invocation
@@ -344,7 +359,7 @@ def _ensure_initial_source_sync(
     # Same reason as _require_group_worktree above: there is no group worktree to sync for a
     # project-scoped run, and `resolve_base_dirty` is read_write so it would otherwise fall
     # straight into this gate (0481 T0010 #1).
-    if action_scope in PROJECT_SCOPED_ACTION_SCOPES:
+    if _is_project_scoped_run(action_scope, merge_id):
         return
     result = git_service.ensure_initial_group_source_sync(project_id, module, group_id)
     if result.get("performed") or result.get("reason") in _INITIAL_SYNC_SAFE_SKIP_REASONS:
@@ -1025,7 +1040,7 @@ def start_run(
     # before it calls in here); every other group-lease call in the run's life (heartbeat,
     # release, handoff, update_token) already no-ops on a missing row.
     # (Deliberately ASCII: the 0430 census caps this file's Korean lines and it is full.)
-    project_scoped = action_scope in PROJECT_SCOPED_ACTION_SCOPES
+    project_scoped = _is_project_scoped_run(action_scope, merge_id)
     # Durable lease admission is authoritative. Memory remains only a UI/live-process signal.
     active = None if project_scoped else db_group_ai_leases.get_active(group_id)
     handoff_allowed = bool(
@@ -1052,6 +1067,7 @@ def start_run(
         (db_docs.get_by_id(doc_ref) or {}).get("branch") or "main",
         locale=template_provision.normalize_locale(continuation_locale),
         action_scope=action_scope,
+        **({"merge_id": merge_id} if project_scoped and merge_id is not None else {}),
     )
     # flowgate.default.0511 T0004: force the group worktree to the current
     # configured base HEAD exactly once, before the group's FIRST raw
@@ -1061,6 +1077,7 @@ def start_run(
     _svc()._ensure_initial_source_sync(
         project_id, module, group_id, action_scope, doc_ref,
         locale=continuation_locale,
+        **({"merge_id": merge_id} if project_scoped and merge_id is not None else {}),
     )
 
     baseline_seq = db_docs.get_group_max_seq(group_id)
