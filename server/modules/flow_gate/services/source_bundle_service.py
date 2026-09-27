@@ -22,6 +22,10 @@ def _public(row, reused=False):
         "exclusion_policy_version": row["exclusion_policy_version"],
         "file_count": row["file_count"], "byte_size": row["byte_size"],
         "created_at": row["created_at"], "expires_at": row["expires_at"], "reused": reused,
+        "origin": "automatic_source_access",
+        "failure_code": row.get("failure_code"), "failure_reason": row.get("failure_reason"),
+        "deleted_at": row.get("deleted_at"),
+        "cleanup_state": "deleted" if row["status"] == "deleted" else "active" if row["status"] == "created" else "none",
     }
 
 

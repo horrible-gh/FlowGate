@@ -65,6 +65,7 @@ def _token_for(run: dict, issued_to: str) -> dict:
     }
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_real_resume_chain_successor_inherits_capability_unrelated_run_denied(
     fake_env, snapshot_env, monkeypatch,
 ):

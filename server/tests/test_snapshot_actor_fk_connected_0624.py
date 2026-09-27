@@ -153,6 +153,7 @@ def connected_env(tmp_path, monkeypatch, migrated_sqlite_db):
     conn.close()
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_a_startup_recovery_uses_real_fk_and_tags_source(connected_env):
     """Reproduces the exact NR log: startup recovery of a published-but-uncommitted
     snapshot must not write `actor_user_id='snapshot-recovery'`."""
@@ -180,6 +181,7 @@ def test_a_startup_recovery_uses_real_fk_and_tags_source(connected_env):
     assert metadata["recovery"] == "published_before_db_update"
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_b_ttl_cleanup_uses_system_actor_and_tags_trigger(connected_env):
     snapshot_id = "snap_ttl_0624"
     connected_env.make_request(snapshot_id)
@@ -204,6 +206,7 @@ def test_b_ttl_cleanup_uses_system_actor_and_tags_trigger(connected_env):
     assert metadata["source"] == "snapshot_ttl_cleanup"
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_c_run_cleanup_prefers_real_actor_and_falls_back_to_system(connected_env):
     snapshot_id = "snap_run_0624"
     connected_env.make_request(snapshot_id, run_id="run_c")
@@ -232,6 +235,7 @@ def test_c_run_cleanup_prefers_real_actor_and_falls_back_to_system(connected_env
     assert event2["actor_user_id"] == materialize.SYSTEM_ACTOR_USER_ID
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_d_group_close_uses_real_actor_and_group_finished_trigger(connected_env):
     snapshot_id = "snap_group_0624"
     connected_env.make_request(snapshot_id, run_id="run_d")
@@ -249,6 +253,7 @@ def test_d_group_close_uses_real_actor_and_group_finished_trigger(connected_env)
     assert metadata["source"] == "snapshot_group_cleanup"
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_e_ai_run_freshness_uses_issued_to_and_falls_back_to_system(connected_env):
     snapshot_id = "snap_access_0624"
     connected_env.make_request(snapshot_id, run_id="run_e")
@@ -287,6 +292,7 @@ def test_e_ai_run_freshness_uses_issued_to_and_falls_back_to_system(connected_en
     assert event2["actor_user_id"] == materialize.SYSTEM_ACTOR_USER_ID
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_f_audit_direct_call_resolves_actor_both_ways(connected_env):
     """`snapshot_access_service._audit()` is the one place that still wrote
     `actor_user_id` inline instead of going through materialize's `_record_event`."""
@@ -307,3 +313,26 @@ def test_f_audit_direct_call_resolves_actor_both_ways(connected_env):
     snapshot_access_service._audit("snapshot_execution_reported", row, anon_run, task_kind="build")
     event2 = connected_env.latest_event()
     assert event2["actor_user_id"] == materialize.SYSTEM_ACTOR_USER_ID
+
+
+def test_t3_retirement_audit_uses_system_actor_and_preserves_created(connected_env, monkeypatch):
+    from modules.flow_gate.services import snapshot_request_service
+
+    monkeypatch.setattr(snapshot_request_service, "get_store", lambda: connected_env.store)
+    connected_env.make_request("snap_t3_requested", run_id="run_t3_requested")
+    connected_env.make_request("snap_t3_approved", run_id="run_t3_approved")
+    connected_env.approve("snap_t3_approved")
+    connected_env.make_request("snap_t3_created", run_id="run_t3_created")
+    connected_env.store._execute(
+        "UPDATE snapshot_requests SET status='created' WHERE snapshot_id=?", ["snap_t3_created"],
+    )
+    closed = snapshot_request_service.retire_unmaterialized(materialize.SYSTEM_ACTOR_USER_ID)
+    assert {row["snapshot_id"] for row in closed} == {"snap_t3_requested", "snap_t3_approved"}
+    assert materialize.db.get("snap_t3_created")["status"] == "created"
+    events = connected_env.store._fetch_all(
+        "SELECT event_type,actor_user_id,from_state,to_state FROM workflow_events "
+        "WHERE event_type='snapshot_retired' ORDER BY id", [],
+    )
+    assert len(events) == 2
+    assert {event["from_state"] for event in events} == {"requested", "approved"}
+    assert all(event["actor_user_id"] == materialize.SYSTEM_ACTOR_USER_ID for event in events)

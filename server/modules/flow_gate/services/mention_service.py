@@ -2134,16 +2134,14 @@ def build_mention(
         )
         if source_crud_section:
             snapshot_policy_section = _section(
-                "AI source snapshot policy",
-                "Request a snapshot only when a real filesystem tree is required for build/test/"
-                "lint/typecheck/dependency or static analysis, or an isolated temporary experiment. "
-                "For reads, searches, comparisons, history, and merge analysis, use the existing "
-                "FlowGate source tools and Merge Context first. A request never approves or creates "
-                "a snapshot; only a human-approved materialized current_worktree snapshot has a "
-                "locator. Snapshot changes are temporary and must never be promoted/uploaded/"
-                "committed/merged/synced back. If stale, report ACTIVE SNAPSHOT IS STALE and do not "
-                "claim current-worktree validation. Full policy: "
-                f"GET {base}/help/items/source_snapshots"
+                "Source Bundle policy",
+                "Source Bundle is prepared automatically when source access or execution needs it; "
+                "no human approval is required. Reads use the immutable Bundle and build/test/lint/"
+                "typecheck tasks run in disposable AI Scratch. Use canonical FlowGate mutation tools "
+                "for persistent source edits. Bundle and Scratch are not the source of truth and "
+                "cannot be promoted, uploaded, committed, merged or synced back. A failed Bundle "
+                "never falls back to legacy Snapshot approval. Full policy: "
+                f"GET {base}/help/items/source_bundles"
             )
 
     # ── Assembly ──────────────────────────────────────────────────────────────

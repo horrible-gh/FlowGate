@@ -1,10 +1,45 @@
 """CLI transport for the same Source Bundle core used by API providers."""
-from fastapi import APIRouter, HTTPException, Request
+import time
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from modules.flow_gate.api.v1.snapshot_routes import _cli_context
+from modules.flow_gate.auth.middleware import get_current_user
+from modules.flow_gate.db import source_bundles as db
 from modules.flow_gate.services import source_bundle_access_service as core
+from modules.flow_gate.services import source_bundle_service as bundles
+from modules.flow_gate.services import source_bundle_materializer as materializer
 
 router = APIRouter(prefix="/api/v1/source-bundles/cli", tags=["SourceBundles"])
+overview_router = APIRouter(prefix="/api/v1/source-bundles", tags=["SourceBundles"])
+
+
+@overview_router.get("")
+def list_bundles(project_id: str, group_id: str, user=Depends(get_current_user)):
+    """Metadata only. This endpoint never ensures or mutates a Bundle."""
+    rows = db.list_recent(project_id, group_id)
+    current = None
+    if any(row["status"] == "created" for row in rows):
+        try:
+            root = materializer.resolve_worktree(project_id, group_id)
+            current = materializer.inspect_source(root, time.monotonic() + materializer.BUILD_SECONDS)
+        except Exception:
+            pass
+    result = []
+    for row in rows:
+        item = bundles._public(row)
+        if row["status"] == "created":
+            fresh = bool(current) and (
+                current["source_revision"] == row["source_revision"] and
+                bool(current["source_dirty"]) == bool(row["source_dirty"]) and
+                current["content_fingerprint"] == row["content_fingerprint"]
+            )
+            item["freshness"] = "current" if fresh else "stale"
+        else:
+            item["freshness"] = "not_applicable"
+        result.append(item)
+    return {"ok": True, "bundles": result}
+
 
 
 def _result(call, operation):

@@ -27,6 +27,7 @@ def test_reason_and_purpose_required_including_whole_source():
  for key in ("reason","purpose"):
   with pytest.raises(service.SnapshotRequestError): service.validate_request(BASE|{"scope":"whole_source","requested_paths":[],key:" "})
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_api_tool_warns_against_misuse_and_has_no_decision():
  schema=api_server_tools.SCHEMAS["request_source_snapshot"]
  assert schema["properties"]["source_kind"]["enum"]==["current_worktree"]
@@ -57,6 +58,7 @@ class _Txn:
 class _Store:
  def transaction(self): return _Txn()
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_audit_keys_and_idempotent_decision(monkeypatch):
  row=BASE|{"snapshot_id":"s","status":"approved","requested_at":"now","approved_by":"human"}
  calls=[]
@@ -73,6 +75,7 @@ def test_audit_keys_and_idempotent_decision(monkeypatch):
  assert set(("snapshot_id","run_id","group_id","provider_id","reason","purpose","scope","requested_paths","source_kind","requested_at","approved_by")) <= set(meta)
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_worker_token_http_route_uses_live_token_metadata(monkeypatch):
  captured={}
  token={
@@ -100,6 +103,7 @@ def test_worker_token_http_route_uses_live_token_metadata(monkeypatch):
  assert captured["actor"]=="worker_user"
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_human_approval_http_endpoint_materializes_to_created(monkeypatch):
  from fastapi import FastAPI
  from fastapi.testclient import TestClient
@@ -121,6 +125,7 @@ def test_human_approval_http_endpoint_materializes_to_created(monkeypatch):
 
 # T0012 §12/§13 — the client's Pending badge/list and the auto-open dialog have nothing
 # to refresh on without a signal; §17 allows a small connection fix within T#3's scope.
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_create_and_approve_broadcast_refresh_signal_not_the_list_itself(monkeypatch):
  events=[]
  monkeypatch.setattr(service,"broadcast_event_threadsafe",lambda event:events.append(event) or 1)
@@ -147,6 +152,7 @@ def test_create_and_approve_broadcast_refresh_signal_not_the_list_itself(monkeyp
  assert len(events)==2
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_broadcast_failure_never_breaks_the_decision(monkeypatch):
  def _boom(event): raise RuntimeError("no subscribers reachable")
  monkeypatch.setattr(service,"broadcast_event_threadsafe",_boom)
@@ -158,6 +164,7 @@ def test_broadcast_failure_never_breaks_the_decision(monkeypatch):
  assert row["snapshot_id"]=="snap_evt2"
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_c16_pending_reused_per_chain_without_duplicate_events(monkeypatch):
  rows={}
  events=[]

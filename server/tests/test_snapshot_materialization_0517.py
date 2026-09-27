@@ -212,6 +212,7 @@ def snapshot_env(tmp_path, monkeypatch):
         ),
     ],
 )
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_scope_materialization_preserves_relative_paths(snapshot_env, scope, paths, expected):
     snapshot_env.row.update(scope=scope, requested_paths=paths)
     result = materialize.materialize("snap_test", "human")
@@ -227,6 +228,7 @@ def test_scope_materialization_preserves_relative_paths(snapshot_env, scope, pat
     assert not snapshot_env.final().is_relative_to(snapshot_env.worktree)
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_selected_file_failure_is_terminal_and_never_publishes_partial(snapshot_env):
     snapshot_env.row.update(
         scope="selected_files", requested_paths=["one.txt", "missing.txt"]
@@ -245,6 +247,7 @@ def test_selected_file_failure_is_terminal_and_never_publishes_partial(snapshot_
     assert snapshot_env.row["failure_code"] == "snapshot_create_failed"
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_exact_worktree_failure_never_falls_back(snapshot_env, monkeypatch):
     monkeypatch.setattr(
         materialize.git_service, "effective_src_root_ex",
@@ -272,6 +275,7 @@ def test_request_and_materializer_reject_abnormal_paths(bad_path):
         snapshot_request_service.validate_request(base)
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_links_are_skipped_recursively_and_rejected_when_explicit(snapshot_env, monkeypatch):
     linked = snapshot_env.worktree / "dir" / "outside_link"
     linked.write_text("pretend-link", encoding="utf-8")
@@ -292,6 +296,7 @@ def test_links_are_skipped_recursively_and_rejected_when_explicit(snapshot_env, 
     assert caught.value.code == "snapshot_link_blocked"
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_manifest_readme_exclusions_and_provenance(snapshot_env):
     snapshot_env.row.update(scope="whole_source", requested_paths=[])
     materialize.materialize("snap_test", "human")
@@ -316,6 +321,7 @@ def test_manifest_readme_exclusions_and_provenance(snapshot_env):
         assert sentence in readme
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_size_limit_fails_closed_without_partial(snapshot_env, monkeypatch):
     monkeypatch.setattr(materialize, "SNAPSHOT_MAX_TOTAL_BYTES", 2)
     with pytest.raises(snapshot_request_service.SnapshotRequestError) as caught:
@@ -325,6 +331,7 @@ def test_size_limit_fails_closed_without_partial(snapshot_env, monkeypatch):
     assert not snapshot_env.final().exists()
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_stale_uses_scope_fingerprint_and_survives_restart(snapshot_env):
     materialize.materialize("snap_test", "human")
     assert materialize.refresh_stale("snap_test")["stale"] is False
@@ -337,6 +344,7 @@ def test_stale_uses_scope_fingerprint_and_survives_restart(snapshot_env):
     assert materialize.refresh_stale("snap_test")["stale"] is True
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_cleanup_deletes_snapshot_and_internal_garbage_with_audit(snapshot_env):
     materialize.materialize("snap_test", "human")
     garbage = snapshot_env.final() / "source" / "__pycache__"
@@ -351,6 +359,7 @@ def test_cleanup_deletes_snapshot_and_internal_garbage_with_audit(snapshot_env):
     assert materialize.cleanup("snap_test", "human")["status"] == "deleted"
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_delete_failure_warns_audits_and_retry_succeeds(snapshot_env, monkeypatch, caplog):
     materialize.materialize("snap_test", "human")
     real_rmtree = materialize.shutil.rmtree
@@ -374,6 +383,7 @@ def test_delete_failure_warns_audits_and_retry_succeeds(snapshot_env, monkeypatc
     assert second["status"] == "deleted"
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_ttl_run_and_group_cleanup_entry_points(snapshot_env, monkeypatch):
     monkeypatch.setattr(materialize.db, "close_unmaterialized_for_run", lambda *args: [])
     monkeypatch.setattr(materialize.db, "close_unmaterialized_for_group", lambda *args: [])
@@ -388,6 +398,7 @@ def test_ttl_run_and_group_cleanup_entry_points(snapshot_env, monkeypatch):
     assert materialize.cleanup_for_run("run")["deleted"] == 1
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_cleanup_cannot_touch_another_snapshot_or_worktree(snapshot_env):
     materialize.materialize("snap_test", "human")
     other = snapshot_env.scratch / materialize.SNAPSHOT_NAMESPACE / "snap_other"
@@ -399,6 +410,7 @@ def test_cleanup_cannot_touch_another_snapshot_or_worktree(snapshot_env):
     assert (snapshot_env.worktree / "one.txt").read_text(encoding="utf-8") == source_before
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_concurrent_materialize_publishes_once(snapshot_env):
     results = []
     errors = []
@@ -420,6 +432,7 @@ def test_concurrent_materialize_publishes_once(snapshot_env):
     assert [event["event_type"] for event in snapshot_env.state.events].count("snapshot_created") == 1
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_publish_then_db_failure_recovers_without_second_tree(snapshot_env, monkeypatch):
     real_mark = snapshot_env.state.mark_created
     calls = {"count": 0}
@@ -441,6 +454,7 @@ def test_publish_then_db_failure_recovers_without_second_tree(snapshot_env, monk
     assert len(finals) == 1
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_delete_then_db_failure_converges_on_retry(snapshot_env, monkeypatch):
     materialize.materialize("snap_test", "human")
     real_mark = snapshot_env.state.mark_deleted
@@ -484,6 +498,7 @@ def test_lifecycle_migrations_include_cleanup_and_provenance_columns(dialect):
         assert column in migration
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_copy_failure_removes_staging_and_never_publishes(snapshot_env, monkeypatch):
     snapshot_env.row.update(
         scope="selected_files", requested_paths=["one.txt", "other.txt"]
@@ -533,6 +548,7 @@ def test_sqlite_lifecycle_migration_executes_after_request_schema(tmp_path):
     } <= columns
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_cleanup_missing_namespace_stays_created_and_audits_warning(snapshot_env):
     materialize.materialize("snap_test", "human")
     materialize.shutil.rmtree(snapshot_env.scratch)
@@ -627,6 +643,7 @@ def test_sqlite_lifecycle_state_machine_queries(tmp_path, monkeypatch):
         ("group", "close_unmaterialized_for_group"),
     ],
 )
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_lifecycle_close_waits_for_inflight_publish_and_deletes(
     snapshot_env, monkeypatch, cleanup_scope, close_name,
 ):
@@ -685,6 +702,7 @@ def test_lifecycle_close_waits_for_inflight_publish_and_deletes(
     assert not snapshot_env.final().exists()
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_materialize_cleanup_race_converges_to_deleted(snapshot_env, monkeypatch):
     entered = threading.Event()
     release = threading.Event()
@@ -714,6 +732,7 @@ def test_materialize_cleanup_race_converges_to_deleted(snapshot_env, monkeypatch
     assert not snapshot_env.final().exists()
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_real_symlink_escape_is_not_followed(snapshot_env):
     outside = snapshot_env.scratch.parent / "outside-secret"
     outside.mkdir()
@@ -730,6 +749,7 @@ def test_real_symlink_escape_is_not_followed(snapshot_env):
     assert {"path": "dir/external", "reason": "symlink_or_reparse"} in manifest["excluded"]["paths"]
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_c1_to_c13_connected_request_pending_approve_read_stale_cleanup(
     snapshot_env, monkeypatch,
 ):
@@ -887,6 +907,7 @@ def test_c1_to_c13_connected_request_pending_approve_read_stale_cleanup(
     assert usages and usages[0]["snapshot_id"] == "snap_test"
 
 @pytest.mark.parametrize("initial_status", ["requested", "approved"])
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_run_finish_closes_unmaterialized_and_late_http_approval_cannot_create(
     snapshot_env, monkeypatch, initial_status,
 ):
@@ -953,6 +974,7 @@ def _disguise_same_size_same_mtime(path: Path, new_text: str) -> None:
         ("whole_source", [], "other.txt"),
     ],
 )
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_t0022_same_size_restored_mtime_content_change_is_stale(
     snapshot_env, monkeypatch, scope, paths, target,
 ):
@@ -985,6 +1007,7 @@ def test_t0022_same_size_restored_mtime_content_change_is_stale(
     assert payload["snapshot"]["current_worktree_validation_allowed"] is False
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_t0022_unchanged_content_with_touched_mtime_stays_active(snapshot_env):
     """The content contract also means a pure touch (same bytes, new mtime) is not stale."""
     materialize.materialize("snap_test", "human")
@@ -994,6 +1017,7 @@ def test_t0022_unchanged_content_with_touched_mtime_stays_active(snapshot_env):
     assert materialize.refresh_stale("snap_test")["stale"] is False
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_t0022_disguised_change_during_build_fails_materialize(snapshot_env, monkeypatch):
     """The post-copy verification inside materialize() used the same stat-reuse shortcut;
     a same-size, restored-mtime edit between copy and verify must still fail closed."""
@@ -1013,6 +1037,7 @@ def test_t0022_disguised_change_during_build_fails_materialize(snapshot_env, mon
     assert not snapshot_env.final().exists()
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_t0022_fingerprint_never_reuses_a_stat_matched_hash(snapshot_env, monkeypatch):
     """Pin the contract itself: every refresh re-reads every in-scope file."""
     snapshot_env.row.update(scope="selected_files", requested_paths=["one.txt", "other.txt"])
@@ -1026,3 +1051,19 @@ def test_t0022_fingerprint_never_reuses_a_stat_matched_hash(snapshot_env, monkey
     materialize.refresh_stale("snap_test")
     materialize.refresh_stale("snap_test")
     assert sorted(reads) == ["one.txt", "one.txt", "other.txt", "other.txt"]
+
+
+def test_t3_legacy_created_snapshot_keeps_real_cleanup(snapshot_env):
+    """Retirement leaves already-created copies on the normal deletion path."""
+    snapshot_env.row.update(
+        status="created", created_at="2026-09-20T00:02:00+00:00",
+        expires_at="2026-09-21T00:02:00+00:00",
+        copied_file_count=1, copied_byte_size=3,
+    )
+    final = snapshot_env.final()
+    (final / "source").mkdir(parents=True)
+    (final / "source" / "one.txt").write_bytes(b"one")
+    result = materialize.cleanup("snap_test", "human", trigger="explicit")
+    assert result["status"] == "deleted"
+    assert not final.exists()
+    assert snapshot_env.state.events[-1]["event_type"] == "snapshot_deleted"

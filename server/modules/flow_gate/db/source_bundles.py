@@ -131,6 +131,15 @@ def record_usage(bundle_id, operation, *, run_id=None, token_id=None, document_i
     return usage_id
 
 
+def list_recent(project_id, group_id, limit=20):
+    """Bounded metadata history for a group's read-only UI."""
+    return [_row(row) for row in get_store()._fetch_all(
+        "SELECT * FROM source_bundles WHERE project_id=? AND group_id=? "
+        "ORDER BY started_at DESC,bundle_id DESC LIMIT ?",
+        [project_id, group_id, limit],
+    )]
+
+
 def list_usage_for_run(run_id):
     return [_row(row) for row in get_store()._fetch_all(
         "SELECT * FROM source_bundle_usages WHERE run_id=? ORDER BY used_at,usage_id", [run_id]

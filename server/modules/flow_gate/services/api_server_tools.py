@@ -137,26 +137,12 @@ REGISTER_SCHEMAS = {
 DESCRIPTIONS = {name: name.replace("_", " ") for name in (*BASE_NAMES, *SNAPSHOT_NAMES, *BUNDLE_NAMES, *SOURCE_NAMES)}
 DESCRIPTIONS["access_source_bundle"] = "Read/status/search/glob/stat an immutable Source Bundle. Omit bundle_id to lazy ensure. Historical results do not claim current worktree freshness unless requested."
 DESCRIPTIONS["run_source_bundle"] = "Execute inside disposable AI Scratch copied from a Source Bundle. Omit bundle_id to lazy ensure. Same run and Bundle reuse Scratch. No promotion or live fallback."
-DESCRIPTIONS["request_source_snapshot"] = (
-    "Request only; never approve, materialize, or return a locator. Use this only when a real "
-    "filesystem tree is required for build/test/lint/typecheck/dependency/static analysis or "
-    "an isolated temporary experiment. Prefer FlowGate read/search/git and Merge Context Tool for "
-    "single-file reads, grep/glob/stat, ref comparison, diffs, history, and merge analysis. "
-    "This request never creates files. whole_source is not the default and requires an explicit "
-    "reason and purpose. One pending request is reused per chain/run; the tool waits briefly "
-    "for a human decision within the remaining run budget. A timeout keeps the same request id."
-)
+DESCRIPTIONS["request_source_snapshot"] = "Retired (410). Source Bundle is prepared automatically when source access or execution needs it."
 DESCRIPTIONS["access_source_snapshot"] = (
-    "Read status/locator or read/search/glob/stat inside a human-approved current-worktree "
-    "snapshot. Stale data remains readable but is marked ACTIVE SNAPSHOT IS STALE and cannot "
-    "be reported as current-worktree validation. Deleted and failed snapshots are explicit."
+    "Read a legacy created Snapshot for historical compatibility only. New work uses Source Bundle."
 )
 DESCRIPTIONS["run_source_snapshot"] = (
-    "Run build/test/lint/typecheck/dependency/static analysis or a temporary experiment inside "
-    "an approved disposable snapshot. There is no promotion, upload, commit, merge, or sync-back; "
-    "persistent edits must use canonical FlowGate source mutation tools. FlowGate constrains the "
-    "working directory, temporary directory, timeout, and captured output, but cannot fully inspect "
-    "every child command; commands must stay inside the snapshot and must not access live source."
+    "Retired (410). Use run_source_bundle; execution occurs in disposable AI Scratch."
 )
 DESCRIPTIONS["read_help"] = (
     "Read personalized help without HTTP. Empty input returns the help index; "
@@ -370,6 +356,7 @@ def _snapshot_token(run: dict, raw_token: str) -> dict:
 
 
 def request_source_snapshot(run: dict, raw_token: str, tool_input: dict, remaining_sec: float = 0) -> tuple[int, dict]:
+    raise ToolError(410, "snapshot_feature_retired", "Legacy Snapshot requests are retired; use Source Bundle")
     token = _snapshot_token(run, raw_token)
     data = snapshot_request_service.request_data_for_run(run, token, tool_input)
     try:
@@ -406,6 +393,7 @@ def access_source_snapshot(run: dict, raw_token: str, tool_input: dict) -> tuple
 def run_source_snapshot(
     run: dict, raw_token: str, tool_input: dict, remaining_sec: float,
 ) -> tuple[int, dict]:
+    raise ToolError(410, "snapshot_feature_retired", "Legacy Snapshot execution is retired; use Source Bundle")
     _snapshot_token(run, raw_token)
     try:
         return snapshot_access_service.execute(
