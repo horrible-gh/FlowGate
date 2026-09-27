@@ -25,9 +25,9 @@ READ_SOURCE_NAMES = tuple(name for name, op in tools.SOURCE_OPS.items() if op in
 
 
 @pytest.mark.parametrize("scope, expected", [
-    ("new", list(tools.BASE_NAMES) + list(tools.SNAPSHOT_NAMES) + list(READ_SOURCE_NAMES)),
-    ("edit", list(tools.BASE_NAMES) + list(tools.SNAPSHOT_NAMES) + list(READ_SOURCE_NAMES)),
-    ("review", list(tools.BASE_NAMES) + list(tools.SNAPSHOT_NAMES) + list(READ_SOURCE_NAMES)),
+    ("new", list(tools.BASE_NAMES) + ["access_source_bundle"] + list(READ_SOURCE_NAMES)),
+    ("edit", list(tools.BASE_NAMES) + ["access_source_bundle"] + list(READ_SOURCE_NAMES)),
+    ("review", list(tools.BASE_NAMES) + ["access_source_bundle"] + list(READ_SOURCE_NAMES)),
     ("test_run", list(tools.BASE_NAMES)),
 ])
 def test_registry_selects_scope_schema_and_tier(monkeypatch, tmp_path, scope, expected):
@@ -44,13 +44,13 @@ def test_registry_selects_scope_schema_and_tier(monkeypatch, tmp_path, scope, ex
 @pytest.mark.parametrize("step_type", ["N", "NR", "CH", "P", "T"])
 def test_non_mutating_types_get_read_tier(monkeypatch, tmp_path, step_type):
     monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": step_type})
-    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + list(tools.SNAPSHOT_NAMES) + list(READ_SOURCE_NAMES)
+    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + ["access_source_bundle"] + list(READ_SOURCE_NAMES)
 
 
 @pytest.mark.parametrize("step_type", ["TR", "TSR", "TS"])
 def test_mutating_types_get_read_write_and_test_tier(monkeypatch, tmp_path, step_type):
     monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": step_type})
-    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + list(tools.SNAPSHOT_NAMES) + list(tools.SOURCE_OPS) + ["run_test"]
+    assert [d["name"] for d in tools.definitions_for_run(_run(tmp_path))] == list(tools.BASE_NAMES) + ["access_source_bundle"] + list(tools.SOURCE_OPS) + ["run_source_bundle", "run_test"]
 
 
 @pytest.mark.parametrize("step_type", ["N", "NR", "T", "TR", "TSR", "TS"])
@@ -87,24 +87,44 @@ def test_source_call_uses_same_root_and_live_token(monkeypatch, tmp_path):
 
 def test_run_test_is_sync_allowlisted_and_cwd_bound(monkeypatch, tmp_path):
     captured = {}
+    scratch = tmp_path / "scratch"
+    source = scratch / "source"
+    source.mkdir(parents=True)
+    bundle_access = tools.source_bundle_access_service
+
     class Proc:
         returncode = 7
+
         def communicate(self, timeout):
             captured["timeout"] = timeout
             return b"stdout-tail", b"stderr-tail"
+
     def popen(command, **kwargs):
         captured.update(command=command, **kwargs)
         return Proc()
-    monkeypatch.setattr(tools, "test_root", lambda _run: tmp_path)
+
     monkeypatch.setattr(tools.test_command_service, "current_os", lambda: "windows")
-    monkeypatch.setattr(tools.test_command_service, "current_shell", lambda: "cmd.exe")
-    monkeypatch.setattr(tools.test_command_service, "list_for_view", lambda _project: [{"command": "pytest -q", "verified_os": "windows"}])
-    monkeypatch.setattr(tools.subprocess, "Popen", popen)
+    monkeypatch.setattr(tools.test_command_service, "list_for_view",
+                        lambda _project: [{"command": "pytest -q", "verified_os": "windows"}])
+    monkeypatch.setattr(bundle_access, "_resolve",
+                        lambda _run, _bundle_id: {"bundle_id": "sb_test", "project_id": "p", "group_id": "g"})
+    monkeypatch.setattr(bundle_access, "_scratch", lambda _run, _row: (scratch, False))
+    monkeypatch.setattr(bundle_access, "_metadata", lambda _row, _current=None: {"bundle_id": "sb_test"})
+    monkeypatch.setattr(bundle_access, "_roots", lambda *_args: ())
+    monkeypatch.setattr(bundle_access, "_usage", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(bundle_access.subprocess, "Popen", popen)
+
     status, result = tools.run_test(_run(tmp_path), {"command": " pytest   -q "}, 9)
     assert status == 200 and result["exit_code"] == 7
-    assert captured["cwd"] == tmp_path and captured["timeout"] == 9
-    assert set(captured["env"]) == {"PATH", "SYSTEMROOT", "TEMP", "TMP"}
-
+    assert captured["cwd"] == source and captured["timeout"] == 9
+    assert captured["command"] == "pytest -q"
+    assert set(captured["env"]) == {
+        "PATH", "SYSTEMROOT", "TEMP", "TMP", "TMPDIR", "XDG_CACHE_HOME",
+        "FLOWGATE_SOURCE_BUNDLE_ID",
+    }
+    with pytest.raises(tools.ToolError) as exc:
+        tools.run_test(_run(tmp_path), {"command": "unregistered"}, 9)
+    assert exc.value.reason == "not_verified"
 
 @pytest.mark.parametrize("kind", ["openai", "claude"])
 def test_provider_round_trip_preserves_multiple_calls(monkeypatch, kind):
@@ -217,7 +237,7 @@ def test_dispatcher_returns_a_result_for_every_call_id(monkeypatch, tmp_path, ca
 def test_full_remote_source_toolset_is_exposed_without_worktree(monkeypatch, tmp_path):
     monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": "TR"})
     names = [item["name"] for item in tools.definitions_for_run(_run(tmp_path))]
-    assert names == list(tools.BASE_NAMES) + list(tools.SNAPSHOT_NAMES) + list(tools.SOURCE_NAMES)
+    assert names == list(tools.BASE_NAMES) + ["access_source_bundle"] + list(tools.SOURCE_OPS) + ["run_source_bundle", "run_test"]
     assert {"read", "grep", "glob", "stat", "diff", "log", "show", "merge_preview", "patch", "write", "remove"} == set(tools.SOURCE_OPS.values())
     for name in tools.SOURCE_OPS:
         assert tools.SCHEMAS[name]["additionalProperties"] is False

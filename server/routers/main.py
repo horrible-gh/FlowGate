@@ -43,6 +43,7 @@ from modules.flow_gate.api.v1.conversation_routes import router as _conversation
 from modules.flow_gate.api.v1.chat_settings_routes import router as _chat_settings_router
 from modules.flow_gate.api.v1.ui_settings_routes import router as _ui_settings_router
 from modules.flow_gate.api.v1.snapshot_routes import router as _snapshot_router
+from modules.flow_gate.api.v1.source_bundle_routes import router as _source_bundle_router
 from modules.flow_gate.api.v1.agent_routes import router as _agent_router
 from modules.flow_gate.api.request_scope_middleware import RequestScopeMiddleware
 from modules.flow_gate.services.git_service import GitServiceError
@@ -192,6 +193,7 @@ app.include_router(_conversation_worker_router, prefix=f"{CONTEXT}", tags=["Conv
 app.include_router(_chat_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["ChatSettings"])
 app.include_router(_ui_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["UiSettings"])
 app.include_router(_snapshot_router, prefix=f"{CONTEXT}", tags=["Snapshots"])
+app.include_router(_source_bundle_router, prefix=f"{CONTEXT}", tags=["SourceBundles"])
 app.include_router(_agent_router, prefix=f"{CONTEXT}/api/v1", tags=["Agents"])
 app.include_router(_files_router.router, prefix="/api", tags=["Files"])
 # Every mutation route must carry an inventory classification. Group routes also name

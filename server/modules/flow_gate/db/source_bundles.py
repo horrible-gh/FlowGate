@@ -129,3 +129,16 @@ def record_usage(bundle_id, operation, *, run_id=None, token_id=None, document_i
          now_iso()],
     )
     return usage_id
+
+
+def list_usage_for_run(run_id):
+    return [_row(row) for row in get_store()._fetch_all(
+        "SELECT * FROM source_bundle_usages WHERE run_id=? ORDER BY used_at,usage_id", [run_id]
+    )]
+
+
+def attach_document(run_id, document_id):
+    return get_store()._execute_affected(
+        "UPDATE source_bundle_usages SET document_id=? WHERE run_id=? AND document_id IS NULL",
+        [document_id, run_id],
+    )
