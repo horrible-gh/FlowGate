@@ -124,7 +124,7 @@ class AgentService:
      [c["ai_cli"],c["ai_api"],c["storage"],ts,b["agent_version"],b["protocol_version"],b["os"],b["architecture"],ts,auth["agent_id"]])
     self.s._execute("UPDATE agent_credentials SET last_heartbeat_at=? WHERE credential_id=?",[ts,auth["credential_id"]])
   if incompatible: raise AgentError(409,"protocol_incompatible","Unsupported Agent protocol version",{"received_version":b["protocol_version"],"supported_versions":SUPPORTED})
-  return {"ok":True,"agent_id":auth["agent_id"],"server_time":ts,"heartbeat_interval_seconds":HEARTBEAT_INTERVAL,"online_ttl_seconds":ONLINE_TTL}
+  return {"accepted":True,"agent_id":auth["agent_id"],"server_time":ts,"protocol_version":SUPPORTED[0],"heartbeat_interval_seconds":HEARTBEAT_INTERVAL,"online_ttl_seconds":ONLINE_TTL}
  def revoke(self,aid):
   self.get(aid); ts=stamp()
   with self.s.transaction():
