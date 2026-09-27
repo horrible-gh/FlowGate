@@ -1,37 +1,7 @@
-CREATE TABLE agents (
-  agent_id VARCHAR(64) PRIMARY KEY,
-  name VARCHAR(255) NOT NULL,
-  enabled BOOLEAN NOT NULL DEFAULT TRUE,
-  location VARCHAR(16) NOT NULL,
-  connection_mode VARCHAR(32) NULL,
-  local_executable_path TEXT NULL,
-  configured_capabilities TEXT NOT NULL,
-  reported_capabilities TEXT NOT NULL,
-  last_seen_at VARCHAR(64) NULL,
-  agent_version VARCHAR(64) NULL,
-  protocol_version VARCHAR(64) NULL,
-  os VARCHAR(64) NULL,
-  architecture VARCHAR(64) NULL,
-  created_at VARCHAR(64) NOT NULL,
-  updated_at VARCHAR(64) NOT NULL
-);
-CREATE TABLE agent_enrollments (
-  enrollment_id VARCHAR(64) PRIMARY KEY,
-  agent_id VARCHAR(64) NOT NULL,
-  code_hash CHAR(64) NOT NULL UNIQUE,
-  expires_at VARCHAR(64) NOT NULL,
-  consumed_at VARCHAR(64) NULL,
-  revoked_at VARCHAR(64) NULL,
-  created_at VARCHAR(64) NOT NULL,
-  INDEX idx_agent_enrollments_agent(agent_id),
-  FOREIGN KEY (agent_id) REFERENCES agents(agent_id)
-);
-CREATE TABLE agent_credentials (
-  credential_id VARCHAR(64) PRIMARY KEY,
-  agent_id VARCHAR(64) NOT NULL,
-  secret_hash CHAR(64) NOT NULL UNIQUE,
-  created_at VARCHAR(64) NOT NULL,
-  revoked_at VARCHAR(64) NULL,
-  INDEX idx_agent_credentials_agent(agent_id),
-  FOREIGN KEY (agent_id) REFERENCES agents(agent_id)
-);
+CREATE TABLE agents(agent_id VARCHAR(64) PRIMARY KEY,name TEXT NOT NULL CHECK(length(trim(name)) BETWEEN 1 AND 100),enabled BOOLEAN NOT NULL DEFAULT TRUE,location TEXT NOT NULL CHECK(location IN('local','remote')),connection_mode TEXT,local_executable_path TEXT,configured_ai_cli BOOLEAN NOT NULL DEFAULT FALSE,configured_ai_api BOOLEAN NOT NULL DEFAULT FALSE,configured_storage BOOLEAN NOT NULL DEFAULT FALSE,reported_ai_cli BOOLEAN,reported_ai_api BOOLEAN,reported_storage BOOLEAN,last_seen_at TEXT,agent_version TEXT,protocol_version INTEGER,os TEXT,architecture TEXT,protocol_compatibility TEXT NOT NULL DEFAULT 'unknown' CHECK(protocol_compatibility IN('unknown','compatible','incompatible')),last_rejected_protocol_version INTEGER,last_protocol_rejection_at TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,CHECK((reported_ai_cli IS NULL AND reported_ai_api IS NULL AND reported_storage IS NULL)OR(reported_ai_cli IS NOT NULL AND reported_ai_api IS NOT NULL AND reported_storage IS NOT NULL)),CHECK((protocol_compatibility='incompatible' AND last_rejected_protocol_version IS NOT NULL AND last_protocol_rejection_at IS NOT NULL)OR(protocol_compatibility<>'incompatible' AND last_rejected_protocol_version IS NULL AND last_protocol_rejection_at IS NULL)),CHECK((location='local' AND connection_mode IS NULL AND reported_ai_cli IS NULL AND reported_ai_api IS NULL AND reported_storage IS NULL AND last_seen_at IS NULL AND agent_version IS NULL AND protocol_version IS NULL AND os IS NULL AND architecture IS NULL AND protocol_compatibility='unknown')OR(location='remote' AND connection_mode='agent_pull' AND local_executable_path IS NULL)));
+CREATE TABLE agent_credentials(credential_id TEXT PRIMARY KEY,agent_id VARCHAR(64) NOT NULL REFERENCES agents(agent_id) ON DELETE RESTRICT,credential_digest CHAR(64) NOT NULL UNIQUE CHECK(credential_digest REGEXP '^[0-9a-f]{64}$'),pepper_id TEXT NOT NULL,issued_at TEXT NOT NULL,revoked_at TEXT CHECK(revoked_at IS NULL OR revoked_at>=issued_at),last_heartbeat_at TEXT);
+CREATE INDEX idx_agent_credentials_agent ON agent_credentials(agent_id);
+ALTER TABLE agent_credentials ADD active_agent_id VARCHAR(64) GENERATED ALWAYS AS(CASE WHEN revoked_at IS NULL THEN agent_id ELSE NULL END) STORED,ADD UNIQUE KEY uq_agent_credentials_active(active_agent_id);
+CREATE TABLE agent_enrollments(enrollment_id TEXT PRIMARY KEY,agent_id VARCHAR(64) NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,token_digest CHAR(64) NOT NULL UNIQUE CHECK(token_digest REGEXP '^[0-9a-f]{64}$'),pepper_id TEXT NOT NULL,created_at TEXT NOT NULL,expires_at TEXT NOT NULL CHECK(expires_at>created_at),consumed_at TEXT,revoked_at TEXT,CHECK(consumed_at IS NULL OR revoked_at IS NULL));
+CREATE INDEX idx_agent_enrollments_agent ON agent_enrollments(agent_id);
+ALTER TABLE agent_enrollments ADD pending_agent_id VARCHAR(64) GENERATED ALWAYS AS(CASE WHEN consumed_at IS NULL AND revoked_at IS NULL THEN agent_id ELSE NULL END) STORED,ADD UNIQUE KEY uq_agent_enrollments_pending(pending_agent_id);
