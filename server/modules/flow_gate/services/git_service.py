@@ -1113,7 +1113,12 @@ def _group_diff_context(project_id: str, group_id: str) -> tuple[str, str, str, 
     if not wt_path.exists():
         raise GitServiceError(409, "invalid_state", "group worktree is not available")
 
-    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    # 0009-TR#1 rev2: this project pins some groups (e.g. v02) to a rolling
+    # integration branch via groups.work_base_ref, which is where the group's own
+    # worktree actually forked from (git/worktree.py already resolves it that way).
+    # Comparing against the project-wide base_branch instead made every such group's
+    # scope diff include every sibling group already merged into that rolling branch.
+    base_branch = resolve_group_work_base_ref(project_id, group_id, config=cfg) or "main"
     merge_proc = _run_git(
         ["merge-base", f"refs/heads/{base_branch}", commit],
         cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC,
@@ -1234,7 +1239,10 @@ def collect_scope_changes(project_id: str, group_id: str) -> dict:
         state = db_git.get_state(group_id) or {}
         result["branch"] = (state.get("branch") or "").strip() or None
         cfg = db_git.get_config(project_id) or {}
-        base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+        # 0009-TR#1 rev2: use this group's own effective work base (groups.work_base_ref
+        # when pinned, else the project default) instead of always the project-wide
+        # base_branch -- see the matching note in _group_diff_context above.
+        base_branch = resolve_group_work_base_ref(project_id, group_id, config=cfg) or "main"
 
         entries_by_path: dict[str, dict] = {}
         merge_proc = _run_git(
@@ -1556,7 +1564,11 @@ def read_group_file_diff(
         commit = ref
 
     cfg = db_git.get_config(project_id) or {}
-    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    # 0009-TR#1 rev2: keep this per-file diff's merge-base in lockstep with
+    # collect_scope_changes/_group_diff_context (see their notes) -- otherwise a
+    # reviewer opening one of THIS group's files from the summary list could see a
+    # different old/new pair than what the summary itself compared against.
+    base_branch = resolve_group_work_base_ref(project_id, group_id, config=cfg) or "main"
     merge_proc = _run_git(
         ["merge-base", f"refs/heads/{base_branch}", commit],
         cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC,

@@ -9,7 +9,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 _log = logging.getLogger(__name__)
 
@@ -65,6 +65,37 @@ def _system_storage_root() -> Optional[Path]:
     return Path(value) if value else None
 
 
+StorageRootSource = Literal["environment", "project", "system", "default"]
+
+
+def _resolve_storage_root(
+    project_id: Optional[str] = None,
+    *,
+    include_shadowed: bool = False,
+) -> tuple[Path, StorageRootSource, Optional[Path], Optional[Path]]:
+    """Resolve the effective root and, when requested, shadowed configured values."""
+    env_value = os.environ.get("FLOWGATE_STORAGE_DIR", "").strip()
+    env_root = Path(env_value) if env_value else None
+    project_root: Optional[Path] = None
+    system_root: Optional[Path] = None
+
+    # Preserve get_storage_root()'s short-circuiting: lower-priority database
+    # settings are only read when needed, unless a caller explicitly needs the
+    # complete configured/effective contract.
+    if env_root is None or include_shadowed:
+        project_root = _project_override_root(project_id)
+    if (env_root is None and project_root is None) or include_shadowed:
+        system_root = _system_storage_root()
+
+    if env_root is not None:
+        return env_root, "environment", project_root, system_root
+    if project_root is not None:
+        return project_root, "project", project_root, system_root
+    if system_root is not None:
+        return system_root, "system", project_root, system_root
+    return default_storage_root(), "default", project_root, system_root
+
+
 def get_storage_root(
     project_id: Optional[str] = None,
     create: bool = False,
@@ -76,19 +107,30 @@ def get_storage_root(
     ③ system_settings.storage_root
     ④ default_storage_root()
     """
-    env = os.environ.get("FLOWGATE_STORAGE_DIR", "").strip()
-    if env:
-        root = Path(env)
-    else:
-        override = _project_override_root(project_id)
-        if override:
-            root = override
-        else:
-            system_root = _system_storage_root()
-            root = system_root if system_root else default_storage_root()
+    root, _, _, _ = _resolve_storage_root(project_id)
     if create:
         root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def get_storage_root_info(project_id: Optional[str] = None) -> dict[str, object]:
+    """Return the additive configured/effective/source contract for settings UI."""
+    root, source, project_root, system_root = _resolve_storage_root(
+        project_id, include_shadowed=True
+    )
+    return {
+        "project_id": project_id,
+        "configured": {
+            "system": str(system_root) if system_root is not None else None,
+            "project": str(project_root) if project_root is not None else None,
+        },
+        "effective": str(root),
+        "source": source,
+        "overrides": {
+            "environment": source == "environment",
+            "project": project_root is not None,
+        },
+    }
 
 
 def _slugify_project_name(name: str) -> str:

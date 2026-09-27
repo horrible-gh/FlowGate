@@ -209,6 +209,104 @@ class TestSystemSettingsService:
             set_values({"storage_root": "/data/flowgate"})
 
 
+class TestStorageRootContract:
+    @staticmethod
+    def _make_client(user):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from modules.flow_gate.auth.middleware import get_current_user
+        from modules.flow_gate.settings.routers.system import router
+
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+        app.dependency_overrides[get_current_user] = lambda: user
+        return TestClient(app)
+
+    @staticmethod
+    def _configure_roots(monkeypatch, *, project: str | None, system: str | None):
+        from modules.flow_gate.storage import paths as storage_paths
+
+        monkeypatch.setattr(
+            storage_paths,
+            "_project_override_root",
+            lambda project_id: Path(project) if project_id and project is not None else None,
+        )
+        monkeypatch.setattr(
+            storage_paths,
+            "_system_storage_root",
+            lambda: Path(system) if system is not None else None,
+        )
+
+    def test_environment_override_wins_and_preserves_configured_values(self, monkeypatch):
+        self._configure_roots(monkeypatch, project="/project/root", system="/system/root")
+        monkeypatch.setenv("FLOWGATE_STORAGE_DIR", "/environment/root")
+        client = self._make_client({"user_id": "usr_admin", "is_admin": 1})
+
+        response = client.get("/api/v1/system/settings/storage-root?project_id=proj_001")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "project_id": "proj_001",
+            "configured": {"system": str(Path("/system/root")), "project": str(Path("/project/root"))},
+            "effective": str(Path("/environment/root")),
+            "source": "environment",
+            "overrides": {"environment": True, "project": True},
+        }
+
+    def test_project_override_wins_over_system_value(self, monkeypatch):
+        self._configure_roots(monkeypatch, project="/project/root", system="/system/root")
+        monkeypatch.delenv("FLOWGATE_STORAGE_DIR", raising=False)
+        client = self._make_client({"user_id": "usr_admin", "is_admin": 1})
+
+        response = client.get("/api/v1/system/settings/storage-root?project_id=proj_001")
+
+        assert response.status_code == 200
+        assert response.json()["effective"] == str(Path("/project/root"))
+        assert response.json()["source"] == "project"
+        assert response.json()["overrides"] == {"environment": False, "project": True}
+
+    def test_system_value_is_fallback_without_overrides(self, monkeypatch):
+        self._configure_roots(monkeypatch, project=None, system="/system/root")
+        monkeypatch.delenv("FLOWGATE_STORAGE_DIR", raising=False)
+        client = self._make_client({"user_id": "usr_admin", "is_admin": 1})
+
+        response = client.get("/api/v1/system/settings/storage-root?project_id=proj_001")
+
+        assert response.status_code == 200
+        assert response.json()["configured"] == {"system": str(Path("/system/root")), "project": None}
+        assert response.json()["effective"] == str(Path("/system/root"))
+        assert response.json()["source"] == "system"
+
+    def test_default_is_reported_when_nothing_is_configured(self, monkeypatch):
+        self._configure_roots(monkeypatch, project=None, system=None)
+        monkeypatch.delenv("FLOWGATE_STORAGE_DIR", raising=False)
+        client = self._make_client({"user_id": "usr_admin", "is_admin": 1})
+
+        response = client.get("/api/v1/system/settings/storage-root")
+
+        assert response.status_code == 200
+        assert response.json()["configured"] == {"system": None, "project": None}
+        assert response.json()["effective"] == str(Path.cwd() / "storage")
+        assert response.json()["source"] == "default"
+        assert response.json()["overrides"] == {"environment": False, "project": False}
+
+    def test_user_without_system_permission_is_denied(self):
+        client = self._make_client({"user_id": "usr_worker", "is_admin": 0})
+
+        response = client.get("/api/v1/system/settings/storage-root?project_id=proj_001")
+
+        assert response.status_code == 403
+
+    def test_existing_system_settings_shape_is_unchanged(self):
+        client = self._make_client({"user_id": "usr_admin", "is_admin": 1})
+
+        response = client.get("/api/v1/system/settings")
+
+        assert response.status_code == 200
+        assert set(response.json()) == {"settings"}
+        assert isinstance(response.json()["settings"], list)
+
+
 class TestUserAdminService:
     def test_list_users_admin(self):
         from modules.flow_gate.settings.user_admin_service import list_users_for_admin

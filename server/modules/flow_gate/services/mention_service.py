@@ -2697,7 +2697,15 @@ def _scope_context_section(target_doc: dict) -> Optional[str]:
     else:
         lines.append("  (no actual changes detected in the assigned worktree)")
 
-    unconfirmed = verdict.get("unconfirmed") or []
+    # 0009-TR#1 rev2: inbox_routes._tr_scope_meta() stores "unconfirmed" as
+    # {"count", "items"} (same shape as "file_manifest" above, unwrapped a few lines
+    # up) -- not a bare list. A dict is truthy even when count==0, so reading it
+    # directly here made an empty result iterate as its own KEYS ("count", "items"),
+    # printed below as if they were reported file paths.
+    unconfirmed_raw = verdict.get("unconfirmed")
+    unconfirmed = (
+        unconfirmed_raw.get("items") if isinstance(unconfirmed_raw, dict) else unconfirmed_raw
+    ) or []
     lines.append("")
     lines.append(
         "Reported by this TR but NOT found in the worktree (unconfirmed -- may mean the "
