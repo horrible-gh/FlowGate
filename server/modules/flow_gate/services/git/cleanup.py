@@ -278,6 +278,13 @@ def merge_session_sweep(sessions: Optional[list[dict]] = None) -> None:
             return
     for session in sessions:
         try:
+            if _gs.db_git.is_branch_merge_session(session):
+                # 0630 T0005 (D0004 §20): an ordinary branch merge has no group and no
+                # TTL abort — a conflict waiting for an AI or a person is not abandoned
+                # because it is quiet. Only a record/workspace mismatch is flagged.
+                from . import branch_merge
+                branch_merge.verify_open_attempt(session)
+                continue
             group_id = session["group_id"]
             project_id = _gs._project_of_group(group_id)
             kind = _gs.db_git.session_kind(session)
@@ -446,8 +453,16 @@ def startup_recovery() -> None:
         touched: set[int] = set()
         for session in sessions:
             merge_id = session["merge_id"]
-            group_id = session["group_id"]
+            group_id = session.get("group_id")
             try:
+                if _gs.db_git.is_branch_merge_session(session):
+                    # 0630 T0005 (D0004 §20): workspace / owner marker / MERGE_HEAD /
+                    # attempt state / conflict files / review state are compared with the
+                    # record; a mismatch is flagged interrupted (never read as success).
+                    from . import branch_merge
+                    branch_merge.verify_open_attempt(session, at_boot=True)
+                    touched.add(int(merge_id))
+                    continue
                 project_id = _gs._project_of_group(group_id)
                 kind = _gs.db_git.session_kind(session)
                 if kind == _gs.db_git.SESSION_KIND_GROUP_UPDATE:

@@ -9,12 +9,14 @@
       <template #top>
         <FileExplorer
           :refresh-token="explorerRefreshToken"
+          :refresh-epoch="explorerRefreshEpoch"
           :project-id="currentProjectId"
         />
       </template>
       <template #bottom>
         <GroupExplorer
           :refresh-token="explorerRefreshToken"
+          :refresh-epoch="explorerRefreshEpoch"
           :project-id="currentProjectId"
           @create-requirement="openRequirementModal"
         />
@@ -29,6 +31,7 @@
     />
     <MainPanel
       :overview-refresh-token="overviewRefreshToken"
+      :overview-refresh-epoch="overviewRefreshEpoch"
       @create-requirement="openRequirementModal"
       @related-doc-created="handleRelatedDocCreated"
       @refresh-overview="manualRefresh"
@@ -72,11 +75,18 @@ const showRequirementModal = ref(false)
 const initialRequirementGroupId = ref<string | null>(null)
 const explorerRefreshToken = ref(0)
 const overviewRefreshToken = ref(0)
+// Companion "which logical refresh is this token bump for" value (rev2 finding 4). `null`
+// means "not an SSE screen-refresh flush" — FileExplorer/GroupExplorer/MainPanel read this
+// alongside their token prop instead of asking the diagnostics module for "whatever epoch is
+// current right now", which used to misattribute manual/local reloads to a stale SSE epoch.
+const explorerRefreshEpoch = ref<number | null>(null)
+const overviewRefreshEpoch = ref<number | null>(null)
 
-function refreshAll() {
+function refreshAll(epoch: number | null) {
   // Cache invalidation belongs to useFlowGateSse.invalidateAndRefresh and has already run for
   // every event before the coalesced callback reaches this view. This callback only advances
   // the view tokens once per fixed refresh window.
+  explorerRefreshEpoch.value = epoch
   explorerRefreshToken.value += 1
   // 0454 T0007 — an SSE refresh used to leave the MainPanel overview cards stale (rev1 review
   // finding): explorerRefreshToken only reaches GroupExplorer/FileExplorer, and
@@ -86,17 +96,22 @@ function refreshAll() {
   // token at all: explorerRefreshToken already drives GroupExplorer's reload(), and that reload
   // now carries the overview-summary aggregate with it (explorer.ts fetchGroupTree), so the
   // cards refresh from the SAME tree fetch instead of a second, separately-timed request.
+  overviewRefreshEpoch.value = epoch
   overviewRefreshToken.value += 1
 }
 
 // Manual overview refresh (button in the overview header). This direct, non-SSE path owns
-// its cache invalidation and also forces an immediate dashboard-card refetch.
+// its cache invalidation and also forces an immediate dashboard-card refetch. Not an SSE
+// screen-refresh flush, so the epoch is explicitly null (rev2 finding 4) rather than left
+// pointing at whatever SSE flush happened to run last.
 function manualRefresh() {
   const pid = projectStore.currentProjectId
   if (!pid) return
   explorerStore.invalidateProject(pid)
+  explorerRefreshEpoch.value = null
   explorerRefreshToken.value += 1
   dashboardStore.invalidate(pid, true)
+  overviewRefreshEpoch.value = null
   overviewRefreshToken.value += 1
 }
 
@@ -171,8 +186,12 @@ async function handleRequirementCreated(payload?: { docId?: string; openAfter?: 
 
   // explorerRefreshToken still needs its own bump here (not folded into the invalidateProject
   // call above): GroupExplorer's refresh-token watch is what re-fetches AFTER the reveal above
-  // has had its chance to run against a cache invalidateProject already cleared.
-  if (pid) explorerRefreshToken.value += 1
+  // has had its chance to run against a cache invalidateProject already cleared. Not an SSE
+  // flush, so epoch is explicitly null (rev2 finding 4).
+  if (pid) {
+    explorerRefreshEpoch.value = null
+    explorerRefreshToken.value += 1
+  }
 }
 
 async function handleRelatedDocCreated(payload: { docId: string; openAfter: boolean; projectId: string }) {
@@ -209,8 +228,12 @@ async function handleRelatedDocCreated(payload: { docId: string; openAfter: bool
     }
   }
 
-  // See the matching comment in handleRequirementCreated — invalidateProject already ran above.
-  if (pid) explorerRefreshToken.value += 1
+  // See the matching comment in handleRequirementCreated — invalidateProject already ran
+  // above; epoch is explicitly null (rev2 finding 4), not an SSE flush.
+  if (pid) {
+    explorerRefreshEpoch.value = null
+    explorerRefreshToken.value += 1
+  }
 }
 
 </script>

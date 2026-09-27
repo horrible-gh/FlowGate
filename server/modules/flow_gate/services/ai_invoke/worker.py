@@ -654,25 +654,16 @@ def _retry_eligible(run: dict) -> bool:
         run.get("mode"), run.get("action_scope"), run.get("scope_oracle_run"),
         run.get("hop_kind"),
     )
-    if _svc().peek_auto_resume(run.get("group_id")) is not None and not review_hop_recovery:
-        # flowgate.default.0466 T0007: this check predates the review gate (0359 L0007
-        # §2.4) and reads a queue entry as proof THIS hop already produced a document and
-        # handed off — true for the continuous chains it was written for, where
-        # `request_auto_resume` is only ever called from the inbox AFTER a submission. But
-        # `run_review_gate`'s review/rework dispatch (0414 L0008 §2.4, "queue first, then
-        # launch") calls `_queue_gate_bundle` — the SAME `request_auto_resume` — BEFORE
-        # spawning the hop at all, so a review hop reliably finds its own dispatcher's
-        # queue entry sitting here on attempt 1, before it has run at all, and this check
-        # silently ate every retry: A10's `attempts_max=2` never got past 1 in production
-        # (confirmed by driving the real `run_review_gate` → `_spawn_review_hop` →
-        # `_worker` path, not just the worker or the gate alone). A review hop's own token
-        # structurally cannot register a document (§2.5: "a review token carries NO
-        # continuation_target_seq" and `docs_target` is pinned to 0), so its worker can
-        # never be the reason a NEW queue entry appears mid-run — every entry it can ever
-        # see here is the pre-spawn one, and reading that as "already handed off" is
-        # simply wrong for this hop kind. `_scope_oracle_retry_open` (rework) keeps the
-        # existing behavior: a rework's `edit` token DOES submit a document mid-run, so a
-        # queue entry appearing there can be the real thing this check exists to catch.
+    rework_no_output_recovery = oracle_module._rework_hop_no_output_recovery_open(
+        run.get("mode"), run.get("action_scope"), run.get("scope_oracle_run"),
+        run.get("hop_kind"), run.get("outcome"),
+    )
+    if (_svc().peek_auto_resume(run.get("group_id")) is not None
+            and not review_hop_recovery and not rework_no_output_recovery):
+        # The review gate queues its next intent before spawning either kind of hop.
+        # That pre-spawn entry does not prove an empty gate-owned hop handed off.
+        # A rework with output still keeps this guard: its edit token can revise the
+        # document mid-run, and another attempt could write a second revision.
         return False        # this hop DID hand off; the next hop is already queued
     if int(run.get("docs_reached") or 0) >= 1:
         return False        # partial output is still output — a rerun would double-write
@@ -1509,8 +1500,16 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                         _status, resp = api_server_tools.source_call(run, current_token, call["name"], call["input"])
                     elif call["name"] == "run_test":
                         _status, resp = api_server_tools.run_test(run, call["input"], _svc()._remaining_sec(run))
+                    elif call["name"] == "access_source_bundle":
+                        _status, resp = api_server_tools.access_source_bundle(run, call["input"])
+                    elif call["name"] == "run_source_bundle":
+                        _status, resp = api_server_tools.run_source_bundle(
+                            run, call["input"], _svc()._remaining_sec(run))
                     elif call["name"] == "request_source_snapshot":
-                        _status, resp = api_server_tools.request_source_snapshot(run, current_token, call["input"])
+                        _status, resp = api_server_tools.request_source_snapshot(
+                            run, current_token, call["input"],
+                            min(_svc()._remaining_sec(run), _absolute_remaining_sec(run)),
+                        )
                     elif call["name"] == "access_source_snapshot":
                         _status, resp = api_server_tools.access_source_snapshot(run, current_token, call["input"])
                     elif call["name"] == "run_source_snapshot":
@@ -1550,7 +1549,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 # entirely (DB0005 2 scope note).
                 if (
                     call["name"] not in api_server_tools.SOURCE_OPS
-                    and call["name"] not in ("run_test", "read_help", *api_server_tools.SNAPSHOT_NAMES)
+                    and call["name"] not in ("run_test", "read_help", *api_server_tools.SNAPSHOT_NAMES, *api_server_tools.BUNDLE_NAMES)
                 ):
                     run["last_tool_name"] = "api_bound_request"
                     run["last_tool_status"] = _status
@@ -1939,8 +1938,11 @@ def _resolve_conflict(run: dict, raw_token: str, tool_input: dict) -> tuple[int,
         "files": tool_input.get("files") or [],
         "complete": bool(tool_input.get("complete")),
     }
+    # 0630 T0005: a branch merge's resolve endpoint is project-scoped.
+    from modules.flow_gate.services import git_service
+    route = git_service.merge_route_prefix(run["merge_id"], run["group_id"])
     req = urllib.request.Request(
-        f"{provider_api._resolve_transport_api_base(run)}/groups/{run['group_id']}/git/merge/{run['merge_id']}/resolve-token",
+        f"{provider_api._resolve_transport_api_base(run)}{route}/resolve-token",
         data=json.dumps(body).encode("utf-8"),
         headers={
             "Content-Type": "application/json",

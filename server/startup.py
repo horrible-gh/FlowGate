@@ -85,6 +85,14 @@ def start_snapshot_cleanup():
         logger.warning(f"[startup] snapshot cleanup bootstrap failed: {exc}")
 
 
+def start_source_bundle_cleanup():
+    try:
+        from modules.flow_gate.services import source_bundle_cleanup_service
+        source_bundle_cleanup_service.startup()
+    except Exception as exc:
+        logger.warning(f"[startup] Source Bundle cleanup bootstrap failed: {exc}")
+
+
 def run_all():
     """Run full bootstrap sequence (called on lifespan entry)."""
     configure_console_encoding()
@@ -94,3 +102,4 @@ def run_all():
     recover_git_sessions()
     encrypt_ai_provider_keys()
     start_snapshot_cleanup()
+    start_source_bundle_cleanup()

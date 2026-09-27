@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -25,8 +27,85 @@ from modules.flow_gate.services.git import branches as branch_service
 from modules.flow_gate.services.git.credentials import GitServiceError
 
 
+_SCHEMA_DIR = _SERVER_DIR / "sql" / "migrations" / "sqlite"
+
+
+class _MockTxn:
+    def __init__(self, conn):
+        self._conn = conn
+        self._cur = None
+
+    def execute(self, sql, params=None):
+        self._cur = self._conn.execute(sql, params or [])
+        self._conn.commit()
+
+    @property
+    def cursor(self):
+        return self._cur
+
+    def fetchone(self):
+        row = self._cur.fetchone() if self._cur else None
+        return dict(row) if row else None
+
+    def fetchall(self):
+        return [dict(r) for r in self._cur.fetchall()] if self._cur else []
+
+
+class _MockDB:
+    def __init__(self, db_path: str):
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA foreign_keys = ON")
+
+    def execute(self, sql, params=None):
+        self._conn.execute(sql, params or [])
+        self._conn.commit()
+
+    def fetch_one(self, sql, params=None):
+        row = self._conn.execute(sql, params or []).fetchone()
+        return dict(row) if row else None
+
+    def fetch_all(self, sql, params=None):
+        return [dict(r) for r in self._conn.execute(sql, params or []).fetchall()]
+
+    @contextmanager
+    def begin_transaction(self):
+        yield _MockTxn(self._conn)
+
+    def close(self):
+        self._conn.close()
+
+
+@pytest.fixture(scope="module")
+def attempt_db(tmp_path_factory):
+    """0630 T0005: every branch merge now writes a persistent attempt row
+    (git_merge_session, owner branch_merge) before `git merge` runs, so the merge
+    cases need a real store with the real sqlite migrations (123 included)."""
+    db_path = tmp_path_factory.mktemp("bm-db") / "flowgate.db"
+    db = _MockDB(str(db_path))
+    for sql_file in sorted(_SCHEMA_DIR.glob("*.sql")):
+        try:
+            db._conn.executescript(sql_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    db._conn.commit()
+    from modules.flow_gate.db import connection as conn_mod
+
+    original_store = conn_mod.STORE
+
+    class _PatchedStore(conn_mod.FlowGateStore):
+        def __init__(self):
+            self._db = db
+            self._sq = None
+
+    conn_mod.STORE = _PatchedStore()
+    yield db
+    conn_mod.STORE = original_store
+    db.close()
+
+
 @pytest.fixture
-def repo(tmp_path, monkeypatch):
+def repo(tmp_path, monkeypatch, attempt_db):
     root = tmp_path / "repo"
     root.mkdir()
     subprocess.run(["git", "init", "-b", "main"], cwd=root, check=True, capture_output=True)
@@ -206,7 +285,12 @@ def test_branch_merge_rejects_self_remote_and_actual_slots(repo):
         assert caught.value.code == code
 
 
-def test_branch_merge_conflict_aborts_cleans_and_creates_no_session(repo, monkeypatch):
+def test_branch_merge_conflict_keeps_a_persistent_attempt_and_its_workspace(repo, monkeypatch):
+    # flowgate.default.0630 T0005 §15 — replaces
+    # test_branch_merge_conflict_aborts_cleans_and_creates_no_session, whose contract
+    # (abort + clean + no session) is exactly what T0005 removes. A conflict is now a
+    # live, addressable attempt: no `merge --abort`, the managed workspace keeps
+    # MERGE_HEAD and the markers, and nothing about the target moved.
     _git(repo, "checkout", "-b", "target")
     (repo / "same.txt").write_text("target\n", encoding="utf-8")
     _git(repo, "add", "same.txt")
@@ -218,20 +302,226 @@ def test_branch_merge_conflict_aborts_cleans_and_creates_no_session(repo, monkey
     _git(repo, "add", "same.txt")
     _git(repo, "commit", "-m", "source")
     _git(repo, "checkout", "main")
-    created = []
-    monkeypatch.setattr(git_service.db_git, "create_session", lambda *a, **k: created.append((a, k)))
+    group_sessions = []
+    monkeypatch.setattr(git_service.db_git, "create_session", lambda *a, **k: group_sessions.append((a, k)))
 
-    with pytest.raises(GitServiceError) as caught:
-        git_service.merge_branches("flowgate", "source", "target")
+    result = git_service.merge_branches("flowgate", "source", "target")
 
-    assert caught.value.code == "branch_merge_conflict"
-    assert caught.value.details["conflict_files"] == ["same.txt"]
+    assert result["status"] == "conflict" and result["ok"] is True
+    assert result["conflict_files"] == ["same.txt"]
+    assert result["push"] is True and result["pushed"] is False
+    assert group_sessions == []                       # no fake group session was opened
+    session = git_service.db_git.get_session(result["merge_id"])
+    assert session["kind"] == "branch_merge" and session["owner_type"] == "branch_merge"
+    assert session["group_id"] is None and session["project_id"] == "flowgate"
+    assert session["status"] == "open"
     assert _git(repo, "rev-parse", "target").stdout.strip() == target_before
-    assert created == []
+    storage = git_service.get_storage_root()
+    trees = list((storage / "git_merge_targets").rglob("tree"))
+    assert len(trees) == 1
+    assert _git(trees[0], "rev-parse", "-q", "--verify", "MERGE_HEAD").stdout.strip()
+    assert "<<<<<<<" in (trees[0] / "same.txt").read_text(encoding="utf-8")
+
+
+# flowgate.default.0612 T0006 §10 — merge/push separation. The existing
+# test_branch_merge_clean_pushes_target_without_switching_base above already
+# covers T1 (push omitted defaults to the old always-push behavior).
+
+
+def test_branch_merge_push_explicit_true_pushes(repo):
+    _git(repo, "branch", "develop")
+    _git(repo, "checkout", "-b", "feature")
+    (repo / "feature.txt").write_text("feature\n", encoding="utf-8")
+    _git(repo, "add", "feature.txt")
+    _git(repo, "commit", "-m", "feature")
+    _git(repo, "checkout", "main")
+
+    result = git_service.merge_branches("flowgate", "feature", "develop", push=True)
+
+    assert result["pushed"] is True
+    assert _git(repo, "ls-remote", "--exit-code", "origin", "refs/heads/develop").returncode == 0
+    remote_sha = _git(repo, "ls-remote", "origin", "refs/heads/develop").stdout.split()[0]
+    assert remote_sha == _git(repo, "rev-parse", "develop").stdout.strip()
+
+
+def test_branch_merge_push_false_skips_push_and_preserves_local_ref(repo):
+    # T3/T4/T6 — an ordinary (non-base) target's managed worktree already has
+    # the branch checked out, so its ref must advance even though nothing
+    # reaches origin.
+    _git(repo, "branch", "develop")
+    _git(repo, "checkout", "-b", "feature")
+    (repo / "feature.txt").write_text("feature\n", encoding="utf-8")
+    _git(repo, "add", "feature.txt")
+    _git(repo, "commit", "-m", "feature")
+    source_head = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    _git(repo, "checkout", "main")
+
+    result = git_service.merge_branches("flowgate", "feature", "develop", push=False)
+
+    assert result["pushed"] is False
+    assert result["workspace_cleaned"] is True
+    # nothing was published: origin never learned about "develop" at all
+    assert _git(repo, "ls-remote", "--exit-code", "origin", "refs/heads/develop").returncode != 0
+    # but the local branch ref itself really did advance to the merge commit
+    assert _git(repo, "rev-parse", "develop").stdout.strip() == result["target_head"]
+    assert _git(repo, "rev-parse", "feature").stdout.strip() == source_head
+    assert _git(repo, "show", "develop:feature.txt").stdout == "feature\n"
+    # the shared base checkout was not touched
+    assert _git(repo, "branch", "--show-current").stdout.strip() == "main"
+
+
+def test_branch_merge_push_false_base_target_updates_local_ref_without_push(repo):
+    # T5 — merging into the project base branch itself with push=False must
+    # land the ref and the shared base checkout's working tree together.
+    # 0630 T0005: the merge now runs in a detached managed workspace (so a
+    # conflict never sits in the shared checkout) and a clean result is applied
+    # to the base checkout by fast-forward before that workspace is cleaned up —
+    # the merge commit is never left unreachable.
+    _git(repo, "checkout", "-b", "feature")
+    (repo / "feature.txt").write_text("feature\n", encoding="utf-8")
+    _git(repo, "add", "feature.txt")
+    _git(repo, "commit", "-m", "feature")
+    source_head = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    _git(repo, "checkout", "main")
+    main_before = _git(repo, "rev-parse", "main").stdout.strip()
+
+    result = git_service.merge_branches("flowgate", "feature", "main", push=False)
+
+    assert result["pushed"] is False
+    assert result["target_before"] == main_before
+    # origin's main is untouched
+    remote_main = _git(repo, "ls-remote", "origin", "refs/heads/main").stdout.split()[0]
+    assert remote_main == main_before
+    # the local base branch ref itself advanced to the merge commit...
+    assert _git(repo, "rev-parse", "main").stdout.strip() == result["target_head"]
+    assert _git(repo, "rev-parse", "main").stdout.strip() != main_before
+    # ...and so did the shared base checkout's actual working tree (not just the ref)
+    assert (repo / "feature.txt").read_text(encoding="utf-8") == "feature\n"
+    assert _git(repo, "branch", "--show-current").stdout.strip() == "main"
+    assert _git(repo, "status", "--porcelain").stdout.strip() == ""
+    # no leftover managed workspace was ever created for this combination
     storage = git_service.get_storage_root()
     assert not (storage / "git_merge_targets").exists() or not any(
         (storage / "git_merge_targets").rglob("tree")
     )
+
+
+def test_branch_merge_push_false_base_target_conflict_leaves_base_clean(repo):
+    # T7, 0630 T0005 — a base-target conflict is kept as a persistent attempt, but
+    # never in the shared base checkout: it lives in a detached managed workspace,
+    # and the base checkout stays exactly as it was (clean, same ref, same branch).
+    (repo / "same.txt").write_text("main\n", encoding="utf-8")
+    _git(repo, "add", "same.txt")
+    _git(repo, "commit", "-m", "main change")
+    main_before = _git(repo, "rev-parse", "main").stdout.strip()
+    _git(repo, "checkout", "-b", "source", "HEAD~1")
+    (repo / "same.txt").write_text("source\n", encoding="utf-8")
+    _git(repo, "add", "same.txt")
+    _git(repo, "commit", "-m", "source change")
+    _git(repo, "checkout", "main")
+
+    result = git_service.merge_branches("flowgate", "source", "main", push=False)
+
+    assert result["status"] == "conflict"
+    assert result["conflict_files"] == ["same.txt"]
+    assert _git(repo, "rev-parse", "main").stdout.strip() == main_before
+    assert _git(repo, "status", "--porcelain").stdout.strip() == ""
+    assert _git(repo, "branch", "--show-current").stdout.strip() == "main"
+    assert not (repo / ".git" / "MERGE_HEAD").exists()
+    session = git_service.db_git.get_session(result["merge_id"])
+    record = git_service.db_git.session_context(session)["merge_target"]
+    assert record["detached"] is True and record["is_project_base"] is False
+
+
+def test_branch_merge_push_false_base_target_rejects_dirty_checkout(repo):
+    # New guard: merging locally into the shared base checkout must not run
+    # over uncommitted changes already sitting there (e.g. a pending
+    # base-commit edit).
+    _git(repo, "branch", "feature")
+    (repo / "README.md").write_text("dirty\n", encoding="utf-8")
+
+    with pytest.raises(GitServiceError) as caught:
+        git_service.merge_branches("flowgate", "feature", "main", push=False)
+
+    assert caught.value.code == "branch_merge_target_dirty"
+    assert _git(repo, "status", "--porcelain").stdout.strip() != ""
+
+
+def test_branch_merge_push_false_base_target_rejects_open_merge_session(repo, monkeypatch):
+    # TR0007 rev1 fix #2: a direct base-checkout merge (push=False, target=base)
+    # mutates base like any other base-mutating op — guard_base_free() must
+    # reject it while an unresolved merge session elsewhere still holds the
+    # base checkout, exactly like the existing base-mutating entry points.
+    _git(repo, "branch", "feature")
+    main_before = _git(repo, "rev-parse", "main").stdout.strip()
+    monkeypatch.setattr(
+        git_service.db_git, "list_open_sessions",
+        lambda: [{"merge_id": 99, "group_id": "flowgate.default.9", "context": "{}"}],
+    )
+
+    with pytest.raises(GitServiceError) as caught:
+        git_service.merge_branches("flowgate", "feature", "main", push=False)
+
+    assert caught.value.code == "merge_conflict_open"
+    assert caught.value.details["blocking_group_id"] == "flowgate.default.9"
+    assert _git(repo, "rev-parse", "main").stdout.strip() == main_before
+    assert _git(repo, "status", "--porcelain").stdout.strip() == ""
+
+
+def test_branch_merge_push_false_base_target_untracked_collision_is_409_not_abort_failure(repo):
+    # TR0007 rev1 fix #1: the pre-merge dirty guard is include_untracked=False
+    # by design, so an untracked file at a path the source branch also adds
+    # sails through it. Git then refuses the merge itself with "untracked
+    # working tree files would be overwritten" BEFORE creating MERGE_HEAD —
+    # unconditionally escalating that to `merge --abort` (a no-op) failing
+    # used to misreport this as branch_merge_abort_failed 500.
+    _git(repo, "checkout", "-b", "source")
+    (repo / "new.txt").write_text("from source\n", encoding="utf-8")
+    _git(repo, "add", "new.txt")
+    _git(repo, "commit", "-m", "add new.txt")
+    _git(repo, "checkout", "main")
+    main_before = _git(repo, "rev-parse", "main").stdout.strip()
+    (repo / "new.txt").write_text("untracked local copy\n", encoding="utf-8")
+
+    with pytest.raises(GitServiceError) as caught:
+        git_service.merge_branches("flowgate", "source", "main", push=False)
+
+    assert caught.value.code == "branch_merge_untracked_conflict"
+    assert caught.value.details["files"] == ["new.txt"]
+    # the local checkout was never mutated: no merge started, ref unchanged,
+    # and the untracked file itself survives untouched.
+    assert _git(repo, "rev-parse", "main").stdout.strip() == main_before
+    assert (repo / "new.txt").read_text(encoding="utf-8") == "untracked local copy\n"
+    assert _git(repo, "status", "--porcelain").stdout == "?? new.txt\n"
+
+
+def test_branch_merge_push_false_base_target_untracked_ff_only_is_409_not_diverged(repo):
+    # TR0007 rev1 fix #1 (second stage): the same untracked collision can hit
+    # the earlier `merge --ff-only origin/{target}` sync — a fast-forward that
+    # really could land, just blocked by a local untracked file — and must not
+    # be misclassified as branch_merge_target_diverged.
+    clone = repo.parent / "clone"
+    _git(repo.parent, "clone", str(repo.parent / "remote.git"), str(clone))
+    _git(clone, "checkout", "-B", "main", "origin/main")
+    _git(clone, "config", "user.name", "Test")
+    _git(clone, "config", "user.email", "test@example.com")
+    (clone / "collide.txt").write_text("from origin\n", encoding="utf-8")
+    _git(clone, "add", "collide.txt")
+    _git(clone, "commit", "-m", "origin-only change")
+    push = _git(clone, "push", "origin", "main")
+    assert push.returncode == 0
+
+    _git(repo, "branch", "feature")
+    main_before = _git(repo, "rev-parse", "main").stdout.strip()
+    (repo / "collide.txt").write_text("untracked local copy\n", encoding="utf-8")
+
+    with pytest.raises(GitServiceError) as caught:
+        git_service.merge_branches("flowgate", "feature", "main", push=False)
+
+    assert caught.value.code == "branch_merge_untracked_conflict"
+    assert caught.value.details["files"] == ["collide.txt"]
+    assert _git(repo, "rev-parse", "main").stdout.strip() == main_before
+    assert (repo / "collide.txt").read_text(encoding="utf-8") == "untracked local copy\n"
 
 
 def _client(*, is_admin=True):
@@ -265,3 +555,31 @@ def test_branch_routes_rbac_delegation_and_error_envelope(monkeypatch):
     assert _client(is_admin=False).get("/api/v1/projects/flowgate/git/branches").status_code == 403
     assert _client(is_admin=False).post("/api/v1/projects/flowgate/git/branches", json={"name": "x", "source_branch": "main"}).status_code == 403
     assert _client(is_admin=False).delete("/api/v1/projects/flowgate/git/branches/x").status_code == 403
+
+
+def test_branch_merge_route_forwards_push_and_defaults_to_true(monkeypatch):
+    # T0006 §4/§8 — BranchMergeBody.push must reach merge_branches() verbatim,
+    # and an omitted field must keep the pre-existing always-push behavior.
+    calls = []
+
+    def fake_merge(project_id, source_branch, target_branch, push=True):
+        calls.append({"project_id": project_id, "source_branch": source_branch,
+                       "target_branch": target_branch, "push": push})
+        return {"ok": True, "pushed": push}
+
+    monkeypatch.setattr(git_routes.git_service, "merge_branches", fake_merge)
+    client = _client()
+
+    resp = client.post(
+        "/api/v1/projects/flowgate/git/branches/merge",
+        json={"source_branch": "a", "target_branch": "b"},
+    )
+    assert resp.status_code == 200 and resp.json()["pushed"] is True
+    assert calls[-1]["push"] is True
+
+    resp = client.post(
+        "/api/v1/projects/flowgate/git/branches/merge",
+        json={"source_branch": "a", "target_branch": "b", "push": False},
+    )
+    assert resp.status_code == 200 and resp.json()["pushed"] is False
+    assert calls[-1]["push"] is False

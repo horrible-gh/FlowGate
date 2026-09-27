@@ -117,7 +117,14 @@ describe('useFlowGateSse ai_review_arrived doc scoping (0543 T0004 §3)', () => 
     vi.advanceTimersByTime(COALESCE_MS)
 
     expect(openDocsRefresh).toHaveBeenCalledTimes(1)
-    expect(lastOpenDocsRefreshDetail()).toEqual({ project: 'proj_alpha', doc_id: 'proj_alpha.none.0001.0002-R' })
+    // refresh_epoch (T0004 diagnostics rev2 finding 4) is the real screen-refresh-flush
+    // epoch this event belongs to — present whenever fg:open_docs_refresh comes from an
+    // SSE flush (as opposed to a manual/local reload, which omits the field).
+    expect(lastOpenDocsRefreshDetail()).toEqual({
+      project: 'proj_alpha',
+      doc_id: 'proj_alpha.none.0001.0002-R',
+      refresh_epoch: expect.any(Number),
+    })
     // Explorer/dashboard invalidation (tree badges) still runs — only the open-tab
     // refetch is narrowed, not the sibling-refresh machinery §7 says to keep.
     expect(invalidateProject).toHaveBeenCalledWith('proj_alpha')

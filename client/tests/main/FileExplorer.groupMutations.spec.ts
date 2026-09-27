@@ -63,7 +63,7 @@ const NODES = [
 ]
 
 /** Mount the explorer with one group slot whose worktree is (or is not) live. */
-async function mountExplorer(opts: { group?: string | null; writable?: boolean; mergeId?: number } = {}) {
+async function mountExplorer(opts: { group?: string | null; writable?: boolean; mergeId?: number; workBase?: string } = {}) {
   useLayoutStore().setFileExplorerCollapsed(false)
   // The slot list arrives through the explorer store's getRequest; the finalize
   // badge is the only api.get the component makes.
@@ -85,7 +85,7 @@ async function mountExplorer(opts: { group?: string | null; writable?: boolean; 
   })
   apiGet.mockImplementation(async (url: string) => {
     if (url.includes('/conflicts')) return { data: { files: [] } }
-    return { data: { state: { ahead_count: 0, status: 'none', merge_id: opts.mergeId ?? null } } }
+    return { data: { state: { ahead_count: 0, behind_count: 1, base_remote_behind_count: 0, status: 'none', merge_id: opts.mergeId ?? null, work_base_ref: opts.workBase ?? 'main' } } }
   })
 
   const wrapper = mount(FileExplorer, {
@@ -237,6 +237,12 @@ describe('FileExplorer group-branch mutations (0327 T0004 / B0001)', () => {
     // the guard sentence is still there — the band only loses its AI half
     expect(document.querySelector('.git-conflict-footer-context .git-conflict-guard')).not.toBeNull()
     expect(document.querySelector('.git-conflict-footer-context .ft-divider')).toBeNull()
+  })
+
+  it('shows the group work base in update status and conflict resolver', async () => {
+    const wrapper = await mountExplorer({ group: GROUP, writable: true, mergeId: 41, workBase: 'v0.2' })
+    expect(wrapper.get('.fx-git-update-status').text()).toContain('v0.2')
+    expect(wrapper.findComponent({ name: 'GitConflictResolverDialog' }).props('baseBranch')).toBe('v0.2')
   })
 
   it('leaves the base checkout view untouched', async () => {

@@ -1,0 +1,165 @@
+<template>
+  <div class="tsr" data-testid="test-report-panel">
+    <div v-if="!report" class="tsr-muted">{{ t('main.test_document.no_result') }}</div>
+    <template v-else>
+      <!-- Summary first: the reviewer's question is "did it pass, and what did not". -->
+      <div class="tsr-overall" :class="`tsr-overall--${overallKey}`" data-testid="tsr-overall">
+        <AppIcon :name="gatePassed ? 'seal-check' : 'prohibit'" />
+        <div>
+          <div class="tsr-overall-verdict">
+            {{ t('main.test_document.overall') }}: <strong>{{ verdictLabel(report.overall) }}</strong>
+          </div>
+          <div class="tsr-overall-gate">
+            {{ gatePassed ? t('main.test_document.gate_passed') : t('main.test_document.gate_blocked') }}
+          </div>
+        </div>
+      </div>
+      <div class="tsr-tiles" data-testid="tsr-tiles">
+        <div v-for="tile in tiles" :key="tile.key" class="tsr-tile" :class="`tsr-tile--${tile.key}`" :data-testid="`tsr-tile-${tile.key}`">
+          <div class="tsr-tile-n">{{ tile.value }}</div>
+          <div class="tsr-tile-l">{{ tile.label }}</div>
+        </div>
+      </div>
+      <p class="tsr-scope">
+        {{ t('main.test_document.required_scope', { ...requiredCounts }) }}
+      </p>
+
+      <table class="tbl tsr-tbl" data-testid="tsr-table">
+        <thead>
+          <tr>
+            <th>{{ t('main.test_document.results.col_case') }}</th>
+            <th>{{ t('main.test_document.results.col_status') }}</th>
+            <th>{{ t('main.test_document.field.expected') }}</th>
+            <th>{{ t('main.test_document.field.actual') }}</th>
+            <th>{{ t('main.test_document.field.evidence') }}</th>
+            <th>{{ t('main.test_document.field.source') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="row in rows"
+            :key="row.case_no ?? ''"
+            :class="{ 'tsr-row-bad': row.required && row.case_status !== 'PASS' }"
+            data-testid="tsr-row"
+            :data-case-id="row.case_no"
+          >
+            <td class="tsr-case">
+              <strong>{{ row.case_no }}</strong>
+              <div class="tsr-sub">{{ row.case_title }}</div>
+              <div class="tsr-sub">
+                {{ modeLabel(row.execution_mode) }} ·
+                {{ row.required ? t('main.test_document.required') : t('main.test_document.optional') }}
+              </div>
+            </td>
+            <td>
+              <span class="badge" :class="verdictBadge(row.case_status)" data-testid="tsr-row-verdict">
+                {{ verdictLabel(row.case_status) }}
+              </span>
+              <div v-if="row.mapping_conflict" class="tsr-sub tsr-warn">{{ t('main.test_document.mapping_conflict') }}</div>
+              <div v-if="row.defect_ref" class="tsr-sub">{{ t('main.test_document.field.defect_ref') }}: {{ row.defect_ref }}</div>
+            </td>
+            <td class="tsr-text">{{ row.expect || '-' }}</td>
+            <td class="tsr-text">{{ row.actual || '-' }}</td>
+            <td class="tsr-text">
+              <div v-for="(ev, idx) in row.evidence ?? []" :key="idx" class="tsr-ev">
+                <span class="badge badge-gray">{{ ev.kind }}</span>
+                <a v-if="ev.kind === 'url'" :href="ev.value" target="_blank" rel="noopener noreferrer">{{ ev.value }}</a>
+                <span v-else>{{ ev.label ? `${ev.label}: ` : '' }}{{ ev.value }}</span>
+              </div>
+              <span v-if="!(row.evidence ?? []).length">-</span>
+            </td>
+            <td class="tsr-text tsr-sub">
+              <div v-if="row.source_name">{{ row.source_name }}</div>
+              <div v-for="(value, key) in row.source_identity ?? {}" :key="key">{{ key }}: {{ value }}</div>
+              <div v-if="row.checked_by || row.checked_at">{{ [row.checked_by, row.checked_at].filter(Boolean).join(' / ') }}</div>
+              <div v-if="row.carried_from_run_id">{{ t('main.test_document.carried', { run: row.carried_from_run_id }) }}</div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <section class="tsr-extra" data-testid="tsr-unmapped">
+        <h4>{{ t('main.test_document.unmapped_title', { count: unmapped.length }) }}</h4>
+        <p v-if="!unmapped.length" class="tsr-muted">{{ t('main.test_document.none') }}</p>
+        <ul v-else>
+          <li v-for="(item, idx) in unmapped" :key="idx">
+            {{ item.case_id || '-' }} · {{ verdictLabel(item.status) }} · {{ item.source_name || '-' }}
+          </li>
+        </ul>
+      </section>
+      <section class="tsr-extra" data-testid="tsr-conflicts">
+        <h4>{{ t('main.test_document.conflicts_title', { count: conflicts.length }) }}</h4>
+        <p v-if="!conflicts.length" class="tsr-muted">{{ t('main.test_document.none') }}</p>
+        <ul v-else>
+          <li v-for="item in conflicts" :key="item.case_id">
+            {{ item.case_id }}: {{ item.result_count }} → {{ item.statuses.join(', ') }}
+          </li>
+        </ul>
+      </section>
+    </template>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+import AppIcon from '@shared/AppIcon.vue'
+
+import type { TestCounts, TestDocumentView } from '../../types/testRun'
+import { useTestVerdictLabels } from './testVerdict'
+
+const props = defineProps<{ view: TestDocumentView }>()
+
+const { t } = useI18n()
+const { verdictLabel, verdictBadge, modeLabel } = useTestVerdictLabels()
+
+const report = computed(() => props.view.report ?? null)
+const rows = computed(() => report.value?.cases ?? [])
+const unmapped = computed(() => report.value?.unmapped ?? [])
+const conflicts = computed(() => report.value?.conflicts ?? [])
+// The gate is the server's: `gate.passed` (recomputed from the record) wins over anything.
+const gatePassed = computed(() => props.view.gate?.passed ?? report.value?.gate_passed ?? false)
+const overallKey = computed(() => String(report.value?.overall ?? 'NOT_RUN').toLowerCase())
+
+const EMPTY: TestCounts = { total: 0, pass: 0, fail: 0, blocked: 0, not_run: 0 }
+const counts = computed<TestCounts>(() => report.value?.summary?.counts ?? EMPTY)
+const requiredCounts = computed<TestCounts>(() => report.value?.summary?.required_counts ?? EMPTY)
+
+const tiles = computed(() => [
+  { key: 'total', label: t('main.test_document.total'), value: counts.value.total },
+  { key: 'pass', label: verdictLabel('PASS'), value: counts.value.pass },
+  { key: 'fail', label: verdictLabel('FAIL'), value: counts.value.fail },
+  { key: 'blocked', label: verdictLabel('BLOCKED'), value: counts.value.blocked },
+  { key: 'not_run', label: verdictLabel('NOT_RUN'), value: counts.value.not_run },
+])
+</script>
+
+<style scoped>
+.tsr-overall { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: var(--r); margin-bottom: 12px; font-size: .875rem; border: 1px solid var(--border); }
+.tsr-overall :deep(.app-icon) { font-size: 1.6rem; }
+.tsr-overall--pass { background: var(--success-l); color: var(--success); border-color: var(--success); }
+.tsr-overall--fail { background: var(--danger-l); color: var(--danger); border-color: var(--danger); }
+.tsr-overall--blocked, .tsr-overall--not_run { background: var(--warning-l); color: var(--warning); border-color: var(--warning); }
+.tsr-overall-gate { font-size: .78rem; opacity: .9; }
+.tsr-tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
+.tsr-tile { border: 1px solid var(--border); border-radius: var(--r); padding: 8px 10px; text-align: center; background: var(--surface); }
+.tsr-tile-n { font-size: 1.25rem; font-weight: 700; }
+.tsr-tile-l { font-size: .72rem; color: var(--text-s); }
+.tsr-tile--pass .tsr-tile-n { color: var(--success); }
+.tsr-tile--fail .tsr-tile-n { color: var(--danger); }
+.tsr-tile--blocked .tsr-tile-n, .tsr-tile--not_run .tsr-tile-n { color: var(--warning); }
+.tsr-scope { font-size: .75rem; color: var(--text-s); margin: 0 0 12px; }
+.tsr-tbl td { vertical-align: top; }
+.tsr-case { min-width: 140px; }
+.tsr-text { white-space: pre-wrap; word-break: break-word; max-width: 280px; font-size: .78rem; }
+.tsr-sub { font-size: .72rem; color: var(--text-m); }
+.tsr-warn { color: var(--warning); }
+.tsr-row-bad td { background: var(--danger-l); }
+.tsr-ev { display: flex; gap: 4px; align-items: baseline; margin-bottom: 2px; }
+.tsr-ev .badge { white-space: nowrap; flex: 0 0 auto; }
+.tsr-tbl th:nth-child(5), .tsr-tbl td:nth-child(5) { min-width: 180px; }
+.tsr-extra { margin-top: 14px; font-size: .8rem; }
+.tsr-extra h4 { font-size: .8125rem; margin: 0 0 6px; }
+.tsr-extra ul { margin: 0 0 0 18px; padding: 0; }
+.tsr-muted { color: var(--text-m); font-size: .8rem; }
+</style>

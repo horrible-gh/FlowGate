@@ -4,6 +4,7 @@ GET   /api/v1/system/settings  — retrieve all K/V settings
 GET   /api/v1/system/settings/storage-root — configured/effective storage root contract
 PATCH /api/v1/system/settings  — update multiple K/V settings
 GET   /api/v1/system/info      — retrieve version and DB status
+GET   /api/v1/system/storage-root — stored vs effective storage root
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from modules.flow_gate.rbac.decorators import require_permission
 from modules.flow_gate.settings.system_settings_service import get_all, get_system_info, set_values
-from modules.flow_gate.storage.paths import get_storage_root_info
+from modules.flow_gate.storage.paths import describe_storage_root, get_storage_root_info
 
 router = APIRouter(prefix="/system", tags=["SystemSettings"])
 
@@ -85,3 +86,8 @@ def update_settings(body: SettingsPatch, user=Depends(require_permission("system
 @router.get("/info")
 def system_info(user=Depends(require_permission("system.settings.manage"))):
     return get_system_info()
+
+
+@router.get("/storage-root")
+def storage_root_describe(user=Depends(require_permission("system.settings.manage"))):
+    return describe_storage_root()

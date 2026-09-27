@@ -599,8 +599,14 @@ def _build_mention_for_token(
     """
     resolved_api_base = api_base_url or _build_api_base(request)
     if action_scope == "resolve_conflict":
-        if not group_id or merge_id is None:
+        if merge_id is None:
             return None
+        if not group_id:
+            # 0630 T0005: an ordinary branch merge has no group — its resolver run is
+            # project-scoped and its session is addressed by project.
+            _owner_group, owner_project = git_service.merge_session_owner_args(merge_id)
+            if not owner_project or owner_project != project_id:
+                return None
         if review_conversation:
             return _build_review_conversation_mention(
                 group_id=group_id,
@@ -954,7 +960,7 @@ _WRITE_PLAN_COPY = {
 
 
 def _build_write_plan_section(
-    *, group_id: str, merge_id: int, raw_token: str, api_base_url: str, allow_test_edits: bool,
+    *, group_id: Optional[str], merge_id: int, raw_token: str, api_base_url: str, allow_test_edits: bool,
     locale: str = "ko",
 ) -> str:
     """flowgate.default.0481 T0008 item 1 / L0007 §2.5-§2.9, Q&A on 0009-TR: the
@@ -970,7 +976,7 @@ def _build_write_plan_section(
     session = db_git.get_session(merge_id)
     context = db_git.session_context(session) if session is not None else {}
     base_fingerprint = context.get("review_fingerprint") or "<unknown — the review screen was not in a pending state>"
-    write_plan_url = f"{api_base_url}/groups/{group_id}/git/merge/{merge_id}/write-plan-token"
+    write_plan_url = f"{api_base_url}{git_service.merge_route_prefix(merge_id, group_id)}/write-plan-token"
     test_edit_note = (
         copy["note_test_edits_allowed"] if allow_test_edits else copy["note_test_edits_denied"]
     )
@@ -1028,7 +1034,7 @@ _REVIEW_CONVERSATION_MAX_FILES = 80
 
 def _build_review_conversation_mention(
     *,
-    group_id: str,
+    group_id: Optional[str],
     project_id: str,
     merge_id: int,
     raw_token: str,
@@ -1052,7 +1058,11 @@ def _build_review_conversation_mention(
     the conversation is replayed, and there is no resolve endpoint in it (resolve_conflicts
     refuses one from this run regardless).
     """
-    brief = git_service.review_conversation_brief(group_id, merge_id)
+    _owner_group, owner_project = git_service.merge_session_owner_args(merge_id, group_id)
+    brief = (
+        git_service.review_conversation_brief(None, merge_id, project_id=owner_project)
+        if owner_project else git_service.review_conversation_brief(group_id, merge_id)
+    )
     if not brief:
         return None
 
@@ -1141,8 +1151,8 @@ def _build_review_conversation_mention(
         "## Document information\n"
         "---\n"
         f"project: {project_id}\n"
-        f"group: {group_id}\n"
-        "type: merge_review_conversation\n"
+        + (f"group: {group_id}\n" if group_id else "owner: branch_merge (project-scoped, no group)\n")
+        + "type: merge_review_conversation\n"
         f"merge_id: {merge_id}\n\n"
         "## Merge review conversation - your task\n"
         "---\n"
@@ -1209,7 +1219,7 @@ _SUPERSEDE_MENTION_SECTION = (
 
 def _build_conflict_mention(
     *,
-    group_id: str,
+    group_id: Optional[str],
     project_id: str,
     merge_id: int,
     scratch_dir: str,
@@ -1219,9 +1229,16 @@ def _build_conflict_mention(
     allow_test_edits: bool = False,
     locale: str = "ko",
 ) -> Optional[str]:
-    conflicts = git_service.list_conflicts(group_id, merge_id)
+    # 0630 T0005: an ordinary branch merge is listed and resolved through its project-scoped
+    # routes; everything else in this mention (chunks, inline limit, reading contract,
+    # supersede, write plan) is the same contract.
+    _owner_group, owner_project = git_service.merge_session_owner_args(merge_id, group_id)
+    conflicts = (
+        git_service.list_conflicts(None, merge_id, project_id=owner_project)
+        if owner_project else git_service.list_conflicts(group_id, merge_id)
+    )
     files = conflicts.get("files") or []
-    resolve_url = f"{api_base_url}/groups/{group_id}/git/merge/{merge_id}/resolve-token"
+    resolve_url = f"{api_base_url}{git_service.merge_route_prefix(merge_id, group_id)}/resolve-token"
     eol_only = set(conflicts.get("eol_only_paths") or [])
     open_files: list[tuple[dict, list[dict]]] = []
     resolved_files: list[dict] = []
@@ -1257,6 +1274,9 @@ def _build_conflict_mention(
         "group_id": group_id,
         "merge_id": merge_id,
         "kind": kind,
+        **({"project_id": owner_project, "owner_type": "branch_merge",
+            "source_branch": conflicts.get("source_branch"),
+            "target_branch": conflicts.get("target_branch")} if owner_project else {}),
         "branch": conflicts.get("branch"),
         "base_branch": conflicts.get("base_branch"),
         "tr_conflict": conflicts.get("tr_conflict") or None,
@@ -1274,12 +1294,23 @@ def _build_conflict_mention(
         )
         if write_requested_by_human else ""
     )
+    binding = (
+        "The bearer token is bound to exactly this project's branch merge (merge_id) — it has no "
+        "group. Other git/config/finalize endpoints are not authorized.\n\n"
+        if owner_project else
+        "The bearer token is bound to exactly this group_id and merge_id. Other git/config/finalize endpoints are not authorized.\n\n"
+    )
     return (
         "## Document information\n"
         "---\n"
         f"project: {project_id}\n"
-        f"group: {group_id}\n"
-        "type: git_conflict\n"
+        + (
+            f"group: {group_id}\n" if not owner_project else
+            "owner: branch_merge (project-scoped, no group)\n"
+            f"source_branch: {conflicts.get('source_branch')}\n"
+            f"target_branch: {conflicts.get('target_branch')}\n"
+        )
+        + "type: git_conflict\n"
         f"merge_id: {merge_id}\n\n"
         + _conflict_task_section(kind, tr)
         + "## Bound resolve endpoint\n"
@@ -1297,7 +1328,7 @@ def _build_conflict_mention(
         "file, with `chunk` (its number in the conflict session below) and `content` (the lines "
         "that replace its whole marker block). The server rebuilds the file from them and checks "
         "it exactly like `content`.\n\n"
-        "The bearer token is bound to exactly this group_id and merge_id. Other git/config/finalize endpoints are not authorized.\n\n"
+        + binding
         + _SUPERSEDE_MENTION_SECTION
         + write_plan_section
         + _conflict_reading_section(

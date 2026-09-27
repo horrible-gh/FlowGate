@@ -280,7 +280,7 @@
               hide-label
               @update:model-value="(v) => emit('update:provider', v)"
             />
-            <label class="git-conflict-auto-toggle" :class="{ disabled: busy }">
+            <label v-if="!hideAutoAuthority" class="git-conflict-auto-toggle" :class="{ disabled: busy }">
               <input type="checkbox" v-model="autoResolve" :disabled="busy" />
               <span>{{ t('main.git_finalize.auto_resolve_label') }}</span>
             </label>
@@ -369,6 +369,12 @@ const props = defineProps<{
   // 기록이 없는 구간. 그 구간이 rev3 까지는 화면에 존재하지 않아서, 누른 사람에게는
   // "눌렀는데 아무 일도 안 일어난다"로 보였다. 호출 성공 여부와 무관하게 호스트가 켜고 끈다.
   aiRunPending?: boolean
+  // 0630 T0005 — an ordinary branch merge's host (GitBranchMergeConflictHost) reuses this
+  // dialog as-is but has no [자동] authority to grant (D0004 §11: the server starts its AI
+  // automatically, and that NEVER approves the result) and no copy-mention token route.
+  // Opt-outs for the same reason `hideAiActions` is one: an omitted prop stays `false`.
+  hideAutoAuthority?: boolean
+  hideCopyMention?: boolean
 }>()
 const emit = defineEmits<{
   close: []
@@ -489,13 +495,15 @@ const aiStrip = computed<{ kind: string; text: string; icon: string; spin: boole
 const footerActions = computed<DialogAction[]>(() => {
   const actions: DialogAction[] = []
   if (showAiActions.value) {
-    actions.push({
-      id: 'copy-mention',
-      label: t('main.git_finalize.copy_conflict_mention'),
-      role: 'aux',
-      disabled: props.busy,
-      onSelect: () => emit('copy-mention'),
-    })
+    if (!props.hideCopyMention) {
+      actions.push({
+        id: 'copy-mention',
+        label: t('main.git_finalize.copy_conflict_mention'),
+        role: 'aux',
+        disabled: props.busy,
+        onSelect: () => emit('copy-mention'),
+      })
+    }
     actions.push({
       id: 'ai-invoke',
       label: t('main.git_finalize.invoke_conflict_ai'),

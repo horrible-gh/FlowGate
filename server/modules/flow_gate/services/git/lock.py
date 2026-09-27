@@ -37,7 +37,8 @@ def open_merge_session_of_project(project_id: str) -> Optional[dict]:
     best: Optional[dict] = None
     for session in _gs.db_git.list_open_sessions():
         try:
-            if _gs._project_of_group(session["group_id"]) != project_id:
+            # 0630 T0005: a branch_merge row has no group; its owner column names the project.
+            if _gs._session_project(session) != project_id:
                 continue
             # A group_update merge lives exclusively in that group's worktree.
             # It does not hold the shared base checkout and must not block other

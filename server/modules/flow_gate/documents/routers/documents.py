@@ -2652,6 +2652,102 @@ def update_document_content_rpc(
     )
 
 
+class TestSpecSaveBody(BaseModel):
+    """Structured TS editor payload (0549 T0008). ``cases`` items use the canonical keys of
+    test_spec_service.SPEC_FIELDS plus case_id/title."""
+
+    cases: list[dict] = Field(default_factory=list)
+    title: Optional[str] = None
+    intro: Optional[str] = None
+    locale: Optional[str] = None
+
+
+@router.get("/{doc_id}/test-document")
+@require_permission("perm_document_read")
+def get_test_document(
+    doc_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Structured TS specification / TSR test report for the document body (0549 T0008).
+
+    ``contract_version`` 1 (or a TSR assembled from a legacy run) tells the client to keep
+    rendering the Markdown body; 2 carries the parsed cases / the report record.
+    """
+    doc = document_service.get_document(doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+    from modules.flow_gate.services import test_run_service as _test_run_service
+    from modules.flow_gate.services import test_spec_service as _test_spec_service
+
+    out = _test_run_service.describe_test_document(doc)
+    if out.get("kind") == "TS" and out.get("contract_version") == _test_spec_service.CONTRACT_LEGACY:
+        # An empty/new TS may START as a specification; a TS that already carries legacy
+        # executable cases is never re-interpreted (D0006 §5).
+        try:
+            _test_run_service.parse_test_cases(_test_run_service._read_doc_content_or_empty(doc))
+            out["can_start_spec"] = False
+        except _test_run_service.TestCaseParseError:
+            out["can_start_spec"] = True
+    return {"ok": True, **out}
+
+
+@router.put("/{doc_id}/test-spec")
+@require_permission("perm_document_update")
+def save_test_spec(
+    doc_id: str,
+    body: TestSpecSaveBody,
+    current_user: dict = Depends(get_current_user),
+    request: Request = None,
+) -> dict:
+    """Save the structured TS editor through the ordinary content save (0549 T0008).
+
+    The canonical document body stays Markdown: the cases are rendered into the
+    specification grammar, the existing frontmatter is kept with ``test_contract_version:
+    2`` asserted, and the result is written by ``update_document_content`` — so revision,
+    review, audit and export keep working on the same file as before. Invalid cases are
+    refused with every validation error at once (422), nothing is written.
+    """
+    doc = document_service.get_document(doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+    if str(doc.get("type_code") or "").upper() != "TS":
+        raise HTTPException(status_code=422, detail={"error": "not_ts", "doc_id": doc_id})
+    from modules.flow_gate.services import test_run_service as _test_run_service
+    from modules.flow_gate.services import test_spec_service as _test_spec_service
+
+    current = _test_run_service._read_doc_content_or_empty(doc)
+    contract = _test_spec_service.detect_contract_version(current)
+    if contract == _test_spec_service.CONTRACT_LEGACY:
+        try:
+            _test_run_service.parse_test_cases(current)
+            raise HTTPException(status_code=409, detail={
+                "error": "legacy_executable_ts",
+                "message": "This TS holds legacy executable cases; it is not re-interpreted "
+                           "as a specification.",
+            })
+        except _test_run_service.TestCaseParseError:
+            pass
+    cases, errors = _test_spec_service.validate_cases_payload(body.cases)
+    if errors:
+        raise HTTPException(status_code=422, detail={
+            "error": "invalid_spec", "errors": errors,
+            "message": "; ".join(err["message"] for err in errors[:10]),
+        })
+    _fields, block, _body = _test_spec_service.split_frontmatter(current)
+    locale = body.locale if body.locale in ("ko", "en", "ja") else "ko"
+    content = _test_spec_service.render_spec_document(
+        cases,
+        title=(body.title or doc.get("title") or doc_id).strip(),
+        frontmatter_block=block,
+        locale=locale,
+        intro=body.intro if body.intro is not None else _test_spec_service.spec_intro(current),
+    )
+    saved = update_document_content(
+        doc_id, DocumentContentUpdate(content=content), current_user, request
+    )
+    return {**saved, "ok": True, "cases": cases}
+
+
 @router.patch("/workflow")
 @require_permission("perm_document_update")
 def update_document_workflow_rpc(
@@ -2873,6 +2969,21 @@ def get_document(
     # Group-scoped, NOT document-scoped: every document of the group gets the same answer,
     # so the action bar of a sibling tab can lock itself while a run is in flight elsewhere.
     out["group_test_run"] = _load_group_test_run(doc)
+    # 0549 T0008: the test controls need the TS contract before any result exists (a
+    # specification TS is never run by the server, so its [run] button must not appear), and
+    # the TSR action bar needs the server-computed gate (a report that did not pass the gate
+    # cannot be approved). Both are display-only extras: a failure omits them.
+    try:
+        type_code = str(doc.get("type_code") or "").upper()
+        if type_code in ("TS", "TSR"):
+            from modules.flow_gate.services import test_run_service as _test_run_service
+
+            if type_code == "TS":
+                out["test_contract_version"] = _test_run_service.ts_contract_version(doc)
+            else:
+                out["test_gate"] = _test_run_service.tsr_gate_state(doc)
+    except Exception:  # noqa: BLE001 — display-only extras must not break document lookup
+        pass
     # TR work-scope check result (0299 D0004 §6). It lives in meta, but is unfolded here so the
     # screen never parses the meta string itself. 0390 TR0005 rev2: with no stored verdict, if
     # the type is checked and the body has a changed-files section, an unevaluated verdict

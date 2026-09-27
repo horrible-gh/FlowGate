@@ -244,9 +244,18 @@ REVIEW_STOP_CODES = frozenset({
 
 # L0007 §4.2 — one criterion: can re-running this hop still do the work? Human-triage stops
 # (head/approve/advance) and intended stops (cancel) are deliberately NOT resumable.
+# 0549 T0008: a hop that handed an approved TS to the test gate (inbox action test_run) ends
+# on TEST_RUN_PENDING. Like question_pending it waits on something outside the worker — here
+# the test result — so it parks the ordinary durable system row, and a PASS resumes it
+# through the ordinary resume_chain (test_run_service.continue_chain_after_test_gate).
+# FAIL/BLOCKED/NOT_RUN relabel the row TEST_GATE_BLOCKED: still a resumable card, because
+# the way forward after a failure-origin rework or a human check is exactly "resume".
+TEST_RUN_PENDING_STOP_CODE = "test_run_pending"
+TEST_GATE_BLOCKED_STOP_CODE = "test_gate_blocked"
+
 RESUMABLE_STOP_CODES = frozenset({
     "no_output_exhausted", "providers_exhausted", "timeout", "user_paused",
-    "question_pending",
+    "question_pending", TEST_RUN_PENDING_STOP_CODE, TEST_GATE_BLOCKED_STOP_CODE,
     # 0414 L0008 §1.2: of the seven review stops, only this one answers "would re-running
     # the hop have a chance?" with yes — the reviewer simply said nothing. Four of the
     # remaining five need a person: a verdict says hold, the loop is not making progress,

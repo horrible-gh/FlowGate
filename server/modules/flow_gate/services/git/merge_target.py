@@ -32,6 +32,10 @@ from pathlib import Path
 from typing import Optional
 
 from modules.flow_gate.db.connection import now_iso
+from modules.flow_gate.db.git_integration import (  # pure session readers (0630 T0005)
+    MERGE_REVIEW_SESSION_KINDS as _MERGE_REVIEW_KINDS,
+    is_branch_merge_session as _is_branch_merge_session,
+)
 from modules.flow_gate.storage.paths import project_dir_name
 
 from .credentials import GitServiceError
@@ -189,7 +193,8 @@ def _write_owner_marker(ctx: MergeTargetContext) -> None:
 
 def target_record(session: Optional[dict]) -> Optional[dict]:
     from modules.flow_gate.services import git_service as _gs
-    if not session or _gs.db_git.session_kind(session) != _gs.db_git.SESSION_KIND_MERGE:
+    # 0630 T0005: a branch_merge attempt pins its target the same way a finalize does.
+    if not session or _gs.db_git.session_kind(session) not in _MERGE_REVIEW_KINDS:
         return None
     rec = _gs.db_git.session_context(session).get(TARGET_RECORD_KEY)
     if isinstance(rec, dict) and isinstance(rec.get("branch"), str) and rec.get("branch"):
@@ -208,10 +213,10 @@ def _base_context(project_id: str, base_branch: str, **extra) -> MergeTargetCont
 def resolve_session_target(session: dict) -> MergeTargetContext:
     """THE target of one merge session (the single source of truth after start).
 
-    Legacy fallback: no record → the project base and its shared checkout."""
+    Legacy fallback: no record → the project base and its shared checkout.
+    0630 T0005: the project comes from the session's owner — a branch_merge row has no group."""
     from modules.flow_gate.services import git_service as _gs
-    group_id = session["group_id"]
-    project_id = _gs._project_of_group(group_id)
+    project_id = _gs._session_project(session)
     cfg = _gs.db_git.get_config(project_id) or {}
     base_branch = project_base_branch(cfg)
     merge_id = int(session["merge_id"]) if session.get("merge_id") is not None else None
@@ -263,14 +268,16 @@ def resolve_merge_id_target(merge_id: int) -> Optional[MergeTargetContext]:
 
 
 def open_merge_attempts(project_id: str) -> list[dict]:
-    """Every open finalize-merge session of the project (any phase, any target)."""
+    """Every open merge attempt of the project (any phase, any target): group finalize
+    merges and — 0630 T0005 — ordinary branch merges, so a workspace/target claim or a
+    branch-delete guard sees both owners."""
     from modules.flow_gate.services import git_service as _gs
     out: list[dict] = []
     for session in _gs.db_git.list_open_sessions():
         try:
-            if _gs.db_git.session_kind(session) != _gs.db_git.SESSION_KIND_MERGE:
+            if _gs.db_git.session_kind(session) not in _MERGE_REVIEW_KINDS:
                 continue
-            if _gs._project_of_group(session["group_id"]) != project_id:
+            if _gs._session_project(session) != project_id:
                 continue
         except Exception:
             continue
@@ -300,7 +307,7 @@ def attempt_phase(session: dict, *, at_boot: bool = False) -> str:
     if at_boot:
         return PHASE_INTERRUPTED
     try:
-        project_id = _gs._project_of_group(session["group_id"])
+        project_id = _gs._session_project(session)
         lock = _gs.db_git.get_lock(project_id)
     except Exception:
         lock = None
@@ -317,7 +324,7 @@ def holds_base_checkout(session: dict) -> bool:
     serializes it) or interrupted (startup/TTL recovery closes it) — neither is a
     conflict the base gate should report."""
     from modules.flow_gate.services import git_service as _gs
-    if _gs.db_git.session_kind(session) != _gs.db_git.SESSION_KIND_MERGE:
+    if _gs.db_git.session_kind(session) not in _MERGE_REVIEW_KINDS:
         return True
     rec = target_record(session)
     if rec is None:
@@ -384,6 +391,10 @@ def inspect_workspace(project_id: str, branch: str) -> tuple[str, dict]:
             "merge_id": session.get("merge_id"),
             "started_at": rec.get("started_at"),
         }
+        if _is_branch_merge_session(session):
+            # 0630 T0005: the claim is an ordinary branch merge, not a group's finalize.
+            details["blocking_owner_type"] = _gs.db_git.OWNER_BRANCH_MERGE
+            details["source_branch"] = rec.get("source_branch")
         if (
             len(claims) == 1 and marker and not marker.get("_invalid")
             and str(marker.get("merge_id")) == str(session.get("merge_id"))
@@ -590,8 +601,10 @@ def close_session_attempt(session: dict, state: str, *, error: Optional[dict] = 
     return True
 
 
-def _return_merging_to_waiting(group_id: str) -> None:
+def _return_merging_to_waiting(group_id: Optional[str]) -> None:
     from modules.flow_gate.services import git_service as _gs
+    if not group_id:
+        return   # 0630 T0005: a branch_merge attempt has no group ledger row to move
     state = _gs.db_git.get_state(group_id) or {}
     if (state.get("status") or "none") == "merging":
         _gs._set_status(group_id, "waiting")
@@ -655,7 +668,7 @@ def fail_attempt(ctx: MergeTargetContext, error: dict) -> None:
         return
     try:
         close_attempt(ctx.merge_id, ATTEMPT_FAILED, error=error)
-        _return_merging_to_waiting(session["group_id"])
+        _return_merging_to_waiting(session.get("group_id"))
     finally:
         release_workspace(ctx)
 
@@ -838,7 +851,7 @@ def recover_interrupted_attempt(session: dict, reason: str) -> Optional[str]:
     # attempt's reclaimable leftover) — close the row, leave the tree to the next
     # attempt's reclaim. release_workspace() refuses it by marker anyway.
     close_attempt(ctx.merge_id, ATTEMPT_INTERRUPTED, error={"code": reason})
-    _return_merging_to_waiting(session["group_id"])
+    _return_merging_to_waiting(session.get("group_id"))
     release_workspace(ctx)
     return ATTEMPT_INTERRUPTED
 
@@ -928,6 +941,11 @@ def _finish_landed_merge(
     first, then the attempt (the same order finalize now uses), then slot cleanup."""
     from modules.flow_gate.services import git_service as _gs
     assert ctx.merge_id is not None
+    if _is_branch_merge_session(session):
+        # 0630 T0005: no group ledger, no slot — the attempt row IS the whole record.
+        from . import branch_merge
+        branch_merge.finish_landed_merge(session, ctx, merge_commit, pushed=pushed)
+        return
     group_id = session["group_id"]
     _gs._set_status(group_id, "merged", merge_id=ctx.merge_id, merge_commit=merge_commit)
     close_attempt(ctx.merge_id, ATTEMPT_COMPLETED, result={
@@ -953,6 +971,10 @@ def finish_completed_review(session: dict) -> bool:
     context = _gs.db_git.session_context(session)
     if context.get("review_state") != _gs.REVIEW_STATE_COMPLETED:
         return False
+    if _is_branch_merge_session(session):
+        from . import branch_merge
+        branch_merge.finish_completed_review(session)
+        return True
     rec = target_record(session)
     if rec is not None:
         pushed = bool(rec.get("push"))

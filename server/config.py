@@ -119,6 +119,8 @@ class Settings(BaseSettings):
     # without the field declared.
     FLOWGATE_AI_ENCRYPT_KEY: str | None = None
     FLOWGATE_AI_ENCRYPT_KEY_PREV: str | None = None
+    FLOWGATE_AGENT_PEPPER: str | None = None
+    FLOWGATE_AGENT_PEPPER_ID: str = "primary"
 
     # Listen address (0273 NR0003 P1-2). stg.py — the entry point the systemd
     # unit runs — had port 8089 hardcoded, so a Linux install could not move off
@@ -221,6 +223,8 @@ for _env_key in (
     "FLOWGATE_GIT_ENCRYPT_KEY_PREV",
     "FLOWGATE_AI_ENCRYPT_KEY",
     "FLOWGATE_AI_ENCRYPT_KEY_PREV",
+    "FLOWGATE_AGENT_PEPPER",
+    "FLOWGATE_AGENT_PEPPER_ID",
 ):
     _env_val = getattr(settings, _env_key, None)
     if _env_val and not os.environ.get(_env_key):

@@ -25,4 +25,3 @@ class EventType(str, Enum):
     # flowgate.default.0517 T0012 §12: durable snapshot request lifecycle changed
     # (requested/approved/rejected). Refresh-only signal — the client re-reads the
     # durable pending list rather than trusting the payload as the list itself.
-    SNAPSHOT_REQUEST_UPDATED               = "snapshot_request_updated"

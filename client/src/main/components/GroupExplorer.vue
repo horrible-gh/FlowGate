@@ -210,8 +210,9 @@ import { useDocumentSearch } from '../composables/useDocumentSearch'
 import GroupTreeNode from './GroupTreeNode.vue'
 import AppIcon from '@shared/AppIcon.vue'
 import { buildTreeIndex, collectDescendantIds } from '../utils/groupTreeIndex'
+import { recordFanOut } from '@shared/diagnostics/runtimeDiagnostics'
 
-const props = defineProps<{ projectId: string | null; refreshToken?: number }>()
+const props = defineProps<{ projectId: string | null; refreshToken?: number; refreshEpoch?: number | null }>()
 defineEmits<{ 'create-requirement': [payload?: { groupId?: string }] }>()
 const { t } = useI18n()
 const explorerStore = useExplorerStore()
@@ -587,8 +588,37 @@ function wantedIncludeTerminal(revealNodeId?: string): boolean {
   return revealNodeId ? true : showFinalApprovedGroups.value
 }
 
+// The API returns a fresh array on every GET. Compare only fields used by the tree
+// and its ordering; preserving the old ref avoids rebuilding every derived index.
+function sameTree(a: GroupNode[], b: GroupNode[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i], y = b[i]
+    if (x.id !== y.id || x.parent_id !== y.parent_id ||
+        x.node_type !== y.node_type || x.type_code !== y.type_code ||
+        x.number !== y.number || x.filename !== y.filename ||
+        x.label !== y.label || x.title !== y.title ||
+        x.has_md !== y.has_md || x.md_path !== y.md_path ||
+        x.is_final_approved !== y.is_final_approved ||
+        x.is_discarded !== y.is_discarded ||
+        x.origin_provider_name !== y.origin_provider_name ||
+        x.origin_ai_run_id !== y.origin_ai_run_id) return false
+  }
+  return true
+}
+
+let reloadInFlight = false
+let reloadPending = false
+let pendingRevealNodeId: string | undefined
+
 async function reload(revealNodeId?: string) {
   if (!props.projectId) return
+  if (reloadInFlight) {
+    reloadPending = true
+    if (revealNodeId) pendingRevealNodeId = revealNodeId
+    return
+  }
+  reloadInFlight = true
   // Keep an already-rendered tree mounted during background/SSE refreshes. Setting
   // loading=true unconditionally replaces the tree with the loading branch, which
   // unmounts GroupTreeNode and destroys any dialog/input it owns even though the
@@ -614,7 +644,7 @@ async function reload(revealNodeId?: string) {
     if (seq !== treeRequestSeq || pid !== props.projectId) return
     // Reveal/expand/toggle decisions belong to the response that actually succeeded.
     if (revealNodeId) applyReveal(revealNodeId, nextNodes)
-    nodes.value = nextNodes
+    if (!sameTree(nodes.value, nextNodes)) nodes.value = nextNodes
     error.value = false
     refreshError.value = false
   } catch {
@@ -632,6 +662,13 @@ async function reload(revealNodeId?: string) {
     // Only the newest request may clear the spinner; a superseded one finishing first would
     // otherwise uncover an empty tree while the current request is still running.
     if (seq === treeRequestSeq) loading.value = false
+    reloadInFlight = false
+    if (reloadPending) {
+      reloadPending = false
+      const reveal = pendingRevealNodeId
+      pendingRevealNodeId = undefined
+      void reload(reveal)
+    }
   }
 }
 
@@ -668,40 +705,29 @@ function openDocument(node: GroupNode) {
   })
 }
 
-watch(() => props.projectId, async (pid) => {
-  // Re-read the per-project show-final-approved setting whenever the project changes.
-  // 0454 T0006 §3.1 — this MUST stay ahead of the fetch below: the restored value decides
-  // which server variant the very first request asks for. A stored "shown" project has to
-  // start on include_terminal=true, or its completed groups would be missing from the
-  // initial paint even though the toggle already reads as on.
+watch(() => props.projectId, (pid) => {
+  // Restore this project's server display variant before starting its first load.
   loadShowFinalApproved(pid)
-  // A search is scoped to one project; switching projects clears the stale query.
   clearSearch()
-  if (!pid) { nodes.value = []; refreshError.value = false; return }
-  // Switching projects discards the previous project's nodes, so this is an INITIAL load by
-  // definition: the blocking loading/error branch is the right one here.
+  // Invalidate an old project's response even if its request is still in flight.
+  // The shared reload queue starts the new project's fetch after that request settles,
+  // so initial loads and SSE refreshes never fetch the same tree concurrently.
+  treeRequestSeq += 1
   nodes.value = []
-  loading.value = true
+  loading.value = false
   error.value = false
   refreshError.value = false
-  const includeTerminal = showFinalApprovedGroups.value
-  const seq = ++treeRequestSeq
-  try {
-    const nextNodes = await explorerStore.fetchGroupTree(pid, true, includeTerminal)
-    if (seq !== treeRequestSeq || pid !== props.projectId) return
-    nodes.value = nextNodes
-  } catch {
-    if (seq !== treeRequestSeq || pid !== props.projectId) return
-    error.value = true
-  } finally {
-    if (seq === treeRequestSeq) loading.value = false
-  }
+  if (pid) void reload()
 }, { immediate: true })
 
 // SSE refreshes must update tree data without replacing this component instance.
 // Keeping the instance alive preserves search/filter state and dialogs owned by tree nodes.
 watch(() => props.refreshToken, (next, prev) => {
   if (next === prev || !props.projectId) return
+  // rev2 finding 4: use the epoch DashboardView paired with this token bump, not the
+  // diagnostics module's current global epoch (which could be stale or belong to a
+  // non-SSE manual reload).
+  recordFanOut('group_explorer_reload', props.refreshEpoch ?? null)
   void reload()
 })
 

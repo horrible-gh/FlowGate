@@ -102,6 +102,123 @@ def insert_run(
     return run  # type: ignore[return-value]
 
 
+_SPEC_RESULT_TO_LEGACY = {"PASS": "pass", "FAIL": "fail"}
+
+
+def insert_spec_run(
+    *,
+    doc_id: str,
+    revision_no: int,
+    triggered_via: str,
+    runner_id: str,
+    rows: list[dict],
+    status: str,
+    overall: str,
+    result_meta: str,
+    case_passed: int,
+    case_failed: int,
+    error: Optional[str],
+    locale: Optional[str],
+    case_meta: list[str],
+) -> dict:
+    """Record one specification-TS result submission as a terminal run (0549 T0008).
+
+    A contract-2 run never executes anything on this server, so it is born terminal:
+    ``status`` is passed/failed, ``picked_at`` is stamped, and TestRunWorker's
+    ``status='running' AND picked_at IS NULL`` pick can never select it. The per-case
+    verdict lives in ``case_status`` (PASS/FAIL/BLOCKED/NOT_RUN); the legacy ``result``
+    column only carries the two values its CHECK allows (pass/fail) and stays NULL for
+    BLOCKED/NOT_RUN, so every legacy reader keeps reading a valid row.
+    """
+    store = get_store()
+    run_id = next_run_id()
+    now = now_iso()
+    with store.transaction():
+        store._execute(
+            "INSERT INTO test_runs "
+            "(run_id, doc_id, revision_no, status, triggered_via, runner_id, "
+            "case_total, case_passed, case_failed, error, picked_at, started_at, "
+            "finished_at, port, locale, created_at, contract_version, overall, result_meta) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 2, ?, ?)",
+            [
+                run_id, doc_id, revision_no, status, triggered_via, runner_id, len(rows),
+                case_passed, case_failed, error, now, now, now, locale, now, overall,
+                result_meta,
+            ],
+        )
+        for row, meta in zip(rows, case_meta):
+            store._execute(
+                "INSERT INTO test_run_cases "
+                "(run_id, kind, case_no, case_title, cmd, expect, assert_mode, result, "
+                "exit_code, duration_ms, output_tail, actual, comparison_result, finished_at, "
+                "case_status, case_meta) "
+                "VALUES (?, 'case', ?, ?, '', ?, NULL, ?, NULL, NULL, NULL, ?, NULL, ?, ?, ?)",
+                [
+                    run_id,
+                    row["case_id"],
+                    row.get("title") or "",
+                    row.get("expected") or "",
+                    _SPEC_RESULT_TO_LEGACY.get(row.get("status") or ""),
+                    row.get("actual") or None,
+                    row.get("checked_at") or None,
+                    row.get("status") or "NOT_RUN",
+                    meta,
+                ],
+            )
+    return get_run(run_id)  # type: ignore[return-value]
+
+
+def latest_spec_run(doc_id: str, revision_no: Optional[int] = None) -> Optional[dict]:
+    """Newest contract-2 result record for a TS (optionally for one TS revision)."""
+    if revision_no is None:
+        return get_store()._fetch_one(
+            "SELECT * FROM test_runs WHERE doc_id = ? AND contract_version = 2 "
+            "ORDER BY created_at DESC, run_id DESC LIMIT 1",
+            [doc_id],
+        )
+    return get_store()._fetch_one(
+        "SELECT * FROM test_runs WHERE doc_id = ? AND contract_version = 2 AND revision_no = ? "
+        "ORDER BY created_at DESC, run_id DESC LIMIT 1",
+        [doc_id, revision_no],
+    )
+
+
+def latest_by_doc(doc_id: str) -> Optional[dict]:
+    return get_store()._fetch_one(
+        "SELECT * FROM test_runs WHERE doc_id = ? ORDER BY created_at DESC, run_id DESC LIMIT 1",
+        [doc_id],
+    )
+
+
+def latest_by_tsr_doc(tsr_doc_id: str) -> Optional[dict]:
+    return get_store()._fetch_one(
+        "SELECT * FROM test_runs WHERE tsr_doc_id = ? ORDER BY created_at DESC, run_id DESC LIMIT 1",
+        [tsr_doc_id],
+    )
+
+
+def set_run_tsr_doc(run_id: str, tsr_doc_id: str) -> None:
+    get_store()._execute(
+        "UPDATE test_runs SET tsr_doc_id = ? WHERE run_id = ?", [tsr_doc_id, run_id]
+    )
+
+
+def mark_spec_report_failed(run_id: str) -> None:
+    """A specification result whose TSR could not be written is not a gate pass
+    (0257 NR0003 §2 applied to 0549): terminal failed with a distinct error."""
+    get_store()._execute(
+        "UPDATE test_runs SET status = 'failed', error = 'report_assembly_failed' "
+        "WHERE run_id = ? AND contract_version = 2",
+        [run_id],
+    )
+
+
+def set_run_result_meta(run_id: str, result_meta: str) -> None:
+    get_store()._execute(
+        "UPDATE test_runs SET result_meta = ? WHERE run_id = ?", [result_meta, run_id]
+    )
+
+
 def list_by_doc(doc_id: str) -> list[dict]:
     return get_store()._fetch_all(
         "SELECT * FROM test_runs WHERE doc_id = ? ORDER BY created_at DESC, run_id DESC",

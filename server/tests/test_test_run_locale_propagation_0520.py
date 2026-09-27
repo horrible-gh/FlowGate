@@ -74,6 +74,9 @@ def _wire_validate_and_create_run(monkeypatch, tmp_path, *, inserted):
             "## Test Cases", "", "### TC-1: smoke", "- cmd: echo hi", "- expect: exits 0",
         ]),
     )
+    # Admission also checks the failure-origin gate before the running-run check; unmocked,
+    # it falls through to a real DB call this test never sets up.
+    monkeypatch.setattr(test_run_service.db_test_runs, "get_pending_failure_origin", lambda _id: None)
     monkeypatch.setattr(test_run_service.db_test_runs, "get_running_by_doc", lambda _id: None)
 
     def insert_run(**kwargs):
@@ -422,3 +425,53 @@ def test_inbox_worker_token_defaults_to_ko_with_no_locale_source_at_all(monkeypa
 
     assert resp.status_code == 202
     assert captured["locale"] == "ko"
+
+
+# -- flowgate.default.0621 T0004 §4.4/§6.3: test_run's dry-run branch shares the same
+# effective_locale as the real run admitted right below it. Before this fix, effective_locale
+# was computed *after* _maybe_dry_run returned, so a dry-run request never got a chance to see
+# it -- these pin case A (header-only) and case B (continuation_locale still outranks the
+# header) through the dry-run branch specifically, not the real-run branch already covered
+# above.
+
+def test_inbox_worker_token_dry_run_message_follows_the_header_without_continuation_locale(
+    monkeypatch,
+):
+    from inbox_client import post_inbox
+    from modules.flow_gate.api import inbox_routes
+
+    _wire_inbox_test_run(monkeypatch, continuation_locale=None)
+    monkeypatch.setattr(inbox_routes.token_service, "increment_dry_run", lambda _tid: None)
+
+    resp = post_inbox(
+        {
+            "action": "test_run", "project": "flowgate", "doc_id": TS_DOC["doc_id"],
+            "dry_run": True,
+        },
+        headers={"x-locale": "ja"},
+    )
+    data = resp.json()
+
+    assert resp.status_code == 200
+    assert data["dry_run"] is True
+    assert data["message"] == inbox_routes._DRY_RUN_COPY["ja"]["ok"]
+
+
+def test_inbox_worker_token_dry_run_continuation_locale_outranks_the_header(monkeypatch):
+    from inbox_client import post_inbox
+    from modules.flow_gate.api import inbox_routes
+
+    _wire_inbox_test_run(monkeypatch, continuation_locale="en")
+    monkeypatch.setattr(inbox_routes.token_service, "increment_dry_run", lambda _tid: None)
+
+    resp = post_inbox(
+        {
+            "action": "test_run", "project": "flowgate", "doc_id": TS_DOC["doc_id"],
+            "dry_run": True,
+        },
+        headers={"x-locale": "ja"},
+    )
+    data = resp.json()
+
+    assert resp.status_code == 200
+    assert data["message"] == inbox_routes._DRY_RUN_COPY["en"]["ok"]

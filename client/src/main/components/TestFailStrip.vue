@@ -28,7 +28,7 @@
         aria-hidden="true"
       />
       <span class="fail-strip-label">
-        {{ optimisticRunning ? t('main.test_fail_strip.optimistic_running') : t('main.test_fail_strip.summary', { failed: failedCount, total: totalCount }) }}
+        {{ optimisticRunning ? t('main.test_fail_strip.optimistic_running') : summaryText }}
       </span>
       <span v-if="!optimisticRunning && finishedText" class="fail-strip-fresh-badge">{{ finishedText }}</span>
       <span v-if="!optimisticRunning && subText" class="fail-strip-sub">{{ subText }}</span>
@@ -56,6 +56,7 @@
           {{ t('main.test_fail_strip.log') }}
         </button>
         <button
+          v-if="!isSpec"
           type="button"
           class="fail-strip-btn fail-strip-btn--rerun"
           :disabled="rerunning"
@@ -89,11 +90,12 @@
             {{ c.case_title || c.case_no || t('main.test_fail_strip.unnamed_case') }}
           </span>
           <span class="fail-case-meta">
-            <span class="fail-case-result">{{ c.result }}</span>
+            <span class="fail-case-result">{{ isSpec ? c.case_status : c.result }}</span>
             <span v-if="c.exit_code != null" class="fail-case-exit">exit {{ c.exit_code }}</span>
           </span>
         </div>
         <div v-if="c.expect" class="fail-case-msg">{{ c.expect }}</div>
+        <div v-if="isSpec && c.actual" class="fail-case-assert-line">{{ t('main.test_fail_strip.actual_line', { value: c.actual }) }}</div>
         <div v-if="c.assert_mode" class="fail-case-assert">
           <div class="fail-case-assert-line">{{ t('main.test_fail_strip.assert_line', { value: c.assert_mode }) }}</div>
           <div class="fail-case-assert-line">{{ t('main.test_fail_strip.actual_line', { value: c.actual ?? '' }) }}</div>
@@ -114,7 +116,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { postRequest } from '@shared/api'
 import { useToast } from './common/useToast'
-import type { TestRun, TestRunCase } from '../types/testRun'
+import type { TestReportCase, TestRun } from '../types/testRun'
 
 const props = defineProps<{
   testRun: TestRun | null
@@ -154,14 +156,34 @@ const failureOriginProviderLabel = computed(() => {
   return `AI · ${name || t('main.doc_info_panel.ai_provider_unknown')}`
 })
 
-const failedCases = computed<TestRunCase[]>(() =>
-  (props.testRun?.cases ?? []).filter((c) => c.result === 'fail' || c.result === 'timeout'),
+// 0549 T0008: a specification result (contract 2) is judged per TS Case ID on required
+// cases — the strip lists the required cases that are not PASS, and never offers the
+// server re-run (a specification TS is not executed by the server).
+const isSpec = computed(() => props.testRun?.contract_version === 2)
+const failedCases = computed<TestReportCase[]>(() =>
+  isSpec.value
+    ? ((props.testRun?.cases ?? []) as TestReportCase[]).filter(
+      (c) => c.required && (c.case_status ?? 'NOT_RUN') !== 'PASS',
+    )
+    : (props.testRun?.cases ?? []).filter((c) => c.result === 'fail' || c.result === 'timeout'),
 )
 
 const failedCount = computed(() => props.testRun?.case_failed ?? failedCases.value.length)
 const totalCount = computed(
   () => props.testRun?.case_total ?? props.testRun?.cases?.length ?? failedCount.value,
 )
+const summaryText = computed(() => {
+  if (!isSpec.value) {
+    return t('main.test_fail_strip.summary', { failed: failedCount.value, total: totalCount.value })
+  }
+  const req = props.testRun?.summary?.required_counts
+  return t('main.test_fail_strip.spec_summary', {
+    overall: props.testRun?.overall ?? 'NOT_RUN',
+    fail: req?.fail ?? 0,
+    blocked: req?.blocked ?? 0,
+    not_run: req?.not_run ?? 0,
+  })
+})
 
 const finishedAt = computed(() =>
   props.testRun?.finished_at ?? props.testRun?.started_at ?? props.testRun?.created_at ?? null,

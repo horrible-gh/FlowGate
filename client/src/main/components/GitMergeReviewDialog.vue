@@ -51,10 +51,10 @@
           </button>
         </div>
         <template v-else>
-          <div class="gmr-provider-badge">
-            <AppIcon name="robot" />
-            <span>{{ t('main.git_review.resolved_by', { provider: review?.resolver_provider || t('main.git_review.unknown_provider') }) }}</span>
-            <small>{{ t('main.git_review.provider_badge_note') }}</small>
+          <div class="gmr-provider-badge" data-test="gmr-resolved-by">
+            <AppIcon :name="review?.resolver_type === 'human' ? 'pencil-simple' : 'robot'" />
+            <span>{{ resolvedByText }}</span>
+            <small v-if="review?.resolver_type !== 'human'">{{ t('main.git_review.provider_badge_note') }}</small>
           </div>
 
           <p class="gmr-warning" :class="warningClass">
@@ -370,6 +370,10 @@ const { showToast } = useToast()
 const props = defineProps<{
   groupId: string
   mergeId: number
+  // 0630 T0005 — an ordinary Branch Manager merge has no group; its host passes the
+  // project-scoped route base (`/api/v1/projects/{p}/git/merge/{id}`) and every call
+  // below goes there. Omitted = the group route, exactly as before.
+  mergeApiBase?: string | null
   branch?: string | null
   baseBranch?: string | null
   providers?: { id: string; name: string }[]
@@ -379,6 +383,17 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ close: []; resolved: []; 'update:provider': [value: string] }>()
+
+const reviewApiBase = computed(
+  () => props.mergeApiBase || `/api/v1/groups/${props.groupId}/git/merge/${props.mergeId}`,
+)
+// A manual resolution is never presented as the AI's (D0004 §27).
+const resolvedByText = computed(() => {
+  const provider = review.value?.resolver_provider || t('main.git_review.unknown_provider')
+  if (review.value?.resolver_type === 'human') return t('main.git_review.resolved_by_human')
+  if (review.value?.resolver_type === 'mixed') return t('main.git_review.resolved_by_mixed', { provider })
+  return t('main.git_review.resolved_by', { provider })
+})
 
 interface ReviewChange {
   path: string
@@ -467,6 +482,9 @@ interface ReviewPayload {
   held_test_operations: HeldTestOperation[]
   pending_conversation?: PendingConversation | null
   resolver_provider: string | null
+  // 0630 T0005 (D0004 §27) — who produced the resolution. Sent for an ordinary branch
+  // merge; absent (group finalize) keeps the provider sentence exactly as before.
+  resolver_type?: 'ai' | 'human' | 'mixed' | null
   reconciliation_kind: string | null
   last_error: { code?: string } | null
   can_approve: boolean
@@ -884,7 +902,7 @@ async function loadDiff(path: string) {
   diffError.value = false
   try {
     const { data } = await getRequest<{ ok: boolean; data: ReviewDiffData }>(
-      `/api/v1/groups/${props.groupId}/git/merge/${props.mergeId}/review-diff`,
+      `${reviewApiBase.value}/review-diff`,
       { path },
     )
     if (selectedPath.value === path) diff.value = data.data
@@ -912,7 +930,7 @@ async function loadReview({ background = false } = {}) {
   }
   try {
     const { data } = await getRequest<{ ok: boolean; result: ReviewPayload }>(
-      `/api/v1/groups/${props.groupId}/git/merge/${props.mergeId}/review`,
+      `${reviewApiBase.value}/review`,
     )
     const priorAiTurns = aiTurnCount(review.value?.conversation ?? [])
     review.value = data.result
@@ -997,7 +1015,7 @@ async function sendMessage(allowTestEdits = false) {
     // action (L0007 §2.7) — allow_test_edits is never carried by the ordinary
     // apply-requested toggle above, only by this dedicated action.
     const { data } = await postRequest<{ ok: boolean; result?: { run_id?: string | null } }>(
-      `/api/v1/groups/${props.groupId}/git/merge/${props.mergeId}/review-message`,
+      `${reviewApiBase.value}/review-message`,
       {
         message, provider_id: props.selectedProvider, provider_pinned: true,
         apply_requested: allowTestEdits ? true : applyRequested.value,
@@ -1083,7 +1101,7 @@ async function approve() {
   approveOutcome.value = null
   try {
     const { data } = await postRequest<{ ok: boolean; result?: ApproveResult; error?: any }>(
-      `/api/v1/groups/${props.groupId}/git/merge/${props.mergeId}/approve`,
+      `${reviewApiBase.value}/approve`,
       { attempt_id: attemptId.value, review_fingerprint: review.value.review_fingerprint },
     )
     const status = String(data.result?.status ?? '')
@@ -1158,7 +1176,7 @@ async function reject(rawReason: string) {
   if (!reason || !props.selectedProvider || busy.value) return
   busy.value = true
   try {
-    await postRequest(`/api/v1/groups/${props.groupId}/git/merge/${props.mergeId}/reject`, {
+    await postRequest(`${reviewApiBase.value}/reject`, {
       reason, provider_id: props.selectedProvider, provider_pinned: true,
     })
     showToast(t('main.git_review.rejected_toast'), 'success')

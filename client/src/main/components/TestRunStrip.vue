@@ -69,6 +69,7 @@
       </button>
       <button
         type="button"
+        v-if="!isSpec"
         class="run-strip-btn run-strip-btn--run"
         :disabled="busy"
         @click="onRun"
@@ -102,6 +103,8 @@ const props = defineProps<{
   groupDisposed: boolean
   docLoaded: boolean
   docId: string
+  /** 0549 T0008: 2 = test specification — never executed by the server (no [run]). */
+  testContractVersion?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -126,6 +129,12 @@ const isServerCancelling = computed(() => status.value === 'cancelling')
 const cancelRequested = ref(false)
 const isCancellingUi = computed(() => cancelRequested.value || isServerCancelling.value)
 const hasRunHistory = computed(() => props.testRun != null)
+// 0549 T0008: a specification TS has no server run. Its results come from the worker it is
+// delegated to (the same [copy mention] / [invoke AI] hand-off) or from [enter results] on
+// the specification itself, so the server [run] button would only ever 422.
+const isSpec = computed(
+  () => props.testContractVersion === 2 || props.testRun?.contract_version === 2,
+)
 
 // Mirror of the backend admission gate (test_run_service.validate_and_create_run):
 // TS + approved, or TS + pending_review/revised with a run already bound (0163/0169). A running
@@ -145,6 +154,11 @@ const label = computed(() => {
   if (isCancellingUi.value) return t('main.test_run_strip.cancelling')
   if (isRunning.value) return t('main.test_run_strip.running')
   if (status.value === 'cancelled') return t('main.test_run_strip.cancelled')
+  if (isSpec.value) {
+    return status.value === 'passed'
+      ? t('main.test_run_strip.spec_passed')
+      : t('main.test_run_strip.spec_ready')
+  }
   if (status.value === 'passed') {
     return t('main.test_run_strip.last_passed', {
       passed: props.testRun?.case_passed ?? 0,

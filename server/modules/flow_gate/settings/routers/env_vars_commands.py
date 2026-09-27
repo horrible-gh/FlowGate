@@ -11,6 +11,12 @@ PUT    /api/v1/commands/{command_id}
 DELETE /api/v1/commands/{command_id}
 POST   /api/v1/commands/{command_id}/resolve
 POST   /api/v1/commands/{command_id}/execute
+
+RBAC (flowgate.default.0623 T0004 §2), evaluated on the system scope:
+  read     = project.settings.read  — GET lists, POST .../resolve
+  mutation = system.settings.manage or project.settings.edit
+             — POST/PUT/DELETE, POST .../execute
+kind=system rows stay admin-only on top of that.
 """
 from __future__ import annotations
 
@@ -59,10 +65,17 @@ def _require_settings_read(user=Depends(get_current_user)):
 
 
 def _require_settings_edit(user=Depends(get_current_user)):
-    """Env vars/commands have no project_id, so mutation is a system-scoped action:
-    it uses the same system.settings.manage policy as ai_settings/system routers,
-    not the read-only project.settings.read that _require_settings_read checks."""
-    if not _has_permission(user, "system.settings.manage", None):
+    """Env vars/commands have no project_id, so mutation is a system-scoped action.
+    Create/update/delete and command execution (a real subprocess) must not ride
+    on the read permission that _require_settings_read checks
+    (flowgate.default.0623 T0004 §2). Either the system.settings.manage policy
+    shared with the ai_settings/system routers or project.settings.edit on the
+    system scope grants it. _has_permission keeps the admin bypass and the
+    cached permission_service lookup."""
+    if not (
+        _has_permission(user, "system.settings.manage", None)
+        or _has_permission(user, "project.settings.edit", None)
+    ):
         raise HTTPException(status_code=403, detail="Forbidden")
     return user
 

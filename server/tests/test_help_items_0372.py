@@ -105,7 +105,7 @@ def test_index_for_a_design_token_lists_the_template_and_hides_the_task_items(mo
     assert body["version"] == help_catalog.VERSION
     assert _names(body) == [
         "notices", "group_documents", "document_access", "document_attachments", "doc_type",
-        "question", "submit", "source_tools", "source_snapshots", "design_template",
+        "question", "submit", "source_tools", "source_bundles", "source_snapshots", "design_template",
     ]
     assert _hidden(body) == {
         "authoring_guide": "no_guide_for_type",

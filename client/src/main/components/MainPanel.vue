@@ -62,6 +62,7 @@
             :test-run="exposedValue(docHeaderRefs[tab.id]?.testRun) ?? null"
             :group-disposed="exposedValue(docHeaderRefs[tab.id]?.groupDisposed) ?? false"
             :doc-loaded="exposedValue(docHeaderRefs[tab.id]?.docLoaded) ?? false"
+            :test-contract-version="exposedValue(docHeaderRefs[tab.id]?.testContractVersion) ?? null"
             :doc-id="tab.id"
             @run-started="docHeaderRefs[tab.id]?.fetchDoc?.(tab.id)"
           />
@@ -632,6 +633,7 @@
       :can-next-action="getWorkflowViewState(activeTabId).canNextAction"
       :test-run-status="exposedValue(docHeaderRefs[activeTabId]?.testRun)?.status ?? null"
       :group-test-run-active="exposedValue(docHeaderRefs[activeTabId]?.groupTestRunActive) ?? true"
+      :test-gate-blocked="isTestGateBlocked(exposedValue(docHeaderRefs[activeTabId]?.testGate))"
       :head-doc-id="exposedValue(docHeaderRefs[activeTabId]?.headDocId) ?? null"
       :head-doc-label="exposedValue(docHeaderRefs[activeTabId]?.workflowHeadType) ?? getWorkflowViewState(activeTabId).headDocLabel"
       :head-doc-title="exposedValue(docHeaderRefs[activeTabId]?.headDocTitle) ?? null"
@@ -934,6 +936,7 @@ import { useProjectStore } from '../stores/project'
 import { useExplorerStore } from '../stores/explorer'
 import { useAiProviderStore } from '../stores/aiProvider'
 import { groupIdFromDocId, isScreenOwnedRun, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
+import { recordFanOut } from '@shared/diagnostics/runtimeDiagnostics'
 import {
   useDashboardStore,
   type DashboardWorkflow,
@@ -1122,11 +1125,13 @@ function formatGitArchiveTime(value: string | null): string {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale.value)
 }
-const props = withDefaults(defineProps<{
-  overviewRefreshToken?: number
-}>(), {
-  overviewRefreshToken: 0,
-})
+const props = withDefaults(defineProps<{
+  overviewRefreshToken?: number
+  overviewRefreshEpoch?: number | null
+}>(), {
+  overviewRefreshToken: 0,
+  overviewRefreshEpoch: null,
+})
 const docTypeStore = useDocTypeStore()
 const { showToast } = useToast()
 const {
@@ -1161,6 +1166,10 @@ const activeTab = computed(() => tabsStore.activeTab)
 const docHeaderRefs = reactive<Record<string, any>>({})
 const docWorkflowRefs = reactive<Record<string, any>>({})
 const mdViewerRefs = reactive<Record<string, any>>({})
+// 0549 T0008: a TSR whose server-computed test gate did not pass cannot be approved.
+function isTestGateBlocked(gate: { applies?: boolean; passed?: boolean } | null | undefined): boolean {
+  return !!gate?.applies && gate.passed === false
+}
 const textViewerRefs = reactive<Record<string, any>>({})
 const stepVerificationCardRefs = reactive<Record<string, any>>({})
 const convViewRefs = reactive<Record<string, any>>({})
@@ -4941,10 +4950,14 @@ watch(() => projectStore.currentProjectId, () => {
 // it fills.
 
 watch(() => props.overviewRefreshToken, () => {
-  if (projectStore.currentProjectId) void fetchQList()
+  if (projectStore.currentProjectId) {
+    recordFanOut('main_panel_fetch_q_list', props.overviewRefreshEpoch ?? null)
+    void fetchQList()
+  }
   // A coalesced screen refresh is also an SSE recovery boundary. The store keeps
   // handoff-pending cards pollable and chooses between adoption and bounded completion.
-  void aiInvokeRunsStore.refreshAllRunning()
+  recordFanOut('ai_refresh_all_running', props.overviewRefreshEpoch ?? null)
+  void aiInvokeRunsStore.refreshAllRunning('overview_refresh')
 })
 
 // T0018 §2.3-4: the `quickInputRef.focus()` half of this watcher is gone with the markup it

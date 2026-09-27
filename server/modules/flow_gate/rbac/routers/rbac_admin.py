@@ -21,8 +21,8 @@ Endpoints:
   GET    /rbac/projects/{project_id}/my-permissions
                                               Current user's project permission list
 
-  GET    /rbac/system/my-permissions          Current user's System-scope permission list
-                                              (no project_id; additive, read-only)
+  GET    /rbac/system/my-permissions          Current user's system permission list
+                                              (System scope, no project_id; additive, read-only)
 """
 from __future__ import annotations
 
@@ -250,10 +250,8 @@ def get_my_permissions(
 
 
 @router.get("/system/my-permissions")
-def get_my_system_permissions(
-    current_user: dict = Depends(get_current_user),
-):
-    """List the current user's own System-scope permissions.
+def get_my_system_permissions(current_user: dict = Depends(get_current_user)):
+    """List the current user's own System-scope permissions (flowgate.default.0623 T0004 §1).
 
     Additive to the project-scoped /rbac/projects/{project_id}/my-permissions
     above: this one takes no project_id and resolves permission_service's
@@ -264,10 +262,8 @@ def get_my_system_permissions(
     matching the existing project-scoped endpoint's policy.
     """
     if current_user.get("is_admin"):
-        from modules.flow_gate.db import permissions as db_perms
-        all_perms = [row["permission_id"] for row in db_perms.list_permissions()]
-        return {"permissions": all_perms, "is_admin": True}
+        all_perms = sorted(row["permission_id"] for row in db_permissions.list_permissions())
+        return {"scope": "system", "permissions": all_perms, "is_admin": True}
 
-    user_id: str = current_user["user_id"]
-    perms = get_user_permissions(user_id, "__SYSTEM__")
-    return {"permissions": sorted(perms), "is_admin": False}
+    perms = get_user_permissions(current_user["user_id"], "__SYSTEM__")
+    return {"scope": "system", "permissions": sorted(perms), "is_admin": False}

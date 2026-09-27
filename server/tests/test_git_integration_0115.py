@@ -2127,6 +2127,32 @@ class TestGitEndToEnd:
         assert result["authenticated"] is True
         assert result["base_branch_exists"] is True
 
+    def test_connection_ignores_broken_server_cwd_0617(self, origin_repo):
+        """flowgate.default.0617 T0004 (NR0003 §5/§7/§8-1): ls-remote must not
+        inherit the server process's own cwd. Reproduce the reported failure by
+        chdir-ing the process into a directory whose `.git` is a broken linked-
+        worktree gitdir pointer (the exact shape preview tooling produced in
+        NR0003 §3), and confirm test_connection still reaches the real origin
+        instead of failing on local repository discovery first.
+        """
+        from modules.flow_gate.services import git_service as svc
+
+        broken = Path(tempfile.mkdtemp(prefix="fg-broken-cwd-"))
+        (broken / ".git").write_text(
+            "gitdir: ../main/.git/worktrees/flowgate_default_0361", encoding="utf-8"
+        )
+        original_cwd = os.getcwd()
+        os.chdir(broken)
+        try:
+            result = svc.test_connection("gitprj", {})
+        finally:
+            os.chdir(original_cwd)
+            shutil.rmtree(broken, ignore_errors=True)
+        assert result["reachable"] is True
+        assert result["authenticated"] is True
+        assert result["base_branch_exists"] is True
+        assert "failure" not in result
+
     def test_ensure_worktree_and_idempotence(self, origin_repo):
         from modules.flow_gate.db import git_integration as db_git
         from modules.flow_gate.services import git_service as svc

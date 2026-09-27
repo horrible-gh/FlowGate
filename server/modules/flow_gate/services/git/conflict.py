@@ -15,6 +15,13 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from modules.flow_gate.db.git_integration import (
+    MERGE_REVIEW_SESSION_KINDS as _MERGE_REVIEW_KINDS,
+    is_branch_merge_session as _is_branch_merge_session,
+    session_owner_type as _session_owner_type,
+    session_project_id as _session_project_id,
+)
+
 from . import approval_intent
 from . import merge_target
 from .command import GIT_LOCAL_TIMEOUT_SEC
@@ -990,7 +997,9 @@ def _classify_conflict_chunks(path: str, original: str, submitted: str) -> list[
     return results
 
 
-def _session_context(group_id: str, merge_id: int) -> tuple[dict, dict, str, Path]:
+def _session_context(
+    group_id: Optional[str], merge_id: int, *, project_id: Optional[str] = None,
+) -> tuple[dict, dict, str, Path]:
     """``(session, cfg, project_id, root)`` — ``root`` is the repo the conflict lives in.
 
     A finalize merge conflicts in the base checkout; a TR revert or reapply conflicts in the
@@ -1002,10 +1011,25 @@ def _session_context(group_id: str, merge_id: int) -> tuple[dict, dict, str, Pat
     (``merge_target.resolve_session_target``) — the shared base checkout for a base
     (or legacy) target, the managed target workspace otherwise. This is the ONLY
     place a conflict file read/write root is decided.
+
+    0630 T0005: a ``branch_merge`` session has no group. It is addressed by
+    ``project_id`` (and ``group_id=None``) and its root is its managed target
+    workspace. A group-addressed call can never reach it and a project-addressed call
+    can never reach a group's session — the owner is part of the identity check.
     """
     from modules.flow_gate.services import git_service as _gs
     session = _gs.db_git.get_session(merge_id)
-    if session is None or session.get("group_id") != group_id or session.get("status") != "open":
+    if session is None or session.get("status") != "open":
+        raise GitServiceError(404, "not_found", f"merge session {merge_id} not found")
+    if _is_branch_merge_session(session):
+        if group_id is not None or not project_id or _session_project_id(session) != project_id:
+            raise GitServiceError(404, "not_found", f"merge session {merge_id} not found")
+        cfg = _gs.db_git.get_config(project_id) or {}
+        target = merge_target.resolve_session_target(session)
+        if target.root is None:
+            raise GitServiceError(409, "invalid_state", "target checkout is not available")
+        return session, cfg, project_id, target.root
+    if project_id is not None or session.get("group_id") != group_id:
         raise GitServiceError(404, "not_found", f"merge session {merge_id} not found")
     cfg, _state, project_id, _base_root, wt_path = _gs._finalize_context(group_id)
     if _gs.db_git.session_kind(session) in _gs.db_git.WORKTREE_SESSION_KINDS:
@@ -1016,18 +1040,20 @@ def _session_context(group_id: str, merge_id: int) -> tuple[dict, dict, str, Pat
     return session, cfg, project_id, target.root
 
 
-def resolve_conflict_src_root(group_id: str, merge_id: int) -> Path:
+def resolve_conflict_src_root(
+    group_id: Optional[str], merge_id: int, *, project_id: Optional[str] = None,
+) -> Path:
     """Return the checked-out root that owns the validated open conflict session."""
     from modules.flow_gate.services import git_service as _gs
-    _session, _cfg, _project_id, root = _gs._session_context(group_id, merge_id)
+    _session, _cfg, _project_id, root = _gs._session_context(group_id, merge_id, **({"project_id": project_id} if project_id else {}))
     return root
 
 
-def list_conflicts(group_id: str, merge_id: int) -> dict:
+def list_conflicts(group_id: Optional[str], merge_id: int, *, project_id: Optional[str] = None) -> dict:
     from modules.flow_gate.services import git_service as _gs
-    session, cfg, _project_id, root = _gs._session_context(group_id, merge_id)
+    session, cfg, _project_id, root = _gs._session_context(group_id, merge_id, **({"project_id": project_id} if project_id else {}))
     _gs.db_git.touch_session(merge_id)   # activity → resets the sweep TTL (0205 L §1)
-    state = _gs.db_git.get_state(group_id) or {}
+    state = (_gs.db_git.get_state(group_id) if group_id else None) or {}
     files = []
     for row in _gs.db_git.session_files(merge_id):
         path = row["path"]
@@ -1047,12 +1073,17 @@ def list_conflicts(group_id: str, merge_id: int) -> dict:
     baseline = context.get("resolver_baseline") or {}
     target_branch = (
         merge_target.resolve_session_target(session).target_branch
-        if kind == _gs.db_git.SESSION_KIND_MERGE else None
+        if kind in _MERGE_REVIEW_KINDS else None
     )
+    branch_merge_info = context.get("branch_merge") or {}
     return {
         "ok": True,
         "merge_id": merge_id,
-        "branch": state.get("branch"),
+        # 0630 T0005: for an ordinary branch merge "the incoming branch" is its source.
+        "branch": state.get("branch") or branch_merge_info.get("source_branch"),
+        "owner_type": _session_owner_type(session),
+        "project_id": _session_project_id(session),
+        "source_branch": branch_merge_info.get("source_branch"),
         "base_branch": (cfg.get("base_branch") or "main"),
         # 0594 T0012 (additive): the branch this merge lands on ("ours").
         "target_branch": target_branch,
@@ -1084,13 +1115,14 @@ def list_conflicts(group_id: str, merge_id: int) -> dict:
 
 
 def resolve_conflicts(
-    group_id: str, merge_id: int, files: list[dict], complete: bool,
-    *, resolver_run_id: Optional[str] = None,
+    group_id: Optional[str], merge_id: int, files: list[dict], complete: bool,
+    *, resolver_run_id: Optional[str] = None, project_id: Optional[str] = None,
 ) -> dict:
     from modules.flow_gate.services import git_service as _gs
     from modules.flow_gate.storage.safe_path import resolve_in_root
 
-    session, cfg, project_id, root = _gs._session_context(group_id, merge_id)
+    session, cfg, project_id, root = _gs._session_context(group_id, merge_id, **({"project_id": project_id} if project_id else {}))
+    is_branch_merge = _is_branch_merge_session(session)
     _gs.db_git.touch_session(merge_id)   # activity → resets the sweep TTL (0205 L §1)
     # 0481 T0010 rev6 (rejection 3): a review-conversation turn's run must never submit a
     # resolution. Until rev5 it was launched with the ordinary resolver mention -- resolve
@@ -1234,7 +1266,14 @@ def resolve_conflicts(
             _gs.db_git.set_session_context(merge_id, context)
             session = _gs.db_git.get_session(merge_id)
 
-    if staged and _gs.db_git.session_kind(session) == _gs.db_git.SESSION_KIND_MERGE:
+    if staged and is_branch_merge:
+        # 0630 T0005 (D0004 §27): who resolved — so a manual resolution is never
+        # presented as the AI's.
+        from . import branch_merge as _branch_merge
+        _branch_merge.note_resolution_submitted(session, resolver_run_id)
+        session = _gs.db_git.get_session(merge_id)
+
+    if staged and _gs.db_git.session_kind(session) in _MERGE_REVIEW_KINDS:
         # D0006 §3.3 / L0007 §2.4: record which side each conflict chunk resolved to
         # (ours/theirs/both/manual) so the review screen can overlay it on the real
         # diff. Recomputed per path on every submission that touches it — a
@@ -1334,10 +1373,18 @@ def resolve_conflicts(
         _gs.db_git.set_session_context(merge_id, context)
         # 0604 D0005 §3.4: a session carrying any `supersede` declaration always
         # stops for a person — the replaced lines must be read before the merge.
-        automatic = bool(context.get("auto_authority")) and not context.get("conflict_supersedes")
+        # 0630 T0005 (D0004 §11): a branch merge's AI was STARTED automatically, which
+        # never grants the authority to approve — it always stops for a person.
+        automatic = (
+            bool(context.get("auto_authority")) and not context.get("conflict_supersedes")
+            and not is_branch_merge
+        )
     finally:
         _gs.db_git.release_lock(project_id, holder)
 
+    if is_branch_merge:
+        from . import branch_merge as _branch_merge
+        _branch_merge.note_review_pending(session)
     if automatic:
         return _gs.approve_merge_review(
             group_id, merge_id,
@@ -1369,7 +1416,7 @@ def _resolver_run_provider(run_id: Optional[str]) -> tuple[Optional[str], Option
         return None, None
 
 
-def abort_merge(group_id: str, merge_id: int) -> dict:
+def abort_merge(group_id: Optional[str], merge_id: int, *, project_id: Optional[str] = None) -> dict:
     """Manual [hold] — abort the merge, preserve the work branch, reopen re-merge
     (0205 P scenario 9). Shares its end state with the auto-recovery sweep; only
     the trigger differs. The merge:{id} release is now best-effort legacy cleanup
@@ -1380,8 +1427,13 @@ def abort_merge(group_id: str, merge_id: int) -> dict:
     and `merge --abort` has nothing to abort in a group worktree — it is delegated whole
     to :func:`abort_tr_conflict` rather than given a second endpoint to learn."""
     from modules.flow_gate.services import git_service as _gs
-    session, _cfg, project_id, root = _gs._session_context(group_id, merge_id)
+    session, _cfg, project_id, root = _gs._session_context(group_id, merge_id, **({"project_id": project_id} if project_id else {}))
     kind = _gs.db_git.session_kind(session)
+    if _is_branch_merge_session(session):
+        # 0630 T0005 (D0004 §19): no group status to return to — the attempt itself records
+        # `aborted`, its tokens/run are stopped and only its own workspace is released.
+        from . import branch_merge as _branch_merge
+        return _branch_merge.abort(project_id, merge_id)
     if kind in _gs.db_git.TR_SESSION_KINDS:
         return abort_tr_conflict(group_id, merge_id)
     if kind == _gs.db_git.SESSION_KIND_MERGE:
