@@ -450,6 +450,7 @@ export default {
         error_110: 'Select at least one role.',
         error_111: 'Passwords do not match.',
         error_124: 'Creation failed',
+        username_already_exists: 'This username is already in use.',
       },
       user_edit_modal: {
         modal_title_5: 'Edit User',

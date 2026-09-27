@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from contextlib import contextmanager
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -87,10 +88,28 @@ def mock_db(test_db_path):
             self._conn = sqlite3.connect(db_path, check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA foreign_keys = ON")
+            self._in_transaction = False
+
+        @contextmanager
+        def transaction(self):
+            if self._in_transaction:
+                yield self
+                return
+            self._conn.execute("BEGIN")
+            self._in_transaction = True
+            try:
+                yield self
+                self._conn.commit()
+            except BaseException:
+                self._conn.rollback()
+                raise
+            finally:
+                self._in_transaction = False
 
         def _execute(self, sql, params=None):
             self._conn.execute(sql, params or [])
-            self._conn.commit()
+            if not self._in_transaction:
+                self._conn.commit()
 
         def _fetch_one(self, sql, params=None):
             cur = self._conn.execute(sql, params or [])
@@ -125,11 +144,13 @@ def mock_db(test_db_path):
             "modules.flow_gate.db.connection",
             "modules.flow_gate.db.system_settings",
             "modules.flow_gate.db.users",
+            "modules.flow_gate.db.roles",
             "modules.flow_gate.db.projects",
             "modules.flow_gate.db.templates",
             "modules.flow_gate.db.numbering_jobs",
             "modules.flow_gate.db.totp_backup_codes",
             "modules.flow_gate.rbac.decorators",
+            "modules.flow_gate.rbac.role_service",
             # rbac.decorators._has_permission delegates to permission_service
             # (0276 T0009), so its bound get_store needs the same treatment.
             "modules.flow_gate.rbac.permission_service",
@@ -268,6 +289,140 @@ class TestUserAdminService:
         revoke_project_role("usr_worker", "proj_001")
         roles_after = get_user_project_roles("usr_worker")
         assert not any(r["project_id"] == "proj_001" for r in roles_after)
+
+
+class TestUserCreateApi:
+    def _make_client(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from modules.flow_gate.auth.middleware import get_current_user
+        from modules.flow_gate.settings.routers.users import router
+
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+        app.dependency_overrides[get_current_user] = lambda: {"user_id": "usr_admin", "is_admin": 1}
+        return TestClient(app)
+
+    @pytest.mark.parametrize(
+        ("role_id", "is_admin"),
+        [
+            ("role_admin", 1),
+            ("role_manager", 0),
+            ("role_worker", 0),
+            ("role_viewer", 0),
+        ],
+    )
+    def test_create_assigns_system_and_project_roles(self, mock_db, role_id, is_admin):
+        from modules.flow_gate.rbac.decorators import _has_permission
+
+        username = f"created_{role_id}"
+        response = self._make_client().post(
+            "/api/v1/users",
+            json={
+                "username": username,
+                "email": f"{username}@test.com",
+                "password": "Pass1234!",
+                "role_id": role_id,
+                "project_roles": [{"project_id": "proj_001", "role_id": "role_worker"}],
+            },
+        )
+        assert response.status_code == 201
+        body = response.json()
+        uid = body["user_id"]
+        assert body["username"] == username
+        assert body["is_admin"] == is_admin
+        assert "password" not in body
+        from modules.flow_gate.auth.password import verify_password
+
+        stored = mock_db._fetch_one("SELECT password FROM users WHERE user_id = ?", [uid])
+        assert verify_password("Pass1234!", stored["password"])
+        rows = mock_db._fetch_all(
+            "SELECT project_id, role_id FROM user_project_roles WHERE user_id = ?", [uid]
+        )
+        assert {(row["project_id"], row["role_id"]) for row in rows} == {
+            ("__SYSTEM__", role_id),
+            ("proj_001", "role_worker"),
+        }
+        assert _has_permission(body, "system.user.create", None) is bool(is_admin)
+
+        listed = self._make_client().get("/api/v1/users", params={"search": username})
+        assert listed.status_code == 200
+        assert listed.json()["items"][0]["roles"] == [role_id.removeprefix("role_")]
+        assert listed.json()["items"][0]["projects"] == ["TestProject"]
+
+    def test_duplicate_username_is_409_without_database_text(self, mock_db):
+        client = self._make_client()
+        first = client.post(
+            "/api/v1/users",
+            json={"username": "dup_0629", "email": "dup_0629@test.com", "password": "Pass1234!"},
+        )
+        assert first.status_code == 201
+        duplicate = client.post(
+            "/api/v1/users",
+            json={"username": "dup_0629", "email": "other_0629@test.com", "password": "Pass1234!"},
+        )
+        assert duplicate.status_code == 409
+        assert duplicate.json()["detail"]["code"] == "username_already_exists"
+        assert not any(
+            text in duplicate.text for text in ("duplicate key value", "users_username_key", "DETAIL:")
+        )
+        assert mock_db._fetch_one(
+            "SELECT COUNT(*) AS count FROM users WHERE username = ?", ["dup_0629"]
+        )["count"] == 1
+
+    def test_role_assignment_failure_rolls_back_user(self, mock_db):
+        from modules.flow_gate.settings.user_admin_service import create_user
+        from modules.flow_gate.rbac import role_service
+
+        with patch.object(role_service, "assign_role", side_effect=RuntimeError("role unavailable")):
+            with pytest.raises(RuntimeError, match="role unavailable"):
+                create_user({
+                    "username": "rollback_0629",
+                    "email": "rollback_0629@test.com",
+                    "password": "Pass1234!",
+                    "role_id": "role_admin",
+                })
+        assert mock_db._fetch_one(
+            "SELECT user_id FROM users WHERE username = ?", ["rollback_0629"]
+        ) is None
+
+    def test_project_role_endpoint_uses_role_id_and_project_id(self, mock_db):
+        client = self._make_client()
+        created = client.post(
+            "/api/v1/users",
+            json={"username": "project_0629", "email": "project_0629@test.com", "password": "Pass1234!"},
+        )
+        uid = created.json()["user_id"]
+        assigned = client.post(
+            f"/api/v1/users/{uid}/project-roles",
+            json={"project_id": "proj_001", "role_id": "role_worker"},
+        )
+        assert assigned.status_code == 201
+        assert assigned.json()["project_id"] == "proj_001"
+        assert assigned.json()["role_id"] == "role_worker"
+        roles = client.get(f"/api/v1/users/{uid}/project-roles")
+        assert any(row["project_id"] == "proj_001" for row in roles.json()["roles"])
+        removed = client.delete(f"/api/v1/users/{uid}/project-roles/proj_001")
+        assert removed.status_code == 200
+        assert not mock_db._fetch_one(
+            "SELECT 1 FROM user_project_roles WHERE user_id = ? AND project_id = ?",
+            [uid, "proj_001"],
+        )
+
+    def test_edit_role_updates_legacy_admin_flag(self, mock_db):
+        client = self._make_client()
+        created = client.post(
+            "/api/v1/users",
+            json={"username": "editrole_0629", "email": "editrole_0629@test.com", "password": "Pass1234!"},
+        )
+        uid = created.json()["user_id"]
+        updated = client.patch(f"/api/v1/users/{uid}", json={"role_id": "role_admin"})
+        assert updated.status_code == 200
+        assert updated.json()["is_admin"] == 1
+        assert mock_db._fetch_one(
+            "SELECT role_id FROM user_project_roles WHERE user_id = ? AND project_id = '__SYSTEM__'",
+            [uid],
+        )["role_id"] == "role_admin"
 
 
 class TestProjectSettingsService:

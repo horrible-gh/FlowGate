@@ -56,7 +56,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="u in filteredUsers" :key="u.id" :style="!u.is_active ? 'opacity:.6' : null">
+            <tr v-for="u in filteredUsers" :key="u.user_id" :style="!u.is_active ? 'opacity:.6' : null">
               <td><input type="checkbox" style="cursor:pointer;"></td>
               <td>
                 <div class="flex items-center gap-2">
@@ -191,19 +191,19 @@ const filteredUsers = computed(() => {
 async function fetchUsers() {
   const params = {
     search: search.value || undefined,
-    role: roleFilter.value || undefined,
-    is_active: statusFilter.value === 'active' ? true : statusFilter.value === 'inactive' ? false : undefined,
+    role: roleFilter.value ? `role_${roleFilter.value}` : undefined,
+    is_active: statusFilter.value === 'active' ? 1 : statusFilter.value === 'inactive' ? 0 : undefined,
     per_page: 100,
   };
   const { data } = await getRequest('/api/v1/users', params);
-  users.value = data.data?.items || [];
+  users.value = data.items || [];
 }
 
 function openEdit(u) { editingUser.value = u; }
 function onCreated() { showCreate.value = false; fetchUsers(); }
 
 function avatarColor(user) {
-  const index = users.value.findIndex((item) => item.id === user.id);
+  const index = users.value.findIndex((item) => item.user_id === user.user_id);
   return avatarColors[Math.max(index, 0) % avatarColors.length];
 }
 
@@ -235,12 +235,12 @@ function handleTrash(u) {
 }
 
 async function unlockUser(u) {
-  await postRequest(`/api/v1/users/${u.id}/unlock`);
+  await postRequest(`/api/v1/users/${u.user_id}/unlock`);
   fetchUsers();
 }
 
 async function setUserActive(u, isActive) {
-  await patchRequest(`/api/v1/users/${u.id}`, { is_active: isActive });
+  await patchRequest(`/api/v1/users/${u.user_id}`, { is_active: isActive });
   fetchUsers();
 }
 

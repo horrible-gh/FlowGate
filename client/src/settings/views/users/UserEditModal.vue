@@ -8,15 +8,9 @@
 
       
       <div class="dialog-feature-body">
-        <div class="form-row">
-          <div class="form-group">
-            <label class="form-label req">{{ $t('settings.users.user_edit_modal.label_11') }}</label>
-            <input type="text" class="form-ctrl" v-model="form.display_name">
-          </div>
-          <div class="form-group">
-            <label class="form-label req">{{ $t('auth.login.username') }}</label>
-            <input type="text" class="form-ctrl" v-model="form.username">
-          </div>
+        <div class="form-group">
+          <label class="form-label req">{{ $t('auth.login.username') }}</label>
+          <input type="text" class="form-ctrl" v-model="form.username">
         </div>
         <div class="form-group">
           <label class="form-label req">{{ $t('settings.users.user_edit_modal.label_20') }}</label>
@@ -25,11 +19,11 @@
         <div class="form-row">
           <div class="form-group">
             <label class="form-label req">{{ $t('settings.users.user_edit_modal.label_25') }}</label>
-            <select class="form-ctrl" :value="form.roles[0] || 'worker'" @change="e => form.roles = [e.target.value]">
-              <option value="admin">{{ $t('settings.users.role_admin') }}</option>
-              <option value="manager">{{ $t('settings.users.role_manager') }}</option>
-              <option value="worker">{{ $t('settings.users.role_worker') }}</option>
-              <option value="viewer">{{ $t('settings.users.role_viewer') }}</option>
+            <select class="form-ctrl" v-model="form.role_id">
+              <option value="role_admin">{{ $t('settings.users.role_admin') }}</option>
+              <option value="role_manager">{{ $t('settings.users.role_manager') }}</option>
+              <option value="role_worker">{{ $t('settings.users.role_worker') }}</option>
+              <option value="role_viewer">{{ $t('settings.users.role_viewer') }}</option>
             </select>
           </div>
           <div class="form-group">
@@ -50,11 +44,7 @@
                   @change="e => onProjectCheck(p, e.target.checked)"> {{ p.project_name }}
               </label>
             </template>
-            <template v-else>
-              <label style="display:flex;align-items:center;gap:6px;font-size:.8125rem;cursor:pointer;"><input type="checkbox"> FlowGate</label>
-              <label style="display:flex;align-items:center;gap:6px;font-size:.8125rem;cursor:pointer;"><input type="checkbox"> Chorus</label>
-              <label style="display:flex;align-items:center;gap:6px;font-size:.8125rem;cursor:pointer;"><input type="checkbox"> FileForge</label>
-            </template>
+            <span v-else class="text-xs text-m">—</span>
           </div>
         </div>
         <hr class="divider">
@@ -97,20 +87,19 @@ const submitting = ref(false);
 
 const form = ref({
   username: props.user.username,
-  display_name: props.user.display_name || '',
   email: props.user.email,
-  roles: props.user.roles ? [...props.user.roles] : ['worker'],
+  role_id: props.user.roles?.[0] ? `role_${props.user.roles[0]}` : 'role_worker',
   is_active: props.user.is_active ?? true,
   new_password: '',
 });
 
 onMounted(async () => {
   const [prData, pData] = await Promise.all([
-    getRequest(`/api/v1/users/${props.user.id}/project-roles`),
+    getRequest(`/api/v1/users/${props.user.user_id}/project-roles`),
     getRequest('/api/v1/projects'),
   ]);
-  projectRoles.value = prData.data || [];
-  projects.value = pData.data || [];
+  projectRoles.value = prData.data.roles || [];
+  projects.value = (pData.data.projects || []).filter(p => p.project_id !== '__SYSTEM__');
 });
 
 async function save() {
@@ -118,13 +107,12 @@ async function save() {
   try {
     const payload = {
       username: form.value.username,
-      display_name: form.value.display_name,
       email: form.value.email,
-      roles: form.value.roles,
+      role_id: form.value.role_id,
       is_active: form.value.is_active,
     };
     if (form.value.new_password) payload.password = form.value.new_password;
-    await patchRequest(`/api/v1/users/${props.user.id}`, payload);
+    await patchRequest(`/api/v1/users/${props.user.user_id}`, payload);
     emit('updated');
     emit('close');
   } finally {
@@ -134,13 +122,13 @@ async function save() {
 
 async function onProjectCheck(project, checked) {
   if (checked) {
-    const { data } = await postRequest(`/api/v1/users/${props.user.id}/project-roles`, { project_id: project.project_id, role: 'worker' });
-    projectRoles.value.push({ ...data.data, project_name: project.project_name });
+    const { data } = await postRequest(`/api/v1/users/${props.user.user_id}/project-roles`, { project_id: project.project_id, role_id: 'role_worker' });
+    projectRoles.value.push({ ...data, project_name: project.project_name });
   } else {
     const pr = projectRoles.value.find(r => r.project_id === project.project_id || r.project_name === project.project_name);
     if (pr) {
-      await deleteRequest(`/api/v1/users/${props.user.id}/project-roles/${pr.id}`);
-      projectRoles.value = projectRoles.value.filter(r => r.id !== pr.id);
+      await deleteRequest(`/api/v1/users/${props.user.user_id}/project-roles/${pr.project_id}`);
+      projectRoles.value = projectRoles.value.filter(r => r.project_id !== pr.project_id);
     }
   }
 }
