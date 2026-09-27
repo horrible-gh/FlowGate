@@ -1,5 +1,5 @@
 <template>
-  <div class="md-viewer">
+  <div class="md-viewer" @scroll.passive="onViewerScroll">
     <div v-if="loading" class="md-viewer__loading">{{ t('common.loading') }}</div>
     <div v-else-if="error" class="md-viewer__error">
       <span>{{ t('main.error.file_load_failed') }}</span>
@@ -202,15 +202,75 @@ async function regenerateFile() {
   }
 }
 
+let loadSequence = 0
+let activeLoads = 0
+let contentRefreshInFlight = false
+let contentRefreshPending = false
+let contentRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let contentRefreshCause: MarkdownParseCause | null = null
+let contentRefreshDetail: { doc_id: string; revision_no?: number | null; refresh_key?: string } | null = null
+let firstPendingAt = 0
+let lastScrollAt = 0
+let disposed = false
+const CONTENT_REFRESH_MS = 120
+const SCROLL_IDLE_MS = 160
+const MAX_SCROLL_DEFER_MS = 800
+
+function clearContentRefresh() {
+  if (contentRefreshTimer !== null) clearTimeout(contentRefreshTimer)
+  contentRefreshTimer = null
+  contentRefreshPending = false
+  contentRefreshCause = null
+  contentRefreshDetail = null
+  firstPendingAt = 0
+}
+
+function scheduleContentRefresh(delay = CONTENT_REFRESH_MS) {
+  if (contentRefreshTimer !== null || contentRefreshInFlight || !contentRefreshPending || disposed) return
+  contentRefreshTimer = setTimeout(() => {
+    contentRefreshTimer = null
+    void runContentRefresh()
+  }, delay)
+}
+
+async function runContentRefresh() {
+  if (!contentRefreshPending || contentRefreshInFlight || disposed) return
+  const now = Date.now()
+  if (now - lastScrollAt < SCROLL_IDLE_MS && now - firstPendingAt < MAX_SCROLL_DEFER_MS) {
+    scheduleContentRefresh(Math.min(SCROLL_IDLE_MS, MAX_SCROLL_DEFER_MS - (now - firstPendingAt)))
+    return
+  }
+  // A prop-driven load owns the fetch. Keep the latest SSE intent until it settles.
+  if (activeLoads > 0) {
+    scheduleContentRefresh(CONTENT_REFRESH_MS)
+    return
+  }
+  contentRefreshInFlight = true
+  contentRefreshPending = false
+  const cause = contentRefreshCause
+  const detail = contentRefreshDetail
+  contentRefreshCause = null
+  contentRefreshDetail = null
+  firstPendingAt = 0
+  const docId = props.docId
+  try {
+    const success = await loadContent(cause)
+    if (!disposed && docId === props.docId && detail) {
+      window.dispatchEvent(new CustomEvent('fg:document_content_refresh_completed', {
+        detail: { ...detail, success },
+      }))
+    }
+  } finally {
+    contentRefreshInFlight = false
+    if (contentRefreshPending) scheduleContentRefresh(0)
+  }
+}
+
 async function loadContent(cause: MarkdownParseCause | null = null): Promise<boolean> {
-  // `cause` is a plain function parameter, not a shared ref — this call's closure over it
-  // is what makes applyContent() below immune to a second, overlapping loadContent() call
-  // (rev4 finding: rev3's fix still routed the cause through a shared ref read later by a
-  // computed, which a second call could overwrite before the first's await resolved).
-  // `null` (the default) covers every non-SSE call site: the initial/prop-driven watch and
-  // regenerateFile()'s manual reloads.
+  const seq = ++loadSequence
   const path = props.path
   const docId = props.docId
+  const current = () => !disposed && seq === loadSequence && path === props.path && docId === props.docId
   if (props.contentOverride != null) {
     applyContent(props.contentOverride, cause)
     error.value = false
@@ -225,44 +285,36 @@ async function loadContent(cause: MarkdownParseCause | null = null): Promise<boo
     loading.value = false
     return false
   }
-  loading.value = true
+  const showSpinner = !hasLinkedSource.value
+  activeLoads += 1
+  if (showSpinner) loading.value = true
   error.value = false
-  hasLinkedSource.value = false
   try {
+    let nextContent: string
     if (docId) {
       const res = await getRequest<{ content: string }>(`/api/v1/documents/content?doc_id=${encodeURIComponent(docId)}`)
-      applyContent((res.data as any)?.content ?? '', cause)
-      hasLinkedSource.value = true
-    } else if (path) {
-      if (props.projectId && props.gitGroupId) {
-        // Group-branch read: checkout-free blob (read-only). Binary/oversize
-        // markdown is unusual, but fall back to empty content rather than error.
-        const data = await explorerStore.fetchGroupBranchBlob(props.projectId, props.gitGroupId, path)
-        applyContent(data.binary ? '' : (data.content ?? ''), cause)
-        hasLinkedSource.value = true
-      } else if (props.projectId && props.gitBranch) {
-        // 0615 T0004 — ordinary local-branch read: same checkout-free contract.
-        // gitCommit pins the read to the commit this tab was opened against, so a
-        // remount (browser restore, or the explorer advancing to a newer commit
-        // while this tab stays open) never silently reads a different commit than
-        // what the tab/tree snapshot on screen implies.
-        const data = await explorerStore.fetchLocalBranchBlob(props.projectId, props.gitBranch, path, props.gitCommit)
-        content.value = data.binary ? '' : (data.content ?? '')
-        hasLinkedSource.value = true
-      } else if (props.projectId) {
-        const url = `/api/v1/projects/${encodeURIComponent(props.projectId)}/files/src-content?path=${encodeURIComponent(path)}`
-        const res = await api.get<string>(url, { responseType: 'text' })
-        applyContent(res.data, cause)
-        hasLinkedSource.value = true
-      } else {
-        const res = await fetch(`/api/files/content?path=${encodeURIComponent(path)}`)
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        applyContent(await res.text(), cause)
-        hasLinkedSource.value = true
-      }
+      nextContent = (res.data as any)?.content ?? ''
+    } else if (path && props.projectId && props.gitGroupId) {
+      const data = await explorerStore.fetchGroupBranchBlob(props.projectId, props.gitGroupId, path)
+      nextContent = data.binary ? '' : (data.content ?? '')
+    } else if (path && props.projectId && props.gitBranch) {
+      const data = await explorerStore.fetchLocalBranchBlob(props.projectId, props.gitBranch, path, props.gitCommit)
+      nextContent = data.binary ? '' : (data.content ?? '')
+    } else if (path && props.projectId) {
+      const url = `/api/v1/projects/${encodeURIComponent(props.projectId)}/files/src-content?path=${encodeURIComponent(path)}`
+      const res = await api.get<string>(url, { responseType: 'text' })
+      nextContent = res.data
+    } else {
+      const res = await fetch(`/api/files/content?path=${encodeURIComponent(path ?? '')}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      nextContent = await res.text()
     }
+    if (!current()) return false
+    applyContent(nextContent, cause)
+    hasLinkedSource.value = true
     return true
   } catch (e: any) {
+    if (!current()) return false
     const status = e?.response?.status
     if (status === 404) {
       error.value = false
@@ -273,10 +325,13 @@ async function loadContent(cause: MarkdownParseCause | null = null): Promise<boo
     applyContent('', cause)
     return false
   } finally {
-    loading.value = false
+    activeLoads -= 1
+    if (current()) {
+      loading.value = false
+      if (contentRefreshPending) scheduleContentRefresh()
+    }
   }
 }
-
 function onDocumentContentChanged(e: Event) {
   if (!props.docId) return
   const detail = (e as CustomEvent).detail as {
@@ -285,27 +340,25 @@ function onDocumentContentChanged(e: Event) {
     revision_no?: number | null
     refresh_key?: string
   } | undefined
-  if (detail?.doc_id !== props.docId) return
+  const docId = detail?.doc_id
+  if (!docId || docId !== props.docId) return
   if (detail.project && props.projectId && detail.project !== props.projectId) return
-  // rev3 finding 2: snapshot the recovery source NOW, synchronously in this SSE event's own
-  // handler — not later when the parse actually runs — so a slower fetch racing a later,
-  // unrelated SSE event cannot let that later event take credit for this reload. `epoch` is
-  // `null`: this reload fires straight off the raw SSE event, decoupled from (and normally
-  // well ahead of) the 250ms-coalesced screen-refresh flush that assigns a real epoch, so it
-  // has none of its own to honestly report.
-  const cause: MarkdownParseCause = { recovery: snapshotRecoverySource(), epoch: null }
-  void loadContent(cause).then((success) => {
-    window.dispatchEvent(new CustomEvent('fg:document_content_refresh_completed', {
-      detail: {
-        doc_id: detail.doc_id,
-        revision_no: detail.revision_no ?? null,
-        refresh_key: detail.refresh_key,
-        success,
-      },
-    }))
-  })
+  // Keep the latest event's diagnostics and completion identity. The fixed window
+  // bounds latency even when updates continue arriving.
+  if (!contentRefreshPending) firstPendingAt = Date.now()
+  contentRefreshPending = true
+  contentRefreshCause = { recovery: snapshotRecoverySource(), epoch: null }
+  contentRefreshDetail = {
+    doc_id: docId,
+    revision_no: detail.revision_no,
+    refresh_key: detail.refresh_key,
+  }
+  scheduleContentRefresh()
 }
 
+function onViewerScroll() {
+  lastScrollAt = Date.now()
+}
 watch(
   () => [
     props.path,
@@ -318,7 +371,10 @@ watch(
   ],
   // Never an SSE-caused reload — do not pass the watcher's own (unrelated) callback args
   // through as `cause`.
-  () => { void loadContent() },
+  () => {
+    clearContentRefresh()
+    void loadContent()
+  },
   { immediate: true },
 )
 
@@ -350,6 +406,9 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
+  loadSequence += 1
+  clearContentRefresh()
   window.removeEventListener('fg:document_content_changed', onDocumentContentChanged)
 })
 
@@ -613,6 +672,10 @@ defineExpose({
 
 .md-viewer__content :deep(.code-block-wrapper) {
   position: relative;
+  /* Code fences are independent blocks. Skip their offscreen layout and paint while
+     retaining the last measured height when the user scrolls back. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 180px;
 }
 
 .md-viewer__content :deep(.code-copy-btn) {
