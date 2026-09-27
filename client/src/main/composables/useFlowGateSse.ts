@@ -797,16 +797,6 @@ export function useFlowGateSse(refreshAll: (epoch: number | null) => void) {
       } catch { /* ignore parse errors */ }
     })
 
-    // flowgate.default.0517 T0012 §12: a durable snapshot request changed (requested /
-    // approved / rejected). Deliberately not the badge/list itself (D0007 §4.1) — the
-    // useSnapshotPendingSync re-reads GET /api/v1/snapshots/pending on this signal, same as
-    // every other durable-state refresh in this file.
-    on('snapshot_request_updated', () => {
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('fg:snapshot_refresh'))
-      }
-    })
-
     on('ai_review_arrived', (e: Event) => {
       try {
         const data = JSON.parse((e as MessageEvent).data)

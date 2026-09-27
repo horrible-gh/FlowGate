@@ -206,6 +206,7 @@ def test_c21_stored_failure_reason_absolute_path_is_redacted_on_api_and_direct_b
         assert variant not in json.dumps(api_payload)
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_c12_stale_execution_claim_is_blocked_and_audited(access_env, monkeypatch):
     access_env.row["stale"] = True
 
@@ -254,6 +255,7 @@ def test_c9_snapshot_promotion_path_is_blocked_before_source_mutation(access_env
     assert "snapshot_to_worktree_promotion" in event["metadata"]
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_c1_api_request_tool_is_request_only_and_returns_no_locator(monkeypatch):
     token = {
         "token_id": "tok", "ai_run_id": "run", "project": "project",
@@ -298,6 +300,7 @@ def test_c1_api_request_tool_is_request_only_and_returns_no_locator(monkeypatch)
     assert captured["data"]["source_kind"] if "source_kind" in captured["data"] else True
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_c3_c4_request_path_has_no_implicit_materialize_call(monkeypatch):
     monkeypatch.setattr(api_server_tools.token_service, "verify", lambda raw: {"token_id": "tok"})
     monkeypatch.setattr(
@@ -424,6 +427,7 @@ def test_c15_sqlite_usage_survives_a_new_connection(tmp_path):
         ).fetchone() == ("s", "r", "read")
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_c7_help_and_prompt_expose_abuse_boundary():
     help_text = str(api_server_tools.DESCRIPTIONS["request_source_snapshot"])
     prompt = provider_api._api_system_prompt()
@@ -460,6 +464,7 @@ def test_c10_c19_canonical_mutation_and_tr_scope_contracts_remain_separate():
     } & set(api_server_tools.SCHEMAS)
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_cli_request_approve_materialize_access_run_share_one_snapshot(
     snapshot_env, monkeypatch,
 ):
@@ -663,6 +668,7 @@ def test_cli_request_approve_materialize_access_run_share_one_snapshot(
     assert str(snapshot_env.final()) not in failed_access.text
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_api_tool_call_boundary_redacts_real_subprocess_file_round_trip(
     snapshot_env, monkeypatch,
 ):
@@ -816,6 +822,7 @@ def _cli_client(snapshot_env, monkeypatch):
     return TestClient(app), {"Authorization": "Bearer raw-cli-token"}, run
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_t0022_live_worktree_oserror_on_materialize_never_reaches_a_worker(
     snapshot_env, monkeypatch,
 ):
@@ -916,6 +923,7 @@ def test_t0022_legacy_stored_worktree_path_is_scrubbed_on_read(snapshot_env, mon
     _assert_no_raw_path(payload, snapshot_env.worktree, leaked)
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_t0022_real_oserror_inside_run_is_scrubbed_on_cli_and_api(snapshot_env, monkeypatch):
     """execute() creating its TEMP dir hits a real FileExistsError naming the snapshot
     scratch path. Previously that escaped both boundaries as an unhandled exception."""
@@ -941,6 +949,7 @@ def test_t0022_real_oserror_inside_run_is_scrubbed_on_cli_and_api(snapshot_env, 
     _assert_no_raw_path(payload, snapshot_env.scratch, blocker, snapshot_env.worktree)
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_t0022_success_payloads_redact_the_live_worktree_path_too(snapshot_env, monkeypatch):
     """A snapshot file (or a command's output) that mentions the live worktree path must
     not hand it to the worker; before T0022 only the scratch root was redacted."""
@@ -980,6 +989,7 @@ def test_t0022_error_text_drops_unknown_absolute_paths_but_keeps_relative_text(t
     assert access.materialization.redact_error_text(text, ()) == expected
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_t0023_cli_status_rechecks_content_freshness_over_http(snapshot_env, monkeypatch):
     """The dedicated CLI status route used to render the stored row: a same-size,
     restored-mtime edit made after creation came back ``active`` with current-worktree
@@ -1008,6 +1018,7 @@ def test_t0023_cli_status_rechecks_content_freshness_over_http(snapshot_env, mon
     _assert_no_raw_path(after.text, snapshot_env.worktree, snapshot_env.scratch)
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_t0023_cli_status_of_created_snapshot_with_missing_tree_is_not_validatable(
     snapshot_env, monkeypatch,
 ):
@@ -1024,6 +1035,7 @@ def test_t0023_cli_status_of_created_snapshot_with_missing_tree_is_not_validatab
     _assert_no_raw_path(response.text, snapshot_env.worktree, snapshot_env.scratch)
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_t0023_namespace_preparation_failure_is_recorded_as_create_failure(
     snapshot_env, monkeypatch,
 ):
@@ -1049,6 +1061,7 @@ def test_t0023_namespace_preparation_failure_is_recorded_as_create_failure(
     assert status.json()["snapshot"]["status"] == "failed"
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_t0023_claim_permission_error_is_recorded_and_scrubbed(snapshot_env, monkeypatch):
     """A non-FileExists OSError creating the claim (here PermissionError naming the
     scratch path) used to skip the failure recorder and reach the CLI as a 500
@@ -1078,6 +1091,7 @@ def test_t0023_claim_permission_error_is_recorded_and_scrubbed(snapshot_env, mon
     assert not snapshot_env.final().exists()
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_t0023_busy_claim_stays_a_conflict_without_failing_the_request(
     snapshot_env, monkeypatch,
 ):
@@ -1107,6 +1121,7 @@ def _leave_invalid_final(snapshot_env, damage: str) -> Path:
 
 
 @pytest.mark.parametrize("damage", ["missing", "corrupt"])
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_t0023_invalid_existing_final_is_recorded_as_create_failure_over_http(
     snapshot_env, monkeypatch, damage,
 ):
@@ -1160,6 +1175,7 @@ def _link_directory(link: Path, target: Path) -> None:
         link.symlink_to(target, target_is_directory=True)
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_t0023_cli_status_closes_a_source_root_swapped_for_a_link(snapshot_env, monkeypatch):
     """``_load_manifest`` checked ``source.is_dir()``, which follows links, so a
     ``source`` replaced by a junction/symlink to another directory still looked healthy:

@@ -10,8 +10,6 @@ from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.services import tool_registry
 from modules.flow_gate.services.ai_invoke.provenance import resolve_run_provenance
 from modules.flow_gate.db.connection import get_store
-from modules.flow_gate.api.v1.events.event_types import EventType
-from modules.flow_gate.api.v1.events.publisher import FlowEvent, broadcast_event_threadsafe
 SCOPES={"single_file","selected_files","directory","whole_source"}
 SOURCE_KIND="current_worktree"
 # Same cap the merge-review reject prompt uses for its typed reason (GitMergeRejectDialog).
@@ -70,21 +68,8 @@ def request_data_for_run(run,token,body):
  return data
 
 def _meta(row):
- keys=("snapshot_id","run_id","chain_id","group_id","provider_id","requested_provider_id","actual_provider_name","provider_source","attempt_no","fallback_used","reason","purpose","scope","requested_paths","source_kind","requested_at","approved_by","rejection_reason")
+ keys=("snapshot_id","run_id","chain_id","group_id","provider_id","requested_provider_id","actual_provider_name","provider_source","attempt_no","fallback_used","reason","purpose","scope","requested_paths","source_kind","requested_at","approved_by","rejection_reason","failure_code","retired_from")
  return json.dumps({k:row.get(k) for k in keys},ensure_ascii=False,sort_keys=True)
-
-def _notify(row,status):
- # T0012 §12: a best-effort "go re-read the durable list" signal only — never the
- # list itself (D0007 §4.1). Broadcast, not user-targeted: any reviewer's Pending
- # panel for this project should refresh, not just the requester's.
- try:
-  broadcast_event_threadsafe(FlowEvent(
-   event_type=EventType.SNAPSHOT_REQUEST_UPDATED,
-   payload={"snapshot_id":row["snapshot_id"],"group_id":row["group_id"],"status":status},
-   audience="*",project=row["project_id"],group_id=row["group_id"],
-  ))
- except Exception:
-  pass
 
 def validate_request_authority(token: dict, run: dict) -> dict:
  if not token.get("ai_run_id") or not run:
@@ -110,26 +95,19 @@ def validate_request_authority(token: dict, run: dict) -> dict:
   raise SnapshotRequestError(403,"snapshot_source_read_required","source read authority is required")
  return token
 
-def create_request(data,actor):
- n=validate_request(data)
- def pending(): return db.pending_for_owner(n["project_id"],n["group_id"],n["chain_id"],n["run_id"])
- existing=pending()
- if existing: return existing|{"reused_pending":True}
- try:
-  with get_store().transaction():
-   # The migration's unique guard is the final arbiter when callers race this read.
-   existing=pending()
-   if existing: return existing|{"reused_pending":True}
-   row=db.create(n)
-   workflow_events.create({"event_type":"snapshot_requested","project_id":row["project_id"],"group_id":row["group_id"],"actor_user_id":actor,"to_state":"requested","metadata":_meta(row)})
- except Exception:
-  # A competing INSERT can win after our read. Query only after rollback, especially
-  # on PostgreSQL where an integrity error aborts the current transaction.
-  existing=pending()
-  if existing: return existing|{"reused_pending":True}
-  raise
- _notify(row,"requested")
- return row|{"reused_pending":False}
+def create_request(data, actor):
+ raise SnapshotRequestError(410, "snapshot_feature_retired", "Legacy Snapshot requests are retired; use Source Bundle")
+
+def retire_unmaterialized(actor="system"):
+ """Idempotent rollout close; preserve created rows and their normal cleanup."""
+ with get_store().transaction():
+  closed=db.retire_unmaterialized()
+  for row in closed:
+   workflow_events.create({"event_type":"snapshot_retired","project_id":row["project_id"],
+                           "group_id":row["group_id"],"actor_user_id":actor,
+                           "from_state":row["retired_from"],"to_state":"rejected","metadata":_meta(row)})
+ return closed
+
 
 def wait_for_decision(row,remaining_sec):
  """Wait within both the configured tool window and the remaining run budget."""
@@ -150,24 +128,5 @@ def clean_rejection_reason(value):
   raise SnapshotRequestError(422,"rejection_reason_too_long",f"rejection_reason must be at most {REJECTION_REASON_MAX} characters")
  return text or None
 
-def decide(snapshot_id,decision,actor,rejection_reason=None):
- event="snapshot_approved" if decision=="approved" else "snapshot_rejected"
- reason=None
- if decision=="rejected":
-  reason=clean_rejection_reason(rejection_reason)
-  if reason is None:
-   # T0026 §2: a human rejection carries a reason (FlowGate's document reject and merge
-   # reject both refuse an empty one). Only a request still awaiting a decision needs it —
-   # an already-decided/terminal request keeps answering exactly as before (idempotent).
-   current=db.get(snapshot_id)
-   if current is None: raise SnapshotRequestError(404,"not_found","snapshot request not found")
-   if current.get("status")=="requested":
-    raise SnapshotRequestError(422,"rejection_reason_required","a rejection reason is required")
- with get_store().transaction():
-  # The approve call is left exactly as it was; only a rejection carries the reason.
-  row,changed=(db.transition(snapshot_id,decision,actor,reason) if decision=="rejected"
-               else db.transition(snapshot_id,decision,actor))
-  if row is None: raise SnapshotRequestError(404,"not_found","snapshot request not found")
-  if changed: workflow_events.create({"event_type":event,"project_id":row["project_id"],"group_id":row["group_id"],"actor_user_id":actor,"from_state":"requested","to_state":decision,"metadata":_meta(row)})
- if changed: _notify(row,decision)
- return row
+def decide(snapshot_id, decision, actor, rejection_reason=None):
+ raise SnapshotRequestError(410, "snapshot_feature_retired", "Legacy Snapshot decisions are retired")

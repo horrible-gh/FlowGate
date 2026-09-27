@@ -259,6 +259,11 @@ def transition_group(
         except Exception:
             # Group closure is already durable. Snapshot cleanup stays retryable via TTL.
             _log.warning("snapshot group-close cleanup failed for %s", group_id, exc_info=True)
+        try:
+            from modules.flow_gate.services import source_bundle_cleanup_service
+            source_bundle_cleanup_service.cleanup_for_group(group_id)
+        except Exception:
+            _log.warning("Source Bundle group-close cleanup failed for %s", group_id, exc_info=True)
 
     result = dict(updated or {})
     if warnings:

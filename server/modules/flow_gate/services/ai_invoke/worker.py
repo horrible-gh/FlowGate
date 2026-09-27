@@ -1500,6 +1500,11 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                         _status, resp = api_server_tools.source_call(run, current_token, call["name"], call["input"])
                     elif call["name"] == "run_test":
                         _status, resp = api_server_tools.run_test(run, call["input"], _svc()._remaining_sec(run))
+                    elif call["name"] == "access_source_bundle":
+                        _status, resp = api_server_tools.access_source_bundle(run, call["input"])
+                    elif call["name"] == "run_source_bundle":
+                        _status, resp = api_server_tools.run_source_bundle(
+                            run, call["input"], _svc()._remaining_sec(run))
                     elif call["name"] == "request_source_snapshot":
                         _status, resp = api_server_tools.request_source_snapshot(
                             run, current_token, call["input"],
@@ -1544,7 +1549,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 # entirely (DB0005 2 scope note).
                 if (
                     call["name"] not in api_server_tools.SOURCE_OPS
-                    and call["name"] not in ("run_test", "read_help", *api_server_tools.SNAPSHOT_NAMES)
+                    and call["name"] not in ("run_test", "read_help", *api_server_tools.SNAPSHOT_NAMES, *api_server_tools.BUNDLE_NAMES)
                 ):
                     run["last_tool_name"] = "api_bound_request"
                     run["last_tool_status"] = _status

@@ -563,15 +563,7 @@ def execute(
     run: dict, tool_input: dict, *, remaining_sec: float,
     source_tool_calls: int = 0, snapshot_reads: int = 0,
 ) -> tuple[int, dict]:
-    try:
-        return _execute(
-            run, tool_input, remaining_sec=remaining_sec,
-            source_tool_calls=source_tool_calls, snapshot_reads=snapshot_reads,
-        )
-    except SnapshotAccessError:
-        raise
-    except Exception as exc:
-        raise _unexpected(exc, tool_input, "execute") from exc
+    raise SnapshotAccessError(410, "snapshot_feature_retired", "Legacy Snapshot execution is retired; use Source Bundle")
 
 
 def _execute(

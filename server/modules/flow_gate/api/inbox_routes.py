@@ -44,7 +44,7 @@ from modules.flow_gate.rbac.decorators import _has_permission, require_permissio
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services import register_binding
-from modules.flow_gate.services import snapshot_access_service
+from modules.flow_gate.services import snapshot_access_service, source_bundle_access_service
 from modules.flow_gate.services import token_service
 from modules.flow_gate.services import tool_registry
 from modules.flow_gate.services import step_verification_service
@@ -4279,8 +4279,12 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             _raw_submission_text, where="new"
         )
     snapshot_provenance: list[dict] = []
+    bundle_provenance: list[dict] = []
     if doc_type.upper() == "TR" and body_for_guards is not None:
         body_for_guards, snapshot_provenance = snapshot_access_service.inject_tr_provenance(
+            body_for_guards, str(token_rec.get("ai_run_id") or "")
+        )
+        body_for_guards, bundle_provenance = source_bundle_access_service.inject_tr_provenance(
             body_for_guards, str(token_rec.get("ai_run_id") or "")
         )
     _new_locale_for_guard = template_provision.normalize_locale(
@@ -4812,6 +4816,10 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             )
         except Exception:
             pass
+    if bundle_provenance:
+        source_bundle_access_service.attach_tr(
+            str(token_rec.get("ai_run_id") or ""), canonical_doc_id
+        )
 
     db_events.create({
         "event_type": "action_taken",
@@ -5303,12 +5311,18 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             _edit_raw_submission_text, where="edit"
         )
     edit_snapshot_provenance: list[dict] = []
+    edit_bundle_provenance: list[dict] = []
     if (
         str(existing_doc.get("type_code") or "").upper() == "TR"
         and edit_body_for_guards is not None
     ):
         edit_body_for_guards, edit_snapshot_provenance = (
             snapshot_access_service.inject_tr_provenance(
+                edit_body_for_guards, str(token_rec.get("ai_run_id") or "")
+            )
+        )
+        edit_body_for_guards, edit_bundle_provenance = (
+            source_bundle_access_service.inject_tr_provenance(
                 edit_body_for_guards, str(token_rec.get("ai_run_id") or "")
             )
         )
@@ -5734,6 +5748,10 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             )
         except Exception:
             pass
+    if edit_bundle_provenance:
+        source_bundle_access_service.attach_tr(
+            str(token_rec.get("ai_run_id") or ""), doc_id
+        )
 
     # ── Step 7.1: Persist body fingerprint (NR0003 §4-2) ─────────────────────────────
     # The dup-body guard can only catch a twin whose meta carries content_sha256.

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from modules.flow_gate.db import documents as db_documents
-from modules.flow_gate.services import git_service, help_catalog, process_runner, remote_tool_service, snapshot_access_service, snapshot_request_service, test_command_service, token_service, tool_registry
+from modules.flow_gate.services import git_service, help_catalog, process_runner, remote_tool_service, snapshot_access_service, snapshot_request_service, source_bundle_access_service, test_command_service, token_service, tool_registry
 from modules.flow_gate.utils.help_url import help_url
 
 DOCUMENT_SCOPES = frozenset({"new", "edit", "review", "test_run"})
@@ -22,6 +22,7 @@ CONFLICT_SCOPE = "resolve_conflict"
 # which validates every chunk. Whatever the registry grows into, these never reach it.
 _CONFLICT_NEVER_OPS = frozenset({"write", "patch", "remove"})
 BASE_NAMES = ("read_document", "read_help", "create_question", "register_document")
+BUNDLE_NAMES = ("access_source_bundle", "run_source_bundle")
 SNAPSHOT_NAMES = ("request_source_snapshot", "access_source_snapshot", "run_source_snapshot")
 SOURCE_NAMES = ("read_source_file", "search_source", "glob_source", "stat_source", "diff_source", "log_source", "show_commit_source", "merge_preview_source", "patch_source_file", "write_source_file", "remove_source_file", "run_test")
 # Provider names are stable aliases; every source operation dispatches through the HTTP remote service.
@@ -96,6 +97,8 @@ SCHEMAS = {
     "write_source_file": _obj({"path": {"type": "string", "minLength": 1}, "content": {"type": "string"}, "mode": {"type": "string", "enum": ["create", "overwrite", "append"]}, "encoding": {"type": "string"}}, ["path", "content"]),
     "remove_source_file": _obj({"path": {"type": "string", "minLength": 1}, "recursive": {"type": "boolean"}}, ["path"]),
     "run_test": _obj({"command": {"type": "string", "minLength": 1}}, ["command"]),
+    "access_source_bundle": _obj({"bundle_id": {"type": "string"}, "operation": {"type": "string", "enum": ["status", "read", "search", "glob", "stat"]}, "path": {"type": "string"}, "pattern": {"type": "string"}, "glob": {"type": "string"}, "ignore_case": {"type": "boolean"}, "max_results": {"type": "integer", "minimum": 1}, "max_bytes": {"type": "integer", "minimum": 0}, "offset": {"type": "integer", "minimum": 0}, "length": {"type": "integer", "minimum": 0}, "encoding": {"type": "string"}, "claim_current_worktree": {"type": "boolean"}}, ["operation"]),
+    "run_source_bundle": _obj({"bundle_id": {"type": "string"}, "task_kind": {"type": "string", "enum": sorted(source_bundle_access_service.TASK_KINDS)}, "command": {"type": "string", "minLength": 1}, "timeout_seconds": {"type": "integer", "minimum": 1}, "claim_current_worktree": {"type": "boolean"}}, ["task_kind", "command"]),
     "read_document": READ_DOCUMENT_SCHEMA,
     "read_help": READ_HELP_SCHEMA,
     "create_question": _obj({"questions": {"type": "array", "minItems": 1, "items": _obj({"title": {"type": "string"}, "body": {"type": "string", "minLength": 1}, "options": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 200}, "maxItems": 10}}, ["body"])}}, ["questions"]),
@@ -131,27 +134,15 @@ REGISTER_SCHEMAS = {
     "test_run": _obj({}),
 }
 
-DESCRIPTIONS = {name: name.replace("_", " ") for name in (*BASE_NAMES, *SNAPSHOT_NAMES, *SOURCE_NAMES)}
-DESCRIPTIONS["request_source_snapshot"] = (
-    "Request only; never approve, materialize, or return a locator. Use this only when a real "
-    "filesystem tree is required for build/test/lint/typecheck/dependency/static analysis or "
-    "an isolated temporary experiment. Prefer FlowGate read/search/git and Merge Context Tool for "
-    "single-file reads, grep/glob/stat, ref comparison, diffs, history, and merge analysis. "
-    "This request never creates files. whole_source is not the default and requires an explicit "
-    "reason and purpose. One pending request is reused per chain/run; the tool waits briefly "
-    "for a human decision within the remaining run budget. A timeout keeps the same request id."
-)
+DESCRIPTIONS = {name: name.replace("_", " ") for name in (*BASE_NAMES, *SNAPSHOT_NAMES, *BUNDLE_NAMES, *SOURCE_NAMES)}
+DESCRIPTIONS["access_source_bundle"] = "Read/status/search/glob/stat an immutable Source Bundle. Omit bundle_id to lazy ensure. Historical results do not claim current worktree freshness unless requested."
+DESCRIPTIONS["run_source_bundle"] = "Execute inside disposable AI Scratch copied from a Source Bundle. Omit bundle_id to lazy ensure. Same run and Bundle reuse Scratch. No promotion or live fallback."
+DESCRIPTIONS["request_source_snapshot"] = "Retired (410). Source Bundle is prepared automatically when source access or execution needs it."
 DESCRIPTIONS["access_source_snapshot"] = (
-    "Read status/locator or read/search/glob/stat inside a human-approved current-worktree "
-    "snapshot. Stale data remains readable but is marked ACTIVE SNAPSHOT IS STALE and cannot "
-    "be reported as current-worktree validation. Deleted and failed snapshots are explicit."
+    "Read a legacy created Snapshot for historical compatibility only. New work uses Source Bundle."
 )
 DESCRIPTIONS["run_source_snapshot"] = (
-    "Run build/test/lint/typecheck/dependency/static analysis or a temporary experiment inside "
-    "an approved disposable snapshot. There is no promotion, upload, commit, merge, or sync-back; "
-    "persistent edits must use canonical FlowGate source mutation tools. FlowGate constrains the "
-    "working directory, temporary directory, timeout, and captured output, but cannot fully inspect "
-    "every child command; commands must stay inside the snapshot and must not access live source."
+    "Retired (410). Use run_source_bundle; execution occurs in disposable AI Scratch."
 )
 DESCRIPTIONS["read_help"] = (
     "Read personalized help without HTTP. Empty input returns the help index; "
@@ -226,10 +217,10 @@ def definitions_for_run(run: dict) -> list[dict]:
     kind, _reason = tool_registry.kind_for_step(scope, step_type)
     allowed_ops = set(tool_registry.tool_names(kind, scope))
     if kind in ("read", "read_write"):
-        names += list(SNAPSHOT_NAMES)
+        names += ["access_source_bundle"]
     names += [name for name, op in SOURCE_OPS.items() if op in allowed_ops]
     if kind == "read_write":
-        names.append("run_test")
+        names += ["run_source_bundle", "run_test"]
     result = []
     for name in names:
         schema = REGISTER_SCHEMAS[scope] if name == "register_document" else SCHEMAS[name]
@@ -369,6 +360,7 @@ def _snapshot_token(run: dict, raw_token: str) -> dict:
 
 
 def request_source_snapshot(run: dict, raw_token: str, tool_input: dict, remaining_sec: float = 0) -> tuple[int, dict]:
+    raise ToolError(410, "snapshot_feature_retired", "Legacy Snapshot requests are retired; use Source Bundle")
     token = _snapshot_token(run, raw_token)
     data = snapshot_request_service.request_data_for_run(run, token, tool_input)
     try:
@@ -405,6 +397,7 @@ def access_source_snapshot(run: dict, raw_token: str, tool_input: dict) -> tuple
 def run_source_snapshot(
     run: dict, raw_token: str, tool_input: dict, remaining_sec: float,
 ) -> tuple[int, dict]:
+    raise ToolError(410, "snapshot_feature_retired", "Legacy Snapshot execution is retired; use Source Bundle")
     _snapshot_token(run, raw_token)
     try:
         return snapshot_access_service.execute(
@@ -416,10 +409,27 @@ def run_source_snapshot(
         return exc.status, exc.payload("execute")
 
 
+def access_source_bundle(run: dict, tool_input: dict) -> tuple[int, dict]:
+    try:
+        return source_bundle_access_service.access(run, tool_input)
+    except source_bundle_access_service.BundleAccessError as exc:
+        return exc.status, exc.payload(str(tool_input.get("operation") or "status"))
+
+
+def run_source_bundle(run: dict, tool_input: dict, remaining_sec: float) -> tuple[int, dict]:
+    try:
+        return source_bundle_access_service.execute(run, tool_input, remaining_sec)
+    except source_bundle_access_service.BundleAccessError as exc:
+        return exc.status, exc.payload("execute")
+
+
 def source_call(run: dict, raw_token: str, name: str, tool_input: dict) -> tuple[int, dict]:
     try:
+        source_bundle_access_service.guard_promotion(run, name, tool_input)
         snapshot_access_service.guard_promotion(run, name, tool_input)
     except snapshot_access_service.SnapshotAccessError as exc:
+        return exc.status, exc.payload(name)
+    except source_bundle_access_service.BundleAccessError as exc:
         return exc.status, exc.payload(name)
     # remote_tool_service is the sole live-token/root authority.  In particular, it
     # preserves worktree fail-closed mutation gates while allowing approved base-root
@@ -446,7 +456,6 @@ def test_root(run: dict) -> Path:
 
 
 def run_test(run: dict, tool_input: dict, remaining_sec: float) -> tuple[int, dict]:
-    root = test_root(run)
     normalized = test_command_service.normalize_command(tool_input["command"])
     host_os = test_command_service.current_os()
     allowed = [row for row in test_command_service.list_for_view(run["project_id"])
@@ -455,21 +464,14 @@ def run_test(run: dict, tool_input: dict, remaining_sec: float) -> tuple[int, di
     if row is None:
         raise ToolError(422, "not_verified")
     command = row.get("command_raw") or row.get("command")
-    timeout = max(.01, min(300.0, remaining_sec))
-    env = {"PATH": os.environ.get("PATH", ""), "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""), "TEMP": str(root / ".flowgate-tmp"), "TMP": str(root / ".flowgate-tmp")}
-    started = time.monotonic()
-    proc = subprocess.Popen(command, cwd=root, shell=True, executable=test_command_service.current_shell(), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=False, start_new_session=(os.name != "nt"))
-    timed_out = False
-    try:
-        stdout, stderr = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        process_runner.kill_process_tree(proc)
-        stdout, stderr = proc.communicate(timeout=5)
-    def tail(raw: bytes) -> tuple[str, bool]:
-        return raw[-1048576:].decode("utf-8", errors="replace"), len(raw) > 1048576
-    out, out_cut = tail(stdout or b""); err, err_cut = tail(stderr or b"")
-    payload = {"ok": True, "op": "run_test", "command": normalized, "exit_code": proc.returncode, "duration_ms": int((time.monotonic()-started)*1000), "stdout": out, "stderr": err, "truncated": out_cut or err_cut, "timed_out": timed_out}
+    status, result = run_source_bundle(run, {"task_kind": "test", "command": command}, remaining_sec)
+    if status >= 400:
+        return status, result
+    payload = {"ok": True, "op": "run_test", "command": normalized,
+               "exit_code": result["exit_code"], "duration_ms": result["duration_ms"],
+               "stdout": result["stdout"], "stderr": result["stderr"],
+               "truncated": result["truncated"], "timed_out": result["timed_out"],
+               "bundle": result["bundle"], "scratch_reused": result["scratch_reused"]}
     encoded = json.dumps(payload, ensure_ascii=False)
     if len(encoded) > 16000:
         excess = len(encoded) - 16000

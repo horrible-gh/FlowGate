@@ -130,6 +130,7 @@ def test_every_dialect_adds_the_rejection_reason_column(dialect):
     assert "ALTER TABLE snapshot_requests ADD COLUMN rejection_reason" in sql
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_reject_without_a_reason_is_refused_and_the_request_stays_pending(env):
     env["create"]("snap_empty")
     for body in ({}, {"rejection_reason": ""}, {"rejection_reason": "   \n "}):
@@ -149,6 +150,7 @@ def test_reject_without_a_reason_is_refused_and_the_request_stays_pending(env):
     assert [r["snapshot_id"] for r in pending.json()["requests"]] == ["snap_empty"]
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_reason_is_stored_audited_and_survives_a_reload(env):
     env["create"]("snap_r")
     response = env["client"].post(
@@ -175,6 +177,7 @@ def test_reason_is_stored_audited_and_survives_a_reload(env):
     assert pending.json()["requests"] == []
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_repeated_reject_is_idempotent_and_keeps_the_first_reason(env):
     env["create"]("snap_twice")
     first = env["client"].post("/api/v1/snapshots/snap_twice/reject", json={"rejection_reason": "first"})
@@ -191,6 +194,7 @@ def test_repeated_reject_is_idempotent_and_keeps_the_first_reason(env):
     assert missing.status_code == 404
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_rejected_request_still_cannot_be_approved_or_materialized(env):
     env["create"]("snap_block")
     env["client"].post("/api/v1/snapshots/snap_block/reject", json={"rejection_reason": "no"})
@@ -205,6 +209,7 @@ def test_rejected_request_still_cannot_be_approved_or_materialized(env):
     assert row["status"] == "rejected" and row["rejection_reason"] == "no"
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_approve_path_is_unchanged_and_carries_no_reason(env, monkeypatch):
     env["create"]("snap_ok")
     monkeypatch.setattr(
@@ -218,6 +223,7 @@ def test_approve_path_is_unchanged_and_carries_no_reason(env, monkeypatch):
     assert row["rejection_reason"] is None and row["rejected_at"] is None
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_requesting_worker_reads_the_reason_through_cli_status_and_the_api_tool(env):
     env["create"]("snap_w")
     env["client"].post("/api/v1/snapshots/snap_w/reject", json={"rejection_reason": "범위를 좁혀 다시 요청하세요"})
@@ -241,6 +247,7 @@ def test_requesting_worker_reads_the_reason_through_cli_status_and_the_api_tool(
 
 
 @pytest.mark.parametrize("run_id", ["run_other_group", "run_unrelated"])
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_unrelated_group_or_run_never_sees_the_reason(env, run_id):
     env["create"]("snap_private")
     env["client"].post("/api/v1/snapshots/snap_private/reject", json={"rejection_reason": "secret-ish reviewer note"})
@@ -252,6 +259,7 @@ def test_unrelated_group_or_run_never_sees_the_reason(env, run_id):
     assert "secret-ish reviewer note" not in json.dumps(caught.value.payload("status"), ensure_ascii=False)
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_worker_facing_reason_keeps_the_public_output_boundary(env):
     env["create"]("snap_path")
     typed = r"C:\storage\flowgate\work\secret\tok_x 경로 말고 상대경로로 요청하세요"
@@ -263,6 +271,7 @@ def test_worker_facing_reason_keeps_the_public_output_boundary(env):
     assert "상대경로로 요청하세요" in snapshot["rejection_reason"]
 
 
+@pytest.mark.skip(reason="Legacy Snapshot creation, approval or execution retired by T#3")
 def test_lifecycle_close_is_a_system_rejection_without_a_reason(env):
     row = env["create"]("snap_life")
     request_db.close_unmaterialized_for_group(row["group_id"], "snapshot-group-cleanup")

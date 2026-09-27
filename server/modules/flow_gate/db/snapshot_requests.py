@@ -181,6 +181,26 @@ def close_unmaterialized_for_group(group_id, actor):
     return [get(row["snapshot_id"]) for row in rows]
 
 
+def retire_unmaterialized():
+    """Close every legacy decision row before recovery can materialize it."""
+    rows = list_unmaterialized()
+    if not rows:
+        return []
+    stamp = now_iso()
+    closed = []
+    for row in rows:
+        snapshot_id = row["snapshot_id"]
+        changed = get_store()._execute_affected(
+            "UPDATE snapshot_requests SET status='rejected',rejected_at=?,"
+            "failure_code='snapshot_feature_retired',failure_reason='Legacy Snapshot approval is retired' "
+            "WHERE snapshot_id=? AND status IN ('requested','approved')",
+            [stamp, snapshot_id],
+        )
+        if changed == 1:
+            closed.append(get(snapshot_id) | {"retired_from": row["status"]})
+    return closed
+
+
 def mark_created(snapshot_id, created_at, expires_at, revision, fingerprint,
                  copied_file_count, copied_byte_size):
     changed = get_store()._execute_affected(

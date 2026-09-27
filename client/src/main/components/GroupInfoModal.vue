@@ -11,21 +11,6 @@
 
         
         <div class="dialog-feature-body">
-          <!--
-            flowgate.default.0517 T0012 §13: stale warning for this group's active
-            (`created`) AI Scratch Source Snapshot, if any. D0007 §3.5 — stale is a
-            warning, not an error: the copy is still readable, it just cannot stand in
-            for a fresh verification of the current worktree. Reuses `.alert-warning`
-            rather than a new banner component or a modal of its own (T0012 §13
-            "불필요한 새 modal을 띄우지 않는다").
-          -->
-          <div v-if="staleSnapshot" class="alert alert-warning snap-stale-alert" data-test="snap-stale-warning">
-            <AppIcon name="warning" />
-            <div>
-              <strong>{{ t('main.snapshot_approval.stale_title') }}</strong>
-              <p>{{ t('main.snapshot_approval.stale_body') }}</p>
-            </div>
-          </div>
           <div class="gi-id-row">
             <span class="gi-id-badge">{{ groupId }}</span>
           </div>
@@ -53,6 +38,30 @@
             </div>
           </div>
           <p v-else class="gi-empty">{{ t('main.group_actions.info_empty') }}</p>
+          <section class="gi-bundles" data-test="source-bundle-observability" :aria-label="t('main.group_actions.bundles.title')">
+            <h3>{{ t('main.group_actions.bundles.title') }}</h3>
+            <p v-if="bundleError">{{ t('main.group_actions.bundles.load_failed') }}</p>
+            <p v-else-if="bundles.length === 0">{{ t('main.group_actions.bundles.empty') }}</p>
+            <article v-for="bundle in bundles" :key="bundle.bundle_id" class="gi-bundle">
+              <strong>{{ bundle.bundle_id }}</strong>
+              <dl>
+                <dt>{{ t('main.group_actions.bundles.status') }}</dt><dd>{{ bundle.status }}</dd>
+                <dt>{{ t('main.group_actions.bundles.revision') }}</dt><dd>{{ bundle.source_revision || '—' }}</dd>
+                <dt>{{ t('main.group_actions.bundles.dirty') }}</dt><dd>{{ bundle.source_dirty }}</dd>
+                <dt>{{ t('main.group_actions.bundles.created') }}</dt><dd>{{ bundle.created_at || '—' }}</dd>
+                <dt>{{ t('main.group_actions.bundles.expires') }}</dt><dd>{{ bundle.expires_at || '—' }}</dd>
+                <dt>{{ t('main.group_actions.bundles.files') }}</dt><dd>{{ bundle.file_count ?? '—' }}</dd>
+                <dt>{{ t('main.group_actions.bundles.bytes') }}</dt><dd>{{ bundle.byte_size ?? '—' }}</dd>
+                <dt>Policy</dt><dd>{{ bundle.exclusion_policy_version }}</dd>
+                <dt>{{ t('main.group_actions.bundles.content_hash') }}</dt><dd>{{ bundle.content_fingerprint || '—' }}</dd>
+                <dt>{{ t('main.group_actions.bundles.bundle_hash') }}</dt><dd>{{ bundle.bundle_sha256 || '—' }}</dd>
+                <dt>{{ t('main.group_actions.bundles.freshness') }}</dt><dd>{{ bundle.freshness }}</dd>
+                <dt>{{ t('main.group_actions.bundles.origin') }}</dt><dd>{{ bundle.origin }}</dd>
+                <dt>{{ t('main.group_actions.bundles.failure') }}</dt><dd>{{ bundle.failure_code || bundle.failure_reason || '—' }}</dd>
+                <dt>{{ t('main.group_actions.bundles.cleanup') }}</dt><dd>{{ bundle.cleanup_state }}{{ bundle.deleted_at ? ` · ${bundle.deleted_at}` : '' }}</dd>
+              </dl>
+            </article>
+          </section>
         </div>
         
       
@@ -111,55 +120,46 @@ function close() {
   emit('update:visible', false)
 }
 
-interface ActiveSnapshotRow {
-  snapshot_id: string
+interface BundleRow {
+  bundle_id: string
   status: string
-  stale: boolean
+  source_revision: string | null
+  source_dirty: boolean
+  created_at: string | null
+  expires_at: string | null
+  file_count: number | null
+  byte_size: number | null
+  exclusion_policy_version: string
+  content_fingerprint: string | null
+  bundle_sha256: string | null
+  freshness: string
+  origin: string
+  failure_code: string | null
+  failure_reason: string | null
+  cleanup_state: string
+  deleted_at: string | null
 }
 
-// T0012 §13: fetched fresh every time the modal opens for a group — GET .../active
-// live-refreshes staleness for that group's rows (snapshot_routes.active), so this never
-// shows a value cached at materialize time.
-//
-// Stale-response guard (rejection round 2): `staleFetchSeq` is bumped on every visibility
-// change (open AND close), and the request that started it captures projectId/groupId at
-// call time. A response is only applied if it is still the most-recently-ISSUED call
-// (`seq === staleFetchSeq`) AND the modal is still open for the SAME project/group it was
-// requested for — otherwise a slow response from a group the user has since closed or
-// switched away from could overwrite (or resurrect) the warning for a different group's
-// screen. Mirrors the fetchSeq/activeProjectId pattern in stores/snapshotRequests.ts.
-const staleSnapshot = ref(false)
-let staleFetchSeq = 0
+const bundles = ref<BundleRow[]>([])
+const bundleError = ref(false)
+let bundleFetchSeq = 0
 watch(
-  () => props.visible,
-  async (visible) => {
-    const seq = ++staleFetchSeq
-    if (!visible) {
-      staleSnapshot.value = false
-      return
-    }
-    const projectId = props.projectId
-    const groupId = props.groupId
-    if (!projectId || !groupId) return
-    const stillCurrent = () =>
-      seq === staleFetchSeq &&
-      props.visible &&
-      props.projectId === projectId &&
-      props.groupId === groupId
+  () => [props.visible, props.projectId, props.groupId] as const,
+  async ([visible, projectId, groupId]) => {
+    const seq = ++bundleFetchSeq
+    bundles.value = []
+    bundleError.value = false
+    if (!visible || !projectId || !groupId) return
     try {
-      const response = await getRequest<{ ok: boolean; requests: ActiveSnapshotRow[] }>(
-        '/api/v1/snapshots/active',
-        { project_id: projectId, group_id: groupId },
+      const response = await getRequest<{ ok: boolean; bundles: BundleRow[] }>(
+        '/api/v1/source-bundles', { project_id: projectId, group_id: groupId },
       )
-      if (!stillCurrent()) return
-      staleSnapshot.value = (response.data?.requests ?? []).some(
-        (row) => row.status === 'created' && row.stale === true,
-      )
+      if (seq === bundleFetchSeq && props.visible) bundles.value = response.data?.bundles ?? []
     } catch {
-      if (!stillCurrent()) return
-      staleSnapshot.value = false
+      if (seq === bundleFetchSeq && props.visible) bundleError.value = true
     }
   },
+  { immediate: true },
 )
 
 // origin_provider_name is a nullable snapshot taken at document-creation time (NR0003 /
@@ -191,8 +191,14 @@ function aiBadgeTitle(d: GroupInfoDoc): string | undefined {
   gap: 8px;
   color: var(--primary);
 }
-.snap-stale-alert { align-items: flex-start; }
-.snap-stale-alert p { margin: 4px 0 0; }
+.gi-bundles { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 12px; }
+.gi-bundles h3 { margin: 0 0 8px; font-size: .82rem; }
+.gi-bundles p { color: var(--text-m); font-size: .76rem; }
+.gi-bundle { padding: 8px; border: 1px solid var(--border); margin: 8px 0; border-radius: var(--r); font-size: .72rem; }
+.gi-bundle strong { overflow-wrap: anywhere; }
+.gi-bundle dl { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 4px 8px; margin: 8px 0 0; }
+.gi-bundle dt { color: var(--text-m); }
+.gi-bundle dd { margin: 0; overflow-wrap: anywhere; }
 .gi-id-row {
   display: flex;
   align-items: center;

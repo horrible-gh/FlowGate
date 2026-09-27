@@ -758,122 +758,7 @@ def _recover_published(row: dict, final: Path, actor: str) -> dict:
 
 
 def materialize(snapshot_id: str, actor: str) -> dict:
-    lock = _operation_lock(snapshot_id)
-    with lock:
-        row = db.get(snapshot_id)
-        if row is None:
-            raise SnapshotRequestError(404, "not_found", "snapshot request not found")
-        if row["status"] == "created":
-            return refresh_stale(snapshot_id, actor=actor)
-        if row["status"] != "approved":
-            raise SnapshotRequestError(409, "snapshot_not_approved", "only an approved snapshot can be materialized")
-
-        try:
-            namespace = _snapshot_namespace(row, create=True)
-        except Exception as exc:
-            _fail_creation(row, actor, exc)
-        final = namespace / snapshot_id
-        if final.exists() or final.is_symlink():
-            return _recover_published(row, final, actor)
-
-        claim = namespace / f".{snapshot_id}.materializing"
-        stage = namespace / f".{snapshot_id}.{uuid.uuid4().hex}.tmp"
-        published = False
-        try:
-            claim.mkdir()
-        except FileExistsError as exc:
-            # Another materializer owns the claim: not a creation failure of this request.
-            raise SnapshotRequestError(409, "snapshot_materialization_busy", "snapshot materialization is already running") from exc
-        except Exception as exc:
-            _fail_creation(row, actor, exc)
-
-        try:
-            root = _resolve_source_root(row)
-            revision, dirty = _git_identity(root, row)
-            directories, files, excluded = _collect_scope(row, root)
-            _check_limits(files)
-
-            stage.mkdir()
-            source_out = stage / "source"
-            source_out.mkdir()
-            for relative in directories:
-                (source_out / PurePosixPath(relative)).mkdir(parents=True, exist_ok=True)
-
-            entries: list[dict] = []
-            copied_bytes = 0
-            for relative, expected in files:
-                sha, size = _copy_and_hash(
-                    root / PurePosixPath(relative),
-                    source_out / PurePosixPath(relative),
-                    expected,
-                )
-                copied_bytes += size
-                if copied_bytes > SNAPSHOT_MAX_TOTAL_BYTES:
-                    raise SnapshotRequestError(413, "snapshot_total_size_limit", "snapshot exceeds total byte limit")
-                entries.append({
-                    "path": relative,
-                    "size": size,
-                    "mtime_ns": int(expected.st_mtime_ns),
-                    "sha256": sha,
-                })
-
-            fingerprint = _fingerprint(entries)
-            current_fingerprint, _ = _current_fingerprint(root, row)
-            if current_fingerprint != fingerprint:
-                raise SnapshotRequestError(409, "snapshot_source_changed", "source changed while snapshot was being built")
-            revision_after, _ = _git_identity(root, row)
-            if revision_after != revision:
-                raise SnapshotRequestError(409, "snapshot_source_changed", "worktree HEAD changed while snapshot was being built")
-
-            created = _utcnow()
-            created_at = created.isoformat()
-            expires_at = (created + timedelta(hours=SNAPSHOT_TTL_HOURS)).isoformat()
-            manifest = _manifest(
-                row, revision, dirty, fingerprint, entries, copied_bytes, excluded,
-                created_at, expires_at,
-            )
-            (stage / "README.md").write_text(
-                _readme(row, revision, fingerprint, created_at, excluded),
-                encoding="utf-8", newline="\n",
-            )
-            _write_json(stage / "snapshot.json", manifest)
-            _load_manifest(stage, row)
-            stage.replace(final)
-            published = True
-
-            with get_store().transaction():
-                updated, changed = db.mark_created(
-                    snapshot_id, created_at, expires_at, revision, fingerprint,
-                    len(entries), copied_bytes,
-                )
-                if not changed:
-                    raise SnapshotRequestError(409, "snapshot_state_conflict", "snapshot state changed before publish completed")
-                _record_event(
-                    "snapshot_created", updated, actor, "approved", "created",
-                    copied_file_count=len(entries), copied_byte_size=copied_bytes,
-                    excluded=_excluded_summary(excluded),
-                    approval_latency_seconds=max(
-                        0.0,
-                        (created - (_parse_time(row.get("approved_at")) or created)).total_seconds(),
-                    ),
-                )
-            result = dict(updated)
-            result["snapshot_path"] = str(final)
-            result["stale"] = False
-            result["available"] = True
-            return result
-        except Exception as exc:
-            if not published:
-                if stage.exists() and not _is_reparse_or_symlink(stage):
-                    shutil.rmtree(stage, ignore_errors=True)
-                _fail_creation(row, actor, exc)
-            raise
-        finally:
-            if claim.exists() and not _is_reparse_or_symlink(claim):
-                try:
-                    claim.rmdir()
-                except OSError:
-                    logger.warning("snapshot %s materialization claim could not be removed", snapshot_id, exc_info=True)
+    raise SnapshotRequestError(410, "snapshot_feature_retired", "Legacy Snapshot materialization is retired")
 
 
 def _mark_stale(row: dict, actor: str, current_revision: str | None, reason: str,
@@ -1255,6 +1140,8 @@ def startup() -> None:
             return
         _sweep_started = True
         _sweep_stop.clear()
+    from modules.flow_gate.services import snapshot_request_service
+    snapshot_request_service.retire_unmaterialized(SYSTEM_ACTOR_USER_ID)
     cleanup_orphans(startup=True)
     sweep_expired()
 
