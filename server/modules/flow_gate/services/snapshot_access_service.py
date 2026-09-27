@@ -210,6 +210,12 @@ def _metadata(row: dict) -> dict:
     if state == "rejected":
         result["rejected_at"] = row.get("rejected_at")
         result["rejection_reason"] = _public_rejection_reason(row)
+    if state == "failed":
+        result["failure_code"] = row.get("failure_code")
+        result["failure_reason"] = public_error_text(
+            str(row.get("failure_reason") or "snapshot materialization failed"),
+            row.get("snapshot_id"),
+        )
     if state == "stale":
         result["warning"] = STALE_WARNING
         result["validation_claim"] = STALE_EXPLANATION

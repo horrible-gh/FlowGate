@@ -1501,7 +1501,10 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     elif call["name"] == "run_test":
                         _status, resp = api_server_tools.run_test(run, call["input"], _svc()._remaining_sec(run))
                     elif call["name"] == "request_source_snapshot":
-                        _status, resp = api_server_tools.request_source_snapshot(run, current_token, call["input"])
+                        _status, resp = api_server_tools.request_source_snapshot(
+                            run, current_token, call["input"],
+                            min(_svc()._remaining_sec(run), _absolute_remaining_sec(run)),
+                        )
                     elif call["name"] == "access_source_snapshot":
                         _status, resp = api_server_tools.access_source_snapshot(run, current_token, call["input"])
                     elif call["name"] == "run_source_snapshot":

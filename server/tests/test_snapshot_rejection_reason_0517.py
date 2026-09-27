@@ -1,7 +1,7 @@
 """flowgate.default.0517 T0026 §2 — a human's snapshot rejection carries a reason.
 
 Drives the real FastAPI routes over a real sqlite schema built from the migrations
-(115/116/118 + 120), so the reason is proven end to end: typed by a human on the reject
+(115/116/118/120/121), so the reason is proven end to end: typed by a human on the reject
 route -> durable column -> audit event metadata -> the worker's CLI status / API tool
 answer, and nowhere outside the requesting run's lineage.
 """
@@ -27,6 +27,7 @@ MIGRATIONS = Path(__file__).parents[1] / "sql" / "migrations"
 SCHEMA = (
     "115_snapshot_requests.sql", "116_snapshot_materialization.sql",
     "118_snapshot_lineage.sql", "120_snapshot_rejection_reason.sql",
+    "121_snapshot_pending_owner_provenance.sql",
 )
 
 RUN = {

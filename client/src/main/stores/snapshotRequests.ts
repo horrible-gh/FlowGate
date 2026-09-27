@@ -16,6 +16,14 @@ export interface SnapshotRequestRow {
   run_id: string
   token_id: string
   provider_id: string
+  chain_id?: string | null
+  requested_provider_id?: string | null
+  actual_provider_name?: string | null
+  provider_source?: string | null
+  attempt_no?: number | null
+  fallback_used?: boolean | null
+  failure_code?: string | null
+  failure_reason?: string | null
   reason: string
   scope: 'single_file' | 'selected_files' | 'directory' | 'whole_source'
   requested_paths: string[]
@@ -32,6 +40,7 @@ export const useSnapshotRequestsStore = defineStore('snapshotRequests', () => {
   const pending = ref<SnapshotRequestRow[]>([])
   const loading = ref(false)
   const error = ref(false)
+  const approvalError = ref<{ code: string; message: string; retryable: boolean; newRequestRequired: boolean } | null>(null)
 
   // T0012 §10: "이번 수신에서 아직 자동 표시하지 않음". A request id is marked seen the
   // FIRST time this store observes it in a pending fetch — including the very first
@@ -74,6 +83,7 @@ export const useSnapshotRequestsStore = defineStore('snapshotRequests', () => {
   }
 
   function openDetail(row: SnapshotRequestRow): void {
+    approvalError.value = null
     detailTarget.value = row
   }
 
@@ -81,6 +91,7 @@ export const useSnapshotRequestsStore = defineStore('snapshotRequests', () => {
   // drops the client-side "currently showing" pointer (T0012 §7/§10).
   function closeDetail(): void {
     detailTarget.value = null
+    approvalError.value = null
   }
 
   function openReject(row: SnapshotRequestRow): void {
@@ -162,7 +173,32 @@ export const useSnapshotRequestsStore = defineStore('snapshotRequests', () => {
   }
 
   async function approve(snapshotId: string): Promise<void> {
-    await settleDecision(snapshotId, 'approve')
+    approvalError.value = null
+    try {
+      await settleDecision(snapshotId, 'approve')
+    } catch (error) {
+      const detail = (error as { response?: { data?: { detail?: { code?: string; message?: string } } } })?.response?.data?.detail
+      let row: SnapshotRequestRow | null = null
+      try {
+        const response = await getRequest<{ ok: boolean; request: SnapshotRequestRow }>(
+          `/api/v1/snapshots/${encodeURIComponent(snapshotId)}`,
+        )
+        row = response.data?.request ?? null
+      } catch { /* Keep the original public HTTP error when detail refresh fails. */ }
+      if (row && detailTarget.value?.snapshot_id === snapshotId) detailTarget.value = row
+      const code = row?.failure_code || detail?.code || 'snapshot_approval_failed'
+      approvalError.value = {
+        code,
+        message: row?.failure_reason || detail?.message || '',
+        retryable: code === 'snapshot_materialization_busy' && row?.status !== 'failed',
+        newRequestRequired: row?.status === 'failed',
+      }
+      // `approved` is a durable, human-actionable retry state after a busy
+      // materialization. Re-read the server list for every refreshed row so closing this
+      // dialog, an SSE refresh, or a later page load all expose the same recovery entry.
+      if (row && row.project_id === activeProjectId.value) await fetchPending(row.project_id)
+      throw error
+    }
   }
 
   // The reason is the human's own text; the server refuses an empty one (T0026 §2).
@@ -178,6 +214,7 @@ export const useSnapshotRequestsStore = defineStore('snapshotRequests', () => {
     pending.value = []
     loading.value = false
     error.value = false
+    approvalError.value = null
     seenIds.clear()
     initialized = false
     detailTarget.value = null
@@ -185,7 +222,7 @@ export const useSnapshotRequestsStore = defineStore('snapshotRequests', () => {
   }
 
   return {
-    pending, loading, error, pendingCount, detailTarget, detailOpen, rejectTarget, rejectOpen,
+    pending, loading, error, approvalError, pendingCount, detailTarget, detailOpen, rejectTarget, rejectOpen,
     fetchPending, approve, reject, openDetail, closeDetail, openReject, closeReject, reset,
   }
 })

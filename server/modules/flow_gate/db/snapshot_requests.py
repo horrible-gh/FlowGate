@@ -16,10 +16,22 @@ def _decode(row):
     for key in ("stale", "cleanup_failed"):
         if key in row:
             row[key] = bool(row.get(key))
-    for key in ("cleanup_attempts", "copied_file_count", "copied_byte_size"):
+    for key in ("cleanup_attempts", "copied_file_count", "copied_byte_size", "attempt_no"):
         if key in row and row.get(key) is not None:
             row[key] = int(row[key])
+    if "fallback_used" in row and row["fallback_used"] is not None:
+        row["fallback_used"] = bool(row["fallback_used"])
     return row
+
+
+def pending_for_owner(project_id, group_id, chain_id, run_id):
+    owner = chain_id or run_id
+    return _decode(get_store()._fetch_one(
+        "SELECT * FROM snapshot_requests WHERE project_id=? AND group_id=? "
+        "AND status='requested' AND COALESCE(NULLIF(chain_id,''),run_id)=? "
+        "ORDER BY requested_at,snapshot_id LIMIT 1",
+        [project_id, group_id, owner],
+    ))
 
 
 def create(data):
@@ -27,12 +39,15 @@ def create(data):
     at = data.get("requested_at") or now_iso()
     get_store()._execute(
         "INSERT INTO snapshot_requests "
-        "(snapshot_id,project_id,group_id,run_id,chain_id,token_id,provider_id,reason,scope,"
-        "requested_paths,purpose,source_kind,status,requested_at,source_revision,source_fingerprint) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "(snapshot_id,project_id,group_id,run_id,chain_id,token_id,provider_id,"
+        "requested_provider_id,actual_provider_name,provider_source,attempt_no,fallback_used,"
+        "reason,scope,requested_paths,purpose,source_kind,status,requested_at,source_revision,source_fingerprint) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
             sid, data["project_id"], data["group_id"], data["run_id"], data.get("chain_id"),
-            data["token_id"], data["provider_id"], data["reason"], data["scope"],
+            data["token_id"], data["provider_id"], data.get("requested_provider_id"),
+            data.get("actual_provider_name"), data.get("provider_source"),
+            data.get("attempt_no"), data.get("fallback_used"), data["reason"], data["scope"],
             json.dumps(data["requested_paths"], ensure_ascii=False), data["purpose"],
             data["source_kind"], "requested", at, data.get("source_revision"),
             data.get("source_fingerprint"),
@@ -48,7 +63,8 @@ def get(snapshot_id):
 
 
 def list_pending(project_id=None, group_id=None):
-    where = ["status='requested'"]
+    """List durable human-action rows, including approved materialization retries."""
+    where = ["status IN ('requested','approved')"]
     params = []
     if project_id:
         where.append("project_id=?")

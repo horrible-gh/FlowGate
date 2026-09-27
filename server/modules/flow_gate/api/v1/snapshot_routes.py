@@ -26,7 +26,7 @@ def request_snapshot(body:RequestIn,request:Request):
       or ai_invoke_runs.get(token.get("ai_run_id")) or {})
  try:
   service.validate_request_authority(token,run)
-  data=body.model_dump()|{"project_id":token.get("project") or token.get("project_id") or run.get("project_id"),"group_id":token.get("group_id") or run.get("group_id"),"run_id":token.get("ai_run_id"),"chain_id":run.get("chain_id") or run.get("run_id"),"token_id":token.get("token_id"),"provider_id":token.get("provider_id") or run.get("provider_id")}
+  data=service.request_data_for_run(run,token,body.model_dump())
   return {"ok":True,"request":service.create_request(data,token["issued_to"])}
  except service.SnapshotRequestError as exc: _error(exc)
 @router.get("/pending")
@@ -87,12 +87,11 @@ def _cli_context(request:Request):
 @router.post("/cli/request")
 def cli_request_snapshot(body:RequestIn,request:Request):
  _raw,token,run=_cli_context(request)
- data=body.model_dump()|{"project_id":run.get("project_id"),"group_id":run.get("group_id"),
-  "run_id":run.get("run_id"),"chain_id":run.get("chain_id") or run.get("run_id"),
-  "token_id":token.get("token_id"),"provider_id":run.get("provider_id")}
+ data=service.request_data_for_run(run,token,body.model_dump())
  try: row=service.create_request(data,str(token.get("issued_to") or "cli-worker"))
  except service.SnapshotRequestError as exc: _error(exc)
- return {"ok":True,"request":row,"materialized":False,"requires_human_decision":True}
+ return {"ok":True,"request":row,"materialized":False,"requires_human_decision":True,
+         "reused_pending":row.get("reused_pending",False)}
 
 @router.get("/cli/{snapshot_id}/status")
 def cli_snapshot_status(snapshot_id:str,request:Request):

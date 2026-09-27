@@ -12,6 +12,7 @@ from modules.flow_gate.services import snapshot_request_service
 from modules.flow_gate.services import snapshot_access_service
 from modules.flow_gate.services import api_server_tools
 from modules.flow_gate.api.v1 import snapshot_routes
+from modules.flow_gate.db import snapshot_requests as snapshot_db
 
 
 class _Txn:
@@ -99,6 +100,26 @@ class _State:
         if group_id and self.row["group_id"] != group_id:
             return []
         return [dict(self.row)]
+
+
+def test_pending_action_queue_includes_approved_materialization_retries(monkeypatch):
+    captured = {}
+
+    class Store:
+        def _fetch_all(self, sql, params):
+            captured["sql"] = sql
+            captured["params"] = params
+            return [
+                {"snapshot_id": "requested", "status": "requested", "requested_paths": "[]"},
+                {"snapshot_id": "approved", "status": "approved", "requested_paths": "[]"},
+            ]
+
+    monkeypatch.setattr(snapshot_db, "get_store", lambda: Store())
+    rows = snapshot_db.list_pending("project", "project.default.0517")
+
+    assert [row["status"] for row in rows] == ["requested", "approved"]
+    assert "status IN ('requested','approved')" in captured["sql"]
+    assert captured["params"] == ["project", "project.default.0517"]
 
 
 @pytest.fixture
@@ -218,7 +239,10 @@ def test_selected_file_failure_is_terminal_and_never_publishes_partial(snapshot_
     assert not list(namespace.glob("*.tmp"))
     failure = snapshot_env.state.events[-1]
     assert failure["event_type"] == "state_changed"
-    assert json.loads(failure["metadata"])["error_code"] == "snapshot_create_failed"
+    metadata = json.loads(failure["metadata"])
+    assert metadata["error_code"] == "snapshot_create_failed"
+    assert metadata["failure_stage"] == "snapshot_path_missing"
+    assert snapshot_env.row["failure_code"] == "snapshot_create_failed"
 
 
 def test_exact_worktree_failure_never_falls_back(snapshot_env, monkeypatch):
@@ -539,6 +563,16 @@ def test_sqlite_lifecycle_state_machine_queries(tmp_path, monkeypatch):
     connection.executescript(request_sql)
     connection.executescript(lifecycle_sql)
     connection.executescript(lineage_sql)
+    rejection_sql = (
+        Path(__file__).parents[1] / "sql" / "migrations" / "sqlite"
+        / "120_snapshot_rejection_reason.sql"
+    ).read_text(encoding="utf-8")
+    connection.executescript(rejection_sql)
+    provenance_sql = (
+        Path(__file__).parents[1] / "sql" / "migrations" / "sqlite"
+        / "121_snapshot_pending_owner_provenance.sql"
+    ).read_text(encoding="utf-8")
+    connection.executescript(provenance_sql)
 
     class Store:
         def _execute(self, sql, params):
@@ -727,6 +761,7 @@ def test_c1_to_c13_connected_request_pending_approve_read_stale_cleanup(
         snapshot_env.row["approved_by" if decision == "approved" else "rejected_by"] = actor
         return dict(snapshot_env.row), True
 
+    monkeypatch.setattr(snapshot_request_service.db, "pending_for_owner", lambda *_args: None)
     monkeypatch.setattr(snapshot_request_service.db, "create", create)
     monkeypatch.setattr(snapshot_request_service.db, "transition", transition)
     monkeypatch.setattr(
@@ -973,6 +1008,7 @@ def test_t0022_disguised_change_during_build_fails_materialize(snapshot_env, mon
     with pytest.raises(snapshot_request_service.SnapshotRequestError) as caught:
         materialize.materialize("snap_test", "human")
     assert caught.value.code == "snapshot_source_changed"
+    assert snapshot_env.row["failure_code"] == "snapshot_source_changed"
     assert snapshot_env.row["status"] == "failed"
     assert not snapshot_env.final().exists()
 

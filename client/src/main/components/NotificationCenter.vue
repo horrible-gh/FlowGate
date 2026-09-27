@@ -202,11 +202,13 @@
             data-test="snap-pending-item"
           >
             <div class="snap-pending-row1">
-              <span class="snap-pending-provider"><AppIcon name="robot" /> {{ snapshotProviderLabel(row.provider_id) }}</span>
+              <span class="snap-pending-provider"><AppIcon name="robot" /> {{ snapshotProviderLabel(row) }}</span>
               <span class="badge" :class="row.scope === 'whole_source' ? 'badge-yellow' : 'badge-gray'">{{ snapshotScopeLabel(row.scope) }}</span>
             </div>
             <p class="snap-pending-meta">
               {{ t('main.snapshot_approval.pending_item_meta', { group: row.group_id, time: formatDashboardTime(row.requested_at) }) }}
+              · {{ t('main.snapshot_approval.field_run') }} …{{ row.run_id.slice(-8) }} · {{ row.status }}
+              <span v-if="row.fallback_used"> · {{ t('main.snapshot_approval.fallback') }}: {{ snapshotSelectedProviderLabel(row) }}</span>
             </p>
             <p class="snap-pending-paths">{{ snapshotPathSummary(row) }}</p>
             <p class="snap-pending-reason">{{ row.reason }}</p>
@@ -214,7 +216,7 @@
               <AppIcon name="warning" /> {{ t('main.snapshot_approval.pending_whole_source_warning') }}
             </p>
             <div class="snap-pending-actions">
-              <button type="button" class="btn btn-danger btn-sm" data-test="snap-pending-reject" @click="snapshotStore.openReject(row)">
+              <button v-if="row.status === 'requested'" type="button" class="btn btn-danger btn-sm" data-test="snap-pending-reject" @click="snapshotStore.openReject(row)">
                 {{ t('main.snapshot_approval.pending_reject') }}
               </button>
               <button type="button" class="btn btn-primary btn-sm" data-test="snap-pending-details" @click="openSnapshotDetails(row)">
@@ -389,9 +391,15 @@ function snapshotScopeLabel(scope: string): string {
   return key ? t(`main.snapshot_approval.${key}`) : scope
 }
 
-function snapshotProviderLabel(providerId: string): string {
-  const found = aiProviderStore.providers.find((p) => p.id === providerId)
-  return found?.name || providerId || t('main.snapshot_approval.unknown_provider')
+function snapshotProviderLabel(row: SnapshotRequestRow): string {
+  if (row.actual_provider_name) return row.actual_provider_name
+  const found = aiProviderStore.providers.find((p) => p.id === row.provider_id)
+  return found?.name || row.provider_id || t('main.snapshot_approval.unknown_provider')
+}
+function snapshotSelectedProviderLabel(row: SnapshotRequestRow): string {
+  const id = row.requested_provider_id
+  const found = aiProviderStore.providers.find((p) => p.id === id)
+  return found?.name || id || t('main.snapshot_approval.unknown_provider')
 }
 
 // Summary only (T0012 §9/§15) — the full list lives in the detail dialog only.
