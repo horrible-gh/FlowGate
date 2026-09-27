@@ -83,7 +83,7 @@
           <AppIcon name="arrow-clockwise" />
           <span>{{ updatePending ? t('main.explorer.git_updating') : t('main.explorer.git_update') }}</span>
         </button>
-        <span class="fx-git-update-status">{{ updateStatusText }}</span>
+        <span class="fx-git-update-status">{{ workBaseBranch }} · {{ updateStatusText }}</span>
       </div>
       <div v-if="selectedGroupBusy" class="fx-readonly-badge">
         <AppIcon name="lock" />
@@ -178,7 +178,7 @@
     v-if="conflictDialogOpen"
     :files="conflictFiles"
     :branch="groupGitState?.branch || selectedGroup"
-    :base-branch="baseBranch"
+    :base-branch="workBaseBranch"
     :busy="updatePending"
     :load-status="conflictLoadStatus"
     :error-message="conflictError"
@@ -320,10 +320,12 @@ type GroupGitState = {
   ahead_count: number | null
   behind_count: number | null
   base_remote_behind_count: number | null
+  work_base_ref: string | null
   status: string
   merge_id: number | null
 }
 const groupGitState = ref<GroupGitState | null>(null)
+const workBaseBranch = computed(() => groupGitState.value?.work_base_ref || baseBranch.value)
 const updatePending = ref(false)
 const baseDirtyDialog = ref<InstanceType<typeof GitBaseDirtyDialog> | null>(null)
 const untrackedConflictDialog = ref<InstanceType<typeof GitUntrackedConflictDialog> | null>(null)
@@ -346,7 +348,7 @@ const showBehindBadge = computed(() => !!groupGitState.value && !structurallyUnr
   && (behindUnknown.value || (groupGitState.value.behind_count ?? 0) > 0))
 const behindDanger = computed(() => !behindUnknown.value && (groupGitState.value?.behind_count ?? 0) > 20)
 const showUpdateRow = computed(() => !!groupGitState.value && !structurallyUnregistered.value)
-const canUpdateFromBase = computed(() => showUpdateRow.value && (
+const canUpdateFromBase = computed(() => showUpdateRow.value && !selectedGroupBusy.value && (
   behindUnknown.value || (groupGitState.value?.behind_count ?? 0) > 0
 ))
 const updateStatusText = computed(() => behindUnknown.value
@@ -550,6 +552,7 @@ async function loadGroupGitBadge(gid: string) {
       ahead_count: st.ahead_count ?? null,
       behind_count: st.behind_count ?? null,
       base_remote_behind_count: st.base_remote_behind_count ?? null,
+      work_base_ref: st.work_base_ref ?? null,
       status: String(st.status ?? 'none'),
       merge_id: st.merge_id == null ? null : Number(st.merge_id),
     } : null

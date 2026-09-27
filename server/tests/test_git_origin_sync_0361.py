@@ -357,6 +357,8 @@ def test_ensure_worktree_locked_syncs_origin_before_fetching(monkeypatch, tmp_pa
 # ── D: update_from_base() (NR0003 §12 test D) ───────────────────────────────
 
 def test_update_from_base_syncs_origin_before_fetching(monkeypatch, tmp_path):
+    from modules.flow_gate.services.git import finalize
+    monkeypatch.setattr(finalize, "_guard_group_update_ai_idle", lambda _gid: None)
     calls: list[list[str]] = []
     base_root = tmp_path / "base"
     wt_path = tmp_path / "wt"
@@ -401,6 +403,8 @@ def test_update_from_base_syncs_origin_before_fetching(monkeypatch, tmp_path):
 
 
 def test_update_from_base_sync_failure_stops_before_fetch(monkeypatch, tmp_path):
+    from modules.flow_gate.services.git import finalize
+    monkeypatch.setattr(finalize, "_guard_group_update_ai_idle", lambda _gid: None)
     base_root = tmp_path / "base"
     wt_path = tmp_path / "wt"
     cfg = {"base_branch": "main", "repo_url": "https://new.example/repo.git"}
