@@ -92,6 +92,11 @@ async def lifespan(app: FastAPI):
         snapshot_materialization_service.shutdown()
     except Exception:
         logger.warning("snapshot cleanup shutdown failed", exc_info=True)
+    try:
+        from modules.flow_gate.services import source_bundle_cleanup_service
+        source_bundle_cleanup_service.shutdown()
+    except Exception:
+        logger.warning("Source Bundle cleanup shutdown failed", exc_info=True)
 
 
 app = FastAPI(lifespan=lifespan)

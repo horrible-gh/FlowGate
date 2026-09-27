@@ -25,9 +25,10 @@ MAX_TOTAL_BYTES = max(1, int(os.getenv("FLOWGATE_BUNDLE_MAX_TOTAL_BYTES", str(50
 BUILD_SECONDS = max(1, int(os.getenv("FLOWGATE_BUNDLE_BUILD_SECONDS", "120")))
 TTL_HOURS = max(1, int(os.getenv("FLOWGATE_BUNDLE_TTL_HOURS", "24")))
 _SECRET = re.compile(
-    r"(^\.env(?:\..*)?$|(?:^|[._-])(?:credential|credentials|secret|secrets|private[-_]?key|certificate|certificates)"
-    r"(?:[._-]|$)|\.(?:pem|p12|pfx|p8|key|crt|cer|jks|keystore)$|^id_(?:rsa|dsa|ecdsa|ed25519)$)",
-    re.IGNORECASE,
+    r"^(?:\.env(?:\..*)?|\.netrc|\.npmrc|\.pypirc|credentials|credentials\.json|"
+    r"service-account\.json|service_account\.json|secrets|id_(?:rsa|dsa|ecdsa|ed25519))$"
+    r"|(?:^|[._-])(?:credentials?|secrets?|private[-_]key|certificates?)(?:[._-]|$)"
+    r"|\.(?:pem|key|p12|pfx|p8|crt|cer|jks|keystore)$", re.IGNORECASE,
 )
 
 
@@ -101,7 +102,7 @@ def _identity(root: Path, deadline):
 
 def _excluded(relative: str, is_dir: bool) -> bool:
     name = PurePosixPath(relative).name
-    if name in EXCLUDED_DIR_NAMES or name.startswith(EXCLUDED_DIR_PREFIXES):
+    if name in EXCLUDED_DIR_NAMES or (is_dir and name in {"source-bundles", "source-bundle-scratch"}) or name.startswith(EXCLUDED_DIR_PREFIXES):
         return True
     if is_dir:
         return bool(_SECRET.search(name))
@@ -220,9 +221,14 @@ def _fingerprint(entries, directories=()):
 
 
 def inspect_source(root: Path, deadline):
+    started = time.monotonic()
     before = _identity(root, deadline)
+    scan_started = time.monotonic()
     files, dirs = _scan(root, deadline)
+    scan_duration_ms = int((time.monotonic() - scan_started) * 1000)
+    hash_started = time.monotonic()
     entries = [_hash_file(root, name, st, deadline) for name, st in files]
+    fingerprint_duration_ms = int((time.monotonic() - hash_started) * 1000)
     if _identity(root, deadline) != before:
         raise SourceBundleError("source_changed", "worktree revision changed during capture")
     after_files, after_dirs = _scan(root, deadline)
@@ -230,7 +236,11 @@ def inspect_source(root: Path, deadline):
         raise SourceBundleError("source_changed", "source tree changed during capture")
     return {"source_revision": before[0], "source_dirty": before[1],
             "content_fingerprint": _fingerprint(entries, dirs), "entries": entries,
-            "files": files, "dirs": dirs}
+            "files": files, "dirs": dirs,
+            "scan_duration_ms": scan_duration_ms,
+            "fingerprint_duration_ms": fingerprint_duration_ms,
+            "duration_ms": int((time.monotonic() - started) * 1000),
+            "bytes_hashed": sum(item["size"] for item in entries)}
 
 
 def bundle_path(project_id: str, bundle_id: str) -> Path:
@@ -241,6 +251,7 @@ def bundle_path(project_id: str, bundle_id: str) -> Path:
 
 
 def materialize(root: Path, project_id: str, bundle_id: str, baseline: dict, deadline):
+    started = time.monotonic()
     final = bundle_path(project_id, bundle_id)
     parent = final.parent
     parent.mkdir(parents=True, exist_ok=True)
@@ -256,14 +267,17 @@ def materialize(root: Path, project_id: str, bundle_id: str, baseline: dict, dea
         for name, st in baseline["dirs"]:
             (source_dir / PurePosixPath(name)).mkdir(parents=True, exist_ok=True)
         copied_bytes = 0
+        copy_started = time.monotonic()
         for name, st in baseline["files"]:
             item = _hash_file(root, name, st, deadline, source_dir / PurePosixPath(name))
             copied_bytes += item["size"]
             if copied_bytes > MAX_TOTAL_BYTES:
                 raise SourceBundleError("resource_limit", "Source Bundle total byte limit exceeded")
             copied.append(item)
+        copy_duration_ms = int((time.monotonic() - copy_started) * 1000)
         if _fingerprint(copied, baseline["dirs"]) != baseline["content_fingerprint"]:
             raise SourceBundleError("source_changed", "source changed between scan and copy")
+        verify_started = time.monotonic()
         verified = inspect_source(root, deadline)
         if verified["content_fingerprint"] != baseline["content_fingerprint"] or (
             verified["source_revision"], verified["source_dirty"]
@@ -287,12 +301,20 @@ def materialize(root: Path, project_id: str, bundle_id: str, baseline: dict, dea
         _check_time(deadline)
         stage.rename(final)
         published = True
+        verify_duration_ms = int((time.monotonic() - verify_started) * 1000)
         now = datetime.now(timezone.utc)
         return {"source_revision": baseline["source_revision"], "source_dirty": baseline["source_dirty"],
                 "content_fingerprint": baseline["content_fingerprint"],
                 "bundle_sha256": hashlib.sha256(encoded).hexdigest(),
-                "file_count": len(copied), "byte_size": sum(x["size"] for x in copied),
-                "created_at": now.isoformat(), "expires_at": (now + timedelta(hours=TTL_HOURS)).isoformat()}
+                "file_count": len(copied), "byte_size": copied_bytes,
+                "created_at": now.isoformat(), "expires_at": (now + timedelta(hours=TTL_HOURS)).isoformat(),
+                "metrics": {"bundle_scan_duration_ms": baseline.get("scan_duration_ms", 0),
+                            "bundle_copy_duration_ms": copy_duration_ms,
+                            "bundle_verify_duration_ms": verify_duration_ms,
+                            "bundle_fingerprint_duration_ms": baseline.get("fingerprint_duration_ms", 0),
+                            "bundle_file_count": len(copied), "bundle_byte_size": copied_bytes,
+                            "bundle_reused": False,
+                            "bundle_build_duration_ms": int((time.monotonic() - started) * 1000)}}
     finally:
         if not published and stage.exists():
             shutil.rmtree(stage, ignore_errors=True)

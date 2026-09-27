@@ -38,7 +38,16 @@ def list_bundles(project_id: str, group_id: str, user=Depends(get_current_user))
         else:
             item["freshness"] = "not_applicable"
         result.append(item)
-    return {"ok": True, "bundles": result}
+    scratches = [{
+        "scratch_key": row["scratch_key"][:16], "bundle_id": row["bundle_id"],
+        "status": row["status"], "created_at": row["created_at"],
+        "expires_at": row["expires_at"], "deleted_at": row["deleted_at"],
+        "byte_size": row["byte_size"], "build_duration_ms": row["build_duration_ms"],
+        "reuse_count": row["reuse_count"], "cleanup_attempts": row["cleanup_attempts"],
+        "cleanup_state": "warning" if row["cleanup_last_error"] else row["status"],
+        "cleanup_last_error": row["cleanup_last_error"],
+    } for row in db.list_scratch_recent(project_id, group_id)]
+    return {"ok": True, "bundles": result, "scratches": scratches}
 
 
 

@@ -38,6 +38,13 @@ def test_whole_source_exclusions_and_atomic_publish(tmp_path, monkeypatch):
     root = _worktree(tmp_path, monkeypatch)
     (root / "app.py").write_text("print('ok')", encoding="utf-8")
     (root / ".env").write_text("SECRET=1", encoding="utf-8")
+    excluded_names = (
+        "credentials-2024.json", "database-credentials.txt", "prod-secrets.yaml",
+        "my-secret-key.txt", "private_key.txt", "aws_credentials.ini",
+        "app.secret", "secrets.yml", "secret.txt",
+    )
+    for name in excluded_names:
+        (root / name).write_text("credential", encoding="utf-8")
     (root / ".git").write_text("gitdir: elsewhere", encoding="utf-8")
     (root / "client.crt").write_text("certificate", encoding="utf-8")
     (root / "secrets").mkdir()
@@ -51,6 +58,7 @@ def test_whole_source_exclusions_and_atomic_publish(tmp_path, monkeypatch):
     final = tmp_path / "durable" / ("sb_" + "a" * 32)
     assert (final / "source" / "app.py").read_text() == "print('ok')"
     assert not (final / "source" / ".env").exists()
+    assert all(not (final / "source" / name).exists() for name in excluded_names)
     assert not (final / "source" / ".git").exists()
     assert not (final / "source" / "client.crt").exists()
     assert not (final / "source" / "secrets").exists()
@@ -111,8 +119,11 @@ def test_sqlite_migration_db_uniqueness():
            "122_source_bundles.sql").read_text(encoding="utf-8")
     conn = sqlite3.connect(":memory:")
     conn.executescript(sql)
+    extension = (Path(__file__).resolve().parents[1] / "sql" / "migrations" / "sqlite" /
+                 "123_source_bundle_cleanup_metrics.sql").read_text(encoding="utf-8")
+    conn.executescript(extension)
     tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    assert {"source_bundles", "source_bundle_builds", "source_bundle_usages"} <= tables
+    assert {"source_bundles", "source_bundle_builds", "source_bundle_usages", "source_bundle_scratches"} <= tables
     conn.execute("INSERT INTO source_bundle_builds VALUES (?,?,?,?,?,?,?,?)",
                  ("p", "g", m.POLICY_VERSION, "owner1", "b1", "tomorrow", "building", None))
     with pytest.raises(sqlite3.IntegrityError):
@@ -143,7 +154,7 @@ def test_reuse_skips_build_and_returns_no_host_path(monkeypatch, tmp_path):
     monkeypatch.setattr(m, "resolve_worktree", lambda _project, _group: tmp_path)
     monkeypatch.setattr(m, "inspect_source", lambda _root, _deadline: baseline)
     monkeypatch.setattr(service.db, "reusable", lambda *_args: [row])
-    monkeypatch.setattr(service, "_integrity", lambda _row: True)
+    monkeypatch.setattr(service, "_integrity", lambda *_args: True)
     monkeypatch.setattr(service.db, "claim", lambda *_args: pytest.fail("reuse copied source"))
     result = service.ensure("project", "group")
     assert result["reused"] is True

@@ -80,11 +80,11 @@ def created(bundle_id, owner, metadata):
         changed = store._execute_affected(
             "UPDATE source_bundles SET status='created',source_revision=?,source_dirty=?,"
             "content_fingerprint=?,bundle_sha256=?,file_count=?,byte_size=?,"
-            "created_at=?,expires_at=? WHERE bundle_id=? AND status='building'",
+            "created_at=?,expires_at=?,metrics_json=? WHERE bundle_id=? AND status='building'",
             [metadata["source_revision"], metadata["source_dirty"],
              metadata["content_fingerprint"], metadata["bundle_sha256"],
              metadata["file_count"], metadata["byte_size"], metadata["created_at"],
-             metadata["expires_at"], bundle_id],
+             metadata["expires_at"], json.dumps(metadata.get("metrics", {}), sort_keys=True), bundle_id],
         )
         if changed != 1:
             raise RuntimeError("bundle lifecycle changed during publish")
@@ -151,3 +151,101 @@ def attach_document(run_id, document_id):
         "UPDATE source_bundle_usages SET document_id=? WHERE run_id=? AND document_id IS NULL",
         [document_id, run_id],
     )
+
+def list_created(*, group_id=None, expired_before=None):
+    query = "SELECT * FROM source_bundles WHERE status='created'"
+    args = []
+    if group_id is not None:
+        query += " AND group_id=?"
+        args.append(group_id)
+    if expired_before is not None:
+        query += " AND expires_at<=?"
+        args.append(expired_before)
+    return [_row(row) for row in get_store()._fetch_all(query, args)]
+
+
+def list_building():
+    return [_row(row) for row in get_store()._fetch_all(
+        "SELECT * FROM source_bundles WHERE status='building'", []
+    )]
+
+
+def bundle_cleanup_warning(bundle_id, reason):
+    get_store()._execute_affected(
+        "UPDATE source_bundles SET cleanup_attempts=cleanup_attempts+1,"
+        "cleanup_last_error=?,cleanup_last_at=? WHERE bundle_id=?",
+        [str(reason)[:500], now_iso(), bundle_id],
+    )
+
+
+def bundle_cleanup_success(bundle_id):
+    get_store()._execute_affected(
+        "UPDATE source_bundles SET cleanup_last_error=NULL,cleanup_last_at=? WHERE bundle_id=?",
+        [now_iso(), bundle_id],
+    )
+
+
+def scratch_get(key):
+    return _row(get_store()._fetch_one(
+        "SELECT * FROM source_bundle_scratches WHERE scratch_key=?", [key]
+    ))
+
+
+def scratch_created(key, bundle_id, run_id, token_id, byte_size, duration_ms, expires_at):
+    get_store()._execute(
+        "INSERT INTO source_bundle_scratches "
+        "(scratch_key,bundle_id,run_id,token_id,status,created_at,expires_at,byte_size,build_duration_ms) "
+        "VALUES (?,?,?,?,'created',?,?,?,?)",
+        [key, bundle_id, run_id, token_id or None, now_iso(), expires_at, byte_size, duration_ms],
+    )
+
+
+def scratch_reused(key):
+    return get_store()._execute_affected(
+        "UPDATE source_bundle_scratches SET reuse_count=reuse_count+1 "
+        "WHERE scratch_key=? AND status='created'", [key],
+    ) == 1
+
+
+def scratch_candidates(*, run_id=None, token_id=None, group_id=None, expired_before=None):
+    query = ("SELECT s.* FROM source_bundle_scratches s "
+             "JOIN source_bundles b ON b.bundle_id=s.bundle_id WHERE s.status='created'")
+    args = []
+    if run_id is not None:
+        query += " AND s.run_id=?"
+        args.append(run_id)
+    if token_id is not None:
+        query += " AND s.token_id=?"
+        args.append(token_id)
+    if group_id is not None:
+        query += " AND b.group_id=?"
+        args.append(group_id)
+    if expired_before is not None:
+        query += " AND s.expires_at<=?"
+        args.append(expired_before)
+    return [_row(row) for row in get_store()._fetch_all(query, args)]
+
+
+def scratch_deleted(key):
+    return get_store()._execute_affected(
+        "UPDATE source_bundle_scratches SET status='deleted',deleted_at=?,"
+        "cleanup_last_error=NULL,cleanup_last_at=? WHERE scratch_key=? AND status='created'",
+        [now_iso(), now_iso(), key],
+    ) == 1
+
+
+def scratch_cleanup_warning(key, reason):
+    get_store()._execute_affected(
+        "UPDATE source_bundle_scratches SET cleanup_attempts=cleanup_attempts+1,"
+        "cleanup_last_error=?,cleanup_last_at=? WHERE scratch_key=?",
+        [str(reason)[:500], now_iso(), key],
+    )
+
+def list_scratch_recent(project_id, group_id, limit=20):
+    return [_row(row) for row in get_store()._fetch_all(
+        "SELECT s.* FROM source_bundle_scratches s "
+        "JOIN source_bundles b ON b.bundle_id=s.bundle_id "
+        "WHERE b.project_id=? AND b.group_id=? "
+        "ORDER BY s.created_at DESC,s.scratch_key DESC LIMIT ?",
+        [project_id, group_id, limit],
+    )]

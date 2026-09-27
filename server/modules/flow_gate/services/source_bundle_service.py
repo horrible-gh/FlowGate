@@ -14,7 +14,13 @@ from modules.flow_gate.services import source_bundle_materializer as materialize
 WAIT_SECONDS = 125
 
 
-def _public(row, reused=False):
+def _public(row, reused=False, fingerprint_ms=0):
+    metrics = json.loads(row.get("metrics_json") or "{}")
+    metrics["bundle_reused"] = bool(reused)
+    if reused:
+        metrics["bundle_fingerprint_duration_ms"] = fingerprint_ms
+        metrics["bundle_copy_duration_ms"] = 0
+        metrics["bundle_build_duration_ms"] = 0
     return {
         "bundle_id": row["bundle_id"], "status": row["status"], "scope": "whole_source",
         "source_revision": row["source_revision"], "source_dirty": bool(row["source_dirty"]),
@@ -25,11 +31,13 @@ def _public(row, reused=False):
         "origin": "automatic_source_access",
         "failure_code": row.get("failure_code"), "failure_reason": row.get("failure_reason"),
         "deleted_at": row.get("deleted_at"),
-        "cleanup_state": "deleted" if row["status"] == "deleted" else "active" if row["status"] == "created" else "none",
+        "cleanup_state": "deleted" if row["status"] == "deleted" else "warning" if row.get("cleanup_last_error") else "active" if row["status"] == "created" else "none",
+        "cleanup_attempts": row.get("cleanup_attempts", 0), "cleanup_last_error": row.get("cleanup_last_error"),
+        "metrics": metrics,
     }
 
 
-def _integrity(row):
+def _integrity(row, deadline=None):
     """Verify the immutable artifact before reuse; no live worktree is opened here."""
     try:
         root = materializer.bundle_path(row["project_id"], row["bundle_id"])
@@ -46,6 +54,8 @@ def _integrity(row):
         if materializer._linked(source.lstat()) or not source.is_dir():
             return False
         for item in source.rglob("*"):
+            if deadline is not None:
+                materializer._check_time(deadline)
             st = item.lstat()
             if materializer._linked(st):
                 return False
@@ -57,6 +67,8 @@ def _integrity(row):
                 h = hashlib.sha256()
                 with item.open("rb") as stream:
                     for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        if deadline is not None:
+                            materializer._check_time(deadline)
                         h.update(chunk)
                 if h.hexdigest() != expected[relative]["sha256"]:
                     return False
@@ -71,19 +83,20 @@ def _integrity(row):
 
 def ensure(project_id: str, group_id: str):
     """Return a path-free identity. A caller needing files uses bundle_path internally."""
-    deadline = time.monotonic() + materializer.BUILD_SECONDS
+    started = time.monotonic()
+    deadline = started + materializer.BUILD_SECONDS
     root = materializer.resolve_worktree(project_id, group_id)
     baseline = materializer.inspect_source(root, deadline)
     for candidate in db.reusable(
         project_id, group_id, baseline["source_revision"], baseline["source_dirty"],
         baseline["content_fingerprint"], datetime.now(timezone.utc).isoformat()
     ):
-        if _integrity(candidate):
-            return _public(candidate, reused=True)
+        if _integrity(candidate, deadline):
+            return _public(candidate, reused=True, fingerprint_ms=baseline.get("fingerprint_duration_ms", 0))
 
     owner, bundle_id = db.claim(project_id, group_id)
     if owner is None:
-        wait_until = time.monotonic() + WAIT_SECONDS
+        wait_until = min(deadline, time.monotonic() + WAIT_SECONDS)
         while time.monotonic() < wait_until:
             previous = db.get(bundle_id)
             if previous is None:
@@ -101,8 +114,8 @@ def ensure(project_id: str, group_id: str):
                 if (previous["source_revision"] == baseline["source_revision"] and
                     bool(previous["source_dirty"]) == baseline["source_dirty"] and
                     previous["content_fingerprint"] == baseline["content_fingerprint"] and
-                    _integrity(previous)):
-                    return _public(previous, reused=True)
+                    _integrity(previous, deadline)):
+                    return _public(previous, reused=True, fingerprint_ms=baseline.get("fingerprint_duration_ms", 0))
                 raise materializer.SourceBundleError(
                     "source_changed", "source changed during concurrent Bundle build"
                 )
@@ -113,6 +126,7 @@ def ensure(project_id: str, group_id: str):
     try:
         db.start(bundle_id, project_id, group_id)
         metadata = materializer.materialize(root, project_id, bundle_id, baseline, deadline)
+        metadata["metrics"]["bundle_build_duration_ms"] = int((time.monotonic() - started) * 1000)
         if materializer.resolve_worktree(project_id, group_id) != root:
             raise materializer.SourceBundleError("source_changed", "exact group worktree changed during capture")
         created = db.created(bundle_id, owner, metadata)

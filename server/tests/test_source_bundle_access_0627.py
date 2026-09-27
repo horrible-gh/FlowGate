@@ -26,6 +26,8 @@ def _fixture(monkeypatch, tmp_path):
     monkeypatch.setattr(access, "locator_roots", lambda *_: ())
     usages = []
     monkeypatch.setattr(access.db, "record_usage", lambda *args, **kwargs: usages.append((args, kwargs)))
+    monkeypatch.setattr(access.db, "scratch_created", lambda *args, **kwargs: None)
+    monkeypatch.setattr(access.db, "scratch_reused", lambda *args, **kwargs: True)
     run = {"project_id": "project", "group_id": "group", "run_id": "run-1",
            "token_id": "token-1", "source_root": str(tmp_path / "live")}
     return run, row, bundle, usages

@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from modules.flow_gate.db import source_bundles as db
@@ -65,7 +66,10 @@ def _resolve(run: dict, bundle_id: str | None) -> dict:
         info = bundles.ensure(_axis(run, "project_id", "project"), _axis(run, "group_id", "group"))
     except materializer.SourceBundleError as exc:
         raise BundleAccessError(409, exc.code, exc.message) from exc
-    return _row(run, info["bundle_id"])
+    row = _row(run, info["bundle_id"])
+    row["_reused"] = bool(info.get("reused"))
+    row["_fingerprint_duration_ms"] = info.get("metrics", {}).get("bundle_fingerprint_duration_ms", 0)
+    return row
 
 
 def _relative(raw: object, *, empty: bool = False) -> str:
@@ -123,6 +127,7 @@ def _fresh(row: dict) -> bool:
     try:
         root = materializer.resolve_worktree(row["project_id"], row["group_id"])
         state = materializer.inspect_source(root, time.monotonic() + materializer.BUILD_SECONDS)
+        row["_freshness_bytes_hashed"] = state.get("bytes_hashed", 0)
         return (state["source_revision"] == row["source_revision"] and
                 bool(state["source_dirty"]) == bool(row["source_dirty"]) and
                 state["content_fingerprint"] == row["content_fingerprint"])
@@ -131,7 +136,8 @@ def _fresh(row: dict) -> bool:
 
 
 def _metadata(row: dict, current: bool | None = None) -> dict:
-    result = bundles._public(row)
+    result = bundles._public(row, reused=row.get("_reused", False),
+                             fingerprint_ms=row.get("_fingerprint_duration_ms", 0))
     result["historical_result"] = True
     result["current_worktree_claim"] = current
     if current is False:
@@ -156,8 +162,12 @@ def access(run: dict, tool_input: dict) -> tuple[int, dict]:
     row = _resolve(run, tool_input.get("bundle_id"))
     root = materializer.bundle_path(row["project_id"], row["bundle_id"]) / "source"
     claim = bool(tool_input.get("claim_current_worktree"))
+    freshness_started = time.monotonic() if claim else None
     current = _fresh(row) if claim else None
-    payload = {"ok": True, "op": operation, "bundle": _metadata(row, current)}
+    freshness_ms = int((time.monotonic() - freshness_started) * 1000) if claim else 0
+    payload = {"ok": True, "op": operation, "bundle": _metadata(row, current),
+               "freshness_check_duration_ms": freshness_ms,
+               "freshness_bytes_hashed": row.get("_freshness_bytes_hashed", 0) if claim else 0}
     if operation == "read":
         target = _member(root, tool_input.get("path"))
         if not target.is_file():
@@ -220,7 +230,9 @@ def access(run: dict, tool_input: dict) -> tuple[int, dict]:
                 break
         payload.update(matches=matches, total=len(matches), truncated=len(matches) >= maximum)
     _usage(run, row, operation, access_kind="bundle_read", claim_current_worktree=claim,
-           freshness=current)
+           freshness=current, bundle_reused=row.get("_reused", False),
+           freshness_check_duration_ms=freshness_ms,
+           freshness_bytes_hashed=row.get("_freshness_bytes_hashed", 0) if claim else 0)
     if claim and not current:
         payload["ok"] = False
         payload["error"] = {"code": "bundle_stale_claim_blocked", "message": "historical Bundle result cannot validate the current worktree"}
@@ -233,6 +245,7 @@ def _scratch(run: dict, row: dict) -> tuple[Path, bool]:
     if not run_id:
         raise BundleAccessError(409, "scratch_run_missing", "AI run identity is required")
     key = hashlib.sha256((run_id + "\0" + row["bundle_id"]).encode()).hexdigest()
+    started = time.monotonic()
     parent = materializer.bundle_path(row["project_id"], row["bundle_id"]).parent / "scratch"
     target = parent / key
     marker = target / ".flowgate-bundle-scratch.json"
@@ -253,6 +266,15 @@ def _scratch(run: dict, row: dict) -> tuple[Path, bool]:
                 try:
                     data = json.loads(marker.read_text(encoding="utf-8"))
                     if data == {"run_id": run_id, "bundle_id": row["bundle_id"]} and (target / "source").is_dir():
+                        try:
+                            if not db.scratch_reused(key):
+                                db.scratch_created(key, row["bundle_id"], run_id,
+                                                   _axis(run, "token_id", "current_token_id"),
+                                                   int(row.get("byte_size") or 0), 0,
+                                                   (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat())
+                        except Exception as exc:
+                            raise BundleAccessError(500, "scratch_record_failed",
+                                                    "AI Scratch ownership could not be recorded") from exc
                         return target, True
                 except (OSError, ValueError):
                     pass
@@ -270,6 +292,15 @@ def _scratch(run: dict, row: dict) -> tuple[Path, bool]:
                 (stage / ".flowgate-bundle-scratch.json").write_text(
                     json.dumps({"run_id": run_id, "bundle_id": row["bundle_id"]}), encoding="utf-8")
                 stage.rename(target)
+                try:
+                    db.scratch_created(key, row["bundle_id"], run_id,
+                                       _axis(run, "token_id", "current_token_id"),
+                                       int(row.get("byte_size") or 0),
+                                       int((time.monotonic() - started) * 1000),
+                                       (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat())
+                except Exception as exc:
+                    shutil.rmtree(target, ignore_errors=True)
+                    raise BundleAccessError(500, "scratch_record_failed", "AI Scratch ownership could not be recorded") from exc
             except BundleAccessError:
                 raise
             except Exception as exc:
@@ -290,8 +321,9 @@ def execute(run: dict, tool_input: dict, remaining_sec: float) -> tuple[int, dic
     if not command or any(c in command for c in "\r\n\0"):
         raise BundleAccessError(422, "bundle_command_invalid", "command must be one non-empty line")
     row = _resolve(run, tool_input.get("bundle_id"))
+    scratch_started = time.monotonic()
     scratch, reused = _scratch(run, row)
-    current_before = _fresh(row) if tool_input.get("claim_current_worktree") else None
+    scratch_build_ms = 0 if reused else int((time.monotonic() - scratch_started) * 1000)
     timeout = max(.01, min(300.0, float(tool_input.get("timeout_seconds") or 300), remaining_sec))
     env = {"PATH": os.environ.get("PATH", ""), "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),
            "TEMP": str(scratch / ".flowgate-tmp"), "TMP": str(scratch / ".flowgate-tmp"),
@@ -316,20 +348,32 @@ def execute(run: dict, tool_input: dict, remaining_sec: float) -> tuple[int, dic
         raise BundleAccessError(409, "scratch_execution_failed", "AI Scratch execution failed") from exc
     out = (stdout or b"")[-MAX_READ:].decode("utf-8", errors="replace")
     err = (stderr or b"")[-MAX_READ:].decode("utf-8", errors="replace")
-    current_after = _fresh(row) if tool_input.get("claim_current_worktree") else None
+    freshness_started = time.monotonic() if tool_input.get("claim_current_worktree") else None
+    current_after = _fresh(row) if freshness_started is not None else None
+    freshness_ms = int((time.monotonic() - freshness_started) * 1000) if freshness_started is not None else 0
     success = proc.returncode == 0 and not timed_out
     detail = {"access_kind": "scratch_execution", "task_kind": task_kind, "scratch_key": hashlib.sha256(str(scratch).encode()).hexdigest()[:16],
-              "scratch_reused": reused, "exit_code": proc.returncode, "timed_out": timed_out,
-              "freshness_before": current_before, "freshness_after": current_after,
+              "bundle_reused": row.get("_reused", False),
+              "scratch_reused": reused, "scratch_build_duration_ms": scratch_build_ms,
+              "scratch_byte_size": int(row.get("byte_size") or 0),
+              "freshness_check_duration_ms": freshness_ms,
+              "freshness_bytes_hashed": row.get("_freshness_bytes_hashed", 0) if freshness_started is not None else 0,
+              "exit_code": proc.returncode, "timed_out": timed_out,
+              "freshness_after": current_after,
               "claim_current_worktree": bool(tool_input.get("claim_current_worktree"))}
     _usage(run, row, "execute", success=success, **detail)
     payload = {"ok": True, "op": "execute", "bundle": _metadata(row, current_after),
-               "task_kind": task_kind, "scratch_reused": reused, "exit_code": proc.returncode,
+               "task_kind": task_kind, "scratch_reused": reused,
+               "scratch_build_duration_ms": scratch_build_ms,
+               "scratch_byte_size": int(row.get("byte_size") or 0),
+               "freshness_check_duration_ms": freshness_ms,
+               "freshness_bytes_hashed": row.get("_freshness_bytes_hashed", 0) if freshness_started is not None else 0,
+               "exit_code": proc.returncode,
                "stdout": out, "stderr": err, "timed_out": timed_out, "success": success,
                "truncated": len(stdout or b"") > MAX_READ or len(stderr or b"") > MAX_READ,
                "duration_ms": int((time.monotonic() - started) * 1000),
                "historical_result": True, "current_worktree_validation_allowed": current_after is True}
-    if tool_input.get("claim_current_worktree") and not (current_before and current_after):
+    if tool_input.get("claim_current_worktree") and not current_after:
         payload.update(ok=False, claim_blocked=True,
                        error={"code": "bundle_stale_claim_blocked", "message": "historical Bundle result cannot validate the current worktree"})
         return 409, _sanitize(payload, _roots(run, row, scratch))
