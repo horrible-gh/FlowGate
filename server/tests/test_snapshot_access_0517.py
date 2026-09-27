@@ -498,6 +498,7 @@ def test_cli_request_approve_materialize_access_run_share_one_snapshot(
         snapshot_env.row["approved_by" if decision == "approved" else "rejected_by"] = actor
         return dict(snapshot_env.row), True
 
+    monkeypatch.setattr(snapshot_request_service.db, "pending_for_owner", lambda *args: None)
     monkeypatch.setattr(snapshot_request_service.db, "create", create)
     monkeypatch.setattr(snapshot_request_service.db, "transition", transition)
     monkeypatch.setattr(

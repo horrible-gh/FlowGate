@@ -138,7 +138,8 @@ DESCRIPTIONS["request_source_snapshot"] = (
     "an isolated temporary experiment. Prefer FlowGate read/search/git and Merge Context Tool for "
     "single-file reads, grep/glob/stat, ref comparison, diffs, history, and merge analysis. "
     "This request never creates files. whole_source is not the default and requires an explicit "
-    "reason and purpose."
+    "reason and purpose. One pending request is reused per chain/run; the tool waits briefly "
+    "for a human decision within the remaining run budget. A timeout keeps the same request id."
 )
 DESCRIPTIONS["access_source_snapshot"] = (
     "Read status/locator or read/search/glob/stat inside a human-approved current-worktree "
@@ -363,25 +364,26 @@ def _snapshot_token(run: dict, raw_token: str) -> dict:
         raise ToolError(403, "snapshot_request_forbidden", "a live AI run/token is required") from exc
 
 
-def request_source_snapshot(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
+def request_source_snapshot(run: dict, raw_token: str, tool_input: dict, remaining_sec: float = 0) -> tuple[int, dict]:
     token = _snapshot_token(run, raw_token)
-    data = dict(tool_input)
-    data.update({
-        "project_id":run.get("project_id"), "group_id":run.get("group_id"),
-        "run_id":run.get("run_id"), "chain_id":run.get("chain_id") or run.get("run_id"),
-        "token_id":token.get("token_id"), "provider_id":run.get("provider_id"),
-    })
+    data = snapshot_request_service.request_data_for_run(run, token, tool_input)
     try:
         row = snapshot_request_service.create_request(data, str(token.get("issued_to") or "ai-worker"))
     except snapshot_request_service.SnapshotRequestError as exc:
         raise ToolError(exc.status, exc.code, exc.message) from exc
+    reused = bool(row.get("reused_pending"))
+    row = snapshot_request_service.wait_for_decision(row, remaining_sec)
     public = {key: row.get(key) for key in (
         "snapshot_id", "status", "scope", "requested_paths", "source_kind",
-        "project_id", "group_id", "run_id", "chain_id", "token_id", "provider_id", "requested_at",
+        "project_id", "group_id", "run_id", "chain_id", "token_id", "provider_id",
+        "requested_provider_id", "actual_provider_name", "provider_source", "attempt_no",
+        "fallback_used", "requested_at", "rejection_reason", "failure_code", "failure_reason",
     )}
-    return 201, {
-        "ok":True, "request_id":row.get("snapshot_id"), "status":"requested",
-        "request":public, "materialized":False, "requires_human_decision":True,
+    return (201 if not reused and row.get("status")=="requested" else 200), {
+        "ok":True, "request_id":row.get("snapshot_id"), "status":row.get("status"),
+        "request":public, "materialized":row.get("status")=="created",
+        "requires_human_decision":row.get("status")=="requested",
+        "reused_pending":reused, "wait_timed_out":row.get("wait_timed_out",False),
     }
 
 

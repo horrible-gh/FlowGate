@@ -555,3 +555,117 @@ describe('Snapshot [거절] asks for a reason (flowgate.default.0517 T0026 §2)'
     expect(useSnapshotRequestsStore().pending.map((r) => r.snapshot_id)).toEqual(['r4'])
   })
 })
+
+describe('Snapshot approval provenance and failure (0618)', () => {
+  it('shows the captured actual provider and distinguishes a fallback run', async () => {
+    const target = row({
+      snapshot_id: 's-provenance', run_id: 'run_0000776',
+      provider_id: 'actual', actual_provider_name: 'Actual before rename',
+      requested_provider_id: 'selected', fallback_used: true,
+    })
+    servePending([target])
+    const wrapper = mountCenter()
+    await flushPromises()
+    await openPendingPanel(wrapper)
+    expect(wrapper.text()).toContain('Actual before rename')
+    expect(wrapper.text()).toContain('0000776')
+    await wrapper.find('[data-test="snap-pending-details"]').trigger('click')
+    await flushPromises()
+    expect(dialogEl()?.textContent).toContain('Actual before rename')
+    expect(dialogEl()?.textContent).toContain('selected')
+    expect(dialogEl()?.textContent).toContain('fallback')
+  })
+
+  it('recovers approved materialization after busy, dialog close, and page reload', async () => {
+    const requested = row({ snapshot_id: 's-busy-recover' })
+    const approved = { ...requested, status: 'approved' }
+    let durableRows: SnapshotRequestRow[] = [requested]
+    vi.mocked(getRequest).mockImplementation((url: string) => {
+      if (url === '/api/v1/snapshots/pending') {
+        return Promise.resolve({ data: { ok: true, requests: durableRows } } as any)
+      }
+      if (url === '/api/v1/snapshots/s-busy-recover') {
+        return Promise.resolve({ data: { ok: true, request: approved } } as any)
+      }
+      return Promise.resolve({ data: {} } as any)
+    })
+    let materializeAttempts = 0
+    vi.mocked(postRequest).mockImplementation(() => {
+      materializeAttempts += 1
+      if (materializeAttempts === 1) {
+        durableRows = [approved]
+        return Promise.reject({
+          response: { data: { detail: {
+            code: 'snapshot_materialization_busy',
+            message: 'snapshot materialization is already running',
+          } } },
+        })
+      }
+      durableRows = []
+      return Promise.resolve({ data: { ok: true, request: { ...approved, status: 'created' } } } as any)
+    })
+
+    const first = mountCenter()
+    await flushPromises()
+    await openPendingPanel(first)
+    await first.find('[data-test="snap-pending-details"]').trigger('click')
+    await flushPromises()
+    actionButton('approve')!.click()
+    await flushPromises()
+
+    expect(useSnapshotRequestsStore().approvalError?.retryable).toBe(true)
+    expect(useSnapshotRequestsStore().pending.map((item) => item.status)).toEqual(['approved'])
+    document.body.querySelector<HTMLButtonElement>('.snap-approval-dialog .fg-dialog-header__close')!.click()
+    await flushPromises()
+    expect(dialogEl()).toBeNull()
+    first.unmount()
+
+    // A fresh application/store instance must recover the approved row solely from
+    // durable GET /pending state; no transient approvalError survives this boundary.
+    setActivePinia(createPinia())
+    useProjectStore().currentProjectId = 'flowgate'
+    const reloaded = mountCenter()
+    await flushPromises()
+    expect(useSnapshotRequestsStore().approvalError).toBeNull()
+    expect(useSnapshotRequestsStore().pending.map((item) => item.status)).toEqual(['approved'])
+
+    await openPendingPanel(reloaded)
+    const recoveredRow = reloaded.get('[data-test="snap-pending-item"]')
+    expect(recoveredRow.text()).toContain('approved')
+    expect(recoveredRow.find('[data-test="snap-pending-reject"]').exists()).toBe(false)
+    await recoveredRow.find('[data-test="snap-pending-details"]').trigger('click')
+    await flushPromises()
+    expect(actionButton('approve')?.textContent).toContain('재시도')
+
+    actionButton('approve')!.click()
+    await flushPromises()
+    expect(materializeAttempts).toBe(2)
+    expect(useSnapshotRequestsStore().pendingCount).toBe(0)
+    expect(dialogEl()).toBeNull()
+  })
+
+  it('keeps terminal failure detail visible and removes the approve action', async () => {
+    const target = row({ snapshot_id: 's-failed' })
+    const failed = { ...target, status: 'failed', failure_code: 'snapshot_source_changed',
+      failure_reason: 'source changed while snapshot was being built' }
+    vi.mocked(getRequest).mockImplementation((url: string) =>
+      Promise.resolve(url === '/api/v1/snapshots/s-failed'
+        ? ({ data: { ok: true, request: failed } } as any)
+        : ({ data: { ok: true, requests: url.endsWith('/pending') ? [] : [target] } } as any)),
+    )
+    vi.mocked(postRequest).mockRejectedValue({
+      response: { data: { detail: { code: failed.failure_code, message: failed.failure_reason } } },
+    })
+    const wrapper = mountCenter()
+    await flushPromises()
+    useSnapshotRequestsStore().openDetail(target)
+    await flushPromises()
+    actionButton('approve')!.click()
+    await flushPromises()
+    expect(dialogEl()?.textContent).toContain('snapshot_source_changed')
+    expect(dialogEl()?.textContent).toContain(failed.failure_reason)
+    expect(actionButton('approve')).toBeNull()
+    expect(useSnapshotRequestsStore().approvalError?.newRequestRequired).toBe(true)
+    wrapper.unmount()
+  })
+})

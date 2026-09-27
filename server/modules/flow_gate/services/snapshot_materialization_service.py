@@ -686,12 +686,15 @@ def _record_event(event_type: str, row: dict, actor: str, from_state: str | None
 def _record_create_failure(row: dict, actor: str, exc: Exception, *, source: str | None = None) -> dict:
     reason = public_failure_reason(exc, row)
     stage = getattr(exc, "code", type(exc).__name__)
+    # Preserve the durable create-failure contract for existing consumers. Only a
+    # changed source needs its own terminal code to guide a fresh request.
+    code = "snapshot_source_changed" if stage == "snapshot_source_changed" else "snapshot_create_failed"
     with get_store().transaction():
-        failed, changed = db.mark_failed(row["snapshot_id"], "snapshot_create_failed", reason)
+        failed, changed = db.mark_failed(row["snapshot_id"], code, reason)
         if changed:
             _record_event(
                 "state_changed", failed, actor, "approved", "failed",
-                error_code="snapshot_create_failed", failure_stage=stage, failure_reason=reason,
+                error_code=code, failure_stage=stage, failure_reason=reason,
                 source=source,
             )
     return failed

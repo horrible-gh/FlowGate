@@ -125,6 +125,7 @@ def test_create_and_approve_broadcast_refresh_signal_not_the_list_itself(monkeyp
  events=[]
  monkeypatch.setattr(service,"broadcast_event_threadsafe",lambda event:events.append(event) or 1)
  monkeypatch.setattr(service,"get_store",lambda:_Store())
+ monkeypatch.setattr(service.db,"pending_for_owner",lambda *args:None)
  monkeypatch.setattr(service.db,"create",lambda n:BASE|{"snapshot_id":"snap_evt","status":"requested"})
  monkeypatch.setattr(service.workflow_events,"create",lambda data:data)
  row=service.create_request(BASE,"worker_user")
@@ -150,46 +151,47 @@ def test_broadcast_failure_never_breaks_the_decision(monkeypatch):
  def _boom(event): raise RuntimeError("no subscribers reachable")
  monkeypatch.setattr(service,"broadcast_event_threadsafe",_boom)
  monkeypatch.setattr(service,"get_store",lambda:_Store())
+ monkeypatch.setattr(service.db,"pending_for_owner",lambda *args:None)
  monkeypatch.setattr(service.db,"create",lambda n:BASE|{"snapshot_id":"snap_evt2","status":"requested"})
  monkeypatch.setattr(service.workflow_events,"create",lambda data:data)
  row=service.create_request(BASE,"worker_user")
  assert row["snapshot_id"]=="snap_evt2"
 
 
-def test_c16_multiple_requests_keep_independent_decisions(monkeypatch):
+def test_c16_pending_reused_per_chain_without_duplicate_events(monkeypatch):
  rows={}
  events=[]
+ signals=[]
  lock=__import__("threading").Lock()
  monkeypatch.setattr(service,"get_store",lambda:_Store())
  monkeypatch.setattr(service.workflow_events,"create",events.append)
- monkeypatch.setattr(service,"_notify",lambda *args:None)
+ monkeypatch.setattr(service,"_notify",lambda *args:signals.append(args))
+ def pending(project,group,chain,run):
+  with lock:
+   return next((dict(row) for row in rows.values() if row["project_id"]==project and row["group_id"]==group and row["status"]=="requested" and (row.get("chain_id") or row["run_id"])==(chain or run)),None)
  def create(data):
   with lock:
-   row=dict(data)|{"status":"requested","requested_at":"now"}
+   owner=data.get("chain_id") or data["run_id"]
+   if any(row["status"]=="requested" and (row.get("chain_id") or row["run_id"])==owner for row in rows.values()):
+    raise sqlite3.IntegrityError("uq_snapshot_pending_owner")
+   row=dict(data)|{"snapshot_id":data["snapshot_id"],"status":"requested","requested_at":"now"}
    rows[row["snapshot_id"]]=row
    return dict(row)
- def transition(snapshot_id,decision,actor,rejection_reason=None):
-  with lock:
-   row=rows.get(snapshot_id)
-   if row is None or row["status"]!="requested": return (dict(row) if row else None),False
-   row["status"]=decision
-   row["approved_by" if decision=="approved" else "rejected_by"]=actor
-   return dict(row),True
+ monkeypatch.setattr(service.db,"pending_for_owner",pending)
  monkeypatch.setattr(service.db,"create",create)
- monkeypatch.setattr(service.db,"transition",transition)
- service.create_request(BASE|{"snapshot_id":"snap_a","requested_paths":["a.py"]},"worker")
- service.create_request(BASE|{"snapshot_id":"snap_b","requested_paths":["b.py"]},"worker")
+ first=service.create_request(BASE|{"chain_id":"chain-a","snapshot_id":"snap_a"},"worker")
+ assert first["reused_pending"] is False
  from concurrent.futures import ThreadPoolExecutor
- with ThreadPoolExecutor(max_workers=2) as pool:
-  first=pool.submit(service.decide,"snap_a","approved","human-a")
-  second=pool.submit(service.decide,"snap_b","rejected","human-b","scope too wide")
-  assert first.result()["status"]=="approved"
-  assert second.result()["status"]=="rejected"
- assert rows["snap_a"]["requested_paths"]==["a.py"]
- assert rows["snap_b"]["requested_paths"]==["b.py"]
- assert rows["snap_a"]["approved_by"]=="human-a"
- assert rows["snap_b"]["rejected_by"]=="human-b"
-
+ with ThreadPoolExecutor(max_workers=10) as pool:
+  repeated=list(pool.map(lambda _:service.create_request(BASE|{"chain_id":"chain-a","snapshot_id":"snap_other"},"worker"),range(10)))
+ assert {row["snapshot_id"] for row in repeated}=={"snap_a"}
+ assert all(row["reused_pending"] for row in repeated)
+ assert len(rows)==len(events)==len(signals)==1
+ other=service.create_request(BASE|{"chain_id":"chain-b","snapshot_id":"snap_b"},"worker")
+ assert other["snapshot_id"]=="snap_b"
+ rows["snap_a"]["status"]="rejected"
+ replacement=service.create_request(BASE|{"chain_id":"chain-a","snapshot_id":"snap_new"},"worker")
+ assert replacement["snapshot_id"]=="snap_new"
 
 def test_active_route_lists_created_and_refreshes_stale_when_group_scoped(monkeypatch):
  created_row=BASE|{"snapshot_id":"snap_active","status":"created","stale":False}

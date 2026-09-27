@@ -45,6 +45,18 @@
               {{ providerLabel }}
             </span>
           </div>
+          <div v-if="request.fallback_used && request.requested_provider_id" class="snap-field">
+            <label>{{ t('main.snapshot_approval.field_selected_ai') }}</label>
+            <span>{{ selectedProviderLabel }} ({{ t('main.snapshot_approval.fallback') }})</span>
+          </div>
+          <div class="snap-field">
+            <label>{{ t('main.snapshot_approval.field_run') }}</label>
+            <span :title="request.run_id">…{{ request.run_id.slice(-8) }}</span>
+          </div>
+          <div class="snap-field">
+            <label>{{ t('main.snapshot_approval.field_status') }}</label>
+            <span>{{ request.status }}</span>
+          </div>
           <div class="snap-field">
             <label>{{ t('main.snapshot_approval.field_group') }}</label>
             <span><AppIcon name="folder" /> {{ request.group_id }}</span>
@@ -62,6 +74,15 @@
           <div class="snap-field">
             <label>{{ t('main.snapshot_approval.field_scope') }}</label>
             <span class="badge" :class="isWholeSource ? 'badge-yellow' : 'badge-gray'">{{ scopeLabel }}</span>
+          </div>
+        </div>
+
+        <div v-if="store.approvalError || request.status === 'failed'" class="alert alert-warning" data-test="snap-approval-error">
+          <AppIcon name="warning" />
+          <div>
+            <strong>{{ store.approvalError?.code || request.failure_code }}</strong>
+            <p>{{ store.approvalError?.message || request.failure_reason }}</p>
+            <p>{{ store.approvalError?.retryable ? t('main.snapshot_approval.retryable') : t('main.snapshot_approval.new_request_required') }}</p>
           </div>
         </div>
 
@@ -117,7 +138,7 @@
     <template #footer>
       <DialogFooter :actions="actions" :busy="busy">
         <template #action-reject><AppIcon name="prohibit" /> {{ t('main.snapshot_approval.reject') }}</template>
-        <template #action-approve><AppIcon name="check" /> {{ t('main.snapshot_approval.approve') }}</template>
+        <template #action-approve><AppIcon name="check" /> {{ request?.status === 'approved' ? t('main.snapshot_approval.retry_materialize') : t('main.snapshot_approval.approve') }}</template>
       </DialogFooter>
     </template>
   </DialogShell>
@@ -159,10 +180,16 @@ const scopeLabel = computed(() => {
 })
 
 const providerLabel = computed(() => {
+  if (request.value?.actual_provider_name) return request.value.actual_provider_name
   const id = request.value?.provider_id
   if (!id) return t('main.snapshot_approval.unknown_provider')
   const found = aiProviderStore.providers.find((p) => p.id === id)
   return found?.name || id
+})
+const selectedProviderLabel = computed(() => {
+  const id = request.value?.requested_provider_id
+  const found = aiProviderStore.providers.find((p) => p.id === id)
+  return found?.name || id || t('main.snapshot_approval.unknown_provider')
 })
 
 const otherPendingCount = computed(() => {
@@ -195,7 +222,8 @@ async function approve() {
   try {
     await store.approve(target.snapshot_id)
   } catch {
-    showToast(t('main.snapshot_approval.approve_failed'), 'danger')
+    const failure = store.approvalError
+    showToast(failure ? `${failure.code}: ${failure.message}` : t('main.snapshot_approval.approve_failed'), 'danger')
   } finally {
     busy.value = false
   }
@@ -211,10 +239,19 @@ function reject() {
 }
 
 // T0012 §3 footer: [거절] danger / [승인] primary — no cancel action at all.
-const actions = computed<DialogAction[]>(() => [
-  { id: 'reject', label: t('main.snapshot_approval.reject'), role: 'danger', tone: 'danger', onSelect: reject },
-  { id: 'approve', label: t('main.snapshot_approval.approve'), role: 'primary', onSelect: approve },
-])
+const actions = computed<DialogAction[]>(() => {
+  if (request.value?.status === 'requested') return [
+    { id: 'reject', label: t('main.snapshot_approval.reject'), role: 'danger', tone: 'danger', onSelect: reject },
+    { id: 'approve', label: t('main.snapshot_approval.approve'), role: 'primary', onSelect: approve },
+  ]
+  // Approved means the human decision already landed but materialization has not.
+  // It remains retryable after this component is destroyed/reloaded; approvalError is
+  // transient presentation state and must never gate the durable recovery action.
+  if (request.value?.status === 'approved') return [
+    { id: 'approve', label: t('main.snapshot_approval.retry_materialize'), role: 'primary', onSelect: approve },
+  ]
+  return []
+})
 </script>
 
 <style scoped>
