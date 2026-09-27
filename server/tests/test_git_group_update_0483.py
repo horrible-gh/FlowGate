@@ -127,6 +127,7 @@ def test_group_tracked_revert_success_in_real_repository(tmp_path, monkeypatch):
 def test_finalize_state_exposes_open_group_update_for_resume(monkeypatch):
     monkeypatch.setattr(git_service, "_project_of_group", lambda _gid: "demo")
     monkeypatch.setattr(git_service.db_git, "get_config", lambda _pid: {"enabled": True, "base_branch": "main"})
+    monkeypatch.setattr(git_service, "resolve_group_work_base_ref", lambda *_a, **_k: "main")
     monkeypatch.setattr(git_service.db_git, "get_state", lambda _gid: {
         "worktree_registered": 1, "status": "waiting", "branch": "group/test",
         "merge_id": None, "merge_commit": None,
@@ -204,6 +205,10 @@ def _patch_group_update(
     monkeypatch.setattr(git_service, "_acquire_lock", lambda _pid, _holder: True)
     monkeypatch.setattr(git_service.db_git, "release_lock", lambda _pid, _holder: None)
 
+    monkeypatch.setattr(git_service, "resolve_group_work_base_ref", lambda *_a, **_k: cfg["base_branch"])
+    from modules.flow_gate.services.git import finalize as finalize_service
+    monkeypatch.setattr(finalize_service, "_guard_group_update_ai_idle", lambda _gid: None)
+
     def _fake_create_session(group_id, files, *, kind, context):
         calls.append({"group_id": group_id, "files": files, "kind": kind, "context": context})
         return 4242
@@ -280,6 +285,9 @@ def test_update_from_base_creates_session_for_real_content_conflict(tmp_path, mo
         return 73
 
     monkeypatch.setattr(git_service.db_git, "create_session", create_session)
+    monkeypatch.setattr(git_service, "resolve_group_work_base_ref", lambda *_a, **_k: "main")
+    from modules.flow_gate.services.git import finalize as finalize_service
+    monkeypatch.setattr(finalize_service, "_guard_group_update_ai_idle", lambda _gid: None)
     result = git_service.update_from_base(group_id)
 
     assert result["result"] == {

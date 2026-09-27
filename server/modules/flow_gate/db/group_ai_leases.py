@@ -198,7 +198,7 @@ def reclaim_orphaned(before: str) -> list[dict]:
 def get_active(group_id: str) -> Optional[dict]:
     recover_expired(group_id)
     row = get(group_id)
-    if _using_memory() and row and row.get("state") != "acquiring":
+    if _using_memory() and row and row.get("state") != "acquiring" and row.get("action_scope") != "group_update":
         # Direct service tests often mark their fake run finished instead of calling the
         # real finalizer. Reconcile that test-only shape so one test/hop cannot poison the
         # next admission; production ownership is always the DB row and never uses this.

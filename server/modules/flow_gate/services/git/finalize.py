@@ -97,7 +97,7 @@ NOOP_CONVERGEABLE_STATUSES = ("awaiting_choice",)
 _NONE_STATE = {
     "branch": None, "base_branch": None, "status": "none", "default_action": None,
     "choices": [], "aux_choices": [], "action_axes": None,
-    "ahead_count": None, "behind_count": None, "merge_id": None,
+    "ahead_count": None, "behind_count": None, "work_base_ref": None, "merge_id": None,
 }
 
 _UNTRACKED_MERGE_RE = re.compile(
@@ -164,7 +164,7 @@ def _group_ac_doc_ids(group_ids: list[str]) -> dict[str, str]:
 
 
 def _group_has_changes(
-    cfg: dict, state: dict, project_name: Optional[str]
+    cfg: dict, state: dict, project_name: Optional[str], group_id: Optional[str] = None
 ) -> Optional[bool]:
     """Whether a group's work branch carries real, mergeable work.
 
@@ -203,7 +203,12 @@ def _group_has_changes(
         # The project's own checkout is missing: git cannot be consulted about
         # ANYTHING here, not even whether the branch exists. Still unknown.
         return None
-    ahead = _ahead_of_base(base_root, base_branch, branch)
+    work_base_ref = (
+        _gs.resolve_group_work_base_ref(_gs._project_of_group(group_id), group_id, config=cfg)
+        if group_id else base_branch
+    )
+    source_ref = _gs._worktree_start_point(base_root, work_base_ref or base_branch)
+    ahead = _ahead_of_base(base_root, source_ref, branch)
     if ahead is None:
         # A working base checkout that still cannot count this branch means the
         # ref is absent or unreadable. With no worktree directory either, the
@@ -215,7 +220,9 @@ def _group_has_changes(
         return True
     # 0607 T0004 §3.3: merged into LOCAL base but never pushed is unfinished work,
     # not "nothing" — auto-discarding it here would tear the slot down unpushed.
-    if _unpushed_local_merge_of(base_root, base_branch, branch) is not None:
+    if (work_base_ref or base_branch) == base_branch and _unpushed_local_merge_of(
+        base_root, base_branch, branch,
+    ) is not None:
         return True
     # ahead == 0: no committed work. Uncommitted/untracked worktree edits still
     # count (a merge/push would absorb them), so inspect the worktree too.
@@ -268,7 +275,7 @@ def _decide_pending_transition(
     git error out to the caller."""
     from modules.flow_gate.services import git_service as _gs
     project_name = _gs._project_name(project_id)
-    if _group_has_changes(cfg, state, project_name) is False:
+    if _group_has_changes(cfg, state, project_name, group_id) is False:
         return _gs._auto_discard_group(project_id, group_id)
     # Had changes, or divergence unmeasurable → preserve the original safe gate.
     _gs._set_status(group_id, "awaiting_choice")
@@ -327,7 +334,7 @@ def _resolve_pending_noop(
     from modules.flow_gate.services import git_service as _gs
     if status not in NOOP_CONVERGEABLE_STATUSES:
         return status
-    if _gs._group_has_changes(cfg, state, _gs._project_name(project_id)) is not False:
+    if _gs._group_has_changes(cfg, state, _gs._project_name(project_id), group_id) is not False:
         return status
     return _gs._auto_discard_group(project_id, group_id)
 
@@ -374,7 +381,7 @@ def group_finalize_is_noop(group_id: str) -> bool:
         # `_group_has_changes` exactly as the registered path does instead of
         # trusting the flag alone; only a proven-empty (or never-assigned) branch
         # answers quiet, and an unmeasurable divergence still keeps the warning.
-        return _gs._group_has_changes(cfg, state, _gs._project_name(project_id)) is False
+        return _gs._group_has_changes(cfg, state, _gs._project_name(project_id), group_id) is False
     except Exception:
         _log.warning("finalize no-op probe failed for %s", group_id, exc_info=True)
         return False
@@ -461,16 +468,20 @@ def _finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         }}
 
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    work_base_ref = _gs.resolve_group_work_base_ref(project_id, group_id, config=cfg) or base_branch
     branch = state.get("branch")
     ahead = behind = None
     project_name = _gs._project_name(project_id)
     base_remote_behind = None
     if project_name and _gs.git_available():
         base_root = _gs.src_root(project_name, base_branch)
-        _base_remote_ahead, base_remote_behind = _gs._base_ahead_behind(base_root, base_branch)
+        _base_remote_ahead, base_remote_behind = _gs._base_ahead_behind(base_root, work_base_ref)
         if (base_root / ".git").exists():
+            source_ref = _gs._worktree_start_point(base_root, work_base_ref)
+            if source_ref.startswith("origin/"):
+                base_remote_behind = 0
             proc = _gs._run_git(
-                ["rev-list", "--left-right", "--count", f"{base_branch}...{branch}"],
+                ["rev-list", "--left-right", "--count", f"{source_ref}...{branch}"],
                 cwd=base_root,
             )
             if proc.returncode == 0:
@@ -493,7 +504,7 @@ def _finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         # ran, the approval's own no-work auto-discard had already unregistered
         # the slot, so the operator got "Git integration is not active" as a
         # warning toast plus an auto-opened Git panel.
-        if _gs._group_has_changes(cfg, state, project_name) is not False:
+        if _gs._group_has_changes(cfg, state, project_name, group_id) is not False:
             display_status = "awaiting_choice"
 
     # Suggested commit message (flowgate.default.0173 P0003 §2): only meaningful
@@ -548,6 +559,7 @@ def _finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         "group_id": group_id,
         "branch": branch,
         "base_branch": base_branch,
+        "work_base_ref": work_base_ref,
         "status": display_status,
         "default_action": cfg.get("default_finalize_action") or "wait",
         "choices": list(FINALIZE_MAIN_CHOICES if actionable else ()),
@@ -608,12 +620,24 @@ def _finalize_context(group_id: str) -> tuple[dict, dict, str, Path, Path]:
     return cfg, state, project_id, base_root, wt_path
 
 
+def _guard_group_update_ai_idle(group_id: str) -> None:
+    """Do not absorb or merge a worktree owned by a live AI run or valid lease."""
+    from modules.flow_gate.db import group_ai_leases
+    from modules.flow_gate.services import ai_invoke_service
+
+    if ai_invoke_service.has_active_run(group_id):
+        raise GitServiceError(409, "run_already_active", "an AI run is active for this group")
+    if group_ai_leases.get_active(group_id) is not None:
+        raise GitServiceError(409, "group_lease_active", "an AI lease is active for this group")
+
+
 def update_from_base(group_id: str) -> dict:
-    """Explicit-only strict refresh: fetch, fast-forward base, then merge base into group."""
+    """Explicit-only refresh from the group's effective work base."""
     from modules.flow_gate.services import git_service as _gs
     cfg, state, project_id, base_root, wt_path = _gs._finalize_context(group_id)
     if _gs.db_git.get_open_session_by_group(group_id) is not None:
         raise GitServiceError(409, "invalid_state", "resolve or abort the current group update first")
+    _guard_group_update_ai_idle(group_id)
     _gs.guard_base_free(project_id)
     if not _gs.git_available():
         raise GitServiceError(500, "git_unavailable", "git binary not found on server")
@@ -621,85 +645,117 @@ def update_from_base(group_id: str) -> dict:
     if not _gs._acquire_lock(project_id, holder):
         raise GitServiceError(409, "git_busy", "another git operation is in progress")
     try:
-        _gs.guard_base_free(project_id)
-        if _gs._dirty(base_root, include_untracked=False):
-            raise GitServiceError(
-                409, "base_dirty", "base checkout has local modifications",
-                details={"files": _dirty_files(base_root, include_untracked=False)},
-            )
-        base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-        username = cfg.get("username")
-        secret = _gs._load_secret_for(cfg) or ""
-        # flowgate.default.0361 NR0003 §5.3/§8.1: the operator-facing "update from
-        # base" action is exactly the surface that must reflect a repo_url change.
-        _gs.ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
-        proc = _gs._run_git(
-            ["fetch", "origin"], cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC,
-            username=username, secret=secret,
-        )
-        if proc.returncode != 0:
-            raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
-        if _gs._ref_exists(base_root, f"refs/remotes/origin/{base_branch}"):
-            proc = _gs._run_git(["merge", "--ff-only", f"origin/{base_branch}"], cwd=base_root)
-            if proc.returncode != 0:
-                ahead, _behind = _gs._base_ahead_behind(base_root, base_branch)
-                if ahead is not None and ahead > 0:
-                    raise GitServiceError(
-                        500, "base_diverged",
-                        "base checkout has local-only commits and cannot fast-forward",
-                    )
-                raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
+        _guard_group_update_ai_idle(group_id)
+        from modules.flow_gate.db import group_ai_leases
+        from modules.flow_gate.services import ai_invoke_service
 
-        _absorb_worker_edits(
-            wt_path, f"chore: preserve {group_id} work before base update",
-            _author_env_from_cfg(cfg),
+        # AI admission uses this same atomic group lease. Hold it across the
+        # worktree mutation, so an AI start after the idle probe cannot pass.
+        lease_run_id = f"group-update:{uuid.uuid4()}"
+        lease = group_ai_leases.acquire(
+            group_id=group_id, project_id=project_id, run_id=lease_run_id,
+            chain_id=None, action_scope="group_update", worker_identity=None,
         )
-        before = _gs._run_git(["rev-parse", "HEAD"], cwd=wt_path)
-        proc = _gs._run_git(
-            [*_gs._GIT_IDENT,
-             "merge", "--no-ff", base_branch, "-m",
-             f"Merge base '{base_branch}' into '{state['branch']}'"],
-            cwd=wt_path, author_env=_author_env_from_cfg(cfg),
-        )
-        if proc.returncode != 0:
-            untracked_blockers = _untracked_merge_blockers(proc.stderr)
-            tracked_blockers = _tracked_merge_blockers(proc.stderr)
-            if untracked_blockers is not None or tracked_blockers is not None:
-                _gs._run_git(["merge", "--abort"], cwd=wt_path)
-                blockers = (untracked_blockers or []) + (tracked_blockers or [])
-                raise GitServiceError(
-                    409, "group_untracked_conflict",
-                    "group update is blocked by local worktree files",
-                    details={
-                        "group_id": group_id, "files": blockers, "scope": "group",
-                        "untracked_files": untracked_blockers or [],
-                        "tracked_files": tracked_blockers or [],
-                    },
-                )
-            # NR0025 §8: the old undefined probe name is gone; refs._unmerged_paths is the same probe.
-            conflicts = _gs._unmerged_paths(wt_path)
-            if conflicts:
-                merge_id = _gs.db_git.create_session(
-                    group_id, conflicts, kind=_gs.db_git.SESSION_KIND_GROUP_UPDATE,
-                    context={"prev_status": state.get("status") or "none",
-                             "branch": state.get("branch")},
-                )
-                # 0608 T0005: line-ending-only conflicts need no resolver.
-                _gs.apply_eol_separation(merge_id, wt_path)
-                return {"ok": True, "result": {
-                    "status": "conflict", "merge_id": merge_id,
-                    "conflict_files": conflicts,
-                }}
-            _gs._run_git(["merge", "--abort"], cwd=wt_path)
-            raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
-        after = _gs._run_git(["rev-parse", "HEAD"], cwd=wt_path)
-        changed = (before.stdout or "").strip() != (after.stdout or "").strip()
-        return {"ok": True, "result": {
-            "status": "updated" if changed else "no_change",
-            "branch": state.get("branch"),
-        }}
+        if lease is None or lease.get("run_id") != lease_run_id:
+            raise GitServiceError(409, "group_lease_active", "an AI lease is active for this group")
+        try:
+            activated = group_ai_leases.activate(
+                group_id, lease_run_id, None, "group_update", None,
+                group_ai_leases.ACTIVE_HEARTBEAT_TTL_SEC,
+            )
+            if activated is None:
+                raise GitServiceError(409, "group_lease_active", "group update lease was lost")
+            if ai_invoke_service.has_active_run(group_id):
+                raise GitServiceError(409, "run_already_active", "an AI run is active for this group")
+            return _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_path)
+        finally:
+            group_ai_leases.release(group_id, lease_run_id, reason="group_update_finished")
     finally:
         _gs.db_git.release_lock(project_id, holder)
+
+
+def _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_path) -> dict:
+    """Run the existing update while its Git lock and group lease are held."""
+    from modules.flow_gate.services import git_service as _gs
+    _gs.guard_base_free(project_id)
+    if _gs._dirty(base_root, include_untracked=False):
+        raise GitServiceError(
+            409, "base_dirty", "base checkout has local modifications",
+            details={"files": _dirty_files(base_root, include_untracked=False)},
+        )
+    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    work_base_ref = _gs.resolve_group_work_base_ref(project_id, group_id, config=cfg) or base_branch
+    username = cfg.get("username")
+    secret = _gs._load_secret_for(cfg) or ""
+    # flowgate.default.0361 NR0003 §5.3/§8.1: the operator-facing "update from
+    # base" action is exactly the surface that must reflect a repo_url change.
+    _gs.ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
+    proc = _gs._run_git(
+        ["fetch", "origin"], cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC,
+        username=username, secret=secret,
+    )
+    if proc.returncode != 0:
+        raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
+    if work_base_ref == base_branch and _gs._ref_exists(base_root, f"refs/remotes/origin/{base_branch}"):
+        proc = _gs._run_git(["merge", "--ff-only", f"origin/{base_branch}"], cwd=base_root)
+        if proc.returncode != 0:
+            ahead, _behind = _gs._base_ahead_behind(base_root, base_branch)
+            if ahead is not None and ahead > 0:
+                raise GitServiceError(
+                    500, "base_diverged",
+                    "base checkout has local-only commits and cannot fast-forward",
+                )
+            raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
+
+    source_ref = _gs._worktree_start_point(base_root, work_base_ref)
+    _absorb_worker_edits(
+        wt_path, f"chore: preserve {group_id} work before base update",
+        _author_env_from_cfg(cfg),
+    )
+    before = _gs._run_git(["rev-parse", "HEAD"], cwd=wt_path)
+    proc = _gs._run_git(
+        [*_gs._GIT_IDENT,
+         "merge", "--no-ff", source_ref, "-m",
+         f"Merge base '{work_base_ref}' into '{state['branch']}'"],
+        cwd=wt_path, author_env=_author_env_from_cfg(cfg),
+    )
+    if proc.returncode != 0:
+        untracked_blockers = _untracked_merge_blockers(proc.stderr)
+        tracked_blockers = _tracked_merge_blockers(proc.stderr)
+        if untracked_blockers is not None or tracked_blockers is not None:
+            _gs._run_git(["merge", "--abort"], cwd=wt_path)
+            blockers = (untracked_blockers or []) + (tracked_blockers or [])
+            raise GitServiceError(
+                409, "group_untracked_conflict",
+                "group update is blocked by local worktree files",
+                details={
+                    "group_id": group_id, "files": blockers, "scope": "group",
+                    "untracked_files": untracked_blockers or [],
+                    "tracked_files": tracked_blockers or [],
+                },
+            )
+        # NR0025 §8: the old undefined probe name is gone; refs._unmerged_paths is the same probe.
+        conflicts = _gs._unmerged_paths(wt_path)
+        if conflicts:
+            merge_id = _gs.db_git.create_session(
+                group_id, conflicts, kind=_gs.db_git.SESSION_KIND_GROUP_UPDATE,
+                context={"prev_status": state.get("status") or "none",
+                         "branch": state.get("branch")},
+            )
+            # 0608 T0005: line-ending-only conflicts need no resolver.
+            _gs.apply_eol_separation(merge_id, wt_path)
+            return {"ok": True, "result": {
+                "status": "conflict", "merge_id": merge_id,
+                "conflict_files": conflicts,
+            }}
+        _gs._run_git(["merge", "--abort"], cwd=wt_path)
+        raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
+    after = _gs._run_git(["rev-parse", "HEAD"], cwd=wt_path)
+    changed = (before.stdout or "").strip() != (after.stdout or "").strip()
+    return {"ok": True, "result": {
+        "status": "updated" if changed else "no_change",
+        "branch": state.get("branch"),
+    }}
 
 
 def group_update_untracked_recover(
@@ -1115,7 +1171,11 @@ def finalize(
         # down with no merge and no push (mirrors the auto-discard transition).
         # ahead is None when it cannot be counted → fall through to the normal
         # merge/push path (never discard on doubt).
-        ahead = _ahead_of_base(base_root, base_branch, branch)
+        work_base_ref = _gs.resolve_group_work_base_ref(
+            project_id, group_id, config=cfg,
+        )
+        source_ref = _gs._worktree_start_point(base_root, work_base_ref or base_branch)
+        ahead = _ahead_of_base(base_root, source_ref, branch)
         # 0607 T0004 §3.3/§3.4 (NR0003 §3 request B): ahead == 0 also describes a
         # branch whose merge commit is already in LOCAL base but never reached
         # origin — a merge whose result an earlier request lost. That is not "no
@@ -1124,7 +1184,8 @@ def finalize(
         unpushed_merge = (
             _unpushed_local_merge_of(base_root, base_branch, branch)
             if (
-                ahead == 0 and action in ("merge", "merge_only")
+                ahead == 0 and work_base_ref == base_branch
+                and action in ("merge", "merge_only")
                 # 0594 T0012: the recovery reads the base checkout, so it can only
                 # finish a merge whose target IS the base; a non-base target keeps
                 # its own attempt path.
