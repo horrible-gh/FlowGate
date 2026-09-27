@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import contextmanager
 
 import pytest
 
@@ -123,6 +124,10 @@ def test_single_writer_revision_cas_never_touches_file_on_stale_request(tmp_path
            "file_path": None, "filename": None, "doc_review_status": "pending_review"}
 
     class Store:
+        @contextmanager
+        def transaction(self):
+            yield self
+
         def _execute(self, sql, params):
             if "revision_no = revision_no + 1" in sql:
                 if row["revision_no"] == params[-1]:

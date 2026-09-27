@@ -4383,7 +4383,7 @@ async function onContinuousWarnCopyMentionWithMessage() {
 function onActionBarCreateApproved(tabId: string) {
   if (!guardNextActionAvailable(tabId)) return
   const code = (getNextStepCode(tabId) || '').toUpperCase()
-  if (!['N', 'T'].includes(code)) {
+  if (!['N', 'T', 'T2'].includes(code)) {
     showToast(t('main.main_panel.error_approved_doc_not_allowed', { docType: code }), 'warning')
     return
   }

@@ -4,6 +4,7 @@ from modules.flow_gate.documents import tr2_service as tr2
 def test_pair_mismatch_is_a_workflow_conflict(monkeypatch):
     from modules.flow_gate.db import workflow_sequences, documents
     monkeypatch.setattr(workflow_sequences,"get_paired_instruction_item",lambda *_:None)
+    monkeypatch.setattr(workflow_sequences,"get_item_by_result_doc_id",lambda *_:None)
     monkeypatch.setattr(documents,"get_by_id",lambda doc_id:{
         "doc_id":doc_id,"type_code":"TR2" if doc_id.endswith("TR2") else "T2",
         "project_id":"p","group_id":"g"})

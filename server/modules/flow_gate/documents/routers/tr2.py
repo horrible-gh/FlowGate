@@ -44,8 +44,7 @@ def _failure(exc: tr2.Tr2ValidationError) -> JSONResponse:
 def get_tr2(doc_id: str, current_user: dict = Depends(get_current_user)):
     doc = _doc(doc_id)
     try:
-        body = tr2.load_body(tr2.canonical_path_for_doc(doc))
-        return tr2.read_view(doc, body)
+        return tr2.read(doc_id)
     except tr2.Tr2ValidationError as exc:
         return _failure(exc)
     except (OSError, ValueError) as exc:
@@ -73,6 +72,22 @@ def put_tr2(request: Request, doc_id: str, body: Tr2Save,
                         expected_revision=body.expected_revision)
     except tr2.Tr2ValidationError as exc:
         return _failure(exc)
+
+
+@router.get("/{doc_id}/tr2/files/{file_path:path}")
+@require_permission("perm_document_read")
+def get_tr2_file(doc_id: str, file_path: str,
+                 current_user: dict = Depends(get_current_user)):
+    _doc(doc_id)
+    try:
+        return tr2.read_file_projection(doc_id, file_path)
+    except tr2.Tr2ValidationError as exc:
+        return _failure(exc)
+    except (OSError, ValueError) as exc:
+        return JSONResponse(
+            status_code=409,
+            content=error_payload("tr2_spec_invalid",
+                                  details={"loc": "file", "reason": str(exc)}))
 
 
 @router.get("/{doc_id}/tr2/attempts")

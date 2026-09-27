@@ -150,6 +150,7 @@ def validate(body: dict, *, doc: dict) -> dict:
     if "notes" in spec:
         _text(spec["notes"], "edit_spec.notes", nonempty=False)
     ids = set()
+    target_kinds: dict[str, str] = {}
     for i, edit in enumerate(spec["edits"]):
         loc = f"edit_spec.edits[{i}]"
         _object(edit, loc,
@@ -163,7 +164,11 @@ def validate(body: dict, *, doc: dict) -> dict:
         kind = edit.get("kind", "edit")
         if not isinstance(kind, str) or kind not in {"edit", "create_file"}:
             _invalid(loc+".kind", "invalid kind")
-        normalized_target_path(edit)
+        path = normalized_target_path(edit)
+        prior_kind = target_kinds.get(path)
+        if prior_kind == "create_file" or (prior_kind is not None and kind == "create_file"):
+            _invalid(loc+".file", "create_file cannot share a target with another edit")
+        target_kinds[path] = kind
         _text(edit["rationale"], loc+".rationale")
         if not isinstance(edit["confidence"], str) or edit["confidence"] not in {"high", "medium", "low"}:
             _invalid(loc+".confidence", "invalid confidence")
@@ -206,6 +211,23 @@ def validate(body: dict, *, doc: dict) -> dict:
         normalized = normalize_command(command)
         if not normalized or len(normalized) > TR2_COMMAND_MAX_LEN:
             _invalid(loc, "empty or too long command")
+    if spec.get("verify") is not None:
+        verify = _object(spec["verify"], "edit_spec.verify",
+                         {"red_test_node", "test_edit_ids", "rationale"})
+        if "red_test_node" in verify:
+            _text(verify["red_test_node"], "edit_spec.verify.red_test_node")
+        if "test_edit_ids" in verify:
+            edit_ids = {edit["id"] for edit in spec["edits"]}
+            if (not isinstance(verify["test_edit_ids"], list)
+                    or any(not isinstance(ident, str) or ident not in edit_ids
+                           for ident in verify["test_edit_ids"])):
+                _invalid("edit_spec.verify.test_edit_ids", "unknown edit id")
+        if "rationale" in verify:
+            _text(verify["rationale"], "edit_spec.verify.rationale")
+    try:
+        _json(body)
+    except (TypeError, ValueError, OverflowError) as exc:
+        _invalid("body", f"not canonical JSON: {exc}")
     return body
 
 
@@ -271,19 +293,23 @@ def load_body(path) -> dict:
     return parse(Path(path).read_text(encoding="utf-8"))
 
 
-def write_body_atomically(path, body: dict) -> None:
+def _write_bytes_atomically(path, content: bytes) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp = tempfile.mkstemp(prefix=".tr2-", suffix=".json", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
-            stream.write(dumps(body))
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temp, path)
     finally:
         if os.path.exists(temp):
             os.unlink(temp)
+
+
+def write_body_atomically(path, body: dict) -> None:
+    _write_bytes_atomically(path, dumps(body).encode("utf-8"))
 
 
 def resolve_source_root(project_id: str, group_id: str) -> Path:
@@ -306,14 +332,36 @@ def resolve_source_root(project_id: str, group_id: str) -> Path:
 
 
 def verify_pair(tr2_doc_id: str, body: dict) -> None:
+    result = db_wfseq.get_item_by_result_doc_id(tr2_doc_id)
     paired = db_wfseq.get_paired_instruction_item(tr2_doc_id, T2_TYPE_CODE)
     tr2_doc = db_docs.get_by_id(tr2_doc_id)
     t2_doc = db_docs.get_by_id(body["source_t2_doc_id"])
-    if (paired is None or paired.get("result_doc_id") != body["source_t2_doc_id"]
+    if (result is None or result.get("type") != TR2_TYPE_CODE
+            or result.get("result_doc_id") != tr2_doc_id
+            or paired is None
+            or paired.get("result_doc_id") != body["source_t2_doc_id"]
+            or paired.get("sequence_id") != result.get("sequence_id")
             or tr2_doc is None or t2_doc is None
             or t2_doc.get("type_code") != T2_TYPE_CODE
             or t2_doc.get("project_id") != tr2_doc.get("project_id")
             or t2_doc.get("group_id") != tr2_doc.get("group_id")):
+        raise Tr2ValidationError("tr2_workflow_conflict", "source_t2_doc_id")
+
+
+def verify_pending_pair(project_id: str, group_id: str, source_t2_doc_id: str) -> None:
+    """Reject an inbox submission before it reserves a number or registers a slot."""
+    result = db_wfseq.get_pending_head_by_group(group_id, project_id)
+    items = db_wfseq.get_sequence_items(result["sequence_id"]) if result else []
+    earlier = [item for item in items
+               if (item.get("sort_order") or 0) < (result.get("sort_order") or 0)]
+    paired = max(earlier, key=lambda item: item.get("sort_order") or 0) if earlier else None
+    source = db_docs.get_by_id(source_t2_doc_id)
+    if (result is None or result.get("type") != TR2_TYPE_CODE
+            or paired is None or paired.get("type") != T2_TYPE_CODE
+            or paired.get("result_doc_id") != source_t2_doc_id
+            or source is None or source.get("type_code") != T2_TYPE_CODE
+            or source.get("project_id") != project_id
+            or source.get("group_id") != group_id):
         raise Tr2ValidationError("tr2_workflow_conflict", "source_t2_doc_id")
 
 
@@ -330,6 +378,40 @@ def derived_files(edit_spec: dict, source_root) -> list[dict]:
                       "edit_ids": [e["id"] for e in edit_spec["edits"]
                                    if normalized_target_path(e) == path]})
     return files
+
+
+def read_file_projection(doc_id: str, requested_path: str) -> dict:
+    """Read one declared target from the current source; never persist a preview."""
+    doc = db_docs.get_by_id(doc_id)
+    if not doc or doc.get("type_code") != TR2_TYPE_CODE:
+        raise Tr2ValidationError("tr2_workflow_conflict", "doc_id")
+    body = load_body(canonical_path_for_doc(doc))
+    spec = body["edit_spec"]
+    path = normalized_target_path({"file": requested_path})
+    if path not in target_set(spec):
+        raise Tr2ValidationError("tr2_path_unsafe", "file",
+                                 {"reason": "path is not an edit target"})
+    root = resolve_source_root(doc["project_id"], doc["group_id"])
+    target = _target_path(root, path, target_kind(spec, path))
+    exists = target.is_file()
+    size = target.stat().st_size if exists else None
+    if exists:
+        with target.open("rb") as stream:
+            prefix = stream.read(1024 * 1024 + 1)
+        truncated = len(prefix) > 1024 * 1024
+        sample = prefix[:1024 * 1024]
+        try:
+            text = sample.decode("utf-8")
+        except UnicodeDecodeError:
+            text = None
+    else:
+        truncated, text = False, None
+    return {
+        "path": path, "kind": target_kind(spec, path), "exists": exists,
+        "size": size, "truncated": truncated, "before_text": text,
+        "edits": [edit for edit in spec["edits"]
+                  if normalized_target_path(edit) == path],
+    }
 
 
 def _history_state(doc: dict) -> str:
@@ -366,6 +448,18 @@ def read_view(doc: dict, body: dict) -> dict:
     }
 
 
+def read(doc_id: str) -> dict:
+    doc = db_docs.get_by_id(doc_id)
+    if not doc or doc.get("type_code") != TR2_TYPE_CODE:
+        raise Tr2ValidationError("tr2_workflow_conflict", "doc_id")
+    return read_view(doc, load_body(canonical_path_for_doc(doc)))
+
+
+def create(doc_id: str, raw_body: str | dict, *, actor: str) -> dict:
+    """Create the canonical body after inbox has registered its workflow slot."""
+    return save(doc_id, raw_body, actor=actor, expected_revision=0)
+
+
 def _lock(doc_id: str) -> threading.Lock:
     with _locks_guard:
         return _locks.setdefault(doc_id, threading.Lock())
@@ -387,6 +481,8 @@ def save(doc_id: str, raw_body: str | dict, *, actor: str, expected_revision: in
     target_set(spec)
     root = resolve_source_root(doc["project_id"], doc["group_id"])
     canonical["baseline_fingerprint"] = target_fingerprint(spec, root)
+    derived = {"files": derived_files(spec, root),
+               "spec_fingerprint": spec_fingerprint(spec)}
     path = canonical_path_for_doc(doc)
     with _lock(doc_id):
         fresh = db_docs.get_by_id(doc_id)
@@ -398,21 +494,34 @@ def save(doc_id: str, raw_body: str | dict, *, actor: str, expected_revision: in
         now = now_iso()
         rel = storage_paths.to_storage_relative(path, doc["project_id"])
         store = get_store()
-        store._execute("UPDATE documents SET revision_no = revision_no + 1, "
-                       "updated_at = ?, file_path = ?, filename = ? "
-                       "WHERE doc_id = ? AND revision_no = ?",
-                       [now, rel, path.name, doc_id, current])
-        refreshed = db_docs.get_by_id(doc_id)
-        if refreshed is None or refreshed.get("revision_no") != current + 1:
-            raise Tr2ValidationError("tr2_spec_changed", "expected_revision",
-                                     {"current_revision_no": (refreshed or {}).get("revision_no")})
+        # Keep the CAS and file replacement in one DB transaction. If the file
+        # replacement or commit fails, restore its previous bytes before returning.
+        previous = path.read_bytes() if path.is_file() else None
+        write_attempted = False
         try:
-            write_body_atomically(path, canonical)
-        except OSError:
-            store._execute("UPDATE documents SET revision_no = ?, updated_at = ?, "
-                           "file_path = ?, filename = ? WHERE doc_id = ? AND revision_no = ?",
-                           [current, fresh.get("updated_at"), fresh.get("file_path"),
-                            fresh.get("filename"), doc_id, current + 1])
+            with store.transaction():
+                store._execute("UPDATE documents SET revision_no = revision_no + 1, "
+                               "updated_at = ?, file_path = ?, filename = ? "
+                               "WHERE doc_id = ? AND revision_no = ?",
+                               [now, rel, path.name, doc_id, current])
+                refreshed = db_docs.get_by_id(doc_id)
+                if refreshed is None or refreshed.get("revision_no") != current + 1:
+                    raise Tr2ValidationError(
+                        "tr2_spec_changed", "expected_revision",
+                        {"current_revision_no": (refreshed or {}).get("revision_no")})
+                write_attempted = True
+                write_body_atomically(path, canonical)
+        except Exception:
+            if write_attempted:
+                try:
+                    if previous is None:
+                        path.unlink(missing_ok=True)
+                    else:
+                        _write_bytes_atomically(path, previous)
+                except OSError as restore_error:
+                    raise Tr2ValidationError(
+                        "tr2_history_invariant_error", "document.json",
+                        {"reason": "save rollback failed"}) from restore_error
             raise
     try:
         from modules.flow_gate.api.v1.events.publisher import publish_event_threadsafe, FlowEvent
@@ -427,7 +536,6 @@ def save(doc_id: str, raw_body: str | dict, *, actor: str, expected_revision: in
         pass  # Save is durable; refresh delivery is best-effort.
     return {"ok": True, "doc_id": doc_id, "new_revision": current + 1,
             "body": canonical,
-            "derived": {"files": derived_files(spec, root),
-                        "spec_fingerprint": spec_fingerprint(spec)},
+            "derived": derived,
             "dropped_keys": dropped, "updated_at": now, "updated_by": actor,
             "doc_review_status": refreshed.get("doc_review_status")}

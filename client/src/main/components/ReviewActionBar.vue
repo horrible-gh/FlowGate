@@ -816,7 +816,7 @@ const canShowReviewRequestAction = computed(() =>
 // next-action/copy-next-mention token path). approve-permission gating is enforced by the
 // server (next-approved → 403); the FE does not hold the granular permission set.
 const canCreateApproved = computed(() =>
-  ['N', 'T'].includes((props.nextStepCode ?? '').toUpperCase()),
+  ['N', 'T', 'T2'].includes((props.nextStepCode ?? '').toUpperCase()),
 )
 
 // 0395 T0030: this is still the existing create-empty action. Only its visible label

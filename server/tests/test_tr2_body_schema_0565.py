@@ -50,3 +50,19 @@ def test_create_file_rejects_anchor_and_blank_content():
     value["edit_spec"]["edits"][0]["anchor_old"]="old"
     with pytest.raises(tr2.Tr2ValidationError):
         tr2.validate(value,doc={})
+
+
+def test_mixed_create_and_edit_target_is_rejected():
+    value = body()
+    value["edit_spec"]["edits"].append({
+        "id": "e2", "kind": "create_file", "file": "src/a.txt",
+        "content": "new", "rationale": "create", "confidence": "high"})
+    with pytest.raises(tr2.Tr2ValidationError, match="tr2_spec_invalid"):
+        tr2.validate(value, doc={})
+
+
+def test_non_json_provenance_is_rejected_before_cas():
+    value = body()
+    value["edit_spec"]["edits"][0]["evidence"] = object()
+    with pytest.raises(tr2.Tr2ValidationError, match="tr2_spec_invalid"):
+        tr2.validate(value, doc={})

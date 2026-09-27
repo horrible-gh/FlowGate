@@ -723,7 +723,7 @@ async function loadSingleStepNote() {
 // N/T steps as ContinuousWorkDialog — otherwise the two continuous entry points would disagree
 // on what a valid stop point is.
 const autoHandledTypes = computed(() =>
-  props.continuationInstructionMode === 'auto_approved' ? ['N', 'T'] : [],
+  props.continuationInstructionMode === 'auto_approved' ? ['N', 'T', 'T2'] : [],
 )
 
 /** The chain's stop point, or null when nothing runnable is chosen yet. */

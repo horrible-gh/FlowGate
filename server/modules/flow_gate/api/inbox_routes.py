@@ -3877,6 +3877,11 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         try:
             tr2_body = tr2_service.validate(
                 tr2_service.parse(body_for_guards or ""), doc={})
+            tr2_service.verify_pending_pair(
+                project, group["group_id"], tr2_body["source_t2_doc_id"])
+            tr2_root = tr2_service.resolve_source_root(project, group["group_id"])
+            tr2_service.target_fingerprint(
+                tr2_service.canonicalize(tr2_body)["edit_spec"], tr2_root)
         except tr2_service.Tr2ValidationError as exc:
             payload = error_payload(exc.code, details=exc.details)
             payload["help_url"] = "/flowgate/api/v1/help/items/authoring_guide/TR2"
@@ -4362,8 +4367,8 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
 
     if tr2_body is not None:
         try:
-            tr2_saved = tr2_service.save(
-                canonical_doc_id, tr2_body, actor=actor_user_id, expected_revision=0)
+            tr2_saved = tr2_service.create(
+                canonical_doc_id, tr2_body, actor=actor_user_id)
         except tr2_service.Tr2ValidationError as exc:
             db_docs.delete(canonical_doc_id)
             payload = error_payload(exc.code, details=exc.details)

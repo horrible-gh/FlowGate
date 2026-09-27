@@ -554,7 +554,7 @@ const presetUnsetCount = computed(() => (
 //      provider cannot be consumed either.
 // Both were being offered as choices; both are removed from the dialog here, and the confirm
 // payload is built from exactly the rows that remain.
-const AUTO_APPROVED_INSTRUCTION_TYPES = ['N', 'T']
+const AUTO_APPROVED_INSTRUCTION_TYPES = ['N', 'T', 'T2']
 const autoHandledTypes = computed(
   () => (instructionMode.value === 'auto_approved' ? AUTO_APPROVED_INSTRUCTION_TYPES : []),
 )
