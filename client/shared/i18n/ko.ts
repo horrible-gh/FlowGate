@@ -450,6 +450,7 @@ export default {
         error_110: '역할을 1개 이상 선택하세요.',
         error_111: '비밀번호가 일치하지 않습니다.',
         error_124: '생성 실패',
+        username_already_exists: '이미 사용 중인 사용자 이름입니다.',
       },
       user_edit_modal: {
         modal_title_5: '사용자 편집',

@@ -450,6 +450,7 @@ export default {
         error_110: '1つ以上のロールを選択してください。',
         error_111: 'パスワードが一致しません。',
         error_124: '作成に失敗しました',
+        username_already_exists: 'このユーザー名は既に使用されています。',
       },
       user_edit_modal: {
         modal_title_5: 'ユーザーの編集',

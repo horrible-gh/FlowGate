@@ -109,6 +109,10 @@ function resolveRegisteredApiErrorMessage(input: unknown, t: Translate): string 
   const error = normalizeApiError(input)
   if (error.network) return t('error.network')
 
+  if (error.code === 'username_already_exists') {
+    return t('settings.users.user_create_modal.username_already_exists')
+  }
+
   if (error.code === 'validation_failed') {
     return t(resolveValidationFailedKey(error.source.errors))
   }
