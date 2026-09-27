@@ -654,25 +654,16 @@ def _retry_eligible(run: dict) -> bool:
         run.get("mode"), run.get("action_scope"), run.get("scope_oracle_run"),
         run.get("hop_kind"),
     )
-    if _svc().peek_auto_resume(run.get("group_id")) is not None and not review_hop_recovery:
-        # flowgate.default.0466 T0007: this check predates the review gate (0359 L0007
-        # §2.4) and reads a queue entry as proof THIS hop already produced a document and
-        # handed off — true for the continuous chains it was written for, where
-        # `request_auto_resume` is only ever called from the inbox AFTER a submission. But
-        # `run_review_gate`'s review/rework dispatch (0414 L0008 §2.4, "queue first, then
-        # launch") calls `_queue_gate_bundle` — the SAME `request_auto_resume` — BEFORE
-        # spawning the hop at all, so a review hop reliably finds its own dispatcher's
-        # queue entry sitting here on attempt 1, before it has run at all, and this check
-        # silently ate every retry: A10's `attempts_max=2` never got past 1 in production
-        # (confirmed by driving the real `run_review_gate` → `_spawn_review_hop` →
-        # `_worker` path, not just the worker or the gate alone). A review hop's own token
-        # structurally cannot register a document (§2.5: "a review token carries NO
-        # continuation_target_seq" and `docs_target` is pinned to 0), so its worker can
-        # never be the reason a NEW queue entry appears mid-run — every entry it can ever
-        # see here is the pre-spawn one, and reading that as "already handed off" is
-        # simply wrong for this hop kind. `_scope_oracle_retry_open` (rework) keeps the
-        # existing behavior: a rework's `edit` token DOES submit a document mid-run, so a
-        # queue entry appearing there can be the real thing this check exists to catch.
+    rework_no_output_recovery = oracle_module._rework_hop_no_output_recovery_open(
+        run.get("mode"), run.get("action_scope"), run.get("scope_oracle_run"),
+        run.get("hop_kind"), run.get("outcome"),
+    )
+    if (_svc().peek_auto_resume(run.get("group_id")) is not None
+            and not review_hop_recovery and not rework_no_output_recovery):
+        # The review gate queues its next intent before spawning either kind of hop.
+        # That pre-spawn entry does not prove an empty gate-owned hop handed off.
+        # A rework with output still keeps this guard: its edit token can revise the
+        # document mid-run, and another attempt could write a second revision.
         return False        # this hop DID hand off; the next hop is already queued
     if int(run.get("docs_reached") or 0) >= 1:
         return False        # partial output is still output — a rerun would double-write

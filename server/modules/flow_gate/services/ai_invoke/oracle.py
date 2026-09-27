@@ -38,6 +38,7 @@ from modules.flow_gate.services import process_runner
 from .runtime import (
     LAST_MESSAGE_MAX_BYTES,
     REVIEW_HOP_KIND,
+    REWORK_HOP_KIND,
     logger,
 )
 
@@ -265,6 +266,23 @@ def _review_hop_recovery_open(mode: Optional[str], action_scope: Optional[str],
         and mode == "single"
         and action_scope == "review"
         and hop_kind == REVIEW_HOP_KIND
+    )
+
+
+def _rework_hop_no_output_recovery_open(mode: Optional[str], action_scope: Optional[str],
+                                        scope_oracle_run: Optional[bool],
+                                        hop_kind: Optional[str], outcome: Optional[str]) -> bool:
+    """Ignore a gate-owned rework's pre-spawn queue only while it produced no output.
+
+    Unlike a review token, an edit token can submit a revision during the hop. A
+    successful rework must keep the queue guard that prevents a duplicate edit.
+    """
+    return (
+        bool(scope_oracle_run)
+        and mode == "single"
+        and action_scope == "edit"
+        and hop_kind == REWORK_HOP_KIND
+        and outcome == "none"
     )
 
 
