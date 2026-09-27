@@ -147,8 +147,37 @@
         >{{ t('main.git_branch_manager.merge_btn') }}</button>
       </div>
 
+      <!-- 0630 T0005 §12 — a conflict is no longer a failed merge: the server keeps it
+           as a persistent attempt and has already started its AI resolver. This box
+           only says so and opens the EXISTING resolver / review dialogs on it. -->
       <div
-        v-if="mergeResult"
+        v-if="mergeResult?.mergeId != null"
+        class="branch-result branch-result--conflict"
+        role="status"
+        data-test="merge-conflict-result"
+      >
+        <strong>{{ t('main.git_branch_manager.merge_conflict_title') }}</strong>
+        <span>{{ mergeResult.source }} → {{ mergeResult.target }}</span>
+        <span class="branch-result-message">
+          {{ t('main.git_branch_manager.merge_conflict_summary', { n: mergeResult.files?.length || 0 }) }}
+        </span>
+        <span v-if="mergeResult.aiStatus" class="branch-result-message" data-test="merge-conflict-ai">
+          {{ t(`main.git_branch_manager.merge_conflict_ai.${mergeResult.aiStatus}`) }}
+        </span>
+        <ul v-if="mergeResult.files?.length">
+          <li v-for="file in mergeResult.files" :key="file">{{ file }}</li>
+        </ul>
+        <div class="branch-form-actions branch-result-actions">
+          <button
+            type="button"
+            class="btn btn-sm btn-primary"
+            data-test="merge-conflict-open"
+            @click="openMergeId = mergeResult?.mergeId ?? null"
+          >{{ t('main.git_branch_manager.merge_conflict_open') }}</button>
+        </div>
+      </div>
+      <div
+        v-else-if="mergeResult"
         class="branch-result"
         :class="{ 'branch-result--error': !!mergeResult.code }"
         role="status"
@@ -179,7 +208,37 @@
           <li v-for="file in mergeResult.files" :key="file">{{ file }}</li>
         </ul>
       </div>
+
+      <!-- 0630 T0005 §10/§12 — attempts still open on the server (a reload, another
+           tab, a restart) stay reachable from here; the state is the server's own. -->
+      <div v-if="openMerges.length" class="branch-open-merges" data-test="open-merges">
+        <h5 class="branch-zone-title">{{ t('main.git_branch_manager.open_merges_title') }}</h5>
+        <div v-for="attempt in openMerges" :key="attempt.merge_id" class="branch-row" data-test="open-merge-row">
+          <span class="branch-name">{{ attempt.source_branch }} → {{ attempt.target_branch }}</span>
+          <span class="badge" data-test="open-merge-state">
+            {{ t(`main.git_branch_manager.attempt_state.${attempt.state}`, attempt.state) }}
+          </span>
+          <span class="branch-meta">
+            {{ t('main.git_branch_manager.open_merge_files', { resolved: attempt.resolved_count, total: attempt.file_count }) }}
+          </span>
+          <span class="branch-spacer"></span>
+          <button
+            type="button"
+            class="btn btn-sm btn-secondary"
+            data-test="open-merge-resolve"
+            @click="openMergeId = attempt.merge_id"
+          >{{ t('main.git_branch_manager.merge_conflict_open') }}</button>
+        </div>
+      </div>
     </form>
+
+    <GitBranchMergeConflictHost
+      v-if="openMergeId != null"
+      :project-id="projectId"
+      :merge-id="openMergeId"
+      @close="onConflictHostClosed"
+      @changed="loadQuietly"
+    />
 
     <!-- T0018 §3.3 — delete is the one irreversible action here, so it never shares a
          row with the list; it gets its own zone, one explicit pick, and the confirm. -->
@@ -233,6 +292,7 @@ import { deleteRequest, getRequest, postRequest, putRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import { confirm } from '../composables/useDialogStack'
 import { useToast } from './common/useToast'
+import GitBranchMergeConflictHost from './GitBranchMergeConflictHost.vue'
 
 interface BranchRow {
   name: string
@@ -245,6 +305,15 @@ interface BranchRow {
 }
 /** What the host panel's overview needs from this catalog — nothing that could
  *  make a catalog failure reach the host's own finalize UI (§4.1). */
+/** 0630 T0005 — one open ordinary branch-merge attempt, as the catalog reports it. */
+interface OpenBranchMerge {
+  merge_id: number
+  source_branch: string
+  target_branch: string
+  state: string
+  file_count: number
+  resolved_count: number
+}
 interface BranchCatalogSummary {
   state: 'ready' | 'error'
   base_branch: string | null
@@ -269,7 +338,14 @@ const mergeTarget = ref('')
 // T0006 §3.1 — default ON keeps the pre-existing always-push behavior.
 const mergePush = ref(true)
 const deleteTarget = ref('')
-const mergeResult = ref<{ source: string; target: string; pushed?: boolean; code?: string; message?: string; files?: string[]; pushFailed?: boolean } | null>(null)
+const mergeResult = ref<{
+  source: string; target: string; pushed?: boolean; code?: string; message?: string
+  files?: string[]; pushFailed?: boolean
+  // 0630 T0005 — set when the merge stopped on a conflict and is now a live attempt.
+  mergeId?: number; aiStatus?: string
+} | null>(null)
+const openMerges = ref<OpenBranchMerge[]>([])
+const openMergeId = ref<number | null>(null)
 const deleteResult = ref<{ branch: string; code?: string; message?: string } | null>(null)
 const showBranches = computed(() => props.view === 'all' || props.view === 'branches')
 const showManage = computed(() => props.view === 'all' || props.view === 'manage')
@@ -365,6 +441,7 @@ async function load(opts: { forceTarget?: string | null } = {}) {
       default_merge_target: data?.default_merge_target || null,
       branches: Array.isArray(data?.branches) ? data.branches : [],
     }
+    openMerges.value = Array.isArray(data?.open_branch_merges) ? data.open_branch_merges : []
     syncSelections(opts)
     emit('catalog', { state: 'ready', base_branch: catalog.value.base_branch, default_merge_target: catalog.value.default_merge_target })
   } catch (e: any) {
@@ -477,7 +554,18 @@ async function confirmMerge() {
       const { data } = await postRequest<any>(`/api/v1/projects/${props.projectId}/git/branches/merge`, {
         source_branch: source, target_branch: target, push,
       })
-      mergeResult.value = { source, target, pushed: !!data?.pushed }
+      if ((data?.status === 'conflict' || data?.status === 'resolved_pending_review') && data?.merge_id != null) {
+        // 0630 T0005 — 202: the conflict is a persistent attempt, not an error, and the
+        // server already started (or tried to start) its AI resolver.
+        mergeResult.value = {
+          source, target,
+          mergeId: Number(data.merge_id),
+          files: Array.isArray(data.conflict_files) ? data.conflict_files : [],
+          aiStatus: data.status === 'resolved_pending_review' ? 'review' : (data.ai?.status || undefined),
+        }
+      } else {
+        mergeResult.value = { source, target, pushed: !!data?.pushed }
+      }
       await load()
     } catch (e: any) {
       // §7 merge 실패 — source/target stay attached to EVERY failure (not just
@@ -500,6 +588,10 @@ async function confirmMerge() {
 // (load() never rejects; it records the failure in `error` instead), so a
 // transient read failure never blanks a list that was already showing.
 function loadQuietly() { void load() }
+function onConflictHostClosed() {
+  openMergeId.value = null
+  loadQuietly()
+}
 watch(() => props.projectId, loadQuietly)
 onMounted(loadQuietly)
 // Picking (via the <select> itself) the branch already on the other side
@@ -562,4 +654,7 @@ function selectMergeTarget(value: string) {
 .branch-result--error, .branch-error { background: var(--danger-l); color: var(--danger); }
 .branch-error { margin: 0; padding: 8px 10px; border-radius: var(--r); }
 .branch-result ul { width: 100%; margin: 0; }
+.branch-result--conflict { background: var(--warning-l, var(--surface-h)); color: var(--text); }
+.branch-result-actions { width: 100%; }
+.branch-open-merges { display: grid; gap: 4px; }
 </style>

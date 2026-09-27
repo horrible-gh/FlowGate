@@ -1933,8 +1933,11 @@ def _resolve_conflict(run: dict, raw_token: str, tool_input: dict) -> tuple[int,
         "files": tool_input.get("files") or [],
         "complete": bool(tool_input.get("complete")),
     }
+    # 0630 T0005: a branch merge's resolve endpoint is project-scoped.
+    from modules.flow_gate.services import git_service
+    route = git_service.merge_route_prefix(run["merge_id"], run["group_id"])
     req = urllib.request.Request(
-        f"{provider_api._resolve_transport_api_base(run)}/groups/{run['group_id']}/git/merge/{run['merge_id']}/resolve-token",
+        f"{provider_api._resolve_transport_api_base(run)}{route}/resolve-token",
         data=json.dumps(body).encode("utf-8"),
         headers={
             "Content-Type": "application/json",

@@ -31,6 +31,19 @@ POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/approve         (0
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/reject          (0481 D0006/L0007 — human only)
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/review-message  (0481 D0006/L0007 — human only)
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/write-plan-token (0481 T0008 item 1 — resolve_conflict worker token only)
+GET            /api/v1/projects/{project_id}/git/merge                            (0630 T0005 — open branch-merge attempts)
+GET            /api/v1/projects/{project_id}/git/merge/{merge_id}                 (0630 T0005 — attempt state)
+GET            /api/v1/projects/{project_id}/git/merge/{merge_id}/conflicts       (0630 T0005)
+POST           /api/v1/projects/{project_id}/git/merge/{merge_id}/resolve         (0630 T0005)
+POST           /api/v1/projects/{project_id}/git/merge/{merge_id}/resolve-token   (0630 T0005 — worker token only)
+POST           /api/v1/projects/{project_id}/git/merge/{merge_id}/ai-resolve      (0630 T0005 — re-invoke resolver)
+POST           /api/v1/projects/{project_id}/git/merge/{merge_id}/abort           (0630 T0005)
+GET            /api/v1/projects/{project_id}/git/merge/{merge_id}/review          (0630 T0005)
+GET            /api/v1/projects/{project_id}/git/merge/{merge_id}/review-diff     (0630 T0005)
+POST           /api/v1/projects/{project_id}/git/merge/{merge_id}/approve         (0630 T0005 — human only)
+POST           /api/v1/projects/{project_id}/git/merge/{merge_id}/reject          (0630 T0005 — human only)
+POST           /api/v1/projects/{project_id}/git/merge/{merge_id}/review-message  (0630 T0005 — human only)
+POST           /api/v1/projects/{project_id}/git/merge/{merge_id}/write-plan-token (0630 T0005 — worker token only)
 
 RBAC (P0005, common): read = project.settings.read, mutate = project.settings.edit.
 Group-scoped routes resolve the project from the group_id prefix and check the
@@ -58,6 +71,7 @@ from modules.flow_gate.services.auth_outbound import verify_bearer
 from modules.flow_gate.services.git_service import GitServiceError
 from modules.flow_gate.services.git.credentials import git_error_envelope
 from modules.flow_gate.services.git import merge_target as git_merge_target
+from modules.flow_gate.services.git import branch_merge as git_branch_merge
 
 router = APIRouter(prefix="/api/v1", tags=["Git"])
 
@@ -212,6 +226,9 @@ class BranchMergeBody(BaseModel):
     # T0006: publish the merge result to origin (default True keeps every
     # existing caller's behavior — an omitted field still pushes).
     push: bool = True
+    # 0630 T0005 (D0004 §12 tier 1): the provider the conflict resolver starts with when
+    # this merge stops on a conflict. Omitted = the server's own selection policy.
+    provider_id: Optional[str] = None
 
 
 @router.get("/projects/{project_id}/git/branches")
@@ -256,14 +273,40 @@ def post_git_branch(
 def post_git_branch_merge(
     project_id: str,
     body: BranchMergeBody,
+    request: Request,
     user=Depends(require_permission("project.settings.edit", "project_id")),
 ):
     try:
-        return git_service.merge_branches(
+        result = git_service.merge_branches(
             project_id, body.source_branch, body.target_branch, push=body.push,
         )
     except GitServiceError as exc:
         return _guard(exc)
+    if not (isinstance(result, dict) and result.get("status") == "conflict"
+            and result.get("merge_id") is not None):
+        return result
+    # 0630 T0005 (D0004 §10): the conflict is durable and the Git lock is released by now.
+    # The server — not a later client click — starts the existing resolve_conflict run.
+    # A failure to start is recorded on the attempt (ai.status=start_failed) and never
+    # aborts it; the conflict stays open for a retry or a manual resolution.
+    merge_id = int(result["merge_id"])
+    try:
+        view = git_branch_merge.settle_new_conflict(
+            project_id, merge_id,
+            start_run=_branch_merge_starter(
+                project_id, merge_id, request, _user_id(user), pinned=bool(body.provider_id),
+            ),
+            provider_id=body.provider_id,
+        )
+        result = {**result, "attempt": view, "ai": view.get("ai"),
+                  "remaining_conflicts": view.get("unresolved") or [],
+                  "status": "resolved_pending_review"
+                  if view.get("state") == "resolved_pending_review" else "conflict"}
+    except Exception:
+        git_service._log.warning(
+            "branch merge %s: post-conflict orchestration failed", merge_id, exc_info=True,
+        )
+    return JSONResponse(status_code=202, content=result)
 
 
 @router.delete("/projects/{project_id}/git/branches/{name:path}")
@@ -1140,6 +1183,312 @@ def post_merge_write_plan_token(
         return git_service.submit_review_write_plan(
             group_id, merge_id, plan=body.model_dump(exclude_none=True),
             ai_run_id=auth.get("ai_run_id"),
+        )
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+# ── Ordinary Branch Merge conflict / review (flowgate.default.0630 T0005, D0004 §8) ─
+# An ordinary branch merge has no group, so its persistent attempt is addressed by
+# project. Every route below is a thin project-scoped window onto the SAME service the
+# group routes above use (`resolve_conflicts`, `list_conflicts`, `get_merge_review`,
+# `approve_merge_review`, ...), called with `group_id=None, project_id=...`. RBAC is the
+# Branch Manager's: read = project.settings.read, mutate = project.settings.edit; the two
+# worker-token routes accept only a resolve_conflict token bound to this project + merge
+# and to no group.
+
+def _branch_merge_project_run_key(project_id: str) -> str:
+    # The run/lease row key every project-scoped AI run already uses (resolve_base_dirty):
+    # a key for the run record only — never a git_merge_session group.
+    return f"{project_id}.none.0000"
+
+
+def _start_branch_merge_resolve_run(
+    *, project_id: str, merge_id: int, request: Request, user_id: str,
+    provider_id: Optional[str], provider_pinned: bool, messages: list[str],
+    write_requested_by_human: bool = False, allow_test_edits: bool = False,
+    review_conversation: bool = False, locale: Optional[str] = None,
+) -> Optional[str]:
+    """The branch-merge twin of ``_start_resolve_conflict_run``: the same
+    ``resolve_conflict`` run, the same mention builder and token, project-scoped."""
+    from modules.flow_gate.api import token_routes as _token_routes
+    from modules.flow_gate.services import ai_invoke_service
+
+    locale = template_provision.normalize_locale(
+        locale if locale is not None else request.headers.get("x-locale")
+    )
+    result = ai_invoke_service.start_run(
+        project_id=project_id, module=None, group_id=_branch_merge_project_run_key(project_id),
+        doc_ref="", action_scope="resolve_conflict", mode="single",
+        continuation_target_seq=None, continuation_review_mode=False,
+        continuation_instruction_mode=None, continuation_locale=locale,
+        issued_to=user_id, api_base_url=_token_routes._build_api_base(request),
+        mention_builder=_resolve_conflict_mention_builder(
+            group_id=None, project_id=project_id, merge_id=merge_id,
+            request=request, locale=locale, messages=messages,
+            write_requested_by_human=write_requested_by_human,
+            allow_test_edits=allow_test_edits,
+            review_conversation=review_conversation,
+        ),
+        provider_id=provider_id, provider_pinned=bool(provider_pinned),
+        merge_id=merge_id,
+        write_requested_by_human=bool(write_requested_by_human),
+        allow_test_edits=bool(allow_test_edits),
+    )
+    return result.get("run_id")
+
+
+def _branch_merge_starter(project_id: str, merge_id: int, request: Request, user_id: str,
+                          *, pinned: bool = False):
+    def _start(provider_id: Optional[str], messages: list[str]) -> Optional[str]:
+        return _start_branch_merge_resolve_run(
+            project_id=project_id, merge_id=merge_id, request=request, user_id=user_id,
+            provider_id=provider_id, provider_pinned=bool(pinned and provider_id),
+            messages=messages,
+        )
+    return _start
+
+
+def _user_id(user: dict) -> str:
+    return user.get("user_id") or user.get("id") or user.get("email") or "unknown"
+
+
+def _worker_token_for_branch_merge(request: Request, project_id: str, merge_id: int):
+    """``auth`` of a resolve_conflict worker token bound to this project's branch merge,
+    or the 403 response. A human JWT, a group-bound token or another merge's token is
+    refused (D0004 §9)."""
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    if auth.get("_is_user_jwt"):
+        return _error_response(403, "conflict_token_required", "A resolve_conflict worker token is required")
+    if (
+        auth.get("action_scope") != "resolve_conflict"
+        or auth.get("group_id")
+        or auth.get("project") != project_id
+        or int(auth.get("merge_id") or -1) != int(merge_id)
+    ):
+        return _error_response(403, "conflict_token_scope_mismatch", "Token is not bound to this merge session")
+    return auth
+
+
+@router.get("/projects/{project_id}/git/merge")
+def get_branch_merge_attempts(
+    project_id: str, all: bool = False,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    try:
+        return git_branch_merge.list_attempts(project_id, open_only=not all)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.get("/projects/{project_id}/git/merge/{merge_id}")
+def get_branch_merge_attempt(
+    project_id: str, merge_id: int,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    try:
+        return git_branch_merge.get_attempt(project_id, merge_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.get("/projects/{project_id}/git/merge/{merge_id}/conflicts")
+def get_branch_merge_conflicts(
+    project_id: str, merge_id: int,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    try:
+        return git_service.list_conflicts(None, merge_id, project_id=project_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/projects/{project_id}/git/merge/{merge_id}/resolve")
+def post_branch_merge_resolve(
+    project_id: str, merge_id: int, body: ResolveBody,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    # ResolveBody, not ResolveBodyHuman: a branch merge has no auto-authority checkbox to record.
+    try:
+        return git_service.resolve_conflicts(
+            None, merge_id, [f.model_dump() for f in body.files], bool(body.complete),
+            project_id=project_id,
+        )
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/projects/{project_id}/git/merge/{merge_id}/resolve-token")
+def post_branch_merge_resolve_token(
+    project_id: str, merge_id: int, body: ResolveBody, request: Request,
+):
+    auth = _worker_token_for_branch_merge(request, project_id, merge_id)
+    if isinstance(auth, JSONResponse):
+        return auth
+    try:
+        result = git_service.resolve_conflicts(
+            None, merge_id, [f.model_dump() for f in body.files], bool(body.complete),
+            resolver_run_id=auth.get("ai_run_id"), project_id=project_id,
+        )
+        if result.get("ok") and result.get("result", {}).get("status") in (
+            "merged", "resolved_pending_review",
+        ):
+            token_service.consume(auth["token_id"], auth["project"])
+        return result
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+class BranchMergeAiBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider_id: Optional[str] = None
+    provider_pinned: bool = False
+    message: Optional[str] = None
+
+
+@router.post("/projects/{project_id}/git/merge/{merge_id}/ai-resolve")
+def post_branch_merge_ai_resolve(
+    project_id: str, merge_id: int, request: Request, body: BranchMergeAiBody | None = None,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    """Re-invoke / re-instruct the AI resolver (auto-start failed, or the person wants
+    another pass). Never a precondition for the first run — the server starts that."""
+    body = body or BranchMergeAiBody()
+    message = (body.message or "").strip()
+    if len(message) > 4000:
+        return _error_response(400, "invalid_message", "message must be at most 4000 characters")
+    try:
+        return git_branch_merge.start_resolver(
+            project_id, merge_id,
+            start_run=_branch_merge_starter(
+                project_id, merge_id, request, _user_id(user), pinned=body.provider_pinned,
+            ),
+            provider_id=body.provider_id, messages=[message] if message else [],
+            trigger="manual",
+        )
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/projects/{project_id}/git/merge/{merge_id}/abort")
+def post_branch_merge_abort(
+    project_id: str, merge_id: int,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    try:
+        return git_service.abort_merge(None, merge_id, project_id=project_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.get("/projects/{project_id}/git/merge/{merge_id}/review")
+def get_branch_merge_review(
+    project_id: str, merge_id: int,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    try:
+        return git_service.get_merge_review(None, merge_id, project_id=project_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.get("/projects/{project_id}/git/merge/{merge_id}/review-diff")
+def get_branch_merge_review_diff(
+    project_id: str, merge_id: int, path: str,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    try:
+        return git_service.read_merge_review_file_diff(None, merge_id, path, project_id=project_id)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/projects/{project_id}/git/merge/{merge_id}/approve")
+def post_branch_merge_approve(
+    project_id: str, merge_id: int, body: ApproveBody,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    if not _UUID_RE.match(body.attempt_id or ""):
+        return _error_response(400, "invalid_attempt_id", "attempt_id must be a UUID")
+    try:
+        return git_service.approve_merge_review(
+            None, merge_id, attempt_id=body.attempt_id,
+            review_fingerprint=body.review_fingerprint, authority="human",
+            project_id=project_id,
+        )
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/projects/{project_id}/git/merge/{merge_id}/reject")
+def post_branch_merge_reject(
+    project_id: str, merge_id: int, body: RejectBody, request: Request,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    reason = (body.reason or "").strip()
+    if not reason or len(reason) > 4000:
+        return _error_response(400, "invalid_reason", "reason must be 1..4000 characters")
+    if body.provider_pinned is not True:
+        return _error_response(422, "provider_not_pinned", "provider_pinned must be true")
+    user_id = _user_id(user)
+    try:
+        return git_service.reject_merge_review(
+            None, merge_id, reason=reason, provider_id=body.provider_id, provider_pinned=True,
+            project_id=project_id,
+            start_run=lambda first_message: _start_branch_merge_resolve_run(
+                project_id=project_id, merge_id=merge_id, request=request, user_id=user_id,
+                provider_id=body.provider_id, provider_pinned=True,
+                messages=[first_message] if first_message else [],
+            ),
+        )
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/projects/{project_id}/git/merge/{merge_id}/review-message")
+def post_branch_merge_review_message(
+    project_id: str, merge_id: int, body: ReviewMessageBody, request: Request,
+    user=Depends(require_permission("project.settings.edit", "project_id")),
+):
+    if body.provider_pinned is not True:
+        return _error_response(422, "provider_not_pinned", "provider_pinned must be true")
+    user_id = _user_id(user)
+    apply_requested = bool(body.apply_requested)
+    allow_test_edits = bool(body.allow_test_edits) and apply_requested
+    locale = template_provision.normalize_locale(request.headers.get("x-locale"))
+    try:
+        return git_service.send_review_message(
+            None, merge_id, message=body.message,
+            provider_id=body.provider_id, provider_pinned=True,
+            apply_requested=apply_requested, allow_test_edits=allow_test_edits,
+            locale=locale, project_id=project_id,
+            start_run=lambda: _start_branch_merge_resolve_run(
+                project_id=project_id, merge_id=merge_id, request=request, user_id=user_id,
+                provider_id=body.provider_id, provider_pinned=True,
+                messages=[body.message], locale=locale,
+                write_requested_by_human=apply_requested,
+                allow_test_edits=allow_test_edits,
+                review_conversation=True,
+            ),
+        )
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/projects/{project_id}/git/merge/{merge_id}/write-plan-token")
+def post_branch_merge_write_plan_token(
+    project_id: str, merge_id: int, body: WritePlanBody, request: Request,
+):
+    auth = _worker_token_for_branch_merge(request, project_id, merge_id)
+    if isinstance(auth, JSONResponse):
+        return auth
+    try:
+        return git_service.submit_review_write_plan(
+            None, merge_id, plan=body.model_dump(exclude_none=True),
+            ai_run_id=auth.get("ai_run_id"), project_id=project_id,
         )
     except GitServiceError as exc:
         return _guard(exc)

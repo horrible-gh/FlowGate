@@ -258,7 +258,11 @@ def conflict_tool_definitions() -> list[dict]:
 
 def open_conflict_counts(run: dict) -> tuple[int, int]:
     """``(files, chunks)`` still carrying conflict markers in the run's merge session."""
-    conflicts = git_service.list_conflicts(run["group_id"], int(run["merge_id"]))
+    # 0630 T0005: a branch merge is addressed by project (see git_service.merge_session_owner_args).
+    owner_group, owner_project = git_service.merge_session_owner_args(run["merge_id"], run["group_id"])
+    conflicts = git_service.list_conflicts(
+        owner_group, int(run["merge_id"]), **({"project_id": owner_project} if owner_project else {}),
+    )
     counts = [int(f.get("conflict_count") or 0) for f in conflicts.get("files") or []]
     return sum(1 for n in counts if n > 0), sum(counts)
 

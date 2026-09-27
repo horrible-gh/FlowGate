@@ -153,6 +153,67 @@ describe('GitBranchManager (T0016 C1-C7)', () => {
     wrapper.unmount()
   })
 
+  // flowgate.default.0630 T0005 §12/§15-23 — a conflict is now a 202 persistent attempt, not
+  // an error: the result names it, and [충돌 해결 열기] mounts the host that reuses the existing
+  // resolver/review dialogs on that merge_id.
+  it('C3d. a conflict attempt response offers the existing resolver entry, not an error', async () => {
+    const wrapper = mount(GitBranchManager, {
+      props: { projectId: 'flowgate' },
+      global: { plugins: [i18n], stubs: { AppIcon: true, GitBranchMergeConflictHost: { name: 'GitBranchMergeConflictHost', props: ['projectId', 'mergeId'], template: '<div data-test="host-stub" />' } } },
+    })
+    await flushPromises()
+    postRequest.mockResolvedValueOnce({
+      data: {
+        ok: true, status: 'conflict', merge_id: 42, conflict_files: ['a.txt', 'b.txt'],
+        push: false, pushed: false, ai: { status: 'running', run_id: 'r1' },
+      },
+    })
+    ;(wrapper.vm as any).mergeSource = 'stale-feature'
+    ;(wrapper.vm as any).mergeTarget = 'flowgate-v0.2'
+    await flushPromises()
+    await wrapper.find('[data-test="branch-zone-merge"]').trigger('submit')
+    await flushPromises()
+
+    const box = wrapper.get('[data-test="merge-conflict-result"]')
+    expect(box.classes()).not.toContain('branch-result--error')
+    expect(box.text()).toContain('a.txt')
+    expect(wrapper.get('[data-test="merge-conflict-ai"]').text()).toBe(
+      i18n.global.t('main.git_branch_manager.merge_conflict_ai.running'),
+    )
+    expect(wrapper.find('[data-test="host-stub"]').exists()).toBe(false)
+    await wrapper.get('[data-test="merge-conflict-open"]').trigger('click')
+    const host = wrapper.findComponent({ name: 'GitBranchMergeConflictHost' })
+    expect(host.exists()).toBe(true)
+    expect(host.props('mergeId')).toBe(42)
+    expect(host.props('projectId')).toBe('flowgate')
+    wrapper.unmount()
+  })
+
+  it('C3e. attempts still open on the server are listed from the catalog and re-enterable', async () => {
+    getRequest.mockResolvedValue({
+      data: {
+        ...CATALOG,
+        open_branch_merges: [{ merge_id: 7, source_branch: 'stale-feature', target_branch: 'main',
+          state: 'resolved_pending_review', push: true, file_count: 2, resolved_count: 2 }],
+      },
+    })
+    const wrapper = mount(GitBranchManager, {
+      props: { projectId: 'flowgate' },
+      global: { plugins: [i18n], stubs: { AppIcon: true, GitBranchMergeConflictHost: { name: 'GitBranchMergeConflictHost', props: ['projectId', 'mergeId'], template: '<div />' } } },
+    })
+    await flushPromises()
+    const row = wrapper.get('[data-test="open-merge-row"]')
+    expect(row.text()).toContain('stale-feature')
+    expect(wrapper.get('[data-test="open-merge-state"]').text()).toBe(
+      i18n.global.t('main.git_branch_manager.attempt_state.resolved_pending_review'),
+    )
+    // only the one catalog request — no extra round trip for the open attempts
+    expect(getRequest).toHaveBeenCalledTimes(1)
+    await wrapper.get('[data-test="open-merge-resolve"]').trigger('click')
+    expect(wrapper.findComponent({ name: 'GitBranchMergeConflictHost' }).props('mergeId')).toBe(7)
+    wrapper.unmount()
+  })
+
   // T0016 §7 merge 실패 — a non-conflict failure (e.g. the target diverged from
   // its remote) must still surface source/target and the server's code/message
   // instead of being flattened into the same bare "병합 실패" the old shared
