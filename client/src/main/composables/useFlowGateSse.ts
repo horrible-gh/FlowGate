@@ -313,6 +313,9 @@ export function useFlowGateSse(refreshAll: (epoch: number | null) => void) {
     pendingRefreshDocId = undefined
     pendingRefreshEventCount = 0
     pendingRefreshLastReason = 'unknown'
+    // A project switch can happen while the fixed window is open. Its reconnect
+    // performs a full resync, so never apply the old project's token to the new view.
+    if (pid && pid !== projectStore.currentProjectId) return
     const epoch = recordScreenRefreshFlushed(immediate, reason, coalescedEventCount)
     emitScreenRefresh(pid, docId, epoch)
   }
@@ -380,6 +383,7 @@ export function useFlowGateSse(refreshAll: (epoch: number | null) => void) {
     if (closedByUs) return
     const normalized = next ?? null
     if (normalized === connectedProject && es !== null) return
+    cancelCoalescedRefresh()
     forceResyncOnOpen = true
     reconnectNow('project_changed')
   }

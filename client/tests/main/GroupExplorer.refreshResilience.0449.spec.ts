@@ -273,3 +273,63 @@ describe('GroupExplorer — background refresh failure keeps the rendered tree',
     expect(renderedLabels(wrapper)).not.toContain('Other')
   })
 })
+
+describe('GroupExplorer — repeated refreshes', () => {
+  it('keeps the same row DOM when the server returns an identical tree', async () => {
+    const wrapper = await mountWithNodes()
+    const before = wrapper.findAll('.tree-row').find((row) => row.find('.tree-lbl').text() === 'G')!.element
+    getRequest.mockResolvedValueOnce(ok(NODES.map((node) => ({ ...node }))))
+    await wrapper.setProps({ refreshToken: 1 })
+    await flushPromises()
+    const after = wrapper.findAll('.tree-row').find((row) => row.find('.tree-lbl').text() === 'G')!.element
+    expect(after).toBe(before)
+    wrapper.unmount()
+  })
+
+  it('replaces rendered rows when title or terminal status changes', async () => {
+    const wrapper = await mountWithNodes()
+    const before = wrapper.findAll('.tree-row').find((row) => row.find('.tree-lbl').text() === 'G')!.element
+    const changed = NODES.map((node) => node.id === 'p.default.0449'
+      ? { ...node, label: 'Renamed', is_final_approved: true }
+      : { ...node })
+    getRequest.mockResolvedValueOnce(ok(changed))
+    await wrapper.setProps({ refreshToken: 1 })
+    await flushPromises()
+    expect(wrapper.findAll('.tree-row').some((row) => row.find('.tree-lbl').text() === 'Renamed')).toBe(false)
+    expect(before.isConnected).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('runs one final reload after events received during an active reload', async () => {
+    const wrapper = await mountWithNodes()
+    let finishFirst!: (value: ReturnType<typeof ok>) => void
+    getRequest.mockImplementationOnce(() => new Promise((resolve) => { finishFirst = resolve }))
+    await wrapper.setProps({ refreshToken: 1 })
+    await wrapper.setProps({ refreshToken: 2 })
+    await wrapper.setProps({ refreshToken: 3 })
+    getRequest.mockResolvedValueOnce(ok(NEXT_NODES))
+    finishFirst(ok(NODES))
+    await flushPromises()
+    expect(getRequest).toHaveBeenCalledTimes(3) // initial + active + one pending
+    expect(renderedLabels(wrapper)).toContain('G2')
+    wrapper.unmount()
+  })
+
+  it('queues an SSE refresh behind an unfinished initial tree load', async () => {
+    let finishInitial!: (value: ReturnType<typeof ok>) => void
+    getRequest.mockImplementationOnce(() => new Promise((resolve) => { finishInitial = resolve }))
+    const wrapper = mount(GroupExplorer, {
+      props: { projectId: 'p', refreshToken: 0 },
+      global: { plugins: [i18n], stubs: DIALOG_STUBS },
+    })
+    await wrapper.setProps({ refreshToken: 1 })
+    expect(getRequest).toHaveBeenCalledTimes(1)
+    getRequest.mockResolvedValueOnce(ok(NEXT_NODES))
+    finishInitial(ok(NODES))
+    await flushPromises()
+    expect(getRequest).toHaveBeenCalledTimes(2)
+    await openToGroups(wrapper)
+    expect(renderedLabels(wrapper)).toContain('G2')
+    wrapper.unmount()
+  })
+})
