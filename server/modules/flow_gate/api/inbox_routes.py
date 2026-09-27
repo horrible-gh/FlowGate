@@ -2664,6 +2664,20 @@ def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSONRespon
     if dry_resp is not None:
         return dry_resp
 
+    is_chain = token_rec.get("continuation_target_seq") is not None
+    chain_context = (
+        {"api_base_url": _inbox_api_base(request), "locale": effective_locale}
+        if is_chain else None
+    )
+    # 0549 T0008: the same chain entrance serves both TS contracts. A specification TS
+    # (test_contract_version: 2) is never executed here — its worker verified the cases
+    # and this POST carries the results; the legacy executable TS keeps the server run.
+    if test_run_service.ts_contract_version(doc) == 2:
+        return _handle_spec_test_results(
+            request, token_rec, body, doc, project=project, doc_id=str(doc_id),
+            locale=effective_locale, chain_context=chain_context,
+        )
+
     try:
         result = test_run_service.validate_and_create_run(
             doc_id=str(doc_id),
@@ -2680,6 +2694,8 @@ def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSONRespon
         project_id=project,
         doc_id=str(doc_id),
     )
+    if is_chain:
+        _park_chain_on_test_gate(token_rec, str(doc_id), result.get("run_id"), chain_context)
     # Unmanned-chain hand-off (group 0150): a continuation-carrying test_run token was
     # minted by advance_workflow's TSR-head wiring, not the manned test-run-request path.
     # The run is async, so no next token can ride on this 202 — the worker's part of the
@@ -2696,11 +2712,113 @@ def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSONRespon
             "message": (
                 f"{result.get('message', '')} Continuous chain hand-off complete: FlowGate "
                 "now executes the TS server-side. On all-green the TSR is auto-assembled "
-                "and auto-approved; on failure the chain pauses for a human. Do NOT write "
-                "the TSR yourself — your chain step ends here."
+                "and auto-approved, and the chain resumes with a fresh worker when its "
+                "target lies beyond the TSR; on failure the chain pauses for a human. Do NOT "
+                "write the TSR yourself — your chain step ends here."
             ).strip(),
         }
     return JSONResponse(status_code=202, content=result)
+
+
+def _park_chain_on_test_gate(
+    token_rec: dict, doc_id: str, run_id: Optional[str], chain_context: Optional[dict],
+    *, stop_code: Optional[str] = None,
+) -> None:
+    """Tag the live chain hop so its finalization parks the durable row (0549 T0008).
+
+    The hop's worker ends at this POST; the test outcome arrives later (legacy async run)
+    or right now (specification results). ``test_run_pending`` makes finalize park the
+    ordinary system row with the chain's target, and ``test_gate_doc_id`` lets its
+    finalization hook ask the gate whether to resume. A copy-mention chain has no engine
+    run to tag — nothing to resume server-side, exactly as before.
+    """
+    from modules.flow_gate.db import test_runs as db_test_runs
+    from modules.flow_gate.services import ai_invoke_service as _ai_invoke
+    from modules.flow_gate.services.ai_invoke.runtime import TEST_RUN_PENDING_STOP_CODE
+
+    try:
+        if run_id and chain_context:
+            existing = db_test_runs.get_run(run_id) or {}
+            if not existing.get("result_meta"):
+                db_test_runs.set_run_result_meta(
+                    run_id, json.dumps({"chain": chain_context}, ensure_ascii=False)
+                )
+        _ai_invoke.mark_chain_stop(
+            token_rec.get("group_id"),
+            stop_code or TEST_RUN_PENDING_STOP_CODE,
+            None,
+            extra={"test_gate_doc_id": doc_id},
+        )
+    except Exception:
+        import LogAssist.log as logger
+        logger.warning("[inbox] test-gate chain tagging failed (ignored)")
+
+
+def _handle_spec_test_results(
+    request: Request,
+    token_rec: dict,
+    body: dict,
+    doc: dict,
+    *,
+    project: str,
+    doc_id: str,
+    locale: str,
+    chain_context: Optional[dict],
+) -> JSONResponse:
+    """Record specification-TS results through the test_run token (0549 T0008)."""
+    from modules.flow_gate.services import test_run_service
+    from modules.flow_gate.services.ai_invoke.runtime import (
+        TEST_GATE_BLOCKED_STOP_CODE,
+        TEST_RUN_PENDING_STOP_CODE,
+    )
+
+    try:
+        recorded = test_run_service.record_spec_results(
+            doc_id=doc_id,
+            runner_id=token_rec["issued_to"],
+            triggered_via="token",
+            results=body.get("results"),
+            junit_xml=body.get("junit_xml"),
+            source_identity=body.get("source_identity"),
+            replace=bool(body.get("replace")),
+            locale=locale,
+            chain_context=chain_context,
+            submitted_overall=body.get("overall"),
+        )
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {"error_message": str(exc.detail)}
+        return JSONResponse(status_code=exc.status_code, content=detail)
+
+    token_service.consume(token_id=token_rec["token_id"], project_id=project, doc_id=doc_id)
+    run = recorded["run"]
+    outcome = test_run_service.finalize_spec_results(recorded["doc"], run, locale=locale)
+    content = test_run_service.spec_result_response(run["run_id"], outcome)
+    if chain_context is not None:
+        action = (outcome.get("continuation") or {}).get("action")
+        if outcome.get("gate_passed") and action == "ended":
+            stop = "chain_completed"
+        elif outcome.get("gate_passed"):
+            stop = TEST_RUN_PENDING_STOP_CODE
+        else:
+            stop = TEST_GATE_BLOCKED_STOP_CODE
+        _park_chain_on_test_gate(token_rec, doc_id, run["run_id"], None, stop_code=stop)
+        content.update({
+            "continuation": True,
+            "continuation_target_seq": token_rec.get("continuation_target_seq"),
+            "continuation_stop_code": stop,
+            "message": (
+                f"{content.get('message', '')} Your chain step ends here: "
+                + (
+                    "the chain target is reached." if stop == "chain_completed"
+                    else "a fresh worker continues with the next workflow step."
+                    if stop == TEST_RUN_PENDING_STOP_CODE
+                    else "the test gate did not pass, so the chain stops for "
+                         "failure-origin review or a human."
+                )
+                + " Do NOT write the TSR yourself."
+            ).strip(),
+        })
+    return JSONResponse(status_code=201, content=content)
 
 
 class _ReviewTokenAlreadyClaimed(Exception):
@@ -4024,6 +4142,28 @@ def _record_change_summary(doc_id: str, revision_no: int, summary: dict, actor_u
         logger.warning(f"[inbox] change summary event failed (ignored): {exc}")
 
 
+def _spec_ts_submission_failure(raw: Optional[str]) -> Optional[JSONResponse]:
+    """400 for a specification TS body that does not validate (0549 T0008), else None."""
+    from modules.flow_gate.services import test_spec_service
+
+    text = raw or ""
+    if test_spec_service.detect_contract_version(text) == test_spec_service.CONTRACT_LEGACY:
+        return None
+    parsed = test_spec_service.parse_spec(text)
+    if not parsed["errors"]:
+        return None
+    return _fail(
+        400,
+        "Specification TS (test_contract_version: 2) is invalid: "
+        + "; ".join(err["message"] for err in parsed["errors"][:10]),
+        help_url="/flowgate/api/v1/help/items/authoring_guide/TS",
+        error={
+            "code": "invalid_spec",
+            "details": {"reason": "invalid_spec", "errors": parsed["errors"][:50]},
+        },
+    )
+
+
 def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     """Processing flow for action: new (D020 §3-3-2)."""
 
@@ -4224,6 +4364,16 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 work_plan_service.inbox_error_message(exc, wp_locale),
                 help_url=work_plan_service.HELP_TEMPLATE_PATH,
             )
+
+    # 0549 T0008: a specification TS (test_contract_version: 2) is validated at submission,
+    # before dry-run and numbering, like the WP body above — a malformed spec never gets a
+    # document number. A TS without the marker is a legacy executable TS and is untouched.
+    if doc_type.upper() == "TS":
+        spec_failure = _spec_ts_submission_failure(
+            body_for_guards if body_for_guards is not None else _submission_text(doc_path, content)
+        )
+        if spec_failure is not None:
+            return spec_failure
 
     # Refuse a substantial body that is byte-identical to an existing document in a
     # *different* group — the submission-layer contamination signature (correct title,
@@ -5243,6 +5393,15 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 work_plan_service.inbox_error_message(exc, wp_locale),
                 help_url=work_plan_service.HELP_TEMPLATE_PATH,
             )
+
+    if (edit_doc_type or "").upper() == "TS":
+        spec_failure = _spec_ts_submission_failure(
+            edit_body_for_guards
+            if edit_body_for_guards is not None
+            else _submission_text(doc_path, content)
+        )
+        if spec_failure is not None:
+            return spec_failure
 
     wp_title_locale: Optional[str] = None
     wp_derived_title: Optional[str] = None

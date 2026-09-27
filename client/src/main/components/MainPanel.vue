@@ -62,6 +62,7 @@
             :test-run="exposedValue(docHeaderRefs[tab.id]?.testRun) ?? null"
             :group-disposed="exposedValue(docHeaderRefs[tab.id]?.groupDisposed) ?? false"
             :doc-loaded="exposedValue(docHeaderRefs[tab.id]?.docLoaded) ?? false"
+            :test-contract-version="exposedValue(docHeaderRefs[tab.id]?.testContractVersion) ?? null"
             :doc-id="tab.id"
             @run-started="docHeaderRefs[tab.id]?.fetchDoc?.(tab.id)"
           />
@@ -632,6 +633,7 @@
       :can-next-action="getWorkflowViewState(activeTabId).canNextAction"
       :test-run-status="exposedValue(docHeaderRefs[activeTabId]?.testRun)?.status ?? null"
       :group-test-run-active="exposedValue(docHeaderRefs[activeTabId]?.groupTestRunActive) ?? true"
+      :test-gate-blocked="isTestGateBlocked(exposedValue(docHeaderRefs[activeTabId]?.testGate))"
       :head-doc-id="exposedValue(docHeaderRefs[activeTabId]?.headDocId) ?? null"
       :head-doc-label="exposedValue(docHeaderRefs[activeTabId]?.workflowHeadType) ?? getWorkflowViewState(activeTabId).headDocLabel"
       :head-doc-title="exposedValue(docHeaderRefs[activeTabId]?.headDocTitle) ?? null"
@@ -1164,6 +1166,10 @@ const activeTab = computed(() => tabsStore.activeTab)
 const docHeaderRefs = reactive<Record<string, any>>({})
 const docWorkflowRefs = reactive<Record<string, any>>({})
 const mdViewerRefs = reactive<Record<string, any>>({})
+// 0549 T0008: a TSR whose server-computed test gate did not pass cannot be approved.
+function isTestGateBlocked(gate: { applies?: boolean; passed?: boolean } | null | undefined): boolean {
+  return !!gate?.applies && gate.passed === false
+}
 const textViewerRefs = reactive<Record<string, any>>({})
 const stepVerificationCardRefs = reactive<Record<string, any>>({})
 const convViewRefs = reactive<Record<string, any>>({})

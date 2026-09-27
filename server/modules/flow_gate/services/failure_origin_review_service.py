@@ -24,8 +24,55 @@ _REWORK_CONSTRAINT = {
 }
 
 
+# 0549 T0008: for a specification TS the "test" side is not the TS text but the automation,
+# the Case ID mapping and the evidence that produced the verdict. The expected result in the
+# approved TS is the requirement and is never the thing to change.
+_SPEC_REWORK_CONSTRAINT = {
+    "product_defect": (
+        "PRODUCT_DEFECT: modify the product source guided by the evidence below until the "
+        "failed TS case's EXPECTED result holds, then submit fresh results. The approved TS "
+        "specification (expected results, required flags) must not be weakened to match "
+        "the observed actual value."
+    ),
+    "test_defect": (
+        "TEST_DEFECT: product source modification is prohibited for this rework. Fix the "
+        "test automation, the Case ID mapping or the evidence collection (repository tests, "
+        "JUnit case linkage, result submission) so the result truly verifies the TS case as "
+        "written, then submit fresh results. Do not weaken the TS expected result."
+    ),
+}
+
+
+def _is_spec_run(run: dict) -> bool:
+    return run.get("contract_version") == 2
+
+
 def _build_evidence(*, doc: dict, run: dict, items: list[dict]) -> dict:
     failed = next((item for item in items if item.get("result") in {"fail", "timeout"}), {})
+    if _is_spec_run(run):
+        from modules.flow_gate.services import test_spec_service
+
+        spec_failed = next(
+            (item for item in items if item.get("case_status") == "FAIL"), failed or {}
+        )
+        row = test_spec_service.stored_case_to_row(spec_failed) if spec_failed else {}
+        return {
+            "run_id": run.get("run_id"),
+            "TS doc/revision": f"{doc.get('doc_id')} / {run.get('revision_no')}",
+            "contract": "test specification (test_contract_version 2)",
+            "overall": run.get("overall"),
+            "case_id": row.get("case_id"),
+            "case_title": row.get("title"),
+            "requirement": row.get("requirement"),
+            "expected": row.get("expected"),
+            "actual": row.get("actual"),
+            "execution_mode": row.get("execution_mode"),
+            "evidence": row.get("evidence"),
+            "source_name": row.get("source_name"),
+            "source_identity": row.get("source_identity"),
+            "defect_ref": row.get("defect_ref"),
+            "related_T_TR": doc.get("prev_doc_id"),
+        }
     return {
         "run_id": run.get("run_id"),
         "TS doc/revision": f"{doc.get('doc_id')} / {run.get('revision_no')}",
@@ -66,7 +113,9 @@ def build_rework_instruction(*, classification: str, doc: dict, run: dict, items
     ``classification`` must be ``product_defect`` or ``test_defect`` — ``hold`` never reopens
     (T0009 §9), so it has no rework instruction to build.
     """
-    constraint = _REWORK_CONSTRAINT[classification]
+    constraint = (
+        _SPEC_REWORK_CONSTRAINT if _is_spec_run(run) else _REWORK_CONSTRAINT
+    )[classification]
     evidence = _build_evidence(doc=doc, run=run, items=items)
     lines = "\n".join(f"- {key}: {value}" for key, value in evidence.items())
     return f"{constraint}\n\n{lines}"

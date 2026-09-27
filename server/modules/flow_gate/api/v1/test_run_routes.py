@@ -1,6 +1,8 @@
 """Remote TS test execution endpoints."""
 from __future__ import annotations
 
+from typing import Optional
+
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -70,6 +72,63 @@ def post_test_run(body: TestRunBody, request: Request):
             return _err(exc)
         raise
     return JSONResponse(status_code=202, content=result)
+
+
+class TestResultsBody(BaseModel):
+    doc_id: str
+    results: Optional[list] = None
+    junit_xml: Optional[str] = None
+    source_identity: Optional[dict] = None
+    replace: bool = False
+    overall: Optional[str] = None
+
+
+@router.post("/documents/test-results")
+def post_test_results(body: TestResultsBody, request: Request):
+    """Record results for an approved specification TS (0549 T0008).
+
+    Manual, external and imported automated (JUnit XML) results share this one model.
+    Same permission gate as starting a run (admin or perm_test_run). The server maps the
+    results onto the TS Case IDs, computes the overall verdict itself (a submitted
+    ``overall`` is ignored), writes the TSR test report and applies the test gate.
+    Plain ``def``: the synchronous DB/file work runs in the threadpool.
+    """
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    if not auth.get("_is_user_jwt"):
+        return JSONResponse(status_code=403, content={"error": "user_session_required"})
+    doc = db_docs.get_by_id(body.doc_id)
+    if doc is None:
+        return JSONResponse(status_code=404, content={"error": "doc_not_found", "doc_id": body.doc_id})
+    if not test_run_service.user_can_run_tests(
+        auth["issued_to"], doc.get("project_id") or "", bool(auth.get("is_admin"))
+    ):
+        return JSONResponse(status_code=403, content={"error": "permission_denied"})
+    locale = request.headers.get("x-locale") or "ko"
+    try:
+        recorded = test_run_service.record_spec_results(
+            doc_id=body.doc_id,
+            runner_id=auth.get("issued_to") or "system",
+            triggered_via="ui",
+            results=body.results,
+            junit_xml=body.junit_xml,
+            source_identity=body.source_identity,
+            replace=body.replace,
+            locale=locale,
+            submitted_overall=body.overall,
+        )
+    except Exception as exc:
+        if hasattr(exc, "status_code"):
+            return _err(exc)
+        raise
+    outcome = test_run_service.finalize_spec_results(
+        recorded["doc"], recorded["run"], locale=locale
+    )
+    return JSONResponse(
+        status_code=201,
+        content=test_run_service.spec_result_response(recorded["run"]["run_id"], outcome),
+    )
 
 
 @router.post("/documents/test-run/{run_id}/cancel")

@@ -1159,6 +1159,124 @@ def _work_plan_scope_section(scope: dict, project_id: str, locale: str, parent_d
 # never translated — only the surrounding prose is.
 _TS_AUTHORING_TYPES = {"TS"}
 
+# 0549 T0008: the default grammar for a NEW TS is the test specification (contract 2).
+# It is prepended to the legacy executable grammar below, which stays verbatim as the rule
+# for revising an existing unmarked TS (D0006 §5: legacy TS keep their meaning).
+_TS_SPEC_AUTHORING_TEXT = {
+    "ko": (
+        '새 TS는 사람이 검토·승인하는 시험사양서(test specification)로 작성하십시오. frontmatter에\n'
+        '`test_contract_version: 2` 를 반드시 넣으십시오 — 이 표시가 있는 TS는 FlowGate가 셸 명령으로\n'
+        '실행하지 않고, 시험 결과를 Case ID별로 받아 시험성적서(TSR)를 조립합니다. 표시가 없는 TS는\n'
+        '기존 실행형(legacy) TS로 계속 취급됩니다.\n'
+        '\n'
+        '---\n'
+        'test_contract_version: 2\n'
+        '---\n'
+        '# <시험사양서 제목>\n'
+        '\n'
+        '<선택: 범위·전제 설명>\n'
+        '\n'
+        '## 시험 사양\n'
+        '\n'
+        '### TC-001: <케이스 제목>\n'
+        '- category: normal | negative | boundary | regression\n'
+        '- requirement: <R/설계/AC 참조; 예: R0001 §4.2 / AC-03>\n'
+        '- execution_mode: automated | manual | external\n'
+        '- required: true | false\n'
+        '- precondition: <전제조건>\n'
+        '- input: <입력/조건>\n'
+        '- procedure: <시험 절차; 여러 줄이면 다음 줄부터 두 칸 들여쓰기>\n'
+        '- expected: <기대 결과 — 요구사항에서 온 값>\n'
+        '- check_points: <확인 관점>\n'
+        '- automation_ref: <선택: 자동 시험 위치; 예: tests/test_x.py::test_tc_001>\n'
+        '\n'
+        '규칙: Case ID는 TS 안에서 유일해야 하고, 필수(required: true) Case가 최소 하나 있어야 합니다.\n'
+        '필드 이름(category, requirement, …)은 번역하지 않는 문법 토큰입니다. cmd/assert/setup 같은\n'
+        '실행형 필드는 시험사양서에서 거부됩니다. 기대 결과는 구현을 보고 쓰지 말고 R/승인 설계/AC/\n'
+        '지시를 근거로 쓰십시오. 케이스 수보다 요구사항·AC 커버리지(정상/부정/경계/회귀)를 우선하십시오.\n'
+        '자동 시험 코드는 저장소 테스트로 두고, JUnit 결과에서 `flowgate.case_id` 속성이나 테스트 이름의\n'
+        '`TC_001` 토큰으로 Case ID를 연결할 수 있습니다. 서버는 필수 Case 기준으로 종합 판정을 직접\n'
+        '계산하므로 문서나 결과에 적은 종합 PASS는 판정에 쓰이지 않습니다.\n'
+        '\n'
+        '── 기존 실행형 TS(test_contract_version 표시 없음)를 고칠 때만 아래 문법을 씁니다 ──\n'
+        '\n'
+        ''
+    ),
+    "ja": (
+        '新しいTSは、人がレビュー・承認する試験仕様書(test specification)として作成してください。\n'
+        'frontmatterに `test_contract_version: 2` を必ず入れてください — この表示のあるTSはFlowGateが\n'
+        'シェルコマンドとして実行せず、Case ID別の試験結果を受け取って試験成績書(TSR)を組み立てます。\n'
+        '表示のないTSは従来の実行型(legacy)TSとして扱われます。\n'
+        '\n'
+        '---\n'
+        'test_contract_version: 2\n'
+        '---\n'
+        '# <試験仕様書タイトル>\n'
+        '\n'
+        '## Test Specification\n'
+        '\n'
+        '### TC-001: <ケースタイトル>\n'
+        '- category: normal | negative | boundary | regression\n'
+        '- requirement: <R/設計/AC参照>\n'
+        '- execution_mode: automated | manual | external\n'
+        '- required: true | false\n'
+        '- precondition: <前提条件>\n'
+        '- input: <入力/条件>\n'
+        '- procedure: <試験手順; 複数行は次の行から2スペース字下げ>\n'
+        '- expected: <期待結果 — 要件から来る値>\n'
+        '- check_points: <確認観点>\n'
+        '- automation_ref: <任意: 自動試験の場所>\n'
+        '\n'
+        '規則: Case IDはTS内で一意、必須(required: true)のCaseが最低1件必要です。フィールド名は\n'
+        '翻訳しない文法トークンです。cmd/assert/setupなどの実行型フィールドは試験仕様書では拒否されます。\n'
+        '期待結果は実装を見て書かず、R/承認済み設計/AC/指示を根拠にしてください。ケース数より\n'
+        '要件・ACのカバレッジ(正常/異常/境界/回帰)を優先してください。JUnit結果では `flowgate.case_id`\n'
+        'プロパティまたはテスト名の `TC_001` トークンでCase IDを連結できます。総合判定はサーバーが必須\n'
+        'Caseから計算するため、文書や結果に書いた総合PASSは判定に使われません。\n'
+        '\n'
+        '── 既存の実行型TS(test_contract_version表示なし)を修正する場合のみ、以下の文法を使います ──\n'
+        '\n'
+        ''
+    ),
+    "en": (
+        'Write a new TS as a test SPECIFICATION that a human reviews and approves. Put\n'
+        '`test_contract_version: 2` in its frontmatter — FlowGate never executes such a TS as shell\n'
+        'commands; it collects results per Case ID and assembles the test report (TSR). A TS without\n'
+        'the marker keeps being a legacy executable TS.\n'
+        '\n'
+        '---\n'
+        'test_contract_version: 2\n'
+        '---\n'
+        '# <specification title>\n'
+        '\n'
+        '## Test Specification\n'
+        '\n'
+        '### TC-001: <case title>\n'
+        '- category: normal | negative | boundary | regression\n'
+        '- requirement: <R/design/AC reference; e.g. R0001 sec 4.2 / AC-03>\n'
+        '- execution_mode: automated | manual | external\n'
+        '- required: true | false\n'
+        '- precondition: <precondition>\n'
+        '- input: <input / condition>\n'
+        '- procedure: <test procedure; continue extra lines indented by two spaces>\n'
+        '- expected: <expected result, taken from the requirement>\n'
+        '- check_points: <what to check>\n'
+        '- automation_ref: <optional: where the automated test lives>\n'
+        '\n'
+        'Rules: Case IDs are unique within the TS and at least one case must be required. Field\n'
+        'names are grammar tokens and are never translated. Executable fields such as cmd/assert/setup\n'
+        'are refused in a specification. Derive expected results from the R/approved design/AC/\n'
+        'instruction, never from the current implementation, and prefer requirement/AC coverage\n'
+        '(normal/negative/boundary/regression) over case count. In JUnit results a case is linked by a\n'
+        '`flowgate.case_id` property or a `TC_001` token in the test name. The server computes the\n'
+        'overall verdict from the required cases; an overall PASS written anywhere else is not read.\n'
+        '\n'
+        '-- Only when revising an existing legacy executable TS (no test_contract_version marker), use the grammar below --\n'
+        '\n'
+        ''
+    ),
+}
+
 _TS_AUTHORING_TEXT = {
     "ko": (
         "이 TS를 실행 가능한 스펙으로 작성하십시오. FlowGate는 프로젝트 소스 루트에서 이를\n"
@@ -1353,7 +1471,8 @@ def _ts_authoring_section(locale: str = "ko") -> str:
     host_os = test_command_service.current_os()
     # {PORT}/{SCRATCH} in the text above are literal placeholders shown to the worker,
     # not str.format fields — use a plain marker replace so they survive untouched.
-    body = _TS_AUTHORING_TEXT[loc].replace("{shell_guidance}", _ts_host_shell_guidance(host_os, loc))
+    legacy = _TS_AUTHORING_TEXT[loc].replace("{shell_guidance}", _ts_host_shell_guidance(host_os, loc))
+    body = _TS_SPEC_AUTHORING_TEXT[loc] + legacy
     return _section("Test scenario authoring (TS)", body)
 
 

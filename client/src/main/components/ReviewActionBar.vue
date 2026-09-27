@@ -355,11 +355,14 @@
           <button
             class="btn btn-success btn-sm"
             :disabled="!canApprove || isActionBarBusy"
-            :title="gitSettling ? t('main.review_action_bar.git_settle_in_progress') : undefined"
+            :title="gitSettling ? t('main.review_action_bar.git_settle_in_progress') : testGateBlocked ? t('main.review_action_bar.test_gate_blocked') : undefined"
             @click="onApproveClick"
           >
             <AppIcon name="check" /> {{ t('main.review_action_bar.btn_approve') }}
           </button>
+          <span v-if="testGateBlocked" class="ab-gate-hint" data-testid="ab-test-gate-hint">
+            <AppIcon name="prohibit" /> {{ t('main.review_action_bar.test_gate_blocked') }}
+          </span>
 
           <!-- Reject -->
           <button class="btn btn-danger btn-sm" :disabled="approving || isActionBarBusy" @click="onRejectClick">
@@ -553,6 +556,12 @@ const props = defineProps<{
    * same true that the running document's own tab gets.
    */
   groupTestRunActive?: boolean
+  /**
+   * 0549 T0008: this TSR's server-computed test gate did not pass (FAIL/BLOCKED/NOT_RUN).
+   * The report exists, but it cannot be approved — the server refuses it too; the button
+   * stays visible and disabled, with the reason next to it.
+   */
+  testGateBlocked?: boolean
   // T813: head doc label fields
   headDocId?: string | null
   /** D031: head step type code (replaces headDocType), sourced from workflowViewState.headDocLabel. */
@@ -1031,6 +1040,7 @@ const canApprove = computed(
   () =>
     !approving.value &&
     approvedDocId.value !== props.docId &&
+    !props.testGateBlocked &&
     ['pending_review', 'revised'].includes(normalizedStatus.value),
 )
 
@@ -1889,6 +1899,8 @@ onBeforeUnmount(() => {
   color: #b45309;
   font-size: 0.6rem;
 }
+/* 0549 T0008: why [approve] is disabled on a TSR that did not pass the test gate. */
+.ab-gate-hint { display: inline-flex; align-items: center; gap: 4px; font-size: .72rem; color: var(--danger); white-space: nowrap; }
 </style>
 
 
