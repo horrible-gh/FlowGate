@@ -48,6 +48,8 @@ from .runtime import (
     REVIEW_STALLED_STOP_CODE,
     REVIEW_VERDICT_HOLD_STOP_CODE,
     SOURCE_DIRTY_FILES_LIMIT,
+    TEST_GATE_BLOCKED_STOP_CODE,
+    TEST_RUN_PENDING_STOP_CODE,
     _absolute_cap_sec,
     _actual_work_executor_provider_id,
     _known_run_prompts,
@@ -322,12 +324,42 @@ def _finalize_run(run: dict) -> None:
     # attempt necessarily defers. Retry after finalization/release; human answers and
     # restart recovery already use the same helper directly from register_answer.
     _auto_resume_answered_question_chain(run)
+    # 0549 T0008: a hop that handed a TS to the test gate parks test_run_pending above; if
+    # the gate already passed while this worker was still finalizing, the resume could not
+    # happen then (the group lease and the live run were still this hop's) — do it now,
+    # strictly after the release, the same ordering the question resume relies on.
+    _auto_resume_test_gate_chain(run)
     # NR0003 §11 제안 1/2 (T#1): the responder dispatch below starts a brand-new run through
     # the ordinary admission path, which refuses a second concurrent run for this group
     # (`run_in_progress`) as long as THIS hop's own lease is still held -- so it must run
     # strictly after the release directly above, never before it.
     if run.get("stop_code") == "question_pending":
         _dispatch_question_responder(run)
+
+
+def _auto_resume_test_gate_chain(run: dict) -> None:
+    """Best-effort finalization hook for the test-gate continuation (0549 T0008).
+
+    ``test_run_service.continue_chain_after_test_gate`` owns the decision (gate passed?
+    target beyond the TSR?) and enters the ordinary resume_chain CAS path; the test-result
+    side calls the same function, so whichever end of the race sees both facts first
+    resumes and the paused-row CAS turns the other into a no-op.
+    """
+    if run.get("stop_code") != TEST_RUN_PENDING_STOP_CODE:
+        return
+    doc_id = run.get("test_gate_doc_id")
+    if not doc_id:
+        return
+    try:
+        from modules.flow_gate.services import test_run_service
+
+        test_run_service.resume_test_gate_chain_for_hop(
+            doc_id,
+            api_base_url=run.get("api_base_url"),
+            locale=run.get("continuation_locale"),
+        )
+    except Exception:
+        logger.warning("test-gate auto-resume failed for %s", run.get("run_id"), exc_info=True)
 
 
 def _finalize_messages(run: dict) -> None:
@@ -583,6 +615,12 @@ def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
     if stop_code == "question_pending":
         return ("This hop registered a query and is waiting for a human answer. "
                 "The chain stopped and can be resumed once it is answered.")
+    if stop_code == TEST_RUN_PENDING_STOP_CODE:
+        return ("This hop handed the approved TS to the test gate. The chain resumes on its "
+                "own once the TSR is PASS and approved; FAIL/BLOCKED/NOT_RUN keep it stopped.")
+    if stop_code == TEST_GATE_BLOCKED_STOP_CODE:
+        return ("The test gate did not pass (FAIL/BLOCKED/NOT_RUN or the run failed), so "
+                "the chain stopped. Resume after the failure-origin rework or a human check.")
     if stop_code == "providers_exhausted":
         return ("No AI provider could be started for this hop. "
                 "The chain stopped and can be resumed.")
@@ -684,7 +722,7 @@ def stop_reason_text(stop_code: Optional[str], *, target_seq: Optional[int] = No
 
 
 def mark_chain_stop(group_id: Optional[str], stop_code: str,
-                    detail: Optional[str] = None) -> bool:
+                    detail: Optional[str] = None, *, extra: Optional[dict] = None) -> bool:
     """Let the inbox self-chain tag the live run with ITS stop reason (L0007 §4.1-5).
 
     Returns False when there is no engine run to tag — a copy-mention (semi-manned) chain,
@@ -697,6 +735,10 @@ def mark_chain_stop(group_id: Optional[str], stop_code: str,
         return False
     run["inbox_stop_code"] = stop_code
     run["inbox_stop_detail"] = detail
+    if extra:
+        # 0549 T0008: facts the run's own finalization needs later (the TS handed to the
+        # test gate), carried on the live run like the stop code itself.
+        run.update(extra)
     return True
 
 
@@ -829,6 +871,12 @@ def stamp_chain_stop(
 # ── Stop row / record / human signal (0359 L0007 §2.8, §2.10.1, §2.11) ───────
 
 
+# Stops that are not a new chain: the paused row keeps the chain identity and lifetime
+# counters so the automatic resume continues the SAME chain (question answered, T#2; test gate
+# passed, 0549 T0008).
+_CHAIN_KEEPING_STOPS = ("question_pending", TEST_RUN_PENDING_STOP_CODE)
+
+
 def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
     """Maintain the miniplayer's [resume] card (L0007 §2.8 / §4.5).
 
@@ -929,16 +977,16 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
             # reconstruct the exact continuation even after a process restart. Other
             # legacy system stops retain their existing re-derived-counter behaviour.
             chain_id=(
-                run.get("chain_id") if run.get("stop_code") == "question_pending" else None
+                run.get("chain_id") if run.get("stop_code") in _CHAIN_KEEPING_STOPS else None
             ),
             chain_docs_target=(
                 run.get("chain_docs_target")
-                if run.get("stop_code") == "question_pending"
+                if run.get("stop_code") in _CHAIN_KEEPING_STOPS
                 else None
             ),
             chain_docs_reached=(
                 int(run.get("chain_docs_reached") or 0)
-                if run.get("stop_code") == "question_pending"
+                if run.get("stop_code") in _CHAIN_KEEPING_STOPS
                 else 0
             ),
             stop_kind="system",

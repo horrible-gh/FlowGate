@@ -48,4 +48,128 @@ export interface TestRun {
   setup?: TestRunCase[]
   cases?: TestRunCase[]
   teardown?: TestRunCase[]
+  // flowgate.default.0549 T0008: null for a legacy executable run; 2 for a
+  // specification-TS result record, whose verdict is the server-computed `overall`.
+  contract_version?: number | null
+  overall?: TestVerdict | null
+  gate_passed?: boolean
+  summary?: TestResultSummary | null
+  unmapped?: TestUnmappedResult[]
+  conflicts?: TestMappingConflict[]
+  source_identity?: Record<string, string>
+}
+
+// ── Specification TS / TSR test report (flowgate.default.0549 T0008) ──────────────
+
+export type TestVerdict = 'PASS' | 'FAIL' | 'BLOCKED' | 'NOT_RUN'
+export type TestCategory = 'normal' | 'negative' | 'boundary' | 'regression'
+export type TestExecutionMode = 'automated' | 'manual' | 'external'
+
+export interface TestCounts {
+  total: number
+  pass: number
+  fail: number
+  blocked: number
+  not_run: number
+}
+
+export interface TestResultSummary {
+  counts?: TestCounts | null
+  required_counts?: TestCounts | null
+  optional_counts?: TestCounts | null
+}
+
+export interface TestEvidence {
+  kind: string
+  value: string
+  label?: string
+}
+
+export interface TestSpecCase {
+  case_id: string
+  title: string
+  category: TestCategory | string | null
+  requirement: string
+  execution_mode: TestExecutionMode | string | null
+  required: boolean
+  precondition: string
+  input: string
+  procedure: string
+  expected: string
+  check_points: string
+  automation_ref?: string
+}
+
+export interface TestSpecError {
+  code: string
+  case_id?: string | null
+  field?: string | null
+  message: string
+}
+
+/** One TS case inside a result record (TestRunCase + the spec/result fields). */
+export interface TestReportCase extends TestRunCase {
+  case_status?: TestVerdict | string | null
+  category?: string | null
+  requirement?: string | null
+  required?: boolean | null
+  precondition?: string | null
+  input?: string | null
+  procedure?: string | null
+  check_points?: string | null
+  evidence?: TestEvidence[] | null
+  defect_ref?: string | null
+  execution_mode?: string | null
+  checked_by?: string | null
+  checked_at?: string | null
+  note?: string | null
+  source_name?: string | null
+  source_identity?: Record<string, string> | null
+  result_origin?: string | null
+  mapping_conflict?: boolean | null
+  result_count?: number | null
+  carried_from_run_id?: string | null
+}
+
+export interface TestUnmappedResult {
+  case_id?: string | null
+  status?: string | null
+  source_name?: string | null
+  actual?: string | null
+  origin?: string | null
+  reason?: string | null
+}
+
+export interface TestMappingConflict {
+  case_id: string
+  result_count: number
+  statuses: string[]
+  source_names?: (string | null)[]
+}
+
+export interface TestResultRecord extends Omit<TestRun, 'cases'> {
+  cases?: TestReportCase[]
+}
+
+/** GET /api/v1/documents/{doc_id}/test-document */
+export interface TestDocumentView {
+  ok?: boolean
+  kind: 'TS' | 'TSR' | string
+  doc_id: string
+  contract_version: number | null
+  // TS (contract 2)
+  title?: string
+  doc_title?: string
+  intro?: string
+  cases?: TestSpecCase[]
+  errors?: TestSpecError[]
+  latest_result?: TestResultRecord | null
+  doc_review_status?: string | null
+  can_start_spec?: boolean
+  tsr_doc_id?: string | null
+  tsr_review_status?: string | null
+  // TSR (contract 2)
+  target_ts?: string | null
+  report?: TestResultRecord | null
+  gate?: { applies: boolean; passed: boolean; overall?: string | null } | null
 }

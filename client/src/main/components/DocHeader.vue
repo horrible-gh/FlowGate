@@ -315,6 +315,10 @@ interface DocDetail {
   workflow_head_doc_title?: string | null
   workflow_head_doc_number?: string | null
   test_run?: TestRun | null
+  // 0549 T0008: TS contract (1 = legacy executable, 2 = test specification) and, on a TSR,
+  // the server-computed test gate. Both are display-only detail extras.
+  test_contract_version?: number | null
+  test_gate?: { applies?: boolean; passed?: boolean; overall?: string | null } | null
   // 0441 TR0005 rev2: group-scoped (not document-scoped) "a test run is in flight" flag.
   group_test_run?: { active?: boolean; run_id?: string | null; doc_id?: string | null; status?: string | null } | null
   next_step_exists?: boolean
@@ -1311,6 +1315,10 @@ const hasCompletedReviewForRevision = computed(() => {
 // 0155: latest test run (with failing-case detail) for the design-B fail strip. null on
 // every non-failing doc, since the embed only binds to a doc that has a bound run.
 const testRun = computed(() => doc.value?.test_run ?? null)
+// 0549 T0008: the contract decides which test controls exist (a specification TS is never
+// executed by the server) and the gate decides whether a TSR may be approved.
+const testContractVersion = computed(() => doc.value?.test_contract_version ?? null)
+const testGate = computed(() => doc.value?.test_gate ?? null)
 // 0441 TR0005 rev4 (rejection: opening an R document during a TS run revived its action bar):
 // testRun above is bound to THIS document, so it stays null on every sibling tab while a
 // run is executing. Keep the group value unknown until detail explicitly answers. Returning
@@ -1398,6 +1406,8 @@ defineExpose({
   aiReviewHistory,
   hasCompletedReviewForRevision,
   testRun,
+  testContractVersion,
+  testGate,
   groupTestRunActive,
   trScope,
   fetchDoc,
