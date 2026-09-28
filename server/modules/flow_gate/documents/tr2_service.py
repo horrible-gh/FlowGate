@@ -348,6 +348,19 @@ def verify_pair(tr2_doc_id: str, body: dict) -> None:
         raise Tr2ValidationError("tr2_workflow_conflict", "source_t2_doc_id")
 
 
+def effective_head_for(doc_id: str) -> dict | None:
+    """The effective head of the sequence that owns ``doc_id``'s slot.
+
+    ``get_pending_head_by_group`` only returns slots that are still unregistered, so it
+    never names a registered TR2; approval admission and progression need the D030
+    effective head (a registered, not yet approved slot first).
+    """
+    item = db_wfseq.get_item_by_result_doc_id(doc_id)
+    if item is None:
+        return None
+    return db_wfseq.get_effective_head(item["sequence_id"])
+
+
 def verify_pending_pair(project_id: str, group_id: str, source_t2_doc_id: str) -> None:
     """Reject an inbox submission before it reserves a number or registers a slot."""
     result = db_wfseq.get_pending_head_by_group(group_id, project_id)
@@ -423,6 +436,8 @@ def read_view(doc: dict, body: dict) -> dict:
     from modules.flow_gate.db import tr_commit_ledger
     from modules.flow_gate.db import tr2_approval_attempts
     from modules.flow_gate.documents import document_service
+    from modules.flow_gate.documents.tr2_errors import TR2_ERRORS
+    from modules.flow_gate.documents.tr2_approval_service import retry_state
     source_root = resolve_source_root(doc["project_id"], doc["group_id"])
     spec = body["edit_spec"]
     live = target_fingerprint(spec, source_root)
@@ -435,9 +450,16 @@ def read_view(doc: dict, body: dict) -> dict:
     if spec.get("termination") == "ready_to_apply" and spec.get("edits"):
         from modules.flow_gate.documents.tr2_apply_adapter import adapter
         anchors = adapter.evaluate(spec, source_root, baseline=baseline)["edits"]
+    editable = document_service.is_document_editable(
+        doc, final_approved=document_service.is_final_approved(doc))
+    block = mutation_block(doc)
+    attempts = [{**row, "retryable": (TR2_ERRORS[row["error_code"]].retryable
+                                      if row.get("error_code") in TR2_ERRORS else None)}
+                for row in tr2_approval_attempts.list_by_doc(doc["doc_id"])]
     return {
-        "document": {**doc, "editable": document_service.is_document_editable(
-            doc, final_approved=document_service.is_final_approved(doc))},
+        "document": {**doc, "editable": editable},
+        "mutation": {"allowed": editable and block is None,
+                     "reason": block if block is not None else (None if editable else "not_editable")},
         "body": body,
         "derived": {
             "files": derived_files(spec, source_root),
@@ -448,8 +470,9 @@ def read_view(doc: dict, body: dict) -> dict:
                                            "exists": (source_root / p).is_file(),
                                            "is_regular_file": (source_root / p).is_file()}
                                           for p in target_set(spec)], "anchors": anchors}},
-        "approval": {"latest_attempt": tr2_approval_attempts.latest_by_doc(doc["doc_id"]),
-                     "attempts": tr2_approval_attempts.list_by_doc(doc["doc_id"])},
+        "approval": {"latest_attempt": attempts[0] if attempts else None,
+                     "attempts": attempts,
+                     "retry": retry_state(doc)},
         "history": {"source_history_state": _history_state(doc), "ledger": ledger},
     }
 
@@ -471,24 +494,41 @@ def _lock(doc_id: str) -> threading.Lock:
         return _locks.setdefault(doc_id, threading.Lock())
 
 
+def mutation_block(doc: dict) -> str | None:
+    """Why the proposal is immutable right now, or None. Approval history owns these states."""
+    from modules.flow_gate.db import tr2_approval_attempts
+    if doc.get("doc_review_status") == "approved":
+        return "approved"
+    if tr2_approval_attempts.in_progress(doc["doc_id"]):
+        return "applying"
+    if tr2_approval_attempts.recovery_required(doc["doc_id"]):
+        return "recovery_required"
+    return None
+
+
+def _assert_mutable(doc: dict) -> None:
+    reason = mutation_block(doc)
+    if reason == "applying":
+        raise Tr2ValidationError("tr2_in_progress", "document", {"reason": reason})
+    if reason is not None:
+        raise Tr2ValidationError("tr2_spec_immutable", "document", {"reason": reason})
+
+
 def save(doc_id: str, raw_body: str | dict, *, actor: str, expected_revision: int) -> dict:
     # This is the only canonical writer for human PUT, AI inbox and direct API.
+    return _save(doc_id, lambda _current: raw_body, actor=actor,
+                 expected_revision=expected_revision)
+
+
+def _save(doc_id: str, build, *, actor: str, expected_revision: int) -> dict:
+    """Validate and persist the body ``build`` returns under the per-document lock.
+
+    ``build`` receives the stored canonical body (None before creation) read after the
+    revision CAS, so a partial mutation is merged into exactly the revision it expected.
+    """
     doc = db_docs.get_by_id(doc_id)
     if not doc or doc.get("type_code") != TR2_TYPE_CODE:
         raise Tr2ValidationError("tr2_workflow_conflict", "doc_id")
-    body = parse(raw_body) if isinstance(raw_body, str) else raw_body
-    if not isinstance(body, dict):
-        _invalid("body", "object required")
-    dropped = [key for key in ("codebase_root", "source_honey") if key in body]
-    validated = validate(body, doc=doc)
-    verify_pair(doc_id, validated)
-    canonical = canonicalize(validated)
-    spec = canonical["edit_spec"]
-    target_set(spec)
-    root = resolve_source_root(doc["project_id"], doc["group_id"])
-    canonical["baseline_fingerprint"] = target_fingerprint(spec, root)
-    derived = {"files": derived_files(spec, root),
-               "spec_fingerprint": spec_fingerprint(spec)}
     path = canonical_path_for_doc(doc)
     with _lock(doc_id):
         fresh = db_docs.get_by_id(doc_id)
@@ -497,6 +537,21 @@ def save(doc_id: str, raw_body: str | dict, *, actor: str, expected_revision: in
             raise Tr2ValidationError("tr2_spec_changed", "expected_revision",
                                      {"current_revision_no": current,
                                       "updated_at": (fresh or {}).get("updated_at")})
+        _assert_mutable(fresh)
+        raw_body = build(load_body(path) if current and path.is_file() else None)
+        body = parse(raw_body) if isinstance(raw_body, str) else raw_body
+        if not isinstance(body, dict):
+            _invalid("body", "object required")
+        dropped = [key for key in ("codebase_root", "source_honey") if key in body]
+        validated = validate(body, doc=doc)
+        verify_pair(doc_id, validated)
+        canonical = canonicalize(validated)
+        spec = canonical["edit_spec"]
+        target_set(spec)
+        root = resolve_source_root(doc["project_id"], doc["group_id"])
+        canonical["baseline_fingerprint"] = target_fingerprint(spec, root)
+        derived = {"files": derived_files(spec, root),
+                   "spec_fingerprint": spec_fingerprint(spec)}
         now = now_iso()
         rel = storage_paths.to_storage_relative(path, doc["project_id"])
         store = get_store()
@@ -530,14 +585,16 @@ def save(doc_id: str, raw_body: str | dict, *, actor: str, expected_revision: in
                         {"reason": "save rollback failed"}) from restore_error
             raise
     try:
-        from modules.flow_gate.api.v1.events.publisher import publish_event_threadsafe, FlowEvent
+        # Every open screen of the project re-reads the new revision, not only the
+        # actor's: an AI inbox save must reach the reviewer looking at this TR2.
+        from modules.flow_gate.api.v1.events.publisher import broadcast_event_threadsafe, FlowEvent
         from modules.flow_gate.api.v1.events.event_types import EventType
-        publish_event_threadsafe(FlowEvent(
+        broadcast_event_threadsafe(FlowEvent(
             event_type=EventType.DOCUMENT_EXPLORER_REFRESH,
             payload={"operation": "updated", "doc_id": doc_id, "type": TR2_TYPE_CODE,
                      "revision_no": current + 1},
             project=doc["project_id"], group_id=doc["group_id"], doc_id=doc_id,
-            audience=actor))
+            audience="*"))
     except Exception:
         pass  # Save is durable; refresh delivery is best-effort.
     return {"ok": True, "doc_id": doc_id, "new_revision": current + 1,
@@ -545,3 +602,96 @@ def save(doc_id: str, raw_body: str | dict, *, actor: str, expected_revision: in
             "derived": derived,
             "dropped_keys": dropped, "updated_at": now, "updated_by": actor,
             "doc_review_status": refreshed.get("doc_review_status")}
+
+
+ITEM_COLLECTIONS = ("edits", "deferred")
+
+
+def empty_edit_spec() -> dict:
+    """The smallest valid proposal: nothing to apply yet."""
+    return {"termination": "needs_more_work", "edits": [], "deferred": [],
+            "gate": {"commands": [], "apply": False}}
+
+
+def find_item(edit_spec: dict, item_id: str) -> tuple[str, int, dict] | None:
+    for collection in ITEM_COLLECTIONS:
+        for index, item in enumerate(edit_spec.get(collection) or []):
+            if isinstance(item, dict) and item.get("id") == item_id:
+                return collection, index, item
+    return None
+
+
+def read_item(doc_id: str, item_id: str) -> dict:
+    doc = db_docs.get_by_id(doc_id)
+    if not doc or doc.get("type_code") != TR2_TYPE_CODE:
+        raise Tr2ValidationError("tr2_workflow_conflict", "doc_id")
+    found = find_item(load_body(canonical_path_for_doc(doc))["edit_spec"], item_id)
+    if found is None:
+        raise Tr2ValidationError("tr2_item_not_found", "item_id", {"item_id": item_id})
+    collection, index, item = found
+    return {"doc_id": doc_id, "revision_no": doc.get("revision_no") or 0,
+            "collection": collection, "index": index, "item": item}
+
+
+def _collection(value, loc: str) -> str:
+    if value not in ITEM_COLLECTIONS:
+        _invalid(loc, f"collection must be one of {list(ITEM_COLLECTIONS)}")
+    return value
+
+
+def mutate(doc_id: str, operation: str, *, actor: str, expected_revision: int,
+           item_id: str | None = None, collection: str | None = None,
+           item: dict | None = None) -> dict:
+    """Whole/individual edit-spec CRUD, merged on the server and saved by ``_save``.
+
+    Clients never assemble the stored document: they send one operation, the merge
+    happens against the revision the CAS admitted, and the result passes the same
+    validator, pair check, baseline fingerprint and revision bump as a full save.
+    """
+    if operation not in {"reset_spec", "add_item", "replace_item", "delete_item"}:
+        _invalid("operation", "unknown operation")
+    if operation in {"add_item", "replace_item"} and not isinstance(item, dict):
+        _invalid("item", "object required")
+    if operation in {"replace_item", "delete_item"} and (
+            not isinstance(item_id, str) or not item_id):
+        _invalid("item_id", "non-empty string required")
+    pruned: list[str] = []
+
+    def build(current: dict | None) -> dict:
+        if current is None:
+            raise Tr2ValidationError("tr2_workflow_conflict", "document",
+                                     {"reason": "TR2 body has not been created"})
+        spec = json.loads(_json(current["edit_spec"]))
+        if operation == "reset_spec":
+            spec = empty_edit_spec()
+        elif operation == "add_item":
+            spec.setdefault(_collection(collection, "collection"), []).append(dict(item))
+        else:
+            found = find_item(spec, item_id)
+            if found is None:
+                raise Tr2ValidationError("tr2_item_not_found", "item_id", {"item_id": item_id})
+            source, index, _old = found
+            del spec[source][index]
+            if operation == "replace_item":
+                target = _collection(collection or source, "collection")
+                if target == source:
+                    spec[target].insert(index, dict(item))
+                else:
+                    spec[target].append(dict(item))
+            live_edits = {edit.get("id") for edit in spec.get("edits") or []
+                          if isinstance(edit, dict)}
+            if item_id not in live_edits:
+                # A verify block may only name live edits; drop the reference with the edit.
+                verify = spec.get("verify")
+                if isinstance(verify, dict) and isinstance(verify.get("test_edit_ids"), list):
+                    kept = [ident for ident in verify["test_edit_ids"] if ident != item_id]
+                    if len(kept) != len(verify["test_edit_ids"]):
+                        pruned.append(item_id)
+                        verify["test_edit_ids"] = kept
+        return {"tr2_version": current["tr2_version"],
+                "source_t2_doc_id": current["source_t2_doc_id"], "edit_spec": spec}
+
+    result = _save(doc_id, build, actor=actor, expected_revision=expected_revision)
+    result["operation"] = operation
+    result["pruned_verify_edit_ids"] = pruned
+    return result

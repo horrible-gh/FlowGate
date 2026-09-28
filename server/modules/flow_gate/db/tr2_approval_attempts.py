@@ -64,6 +64,32 @@ def successful_root(ledger_row_id: int) -> dict | None:
         "AND state = 'succeeded' ORDER BY id DESC LIMIT 1", [ledger_row_id])
 
 
+def _notify(row: dict | None) -> None:
+    """Best-effort SSE for a state/phase change, delivered after the enclosing commit."""
+    if not row:
+        return
+
+    def publish():
+        try:
+            from modules.flow_gate.api.v1.events.event_types import EventType
+            from modules.flow_gate.api.v1.events.publisher import (
+                FlowEvent, broadcast_event_threadsafe,
+            )
+            broadcast_event_threadsafe(FlowEvent(
+                event_type=EventType.GROUP_VIEW_REFRESH,
+                payload={"group_id": row["group_id"], "reason": "tr2_approval_changed",
+                         "doc_id": row["tr2_doc_id"], "attempt_id": row["attempt_id"],
+                         "state": row["state"], "phase": row["phase"]},
+                audience="*", project=row["project_id"], group_id=row["group_id"],
+                doc_id=row["tr2_doc_id"]))
+        except Exception:
+            pass  # The journal row is durable; the screen also re-reads on focus.
+
+    from .connection import after_commit
+    if not after_commit(publish):
+        publish()
+
+
 def create(*, doc: dict, actor_user_id: str, spec_fingerprint: str,
            baseline_fingerprint: str, request_key: str | None) -> dict:
     """Called under the project source lock after all admission checks."""
@@ -82,7 +108,9 @@ def create(*, doc: dict, actor_user_id: str, spec_fingerprint: str,
          int(doc.get("revision_no") or 0), doc.get("etag"), round_no, actor_user_id,
          spec_fingerprint, baseline_fingerprint, now, now, now],
     )
-    return by_id(attempt_id)
+    row = by_id(attempt_id)
+    _notify(row)
+    return row
 
 
 def update(attempt_id: str, **fields: Any) -> dict:
@@ -104,6 +132,8 @@ def update(attempt_id: str, **fields: Any) -> dict:
     row = by_id(attempt_id)
     if row is None:
         raise LookupError(attempt_id)
+    if "state" in fields or "phase" in fields:
+        _notify(row)
     return row
 
 

@@ -93,7 +93,7 @@ def authoritative_precheck(doc_id: str, locked: LockedSource, *,
     if expected_revision is not None and revision != expected_revision:
         raise tr2.Tr2ValidationError("tr2_spec_changed", "revision_no",
                                      {"current_revision_no": revision})
-    head = db_wfseq.get_pending_head_by_group(locked.group_id, locked.project_id)
+    head = tr2.effective_head_for(doc_id)
     if not head or head.get("result_doc_id") != doc_id or head.get("type") != "TR2":
         raise tr2.Tr2ValidationError("tr2_workflow_conflict", "workflow_head")
     body = tr2.load_body(tr2.canonical_path_for_doc(doc))

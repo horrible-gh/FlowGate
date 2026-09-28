@@ -417,7 +417,10 @@ async def document_review_transition_rpc(
     response = await document_review_transition_endpoint(
         body.doc_id,
         action,
-        DocumentTransitionRequest(comment=body.comment),
+        # TR2 approval CAS and retry idempotency ride on these two fields; every other
+        # document type ignores them exactly as before.
+        DocumentTransitionRequest(comment=body.comment, expected_revision=body.expected_revision,
+                                  request_key=body.request_key),
         current_user,
         request,
     )

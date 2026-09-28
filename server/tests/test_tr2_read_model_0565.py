@@ -9,13 +9,21 @@ def test_read_view_four_blocks_and_unique_files(monkeypatch,tmp_path):
     monkeypatch.setattr(tr_commit_ledger,"list_by_group",lambda *_:[])
     monkeypatch.setattr(document_service,"is_document_editable",lambda *a,**kw:True)
     monkeypatch.setattr(document_service,"is_final_approved",lambda *_:False)
+    from modules.flow_gate.db import tr2_approval_attempts
+    from modules.flow_gate.documents import tr2_approval_service
+    monkeypatch.setattr(tr2_approval_attempts,"list_by_doc",lambda *_:[])
+    monkeypatch.setattr(tr2_approval_service,"retry_state",lambda _doc:{"allowed":False,"reason":"no_attempt"})
+    monkeypatch.setattr(tr2,"mutation_block",lambda _doc:None)
+    monkeypatch.setattr(tr2,"_history_state",lambda _doc:"aligned")
     spec={"edits":[{"id":"a","file":"a"},{"id":"b","file":"a"}]}
     body={"edit_spec":spec,"baseline_fingerprint":tr2.target_fingerprint(spec,tmp_path)}
     view=tr2.read_view({"project_id":"p","group_id":"g","doc_id":"d"},body)
-    assert set(view)=={"document","body","derived","approval","history"}
+    assert set(view)=={"document","mutation","body","derived","approval","history"}
+    assert view["mutation"]=={"allowed":True,"reason":None}
     assert len(view["derived"]["files"])==1
     assert view["derived"]["files"][0]["edit_ids"]==["a","b"]
-    assert view["approval"]=={"latest_attempt":None,"attempts":[]}
+    assert view["approval"]=={"latest_attempt":None,"attempts":[],
+                              "retry":{"allowed":False,"reason":"no_attempt"}}
     assert view["derived"]["live_precheck"]["anchors"] is None
 
 def test_attempts_route_shape():
@@ -25,7 +33,9 @@ def test_attempts_route_shape():
 
 def test_file_projection_reads_only_declared_target(monkeypatch, tmp_path):
     from modules.flow_gate.db import documents
-    (tmp_path / "a").write_text("current\n", encoding="utf-8")
+    # Bytes, not write_text: on Windows text mode stores CRLF, and the projection
+    # must return the file exactly as it is on disk.
+    (tmp_path / "a").write_bytes(b"current\n")
     doc = {"doc_id": "d", "type_code": "TR2", "project_id": "p", "group_id": "g"}
     spec = {"edits": [{"id": "e1", "kind": "edit", "file": "a",
                        "anchor_old": "current", "replacement_new": "changed"}]}

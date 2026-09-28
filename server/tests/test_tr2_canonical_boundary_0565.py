@@ -71,6 +71,7 @@ def test_file_and_revision_rollback_when_writer_fails(tmp_path, monkeypatch):
     monkeypatch.setattr(tr2.db_docs, "get_by_id", lambda _: row.copy())
     monkeypatch.setattr(tr2, "get_store", lambda: Store())
     monkeypatch.setattr(tr2, "verify_pair", lambda *_: None)
+    monkeypatch.setattr(tr2, "mutation_block", lambda _doc: None)
     monkeypatch.setattr(tr2, "resolve_source_root", lambda *_: root)
     monkeypatch.setattr(tr2, "canonical_path_for_doc", lambda _: path)
     monkeypatch.setattr(tr2.storage_paths, "to_storage_relative", lambda *_: "new-path")

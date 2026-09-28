@@ -226,8 +226,10 @@ def test_revision_and_spec_identity_inside_authoritative_precheck(tmp_path, monk
            "project_id": "p", "group_id": "g", "doc_review_status": "pending_review",
            "revision_no": 2}
     monkeypatch.setattr(precheck.db_docs, "get_by_id", lambda _: doc)
-    monkeypatch.setattr(precheck.db_wfseq, "get_pending_head_by_group",
-                        lambda *_: {"type": "TR2", "result_doc_id": doc["doc_id"]})
+    # The registered TR2 slot is the effective head (get_pending_head_by_group only ever
+    # names unregistered slots; see test_tr2_connected_e2e_0565.py).
+    monkeypatch.setattr(tr2, "effective_head_for",
+                        lambda _doc_id: {"type": "TR2", "result_doc_id": doc["doc_id"]})
     monkeypatch.setattr(tr2, "canonical_path_for_doc", lambda _: tmp_path / "document.json")
     monkeypatch.setattr(tr2, "load_body", lambda _: body)
     monkeypatch.setattr(tr2, "verify_pair", lambda *_: None)

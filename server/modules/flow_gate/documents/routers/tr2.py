@@ -25,6 +25,12 @@ class Tr2Save(BaseModel):
     body: dict | str
 
 
+class Tr2ItemWrite(BaseModel):
+    expected_revision: int
+    collection: str | None = None
+    item: dict
+
+
 def _doc(doc_id: str) -> dict:
     doc = db_docs.get_by_id(doc_id)
     if doc is None:
@@ -68,10 +74,8 @@ def post_tr2_precheck(doc_id: str, current_user: dict = Depends(get_current_user
                                                   details={"loc": "body", "reason": str(exc)}))
 
 
-@router.put("/{doc_id}/tr2")
-@require_permission("perm_document_update")
-def put_tr2(request: Request, doc_id: str, body: Tr2Save,
-            current_user: dict = Depends(get_current_user)):
+def _writable_doc(doc_id: str) -> dict:
+    """Route-level write admission shared by every TR2 mutation entry point."""
     from modules.flow_gate.documents.routers.documents import (
         _reject_if_group_ai_running, _reject_if_group_disposed,
     )
@@ -82,11 +86,78 @@ def put_tr2(request: Request, doc_id: str, body: Tr2Save,
         doc, final_approved=document_service.is_final_approved(doc)
     ):
         raise HTTPException(status_code=422, detail="Document is not editable")
+    return doc
+
+
+@router.put("/{doc_id}/tr2")
+@require_permission("perm_document_update")
+def put_tr2(request: Request, doc_id: str, body: Tr2Save,
+            current_user: dict = Depends(get_current_user)):
+    _writable_doc(doc_id)
     try:
         return tr2.save(doc_id, body.body, actor=current_user["user_id"],
                         expected_revision=body.expected_revision)
     except tr2.Tr2ValidationError as exc:
         return _failure(exc)
+
+
+def _mutate(doc_id: str, operation: str, current_user: dict, **kwargs):
+    _writable_doc(doc_id)
+    try:
+        return tr2.mutate(doc_id, operation, actor=current_user["user_id"], **kwargs)
+    except tr2.Tr2ValidationError as exc:
+        return _failure(exc)
+    except (OSError, ValueError) as exc:
+        return JSONResponse(status_code=409,
+                            content=error_payload("tr2_spec_invalid",
+                                                  details={"loc": "body", "reason": str(exc)}))
+
+
+@router.delete("/{doc_id}/tr2/spec")
+@require_permission("perm_document_update")
+def delete_tr2_spec(doc_id: str, expected_revision: int,
+                    current_user: dict = Depends(get_current_user)):
+    """Reset the editable proposal to an empty spec as a new revision; history stays."""
+    return _mutate(doc_id, "reset_spec", current_user, expected_revision=expected_revision)
+
+
+@router.post("/{doc_id}/tr2/items")
+@require_permission("perm_document_update")
+def post_tr2_item(doc_id: str, body: Tr2ItemWrite,
+                  current_user: dict = Depends(get_current_user)):
+    return _mutate(doc_id, "add_item", current_user, expected_revision=body.expected_revision,
+                   collection=body.collection, item=body.item)
+
+
+@router.get("/{doc_id}/tr2/items/{item_id:path}")
+@require_permission("perm_document_read")
+def get_tr2_item(doc_id: str, item_id: str, current_user: dict = Depends(get_current_user)):
+    _doc(doc_id)
+    try:
+        return tr2.read_item(doc_id, item_id)
+    except tr2.Tr2ValidationError as exc:
+        return _failure(exc)
+    except (OSError, ValueError) as exc:
+        return JSONResponse(status_code=409,
+                            content=error_payload("tr2_spec_invalid",
+                                                  details={"loc": "body", "reason": str(exc)}))
+
+
+@router.put("/{doc_id}/tr2/items/{item_id:path}")
+@require_permission("perm_document_update")
+def put_tr2_item(doc_id: str, item_id: str, body: Tr2ItemWrite,
+                 current_user: dict = Depends(get_current_user)):
+    return _mutate(doc_id, "replace_item", current_user,
+                   expected_revision=body.expected_revision, item_id=item_id,
+                   collection=body.collection, item=body.item)
+
+
+@router.delete("/{doc_id}/tr2/items/{item_id:path}")
+@require_permission("perm_document_update")
+def delete_tr2_item(doc_id: str, item_id: str, expected_revision: int,
+                    current_user: dict = Depends(get_current_user)):
+    return _mutate(doc_id, "delete_item", current_user,
+                   expected_revision=expected_revision, item_id=item_id)
 
 
 @router.get("/{doc_id}/tr2/files/{file_path:path}")

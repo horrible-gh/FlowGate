@@ -255,6 +255,43 @@ def _recover_stale(locked, row: dict) -> None:
     _raise("tr2_recovery_required", "stale_attempt")
 
 
+def retry_state(doc: dict) -> dict:
+    """Whether the latest failed/stale attempt may be retried, decided by the server.
+
+    A retry is an ordinary approval request whose ``request_key`` is derived from the
+    attempt it retries, so repeated clicks replay one retry attempt instead of starting
+    new rounds. Non-retryable failures need a new revision; a recovery_required,
+    running or succeeded attempt is never retried.
+    """
+    from modules.flow_gate.documents.tr2_errors import TR2_ERRORS
+    latest = db_attempts.latest_by_doc(doc["doc_id"])
+    state = {"allowed": False, "reason": None, "mode": None,
+             "attempt_id": latest["attempt_id"] if latest else None,
+             "error_code": latest.get("error_code") if latest else None,
+             "request_key": None}
+    if latest is None:
+        return {**state, "reason": "no_attempt"}
+    if db_attempts.recovery_required(doc["doc_id"]):
+        return {**state, "reason": "recovery_required"}
+    if doc.get("doc_review_status") != "pending_review":
+        return {**state, "reason": "review_status"}
+    if latest["state"] == "in_progress":
+        if not _stale(latest):
+            return {**state, "reason": "in_progress"}
+        mode = "recover_stale"
+    elif latest["state"] == "failed":
+        spec = TR2_ERRORS.get(latest.get("error_code") or "")
+        if spec is None or not spec.retryable:
+            return {**state, "reason": "not_retryable"}
+        if int(latest["document_revision"]) != int(doc.get("revision_no") or 0):
+            return {**state, "reason": "revision_changed"}
+        mode = "new_attempt"
+    else:
+        return {**state, "reason": latest["state"]}
+    return {**state, "allowed": True, "mode": mode,
+            "request_key": f"retry:{latest['attempt_id']}"}
+
+
 def _replay(row: dict) -> dict:
     state = row["state"]
     if state == "succeeded":
@@ -372,7 +409,7 @@ def approve(*, doc_id: str, actor_user_id: str, user_permissions: set[str],
                 if not db_docs.update_review_cas(doc_id, revision, "pending_review",
                                                  {"doc_review_status": "approved"}):
                     _raise("tr2_spec_changed", "review_cas")
-                next_head = db_wfseq.get_pending_head_by_group(doc["group_id"], doc["project_id"])
+                next_head = tr2.effective_head_for(doc_id)
                 if next_head and next_head.get("result_doc_id") == doc_id:
                     _raise("tr2_workflow_conflict", "workflow_progression")
                 log_state_changed(project_id=doc["project_id"], actor_user_id=actor_user_id,

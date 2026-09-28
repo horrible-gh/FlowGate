@@ -22,6 +22,8 @@ TR2_ERRORS: dict[str, Tr2ErrorSpec] = {
         ("tr2_source_drift", False, 409, "Source changed since proposal"),
         ("tr2_spec_changed", False, 409, "Proposal changed; reload the latest revision"),
         ("tr2_spec_invalid", False, 422, "Invalid TR2 proposal"),
+        ("tr2_spec_immutable", False, 409, "Proposal cannot be changed in its current state"),
+        ("tr2_item_not_found", False, 404, "Edit-spec item not found"),
         ("tr2_edit_not_applicable", False, 422, "Edit is not applicable"),
         ("tr2_apply_failed", False, 500, "Apply failed"),
         ("tr2_path_unsafe", False, 422, "Unsafe source path"),

@@ -488,7 +488,10 @@ export function useFlowGateSse(refreshAll: () => void) {
         // creation, git archive, …) keeps the broad project-wide refresh: those events'
         // doc_id often names a DIFFERENT document than the one that needs re-reading
         // (e.g. a newly created sibling), so narrowing there would miss real updates.
-        const docId = p.reason === 'review_added' ? (data.doc_id ?? null) : undefined
+        // 0565: a TR2 approval attempt changing phase/state names its own document too, and
+        // fires several times per approval — refetch only that tab, not the whole group.
+        const docScoped = p.reason === 'review_added' || p.reason === 'tr2_approval_changed'
+        const docId = docScoped ? (data.doc_id ?? null) : undefined
         invalidateAndRefresh(data.project, false, docId)
         // R0001 group 0381: a CODE RED sends the failing TS back through the time machine to
         // the pre-approval step. The refresh above re-renders the (now pending) status badge,
