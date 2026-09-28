@@ -338,6 +338,69 @@ def test_resolve_target_guards(repo, tmp_path, monkeypatch):
     assert resolved_target.managed_workspace is False
 
 
+def test_merge_worktree_final_preflight_runs_after_own_claim(repo, tmp_path, monkeypatch):
+    """A lease that wins the old preflight->claim gap must stop the merge before Git mutation."""
+    wt_dir = tmp_path / "wt_claim_handoff"
+    _git(repo, "worktree", "add", str(wt_dir), "-b", "wt-claim-handoff")
+
+    _git(repo, "checkout", "-b", "claim-race-source")
+    (repo / "race.txt").write_text("source\n", encoding="utf-8")
+    _git(repo, "add", "race.txt")
+    _git(repo, "commit", "-m", "claim race source")
+    _git(repo, "checkout", "main")
+
+    gid = "flowgate.default.299"
+    groups_records = {
+        gid: {"group_id": gid, "project_id": "flowgate", "deleted_at": None}
+    }
+    git_states = {
+        gid: {
+            "group_id": gid,
+            "project_id": "flowgate",
+            "worktree_registered": True,
+            "branch": "wt-claim-handoff",
+            "status": "active",
+        }
+    }
+    wt_map = {"wt-claim-handoff": wt_dir}
+
+    monkeypatch.setattr(db_groups, "get_by_id", lambda g: groups_records.get(g))
+    monkeypatch.setattr(git_service, "_project_name", lambda pid: "FlowGate")
+    monkeypatch.setattr(git_service, "_project_of_group", lambda g: "flowgate")
+    monkeypatch.setattr(git_service.db_git, "get_state", lambda g: git_states.get(g))
+    monkeypatch.setattr(git_service, "src_root", lambda pname, b: wt_map.get(b))
+    monkeypatch.setattr(ai_invoke_service, "has_active_run", lambda g: False)
+
+    lease_checks = {"count": 0}
+
+    def lease_after_claim(group_id):
+        lease_checks["count"] += 1
+        # resolve_target runs before the project lock and once again under it.
+        # The third mutable check is the new post-open-attempt check.
+        if lease_checks["count"] >= 3:
+            return {"run_id": "lease-won-gap"}
+        return None
+
+    monkeypatch.setattr(group_ai_leases, "get_active", lease_after_claim)
+
+    with pytest.raises(GitServiceError) as exc:
+        git_service.merge_branches(
+            "flowgate",
+            source_branch="claim-race-source",
+            target_branch="wt-claim-handoff",
+            source_kind="branch",
+            target_kind="worktree",
+            target_group_id=gid,
+            push=False,
+        )
+
+    assert exc.value.code == "branch_merge_target_group_ai_active"
+    assert lease_checks["count"] >= 3
+    assert not (wt_dir / "race.txt").exists()
+    assert not git_service._merge_in_progress(wt_dir)
+    assert branch_merge.get_branch_merge_group_claim(gid) is None
+
+
 def test_merge_branches_all_4_combinations(repo, tmp_path, monkeypatch):
     """Test all 4 branch/worktree combinations and push false/true."""
     # Setup worktree 1 (Group 301, branch wt-1)
@@ -872,6 +935,17 @@ def test_worktree_provisioning_blocked_during_claim_and_disappeared_target(repo,
     }
     monkeypatch.setattr(branch_merge, "get_branch_merge_group_claim", lambda g: active_claim if g == gid else None)
 
+    provision_failures = []
+    monkeypatch.setattr(
+        git_service, "_fail_worktree",
+        lambda *args, **kwargs: provision_failures.append((args, kwargs)),
+    )
+    attempt_records = []
+    monkeypatch.setattr(
+        worktree_service, "_record_attempt",
+        lambda *args, **kwargs: attempt_records.append((args, kwargs)),
+    )
+
     cfg = git_service.db_git.get_config("flowgate")
 
     # 1. With worktree directory present, provisioning / ensure returns 'failed'
@@ -892,3 +966,12 @@ def test_worktree_provisioning_blocked_during_claim_and_disappeared_target(repo,
     res_locked_missing = worktree_service._ensure_worktree_locked(cfg, "flowgate", "FlowGate", gid, branch)
     assert res_locked_missing == "failed"
     assert not wt_missing.exists()
+
+    # A live claim is normal ownership protection.  It may keep the legacy
+    # 'failed' return value for compatibility, but must not persist/emit a
+    # provisioning failure.
+    assert provision_failures == []
+    assert any(
+        args[1] == "blocked" and args[2] == "branch_merge_claim_active"
+        for args, _kwargs in attempt_records
+    )

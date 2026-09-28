@@ -322,6 +322,81 @@ def resolve_source(
     raise GitServiceError(422, "branch_merge_invalid_kind", f"unsupported source kind '{kind}'")
 
 
+def _validate_worktree_target_mutable(
+    group_id: str,
+    wt_path: Path,
+    *,
+    allow_merge_id: Optional[int] = None,
+) -> None:
+    """Re-check mutable target-worktree state.
+
+    ``resolve_target`` calls this as the early preflight.  A worktree merge calls it
+    again *after* ``open_attempt`` has made the branch-merge claim durable, closing
+    the preflight -> claim ownership gap.  Only that attempt's own claim may pass
+    the second check; every other claim remains a conflict.
+    """
+    from . import branch_merge
+    from .refs import _dirty, _dirty_files
+    from modules.flow_gate.services import git_service as _gs
+    from modules.flow_gate.db import group_ai_leases
+    from modules.flow_gate.services import ai_invoke_service
+
+    claim = branch_merge.get_branch_merge_group_claim(group_id)
+    if allow_merge_id is None:
+        if claim is not None:
+            raise GitServiceError(
+                409,
+                "branch_merge_target_group_busy",
+                f"target group '{group_id}' has an active branch merge claim",
+                {"group_id": group_id, "claim": claim},
+            )
+    else:
+        if claim is None:
+            raise GitServiceError(
+                409,
+                "branch_merge_target_claim_missing",
+                f"target group '{group_id}' did not retain this branch merge claim",
+                {"group_id": group_id, "merge_id": allow_merge_id},
+            )
+        try:
+            claimed_merge_id = int(claim.get("merge_id"))
+        except (TypeError, ValueError):
+            claimed_merge_id = -1
+        if claimed_merge_id != int(allow_merge_id):
+            raise GitServiceError(
+                409,
+                "branch_merge_target_group_busy",
+                f"target group '{group_id}' is claimed by another branch merge",
+                {"group_id": group_id, "claim": claim, "merge_id": allow_merge_id},
+            )
+
+    if _gs.db_git.get_open_session_by_group(group_id) is not None:
+        raise GitServiceError(
+            409,
+            "branch_merge_target_group_busy",
+            f"target group '{group_id}' has an open merge session",
+            {"group_id": group_id},
+        )
+    if _dirty(wt_path, include_untracked=True):
+        dirty_files = _dirty_files(wt_path, include_untracked=True)
+        raise GitServiceError(
+            409,
+            "branch_merge_target_worktree_dirty",
+            "target worktree has uncommitted changes",
+            {"files": dirty_files, "group_id": group_id},
+        )
+    if (
+        ai_invoke_service.has_active_run(group_id)
+        or group_ai_leases.get_active(group_id) is not None
+    ):
+        raise GitServiceError(
+            409,
+            "branch_merge_target_group_ai_active",
+            f"an AI run or lease is active for target group '{group_id}'",
+            {"group_id": group_id},
+        )
+
+
 def resolve_target(
     project_id: str,
     base_root: Path,
@@ -362,41 +437,7 @@ def resolve_target(
         group_id, wt_path, ledger_branch = _resolve_worktree_endpoint(
             project_id, base_root, endpoint, "target"
         )
-        from . import branch_merge
-        claim = branch_merge.get_branch_merge_group_claim(group_id)
-        if claim is not None:
-            raise GitServiceError(
-                409,
-                "branch_merge_target_group_busy",
-                f"target group '{group_id}' has an active branch merge claim",
-                {"group_id": group_id, "claim": claim},
-            )
-        from modules.flow_gate.services import git_service as _gs
-        if _gs.db_git.get_open_session_by_group(group_id) is not None:
-            raise GitServiceError(
-                409,
-                "branch_merge_target_group_busy",
-                f"target group '{group_id}' has an open merge session",
-                {"group_id": group_id},
-            )
-        if _dirty(wt_path, include_untracked=True):
-            dirty_files = _dirty_files(wt_path, include_untracked=True)
-            raise GitServiceError(
-                409,
-                "branch_merge_target_worktree_dirty",
-                "target worktree has uncommitted changes",
-                {"files": dirty_files, "group_id": group_id},
-            )
-        from modules.flow_gate.db import group_ai_leases
-        from modules.flow_gate.services import ai_invoke_service
-
-        if ai_invoke_service.has_active_run(group_id) or group_ai_leases.get_active(group_id) is not None:
-            raise GitServiceError(
-                409,
-                "branch_merge_target_group_ai_active",
-                f"an AI run or lease is active for target group '{group_id}'",
-                {"group_id": group_id},
-            )
+        _validate_worktree_target_mutable(group_id, wt_path)
 
         return ResolvedTarget(
             kind="worktree",
@@ -508,6 +549,28 @@ def merge_branches(
             source_kind=source_resolved.kind, source_group_id=source_resolved.group_id,
         )
         attempt_open = True
+        if target_resolved.kind == "worktree":
+            # The open attempt above is the durable ownership claim.  Re-resolve the
+            # identity and re-check every mutable guard *after* that claim is visible.
+            # If an AI lease/source mutation won the former preflight->claim gap, this
+            # fails before fetch/ff/merge can mutate the target.
+            final_group_id, final_root, final_branch = _resolve_worktree_endpoint(
+                project_id, base_root, target_ep, "target"
+            )
+            if (
+                final_group_id != target_resolved.group_id
+                or final_branch != target_resolved.branch
+                or final_root.resolve() != target_resolved.root.resolve()
+            ):
+                raise GitServiceError(
+                    409,
+                    "branch_merge_worktree_identity_mismatch",
+                    "target worktree identity changed after the branch merge claim was acquired",
+                    {"group_id": target_resolved.group_id, "merge_id": ctx.merge_id},
+                )
+            _validate_worktree_target_mutable(
+                final_group_id, final_root, allow_merge_id=ctx.merge_id
+            )
         # Git refuses a second checkout of the project base. A detached managed worktree
         # preserves the shared checkout while HEAD is pushed / applied explicitly.
         if ctx.managed_workspace:

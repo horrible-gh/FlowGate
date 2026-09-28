@@ -612,6 +612,68 @@ def test_08b_concurrent_explicit_ai_resolve_requests_start_single_live_run(proj,
     run_ids = [res[1]["result"]["run_id"] for res in results]
     assert set(run_ids) == {"run-concurrent-1"}
 
+def test_08c_start_resolver_claims_ownership_through_db_cas(proj, monkeypatch):
+    from modules.flow_gate.db import git_integration as db_git
+    from modules.flow_gate.services.git import branch_merge as bm_mod
+
+    p = proj
+    out, _before = p.conflict()
+    merge_id = out["merge_id"]
+    real_cas = db_git.cas_session_context
+    cas_calls = []
+
+    def spy_cas(mid, expected_raw, context):
+        cas_calls.append((mid, expected_raw, context))
+        return real_cas(mid, expected_raw, context)
+
+    monkeypatch.setattr(db_git, "cas_session_context", spy_cas)
+    result = bm_mod.start_resolver(
+        p.pid, merge_id,
+        start_run=lambda _provider, _messages: "run-cas-owner",
+        provider_id="prov-cas",
+    )
+    assert result["result"]["status"] == "running"
+    assert result["result"]["run_id"] == "run-cas-owner"
+    assert len(cas_calls) == 1
+    assert cas_calls[0][0] == merge_id
+    assert cas_calls[0][2]["ai"]["status"] == "starting"
+    assert cas_calls[0][2]["ai"]["provider_id"] == "prov-cas"
+
+
+def test_08d_session_context_cas_rejects_stale_parallel_start_claim(proj):
+    from modules.flow_gate.db import git_integration as db_git
+
+    p = proj
+    out, _before = p.conflict()
+    merge_id = out["merge_id"]
+    session = db_git.get_session(merge_id)
+    raw = session["context"]
+    original = db_git.session_context(session)
+
+    first = dict(original)
+    first_ai = dict(first.get("ai") or {})
+    first_ai.update({
+        "status": "starting",
+        "provider_id": "winner",
+        "requested_at": "2026-09-28T00:00:00+00:00",
+    })
+    first["ai"] = first_ai
+
+    stale = dict(original)
+    stale_ai = dict(stale.get("ai") or {})
+    stale_ai.update({
+        "status": "starting",
+        "provider_id": "loser",
+        "requested_at": "2026-09-28T00:00:00+00:00",
+    })
+    stale["ai"] = stale_ai
+
+    assert db_git.cas_session_context(merge_id, raw, first) is True
+    assert db_git.cas_session_context(merge_id, raw, stale) is False
+    latest = db_git.session_context(db_git.get_session(merge_id))
+    assert latest["ai"]["provider_id"] == "winner"
+
+
 # ── 9/10 AI resolution → review, nothing moved ───────────────────────────────
 
 def test_09_10_ai_resolution_stops_at_review_and_moves_nothing(proj):
