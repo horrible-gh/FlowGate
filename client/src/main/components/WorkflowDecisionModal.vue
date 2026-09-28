@@ -151,7 +151,7 @@
                     @dragend="handleTypeDragEnd"
                   >
                     <span class="doc-tag" :class="`c-${item.type}`">{{ item.type }}</span>
-                    <span class="wdm-type-name">{{ docTypeStore.getLabel(item.type) }}</span>
+                    <span class="wdm-type-name" :class="{ 'wdm-type-name--nowrap': item.type === 'T2' }">{{ docTypeStore.getLabel(item.type) }}</span>
                     <span v-if="item.autoHintKey" class="wdm-auto-hint">{{ t(`main.workflow_decision_modal.${item.autoHintKey}`) }}</span>
                     <span class="wdm-seq-badge" :style="typeSeqCounts[item.type] > 0 ? '' : 'display:none'">×{{ typeSeqCounts[item.type] }}</span>
                     <AppIcon name="plus" class="wdm-add-ico" />
@@ -1740,6 +1740,7 @@ watch(
 }
 
 .wdm-type-name { flex: 1; font-size: .8rem; font-weight: 500; color: var(--text); }
+.wdm-type-name--nowrap { white-space: nowrap; }
 
 .wdm-seq-badge {
   font-size: .6rem;
