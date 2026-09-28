@@ -632,6 +632,9 @@ def transition_document_review(
     comment: str | None = None,
     locale: str = "ko",
     review_id: Any = None,
+    mutation_principal: Any = None,
+    expected_revision: int | None = None,
+    request_key: str | None = None,
 ) -> dict:
     """Transition the document review state (doc_review_status column).
 
@@ -648,6 +651,16 @@ def transition_document_review(
     doc = db_docs.get_by_id(doc_id)
     if not doc:
         raise ValueError(f"Document not found: {doc_id}")
+
+    # TR2 alone needs a source-changing approval. All other actions and document
+    # types keep the established review transition and TR commit semantics.
+    if action == "approve" and doc.get("type_code") == "TR2":
+        from modules.flow_gate.documents import tr2_approval_service
+        return tr2_approval_service.approve(
+            doc_id=doc_id, actor_user_id=actor_user_id,
+            user_permissions=user_permissions, mutation_principal=mutation_principal,
+            expected_revision=expected_revision, request_key=request_key, locale=locale,
+        )
 
     current_review_status = doc.get("doc_review_status") or ""
     next_status = get_doc_review_rule(current_review_status, action)

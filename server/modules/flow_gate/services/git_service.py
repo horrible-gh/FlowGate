@@ -8222,7 +8222,7 @@ def startup_recovery() -> None:
         # includes the legacy merge:{id} inheritance lock (§2.6).
         for lock in db_git.list_locks():
             holder = str(lock.get("holder") or "")
-            if holder.startswith(("op:", "sweep:", "merge:", "dispose:")):
+            if holder.startswith(("op:", "sweep:", "merge:", "dispose:", "tr2:")):
                 db_git.force_release_lock(lock["project_id"])
         # The original snapshot is only a candidate-id list here; reconcile_push_session
         # re-reads each row and re-checks its guard before changing it.

@@ -415,12 +415,13 @@ def read_file_projection(doc_id: str, requested_path: str) -> dict:
 
 
 def _history_state(doc: dict) -> str:
-    # Time Machine ownership: T#3. This seam is replaced there.
-    return "aligned"
+    from modules.flow_gate.documents.tr2_history import source_history_state
+    return source_history_state(doc["doc_id"])
 
 
 def read_view(doc: dict, body: dict) -> dict:
     from modules.flow_gate.db import tr_commit_ledger
+    from modules.flow_gate.db import tr2_approval_attempts
     from modules.flow_gate.documents import document_service
     source_root = resolve_source_root(doc["project_id"], doc["group_id"])
     spec = body["edit_spec"]
@@ -447,7 +448,8 @@ def read_view(doc: dict, body: dict) -> dict:
                                            "exists": (source_root / p).is_file(),
                                            "is_regular_file": (source_root / p).is_file()}
                                           for p in target_set(spec)], "anchors": anchors}},
-        "approval": {"latest_attempt": None, "attempts": []},
+        "approval": {"latest_attempt": tr2_approval_attempts.latest_by_doc(doc["doc_id"]),
+                     "attempts": tr2_approval_attempts.list_by_doc(doc["doc_id"])},
         "history": {"source_history_state": _history_state(doc), "ledger": ledger},
     }
 

@@ -3165,26 +3165,40 @@ def settle_completed_step(
                 ),
             }
         from modules.flow_gate.workflow.pipeline_service import transition_document_review
-        try:
-            transition_document_review(
-                doc_id=doc_id,
-                action="approve",
-                actor_user_id=actor_user_id,
-                user_permissions=approver_perms,
-                # 0430 T0009 task 4: an approval failure is handed straight back to the
-                # worker in envelope["continuation_reason"], so the localized rejection
-                # message follows the chain's own continuation_locale — the same field
-                # mention_service uses to pick the language of the chained instruction.
-                # The engine's review gate passes none and falls back to the default.
-                locale=template_provision.normalize_locale(locale),
-            )
-        except Exception as exc:  # noqa: BLE001 — never 500 the saved submission
-            return {
-                "outcome": "stopped",
-                "stop_code": "approve_failed",
-                "reason": f"auto-approve failed: {exc}",
-                "detail": str(exc),
-            }
+        from modules.flow_gate.services.mutation_policy import system_principal
+        is_tr2 = (doc_type or "").upper() == "TR2"
+        revision = int((db_docs.get_by_id(doc_id) or {}).get("revision_no") or 0)
+        for retry_index in range(2 if is_tr2 else 1):
+            request_key = None
+            if is_tr2:
+                identity = f"{doc_id}:{revision}:{retry_index}".encode("utf-8")
+                request_key = "auto:" + hashlib.sha256(identity).hexdigest()[:48]
+            try:
+                transition_document_review(
+                    doc_id=doc_id,
+                    action="approve",
+                    actor_user_id=actor_user_id,
+                    user_permissions=approver_perms,
+                    # Keep the worker's continuation locale on approval errors.
+                    locale=template_provision.normalize_locale(locale),
+                    mutation_principal=system_principal(user_id=actor_user_id,
+                                                        group_id=group_id),
+                    request_key=request_key,
+                )
+                break
+            except Exception as exc:  # noqa: BLE001 — never 500 the saved submission
+                if (is_tr2 and retry_index == 0
+                        and isinstance(exc, tr2_service.Tr2ValidationError)
+                        and exc.code != "tr2_in_progress"
+                        and TR2_ERRORS.get(exc.code)
+                        and TR2_ERRORS[exc.code].retryable):
+                    continue
+                return {
+                    "outcome": "stopped",
+                    "stop_code": "approve_failed",
+                    "reason": f"auto-approve failed: {exc}",
+                    "detail": str(exc),
+                }
         # 0332 D0005 §2.2 / P0006 §1-7 — the second approval entry point. An unmanned
         # chain approves its TR here without ever touching the HTTP approve route, so
         # leaving this line out would mean TR commits exist only for hand-clicked
@@ -3220,6 +3234,24 @@ def settle_completed_step(
             except Exception:
                 import LogAssist.log as logger
                 logger.warning("[inbox] tr_commit SSE emission failed (ignored)")
+
+    if (doc_type or "").upper() == "TR2":
+        # A strong approval is only a continuation point when its durable source
+        # history agrees with the approved document. A canceled or conflicted row
+        # must not launch the next unattended worker.
+        from modules.flow_gate.documents.tr2_history import source_history_state
+        try:
+            history_state = source_history_state(doc_id)
+        except Exception:
+            history_state = "invariant_error"
+        if history_state != "aligned":
+            return {
+                **settled_extra,
+                "outcome": "stopped",
+                "stop_code": "approve_failed",
+                "reason": f"TR2 source history is {history_state}",
+                "detail": history_state,
+            }
 
     # 0415 T0007 task 2: a run-to-end target is re-checked against the CURRENT sequence
     # right here, at the hop's own issuance/settlement point — not the number resolved

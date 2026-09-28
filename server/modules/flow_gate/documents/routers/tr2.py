@@ -109,4 +109,6 @@ def get_tr2_file(doc_id: str, file_path: str,
 @require_permission("perm_document_read")
 def get_tr2_attempts(doc_id: str, current_user: dict = Depends(get_current_user)):
     _doc(doc_id)
-    return {"items": [], "total": 0, "next_cursor": None}
+    from modules.flow_gate.db import tr2_approval_attempts
+    items = tr2_approval_attempts.list_by_doc(doc_id)
+    return {"items": items, "total": len(items), "next_cursor": None}
