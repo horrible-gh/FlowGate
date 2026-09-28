@@ -109,8 +109,10 @@ def ensure_worktree(
             _gs._fail_worktree(project_id, group_id, branch, "branch_merge_claim_query_failed")
             return "failed"
         if claim is not None:
-            _record_attempt(project_id, "failed", "branch_merge_claim_active", trigger, "none")
-            _gs._fail_worktree(project_id, group_id, branch, "branch_merge_claim_active")
+            # Normal ownership protection, not a broken worktree.  Keep the public
+            # ensure_worktree return contract for callers, but do not poison the
+            # durable provision-failure ledger or emit git_worktree_failed.
+            _record_attempt(project_id, "blocked", "branch_merge_claim_active", trigger, "none")
             return "failed"
 
         holder = f"op:{uuid.uuid4()}"
@@ -144,7 +146,8 @@ def _ensure_worktree_locked(
         _gs._fail_worktree(project_id, group_id, branch, "branch_merge_claim_query_failed")
         return "failed"
     if claim is not None:
-        _gs._fail_worktree(project_id, group_id, branch, "branch_merge_claim_active")
+        # The slot is healthy but owned by a branch merge.  Fail closed without
+        # rewriting group_git_state.provision_error or emitting a failure SSE.
         return "failed"
 
     project_base_branch = (cfg.get("base_branch") or "main").strip() or "main"

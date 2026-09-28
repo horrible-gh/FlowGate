@@ -537,74 +537,121 @@ def start_resolver(
 ) -> dict:
     """Start (or re-start) the existing ``resolve_conflict`` AI run for this attempt.
 
-    This is the ONLY entry point for the AI resolver (T#3). It is called exclusively from
-    the ``/ai-resolve`` route after the user selects a Provider and clicks ``[AI 호출]``
-    in the ``GitConflictResolverDialog``. The server never calls this automatically.
-
-    ``start_run(provider_id, messages) -> run_id`` is supplied by the API layer, which
-    already knows how to build the conflict mention/token (the same seam
-    ``reject_merge_review`` uses). Called only after the conflict is durable and the Git
-    lock is released — the model call never holds the project lock (§10).
-
-    A failure to start does NOT abort the attempt: it records ``ai.status=start_failed``
-    and the conflict stays open for a retry or a manual resolution."""
+    The process-local lock is a same-process debounce only.  The authoritative
+    ``not_started/retryable -> starting`` ownership transition is a DB CAS on the raw
+    session context, so two server processes cannot both call the resolver starter.
+    """
     with _attempt_start_lock(project_id, merge_id):
         gs = _gs()
-        session = get_session_of_project(project_id, merge_id, open_only=True)
-        context = gs.db_git.session_context(session)
-        if context.get("review_state"):
-            raise GitServiceError(409, "review_in_progress",
-                                  "this merge already reached review; use the review screen")
-        ai = dict(context.get(AI_KEY) or {})
-        run_id = ai.get("run_id")
-        is_live = False
-        if ai.get("status") == AI_STARTING:
-            if run_id:
-                is_live = (_ai_run_status(run_id) == AI_RUNNING)
-            else:
-                req_at = ai.get("requested_at")
-                if req_at:
-                    try:
-                        dt = datetime.fromisoformat(str(req_at).replace("Z", "+00:00"))
-                        now = datetime.now(timezone.utc)
-                        is_live = (now - dt).total_seconds() < 60
-                    except Exception:
-                        is_live = True
-                else:
-                    is_live = True
-        elif ai.get("status") == AI_RUNNING:
-            is_live = (_ai_run_status(run_id) == AI_RUNNING)
+        provider: Optional[str] = None
+        ai: dict = {}
+        session: Optional[dict] = None
 
-        if is_live:
-            return {"ok": True, "result": {"status": "already_running", "run_id": run_id,
-                                            "attempt": attempt_view(session)}}
-        provider = resolve_provider(project_id, provider_id, session)
-        ai.update({"status": AI_STARTING, "provider_id": provider, "error": None,
-                   "trigger": trigger, "requested_at": now_iso()})
-        _update(merge_id, **{AI_KEY: ai})
+        # An unrelated context writer (for example an audit append) may beat this request
+        # without owning the resolver. Re-read a few times; a real competing resolver
+        # becomes STARTING/RUNNING and returns already_running on the next iteration.
+        for _cas_round in range(4):
+            session = get_session_of_project(project_id, merge_id, open_only=True)
+            context = gs.db_git.session_context(session)
+            if context.get("review_state"):
+                raise GitServiceError(
+                    409, "review_in_progress",
+                    "this merge already reached review; use the review screen",
+                )
+
+            ai = dict(context.get(AI_KEY) or {})
+            run_id = ai.get("run_id")
+            is_live = False
+            if ai.get("status") == AI_STARTING:
+                if run_id:
+                    is_live = (_ai_run_status(run_id) == AI_RUNNING)
+                else:
+                    req_at = ai.get("requested_at")
+                    if req_at:
+                        try:
+                            dt = datetime.fromisoformat(str(req_at).replace("Z", "+00:00"))
+                            now = datetime.now(timezone.utc)
+                            is_live = (now - dt).total_seconds() < 60
+                        except Exception:
+                            is_live = True
+                    else:
+                        is_live = True
+            elif ai.get("status") == AI_RUNNING:
+                is_live = (_ai_run_status(run_id) == AI_RUNNING)
+
+            if is_live:
+                return {"ok": True, "result": {
+                    "status": "already_running", "run_id": run_id,
+                    "attempt": attempt_view(session),
+                }}
+
+            provider = resolve_provider(project_id, provider_id, session)
+            candidate_ai = dict(ai)
+            candidate_ai.update({
+                "status": AI_STARTING,
+                "provider_id": provider,
+                "error": None,
+                "trigger": trigger,
+                "requested_at": now_iso(),
+            })
+            candidate_context = dict(context)
+            candidate_context[AI_KEY] = candidate_ai
+            expected_raw = session.get("context")
+            if gs.db_git.cas_session_context(
+                merge_id, expected_raw, candidate_context
+            ):
+                ai = candidate_ai
+                break
+        else:
+            raise GitServiceError(
+                409,
+                "branch_merge_resolver_state_changed",
+                "resolver state changed concurrently; retry the explicit AI invocation",
+                {"merge_id": merge_id},
+            )
+
         try:
             run_id = start_run(provider, list(messages or []))
-        except Exception as exc:  # noqa: BLE001 — every start failure is recorded, none aborts
+        except Exception as exc:  # noqa: BLE001
+            # Production ai_invoke.start_run opens its handoff gate only on success;
+            # post-thread startup failures abort that gate before raising, so no worker
+            # can become a live resolver after this failure transition.
             code, message = _start_failure(exc)
-            ai.update({"status": AI_START_FAILED, "error": {"code": code, "message": message},
-                       "run_id": None})
+            ai.update({
+                "status": AI_START_FAILED,
+                "error": {"code": code, "message": message},
+                "run_id": None,
+            })
             _update(merge_id, **{AI_KEY: ai})
             record_event(merge_id, EV_AI_START_FAILED, provider=provider, error=code)
             return {"ok": True, "result": {
-                "status": AI_START_FAILED, "error": {"code": code, "message": message},
+                "status": AI_START_FAILED,
+                "error": {"code": code, "message": message},
                 "attempt": attempt_view(gs.db_git.get_session(merge_id)),
             }}
+
         if not run_id:
-            ai.update({"status": AI_START_FAILED,
-                       "error": {"code": "run_not_started", "message": "no AI run was started"}})
+            ai.update({
+                "status": AI_START_FAILED,
+                "error": {"code": "run_not_started", "message": "no AI run was started"},
+            })
             _update(merge_id, **{AI_KEY: ai})
-            record_event(merge_id, EV_AI_START_FAILED, provider=provider, error="run_not_started")
+            record_event(
+                merge_id, EV_AI_START_FAILED,
+                provider=provider, error="run_not_started",
+            )
         else:
             ai.update({"status": AI_RUNNING, "run_id": run_id, "started_at": now_iso()})
             _update(merge_id, **{AI_KEY: ai})
-            record_event(merge_id, EV_AI_STARTED, provider=provider, resolver_run_id=run_id)
+            record_event(
+                merge_id, EV_AI_STARTED,
+                provider=provider, resolver_run_id=run_id,
+            )
+
         return {"ok": True, "result": {
-            "status": ai["status"], "run_id": ai.get("run_id"), "error": ai.get("error"),
+            "status": ai["status"],
+            "run_id": ai.get("run_id"),
+            "error": ai.get("error"),
             "attempt": attempt_view(gs.db_git.get_session(merge_id)),
         }}
 
