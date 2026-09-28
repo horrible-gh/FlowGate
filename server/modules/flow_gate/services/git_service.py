@@ -310,7 +310,11 @@ from .git.lock import (
     _acquire_lock,
     base_merge_in_progress,
     guard_base_free,
+    guard_group_branch_merge_free,
     open_merge_session_of_project,
+)
+from .git.branch_merge import (
+    get_branch_merge_group_claim,
 )
 
 

@@ -93,6 +93,51 @@ def is_branch_merge(session: Optional[dict]) -> bool:
     return _gs().db_git.is_branch_merge_session(session)
 
 
+def get_branch_merge_group_claim(group_id: str) -> Optional[dict]:
+    """Return claim details if `group_id` is claimed by an open branch_merge attempt."""
+    if not group_id:
+        return None
+    gs = _gs()
+    try:
+        sessions = gs.db_git.list_open_sessions()
+        for session in sessions:
+            if not is_branch_merge(session):
+                continue
+            if session.get("status") != "open":
+                continue
+            ctx = gs.db_git.session_context(session)
+            target_rec = ctx.get(merge_target.TARGET_RECORD_KEY) or {}
+            bm = ctx.get(BRANCH_MERGE_KEY) or {}
+            claimed_group = target_rec.get("target_group_id") or bm.get("target_group_id")
+            if claimed_group == group_id:
+                attempt_state = ctx.get(merge_target.ATTEMPT_STATE_KEY)
+                review_state = ctx.get("review_state")
+                if attempt_state in (
+                    merge_target.ATTEMPT_COMPLETED,
+                    merge_target.ATTEMPT_ABORTED,
+                    merge_target.ATTEMPT_FAILED,
+                ) or review_state == gs.REVIEW_STATE_COMPLETED:
+                    continue
+                return {
+                    "merge_id": session.get("merge_id"),
+                    "project_id": gs.db_git.session_project_id(session),
+                    "group_id": group_id,
+                    "target_branch": target_rec.get("branch") or bm.get("target_branch"),
+                    "source_branch": bm.get("source_branch"),
+                    "attempt_state": attempt_state,
+                }
+    except GitServiceError:
+        raise
+    except Exception as exc:
+        raise GitServiceError(
+            500,
+            "branch_merge_claim_query_failed",
+            f"failed to query branch merge claim for group '{group_id}': {exc}",
+            details={"group_id": group_id, "error": str(exc)},
+        ) from exc
+    return None
+
+
 def get_session_of_project(project_id: str, merge_id: int, *, open_only: bool = False) -> dict:
     """The branch_merge session ``merge_id`` owned by ``project_id``, or 404."""
     session = _gs().db_git.get_session(int(merge_id))
@@ -158,7 +203,8 @@ def record_event(session_or_id, event_type: str, **fields) -> None:
 def open_attempt(
     ctx: merge_target.MergeTargetContext, *, source_branch: str, push: bool,
     base_branch: str, target_is_base: bool, requested_by: Optional[str] = None,
-    provider_id: Optional[str] = None,
+    provider_id: Optional[str] = None, source_kind: str = "branch",
+    source_group_id: Optional[str] = None,
 ) -> merge_target.MergeTargetContext:
     """Write the attempt row BEFORE ``git merge`` runs (D0004 §4) and return the pinned ctx.
 
@@ -192,6 +238,11 @@ def open_attempt(
         "finalize_action": action,
         "push": bool(push),
         "source_branch": source_branch,
+        "source_kind": source_kind,
+        "source_group_id": source_group_id,
+        "target_kind": ctx.target_kind,
+        "target_group_id": ctx.target_group_id,
+        "managed_workspace": ctx.managed_workspace,
     }
     context = {
         merge_target.TARGET_BRANCH_KEY: ctx.target_branch,
@@ -199,7 +250,12 @@ def open_attempt(
         merge_target.ATTEMPT_STATE_KEY: merge_target.ATTEMPT_IN_PROGRESS,
         BRANCH_MERGE_KEY: {
             "source_branch": source_branch,
+            "source_kind": source_kind,
+            "source_group_id": source_group_id,
             "target_branch": ctx.target_branch,
+            "target_kind": ctx.target_kind,
+            "target_group_id": ctx.target_group_id,
+            "managed_workspace": ctx.managed_workspace,
             "push": bool(push),
             "target_is_base": bool(target_is_base),
             "requested_by": requested_by,
@@ -250,7 +306,8 @@ def complete_clean(ctx: merge_target.MergeTargetContext, *, merge_commit: Option
     merge_target.close_attempt(ctx.merge_id, merge_target.ATTEMPT_COMPLETED, result={
         "merge_commit": merge_commit, "pushed": pushed, "local_applied": True,
     })
-    merge_target.release_workspace(ctx)
+    if ctx.managed_workspace:
+        merge_target.release_workspace(ctx)
     record_event(ctx.merge_id, EV_COMPLETED, merge_commit=merge_commit, pushed=pushed)
 
 
@@ -369,7 +426,12 @@ def attempt_view(session: dict) -> dict:
         "attempt_state": context.get(merge_target.ATTEMPT_STATE_KEY),
         "review_state": review_state,
         "source_branch": bm.get("source_branch"),
+        "source_kind": bm.get("source_kind") or "branch",
+        "source_group_id": bm.get("source_group_id"),
         "target_branch": bm.get("target_branch"),
+        "target_kind": bm.get("target_kind") or "branch",
+        "target_group_id": bm.get("target_group_id"),
+        "managed_workspace": bool(bm.get("managed_workspace", True)),
         "target_is_base": bool(bm.get("target_is_base")),
         "push": bool(bm.get("push")),
         "files": [row["path"] for row in files],
@@ -718,7 +780,7 @@ def complete_reviewed(merge_id: int, context: dict, *, pushed: bool) -> dict:
     merge_target.close_attempt(merge_id, merge_target.ATTEMPT_COMPLETED, result={
         "merge_commit": merge_commit or None, "pushed": pushed, "local_applied": True,
     })
-    if target is not None:
+    if target is not None and target.managed_workspace:
         merge_target.release_workspace(target)
     record_event(merge_id, EV_COMPLETED, merge_commit=merge_commit or None, pushed=pushed,
                  resolver_run_id=context.get("resolver_run_id"),
@@ -763,7 +825,8 @@ def finish_landed_merge(session: dict, ctx: merge_target.MergeTargetContext,
         "merge_commit": merge_commit, "pushed": pushed, "recovered": True,
         "local_applied": bool(local_applied),
     })
-    merge_target.release_workspace(ctx)
+    if ctx.managed_workspace:
+        merge_target.release_workspace(ctx)
     record_event(ctx.merge_id, EV_COMPLETED, merge_commit=merge_commit, pushed=pushed, recovered=True)
 
 
@@ -798,7 +861,7 @@ def abort(project_id: str, merge_id: int) -> dict:
                     diagnostic=gs._last_line(proc.stderr),
                 )
         merge_target.close_attempt(merge_id, merge_target.ATTEMPT_ABORTED, error={"code": "user_abort"})
-        cleaned = merge_target.release_workspace(target)
+        cleaned = merge_target.release_workspace(target) if target.managed_workspace else False
     finally:
         gs.db_git.release_lock(project_id, holder)
     _stop_resolver(merge_id, context)

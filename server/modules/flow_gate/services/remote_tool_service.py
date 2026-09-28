@@ -765,6 +765,25 @@ def _resolve_root_for_mutation(grant: dict, op: str) -> Optional[Path]:
     from modules.flow_gate.services import git_service  # lazy — import cycle
     from modules.flow_gate.db import git_integration as db_git
 
+    try:
+        claim = git_service.get_branch_merge_group_claim(group_id)
+    except Exception as exc:
+        raise _OpError(
+            500,
+            details={"group_id": group_id, "cause": "branch_merge_claim_query_failed", "error": str(exc)},
+            message=f"failed to query branch merge claim for group '{group_id}': {exc}",
+        ) from exc
+    if claim is not None:
+        if not (grant and grant.get("action_scope") == "resolve_conflict" and str(grant.get("merge_id")) == str(claim.get("merge_id"))):
+            raise _OpError(
+                409,
+                details={
+                    "group_id": group_id, "cause": "branch_merge_claim_active",
+                    "claim": claim,
+                },
+                message=f"git worktree for group '{group_id}' has an active branch merge claim — mutation blocked",
+            )
+
     wt = git_service.effective_src_root(project_id, group_id)
     if wt is not None:
         return wt

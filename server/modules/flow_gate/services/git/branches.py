@@ -362,6 +362,23 @@ def resolve_target(
         group_id, wt_path, ledger_branch = _resolve_worktree_endpoint(
             project_id, base_root, endpoint, "target"
         )
+        from . import branch_merge
+        claim = branch_merge.get_branch_merge_group_claim(group_id)
+        if claim is not None:
+            raise GitServiceError(
+                409,
+                "branch_merge_target_group_busy",
+                f"target group '{group_id}' has an active branch merge claim",
+                {"group_id": group_id, "claim": claim},
+            )
+        from modules.flow_gate.services import git_service as _gs
+        if _gs.db_git.get_open_session_by_group(group_id) is not None:
+            raise GitServiceError(
+                409,
+                "branch_merge_target_group_busy",
+                f"target group '{group_id}' has an open merge session",
+                {"group_id": group_id},
+            )
         if _dirty(wt_path, include_untracked=True):
             dirty_files = _dirty_files(wt_path, include_untracked=True)
             raise GitServiceError(
@@ -439,15 +456,8 @@ def merge_branches(
     )
     source_resolved = resolve_source(project_id, base_root, base_branch, source_ep)
     target_resolved = resolve_target(project_id, base_root, base_branch, target_ep, source_resolved)
-    if target_resolved.kind == "worktree":
-        raise GitServiceError(
-            501,
-            "worktree_target_merge_pending",
-            "actual merge into worktree target will be enabled in T#2",
-            {"source": source_resolved.branch, "target": target_resolved.branch, "target_group_id": target_resolved.group_id},
-        )
 
-    is_base_target = target_branch == base_branch
+    is_base_target = (target_resolved.kind == "branch" and target_branch == base_branch)
     apply_to_base_checkout = is_base_target and not push
     if apply_to_base_checkout:
         _gs.guard_base_free(project_id)   # 0205 §2.2 — 1st gate (before lock)
@@ -456,13 +466,6 @@ def merge_branches(
     if not _gs._acquire_lock(project_id, holder):
         raise GitServiceError(409, "git_busy", "another Git operation is in progress")
     owner = f"branch-merge:{uuid.uuid4()}"
-    wdir = merge_target.workspace_dir(project_id, target_branch)
-    ctx = merge_target.MergeTargetContext(
-        project_id=project_id, base_branch=base_branch, target_branch=target_branch,
-        is_project_base=False, root=wdir / merge_target.WORKSPACE_TREE,
-        workspace_dir=wdir, workspace_key=merge_target.workspace_key(target_branch),
-        owner=owner, lock_holder=holder,
-    )
     attempt_open = False
     prepared = False
     keep_workspace = False
@@ -470,32 +473,46 @@ def merge_branches(
         source_resolved = resolve_source(project_id, base_root, base_branch, source_ep)
         target_resolved = resolve_target(project_id, base_root, base_branch, target_ep, source_resolved)
         if target_resolved.kind == "worktree":
-            raise GitServiceError(
-                501,
-                "worktree_target_merge_pending",
-                "actual merge into worktree target will be enabled in T#2",
-                {"source": source_resolved.branch, "target": target_resolved.branch, "target_group_id": target_resolved.group_id},
+            ctx = merge_target.MergeTargetContext(
+                project_id=project_id, base_branch=base_branch, target_branch=target_branch,
+                is_project_base=False, root=target_resolved.root,
+                workspace_dir=None, workspace_key=None,
+                owner=owner, lock_holder=holder,
+                target_kind="worktree", target_group_id=target_resolved.group_id,
+                managed_workspace=False,
             )
-        if apply_to_base_checkout:
-            _gs.guard_base_free(project_id)   # 0205 §2.2 — 2nd gate (race close, after lock)
-            if _gs._dirty(base_root, include_untracked=False):
-                raise GitServiceError(
-                    409, "branch_merge_target_dirty",
-                    "target branch checkout has uncommitted changes",
-                )
-        # One live attempt per target workspace: another open branch merge or finalize
-        # attempt on the same target is refused before anything is written.
-        merge_target.raise_if_workspace_unavailable(project_id, target_branch)
+        else:
+            if apply_to_base_checkout:
+                _gs.guard_base_free(project_id)   # 0205 §2.2 — 2nd gate (race close, after lock)
+                if _gs._dirty(base_root, include_untracked=False):
+                    raise GitServiceError(
+                        409, "branch_merge_target_dirty",
+                        "target branch checkout has uncommitted changes",
+                    )
+            # One live attempt per target workspace: another open branch merge or finalize
+            # attempt on the same target is refused before anything is written.
+            merge_target.raise_if_workspace_unavailable(project_id, target_branch)
+            wdir = merge_target.workspace_dir(project_id, target_branch)
+            ctx = merge_target.MergeTargetContext(
+                project_id=project_id, base_branch=base_branch, target_branch=target_branch,
+                is_project_base=False, root=wdir / merge_target.WORKSPACE_TREE,
+                workspace_dir=wdir, workspace_key=merge_target.workspace_key(target_branch),
+                owner=owner, lock_holder=holder,
+                target_kind="branch", target_group_id=None,
+                managed_workspace=True,
+            )
         local_target_head = _gs._rev_parse(base_root, f"refs/heads/{target_branch}")
         ctx = branch_merge.open_attempt(
             ctx, source_branch=source_branch, push=push, base_branch=base_branch,
             target_is_base=is_base_target, requested_by=requested_by, provider_id=provider_id,
+            source_kind=source_resolved.kind, source_group_id=source_resolved.group_id,
         )
         attempt_open = True
         # Git refuses a second checkout of the project base. A detached managed worktree
         # preserves the shared checkout while HEAD is pushed / applied explicitly.
-        merge_target.prepare_workspace(ctx, detached=is_base_target)
-        prepared = True
+        if ctx.managed_workspace:
+            merge_target.prepare_workspace(ctx, detached=is_base_target)
+            prepared = True
         merge_root = ctx.root
         username = cfg.get("username")
         secret = _gs._load_secret_for(cfg) or ""
@@ -605,7 +622,7 @@ def merge_branches(
                 )
         branch_merge.complete_clean(ctx, merge_commit=target_after, pushed=push)
         prepared = False
-        if merge_target.read_owner_marker(ctx.workspace_dir) is not None:
+        if ctx.managed_workspace and ctx.workspace_dir and merge_target.read_owner_marker(ctx.workspace_dir) is not None:
             raise GitServiceError(
                 500, "branch_merge_cleanup_failed",
                 "branch merge succeeded but its managed workspace could not be cleaned",
@@ -616,7 +633,8 @@ def merge_branches(
             "ok": True, "status": "merged", "merge_id": ctx.merge_id,
             "source_branch": source_branch, "target_branch": target_branch,
             "source_head": source_before, "target_before": target_before,
-            "target_head": target_after, "pushed": push, "workspace_cleaned": True,
+            "target_head": target_after, "pushed": push,
+            "workspace_cleaned": bool(ctx.managed_workspace),
         }
     except GitServiceError as exc:
         if attempt_open and not keep_workspace:

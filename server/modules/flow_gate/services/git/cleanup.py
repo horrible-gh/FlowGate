@@ -41,6 +41,11 @@ def cleanup_disposed_group(project_id: str, group_id: str) -> dict:
         state = _gs.db_git.get_state(group_id)
         if state is None or not state.get("worktree_registered"):
             return {"ok": True, "cleaned": False, "reason": "no_slot"}
+        try:
+            if _gs.get_branch_merge_group_claim(group_id) is not None:
+                return {"ok": False, "cleaned": False, "reason": "branch_merge_claim_active"}
+        except Exception:
+            return {"ok": False, "cleaned": False, "reason": "branch_merge_claim_query_failed"}
         if not _gs.git_available():
             return {"ok": True, "cleaned": False, "reason": "git_unavailable"}
         # A conflict/merging slot holds the project lock as merge:{id}; abort +
@@ -99,6 +104,13 @@ def cleanup_terminal_slots(project_id: str) -> dict:
             # must not destroy the session; it remains a separately actionable row.
             if _gs.tr_conflict_session(gid) is not None:
                 pending.append({"group_id": gid, "reason": "revert_conflict"})
+                continue
+            try:
+                if _gs.get_branch_merge_group_claim(gid) is not None:
+                    pending.append({"group_id": gid, "reason": "branch_merge_claim_active"})
+                    continue
+            except Exception:
+                pending.append({"group_id": gid, "reason": "branch_merge_claim_query_failed"})
                 continue
             if _gs._cleanup_group_slot(project_id, gid):
                 cleaned.append(gid)
