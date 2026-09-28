@@ -109,7 +109,7 @@
             :aria-label="t('main.git_branch_manager.source_label')"
             @change="selectMergeSource(($event.target as HTMLSelectElement).value)"
           >
-            <option v-for="branch in sourceCandidates" :key="branch.name" :value="branch.name">{{ branch.name }}</option>
+            <option v-for="branch in sourceCandidates" :key="branch.name" :value="branch.name">{{ candidateDisplayLabel(branch) }}</option>
           </select>
           <small>{{ t('main.git_branch_manager.source_hint') }}</small>
         </label>
@@ -121,7 +121,7 @@
             :aria-label="t('main.git_branch_manager.target_label')"
             @change="selectMergeTarget(($event.target as HTMLSelectElement).value)"
           >
-            <option v-for="branch in targetCandidates" :key="branch.name" :value="branch.name">{{ branch.name }}</option>
+            <option v-for="branch in targetCandidates" :key="branch.name" :value="branch.name">{{ candidateDisplayLabel(branch) }}</option>
           </select>
           <small>{{ t('main.git_branch_manager.target_hint') }}</small>
         </label>
@@ -137,7 +137,7 @@
       </template>
       <!-- §3.3 — the current selection must also read as a plain sentence. -->
       <p v-if="hasMergeCandidates && mergeSource && mergeTarget" class="branch-merge-summary" data-test="merge-summary">
-        {{ t('main.git_branch_manager.merge_summary', { source: mergeSource, target: mergeTarget }) }}
+        {{ mergeSummaryText }}
       </p>
       <div class="branch-form-actions">
         <button
@@ -214,7 +214,7 @@
       <div v-if="openMerges.length" class="branch-open-merges" data-test="open-merges">
         <h5 class="branch-zone-title">{{ t('main.git_branch_manager.open_merges_title') }}</h5>
         <div v-for="attempt in openMerges" :key="attempt.merge_id" class="branch-row" data-test="open-merge-row">
-          <span class="branch-name">{{ attempt.source_branch }} → {{ attempt.target_branch }}</span>
+          <span class="branch-name">{{ formatAttemptEndpoint(attempt.source_branch, attempt.source_kind, attempt.source_group_id) }} → {{ formatAttemptEndpoint(attempt.target_branch, attempt.target_kind, attempt.target_group_id) }}</span>
           <span class="badge" data-test="open-merge-state">
             {{ t(`main.git_branch_manager.attempt_state.${attempt.state}`, attempt.state) }}
           </span>
@@ -310,6 +310,10 @@ interface OpenBranchMerge {
   merge_id: number
   source_branch: string
   target_branch: string
+  source_kind?: string
+  source_group_id?: string | null
+  target_kind?: string
+  target_group_id?: string | null
   state: string
   file_count: number
   resolved_count: number
@@ -351,18 +355,24 @@ const showBranches = computed(() => props.view === 'all' || props.view === 'bran
 const showManage = computed(() => props.view === 'all' || props.view === 'manage')
 const ordinary = computed(() => (catalog.value.branches || []).filter(b => b.kind === 'local' || b.kind === 'base'))
 const createCandidates = computed(() => (catalog.value.branches || []).filter(b => b.can_be_create_source && b.kind !== 'remote_only'))
-// Both selects always list every ordinary branch — never filtered by the
-// other side's current value. With exactly two ordinary branches, filtering
-// Source by the current Target (and Target by the current Source) leaves
-// each <select> with only one <option>, so once mergeSource/mergeTarget
-// settle on a pair neither <select> ever offers the value needed to flip
-// direction: main -> test becomes permanently unreachable while test -> main
-// still works (human rejection rej_01M3E5RFNW2BXG5E, confirmed live with
-// only main/test present). Picking the value already on the other side now
-// swaps them instead (see selectMergeSource/selectMergeTarget below).
-const sourceCandidates = computed(() => ordinary.value)
-const targetCandidates = computed(() => ordinary.value)
-const hasMergeCandidates = computed(() => ordinary.value.length >= 2)
+// flowgate.default.0635 T0005: Source/Target merge selection includes both ordinary branches
+// and registered group worktrees (kind=internal_slot with connected_group_id).
+const mergeCandidates = computed(() =>
+  (catalog.value.branches || []).filter(
+    b => b.kind === 'local' || b.kind === 'base' || (b.kind === 'internal_slot' && !!b.connected_group_id)
+  )
+)
+const sourceCandidates = computed(() => mergeCandidates.value)
+const targetCandidates = computed(() => mergeCandidates.value)
+const hasMergeCandidates = computed(() => mergeCandidates.value.length >= 2)
+
+const mergeSummaryText = computed(() => {
+  const s = mergeCandidates.value.find(b => b.name === mergeSource.value)
+  const tCandidate = mergeCandidates.value.find(b => b.name === mergeTarget.value)
+  const sLabel = s ? candidateSummaryLabel(s) : mergeSource.value
+  const tLabel = tCandidate ? candidateSummaryLabel(tCandidate) : mergeTarget.value
+  return t('main.git_branch_manager.merge_summary', { source: sLabel, target: tLabel })
+})
 // Protected branches stay pickable so the zone can say WHY they cannot go; the
 // delete button itself follows the server's can_delete verdict only.
 const deleteCandidates = computed(() => (catalog.value.branches || []).filter(b => b.kind !== 'remote_only'))
@@ -380,6 +390,27 @@ function kindBadgeClass(branch: BranchRow): string {
   if (branch.kind === 'base') return 'badge-blue'
   return ''
 }
+function candidateDisplayLabel(branch: BranchRow): string {
+  if (branch.kind === 'internal_slot') {
+    return `${branch.name} [${t('main.git_branch_manager.kind.internal_slot')}: ${branch.connected_group_id}]`
+  }
+  if (branch.kind === 'base') {
+    return `${branch.name} [${t('main.git_branch_manager.kind.base')}]`
+  }
+  return `${branch.name} [${t('main.git_branch_manager.kind.local')}]`
+}
+function candidateSummaryLabel(branch: BranchRow): string {
+  if (branch.kind === 'internal_slot') {
+    return `${branch.name} (${t('main.git_branch_manager.kind.internal_slot')}: ${branch.connected_group_id || ''})`
+  }
+  return branch.name
+}
+function formatAttemptEndpoint(branch: string, kind?: string, groupId?: string | null): string {
+  if (kind === 'worktree' && groupId) {
+    return `${branch} (${t('main.git_branch_manager.kind.internal_slot')}: ${groupId})`
+  }
+  return branch
+}
 function deleteReasonText(branch: BranchRow): string | undefined {
   if (branch.can_delete || !branch.delete_blocked_reason) return undefined
   return t(`main.git_branch_manager.delete_blocked.${branch.delete_blocked_reason}`, branch.delete_blocked_reason)
@@ -395,7 +426,7 @@ function deleteResultReasonText(result: { code?: string; message?: string }): st
   return result.message || t('main.git_branch_manager.op_failed')
 }
 function syncSelections(opts: { forceTarget?: string | null } = {}) {
-  const first = ordinary.value[0]?.name || ''
+  const first = ordinary.value[0]?.name || mergeCandidates.value[0]?.name || ''
   if (!createCandidates.value.some(b => b.name === createSource.value)) createSource.value = catalog.value.base_branch || first
 
   // Target is settled first. setDefaultTarget() passes forceTarget so the new
@@ -406,7 +437,7 @@ function syncSelections(opts: { forceTarget?: string | null } = {}) {
     mergeTarget.value =
       opts.forceTarget ||
       catalog.value.base_branch ||
-      ordinary.value.find(b => b.name !== mergeSource.value)?.name ||
+      mergeCandidates.value.find(b => b.name !== mergeSource.value)?.name ||
       first
   } else if (!targetCandidates.value.some(b => b.name === mergeTarget.value)) {
     mergeTarget.value = catalog.value.default_merge_target || catalog.value.base_branch || targetCandidates.value[0]?.name || ''
@@ -414,17 +445,17 @@ function syncSelections(opts: { forceTarget?: string | null } = {}) {
 
   // Source is re-validated against the now-settled target, not just against
   // `ordinary` — mergeSource must differ from mergeTarget.
-  if (!ordinary.value.some(b => b.name === mergeSource.value) || mergeSource.value === mergeTarget.value) {
+  if (!mergeCandidates.value.some(b => b.name === mergeSource.value) || mergeSource.value === mergeTarget.value) {
     mergeSource.value =
-      ordinary.value.find(b => b.name !== mergeTarget.value && b.name !== catalog.value.base_branch)?.name ||
-      ordinary.value.find(b => b.name !== mergeTarget.value)?.name ||
+      mergeCandidates.value.find(b => b.name !== mergeTarget.value && b.name !== catalog.value.base_branch)?.name ||
+      mergeCandidates.value.find(b => b.name !== mergeTarget.value)?.name ||
       ''
   }
 
   // If settling the source made it collide with the target again (e.g. a
   // forced target equal to the previous source), separate them one more time.
-  if (mergeTarget.value === mergeSource.value || !ordinary.value.some(b => b.name === mergeTarget.value)) {
-    mergeTarget.value = ordinary.value.find(b => b.name !== mergeSource.value)?.name || ''
+  if (mergeTarget.value === mergeSource.value || !mergeCandidates.value.some(b => b.name === mergeTarget.value)) {
+    mergeTarget.value = mergeCandidates.value.find(b => b.name !== mergeSource.value)?.name || ''
   }
 
   if (!deleteCandidates.value.some(b => b.name === deleteTarget.value)) {
@@ -551,30 +582,50 @@ async function confirmMerge() {
   deleteResult.value = null
   await run(async () => {
     try {
+      const sourceCandidate = mergeCandidates.value.find(b => b.name === source)
+      const targetCandidate = mergeCandidates.value.find(b => b.name === target)
+      const source_kind = sourceCandidate?.kind === 'internal_slot' ? 'worktree' : 'branch'
+      const source_group_id = sourceCandidate?.connected_group_id || null
+      const target_kind = targetCandidate?.kind === 'internal_slot' ? 'worktree' : 'branch'
+      const target_group_id = targetCandidate?.connected_group_id || null
+
+      const sourceLabel = sourceCandidate?.kind === 'internal_slot' ? candidateSummaryLabel(sourceCandidate) : source
+      const targetLabel = targetCandidate?.kind === 'internal_slot' ? candidateSummaryLabel(targetCandidate) : target
+
       const { data } = await postRequest<any>(`/api/v1/projects/${props.projectId}/git/branches/merge`, {
-        source_branch: source, target_branch: target, push,
+        source_branch: source,
+        source_kind,
+        source_group_id,
+        target_branch: target,
+        target_kind,
+        target_group_id,
+        push,
       })
       if ((data?.status === 'conflict' || data?.status === 'resolved_pending_review') && data?.merge_id != null) {
         // 0630 T0005 — 202: the conflict is a persistent attempt, not an error, and the
         // server already started (or tried to start) its AI resolver.
         mergeResult.value = {
-          source, target,
+          source: sourceLabel, target: targetLabel,
           mergeId: Number(data.merge_id),
           files: Array.isArray(data.conflict_files) ? data.conflict_files : [],
           aiStatus: data.status === 'resolved_pending_review' ? 'review' : (data.ai?.status || undefined),
         }
       } else {
-        mergeResult.value = { source, target, pushed: !!data?.pushed }
+        mergeResult.value = { source: sourceLabel, target: targetLabel, pushed: !!data?.pushed }
       }
       await load()
     } catch (e: any) {
+      const sourceLabel = (mergeCandidates.value.find(b => b.name === source))?.kind === 'internal_slot'
+        ? candidateSummaryLabel(mergeCandidates.value.find(b => b.name === source)!) : source
+      const targetLabel = (mergeCandidates.value.find(b => b.name === target))?.kind === 'internal_slot'
+        ? candidateSummaryLabel(mergeCandidates.value.find(b => b.name === target)!) : target
       // §7 merge 실패 — source/target stay attached to EVERY failure (not just
       // conflict), plus the server's code/message and whether this was
       // specifically a push failure, so a diverged-target or push rejection
       // is never flattened into the same one-line "Merge failed" as a conflict.
       const apiError = e?.response?.data?.error
       mergeResult.value = {
-        source, target,
+        source: sourceLabel, target: targetLabel,
         code: apiError?.code,
         message: apiError?.message,
         files: apiError?.code === 'branch_merge_conflict' ? (apiError.details?.conflict_files || []) : undefined,

@@ -127,7 +127,15 @@ describe('GitBranchManager (T0016 C1-C7)', () => {
     expect(dialogConfirm).toHaveBeenCalled()
     expect(postRequest).toHaveBeenCalledWith(
       '/api/v1/projects/flowgate/git/branches/merge',
-      { source_branch: 'stale-feature', target_branch: 'flowgate-v0.2', push: true },
+      {
+        source_branch: 'stale-feature',
+        source_kind: 'branch',
+        source_group_id: null,
+        target_branch: 'flowgate-v0.2',
+        target_kind: 'branch',
+        target_group_id: null,
+        push: true,
+      },
     )
     // refresh after success
     expect(getRequest).toHaveBeenCalledTimes(2)
@@ -535,7 +543,15 @@ describe('GitBranchManager zones and views (T0018)', () => {
     expect(dialogConfirm).toHaveBeenCalled()
     expect(postRequest).toHaveBeenCalledWith(
       '/api/v1/projects/flowgate/git/branches/merge',
-      { source_branch: 'stale-feature', target_branch: 'flowgate-v0.2', push: true },
+      {
+        source_branch: 'stale-feature',
+        source_kind: 'branch',
+        source_group_id: null,
+        target_branch: 'flowgate-v0.2',
+        target_kind: 'branch',
+        target_group_id: null,
+        push: true,
+      },
     )
     // the result banner stays inside the merge zone, not in the danger zone
     expect(zone.find('.branch-result').exists()).toBe(true)
@@ -632,7 +648,15 @@ describe('GitBranchManager merge selection sync (T0004 §3, source_nr 0003-NR §
     await flushPromises()
     expect(postRequest).toHaveBeenCalledWith(
       '/api/v1/projects/flowgate/git/branches/merge',
-      { source_branch: 'main', target_branch: 'flowgate-v0.2', push: true },
+      {
+        source_branch: 'main',
+        source_kind: 'branch',
+        source_group_id: null,
+        target_branch: 'flowgate-v0.2',
+        target_kind: 'branch',
+        target_group_id: null,
+        push: true,
+      },
     )
     wrapper.unmount()
   })
@@ -651,7 +675,15 @@ describe('GitBranchManager merge selection sync (T0004 §3, source_nr 0003-NR §
     await flushPromises()
     expect(postRequest).toHaveBeenCalledWith(
       '/api/v1/projects/flowgate/git/branches/merge',
-      { source_branch: 'flowgate-v0.2', target_branch: 'main', push: true },
+      {
+        source_branch: 'flowgate-v0.2',
+        source_kind: 'branch',
+        source_group_id: null,
+        target_branch: 'main',
+        target_kind: 'branch',
+        target_group_id: null,
+        push: true,
+      },
     )
     wrapper.unmount()
   })
@@ -688,7 +720,15 @@ describe('GitBranchManager merge selection sync (T0004 §3, source_nr 0003-NR §
     await flushPromises()
     expect(postRequest).toHaveBeenCalledWith(
       '/api/v1/projects/flowgate/git/branches/merge',
-      { source_branch: 'main', target_branch: 'test', push: true },
+      {
+        source_branch: 'main',
+        source_kind: 'branch',
+        source_group_id: null,
+        target_branch: 'test',
+        target_kind: 'branch',
+        target_group_id: null,
+        push: true,
+      },
     )
 
     // And back again, purely through the Source <select>, proving the
@@ -711,7 +751,15 @@ describe('GitBranchManager merge selection sync (T0004 §3, source_nr 0003-NR §
     await flushPromises()
     expect(postRequest).toHaveBeenCalledWith(
       '/api/v1/projects/flowgate/git/branches/merge',
-      { source_branch: 'stale-feature', target_branch: 'flowgate-v0.2', push: true },
+      {
+        source_branch: 'stale-feature',
+        source_kind: 'branch',
+        source_group_id: null,
+        target_branch: 'flowgate-v0.2',
+        target_kind: 'branch',
+        target_group_id: null,
+        push: true,
+      },
     )
     wrapper.unmount()
   })
@@ -730,14 +778,79 @@ describe('GitBranchManager merge selection sync (T0004 §3, source_nr 0003-NR §
     wrapper.unmount()
   })
 
-  it('T7. internal_slot 브랜치는 merge Source/Target 옵션 목록에 없다', async () => {
+  it('T7. registered worktree(internal_slot) 브랜치는 merge Source/Target 옵션 목록에 노출되고 종류와 connected_group_id를 표시한다 (0635 T0005)', async () => {
     const wrapper = mountManager()
     await flushPromises()
     const { source, target } = mergeSelects(wrapper)
     const sourceNames = source.findAll('option').map((o) => o.element.value)
     const targetNames = target.findAll('option').map((o) => o.element.value)
-    expect(sourceNames).not.toContain('flowgate_default_0599')
-    expect(targetNames).not.toContain('flowgate_default_0599')
+    expect(sourceNames).toContain('flowgate_default_0599')
+    expect(targetNames).toContain('flowgate_default_0599')
+
+    const opt = source.findAll('option').find((o) => o.element.value === 'flowgate_default_0599')!
+    expect(opt.text()).toContain('flowgate.default.0599')
+    expect(opt.text()).toContain(i18n.global.t('main.git_branch_manager.kind.internal_slot'))
+
+    // default_merge_target 지정 버튼은 여전히 internal_slot을 제외한다
+    const slotRow = wrapper.findAll('.branch-row').find((r) => r.text().includes('flowgate_default_0599'))!
+    expect(slotRow.find('button.btn-secondary').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('T7b. worktree를 Source로 선택해 merge하면 typed identity(kind=worktree, group_id)가 전달된다 (0635 T0005)', async () => {
+    const wrapper = mountManager()
+    await flushPromises()
+    const { source, target } = mergeSelects(wrapper)
+    await target.setValue('main')
+    await source.setValue('flowgate_default_0599')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="merge-summary"]').text()).toContain('flowgate_default_0599')
+    expect(wrapper.get('[data-test="merge-summary"]').text()).toContain('flowgate.default.0599')
+
+    postRequest.mockResolvedValueOnce({ data: { ok: true } })
+    await wrapper.find('[data-test="branch-zone-merge"]').trigger('submit')
+    await flushPromises()
+
+    expect(postRequest).toHaveBeenCalledWith(
+      '/api/v1/projects/flowgate/git/branches/merge',
+      {
+        source_branch: 'flowgate_default_0599',
+        source_kind: 'worktree',
+        source_group_id: 'flowgate.default.0599',
+        target_branch: 'main',
+        target_kind: 'branch',
+        target_group_id: null,
+        push: true,
+      },
+    )
+    wrapper.unmount()
+  })
+
+  it('T7c. worktree를 Target으로 선택해 merge하면 typed identity(kind=worktree, group_id)가 전달된다 (0635 T0005)', async () => {
+    const wrapper = mountManager()
+    await flushPromises()
+    const { source, target } = mergeSelects(wrapper)
+    await source.setValue('main')
+    await target.setValue('flowgate_default_0599')
+    await flushPromises()
+
+    postRequest.mockResolvedValueOnce({ data: { ok: true } })
+    await wrapper.find('[data-test="branch-zone-merge"]').trigger('submit')
+    await flushPromises()
+
+    expect(postRequest).toHaveBeenCalledWith(
+      '/api/v1/projects/flowgate/git/branches/merge',
+      {
+        source_branch: 'main',
+        source_kind: 'branch',
+        source_group_id: null,
+        target_branch: 'flowgate_default_0599',
+        target_kind: 'worktree',
+        target_group_id: 'flowgate.default.0599',
+        push: true,
+      },
+    )
     wrapper.unmount()
   })
 
@@ -804,7 +917,15 @@ describe('GitBranchManager merge push selection (T0006)', () => {
 
     expect(postRequest).toHaveBeenCalledWith(
       '/api/v1/projects/flowgate/git/branches/merge',
-      { source_branch: 'stale-feature', target_branch: 'flowgate-v0.2', push: false },
+      {
+        source_branch: 'stale-feature',
+        source_kind: 'branch',
+        source_group_id: null,
+        target_branch: 'flowgate-v0.2',
+        target_kind: 'branch',
+        target_group_id: null,
+        push: false,
+      },
     )
     wrapper.unmount()
   })

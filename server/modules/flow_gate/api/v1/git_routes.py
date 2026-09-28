@@ -53,7 +53,7 @@ Errors follow the source-mode envelope {"ok": false, "error": {code, message}}.
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
@@ -218,11 +218,25 @@ class BranchCreateBody(BaseModel):
     source_branch: str
 
 
+class MergeEndpointIdentity(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["branch", "worktree"] = "branch"
+    branch: str
+    group_id: Optional[str] = None
+
+
 class BranchMergeBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    source_branch: str
-    target_branch: str
+    source_branch: Optional[str] = None
+    target_branch: Optional[str] = None
+    source_kind: Literal["branch", "worktree"] = "branch"
+    source_group_id: Optional[str] = None
+    target_kind: Literal["branch", "worktree"] = "branch"
+    target_group_id: Optional[str] = None
+    source: Optional[MergeEndpointIdentity] = None
+    target: Optional[MergeEndpointIdentity] = None
     # T0006: publish the merge result to origin (default True keeps every
     # existing caller's behavior — an omitted field still pushes).
     push: bool = True
@@ -276,28 +290,53 @@ def post_git_branch_merge(
     request: Request,
     user=Depends(require_permission("project.settings.edit", "project_id")),
 ):
+    s_kind = body.source.kind if body.source else body.source_kind
+    s_branch = (body.source.branch if body.source else body.source_branch) or ""
+    s_group_id = body.source.group_id if body.source else body.source_group_id
+
+    t_kind = body.target.kind if body.target else body.target_kind
+    t_branch = (body.target.branch if body.target else body.target_branch) or ""
+    t_group_id = body.target.group_id if body.target else body.target_group_id
+
+    if not s_branch or not t_branch:
+        return _error_response(422, "branch_merge_missing_branch", "source and target branches are required")
+
     try:
-        result = git_service.merge_branches(
-            project_id, body.source_branch, body.target_branch, push=body.push,
+        import inspect
+
+        merge_fn = git_service.merge_branches
+        sig = inspect.signature(merge_fn)
+        params = sig.parameters
+        accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+        call_kwargs = {"push": body.push}
+        if accepts_kwargs or "source_kind" in params:
+            call_kwargs["source_kind"] = s_kind
+        if accepts_kwargs or "source_group_id" in params:
+            call_kwargs["source_group_id"] = s_group_id
+        if accepts_kwargs or "target_kind" in params:
+            call_kwargs["target_kind"] = t_kind
+        if accepts_kwargs or "target_group_id" in params:
+            call_kwargs["target_group_id"] = t_group_id
+        if accepts_kwargs or "requested_by" in params:
+            call_kwargs["requested_by"] = _user_id(user)
+        if accepts_kwargs or "provider_id" in params:
+            call_kwargs["provider_id"] = body.provider_id
+
+        result = merge_fn(
+            project_id, s_branch, t_branch, **call_kwargs,
         )
     except GitServiceError as exc:
         return _guard(exc)
     if not (isinstance(result, dict) and result.get("status") == "conflict"
             and result.get("merge_id") is not None):
         return result
-    # 0630 T0005 (D0004 §10): the conflict is durable and the Git lock is released by now.
-    # The server — not a later client click — starts the existing resolve_conflict run.
-    # A failure to start is recorded on the attempt (ai.status=start_failed) and never
-    # aborts it; the conflict stays open for a retry or a manual resolution.
+    # 0630 T0005 / T#3 (D0004 §10): the conflict is durable and the Git lock is released.
+    # T#3: the server no longer auto-starts the resolver here. EOL-only conflicts are still
+    # frozen to review automatically. For real conflicts the attempt stays open in "conflict"
+    # state; the user opens GitConflictResolverDialog and clicks [AI invoke] → /ai-resolve.
     merge_id = int(result["merge_id"])
     try:
-        view = git_branch_merge.settle_new_conflict(
-            project_id, merge_id,
-            start_run=_branch_merge_starter(
-                project_id, merge_id, request, _user_id(user), pinned=bool(body.provider_id),
-            ),
-            provider_id=body.provider_id,
-        )
+        view = git_branch_merge.settle_new_conflict(project_id, merge_id)
         result = {**result, "attempt": view, "ai": view.get("ai"),
                   "remaining_conflicts": view.get("unresolved") or [],
                   "status": "resolved_pending_review"
@@ -1354,8 +1393,10 @@ def post_branch_merge_ai_resolve(
     project_id: str, merge_id: int, request: Request, body: BranchMergeAiBody | None = None,
     user=Depends(require_permission("project.settings.edit", "project_id")),
 ):
-    """Re-invoke / re-instruct the AI resolver (auto-start failed, or the person wants
-    another pass). Never a precondition for the first run — the server starts that."""
+    """Invoke (first run) or re-invoke the AI resolver (T#3: the server never auto-starts).
+    The GitConflictResolverDialog calls this when the user selects a Provider and clicks
+    [AI invoke]. Duplicate clicks and concurrent requests are guarded by an atomic per-attempt lock
+    and live-run check in start_resolver."""
     body = body or BranchMergeAiBody()
     message = (body.message or "").strip()
     if len(message) > 4000:

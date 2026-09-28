@@ -310,8 +310,12 @@ from .git.lock import (
     _acquire_lock,
     base_merge_in_progress,
     guard_base_free,
+    guard_group_branch_merge_free,
     open_merge_session_of_project,
 )
+def get_branch_merge_group_claim(group_id: str):
+    from .git import branch_merge
+    return branch_merge.get_branch_merge_group_claim(group_id)
 
 
 
@@ -324,12 +328,18 @@ from .git.lock import (
 
 
 from .git.branches import (
+    MergeEndpointIdentity,
+    ResolvedSource,
+    ResolvedTarget,
     check_branch_delete,
+    check_git_operation_in_progress,
     create_branch,
     delete_branch,
     internal_slot_owner,
     list_branches,
     merge_branches,
+    resolve_source,
+    resolve_target,
     read_local_branch_blob,
     read_local_branch_tree,
     resolve_local_branch_ref,

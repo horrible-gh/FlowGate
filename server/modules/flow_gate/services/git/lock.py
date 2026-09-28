@@ -106,3 +106,18 @@ def guard_base_free(project_id: str) -> None:
             "conflict_since": session.get("created_at"),
         },
     )
+
+
+def guard_group_branch_merge_free(group_id: str) -> None:
+    """Reject an operation on group worktree while it is claimed by an open branch_merge attempt."""
+    if not group_id:
+        return
+    from .branch_merge import get_branch_merge_group_claim
+    claim = get_branch_merge_group_claim(group_id)
+    if claim is not None:
+        raise GitServiceError(
+            409,
+            "branch_merge_claim_active",
+            f"group '{group_id}' has an active branch merge claim",
+            details={"group_id": group_id, "claim": claim},
+        )

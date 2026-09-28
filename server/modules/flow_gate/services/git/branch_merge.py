@@ -16,12 +16,13 @@ nothing new on the resolve or review side:
   checks, candidate freeze, review, approve/reject/re-review, stale/CAS and reconciliation
   are the existing ``conflict``/``git_service`` functions, reached with ``project_id``
   instead of ``group_id``;
-* the AI resolver is the existing ``resolve_conflict`` run, started by the server right
-  after the conflict is durable (``auto_start``) — which never grants ``auto_authority``:
+* the AI resolver is the existing ``resolve_conflict`` run. The user opens the
+  ``GitConflictResolverDialog``, selects a Provider, and clicks ``[기 호출]`` to start it;
+  the server never auto-starts the resolver. ``auto_authority`` is always False:
   the resolved candidate always stops at ``resolved_pending_review`` for a person.
 
 Only what genuinely differs for a group-less merge lives here: opening/closing the attempt,
-the conflict response, the AI auto-start bookkeeping, abort, recovery, and the final
+the conflict response, the explicit AI-invoke path (``/ai-resolve``), abort, recovery, and the final
 publish (local target ref and the ``push`` choice frozen when the attempt started).
 """
 from __future__ import annotations
@@ -31,6 +32,8 @@ import uuid
 from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Optional
+from datetime import datetime, timezone
+import threading
 
 from modules.flow_gate.db.connection import get_store, now_iso
 
@@ -91,6 +94,51 @@ def _gs():
 
 def is_branch_merge(session: Optional[dict]) -> bool:
     return _gs().db_git.is_branch_merge_session(session)
+
+
+def get_branch_merge_group_claim(group_id: str) -> Optional[dict]:
+    """Return claim details if `group_id` is claimed by an open branch_merge attempt."""
+    if not group_id:
+        return None
+    gs = _gs()
+    try:
+        sessions = gs.db_git.list_open_sessions()
+        for session in sessions:
+            if not is_branch_merge(session):
+                continue
+            if session.get("status") != "open":
+                continue
+            ctx = gs.db_git.session_context(session)
+            target_rec = ctx.get(merge_target.TARGET_RECORD_KEY) or {}
+            bm = ctx.get(BRANCH_MERGE_KEY) or {}
+            claimed_group = target_rec.get("target_group_id") or bm.get("target_group_id")
+            if claimed_group == group_id:
+                attempt_state = ctx.get(merge_target.ATTEMPT_STATE_KEY)
+                review_state = ctx.get("review_state")
+                if attempt_state in (
+                    merge_target.ATTEMPT_COMPLETED,
+                    merge_target.ATTEMPT_ABORTED,
+                    merge_target.ATTEMPT_FAILED,
+                ) or review_state == gs.REVIEW_STATE_COMPLETED:
+                    continue
+                return {
+                    "merge_id": session.get("merge_id"),
+                    "project_id": gs.db_git.session_project_id(session),
+                    "group_id": group_id,
+                    "target_branch": target_rec.get("branch") or bm.get("target_branch"),
+                    "source_branch": bm.get("source_branch"),
+                    "attempt_state": attempt_state,
+                }
+    except GitServiceError:
+        raise
+    except Exception as exc:
+        raise GitServiceError(
+            500,
+            "branch_merge_claim_query_failed",
+            f"failed to query branch merge claim for group '{group_id}': {exc}",
+            details={"group_id": group_id, "error": str(exc)},
+        ) from exc
+    return None
 
 
 def get_session_of_project(project_id: str, merge_id: int, *, open_only: bool = False) -> dict:
@@ -158,7 +206,8 @@ def record_event(session_or_id, event_type: str, **fields) -> None:
 def open_attempt(
     ctx: merge_target.MergeTargetContext, *, source_branch: str, push: bool,
     base_branch: str, target_is_base: bool, requested_by: Optional[str] = None,
-    provider_id: Optional[str] = None,
+    provider_id: Optional[str] = None, source_kind: str = "branch",
+    source_group_id: Optional[str] = None,
 ) -> merge_target.MergeTargetContext:
     """Write the attempt row BEFORE ``git merge`` runs (D0004 §4) and return the pinned ctx.
 
@@ -192,6 +241,11 @@ def open_attempt(
         "finalize_action": action,
         "push": bool(push),
         "source_branch": source_branch,
+        "source_kind": source_kind,
+        "source_group_id": source_group_id,
+        "target_kind": ctx.target_kind,
+        "target_group_id": ctx.target_group_id,
+        "managed_workspace": ctx.managed_workspace,
     }
     context = {
         merge_target.TARGET_BRANCH_KEY: ctx.target_branch,
@@ -199,7 +253,12 @@ def open_attempt(
         merge_target.ATTEMPT_STATE_KEY: merge_target.ATTEMPT_IN_PROGRESS,
         BRANCH_MERGE_KEY: {
             "source_branch": source_branch,
+            "source_kind": source_kind,
+            "source_group_id": source_group_id,
             "target_branch": ctx.target_branch,
+            "target_kind": ctx.target_kind,
+            "target_group_id": ctx.target_group_id,
+            "managed_workspace": ctx.managed_workspace,
             "push": bool(push),
             "target_is_base": bool(target_is_base),
             "requested_by": requested_by,
@@ -208,7 +267,7 @@ def open_attempt(
         # D0004 §11: two separate switches. Starting the resolver automatically never
         # carries the authority to approve its result.
         "auto_authority": False,
-        AI_KEY: {"auto_start": True, "auto_authority": False, "status": AI_NOT_STARTED},
+        AI_KEY: {"auto_start": False, "auto_authority": False, "status": AI_NOT_STARTED},
     }
     merge_id = gs.db_git.create_branch_merge_session(
         ctx.project_id, finalize_action=action, context=context,
@@ -250,7 +309,8 @@ def complete_clean(ctx: merge_target.MergeTargetContext, *, merge_commit: Option
     merge_target.close_attempt(ctx.merge_id, merge_target.ATTEMPT_COMPLETED, result={
         "merge_commit": merge_commit, "pushed": pushed, "local_applied": True,
     })
-    merge_target.release_workspace(ctx)
+    if ctx.managed_workspace:
+        merge_target.release_workspace(ctx)
     record_event(ctx.merge_id, EV_COMPLETED, merge_commit=merge_commit, pushed=pushed)
 
 
@@ -369,7 +429,12 @@ def attempt_view(session: dict) -> dict:
         "attempt_state": context.get(merge_target.ATTEMPT_STATE_KEY),
         "review_state": review_state,
         "source_branch": bm.get("source_branch"),
+        "source_kind": bm.get("source_kind") or "branch",
+        "source_group_id": bm.get("source_group_id"),
         "target_branch": bm.get("target_branch"),
+        "target_kind": bm.get("target_kind") or "branch",
+        "target_group_id": bm.get("target_group_id"),
+        "managed_workspace": bool(bm.get("managed_workspace", True)),
         "target_is_base": bool(bm.get("target_is_base")),
         "push": bool(bm.get("push")),
         "files": [row["path"] for row in files],
@@ -378,7 +443,7 @@ def attempt_view(session: dict) -> dict:
         "unresolved": remaining,
         "eol_only_paths": list(context.get("eol_only_paths") or []),
         "ai": {
-            "auto_start": bool(ai.get("auto_start", True)),
+            "auto_start": bool(ai.get("auto_start", False)),
             "auto_authority": False,
             "status": ai.get("status") or AI_NOT_STARTED,
             "run_id": ai.get("run_id"),
@@ -434,7 +499,7 @@ def conflict_response(ctx: merge_target.MergeTargetContext, files: list[str]) ->
     }
 
 
-# ── AI resolver auto-start (D0004 §10–§12) ───────────────────────────────────
+# ── AI resolver — explicit invoke only (D0004 §10–§12; T#3: auto-start removed) ────────
 
 def resolve_provider(project_id: str, requested: Optional[str], session: Optional[dict] = None) -> Optional[str]:
     """Provider priority: 1) the Branch Merge request's explicit provider, 2) a
@@ -450,13 +515,31 @@ def resolve_provider(project_id: str, requested: Optional[str], session: Optiona
     return stored or None
 
 
+_resolver_start_locks: dict[tuple[str, int], threading.Lock] = {}
+_resolver_start_locks_meta = threading.Lock()
+
+
+def _attempt_start_lock(project_id: str, merge_id: int) -> threading.Lock:
+    key = (str(project_id), int(merge_id))
+    with _resolver_start_locks_meta:
+        lock = _resolver_start_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _resolver_start_locks[key] = lock
+        return lock
+
+
 def start_resolver(
     project_id: str, merge_id: int, *,
     start_run: Callable[[Optional[str], list[str]], Optional[str]],
     provider_id: Optional[str] = None, messages: Optional[list[str]] = None,
-    trigger: str = "auto_start",
+    trigger: str = "manual",
 ) -> dict:
     """Start (or re-start) the existing ``resolve_conflict`` AI run for this attempt.
+
+    This is the ONLY entry point for the AI resolver (T#3). It is called exclusively from
+    the ``/ai-resolve`` route after the user selects a Provider and clicks ``[AI 호출]``
+    in the ``GitConflictResolverDialog``. The server never calls this automatically.
 
     ``start_run(provider_id, messages) -> run_id`` is supplied by the API layer, which
     already knows how to build the conflict mention/token (the same seam
@@ -465,45 +548,65 @@ def start_resolver(
 
     A failure to start does NOT abort the attempt: it records ``ai.status=start_failed``
     and the conflict stays open for a retry or a manual resolution."""
-    gs = _gs()
-    session = get_session_of_project(project_id, merge_id, open_only=True)
-    context = gs.db_git.session_context(session)
-    if context.get("review_state"):
-        raise GitServiceError(409, "review_in_progress",
-                              "this merge already reached review; use the review screen")
-    ai = dict(context.get(AI_KEY) or {})
-    if ai.get("status") in (AI_RUNNING, AI_STARTING) and _ai_run_status(ai.get("run_id")) == AI_RUNNING:
-        return {"ok": True, "result": {"status": "already_running", "run_id": ai.get("run_id"),
-                                        "attempt": attempt_view(session)}}
-    provider = resolve_provider(project_id, provider_id, session)
-    ai.update({"status": AI_STARTING, "provider_id": provider, "error": None,
-               "trigger": trigger, "requested_at": now_iso()})
-    _update(merge_id, **{AI_KEY: ai})
-    try:
-        run_id = start_run(provider, list(messages or []))
-    except Exception as exc:  # noqa: BLE001 — every start failure is recorded, none aborts
-        code, message = _start_failure(exc)
-        ai.update({"status": AI_START_FAILED, "error": {"code": code, "message": message},
-                   "run_id": None})
+    with _attempt_start_lock(project_id, merge_id):
+        gs = _gs()
+        session = get_session_of_project(project_id, merge_id, open_only=True)
+        context = gs.db_git.session_context(session)
+        if context.get("review_state"):
+            raise GitServiceError(409, "review_in_progress",
+                                  "this merge already reached review; use the review screen")
+        ai = dict(context.get(AI_KEY) or {})
+        run_id = ai.get("run_id")
+        is_live = False
+        if ai.get("status") == AI_STARTING:
+            if run_id:
+                is_live = (_ai_run_status(run_id) == AI_RUNNING)
+            else:
+                req_at = ai.get("requested_at")
+                if req_at:
+                    try:
+                        dt = datetime.fromisoformat(str(req_at).replace("Z", "+00:00"))
+                        now = datetime.now(timezone.utc)
+                        is_live = (now - dt).total_seconds() < 60
+                    except Exception:
+                        is_live = True
+                else:
+                    is_live = True
+        elif ai.get("status") == AI_RUNNING:
+            is_live = (_ai_run_status(run_id) == AI_RUNNING)
+
+        if is_live:
+            return {"ok": True, "result": {"status": "already_running", "run_id": run_id,
+                                            "attempt": attempt_view(session)}}
+        provider = resolve_provider(project_id, provider_id, session)
+        ai.update({"status": AI_STARTING, "provider_id": provider, "error": None,
+                   "trigger": trigger, "requested_at": now_iso()})
         _update(merge_id, **{AI_KEY: ai})
-        record_event(merge_id, EV_AI_START_FAILED, provider=provider, error=code)
+        try:
+            run_id = start_run(provider, list(messages or []))
+        except Exception as exc:  # noqa: BLE001 — every start failure is recorded, none aborts
+            code, message = _start_failure(exc)
+            ai.update({"status": AI_START_FAILED, "error": {"code": code, "message": message},
+                       "run_id": None})
+            _update(merge_id, **{AI_KEY: ai})
+            record_event(merge_id, EV_AI_START_FAILED, provider=provider, error=code)
+            return {"ok": True, "result": {
+                "status": AI_START_FAILED, "error": {"code": code, "message": message},
+                "attempt": attempt_view(gs.db_git.get_session(merge_id)),
+            }}
+        if not run_id:
+            ai.update({"status": AI_START_FAILED,
+                       "error": {"code": "run_not_started", "message": "no AI run was started"}})
+            _update(merge_id, **{AI_KEY: ai})
+            record_event(merge_id, EV_AI_START_FAILED, provider=provider, error="run_not_started")
+        else:
+            ai.update({"status": AI_RUNNING, "run_id": run_id, "started_at": now_iso()})
+            _update(merge_id, **{AI_KEY: ai})
+            record_event(merge_id, EV_AI_STARTED, provider=provider, resolver_run_id=run_id)
         return {"ok": True, "result": {
-            "status": AI_START_FAILED, "error": {"code": code, "message": message},
+            "status": ai["status"], "run_id": ai.get("run_id"), "error": ai.get("error"),
             "attempt": attempt_view(gs.db_git.get_session(merge_id)),
         }}
-    if not run_id:
-        ai.update({"status": AI_START_FAILED,
-                   "error": {"code": "run_not_started", "message": "no AI run was started"}})
-        _update(merge_id, **{AI_KEY: ai})
-        record_event(merge_id, EV_AI_START_FAILED, provider=provider, error="run_not_started")
-    else:
-        ai.update({"status": AI_RUNNING, "run_id": run_id, "started_at": now_iso()})
-        _update(merge_id, **{AI_KEY: ai})
-        record_event(merge_id, EV_AI_STARTED, provider=provider, resolver_run_id=run_id)
-    return {"ok": True, "result": {
-        "status": ai["status"], "run_id": ai.get("run_id"), "error": ai.get("error"),
-        "attempt": attempt_view(gs.db_git.get_session(merge_id)),
-    }}
 
 
 def _start_failure(exc: Exception) -> tuple[str, str]:
@@ -518,15 +621,20 @@ def _start_failure(exc: Exception) -> tuple[str, str]:
 
 def settle_new_conflict(
     project_id: str, merge_id: int, *,
-    start_run: Optional[Callable[[Optional[str], list[str]], Optional[str]]],
+    start_run: Optional[Callable[[Optional[str], list[str]], Optional[str]]] = None,
     provider_id: Optional[str] = None,
 ) -> dict:
     """What happens right after the Branch Merge endpoint reports a conflict.
 
     * Every conflict was line-ending noise (EOL separation already staged them): nothing
       is left for a resolver, so the candidate is frozen straight into review (§13 — never
-      committed on the spot).
-    * Otherwise the AI resolver is started automatically when a starter is available.
+      committed on the spot). This is the only automatic step.
+    * Otherwise the attempt stays open in ``conflict`` state. The AI resolver is NOT
+      started automatically. The user opens ``GitConflictResolverDialog``, selects a
+      Provider, and clicks ``[AI 호출]`` (``/ai-resolve``) to start it.
+
+    ``start_run`` and ``provider_id`` are accepted for call-site compatibility but are
+    intentionally ignored for the non-EOL-only path.
     """
     gs = _gs()
     get_session_of_project(project_id, merge_id, open_only=True)
@@ -535,9 +643,6 @@ def settle_new_conflict(
             gs.resolve_conflicts(None, merge_id, [], True, project_id=project_id)
         except GitServiceError as exc:
             _log.warning("branch merge %s: eol-only freeze failed (%s)", merge_id, exc.code)
-        return attempt_view(gs.db_git.get_session(merge_id))
-    if start_run is not None:
-        start_resolver(project_id, merge_id, start_run=start_run, provider_id=provider_id)
     return attempt_view(gs.db_git.get_session(merge_id))
 
 
@@ -718,7 +823,7 @@ def complete_reviewed(merge_id: int, context: dict, *, pushed: bool) -> dict:
     merge_target.close_attempt(merge_id, merge_target.ATTEMPT_COMPLETED, result={
         "merge_commit": merge_commit or None, "pushed": pushed, "local_applied": True,
     })
-    if target is not None:
+    if target is not None and target.managed_workspace:
         merge_target.release_workspace(target)
     record_event(merge_id, EV_COMPLETED, merge_commit=merge_commit or None, pushed=pushed,
                  resolver_run_id=context.get("resolver_run_id"),
@@ -763,7 +868,8 @@ def finish_landed_merge(session: dict, ctx: merge_target.MergeTargetContext,
         "merge_commit": merge_commit, "pushed": pushed, "recovered": True,
         "local_applied": bool(local_applied),
     })
-    merge_target.release_workspace(ctx)
+    if ctx.managed_workspace:
+        merge_target.release_workspace(ctx)
     record_event(ctx.merge_id, EV_COMPLETED, merge_commit=merge_commit, pushed=pushed, recovered=True)
 
 
@@ -798,7 +904,7 @@ def abort(project_id: str, merge_id: int) -> dict:
                     diagnostic=gs._last_line(proc.stderr),
                 )
         merge_target.close_attempt(merge_id, merge_target.ATTEMPT_ABORTED, error={"code": "user_abort"})
-        cleaned = merge_target.release_workspace(target)
+        cleaned = merge_target.release_workspace(target) if target.managed_workspace else False
     finally:
         gs.db_git.release_lock(project_id, holder)
     _stop_resolver(merge_id, context)

@@ -373,6 +373,12 @@ def create_tr_commit(group_id: str, subject: str) -> dict:
         return {**blank, "skipped_reason": reason,
                 "excluded_artifacts": list(artifacts or [])}
 
+    try:
+        claim = _gs.get_branch_merge_group_claim(group_id)
+        if claim is not None:
+            return skip("branch_merge_claim_active")
+    except Exception:
+        return skip("branch_merge_claim_query_failed")
     project_id = _gs._project_of_group(group_id)
     if not project_id:
         return skip("git_inactive")
@@ -398,6 +404,11 @@ def create_tr_commit(group_id: str, subject: str) -> dict:
     if not _gs._acquire_lock(project_id, holder, wait_sec=TR_COMMIT_LOCK_WAIT_SEC):
         return skip("git_busy")
     try:
+        try:
+            if _gs.get_branch_merge_group_claim(group_id) is not None:
+                return skip("branch_merge_claim_active")
+        except Exception:
+            return skip("branch_merge_claim_query_failed")
         wt_path = _gs.src_root(project_name, state["branch"])
         if not wt_path.is_dir():
             return skip("no_worktree")
@@ -576,6 +587,12 @@ def _cancel_prelock_gate(group_id: str) -> dict:
         return blocked("git_busy", "merge_in_flight")
     if not state.get("worktree_registered") or not state.get("branch"):    # G7
         return blocked("no_worktree", "worktree_unregistered")
+    try:
+        claim = _gs.get_branch_merge_group_claim(group_id)
+        if claim is not None:
+            return blocked("git_busy", "branch_merge_claim_active")
+    except Exception:
+        return blocked("git_busy", "branch_merge_claim_query_failed")
     return out
 
 
@@ -640,6 +657,13 @@ def open_cancel_session(group_id: str, target_shas: Sequence[str]) -> dict:
     if not _gs._acquire_lock(project_id, holder, wait_sec=_gs.CANCEL_LOCK_WAIT_SEC):  # G8
         return block("git_busy", "lock_timeout")
     try:
+        try:
+            if _gs.get_branch_merge_group_claim(group_id) is not None:
+                raise _CancelGateFailed("git_busy", "branch_merge_claim_active")
+        except _CancelGateFailed:
+            raise
+        except Exception as exc:
+            raise _CancelGateFailed("git_busy", "branch_merge_claim_query_failed") from exc
         project_name = _gs._project_name(project_id)
         wt_path = _gs.src_root(project_name, state["branch"]) if project_name else None
         if wt_path is None or not wt_path.is_dir():                       # G9
