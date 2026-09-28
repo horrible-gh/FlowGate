@@ -4306,6 +4306,9 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             "commit_message": commit_message_draft,
             "origin_provider_name": _origin_provider_name,
             "origin_ai_run_id": _origin_run_id,
+            # The TR2 canonical path is derived from the row (tr2_service.canonical_path_for_doc),
+            # so the row must name the branch directory its file is stored under.
+            **({"branch": branch} if tr2_body is not None else {}),
         })
         # group 0022 §5 / D0005 §3.4 type ①: create document + query together. The AI
         # worker attaches low-confidence points as queries on that document
@@ -4400,7 +4403,8 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     if tr2_body is not None:
         try:
             tr2_saved = tr2_service.create(
-                canonical_doc_id, tr2_body, actor=actor_user_id)
+                canonical_doc_id, tr2_body, actor=actor_user_id,
+                origin=tr2_service.ORIGIN_AI)
         except tr2_service.Tr2ValidationError as exc:
             db_docs.delete(canonical_doc_id)
             payload = error_payload(exc.code, details=exc.details)
@@ -4917,7 +4921,8 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
                 return JSONResponse(content={"ok": True, "dry_run": True, "doc_id": doc_id})
             saved = tr2_service.save(
                 doc_id, proposal, actor=actor_user_id,
-                expected_revision=existing_doc.get("revision_no") or 0)
+                expected_revision=existing_doc.get("revision_no") or 0,
+                origin=tr2_service.ORIGIN_AI)
         except tr2_service.Tr2ValidationError as exc:
             payload = error_payload(exc.code, details=exc.details)
             payload["help_url"] = "/flowgate/api/v1/help/items/authoring_guide/TR2"

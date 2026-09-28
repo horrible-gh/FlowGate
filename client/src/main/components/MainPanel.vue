@@ -142,6 +142,8 @@
             :doc-id="tab.id"
             :ref="(el) => bindActiveRef(stepVerificationCardRefs, tab.id, el)"
           />
+          <!-- 0565 T0030 §2: 반영지시 must not read as "apply now" — it only asks for a 반영안. -->
+          <p v-if="tab.typeCode === 'T2'" class="doc-type-note" data-testid="t2-apply-note">{{ t('main.t2_note') }}</p>
           <!-- Every document body is chosen and wired by the documents router: AC/DC/generic
                moved there in T#1, CH/WP/Q in T0007. MainPanel keeps the shell above and below
                it plus the orchestration each body needs, and hands that over as props/events —
@@ -4854,7 +4856,7 @@ const TYPE_COLOR_MAP: Record<string, string> = {
   TR: '#0284c7', M: '#64748b', Q: '#d97706', AC: '#16a34a',
   N: '#0284c7', NR: '#6366f1', TS: '#db2777', L: '#7c3aed',
   A: '#16a34a', B: '#dc2626', P: '#0d9488', DB: '#ca8a04',
-  WP: '#14b8a6',
+  WP: '#14b8a6', T2: '#0891b2', TR2: '#0284c7',
 }
 
 function typeBarWidth(count: number): number {

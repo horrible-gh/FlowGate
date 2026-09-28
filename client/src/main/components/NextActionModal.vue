@@ -578,6 +578,7 @@ const CONTEXT_TYPES_BY_CURRENT: Record<string, string[]> = {
   L:  ['D', 'P', 'L', 'DB', 'DS', 'M', 'Q'],
   DB: ['D', 'P', 'L', 'DB', 'DS', 'M', 'Q'],
   T:  ['D', 'P', 'L', 'DB'],
+  T2: ['D', 'P', 'L', 'DB'],
   N:  ['Q', 'M'],
   TS: ['D', 'P', 'L', 'DB', 'T', 'TR'],
   Q:  [],

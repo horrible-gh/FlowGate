@@ -357,7 +357,7 @@ def approve(*, doc_id: str, actor_user_id: str, user_permissions: set[str],
         prior = db_attempts.latest_success(doc_id)
         if prior and int(prior["document_revision"]) >= revision:
             _raise("tr2_history_revision_required", "revision_no")
-        body = tr2.load_body(tr2.canonical_path_for_doc(doc))
+        body = tr2.load_current(doc)
         spec = tr2.canonicalize(tr2.validate(body, doc=doc))["edit_spec"]
         fingerprint = tr2.spec_fingerprint(spec)
         baseline = body.get("baseline_fingerprint")
@@ -397,7 +397,7 @@ def approve(*, doc_id: str, actor_user_id: str, user_permissions: set[str],
                 fresh = db_docs.get_by_id(doc_id)
                 if not fresh or int(fresh.get("revision_no") or 0) != revision:
                     _raise("tr2_spec_changed", "revision_no")
-                fresh_body = tr2.load_body(tr2.canonical_path_for_doc(fresh))
+                fresh_body = tr2.load_current(fresh)
                 fresh_spec = tr2.canonicalize(tr2.validate(fresh_body, doc=fresh))["edit_spec"]
                 if tr2.spec_fingerprint(fresh_spec) != fingerprint:
                     _raise("tr2_spec_changed", "spec_fingerprint")

@@ -68,6 +68,12 @@ def test_file_and_revision_rollback_when_writer_fails(tmp_path, monkeypatch):
                 row["file_path"] = params[1]
                 row["filename"] = params[2]
 
+        def _execute_affected(self, sql, params):
+            # The writer's CAS authority is the driver's affected-row count (T0030 §8).
+            before = row["revision_no"]
+            self._execute(sql, params)
+            return int(row["revision_no"] != before)
+
     monkeypatch.setattr(tr2.db_docs, "get_by_id", lambda _: row.copy())
     monkeypatch.setattr(tr2, "get_store", lambda: Store())
     monkeypatch.setattr(tr2, "verify_pair", lambda *_: None)

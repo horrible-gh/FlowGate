@@ -766,7 +766,7 @@ function onToggleAutoApprove(itemSeq: number, checked: boolean) {
 // blank "use default" option. `overrides` still stores ONLY genuine per-step overrides (a step
 // that differs from the default), so the step tag's default/override distinction and the
 // confirm payload stay unchanged — the default just becomes visible instead of an empty slot.
-const PAIRED_REPORT_TYPES: Record<string, string> = { N: 'NR', T: 'TR' }
+const PAIRED_REPORT_TYPES: Record<string, string> = { N: 'NR', T: 'TR', T2: 'TR2' }
 
 function pairedReportProviderItem(item: WorkflowStepItem): WorkflowStepItem | null {
   if (item.provider_id) return null

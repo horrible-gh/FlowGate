@@ -1174,18 +1174,27 @@ def create_next_empty_document(
     # reader cannot open it, leaving "this work plan cannot be opened as a table" on screen (user report).
     is_work_plan = type_code == WORK_PLAN_TYPE
     from modules.flow_gate.services import work_plan_service as _wp
+    # 0565 T0030 §4: a TR2 is a canonical JSON proposal too. This route used to register a
+    # Markdown skeleton for it, which the TR2 reader then failed to open ("No such file ...
+    # _document.json"). Its row now names the canonical file, and the canonical writer
+    # creates that file as revision 1 once the slot is registered (same writer as inbox).
+    is_tr2 = type_code == "TR2"
+    from modules.flow_gate.documents import tr2_service as _tr2
 
     doc_file_path = storage_paths.document_path(
         project_id=body.project_id,
         group_code=body.group_id,
         doc_code=doc_code,
-        filename=_wp.DOCUMENT_FILENAME if is_work_plan else "document.md",
+        filename=(_wp.DOCUMENT_FILENAME if is_work_plan
+                  else _tr2.DOCUMENT_FILENAME if is_tr2 else "document.md"),
         module=module,
         branch=_get_project_branch(body.project_id),
     )
 
     try:
-        if is_work_plan:
+        if is_tr2:
+            pass  # Written by tr2_service.create inside the transaction below.
+        elif is_work_plan:
             # This path has no create dialog, so no user-chosen quantities or providers. Rather
             # than inventing them it reads from what is already settled — quantities from this
             # group's workflow sequence, providers from the project's run chain and per-doc-type table (work_plan_service.auto_plan_body).
@@ -1223,6 +1232,9 @@ def create_next_empty_document(
         "owner_id": current_user["user_id"],
         "file_path": storage_paths.to_storage_relative(doc_file_path, body.project_id),
     }
+    if is_tr2:
+        # tr2_service derives the canonical path from the row; keep it on this branch directory.
+        data["branch"] = _get_project_branch(body.project_id)
     if is_work_plan:
         # The marker the work-plan screen reads as "a human-created plan". Same value as the create-dialog path.
         data["meta"] = _json.dumps({"work_plan": {"origin": "human"}}, ensure_ascii=False)
@@ -1261,6 +1273,9 @@ def create_next_empty_document(
                     actor_user_id=current_user["user_id"],
                     user_permissions={"document.update"},
                 )
+                if is_tr2:
+                    _tr2.create(doc["doc_id"], _tr2.initial_body(doc["doc_id"]),
+                                actor=current_user["user_id"])
                 from modules.flow_gate.db import documents as _db_docs
                 refreshed = _db_docs.get_by_id(doc["doc_id"])
                 if refreshed is not None:
@@ -1275,11 +1290,17 @@ def create_next_empty_document(
                     asker_kind="ai",
                     project_id=body.project_id,
                 )
-    except Exception:
+    except Exception as exc:
         try:
             doc_file_path.unlink(missing_ok=True)
+            if is_tr2:
+                _tr2.snapshot_path(data, 1).unlink(missing_ok=True)
         except OSError:
             pass
+        if isinstance(exc, _tr2.Tr2ValidationError):
+            from modules.flow_gate.documents.tr2_errors import TR2_ERRORS as _TR2_ERRORS, error_payload
+            return JSONResponse(status_code=_TR2_ERRORS[exc.code].http_status,
+                                content=error_payload(exc.code, details=exc.details))
         raise
 
     # T528: child creation → automatically transition parent (R/M) open → closed
@@ -1825,6 +1846,8 @@ def retry_cancel_tr_commits(
         # attempted", it does not turn a read-and-retry button into a 500.
         _log.warning("tr commit cancel retry failed for %s", group_id, exc_info=True)
         result = _tr_commit.empty_cancel_result()
+    from modules.flow_gate.documents.tr2_service import notify_group_history_changed
+    notify_group_history_changed(group_id)
     return {"ok": True, "tr_commit_cancel": result}
 
 
@@ -1859,6 +1882,8 @@ def retry_reapply_tr_commits(
     except Exception:
         _log.warning("tr commit reapply retry failed for %s", group_id, exc_info=True)
         result = _tr_commit.empty_restore_result()
+    from modules.flow_gate.documents.tr2_service import notify_group_history_changed
+    notify_group_history_changed(group_id)
     return {"ok": True, "tr_commit_restore": result}
 
 
@@ -2024,6 +2049,8 @@ def restore_workflow(
         _attach_tr_commit_restore(
             payload, project_id, group_id, restored, current_user["user_id"],
         )
+    from modules.flow_gate.documents.tr2_service import notify_group_history_changed
+    notify_group_history_changed(group_id)
     return payload
 
 

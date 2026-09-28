@@ -1,6 +1,11 @@
 """TR2 error catalog; retryability is defined here only."""
 from __future__ import annotations
+
+import logging
+import re
 from dataclasses import dataclass
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -37,6 +42,14 @@ TR2_ERRORS: dict[str, Tr2ErrorSpec] = {
         ("tr2_history_revision_required", False, 409, "A new revision is required"),
         ("tr2_history_invariant_error", False, 500, "TR2 history invariant violated"),
         ("tr2_precheck_failed", False, 422, "Precheck failed"),
+        # 0565 T0030 §5/§6: the stored proposal itself, kept apart from apply recovery.
+        ("tr2_body_missing", False, 409, "The proposal file is missing"),
+        ("tr2_body_corrupt", False, 409, "The proposal file is unreadable or damaged"),
+        ("tr2_body_schema_invalid", False, 409, "The stored proposal does not match the TR2 schema"),
+        ("tr2_storage_mismatch", False, 409, "The document is not stored as a canonical TR2 proposal"),
+        ("tr2_revision_not_found", False, 404, "No saved proposal revision with that number"),
+        ("tr2_revision_unusable", False, 409, "The saved proposal revision is not a valid proposal"),
+        ("tr2_internal_error", False, 500, "Internal server error"),
     )
 }
 
@@ -45,7 +58,38 @@ def retryable(code: str) -> bool:
     return TR2_ERRORS[code].retryable
 
 
+# Reasons for these codes are written by the TR2 validators themselves (a location and
+# a short rule), so a screen may show them. Every other code's reason can carry an
+# exception text, Git stderr or a host path: operators read those in the server log.
+_PUBLIC_REASON_CODES = frozenset({
+    "tr2_spec_invalid", "tr2_path_unsafe", "tr2_body_missing", "tr2_body_corrupt",
+    "tr2_body_schema_invalid", "tr2_storage_mismatch", "tr2_revision_unusable",
+})
+# A drive path, a UNC path or an absolute POSIX path of two or more segments.
+_HOST_PATH = re.compile(r"[A-Za-z]:[\\/]|\\\\|(?:^|[\s'\"(=])/[^/\s]+/")
+
+
+def _scrub(value):
+    if isinstance(value, str):
+        return "[hidden]" if _HOST_PATH.search(value) else value
+    if isinstance(value, dict):
+        return {key: _scrub(child) for key, child in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_scrub(child) for child in value]
+    return value
+
+
+def public_details(code: str, details: dict | None) -> dict:
+    """What an HTTP client may see of an error's details (T0030 §5)."""
+    kept = dict(details or {})
+    if code not in _PUBLIC_REASON_CODES:
+        kept.pop("reason", None)
+    return _scrub(kept)
+
+
 def error_payload(code: str, *, attempt_id=None, details=None) -> dict:
     spec = TR2_ERRORS[code]
+    if details and details != public_details(code, details):
+        log.info("TR2 error %s details withheld from client: %r", code, details)
     return {"code": code, "message": spec.message, "retryable": retryable(code),
-            "attempt_id": attempt_id, "details": details or {}}
+            "attempt_id": attempt_id, "details": public_details(code, details)}

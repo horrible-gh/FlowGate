@@ -231,7 +231,7 @@ def test_revision_and_spec_identity_inside_authoritative_precheck(tmp_path, monk
     monkeypatch.setattr(tr2, "effective_head_for",
                         lambda _doc_id: {"type": "TR2", "result_doc_id": doc["doc_id"]})
     monkeypatch.setattr(tr2, "canonical_path_for_doc", lambda _: tmp_path / "document.json")
-    monkeypatch.setattr(tr2, "load_body", lambda _: body)
+    monkeypatch.setattr(tr2, "load_current", lambda _: body)
     monkeypatch.setattr(tr2, "verify_pair", lambda *_: None)
     monkeypatch.setattr(precheck, "_clean", lambda _: None)
     monkeypatch.setattr(precheck.db_git, "get_lock", lambda _: {"holder": "holder"})

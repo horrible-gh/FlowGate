@@ -397,10 +397,10 @@ _TR_AUTHORING_GUIDE: dict[str, str] = {
 }
 
 _AUTHORING_GUIDE_TITLES: dict[str, dict[str, str]] = {
-    "ko": {"N": "조사지시 작성", "T": "작업지시 작성", "T2": "변경제안 지시 작성", "TR": "작업레포트 작성", "TR2": "변경제안 작성", "TS": "테스트시나리오 작성"},
+    "ko": {"N": "조사지시 작성", "T": "작업지시 작성", "T2": "반영지시 작성", "TR": "작업레포트 작성", "TR2": "반영안 작성", "TS": "테스트시나리오 작성"},
     "en": {"N": "Writing an investigation instruction", "T": "Writing a work instruction",
-           "T2": "Writing a change proposal instruction", "TR": "Writing a work report", "TR2": "Writing a change proposal", "TS": "Writing a test scenario"},
-    "ja": {"N": "調査指示の作成", "T": "作業指示の作成", "T2": "変更提案指示の作成", "TR": "作業レポートの作成", "TR2": "変更提案の作成", "TS": "テストシナリオの作成"},
+           "T2": "Writing an apply instruction", "TR": "Writing a work report", "TR2": "Writing an apply proposal", "TS": "Writing a test scenario"},
+    "ja": {"N": "調査指示の作成", "T": "作業指示の作成", "T2": "反映指示の作成", "TR": "作業レポートの作成", "TR2": "反映案の作成", "TS": "テストシナリオの作成"},
 }
 
 

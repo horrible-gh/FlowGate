@@ -78,6 +78,8 @@ def test_restart_rollback_uses_journaled_spec_after_document_edit(monkeypatch, t
                         lambda _locked, old_spec, *_args, **_kw: restored.append(old_spec))
     monkeypatch.setattr(approval.tr2, "load_body",
                         lambda *_args: pytest.fail("current document body is not recovery authority"))
+    monkeypatch.setattr(approval.tr2, "load_current",
+                        lambda *_args: pytest.fail("current document body is not recovery authority"))
     approval._rollback(locked, row, None, RuntimeError("stale"))
     assert restored == [spec]
     assert finished[0]["state"] == "failed"

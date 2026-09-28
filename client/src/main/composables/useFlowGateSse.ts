@@ -490,7 +490,9 @@ export function useFlowGateSse(refreshAll: () => void) {
         // (e.g. a newly created sibling), so narrowing there would miss real updates.
         // 0565: a TR2 approval attempt changing phase/state names its own document too, and
         // fires several times per approval — refetch only that tab, not the whole group.
+        // T0030: a Time Machine rewind/restore moving a 반영안's history is doc-scoped too.
         const docScoped = p.reason === 'review_added' || p.reason === 'tr2_approval_changed'
+          || p.reason === 'tr2_history_changed'
         const docId = docScoped ? (data.doc_id ?? null) : undefined
         invalidateAndRefresh(data.project, false, docId)
         // R0001 group 0381: a CODE RED sends the failing TS back through the time machine to

@@ -138,6 +138,12 @@ def test_single_writer_revision_cas_never_touches_file_on_stale_request(tmp_path
                 if row["revision_no"] == params[-1]:
                     row["revision_no"] = params[0]
 
+        def _execute_affected(self, sql, params):
+            # The writer's CAS authority is the driver's affected-row count (T0030 §8).
+            before = row["revision_no"]
+            self._execute(sql, params)
+            return int(row["revision_no"] != before)
+
     monkeypatch.setattr(tr2.db_docs, "get_by_id", lambda _doc_id: row.copy())
     monkeypatch.setattr(tr2, "get_store", lambda: Store())
     monkeypatch.setattr(tr2, "verify_pair", lambda *_: None)

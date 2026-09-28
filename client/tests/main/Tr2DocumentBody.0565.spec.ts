@@ -28,6 +28,7 @@ function makeView(over: Record<string, any> = {}): Tr2View & Record<string, any>
   return {
     document: { doc_id: docId, revision_no: 2, doc_review_status: 'pending_review', editable: true, ...(over.document ?? {}) },
     mutation: over.mutation ?? { allowed: true, reason: null },
+    readiness: over.readiness ?? { ready: true, code: null, loc: null, reason: null, edits: [{ id: 'e1', status: 'applicable', applicable: true }, { id: 'c1', status: 'applicable', applicable: true }] },
     body: {
       tr2_version: 1, source_t2_doc_id: 'flowgate.default.0565.0008-T2', baseline_fingerprint: 'sha256:base',
       edit_spec: { termination: 'ready_to_apply', edits: [EDIT, CREATE], deferred: [DEFER], gate: { commands: ['pytest -q', 'npm test'], apply: false }, ...(over.spec ?? {}) },
@@ -367,5 +368,189 @@ describe('TR2 body — ko / ja / en', () => {
       expect(text).toContain(label)
     }
     if (locale !== 'en') expect(text).not.toContain(en.main.tr2_body.actions.diagnostic)
+  })
+})
+
+// ── 0565 T0030 — authoritative readiness, error meaning, proposal recovery ─────────
+
+describe('T0030 — ready only on the server word', () => {
+  it('is not ready when the server readiness says an anchor is missing, even without drift', () => {
+    const view = makeView({ readiness: { ready: false, code: 'tr2_edit_not_applicable', loc: 'e1', reason: 'anchor_missing', edits: [{ id: 'e1', status: 'anchor_missing', applicable: false }] } })
+    expect(view.derived.live_precheck.drift).toBe(false)
+    expect(tr2State(view)).toBe('not_ready')
+  })
+
+  it('never calls a view ready without a server readiness', () => {
+    const view = makeView()
+    delete (view as any).readiness
+    expect(tr2State(view)).toBe('not_ready')
+  })
+
+  it('names the blocking reason in the strip and on the item', async () => {
+    current = makeView({ readiness: { ready: false, code: 'tr2_edit_not_applicable', loc: 'e1', reason: 'anchor_missing', edits: [{ id: 'e1', status: 'anchor_missing', applicable: false }] } })
+    const wrapper = mountBody(); await flushPromises()
+    const strip = byTestId(wrapper, 'tr2-state-strip')
+    expect(strip.classes()).toContain('tr2-tone-danger')
+    expect(strip.text()).toContain(en.main.tr2_body.state.not_ready)
+    expect(strip.text()).toContain('e1: the BEFORE text (anchor) is not in the target file.')
+    await byTestId(wrapper, 'tr2-item-e1').trigger('click'); await flushPromises()
+    expect(byTestId(wrapper, 'tr2-item-status').text()).toContain('e1: the BEFORE text (anchor) is not in the target file.')
+  })
+
+  it('shows a stored proposal whose worktree is unavailable as not ready, never as matching', async () => {
+    current = makeView({
+      readiness: { ready: false, code: 'tr2_git_unavailable', loc: 'source_root', reason: 'worktree_unregistered', edits: [] },
+      live: { source_available: false, drift: null, live_fingerprint: null, anchors: null },
+    })
+    const wrapper = mountBody(); await flushPromises()
+    expect(tr2State(current)).toBe('not_ready')
+    const strip = byTestId(wrapper, 'tr2-state-strip')
+    expect(strip.classes()).toContain('tr2-tone-danger')
+    expect(strip.text()).toContain(en.main.tr2_body.state.not_ready)
+    expect(byTestId(wrapper, 'tr2-diag-strip').text()).toContain(en.main.tr2_body.diag.unavailable)
+    expect(byTestId(wrapper, 'tr2-diag-strip').text()).not.toContain(en.main.tr2_body.diag.match + '')
+    expect(wrapper.text()).toContain('e1')
+  })
+
+  it.each([
+    ['tr2_worktree_dirty', null, 'The working tree has uncommitted changes.'],
+    ['tr2_validation_command_unapproved', null, 'A validation command is not registered.'],
+    ['tr2_edit_not_applicable', 'file_exists', 'c1: the file to create already exists.'],
+  ])('explains %s', async (code, reason, text) => {
+    current = makeView({ readiness: { ready: false, code, loc: 'c1', reason, edits: [] } })
+    const wrapper = mountBody(); await flushPromises()
+    expect(byTestId(wrapper, 'tr2-state-strip').text()).toContain(text)
+  })
+})
+
+describe('T0030 — every failure says what it means, never how the server broke', () => {
+  it.each([
+    [500, { code: 'tr2_internal_error', message: 'Internal server error' }, en.main.tr2_body.errors.internal],
+    [500, { detail: 'Traceback (most recent call last): FileNotFoundError C:\\storage\\x.json' }, en.main.tr2_body.errors.internal],
+    [409, { code: 'tr2_spec_immutable', details: { reason: 'approved' } }, 'It cannot be changed in its current state: approved'],
+    [409, { code: 'tr2_worktree_dirty' }, 'Pre-approval check failed: The working tree has uncommitted changes.'],
+    [422, { code: 'tr2_validation_failed' }, 'Applying to the actual work failed: A validation command failed.'],
+    [422, { detail: 'Document is not editable' }, en.main.tr2_body.errors.not_editable],
+  ])('%s %j', async (status, data, expected) => {
+    putRequest.mockImplementationOnce(() => reject(status, data))
+    const wrapper = mountBody(); await flushPromises()
+    await byTestId(wrapper, 'tr2-edit-whole').trigger('click')
+    await byTestId(wrapper, 'tr2-save-whole').trigger('click'); await flushPromises()
+    const alert = wrapper.find('[role=alert]').text()
+    expect(alert).toContain(expected)
+    expect(alert).not.toMatch(/Traceback|[A-Za-z]:\\|rejected the proposal/)
+  })
+
+  it('reports a network failure while loading as a load failure', async () => {
+    getRequest.mockImplementation(() => Promise.reject(new Error('socket hang up')))
+    const wrapper = mountBody(); await flushPromises()
+    expect(wrapper.find('[role=alert]').text()).toBe('Could not load the proposal: Cannot reach the server.')
+  })
+})
+
+function recoveryState(over: Record<string, any> = {}) {
+  return {
+    doc_id: docId, revision_no: 3, state: 'tr2_body_missing',
+    error: { code: 'tr2_body_missing', loc: 'document.json', reason: 'proposal file does not exist' },
+    approval_blocked: true,
+    revisions: [
+      { revision_no: 3, created_at: '2026-09-28T10:00:00+09:00', origin: 'human', size: 900, sha256: 'a', usable: true, problem: null, is_current: true },
+      { revision_no: 2, created_at: '2026-09-28T09:00:00+09:00', origin: 'human', size: 800, sha256: 'b', usable: true, problem: null, is_current: false },
+      { revision_no: 1, created_at: '2026-09-28T08:00:00+09:00', origin: 'ai', size: 700, sha256: 'c', usable: false, problem: 'tr2_body_corrupt', is_current: false },
+    ],
+    recommended_revision_no: 3, recoverable: true,
+    raw: { available: false, size: null, filename: null },
+    mutation: { allowed: true, reason: null },
+    ...over,
+  }
+}
+function brokenServer(recovery: Record<string, any>, code = 'tr2_body_missing') {
+  getRequest.mockImplementation((url: string) => {
+    if (url === base) return reject(409, { code, recovery: true, details: { loc: 'document.json' } })
+    if (url === `${base}/recovery`) return Promise.resolve({ data: recovery })
+    if (url === `${base}/revisions/2`) return Promise.resolve({ data: { revision_no: 2, content: '{"edit_spec":{"edits":[]}}', usable: true } })
+    if (url === `${base}/raw`) return Promise.resolve({ data: { filename: '0009-TR2_document.json', content: '{"broken": ', size: 11 } })
+    return Promise.resolve({ data: current })
+  })
+}
+
+describe('T0030 — 반영안 복구 (proposal recovery), apart from the apply rollback', () => {
+  it('replaces the dead end with the recovery surface and restores a revision as a new one', async () => {
+    brokenServer(recoveryState())
+    const wrapper = mountBody(); await flushPromises()
+    expect(byTestId(wrapper, 'tr2-state-strip').exists()).toBe(false)
+    const panel = byTestId(wrapper, 'tr2-recovery')
+    expect(panel.text()).toContain(en.main.tr2_body.errors.body_missing)
+    expect(panel.text()).toContain(en.main.tr2_body.recovery.state.tr2_body_missing)
+    expect(panel.text()).toContain(en.main.tr2_body.recovery.blocked)
+    expect(panel.text()).toContain(en.main.tr2_body.recovery.recoverable)
+    expect(byTestId(wrapper, 'tr2-revision-1').text()).toContain('unusable: Proposal file damaged')
+    expect(byTestId(wrapper, 'tr2-revision-restore-1').attributes('disabled')).toBeDefined()
+    for (const id of ['tr2-edit-whole', 'tr2-reset-whole', 'tr2-upload']) expect(byTestId(wrapper, id).attributes('disabled'), id).toBeDefined()
+
+    await byTestId(wrapper, 'tr2-revision-view-2').trigger('click'); await flushPromises()
+    expect(byTestId(wrapper, 'tr2-revision-content-2').text()).toContain('"edit_spec"')
+    const blobs = captureDownloads()
+    await byTestId(wrapper, 'tr2-revision-download-2').trigger('click'); await flushPromises()
+    expect(await blobText(blobs[0])).toBe('{"edit_spec":{"edits":[]}}') // exact saved bytes
+
+    postRequest.mockResolvedValueOnce({ data: { new_revision: 4, restored_from_revision: 2 } })
+    await byTestId(wrapper, 'tr2-revision-restore-2').trigger('click')
+    expect(postRequest).not.toHaveBeenCalled()
+    getRequest.mockImplementation((url: string) => Promise.resolve({ data: url === `${base}/recovery` ? recoveryState({ state: 'ok', error: null }) : makeView({ document: { revision_no: 4 } }) }))
+    await byTestId(wrapper, 'tr2-recovery-confirm-yes').trigger('click'); await flushPromises()
+    expect(postRequest).toHaveBeenCalledWith(`${base}/recovery/restore`, { expected_revision: 3, revision_no: 2 })
+    expect(byTestId(wrapper, 'tr2-recovery').exists()).toBe(false)
+    expect(byTestId(wrapper, 'tr2-revision').text()).toBe('4')
+    expect(wrapper.text()).toContain('Created revision 4 from revision 2.')
+  })
+
+  it('fails closed when nothing can be recovered: shows the remaining content and offers a new proposal', async () => {
+    brokenServer(recoveryState({ state: 'tr2_body_corrupt', error: { code: 'tr2_body_corrupt', loc: 'document.json', reason: 'invalid JSON at line 1' },
+      revisions: [], recommended_revision_no: null, recoverable: false, raw: { available: true, size: 11, filename: '0009-TR2_document.json' } }), 'tr2_body_corrupt')
+    const wrapper = mountBody(); await flushPromises()
+    expect(byTestId(wrapper, 'tr2-recovery-verdict').text()).toBe(en.main.tr2_body.recovery.unrecoverable)
+    expect(byTestId(wrapper, 'tr2-recovery-state').text()).toContain('Location: document.json · invalid JSON at line 1')
+    await byTestId(wrapper, 'tr2-raw-view').trigger('click'); await flushPromises()
+    expect(byTestId(wrapper, 'tr2-raw-content').text()).toBe('{"broken":')
+    postRequest.mockResolvedValueOnce({ data: { new_revision: 4 } })
+    await byTestId(wrapper, 'tr2-new-proposal').trigger('click')
+    expect(byTestId(wrapper, 'tr2-recovery-confirm').text()).toContain(en.main.tr2_body.confirm.new_proposal)
+    await byTestId(wrapper, 'tr2-recovery-confirm-yes').trigger('click'); await flushPromises()
+    expect(postRequest).toHaveBeenCalledWith(`${base}/recovery/new`, { expected_revision: 3 })
+  })
+
+  it('keeps the recovery surface read-only while the group is locked', async () => {
+    brokenServer(recoveryState({ mutation: { allowed: false, reason: 'not_editable' } }))
+    const wrapper = mountBody(); await flushPromises()
+    expect(byTestId(wrapper, 'tr2-revision-restore-3').attributes('disabled')).toBeDefined()
+    expect(byTestId(wrapper, 'tr2-new-proposal').attributes('disabled')).toBeDefined()
+  })
+
+  it('offers the revision history on a healthy proposal', async () => {
+    const wrapper = mountBody(); await flushPromises()
+    getRequest.mockImplementation((url: string) => Promise.resolve({ data: url === `${base}/recovery` ? recoveryState({ state: 'ok', error: null, revision_no: 2,
+      revisions: recoveryState().revisions.slice(1).map((r) => ({ ...r, is_current: r.revision_no === 2 })) }) : current }))
+    const toggle = byTestId(wrapper, 'tr2-history-toggle')
+    ;(toggle.element as HTMLDetailsElement).open = true
+    await toggle.trigger('toggle'); await flushPromises()
+    expect(byTestId(wrapper, 'tr2-revision-history').text()).toContain(en.main.tr2_body.recovery.history_hint)
+    expect(byTestId(wrapper, 'tr2-revision-restore-2').attributes('disabled')).toBeDefined() // current: nothing to restore
+    expect(byTestId(wrapper, 'tr2-new-proposal').exists()).toBe(false)
+  })
+})
+
+describe('T0030 — terms', () => {
+  it.each([['ko', ko, '반영안'], ['ja', ja, '反映案'], ['en', en, 'Apply proposal']] as const)('%s names TR2 %s and says approval applies it', async (locale, messages, name) => {
+    i18n.global.locale.value = locale
+    const wrapper = mountBody(); await flushPromises()
+    expect(byTestId(wrapper, 'tr2-chip').text()).toBe(`TR2 · ${name}`)
+    expect(byTestId(wrapper, 'tr2-apply-notice').text()).toBe((messages as any).main.tr2_body.apply_notice)
+    expect(wrapper.text()).not.toMatch(/edit-spec|edit spec|변경제안|変更提案|Change Proposal/)
+  })
+
+  it('retires the old names and the flattened "rejected" message in every locale', () => {
+    expect([(ko as any).main.doc_types?.T2 ?? (ko as any).doc_types?.T2].filter(Boolean)).not.toContain('변경제안 지시')
+    expect(JSON.stringify([ko, ja, en])).not.toMatch(/변경제안|変更提案|Change Proposal|rejected the proposal|提案を拒否|제안을 거절/)
   })
 })

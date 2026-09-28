@@ -613,7 +613,7 @@ const CATEGORIES = [
       { type: 'DS', autoHintKey: '' },
       { type: 'N',  autoHintKey: 'auto_hint_NR' },
       { type: 'T',  autoHintKey: 'auto_hint_TR' },
-      { type: 'T2', autoHintKey: '' },
+      { type: 'T2', autoHintKey: 'auto_hint_TR2' },
       { type: 'TS', autoHintKey: 'auto_hint_TSR' },
     ],
   },

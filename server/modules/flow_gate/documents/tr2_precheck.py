@@ -96,7 +96,7 @@ def authoritative_precheck(doc_id: str, locked: LockedSource, *,
     head = tr2.effective_head_for(doc_id)
     if not head or head.get("result_doc_id") != doc_id or head.get("type") != "TR2":
         raise tr2.Tr2ValidationError("tr2_workflow_conflict", "workflow_head")
-    body = tr2.load_body(tr2.canonical_path_for_doc(doc))
+    body = tr2.load_current(doc)
     canonical = tr2.canonicalize(tr2.validate(body, doc=doc))
     tr2.verify_pair(doc_id, canonical)
     spec = canonical["edit_spec"]
@@ -153,7 +153,7 @@ def diagnostic_precheck(doc_id: str) -> dict:
     doc = db_docs.get_by_id(doc_id)
     if not doc or doc.get("type_code") != tr2.TR2_TYPE_CODE:
         raise tr2.Tr2ValidationError("tr2_workflow_conflict", "doc_id")
-    body = tr2.load_body(tr2.canonical_path_for_doc(doc))
+    body = tr2.load_current(doc)
     spec = tr2.canonicalize(tr2.validate(body, doc=doc))["edit_spec"]
     _committable(spec)
     root = _approval_root(doc["project_id"], doc["group_id"])
@@ -166,3 +166,57 @@ def diagnostic_precheck(doc_id: str) -> dict:
     elif pending is None:
         result["code"] = "tr2_git_unavailable"
     return result
+
+
+def readiness(doc: dict, body: dict) -> dict:
+    """Would approval admit this revision right now? The read model's authority (T0030 §7).
+
+    Runs, without the source lock and without recording anything, every check the
+    approval path performs before it writes: review state, running/blocked attempts,
+    workflow head and T2 pair, committable targets, approved gate commands, a
+    registered Git worktree, a clean worktree, drift and each edit's applicability.
+    A screen may call a revision ready only when this says so.
+    """
+    from modules.flow_gate.db import tr2_approval_attempts as db_attempts
+    spec = body["edit_spec"]
+    result = {"ready": False, "code": None, "loc": None, "reason": None,
+              "edits": [], "worktree_clean": None}
+    if doc.get("doc_review_status") != "pending_review":
+        return {**result, "reason": "review_status"}
+    if db_attempts.recovery_required(doc["doc_id"]):
+        return {**result, "reason": "recovery_required", "code": "tr2_recovery_required"}
+    if db_attempts.in_progress(doc["doc_id"]):
+        return {**result, "reason": "in_progress", "code": "tr2_in_progress"}
+    prior = db_attempts.latest_success(doc["doc_id"])
+    if prior and int(prior["document_revision"]) >= int(doc.get("revision_no") or 0):
+        # Already applied once (e.g. reopened by Time Machine): approval needs a new revision.
+        return {**result, "reason": "revision_already_applied",
+                "code": "tr2_history_revision_required"}
+    if spec.get("termination") != "ready_to_apply" or not spec.get("edits"):
+        return {**result, "reason": "needs_more_work"}
+    try:
+        head = tr2.effective_head_for(doc["doc_id"])
+        if not head or head.get("result_doc_id") != doc["doc_id"] or head.get("type") != "TR2":
+            raise tr2.Tr2ValidationError("tr2_workflow_conflict", "workflow_head")
+        tr2.verify_pair(doc["doc_id"], body)
+        _committable(spec)
+        from modules.flow_gate.documents.tr2_approval_service import _check_commands
+        _check_commands(doc, spec)
+        root = _approval_root(doc["project_id"], doc["group_id"])
+        evaluation = adapter.evaluate(spec, root, baseline=body.get("baseline_fingerprint"))
+        result["edits"] = evaluation["edits"]
+        if not evaluation["ready"]:
+            failing = next((edit for edit in evaluation["edits"] if not edit["applicable"]), None)
+            raise tr2.Tr2ValidationError(
+                evaluation["code"], failing["id"] if failing else "edit_spec",
+                {"status": failing["status"] if failing else None})
+        pending = git_service.probe_worktree_pending_changes(root)
+        result["worktree_clean"] = pending is False
+        if pending is None:
+            raise tr2.Tr2ValidationError("tr2_git_unavailable", "worktree_status")
+        if pending:
+            raise tr2.Tr2ValidationError("tr2_worktree_dirty", "worktree_status")
+    except tr2.Tr2ValidationError as exc:
+        return {**result, "code": exc.code, "loc": exc.loc,
+                "reason": exc.details.get("status") or exc.details.get("reason")}
+    return {**result, "ready": True}

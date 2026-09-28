@@ -1550,15 +1550,15 @@ def _nt_authoring_section(scope_type: str, locale: str = "ko") -> str:
     texts = _NT_AUTHORING_TEXT[loc]
     if stype == "T2":
         body = {
-            "ko": ("이 T2 변경제안 지시서를 직접 작성합니다. 짝인 TR2가 만들 edit-spec의 "
+            "ko": ("이 T2 반영지시를 직접 작성합니다. 짝인 TR2 반영안이 만들 edit-spec의 "
                    "대상 파일, 변경 목적, 안전 조건, 검증 기준을 명시하십시오. "
                    "source는 읽어도 되지만 직접 수정하지 마십시오. 구현은 승인 시 서버가 수행합니다."),
-            "ja": ("この T2 変更提案指示を直接作成します。対になる TR2 の edit-spec に "
+            "ja": ("この T2 反映指示を直接作成します。対になる TR2 反映案の edit-spec に "
                    "対象ファイル、変更目的、安全条件、検証基準を指定してください。"
                    "ソースの読み取りは可能ですが、直接変更しないでください。"),
-            "en": ("Write this T2 change-proposal instruction directly. Specify the "
+            "en": ("Write this T2 apply instruction directly. Specify the "
                    "target files, purpose, safety conditions, and validation criteria "
-                   "for the paired TR2 edit-spec. Read source as needed but do not "
+                   "for the paired TR2 edit-spec (the apply proposal). Read source as needed but do not "
                    "modify it; the server applies the approved proposal."),
         }[loc]
     else:

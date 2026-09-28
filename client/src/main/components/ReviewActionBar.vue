@@ -499,6 +499,7 @@ import { useDocTypeStore } from '../stores/docTypeStore'
 import GitFinalizeAxis from './GitFinalizeAxis.vue'
 import type { FinalizeAxes } from '../composables/finalizeAxis'
 import { useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
+import { describeTr2Error } from './documents/tr2State'
 
 type ActionBarMode = 'workflow' | 'next' | 'review' | 'q' | 'info' | 'sequence-complete' | 'rejected' | 'workflow-recover'
 
@@ -571,7 +572,7 @@ const emit = defineEmits<{
   'open-test-scenario': [payload: { docId: string; projectId: string; groupId: string }]
 }>()
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const approving = ref(false)
 const showApproveConfirm = ref(false)
 const markRevising = ref(false)
@@ -1116,7 +1117,12 @@ async function doApprove() {
       try { await props.afterApprove(updated ?? {}) } catch { /* approval is already durable */ }
     }
   } catch (e: any) {
-    const detail = e?.response?.data?.detail ?? e
+    // 0565 T0030 §5: a TR2 refusal carries a code; say what it means rather than the
+    // transport error ("AxiosError: Request failed with status code 409").
+    const code = e?.response?.data?.code
+    const detail = typeof code === 'string' && code.startsWith('tr2_')
+      ? describeTr2Error(e, t, te).text
+      : (e?.response?.data?.detail ?? e)
     // 0257 NR0003 §3: the server refusing approve on an already-approved doc is correct and
     // stays untouched. Re-read the document rather than pattern-matching that message — the
     // wording is not an API contract. If the server says it is already approved, this click
