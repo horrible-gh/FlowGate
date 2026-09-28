@@ -1,0 +1,43 @@
+CREATE TABLE ai_evaluation_runs (
+    evaluation_id VARCHAR(191) PRIMARY KEY,
+    project_id VARCHAR(191) NOT NULL,
+    project_run_seq BIGINT UNSIGNED NOT NULL,
+    provider_id VARCHAR(191) NOT NULL,
+    provider_name_snapshot TEXT,
+    subject_fingerprint CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    subject_fingerprint_version INTEGER NOT NULL DEFAULT 1,
+    active_dedupe_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
+    lifecycle VARCHAR(16) NOT NULL CHECK (lifecycle IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
+    verdict VARCHAR(16) NULL CHECK (verdict IS NULL OR verdict IN ('suitable', 'unsuitable')),
+    reason_code VARCHAR(64),
+    diagnostic_summary TEXT,
+    created_by VARCHAR(191),
+    created_at VARCHAR(64) NOT NULL,
+    started_at VARCHAR(64),
+    finished_at VARCHAR(64),
+    updated_at VARCHAR(64) NOT NULL,
+    CONSTRAINT fk_ai_evaluation_project FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE,
+    CONSTRAINT fk_ai_evaluation_creator FOREIGN KEY (created_by) REFERENCES users(user_id) ON DELETE SET NULL,
+    UNIQUE KEY uq_ai_evaluation_project_seq (project_id, project_run_seq),
+    UNIQUE KEY uq_ai_evaluation_active (active_dedupe_key),
+    KEY idx_ai_evaluation_current (project_id, provider_id, subject_fingerprint_version, subject_fingerprint, project_run_seq),
+    KEY idx_ai_evaluation_provider_history (project_id, provider_id, project_run_seq),
+    KEY idx_ai_evaluation_project_history (project_id, project_run_seq)
+);
+CREATE TABLE ai_groups (
+    ai_group_id VARCHAR(191) PRIMARY KEY,
+    project_id VARCHAR(191) NOT NULL,
+    name VARCHAR(800) NOT NULL,
+    name_key VARCHAR(1024) NOT NULL,
+    name_key_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    description TEXT,
+    work_executor_provider_id VARCHAR(191) NOT NULL,
+    reviewer_provider_id VARCHAR(191),
+    reworker_provider_id VARCHAR(191),
+    created_at VARCHAR(64) NOT NULL,
+    updated_at VARCHAR(64) NOT NULL,
+    CONSTRAINT fk_ai_groups_project FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE,
+    UNIQUE KEY uq_ai_groups_name_hash (project_id, name_key_hash),
+    KEY idx_ai_groups_project_updated (project_id, updated_at, ai_group_id)
+);
+ALTER TABLE ai_invoke_runs ADD COLUMN requested_ai_group_id VARCHAR(191) NULL;
