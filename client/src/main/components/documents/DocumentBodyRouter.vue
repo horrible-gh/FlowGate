@@ -35,6 +35,7 @@
     :project-id="tab.projectId ?? null"
     :read-only="readOnly"
   />
+  <Tr2DocumentBody v-else-if="tab.typeCode === 'TR2'" :tab="tab" :read-only="readOnly" />
   <QuestionDocumentBody
     v-else-if="tab.type === 'qtui' || (tab.type === 'md' && tab.typeCode === 'Q')"
     :tab="tab"
@@ -72,6 +73,7 @@ import DiscardBody from './DiscardBody.vue'
 import FinalApprovalBody from './FinalApprovalBody.vue'
 import GenericDocumentBody from './GenericDocumentBody.vue'
 import QuestionDocumentBody from './QuestionDocumentBody.vue'
+import Tr2DocumentBody from './Tr2DocumentBody.vue'
 
 defineProps<{
   tab: Tab
