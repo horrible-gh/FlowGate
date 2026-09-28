@@ -214,7 +214,7 @@
       <div v-if="openMerges.length" class="branch-open-merges" data-test="open-merges">
         <h5 class="branch-zone-title">{{ t('main.git_branch_manager.open_merges_title') }}</h5>
         <div v-for="attempt in openMerges" :key="attempt.merge_id" class="branch-row" data-test="open-merge-row">
-          <span class="branch-name">{{ attempt.source_branch }} → {{ attempt.target_branch }}</span>
+          <span class="branch-name">{{ formatAttemptEndpoint(attempt.source_branch, attempt.source_kind, attempt.source_group_id) }} → {{ formatAttemptEndpoint(attempt.target_branch, attempt.target_kind, attempt.target_group_id) }}</span>
           <span class="badge" data-test="open-merge-state">
             {{ t(`main.git_branch_manager.attempt_state.${attempt.state}`, attempt.state) }}
           </span>
@@ -310,6 +310,10 @@ interface OpenBranchMerge {
   merge_id: number
   source_branch: string
   target_branch: string
+  source_kind?: string
+  source_group_id?: string | null
+  target_kind?: string
+  target_group_id?: string | null
   state: string
   file_count: number
   resolved_count: number
@@ -400,6 +404,12 @@ function candidateSummaryLabel(branch: BranchRow): string {
     return `${branch.name} (${t('main.git_branch_manager.kind.internal_slot')}: ${branch.connected_group_id || ''})`
   }
   return branch.name
+}
+function formatAttemptEndpoint(branch: string, kind?: string, groupId?: string | null): string {
+  if (kind === 'worktree' && groupId) {
+    return `${branch} (${t('main.git_branch_manager.kind.internal_slot')}: ${groupId})`
+  }
+  return branch
 }
 function deleteReasonText(branch: BranchRow): string | undefined {
   if (branch.can_delete || !branch.delete_blocked_reason) return undefined
@@ -579,6 +589,9 @@ async function confirmMerge() {
       const target_kind = targetCandidate?.kind === 'internal_slot' ? 'worktree' : 'branch'
       const target_group_id = targetCandidate?.connected_group_id || null
 
+      const sourceLabel = sourceCandidate?.kind === 'internal_slot' ? candidateSummaryLabel(sourceCandidate) : source
+      const targetLabel = targetCandidate?.kind === 'internal_slot' ? candidateSummaryLabel(targetCandidate) : target
+
       const { data } = await postRequest<any>(`/api/v1/projects/${props.projectId}/git/branches/merge`, {
         source_branch: source,
         source_kind,
@@ -592,23 +605,27 @@ async function confirmMerge() {
         // 0630 T0005 — 202: the conflict is a persistent attempt, not an error, and the
         // server already started (or tried to start) its AI resolver.
         mergeResult.value = {
-          source, target,
+          source: sourceLabel, target: targetLabel,
           mergeId: Number(data.merge_id),
           files: Array.isArray(data.conflict_files) ? data.conflict_files : [],
           aiStatus: data.status === 'resolved_pending_review' ? 'review' : (data.ai?.status || undefined),
         }
       } else {
-        mergeResult.value = { source, target, pushed: !!data?.pushed }
+        mergeResult.value = { source: sourceLabel, target: targetLabel, pushed: !!data?.pushed }
       }
       await load()
     } catch (e: any) {
+      const sourceLabel = (mergeCandidates.value.find(b => b.name === source))?.kind === 'internal_slot'
+        ? candidateSummaryLabel(mergeCandidates.value.find(b => b.name === source)!) : source
+      const targetLabel = (mergeCandidates.value.find(b => b.name === target))?.kind === 'internal_slot'
+        ? candidateSummaryLabel(mergeCandidates.value.find(b => b.name === target)!) : target
       // §7 merge 실패 — source/target stay attached to EVERY failure (not just
       // conflict), plus the server's code/message and whether this was
       // specifically a push failure, so a diverged-target or push rejection
       // is never flattened into the same one-line "Merge failed" as a conflict.
       const apiError = e?.response?.data?.error
       mergeResult.value = {
-        source, target,
+        source: sourceLabel, target: targetLabel,
         code: apiError?.code,
         message: apiError?.message,
         files: apiError?.code === 'branch_merge_conflict' ? (apiError.details?.conflict_files || []) : undefined,

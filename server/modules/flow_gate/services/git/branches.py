@@ -1021,6 +1021,6 @@ def _open_branch_merge_summaries(project_id: str) -> list[dict]:
         attempts = branch_merge.list_attempts(project_id)["result"]["attempts"]
     except Exception:
         return []
-    keys = ("merge_id", "source_branch", "target_branch", "state", "push",
-            "file_count", "resolved_count")
+    keys = ("merge_id", "source_branch", "target_branch", "source_kind", "source_group_id",
+            "target_kind", "target_group_id", "state", "push", "file_count", "resolved_count")
     return [{key: attempt.get(key) for key in keys} for attempt in attempts]

@@ -7,7 +7,7 @@ checkout), so nothing leaks between cases. The numbers are T0005 §15's required
    1/2  clean merge push=false / push=true — attempt row created and completed
    3/4/5 conflict → persistent attempt, managed workspace kept, no `merge --abort`
    6    multi-file partial resolve
-   7/8  AI auto-start from the Branch Merge route; start failure → manual fallback
+   7/8  T#3: no AI auto-start on conflict; explicit /ai-resolve route starts resolver
    9    AI resolution → resolved_pending_review (never auto-approved)
   10    target ref / remote untouched before approval
   11/12 approve push=false (local only) / push=true (remote)
@@ -413,7 +413,7 @@ def test_06_multi_file_partial_resolve_keeps_the_rest_open(proj):
     assert view["resolver_type"] == "human"
 
 
-# ── 7/8 AI auto-start through the real route ─────────────────────────────────
+# ── 7/8 T#3: no auto-start on conflict; explicit /ai-resolve starts resolver ──────────
 
 def _client(monkeypatch):
     from fastapi import FastAPI
@@ -434,7 +434,9 @@ def _prepare_route_conflict(p: Proj):
     p.commit_on("feature", {"same.txt": "feature version\n"})
 
 
-def test_07_route_conflict_auto_starts_the_resolver_without_a_click(proj, monkeypatch):
+def test_07_route_conflict_does_not_auto_start_resolver(proj, monkeypatch):
+    """T#3: conflict route must NOT auto-start the AI resolver. The attempt is left
+    open in 'conflict' state with ai.status=not_started and auto_start=False."""
     from modules.flow_gate.api.v1 import git_routes
     p = proj
     _prepare_route_conflict(p)
@@ -442,7 +444,7 @@ def test_07_route_conflict_auto_starts_the_resolver_without_a_click(proj, monkey
 
     def fake_start(**kwargs):
         calls.append(kwargs)
-        return "run-auto-1"
+        return "run-should-never-fire"
 
     monkeypatch.setattr(git_routes, "_start_branch_merge_resolve_run", fake_start)
     resp = _client(monkeypatch).post(
@@ -453,30 +455,37 @@ def test_07_route_conflict_auto_starts_the_resolver_without_a_click(proj, monkey
     assert resp.status_code == 202, resp.text
     body = resp.json()
     assert body["status"] == "conflict" and body["merge_id"]
-    assert body["ai"]["status"] == "running" and body["ai"]["run_id"] == "run-auto-1"
-    assert body["ai"]["auto_start"] is True and body["ai"]["auto_authority"] is False
-    assert len(calls) == 1
-    assert calls[0]["project_id"] == p.pid and calls[0]["merge_id"] == body["merge_id"]
-    assert calls[0]["provider_id"] == "prov-x"                  # §12 tier 1
-    # the start ran after the Git lock was released
+    # T#3 key assertions: resolver was NOT started automatically
+    assert calls == [], "auto-start must not fire on conflict (T#3)"
+    ai = body["ai"]
+    assert ai["status"] == "not_started", f"expected not_started, got {ai['status']}"
+    assert ai["auto_start"] is False, "auto_start must be False (T#3)"
+    assert ai["auto_authority"] is False
+    assert ai.get("run_id") is None
+    # Conflict event is recorded; AI-started event must NOT be present
+    events = [e["type"] for e in _ctx(body["merge_id"])["attempt_events"]]
+    assert "git_branch_merge_conflict" in events
+    assert "git_branch_merge_ai_started" not in events, "ai_started must not appear (T#3)"
+    # Git lock is released (nothing blocking)
     from modules.flow_gate.db import git_integration as db_git
     assert p.pid not in {row["project_id"] for row in db_git.list_locks()}
-    events = [e["type"] for e in _ctx(body["merge_id"])["attempt_events"]]
-    assert "git_branch_merge_conflict" in events and "git_branch_merge_ai_started" in events
 
 
-def test_08_ai_start_failure_keeps_attempt_and_manual_fallback_reaches_review(proj, monkeypatch):
-    from fastapi import HTTPException
+def test_08_explicit_ai_resolve_route_starts_resolver_and_duplicate_is_guarded(proj, monkeypatch):
+    """T#3: /ai-resolve is the ONLY way to start the resolver.
+    First call creates a run; duplicate call returns already_running (single live run)."""
     from modules.flow_gate.api.v1 import git_routes
     p = proj
     _prepare_route_conflict(p)
+    calls = []
 
-    def failing_start(**kwargs):
-        raise HTTPException(status_code=409, detail={"code": "no_enabled_provider",
-                                                      "message": "no provider"})
+    def fake_start(**kwargs):
+        calls.append(kwargs)
+        return "run-explicit-1"
 
-    monkeypatch.setattr(git_routes, "_start_branch_merge_resolve_run", failing_start)
+    monkeypatch.setattr(git_routes, "_start_branch_merge_resolve_run", fake_start)
     client = _client(monkeypatch)
+    # Step 1: trigger conflict — no auto-start
     resp = client.post(
         f"/api/v1/projects/{p.pid}/git/branches/merge",
         json={"source_branch": "feature", "target_branch": "develop", "push": False},
@@ -484,25 +493,124 @@ def test_08_ai_start_failure_keeps_attempt_and_manual_fallback_reaches_review(pr
     assert resp.status_code == 202, resp.text
     body = resp.json()
     merge_id = body["merge_id"]
-    assert body["ai"]["status"] == "start_failed"
-    assert body["ai"]["error"]["code"] == "no_enabled_provider"
-    assert _session(merge_id)["status"] == "open"
-    assert _view(p, merge_id)["state"] == "conflict_remaining"
-    # manual fallback through the project-scoped human route
-    conflicts = client.get(f"/api/v1/projects/{p.pid}/git/merge/{merge_id}/conflicts").json()
-    assert [f["path"] for f in conflicts["files"]] == ["same.txt"]
-    resolved = client.post(
-        f"/api/v1/projects/{p.pid}/git/merge/{merge_id}/resolve",
-        json={"files": [{"path": "same.txt", "content": "merged by hand\n"}], "complete": True},
-    ).json()
-    assert resolved["result"]["status"] == "resolved_pending_review"
-    review = client.get(f"/api/v1/projects/{p.pid}/git/merge/{merge_id}/review").json()["result"]
-    assert review["resolver_type"] == "human" and review["owner_type"] == "branch_merge"
-    assert review["source_branch"] == "feature" and review["target_branch"] == "develop"
-    # the re-invoke route records a new start attempt (still failing here)
-    again = client.post(f"/api/v1/projects/{p.pid}/git/merge/{merge_id}/ai-resolve", json={})
-    assert again.status_code == 409      # already in review: use the review screen
+    assert body["ai"]["status"] == "not_started"    # T#3: no run yet
+    assert calls == []                              # T#3: starter not called
 
+    # Step 2: user opens dialog and clicks [AI 호출] → /ai-resolve
+    from modules.flow_gate.services.git import branch_merge as bm_mod
+    from modules.flow_gate.services.git.branch_merge import AI_RUNNING
+    monkeypatch.setattr(bm_mod, "_ai_run_status", lambda run_id: AI_RUNNING)
+    resp2 = client.post(
+        f"/api/v1/projects/{p.pid}/git/merge/{merge_id}/ai-resolve",
+        json={"provider_id": "prov-x"},
+    )
+    assert resp2.status_code == 200, resp2.text
+    body2 = resp2.json()
+    assert body2["result"]["status"] == "running"
+    assert body2["result"]["run_id"] == "run-explicit-1"
+    assert len(calls) == 1                          # exactly one run created
+    assert calls[0]["provider_id"] == "prov-x"     # provider from dialog
+
+    # Step 3: duplicate click — same live run returned, no second start
+    resp3 = client.post(
+        f"/api/v1/projects/{p.pid}/git/merge/{merge_id}/ai-resolve",
+        json={"provider_id": "prov-x"},
+    )
+    assert resp3.status_code == 200, resp3.text
+    body3 = resp3.json()
+    assert body3["result"]["status"] == "already_running"
+    assert len(calls) == 1                          # still only one run
+
+    # Step 4: manual resolve still works after explicit AI path
+    from modules.flow_gate.services import git_service as svc
+    monkeypatch.setattr(bm_mod, "_ai_run_status", lambda run_id: "finished")
+    svc.resolve_conflicts(
+        None, merge_id, [{"path": "same.txt", "content": "manual\n"}], True,
+        project_id=p.pid,
+    )
+    view = _view(p, merge_id)
+    assert view["state"] == "resolved_pending_review"
+    # /ai-resolve after review is blocked
+    again = client.post(f"/api/v1/projects/{p.pid}/git/merge/{merge_id}/ai-resolve", json={})
+    assert again.status_code == 409     # already in review: use the review screen
+
+
+def test_08b_concurrent_explicit_ai_resolve_requests_start_single_live_run(proj, monkeypatch):
+    """T#3: Concurrent explicit /ai-resolve requests are guarded by an atomic per-attempt lock.
+    Even when multiple requests arrive while start_run is in-flight, exactly ONE live run is created."""
+    import threading
+    import time
+    from modules.flow_gate.api.v1 import git_routes
+    from modules.flow_gate.services.git import branch_merge as bm_mod
+    from modules.flow_gate.services.git.branch_merge import AI_RUNNING
+
+    p = proj
+    _prepare_route_conflict(p)
+    calls = []
+    start_entered = threading.Event()
+    release_starter = threading.Event()
+
+    def fake_start(**kwargs):
+        calls.append(kwargs)
+        start_entered.set()
+        # Hold in start_run briefly to simulate in-flight execution and let concurrent requests arrive
+        release_starter.wait(timeout=5)
+        return "run-concurrent-1"
+
+    monkeypatch.setattr(git_routes, "_start_branch_merge_resolve_run", fake_start)
+    monkeypatch.setattr(bm_mod, "_ai_run_status", lambda run_id: AI_RUNNING)
+
+    client = _client(monkeypatch)
+    resp = client.post(
+        f"/api/v1/projects/{p.pid}/git/branches/merge",
+        json={"source_branch": "feature", "target_branch": "develop", "push": False},
+    )
+    assert resp.status_code == 202, resp.text
+    merge_id = resp.json()["merge_id"]
+
+    results = []
+    results_lock = threading.Lock()
+
+    def invoke():
+        r = client.post(
+            f"/api/v1/projects/{p.pid}/git/merge/{merge_id}/ai-resolve",
+            json={"provider_id": "prov-x"},
+        )
+        with results_lock:
+            results.append((r.status_code, r.json()))
+
+    # Thread 1 starts the resolver and waits inside fake_start
+    t1 = threading.Thread(target=invoke)
+    t1.start()
+
+    # Wait until Thread 1 has actually entered fake_start (meaning status=starting is written and run_id is absent)
+    assert start_entered.wait(timeout=5), "starter was never entered"
+
+    # Thread 2 and Thread 3 fire concurrently WHILE Thread 1 is still inside fake_start!
+    threads = [threading.Thread(target=invoke) for _ in range(2)]
+    for t in threads:
+        t.start()
+
+    # Give them a moment to hit the atomic guard and wait on the lock
+    time.sleep(0.05)
+
+    # Now release Thread 1 to finish start_run and record run_id
+    release_starter.set()
+
+    t1.join(timeout=5)
+    for t in threads:
+        t.join(timeout=5)
+
+    assert len(results) == 3
+    # Exactly one live run was started
+    assert len(calls) == 1, f"expected 1 starter call, got {len(calls)}"
+
+    statuses = [res[1]["result"]["status"] for res in results]
+    assert statuses.count("running") == 1, f"expected 1 running, got {statuses}"
+    assert statuses.count("already_running") == 2, f"expected 2 already_running, got {statuses}"
+
+    run_ids = [res[1]["result"]["run_id"] for res in results]
+    assert set(run_ids) == {"run-concurrent-1"}
 
 # ── 9/10 AI resolution → review, nothing moved ───────────────────────────────
 

@@ -330,19 +330,13 @@ def post_git_branch_merge(
     if not (isinstance(result, dict) and result.get("status") == "conflict"
             and result.get("merge_id") is not None):
         return result
-    # 0630 T0005 (D0004 §10): the conflict is durable and the Git lock is released by now.
-    # The server — not a later client click — starts the existing resolve_conflict run.
-    # A failure to start is recorded on the attempt (ai.status=start_failed) and never
-    # aborts it; the conflict stays open for a retry or a manual resolution.
+    # 0630 T0005 / T#3 (D0004 §10): the conflict is durable and the Git lock is released.
+    # T#3: the server no longer auto-starts the resolver here. EOL-only conflicts are still
+    # frozen to review automatically. For real conflicts the attempt stays open in "conflict"
+    # state; the user opens GitConflictResolverDialog and clicks [AI invoke] → /ai-resolve.
     merge_id = int(result["merge_id"])
     try:
-        view = git_branch_merge.settle_new_conflict(
-            project_id, merge_id,
-            start_run=_branch_merge_starter(
-                project_id, merge_id, request, _user_id(user), pinned=bool(body.provider_id),
-            ),
-            provider_id=body.provider_id,
-        )
+        view = git_branch_merge.settle_new_conflict(project_id, merge_id)
         result = {**result, "attempt": view, "ai": view.get("ai"),
                   "remaining_conflicts": view.get("unresolved") or [],
                   "status": "resolved_pending_review"
@@ -1399,8 +1393,10 @@ def post_branch_merge_ai_resolve(
     project_id: str, merge_id: int, request: Request, body: BranchMergeAiBody | None = None,
     user=Depends(require_permission("project.settings.edit", "project_id")),
 ):
-    """Re-invoke / re-instruct the AI resolver (auto-start failed, or the person wants
-    another pass). Never a precondition for the first run — the server starts that."""
+    """Invoke (first run) or re-invoke the AI resolver (T#3: the server never auto-starts).
+    The GitConflictResolverDialog calls this when the user selects a Provider and clicks
+    [AI invoke]. Duplicate clicks and concurrent requests are guarded by an atomic per-attempt lock
+    and live-run check in start_resolver."""
     body = body or BranchMergeAiBody()
     message = (body.message or "").strip()
     if len(message) > 4000:

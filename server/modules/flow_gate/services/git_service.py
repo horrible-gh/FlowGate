@@ -313,9 +313,9 @@ from .git.lock import (
     guard_group_branch_merge_free,
     open_merge_session_of_project,
 )
-from .git.branch_merge import (
-    get_branch_merge_group_claim,
-)
+def get_branch_merge_group_claim(group_id: str):
+    from .git import branch_merge
+    return branch_merge.get_branch_merge_group_claim(group_id)
 
 
 

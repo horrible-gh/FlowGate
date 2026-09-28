@@ -262,7 +262,7 @@ describe('0.1 Branch Manager conflict → existing resolver/review (T0005 §15-2
     await flushPromises()
 
     expect(postRequest).toHaveBeenCalledWith('/api/v1/projects/flowgate/git/branches/merge',
-      { source_branch: 'feature', target_branch: 'develop', push: true })
+      expect.objectContaining({ source_branch: 'feature', target_branch: 'develop', push: true }))
     expect(wrapper.get('[data-test="merge-conflict-ai"]').text())
       .toBe(i18n.global.t('main.git_branch_manager.merge_conflict_ai.start_failed'))
     await wrapper.get('[data-test="merge-conflict-open"]').trigger('click')
@@ -392,5 +392,102 @@ describe('GitMergeReviewDialog route base + resolver type (0630)', () => {
     await flushPromises()
     expect(postRequest.mock.calls.some(([url]) => url === `${BASE}/approve`)).toBe(true)
     wrapper.unmount()
+  })
+})
+
+describe('T#3 explicit resolver UX & worktree metadata', () => {
+  it('merge conflict starts with not_started; opening resolver makes 0 AI runs; [AI 호출] creates run', async () => {
+    const { default: GitBranchManager } = await import('@main/components/GitBranchManager.vue')
+    const { useAiProviderStore } = await import('@main/stores/aiProvider')
+    const providerStore = useAiProviderStore()
+    providerStore.providers = [{ id: 'prov-test', name: 'Claude' }]
+    providerStore.selectedProviderId = 'prov-test'
+
+    const catalog = {
+      ok: true, base_branch: 'main', default_merge_target: null,
+      branches: [
+        { name: 'main', kind: 'base', can_delete: false, can_be_create_source: true },
+        { name: 'feature', kind: 'local', can_delete: true, can_be_create_source: true },
+      ],
+    }
+    let attemptState = 'conflict'
+    getRequest.mockImplementation((url: string) => {
+      if (url === '/api/v1/projects/flowgate/git/branches') return Promise.resolve({ data: catalog })
+      if (url === BASE) {
+        return Promise.resolve({ data: attempt(attemptState, { status: 'not_started', run_id: null, provider_id: null, error: null }) })
+      }
+      if (url === `${BASE}/conflicts`) {
+        return Promise.resolve({ data: { ok: true, files: [{ path: 'same.txt', content: CONFLICT, conflict_count: 1 }] } })
+      }
+      if (url.includes('ai-settings/providers')) {
+        return Promise.resolve({ data: { ok: true, providers: [{ id: 'prov-test', name: 'Claude' }], default_provider: 'prov-test' } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+    postRequest.mockImplementation((url: string) => {
+      if (url === '/api/v1/projects/flowgate/git/branches/merge') {
+        return Promise.resolve({ data: { ok: true, status: 'conflict', merge_id: 42, conflict_files: ['same.txt'],
+          push: false, pushed: false, ai: { status: 'not_started', auto_start: false } } })
+      }
+      if (url === `${BASE}/ai-resolve`) {
+        attemptState = 'ai_resolving'
+        return Promise.resolve({ data: { ok: true, result: { status: 'running', run_id: 'run-ai-explicit' } } })
+      }
+      return Promise.resolve({ data: { ok: true } })
+    })
+    const wrapper = mount(GitBranchManager, {
+      props: { projectId: 'flowgate' },
+      global: { plugins: [i18n], stubs: { AppIcon: true } },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    ;(wrapper.vm as any).mergeSource = 'feature'
+    ;(wrapper.vm as any).mergeTarget = 'main'
+    await flushPromises()
+    await wrapper.find('[data-test="branch-zone-merge"]').trigger('submit')
+    await flushPromises()
+
+    // 1. Conflict response has aiStatus=not_started
+    expect(wrapper.get('[data-test="merge-conflict-ai"]').text())
+      .toBe(i18n.global.t('main.git_branch_manager.merge_conflict_ai.not_started'))
+
+    // 2. Open resolver dialog — verify no /ai-resolve called yet
+    await wrapper.get('[data-test="merge-conflict-open"]').trigger('click')
+    await flushPromises()
+    expect(postRequest).not.toHaveBeenCalledWith(`${BASE}/ai-resolve`, expect.anything())
+
+    // 3. Resolver dialog exists; emitting ai-invoke triggers /ai-resolve
+    const resolver = wrapper.findComponent(GitConflictResolverDialog)
+    expect(resolver.exists()).toBe(true)
+    resolver.vm.$emit('ai-invoke', 'please resolve', false)
+    await flushPromises()
+    expect(postRequest).toHaveBeenCalledWith(`${BASE}/ai-resolve`, expect.objectContaining({
+      message: 'please resolve',
+    }))
+    wrapper.unmount()
+  })
+
+  it('worktree source/target displays additive metadata in open merges and dialog header', async () => {
+    routeGets({
+      [BASE]: {
+        ok: true,
+        result: {
+          merge_id: 42, state: 'conflict',
+          source_branch: 'feature-wt', source_kind: 'worktree', source_group_id: 'flowgate.default.0101',
+          target_branch: 'main', target_kind: 'branch', target_group_id: null,
+          push: false, file_count: 1, resolved_count: 0,
+          ai: { status: 'not_started', run_id: null, provider_id: null, error: null },
+        },
+      },
+      [`${BASE}/conflicts`]: { ok: true, files: [{ path: 'same.txt', content: CONFLICT, conflict_count: 1 }] },
+    })
+    const host = mountHost()
+    await flushPromises()
+    const dialog = host.findComponent({ name: 'GitConflictResolverDialog' })
+    expect(dialog.exists()).toBe(true)
+    const expectedSuffix = i18n.global.t('main.git_branch_manager.kind.internal_slot')
+    expect(dialog.props('branch')).toContain(`feature-wt (${expectedSuffix}: flowgate.default.0101)`)
+    expect(dialog.props('baseBranch')).toBe('main')
+    host.unmount()
   })
 })

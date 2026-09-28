@@ -766,6 +766,7 @@ def test_claim_query_failure_fails_closed(repo, tmp_path, monkeypatch):
     monkeypatch.setattr(git_service, "_project_name", lambda pid: "FlowGate")
     monkeypatch.setattr(git_service, "_project_of_group", lambda g: "flowgate")
     monkeypatch.setattr(git_service.db_git, "get_state", lambda g: git_states.get(g))
+    monkeypatch.setattr(git_service.db_git, "list_states_of_project", lambda pid: list(git_states.values()))
     monkeypatch.setattr(git_service, "src_root", lambda pname, b: wt_map.get(b))
 
     def _raising_list_open_sessions():
