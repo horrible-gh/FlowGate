@@ -83,7 +83,7 @@ def normalized_target_path(edit: dict) -> str:
         raise Tr2ValidationError("tr2_path_unsafe", "file")
     p = p.replace("\\", "/")
     parts = [part for part in p.split("/") if part not in ("", ".")]
-    if not parts or any(part == ".." for part in parts):
+    if not parts or any(part in ("..", ".git") or ":" in part for part in parts):
         raise Tr2ValidationError("tr2_path_unsafe", "file")
     return "/".join(parts)
 
@@ -430,6 +430,10 @@ def read_view(doc: dict, body: dict) -> dict:
         raise Tr2ValidationError("tr2_history_invariant_error", "baseline_fingerprint")
     ledger = [row for row in tr_commit_ledger.list_by_group(doc["group_id"])
               if row.get("doc_id", row.get("tr_doc_id")) == doc["doc_id"]]
+    anchors = None
+    if spec.get("termination") == "ready_to_apply" and spec.get("edits"):
+        from modules.flow_gate.documents.tr2_apply_adapter import adapter
+        anchors = adapter.evaluate(spec, source_root, baseline=baseline)["edits"]
     return {
         "document": {**doc, "editable": document_service.is_document_editable(
             doc, final_approved=document_service.is_final_approved(doc))},
@@ -442,7 +446,7 @@ def read_view(doc: dict, body: dict) -> dict:
                               "targets": [{"path": p, "kind": target_kind(spec, p),
                                            "exists": (source_root / p).is_file(),
                                            "is_regular_file": (source_root / p).is_file()}
-                                          for p in target_set(spec)], "anchors": None}},
+                                          for p in target_set(spec)], "anchors": anchors}},
         "approval": {"latest_attempt": None, "attempts": []},
         "history": {"source_history_state": _history_state(doc), "ledger": ledger},
     }

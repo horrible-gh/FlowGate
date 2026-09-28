@@ -53,6 +53,21 @@ def get_tr2(doc_id: str, current_user: dict = Depends(get_current_user)):
                                                   details={"loc": "body", "reason": str(exc)}))
 
 
+@router.post("/{doc_id}/tr2/precheck")
+@require_permission("perm_document_read")
+def post_tr2_precheck(doc_id: str, current_user: dict = Depends(get_current_user)):
+    from modules.flow_gate.documents.tr2_precheck import diagnostic_precheck
+    _doc(doc_id)
+    try:
+        return diagnostic_precheck(doc_id)
+    except tr2.Tr2ValidationError as exc:
+        return _failure(exc)
+    except (OSError, ValueError) as exc:
+        return JSONResponse(status_code=409,
+                            content=error_payload("tr2_spec_invalid",
+                                                  details={"loc": "body", "reason": str(exc)}))
+
+
 @router.put("/{doc_id}/tr2")
 @require_permission("perm_document_update")
 def put_tr2(request: Request, doc_id: str, body: Tr2Save,
