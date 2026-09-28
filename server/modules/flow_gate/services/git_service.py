@@ -3871,6 +3871,8 @@ def reconcile_due_merge_review_sessions(
 
 
 
+# Startup recovery lives in git/cleanup.py; it releases every stale project lock,
+# including tr2: holders, without a prefix allowlist.
 
 
 

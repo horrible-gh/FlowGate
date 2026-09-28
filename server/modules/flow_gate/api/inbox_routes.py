@@ -40,6 +40,9 @@ from modules.flow_gate.documents.constants import (
     WORK_PLAN_TYPE,
     is_server_assembled_type,
 )
+from modules.flow_gate.documents.type_code import doc_code_type as canonical_doc_code_type, DOC_CODE_RE
+from modules.flow_gate.documents import tr2_service
+from modules.flow_gate.documents.tr2_errors import TR2_ERRORS, error_payload
 from modules.flow_gate.rbac.decorators import _has_permission, require_permission
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import git_service
@@ -1542,23 +1545,24 @@ def _group_short_code(group_id: str) -> str:
 def _doc_code_alternates(code: str) -> set[str]:
     code = code.strip()
     alts = {code}
-    m = re.fullmatch(r"(\d+)-([A-Za-z]+)", code)
-    if m:
-        alts.add(f"{m.group(2)}{m.group(1)}")
+    m = DOC_CODE_RE.fullmatch(code.upper())
+    # Compact IDs are ambiguous for type codes containing digits (T2/TR2).
+    if m and m["type"].isalpha():
+        alts.add(f"{m['type']}{m['seq']}")
     m = re.fullmatch(r"([A-Za-z]+)(\d+)", code)
-    if m:
-        alts.add(f"{m.group(2)}-{m.group(1)}")
+    if m and m.group(1).upper().isalpha():
+        alts.add(f"{m.group(2)}-{m.group(1).upper()}")
     return alts
 
 
 def _doc_code_type(code: str) -> Optional[str]:
     code = code.strip()
-    m = re.fullmatch(r"\d+-([A-Za-z]+)", code)
-    if m:
-        return m.group(1)
+    canonical = canonical_doc_code_type(code)
+    if canonical:
+        return canonical
     m = re.fullmatch(r"([A-Za-z]+)\d+", code)
     if m:
-        return m.group(1)
+        return m.group(1).upper()
     return None
 
 
@@ -2360,6 +2364,8 @@ def _resolve_storage_path(
     filename = "document.md"
     if (doc_type or "").upper() == WORK_PLAN_TYPE:
         filename = work_plan_service.DOCUMENT_FILENAME
+    elif (doc_type or "").upper() == "TR2":
+        filename = tr2_service.DOCUMENT_FILENAME
     return document_path(
         project_id=project_id,
         group_code=group_code,
@@ -3488,7 +3494,8 @@ def _normalize_continuation_target(
         return target_seq
 
     instruction_type = str(items[target_idx].get("type") or "").upper()
-    report_type = {"N": "NR", "T": "TR"}.get(instruction_type)
+    from modules.flow_gate.services.workflow_decision_service import AUTO_REPORT_MAP
+    report_type = AUTO_REPORT_MAP.get(instruction_type)
     if report_type is None or target_idx + 1 >= len(items):
         return target_seq
 
@@ -3626,26 +3633,40 @@ def settle_completed_step(
                 ),
             }
         from modules.flow_gate.workflow.pipeline_service import transition_document_review
-        try:
-            transition_document_review(
-                doc_id=doc_id,
-                action="approve",
-                actor_user_id=actor_user_id,
-                user_permissions=approver_perms,
-                # 0430 T0009 task 4: an approval failure is handed straight back to the
-                # worker in envelope["continuation_reason"], so the localized rejection
-                # message follows the chain's own continuation_locale — the same field
-                # mention_service uses to pick the language of the chained instruction.
-                # The engine's review gate passes none and falls back to the default.
-                locale=template_provision.normalize_locale(locale),
-            )
-        except Exception as exc:  # noqa: BLE001 — never 500 the saved submission
-            return {
-                "outcome": "stopped",
-                "stop_code": "approve_failed",
-                "reason": f"auto-approve failed: {exc}",
-                "detail": str(exc),
-            }
+        from modules.flow_gate.services.mutation_policy import system_principal
+        is_tr2 = (doc_type or "").upper() == "TR2"
+        revision = int((db_docs.get_by_id(doc_id) or {}).get("revision_no") or 0)
+        for retry_index in range(2 if is_tr2 else 1):
+            request_key = None
+            if is_tr2:
+                identity = f"{doc_id}:{revision}:{retry_index}".encode("utf-8")
+                request_key = "auto:" + hashlib.sha256(identity).hexdigest()[:48]
+            try:
+                transition_document_review(
+                    doc_id=doc_id,
+                    action="approve",
+                    actor_user_id=actor_user_id,
+                    user_permissions=approver_perms,
+                    # Keep the worker's continuation locale on approval errors.
+                    locale=template_provision.normalize_locale(locale),
+                    mutation_principal=system_principal(user_id=actor_user_id,
+                                                        group_id=group_id),
+                    request_key=request_key,
+                )
+                break
+            except Exception as exc:  # noqa: BLE001 — never 500 the saved submission
+                if (is_tr2 and retry_index == 0
+                        and isinstance(exc, tr2_service.Tr2ValidationError)
+                        and exc.code != "tr2_in_progress"
+                        and TR2_ERRORS.get(exc.code)
+                        and TR2_ERRORS[exc.code].retryable):
+                    continue
+                return {
+                    "outcome": "stopped",
+                    "stop_code": "approve_failed",
+                    "reason": f"auto-approve failed: {exc}",
+                    "detail": str(exc),
+                }
         # 0332 D0005 §2.2 / P0006 §1-7 — the second approval entry point. An unmanned
         # chain approves its TR here without ever touching the HTTP approve route, so
         # leaving this line out would mean TR commits exist only for hand-clicked
@@ -3681,6 +3702,24 @@ def settle_completed_step(
             except Exception:
                 import LogAssist.log as logger
                 logger.warning("[inbox] tr_commit SSE emission failed (ignored)")
+
+    if (doc_type or "").upper() == "TR2":
+        # A strong approval is only a continuation point when its durable source
+        # history agrees with the approved document. A canceled or conflicted row
+        # must not launch the next unattended worker.
+        from modules.flow_gate.documents.tr2_history import source_history_state
+        try:
+            history_state = source_history_state(doc_id)
+        except Exception:
+            history_state = "invariant_error"
+        if history_state != "aligned":
+            return {
+                **settled_extra,
+                "outcome": "stopped",
+                "stop_code": "approve_failed",
+                "reason": f"TR2 source history is {history_state}",
+                "detail": history_state,
+            }
 
     # 0415 T0007 task 2: a run-to-end target is re-checked against the CURRENT sequence
     # right here, at the hop's own issuance/settlement point — not the number resolved
@@ -4379,6 +4418,21 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         if spec_failure is not None:
             return spec_failure
 
+    tr2_body = None
+    if doc_type.upper() == "TR2":
+        try:
+            tr2_body = tr2_service.validate(
+                tr2_service.parse(body_for_guards or ""), doc={})
+            tr2_service.verify_pending_pair(
+                project, group["group_id"], tr2_body["source_t2_doc_id"])
+            tr2_root = tr2_service.resolve_source_root(project, group["group_id"])
+            tr2_service.target_fingerprint(
+                tr2_service.canonicalize(tr2_body)["edit_spec"], tr2_root)
+        except tr2_service.Tr2ValidationError as exc:
+            payload = error_payload(exc.code, details=exc.details)
+            payload["help_url"] = "/flowgate/api/v1/help/items/authoring_guide/TR2"
+            return JSONResponse(status_code=TR2_ERRORS[exc.code].http_status, content=payload)
+
     # Refuse a substantial body that is byte-identical to an existing document in a
     # *different* group — the submission-layer contamination signature (correct title,
     # stale/reused body). Runs in Step 5 so a validation *failure* (the 409 below) is
@@ -4657,7 +4711,9 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
 
     try:
         stored_path.parent.mkdir(parents=True, exist_ok=True)
-        if wp_plan is not None:
+        if tr2_body is not None:
+            pass  # tr2_service.save writes after workflow slot registration.
+        elif wp_plan is not None:
             # The canonical body is written from the standard form the validator
             # returned, not the characters that were sent (P0009 §2.6 decision 3-4).
             # If key order and whitespace wobbled on every save, the diff between
@@ -4770,6 +4826,9 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
             "commit_message": commit_message_draft,
             "origin_provider_name": _origin_provider_name,
             "origin_ai_run_id": _origin_run_id,
+            # The TR2 canonical path is derived from the row (tr2_service.canonical_path_for_doc),
+            # so the row must name the branch directory its file is stored under.
+            **({"branch": branch} if tr2_body is not None else {}),
         })
         # group 0022 §5 / D0005 §3.4 type ①: create document + query together. The AI
         # worker attaches low-confidence points as queries on that document
@@ -4882,6 +4941,17 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         except Exception:
             pass
 
+    if tr2_body is not None:
+        try:
+            tr2_saved = tr2_service.create(
+                canonical_doc_id, tr2_body, actor=actor_user_id,
+                origin=tr2_service.ORIGIN_AI)
+        except tr2_service.Tr2ValidationError as exc:
+            db_docs.delete(canonical_doc_id)
+            payload = error_payload(exc.code, details=exc.details)
+            payload["help_url"] = "/flowgate/api/v1/help/items/authoring_guide/TR2"
+            return JSONResponse(status_code=TR2_ERRORS[exc.code].http_status, content=payload)
+
     # T823: all non-auto-complete inbox docs must reach pending_review regardless of head.
     if doc_type.upper() not in AUTO_COMPLETE_TYPES:
         from modules.flow_gate.workflow.pipeline_service import transition_document_review
@@ -4992,7 +5062,16 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
     # goes out in the response — so no new table or column is needed. Line numbers are
     # keyed to the **stored file**, so it re-reads stored_path rather than the sent
     # body — that way the outline lookup and the save summary agree on line numbers.
-    if wp_plan is not None:
+    if tr2_body is not None:
+        spec = tr2_saved["body"]["edit_spec"]
+        resp_content["change_summary"] = {
+            "changed": f"edit {sum(e['kind'] == 'edit' for e in spec['edits'])}, "
+                       f"create_file {sum(e['kind'] == 'create_file' for e in spec['edits'])}, "
+                       f"deferred {len(spec['deferred'])}; {spec['termination']}; "
+                       f"gate commands {len(spec['gate']['commands'])}"}
+        resp_content.update({"doc_type": "TR2", "revision_no": tr2_saved["new_revision"],
+                             "body": tr2_saved["body"]})
+    elif wp_plan is not None:
         # A work plan has neither sections nor lines (P0009 §5 decision 10). What an
         # unmanned worker needs to confirm is not "which section which line landed in"
         # but whether the quantities and assignments it sent were saved as-is, so it
@@ -5013,7 +5092,7 @@ def _handle_new(request: Request, raw_token: str, body: dict) -> JSONResponse:
         )
     if worktree_untracked is not None:
         resp_content["worktree_untracked"] = worktree_untracked
-    _record_change_summary(canonical_doc_id, 0, resp_content["change_summary"], token_rec.get("issued_to"))
+    _record_change_summary(canonical_doc_id, tr2_saved["new_revision"] if tr2_body is not None else 0, resp_content["change_summary"], token_rec.get("issued_to"))
     # Continuous work self-chain (group 0051 / NR0003 option B): for a continuation token,
     # embed next_token/next_mention/continuation_remaining so the worker proceeds to the
     # next step without a human re-issuing a token. No-op for ordinary tokens. Never
@@ -5431,6 +5510,38 @@ def _handle_edit(request: Request, raw_token: str, body: dict) -> JSONResponse:
             ),
             ensure_ascii=False,
         )
+
+    if edit_doc_type == "TR2":
+        try:
+            proposal = tr2_service.validate(
+                tr2_service.parse(edit_body_for_guards or ""), doc=existing_doc)
+            if body.get("dry_run"):
+                return JSONResponse(content={"ok": True, "dry_run": True, "doc_id": doc_id})
+            saved = tr2_service.save(
+                doc_id, proposal, actor=actor_user_id,
+                expected_revision=existing_doc.get("revision_no") or 0,
+                origin=tr2_service.ORIGIN_AI)
+        except tr2_service.Tr2ValidationError as exc:
+            payload = error_payload(exc.code, details=exc.details)
+            payload["help_url"] = "/flowgate/api/v1/help/items/authoring_guide/TR2"
+            return JSONResponse(status_code=TR2_ERRORS[exc.code].http_status, content=payload)
+        if rejection_history_update is not None:
+            db_docs.update(doc_id, {"rejection_history": rejection_history_update})
+        if edit_reason == "rejected":
+            from modules.flow_gate.workflow.pipeline_service import transition_document_review
+            transition_document_review(
+                doc_id=doc_id, action="submit", actor_user_id=actor_user_id,
+                user_permissions={"document.update"})
+        token_service.consume(token_id=token_rec["token_id"], project_id=project, doc_id=doc_id)
+        spec = saved["body"]["edit_spec"]
+        summary = {"changed": f"edit {sum(e['kind'] == 'edit' for e in spec['edits'])}, "
+                   f"create_file {sum(e['kind'] == 'create_file' for e in spec['edits'])}, "
+                   f"deferred {len(spec['deferred'])}; {spec['termination']}; "
+                   f"gate commands {len(spec['gate']['commands'])}"}
+        return JSONResponse(content={
+            "ok": True, "doc_id": doc_id, "doc_type": "TR2",
+            "revision_no": saved["new_revision"], "body": saved["body"],
+            "change_summary": summary})
 
     # Mirror _handle_new's cross-group duplicate guard on the edit path. B0106 only
     # defended `new`, so the same contamination (correct title, stale/reused body from

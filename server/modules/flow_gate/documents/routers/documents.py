@@ -30,6 +30,7 @@ from modules.flow_gate.db import conversation_turns as conv_turn_store
 from modules.flow_gate.db import mention_copies as db_mention_copies
 from modules.flow_gate.documents import attachments
 from modules.flow_gate.documents import document_service, document_types, template_service
+from modules.flow_gate.documents.type_code import doc_code_seq_text
 from modules.flow_gate.documents.constants import (
     AUTO_COMPLETE_TYPES,
     WORK_PLAN_TYPE,
@@ -406,12 +407,12 @@ class NextApprovedDocumentCreate(BaseModel):
     """Request to create an auto-approved instruction document for the next step.
 
     R0001 #2 / group 0048 P0005 §2-2: title/content are NOT accepted — the server
-    generates them from the type label. type_code must be one of N | T | TS.
+    generates them from the type label. type_code must be one of N | T | T2.
     """
     project_id: str
     group_id: str
     prev_doc_id: str
-    type_code: str  # N | T | TS only (gated in handler)
+    type_code: str  # N | T | T2 only (gated in handler)
     module: str = "none"
 
 
@@ -823,6 +824,11 @@ def create_document(
     import logging as _logging
     data = body.model_dump()
     _reject_if_group_ai_running(data)
+    if str(data.get("type_code") or "").upper() == "TR2":
+        raise HTTPException(
+            status_code=409,
+            detail="Create TR2 through the canonical proposal submission.",
+        )
     if not data.get("owner_id"):
         data["owner_id"] = current_user["user_id"]
 
@@ -1014,8 +1020,8 @@ def create_related_document(
     doc_id = f"{body.group_id}.{doc_code}"
 
     # seq is the numeric part of doc_code
-    m = _re.match(r'^(\d+)-[A-Za-z]+$', doc_code)
-    seq = int(m.group(1)) if m else 0
+    numeric = doc_code_seq_text(doc_code)
+    seq = int(numeric) if numeric is not None else 0
 
     # Create markdown file
     slug = _slugify_title(title)
@@ -1164,8 +1170,8 @@ def create_next_empty_document(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    m = _re.match(r"^(\d+)-[A-Za-z]+$", doc_code)
-    seq_no = int(m.group(1)) if m else 0
+    numeric = doc_code_seq_text(doc_code)
+    seq_no = int(numeric) if numeric is not None else 0
     doc_id = f"{body.group_id}.{doc_code}"
     next_type = _next_workflow_type(seq["id"], head["id"])
     # 0395 T0026 rework: a work plan's canonical form is JSON, not Markdown (P0009 §2.6 decision 2).
@@ -1173,6 +1179,12 @@ def create_next_empty_document(
     # reader cannot open it, leaving "this work plan cannot be opened as a table" on screen (user report).
     is_work_plan = type_code == WORK_PLAN_TYPE
     from modules.flow_gate.services import work_plan_service as _wp
+    # 0565 T0030 §4: a TR2 is a canonical JSON proposal too. This route used to register a
+    # Markdown skeleton for it, which the TR2 reader then failed to open ("No such file ...
+    # _document.json"). Its row now names the canonical file, and the canonical writer
+    # creates that file as revision 1 once the slot is registered (same writer as inbox).
+    is_tr2 = type_code == "TR2"
+    from modules.flow_gate.documents import tr2_service as _tr2
 
     wp_plan = (
         _wp.auto_plan_body(body.project_id, _db_wfseq.get_sequence_items(seq["id"]))
@@ -1189,13 +1201,16 @@ def create_next_empty_document(
         project_id=body.project_id,
         group_code=body.group_id,
         doc_code=doc_code,
-        filename=_wp.DOCUMENT_FILENAME if is_work_plan else "document.md",
+        filename=(_wp.DOCUMENT_FILENAME if is_work_plan
+                  else _tr2.DOCUMENT_FILENAME if is_tr2 else "document.md"),
         module=module,
         branch=_get_project_branch(body.project_id),
     )
 
     try:
-        if is_work_plan:
+        if is_tr2:
+            pass  # Written by tr2_service.create inside the transaction below.
+        elif is_work_plan:
             # This path has no create dialog, so no user-chosen quantities or providers. Rather
             # than inventing them it reads from what is already settled — quantities from this
             # group's workflow sequence, providers from the project's run chain and per-doc-type table (work_plan_service.auto_plan_body).
@@ -1233,6 +1248,9 @@ def create_next_empty_document(
         "owner_id": current_user["user_id"],
         "file_path": storage_paths.to_storage_relative(doc_file_path, body.project_id),
     }
+    if is_tr2:
+        # tr2_service derives the canonical path from the row; keep it on this branch directory.
+        data["branch"] = _get_project_branch(body.project_id)
     if is_work_plan:
         # The marker the work-plan screen reads as "a human-created plan". Same value as the create-dialog path.
         data["meta"] = _json.dumps({"work_plan": {"origin": "human", "title_locale": wp_title_locale}}, ensure_ascii=False)
@@ -1271,6 +1289,9 @@ def create_next_empty_document(
                     actor_user_id=current_user["user_id"],
                     user_permissions={"document.update"},
                 )
+                if is_tr2:
+                    _tr2.create(doc["doc_id"], _tr2.initial_body(doc["doc_id"]),
+                                actor=current_user["user_id"])
                 from modules.flow_gate.db import documents as _db_docs
                 refreshed = _db_docs.get_by_id(doc["doc_id"])
                 if refreshed is not None:
@@ -1294,11 +1315,17 @@ def create_next_empty_document(
                     created_by=current_user["user_id"],
                     revision_no=0,
                 )
-    except Exception:
+    except Exception as exc:
         try:
             doc_file_path.unlink(missing_ok=True)
+            if is_tr2:
+                _tr2.snapshot_path(data, 1).unlink(missing_ok=True)
         except OSError:
             pass
+        if isinstance(exc, _tr2.Tr2ValidationError):
+            from modules.flow_gate.documents.tr2_errors import TR2_ERRORS as _TR2_ERRORS, error_payload
+            return JSONResponse(status_code=_TR2_ERRORS[exc.code].http_status,
+                                content=error_payload(exc.code, details=exc.details))
         raise
 
     # T528: child creation → automatically transition parent (R/M) open → closed
@@ -1677,7 +1704,7 @@ def create_next_approved_core(
     # (G1) Type whitelist — stronger than next-empty's blacklist (P0005 §5).
     # AC is excluded naturally (AC ∉ {N,T}, D0004 §3-3). TS removed (group 0121 R0001):
     # a test-scenario directive is token-issued (AI authors it), never auto-approved.
-    if type_code not in {"N", "T"}:
+    if type_code not in {"N", "T", "T2"}:
         raise NextApprovedError(422, f"Auto-approved document not allowed for type: {type_code}")
 
     # (G2) Shared guards — replicated from next-empty (documents.py next-empty path)
@@ -1768,8 +1795,8 @@ def create_next_approved_core(
     except ValueError as exc:
         raise NextApprovedError(400, str(exc)) from exc
 
-    m = _re.match(r"^(\d+)-[A-Za-z]+$", doc_code)
-    seq_no = int(m.group(1)) if m else 0
+    numeric = doc_code_seq_text(doc_code)
+    seq_no = int(numeric) if numeric is not None else 0
     doc_id = f"{group_id}.{doc_code}"
     next_type = _next_workflow_type(seq["id"], head["id"])
     doc_file_path = storage_paths.document_path(
@@ -1972,7 +1999,7 @@ def create_next_approved_document(
 ) -> dict:
     """Create an auto-approved instruction document for the current workflow head.
 
-    R0001 #2 (group 0048): when the next step is N | T | TS, create a document and
+    R0001 #2 (group 0048): when the next step is N | T | T2, create a document and
     approve it in the same transaction. Thin HTTP wrapper over
     :func:`create_next_approved_core` (group 0092: the same core also drives the
     unmanned continuous chain). Title/body are generated by the server from the type
@@ -1992,7 +2019,7 @@ def create_next_approved_document(
     locale = request.headers.get("x-locale") or "ko"
     approver_perms = _resolve_user_permissions(current_user)
     requested_type = (body.type_code or "").strip().upper()
-    if requested_type not in {"N", "T"}:
+    if requested_type not in {"N", "T", "T2"}:
         raise HTTPException(
             status_code=422,
             detail=f"Auto-approved document not allowed for type: {requested_type}",
@@ -2100,8 +2127,8 @@ def open_final_approval(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    m = _re.match(r"^(\d+)-[A-Za-z]+$", doc_code)
-    seq_no = int(m.group(1)) if m else 0
+    numeric = doc_code_seq_text(doc_code)
+    seq_no = int(numeric) if numeric is not None else 0
     new_id = f"{group_id}.{doc_code}"
 
     data: dict[str, Any] = {
@@ -2223,6 +2250,8 @@ def retry_cancel_tr_commits(
         # attempted", it does not turn a read-and-retry button into a 500.
         _log.warning("tr commit cancel retry failed for %s", group_id, exc_info=True)
         result = _tr_commit.empty_cancel_result()
+    from modules.flow_gate.documents.tr2_service import notify_group_history_changed
+    notify_group_history_changed(group_id)
     return {"ok": True, "tr_commit_cancel": result}
 
 
@@ -2257,6 +2286,8 @@ def retry_reapply_tr_commits(
     except Exception:
         _log.warning("tr commit reapply retry failed for %s", group_id, exc_info=True)
         result = _tr_commit.empty_restore_result()
+    from modules.flow_gate.documents.tr2_service import notify_group_history_changed
+    notify_group_history_changed(group_id)
     return {"ok": True, "tr_commit_restore": result}
 
 
@@ -2422,6 +2453,8 @@ def restore_workflow(
         _attach_tr_commit_restore(
             payload, project_id, group_id, restored, current_user["user_id"],
         )
+    from modules.flow_gate.documents.tr2_service import notify_group_history_changed
+    notify_group_history_changed(group_id)
     return payload
 
 
@@ -2475,8 +2508,8 @@ def _create_next_empty_document_for_auto_draft(
     except ValueError:
         return None
 
-    m = _re.match(r"^(\d+)-[A-Za-z]+$", doc_code)
-    seq_no = int(m.group(1)) if m else 0
+    numeric = doc_code_seq_text(doc_code)
+    seq_no = int(numeric) if numeric is not None else 0
     doc_id = f"{group_id}.{doc_code}"
     next_type = _next_workflow_type(seq["id"], head["id"])
     doc_file_path = storage_paths.document_path(
@@ -3114,6 +3147,11 @@ def update_document_content(
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
+    if str(doc.get("type_code") or "").upper() == "TR2":
+        raise HTTPException(
+            status_code=409,
+            detail="Use the TR2 document endpoint with expected_revision.",
+        )
     # 0344 TR0008 후속 — 이관이 끝난 대화(CH)는 전체 본문 교체를 받지 않는다
     # (0432.0003-NR §7-1, 0344.0005-L §2-16). 0344.0008-TR 이 이 마무리를 시도했다가
     # 반려된 뒤 후속이 없어 방치돼 있었다. 화면의 [편집] 진입점을 지우는 것만으로는
@@ -3173,6 +3211,11 @@ def regenerate_document_file(
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
+    if str(doc.get("type_code") or "").upper() == "TR2":
+        raise HTTPException(
+            status_code=409,
+            detail="TR2 recovery requires its canonical JSON document.",
+        )
 
     target = _regenerate_target_path(doc)
     if target.is_file():

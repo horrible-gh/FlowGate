@@ -522,6 +522,7 @@ import { useDocTypeStore } from '../stores/docTypeStore'
 import GitFinalizeAxis from './GitFinalizeAxis.vue'
 import type { FinalizeAxes } from '../composables/finalizeAxis'
 import { useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
+import { describeTr2Error } from './documents/tr2State'
 
 type ActionBarMode = 'workflow' | 'next' | 'review' | 'q' | 'info' | 'sequence-complete' | 'rejected' | 'workflow-recover'
 
@@ -600,7 +601,7 @@ const emit = defineEmits<{
   'open-test-scenario': [payload: { docId: string; projectId: string; groupId: string }]
 }>()
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const approving = ref(false)
 const showApproveConfirm = ref(false)
 const markRevising = ref(false)
@@ -888,7 +889,7 @@ const canShowReviewRequestAction = computed(() =>
 // next-action/copy-next-mention token path). approve-permission gating is enforced by the
 // server (next-approved → 403); the FE does not hold the granular permission set.
 const canCreateApproved = computed(() =>
-  ['N', 'T'].includes((props.nextStepCode ?? '').toUpperCase()),
+  ['N', 'T', 'T2'].includes((props.nextStepCode ?? '').toUpperCase()),
 )
 
 // 0395 T0030: this is still the existing create-empty action. Only its visible label
@@ -1283,7 +1284,11 @@ async function doApprove() {
       try { await props.afterApprove(updated ?? {}) } catch { /* approval is already durable */ }
     }
   } catch (e: any) {
-    const detail = e?.response?.data?.detail ?? e?.response?.data?.error?.message ?? e
+    // TR2 returns a specific refusal code; present its meaning in the approval bar.
+    const code = e?.response?.data?.code
+    const detail = typeof code === 'string' && code.startsWith('tr2_')
+      ? describeTr2Error(e, t, te).text
+      : (e?.response?.data?.detail ?? e?.response?.data?.error?.message ?? e)
     if (sentGitAction) {
       // 0607 T0004 §3.6 — see settleGitApproval. No new approve is sent from here.
       const settled = await settleGitApproval(generation)

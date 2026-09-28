@@ -1457,6 +1457,8 @@ const TYPE_ICONS: Record<string, string> = {
   D: 'compass-tool',
   T: 'list-checks',
   TR: 'seal-check',
+  T2: 'list-checks',
+  TR2: 'git-diff',
   DC: 'trash',
 }
 

@@ -81,23 +81,24 @@ describe('WorkflowDecisionModal — what the dialog offers and what a click prod
     wrapper.unmount()
   })
 
-  it('① lists exactly NR/TR/TSR as the automatically produced reports', () => {
+  it('① lists exactly NR/TR/TR2/TSR as the automatically produced reports', () => {
     const wrapper = mountModal()
 
-    expect(autoOnlyTypes(wrapper)).toEqual(['NR', 'TR', 'TSR'])
+    expect(autoOnlyTypes(wrapper)).toEqual(['NR', 'TR', 'TR2', 'TSR'])
     // They are shown, never offered: adding one by hand would double the report.
-    for (const auto of ['NR', 'TR', 'TSR']) {
+    for (const auto of ['NR', 'TR', 'TR2', 'TSR']) {
       expect(pickableTypes(wrapper)).not.toContain(auto)
     }
     wrapper.unmount()
   })
 
-  it('① pairs N/T/TS with their auto report, and leaves the others alone', async () => {
+  it('① pairs N/T/T2/TS with their auto report, and leaves the others alone', async () => {
     const wrapper = mountModal()
 
     for (const [picked, expected] of [
       ['N', ['N', 'NR']],
       ['T', ['T', 'TR']],
+      ['T2', ['T2', 'TR2']],
       ['TS', ['TS', 'TSR']],
       ['DS', ['DS']],
       ['WP', ['WP']],

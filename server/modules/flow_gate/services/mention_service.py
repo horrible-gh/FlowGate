@@ -1566,7 +1566,7 @@ def _ts_host_shell_guidance(host_os: str, locale: str = "ko") -> str:
 #
 # In the default (auto_approved) path N/T are auto-completed server-side and never reach this
 # code, so the section is only ever emitted when the flag is on — no regression to managed runs.
-_NT_AUTHORING_TYPES = {"N", "T"}
+_NT_AUTHORING_TYPES = {"N", "T", "T2"}
 
 # This guide was still English-fixed regardless of the worker's requested locale (B0001
 # rev2 follow-up). Unlike _ts_authoring_section, the bullet labels below (purpose/background,
@@ -1669,7 +1669,21 @@ def _nt_authoring_section(scope_type: str, locale: str = "ko") -> str:
     stype = (scope_type or "").upper()
     loc = template_provision.normalize_locale(locale)
     texts = _NT_AUTHORING_TEXT[loc]
-    body = texts["N"] if stype == "N" else texts["T"]
+    if stype == "T2":
+        body = {
+            "ko": ("이 T2 반영지시를 직접 작성합니다. 짝인 TR2 반영안이 만들 edit-spec의 "
+                   "대상 파일, 변경 목적, 안전 조건, 검증 기준을 명시하십시오. "
+                   "source는 읽어도 되지만 직접 수정하지 마십시오. 구현은 승인 시 서버가 수행합니다."),
+            "ja": ("この T2 反映指示を直接作成します。対になる TR2 反映案の edit-spec に "
+                   "対象ファイル、変更目的、安全条件、検証基準を指定してください。"
+                   "ソースの読み取りは可能ですが、直接変更しないでください。"),
+            "en": ("Write this T2 apply instruction directly. Specify the "
+                   "target files, purpose, safety conditions, and validation criteria "
+                   "for the paired TR2 edit-spec (the apply proposal). Read source as needed but do not "
+                   "modify it; the server applies the approved proposal."),
+        }[loc]
+    else:
+        body = texts["N"] if stype == "N" else texts["T"]
     body += texts["footer"]
     return _section(f"Instruction authoring ({stype})", body)
 

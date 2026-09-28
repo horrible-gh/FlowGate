@@ -409,6 +409,7 @@ def _row_view(row: dict, doc: Optional[dict] = None) -> dict[str, Any]:
     cancel = row.get("cancel_commit")
     return {
         "doc_id": row.get("doc_id"),
+        "history_track": "tr2" if (doc or row).get("type_code") == "TR2" else "tr",
         "doc_code": doc_code(doc) if doc is not None else _code_from_row(row),
         "state": row.get("state"),
         "commit": sha[:7] if sha else None,
@@ -680,6 +681,7 @@ def _line(row: dict, code: str) -> dict[str, Any]:
     sha = row.get("commit_sha")
     return {
         "doc_id": row.get("doc_id"), "doc_code": code,
+        "history_track": "tr2" if code.endswith("-TR2") else "tr",
         "commit": sha[:7] if sha else None,
     }
 
@@ -709,6 +711,7 @@ def cancel_tr_commits(
     reopened_doc_ids: Iterable[str],
     *,
     exclude_row_ids: Optional[Iterable[int]] = None,
+    opened_session: Optional[dict] = None,
 ) -> dict[str, Any]:
     """Revert the rewound region's TR commits, newest first (L0007 §2.2).
 
@@ -742,13 +745,15 @@ def cancel_tr_commits(
         return result
 
     codes = _doc_codes(targets)
-    opened = git_service.open_cancel_session(
-        group_id, [row.get("commit_sha") for row in targets]
-    )
-    if not opened.get("ok"):
-        return _blocked(result, group_id, opened["blocked_reason"], opened["block_sub"])
-
-    session = opened["session"]
+    if opened_session is None:
+        opened = git_service.open_cancel_session(
+            group_id, [row.get("commit_sha") for row in targets]
+        )
+        if not opened.get("ok"):
+            return _blocked(result, group_id, opened["blocked_reason"], opened["block_sub"])
+        session = opened["session"]
+    else:
+        session = opened_session
     try:
         result["attempted"] = True
         stopped = False
@@ -817,7 +822,8 @@ def cancel_tr_commits(
     finally:
         # Before the re-arm, always: `reopen_group_git` takes the same project lock and
         # it is not re-entrant (L0007 §2.1 ③).
-        git_service.close_cancel_session(session)
+        if opened_session is None:
+            git_service.close_cancel_session(session)
 
 
 def _blocked(
@@ -850,6 +856,7 @@ def _terminal_reopen(
     contains this content.
     """
     result["attempted"] = True
+    result["history_mode"] = "terminal_reopen"
     result["_terminal_commit_sha"] = targets[0].get("commit_sha")
     for row in targets:
         code = codes.get(row.get("doc_id"), "")
@@ -868,6 +875,11 @@ def cancel_for_reopen(
     T0007 defines: see :func:`_terminal_reopen`.
     """
     result = empty_cancel_result()
+    reopened_doc_ids = list(reopened_doc_ids)
+    docs = db_docs.get_documents_by_ids(reopened_doc_ids) if reopened_doc_ids else {}
+    durable = any((docs.get(doc_id) or {}).get("type_code") == "TR2"
+                  for doc_id in reopened_doc_ids)
+    result["history_mode"] = "durable_revert" if durable else "legacy_uncommit"
     targets = db_ledger.live_rows(group_id, reopened_doc_ids)
     if not targets:
         result["attempted"] = True
@@ -897,6 +909,11 @@ def cancel_for_reopen(
 
     session = opened["session"]
     try:
+        if durable:
+            durable_result = cancel_tr_commits(group_id, reopened_doc_ids,
+                                               opened_session=session)
+            durable_result["history_mode"] = "durable_revert"
+            return durable_result
         result["attempted"] = True
         outcome = git_service.uncommit_tr_suffix(
             session, [row.get("commit_sha") for row in targets],

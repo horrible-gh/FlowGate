@@ -561,7 +561,7 @@ const presetUnsetCount = computed(() => (
 //      provider cannot be consumed either.
 // Both were being offered as choices; both are removed from the dialog here, and the confirm
 // payload is built from exactly the rows that remain.
-const AUTO_APPROVED_INSTRUCTION_TYPES = ['N', 'T']
+const AUTO_APPROVED_INSTRUCTION_TYPES = ['N', 'T', 'T2']
 const autoHandledTypes = computed(
   () => (instructionMode.value === 'auto_approved' ? AUTO_APPROVED_INSTRUCTION_TYPES : []),
 )
@@ -719,7 +719,7 @@ function onToggleAutoApprove(itemSeq: number, checked: boolean) {
 // blank "use default" option. `overrides` still stores ONLY genuine per-step overrides (a step
 // that differs from the default), so the step tag's default/override distinction and the
 // confirm payload stay unchanged — the default just becomes visible instead of an empty slot.
-const PAIRED_REPORT_TYPES: Record<string, string> = { N: 'NR', T: 'TR' }
+const PAIRED_REPORT_TYPES: Record<string, string> = { N: 'NR', T: 'TR', T2: 'TR2' }
 
 function pairedReportProviderItem(item: WorkflowStepItem): WorkflowStepItem | null {
   if (item.provider_id) return null
