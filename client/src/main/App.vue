@@ -19,11 +19,14 @@ import ClipboardFallbackModal from './components/ClipboardFallbackModal.vue'
 import { useDocTypeStore } from './stores/docTypeStore'
 import { useProjectStore } from './stores/project'
 import { useAiInvokeRunsStore } from './stores/aiInvokeRuns'
+import { useTabsStore } from './stores/tabs'
+import { registerDiagnosticsContext, startLongTaskObserver } from '@shared/diagnostics/runtimeDiagnostics'
 
 const { locale } = useI18n()
 const docTypeStore = useDocTypeStore()
 const projectStore = useProjectStore()
 const aiInvokeRunsStore = useAiInvokeRunsStore()
+const tabsStore = useTabsStore()
 
 // P0008 S1: one bootstrap per app mount restores running + paused + awaiting cards.
 // It lives here rather than in the miniplayer because that component now renders inside
@@ -34,6 +37,13 @@ onMounted(() => {
   // server once per app mount so a value saved in another browser (or never mirrored here)
   // takes effect on this load rather than on the next recovery signal.
   void aiInvokeRunsStore.refreshRetentionSetting()
+  // T0004 §4/§11: bounded runtime diagnostics for the intermittent-freeze investigation.
+  // The context (active AI count, open tab) lives in stores only reachable from here.
+  registerDiagnosticsContext(() => ({
+    activeAiCount: aiInvokeRunsStore.activeCount,
+    openDocId: tabsStore.activeTabId,
+  }))
+  startLongTaskObserver()
 })
 
 // Reload labels when locale changes

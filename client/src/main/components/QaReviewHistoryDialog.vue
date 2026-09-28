@@ -58,7 +58,7 @@
                     {{ verdictLabel(entry.review) }}
                   </span>
                   <span v-if="entry.kind === 'reject'" class="rhd-who">
-                    {{ rejectedByDisplay?.(entry.reject.rejected_by) || t('main.doc_info_panel.rejection_review_author') }}
+                    {{ rejectionAuthorDisplay(entry.reject) }}
                   </span>
                   <span
                     v-if="entry.kind === 'ai_review' && entry.review.review_intent"
@@ -121,6 +121,7 @@
                   <span class="rhd-ai-response-label">
                     <AppIcon name="arrow-bend-up-left" class="rhd-ai-thread" />
                     <AppIcon name="robot" /> {{ t('main.qa_review_history.ai_response') }}
+                    <span class="rhd-provider-inline">{{ responseProviderLabel(entry.reject) }}</span>
                   </span>
                   <span v-if="entry.reject.responded_at" class="rhd-ai-response-date">{{ formatWhen(entry.reject.responded_at) }}</span>
                   <AppIcon name="caret-down" class="rhd-ai-chevron" />
@@ -151,7 +152,7 @@ import DialogHeader from './dialogs/DialogHeader.vue'
 import DialogFooter from './dialogs/DialogFooter.vue'
 import { computed, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { AiReview } from '../types/aiReview'
+import type { AiReview, AiProvenance } from '../types/aiReview'
 import type { RejectionHistoryItem } from '../composables/useFlowGateToken'
 import AppIcon from '@shared/AppIcon.vue'
 
@@ -243,6 +244,22 @@ function actualProviderLabel(review: AiReview): string {
     || review.review_provider?.actual_provider_id
     || ''
 }
+
+// 0582 T0005 §3/§4: mirrors DocInfoPanel's own rejectionAuthorDisplay/responseProviderLabel
+// so the compact panel and this full-history dialog never disagree on the same rejection.
+function providerLabel(p?: AiProvenance | null): string {
+  const name = p?.ai_provider_name || p?.ai_provider_id
+  return name ? `AI · ${name}` : ''
+}
+function rejectionAuthorDisplay(reject: RejectionHistoryItem): string {
+  if (reject.review_id != null) {
+    return providerLabel(reject.rejection_provider) || `AI · ${t('main.doc_info_panel.ai_provider_unknown')}`
+  }
+  return props.rejectedByDisplay?.(reject.rejected_by) || t('main.doc_info_panel.rejection_review_author')
+}
+function responseProviderLabel(reject: RejectionHistoryItem): string {
+  return providerLabel(reject.response_provider) || `AI · ${t('main.doc_info_panel.ai_provider_unknown')}`
+}
 function provenanceLabel(review: AiReview): string {
   return review.review_intent === 'rerun'
     ? t('main.qa_review_history.provenance_rerun')
@@ -313,6 +330,8 @@ function onClose() {
    to show onto this card's header row (the pre-merge ReviewHistoryDialog never received
    rejected_by, so it could not show it). */
 .rhd-who { font-size: .66rem; color: var(--text-s); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 0582 T0005 §4/§7: the rework-response label's own 'AI · {provider}' suffix. */
+.rhd-provider-inline { font-size: .6rem; font-weight: 600; color: var(--text-s); margin-left: 4px; }
 .rhd-provenance { font-size: .62rem; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--surface-h); color: var(--text-s); }
 .rhd-provenance--rerun { background: #ffedd5; color: #9a3412; }
 .rhd-superseded { margin: 0 0 7px; font-size: .68rem; color: var(--text-s); }

@@ -328,11 +328,29 @@ def test_real_worker_standalone_loop_broadcasts_reject_and_response_across_two_r
         "started_at": loop["started_at"], "docs_target": 0,
         "chain_id": "loop", "chain_docs_target": 0, "chain_docs_reached": 0,
         "attempts_used": 0, "fallback_history": [],
+        # 0582 TR0006 rev1: this run's own admission scope, pinned for its whole
+        # lifetime exactly like a real review-starting loop's (review.py
+        # _spawn_review_hop's action_scope="review") -- the rework hop below must
+        # still resolve as "edit" for provenance despite this never changing.
+        "action_scope": "review",
+        # A real review-starting loop's FIRST hop is admitted with hop_kind=
+        # REVIEW_HOP_KIND too (review.py _spawn_review_hop's hop_kind=REVIEW_HOP_KIND) --
+        # only the SUBSEQUENT stage transitions inside _worker are the part under test.
+        "hop_kind": "review",
     }
     hops = []
+    stage_snapshots = []
     def execute(_run, _chain, _prompt):
+        from modules.flow_gate.services.ai_invoke.provenance import effective_action_scope
         stage = db_loops.get("aiv_e2e_bcast")["current_stage"]
         hops.append(stage)
+        stage_snapshots.append({
+            "hop_kind": _run.get("hop_kind"),
+            "action_scope": _run.get("action_scope"),
+            "provider_id": _run.get("provider_id"),
+            "requested_provider_id": _run.get("requested_provider_id"),
+            "effective_action_scope": effective_action_scope(_run),
+        })
         stamp = f"2026-09-12T00:00:0{len(hops)}+00:00"
         if stage == "rework":
             rejected = service.db_docs.get_by_id("standalone2")
@@ -369,6 +387,16 @@ def test_real_worker_standalone_loop_broadcasts_reject_and_response_across_two_r
     monkeypatch.setattr(service, "_judge_hop", lambda item: item.update(outcome="complete"))
     monkeypatch.setattr(service, "_prepare_retry_token", lambda item: {"mention": "token"})
     monkeypatch.setattr(service, "_reset_attempt_state", lambda item: None)
+    # The real post-process recovery timer races this test's own (real sqlite,
+    # real transaction) checkpoint work against a short stuck-process grace period
+    # meant for an ACTUAL provider subprocess -- there is none here, so it must not
+    # fire mid-test and silently return _worker before the loop's second hop. Unlike
+    # `_execute_provider_chain` (called as `_svc()._execute_provider_chain`, so the
+    # facade re-export above is enough), `_worker` calls this one as a bare
+    # module-level name, so it has to be patched on the `worker` module itself.
+    from modules.flow_gate.services.ai_invoke import worker as worker_module
+    monkeypatch.setattr(worker_module, "_start_post_process_recovery", lambda item: (None, None))
+    monkeypatch.setattr(worker_module, "_stop_post_process_recovery", lambda *a, **k: None)
     monkeypatch.setattr(
         service, "_broadcast",
         lambda run, event_type, payload: broadcasts.append((event_type, dict(payload))),
@@ -385,6 +413,24 @@ def test_real_worker_standalone_loop_broadcasts_reject_and_response_across_two_r
     assert hops == ["review", "rework", "review"]
     assert db_loops.get("aiv_e2e_bcast")["stop_reason"] == "review_passed"
 
+    # 0582 TR0006 rev1: action_scope stays pinned to the run's admission value
+    # ("review") for the whole run, on EVERY hop -- exactly the fact that made the
+    # old action_scope-only filter blind to this run's rework stage. hop_kind is the
+    # live per-hop signal, and effective_action_scope must resolve it to "edit" for
+    # the rework hop despite action_scope never moving, and the SAME single-provider
+    # stage transition (worker.py) must snapshot requested_provider_id == the
+    # provider that actually ran, never a stale admission-time value.
+    assert [s["action_scope"] for s in stage_snapshots] == ["review"] * 3
+    assert [s["hop_kind"] for s in stage_snapshots] == ["review", "rework", "review"]
+    assert [s["effective_action_scope"] for s in stage_snapshots] == [
+        "review", "edit", "review",
+    ]
+    rework_snapshot, second_review_snapshot = stage_snapshots[1], stage_snapshots[2]
+    assert rework_snapshot["provider_id"] == "reworker"
+    assert rework_snapshot["requested_provider_id"] == "reworker"
+    assert second_review_snapshot["provider_id"] == "reviewer"
+    assert second_review_snapshot["requested_provider_id"] == "reviewer"
+
     # AC-1/AC-2: exactly the auto-reject transition broadcasts, carrying the SAME
     # canonical rejection_history row transition_document_review actually wrote to
     # documents.rejection_history -- nothing here is injected by the test.
@@ -400,6 +446,16 @@ def test_real_worker_standalone_loop_broadcasts_reject_and_response_across_two_r
     assert payload["rejection_history"][0]["reason"] == payload["rejection_reason"]
     # Not yet answered at the moment this fired -- the rework hop runs afterwards.
     assert payload["rejection_history"][0]["ai_response"] is None
+    # 0582 TR0006 rev1: this broadcast (review.py's _broadcast_reject) used to carry the
+    # raw parsed item -- no rejection_provider/response_provider keys -- while GET
+    # /document already ran the SAME item through enrich_rejection_history_provenance.
+    # DocHeader's listener replaces its whole rejection_history array with this payload's,
+    # so the just-fired automatic rejection's own provider showed as undefined until the
+    # next manual reload. The keys must be present now (value None here -- this review
+    # ran with no ai-invoke run bound, a plain document_reviews insert, not a real
+    # ai-invoke provider chain -- but the key's presence proves enrichment ran).
+    assert "rejection_provider" in payload["rejection_history"][0]
+    assert "response_provider" in payload["rejection_history"][0]
 
     # AC-3: the rework hop's response landed on that SAME rejection item in the real
     # row, proving the loop moved the document from rev3 to rev4 with a real answer.
@@ -412,6 +468,179 @@ def test_real_worker_standalone_loop_broadcasts_reject_and_response_across_two_r
     assert len(history) == 1
     assert history[0]["ai_response"] == "Addressed first finding."
     assert history[0]["response_revision_no"] == 4
+    conn.close()
+
+
+def test_real_worker_standalone_loop_starting_with_rework_keeps_stage_provenance_correct(
+    monkeypatch, tmp_path,
+):
+    """0582 TR0006 rev1, the mirror direction of the test above.
+
+    A loop that starts admitted with action_scope="edit" (`starts_with_rework=True`,
+    review.py `_spawn_rework_hop`) and is still on the SAME run_id when it reaches its
+    review hop must report that hop's provenance as "review", not "edit" -- the exact
+    case that used to null out inbox_routes._review_provenance's snapshot (document_reviews'
+    own provider, and the review_id-joined automatic rejection's provider with it).
+    Drives the SAME real worker loop / real gate / real checkpoint transaction as
+    the review-starting direction above, just rework -> review instead of review -> rework
+    -> review, with no rejection involved (the rework hop lands before any review exists).
+    """
+    from contextlib import contextmanager
+    from modules.flow_gate.db import ai_invoke_document_review_loops as db_loops
+    from modules.flow_gate.db import document_reviews as db_reviews
+    from modules.flow_gate.services.ai_invoke.provenance import effective_action_scope
+    from modules.flow_gate.services.ai_invoke import worker as worker_module
+
+    conn = sqlite3.connect(tmp_path / "worker-loop-rework-start.db")
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.executescript("""
+        CREATE TABLE ai_invoke_runs(run_id TEXT PRIMARY KEY);
+        CREATE TABLE groups(group_id TEXT PRIMARY KEY);
+        CREATE TABLE documents(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            doc_id TEXT UNIQUE NOT NULL,
+            project_id TEXT,
+            group_id TEXT,
+            revision_no INTEGER NOT NULL,
+            doc_review_status TEXT NOT NULL,
+            meta TEXT,
+            rejection_reason TEXT,
+            rejection_history TEXT,
+            updated_at TEXT
+        );
+        CREATE TABLE ai_providers(provider_id TEXT PRIMARY KEY);
+        CREATE TABLE document_reviews(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            doc_id TEXT NOT NULL,
+            revision_no INTEGER NOT NULL,
+            reviewer_id TEXT NOT NULL,
+            verdict TEXT NOT NULL,
+            findings TEXT NOT NULL,
+            comment TEXT,
+            reviewed_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+    """)
+    migrations = Path(__file__).resolve().parents[1] / "sql/migrations/sqlite"
+    for name in ("091_ai_invoke_document_review_loops.sql",
+                 "092_ai_invoke_document_review_loop_live_run.sql"):
+        conn.executescript((migrations / name).read_text(encoding="utf-8"))
+    conn.execute("INSERT INTO groups VALUES ('flowgate.default.0561')")
+    conn.execute(
+        "INSERT INTO documents(doc_id,project_id,group_id,revision_no,doc_review_status,updated_at) "
+        "VALUES (?, 'flowgate', 'flowgate.default.0561', 3, 'pending_review', ?)",
+        ("standalone3", "2026-09-12T00:00:00+00:00"),
+    )
+    conn.executemany("INSERT INTO ai_providers VALUES (?)", [("reviewer",), ("reworker",)])
+    conn.commit()
+
+    class Store:
+        def _execute(self, sql, values=()):
+            cursor = conn.execute(sql, values)
+            conn.commit()
+            return cursor
+        def _execute_affected(self, sql, values=()):
+            cursor = conn.execute(sql, values)
+            return cursor.rowcount
+        def _fetch_one(self, sql, values=()):
+            row = conn.execute(sql, values).fetchone()
+            return dict(row) if row else None
+        def _fetch_all(self, sql, values=()):
+            return [dict(row) for row in conn.execute(sql, values).fetchall()]
+        @contextmanager
+        def transaction(self):
+            try:
+                yield self
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+    store = Store()
+    monkeypatch.setattr(db_loops, "get_store", lambda: store)
+    monkeypatch.setattr(service, "get_store", lambda: store)
+    monkeypatch.setattr(service.db_docs, "get_store", lambda: store)
+    monkeypatch.setattr(db_reviews, "get_store", lambda: store)
+
+    started = datetime.now(timezone.utc)
+    loop = {
+        **BASE, "review_baseline_id": 0, "run_id": "aiv_e2e_rework_start",
+        "group_id": "flowgate.default.0561",
+        "doc_ref": "standalone3", "rework_message": "fix it",
+        "starts_with_rework": True, "current_stage": "rework",
+        "started_at": started.isoformat(),
+        "deadline_at": (started + timedelta(hours=1)).isoformat(),
+        "stop_reason": None, "stop_detail": None,
+    }
+    persisted = db_loops.insert(loop)
+    run = {
+        "run_id": "aiv_e2e_rework_start", "project_id": "flowgate", "issued_to": "review-owner",
+        "api_base_url": "http://127.0.0.1:8089/flowgate/api/v1",
+        "group_id": "flowgate.default.0561", "doc_ref": "standalone3",
+        "mode": "single", "document_review_loop": persisted,
+        "started_at": loop["started_at"], "docs_target": 0,
+        "chain_id": "loop", "chain_docs_target": 0, "chain_docs_reached": 0,
+        "attempts_used": 0, "fallback_history": [],
+        # review.py _spawn_rework_hop admits a starts_with_rework loop's FIRST hop as
+        # action_scope="edit", hop_kind=REWORK_HOP_KIND -- pinned for the run's whole
+        # lifetime exactly like the mirror test's "review" admission is.
+        "action_scope": "edit",
+        "hop_kind": "rework",
+    }
+    hops = []
+    stage_snapshots = []
+    def execute(_run, _chain, _prompt):
+        stage = db_loops.get("aiv_e2e_rework_start")["current_stage"]
+        hops.append(stage)
+        stage_snapshots.append({
+            "hop_kind": _run.get("hop_kind"),
+            "action_scope": _run.get("action_scope"),
+            "provider_id": _run.get("provider_id"),
+            "requested_provider_id": _run.get("requested_provider_id"),
+            "effective_action_scope": effective_action_scope(_run),
+        })
+        stamp = f"2026-09-13T00:00:0{len(hops)}+00:00"
+        if stage == "rework":
+            conn.execute("UPDATE documents SET revision_no = 4 WHERE doc_id = 'standalone3'")
+        else:
+            conn.execute(
+                "INSERT INTO document_reviews(doc_id,revision_no,reviewer_id,verdict,findings,comment,reviewed_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                ("standalone3", 4, "reviewer", "pass", "[]", None, stamp, stamp, stamp),
+            )
+        conn.commit()
+        return True
+
+    monkeypatch.setattr(service, "_execute_provider_chain", execute)
+    monkeypatch.setattr(service, "_classify_end_reason", lambda item, ok: item.update(outcome="complete"))
+    monkeypatch.setattr(service, "_judge_hop", lambda item: item.update(outcome="complete"))
+    monkeypatch.setattr(service, "_prepare_retry_token", lambda item: {"mention": "token"})
+    monkeypatch.setattr(service, "_reset_attempt_state", lambda item: None)
+    monkeypatch.setattr(worker_module, "_start_post_process_recovery", lambda item: (None, None))
+    monkeypatch.setattr(worker_module, "_stop_post_process_recovery", lambda *a, **k: None)
+    monkeypatch.setattr(service, "_broadcast", lambda run, event_type, payload: None)
+    monkeypatch.setattr(service, "_finalize_run", lambda item: item.update(status="finished"))
+    monkeypatch.setattr(service.ai_settings_service, "resolve_effective", lambda project: {
+        "providers": [{"id": "reviewer", "name": "Reviewer"},
+                      {"id": "reworker", "name": "Reworker"}]
+    })
+
+    service._worker(run, [{"id": "reworker", "name": "Reworker"}], "fix it")
+
+    # The real gate actually walked rework -> review, not a mocked shortcut.
+    assert hops == ["rework", "review"]
+    assert db_loops.get("aiv_e2e_rework_start")["stop_reason"] == "review_passed"
+
+    # action_scope stays pinned to "edit" (this run's admission value) on EVERY hop,
+    # including the review hop -- exactly the fact that made the old action_scope-only
+    # filter blind to this run's review stage. hop_kind is the live per-hop signal.
+    assert [s["action_scope"] for s in stage_snapshots] == ["edit"] * 2
+    assert [s["hop_kind"] for s in stage_snapshots] == ["rework", "review"]
+    assert [s["effective_action_scope"] for s in stage_snapshots] == ["edit", "review"]
+    review_snapshot = stage_snapshots[1]
+    assert review_snapshot["provider_id"] == "reviewer"
+    assert review_snapshot["requested_provider_id"] == "reviewer"
     conn.close()
 
 

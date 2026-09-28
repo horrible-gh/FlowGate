@@ -95,8 +95,8 @@ def test_both_steps_of_a_pair_keep_their_own_note_and_nothing_is_dropped():
     ]
 
 
-def test_attached_auto_row_takes_the_common_note_and_server_assembled_note_is_still_dropped():
-    """The common note reaches the report row too — under [자동 승인] that is the running row."""
+def test_defaults_note_stays_on_instruction_and_server_assembled_note_is_still_dropped():
+    """A common authoring note must not be replayed to the paired report worker."""
     rows, dropped, uid = _rows({
         "defaults": {"note": "shared"},
         "steps": [
@@ -104,13 +104,31 @@ def test_attached_auto_row_takes_the_common_note_and_server_assembled_note_is_st
             {"key": "TSR#1", "type": "TSR", "note": "server-only"},
         ],
     })
+    assert rows[0]["pair_note"] == ""
+    assert rows[0]["pair_note_source"] is None
     attached, _ = wpseq.attach_auto_rows(rows, next_uid=uid)
 
     assert [(row["type"], row["note"], row["note_source"]) for row in attached] == [
         ("T", "shared", "defaults"),
-        ("TR", "shared", "defaults"),
+        ("TR", "", None),
     ]
     assert [item["reason"] for item in dropped] == ["server_assembled_note"]
+
+
+def test_work_plan_rebuild_scrubs_legacy_defaults_pair_note():
+    rows, _dropped, uid = _rows({
+        "defaults": {"note": "shared"},
+        "steps": [{"key": "N#1", "type": "N", "note": ""}],
+    })
+    rows[0]["pair_note"] = "shared"
+    rows[0]["pair_note_source"] = "defaults"
+
+    attached, _ = wpseq.attach_auto_rows(rows, next_uid=uid)
+
+    assert [(row["type"], row["note"], row["note_source"]) for row in attached] == [
+        ("N", "shared", "defaults"),
+        ("NR", "", None),
+    ]
 
 
 @pytest.mark.parametrize("defaults", [None, "not-a-dict", {"note": " \t\n "}])
@@ -156,4 +174,9 @@ def test_candidates_publish_note_source_keep_the_row_contract_and_clear_note_mis
         "type", "label", "status", "locked", "poured", "note", "note_source",
         "origin", "plan_key", "source_doc_id", "source_revision_no",
         "provider_id", "provider_display_name", "provider_registered",
+        # 880712d: work plan execution settings (review/reviewer/pre-instruction) and
+        # plan-revision freshness now ride on the same public row contract.
+        "review_count", "reviewer_provider_id", "reviewer_provider_display_name",
+        "pre_instruction_text", "pre_instruction_attachment",
+        "source_freshness", "source_current_revision_no",
     }

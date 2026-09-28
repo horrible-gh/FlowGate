@@ -9,6 +9,7 @@ from modules.flow_gate.auth.auth_api import router as _auth_router
 from modules.flow_gate.documents.routers.documents import router as _documents_router
 from modules.flow_gate.documents.routers.conversation_turns import router as _conversation_turns_router
 from modules.flow_gate.documents.routers.work_plan import router as _work_plan_router
+from modules.flow_gate.documents.routers.tr2 import router as _tr2_router
 from modules.flow_gate.settings.routers.system import router as _settings_system_router
 from modules.flow_gate.settings.routers.users import router as _settings_users_router
 from modules.flow_gate.settings.routers.project_settings import router as _settings_project_router
@@ -42,6 +43,10 @@ from modules.flow_gate.api.v1.git_routes import router as _git_router
 from modules.flow_gate.api.v1.conversation_routes import router as _conversation_worker_router
 from modules.flow_gate.api.v1.chat_settings_routes import router as _chat_settings_router
 from modules.flow_gate.api.v1.ui_settings_routes import router as _ui_settings_router
+from modules.flow_gate.api.v1.snapshot_routes import router as _snapshot_router
+from modules.flow_gate.api.v1.source_bundle_routes import router as _source_bundle_router, overview_router as _source_bundle_overview_router
+from modules.flow_gate.api.v1.agent_routes import router as _agent_router
+from modules.flow_gate.api.v1.agent_job_routes import router as _agent_job_router
 from modules.flow_gate.api.request_scope_middleware import RequestScopeMiddleware
 from modules.flow_gate.services.git_service import GitServiceError
 from modules.flow_gate.services.git.credentials import git_error_envelope
@@ -84,6 +89,16 @@ async def lifespan(app: FastAPI):
     app.state.shutdown_event = asyncio.Event()
     yield                  # ← server running
     app.state.shutdown_event.set()
+    try:
+        from modules.flow_gate.services import snapshot_materialization_service
+        snapshot_materialization_service.shutdown()
+    except Exception:
+        logger.warning("snapshot cleanup shutdown failed", exc_info=True)
+    try:
+        from modules.flow_gate.services import source_bundle_cleanup_service
+        source_bundle_cleanup_service.shutdown()
+    except Exception:
+        logger.warning("Source Bundle cleanup shutdown failed", exc_info=True)
 
 
 app = FastAPI(lifespan=lifespan)
@@ -93,6 +108,15 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # RequestValidationError handler must be registered BEFORE SlowAPIMiddleware
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    # Machine payloads can contain one-time enrollment secrets. Never log their body.
+    if request.url.path.startswith(f"{CONTEXT}/api/v1/agent/") or request.url.path.startswith(f"{CONTEXT}/api/v1/system/agents"):
+        first = exc.errors()[0] if exc.errors() else {}
+        loc = first.get("loc") or ("body",)
+        field = str(loc[-1]) if len(loc) > 1 else "body"
+        return JSONResponse(status_code=422, content={"ok": False, "error": {
+            "code": "validation_failed", "message": "Invalid Agent field",
+            "details": {"field": field, "reason": first.get("type", "invalid")},
+        }})
     logger.debug("💥 Validation error occurred")
     logger.debug("⛳ Path:", request.url)
     logger.debug("📦 Details:\n", exc.errors())
@@ -142,6 +166,7 @@ app.include_router(_conversation_turns_router, prefix=f"{CONTEXT}/api/v1", tags=
 # Work plan (WP) routes live under the same /documents prefix but in their own module:
 # documents.py is already 112KB and the plan paths share nothing with it but the prefix.
 app.include_router(_work_plan_router, prefix=f"{CONTEXT}/api/v1", tags=["Documents"])
+app.include_router(_tr2_router, prefix=f"{CONTEXT}/api/v1", tags=["Documents"])
 app.include_router(_settings_system_router, prefix=f"{CONTEXT}/api/v1", tags=["SystemSettings"])
 app.include_router(_settings_users_router, prefix=f"{CONTEXT}/api/v1", tags=["UserAdmin"])
 app.include_router(_settings_project_router, prefix=f"{CONTEXT}/api/v1", tags=["ProjectSettings"])
@@ -175,6 +200,11 @@ app.include_router(_git_router, prefix=f"{CONTEXT}", tags=["Git"])
 app.include_router(_conversation_worker_router, prefix=f"{CONTEXT}", tags=["Conversation"])
 app.include_router(_chat_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["ChatSettings"])
 app.include_router(_ui_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["UiSettings"])
+app.include_router(_snapshot_router, prefix=f"{CONTEXT}", tags=["Snapshots"])
+app.include_router(_source_bundle_router, prefix=f"{CONTEXT}", tags=["SourceBundles"])
+app.include_router(_source_bundle_overview_router, prefix=f"{CONTEXT}", tags=["SourceBundles"])
+app.include_router(_agent_router, prefix=f"{CONTEXT}/api/v1", tags=["Agents"])
+app.include_router(_agent_job_router, prefix=f"{CONTEXT}/api/v1", tags=["AgentJobs"])
 app.include_router(_files_router.router, prefix="/api", tags=["Files"])
 # Every mutation route must carry an inventory classification. Group routes also name
 # the standard resolver used by GroupMutationPolicyMiddleware.

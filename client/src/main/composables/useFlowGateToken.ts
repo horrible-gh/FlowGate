@@ -4,6 +4,7 @@ import { postRequest } from '@shared/api'
 import { useToast } from '../components/common/useToast'
 import { prependMessagesSection } from '../utils/mentionMessages'
 import { copyToClipboard } from '../utils/clipboard'
+import type { AiProvenance } from '../types/aiReview'
 
 // Base URL used ONLY to build copy-paste mention text (buildMentText — the fallback for
 // when the server returns no mention). Mentions are consumed by an AI worker on another machine, so the URL
@@ -143,6 +144,15 @@ export interface RejectionHistoryItem {
   responded_at?: string | null
   response_recorded_by?: string | null
   response_revision_no?: number | null
+  // T0005 2.1.5: the document_reviews row id this AUTOMATIC rejection came from (absent
+  // for a human rejection).
+  review_id?: number | string | null
+  // 0582 T0005 §3/§4: the ACTUAL reviewing AI for an automatic rejection, resolved
+  // server-side from `review_id` — never the server logic that ran the transition.
+  rejection_provider?: AiProvenance | null
+  // 0582 T0005 §C/§4: the rework run that generated `ai_response`, distinct from
+  // (and possibly a different provider than) the review above.
+  response_provider?: AiProvenance | null
 }
 
 export interface RejectionContext {

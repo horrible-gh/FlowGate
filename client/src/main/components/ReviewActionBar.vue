@@ -352,9 +352,17 @@
                v3 screen 1. -->
 
           <!-- Approve -->
-          <button class="btn btn-success btn-sm" :disabled="!canApprove || isActionBarBusy" @click="onApproveClick">
+          <button
+            class="btn btn-success btn-sm"
+            :disabled="!canApprove || isActionBarBusy"
+            :title="gitSettling ? t('main.review_action_bar.git_settle_in_progress') : testGateBlocked ? t('main.review_action_bar.test_gate_blocked') : undefined"
+            @click="onApproveClick"
+          >
             <AppIcon name="check" /> {{ t('main.review_action_bar.btn_approve') }}
           </button>
+          <span v-if="testGateBlocked" class="ab-gate-hint" data-testid="ab-test-gate-hint">
+            <AppIcon name="prohibit" /> {{ t('main.review_action_bar.test_gate_blocked') }}
+          </span>
 
           <!-- Reject -->
           <button class="btn btn-danger btn-sm" :disabled="approving || isActionBarBusy" @click="onRejectClick">
@@ -457,6 +465,21 @@
         </div>
         </template>
 
+        <div class="ab-git-target">
+          <label for="ab-git-target">{{ t('main.git_finalize.merge_target_label') }}</label>
+          <select
+            id="ab-git-target"
+            v-model="gitTargetBranch"
+            data-test="finalize-target-selector"
+            :disabled="gitArchiveSelected || !gitActionMerges"
+          >
+            <option v-for="branch in gitTargetCandidates" :key="branch" :value="branch">{{ branch }}</option>
+          </select>
+          <p v-if="gitActionMerges && gitFin.base_branch && gitTargetBranch !== gitFin.base_branch" class="ab-git-retarget" role="status" data-test="finalize-retarget-notice">
+            {{ t('main.git_finalize.retarget_notice', { base: gitFin.base_branch, target: gitTargetBranch }) }}
+          </p>
+        </div>
+
         <!-- sqyjx6bt v4: archive is outside the two axes and disables them when
              selected. The approval dialog intentionally keeps the compact form. -->
         <section v-if="gitFin.archive_action" class="ab-git-keep-zone">
@@ -499,6 +522,7 @@ import { useDocTypeStore } from '../stores/docTypeStore'
 import GitFinalizeAxis from './GitFinalizeAxis.vue'
 import type { FinalizeAxes } from '../composables/finalizeAxis'
 import { useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
+import { describeTr2Error } from './documents/tr2State'
 
 type ActionBarMode = 'workflow' | 'next' | 'review' | 'q' | 'info' | 'sequence-complete' | 'rejected' | 'workflow-recover'
 
@@ -533,6 +557,12 @@ const props = defineProps<{
    * same true that the running document's own tab gets.
    */
   groupTestRunActive?: boolean
+  /**
+   * 0549 T0008: this TSR's server-computed test gate did not pass (FAIL/BLOCKED/NOT_RUN).
+   * The report exists, but it cannot be approved — the server refuses it too; the button
+   * stays visible and disabled, with the reason next to it.
+   */
+  testGateBlocked?: boolean
   // T813: head doc label fields
   headDocId?: string | null
   /** D031: head step type code (replaces headDocType), sourced from workflowViewState.headDocLabel. */
@@ -571,7 +601,7 @@ const emit = defineEmits<{
   'open-test-scenario': [payload: { docId: string; projectId: string; groupId: string }]
 }>()
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const approving = ref(false)
 const showApproveConfirm = ref(false)
 const markRevising = ref(false)
@@ -619,6 +649,8 @@ async function onReleaseLeaseClick(): Promise<void> {
 // block, its default, and the pre-check on the server all read one source of truth.
 interface GitFinState {
   branch: string | null
+  base_branch?: string | null
+  finalize_target?: { target_branch?: string | null } | null
   status: string
   default_action: string | null
   choices: string[]
@@ -628,10 +660,19 @@ interface GitFinState {
   action_axes?: FinalizeAxes | null
   // 0339: separate overlay, deliberately not a fourth scope.
   archive_action?: 'stash' | null
+  // 0555: terminal Git whose approval still has to be committed (approval-only retry).
+  approval_pending?: boolean
+  // 0607 T0004 §3.6 (rev1): this group's final approval is still running Git on
+  // the server. `null`/missing means the server could not confirm either way
+  // (lock probe failure) — treat that the same as `true`, never as `false`.
+  approval_in_flight?: boolean | null
 }
 const gitFin = ref<GitFinState | null>(null)
 const gitNormalChoice = ref<string>('')
 const gitArchiveSelected = ref(false)
+const gitTargetBranch = ref('')
+const gitTargetCandidates = ref<string[]>([])
+const gitActionMerges = computed(() => ['merge', 'merge_only'].includes(gitNormalChoice.value))
 const isAcDoc = computed(() => (props.docType ?? '').toUpperCase() === 'AC')
 // Show the choice only for an AC doc whose group slot is still actionable —
 // awaiting_choice / waiting with real choices offered. Terminal (merged/pushed),
@@ -650,6 +691,7 @@ async function fetchGitFin() {
     gitFin.value = null
     return
   }
+  let state: GitFinState
   try {
     // context=approval → the server returns a display-only preliminary
     // awaiting_choice so the choice block renders in THIS confirm dialog, before
@@ -659,12 +701,43 @@ async function fetchGitFin() {
     const { data } = await getRequest<{ ok: boolean; state: GitFinState }>(
       `/api/v1/groups/${props.groupId}/git/finalize?context=approval`,
     )
-    gitFin.value = data.state
-    gitNormalChoice.value = data.state.default_action || 'wait'
-    gitArchiveSelected.value = false
-    gitAuxOpen.value = !!data.state.aux_choices?.includes(gitNormalChoice.value)
+    state = data.state
   } catch {
     gitFin.value = null // 403/404/500 — no git block, plain approve
+    return
+  }
+  gitFin.value = state
+  gitNormalChoice.value = state.default_action || 'wait'
+  gitArchiveSelected.value = false
+  gitAuxOpen.value = !!state.aux_choices?.includes(gitNormalChoice.value)
+  // T0016 §4.1 — the branch catalog / merge-target suggestion is a separate,
+  // best-effort enrichment of the finalize UI above, not a precondition for it.
+  // A 403/404/500 here must fall back to the pinned/base target instead of
+  // wiping out the finalize block this dialog already has.
+  const fallbackTarget = state.finalize_target?.target_branch || state.base_branch || ''
+  // Keep the fallback as a real option as well as the model value. A native
+  // select does not display a value that has no matching option, so leaving
+  // candidates empty made the catalog-failure fallback look blank.
+  gitTargetCandidates.value = fallbackTarget ? [fallbackTarget] : []
+  gitTargetBranch.value = fallbackTarget
+  try {
+    const catalog = await getRequest<any>(`/api/v1/projects/${props.projectId}/git/branches`)
+    gitTargetCandidates.value = (catalog.data.branches || [])
+      .filter((branch: any) => (branch.kind === 'local' || branch.kind === 'base') && branch.name !== state.branch)
+      .map((branch: any) => branch.name)
+    // T0016 §2.2: an already-pinned open attempt always wins (never silently
+    // retargeted); otherwise prefer the project's persisted integration branch
+    // over resetting to base every time this dialog opens.
+    const defaultTarget = state.finalize_target?.target_branch
+      || catalog.data.default_merge_target
+      || state.base_branch
+      || catalog.data.base_branch
+      || ''
+    gitTargetBranch.value = gitTargetCandidates.value.includes(defaultTarget)
+      ? defaultTarget : (gitTargetCandidates.value[0] || '')
+  } catch {
+    // catalog read failed — keep the finalize/base fallback set above and
+    // leave gitFin untouched so the approval Git block stays visible.
   }
 }
 
@@ -816,7 +889,7 @@ const canShowReviewRequestAction = computed(() =>
 // next-action/copy-next-mention token path). approve-permission gating is enforced by the
 // server (next-approved → 403); the FE does not hold the granular permission set.
 const canCreateApproved = computed(() =>
-  ['N', 'T'].includes((props.nextStepCode ?? '').toUpperCase()),
+  ['N', 'T', 'T2'].includes((props.nextStepCode ?? '').toUpperCase()),
 )
 
 // 0395 T0030: this is still the existing create-empty action. Only its visible label
@@ -968,6 +1041,7 @@ const canApprove = computed(
   () =>
     !approving.value &&
     approvedDocId.value !== props.docId &&
+    !props.testGateBlocked &&
     ['pending_review', 'revised'].includes(normalizedStatus.value),
 )
 
@@ -988,6 +1062,82 @@ function isGitInvalidRequest(e: any): boolean {
     e?.response?.status === 422
     && e?.response?.data?.error?.code === 'invalid_request'
   )
+}
+
+// flowgate.default.0607 T0004 §3.6 (NR0003 §3/§6): when an approve that carried a
+// git_action fails without a verdict (axios timeout, dropped connection, gateway
+// 5xx), the server may still be merging — Axios giving up never stops it. 0600's
+// button came back at 30s, the second click reached a server that had already
+// merged, and that click discarded the slot unpushed. So the button stays locked
+// and the SERVER is asked, not a timer: the approval lock this group's approval
+// holds (`approval_in_flight`), then the document, then the Git slot. Only once
+// the server has stopped working does this settle into one of four outcomes.
+type GitApproveSettle = 'approved' | 'deferred' | 'retry' | 'failed' | 'unknown'
+const GIT_SETTLE_POLL_MS = 3_000
+// Past the whole server-side Git budget (see GIT_APPROVAL_TIMEOUT_MS) twice over.
+// Reaching it is said out loud ('unknown'), never a silent give-up.
+const GIT_SETTLE_MAX_MS = 11 * 60_000
+const gitSettling = ref(false)
+let approveGeneration = 0
+
+watch(() => props.docId, () => { approveGeneration += 1 })
+onBeforeUnmount(() => { approveGeneration += 1 })
+
+async function fetchGitFinLive(): Promise<GitFinState | null> {
+  if (!props.groupId) return null
+  try {
+    const { data } = await getRequest<{ ok: boolean; state: GitFinState }>(
+      `/api/v1/groups/${props.groupId}/git/finalize?context=approval`,
+    )
+    return data?.state ?? null
+  } catch {
+    return null
+  }
+}
+
+async function settleGitApproval(generation: number): Promise<GitApproveSettle | null> {
+  const started = Date.now()
+  let announced = false
+  for (;;) {
+    if (generation !== approveGeneration) return null
+    const git = await fetchGitFinLive()
+    if (generation !== approveGeneration) return null
+    // rev1 (human rejection): `approval_in_flight` is only trustworthy when it is
+    // an explicit `false`. A failed finalize GET (`fetchGitFinLive` → null), a
+    // response missing the field, or the server's own lock probe failing all
+    // surface here as `undefined`/`null` — none of those are "no approval is
+    // running", so only `=== false` may unlock the button and read the doc.
+    if (git?.approval_in_flight === false) {
+      // Read the document only AFTER the server explicitly confirmed the lock is
+      // free: the approval commits before the lock is released, so an approved
+      // request is visible here.
+      const serverStatus = await fetchServerReviewStatus()
+      if (serverStatus === 'approved') return 'approved'
+      if (git?.status === 'conflict') return 'deferred'
+      if (git?.approval_pending) return 'retry'
+      return 'failed'
+    }
+    // Either confirmed in flight, or unknown — both keep the button locked and
+    // keep polling instead of re-POSTing.
+    if (!announced) {
+      announced = true
+      gitSettling.value = true
+      showToast(t('main.review_action_bar.git_settle_in_progress'), 'info')
+    }
+    if (Date.now() - started >= GIT_SETTLE_MAX_MS) return 'unknown'
+    await new Promise((resolve) => setTimeout(resolve, GIT_SETTLE_POLL_MS))
+  }
+}
+
+function requestGitStatusRefresh() {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent('fg:git_status_refresh', {
+    detail: {
+      project: props.projectId || null,
+      group_id: props.groupId || null,
+      status: null,
+    },
+  }))
 }
 
 async function postApproveWithGitRetry(body: Record<string, unknown>) {
@@ -1013,6 +1163,8 @@ function onApproveClick() {
 async function doApprove() {
   if (!canApprove.value) return
   approving.value = true
+  const generation = ++approveGeneration
+  let sentGitAction = false
   try {
     if (props.beforeApprove && !(await props.beforeApprove())) return
     // §3.1: the git finalize choice rides on the approve request only when the
@@ -1022,7 +1174,11 @@ async function doApprove() {
     const body: Record<string, unknown> = { doc_id: props.docId, comment: null }
     if (showGitFinalizeBlock.value && (gitArchiveSelected.value || gitNormalChoice.value)) {
       body.git_action = gitArchiveSelected.value ? 'stash' : gitNormalChoice.value
+      if (!gitArchiveSelected.value && gitActionMerges.value && gitTargetBranch.value) {
+        body.git_target_branch = gitTargetBranch.value
+      }
     }
+    sentGitAction = !!body.git_action
     const res = await postApproveWithGitRetry(body)
     const git = (res.data as any)?.git
     if (git?.quiet) {
@@ -1107,16 +1263,60 @@ async function doApprove() {
         },
       }))
     }
-    // Pass the server-confirmed status up so DocHeader can optimistically flip the
-    // strip/action bar before the refetch round-trip (gap D, NR0003 §6 item 2).
-    const updated = (res.data as any)?.document ?? (res.data as any)?.data ?? res.data
+    // 0555 T#4: HTTP 200 is not itself an approval verdict. A conflict is a
+    // successful deferred Git transition while the AC and root remain pending.
+    // Only an explicit approved verdict (or the legacy approved document shape)
+    // may pin this bar and publish the approved transition.
+    const payload = res.data as any
+    const approval = payload?.approval
+    const updated = payload?.document ?? payload?.data ?? payload
+    const approved = approval?.approved === true
+      || (approval == null && updated?.doc_review_status === 'approved')
+    if (!approved) {
+      // Keep the button available for the same AC. The Git refresh/open event
+      // above moves conflict sessions to their recovery surface and terminal
+      // approval failures to the approval-only retry state.
+      return
+    }
     approvedDocId.value = props.docId
-    emit('approve', updated?.doc_review_status ?? 'approved')
+    emit('approve', updated?.doc_review_status ?? approval?.document_status ?? 'approved')
     if (props.afterApprove) {
       try { await props.afterApprove(updated ?? {}) } catch { /* approval is already durable */ }
     }
   } catch (e: any) {
-    const detail = e?.response?.data?.detail ?? e
+    // TR2 returns a specific refusal code; present its meaning in the approval bar.
+    const code = e?.response?.data?.code
+    const detail = typeof code === 'string' && code.startsWith('tr2_')
+      ? describeTr2Error(e, t, te).text
+      : (e?.response?.data?.detail ?? e?.response?.data?.error?.message ?? e)
+    if (sentGitAction) {
+      // 0607 T0004 §3.6 — see settleGitApproval. No new approve is sent from here.
+      const settled = await settleGitApproval(generation)
+      if (settled === null) return // this bar moved to another document meanwhile
+      if (settled === 'approved') {
+        approvedDocId.value = props.docId
+        emit('approve', 'approved')
+        requestGitStatusRefresh()
+        return
+      }
+      requestGitStatusRefresh()
+      if (settled === 'deferred') {
+        showToast(t('main.review_action_bar.git_settle_deferred'), 'warning')
+        return
+      }
+      if (settled === 'retry') {
+        await fetchGitFin()
+        showToast(t('main.review_action_bar.git_settle_retry'), 'warning')
+        return
+      }
+      if (settled === 'unknown') {
+        showToast(t('main.review_action_bar.git_settle_unknown'), 'warning')
+        return
+      }
+      console.error(t('main.review_action_bar.error_approve_failed_log'), detail)
+      showToast(t('main.review_action_bar.toast_approve_failed', { detail }), 'danger')
+      return
+    }
     // 0257 NR0003 §3: the server refusing approve on an already-approved doc is correct and
     // stays untouched. Re-read the document rather than pattern-matching that message — the
     // wording is not an API contract. If the server says it is already approved, this click
@@ -1131,6 +1331,7 @@ async function doApprove() {
     console.error(t('main.review_action_bar.error_approve_failed_log'), detail)
     showToast(t('main.review_action_bar.toast_approve_failed', { detail }), 'danger')
   } finally {
+    gitSettling.value = false
     approving.value = false
   }
 }
@@ -1592,6 +1793,27 @@ onBeforeUnmount(() => {
 .ab-git-choice--aux {
   margin-top: 8px;
 }
+.ab-git-target {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+}
+.ab-git-target label {
+  color: var(--text-m);
+  font-size: .72rem;
+  font-weight: 700;
+}
+.ab-git-target select {
+  width: 100%;
+}
+.ab-git-retarget {
+  margin: 0;
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: var(--warning-l, #fef3c7);
+  color: var(--warning, #d97706);
+  font-size: .72rem;
+}
 .ab-git-aux {
   margin-top: 2px;
 }
@@ -1682,6 +1904,8 @@ onBeforeUnmount(() => {
   color: #b45309;
   font-size: 0.6rem;
 }
+/* 0549 T0008: why [approve] is disabled on a TSR that did not pass the test gate. */
+.ab-gate-hint { display: inline-flex; align-items: center; gap: 4px; font-size: .72rem; color: var(--danger); white-space: nowrap; }
 </style>
 
 

@@ -155,3 +155,14 @@ def get_latest_by_doc(doc_id: str) -> Optional[dict]:
         "SELECT * FROM document_reviews WHERE doc_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
         [doc_id],
     )
+
+
+def get_by_id(review_id: int) -> Optional[dict]:
+    """Return one review row by its primary key.
+
+    0582 T0005 SS3: an automatic rejection stores only ``review_id`` (the review row it
+    came from) in ``documents.rejection_history`` -- this is the join a read path uses to
+    resolve that id back to the review's ``actual_provider_name`` without duplicating the
+    provider snapshot into the rejection item itself.
+    """
+    return get_store()._fetch_one("SELECT * FROM document_reviews WHERE id = ?", [review_id])

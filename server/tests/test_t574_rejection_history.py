@@ -457,6 +457,54 @@ class TestSSEPayloadRejectionHistory:
         assert "rejection_history" in sse_payload
         assert sse_payload["rejection_history"] == history
 
+    def test_endpoint_broadcast_enriches_rejection_history_provenance(self, db_conn, monkeypatch):
+        """0582 TR0006 rev1: document_review_transition_endpoint's own SSE broadcast
+        (workflow.py, the human [반려]/[승인] action route) used to send
+        _parse_rejection_history's raw items -- no rejection_provider/response_provider
+        keys at all -- while GET /document already runs the SAME list through
+        enrich_rejection_history_provenance. DocHeader's fg:doc_review_status_changed
+        listener replaces its whole (enriched) rejection_history array with whatever this
+        payload carries, so this is the OTHER path (besides the AI review-loop ones covered
+        elsewhere) a browser's rejection_history can silently lose its provider from.
+
+        Drives the REAL endpoint function (not a hand-copied duplicate of its payload
+        assembly), guards bypassed the same way test_d_point_locale_0430 does.
+        """
+        _patch_pipeline(db_conn, monkeypatch)
+        import modules.flow_gate.workflow.routers.workflow as wf_router
+
+        monkeypatch.setattr(wf_router, "_guard_group_not_ai_running", lambda _doc, _doc_id: None)
+        monkeypatch.setattr(wf_router.process_service, "is_group_disposed", lambda _gid: False)
+
+        captured_payloads: list[dict] = []
+
+        async def fake_broadcast(event):
+            captured_payloads.append(event.payload)
+
+        # The endpoint imports broadcast_event LOCALLY inside its own try block (not a
+        # module-level name on `workflow`), so the patch target is its actual source.
+        with patch(
+            "modules.flow_gate.api.v1.events.publisher.broadcast_event",
+            new=fake_broadcast,
+        ):
+            result = asyncio.run(wf_router.document_review_transition_endpoint(
+                doc_id="D001",
+                action="reject",
+                body=wf_router.DocumentTransitionRequest(comment="needs work"),
+                current_user={"user_id": "u001", "is_admin": True},
+            ))
+
+        assert result["document"]["doc_review_status"] == "rejected"
+        assert len(captured_payloads) == 1
+        history = captured_payloads[0]["rejection_history"]
+        assert len(history) == 1
+        assert history[0]["reason"] == "needs work"
+        # The key's presence (value None here -- a human reject with no review_id and no
+        # AI response yet) is what proves enrich_rejection_history_provenance ran on this
+        # broadcast payload instead of the raw parsed list.
+        assert "rejection_provider" in history[0]
+        assert "response_provider" in history[0]
+
 
 # ── GET response model ────────────────────────────────────────────────────────
 
@@ -496,8 +544,14 @@ class TestGetDocumentResponse:
         data = _json.loads(result.body)
         assert data["ok"] is True
         assert "rejection_history" in data
+        # 0582 T0005 §4: every item now also carries rejection_provider/response_provider
+        # (both null here — no review_id, no recorded response) via
+        # pipeline_service.enrich_rejection_history_provenance.
         assert data["rejection_history"] == [
-            {"reason": "GET test", "rejected_at": "2026-05-01T00:00:00Z", "rejected_by": "u001"}
+            {
+                "reason": "GET test", "rejected_at": "2026-05-01T00:00:00Z", "rejected_by": "u001",
+                "rejection_provider": None, "response_provider": None,
+            }
         ]
         assert data["rejection_reason"] == "GET test"
         assert "doc_review_status" in data
@@ -1230,6 +1284,17 @@ class TestRejectionResponseThroughRealInboxEdit:
         payload = status_events[0].payload
         assert payload["next_status"] == "revised"
         assert payload["rejection_history"][0]["ai_response"] == "addressed the review comments"
+        # 0582 TR0006 rev1: this broadcast used to carry parse_rejection_history's raw
+        # item -- no rejection_provider/response_provider keys at all -- while GET
+        # /document already ran the SAME item through enrich_rejection_history_provenance.
+        # DocHeader's listener replaces its whole (enriched) rejection_history array with
+        # this payload's, so a raw item here made the just-recorded response's provider
+        # show as undefined ('AI · 외부/미확인') until the next manual reload. The keys
+        # must be present now (their VALUE is None here -- review_id 90 names no real
+        # document_reviews row in this e2e fixture, and this edit token carries no bound
+        # ai-invoke run -- but the key itself proves enrichment ran on this payload).
+        assert "rejection_provider" in payload["rejection_history"][0]
+        assert "response_provider" in payload["rejection_history"][0]
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════

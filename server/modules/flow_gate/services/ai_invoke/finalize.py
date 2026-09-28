@@ -48,7 +48,10 @@ from .runtime import (
     REVIEW_STALLED_STOP_CODE,
     REVIEW_VERDICT_HOLD_STOP_CODE,
     SOURCE_DIRTY_FILES_LIMIT,
+    TEST_GATE_BLOCKED_STOP_CODE,
+    TEST_RUN_PENDING_STOP_CODE,
     _absolute_cap_sec,
+    _actual_work_executor_provider_id,
     _known_run_prompts,
     _known_run_raw_tokens,
     _mark_scratch_completed,
@@ -177,8 +180,13 @@ def _conflict_resolved(run: dict) -> bool:
     merge_id = run.get("merge_id")
     if merge_id is None:
         return False
+    # 0630 T0005: a branch merge's run carries only the synthetic project-scoped key, so
+    # its session is addressed by project instead of by group.
+    owner_group, owner_project = git_service.merge_session_owner_args(merge_id, run["group_id"])
     try:
-        conflicts = git_service.list_conflicts(run["group_id"], int(merge_id))
+        conflicts = git_service.list_conflicts(
+            owner_group, int(merge_id), **({"project_id": owner_project} if owner_project else {}),
+        )
     except GitServiceError as exc:
         # A successful complete=true resolve closes the merge session; list_conflicts
         # then returns not_found. Treat closed/missing as terminal for this scoped oracle.
@@ -317,6 +325,46 @@ def _finalize_run(run: dict) -> None:
             break
         terminal.attempt(run, "prepare_" + name, action)
     terminal.cleanup(run, handoff=respawn_pending, reason="normal_finish")
+    # T#2: an AI responder POSTs while it still owns this lease, so the answer-path
+    # attempt necessarily defers. Retry after finalization/release; human answers and
+    # restart recovery already use the same helper directly from register_answer.
+    _auto_resume_answered_question_chain(run)
+    # 0549 T0008: a hop that handed a TS to the test gate parks test_run_pending above; if
+    # the gate already passed while this worker was still finalizing, the resume could not
+    # happen then (the group lease and the live run were still this hop's) — do it now,
+    # strictly after the release, the same ordering the question resume relies on.
+    _auto_resume_test_gate_chain(run)
+    # NR0003 §11 제안 1/2 (T#1): the responder dispatch below starts a brand-new run through
+    # the ordinary admission path, which refuses a second concurrent run for this group
+    # (`run_in_progress`) as long as THIS hop's own lease is still held -- so it must run
+    # strictly after the release directly above, never before it.
+    if run.get("stop_code") == "question_pending":
+        _dispatch_question_responder(run)
+
+
+def _auto_resume_test_gate_chain(run: dict) -> None:
+    """Best-effort finalization hook for the test-gate continuation (0549 T0008).
+
+    ``test_run_service.continue_chain_after_test_gate`` owns the decision (gate passed?
+    target beyond the TSR?) and enters the ordinary resume_chain CAS path; the test-result
+    side calls the same function, so whichever end of the race sees both facts first
+    resumes and the paused-row CAS turns the other into a no-op.
+    """
+    if run.get("stop_code") != TEST_RUN_PENDING_STOP_CODE:
+        return
+    doc_id = run.get("test_gate_doc_id")
+    if not doc_id:
+        return
+    try:
+        from modules.flow_gate.services import test_run_service
+
+        test_run_service.resume_test_gate_chain_for_hop(
+            doc_id,
+            api_base_url=run.get("api_base_url"),
+            locale=run.get("continuation_locale"),
+        )
+    except Exception:
+        logger.warning("test-gate auto-resume failed for %s", run.get("run_id"), exc_info=True)
 
 
 def _finalize_messages(run: dict) -> None:
@@ -382,6 +430,105 @@ def _finalize_review_checkpoint(run: dict) -> None:
         except Exception as exc:
             logger.exception("document review-loop checkpoint failed for %s", run["run_id"])
             review.force_stop_loop_after_checkpoint_failure(run, exc)
+
+
+def _auto_resume_answered_question_chain(run: dict) -> None:
+    """Best-effort finalization hook for the last-answer continuation.
+
+    The shared q_service helper re-checks the durable system stop and every open Q
+    in the group, then enters the ordinary resume_chain CAS path. Calling it for all
+    completed runs also closes the narrow race where a human answers while the
+    requester itself is still finalizing its question_pending stop.
+    """
+    doc_ref = run.get("doc_ref")
+    api_base_url = run.get("api_base_url")
+    if not doc_ref or not api_base_url:
+        return
+    try:
+        from modules.flow_gate.services import q_service
+
+        is_q_responder = bool(
+            run.get("mode") == "single"
+            and run.get("action_scope") == "edit"
+            and run.get("completion_oracle") is not None
+            and not run.get("scope_oracle_run")
+        )
+        q_service.auto_resume_answered_chain(
+            doc_id=doc_ref,
+            api_base_url=api_base_url,
+            locale=run.get("continuation_locale") or "ko",
+            responder_run=run if is_q_responder else None,
+        )
+    except Exception:
+        logger.warning(
+            "question answer finalization resume failed for %s",
+            doc_ref,
+            exc_info=True,
+        )
+
+
+def _dispatch_question_responder(run: dict) -> None:
+    """Auto-dispatch the AI responder for a `question_pending` stop.
+
+    Connects two pieces NR0003 found already built on their own (§12): the responder
+    priority `review.resolve_question_responder` resolves, and the existing
+    `q_answer_invoke_service.dispatch_answer_run` a human's own [AI 답변 요청] click
+    already performs. No new AI execution engine is built here -- only the missing wiring
+    between `question_pending` and that dispatch (제안 2).
+
+    Only the earliest (lowest-seq) unanswered item is dispatched when several questions are
+    pending at once: one AI run answers exactly one item (D0005 §3.2), and the group lease
+    this function relies on being free (see the caller) permits only one run in flight per
+    group regardless -- firing one per pending item here would only manufacture
+    `run_in_progress` failures for every item after the first.
+
+    Every failure is swallowed and logged: an auto-dispatch that could not start (no
+    enabled provider, an unusable pick, an admission error) leaves the question exactly
+    where a human can still answer it by hand through [AI 답변 요청]/[멘트복사] -- a
+    successful `question_pending` stop must never turn into an unhandled exception here.
+    """
+    doc_ref = run.get("doc_ref")
+    if not doc_ref:
+        return
+    try:
+        from modules.flow_gate.db import questions as db_questions
+        from modules.flow_gate.db import question_items as db_question_items
+        from modules.flow_gate.services import q_service, q_answer_invoke_service
+
+        anchor = q_service.resolve_question_anchor(doc_ref)
+        container = db_questions.get_container_by_doc(anchor)
+        if container is None or container.get("status") != "pending":
+            return
+        unanswered = db_question_items.list_unanswered(container["id"])
+        if not unanswered:
+            return
+        target = min(unanswered, key=lambda row: row.get("seq") or 0)
+
+        doc = db_docs.get_by_id(anchor)
+        if doc is None:
+            return
+        doc = {**doc, "doc_id": anchor}
+        item = q_answer_invoke_service.resolve_item(anchor, target["id"])
+
+        item_seq = admission.continuation_hop_item_seq(
+            doc_ref,
+            continuation_instruction_mode=run.get("continuation_instruction_mode"),
+            continuation_auto_approve_item_seqs=run.get("continuation_auto_approve_item_seqs"),
+        )
+        provider_id = review.resolve_question_responder(
+            run.get("continuation_reviewer_overrides"),
+            item_seq,
+            run.get("continuation_base_provider_id"),
+            run.get("project_id"),
+        )
+        q_answer_invoke_service.dispatch_answer_run(
+            doc=doc, item=item, issued_to=run.get("issued_to"),
+            api_base_url=run.get("api_base_url"), provider_id=provider_id,
+        )
+    except Exception:
+        logger.warning(
+            "question responder auto-dispatch failed for %s", doc_ref, exc_info=True,
+        )
 
 
 # ── Stop classification (0359 L0007 §4.1 ~ §4.3) ─────────────────────────────
@@ -473,6 +620,12 @@ def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
     if stop_code == "question_pending":
         return ("This hop registered a query and is waiting for a human answer. "
                 "The chain stopped and can be resumed once it is answered.")
+    if stop_code == TEST_RUN_PENDING_STOP_CODE:
+        return ("This hop handed the approved TS to the test gate. The chain resumes on its "
+                "own once the TSR is PASS and approved; FAIL/BLOCKED/NOT_RUN keep it stopped.")
+    if stop_code == TEST_GATE_BLOCKED_STOP_CODE:
+        return ("The test gate did not pass (FAIL/BLOCKED/NOT_RUN or the run failed), so "
+                "the chain stopped. Resume after the failure-origin rework or a human check.")
     if stop_code == "providers_exhausted":
         return ("No AI provider could be started for this hop. "
                 "The chain stopped and can be resumed.")
@@ -574,7 +727,7 @@ def stop_reason_text(stop_code: Optional[str], *, target_seq: Optional[int] = No
 
 
 def mark_chain_stop(group_id: Optional[str], stop_code: str,
-                    detail: Optional[str] = None) -> bool:
+                    detail: Optional[str] = None, *, extra: Optional[dict] = None) -> bool:
     """Let the inbox self-chain tag the live run with ITS stop reason (L0007 §4.1-5).
 
     Returns False when there is no engine run to tag — a copy-mention (semi-manned) chain,
@@ -587,6 +740,10 @@ def mark_chain_stop(group_id: Optional[str], stop_code: str,
         return False
     run["inbox_stop_code"] = stop_code
     run["inbox_stop_detail"] = detail
+    if extra:
+        # 0549 T0008: facts the run's own finalization needs later (the TS handed to the
+        # test gate), carried on the live run like the stop code itself.
+        run.update(extra)
     return True
 
 
@@ -719,6 +876,12 @@ def stamp_chain_stop(
 # ── Stop row / record / human signal (0359 L0007 §2.8, §2.10.1, §2.11) ───────
 
 
+# Stops that are not a new chain: the paused row keeps the chain identity and lifetime
+# counters so the automatic resume continues the SAME chain (question answered, T#2; test gate
+# passed, 0549 T0008).
+_CHAIN_KEEPING_STOPS = ("question_pending", TEST_RUN_PENDING_STOP_CODE)
+
+
 def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
     """Maintain the miniplayer's [resume] card (L0007 §2.8 / §4.5).
 
@@ -762,6 +925,17 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
                     continuation_base_provider_id=run.get("continuation_base_provider_id"),
                     continuation_provider_pinned=run.get("continuation_provider_pinned"),
                     continuation_provider_overrides=run.get("continuation_provider_overrides"),
+                    # flowgate.default.0596 T0004 (NR0003 rev3): pause_run already stores the
+                    # actual work-hop executor into this same row (chain.pause_run reads
+                    # _actual_work_executor_provider_id) — this refresh upsert runs right
+                    # after every user pause and overwrites every column, so omitting it here
+                    # immediately erases what pause_run just wrote and a resumed rework
+                    # silently falls back to the header/default provider.
+                    # rev3 (human rejection 2026-09-21): read the same helper pause_run uses —
+                    # run["provider_id"] (the actual post-startup-fallback executor) ahead of
+                    # continuation_selected_provider_id (the pre-attempt chain head), or this
+                    # refresh reintroduces the exact fallback bug on the very same row.
+                    continuation_work_executor_provider_id=_actual_work_executor_provider_id(run),
                     continuation_default_note=run.get("continuation_default_note"),
                     continuation_note_overrides=run.get("continuation_note_overrides"),
                     # 0352 T0004 §3.6: the N/T authoring mode + its per-item_seq auto-approve
@@ -803,11 +977,23 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
             continuation_target_seq=run.get("continuation_target_seq"),
             docs_target=run.get("docs_target"),
             docs_reached=int(run.get("docs_reached") or 0),
-            # A SYSTEM row deliberately carries no chain counters (0357 T0004): the run
-            # record this stop points at (stop_run_id) has none either, and resume_chain
-            # re-derives the target from the sequence when the row leaves them NULL. The
-            # user-pause refresh above does carry them — that row is a snapshot taken
-            # mid-chain and would otherwise go stale.
+            # T#2: a question stop is not a new chain. Keep the original chain identity
+            # and lifetime counters on its durable row so answer-triggered resume can
+            # reconstruct the exact continuation even after a process restart. Other
+            # legacy system stops retain their existing re-derived-counter behaviour.
+            chain_id=(
+                run.get("chain_id") if run.get("stop_code") in _CHAIN_KEEPING_STOPS else None
+            ),
+            chain_docs_target=(
+                run.get("chain_docs_target")
+                if run.get("stop_code") in _CHAIN_KEEPING_STOPS
+                else None
+            ),
+            chain_docs_reached=(
+                int(run.get("chain_docs_reached") or 0)
+                if run.get("stop_code") in _CHAIN_KEEPING_STOPS
+                else 0
+            ),
             stop_kind="system",
             stop_code=run.get("stop_code"),
             stop_run_id=run.get("run_id"),
@@ -1158,6 +1344,7 @@ def finished_payload(run: dict) -> dict:
         "docs_reached": run["docs_reached"],
         "docs_target": run["docs_target"],
         "chain_id": run.get("chain_id"),
+        "question_resume_trace": run.get("question_resume_trace"),
         "chain_docs_target": int(run.get("chain_docs_target") or 0),
         "chain_docs_reached": int(run.get("chain_docs_reached") or 0),
         "reached_doc_ids": run["reached_doc_ids"],

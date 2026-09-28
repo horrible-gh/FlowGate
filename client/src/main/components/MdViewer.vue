@@ -1,5 +1,5 @@
 <template>
-  <div class="md-viewer">
+  <div class="md-viewer" @scroll.passive="onViewerScroll">
     <div v-if="loading" class="md-viewer__loading">{{ t('common.loading') }}</div>
     <div v-else-if="error" class="md-viewer__error">
       <span>{{ t('main.error.file_load_failed') }}</span>
@@ -41,7 +41,7 @@
 
 <script setup lang="ts">
 import AppIcon from '@shared/AppIcon.vue'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Marked } from 'marked'
 import { getRequest, postRequest } from '@shared/api'
@@ -51,6 +51,8 @@ import { useToast } from './common/useToast'
 import { useExplorerStore } from '../stores/explorer'
 import { copyToClipboard } from '../utils/clipboard'
 import { openClipboardFallback } from '../composables/useClipboardFallback'
+import { recordMarkdownParse, snapshotRecoverySource } from '@shared/diagnostics/runtimeDiagnostics'
+import type { MarkdownParseCause } from '@shared/diagnostics/runtimeDiagnostics'
 
 const props = defineProps<{
   path: string | null
@@ -61,9 +63,12 @@ const props = defineProps<{
   // (checkout-free, read-only) instead of the base checkout.
   gitGroupId?: string | null
   gitCommit?: string | null
+  // 0615 T0004 — when set instead of gitGroupId, read from an ordinary local
+  // branch's committed tree (same checkout-free contract, always read-only).
+  gitBranch?: string | null
   readOnly?: boolean
 }>()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const explorerStore = useExplorerStore()
 const { showToast } = useToast()
 
@@ -74,6 +79,24 @@ const hasLinkedSource = ref(false)
 const copyMdDone = ref(false)
 const copyHeaderDone = ref(false)
 const regenerating = ref(false)
+// rev4 finding: rendered directly by whichever loadContent() call's `applyContent()` last
+// ran (see below) instead of a `computed` over `content` — a computed re-derives from
+// whatever `content.value`/cause are *currently* sitting in shared refs when Vue happens to
+// re-run it, which is exactly what let one call's cause attach to a different call's parse
+// (rev3 finding 2 was not actually fixed by rev3: a shared `pendingParseCause` ref, written
+// synchronously at call-start but read only later by the computed at content-set time, still
+// lets a second, overlapping call overwrite it before the first call's await resolves).
+// `applyContent()` closes over its own call's `cause` parameter and parses+records in the
+// same synchronous step as the matching `content.value` write, so no two calls ever share
+// mutable state between "decide the cause" and "use the cause".
+//
+// rev5 finding: dropping the `computed` also dropped its implicit dependency on `locale`
+// (the code-block renderer below reads `t('main.md_viewer.copy_code')` at parse time), so a
+// locale switch while a document with a code block was open left the copy-button
+// aria-label stuck in the previous language until the next reload. Fixed below by a
+// dedicated `watch(locale, ...)` that re-parses the already-loaded `content.value` in place
+// — it never re-decides or re-reads a `cause`, so it cannot reintroduce the rev3/rev4 race.
+const renderedContent = ref('')
 
 // gfm: enable GitHub-Flavored Markdown (tables, etc.) — R0001 #3.
 const mdRenderer = new Marked({ gfm: true })
@@ -90,7 +113,20 @@ mdRenderer.use({
   },
 })
 
-const renderedContent = computed(() => mdRenderer.parse(stripLeadingNextHeader(stripFrontmatter(content.value || ''))) as string)
+// rev4 finding: sets `content` and parses+records in one synchronous step, using only the
+// `cause` this specific call was given — never a ref some other in-flight call could have
+// since overwritten. Called at every point that used to do a bare `content.value = ...`
+// (rev3 finding 2's list of call sites), including the error-path clear, so behavior other
+// than the attribution itself (what gets rendered, when) is unchanged.
+function applyContent(newContent: string, cause: MarkdownParseCause | null): void {
+  content.value = newContent
+  // T0004 §10: measure the synchronous parse cost only — never the source text itself.
+  const source = stripLeadingNextHeader(stripFrontmatter(newContent || ''))
+  const start = performance.now()
+  const html = mdRenderer.parse(source) as string
+  recordMarkdownParse(source.length, performance.now() - start, cause)
+  renderedContent.value = html
+}
 
 // Shared honest write (B0001 / group 0221) — the former local copy is folded into
 // utils/clipboard. On failure offer the manual-copy fallback modal; toast only when it
@@ -166,52 +202,119 @@ async function regenerateFile() {
   }
 }
 
-async function loadContent(): Promise<boolean> {
+let loadSequence = 0
+let activeLoads = 0
+let contentRefreshInFlight = false
+let contentRefreshPending = false
+let contentRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let contentRefreshCause: MarkdownParseCause | null = null
+let contentRefreshDetail: { doc_id: string; revision_no?: number | null; refresh_key?: string } | null = null
+let firstPendingAt = 0
+let lastScrollAt = 0
+let disposed = false
+const CONTENT_REFRESH_MS = 120
+const SCROLL_IDLE_MS = 160
+const MAX_SCROLL_DEFER_MS = 800
+
+function clearContentRefresh() {
+  if (contentRefreshTimer !== null) clearTimeout(contentRefreshTimer)
+  contentRefreshTimer = null
+  contentRefreshPending = false
+  contentRefreshCause = null
+  contentRefreshDetail = null
+  firstPendingAt = 0
+}
+
+function scheduleContentRefresh(delay = CONTENT_REFRESH_MS) {
+  if (contentRefreshTimer !== null || contentRefreshInFlight || !contentRefreshPending || disposed) return
+  contentRefreshTimer = setTimeout(() => {
+    contentRefreshTimer = null
+    void runContentRefresh()
+  }, delay)
+}
+
+async function runContentRefresh() {
+  if (!contentRefreshPending || contentRefreshInFlight || disposed) return
+  const now = Date.now()
+  if (now - lastScrollAt < SCROLL_IDLE_MS && now - firstPendingAt < MAX_SCROLL_DEFER_MS) {
+    scheduleContentRefresh(Math.min(SCROLL_IDLE_MS, MAX_SCROLL_DEFER_MS - (now - firstPendingAt)))
+    return
+  }
+  // A prop-driven load owns the fetch. Keep the latest SSE intent until it settles.
+  if (activeLoads > 0) {
+    scheduleContentRefresh(CONTENT_REFRESH_MS)
+    return
+  }
+  contentRefreshInFlight = true
+  contentRefreshPending = false
+  const cause = contentRefreshCause
+  const detail = contentRefreshDetail
+  contentRefreshCause = null
+  contentRefreshDetail = null
+  firstPendingAt = 0
+  const docId = props.docId
+  try {
+    const success = await loadContent(cause)
+    if (!disposed && docId === props.docId && detail) {
+      window.dispatchEvent(new CustomEvent('fg:document_content_refresh_completed', {
+        detail: { ...detail, success },
+      }))
+    }
+  } finally {
+    contentRefreshInFlight = false
+    if (contentRefreshPending) scheduleContentRefresh(0)
+  }
+}
+
+async function loadContent(cause: MarkdownParseCause | null = null): Promise<boolean> {
+  const seq = ++loadSequence
   const path = props.path
   const docId = props.docId
+  const current = () => !disposed && seq === loadSequence && path === props.path && docId === props.docId
   if (props.contentOverride != null) {
-    content.value = props.contentOverride
+    applyContent(props.contentOverride, cause)
     error.value = false
     hasLinkedSource.value = true
     loading.value = false
     return true
   }
   if (!docId && !path) {
-    content.value = ''
+    applyContent('', cause)
     error.value = false
     hasLinkedSource.value = false
     loading.value = false
     return false
   }
-  loading.value = true
+  const showSpinner = !hasLinkedSource.value
+  activeLoads += 1
+  if (showSpinner) loading.value = true
   error.value = false
-  hasLinkedSource.value = false
   try {
+    let nextContent: string
     if (docId) {
       const res = await getRequest<{ content: string }>(`/api/v1/documents/content?doc_id=${encodeURIComponent(docId)}`)
-      content.value = (res.data as any)?.content ?? ''
-      hasLinkedSource.value = true
-    } else if (path) {
-      if (props.projectId && props.gitGroupId) {
-        // Group-branch read: checkout-free blob (read-only). Binary/oversize
-        // markdown is unusual, but fall back to empty content rather than error.
-        const data = await explorerStore.fetchGroupBranchBlob(props.projectId, props.gitGroupId, path)
-        content.value = data.binary ? '' : (data.content ?? '')
-        hasLinkedSource.value = true
-      } else if (props.projectId) {
-        const url = `/api/v1/projects/${encodeURIComponent(props.projectId)}/files/src-content?path=${encodeURIComponent(path)}`
-        const res = await api.get<string>(url, { responseType: 'text' })
-        content.value = res.data
-        hasLinkedSource.value = true
-      } else {
-        const res = await fetch(`/api/files/content?path=${encodeURIComponent(path)}`)
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        content.value = await res.text()
-        hasLinkedSource.value = true
-      }
+      nextContent = (res.data as any)?.content ?? ''
+    } else if (path && props.projectId && props.gitGroupId) {
+      const data = await explorerStore.fetchGroupBranchBlob(props.projectId, props.gitGroupId, path)
+      nextContent = data.binary ? '' : (data.content ?? '')
+    } else if (path && props.projectId && props.gitBranch) {
+      const data = await explorerStore.fetchLocalBranchBlob(props.projectId, props.gitBranch, path, props.gitCommit)
+      nextContent = data.binary ? '' : (data.content ?? '')
+    } else if (path && props.projectId) {
+      const url = `/api/v1/projects/${encodeURIComponent(props.projectId)}/files/src-content?path=${encodeURIComponent(path)}`
+      const res = await api.get<string>(url, { responseType: 'text' })
+      nextContent = res.data
+    } else {
+      const res = await fetch(`/api/files/content?path=${encodeURIComponent(path ?? '')}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      nextContent = await res.text()
     }
+    if (!current()) return false
+    applyContent(nextContent, cause)
+    hasLinkedSource.value = true
     return true
   } catch (e: any) {
+    if (!current()) return false
     const status = e?.response?.status
     if (status === 404) {
       error.value = false
@@ -219,13 +322,16 @@ async function loadContent(): Promise<boolean> {
     } else {
       error.value = true
     }
-    content.value = ''
+    applyContent('', cause)
     return false
   } finally {
-    loading.value = false
+    activeLoads -= 1
+    if (current()) {
+      loading.value = false
+      if (contentRefreshPending) scheduleContentRefresh()
+    }
   }
 }
-
 function onDocumentContentChanged(e: Event) {
   if (!props.docId) return
   const detail = (e as CustomEvent).detail as {
@@ -234,31 +340,75 @@ function onDocumentContentChanged(e: Event) {
     revision_no?: number | null
     refresh_key?: string
   } | undefined
-  if (detail?.doc_id !== props.docId) return
+  const docId = detail?.doc_id
+  if (!docId || docId !== props.docId) return
   if (detail.project && props.projectId && detail.project !== props.projectId) return
-  void loadContent().then((success) => {
-    window.dispatchEvent(new CustomEvent('fg:document_content_refresh_completed', {
-      detail: {
-        doc_id: detail.doc_id,
-        revision_no: detail.revision_no ?? null,
-        refresh_key: detail.refresh_key,
-        success,
-      },
-    }))
-  })
+  // Keep the latest event's diagnostics and completion identity. The fixed window
+  // bounds latency even when updates continue arriving.
+  if (!contentRefreshPending) firstPendingAt = Date.now()
+  contentRefreshPending = true
+  contentRefreshCause = { recovery: snapshotRecoverySource(), epoch: null }
+  contentRefreshDetail = {
+    doc_id: docId,
+    revision_no: detail.revision_no,
+    refresh_key: detail.refresh_key,
+  }
+  scheduleContentRefresh()
 }
 
+function onViewerScroll() {
+  lastScrollAt = Date.now()
+}
 watch(
-  () => [props.path, props.docId, props.contentOverride, props.projectId, props.gitGroupId, props.gitCommit],
-  loadContent,
+  () => [
+    props.path,
+    props.docId,
+    props.contentOverride,
+    props.projectId,
+    props.gitGroupId,
+    props.gitBranch,
+    props.gitCommit,
+  ],
+  // Never an SSE-caused reload — do not pass the watcher's own (unrelated) callback args
+  // through as `cause`.
+  () => {
+    clearContentRefresh()
+    void loadContent()
+  },
   { immediate: true },
 )
+
+// rev5 finding: re-render the already-loaded content in place when the active locale
+// changes, so the code-block copy button's `aria-label` (read from `t()` at parse time by
+// the Marked renderer above) does not stay stuck in the previous language until the next
+// unrelated reload. This intentionally does NOT call applyContent()/loadContent() — it
+// re-parses `content.value` as-is, with no cause of its own (`null`: this re-render was not
+// triggered by any SSE/recovery event), so it cannot race or be raced by an in-flight
+// loadContent() call's cause attribution.
+// rev5 finding: re-render the already-loaded content in place when the active locale
+// changes, so the code-block copy button's `aria-label` (read from `t()` at parse time by
+// the Marked renderer above) does not stay stuck in the previous language until the next
+// unrelated reload. This intentionally does NOT call applyContent()/loadContent() — it
+// re-parses `content.value` as-is, with no cause of its own (`null`: this re-render was not
+// triggered by any SSE/recovery event), so it cannot race or be raced by an in-flight
+// loadContent() call's cause attribution.
+watch(locale, () => {
+  if (!hasLinkedSource.value) return
+  const source = stripLeadingNextHeader(stripFrontmatter(content.value || ''))
+  const start = performance.now()
+  const html = mdRenderer.parse(source) as string
+  recordMarkdownParse(source.length, performance.now() - start, null)
+  renderedContent.value = html
+})
 
 onMounted(() => {
   window.addEventListener('fg:document_content_changed', onDocumentContentChanged)
 })
 
 onBeforeUnmount(() => {
+  disposed = true
+  loadSequence += 1
+  clearContentRefresh()
   window.removeEventListener('fg:document_content_changed', onDocumentContentChanged)
 })
 
@@ -522,6 +672,10 @@ defineExpose({
 
 .md-viewer__content :deep(.code-block-wrapper) {
   position: relative;
+  /* Code fences are independent blocks. Skip their offscreen layout and paint while
+     retaining the last measured height when the user scrolls back. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 180px;
 }
 
 .md-viewer__content :deep(.code-copy-btn) {

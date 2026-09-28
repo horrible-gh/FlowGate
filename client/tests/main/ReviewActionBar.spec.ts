@@ -648,7 +648,7 @@ describe('ReviewActionBar', () => {
   it('AC approval with a git conflict opens the Git status panel event path', async () => {
     postRequest.mockResolvedValueOnce({
       data: {
-        document: { doc_review_status: 'approved' },
+        approval: { approved: false, deferred: true, document_status: 'pending_review', root_status: 'wf_in_progress' },
         git: { ok: true, result: { status: 'conflict', conflict_files: ['client/a.ts'] } },
       },
     })
@@ -675,11 +675,71 @@ describe('ReviewActionBar', () => {
       expect(events).toEqual([
         { project: 'flowgate', group_id: 'flowgate.default.0170', status: 'conflict' },
       ])
-      expect(wrapper.emitted('approve')?.[0]).toEqual(['approved'])
+      expect(wrapper.emitted('approve')).toBeUndefined()
     } finally {
       window.removeEventListener('fg:git_status_open', onOpen)
       wrapper.unmount()
     }
+  })
+
+  it('A11 terminal approval retry keeps the chooser hidden and sends no git_action', async () => {
+    getRequest.mockImplementation((url: string) =>
+      url.includes('/git/finalize')
+        ? Promise.resolve({
+          data: {
+            ok: true,
+            state: {
+              branch: 'flowgate_default_0170',
+              status: 'merged',
+              default_action: 'merge',
+              choices: [],
+              approval_pending: true,
+            },
+          },
+        })
+        : Promise.resolve({ data: {} }),
+    )
+    postRequest.mockResolvedValueOnce({
+      data: {
+        document: { doc_review_status: 'approved' },
+        approval: { approved: true, document_status: 'approved', root_status: 'wf_done' },
+        git: {
+          ok: true,
+          terminal: true,
+          result: { status: 'merged', approval_retry: true, retry_source: 'group_state' },
+        },
+      },
+    })
+    const wrapper = mount(ReviewActionBar, {
+      props: {
+        ...defaultProps,
+        docId: 'flowgate.default.0170.0005-AC',
+        projectId: 'flowgate',
+        groupId: 'flowgate.default.0170',
+        docRef: 'flowgate.default.0170.0005-AC',
+        docType: 'AC',
+        reviewStatus: 'pending_review',
+        mode: 'review',
+      },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    expect((wrapper.vm as any).showGitFinalizeBlock).toBe(false)
+    await (wrapper.vm as any).doApprove()
+    await flushPromises()
+
+    const approveCall = postRequest.mock.calls.find(([url]) =>
+      String(url).includes('/documents/review_transitions/approve'),
+    )
+    expect(approveCall).toBeDefined()
+    expect(approveCall?.[1]).toEqual({
+      doc_id: 'flowgate.default.0170.0005-AC',
+      comment: null,
+    })
+    expect(approveCall?.[1]).not.toHaveProperty('git_action')
+    expect(wrapper.emitted('approve')?.[0]).toEqual(['approved'])
+    wrapper.unmount()
   })
 
   it('AC approval with terminal git result refreshes the Git button without opening the panel', async () => {
@@ -1383,5 +1443,177 @@ describe('approval presave gate', () => {
 
     expect(postRequest).toHaveBeenCalledTimes(1)
     expect(wrapper.emitted('approve')?.[0]).toEqual(['approved'])
+  })
+})
+// flowgate.default.0594 T0016 §8.1 C8 — the finalize-approval dialog's merge target
+// selector must show the project's current (non-base) merge target correctly, and the
+// pre-existing Git approval choice UI must keep rendering unchanged next to it.
+describe('ReviewActionBar — finalize target selector (T0016 C8)', () => {
+  const acProps = {
+    docId: 'flowgate.default.0170.0005-AC',
+    projectId: 'flowgate',
+    groupId: 'flowgate.default.0170',
+    docRef: 'flowgate.default.0170.0005-AC',
+    docType: 'AC',
+    reviewStatus: 'pending_review' as const,
+    mode: 'review' as const,
+  }
+
+  function mockGitFinAndCatalog() {
+    getRequest.mockImplementation((url: string) => {
+      if (url.includes('/git/finalize')) {
+        return Promise.resolve({
+          data: {
+            ok: true,
+            state: {
+              branch: 'flowgate_default_0170',
+              base_branch: 'main',
+              finalize_target: null,
+              status: 'awaiting_choice',
+              default_action: 'merge',
+              choices: ['merge', 'merge_only', 'push', 'wait'],
+            },
+          },
+        })
+      }
+      if (url.includes('/git/branches')) {
+        return Promise.resolve({
+          data: {
+            ok: true,
+            base_branch: 'main',
+            default_merge_target: 'flowgate-v0.2',
+            branches: [
+              { name: 'main', kind: 'base', can_delete: false, can_be_create_source: true },
+              { name: 'flowgate-v0.2', kind: 'local', can_delete: true, can_be_create_source: true },
+              { name: 'flowgate_default_0170', kind: 'internal_slot', can_delete: false, can_be_create_source: false },
+            ],
+          },
+        })
+      }
+      return Promise.resolve({
+        data: { ok: true, state: { branch: null, status: 'none', default_action: null, choices: [] } },
+      })
+    })
+  }
+
+  it('defaults the target selector to the project\'s persisted integration branch, not base', async () => {
+    mockGitFinAndCatalog()
+    const wrapper = mount(ReviewActionBar, { props: acProps, global: { plugins: [i18n] } })
+    await flushPromises()
+
+    expect((wrapper.vm as any).gitTargetBranch).toBe('flowgate-v0.2')
+
+    await wrapper.find('button.btn-success.btn-sm').trigger('click')
+    await flushPromises()
+
+    const select = wrapper.find('select#ab-git-target')
+    expect(select.exists()).toBe(true)
+    const options = select.findAll('option').map((o) => o.element.value)
+    // the group's own in-progress slot branch is never offered as a target
+    expect(options).toEqual(['main', 'flowgate-v0.2'])
+    expect((select.element as HTMLSelectElement).value).toBe('flowgate-v0.2')
+
+    // the pre-existing Git approval choice UI (radios) still renders alongside it
+    expect(wrapper.findAll('input[name="ab-git-fin-action"]').length).toBeGreaterThan(0)
+  })
+
+  it('shows the retarget notice (translated) only while a non-base target is selected for a merge action', async () => {
+    mockGitFinAndCatalog()
+    const wrapper = mount(ReviewActionBar, { props: acProps, global: { plugins: [i18n] } })
+    await flushPromises()
+    await wrapper.find('button.btn-success.btn-sm').trigger('click')
+    await flushPromises()
+
+    const notice = wrapper.find('[data-test="finalize-retarget-notice"]')
+    expect(notice.exists()).toBe(true)
+    expect(notice.text()).toBe(
+      i18n.global.t('main.git_finalize.retarget_notice', { base: 'main', target: 'flowgate-v0.2' }),
+    )
+    expect(notice.text()).not.toContain('Working base:')
+
+    await wrapper.find('select#ab-git-target').setValue('main')
+    await flushPromises()
+    expect(wrapper.find('[data-test="finalize-retarget-notice"]').exists()).toBe(false)
+  })
+
+  it('disables the target selector for a non-merge action (push/wait)', async () => {
+    getRequest.mockImplementation((url: string) => {
+      if (url.includes('/git/finalize')) {
+        return Promise.resolve({
+          data: {
+            ok: true,
+            state: {
+              branch: 'flowgate_default_0170', base_branch: 'main', finalize_target: null,
+              status: 'awaiting_choice', default_action: 'wait',
+              choices: ['merge', 'merge_only', 'push', 'wait'],
+            },
+          },
+        })
+      }
+      if (url.includes('/git/branches')) {
+        return Promise.resolve({
+          data: { ok: true, base_branch: 'main', default_merge_target: 'flowgate-v0.2', branches: [
+            { name: 'main', kind: 'base', can_delete: false, can_be_create_source: true },
+            { name: 'flowgate-v0.2', kind: 'local', can_delete: true, can_be_create_source: true },
+          ] },
+        })
+      }
+      return Promise.resolve({ data: { ok: true, state: { branch: null, status: 'none', default_action: null, choices: [] } } })
+    })
+    const wrapper = mount(ReviewActionBar, { props: acProps, global: { plugins: [i18n] } })
+    await flushPromises()
+    await wrapper.find('button.btn-success.btn-sm').trigger('click')
+    await flushPromises()
+
+    const select = wrapper.find('select#ab-git-target')
+    expect(select.exists()).toBe(true)
+    expect((select.element as HTMLSelectElement).disabled).toBe(true)
+    expect(wrapper.find('[data-test="finalize-retarget-notice"]').exists()).toBe(false)
+  })
+
+  // T0016 §4.1 — a branch catalog/target read failure (403/404/500) must not be
+  // caught by the same try/catch as the finalize state read and blank out this
+  // existing approval Git UI (rejection: fetchGitFin previously shared one
+  // try/catch across both requests, so a catalog 500 after a successful
+  // finalize read still nulled gitFin and hid the whole block).
+  it('keeps the existing finalize Git approval UI when only the branch catalog read fails', async () => {
+    getRequest.mockImplementation((url: string) => {
+      if (url.includes('/git/finalize')) {
+        return Promise.resolve({
+          data: {
+            ok: true,
+            state: {
+              branch: 'flowgate_default_0170',
+              base_branch: 'main',
+              finalize_target: null,
+              status: 'awaiting_choice',
+              default_action: 'merge',
+              choices: ['merge', 'merge_only', 'push', 'wait'],
+            },
+          },
+        })
+      }
+      if (url.includes('/git/branches')) {
+        return Promise.reject({ response: { status: 500, data: { error: { code: 'branch_catalog_failed' } } } })
+      }
+      return Promise.resolve({ data: { ok: true, state: { branch: null, status: 'none', default_action: null, choices: [] } } })
+    })
+    const wrapper = mount(ReviewActionBar, { props: acProps, global: { plugins: [i18n] } })
+    await flushPromises()
+    await wrapper.find('button.btn-success.btn-sm').trigger('click')
+    await flushPromises()
+
+    // the pre-existing Git choice UI is still intact — a catalog failure never
+    // reaches fetchGitFin's own catch and nulls gitFin out from under it.
+    expect(wrapper.findAll('input[name="ab-git-fin-action"]').length).toBeGreaterThan(0)
+    const select = wrapper.find('select#ab-git-target')
+    expect(select.exists()).toBe(true)
+    // The fallback must exist in the rendered native select, not merely in an
+    // internal ref: browsers display a blank select when the model has no
+    // matching option.
+    const element = select.element as HTMLSelectElement
+    expect(element.value).toBe('main')
+    expect(Array.from(element.options).map((option) => option.value)).toEqual(['main'])
+    expect(select.text()).toContain('main')
   })
 })

@@ -2,6 +2,8 @@
  * Official document ID format: <project>.<module>.<group>.<doc_number>-<doc_type>
  */
 
+import { isValidTypeCode, docIdTypeCode } from './typeCode'
+
 export function slashToNormalFormat(slashFormat: string): string {
   if (!slashFormat) return slashFormat
   const rawParts = slashFormat.split('/')
@@ -17,7 +19,7 @@ export function slashToNormalFormat(slashFormat: string): string {
   }
   if (parts.length < 2) return slashFormat
   const lastPart = parts[parts.length - 1]
-  if (lastPart.length <= 3 && /^[A-Z]+$/.test(lastPart)) {
+  if (isValidTypeCode(lastPart)) {
     const beforeLast = parts.slice(0, -1).join('.')
     return `${beforeLast}-${lastPart}`
   }
@@ -49,14 +51,14 @@ export function formatDocId(raw: string): string {
     const base = raw.substring(0, slashIdx)
 
     // If base already ends with -TYPECODE, content after slash is redundant → remove
-    if (/-[A-Z]+$/.test(base)) {
+    if (docIdTypeCode(base) !== null) {
       return base
     }
 
     // /TYPECODE pattern → convert to -TYPECODE (treat as type code if last segment is uppercase letters only)
     const parts = raw.split('/')
     const lastPart = parts[parts.length - 1]
-    if (/^[A-Z]+$/.test(lastPart) && lastPart.length <= 4) {
+    if (isValidTypeCode(lastPart)) {
       return `${parts.slice(0, -1).join('.')}-${lastPart}`
     }
 

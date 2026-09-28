@@ -246,6 +246,7 @@ def test_runtime_generated_instructions_and_errors_have_zero_korean(locale, monk
         {"dry_run": True},
         {"token_id": "tok", "dry_run_count": 0, "continuation_locale": locale},
         {"doc_type": "TR"},
+        locale,
     )
     outputs.append(json.loads(dry_response.body))
 

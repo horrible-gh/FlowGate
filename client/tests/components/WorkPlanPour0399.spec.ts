@@ -480,6 +480,9 @@ describe('계획 줄로 채워진 시퀀스 수정 창', () => {
       type: 'DB', label: 'DB', note: '',
       source_doc_id: WP_DOC_ID, source_revision_no: 1,
       provider_id: null, provider_display_name: null,
+      // 0554 T#3 (880712d): every saved row now always carries these five keys too.
+      review_count: 0, reviewer_provider_id: null, reviewer_provider_display_name: null,
+      pre_instruction_text: null, pre_instruction_attachment: null,
     })
   })
 
@@ -519,24 +522,29 @@ describe('계획 줄로 채워진 시퀀스 수정 창', () => {
     // WorkflowDecisionModal.vue applyPour()/save() always carries provider_id/
     // provider_display_name through each row (defaulting to null when the pour
     // payload has none), alongside note/source.
+    // 0554 T#3 (880712d): every saved row now always carries these five keys too.
+    const execDefaults = {
+      review_count: 0, reviewer_provider_id: null, reviewer_provider_display_name: null,
+      pre_instruction_text: null, pre_instruction_attachment: null,
+    }
     expect(body.items).toEqual([
       {
         type: 'P', label: '프로토콜설계', note: '', source_doc_id: null, source_revision_no: null,
-        provider_id: null, provider_display_name: null,
+        provider_id: null, provider_display_name: null, ...execDefaults,
       },
       {
         type: 'P', label: '프로토콜설계', note: '레거시 API 호환 확인',
         source_doc_id: WP_DOC_ID, source_revision_no: 1,
-        provider_id: null, provider_display_name: null,
+        provider_id: null, provider_display_name: null, ...execDefaults,
       },
       {
         type: 'T', label: '작업지시', note: '테스트 포함 구현',
         source_doc_id: WP_DOC_ID, source_revision_no: 1,
-        provider_id: null, provider_display_name: null,
+        provider_id: null, provider_display_name: null, ...execDefaults,
       },
       {
         type: 'TR', label: '작업레포트', note: '', source_doc_id: null, source_revision_no: null,
-        provider_id: null, provider_display_name: null,
+        provider_id: null, provider_display_name: null, ...execDefaults,
       },
     ])
   })
@@ -572,6 +580,10 @@ describe('계획 줄로 채워진 시퀀스 수정 창', () => {
             sort_order: 0, status: 'pending', note: '남아 있던 멘트',
             source_doc_id: WP_DOC_ID, source_revision_no: 1,
             provider_id: null, provider_display_name: null,
+            // 0554 T#3 (880712d): metaContractMissing treats a row without these as a
+            // legacy-shaped response and blocks save() outright.
+            review_count: 0, reviewer_provider_id: null, reviewer_provider_display_name: null,
+            pre_instruction_text: null, pre_instruction_attachment: null,
           },
         ],
       },
@@ -589,6 +601,8 @@ describe('계획 줄로 채워진 시퀀스 수정 창', () => {
       type: 'P', label: '프로토콜설계', note: '남아 있던 멘트',
       source_doc_id: WP_DOC_ID, source_revision_no: 1,
       provider_id: null, provider_display_name: null,
+      review_count: 0, reviewer_provider_id: null, reviewer_provider_display_name: null,
+      pre_instruction_text: null, pre_instruction_attachment: null,
     }])
   })
 

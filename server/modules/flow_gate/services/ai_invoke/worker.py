@@ -32,6 +32,7 @@ from modules.flow_gate.services import api_server_tools
 from modules.flow_gate.services import q_service
 from modules.flow_gate.services import register_binding
 from modules.flow_gate.services import token_service
+from modules.flow_gate.services import work_plan_attachment_service
 from modules.flow_gate.settings import ai_settings_service
 from modules.flow_gate.utils.api_key_crypto import ApiKeyCryptoError
 
@@ -48,6 +49,11 @@ from . import terminal
 from . import review
 from .runtime import (
     API_CALL_MAX_TIMEOUT_SEC,
+    API_CONFLICT_MAX_TOKENS,
+    API_CONFLICT_MAX_TURNS,
+    API_CONFLICT_SOURCE_CALLS_PER_TURN,
+    API_CONFLICT_TURNS_PER_CHUNK,
+    API_TOOL_RESULT_MAX_CHARS,
     API_STARTUP_TRANSPORT_BACKOFF_SEC,
     API_STARTUP_TRANSPORT_MAX_RETRIES,
     HOP_HANDOFF_FAILED_STOP_CODE,
@@ -328,6 +334,14 @@ def _worker(run: dict, chain: list[dict], prompt: str) -> None:
                 run["hop_kind"] = loop["current_stage"]
                 run["provider"] = oracle_module._provider_brief(selected)
                 run["provider_id"] = selected_id
+                # 0582 TR0006 rev1: requested_provider_id is set once at admission (the
+                # FIRST stage's own provider) and never touched again by this transition --
+                # left alone, a provenance snapshot taken on stage 2+ would compare stage
+                # 2's actual provider against stage 1's requested one and report a fallback
+                # that never happened. A loop stage is a single-candidate chain
+                # (resolve_loop_provider names the only provider this hop will run), so the
+                # requested and actual provider for THIS hop are, by construction, the same.
+                run["requested_provider_id"] = selected_id
                 run["attempt_no"] = int(run.get("attempt_no") or 0) + 1
                 run["document_review_loop_checkpointed"] = False
                 # T0011 §4 / 0486 NR0010 Finding 3: a stage switch is a new HOP, so its
@@ -640,25 +654,16 @@ def _retry_eligible(run: dict) -> bool:
         run.get("mode"), run.get("action_scope"), run.get("scope_oracle_run"),
         run.get("hop_kind"),
     )
-    if _svc().peek_auto_resume(run.get("group_id")) is not None and not review_hop_recovery:
-        # flowgate.default.0466 T0007: this check predates the review gate (0359 L0007
-        # §2.4) and reads a queue entry as proof THIS hop already produced a document and
-        # handed off — true for the continuous chains it was written for, where
-        # `request_auto_resume` is only ever called from the inbox AFTER a submission. But
-        # `run_review_gate`'s review/rework dispatch (0414 L0008 §2.4, "queue first, then
-        # launch") calls `_queue_gate_bundle` — the SAME `request_auto_resume` — BEFORE
-        # spawning the hop at all, so a review hop reliably finds its own dispatcher's
-        # queue entry sitting here on attempt 1, before it has run at all, and this check
-        # silently ate every retry: A10's `attempts_max=2` never got past 1 in production
-        # (confirmed by driving the real `run_review_gate` → `_spawn_review_hop` →
-        # `_worker` path, not just the worker or the gate alone). A review hop's own token
-        # structurally cannot register a document (§2.5: "a review token carries NO
-        # continuation_target_seq" and `docs_target` is pinned to 0), so its worker can
-        # never be the reason a NEW queue entry appears mid-run — every entry it can ever
-        # see here is the pre-spawn one, and reading that as "already handed off" is
-        # simply wrong for this hop kind. `_scope_oracle_retry_open` (rework) keeps the
-        # existing behavior: a rework's `edit` token DOES submit a document mid-run, so a
-        # queue entry appearing there can be the real thing this check exists to catch.
+    rework_no_output_recovery = oracle_module._rework_hop_no_output_recovery_open(
+        run.get("mode"), run.get("action_scope"), run.get("scope_oracle_run"),
+        run.get("hop_kind"), run.get("outcome"),
+    )
+    if (_svc().peek_auto_resume(run.get("group_id")) is not None
+            and not review_hop_recovery and not rework_no_output_recovery):
+        # The review gate queues its next intent before spawning either kind of hop.
+        # That pre-spawn entry does not prove an empty gate-owned hop handed off.
+        # A rework with output still keeps this guard: its edit token can revise the
+        # document mid-run, and another attempt could write a second revision.
         return False        # this hop DID hand off; the next hop is already queued
     if int(run.get("docs_reached") or 0) >= 1:
         return False        # partial output is still output — a rerun would double-write
@@ -848,6 +853,18 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
         return None
     try:
         issue = admission._call_issue_builder(issue_builder, run["run_id"])
+    except work_plan_attachment_service.PreInstructionAttachmentError:
+        # 0554 T0014 §5 (review rej_01M334Z5Y72GK6BW finding 2): a rework issue_builder
+        # (issue_rework_request) that raises this directly has already revoked the token
+        # it minted before re-raising (invoke_mention_service.issue_rework_request). The
+        # broad `except Exception` below used to catch this too, folding it into the
+        # generic "reissue failed" log + None — which erased the specific code and, at
+        # the review-loop call site, surfaced only as a generic
+        # document_review_loop_transition_failed. Re-raising here lets it reach the
+        # same fail-closed handling every other mid-run PreInstructionAttachmentError
+        # gets: propagate out of _worker's outer try/except (end_reason="worker_error",
+        # full exception logged) rather than a new bespoke stop_reason.
+        raise
     except Exception:
         logger.warning("ai-invoke retry token reissue failed for %s",
                        run["run_id"], exc_info=True)
@@ -859,17 +876,39 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
         run.get("mode") == "single" and run.get("action_scope") == "new"
     ):
         retry_audit: dict = {}
-        mention = admission._inject_hop_notes(
-            mention,
-            run["doc_ref"],
-            default_note=run.get("continuation_default_note"),
-            note_overrides=run.get("continuation_note_overrides"),
-            instruction_mode=run.get("continuation_instruction_mode"),
-            auto_approve_item_seqs=run.get("continuation_auto_approve_item_seqs"),
-            fold_worker_item_seq=(run.get("mode") == "continuous"),
-            locale=run.get("continuation_locale"),
-            audit=retry_audit,
-        )
+        try:
+            mention = admission._inject_hop_notes(
+                mention,
+                run["doc_ref"],
+                default_note=run.get("continuation_default_note"),
+                note_overrides=run.get("continuation_note_overrides"),
+                instruction_mode=run.get("continuation_instruction_mode"),
+                auto_approve_item_seqs=run.get("continuation_auto_approve_item_seqs"),
+                fold_worker_item_seq=(run.get("mode") == "continuous"),
+                locale=run.get("continuation_locale"),
+                audit=retry_audit,
+            )
+        except work_plan_attachment_service.PreInstructionAttachmentError:
+            # 0554 T0014 §5 (review finding 2): unlike issue_rework_request above, this
+            # builder (a plain 'new'-scope issuer) already minted and returned a live
+            # token before this call ever runs, and run["token_id"]/run["raw_token"] are
+            # not updated to it until AFTER this block succeeds (below). Without this
+            # revoke the new token would never be recorded on the run and never revoked
+            # either — an orphan the finalizer can't see because it only knows the OLD
+            # token_id. Revoke it by its own id (never `token_id`, the stale variable
+            # still bound to the PREVIOUS attempt's token) before propagating.
+            new_token_id = issue.get("token_id")
+            if new_token_id:
+                try:
+                    token_service.revoke(
+                        new_token_id, reason="ai_invoke_pre_instruction_attachment_invalid"
+                    )
+                except Exception:
+                    logger.warning(
+                        "orphaned retry token revoke failed for %s (run %s)",
+                        new_token_id, run["run_id"], exc_info=True,
+                    )
+            raise
         # 0406 T0022 item 5: a retry rebuilds the prompt from scratch, so the audit must
         # point at THAT prompt — otherwise attempt 1's hash gets attached to attempt 2's
         # run while still claiming "the note went in".
@@ -917,7 +956,15 @@ def _prepare_retry_token(run: dict) -> Optional[dict]:
     if issue.get("worker_document_type"):
         run["worker_document_type"] = issue.get("worker_document_type")
     if issue.get("auto_handled_item_seqs") is not None:
-        run["auto_handled_item_seqs"] = list(issue.get("auto_handled_item_seqs") or [])
+        # 0611 TR0012: a retry re-enters the SAME hop's issuer after its first attempt already
+        # expanded the instruction head, so the retry's own advance finds nothing left and
+        # reports []. Overwriting erased the only record that the server expanded that T/N in
+        # this run; keep what earlier attempts handled and append anything new.
+        handled = list(run.get("auto_handled_item_seqs") or [])
+        for item_seq in issue.get("auto_handled_item_seqs") or []:
+            if item_seq not in handled:
+                handled.append(item_seq)
+        run["auto_handled_item_seqs"] = handled
     return {"mention": mention, "token_id": issue.get("token_id"),
             "token_id_before": before, "reissued": True}
 
@@ -1108,6 +1155,29 @@ def _api_trace_tool(entry: dict, name: object, status: object, *, registration: 
         tools.append({"name": str(name or "tool")[:80], "status": int(status or 0), "registration": registration})
 
 
+def _conflict_tool_result_well_formed(status: object, resp: object) -> bool:
+    """0608 T0007: whether a conflict-run read tool's ``(status, resp)`` is a real envelope.
+
+    Success: ``ok is True`` with a 2xx status. Failure: ``ok is False`` with a non-2xx status
+    and either the P0005 ``error: {code, message}`` object (remote tools, error_payload) or
+    read_help's ``error_message`` string. Anything else -- ``{}``, a missing or non-boolean
+    ``ok``, an ``ok`` that contradicts the status, a failure with no readable error -- is a
+    malformed result, never a successful read.
+    """
+    if not isinstance(status, int) or isinstance(status, bool) or not isinstance(resp, dict):
+        return False
+    ok = resp.get("ok")
+    if not isinstance(ok, bool) or ok != (200 <= status < 300):
+        return False
+    if ok:
+        return True
+    error = resp.get("error")
+    if isinstance(error, dict):
+        return (isinstance(error.get("code"), str) and bool(error["code"].strip())
+                and isinstance(error.get("message"), str))
+    return error is None and isinstance(resp.get("error_message"), str) and bool(resp["error_message"].strip())
+
+
 def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]:
     """Minimal tool loop for API providers, including workflow decision kickoff."""
     run.setdefault("register_errors", [])
@@ -1142,9 +1212,31 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     is_chat = run.get("action_scope") == "chat"
     is_sequence_edit = run.get("action_scope") == "workflow_sequence_edit"
     last_text: Optional[str] = None
+    first_prompt = provider_api._api_help_prompt(prompt)
+    conflict_specs: Optional[list[dict]] = None
+    conflict_source_calls = 0
+    conflict_source_budget = 0
+    # (turn, message) of each read-tool result, so an accepted partial submit can drop
+    # the reads that led to it instead of carrying them to the end of the run.
+    conflict_read_msgs: list[tuple[int, dict]] = []
+    if conflict_pending:
+        # 0608 T0007: the resolver gets the read tools its mention advertises (registry-
+        # judged, write/patch/remove never) next to resolve_git_conflict, and a budget that
+        # follows the conflict's size (runtime.API_CONFLICT_*).
+        conflict_specs = api_server_tools.conflict_tool_definitions() + [{
+            "name": _RESOLVE_TOOL_NAME, "description": _RESOLVE_TOOL_DESC,
+            "schema": _RESOLVE_TOOL_SCHEMA, "completion": True,
+        }]
+        max_turns = _conflict_turn_budget(run)
+        conflict_source_budget = max_turns * API_CONFLICT_SOURCE_CALLS_PER_TURN
+        run["api_turn_budget"] = max_turns
+        first_prompt = (
+            provider_api._api_conflict_guidance([spec["name"] for spec in conflict_specs])
+            + "\n\n" + first_prompt
+        )
     conversation: list[dict] = [
         {"role": "system", "content": provider_api._api_system_prompt()},
-        {"role": "user", "content": provider_api._api_help_prompt(prompt)},
+        {"role": "user", "content": first_prompt},
     ]
     if is_chat:
         # 0505 T0006 (DB0005 3.3): the FIRST self-HTTP this hop may open. Its status/
@@ -1193,7 +1285,8 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         if workflow_pending:
             tool_name, tool_desc, tool_schema = _DECIDE_TOOL_NAME, _DECIDE_TOOL_DESC, _DECIDE_TOOL_SCHEMA
         elif conflict_pending:
-            tool_name, tool_desc, tool_schema = _RESOLVE_TOOL_NAME, _RESOLVE_TOOL_DESC, _RESOLVE_TOOL_SCHEMA
+            tool_specs = conflict_specs
+            tool_name, tool_desc, tool_schema = tool_specs, "", {}
         elif is_chat:
             tool_name, tool_desc, tool_schema = _CHAT_TOOL_NAME, _CHAT_TOOL_DESC, _CHAT_TOOL_SCHEMA
         elif is_sequence_edit:
@@ -1232,6 +1325,7 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     reply_text, tool_call, assistant_msg = _svc()._call_anthropic(
                         base_url, model, key, conversation, call_timeout,
                         tool_name, tool_desc, tool_schema, True,
+                        **({"max_tokens": API_CONFLICT_MAX_TOKENS} if conflict_pending else {}),
                     )
                 else:
                     reply_text, tool_call, assistant_msg = _svc()._call_openai(
@@ -1325,7 +1419,8 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     "content": (
                         (f"The required action is not complete. Call the `{tool_name}` tool now with the actual full payload. "
                          if tool_specs is None else
-                         "Use the available tools to inspect or change the bound work, then call `register_document` when complete. ")
+                         "Use the available tools to inspect or change the bound work, then call "
+                         f"`{_completion_tool_name(tool_specs)}` when complete. ")
                         + "Do not merely say that you registered or attached it."
                     ),
                 })
@@ -1354,6 +1449,9 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     validation_errors.append(exc)
 
             completion_call = None
+            # 0608 T0007: a tool the model asked for in this turn that did not succeed. The
+            # model has not seen that failure yet, so a resolve sent alongside it is a guess.
+            failed_tools: list[str] = []
             for call, validation_error in zip(tool_calls, validation_errors):
                 if validation_error is not None:
                     _status, resp = api_server_tools.error_payload(
@@ -1362,8 +1460,10 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     conversation.append(_svc()._tool_result_msg(
                         kind, call, json.dumps(resp, ensure_ascii=False)[:16000]
                     ))
+                    if not (exposed.get(call.get("name")) or {}).get("completion"):
+                        failed_tools.append(str(call.get("name") or "tool_call"))
                     continue
-                if call["name"] == _REGISTER_TOOL_NAME:
+                if exposed[call["name"]].get("completion") or call["name"] == _REGISTER_TOOL_NAME:
                     if completion_call is None:
                         completion_call = call
                         trace["completion_selected"] = True
@@ -1378,14 +1478,44 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                             kind, call, json.dumps(resp, ensure_ascii=False)[:16000]
                         ))
                     continue
+                if conflict_pending and conflict_source_calls >= conflict_source_budget:
+                    # 0608 T0007: bounded like the turns -- refused, never run.
+                    _status, resp = api_server_tools.error_payload(call["name"], api_server_tools.ToolError(
+                        429, "tool_call_budget_exhausted",
+                        f"this run's {conflict_source_budget} read-tool calls are used up; submit what "
+                        "you have fully read, or stop without guessing",
+                    ))
+                    _api_trace_tool(trace, call["name"], _status)
+                    conversation.append(_svc()._tool_result_msg(kind, call, json.dumps(resp, ensure_ascii=False)))
+                    failed_tools.append(call["name"])
+                    continue
+                if conflict_pending:
+                    conflict_source_calls += 1
                 # 0505 T0006 (DB0005 2): sent to a real handler regardless of what it
                 # returns -- "executed" counts dispatch, not success.
                 run["tool_calls_executed"] = run.get("tool_calls_executed", 0) + 1
                 try:
                     if call["name"] in api_server_tools.SOURCE_OPS:
+                        run["source_tool_calls"] = int(run.get("source_tool_calls") or 0) + 1
                         _status, resp = api_server_tools.source_call(run, current_token, call["name"], call["input"])
                     elif call["name"] == "run_test":
                         _status, resp = api_server_tools.run_test(run, call["input"], _svc()._remaining_sec(run))
+                    elif call["name"] == "access_source_bundle":
+                        _status, resp = api_server_tools.access_source_bundle(run, call["input"])
+                    elif call["name"] == "run_source_bundle":
+                        _status, resp = api_server_tools.run_source_bundle(
+                            run, call["input"], _svc()._remaining_sec(run))
+                    elif call["name"] == "request_source_snapshot":
+                        _status, resp = api_server_tools.request_source_snapshot(
+                            run, current_token, call["input"],
+                            min(_svc()._remaining_sec(run), _absolute_remaining_sec(run)),
+                        )
+                    elif call["name"] == "access_source_snapshot":
+                        _status, resp = api_server_tools.access_source_snapshot(run, current_token, call["input"])
+                    elif call["name"] == "run_source_snapshot":
+                        _status, resp = api_server_tools.run_source_snapshot(
+                            run, current_token, call["input"], _svc()._remaining_sec(run)
+                        )
                     elif call["name"] == "read_document":
                         _status, resp = _svc()._api_read_document(run, current_token, call["input"])
                     elif call["name"] == "read_help":
@@ -1397,24 +1527,73 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                         _status, resp = _api_create_question(run, current_token, call["input"])
                 except api_server_tools.ToolError as exc:
                     _status, resp = api_server_tools.error_payload(call["name"], exc)
+                except Exception as exc:
+                    if not conflict_pending:
+                        raise
+                    # 0608 T0007: a failed read is a tool result the model must see, not
+                    # the end of the run and never something to resolve around.
+                    logger.warning("ai-invoke %s: conflict tool %s failed: %s", run["run_id"], call["name"], exc)
+                    _status, resp = api_server_tools.error_payload(
+                        call["name"], api_server_tools.ToolError(503, "tool_failed", str(exc)[:300] or "tool failed"),
+                    )
+                if conflict_pending and not _conflict_tool_result_well_formed(_status, resp):
+                    # 0608 T0007: `{}`, a missing/non-boolean `ok`, an `ok` the status
+                    # contradicts, or a failure without an error is not a read -- a failure.
+                    _status, resp = api_server_tools.error_payload(
+                        call["name"], api_server_tools.ToolError(502, "malformed_tool_result"),
+                    )
                 # 0505 T0006 (DB0005 3.3): read_document/create_question both dispatch
                 # through _api_bound_request -- one self-HTTP call point, one name. The
                 # other three branches above (SOURCE_OPS, run_test, read_help) are direct
                 # in-process handlers, never self-HTTP, and stay out of last_tool_name
                 # entirely (DB0005 2 scope note).
-                if call["name"] not in api_server_tools.SOURCE_OPS and call["name"] not in ("run_test", "read_help"):
+                if (
+                    call["name"] not in api_server_tools.SOURCE_OPS
+                    and call["name"] not in ("run_test", "read_help", *api_server_tools.SNAPSHOT_NAMES, *api_server_tools.BUNDLE_NAMES)
+                ):
                     run["last_tool_name"] = "api_bound_request"
                     run["last_tool_status"] = _status
                     run["last_tool_error"] = (
                         None if 200 <= _status < 300 else _registration_error_summary(resp)[:500]
                     )
                 trace["dispatched"] += 1
+                result_text = json.dumps(resp, ensure_ascii=False)
+                if conflict_pending and len(result_text) > API_TOOL_RESULT_MAX_CHARS:
+                    # 0608 T0007: a cut-off read looks like a whole one; refuse it instead.
+                    _status, resp = api_server_tools.error_payload(call["name"], api_server_tools.ToolError(
+                        413, "result_too_large",
+                        f"the result is {len(result_text)} characters and tool results are limited to "
+                        f"{API_TOOL_RESULT_MAX_CHARS}; read a narrower start_line/end_line range",
+                    ))
+                    result_text = json.dumps(resp, ensure_ascii=False)
                 _api_trace_tool(trace, call["name"], _status)
-                conversation.append(_svc()._tool_result_msg(
-                    kind, call, json.dumps(resp, ensure_ascii=False)[:16000]
-                ))
+                result_msg = _svc()._tool_result_msg(kind, call, result_text[:API_TOOL_RESULT_MAX_CHARS])
+                conversation.append(result_msg)
+                if conflict_pending:
+                    conflict_read_msgs.append((turn, result_msg))
+                if not 200 <= _status < 300:
+                    failed_tools.append(call["name"])
             if completion_call is None:
                 trace["disposition"] = "direct_tools_only"
+                continue
+            if conflict_pending and failed_tools:
+                # 0608 T0007: the server, not the model's caution, keeps a guess out of the
+                # merge -- the resolve is never dispatched, so no file, index stage or session
+                # state moves. The model gets the failures and must re-read successfully
+                # (then submit in a later turn) or stop.
+                run["tool_calls_executed"] = max(0, run.get("tool_calls_executed", 0) - 1)
+                run["conflict_blocked_submits"] = run.get("conflict_blocked_submits", 0) + 1
+                trace["disposition"] = "completion_blocked"
+                _status, resp = api_server_tools.error_payload(completion_call["name"], api_server_tools.ToolError(
+                    409, "prerequisite_tool_failed",
+                    f"not submitted: {', '.join(sorted(set(failed_tools)))} failed in this same turn, so this "
+                    "resolution was written without that result. Nothing was written or staged. Re-read what "
+                    "you need until it succeeds and submit in a later turn, or stop without guessing.",
+                ))
+                _api_trace_tool(trace, completion_call["name"], _status)
+                conversation.append(_svc()._tool_result_msg(
+                    kind, completion_call, json.dumps(resp, ensure_ascii=False)
+                ))
                 continue
             tool_call = completion_call
         else:
@@ -1499,6 +1678,22 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             run["last_tool_status"] = status
             run["last_tool_error"] = None if 200 <= status < 300 else _registration_error_summary(resp)[:500]
             if 200 <= status < 300:
+                result = resp.get("result") if isinstance(resp, dict) else None
+                if isinstance(result, dict) and result.get("status") == "conflict":
+                    # 0608 T0007: accepted, but conflicts remain (complete=false, or files
+                    # left). The server already wrote and staged what it accepted; the run
+                    # goes on to the rest instead of ending here.
+                    run["conflict_partial_submits"] = run.get("conflict_partial_submits", 0) + 1
+                    _elide_conflict_reads(kind, conflict_read_msgs, turn)
+                    remaining = result.get("remaining_conflicts") or []
+                    conversation.append(_svc()._tool_result_msg(kind, tool_call, (
+                        json.dumps(resp, ensure_ascii=False)[:4000] + "\n"
+                        + ("Accepted. Continue with remaining_conflicts, then call resolve_git_conflict "
+                           "with complete=true." if remaining else
+                           "Accepted. No conflicts remain: call resolve_git_conflict with "
+                           "{\"files\": [], \"complete\": true} to finish.")
+                    )))
+                    continue
                 conversation.append(_svc()._tool_result_msg(kind, tool_call, json.dumps(resp, ensure_ascii=False)[:4000]))
                 break
             conversation.append(_svc()._tool_result_msg(
@@ -1632,6 +1827,52 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     return "started_ok", None
 
 
+def _completion_tool_name(tool_specs: list[dict]) -> str:
+    return next((spec["name"] for spec in tool_specs if spec.get("completion")), _REGISTER_TOOL_NAME)
+
+
+def _conflict_turn_budget(run: dict) -> int:
+    """0608 T0007: turns for a resolve_conflict API run, from the conflict it faces.
+
+    ``API_MAX_TURNS_PER_DOC`` (the old flat budget) + ``API_CONFLICT_TURNS_PER_CHUNK`` per
+    open chunk + one submit per open file, capped at ``API_CONFLICT_MAX_TURNS``. An
+    unreadable session keeps the old flat budget -- the submit itself will say why.
+    """
+    base = _svc().API_MAX_TURNS_PER_DOC
+    try:
+        files, chunks = api_server_tools.open_conflict_counts(run)
+    except Exception as exc:
+        logger.warning("ai-invoke %s: conflict budget falls back to %d turns: %s", run.get("run_id"), base, exc)
+        return base
+    return min(API_CONFLICT_MAX_TURNS, base + API_CONFLICT_TURNS_PER_CHUNK * chunks + files)
+
+
+_CONFLICT_READ_ELIDED = json.dumps({
+    "ok": True,
+    "elided": "Dropped after a later resolve_git_conflict call was accepted; read again if still needed.",
+})
+
+
+def _elide_conflict_reads(kind: str, reads: list[tuple[int, dict]], turn: int) -> None:
+    """Replace the text of read results from turns before ``turn`` (0608 T0007).
+
+    A resolve_conflict run accumulates every read it makes; once a submit is accepted
+    the reads behind it have done their job. The results stay in place (each tool call
+    still has its result) -- only their text shrinks. Reads made in this same turn may
+    be for the next file and are kept.
+    """
+    kept = []
+    for read_turn, msg in reads:
+        if read_turn >= turn:
+            kept.append((read_turn, msg))
+            continue
+        if kind == "claude":
+            msg["content"][0]["content"] = _CONFLICT_READ_ELIDED
+        else:
+            msg["content"] = _CONFLICT_READ_ELIDED
+    reads[:] = kept
+
+
 def _absorb_binding_failure(run: dict, response: dict, turn: int) -> bool:
     """Was this 403 already recorded in full, axes and all?
 
@@ -1697,8 +1938,11 @@ def _resolve_conflict(run: dict, raw_token: str, tool_input: dict) -> tuple[int,
         "files": tool_input.get("files") or [],
         "complete": bool(tool_input.get("complete")),
     }
+    # 0630 T0005: a branch merge's resolve endpoint is project-scoped.
+    from modules.flow_gate.services import git_service
+    route = git_service.merge_route_prefix(run["merge_id"], run["group_id"])
     req = urllib.request.Request(
-        f"{provider_api._resolve_transport_api_base(run)}/groups/{run['group_id']}/git/merge/{run['merge_id']}/resolve-token",
+        f"{provider_api._resolve_transport_api_base(run)}{route}/resolve-token",
         data=json.dumps(body).encode("utf-8"),
         headers={
             "Content-Type": "application/json",

@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional
@@ -14,6 +16,7 @@ from modules.flow_gate.db import project_ai_leases as db_project_ai_leases
 from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import terminal_cleanup_snapshots as db_terminal_cleanup
 
+from . import approval_intent
 from .commit import _ledger_group_by_merge_sha
 from .finalize import NOOP_CONVERGEABLE_STATUSES
 from .credentials import GitServiceError, decrypt_secret
@@ -69,12 +72,25 @@ def test_connection(project_id: str, override: Optional[dict] = None) -> dict:
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
     repo_url = (cfg.get("repo_url") or "").strip()
     t0 = time.monotonic()
-    proc = _gs._run_git(
-        ["ls-remote", "--symref", repo_url, "HEAD", f"refs/heads/{base_branch}"],
-        timeout=_gs.GIT_TEST_TIMEOUT_SEC,
-        username=cfg.get("username"),
-        secret=secret if secret is not None else "",
-    )
+    # flowgate.default.0617 T0004 (NR0003 §5/§7): ls-remote needs no local checkout,
+    # so it must not inherit the server process's own cwd via _run_git(cwd=None).
+    # That cwd is FlowGate's own deployment/session concern, not this probe's, and
+    # its .git metadata can be transiently broken (a linked worktree's gitdir
+    # pointer copied over a plain directory by unrelated preview tooling, NR0003
+    # §3) without the probe having any way to know. A throwaway temp directory has
+    # no .git of its own, so git's repository discovery can only ever reach the
+    # remote, never fail on unrelated local state first.
+    probe_dir = Path(tempfile.mkdtemp(prefix="fg-gitprobe-"))
+    try:
+        proc = _gs._run_git(
+            ["ls-remote", "--symref", repo_url, "HEAD", f"refs/heads/{base_branch}"],
+            cwd=probe_dir,
+            timeout=_gs.GIT_TEST_TIMEOUT_SEC,
+            username=cfg.get("username"),
+            secret=secret if secret is not None else "",
+        )
+    finally:
+        shutil.rmtree(probe_dir, ignore_errors=True)
     elapsed_ms = int((time.monotonic() - t0) * 1000)
 
     if proc.returncode == 0:
@@ -354,6 +370,10 @@ def project_git_status(project_id: str) -> dict:
     # been unresolved (elapsed = now − conflict_since), so the panel can surface
     # the wait time and offer [resume resolution]/[hold]. Other rows carry no field.
     for row in pending:
+        # 0555 T0008 §10 / D0005 §3.11: the control surfaces read this to decide
+        # between "choose an action and run it" and "go finish the conflict" — a
+        # coupled group's Git already belongs to a final approval that is waiting.
+        row["final_approval_bound"] = False
         if row.get("status") == "conflict" and row.get("merge_id") is not None:
             try:
                 s = _gs.db_git.get_session(int(row["merge_id"]))
@@ -366,6 +386,9 @@ def project_git_status(project_id: str) -> dict:
                     ctx = _gs.db_git.session_context(s)
                     row["review_state"] = ctx.get("review_state")
                     row["reconciliation_kind"] = ctx.get("reconciliation_kind")
+                    row["final_approval_bound"] = (
+                        approval_intent.intent_of_context(ctx) is not None
+                    )
                 else:
                     row["review_state"] = None
                     row["reconciliation_kind"] = None
@@ -373,6 +396,7 @@ def project_git_status(project_id: str) -> dict:
                 row["conflict_since"] = None
                 row["review_state"] = None
                 row["reconciliation_kind"] = None
+                row["final_approval_bound"] = False
     # 0205 P scenario 8: persisted worktree provisioning failures (unregistered
     # rows with a provision_error) so a slot-less group's "not tracked by git" warning
     # survives the one-shot SSE. Disposed groups are excluded. Newest first.

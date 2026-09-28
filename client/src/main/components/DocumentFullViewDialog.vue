@@ -67,6 +67,7 @@
             :project-id="tab.projectId ?? null"
             :wrap-lines="wrapLines"
             :git-group-id="tab.gitGroupId ?? null"
+            :git-branch="tab.gitBranch ?? null"
             :git-commit="tab.gitCommit ?? null"
           />
           <!-- 0310 TR: not-a-file-tab → load by doc-id (mirrors the preview-card MdViewer);
@@ -77,6 +78,7 @@
             :doc-id="isFileTab(tab) ? null : tab.id"
             :project-id="tab.projectId ?? null"
             :git-group-id="tab.gitGroupId ?? null"
+            :git-branch="tab.gitBranch ?? null"
             :git-commit="tab.gitCommit ?? null"
           />
         </template>

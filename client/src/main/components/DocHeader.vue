@@ -194,6 +194,7 @@
   </ContextMenu>
   <GroupInfoModal
     v-model:visible="showGroupInfo"
+    :project-id="doc?.project_id ?? ''"
     :group-id="doc?.group_id ?? ''"
     :group-name="groupName"
     :documents="groupDocuments"
@@ -239,6 +240,7 @@ import { useToast } from './common/useToast'
 import { MENTION_COPIED_EVENT, type MentionCopiedDetail } from '../composables/useMentionCopy'
 import { copyToClipboard } from '../utils/clipboard'
 import type { Tab } from '../stores/tabs'
+import { recordFanOut } from '@shared/diagnostics/runtimeDiagnostics'
 import { useTabsStore } from '../stores/tabs'
 import { useExplorerStore } from '../stores/explorer'
 import { useDocumentContextStore } from '../stores/documentContext'
@@ -313,6 +315,10 @@ interface DocDetail {
   workflow_head_doc_title?: string | null
   workflow_head_doc_number?: string | null
   test_run?: TestRun | null
+  // 0549 T0008: TS contract (1 = legacy executable, 2 = test specification) and, on a TSR,
+  // the server-computed test gate. Both are display-only detail extras.
+  test_contract_version?: number | null
+  test_gate?: { applies?: boolean; passed?: boolean; overall?: string | null } | null
   // 0441 TR0005 rev2: group-scoped (not document-scoped) "a test run is in flight" flag.
   group_test_run?: { active?: boolean; run_id?: string | null; doc_id?: string | null; status?: string | null } | null
   next_step_exists?: boolean
@@ -1206,7 +1212,7 @@ function _onOpenDocsRefresh(e: Event) {
   // it live. Stamp lastPullAt so a focus pull landing right after doesn't double-fetch.
   const current = doc.value
   if (!current) return
-  const payload = (e as CustomEvent).detail as { project?: string | null; doc_id?: string | null } | undefined
+  const payload = (e as CustomEvent).detail as { project?: string | null; doc_id?: string | null; refresh_epoch?: number | null } | undefined
   if (payload?.project && current.project_id && payload.project !== current.project_id) return
   // T0004 §3: when the coalesced refresh names one specific document (e.g. an AI
   // review arriving for it), skip tabs that are not that document instead of forcing
@@ -1216,11 +1222,21 @@ function _onOpenDocsRefresh(e: Event) {
   // tab to refresh regardless of which document they name.
   if (payload?.doc_id && payload.doc_id !== current.doc_id) return
   lastPullAt = Date.now()
+  // rev2 finding 4: fg:open_docs_refresh carries the real epoch only when it came from an
+  // SSE screen-refresh flush; other dispatchers (GitActionMenu, GitMergeReviewDialog,
+  // GitStatusPanel, WorkPlanEditor) fire this event on their own and omit the field, which
+  // must read as "not an SSE epoch" (null) rather than borrowing a stale one.
+  recordFanOut('doc_header_refetch', payload?.refresh_epoch ?? null)
   void silentRefetchWithRetry(true)
 }
 
 function _onReviewStatusChanged(e: Event) {
-  const payload = (e as CustomEvent).detail as { doc_id?: string; next_status?: string; rejection_reason?: string | null; rejection_history?: Array<{ reason: string; rejected_at: string; rejected_by: string | null }> | null }
+  // 0582 TR0006 rev1: the server now runs every doc_review_status_changed emitter's
+  // rejection_history through the SAME enrich_rejection_history_provenance GET
+  // /document uses (inbox_routes.py / ai_invoke/review.py / workflow.py), so this
+  // payload's shape matches RejectionHistoryItem, provider fields included -- the
+  // whole-array replacement below is safe without a follow-up refetch.
+  const payload = (e as CustomEvent).detail as { doc_id?: string; next_status?: string; rejection_reason?: string | null; rejection_history?: RejectionHistoryItem[] | null }
   if (doc.value && payload.doc_id === doc.value.doc_id && payload.next_status) {
     invalidatePendingDocFetches()
     doc.value.doc_review_status = payload.next_status
@@ -1299,6 +1315,10 @@ const hasCompletedReviewForRevision = computed(() => {
 // 0155: latest test run (with failing-case detail) for the design-B fail strip. null on
 // every non-failing doc, since the embed only binds to a doc that has a bound run.
 const testRun = computed(() => doc.value?.test_run ?? null)
+// 0549 T0008: the contract decides which test controls exist (a specification TS is never
+// executed by the server) and the gate decides whether a TSR may be approved.
+const testContractVersion = computed(() => doc.value?.test_contract_version ?? null)
+const testGate = computed(() => doc.value?.test_gate ?? null)
 // 0441 TR0005 rev4 (rejection: opening an R document during a TS run revived its action bar):
 // testRun above is bound to THIS document, so it stays null on every sibling tab while a
 // run is executing. Keep the group value unknown until detail explicitly answers. Returning
@@ -1386,6 +1406,8 @@ defineExpose({
   aiReviewHistory,
   hasCompletedReviewForRevision,
   testRun,
+  testContractVersion,
+  testGate,
   groupTestRunActive,
   trScope,
   fetchDoc,
@@ -1435,6 +1457,8 @@ const TYPE_ICONS: Record<string, string> = {
   D: 'compass-tool',
   T: 'list-checks',
   TR: 'seal-check',
+  T2: 'list-checks',
+  TR2: 'git-diff',
   DC: 'trash',
 }
 

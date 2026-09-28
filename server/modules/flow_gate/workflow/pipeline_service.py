@@ -153,6 +153,7 @@ def create_group(
     user_permissions: set[str],
     group_id: str,
     priority: str | None = None,
+    work_base_ref: str | None = None,
 ) -> dict:
     """Create a new group and register it in draft state (D017 r1 Step 1).
 
@@ -163,6 +164,12 @@ def create_group(
     """
     if not check_permission(user_permissions, ("project.group.manage",)):
         raise PermissionError("Permission 'project.group.manage' is required.")
+
+    if work_base_ref is not None:
+        from modules.flow_gate.services import git_service
+        work_base_ref = git_service.validate_group_work_base_ref(
+            project_id, work_base_ref
+        )
 
     now = now_iso()
     return db_groups.create(
@@ -175,6 +182,7 @@ def create_group(
             "status": "draft",
             "created_at": now,
             "updated_at": now,
+            "work_base_ref": work_base_ref,
         }
     )
 
@@ -239,6 +247,23 @@ def transition_group(
             actor_user_id=actor_user_id,
             group_id=group_id,
         )
+
+    if str(next_status).lower() == "closed":
+        try:
+            from modules.flow_gate.services import snapshot_materialization_service
+            # actor_user_id is a real users.user_id FK; the group-close meaning lives in
+            # cleanup_for_group's own trigger="group_finished" metadata, not in the actor.
+            snapshot_materialization_service.cleanup_for_group(
+                group_id, actor=actor_user_id
+            )
+        except Exception:
+            # Group closure is already durable. Snapshot cleanup stays retryable via TTL.
+            _log.warning("snapshot group-close cleanup failed for %s", group_id, exc_info=True)
+        try:
+            from modules.flow_gate.services import source_bundle_cleanup_service
+            source_bundle_cleanup_service.cleanup_for_group(group_id)
+        except Exception:
+            _log.warning("Source Bundle group-close cleanup failed for %s", group_id, exc_info=True)
 
     result = dict(updated or {})
     if warnings:
@@ -623,6 +648,57 @@ def _require_document_body_for_approval(doc: dict, locale: str = "ko") -> None:
         raise TransitionError(_empty_body_approval_message(locale))
 
 
+_TEST_GATE_MESSAGES = {
+    "tsr": {
+        "ko": "시험 gate를 통과하지 못한 시험성적서(TSR)는 승인할 수 없습니다. 서버 판정: {overall} (필수 Case 기준).",
+        "en": "A test report (TSR) that has not passed the test gate cannot be approved. Server verdict: {overall} (required cases).",
+        "ja": "試験ゲートを通過していない試験成績書(TSR)は承認できません。サーバー判定: {overall} (必須Case基準)。",
+    },
+    "ts": {
+        "ko": "시험사양서(TS) 구조 검증 오류가 있어 승인할 수 없습니다: {errors}",
+        "en": "The test specification (TS) has validation errors and cannot be approved: {errors}",
+        "ja": "試験仕様書(TS)に構造検証エラーがあるため承認できません: {errors}",
+    },
+}
+
+
+def _require_test_gate_for_approval(doc: dict, locale: str = "ko") -> None:
+    """0549 T0008: approval is where the test gate becomes a workflow gate.
+
+    * TSR — "the report exists" is not "the gate passed". A report whose newest result
+      record is a specification result with a server-computed overall other than PASS is
+      refused, whoever asks (a human, the chain, the review loop). The verdict is read from
+      the server record, never from the report text, so an overall written into the body by
+      anyone does not open the gate. Legacy executable TSRs are only assembled on all-green
+      and keep their approval semantics.
+    * TS — a specification TS (test_contract_version: 2) must validate before it can become
+      the approved test basis.
+    """
+    type_code = str(doc.get("type_code") or "").upper()
+    lang = locale if locale in ("ko", "en", "ja") else "ko"
+    if type_code == "TSR":
+        from modules.flow_gate.services import test_run_service
+
+        gate = test_run_service.tsr_gate_state(doc)
+        if gate.get("applies") and not gate.get("passed"):
+            raise TransitionError(
+                _TEST_GATE_MESSAGES["tsr"][lang].format(overall=gate.get("overall") or "NOT_RUN")
+            )
+    elif type_code == "TS":
+        from modules.flow_gate.services import test_run_service, test_spec_service
+
+        content = test_run_service._read_doc_content_or_empty(doc)
+        if test_spec_service.detect_contract_version(content) == test_spec_service.CONTRACT_LEGACY:
+            return
+        parsed = test_spec_service.parse_spec(content)
+        if parsed["errors"]:
+            raise TransitionError(
+                _TEST_GATE_MESSAGES["ts"][lang].format(
+                    errors="; ".join(err["message"] for err in parsed["errors"][:5])
+                )
+            )
+
+
 def transition_document_review(
     *,
     doc_id: str,
@@ -632,6 +708,10 @@ def transition_document_review(
     comment: str | None = None,
     locale: str = "ko",
     review_id: Any = None,
+    dry_run: bool = False,
+    mutation_principal: Any = None,
+    expected_revision: int | None = None,
+    request_key: str | None = None,
 ) -> dict:
     """Transition the document review state (doc_review_status column).
 
@@ -648,6 +728,16 @@ def transition_document_review(
     doc = db_docs.get_by_id(doc_id)
     if not doc:
         raise ValueError(f"Document not found: {doc_id}")
+
+    # TR2 alone needs a source-changing approval. All other actions and document
+    # types keep the established review transition and TR commit semantics.
+    if action == "approve" and doc.get("type_code") == "TR2":
+        from modules.flow_gate.documents import tr2_approval_service
+        return tr2_approval_service.approve(
+            doc_id=doc_id, actor_user_id=actor_user_id,
+            user_permissions=user_permissions, mutation_principal=mutation_principal,
+            expected_revision=expected_revision, request_key=request_key, locale=locale,
+        )
 
     current_review_status = doc.get("doc_review_status") or ""
     next_status = get_doc_review_rule(current_review_status, action)
@@ -672,6 +762,7 @@ def transition_document_review(
 
     if action == "approve":
         _require_document_body_for_approval(doc, locale)
+        _require_test_gate_for_approval(doc, locale)
 
     update_fields: dict[str, Any] = {
         "doc_review_status": next_status,
@@ -711,6 +802,14 @@ def transition_document_review(
             item["review_id"] = review_id
         existing_history.append(item)
         update_fields["rejection_history"] = json.dumps(existing_history, ensure_ascii=False)
+
+    if dry_run:
+        return {
+            "document": doc,
+            "current_review_status": current_review_status,
+            "next_status": next_status,
+            "update_fields": update_fields,
+        }
 
     updated = db_docs.update(doc_id, update_fields)
     if not updated:
@@ -763,6 +862,7 @@ def transition_document_review(
                 plan_body = _wp.load_body(
                     _wp.plan_path_for_doc(fresh_plan_doc),
                     project_id=fresh_plan_doc.get("project_id"),
+                    doc_id=fresh_plan_doc.get("doc_id"),
                 )
                 expansion = _wpseq.expand_final_work_plan(
                     doc=fresh_plan_doc, plan=plan_body, locale=locale,
@@ -792,6 +892,99 @@ def transition_document_review(
                 "[work plan] final expansion after approving %s failed: %s", doc_id, exc, exc_info=True
             )
     return updated
+
+
+def precheck_document_review_transition(
+    *,
+    doc_id: str,
+    action: str,
+    actor_user_id: str,
+    user_permissions: set[str],
+    comment: str | None = None,
+    locale: str = "ko",
+    review_id: Any = None,
+) -> dict:
+    """Run the canonical review rules without writing documents or events."""
+    return transition_document_review(
+        doc_id=doc_id,
+        action=action,
+        actor_user_id=actor_user_id,
+        user_permissions=user_permissions,
+        comment=comment,
+        locale=locale,
+        review_id=review_id,
+        dry_run=True,
+    )
+
+
+def commit_final_approval(
+    *,
+    doc_id: str,
+    actor_user_id: str,
+    user_permissions: set[str],
+    locale: str = "ko",
+    consume_hook: Any = None,
+) -> dict:
+    """Atomically approve one AC and finish its canonical R/B root.
+
+    ``consume_hook`` is the T#2 seam: when supplied it runs inside the same
+    transaction after both CAS updates and may raise (or return ``False``) to
+    roll the whole unit back.
+    """
+    store = get_store()
+    with store.transaction():
+        plan = precheck_document_review_transition(
+            doc_id=doc_id,
+            action="approve",
+            actor_user_id=actor_user_id,
+            user_permissions=user_permissions,
+            locale=locale,
+        )
+        doc = plan["document"]
+        if str(doc.get("type_code") or "").upper() != "AC":
+            raise TransitionError("Final approval requires an AC document")
+        root = db_docs.get_by_id(doc.get("target_id") or "")
+        if (
+            root is None
+            or root.get("group_id") != doc.get("group_id")
+            or str(root.get("type_code") or "").upper() not in _WORKFLOW_ROOT_TYPES
+            or root.get("doc_review_status") != "wf_in_progress"
+        ):
+            raise TransitionError("Workflow root is not in wf_in_progress")
+
+        updated_doc = db_docs.update_review_status_cas(
+            doc_id, plan["current_review_status"], plan["next_status"]
+        )
+        if updated_doc is None:
+            raise TransitionError("Final approval document changed concurrently")
+        updated_root = db_docs.update_review_status_cas(
+            root["doc_id"], "wf_in_progress", "wf_done"
+        )
+        if updated_root is None:
+            raise TransitionError("Workflow root changed concurrently")
+
+        log_state_changed(
+            project_id=doc.get("project_id", ""),
+            actor_user_id=actor_user_id,
+            from_state=f"review:{plan['current_review_status']}",
+            to_state=f"review:{plan['next_status']}",
+            group_id=doc.get("group_id"),
+            document_id=doc.get("id"),
+            action_code="review_approve",
+        )
+        log_state_changed(
+            project_id=root.get("project_id", ""),
+            actor_user_id=actor_user_id,
+            from_state="review:wf_in_progress",
+            to_state="review:wf_done",
+            group_id=root.get("group_id"),
+            document_id=root.get("id"),
+            action_code="final_approval",
+        )
+        if consume_hook is not None and consume_hook(doc, root) is False:
+            raise TransitionError("Final approval intent was already consumed")
+
+    return {"document": updated_doc, "root": updated_root}
 
 
 # P0005/T0006: AI response length ceiling (fixed by T0006).
@@ -881,6 +1074,58 @@ def parse_rejection_history(raw: Any) -> list:
     return []
 
 
+def rejection_provenance_view(item: dict) -> dict:
+    """Shape one rejection_history item's AI-provider evidence for API/UI (0582 T0005).
+
+    Resolves two independent, both-optional facts -- neither is stored redundantly on
+    the item itself, and both are None-safe for a legacy row that predates this T:
+
+    * ``rejection_provider`` -- when this rejection carries a ``review_id`` (an
+      AUTOMATIC AI-review rejection, T0005 2.1.5), the ACTUAL reviewing AI, resolved
+      from ``document_reviews`` at read time. The server logic that executed the
+      auto-reject transition is never reported as "the AI" here (0582 T0005 SS2.1) --
+      only the AI review run that produced the `issues` verdict is.
+    * ``response_provider`` -- the AI that generated ``ai_response`` (the rework
+      reply), if it was recorded with a run/provider snapshot (0582 T0005 SSC).
+
+    Returns a NEW dict; the source item is left untouched.
+    """
+    from modules.flow_gate.services.ai_invoke.provenance import to_api_payload
+
+    out = dict(item)
+    rejection_provider = None
+    review_id = item.get("review_id")
+    if is_review_row_id(review_id):
+        try:
+            from modules.flow_gate.db import document_reviews as db_reviews
+            row = db_reviews.get_by_id(int(str(review_id).strip()))
+        except Exception:
+            row = None
+        if row is not None:
+            rejection_provider = to_api_payload({
+                "ai_run_id": row.get("review_run_id"),
+                "actual_provider_id": row.get("actual_provider_id"),
+                "actual_provider_name": row.get("actual_provider_name"),
+            })
+    out["rejection_provider"] = rejection_provider
+    out["response_provider"] = to_api_payload({
+        "ai_run_id": item.get("response_ai_run_id"),
+        "actual_provider_id": item.get("response_actual_provider_id"),
+        "actual_provider_name": item.get("response_actual_provider_name"),
+    })
+    return out
+
+
+def enrich_rejection_history_provenance(history: list) -> list:
+    """Apply :func:`rejection_provenance_view` across a whole rejection_history list.
+
+    Every document read path that surfaces ``rejection_history`` (api/v1/document_routes,
+    documents/routers/documents) calls this ONE function so the derived provider fields
+    cannot drift between the console UI and the T-API worker view (0582 T0005 SS4).
+    """
+    return [rejection_provenance_view(item) for item in history if isinstance(item, dict)]
+
+
 def resolve_rejection_target(
     history: list, *, rejection_id: str | None = None, review_id: Any = None,
 ) -> dict | None:
@@ -916,6 +1161,9 @@ def record_rejection_response(
     revision_no: int | None,
     review_id: Any = None,
     rejection_id: str | None = None,
+    response_ai_run_id: str | None = None,
+    response_actual_provider_id: str | None = None,
+    response_actual_provider_name: str | None = None,
 ) -> dict | None:
     """Annotate the rejection this response answers with how the AI addressed it.
 
@@ -975,6 +1223,12 @@ def record_rejection_response(
     target["responded_at"] = now_iso()
     target["response_recorded_by"] = recorded_by
     target["response_revision_no"] = revision_no
+    # 0582 T0005 SSC: the rework run's OWN effective provider, never the review's or a
+    # stale prior response's -- callers resolve it fresh per call via
+    # ai_invoke.provenance.resolve_run_provenance and pass the snapshot in.
+    target["response_ai_run_id"] = response_ai_run_id
+    target["response_actual_provider_id"] = response_actual_provider_id
+    target["response_actual_provider_name"] = response_actual_provider_name
 
     db_docs.update(doc_id, {
         "rejection_history": json.dumps(history, ensure_ascii=False),

@@ -50,6 +50,22 @@ const KNOWN_CODES: ReadonlySet<string> = new Set([
   'note_too_long',
   'note_has_control_char',
   'provider_display_name_without_provider_id',
+  'review_count_invalid',
+  'reviewer_not_allowed',
+  'reviewer_provider_unavailable',
+  'reviewer_display_name_without_provider_id',
+  'pre_instruction_too_long',
+  'pre_instruction_control_char',
+  'pre_instruction_not_allowed',
+  'pre_instruction_attachment_digest_invalid',
+  'pre_instruction_attachment_ai_forbidden',
+  'pre_instruction_attachment_doc_mismatch',
+  'pre_instruction_attachment_reserved_name_required',
+  'pre_instruction_attachment_registry_missing',
+  'pre_instruction_attachment_file_missing',
+  'pre_instruction_attachment_original_name_mismatch',
+  'pre_instruction_attachment_digest_mismatch',
+  'pre_instruction_attachment_outside_storage',
 ])
 
 // Keys `empty_selection`'s `what_key` param can carry (mirrors work_plan_service's

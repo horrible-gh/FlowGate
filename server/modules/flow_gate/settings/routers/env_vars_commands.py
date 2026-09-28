@@ -11,6 +11,11 @@ PUT    /api/v1/commands/{command_id}
 DELETE /api/v1/commands/{command_id}
 POST   /api/v1/commands/{command_id}/resolve
 POST   /api/v1/commands/{command_id}/execute
+
+RBAC (flowgate.default.0623 T0004 §2), evaluated on the system scope:
+  read     = project.settings.read  — GET lists, POST .../resolve
+  mutation = project.settings.edit  — POST/PUT/DELETE, POST .../execute
+kind=system rows stay admin-only on top of that.
 """
 from __future__ import annotations
 
@@ -54,6 +59,15 @@ def _safe_decode(data: bytes) -> str:
 
 def _require_settings_read(user=Depends(get_current_user)):
     if not (_has_permission(user, "project.settings.read", None) or user.get("is_admin")):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return user
+
+
+def _require_settings_edit(user=Depends(get_current_user)):
+    # Create/update/delete and command execution (a real subprocess) must not ride
+    # on the read permission (flowgate.default.0623 T0004 §2). _has_permission
+    # keeps the admin bypass and the cached permission_service lookup.
+    if not _has_permission(user, "project.settings.edit", None):
         raise HTTPException(status_code=403, detail="Forbidden")
     return user
 
@@ -112,7 +126,7 @@ def list_env_vars(
 
 
 @router.post("/env-vars", status_code=201)
-def create_env_var(body: EnvVarCreate, user=Depends(_require_settings_read)):
+def create_env_var(body: EnvVarCreate, user=Depends(_require_settings_edit)):
     # Only user kind is allowed from the admin UI
     if body.kind == "system" and not user.get("is_admin"):
         raise HTTPException(status_code=403, detail="Only admins can create system variables.")
@@ -127,7 +141,7 @@ def create_env_var(body: EnvVarCreate, user=Depends(_require_settings_read)):
 
 
 @router.put("/env-vars/{var_id}")
-def update_env_var(var_id: str, body: EnvVarUpdate, user=Depends(_require_settings_read)):
+def update_env_var(var_id: str, body: EnvVarUpdate, user=Depends(_require_settings_edit)):
     existing = _ev_db.get_by_id(var_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Environment variable not found.")
@@ -145,7 +159,7 @@ def update_env_var(var_id: str, body: EnvVarUpdate, user=Depends(_require_settin
 
 
 @router.delete("/env-vars/{var_id}", status_code=200)
-def delete_env_var(var_id: str, user=Depends(_require_settings_read)):
+def delete_env_var(var_id: str, user=Depends(_require_settings_edit)):
     existing = _ev_db.get_by_id(var_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Environment variable not found.")
@@ -216,7 +230,7 @@ def list_commands(
 
 
 @router.post("/commands", status_code=201)
-def create_command(body: CommandCreate, user=Depends(_require_settings_read)):
+def create_command(body: CommandCreate, user=Depends(_require_settings_edit)):
     if body.kind == "system" and not user.get("is_admin"):
         raise HTTPException(status_code=403, detail="Only admins can create system commands.")
     try:
@@ -230,7 +244,7 @@ def create_command(body: CommandCreate, user=Depends(_require_settings_read)):
 
 
 @router.put("/commands/{command_id}")
-def update_command(command_id: str, body: CommandUpdate, user=Depends(_require_settings_read)):
+def update_command(command_id: str, body: CommandUpdate, user=Depends(_require_settings_edit)):
     existing = _cmd_db.get_by_id(command_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Command not found.")
@@ -248,7 +262,7 @@ def update_command(command_id: str, body: CommandUpdate, user=Depends(_require_s
 
 
 @router.delete("/commands/{command_id}", status_code=200)
-def delete_command(command_id: str, user=Depends(_require_settings_read)):
+def delete_command(command_id: str, user=Depends(_require_settings_edit)):
     existing = _cmd_db.get_by_id(command_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Command not found.")
@@ -270,7 +284,7 @@ def resolve_command(command_id: str, user=Depends(_require_settings_read)):
 def execute_command(
     command_id: str,
     body: Optional[Dict] = Body(default=None),
-    user=Depends(_require_settings_read),
+    user=Depends(_require_settings_edit),
 ):
     cmd = _cmd_db.get_by_id(command_id)
     if cmd is None:

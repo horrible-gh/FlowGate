@@ -131,6 +131,41 @@ def update(doc_id: str, updates: dict[str, Any]) -> Optional[dict]:
     return get_by_id(doc_id)
 
 
+def update_review_status_cas(
+    doc_id: str,
+    expected_status: str,
+    next_status: str,
+) -> Optional[dict]:
+    """Conditionally update a review status and report an exact CAS outcome.
+
+    Unlike the legacy generic ``update_cas`` helper, this boundary uses the
+    driver's affected-row count.  Final approval depends on distinguishing a
+    committed transition from a concurrent no-op inside one transaction.
+    """
+    store = get_store()
+    affected = store._execute_affected(
+        "UPDATE documents SET doc_review_status = ?, updated_at = ? "
+        "WHERE doc_id = ? AND doc_review_status = ?",
+        [next_status, now_iso(), doc_id, expected_status],
+    )
+    return get_by_id(doc_id) if affected == 1 else None
+
+def update_review_cas(doc_id: str, expected_revision: int,
+                      expected_review_status: str, updates: dict[str, Any]) -> bool:
+    """Atomically approve one unchanged document revision and review round."""
+    allowed = {"doc_review_status", "updated_at", "meta"}
+    if not updates or set(updates) - allowed:
+        raise ValueError("Invalid review CAS update")
+    fields = dict(updates)
+    fields.setdefault("updated_at", now_iso())
+    clause = ", ".join(f"{key} = ?" for key in fields)
+    return get_store()._execute_affected(
+        f"UPDATE documents SET {clause} WHERE doc_id = ? "
+        "AND revision_no = ? AND doc_review_status = ?",
+        [*fields.values(), doc_id, expected_revision, expected_review_status],
+    ) == 1
+
+
 def delete(doc_id: str) -> None:
     store = get_store()
     doc = get_by_id(doc_id)

@@ -1,0 +1,10 @@
+-- 115_ai_invoke_run_write_plan_bool_repair.sql
+-- flowgate.default.0546 T0004 (NR0003). PostgreSQL-only repair: migration 105 declared
+-- ai_invoke_runs.write_requested_by_human / allow_test_edits as BOOLEAN there, while
+-- this dialect's own 105 already used INTEGER, matching the writer's None/0/1 contract
+-- (db/ai_invoke_runs.py upsert()). There is nothing to converge on sqlite.
+--
+-- This file exists only so sqlite/postgres/mysql keep holding the same migration file
+-- set -- test_migration_numbering.py's test_the_three_dialects_hold_the_same_file_set
+-- fails otherwise. See postgres/115_ai_invoke_run_write_plan_bool_repair.sql for the
+-- actual fix.

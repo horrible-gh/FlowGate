@@ -330,17 +330,7 @@ def _resolve_cli_launch(provider: dict, run: dict, command: str) -> tuple[Option
     source = Path(run["source_root"]) if run.get("source_root") else None
     agent_cwd = scratch_abs
     cwd_source = "run_scratch"
-    if source is not None and source.is_dir() and run.get("group_id") and project_id:
-        try:
-            integrated = bool((db_git.get_config(project_id) or {}).get("enabled"))
-        except Exception:
-            integrated = False
-        if integrated:
-            if not _svc()._is_group_worktree(project_id, run["group_id"], source):
-                return None, "group_worktree_identity_invalid"
-            agent_cwd = source.absolute() if str(source).startswith("\\\\") else source.resolve(strict=True)
-            cwd_source = "group_worktree"
-    elif source is not None and source.is_dir() and not project_id:
+    if source is not None and source.is_dir() and not project_id:
         # Test-only legacy run shape; real runs are covered by the manifest branch above.
         agent_cwd = source.absolute() if str(source).startswith("\\\\") else source.resolve(strict=True)
         cwd_source = "group_worktree"
@@ -394,6 +384,13 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
     # base (configured setting -> same-host loopback -> operator base).
     operator_api_base = run.get("api_base_url") or ""
     prompt, agent_api_base = _canonicalize_cli_prompt(prompt, operator_api_base)
+    bundle_api_base = (agent_api_base or operator_api_base).rstrip("/") + "/source-bundles/cli"
+    prompt = prompt.rstrip() + (
+        "\n\n## Source Bundle CLI boundary\n"
+        "Use FLOWGATE_BUNDLE_API with Authorization: Bearer $FLOWGATE_TOKEN for "
+        "ensure, status, access (read/search/glob/stat), and allowed run calls. "
+        "No human approval is required. Never consume an internal Bundle or Scratch path directly.\n"
+    )
     # CLI providers authenticate themselves; a configured api_key is deliberately
     # NOT exported (leak prevention, L0006 §2.3).
     env = {
@@ -412,6 +409,7 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         "PIP_CACHE_DIR": str(scratch / "cache" / "pip"),
         "NPM_CONFIG_CACHE": str(scratch / "cache" / "npm"),
         "FLOWGATE_API_BASE": agent_api_base or operator_api_base,
+        "FLOWGATE_BUNDLE_API": bundle_api_base,
     }
     decision, reason = _resolve_cli_launch(provider, run, cmd)
     if decision is None:

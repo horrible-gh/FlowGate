@@ -8,15 +8,9 @@
 
       
       <div class="dialog-feature-body">
-        <div class="form-row">
-          <div class="form-group">
-            <label class="form-label req">{{ $t('settings.users.user_create_modal.label_11') }}</label>
-            <input type="text" class="form-ctrl" v-model="form.display_name" :placeholder="$t('settings.users.user_create_modal.placeholder_12')">
-          </div>
-          <div class="form-group">
-            <label class="form-label req">{{ $t('auth.login.username') }}</label>
-            <input type="text" class="form-ctrl" v-model="form.username" placeholder="username">
-          </div>
+        <div class="form-group">
+          <label class="form-label req">{{ $t('auth.login.username') }}</label>
+          <input type="text" class="form-ctrl" v-model="form.username" placeholder="username">
         </div>
         <div class="form-group">
           <label class="form-label req">{{ $t('settings.users.user_create_modal.label_20') }}</label>
@@ -35,11 +29,11 @@
         <div class="form-row">
           <div class="form-group">
             <label class="form-label req">{{ $t('settings.users.user_create_modal.label_35') }}</label>
-            <select class="form-ctrl" :value="form.roles[0] || 'manager'" @change="e => form.roles = [e.target.value]">
-              <option value="admin">{{ $t('settings.users.role_admin') }}</option>
-              <option value="manager">{{ $t('settings.users.role_manager') }}</option>
-              <option value="worker">{{ $t('settings.users.role_worker') }}</option>
-              <option value="viewer">{{ $t('settings.users.role_viewer') }}</option>
+            <select class="form-ctrl" v-model="form.role_id">
+              <option value="role_admin">{{ $t('settings.users.role_admin') }}</option>
+              <option value="role_manager">{{ $t('settings.users.role_manager') }}</option>
+              <option value="role_worker">{{ $t('settings.users.role_worker') }}</option>
+              <option value="role_viewer">{{ $t('settings.users.role_viewer') }}</option>
             </select>
           </div>
           <div class="form-group">
@@ -59,11 +53,7 @@
                   @change="e => toggleProject(p.project_id, e.target.checked)"> {{ p.project_name }}
               </label>
             </template>
-            <template v-else>
-              <label style="display:flex;align-items:center;gap:6px;font-size:.8125rem;cursor:pointer;"><input type="checkbox"> FlowGate</label>
-              <label style="display:flex;align-items:center;gap:6px;font-size:.8125rem;cursor:pointer;"><input type="checkbox"> Chorus</label>
-              <label style="display:flex;align-items:center;gap:6px;font-size:.8125rem;cursor:pointer;"><input type="checkbox"> FileForge</label>
-            </template>
+            <span v-else class="text-xs text-m">—</span>
           </div>
         </div>
         <div v-if="errorMsg" class="alert alert-danger" style="margin-top:12px;">{{ errorMsg }}</div>
@@ -90,29 +80,32 @@ import DialogShell from '../../../main/components/dialogs/DialogShell.vue'
 import DialogHeader from '../../../main/components/dialogs/DialogHeader.vue'
 import DialogFooter from '../../../main/components/dialogs/DialogFooter.vue'
 import { ref, onMounted } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { postRequest, getRequest } from '@shared/api';
+import { resolveApiError } from '@shared/apiErrors';
 import AppIcon from '@shared/AppIcon.vue';
 
 const emit = defineEmits(['close', 'created']);
+const { t } = useI18n();
 
 const projects = ref([]);
 const submitting = ref(false);
 const errorMsg = ref('');
 const passwordConfirm = ref('');
 const form = ref({
-  username: '', display_name: '', email: '', password: '',
-  roles: ['manager'], is_active: true, project_roles: [],
+  username: '', email: '', password: '',
+  role_id: 'role_manager', is_active: true, project_roles: [],
 });
 
 onMounted(async () => {
   const { data } = await getRequest('/api/v1/projects');
-  projects.value = data.data || [];
+  projects.value = (data.projects || []).filter(p => p.project_id !== '__SYSTEM__');
 });
 
 function toggleProject(projectId, checked) {
   if (checked) {
     if (!form.value.project_roles.some(r => r.project_id === projectId)) {
-      form.value.project_roles.push({ project_id: projectId, role: 'worker' });
+      form.value.project_roles.push({ project_id: projectId, role_id: 'role_worker' });
     }
   } else {
     form.value.project_roles = form.value.project_roles.filter(r => r.project_id !== projectId);
@@ -120,21 +113,23 @@ function toggleProject(projectId, checked) {
 }
 
 async function submit() {
-  if (!form.value.roles.length) { errorMsg.value = $t('settings.users.user_create_modal.error_110'); return; }
-  if (form.value.password !== passwordConfirm.value) { errorMsg.value = $t('settings.users.user_create_modal.error_111'); return; }
+  if (!form.value.role_id) { errorMsg.value = t('settings.users.user_create_modal.error_110'); return; }
+  if (form.value.password !== passwordConfirm.value) { errorMsg.value = t('settings.users.user_create_modal.error_111'); return; }
   submitting.value = true;
   errorMsg.value = '';
   try {
-    const { data } = await postRequest('/api/v1/users', form.value);
-    const userId = data.data.id;
-    for (const pm of form.value.project_roles) {
-      if (pm.project_id) {
-        await postRequest(`/api/v1/users/${userId}/project-roles`, pm);
-      }
-    }
+    const { data } = await postRequest('/api/v1/users', {
+      username: form.value.username,
+      email: form.value.email,
+      password: form.value.password,
+      is_active: form.value.is_active,
+      role_id: form.value.role_id,
+      project_roles: form.value.project_roles,
+    });
+    if (!data.user_id) throw new Error('Missing user_id in user creation response');
     emit('created');
   } catch (e) {
-    errorMsg.value = e.response?.data?.detail || $t('settings.users.user_create_modal.error_124');
+    errorMsg.value = resolveApiError(e, t, 'settings.users.user_create_modal.error_124');
   } finally {
     submitting.value = false;
   }

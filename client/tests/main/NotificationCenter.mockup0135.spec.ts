@@ -364,6 +364,73 @@ describe('NotificationCenter 시안 3 mockup (group 0135)', () => {
     expect(wrapper.find('.notif-panel').exists()).toBe(true)
   })
 
+  // T0007: mirror diagnostics.py::ai_run_succeeded() outputs; rendering consumes only succeeded.
+  it.each([
+    { label: 'no stop code', stopCode: null, succeeded: true },
+    { label: 'hop_handoff', stopCode: 'hop_handoff', succeeded: true },
+    { label: 'chain_completed', stopCode: 'chain_completed', succeeded: true },
+    { label: 'head_slot_mismatch', stopCode: 'head_slot_mismatch', succeeded: false },
+    { label: 'approve_denied', stopCode: 'approve_denied', succeeded: false },
+    { label: 'approve_failed', stopCode: 'approve_failed', succeeded: false },
+    { label: 'advance_blocked', stopCode: 'advance_blocked', succeeded: false },
+    { label: 'review_hold', stopCode: 'review_hold', succeeded: false },
+    { label: 'user_paused', stopCode: 'user_paused', succeeded: false },
+  ])('renders the diagnostics decision for $label consistently in the AI list and detail', async ({ stopCode, succeeded }) => {
+    const wrapper = await mountOpen([])
+    const store = useNotificationsStore()
+    const runId = `run-${stopCode ?? 'none'}`
+    store.aiItems = [{
+      run_id: runId,
+      doc_ref: null,
+      doc_title: null,
+      doc_type_code: null,
+      succeeded,
+      outcome: 'complete',
+      docs_reached: 1,
+      docs_target: 1,
+      end_reason: 'exited',
+      stop_code: stopCode,
+      provider_name: 'Codex',
+      finished_at: '2026-07-02T00:05:00Z',
+      last_message_excerpt: null,
+    }]
+    vi.mocked(getRequest).mockResolvedValueOnce({
+      data: {
+        run_id: runId,
+        doc_ref: null,
+        doc_title: null,
+        succeeded,
+        outcome: 'complete',
+        end_reason: 'exited',
+        stop_code: stopCode,
+        stop_reason: null,
+        provider_name: 'Codex',
+        finished_at: '2026-07-02T00:05:00Z',
+        last_message: 'diagnostics result',
+      },
+    } as any)
+
+    await wrapper.findAll('.notif-section-tab')[1].trigger('click')
+
+    const tone = succeeded ? 'success' : 'failure'
+    const expectedText = i18n.global.t(`main.notif_center.ai_${tone}`)
+    const row = wrapper.find('.notif-ai-row')
+    expect(row.classes()).toContain(`notif-ai-row--${tone}`)
+    expect(row.findComponent({ name: 'AppIcon' }).props('name')).toBe(succeeded ? 'check-circle' : 'warning')
+    expect(row.find('.notif-ai-status').text()).toBe(expectedText)
+
+    await row.find('.notif-ai-detail-btn').trigger('click')
+    await flushPromises()
+
+    expect(getRequest).toHaveBeenCalledWith(`/api/v1/ai-invoke/${runId}`)
+    const detailStatus = wrapper.find(`.detail-${tone}`)
+    const detailStatusElement = detailStatus.exists()
+      ? detailStatus.element
+      : document.body.querySelector(`.detail-${tone}`)
+    expect(detailStatusElement).not.toBeNull()
+    expect(detailStatusElement?.textContent).toBe(expectedText)
+  })
+
   it('renders success and failure rows without separators for omitted fragments', async () => {
     const wrapper = await mountOpen([])
     const store = useNotificationsStore()

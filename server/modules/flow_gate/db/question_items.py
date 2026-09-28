@@ -41,16 +41,27 @@ def insert(
     title: Optional[str] = None,
     asker_kind: str = "human",
     options: str = "[]",
+    asker_ai_run_id: Optional[str] = None,
+    asker_actual_provider_id: Optional[str] = None,
+    asker_actual_provider_name: Optional[str] = None,
 ) -> None:
     """question_items INSERT (DB0006 §3.3 — title + asker_kind; DB0007 §4 — options).
 
     ``options`` is the serialized [{"id", "label"}] JSON array (DB0007 §2); the caller
     validates and serializes it (L0008 §2.2/§2.3).
+
+    The three ``asker_*`` columns are the AI run/provider snapshot for an AI-registered
+    question (0582 T0005 §4/§D) — always None for a human [+query], and None for an AI
+    question whose token carried no bound run (legacy/external — the caller could not
+    resolve one, not that one was silently dropped here).
     """
     store = get_store()
     store._execute(
         store._sql("question_items.insert_question_item"),
-        [question_pk, seq, title, body, asker_kind, options],
+        [
+            question_pk, seq, title, body, asker_kind, options,
+            asker_ai_run_id, asker_actual_provider_id, asker_actual_provider_name,
+        ],
     )
 
 

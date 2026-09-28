@@ -38,6 +38,67 @@ def _ahead_of_base(base_root: Path, base_branch: str, branch: str) -> Optional[i
         return None
 
 
+def _is_ancestor(repo: Path, ancestor: str, descendant: str) -> Optional[bool]:
+    """``merge-base --is-ancestor``: True/False, None when git cannot answer."""
+    from modules.flow_gate.services import git_service as _gs
+    proc = _gs._run_git(["merge-base", "--is-ancestor", ancestor, descendant], cwd=repo)
+    if proc.returncode == 0:
+        return True
+    if proc.returncode == 1:
+        return False
+    return None
+
+
+def _unpushed_local_merge_of(
+    base_root: Path, base_branch: str, branch: str
+) -> Optional[str]:
+    """The local, not-yet-pushed merge commit that brought ``branch`` into base.
+
+    flowgate.default.0607 T0004 §3.3 (NR0003 §3/§9.5 F3): ``base..branch == 0`` has
+    two meanings. The branch may simply have nothing (no work — discard it), or its
+    work may already sit in LOCAL base through a merge commit that never reached
+    origin (a merge whose command result was lost, then a retry). Reading the second
+    as the first is how 0600 was torn down without a push.
+
+    Returns the full sha of that merge commit, or None when there is none to find
+    (branch already on origin, no origin ref, git cannot answer). A commit is only
+    this branch's merge when it sits on base's first-parent line above origin, its
+    SECOND parent contains the branch tip and its FIRST parent does not — so a fresh,
+    work-less branch cut from an unpushed local base (other groups' merges above
+    origin) is never mistaken for merged work of its own.
+    """
+    from modules.flow_gate.services import git_service as _gs
+    origin_ref = f"refs/remotes/origin/{base_branch}"
+    branch_ref = f"refs/heads/{branch}"
+    # One call answers the common case: a branch already contained in origin (or an
+    # origin/branch git cannot resolve) has no unpushed merge to find.
+    beyond_origin = _gs._run_git(
+        ["rev-list", "--count", f"{origin_ref}..{branch_ref}"], cwd=base_root,
+    )
+    if beyond_origin.returncode != 0 or (beyond_origin.stdout or "").strip() in ("", "0"):
+        return None
+    tip = _rev_parse(base_root, branch_ref)
+    if not tip:
+        return None
+    merges = _gs._run_git(
+        ["rev-list", "--merges", "--first-parent", f"{origin_ref}..refs/heads/{base_branch}"],
+        cwd=base_root,
+    )
+    if merges.returncode != 0:
+        return None
+    for merge in (merges.stdout or "").split():
+        second = _rev_parse(base_root, f"{merge}^2")
+        first = _rev_parse(base_root, f"{merge}^1")
+        if not second or not first:
+            continue
+        if second != tip and _is_ancestor(base_root, tip, second) is not True:
+            continue
+        if _is_ancestor(base_root, tip, first) is not False:
+            continue
+        return merge
+    return None
+
+
 def _parse_name_status_z(stdout: str) -> list[str]:
     """``git diff --name-status -M -z`` → changed paths (renames → new path only).
 
@@ -406,8 +467,20 @@ def _ignored_paths(repo: Path, paths: list[str]) -> list[str]:
 def _query_remote_ref(base_root: Path, cfg: dict, base_branch: str) -> Optional[str]:
     """Best-effort, network ``ls-remote`` read of the real current position of the
     remote base ref (D0006 §3.6 / L0007 §2.8.1) — ``None`` when the query itself
-    fails (unreachable/timeout), which the caller must NOT treat as "not found"."""
+    fails (unreachable/timeout), which the caller must NOT treat as "not found".
+
+    flowgate.default.0361 NR0003 §7/§16: a stuck ``reconciling`` session can sit
+    long enough for the operator to repoint ``repo_url`` at a different remote
+    before this reconciliation read runs — this must ask the CURRENTLY configured
+    origin, not whatever ``origin`` happened to point at when the base checkout
+    was provisioned. A sync failure folds into the existing "query failed" ``None``
+    contract instead of running ``ls-remote`` against a possibly-stale origin.
+    """
     from modules.flow_gate.services import git_service as _gs
+    try:
+        _gs.ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
+    except GitServiceError:
+        return None
     proc = _gs._run_git(
         ["ls-remote", "origin", f"refs/heads/{base_branch}"],
         cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC,
@@ -531,5 +604,14 @@ def _local_commit_count(base_root: Optional[Path]) -> Optional[int]:
 
 def _merge_in_progress(base_root: Path) -> bool:
     """True while a conflict session holds the base checkout mid-merge — commit
-    and revert must not touch that intermediate state (resolve/abort only)."""
-    return (base_root / ".git" / "MERGE_HEAD").exists()
+    and revert must not touch that intermediate state (resolve/abort only).
+
+    0594 T0012: a managed merge-target workspace is a LINKED worktree whose ``.git``
+    is a file pointing at ``<repo>/.git/worktrees/<name>`` — ask git there. The
+    shared base checkout (a real ``.git`` directory) keeps the direct file check."""
+    git_path = base_root / ".git"
+    if git_path.is_file():
+        from modules.flow_gate.services import git_service as _gs
+        proc = _gs._run_git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], cwd=base_root)
+        return proc.returncode == 0
+    return (git_path / "MERGE_HEAD").exists()

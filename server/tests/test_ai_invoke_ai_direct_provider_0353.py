@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 
 os.environ.setdefault("TESTING", "1")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
@@ -279,7 +280,7 @@ def test_docs_target_counts_modes_mixed_items_and_ts(run_env):
     [("ai_direct", 1), ("auto_approved", 2)],
 )
 @pytest.mark.parametrize("key_kind", ["string", "integer"])
-def test_override_key_formats_and_disabled_provider_fallback(
+def test_override_key_formats_and_disabled_provider_fail_closed(
     run_env, instruction_mode, item_seq, key_kind
 ):
     run_env["wfseq"].items = [
@@ -293,12 +294,15 @@ def test_override_key_formats_and_disabled_provider_fallback(
         run_env["providers"],
         continuation_instruction_mode=instruction_mode,
     ) == "provider1"
-    assert svc._resolve_continuation_hop_override(
-        ROOT_DOC,
-        {key: "deleted-provider"},
-        run_env["providers"],
-        continuation_instruction_mode=instruction_mode,
-    ) is None
+    with pytest.raises(HTTPException) as caught:
+        svc._resolve_continuation_hop_override(
+            ROOT_DOC,
+            {key: "deleted-provider"},
+            run_env["providers"],
+            continuation_instruction_mode=instruction_mode,
+        )
+    assert caught.value.status_code == 422
+    assert caught.value.detail["code"] == "provider_unavailable"
 
 
 @pytest.mark.parametrize(

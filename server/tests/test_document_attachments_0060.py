@@ -1047,3 +1047,178 @@ def test_a_jail_that_cannot_be_resolved_at_all_denies_instead_of_waving_it_throu
         "STORAGE_PATH_OUTSIDE_ROOT",
     )
     assert not (room_of(env) / "메모.txt").exists()
+
+
+# ── flowgate.default.0554 T0008 — reserved WorkPlan attachment lifecycle ─────
+
+def test_general_attachment_list_hides_reserved_work_plan_files(monkeypatch):
+    from modules.flow_gate.documents.attachments import service
+
+    monkeypatch.setattr(service, "load_document", lambda doc_id: {"doc_id": doc_id})
+    monkeypatch.setattr(service, "registry_list", lambda doc_id: [
+        {
+            "doc_id": doc_id,
+            "filename": "human.pdf",
+            "original_filename": "human.pdf",
+            "size": 1,
+            "content_type": "application/pdf",
+            "content_sha256": "a" * 64,
+        },
+        {
+            "doc_id": doc_id,
+            "filename": "__wp_pre_instruction__T-1__private.pdf",
+            "original_filename": "private.pdf",
+            "size": 1,
+            "content_type": "application/pdf",
+            "content_sha256": "b" * 64,
+        },
+    ])
+    listed = service.list_attachments("doc")
+    assert [row["filename"] for row in listed["attachments"]] == ["human.pdf"]
+    assert listed["count"] == 1
+
+
+def test_general_delete_cannot_remove_reserved_work_plan_file(monkeypatch):
+    from modules.flow_gate.documents.attachments import service
+
+    monkeypatch.setattr(service, "load_document", lambda doc_id: {"doc_id": doc_id})
+    monkeypatch.setattr(service, "assert_mutable", lambda *args: None)
+    with pytest.raises(service.AttachmentError) as exc:
+        service.delete_attachment(
+            "doc", "__wp_pre_instruction__T-1__private.txt", {"user_id": "u"}
+        )
+    assert exc.value.code == "DOCUMENT_NOT_MUTABLE"
+    assert exc.value.details["reason"] == "reserved_work_plan_attachment"
+
+
+def test_work_plan_cleanup_deletes_only_unreferenced_reserved_rows(tmp_path, monkeypatch):
+    from modules.flow_gate.services import work_plan_attachment_service as lifecycle
+
+    keep_path = tmp_path / "__wp_pre_instruction__T-1__keep.txt"
+    orphan_path = tmp_path / "__wp_pre_instruction__T-2__orphan.txt"
+    human_path = tmp_path / "human.txt"
+    for path in (keep_path, orphan_path, human_path):
+        path.write_text("x", encoding="utf-8")
+    rows = [
+        {"filename": keep_path.name},
+        {"filename": orphan_path.name},
+        {"filename": human_path.name},
+    ]
+    by_name = {
+        keep_path.name: keep_path,
+        orphan_path.name: orphan_path,
+        human_path.name: human_path,
+    }
+    deleted = []
+    monkeypatch.setattr(lifecycle, "registry_list", lambda doc_id: rows)
+    monkeypatch.setattr(
+        lifecycle,
+        "resolve_registered_attachment",
+        lambda doc, name, require_file=False: (
+            {"filename": name}, by_name[name],
+        ),
+    )
+    monkeypatch.setattr(
+        lifecycle, "registry_delete", lambda doc_id, name: deleted.append(name)
+    )
+    body = {
+        "steps": [{
+            "pre_instruction_attachment": {
+                "filename": keep_path.name,
+            },
+        }],
+    }
+    assert lifecycle.cleanup_unreferenced({"doc_id": "doc"}, body) == []
+    assert keep_path.exists()
+    assert human_path.exists()
+    assert not orphan_path.exists()
+    assert deleted == [orphan_path.name]
+
+
+def test_attachment_reference_codes_distinguish_scope_name_and_missing_row(monkeypatch):
+    from modules.flow_gate.services import work_plan_attachment_service as lifecycle
+
+    reference = {
+        "doc_id": "doc",
+        "filename": "__wp_pre_instruction__T-1__a.txt",
+        "original_filename": "a.txt",
+        "content_sha256": "a" * 64,
+    }
+    assert lifecycle.validate_reference("other", reference) == (
+        "pre_instruction_attachment_doc_mismatch"
+    )
+    forged = dict(reference, filename="ordinary.txt")
+    assert lifecycle.validate_reference("doc", forged) == (
+        "pre_instruction_attachment_reserved_name_required"
+    )
+    monkeypatch.setattr(lifecycle, "registry_get", lambda doc_id, filename: None)
+    assert lifecycle.validate_reference("doc", reference) == (
+        "pre_instruction_attachment_registry_missing"
+    )
+
+
+def test_reserved_attachment_saved_for_real_is_read_back_through_the_real_worker_route(env):
+    """0554 T0014 §4/I2 rework (rej_01M33DPHG59E1H56 finding 4): the four tests above (and
+    the pre-instruction tests in test_ai_invoke_pre_instruction_0554.py) all monkeypatch
+    ``validate_reference``/``resolve_registered_attachment`` directly and never create a real
+    reserved registry row + file, so they never prove a worker can actually READ one back.
+
+    This uploads a reserved pre-instruction attachment through the real
+    ``work_plan_attachment_service.upload_pre_instruction_attachment`` (real file on disk,
+    real ``attachments`` table row via the real sqlite ``env`` fixture — same DB/storage this
+    whole file already uses for ordinary attachments), then calls the SAME
+    ``GET /api/v1/document/{doc_id}/attachments/{name}/read`` route a worker token uses for
+    any other attachment, over real HTTP (TestClient), with only the token-verification
+    boundary stubbed (mirrors test_worker_document_attachments_0523.py's ``_auth_as``) — the
+    route handler, ``tool_registry`` kind check, and ``read_attachment`` all run unstubbed.
+    """
+    import asyncio
+    from unittest.mock import patch
+
+    from fastapi import FastAPI
+    from starlette.testclient import TestClient
+
+    from modules.flow_gate.api.v1.document_routes import router
+    from modules.flow_gate.services import auth_outbound
+    from modules.flow_gate.services import work_plan_attachment_service as wpa
+
+    wp_doc_id = "flowgate.default.0060.0003-WP"
+    env["store"]._execute(
+        "INSERT OR IGNORE INTO documents(doc_id,project_id,module,group_id,type_code,seq,"
+        "title,file_path,status,created_at,updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))",
+        [wp_doc_id, PROJECT_ID, "default", GROUP_ID, "WP", 3, "wp doc",
+         f"documents/{PROJECT_ID}/main/default/0060/0003-WP_document.md", "open"],
+    )
+    (env["group_dir"] / "0003-WP_document.md").write_text("# wp body", encoding="utf-8")
+
+    saved = asyncio.run(wpa.upload_pre_instruction_attachment(
+        wp_doc_id, "T#1", FakePart("brief.txt", b"real reserved bytes"), ACTOR, None,
+    ))
+    reference = saved["reference"]
+    assert wpa.is_reserved_name(reference["filename"])
+    # The real production validator (not monkeypatched) confirms this reference resolves —
+    # what the sequence item's pre_instruction_attachment_json would carry.
+    assert wpa.validate_reference(wp_doc_id, reference) is None
+
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+    worker_token = {
+        "token_id": "tok_worker_0060", "issued_to": "usr_admin",
+        "project": PROJECT_ID, "group_id": GROUP_ID, "doc_ref": wp_doc_id,
+        "action_scope": "new", "expires_at": "2999-01-01T00:00:00+00:00",
+    }
+    with patch.object(auth_outbound.token_service, "verify", return_value=worker_token), \
+         patch.object(auth_outbound, "has_permission", return_value=True):
+        resp = client.get(
+            f"/api/v1/document/{wp_doc_id}/attachments/{reference['filename']}/read",
+            headers={"Authorization": "Bearer x"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["kind"] == "text"
+    assert body["content"] == "real reserved bytes"
+    assert body["attachment"]["content_sha256"] == reference["content_sha256"]
+    assert reference["content_sha256"] == hashlib.sha256(b"real reserved bytes").hexdigest()

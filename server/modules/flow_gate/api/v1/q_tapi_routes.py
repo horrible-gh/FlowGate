@@ -48,6 +48,13 @@ def _fail(status: int, message: str) -> JSONResponse:
     )
 
 
+def _operator_facing_api_base(request: Request) -> str:
+    """Build the same browser-facing API base used by the AI-invoke routes."""
+    from modules.flow_gate.api import token_routes
+
+    return token_routes._build_api_base(request)
+
+
 def _compose_doc_id(project_id: str, module: str, group_seq: str, doc_code: str) -> str:
     """Slash path segments → canonical doc_id."""
     group_id = f"{project_id}.{module}.{group_seq}"
@@ -119,7 +126,9 @@ def _extract_bearer(request: Request) -> Optional[str]:
     return None
 
 
-def _resolve_writer(request: Request, doc_id: str) -> Union[Tuple[str, Optional[str]], JSONResponse]:
+def _resolve_writer(
+    request: Request, doc_id: str
+) -> Union[Tuple[str, Optional[str], Optional[str]], JSONResponse]:
     """Dual auth for register-query/answer endpoints.
 
     An AI worker holds an inbox/edit token (issued by [Request AI answer] or the inbox flow),
@@ -132,8 +141,12 @@ def _resolve_writer(request: Request, doc_id: str) -> Union[Tuple[str, Optional[
     Parent-document perm_document_create is enforced downstream by _doc_project_or_403 against
     the resolved writer (issued_to for tokens, user_id for sessions).
 
-    Returns (writer_user_id, forced_kind) where forced_kind='ai' for worker tokens and None for
-    sessions, or a JSONResponse on auth failure (caller must return it immediately).
+    Returns (writer_user_id, forced_kind, ai_run_id) where forced_kind='ai' for worker
+    tokens and None for sessions, or a JSONResponse on auth failure (caller must return
+    it immediately). 0582 T0005 §D: the token's bound ``ai_run_id`` used to be dropped
+    right here — the one place that verified it — leaving every AI question/answer with
+    no way to say which model raised or answered it. It rides along now so the caller can
+    resolve the run's actual provider without re-verifying the token.
     """
     raw = _extract_bearer(request)
     if raw is None:
@@ -148,14 +161,14 @@ def _resolve_writer(request: Request, doc_id: str) -> Union[Tuple[str, Optional[
         # Context binding: an edit token may only register against its own document.
         if token_rec.get("doc_ref") not in (None, "", doc_id):
             return _fail(403, "Context binding mismatch. Use the correct token.")
-        return token_rec["issued_to"], "ai"
+        return token_rec["issued_to"], "ai", token_rec.get("ai_run_id")
 
     # 2) login session JWT (human via [+query])
     try:
         user = get_current_user(verify_token(raw))
     except HTTPException as exc:
         return _fail(exc.status_code, exc.detail)
-    return user["user_id"], None
+    return user["user_id"], None, None
 
 
 # ── Request schemas ──────────────────────────────────────────────────────────
@@ -234,7 +247,22 @@ class RegisterAnswerRequest(BaseModel):
 
 # ── shared handlers ───────────────────────────────────────────────────────────
 
-def _add_questions_response(doc_id: str, body: AddQuestionsRequest, user_id: str) -> JSONResponse:
+def _resolve_ai_provenance(ai_run_id: Optional[str]) -> dict:
+    """The token's run/provider snapshot, unrestricted by action_scope (0582 T0005 §D).
+
+    An AI worker registers a question or answer incidentally while doing whatever its
+    token was actually admitted for (new/edit/review/... — there is no dedicated
+    "question" action_scope), so this does not filter by scope the way the review path
+    does. {} (every field null) when the token carries no run — a legacy token or the
+    [Copy Mention] hand-off, which starts no run by design.
+    """
+    from modules.flow_gate.services.ai_invoke.provenance import resolve_run_provenance
+    return resolve_run_provenance(ai_run_id, doc_id=None, allowed_action_scopes=None)
+
+
+def _add_questions_response(
+    doc_id: str, body: AddQuestionsRequest, user_id: str, ai_run_id: Optional[str] = None,
+) -> JSONResponse:
     project_id = _doc_project_or_403(doc_id, user_id, "perm_document_create", reject_disposed=True)
     if isinstance(project_id, JSONResponse):
         return project_id
@@ -247,6 +275,7 @@ def _add_questions_response(doc_id: str, body: AddQuestionsRequest, user_id: str
             created_by=user_id if body.asker_kind == "human" else None,
             project_id=project_id or None,
             notify_audience=user_id if body.asker_kind == "ai" else None,
+            asker_provenance=_resolve_ai_provenance(ai_run_id) if body.asker_kind == "ai" else None,
         )
     except HTTPException as exc:
         return _fail(exc.status_code, exc.detail)
@@ -254,7 +283,9 @@ def _add_questions_response(doc_id: str, body: AddQuestionsRequest, user_id: str
 
 
 def _register_answer_response(
-    doc_id: str, item_id: int, body: RegisterAnswerRequest, user_id: str
+    doc_id: str, item_id: int, body: RegisterAnswerRequest, user_id: str,
+    request: Request,
+    ai_run_id: Optional[str] = None,
 ) -> JSONResponse:
     project_id = _doc_project_or_403(doc_id, user_id, "perm_document_create", reject_disposed=True)
     if isinstance(project_id, JSONResponse):
@@ -268,6 +299,9 @@ def _register_answer_response(
             author_id=user_id if body.author_kind == "human" else None,
             selected_option_ids=body.selected_option_ids,
             notify_audience=user_id,
+            author_provenance=_resolve_ai_provenance(ai_run_id) if body.author_kind == "ai" else None,
+            auto_resume_api_base_url=_operator_facing_api_base(request),
+            auto_resume_locale=request.headers.get("x-locale") or "ko",
         )
     except HTTPException as exc:
         return _fail(exc.status_code, exc.detail)
@@ -301,7 +335,7 @@ def post_add_questions(
     auth = _resolve_writer(request, doc_id)
     if isinstance(auth, JSONResponse):
         return auth
-    user_id, forced_kind = auth
+    user_id, forced_kind, ai_run_id = auth
     ch_rejected = _reject_conversation_doc(doc_id)
     if ch_rejected is not None:
         return ch_rejected
@@ -313,7 +347,7 @@ def post_add_questions(
         # current work-context document (in-progress report doc, else its predecessor
         # instruction doc). Human [+query] (forced_kind is None) registers where it clicks.
         doc_id = q_service.resolve_question_anchor(doc_id)
-    return _add_questions_response(doc_id, body, user_id)
+    return _add_questions_response(doc_id, body, user_id, ai_run_id=ai_run_id)
 
 
 # ── POST /q/{doc_id}/items/{item_id}/answers — register answer ────────────────────────
@@ -336,10 +370,10 @@ def post_register_answer_by_path(
     auth = _resolve_writer(request, doc_id)
     if isinstance(auth, JSONResponse):
         return auth
-    user_id, forced_kind = auth
+    user_id, forced_kind, ai_run_id = auth
     if forced_kind is not None:
         body.author_kind = forced_kind
-    return _register_answer_response(doc_id, item_id, body, user_id)
+    return _register_answer_response(doc_id, item_id, body, user_id, request, ai_run_id=ai_run_id)
 
 
 @router.post("/q/{doc_id}/items/{item_id}/answers")
@@ -356,10 +390,10 @@ def post_register_answer(
     auth = _resolve_writer(request, doc_id)
     if isinstance(auth, JSONResponse):
         return auth
-    user_id, forced_kind = auth
+    user_id, forced_kind, ai_run_id = auth
     if forced_kind is not None:
         body.author_kind = forced_kind
-    return _register_answer_response(doc_id, item_id, body, user_id)
+    return _register_answer_response(doc_id, item_id, body, user_id, request, ai_run_id=ai_run_id)
 
 
 # ── Answer hand-off — give one query item to an AI worker ────────────────────────────

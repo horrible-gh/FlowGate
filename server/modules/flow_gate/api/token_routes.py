@@ -526,7 +526,7 @@ def _determine_action_scope(doc_ref_raw: Optional[str]) -> str:
 
 # ── M020 mention helpers ──────────────────────────────────────────────────────
 
-_DOC_CODE_RE = re.compile(r'([A-Z]+\d+)$')
+from modules.flow_gate.documents.type_code import DOC_ID_TAIL_RE as _DOC_CODE_RE
 
 
 def _derive_status(result_doc_id, result_review: str | None) -> str:
@@ -599,8 +599,14 @@ def _build_mention_for_token(
     """
     resolved_api_base = api_base_url or _build_api_base(request)
     if action_scope == "resolve_conflict":
-        if not group_id or merge_id is None:
+        if merge_id is None:
             return None
+        if not group_id:
+            # 0630 T0005: an ordinary branch merge has no group — its resolver run is
+            # project-scoped and its session is addressed by project.
+            _owner_group, owner_project = git_service.merge_session_owner_args(merge_id)
+            if not owner_project or owner_project != project_id:
+                return None
         if review_conversation:
             return _build_review_conversation_mention(
                 group_id=group_id,
@@ -715,30 +721,43 @@ def _build_mention_for_token(
     )
 
 
+# 0608 T0007: the marker patterns resolve_conflicts' own parser uses
+# (git_service._CONFLICT_OPEN_RE/_CLOSE_RE, git/conflict.py _CONFLICT_BASE_RE/_SEP_RE), so
+# chunk N in the mention is chunk N when a `chunks` submission is assembled.
+_CHUNK_BASE_RE = re.compile(r"^\|{7}( |$)")
+_CHUNK_SEP_RE = re.compile(r"^={7}$")
+
+
 def _split_conflict_chunks(content: str) -> list[dict]:
     chunks: list[dict] = []
     state: Optional[str] = None
     current = {"ours": [], "base": [], "theirs": []}
     ours_label = ""
     theirs_label = ""
-    for line in content.splitlines():
-        if line.startswith("<<<<<<<"):
+    start_line = 0
+    # Line numbers count the way `/remote/read` start_line/end_line do (str.splitlines),
+    # so a chunk's range can be read back as-is (0608 T0005).
+    for line_no, line in enumerate(content.splitlines(), start=1):
+        if git_service._CONFLICT_OPEN_RE.match(line):
             state = "ours"
             current = {"ours": [], "base": [], "theirs": []}
             ours_label = line[7:].strip()
             theirs_label = ""
+            start_line = line_no
             continue
-        if state == "ours" and line.startswith("|||||||"):
+        if state == "ours" and _CHUNK_BASE_RE.match(line):
             state = "base"
             continue
-        if state in ("ours", "base") and line.startswith("======="):
+        if state in ("ours", "base") and _CHUNK_SEP_RE.match(line):
             state = "theirs"
             continue
-        if state == "theirs" and line.startswith(">>>>>>>"):
+        if state == "theirs" and git_service._CONFLICT_CLOSE_RE.match(line):
             theirs_label = line[7:].strip()
             chunks.append({
                 "ours_label": ours_label,
                 "theirs_label": theirs_label,
+                "start_line": start_line,
+                "end_line": line_no,
                 "ours": current["ours"],
                 "base": current["base"],
                 "theirs": current["theirs"],
@@ -779,8 +798,9 @@ def _conflict_task_section(kind: str, tr: dict) -> str:
             "Before you decide a chunk, read the whole file and the surrounding code with the "
             "read/grep/glob/diff/log/show tools — a chunk resolved correctly in isolation can "
             "still leave a name undefined, an import dropped or a branch unreachable.\n"
-            "Do not ask the user to choose chunks. Produce complete file contents with all "
-            "conflict markers removed, then call the bound resolve endpoint.\n"
+            "Do not ask the user to choose chunks. Produce each resolved file -- its complete "
+            "contents, or every one of its chunks resolved -- with all conflict markers "
+            "removed, then call the bound resolve endpoint.\n"
             "Your call ends at `resolved_pending_review`, not at a commit: a person reads the "
             "whole candidate diff and presses the approve button. Leave the tree in the state "
             "you would want them to read, and say in your final message which chunks you were unsure "
@@ -940,7 +960,7 @@ _WRITE_PLAN_COPY = {
 
 
 def _build_write_plan_section(
-    *, group_id: str, merge_id: int, raw_token: str, api_base_url: str, allow_test_edits: bool,
+    *, group_id: Optional[str], merge_id: int, raw_token: str, api_base_url: str, allow_test_edits: bool,
     locale: str = "ko",
 ) -> str:
     """flowgate.default.0481 T0008 item 1 / L0007 §2.5-§2.9, Q&A on 0009-TR: the
@@ -956,7 +976,7 @@ def _build_write_plan_section(
     session = db_git.get_session(merge_id)
     context = db_git.session_context(session) if session is not None else {}
     base_fingerprint = context.get("review_fingerprint") or "<unknown — the review screen was not in a pending state>"
-    write_plan_url = f"{api_base_url}/groups/{group_id}/git/merge/{merge_id}/write-plan-token"
+    write_plan_url = f"{api_base_url}{git_service.merge_route_prefix(merge_id, group_id)}/write-plan-token"
     test_edit_note = (
         copy["note_test_edits_allowed"] if allow_test_edits else copy["note_test_edits_denied"]
     )
@@ -1014,7 +1034,7 @@ _REVIEW_CONVERSATION_MAX_FILES = 80
 
 def _build_review_conversation_mention(
     *,
-    group_id: str,
+    group_id: Optional[str],
     project_id: str,
     merge_id: int,
     raw_token: str,
@@ -1038,7 +1058,11 @@ def _build_review_conversation_mention(
     the conversation is replayed, and there is no resolve endpoint in it (resolve_conflicts
     refuses one from this run regardless).
     """
-    brief = git_service.review_conversation_brief(group_id, merge_id)
+    _owner_group, owner_project = git_service.merge_session_owner_args(merge_id, group_id)
+    brief = (
+        git_service.review_conversation_brief(None, merge_id, project_id=owner_project)
+        if owner_project else git_service.review_conversation_brief(group_id, merge_id)
+    )
     if not brief:
         return None
 
@@ -1127,8 +1151,8 @@ def _build_review_conversation_mention(
         "## Document information\n"
         "---\n"
         f"project: {project_id}\n"
-        f"group: {group_id}\n"
-        "type: merge_review_conversation\n"
+        + (f"group: {group_id}\n" if group_id else "owner: branch_merge (project-scoped, no group)\n")
+        + "type: merge_review_conversation\n"
         f"merge_id: {merge_id}\n\n"
         "## Merge review conversation - your task\n"
         "---\n"
@@ -1172,9 +1196,30 @@ def _build_review_conversation_mention(
     )
 
 
+_SUPERSEDE_MENTION_SECTION = (
+    # 0604 D0005 §3.4 — the one case where the correct result equals one side verbatim.
+    # Worded as a narrow exception with server-side evidence, never as a shortcut.
+    "## Superset declaration (`supersede`)\n"
+    "---\n"
+    "A chunk resolved to exactly one side's text, where BOTH sides changed it, is rejected "
+    "with 422 `conflict_side_dropped` (the response lists every such file, chunk and line range). "
+    "Normally the fix is to merge both sides' changes into that chunk.\n"
+    "Only when the side you kept ALREADY contains the other side's changes (each line the "
+    "other side added over `base` is still there verbatim, or was changed in the same place) "
+    "may you declare it on that file:\n\n"
+    "{\"path\": \"...\", \"content\": \"...\", "
+    "\"supersede\": {\"side\": \"ours|theirs\", \"reason\": \"<why the kept side contains the other side>\"}}\n\n"
+    "The server checks the evidence and rejects a false declaration with 422 "
+    "`conflict_supersede_invalid` (declared side not the one kept, a line of the other side "
+    "removed outright, fewer lines kept than changed, or no rejected chunk in that file). "
+    "A declared merge is never auto-approved: a person reads the replaced lines before approving. "
+    "Do not invent lines to make a one-side resolution look merged.\n\n"
+)
+
+
 def _build_conflict_mention(
     *,
-    group_id: str,
+    group_id: Optional[str],
     project_id: str,
     merge_id: int,
     scratch_dir: str,
@@ -1184,29 +1229,63 @@ def _build_conflict_mention(
     allow_test_edits: bool = False,
     locale: str = "ko",
 ) -> Optional[str]:
-    conflicts = git_service.list_conflicts(group_id, merge_id)
+    # 0630 T0005: an ordinary branch merge is listed and resolved through its project-scoped
+    # routes; everything else in this mention (chunks, inline limit, reading contract,
+    # supersede, write plan) is the same contract.
+    _owner_group, owner_project = git_service.merge_session_owner_args(merge_id, group_id)
+    conflicts = (
+        git_service.list_conflicts(None, merge_id, project_id=owner_project)
+        if owner_project else git_service.list_conflicts(group_id, merge_id)
+    )
     files = conflicts.get("files") or []
-    resolve_url = f"{api_base_url}/groups/{group_id}/git/merge/{merge_id}/resolve-token"
-    chunks_payload = []
+    resolve_url = f"{api_base_url}{git_service.merge_route_prefix(merge_id, group_id)}/resolve-token"
+    eol_only = set(conflicts.get("eol_only_paths") or [])
+    open_files: list[tuple[dict, list[dict]]] = []
+    resolved_files: list[dict] = []
     for file in files:
-        content = file.get("content") or ""
-        chunks_payload.append({
+        # 2026-09-23 incident: each file used to also carry `raw_content: content` — the
+        # whole file a second time — which alone produced a ~3.94M-char prompt.
+        chunks = _split_conflict_chunks(file.get("content") or "")
+        if chunks:
+            open_files.append((file, chunks))
+        else:
+            resolved_files.append({
+                "path": file.get("path"),
+                "reason": "eol_only" if file.get("path") in eol_only else "resolved",
+            })
+    # 0608 T0005: chunk TEXT rides along only while the whole set is small. Past that the
+    # mention carries where each chunk is and the worker reads it through the remote
+    # source tools — 0594's real conflicts (24 chunks, ~53k chars of chunk JSON) would
+    # otherwise make the first prompt scale with the conflict, not with the task.
+    inline = sum(
+        len(json.dumps(chunks, ensure_ascii=False, indent=2)) for _file, chunks in open_files
+    ) <= CONFLICT_INLINE_CHUNKS_MAX_CHARS
+    chunks_payload = [
+        {
             "path": file.get("path"),
             "conflict_count": file.get("conflict_count"),
-            "chunks": _split_conflict_chunks(content),
-            "raw_content": content,
-        })
+            "chunks": chunks if inline else [_conflict_chunk_location(i, c) for i, c in enumerate(chunks, 1)],
+        }
+        for file, chunks in open_files
+    ]
     kind = conflicts.get("kind") or "merge"
     tr = conflicts.get("tr_conflict") or {}
     payload = {
         "group_id": group_id,
         "merge_id": merge_id,
         "kind": kind,
+        **({"project_id": owner_project, "owner_type": "branch_merge",
+            "source_branch": conflicts.get("source_branch"),
+            "target_branch": conflicts.get("target_branch")} if owner_project else {}),
         "branch": conflicts.get("branch"),
         "base_branch": conflicts.get("base_branch"),
         "tr_conflict": conflicts.get("tr_conflict") or None,
+        "refs": conflicts.get("refs") or None,
+        "chunk_text": "inline" if inline else "omitted",
         "files": chunks_payload,
     }
+    if resolved_files:
+        payload["resolved_files"] = resolved_files
     write_plan_section = (
         _build_write_plan_section(
             group_id=group_id, merge_id=merge_id, raw_token=raw_token,
@@ -1215,12 +1294,23 @@ def _build_conflict_mention(
         )
         if write_requested_by_human else ""
     )
+    binding = (
+        "The bearer token is bound to exactly this project's branch merge (merge_id) — it has no "
+        "group. Other git/config/finalize endpoints are not authorized.\n\n"
+        if owner_project else
+        "The bearer token is bound to exactly this group_id and merge_id. Other git/config/finalize endpoints are not authorized.\n\n"
+    )
     return (
         "## Document information\n"
         "---\n"
         f"project: {project_id}\n"
-        f"group: {group_id}\n"
-        "type: git_conflict\n"
+        + (
+            f"group: {group_id}\n" if not owner_project else
+            "owner: branch_merge (project-scoped, no group)\n"
+            f"source_branch: {conflicts.get('source_branch')}\n"
+            f"target_branch: {conflicts.get('target_branch')}\n"
+        )
+        + "type: git_conflict\n"
         f"merge_id: {merge_id}\n\n"
         + _conflict_task_section(kind, tr)
         + "## Bound resolve endpoint\n"
@@ -1234,14 +1324,120 @@ def _build_conflict_mention(
         "  ],\n"
         "  \"complete\": true\n"
         "}\n\n"
-        "The bearer token is bound to exactly this group_id and merge_id. Other git/config/finalize endpoints are not authorized.\n\n"
+        "Instead of `content`, a file may carry `chunks`: one object for every chunk of that "
+        "file, with `chunk` (its number in the conflict session below) and `content` (the lines "
+        "that replace its whole marker block). The server rebuilds the file from them and checks "
+        "it exactly like `content`.\n\n"
+        + binding
+        + _SUPERSEDE_MENTION_SECTION
         + write_plan_section
+        + _conflict_reading_section(
+            api_base_url, inline=inline, has_open=bool(open_files),
+            refs=payload["refs"],
+        )
+        + _conflict_remote_source_section(api_base_url, raw_token)
         + "## Conflict session\n"
         "---\n"
         "```json\n"
-        f"{json.dumps(payload, ensure_ascii=False, indent=2)}\n"
+        f"{_conflict_session_json(payload)}\n"
         "```\n"
     )
+
+
+# 0608 T0005: the most chunk JSON the mention still inlines as text. A single small
+# conflict (the everyday case) keeps its chunks in the prompt; 0594's 24 real chunks
+# (~53k chars) do not.
+CONFLICT_INLINE_CHUNKS_MAX_CHARS = 4_000
+
+
+def _conflict_chunk_location(index: int, chunk: dict) -> dict:
+    """Where a chunk is, without its text: marker lines plus each side's line count."""
+    return {
+        "chunk": index,
+        "start_line": chunk["start_line"],
+        "end_line": chunk["end_line"],
+        "ours_lines": len(chunk["ours"]),
+        "base_lines": len(chunk["base"]),
+        "theirs_lines": len(chunk["theirs"]),
+    }
+
+
+def _conflict_session_json(value, level: int = 0) -> str:
+    """``json.dumps(indent=2)`` except that an object holding only scalars stays on one
+    line — a chunk location is one line, not eight."""
+    pad = "  " * (level + 1)
+    if isinstance(value, dict) and value:
+        if not any(isinstance(v, (dict, list)) for v in value.values()):
+            return json.dumps(value, ensure_ascii=False)
+        items = ",\n".join(
+            f"{pad}{json.dumps(k, ensure_ascii=False)}: {_conflict_session_json(v, level + 1)}"
+            for k, v in value.items()
+        )
+        return "{\n" + items + "\n" + "  " * level + "}"
+    if isinstance(value, list) and value:
+        items = ",\n".join(f"{pad}{_conflict_session_json(v, level + 1)}" for v in value)
+        return "[\n" + items + "\n" + "  " * level + "]"
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _conflict_remote_source_section(api_base_url: str, raw_token: str) -> str:
+    """The "Remote project source CRUD" section every other worker mention carries
+    (NR0003 §3.4: the conflict mention never had it, so the read tools its task paragraph
+    asks for had no address). English, like the rest of this mention; the tool list is
+    tool_registry's judgment for resolve_conflict — the read tools only."""
+    section = mention_service._remote_source_crud_section(
+        api_base_url, raw_token, None, "en", action_scope="resolve_conflict",
+    )
+    return section + "\n\n" if section else ""
+
+
+def _conflict_reading_section(
+    api_base_url: str, *, inline: bool, has_open: bool, refs: Optional[dict],
+) -> str:
+    """How to read the conflicts and hand the result back (0608 T0005, NR0003 §3.4/§8)."""
+    if not has_open:
+        return (
+            "## Reading the conflicts\n"
+            "---\n"
+            "No file in this session has conflict markers left (see `resolved_files`). "
+            "Finish with {\"files\": [], \"complete\": true} to the bound resolve endpoint.\n\n"
+        )
+    read_url = f"{api_base_url}/remote/read"
+    lines = [
+        "## Reading the conflicts",
+        "---",
+        "`files` lists every file that still has conflicts. For each chunk, `start_line`/"
+        "`end_line` are the 1-based lines of its `<<<<<<<` and `>>>>>>>` markers in the "
+        "conflicted file as it is now.",
+        (
+            "The chunk text is included below."
+            if inline else
+            "The chunk text is NOT included — read it with the remote source tools."
+        ),
+        f"- A chunk and its surroundings: POST {read_url} "
+        "{\"path\": \"<path>\", \"start_line\": <max(1, start_line - 40)>, "
+        "\"end_line\": <end_line + 40>} "
+        "with the bearer token below. This reads the conflicted file itself, which is not "
+        "your working directory's copy.",
+    ]
+    if refs:
+        lines.append(
+            f"- Whole versions of each side: add \"ref\": \"{refs.get('ours')}\" (ours, "
+            f"the base branch) or \"ref\": \"{refs.get('theirs')}\" (theirs, the group branch)."
+        )
+    lines += [
+        "- Remote write, patch and remove are not available to this run. The bound resolve "
+        "endpoint is the only way to change a file, and it validates every chunk.",
+        "- Build each resolved file with a script in your scratch directory "
+        "(FLOWGATE_SCRATCH): fetch the conflicted file, replace each chunk, and let the script "
+        "JSON-encode the request body. Do not type a large file into JSON by hand; sending "
+        "`chunks` instead of `content` keeps the body to the resolved chunks. You may "
+        "send files one at a time with \"complete\": false and set \"complete\": true on the last. "
+        "Each accepted call answers with `remaining_conflicts`.",
+        "- `resolved_files` need nothing from you. `eol_only` means both sides differed only "
+        "in CRLF/LF and the file was already merged on normalised line endings.",
+    ]
+    return "\n".join(lines) + "\n\n"
 
 def _load_current_revision_review(doc: dict) -> Optional[dict]:
     """Return the latest review only when it targets the document's current revision."""

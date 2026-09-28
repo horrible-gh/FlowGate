@@ -19,7 +19,12 @@ vi.mock('@main/components/common/useToast', () => ({
 import WorkflowDecisionModal, { type PourPayload } from '@main/components/WorkflowDecisionModal.vue'
 
 const DOC_ID = 'flowgate.default.0406.0001-B'
-const metadataKeys = ['note', 'source_doc_id', 'source_revision_no'] as const
+const metadataKeys = [
+  'note', 'source_doc_id', 'source_revision_no',
+  'provider_id', 'provider_display_name',
+  'review_count', 'reviewer_provider_id', 'reviewer_provider_display_name',
+  'pre_instruction_text', 'pre_instruction_attachment',
+] as const
 
 const canonicalItems = [
   {
@@ -58,7 +63,17 @@ const canonicalItems = [
     source_doc_id: 'flowgate.default.0406.0003-WP',
     source_revision_no: 0,
   },
-].map(item => ({ ...item, provider_id: null, provider_display_name: null, provider_registered: null }))
+].map((item, index) => ({
+  ...item,
+  provider_id: null,
+  provider_display_name: null,
+  provider_registered: null,
+  review_count: index === 0 ? 2 : 0,
+  reviewer_provider_id: index === 0 ? 'aip_reviewer' : null,
+  reviewer_provider_display_name: index === 0 ? 'Reviewer' : null,
+  pre_instruction_text: index === 0 ? 'Read the acceptance criteria first.' : null,
+  pre_instruction_attachment: index === 0 ? { doc_id: 'flowgate.default.0406.0007-AT' } : null,
+}))
 
 const legacyItem = {
   id: 4061,
@@ -131,7 +146,12 @@ describe('WorkflowDecisionModal metadata response contract (0406 T0007)', () => 
     const before = loadedMetadata(canonicalItems)
     const after = sentMetadata()
     expect(after).toEqual(before)
-    expect(after[1]).toEqual({ note: '', source_doc_id: null, source_revision_no: null })
+    expect(after[1]).toEqual({
+      note: '', source_doc_id: null, source_revision_no: null,
+      provider_id: null, provider_display_name: null,
+      review_count: 0, reviewer_provider_id: null, reviewer_provider_display_name: null,
+      pre_instruction_text: null, pre_instruction_attachment: null,
+    })
     expect(after[2].source_revision_no).toBe(0)
     console.log('ROUNDTRIP_METADATA=' + JSON.stringify({ before, after }))
   })
@@ -191,7 +211,12 @@ describe('WorkflowDecisionModal metadata response contract (0406 T0007)', () => 
     await saveButton.trigger('click')
     await flushPromises()
 
-    expect(sentMetadata()).toEqual([{ note: '', source_doc_id: null, source_revision_no: null }])
+    expect(sentMetadata()).toEqual([{
+      note: '', source_doc_id: null, source_revision_no: null,
+      provider_id: null, provider_display_name: null,
+      review_count: 0, reviewer_provider_id: null, reviewer_provider_display_name: null,
+      pre_instruction_text: null, pre_instruction_attachment: null,
+    }])
   })
 
   it('blocks the whole save when only one of two rows omits metadata keys', async () => {
@@ -241,6 +266,14 @@ describe('WorkflowDecisionModal metadata response contract (0406 T0007)', () => 
         plan_key: 'step-1',
         source_doc_id: 'flowgate.default.0406.0004-WP',
         source_revision_no: 4,
+        provider_id: null,
+        provider_display_name: null,
+        provider_registered: null,
+        review_count: 0,
+        reviewer_provider_id: null,
+        reviewer_provider_display_name: null,
+        pre_instruction_text: null,
+        pre_instruction_attachment: null,
       }],
       rowCountChange: { before: 0, after: 1, deleted: 0, added: 1 },
       notifications: [],
@@ -260,6 +293,13 @@ describe('WorkflowDecisionModal metadata response contract (0406 T0007)', () => 
       note: 'Poured note',
       source_doc_id: 'flowgate.default.0406.0004-WP',
       source_revision_no: 4,
+      provider_id: null,
+      provider_display_name: null,
+      review_count: 0,
+      reviewer_provider_id: null,
+      reviewer_provider_display_name: null,
+      pre_instruction_text: null,
+      pre_instruction_attachment: null,
     }])
   })
 })

@@ -241,6 +241,14 @@ async def upload_attachments(
         for part in parts:  # request order preserved
             raw_name = getattr(part, "filename", None)
             safe = sanitize_attachment_name(raw_name)
+            # The WorkPlan namespace is server-generated and can only be written through
+            # its dedicated lifecycle endpoint.
+            if safe.startswith("__wp_pre_instruction__"):
+                raise AttachmentError(
+                    400, "INVALID_FILENAME",
+                    "This filename prefix is reserved for WorkPlan pre-instructions.",
+                    filename=safe, reason="reserved_work_plan_prefix",
+                )
             # E1~E2. No extension is refused here — see constants §1-3 and TR0017 rev3.
             content_type = resolve_content_type(safe)
 
@@ -374,7 +382,10 @@ def _commit_registry(doc_id: str, done: list[dict], actor_id: Optional[str]) -> 
 def list_attachments(doc_id: str) -> dict:
     """A document with no attachments is a 200 and an empty array, never a 404."""
     load_document(doc_id)
-    rows = registry_list(doc_id)
+    rows = [
+        row for row in registry_list(doc_id)
+        if not str(row.get("filename") or "").startswith("__wp_pre_instruction__")
+    ]
     return {
         "doc_id": doc_id,
         "attachments": [_attachment_object(r) for r in rows],
@@ -424,6 +435,12 @@ def delete_attachment(doc_id: str, name: str, actor: Optional[dict]) -> dict:
     """
     doc = load_document(doc_id)
     assert_mutable(doc, actor, "attachment delete")
+    if str(name or "").startswith("__wp_pre_instruction__"):
+        raise AttachmentError(
+            409, "DOCUMENT_NOT_MUTABLE",
+            "Reserved WorkPlan attachments are removed only by the WorkPlan lifecycle.",
+            doc_id=doc_id, filename=name, reason="reserved_work_plan_attachment",
+        )
     # X3 — every jail check, but a missing file is not an error here: X4 treats it as the
     # target state, which is what lets the next identical delete clear a ghost_row.
     row, path = resolve_registered_attachment(doc, name, require_file=False)

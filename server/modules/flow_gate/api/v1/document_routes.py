@@ -30,20 +30,30 @@ from modules.flow_gate.utils.id_validators import (
     validate_group_id,
     validate_doc_id,
 )
+from modules.flow_gate.documents.type_code import DOC_ID_TAIL_RE, doc_code_seq_text
 import LogAssist.log as logger
 
 router = APIRouter(prefix="/api/v1", tags=["OutboundDocument"])
 
 
 def _parse_rejection_history(raw: Any) -> list:
-    """Convert DB rejection_history JSON string to a Python list. Returns an empty list on parse failure."""
+    """DB rejection_history JSON string -> API list, with AI provider evidence attached.
+
+    0582 T0005 SS4: every item gains ``rejection_provider``/``response_provider``
+    (both nullable) via pipeline_service.enrich_rejection_history_provenance, the same
+    one function the console-facing documents.py router calls, so the two read
+    surfaces cannot report different providers for the same rejection.
+    """
     if not raw:
         return []
     try:
         parsed = json.loads(raw)
-        return parsed if isinstance(parsed, list) else []
     except (json.JSONDecodeError, TypeError):
         return []
+    if not isinstance(parsed, list):
+        return []
+    from modules.flow_gate.workflow.pipeline_service import enrich_rejection_history_provenance
+    return enrich_rejection_history_provenance(parsed)
 
 
 def _fail(status: int, message: str) -> JSONResponse:
@@ -127,7 +137,7 @@ def _download_available(doc: dict) -> bool:
 
 
 def _document_filename(doc_id: str) -> str:
-    if _re.search(r"(?:^|[.-])(\d{4})-([A-Z]+)$", doc_id) is None:
+    if DOC_ID_TAIL_RE.search(doc_id) is None:
         raise ValueError(f"doc_id format is invalid: {doc_id!r}")
     return f"{doc_id}.md"
 
@@ -834,8 +844,8 @@ def _doc_seq(row: dict) -> int:
         return int(str(seq))
     except (TypeError, ValueError):
         pass
-    m = _re.search(r"(\d+)-[A-Za-z]+$", row.get("doc_id") or "")
-    return int(m.group(1)) if m else 0
+    numeric = doc_code_seq_text((row.get("doc_id") or "").rsplit(".", 1)[-1])
+    return int(numeric) if numeric is not None else 0
 
 
 def _workflow_item_brief(item: Optional[dict]) -> Optional[dict]:

@@ -31,6 +31,9 @@
     <div class="hdr-actions">
       <GitActionMenu />
       <div class="hdr-div"></div>
+      <!-- flowgate.default.0517 T0026 §1: Snapshot Pending has no header icon of its own any
+           more — its list is the bell panel's [승인 대기] section and its count is on the
+           bell badge (NotificationCenter). -->
       <NotificationCenter />
     </div>
     <div class="hdr-div"></div>

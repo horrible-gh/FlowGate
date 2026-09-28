@@ -90,9 +90,20 @@ describe('DocHeader fg:doc_review_status_changed', () => {
     await flushPromises()
     expect((wrapper.vm as any).rejectionHistory).toEqual([])
 
+    // 0582 TR0006 rev1: the server now runs every doc_review_status_changed emitter's
+    // rejection_history through enrich_rejection_history_provenance (inbox_routes.py's
+    // rejected->revised broadcast AND ai_invoke/review.py's auto-reject broadcast are
+    // the two event paths this covers), so a real payload carries rejection_provider/
+    // response_provider too. This handler applies the payload verbatim (no client-side
+    // enrichment, no follow-up refetch) -- pin that those fields survive into the open
+    // tab's state immediately, on BOTH transitions, instead of only proving the
+    // pre-existing bare-history fields still round-trip.
     const rejectedHistory = [{
       rejection_id: 'rej_1', reason: 'issues found', rejected_at: '2026-09-12T00:00:01+00:00',
       rejected_by: 'u1', ai_response: null, responded_at: null,
+      review_id: 42,
+      rejection_provider: { ai_run_id: 'aiv_1', ai_provider_id: 'aip_x', ai_provider_name: 'Claude Opus 5' },
+      response_provider: null,
     }]
     window.dispatchEvent(new CustomEvent('fg:doc_review_status_changed', {
       detail: {
@@ -104,8 +115,12 @@ describe('DocHeader fg:doc_review_status_changed', () => {
 
     expect((wrapper.vm as any).docReviewStatus).toBe('rejected')
     expect((wrapper.vm as any).rejectionHistory).toEqual(rejectedHistory)
+    expect((wrapper.vm as any).rejectionHistory[0].rejection_provider.ai_provider_name).toBe('Claude Opus 5')
 
-    const respondedHistory = [{ ...rejectedHistory[0], ai_response: 'addressed it', responded_at: '2026-09-12T00:05:00+00:00' }]
+    const respondedHistory = [{
+      ...rejectedHistory[0], ai_response: 'addressed it', responded_at: '2026-09-12T00:05:00+00:00',
+      response_provider: { ai_run_id: 'aiv_2', ai_provider_id: 'aip_y', ai_provider_name: 'Codex1 GPT-5.6 Sol' },
+    }]
     window.dispatchEvent(new CustomEvent('fg:doc_review_status_changed', {
       detail: {
         doc_id: 'test.none.0002.0001-R', next_status: 'revised',
@@ -116,6 +131,10 @@ describe('DocHeader fg:doc_review_status_changed', () => {
 
     expect((wrapper.vm as any).docReviewStatus).toBe('revised')
     expect((wrapper.vm as any).rejectionHistory).toEqual(respondedHistory)
+    // the rework response's own provider differs from the reviewer's, and BOTH must be
+    // immediately live -- no undefined/"AI · 외부/미확인" limbo pending a manual reload.
+    expect((wrapper.vm as any).rejectionHistory[0].response_provider.ai_provider_name).toBe('Codex1 GPT-5.6 Sol')
+    expect((wrapper.vm as any).rejectionHistory[0].rejection_provider.ai_provider_name).toBe('Claude Opus 5')
 
     wrapper.unmount()
   })

@@ -5,6 +5,7 @@ Do not add new inline SQL.
 """
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 from .connection import FlowGateStore, get_store
@@ -15,6 +16,40 @@ def _sql(store, key: str) -> str:
     if hasattr(store, "_sql"):
         return store._sql(key)
     return FlowGateStore._sql(store, key)
+
+
+def decode_pre_instruction_attachment(raw) -> Optional[dict]:
+    """Decode the stored JSON snapshot without making a damaged legacy row unreadable."""
+    if isinstance(raw, dict):
+        return dict(raw)
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def pre_instruction_attachment_json_malformed(raw) -> bool:
+    """True when ``raw`` holds non-empty stored content that decode_pre_instruction_attachment
+    cannot turn into a usable reference dict (0554 T0014 §5 rework, review rej_01M334Z5Y72GK6BW).
+
+    An empty/absent column (``None``, blank string) means "no attachment" and is NOT malformed
+    — that is the ordinary case for most rows. This exists so a caller that must fail-closed
+    (work_plan_attachment_service.resolve_pre_instruction) can tell "nothing was ever stored"
+    apart from "something was stored but it decoded to nothing", which decode's own return
+    value (``None`` either way) deliberately does not distinguish for its display-only callers.
+    """
+    if isinstance(raw, dict):
+        return False
+    if not isinstance(raw, str) or not raw.strip():
+        return False
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return True
+    return not isinstance(value, dict)
 
 
 # ── Sequence header ───────────────────────────────────────────────────────────
@@ -115,6 +150,11 @@ def insert_sequence_item(
     source_revision_no: Optional[int] = None,
     provider_id: Optional[str] = None,
     provider_display_name: Optional[str] = None,
+    review_count: int = 0,
+    reviewer_provider_id: Optional[str] = None,
+    reviewer_provider_display_name: Optional[str] = None,
+    pre_instruction_text: Optional[str] = None,
+    pre_instruction_attachment: Optional[dict | str] = None,
 ) -> None:
     """Insert a sequence item.
 
@@ -124,11 +164,84 @@ def insert_sequence_item(
     every existing caller that only knows about the structural columns keeps working and
     stores "this row did not come from a plan", which is the truth for those paths.
     """
+    attachment_json = (
+        json.dumps(pre_instruction_attachment, ensure_ascii=False, separators=(",", ":"))
+        if isinstance(pre_instruction_attachment, dict)
+        else pre_instruction_attachment
+    )
     store = get_store()
     sql = _sql(store, "workflow_sequences.insert_sequence_item")
     store._execute(sql, [
         sequence_id, item_seq, type_, label, doc_class, sort_order,
         note or "", source_doc_id, source_revision_no, provider_id, provider_display_name,
+        review_count, reviewer_provider_id, reviewer_provider_display_name,
+        pre_instruction_text, attachment_json,
+    ])
+
+
+def update_sequence_item_execution_settings(
+    item_id: int,
+    *,
+    review_count: int = 0,
+    reviewer_provider_id: Optional[str] = None,
+    reviewer_provider_display_name: Optional[str] = None,
+    pre_instruction_text: Optional[str] = None,
+    pre_instruction_attachment: Optional[dict | str] = None,
+) -> None:
+    """Replace the execution-setting snapshot for one sequence item."""
+
+    attachment_json = (
+        json.dumps(pre_instruction_attachment, ensure_ascii=False, separators=(",", ":"))
+        if isinstance(pre_instruction_attachment, dict)
+        else pre_instruction_attachment
+    )
+    store = get_store()
+    sql = _sql(store, "workflow_sequences.update_sequence_item_execution_settings")
+    store._execute(sql, [
+        review_count,
+        reviewer_provider_id,
+        reviewer_provider_display_name,
+        pre_instruction_text,
+        attachment_json,
+        item_id,
+    ])
+
+
+def update_sequence_item_plan_snapshot(
+    item_id: int,
+    *,
+    note: str,
+    source_doc_id: Optional[str],
+    source_revision_no: Optional[int],
+    provider_id: Optional[str],
+    provider_display_name: Optional[str],
+    review_count: int = 0,
+    reviewer_provider_id: Optional[str] = None,
+    reviewer_provider_display_name: Optional[str] = None,
+    pre_instruction_text: Optional[str] = None,
+    pre_instruction_attachment: Optional[dict | str] = None,
+) -> None:
+    """Atomically replace the WorkPlan-owned execution snapshot for one pending row."""
+
+    attachment_json = (
+        json.dumps(pre_instruction_attachment, ensure_ascii=False, separators=(",", ":"))
+        if isinstance(pre_instruction_attachment, dict)
+        else pre_instruction_attachment
+    )
+    store = get_store()
+    sql = _sql(store, "workflow_sequences.update_sequence_item_plan_snapshot")
+    store._execute(sql, [
+        note or "",
+        source_doc_id,
+        source_revision_no,
+        provider_id,
+        provider_display_name,
+        review_count,
+        reviewer_provider_id,
+        reviewer_provider_display_name,
+        pre_instruction_text,
+        attachment_json,
+        item_id,
     ])
 
 
@@ -148,6 +261,18 @@ def get_max_item_seq(sequence_id: int) -> int:
 
 
 # ── result_doc_id helpers ─────────────────────────────────────────────────────
+
+def get_paired_instruction_item(result_doc_id: str, instruction_type: str) -> Optional[dict]:
+    """Find the instruction slot paired to a result slot by sequence and item_seq."""
+    result = get_item_by_result_doc_id(result_doc_id)
+    if result is None:
+        return None
+    candidates = get_sequence_items(result["sequence_id"])
+    earlier = [item for item in candidates
+               if (item.get("sort_order") or 0) < (result.get("sort_order") or 0)]
+    previous = max(earlier, key=lambda item: item.get("sort_order") or 0) if earlier else None
+    return previous if previous and previous.get("type") == instruction_type else None
+
 
 def get_item_by_result_doc_id(result_doc_id: str) -> Optional[dict]:
     """Return the workflow slot holding ``result_doc_id`` — the earliest one (reverse lookup).

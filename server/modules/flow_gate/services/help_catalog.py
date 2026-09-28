@@ -56,6 +56,8 @@ CATALOG_ORDER: tuple[str, ...] = (
     "question",
     "submit",
     "source_tools",
+    "source_bundles",
+    "source_snapshots",
     "design_template",
     "authoring_guide",
     "test_commands",
@@ -72,6 +74,8 @@ ITEM_FORM: dict[str, str] = {
     "question": "content",
     "submit": "content",
     "source_tools": "children",
+    "source_bundles": "content",
+    "source_snapshots": "content",
     "design_template": "children",
     "authoring_guide": "children",
     "test_commands": "content",
@@ -90,7 +94,7 @@ ALWAYS_VISIBLE = frozenset({
 USER_SESSION_VISIBLE = frozenset({"document_access", "doc_type"})
 
 AUTHORING_SCOPES = frozenset({"new", "edit"})
-GUIDE_TYPES = frozenset({"N", "T", "TR", "TS"})
+GUIDE_TYPES = frozenset({"N", "T", "T2", "TR", "TR2", "TS"})
 INVESTIGATION_TYPES = frozenset({"N", "NR"})
 # Mutating types come from the registry that already gates the write tools, so the
 # "you may write source" judgment and the "you must report changed files" judgment
@@ -112,6 +116,8 @@ TITLES: dict[str, dict[str, str]] = {
         "question": "질의(Q) 등록",
         "submit": "결과 제출 방법",
         "source_tools": "소스 도구",
+        "source_bundles": "Source Bundle 사용 정책",
+        "source_snapshots": "Legacy Snapshot 종료 안내",
         "design_template": "설계서 템플릿",
         "authoring_guide": "작성 지침",
         "test_commands": "검증된 테스트 명령",
@@ -127,6 +133,8 @@ TITLES: dict[str, dict[str, str]] = {
         "question": "Register a query (Q)",
         "submit": "How to submit",
         "source_tools": "Source tools",
+        "source_bundles": "Source Bundle policy",
+        "source_snapshots": "Legacy Snapshot retirement",
         "design_template": "Design document template",
         "authoring_guide": "Authoring guide",
         "test_commands": "Verified test commands",
@@ -142,6 +150,8 @@ TITLES: dict[str, dict[str, str]] = {
         "question": "質問(Q)の登録",
         "submit": "結果の提出方法",
         "source_tools": "ソースツール",
+        "source_bundles": "Source Bundle の利用方針",
+        "source_snapshots": "旧 Snapshot の廃止",
         "design_template": "設計書テンプレート",
         "authoring_guide": "作成ガイド",
         "test_commands": "検証済みテストコマンド",
@@ -180,6 +190,8 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "question": "막혔을 때 질의를 등록하는 방법.",
         "submit": "작성한 문서를 등록하는 요청 서식.",
         "source_tools": "이 토큰이 쓸 수 있는 원격 소스 도구 목록.",
+        "source_bundles": "자동 준비, 읽기·실행, freshness 및 promotion 금지 정책.",
+        "source_snapshots": "Legacy Snapshot 생성·승인 종료 및 역사 조회.",
         "design_template": "설계 타입별 표준 템플릿 본문.",
         "authoring_guide": "이 타입의 문서를 쓰는 방법.",
         "test_commands": "이 프로젝트에 등록된, 실행이 확인된 테스트 명령.",
@@ -195,6 +207,8 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "question": "How to register a query when you are blocked.",
         "submit": "Request format that registers the document you wrote.",
         "source_tools": "Remote source tools this token may call.",
+        "source_bundles": "Automatic preparation, access, execution, freshness, and no-promotion policy.",
+        "source_snapshots": "Legacy Snapshot creation and approval retirement.",
         "design_template": "Standard template body per design type.",
         "authoring_guide": "How to write a document of this type.",
         "test_commands": "Test commands registered for this project and verified on this host.",
@@ -210,6 +224,8 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "question": "行き詰まったときに質問を登録する方法。",
         "submit": "作成した文書を登録するリクエスト形式。",
         "source_tools": "このトークンが使えるリモートソースツールの一覧。",
+        "source_bundles": "自動準備、参照・実行、鮮度、昇格禁止の方針。",
+        "source_snapshots": "旧 Snapshot の作成・承認の廃止。",
         "design_template": "設計タイプ別の標準テンプレート本文。",
         "authoring_guide": "このタイプの文書を書く方法。",
         "test_commands": "このプロジェクトに登録され、実行が確認されたテストコマンド。",
@@ -247,6 +263,7 @@ NOTICE_LINES: dict[str, dict[str, str]] = {
         "review_no_modify": "검토 작업에서는 대상 문서를 수정하거나 새 결과 문서를 만들지 말고, 지정된 판정만 제출하십시오.",
         "investigation_only": "이 단계는 조사 전용입니다. 소스 파일을 수정·생성·삭제하지 마십시오.",
         "assigned_scope_only": "이 작업에 배정된 그룹 작업 공간과 파일만 변경하고, 변경 파일은 작업 레포트에 빠짐없이 보고하십시오.",
+        "source_snapshot_policy": "Source Bundle은 소스 접근이나 실행이 필요할 때 자동 준비되며 사람 승인이 필요하지 않습니다. 영구 변경은 FlowGate 소스 변경 도구를 사용하고 Bundle/Scratch를 원본으로 취급하거나 되돌려 반영하지 마세요.",
     },
     "en": {
         "continuous_unattended": "This task is part of an UNMANNED continuous work chain. Nobody is watching.",
@@ -256,6 +273,7 @@ NOTICE_LINES: dict[str, dict[str, str]] = {
         "review_no_modify": "In a review step, do not modify the target document or create a new result document — submit only the verdict you were asked for.",
         "investigation_only": "This step is investigation-only. Do not modify, create or delete source files.",
         "assigned_scope_only": "Change only the group workspace and files assigned to this task, and report every changed file in the work report.",
+        "source_snapshot_policy": "Source Bundle is prepared automatically when source access or execution needs it; no human approval is required. Use canonical FlowGate mutation tools for persistent edits. Bundle and Scratch are not the source of truth and cannot be promoted.",
     },
     "ja": {
         "continuous_unattended": "この作業は無人(UNMANNED)連続作業チェーンの一部です。人は見ていません。",
@@ -265,6 +283,7 @@ NOTICE_LINES: dict[str, dict[str, str]] = {
         "review_no_modify": "レビュー作業では対象文書を修正したり新しい結果文書を作成したりせず、指定された判定のみを提出してください。",
         "investigation_only": "この段階は調査専用です。ソースファイルを修正・作成・削除しないでください。",
         "assigned_scope_only": "この作業に割り当てられたグループ作業領域とファイルのみ変更し、変更ファイルは作業レポートに漏れなく報告してください。",
+        "source_snapshot_policy": "Source Bundle はソース参照や実行が必要なとき自動準備され、人の承認は不要です。永続的な変更には FlowGate の正規ソース変更ツールを使い、Bundle/Scratch を原本として扱ったり昇格させたりしないでください。",
     },
 }
 
@@ -397,10 +416,10 @@ _TR_AUTHORING_GUIDE: dict[str, str] = {
 }
 
 _AUTHORING_GUIDE_TITLES: dict[str, dict[str, str]] = {
-    "ko": {"N": "조사지시 작성", "T": "작업지시 작성", "TR": "작업레포트 작성", "TS": "테스트시나리오 작성"},
+    "ko": {"N": "조사지시 작성", "T": "작업지시 작성", "T2": "반영지시 작성", "TR": "작업레포트 작성", "TR2": "반영안 작성", "TS": "테스트시나리오 작성"},
     "en": {"N": "Writing an investigation instruction", "T": "Writing a work instruction",
-           "TR": "Writing a work report", "TS": "Writing a test scenario"},
-    "ja": {"N": "調査指示の作成", "T": "作業指示の作成", "TR": "作業レポートの作成", "TS": "テストシナリオの作成"},
+           "T2": "Writing an apply instruction", "TR": "Writing a work report", "TR2": "Writing an apply proposal", "TS": "Writing a test scenario"},
+    "ja": {"N": "調査指示の作成", "T": "作業指示の作成", "T2": "反映指示の作成", "TR": "作業レポートの作成", "TR2": "反映案の作成", "TS": "テストシナリオの作成"},
 }
 
 
@@ -546,7 +565,7 @@ def decide_visibility(name: str, ctx: dict) -> Decision:
     if name in ALWAYS_VISIBLE:
         return VISIBLE
 
-    if name == "source_tools":
+    if name in {"source_tools", "source_bundles", "source_snapshots"}:
         if ctx.get("source_mode") != "remote":
             return Decision(False, "source_mode_local")
         if ctx.get("tool_kind") == "none":
@@ -719,7 +738,10 @@ def _content_notices(ctx: dict) -> dict:
         keys.append("assigned_scope_only")
     # A key requested by two conditions still prints once.
     ordered = list(dict.fromkeys(keys))
-    return {"lines": [_copy(NOTICE_LINES, ctx["locale"], key) for key in ordered]}
+    lines = [_copy(NOTICE_LINES, ctx["locale"], key) for key in ordered]
+    if ctx.get("source_mode") == "remote" and ctx.get("tool_kind") != "none":
+        lines.append(_copy(NOTICE_LINES, ctx["locale"], "source_snapshot_policy"))
+    return {"lines": lines}
 
 
 def _content_group_documents(ctx: dict) -> dict:
@@ -1171,8 +1193,25 @@ def _content_step_verification_format(ctx: dict) -> dict:
     }
 
 
+def _content_source_snapshots(ctx: dict) -> dict:
+    """The old help URL remains an alias so historical mentions explain retirement."""
+    return {
+        "operation": "access_source_bundle / run_source_bundle",
+        "preparation": "Source Bundle is prepared automatically when source access or execution requires it; no human approval is needed.",
+        "read_only_observability": "GET /api/v1/source-bundles?project_id=...&group_id=... lists status, revision, dirty flag, dates, size, policy, hashes, freshness, origin, failure and cleanup state. It never approves, rejects or materializes.",
+        "access": ["status", "read", "search", "glob", "stat"],
+        "execution": "Build, test, lint, typecheck, dependency/static analysis and temporary experiments run only in disposable AI Scratch copied from the Bundle.",
+        "preferred_tools": ["read", "grep", "glob", "stat", "diff", "log", "show", "merge_preview", "Merge Context Tool"],
+        "freshness": "Historical Bundle reads remain available; a current-worktree claim requires a fresh fingerprint and a stale claim is rejected.",
+        "legacy_snapshot": "New Snapshot requests and approve/reject/materialize/run endpoints return snapshot_feature_retired. Existing created Snapshots remain readable until TTL or group cleanup; no legacy fallback occurs after a Bundle failure.",
+        "persistent_changes": "Use canonical FlowGate write_source_file, patch_source_file or remove_source_file. Bundle and AI Scratch are not the source of truth and cannot be promoted, uploaded, committed, merged or synced back.",
+    }
+
+
 _CONTENT_SUPPLIERS = {
     "notices": _content_notices,
+    "source_bundles": _content_source_snapshots,
+    "source_snapshots": _content_source_snapshots,
     "group_documents": _content_group_documents,
     "document_access": _content_document_access,
     "document_attachments": _content_document_attachments,
@@ -1332,12 +1371,25 @@ def _authoring_guide_body(type_code: str, locale: str) -> str:
     # module scope would drag the whole mention assembly into every help request.
     from modules.flow_gate.services import mention_service
 
+    if type_code == "T2":
+        return {
+            "ko": "TR2가 edit-spec으로 표현할 수 있는 소스 변경을 지시하는 Markdown 지시서를 작성합니다.",
+            "en": "Write a Markdown instruction for source changes expressible as a TR2 edit-spec.",
+            "ja": "TR2 の edit-spec で表現できるソース変更を Markdown で指示します.",
+        }.get(locale, "TR2가 edit-spec으로 표현할 수 있는 소스 변경을 지시하는 Markdown 지시서를 작성합니다.")
+    if type_code == "TR2":
+        return {
+            "ko": "본문은 Markdown이 아닌 canonical JSON(document.json)입니다. tr2_version=1, source_t2_doc_id, edit_spec의 termination/edits/deferred/gate를 제출하세요. source는 읽기 전용입니다. 직접 수정하지 말고 edit/create_file로 제안하세요. baseline_fingerprint는 서버가 계산합니다. ready_to_apply에는 edit가 한 건 이상 있어야 하고 gate.apply는 false입니다.",
+            "en": "Submit canonical JSON (document.json), not Markdown: tr2_version=1, source_t2_doc_id, edit_spec with termination, edits, deferred, gate. Source is read-only; propose edit/create_file entries. The server computes baseline_fingerprint. ready_to_apply needs at least one edit; gate.apply must be false.",
+            "ja": "本文は Markdown ではなく canonical JSON(document.json) です。tr2_version=1、source_t2_doc_id、termination/edits/deferred/gate を含む edit_spec を提出します。ソースは読み取り専用です。変更は edit/create_file で提案します。baseline_fingerprint はサーバーが計算します。ready_to_apply には一件以上の edit が必要で、gate.apply は false です。",
+        }.get(locale, "TR2 canonical JSON(document.json): tr2_version=1, source_t2_doc_id, edit_spec; source read-only; gate.apply=false.")
     if type_code == "TS":
         return mention_service._ts_authoring_section(locale)
     if type_code in {"N", "T"}:
         return mention_service._nt_authoring_section(type_code, locale)
-    # TR is the one guide type the mention never carried a block for.
-    return _TR_AUTHORING_GUIDE.get(locale, _TR_AUTHORING_GUIDE[FALLBACK_LOCALE])
+    if type_code == "TR":
+        return _TR_AUTHORING_GUIDE.get(locale, _TR_AUTHORING_GUIDE[FALLBACK_LOCALE])
+    raise ValueError(f"Unknown authoring guide type: {type_code}")
 
 
 def _child_authoring_guide(child: str, ctx: dict) -> dict:
