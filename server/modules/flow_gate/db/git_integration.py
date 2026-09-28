@@ -92,6 +92,21 @@ def upsert_config(project_id: str, data: dict[str, Any]) -> dict:
     return get_config(project_id)  # type: ignore[return-value]
 
 
+def set_default_merge_target(project_id: str, branch: Optional[str]) -> None:
+    """Persist the project's suggested finalize target (T0016 §2.2) without
+    disturbing any other git config field. A non-base integration branch that a
+    finalize actually merged into becomes this project's suggested default for
+    the NEXT group's finalize dialog, instead of resetting to base_branch every
+    time. ``None``/blank clears the suggestion back to "none"."""
+    if _get_config_db(project_id) is None:
+        return
+    get_store()._execute(
+        "UPDATE project_git_config SET default_merge_target = ? WHERE project_id = ?",
+        [branch or None, project_id],
+    )
+    meta_cache.invalidate_git_config(project_id)
+
+
 def delete_config(project_id: str) -> bool:
     if _get_config_db(project_id) is None:
         return False
@@ -107,6 +122,19 @@ def delete_config(project_id: str) -> bool:
 def get_state(group_id: str) -> Optional[dict]:
     return get_store()._fetch_one(
         "SELECT * FROM group_git_state WHERE group_id = ?", [group_id]
+    )
+
+
+def get_state_by_branch(project_id: str, branch: str) -> Optional[dict]:
+    """Return any durable FlowGate owner of a group worktree branch.
+
+    Unlike ``list_states_of_project``, this intentionally includes unregistered
+    historical/failure rows: a stale internal branch must never become another
+    group's work base merely because its worktree is currently absent.
+    """
+    return get_store()._fetch_one(
+        "SELECT * FROM group_git_state WHERE project_id = ? AND branch = ?",
+        [project_id, branch],
     )
 
 
@@ -281,17 +309,56 @@ SESSION_KIND_MERGE = "merge"
 SESSION_KIND_TR_REVERT = "tr_revert"
 SESSION_KIND_TR_REAPPLY = "tr_reapply"
 SESSION_KIND_GROUP_UPDATE = "group_update"
+# flowgate.default.0630 T0005: an ordinary Branch Manager merge (local source → local target)
+# that stopped on a conflict. Unlike every kind above it has no group: it is owned by the
+# project (owner_type='branch_merge', migration 123). It walks the same resolver and the same
+# merge review as a finalize `merge` — never the commit-on-resolve path of `group_update`.
+SESSION_KIND_BRANCH_MERGE = "branch_merge"
 SESSION_KINDS = (
     SESSION_KIND_MERGE, SESSION_KIND_TR_REVERT, SESSION_KIND_TR_REAPPLY,
-    SESSION_KIND_GROUP_UPDATE,
+    SESSION_KIND_GROUP_UPDATE, SESSION_KIND_BRANCH_MERGE,
 )
 TR_SESSION_KINDS = (SESSION_KIND_TR_REVERT, SESSION_KIND_TR_REAPPLY)
 WORKTREE_SESSION_KINDS = (*TR_SESSION_KINDS, SESSION_KIND_GROUP_UPDATE)
+# Kinds that carry a pinned merge target and end in the human merge review gate.
+MERGE_REVIEW_SESSION_KINDS = (SESSION_KIND_MERGE, SESSION_KIND_BRANCH_MERGE)
+
+# git_merge_session.owner_type (123). NULL reads as 'group': every row written before 123
+# was a group's session.
+OWNER_GROUP = "group"
+OWNER_BRANCH_MERGE = "branch_merge"
 
 
 def session_kind(session: Optional[dict]) -> str:
     """The session's kind, with the pre-088 NULL read as 'merge'."""
     return str((session or {}).get("kind") or SESSION_KIND_MERGE)
+
+
+def session_owner_type(session: Optional[dict]) -> str:
+    """The session's owner, with the pre-123 NULL read as 'group'."""
+    owner = (session or {}).get("owner_type")
+    if owner:
+        return str(owner)
+    if session_kind(session) == SESSION_KIND_BRANCH_MERGE:
+        return OWNER_BRANCH_MERGE
+    return OWNER_GROUP
+
+
+def is_branch_merge_session(session: Optional[dict]) -> bool:
+    return bool(session) and session_owner_type(session) == OWNER_BRANCH_MERGE
+
+
+def session_project_id(session: Optional[dict]) -> Optional[str]:
+    """The owning project: the stored column for a branch merge, the group prefix otherwise
+    (the same derivation git_service._project_of_group has always used for group rows)."""
+    if not session:
+        return None
+    if session.get("project_id"):
+        return str(session["project_id"])
+    group_id = session.get("group_id")
+    if group_id:
+        return str(group_id).split(".", 1)[0]
+    return None
 
 
 def session_context(session: Optional[dict]) -> dict:
@@ -350,6 +417,67 @@ def create_session(
                 [merge_id, path],
             )
     return merge_id
+
+
+def create_branch_merge_session(
+    project_id: str,
+    *,
+    finalize_action: str | None = None,
+    context: Optional[dict] = None,
+) -> int:
+    """Open a group-less ``branch_merge`` session owned by ``project_id`` (0630 T0005).
+
+    Written BEFORE ``git merge`` runs (the attempt record), with no conflict files yet —
+    ``add_session_files`` attaches them if the merge stops. ``group_id`` stays NULL: there is
+    no group, and inventing one is exactly what D0004 §2.1 forbids. Callers hold the project
+    Git lock, so the newest open branch_merge row of this project is the one just inserted.
+    """
+    if finalize_action is not None and finalize_action not in ACTION_VALUES:
+        raise ValueError(f"invalid finalize action: {finalize_action!r}")
+    now = now_iso()
+    store = get_store()
+    context_json = json.dumps(context or {}, ensure_ascii=False)
+    with store.transaction():
+        store._execute(
+            "INSERT INTO git_merge_session "
+            "(group_id, status, finalize_action, kind, context, created_at, touched_at, "
+            "owner_type, project_id) "
+            "VALUES (NULL, 'open', ?, ?, ?, ?, ?, ?, ?)",
+            [finalize_action, SESSION_KIND_BRANCH_MERGE, context_json, now, now,
+             OWNER_BRANCH_MERGE, project_id],
+        )
+        row = store._fetch_one(
+            "SELECT merge_id FROM git_merge_session "
+            "WHERE project_id = ? AND owner_type = ? AND status = 'open' "
+            "ORDER BY merge_id DESC",
+            [project_id, OWNER_BRANCH_MERGE],
+        )
+    return int(row["merge_id"])
+
+
+def list_branch_merge_sessions(project_id: str, *, open_only: bool = True) -> list[dict]:
+    """A project's branch_merge sessions, newest first (0630 T0005)."""
+    sql = (
+        "SELECT * FROM git_merge_session WHERE project_id = ? AND owner_type = ?"
+        + (" AND status = 'open'" if open_only else "")
+        + " ORDER BY merge_id DESC"
+    )
+    return get_store()._fetch_all(sql, [project_id, OWNER_BRANCH_MERGE])
+
+
+def add_session_files(merge_id: int, files: list[str]) -> None:
+    """Attach conflict files to an already-open session (flowgate.default.0594 T0012).
+
+    A finalize attempt record is now written BEFORE the merge runs, so its conflict
+    file set is only known afterwards. Same rows ``create_session`` writes."""
+    store = get_store()
+    with store.transaction():
+        for path in files:
+            store._execute(
+                "INSERT INTO git_merge_session_file (merge_id, path, resolved) "
+                "VALUES (?, ?, 0)",
+                [merge_id, path],
+            )
 
 
 def get_session(merge_id: int) -> Optional[dict]:

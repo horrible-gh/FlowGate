@@ -153,6 +153,7 @@ def create_group(
     user_permissions: set[str],
     group_id: str,
     priority: str | None = None,
+    work_base_ref: str | None = None,
 ) -> dict:
     """Create a new group and register it in draft state (D017 r1 Step 1).
 
@@ -163,6 +164,12 @@ def create_group(
     """
     if not check_permission(user_permissions, ("project.group.manage",)):
         raise PermissionError("Permission 'project.group.manage' is required.")
+
+    if work_base_ref is not None:
+        from modules.flow_gate.services import git_service
+        work_base_ref = git_service.validate_group_work_base_ref(
+            project_id, work_base_ref
+        )
 
     now = now_iso()
     return db_groups.create(
@@ -175,6 +182,7 @@ def create_group(
             "status": "draft",
             "created_at": now,
             "updated_at": now,
+            "work_base_ref": work_base_ref,
         }
     )
 
@@ -239,6 +247,23 @@ def transition_group(
             actor_user_id=actor_user_id,
             group_id=group_id,
         )
+
+    if str(next_status).lower() == "closed":
+        try:
+            from modules.flow_gate.services import snapshot_materialization_service
+            # actor_user_id is a real users.user_id FK; the group-close meaning lives in
+            # cleanup_for_group's own trigger="group_finished" metadata, not in the actor.
+            snapshot_materialization_service.cleanup_for_group(
+                group_id, actor=actor_user_id
+            )
+        except Exception:
+            # Group closure is already durable. Snapshot cleanup stays retryable via TTL.
+            _log.warning("snapshot group-close cleanup failed for %s", group_id, exc_info=True)
+        try:
+            from modules.flow_gate.services import source_bundle_cleanup_service
+            source_bundle_cleanup_service.cleanup_for_group(group_id)
+        except Exception:
+            _log.warning("Source Bundle group-close cleanup failed for %s", group_id, exc_info=True)
 
     result = dict(updated or {})
     if warnings:
@@ -623,6 +648,57 @@ def _require_document_body_for_approval(doc: dict, locale: str = "ko") -> None:
         raise TransitionError(_empty_body_approval_message(locale))
 
 
+_TEST_GATE_MESSAGES = {
+    "tsr": {
+        "ko": "시험 gate를 통과하지 못한 시험성적서(TSR)는 승인할 수 없습니다. 서버 판정: {overall} (필수 Case 기준).",
+        "en": "A test report (TSR) that has not passed the test gate cannot be approved. Server verdict: {overall} (required cases).",
+        "ja": "試験ゲートを通過していない試験成績書(TSR)は承認できません。サーバー判定: {overall} (必須Case基準)。",
+    },
+    "ts": {
+        "ko": "시험사양서(TS) 구조 검증 오류가 있어 승인할 수 없습니다: {errors}",
+        "en": "The test specification (TS) has validation errors and cannot be approved: {errors}",
+        "ja": "試験仕様書(TS)に構造検証エラーがあるため承認できません: {errors}",
+    },
+}
+
+
+def _require_test_gate_for_approval(doc: dict, locale: str = "ko") -> None:
+    """0549 T0008: approval is where the test gate becomes a workflow gate.
+
+    * TSR — "the report exists" is not "the gate passed". A report whose newest result
+      record is a specification result with a server-computed overall other than PASS is
+      refused, whoever asks (a human, the chain, the review loop). The verdict is read from
+      the server record, never from the report text, so an overall written into the body by
+      anyone does not open the gate. Legacy executable TSRs are only assembled on all-green
+      and keep their approval semantics.
+    * TS — a specification TS (test_contract_version: 2) must validate before it can become
+      the approved test basis.
+    """
+    type_code = str(doc.get("type_code") or "").upper()
+    lang = locale if locale in ("ko", "en", "ja") else "ko"
+    if type_code == "TSR":
+        from modules.flow_gate.services import test_run_service
+
+        gate = test_run_service.tsr_gate_state(doc)
+        if gate.get("applies") and not gate.get("passed"):
+            raise TransitionError(
+                _TEST_GATE_MESSAGES["tsr"][lang].format(overall=gate.get("overall") or "NOT_RUN")
+            )
+    elif type_code == "TS":
+        from modules.flow_gate.services import test_run_service, test_spec_service
+
+        content = test_run_service._read_doc_content_or_empty(doc)
+        if test_spec_service.detect_contract_version(content) == test_spec_service.CONTRACT_LEGACY:
+            return
+        parsed = test_spec_service.parse_spec(content)
+        if parsed["errors"]:
+            raise TransitionError(
+                _TEST_GATE_MESSAGES["ts"][lang].format(
+                    errors="; ".join(err["message"] for err in parsed["errors"][:5])
+                )
+            )
+
+
 def transition_document_review(
     *,
     doc_id: str,
@@ -633,6 +709,9 @@ def transition_document_review(
     locale: str = "ko",
     review_id: Any = None,
     dry_run: bool = False,
+    mutation_principal: Any = None,
+    expected_revision: int | None = None,
+    request_key: str | None = None,
 ) -> dict:
     """Transition the document review state (doc_review_status column).
 
@@ -649,6 +728,16 @@ def transition_document_review(
     doc = db_docs.get_by_id(doc_id)
     if not doc:
         raise ValueError(f"Document not found: {doc_id}")
+
+    # TR2 alone needs a source-changing approval. All other actions and document
+    # types keep the established review transition and TR commit semantics.
+    if action == "approve" and doc.get("type_code") == "TR2":
+        from modules.flow_gate.documents import tr2_approval_service
+        return tr2_approval_service.approve(
+            doc_id=doc_id, actor_user_id=actor_user_id,
+            user_permissions=user_permissions, mutation_principal=mutation_principal,
+            expected_revision=expected_revision, request_key=request_key, locale=locale,
+        )
 
     current_review_status = doc.get("doc_review_status") or ""
     next_status = get_doc_review_rule(current_review_status, action)
@@ -673,6 +762,7 @@ def transition_document_review(
 
     if action == "approve":
         _require_document_body_for_approval(doc, locale)
+        _require_test_gate_for_approval(doc, locale)
 
     update_fields: dict[str, Any] = {
         "doc_review_status": next_status,

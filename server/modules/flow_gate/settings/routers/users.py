@@ -17,9 +17,10 @@ POST   /api/v1/me/backup-codes    — regenerate current user's backup codes
 from __future__ import annotations
 
 import secrets
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from modules.flow_gate.auth.middleware import get_current_user
 from modules.flow_gate.rbac.decorators import _has_permission, require_permission
@@ -38,6 +39,7 @@ from modules.flow_gate.settings.user_admin_service import (
     revoke_project_role,
     unlock_user,
     update_user,
+    UsernameAlreadyExists,
 )
 
 router = APIRouter(tags=["UserAdmin"])
@@ -57,12 +59,23 @@ def list_users(
     return list_users_for_manager(manager_id=user["user_id"], page=page, per_page=per_page)
 
 
+SystemRoleId = Literal["role_admin", "role_manager", "role_worker", "role_viewer"]
+
+
+class AssignRoleBody(BaseModel):
+    project_id: str
+    role_id: str
+
+
 class UserCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     username: str
     email: str
     password: str
     is_active: int = 1
-    is_admin: int = 0
+    role_id: SystemRoleId = "role_viewer"
+    project_roles: list[AssignRoleBody] = Field(default_factory=list)
 
 
 @router.post("/users", status_code=201)
@@ -72,8 +85,8 @@ def create_user_endpoint(
 ):
     try:
         return create_user(body.model_dump(), created_by=user.get("user_id"))
-    except Exception as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+    except UsernameAlreadyExists:
+        raise HTTPException(status_code=409, detail={"code": "username_already_exists"}) from None
 
 
 @router.get("/users/{uid}")
@@ -88,7 +101,7 @@ class UserPatch(BaseModel):
     username: str | None = None
     email: str | None = None
     is_active: int | None = None
-    is_admin: int | None = None
+    role_id: SystemRoleId | None = None
 
 
 @router.patch("/users/{uid}")
@@ -144,11 +157,6 @@ def unlock(uid: str, user: dict = Depends(require_permission("system.user.update
 @router.get("/users/{uid}/project-roles")
 def get_roles(uid: str, user: dict = Depends(require_permission("system.user.read"))):
     return {"roles": get_user_project_roles(uid)}
-
-
-class AssignRoleBody(BaseModel):
-    project_id: str
-    role_id: str
 
 
 @router.post("/users/{uid}/project-roles", status_code=201)

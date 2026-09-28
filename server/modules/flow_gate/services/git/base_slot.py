@@ -352,6 +352,20 @@ def _provision_base_locked(cfg: dict, project_id: str, project_name: str, trigge
     base_root = _gs.src_root(project_name, base_branch)
     state = _gs._judge_base_slot(base_root, base_branch)
     if state == "checkout":
+        # flowgate.default.0361 NR0003 §3/§8.1: this used to be a bare pass-through,
+        # so a repo_url change never reached an EXISTING checkout's actual `origin`
+        # — only a fresh clone/adopt ever wired it. Sync before returning so every
+        # fetch/push that follows (including one issued straight from a group
+        # worktree of this same repository) already sees the configured remote.
+        try:
+            _gs.ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
+        except GitServiceError as exc:
+            # provision_base()/_provision_base_locked() never raise (docstring
+            # contract) — a sync failure is a reported failure like any other.
+            # The ledger is NOT updated here either, same as the pass-through it
+            # replaces (P0004 scenario 4): an already-established checkout stays put.
+            return {"status": "failed", "mode": "none", "reason": exc.code,
+                    "snapshot_commit": None, "snapshot_at": None}
         # idempotent pass-through — the ledger is NOT updated (P0004 scenario 4)
         return {"status": "ok", "mode": "none", "reason": None,
                 "snapshot_commit": None, "snapshot_at": None}
@@ -517,6 +531,10 @@ def manual_fetch(project_id: str) -> dict:
             f"Another git operation is in progress for project '{project_id}' (try again shortly)",
         )
     try:
+        # flowgate.default.0361 NR0003 §3/§8.1: this recovery fetch used to trust
+        # whatever `origin` already pointed at — the very entry point B0001's
+        # symptom (`/remote/show` 404 on a GitHub-only commit) traced back to.
+        _gs.ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
         proc = _gs._run_git(
             ["fetch", "origin"],
             cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC,

@@ -681,6 +681,15 @@ def _resolve_src_root(grant: dict, op: str = "read") -> Optional[Path]:
     if token_rec and token_rec.get("action_scope") == "resolve_conflict" and merge_id:
         try:
             from modules.flow_gate.services import git_service
+            # 0630 T0005: a branch merge's token has no group — its root is the attempt's
+            # managed workspace, addressed by project.
+            owner_group, owner_project = git_service.merge_session_owner_args(
+                merge_id, str(token_rec.get("group_id") or group_id),
+            )
+            if owner_project:
+                if owner_project != (token_rec.get("project") or project_id):
+                    raise ValueError("resolve token project does not own this merge")
+                return git_service.resolve_conflict_src_root(None, int(merge_id), project_id=owner_project)
             return git_service.resolve_conflict_src_root(str(token_rec.get("group_id") or group_id), int(merge_id))
         except Exception as exc:
             raise _OpError(404, details={"reason": "conflict_session_not_found"}) from exc

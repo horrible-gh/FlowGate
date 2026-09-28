@@ -637,6 +637,23 @@ def _client():
     return TestClient(app, raise_server_exceptions=False)
 
 
+def _assert_exact_r0(doc_id: str, canonical: Path):
+    """Return the sole r0 row after proving it is the canonical creation bytes."""
+    from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.services import work_plan_service as wp
+
+    rows = db_revisions.list_by_doc_revision(doc_id, 0)
+    assert len(rows) == 1
+    doc = db_docs.get_by_id(doc_id)
+    baseline = wp.resolve_revision_snapshot(
+        rows[0], project_id=doc["project_id"], doc_id=doc_id,
+    )
+    assert baseline.resolve() != canonical.resolve()
+    assert baseline.read_bytes() == canonical.read_bytes()
+    return rows[0], baseline
+
+
 def test_human_create_read_save_roundtrip(seed, storage_root):
     from modules.flow_gate.db import documents as db_docs
 
@@ -669,6 +686,7 @@ def test_human_create_read_save_roundtrip(seed, storage_root):
     assert stored.endswith("_document.json"), stored
     assert (storage_root / stored).is_file()
     assert json.loads((storage_root / stored).read_text(encoding="utf-8"))["wp_version"] == 2
+    _assert_exact_r0(doc_id, storage_root / stored)
 
     # 결정 4: pending review, and the parent is left exactly as it was.
     row = db_docs.get_by_id(doc_id)
@@ -1408,6 +1426,7 @@ def test_ai_inbox_creates_a_json_work_plan(seed, storage_root, tmp_path):
     assert data["title"] == wp.derived_title(plan, "ko")
     # 결정 3 (§2.6): stored in canonical form regardless of how it arrived.
     assert Path(data["stored_path"]).read_text(encoding="utf-8") == wp.dumps(plan)
+    _assert_exact_r0(data["doc_id"], Path(data["stored_path"]))
 
     # The same response consumed by WorkPlanEditor opens as a structured table, and
     # every assignable row supplied by the AI is assigned (the locked TSR is excluded).
@@ -1417,6 +1436,28 @@ def test_ai_inbox_creates_a_json_work_plan(seed, storage_root, tmp_path):
     assert view["body"]["wp_version"] == 2
     assert len(view["body"]["steps"]) == 15
     assert view["unassigned_step_count"] == 0
+
+    # 0599 T#3 E: the real inbox route must expose and restore its own r0 after
+    # canonical corruption, not merely call the snapshot helper.
+    inbox_canonical = Path(data["stored_path"])
+    inbox_initial_bytes = inbox_canonical.read_bytes()
+    inbox_canonical.write_text('{"wp_version":', encoding="utf-8")
+    unreadable = _client().get(
+        f"/api/v1/documents/{data['doc_id']}/work-plan",
+    )
+    assert unreadable.status_code == 409
+    listed_r0 = next(
+        item for item in unreadable.json()["revisions"]
+        if item["revision_no"] == 0
+    )
+    assert listed_r0["restorable"] is True
+    restored = _client().post(
+        f"/api/v1/documents/{data['doc_id']}/work-plan/revisions/0/restore",
+        json={"base_revision_no": 0},
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["revision_no"] == 1
+    assert inbox_canonical.read_bytes() == inbox_initial_bytes
 
 
 def test_ai_inbox_edit_reuses_derived_title_and_frozen_creation_locale(
@@ -1778,6 +1819,7 @@ def test_next_empty_creates_a_plan_that_opens_as_a_table(seed, storage_root):
     assert stored.endswith("_document.json"), stored
     on_disk = json.loads((storage_root / stored).read_text(encoding="utf-8"))
     assert on_disk["wp_version"] == 2
+    _assert_exact_r0(doc_id, storage_root / stored)
 
     # 2. 문서를 열면 표가 나온다 — 409 "표로 열 수 없습니다" 가 아니다.
     view = client.get(f"/api/v1/documents/{doc_id}/work-plan")
@@ -1795,6 +1837,26 @@ def test_next_empty_creates_a_plan_that_opens_as_a_table(seed, storage_root):
 
     # 4. 제목은 canonical totals에서 파생되고 요청 문자열 "ww"는 정본이 아니다.
     assert payload["title"] == "작업계획 — 설계 2장 · 작업 2세트"
+
+    # 0599 T#3 E: this is deliberately the connected POST /documents/next-empty
+    # route. Corrupting its result must expose the route-created r0 as restorable.
+    next_empty_canonical = storage_root / stored
+    next_empty_initial_bytes = next_empty_canonical.read_bytes()
+    next_empty_canonical.write_text('{"wp_version":', encoding="utf-8")
+    unreadable = client.get(f"/api/v1/documents/{doc_id}/work-plan")
+    assert unreadable.status_code == 409
+    listed_r0 = next(
+        item for item in unreadable.json()["revisions"]
+        if item["revision_no"] == 0
+    )
+    assert listed_r0["restorable"] is True
+    restored = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+        json={"base_revision_no": 0},
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["revision_no"] == 1
+    assert next_empty_canonical.read_bytes() == next_empty_initial_bytes
 
 
 def test_next_empty_still_writes_markdown_for_other_types(seed, storage_root):
@@ -1832,6 +1894,7 @@ def test_an_already_broken_plan_heals_the_first_time_it_is_opened(seed, storage_
     없는 파일에 한해, 여는 그 자리에서 정본을 만들고 문서가 그 파일을 가리키게 한다.
     지난 마크다운 파일은 지우지 않는다.
     """
+    from modules.flow_gate.db import document_revisions as db_revisions
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.storage import paths as storage_paths
 
@@ -1871,10 +1934,14 @@ def test_an_already_broken_plan_heals_the_first_time_it_is_opened(seed, storage_
 
     # 두 번째로 열어도 같은 표가 나온다(되살리기는 한 번으로 끝난다).
     assert client.get(f"/api/v1/documents/{doc_id}/work-plan").status_code == 200
+    # 0599 T#2: self-heal is not evidence of the original creation bytes and must
+    # never fabricate a legacy r0 from today's settings.
+    assert db_revisions.list_by_doc(doc_id) == []
 
 
 def test_a_broken_plan_with_content_is_never_overwritten(seed, storage_root):
     """반쯤 쓰다 깨진 계획은 서버가 덮어쓰지 않는다 — 원문 보기로 넘긴다."""
+    from modules.flow_gate.db import document_revisions as db_revisions
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.storage import paths as storage_paths
 
@@ -1897,7 +1964,9 @@ def test_a_broken_plan_with_content_is_never_overwritten(seed, storage_root):
     resp = client.get(f"/api/v1/documents/{doc_id}/work-plan")
     assert resp.status_code == 409
     assert resp.json()["code"] == "wp_unreadable"
+    assert resp.json()["revisions"] == []
     assert path.read_text(encoding="utf-8") == broken
+    assert db_revisions.list_by_doc(doc_id) == []
 
 
 def test_template_includes_real_candidates_and_note_rules(monkeypatch):
@@ -2236,6 +2305,480 @@ def test_title_body_revision_and_locale_move_as_one_state(seed, storage_root):
         assert after_failure[field] == before_failure[field]
     assert (storage_root / after_failure["file_path"]).read_text(encoding="utf-8") == before_file
 
+
+# ── flowgate.default.0599 T#1: durable r0 recovery contract ──────────────────
+
+def test_r0_snapshot_survives_first_save_without_duplicate_or_overwrite(seed, storage_root):
+    from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.services import work_plan_service as wp
+    from modules.flow_gate.storage import paths as storage_paths
+
+    doc_id = f"{GROUP}-WP0599"
+    canonical = storage_root / "r0-contract" / "document.json"
+    initial = _plan()
+    wp.write_body_atomically(canonical, initial)
+    db_docs.create({
+        "doc_id": doc_id,
+        "project_id": PROJECT,
+        "type_code": "WP",
+        "seq": 599,
+        "title": "R0 contract",
+        "group_id": GROUP,
+        "module": "__ALL__",
+        "owner_id": "usr_wp_001",
+        "file_path": storage_paths.to_storage_relative(canonical, PROJECT),
+    })
+    doc = db_docs.get_by_id(doc_id)
+    initial_bytes = canonical.read_bytes()
+
+    first = wp.ensure_revision_snapshot(
+        doc,
+        canonical,
+        created_by="usr_wp_001",
+    )
+    second = wp.ensure_revision_snapshot(
+        doc,
+        canonical,
+        created_by="usr_wp_001",
+    )
+    assert second["id"] == first["id"]
+    rows = db_revisions.list_by_doc_revision(doc_id, 0)
+    assert len(rows) == 1
+    baseline = wp.resolve_revision_snapshot(rows[0], project_id=PROJECT, doc_id=doc_id)
+    assert baseline.read_bytes() == initial_bytes
+    assert baseline.resolve() != canonical.resolve()
+
+    changed = _plan()
+    changed["quantities"]["D"]["count"] = 3
+    changed["steps"] = wp.expand_steps(changed["counted_types"], changed["quantities"])
+    saved = _client().put(
+        f"/api/v1/documents/{doc_id}/work-plan",
+        json={"base_revision_no": 0, "body": changed},
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["revision_no"] == 1
+
+    rows = db_revisions.list_by_doc_revision(doc_id, 0)
+    assert len(rows) == 1
+    assert rows[0]["id"] == first["id"]
+    assert baseline.read_bytes() == initial_bytes
+    assert canonical.read_bytes() != initial_bytes
+
+    # Calling the creation contract after the canonical changed still returns the
+    # original r0. It must never recalculate or overwrite the recovery source.
+    again = wp.ensure_revision_snapshot(
+        db_docs.get_by_id(doc_id),
+        canonical,
+        created_by="usr_wp_001",
+    )
+    assert again["id"] == first["id"]
+    assert baseline.read_bytes() == initial_bytes
+
+
+def test_revision_snapshot_fails_closed_for_missing_corrupt_and_ambiguous(seed, storage_root):
+    from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db.connection import get_store, now_iso
+    from modules.flow_gate.services import work_plan_service as wp
+    from modules.flow_gate.storage import paths as storage_paths
+
+    def make_doc(suffix: str, seq: int):
+        doc_id = f"{GROUP}-WP0599{suffix}"
+        canonical = storage_root / f"r0-contract-{suffix}" / "document.json"
+        wp.write_body_atomically(canonical, _plan())
+        db_docs.create({
+            "doc_id": doc_id,
+            "project_id": PROJECT,
+            "type_code": "WP",
+            "seq": seq,
+            "title": f"R0 contract {suffix}",
+            "group_id": GROUP,
+            "module": "__ALL__",
+            "owner_id": "usr_wp_001",
+            "file_path": storage_paths.to_storage_relative(canonical, PROJECT),
+        })
+        doc = db_docs.get_by_id(doc_id)
+        row = wp.ensure_revision_snapshot(
+            doc, canonical, created_by="usr_wp_001",
+        )
+        return doc, canonical, row
+
+    missing_doc, _missing_canonical, missing_row = make_doc("M", 600)
+    missing_path = storage_root / missing_row["backup_path"]
+    missing_path.unlink()
+    with pytest.raises(wp.RevisionSnapshotError):
+        wp.resolve_revision_snapshot(
+            missing_row, project_id=PROJECT, doc_id=missing_doc["doc_id"],
+        )
+
+    corrupt_doc, _corrupt_canonical, corrupt_row = make_doc("C", 601)
+    corrupt_path = storage_root / corrupt_row["backup_path"]
+    corrupt_path.write_text("{not-json", encoding="utf-8")
+    with pytest.raises(wp.RevisionSnapshotError):
+        wp.resolve_revision_snapshot(
+            corrupt_row, project_id=PROJECT, doc_id=corrupt_doc["doc_id"],
+        )
+
+    ambiguous_doc, _ambiguous_canonical, ambiguous_row = make_doc("A", 602)
+    get_store()._execute(
+        "INSERT INTO document_revisions "
+        "(doc_id, revision_no, backup_path, edit_reason, linked_doc_id, created_by, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+            ambiguous_doc["doc_id"], 0, ambiguous_row["backup_path"],
+            "user_comment", None, "usr_wp_001", now_iso(),
+        ],
+    )
+    with pytest.raises(db_revisions.RevisionAmbiguityError):
+        db_revisions.get_single_by_doc_revision(ambiguous_doc["doc_id"], 0)
+
+
+# ── flowgate.default.0599 T#2: connected creation and r0 restore ──────────────
+
+def test_created_r0_restores_before_first_save_and_preserves_broken_raw(
+    seed, storage_root,
+):
+    """Creation -> unreadable r0 listing -> guarded CAS restore -> current+1."""
+    from fastapi import HTTPException
+
+    from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db import workflow_events as db_events
+    from modules.flow_gate.services import work_plan_service as wp
+
+    client = _client()
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0603-WP",
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "counted_types": ["D"],
+            "provider_candidates": [],
+            "quantities": {"D": 1},
+        })
+    assert created.status_code == 201, created.text
+    payload = created.json()
+    doc_id = payload["doc_id"]
+    canonical = storage_root / payload["stored_path"]
+    initial_bytes = canonical.read_bytes()
+    r0, baseline = _assert_exact_r0(doc_id, canonical)
+
+    broken_raw = '{"wp_version":'
+    canonical.write_text(broken_raw, encoding="utf-8")
+    unreadable = client.get(f"/api/v1/documents/{doc_id}/work-plan")
+    assert unreadable.status_code == 409
+    unreadable_body = unreadable.json()
+    assert unreadable_body["code"] == "wp_unreadable"
+    assert unreadable_body["raw"] == broken_raw
+    assert unreadable_body["revision_no"] == 0
+    listed_r0 = next(
+        item for item in unreadable_body["revisions"]
+        if item["revision_no"] == 0
+    )
+    assert listed_r0["restorable"] is True
+    assert listed_r0["restore_unavailable_reason"] is None
+    assert "backup_path" not in listed_r0
+
+    stale = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+        json={"base_revision_no": 9},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["code"] == "wp_revision_conflict"
+    assert canonical.read_text(encoding="utf-8") == broken_raw
+
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.document_service.is_final_approved",
+        return_value=True,
+    ):
+        guarded = client.post(
+            f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+            json={"base_revision_no": 0},
+        )
+    assert guarded.status_code == 422
+    assert db_docs.get_by_id(doc_id)["revision_no"] == 0
+
+    with patch(
+        "modules.flow_gate.documents.routers.documents._reject_if_group_disposed",
+        side_effect=HTTPException(status_code=409, detail="disposed"),
+    ):
+        disposed = client.post(
+            f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+            json={"base_revision_no": 0},
+        )
+    assert disposed.status_code == 409
+
+    with patch(
+        "modules.flow_gate.documents.routers.documents._reject_if_group_ai_running",
+        side_effect=HTTPException(status_code=409, detail="ai running"),
+    ):
+        ai_running = client.post(
+            f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+            json={"base_revision_no": 0},
+        )
+    assert ai_running.status_code == 409
+    assert canonical.read_text(encoding="utf-8") == broken_raw
+
+    restored = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+        json={"base_revision_no": 0},
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["revision_no"] == 1
+    assert canonical.read_bytes() == initial_bytes
+    assert baseline.read_bytes() == initial_bytes
+    assert db_revisions.list_by_doc_revision(doc_id, 0) == [r0]
+    assert db_revisions.list_by_doc_revision(doc_id, 1) == []
+
+    restore_events = [
+        event for event in db_events.list_by_project(PROJECT)
+        if (json.loads(event.get("metadata") or "{}").get("edit_reason")
+            == "work_plan_revision_restore")
+        and json.loads(event.get("metadata") or "{}").get("doc_id") == doc_id
+    ]
+    assert len(restore_events) == 1
+    provenance = json.loads(restore_events[0]["metadata"])
+    assert provenance["restored_revision_no"] == 0
+    assert provenance["restored_revision_id"] == r0["id"]
+    assert provenance["restored_revision_created_by"] == "usr_wp_001"
+    assert provenance["unreadable_backup_is_sidecar"] is True
+    broken_backup = storage_root / provenance["unreadable_backup_path"]
+    assert broken_backup.read_text(encoding="utf-8") == broken_raw
+
+
+def test_r0_restore_after_first_save_keeps_0597_revision_history(seed, storage_root):
+    """The ordinary 0597 N -> N+1 before-image row remains unchanged."""
+    from modules.flow_gate.db import document_revisions as db_revisions
+
+    client = _client()
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0605-WP",
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "counted_types": ["D"],
+            "provider_candidates": [],
+            "quantities": {"D": 1},
+        })
+    assert created.status_code == 201, created.text
+    payload = created.json()
+    doc_id = payload["doc_id"]
+    canonical = storage_root / payload["stored_path"]
+    r0_bytes = canonical.read_bytes()
+
+    changed = json.loads(json.dumps(payload["body"]))
+    changed["steps"][0]["note"] = "first save"
+    saved = client.put(
+        f"/api/v1/documents/{doc_id}/work-plan",
+        json={"base_revision_no": 0, "body": changed},
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["revision_no"] == 1
+
+    broken_raw = '{"wp_version":'
+    canonical.write_text(broken_raw, encoding="utf-8")
+    restored = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+        json={"base_revision_no": 1},
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["revision_no"] == 2
+    assert canonical.read_bytes() == r0_bytes
+    r1 = db_revisions.get_single_by_doc_revision(doc_id, 1)
+    assert r1 is not None
+    assert (storage_root / r1["backup_path"]).read_text(encoding="utf-8") == broken_raw
+
+
+def test_restore_listing_fails_closed_for_ambiguous_revision(seed, storage_root):
+    from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.db.connection import get_store, now_iso
+
+    client = _client()
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value="0604-WP",
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "counted_types": ["D"],
+            "provider_candidates": [],
+            "quantities": {"D": 1},
+        })
+    assert created.status_code == 201, created.text
+    doc_id = created.json()["doc_id"]
+    r0 = db_revisions.get_single_by_doc_revision(doc_id, 0)
+    get_store()._execute(
+        "INSERT INTO document_revisions "
+        "(doc_id, revision_no, backup_path, edit_reason, linked_doc_id, created_by, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [doc_id, 0, r0["backup_path"], "user_comment", None, "usr_wp_001", now_iso()],
+    )
+    canonical = storage_root / created.json()["stored_path"]
+    canonical.write_text('{"wp_version":', encoding="utf-8")
+
+    unreadable = client.get(f"/api/v1/documents/{doc_id}/work-plan")
+    listed = unreadable.json()["revisions"]
+    assert len(listed) == 1
+    assert listed[0]["restorable"] is False
+    assert listed[0]["restore_unavailable_reason"] == "revision_ambiguous"
+    restore = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+        json={"base_revision_no": 0},
+    )
+    assert restore.status_code == 422
+    assert restore.json()["reason"] == "revision_ambiguous"
+    assert canonical.read_text(encoding="utf-8") == '{"wp_version":'
+
+
+# ── flowgate.default.0599 T#3: connected recovery regression ────────────────
+
+def _create_connected_r0(client, storage_root, doc_code: str):
+    from modules.flow_gate.db import documents as db_docs
+
+    with patch(
+        "modules.flow_gate.documents.routers.work_plan.numbering_service.reserve_document",
+        return_value=doc_code,
+    ):
+        created = client.post("/api/v1/documents/work-plan", json={
+            "parent_doc_id": ROOT_DOC,
+            "counted_types": ["D"],
+            "provider_candidates": [],
+            "quantities": {"D": 1},
+        })
+    assert created.status_code == 201, created.text
+    payload = created.json()
+    doc_id = payload["doc_id"]
+    canonical = storage_root / payload["stored_path"]
+    assert db_docs.get_by_id(doc_id)["revision_no"] == 0
+    initial_bytes = canonical.read_bytes()
+    r0, baseline = _assert_exact_r0(doc_id, canonical)
+    return payload, canonical, initial_bytes, r0, baseline
+
+
+def test_connected_first_save_keeps_one_original_r0(seed, storage_root):
+    from modules.flow_gate.db import document_revisions as db_revisions
+
+    client = _client()
+    payload, canonical, initial_bytes, r0, baseline = _create_connected_r0(
+        client, storage_root, "0610-WP",
+    )
+    changed = json.loads(json.dumps(payload["body"]))
+    changed["steps"][0]["note"] = "first connected save"
+    saved = client.put(
+        f"/api/v1/documents/{payload['doc_id']}/work-plan",
+        json={"base_revision_no": 0, "body": changed},
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["revision_no"] == 1
+    rows = db_revisions.list_by_doc_revision(payload["doc_id"], 0)
+    assert rows == [r0]
+    assert baseline.read_bytes() == initial_bytes
+    assert canonical.read_bytes() != initial_bytes
+
+
+def test_closed_work_plan_blocks_save_and_r0_restore_without_mutation(
+    seed, storage_root,
+):
+    from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.db import documents as db_docs
+
+    client = _client()
+    payload, canonical, initial_bytes, r0, baseline = _create_connected_r0(
+        client, storage_root, "0611-WP",
+    )
+    doc_id = payload["doc_id"]
+    db_docs.update(doc_id, {"status": "closed"})
+
+    changed = json.loads(json.dumps(payload["body"]))
+    changed["steps"][0]["note"] = "must not save"
+    save = client.put(
+        f"/api/v1/documents/{doc_id}/work-plan",
+        json={"base_revision_no": 0, "body": changed},
+    )
+    assert save.status_code == 422
+    assert canonical.read_bytes() == initial_bytes
+    assert db_docs.get_by_id(doc_id)["revision_no"] == 0
+
+    broken_raw = '{"wp_version":'
+    canonical.write_text(broken_raw, encoding="utf-8")
+    restore = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+        json={"base_revision_no": 0},
+    )
+    assert restore.status_code == 422
+    assert canonical.read_text(encoding="utf-8") == broken_raw
+    assert db_docs.get_by_id(doc_id)["revision_no"] == 0
+    assert db_revisions.list_by_doc_revision(doc_id, 0) == [r0]
+    assert baseline.read_bytes() == initial_bytes
+
+
+@pytest.mark.parametrize(
+    ("failure", "doc_code", "expected_reason"),
+    [
+        ("missing", "0620-WP", "backup_unavailable"),
+        ("out_of_root", "0621-WP", "backup_unavailable"),
+        ("corrupt", "0622-WP", "not_json"),
+    ],
+)
+def test_restore_bad_r0_backup_fails_closed_without_partial_mutation(
+    seed, storage_root, failure, doc_code, expected_reason, monkeypatch,
+):
+    from modules.flow_gate.db import document_revisions as db_revisions
+    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.db.connection import get_store
+    from modules.flow_gate.storage import paths as storage_paths
+
+    client = _client()
+    payload, canonical, initial_bytes, r0, baseline = _create_connected_r0(
+        client, storage_root, doc_code,
+    )
+    doc_id = payload["doc_id"]
+    if failure == "missing":
+        baseline.unlink()
+    elif failure == "out_of_root":
+        outside = storage_root.parent / f"{doc_id}.outside-r0.json"
+        outside.write_bytes(initial_bytes)
+        get_store()._execute(
+            "UPDATE document_revisions SET backup_path = ? WHERE id = ?",
+            [f"../{outside.name}", r0["id"]],
+        )
+        monkeypatch.setattr(
+            storage_paths,
+            "_allowed_roots",
+            lambda _project_id=None: [storage_root.resolve()],
+        )
+    else:
+        baseline.write_text('{"wp_version":', encoding="utf-8")
+
+    broken_raw = '{"wp_version":'
+    canonical.write_text(broken_raw, encoding="utf-8")
+    unreadable = client.get(f"/api/v1/documents/{doc_id}/work-plan")
+    assert unreadable.status_code == 409
+    listed_r0 = next(
+        item for item in unreadable.json()["revisions"]
+        if item["revision_no"] == 0
+    )
+    assert listed_r0["restorable"] is False
+    assert listed_r0["restore_unavailable_reason"] == expected_reason
+
+    restore = client.post(
+        f"/api/v1/documents/{doc_id}/work-plan/revisions/0/restore",
+        json={"base_revision_no": 0},
+    )
+    assert restore.status_code == 422
+    assert restore.json()["reason"] == expected_reason
+    assert canonical.read_text(encoding="utf-8") == broken_raw
+    assert db_docs.get_by_id(doc_id)["revision_no"] == 0
+    assert len(db_revisions.list_by_doc_revision(doc_id, 0)) == 1
+    revisions_dir = canonical.parent / "revisions"
+    assert not list(revisions_dir.glob(
+        f"{doc_id}.r0.unreadable-before-r1*",
+    ))
+
+
 # ── 0597 T0004: unreadable revision restore regression ───────────────────────
 
 def test_unreadable_revision_restore_contract(seed, storage_root):
@@ -2243,6 +2786,7 @@ def test_unreadable_revision_restore_contract(seed, storage_root):
     from modules.flow_gate.db import document_revisions as db_revisions
     from modules.flow_gate.db import documents as db_docs
     from modules.flow_gate.db.connection import now_iso
+    from modules.flow_gate.services import work_plan_service as wp
 
     client = _client()
     with patch(
@@ -2272,7 +2816,9 @@ def test_unreadable_revision_restore_contract(seed, storage_root):
     assert saved.json()["revision_no"] == 1
 
     # Simulate a future writer. The current reader must fail closed but retain raw/history.
-    future_raw = '{"wp_version":2,"binding":"advisory"}\n'
+    # wp_version 3 is genuinely beyond WP_VERSION_SUPPORTED (2 in this branch); 2 itself
+    # now parses as a supported-but-incomplete body (schema_invalid), not this reason.
+    future_raw = '{"wp_version":3,"binding":"advisory"}\n'
     canonical.write_text(future_raw, encoding="utf-8")
     unreadable = client.get(f"/api/v1/documents/{doc_id}/work-plan")
     assert unreadable.status_code == 409
@@ -2291,7 +2837,7 @@ def test_unreadable_revision_restore_contract(seed, storage_root):
     )
     assert restored.status_code == 200, restored.text
     assert restored.json()["revision_no"] == 2  # never rewind to r0
-    assert restored.json()["body"]["wp_version"] == 1
+    assert restored.json()["body"]["wp_version"] == wp.WP_VERSION_SUPPORTED
     assert canonical.read_text(encoding="utf-8") == valid_raw
     rows = db_revisions.list_by_doc(doc_id)
     current_backup = next(row for row in rows if row["revision_no"] == 1)
@@ -2346,7 +2892,7 @@ def test_unreadable_revision_restore_contract(seed, storage_root):
     bad_dir = canonical.parent / "revisions"
     cases = [
         (10, bad_dir / "missing.json", None, "backup_unavailable"),
-        (11, bad_dir / "future.json", '{"wp_version":2}\n', "wp_version_unsupported"),
+        (11, bad_dir / "future.json", '{"wp_version":3}\n', "wp_version_unsupported"),
         (12, bad_dir / "invalid.json", '{"wp_version":1}\n', "schema_invalid"),
     ]
     for revision_no, backup, raw, reason in cases:

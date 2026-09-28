@@ -51,10 +51,10 @@
           </button>
         </div>
         <template v-else>
-          <div class="gmr-provider-badge">
-            <AppIcon name="robot" />
-            <span>{{ t('main.git_review.resolved_by', { provider: review?.resolver_provider || t('main.git_review.unknown_provider') }) }}</span>
-            <small>{{ t('main.git_review.provider_badge_note') }}</small>
+          <div class="gmr-provider-badge" data-test="gmr-resolved-by">
+            <AppIcon :name="review?.resolver_type === 'human' ? 'pencil-simple' : 'robot'" />
+            <span>{{ resolvedByText }}</span>
+            <small v-if="review?.resolver_type !== 'human'">{{ t('main.git_review.provider_badge_note') }}</small>
           </div>
 
           <p class="gmr-warning" :class="warningClass">
@@ -82,6 +82,9 @@
                   <span v-if="conflictCountOf(change.path)" class="gmr-conflict-count-badge">
                     <AppIcon name="lightning" /> {{ t('main.git_review.conflict_chunks', { n: conflictCountOf(change.path) }) }}
                   </span>
+                  <span v-if="supersedeOf(change.path)" class="gmr-supersede-badge" data-test="gmr-supersede-badge">
+                    <AppIcon name="warning" /> {{ t('main.git_review.supersede_badge') }}
+                  </span>
                 </button>
               </aside>
 
@@ -94,6 +97,36 @@
                     {{ t('main.git_review.chunk_selection', { selection: selectionLabel(origin.selection) }) }}
                     <template v-if="origin.start_line != null">({{ origin.start_line }}–{{ origin.end_line }}{{ t('main.git_review.line_suffix') }})</template>
                   </span>
+                </div>
+                <!-- 0604 D0005 §6 — the resolver's supersede declaration, directly under the
+                     origin tags. Never collapsed: the replaced lines are the safety net. -->
+                <div v-if="selectedSupersede" class="gmr-supersede" data-test="gmr-supersede" role="note">
+                  <p class="gmr-supersede-hd">
+                    <AppIcon name="warning" />
+                    <strong>{{ t('main.git_review.supersede_title') }}</strong>
+                  </p>
+                  <p class="gmr-supersede-statement" data-test="gmr-supersede-side">{{ supersedeStatement(selectedSupersede.side) }}</p>
+                  <p class="gmr-supersede-reason" data-test="gmr-supersede-reason">{{ t('main.git_review.supersede_reason', { reason: selectedSupersede.reason }) }}</p>
+                  <div
+                    v-for="chunk in selectedSupersede.chunks"
+                    :key="`sup-${chunk.chunk}`"
+                    class="gmr-supersede-chunk"
+                    data-test="gmr-supersede-chunk"
+                  >
+                    <p class="gmr-supersede-chunk-hd">
+                      {{ t('main.git_review.supersede_chunk', { start: chunk.start_line, end: chunk.end_line, preserved: chunk.preserved_lines.length }) }}
+                    </p>
+                    <template v-if="chunk.changed_lines.length">
+                      <p class="gmr-supersede-replaced-hd">{{ supersedeReplacedTitle(chunk) }}</p>
+                      <ul class="gmr-supersede-lines" data-test="gmr-supersede-lines">
+                        <li v-for="(row, rowIdx) in chunk.changed_lines" :key="`sup-${chunk.chunk}-${rowIdx}`">
+                          <div class="gcd-mono gmr-supersede-old">- {{ row.line }}</div>
+                          <div class="gcd-mono gmr-supersede-new">+ {{ row.replacement }}</div>
+                        </li>
+                      </ul>
+                    </template>
+                    <p v-else class="gmr-supersede-none">{{ t('main.git_review.supersede_replaced_none') }}</p>
+                  </div>
                 </div>
 
                 <div v-if="diffLoading" class="gcd-diff-state">
@@ -337,6 +370,10 @@ const { showToast } = useToast()
 const props = defineProps<{
   groupId: string
   mergeId: number
+  // 0630 T0005 — an ordinary Branch Manager merge has no group; its host passes the
+  // project-scoped route base (`/api/v1/projects/{p}/git/merge/{id}`) and every call
+  // below goes there. Omitted = the group route, exactly as before.
+  mergeApiBase?: string | null
   branch?: string | null
   baseBranch?: string | null
   providers?: { id: string; name: string }[]
@@ -346,6 +383,17 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ close: []; resolved: []; 'update:provider': [value: string] }>()
+
+const reviewApiBase = computed(
+  () => props.mergeApiBase || `/api/v1/groups/${props.groupId}/git/merge/${props.mergeId}`,
+)
+// A manual resolution is never presented as the AI's (D0004 §27).
+const resolvedByText = computed(() => {
+  const provider = review.value?.resolver_provider || t('main.git_review.unknown_provider')
+  if (review.value?.resolver_type === 'human') return t('main.git_review.resolved_by_human')
+  if (review.value?.resolver_type === 'mixed') return t('main.git_review.resolved_by_mixed', { provider })
+  return t('main.git_review.resolved_by', { provider })
+})
 
 interface ReviewChange {
   path: string
@@ -359,6 +407,22 @@ interface ConflictOrigin {
   start_line: number | null
   end_line: number | null
   range_ambiguous: boolean
+}
+/** 0604 D0005 §3.4 — one file's recorded `supersede` declaration (server evidence). */
+interface SupersedeChunk {
+  chunk: number
+  start_line: number
+  end_line: number
+  kept_side: 'ours' | 'theirs'
+  dropped_side: 'ours' | 'theirs'
+  preserved_lines: string[]
+  changed_lines: { line: string; replacement: string }[]
+}
+interface ConflictSupersede {
+  path: string
+  side: 'ours' | 'theirs'
+  reason: string
+  chunks: SupersedeChunk[]
 }
 interface ApplyError {
   code?: string
@@ -412,10 +476,15 @@ interface ReviewPayload {
   merge_head: string | null
   changes: ReviewChange[]
   conflict_origins: ConflictOrigin[]
+  // Absent on a payload from a server older than 0604 — read with `?? []`.
+  conflict_supersedes?: ConflictSupersede[]
   conversation: ConversationTurn[]
   held_test_operations: HeldTestOperation[]
   pending_conversation?: PendingConversation | null
   resolver_provider: string | null
+  // 0630 T0005 (D0004 §27) — who produced the resolution. Sent for an ordinary branch
+  // merge; absent (group finalize) keeps the provider sentence exactly as before.
+  resolver_type?: 'ai' | 'human' | 'mixed' | null
   reconciliation_kind: string | null
   last_error: { code?: string } | null
   can_approve: boolean
@@ -779,6 +848,17 @@ function conflictCountOf(path: string): number {
 const selectedOrigins = computed(() =>
   (review.value?.conflict_origins ?? []).filter((o) => o.path === selectedPath.value),
 )
+function supersedeOf(path: string | null): ConflictSupersede | null {
+  if (!path) return null
+  return (review.value?.conflict_supersedes ?? []).find((row) => row.path === path) ?? null
+}
+const selectedSupersede = computed(() => supersedeOf(selectedPath.value))
+function supersedeStatement(side: string): string {
+  return t(`main.git_review.supersede_statement.${side === 'ours' ? 'ours' : 'theirs'}`)
+}
+function supersedeReplacedTitle(chunk: SupersedeChunk): string {
+  return t(`main.git_review.supersede_replaced.${chunk.dropped_side === 'ours' ? 'ours' : 'theirs'}`, { n: chunk.changed_lines.length })
+}
 function selectionLabel(selection: string): string {
   return t(`main.git_finalize.${selection === 'ours' ? 'current' : selection === 'theirs' ? 'incoming' : selection === 'both' ? 'both' : 'direct_edit'}`)
 }
@@ -822,7 +902,7 @@ async function loadDiff(path: string) {
   diffError.value = false
   try {
     const { data } = await getRequest<{ ok: boolean; data: ReviewDiffData }>(
-      `/api/v1/groups/${props.groupId}/git/merge/${props.mergeId}/review-diff`,
+      `${reviewApiBase.value}/review-diff`,
       { path },
     )
     if (selectedPath.value === path) diff.value = data.data
@@ -850,7 +930,7 @@ async function loadReview({ background = false } = {}) {
   }
   try {
     const { data } = await getRequest<{ ok: boolean; result: ReviewPayload }>(
-      `/api/v1/groups/${props.groupId}/git/merge/${props.mergeId}/review`,
+      `${reviewApiBase.value}/review`,
     )
     const priorAiTurns = aiTurnCount(review.value?.conversation ?? [])
     review.value = data.result
@@ -935,7 +1015,7 @@ async function sendMessage(allowTestEdits = false) {
     // action (L0007 §2.7) — allow_test_edits is never carried by the ordinary
     // apply-requested toggle above, only by this dedicated action.
     const { data } = await postRequest<{ ok: boolean; result?: { run_id?: string | null } }>(
-      `/api/v1/groups/${props.groupId}/git/merge/${props.mergeId}/review-message`,
+      `${reviewApiBase.value}/review-message`,
       {
         message, provider_id: props.selectedProvider, provider_pinned: true,
         apply_requested: allowTestEdits ? true : applyRequested.value,
@@ -1021,7 +1101,7 @@ async function approve() {
   approveOutcome.value = null
   try {
     const { data } = await postRequest<{ ok: boolean; result?: ApproveResult; error?: any }>(
-      `/api/v1/groups/${props.groupId}/git/merge/${props.mergeId}/approve`,
+      `${reviewApiBase.value}/approve`,
       { attempt_id: attemptId.value, review_fingerprint: review.value.review_fingerprint },
     )
     const status = String(data.result?.status ?? '')
@@ -1096,7 +1176,7 @@ async function reject(rawReason: string) {
   if (!reason || !props.selectedProvider || busy.value) return
   busy.value = true
   try {
-    await postRequest(`/api/v1/groups/${props.groupId}/git/merge/${props.mergeId}/reject`, {
+    await postRequest(`${reviewApiBase.value}/reject`, {
       reason, provider_id: props.selectedProvider, provider_pinned: true,
     })
     showToast(t('main.git_review.rejected_toast'), 'success')
@@ -1164,6 +1244,28 @@ onBeforeUnmount(stopPolling)
 .gmr-origin-tag.gmr-sel-theirs { background: #dcfce7; color: #047857; }
 .gmr-origin-tag.gmr-sel-both { background: #ede9fe; color: #6d28d9; }
 .gmr-origin-tag.gmr-sel-manual { background: #fef3c7; color: #92400e; }
+/* 0604 D0005 §6 — supersede declaration block and file-list badge. */
+.gmr-supersede-badge {
+  display: inline-flex; align-items: center; gap: 4px; align-self: flex-start;
+  margin-top: 2px; padding: 1px 6px; border-radius: 999px; font-size: 0.66rem;
+  background: #fff7ed; color: #9a3412; border: 1px solid #fdba74;
+}
+.gmr-supersede {
+  margin: 6px 12px; padding: 8px 10px; border: 1px solid #fdba74; border-radius: 6px;
+  background: #fff7ed; color: #7c2d12; font-size: 0.74rem;
+  max-height: 40%; overflow: auto; flex-shrink: 0;
+}
+.gmr-supersede p { margin: 0 0 4px; }
+.gmr-supersede-hd { display: flex; align-items: center; gap: 6px; }
+.gmr-supersede-reason { white-space: pre-wrap; word-break: break-word; }
+.gmr-supersede-chunk { margin-top: 6px; padding-top: 6px; border-top: 1px dashed #fdba74; }
+.gmr-supersede-chunk-hd, .gmr-supersede-replaced-hd { font-weight: 600; }
+.gmr-supersede-lines { list-style: none; margin: 0; padding: 0; }
+.gmr-supersede-lines li { margin-bottom: 4px; }
+.gmr-supersede-old, .gmr-supersede-new { white-space: pre-wrap; word-break: break-all; padding: 0 4px; }
+.gmr-supersede-old { background: #fee2e2; color: #991b1b; }
+.gmr-supersede-new { background: #dcfce7; color: #166534; }
+.gmr-supersede-none { font-style: italic; }
 .gmr-origin-row { box-shadow: inset 3px 0 0 #f59e0b; }
 .gmr-origin-flag { grid-column: 1 / -1; font-size: 0.65rem; }
 .gmr-conversation {

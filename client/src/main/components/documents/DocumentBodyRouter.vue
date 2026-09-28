@@ -32,12 +32,45 @@
     :project-id="tab.projectId ?? null"
     :read-only="readOnly"
   />
+  <Tr2DocumentBody v-else-if="tab.typeCode === 'TR2'" :tab="tab" :read-only="readOnly" />
   <QuestionDocumentBody
     v-else-if="tab.type === 'qtui' || (tab.type === 'md' && tab.typeCode === 'Q')"
     :tab="tab"
     :read-only="readOnly"
     @status-changed="emit('q-status-changed', $event)"
   />
+  <!-- flowgate.default.0549 T0008: TS/TSR get the structured specification / test report
+       view. A legacy executable TS/TSR is handed back to the same GenericDocumentBody through
+       the slot, unchanged, so the Markdown body and every seam MainPanel binds keep working. -->
+  <TestDocumentBody
+    v-else-if="tab.type === 'md' && (tab.typeCode === 'TS' || tab.typeCode === 'TSR')"
+    :tab="tab"
+    :read-only="readOnly"
+    :can-edit="canEdit"
+  >
+    <GenericDocumentBody
+      :tab="tab"
+      :read-only="readOnly"
+      :can-edit="canEdit"
+      :edit-dropdown-open="editDropdownOpen"
+      :text-wrap-enabled="textWrapEnabled"
+      :download-available="downloadAvailable"
+      :download-busy="downloadBusy"
+      :upload-busy="uploadBusy"
+      @close="emit('close')"
+      @edit-direct="emit('edit-direct')"
+      @edit-mention="emit('edit-mention')"
+      @invoke-command="emit('invoke-command')"
+      @invoke-ai="emit('invoke-ai')"
+      @open-full-view="emit('open-full-view')"
+      @toggle-edit-dropdown="emit('toggle-edit-dropdown')"
+      @download-markdown="emit('download-markdown')"
+      @upload-markdown="emit('upload-markdown', $event)"
+      @update:text-wrap-enabled="emit('update:text-wrap-enabled', $event)"
+      @bind-md-viewer="emit('bind-md-viewer', $event)"
+      @bind-text-viewer="emit('bind-text-viewer', $event)"
+    />
+  </TestDocumentBody>
   <GenericDocumentBody
     v-else
     :tab="tab"
@@ -71,6 +104,8 @@ import DiscardBody from './DiscardBody.vue'
 import FinalApprovalBody from './FinalApprovalBody.vue'
 import GenericDocumentBody from './GenericDocumentBody.vue'
 import QuestionDocumentBody from './QuestionDocumentBody.vue'
+import TestDocumentBody from './TestDocumentBody.vue'
+import Tr2DocumentBody from './Tr2DocumentBody.vue'
 
 defineProps<{
   tab: Tab

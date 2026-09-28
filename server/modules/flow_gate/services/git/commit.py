@@ -876,9 +876,14 @@ def _merge_commit_subject(branch: str, base_branch: str) -> str:
 
 def _ledger_group_by_merge_sha(project_id: str, full_sha: str) -> Optional[str]:
     from modules.flow_gate.services import git_service as _gs
+    from .merge_target import merged_on_project_base
     matches: list[str] = []
     for row in _gs.db_git.list_states_of_project_any(project_id):
         if row.get("status") != "merged" or not row.get("merge_commit"):
+            continue
+        # 0594 T0012 §15: a merge that landed on a non-base target never maps to a
+        # base commit, so the base unmerge list can never offer it (fail closed).
+        if not merged_on_project_base(row):
             continue
         if full_sha.lower().startswith(str(row["merge_commit"]).lower()):
             matches.append(row["group_id"])

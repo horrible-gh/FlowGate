@@ -100,6 +100,7 @@ def test_auto_approved_projection_folds_n_and_t():
     items = [item(1, "T"), item(2, "TR")]
     out = svc.project(steps, svc.build_step_map(steps, items), items, "auto_approved", REGISTRY)
     assert out["provider_overrides"] == {"2": "p1"}
+    assert out["note_overrides"] == {"2": "note"}
     assert out["filled_item_seqs"] == [2]
 
 
@@ -129,6 +130,7 @@ def test_ai_direct_projection_does_not_fold():
     items = [item(1, "T"), item(2, "TR")]
     out = svc.project(steps, svc.build_step_map(steps, items), items, "ai_direct", REGISTRY)
     assert out["provider_overrides"] == {"1": "p1"} and out["folded"] == []
+    assert out["note_overrides"] == {"1": "note"}
 
 
 def test_execution_settings_fold_to_the_paired_worker():

@@ -4,6 +4,7 @@ GET/POST/PATCH/DELETE /api/v1/projects/{project_id}/document-types
 POST                  /api/v1/projects/{project_id}/templates
 GET/PATCH             /api/v1/projects/{project_id}/settings
 GET/PATCH             /api/v1/projects/{project_id}/paths  (→ settings alias)
+GET                   /api/v1/projects/{project_id}/storage-root
 GET                   /api/v1/projects/{project_id}/numbering/impact
 POST                  /api/v1/projects/{project_id}/numbering/migrate
 POST                  /api/v1/projects/{project_id}/numbering/verify
@@ -48,6 +49,7 @@ from modules.flow_gate.db import messages as messages_db
 from modules.flow_gate.utils.slug import project_name_to_slug
 from modules.flow_gate.utils.id_validators import validate_project_id
 from modules.flow_gate.storage.migration import apply_storage_change
+from modules.flow_gate.storage.paths import describe_storage_root
 from modules.flow_gate.services import test_command_service
 
 router = APIRouter(tags=["ProjectSettings"])
@@ -724,6 +726,16 @@ def get_settings(
 ):
     row = get_project_settings(project_id)
     return row or {}
+
+
+@router.get("/projects/{project_id}/storage-root")
+def get_project_storage_root(
+    project_id: str,
+    user=Depends(require_permission("project.settings.read", "project_id")),
+):
+    if not projects_db.get_by_id(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    return describe_storage_root(project_id)
 
 
 class ProjectSettingsPatch(BaseModel):

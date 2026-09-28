@@ -17,6 +17,34 @@ from .credentials import GitServiceError, _scrub
 
 GIT_LOCAL_TIMEOUT_SEC = 30
 
+# flowgate.default.0607 T0004 §3.1 (NR0003 §5/§9.6): git commands that write objects
+# (merge, commit, fetch) end by running auto maintenance. Git for Windows cannot
+# detach it, so a `git gc --auto` repack of the whole object store ran INSIDE the
+# approval's `git merge --no-ff`, held the process ~35s after the merge commit
+# already existed, and `_run_git`'s 30s kill turned a successful merge into a
+# git_error. Every FlowGate git call runs on a request path, so auto gc/maintenance
+# is switched off per invocation through git's command-scope environment config
+# (GIT_CONFIG_COUNT/KEY_n/VALUE_n, the env twin of `-c`; same precedence, argv
+# untouched). The repository's own config is never written. FlowGate has no other
+# gc/maintenance path of its own — see the 0607 TR for the follow-up note.
+_REQUEST_PATH_GIT_CONFIG: tuple[tuple[str, str], ...] = (
+    ("gc.auto", "0"),
+    ("maintenance.auto", "false"),
+)
+
+
+def _suppress_auto_maintenance(env: dict) -> None:
+    """Append the request-path overrides after any env config already present."""
+    try:
+        count = max(int(env.get("GIT_CONFIG_COUNT") or 0), 0)
+    except (TypeError, ValueError):
+        count = 0
+    for key, value in _REQUEST_PATH_GIT_CONFIG:
+        env[f"GIT_CONFIG_KEY_{count}"] = key
+        env[f"GIT_CONFIG_VALUE_{count}"] = value
+        count += 1
+    env["GIT_CONFIG_COUNT"] = str(count)
+
 
 def git_available() -> bool:
     return shutil.which("git") is not None
@@ -83,6 +111,7 @@ def _run_git(
         env.update(author_env)
     if extra_env:
         env.update(extra_env)
+    _suppress_auto_maintenance(env)
     askpass_dir: Optional[Path] = None
     if secret is not None:
         launcher, askpass_dir = _write_askpass()

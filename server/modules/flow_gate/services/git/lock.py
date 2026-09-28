@@ -8,6 +8,7 @@ import logging
 import time
 from typing import Optional
 
+from . import merge_target
 from .credentials import GitServiceError
 
 _log = logging.getLogger(__name__)
@@ -36,12 +37,19 @@ def open_merge_session_of_project(project_id: str) -> Optional[dict]:
     best: Optional[dict] = None
     for session in _gs.db_git.list_open_sessions():
         try:
-            if _gs._project_of_group(session["group_id"]) != project_id:
+            # 0630 T0005: a branch_merge row has no group; its owner column names the project.
+            if _gs._session_project(session) != project_id:
                 continue
             # A group_update merge lives exclusively in that group's worktree.
             # It does not hold the shared base checkout and must not block other
             # groups' base-mutating operations.
             if _gs.db_git.session_kind(session) == _gs.db_git.SESSION_KIND_GROUP_UPDATE:
+                continue
+            # 0594 T0012: a finalize attempt record now exists from BEFORE the merge
+            # runs, and a non-base target merges in its own managed workspace. Only
+            # a session that actually owns the base checkout's merge state (legacy,
+            # TR kinds, or a base-target attempt that reached a conflict) blocks it.
+            if not merge_target.holds_base_checkout(session):
                 continue
         except Exception:
             continue

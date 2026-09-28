@@ -497,11 +497,8 @@ def plan_to_rows(
         if default_note and row["note"] == "":
             row["note"] = default_note
             row["note_source"] = "defaults"
-        # The automatic row is a step of its own (and the only one an auto-approved run hands
-        # to a worker), so the plan's common note reaches it on the same terms.
-        if default_note and row["type"] in INSTRUCTION_TYPES and not row.get("pair_note"):
-            row["pair_note"] = default_note
-            row["pair_note_source"] = "defaults"
+        # defaults.note is authoring context for this WorkPlan row only.  A result step
+        # reaches its automatic NR/TR exclusively through _carry_note_to_pair above.
     return rows, dropped, uid
 
 
@@ -521,10 +518,12 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
         if row.get("is_auto"):
             continue
         want = AUTO_ROW_MAP.get(row["type"]) if row["type"] in INSTRUCTION_TYPES else None
-        # WorkPlan T/N remains the canonical owner, but auto-approved execution runs the
-        # paired TR/NR row.  Move an immutable snapshot onto that worker and keep the
-        # server-assembled instruction slot empty, matching work_plan_apply_service.project().
-        worker_pre_instruction = row["type"] in {"T", "N"} and bool(want)
+        # WorkPlan-backed N/T metadata belongs exclusively to the source authoring hop.
+        # Rebuilding auto rows also scrubs snapshots left by older pours.  Legacy callers
+        # without WorkPlan provenance keep their historical paired-row projection.
+        worker_pre_instruction = (
+            row["type"] in {"T", "N"} and bool(want) and not row.get("source_doc_id")
+        )
         old = by_parent.get(row["uid"])
         old_matches = old is not None and old.get("type") == want
         pre_instruction_text = (
@@ -538,9 +537,6 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
             else old.get("pre_instruction_attachment") if worker_pre_instruction and old_matches else None
         )
         pre_instruction_attachment = dict(attachment) if isinstance(attachment, dict) else None
-        if worker_pre_instruction:
-            row["pre_instruction_text"] = None
-            row["pre_instruction_attachment"] = None
         out.append(row)
         if not want:
             continue
@@ -560,7 +556,15 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
         # (0434 T0004 F1) moved only the provider half of it, so the note this function refuses
         # to write was being written on the decision/edit path.
         server_assembled = want in SERVER_ASSEMBLED_REPORT_TYPES
-        pair_note = "" if server_assembled else (row.get("pair_note") or "")
+        stale_work_plan_default_pair_note = (
+            row["type"] in {"T", "N"}
+            and bool(row.get("source_doc_id"))
+            and row.get("pair_note_source") == "defaults"
+        )
+        pair_note = (
+            "" if server_assembled or stale_work_plan_default_pair_note
+            else (row.get("pair_note") or "")
+        )
         pair_note_source = row.get("pair_note_source") if pair_note else None
         if server_assembled:
             provider_id, provider_name = None, None
@@ -587,22 +591,23 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
             provider_display_name=provider_name,
             review_count=(
                 0 if server_assembled else (
-                    row.get("pair_review_count") or row.get("review_count") or 0
+                    row.get("pair_review_count") if row.get("source_doc_id") else (row.get("pair_review_count") or row.get("review_count") or 0)
                 )
             ),
             reviewer_provider_id=(
                 None if server_assembled else (
                     row.get("pair_reviewer_provider_id")
-                    or row.get("reviewer_provider_id")
+                    or (None if row.get("source_doc_id") else row.get("reviewer_provider_id"))
                 )
             ),
             reviewer_provider_display_name=(
                 None if server_assembled else (
                     row.get("pair_reviewer_provider_display_name")
-                    or row.get("reviewer_provider_display_name")
+                    or (None if row.get("source_doc_id") else row.get("reviewer_provider_display_name"))
                 )
             ),
-            # T/N is server-assembled in auto-approved mode; TR/NR is the actual worker.
+            # WorkPlan-backed rows pass None here: N/T authoring metadata must not leak
+            # into the later paired NR/TR worker. Legacy rows retain the projection above.
             pre_instruction_text=pre_instruction_text,
             pre_instruction_attachment=pre_instruction_attachment,
             status=status,

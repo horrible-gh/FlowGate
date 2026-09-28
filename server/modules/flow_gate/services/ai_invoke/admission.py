@@ -73,6 +73,16 @@ from .runtime import (
 )
 
 
+# 2026-09-23 incident (flowgate.default.0594 / merge_id=100): a resolve_conflict mention
+# duplicated every conflicted file's full content (chunks + raw_content) with no size cap,
+# reaching ~3.94M chars and getting fast_fail'd by every provider ("Prompt is too long" /
+# Codex's own 1,048,576-char input ceiling) only AFTER a token was spent launching each one.
+# `raw_content` is gone now (token_routes._build_conflict_mention), but a large enough
+# conflict set can still exceed what any provider will accept, so this catches that BEFORE
+# a provider is launched rather than after. Conservative relative to Codex's known hard
+# limit, leaving headroom for the task/instruction sections built around the chunks.
+CONFLICT_MENTION_MAX_CHARS = 500_000
+
 # T0004 work item 6 / NR0003 finding 6: the worktree_unavailable 409 always went out in
 # Korean with no locale branch. It reuses the same locale-dictionary pattern as
 # remote_tool_service._ERROR_MESSAGES / _CUSTOM_ERROR_MESSAGES.
@@ -199,9 +209,23 @@ def _is_group_worktree(project_id: str, group_id: str, root: Optional[Path]) -> 
 PROJECT_SCOPED_ACTION_SCOPES = frozenset({"resolve_base_dirty"})
 
 
+def _is_project_scoped_run(action_scope: Optional[str], merge_id: Optional[int] = None) -> bool:
+    """flowgate.default.0630 T0005: besides resolve_base_dirty, a resolve_conflict run for
+    an ordinary Branch Manager merge (owner branch_merge) has no group either. It takes no
+    group lease, demands no group worktree, and its token is minted group-less and bound
+    to project + merge_id; the run keeps the synthetic `<project>.none.0000` key only as
+    the row key, exactly like resolve_base_dirty."""
+    if action_scope in PROJECT_SCOPED_ACTION_SCOPES:
+        return True
+    if action_scope == "resolve_conflict" and merge_id is not None:
+        _owner_group, owner_project = git_service.merge_session_owner_args(merge_id)
+        return bool(owner_project)
+    return False
+
+
 def _require_group_worktree(
     project_id: str, module: str, group_id: str, branch: str, locale: Optional[str] = None,
-    action_scope: Optional[str] = None,
+    action_scope: Optional[str] = None, merge_id: Optional[int] = None,
 ) -> None:
     """Refuse to launch a run that would execute in the base tree (0299 R0001).
 
@@ -222,7 +246,7 @@ def _require_group_worktree(
     # A project-scoped run works in the base checkout on purpose — there is no group
     # worktree to demand, and demanding one either invents a junk group or blocks the
     # press outright (0481 T0010 #1).
-    if action_scope in PROJECT_SCOPED_ACTION_SCOPES:
+    if _is_project_scoped_run(action_scope, merge_id):
         return
     try:
         cfg = db_git.get_config(project_id)
@@ -316,6 +340,7 @@ def _worker_source_kind(token_rec: dict) -> str:
 def _ensure_initial_source_sync(
     project_id: str, module: str, group_id: str,
     action_scope: str, doc_ref: Optional[str], locale: Optional[str] = None,
+    merge_id: Optional[int] = None,
 ) -> None:
     """Force the group worktree to the current base HEAD exactly once, before
     the group's FIRST raw source-capable (read/read_write) AI invocation
@@ -334,7 +359,7 @@ def _ensure_initial_source_sync(
     # Same reason as _require_group_worktree above: there is no group worktree to sync for a
     # project-scoped run, and `resolve_base_dirty` is read_write so it would otherwise fall
     # straight into this gate (0481 T0010 #1).
-    if action_scope in PROJECT_SCOPED_ACTION_SCOPES:
+    if _is_project_scoped_run(action_scope, merge_id):
         return
     result = git_service.ensure_initial_group_source_sync(project_id, module, group_id)
     if result.get("performed") or result.get("reason") in _INITIAL_SYNC_SAFE_SKIP_REASONS:
@@ -537,7 +562,10 @@ def _continuation_docs_target(
     ``target_item_seq=None`` means "no upper bound" (to-end).
     Returns None when the doc has no decided workflow sequence.
     """
-    from modules.flow_gate.services.workflow_decision_service import is_auto_handled_step
+    from modules.flow_gate.services.workflow_decision_service import (
+        has_work_plan_instruction_document,
+        is_auto_handled_step,
+    )
 
     # Internal request-scope callers may pass the sequence snapshot they already
     # read. None remains the default sentinel, so ordinary calls always read
@@ -562,6 +590,8 @@ def _continuation_docs_target(
             item_seq=item_seq,
             instruction_mode=continuation_instruction_mode,
             auto_approve_item_seqs=continuation_auto_approve_item_seqs,
+            source_doc_id=item.get("source_doc_id"),
+            has_instruction_document=has_work_plan_instruction_document(item),
         ):
             continue
         count += 1
@@ -1010,7 +1040,7 @@ def start_run(
     # before it calls in here); every other group-lease call in the run's life (heartbeat,
     # release, handoff, update_token) already no-ops on a missing row.
     # (Deliberately ASCII: the 0430 census caps this file's Korean lines and it is full.)
-    project_scoped = action_scope in PROJECT_SCOPED_ACTION_SCOPES
+    project_scoped = _is_project_scoped_run(action_scope, merge_id)
     # Durable lease admission is authoritative. Memory remains only a UI/live-process signal.
     active = None if project_scoped else db_group_ai_leases.get_active(group_id)
     handoff_allowed = bool(
@@ -1037,6 +1067,7 @@ def start_run(
         (db_docs.get_by_id(doc_ref) or {}).get("branch") or "main",
         locale=template_provision.normalize_locale(continuation_locale),
         action_scope=action_scope,
+        **({"merge_id": merge_id} if project_scoped and merge_id is not None else {}),
     )
     # flowgate.default.0511 T0004: force the group worktree to the current
     # configured base HEAD exactly once, before the group's FIRST raw
@@ -1046,6 +1077,7 @@ def start_run(
     _svc()._ensure_initial_source_sync(
         project_id, module, group_id, action_scope, doc_ref,
         locale=continuation_locale,
+        **({"merge_id": merge_id} if project_scoped and merge_id is not None else {}),
     )
 
     baseline_seq = db_docs.get_group_max_seq(group_id)
@@ -1260,6 +1292,27 @@ def start_run(
             db_group_ai_leases.release(group_id, run_id, reason="admission_rollback_mention_unavailable")
         raise _http_error(409, "mention_unavailable",
                           "Could not build a worker mention for this document.")
+
+    if action_scope == "resolve_conflict":
+        _mention_chars = len(mention)
+        if _mention_chars > CONFLICT_MENTION_MAX_CHARS:
+            # Refuse before the token is spent on a provider that will only reject it
+            # after launch. No tail truncation here — a silently dropped conflict chunk
+            # would let a resolution look complete while missing part of the merge.
+            try:
+                token_service.revoke(issue["token_id"], reason="ai_invoke_conflict_prompt_too_large")
+            except Exception:
+                logger.warning("token revoke failed after conflict_prompt_too_large", exc_info=True)
+            if not project_scoped:
+                db_group_ai_leases.release(
+                    group_id, run_id, reason="admission_rollback_conflict_prompt_too_large"
+                )
+            raise _http_error(
+                409, "conflict_prompt_too_large",
+                "This merge conflict's resolve prompt is too large for any provider to accept. "
+                "Split the merge into smaller commits or resolve part of it manually, then retry.",
+                prompt_chars=_mention_chars, limit_chars=CONFLICT_MENTION_MAX_CHARS,
+            )
 
     lease = (
         db_group_ai_leases.activate(
@@ -2194,6 +2247,7 @@ def _resolve_continuation_hop_provider(
         head_type = (head.get("type") or "").upper()
         from modules.flow_gate.services.workflow_decision_service import (
             AUTO_REPORT_MAP,
+            has_work_plan_instruction_document,
             is_auto_handled_step,
         )
 
@@ -2202,6 +2256,8 @@ def _resolve_continuation_hop_provider(
             item_seq=head.get("item_seq"),
             instruction_mode=continuation_instruction_mode,
             auto_approve_item_seqs=continuation_auto_approve_item_seqs,
+            source_doc_id=head.get("source_doc_id"),
+            has_instruction_document=has_work_plan_instruction_document(head),
         )
         worker_type = AUTO_REPORT_MAP.get(head_type, head_type) if fold_to_report else head_type
         # Preserve the legacy auto-approved preference: report assignment first, raw N/T
@@ -2258,6 +2314,7 @@ def _hop_worker_item_seq(
     head_type = (head.get("type") or "").upper()
     from modules.flow_gate.services.workflow_decision_service import (
         AUTO_REPORT_MAP,
+        has_work_plan_instruction_document,
         is_auto_handled_step,
     )
 
@@ -2266,6 +2323,8 @@ def _hop_worker_item_seq(
         item_seq=head_item_seq,
         instruction_mode=continuation_instruction_mode,
         auto_approve_item_seqs=continuation_auto_approve_item_seqs,
+        source_doc_id=head.get("source_doc_id"),
+        has_instruction_document=has_work_plan_instruction_document(head),
     )
     if not fold_to_report or head_item_seq is None:
         return head_item_seq

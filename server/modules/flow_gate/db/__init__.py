@@ -574,8 +574,12 @@ def remove_project_settings(project) -> None:
 
 # ── Groups CRUD ───────────────────────────────────────────────────────────────
 
-def insert_group(group_id, project, module, title, priority=None) -> None:
-    _db_groups.insert_group(group_id, project, module, title, priority)
+def insert_group(
+    group_id, project, module, title, priority=None, work_base_ref=None,
+) -> None:
+    _db_groups.insert_group(
+        group_id, project, module, title, priority, work_base_ref,
+    )
 
 
 def get_group(group_id):

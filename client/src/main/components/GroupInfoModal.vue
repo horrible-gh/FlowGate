@@ -38,6 +38,30 @@
             </div>
           </div>
           <p v-else class="gi-empty">{{ t('main.group_actions.info_empty') }}</p>
+          <section class="gi-bundles" data-test="source-bundle-observability" :aria-label="t('main.group_actions.bundles.title')">
+            <h3>{{ t('main.group_actions.bundles.title') }}</h3>
+            <p v-if="bundleError">{{ t('main.group_actions.bundles.load_failed') }}</p>
+            <p v-else-if="bundles.length === 0">{{ t('main.group_actions.bundles.empty') }}</p>
+            <article v-for="bundle in bundles" :key="bundle.bundle_id" class="gi-bundle">
+              <strong>{{ bundle.bundle_id }}</strong>
+              <dl>
+                <dt>{{ t('main.group_actions.bundles.status') }}</dt><dd>{{ bundle.status }}</dd>
+                <dt>{{ t('main.group_actions.bundles.revision') }}</dt><dd>{{ bundle.source_revision || '—' }}</dd>
+                <dt>{{ t('main.group_actions.bundles.dirty') }}</dt><dd>{{ bundle.source_dirty }}</dd>
+                <dt>{{ t('main.group_actions.bundles.created') }}</dt><dd>{{ bundle.created_at || '—' }}</dd>
+                <dt>{{ t('main.group_actions.bundles.expires') }}</dt><dd>{{ bundle.expires_at || '—' }}</dd>
+                <dt>{{ t('main.group_actions.bundles.files') }}</dt><dd>{{ bundle.file_count ?? '—' }}</dd>
+                <dt>{{ t('main.group_actions.bundles.bytes') }}</dt><dd>{{ bundle.byte_size ?? '—' }}</dd>
+                <dt>Policy</dt><dd>{{ bundle.exclusion_policy_version }}</dd>
+                <dt>{{ t('main.group_actions.bundles.content_hash') }}</dt><dd>{{ bundle.content_fingerprint || '—' }}</dd>
+                <dt>{{ t('main.group_actions.bundles.bundle_hash') }}</dt><dd>{{ bundle.bundle_sha256 || '—' }}</dd>
+                <dt>{{ t('main.group_actions.bundles.freshness') }}</dt><dd>{{ bundle.freshness }}</dd>
+                <dt>{{ t('main.group_actions.bundles.origin') }}</dt><dd>{{ bundle.origin }}</dd>
+                <dt>{{ t('main.group_actions.bundles.failure') }}</dt><dd>{{ bundle.failure_code || bundle.failure_reason || '—' }}</dd>
+                <dt>{{ t('main.group_actions.bundles.cleanup') }}</dt><dd>{{ bundle.cleanup_state }}{{ bundle.deleted_at ? ` · ${bundle.deleted_at}` : '' }}</dd>
+              </dl>
+            </article>
+          </section>
         </div>
         
       
@@ -60,11 +84,13 @@
 </template>
 
 <script setup lang="ts">
+import { ref, watch } from 'vue'
 import DialogShell from './dialogs/DialogShell.vue'
 import DialogHeader from './dialogs/DialogHeader.vue'
 import DialogFooter from './dialogs/DialogFooter.vue'
 import AppIcon from '@shared/AppIcon.vue'
 import { useI18n } from 'vue-i18n'
+import { getRequest } from '@shared/api'
 
 export interface GroupInfoDoc {
   id: string
@@ -75,8 +101,9 @@ export interface GroupInfoDoc {
   originAiRunId?: string | null
 }
 
-defineProps<{
+const props = defineProps<{
   visible: boolean
+  projectId?: string
   groupId: string
   groupName: string
   documents: GroupInfoDoc[]
@@ -92,6 +119,48 @@ const { t } = useI18n()
 function close() {
   emit('update:visible', false)
 }
+
+interface BundleRow {
+  bundle_id: string
+  status: string
+  source_revision: string | null
+  source_dirty: boolean
+  created_at: string | null
+  expires_at: string | null
+  file_count: number | null
+  byte_size: number | null
+  exclusion_policy_version: string
+  content_fingerprint: string | null
+  bundle_sha256: string | null
+  freshness: string
+  origin: string
+  failure_code: string | null
+  failure_reason: string | null
+  cleanup_state: string
+  deleted_at: string | null
+}
+
+const bundles = ref<BundleRow[]>([])
+const bundleError = ref(false)
+let bundleFetchSeq = 0
+watch(
+  () => [props.visible, props.projectId, props.groupId] as const,
+  async ([visible, projectId, groupId]) => {
+    const seq = ++bundleFetchSeq
+    bundles.value = []
+    bundleError.value = false
+    if (!visible || !projectId || !groupId) return
+    try {
+      const response = await getRequest<{ ok: boolean; bundles: BundleRow[] }>(
+        '/api/v1/source-bundles', { project_id: projectId, group_id: groupId },
+      )
+      if (seq === bundleFetchSeq && props.visible) bundles.value = response.data?.bundles ?? []
+    } catch {
+      if (seq === bundleFetchSeq && props.visible) bundleError.value = true
+    }
+  },
+  { immediate: true },
+)
 
 // origin_provider_name is a nullable snapshot taken at document-creation time (NR0003 /
 // WP0005) — it is never re-looked-up, so an empty/whitespace-only value is treated the
@@ -122,6 +191,14 @@ function aiBadgeTitle(d: GroupInfoDoc): string | undefined {
   gap: 8px;
   color: var(--primary);
 }
+.gi-bundles { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 12px; }
+.gi-bundles h3 { margin: 0 0 8px; font-size: .82rem; }
+.gi-bundles p { color: var(--text-m); font-size: .76rem; }
+.gi-bundle { padding: 8px; border: 1px solid var(--border); margin: 8px 0; border-radius: var(--r); font-size: .72rem; }
+.gi-bundle strong { overflow-wrap: anywhere; }
+.gi-bundle dl { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 4px 8px; margin: 8px 0 0; }
+.gi-bundle dt { color: var(--text-m); }
+.gi-bundle dd { margin: 0; overflow-wrap: anywhere; }
 .gi-id-row {
   display: flex;
   align-items: center;

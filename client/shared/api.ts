@@ -6,6 +6,10 @@ import axios, {
 } from 'axios'
 import i18n from './i18n'
 import { resolveApiErrorWithFallbackText } from './apiErrors'
+import {
+  beginVisibilityRecoveryTick,
+  recordVisibilityRecovery,
+} from './diagnostics/runtimeDiagnostics'
 
 interface RefreshResponse {
   access_token: string
@@ -186,6 +190,21 @@ const LONG_RUNNING_PATHS = [
   /\/groups\/tree/,
 ]
 
+// flowgate.default.0607 T0004 §3.5 (NR0003 §6): a final approval that carries a
+// `git_action` runs the whole Git finalize inside the request — fetch (≤120s),
+// ff-only + merge (≤30s each), push (≤120s) — before it answers, so the 30s default
+// abandoned healthy merges mid-flight. Only that request gets this ceiling; a plain
+// approve on the same path keeps the default. Decided on path + body here so a new
+// call site cannot forget it.
+export const GIT_APPROVAL_TIMEOUT_MS = 330_000
+const GIT_APPROVAL_PATH = /\/documents\/review_transitions\/approve(?:$|\?)/
+
+function carriesGitAction(data: unknown): boolean {
+  if (!data || typeof data !== 'object') return false
+  const action = (data as Record<string, unknown>).git_action
+  return typeof action === 'string' && action.length > 0
+}
+
 const api: AxiosInstance = axios.create({
   baseURL: getBaseUrl(),
   headers: { 'Content-Type': 'application/json' },
@@ -199,7 +218,9 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   // Raise the ceiling for known-slow endpoints unless the caller set its own timeout.
   if (config.timeout === DEFAULT_TIMEOUT_MS) {
     const path = config.url || ''
-    if (LONG_RUNNING_PATHS.some((re) => re.test(path))) {
+    if (GIT_APPROVAL_PATH.test(path) && carriesGitAction(config.data)) {
+      config.timeout = GIT_APPROVAL_TIMEOUT_MS
+    } else if (LONG_RUNNING_PATHS.some((re) => re.test(path))) {
       config.timeout = LONG_TIMEOUT_MS
     }
   }
@@ -327,7 +348,13 @@ function scheduleProactiveRefresh() {
   }, delay)
 }
 
-const onVisibilityRefresh = () => {
+// `recordRecovery` distinguishes an actual hidden->visible transition (the visibilitychange
+// listener below, which only reaches this point once `document.visibilityState` has just
+// become 'visible') from a plain window focus that never left the tab hidden (rev3 finding
+// 3) — e.g. clicking the address bar while already visible. Both still rotate/reschedule the
+// token identically; only the diagnostics attribution differs, so this is diagnostics-only
+// and changes no token-refresh behavior.
+const onVisibilityRefresh = (recordRecovery: boolean) => {
   if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
   if (!getStoredRefreshToken()) return
   const token = currentAccessToken()
@@ -335,12 +362,24 @@ const onVisibilityRefresh = () => {
   // setTimeout is throttled/parked while the tab is hidden or the machine sleeps, so on regain
   // the token may already be (near) expired — rotate now to keep the next request and the SSE
   // reconnect off an expired token.
-  if (expMs !== null && expMs - Date.now() <= REFRESH_SKEW_MS) {
+  const nearExpiry = expMs !== null && expMs - Date.now() <= REFRESH_SKEW_MS
+  if (recordRecovery) {
+    // T0004 §8: this module's own independent visibility-recovery listener — diagnostics
+    // only, coalesced under the same generation as the SSE/AI-run recovery entries via the
+    // shared tick. Recorded only for a genuine hidden->visible recovery (see above), not
+    // every focus, so a same-state focus cannot manufacture a duplicate token recovery entry
+    // or generation for a recovery that never actually happened.
+    const generation = beginVisibilityRecoveryTick()
+    recordVisibilityRecovery('token', generation, { action: nearExpiry ? 'refreshed' : 'rescheduled' })
+  }
+  if (nearExpiry) {
     ensureFreshToken().catch(() => clearProactiveRefresh())
   } else {
     scheduleProactiveRefresh()
   }
 }
+const onVisibilityChangeRefresh = () => onVisibilityRefresh(true)
+const onFocusRefresh = () => onVisibilityRefresh(false)
 
 /**
  * Start the proactive refresh loop. Called by the app shell (main.ts) once a valid session
@@ -351,9 +390,9 @@ export const startTokenAutoRefresh = () => {
   if (!autoRefreshStarted) {
     autoRefreshStarted = true
     if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', onVisibilityRefresh)
+      document.addEventListener('visibilitychange', onVisibilityChangeRefresh)
     }
-    window.addEventListener('focus', onVisibilityRefresh)
+    window.addEventListener('focus', onFocusRefresh)
   }
   scheduleProactiveRefresh()
 }
@@ -363,10 +402,10 @@ export const stopTokenAutoRefresh = () => {
   autoRefreshStarted = false
   clearProactiveRefresh()
   if (typeof document !== 'undefined') {
-    document.removeEventListener('visibilitychange', onVisibilityRefresh)
+    document.removeEventListener('visibilitychange', onVisibilityChangeRefresh)
   }
   if (typeof window !== 'undefined') {
-    window.removeEventListener('focus', onVisibilityRefresh)
+    window.removeEventListener('focus', onFocusRefresh)
   }
 }
 

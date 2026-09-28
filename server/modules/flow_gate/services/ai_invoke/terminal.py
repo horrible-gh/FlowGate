@@ -99,6 +99,22 @@ def cleanup(run: dict, *, handoff: bool = False, reason: str = "normal_finish") 
         lease_ok = attempt(run, "lease_release", lambda: release_owned_lease(run, reason))
     run["lease_cleanup_pending"] = not lease_ok
 
+    def _cleanup_run_snapshots() -> None:
+        from modules.flow_gate.services import snapshot_materialization_service
+        # The FK'd actor must be a real users.user_id: the run's own issued-to user when
+        # known, else the reserved system user (migration 038) — never a free-text label.
+        snapshot_materialization_service.cleanup_for_run(
+            str(run.get("run_id") or ""),
+            actor=run.get("issued_to") or snapshot_materialization_service.SYSTEM_ACTOR_USER_ID,
+        )
+
+    attempt(run, "snapshot_cleanup", _cleanup_run_snapshots)
+    def _cleanup_run_bundle_scratch() -> None:
+        from modules.flow_gate.services import source_bundle_cleanup_service
+        source_bundle_cleanup_service.cleanup_for_run(str(run.get("run_id") or ""))
+
+    attempt(run, "source_bundle_scratch_cleanup", _cleanup_run_bundle_scratch)
+
     run.setdefault("outcome", "none")
     if not run.get("outcome"):
         run["outcome"] = "none"

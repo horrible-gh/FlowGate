@@ -1,4 +1,4 @@
-﻿"""Workflow decision (decide) + advance-to-next-step service (T301 — R016 T-C).
+"""Workflow decision (decide) + advance-to-next-step service (T301 — R016 T-C).
 
 P002 §2 decision save + P002 §3 advance-to-next-step.
 No auto-mode. No auto_advance flag (R016 correction).
@@ -33,7 +33,7 @@ from modules.flow_gate.settings import ai_execution_policy_service
 #     reports entirely because the expansion only existed in the client).
 # Mirrors the client AUTO_MAP (N→NR, T→TR, TS→TSR). V→VR is intentionally excluded: VR
 # is not a registered document_type, so attaching it would create an unprocessable step.
-AUTO_REPORT_MAP = {"N": "NR", "T": "TR", "TS": "TSR"}
+AUTO_REPORT_MAP = {"N": "NR", "T": "TR", "T2": "TR2", "TS": "TSR"}
 
 # 0444 T0007 (NR0003 §4-2 / §2-7): report types the SERVER assembles by itself. A TSR is built
 # from a test run's result, not from an instruction a person handed down the chain, so neither
@@ -142,7 +142,7 @@ def resolve_row_provider(
 # differs from AUTO_REPORT_MAP, which still pairs TS→TSR for sequence STRUCTURE (TS remains a
 # decided step whose report is auto-attached) — only the auto-APPROVAL of TS is removed.
 # DS likewise excluded — it is neither here nor in AUTO_REPORT_MAP.
-INSTRUCTION_AUTO_TYPES = {"N", "T"}
+INSTRUCTION_AUTO_TYPES = {"N", "T", "T2"}
 CONTINUATION_INSTRUCTION_AUTO_APPROVED = "auto_approved"
 CONTINUATION_INSTRUCTION_AI_DIRECT = "ai_direct"
 CONTINUATION_INSTRUCTION_MODES = {
@@ -235,12 +235,29 @@ def validate_continuation_auto_approve_item_seqs(
             raise ValueError(f"already_done_auto_approve_item_seq:{item_seq}")
 
 
+def has_work_plan_instruction_document(item: Optional[dict]) -> bool:
+    """True when a sequence row carries a WorkPlan instruction document (text and/or file).
+
+    Presence only -- the server materializer validates and reads the file itself and fails
+    closed on a broken reference, so this predicate never swallows a bad attachment.
+    """
+    if not item:
+        return False
+    if str(item.get("pre_instruction_text") or "").strip():
+        return True
+    if isinstance(item.get("pre_instruction_attachment"), dict):
+        return True
+    return bool(str(item.get("pre_instruction_attachment_json") or "").strip())
+
+
 def is_auto_handled_step(
     *,
     head_type: Optional[str],
     item_seq: Optional[int],
     instruction_mode: Optional[str],
     auto_approve_item_seqs: Optional[list] = None,
+    source_doc_id: Optional[str] = None,
+    has_instruction_document: bool = False,
 ) -> bool:
     """The §2 auto-handling predicate — the single source of truth, reused by ai_invoke_service so the
     provider/note/docs-target accounting never drifts from the auto-complete loop's own
@@ -255,7 +272,29 @@ def is_auto_handled_step(
     eligible = (head_type or "").upper() in INSTRUCTION_AUTO_TYPES
     if not eligible:
         return False
+    # 0611 T0011: a WorkPlan-backed N/T whose step carries its instruction document is
+    # server-materialized from that document exactly like the manual [승인 문서 생성]
+    # path, so the next worker receives the real T/N.  Legacy/non-WorkPlan rows keep their
+    # contract below.
+    # 0611 TR0012 rev2 (historical final contract, rej_01M3AVQVHD6PSTBE): a WorkPlan N/T
+    # with NO instruction document used to stay a real authoring hop under auto_approved
+    # too, because copying steps[].note into the canonical body produced a self-referential
+    # document (0611 B0001: "a work order that says: write a work order"). That was a
+    # deliberate, human-approved contract, not a bug.
+    # 0614 T0004 (explicit human override, NOT a regression fix): the user re-confirmed the
+    # B0001 risk and asked steps[].note to become a real fallback body source, so under
+    # auto_approved a WorkPlan N/T is ALWAYS server-materialized regardless of whether it
+    # carries an instruction document -- documents.py's source resolution (instruction
+    # file/pre_instruction_text > steps[].note > legacy generated instruction) decides what
+    # the body actually contains. ``has_instruction_document`` is kept in the signature for
+    # every existing caller's compatibility but no longer gates this branch.  ai_direct is
+    # untouched: it keeps the T/N as a real authoring hop even when the step carries a
+    # document or a note -- those go to that authoring worker as input only (admission's
+    # _inject_hop_notes) and its output follows the ordinary review/approval flow.  The
+    # manual [승인지시서 생성] path does not consult this predicate at all.
     mode = normalize_continuation_instruction_mode(instruction_mode)
+    if str(source_doc_id or "").upper().endswith("-WP"):
+        return mode == CONTINUATION_INSTRUCTION_AUTO_APPROVED
     if mode == CONTINUATION_INSTRUCTION_AUTO_APPROVED:
         return True
     if mode == CONTINUATION_INSTRUCTION_AI_DIRECT:
@@ -398,6 +437,8 @@ def validate_continuation_review_item_seqs(
             item_seq=item_seq,
             instruction_mode=instruction_mode,
             auto_approve_item_seqs=auto_approve_item_seqs,
+            source_doc_id=item.get("source_doc_id"),
+            has_instruction_document=has_work_plan_instruction_document(item),
         ):
             raise ValueError(
                 f"ineligible_review_item_seq:{item_seq} — this step has no worker output to review")
@@ -816,7 +857,7 @@ def _auto_complete_instruction_heads(
 
     Loops while the effective head is an instruction type AND is_auto_handled_step says this
     exact head is server-handled: create + approve it via
-    ``documents.create_next_approved_core`` (the same mechanics as the managed auto-approved-document
+    ``documents.materialize_work_plan_instruction`` (which delegates legacy rows to the managed auto-approved-document
     button) so the head advances to its paired report step. Stops at the first head that is
     either a report/non-instruction type, or an ai_direct N/T NOT in the user's auto-approve
     selection — which the caller (advance_workflow) then mints the worker token + mention for.
@@ -829,11 +870,11 @@ def _auto_complete_instruction_heads(
     Permission source = the SAME resolver the live approve button and the inbox self-chain
     use (workflow._get_user_permissions, the is_admin stub), not permission_service (which
     returns ∅ on the live system with unpopulated RBAC tables — the bug fixed in 0086). If
-    the actor genuinely lacks document.approve, create_next_approved_core raises (403) and
+    the actor genuinely lacks document.approve, the materializer/core raises (403) and
     we re-raise as ValueError so the chain pauses honestly (P0005 §4 — approve never bypassed).
     """
     from modules.flow_gate.documents.routers.documents import (
-        create_next_approved_core,
+        materialize_work_plan_instruction,
         NextApprovedError,
     )
 
@@ -872,6 +913,8 @@ def _auto_complete_instruction_heads(
             item_seq=item_seq,
             instruction_mode=instruction_mode,
             auto_approve_item_seqs=auto_approve_item_seqs,
+            source_doc_id=head.get("source_doc_id"),
+            has_instruction_document=has_work_plan_instruction_document(head),
         ):
             # report / AC / other type, OR an ai_direct N/T not in the auto-approve
             # selection → caller mints the worker mention here.
@@ -890,12 +933,13 @@ def _auto_complete_instruction_heads(
             break
         prev_item_seq = item_seq
         try:
-            create_next_approved_core(
+            created = materialize_work_plan_instruction(
                 project_id=project_id,
                 group_id=group_id,
                 module=module,
                 prev_doc_id=spine_doc_id,
-                type_code=head_type,
+                sequence_id=seq["id"],
+                head=head,
                 actor_user_id=actor_user_id,
                 approver_perms=_approver_perms(),
                 locale=locale,
@@ -905,7 +949,11 @@ def _auto_complete_instruction_heads(
                 f"instruction_auto_complete_failed:{head_type}:{exc.detail}"
             ) from exc
         if item_seq is not None:
-            completed.append(int(item_seq))
+            current = db_wfseq.get_effective_head(seq["id"])
+            if current is None or current.get("item_seq") != item_seq:
+                completed.append(int(item_seq))
+            else:
+                break
     return completed
 
 

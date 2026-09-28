@@ -9,7 +9,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 from modules.flow_gate.db import documents as db_documents
 from modules.flow_gate.db.connection import get_store
@@ -23,14 +23,17 @@ from .commit import (
     _ledger_group_by_merge_sha,
     _merge_commit_subject,
 )
+from . import merge_target
 from .credentials import GitServiceError, _author_env_from_cfg
 from .refs import (
     _ahead_of_base,
     _dirty_files,
     _full_sha_matches,
+    _is_ancestor,
     _rev_parse,
     _short_head,
     _unpushed_commits,
+    _unpushed_local_merge_of,
     _untracked_files,
     _worktree_untracked_summary_for_path,
 )
@@ -94,7 +97,7 @@ NOOP_CONVERGEABLE_STATUSES = ("awaiting_choice",)
 _NONE_STATE = {
     "branch": None, "base_branch": None, "status": "none", "default_action": None,
     "choices": [], "aux_choices": [], "action_axes": None,
-    "ahead_count": None, "behind_count": None, "merge_id": None,
+    "ahead_count": None, "behind_count": None, "work_base_ref": None, "merge_id": None,
 }
 
 _UNTRACKED_MERGE_RE = re.compile(
@@ -161,7 +164,7 @@ def _group_ac_doc_ids(group_ids: list[str]) -> dict[str, str]:
 
 
 def _group_has_changes(
-    cfg: dict, state: dict, project_name: Optional[str]
+    cfg: dict, state: dict, project_name: Optional[str], group_id: Optional[str] = None
 ) -> Optional[bool]:
     """Whether a group's work branch carries real, mergeable work.
 
@@ -200,7 +203,12 @@ def _group_has_changes(
         # The project's own checkout is missing: git cannot be consulted about
         # ANYTHING here, not even whether the branch exists. Still unknown.
         return None
-    ahead = _ahead_of_base(base_root, base_branch, branch)
+    work_base_ref = (
+        _gs.resolve_group_work_base_ref(_gs._project_of_group(group_id), group_id, config=cfg)
+        if group_id else base_branch
+    )
+    source_ref = _gs._worktree_start_point(base_root, work_base_ref or base_branch)
+    ahead = _ahead_of_base(base_root, source_ref, branch)
     if ahead is None:
         # A working base checkout that still cannot count this branch means the
         # ref is absent or unreadable. With no worktree directory either, the
@@ -209,6 +217,12 @@ def _group_has_changes(
         # naming a branch whose ref and directory were both already gone).
         return None if wt_path.is_dir() else False
     if ahead > 0:
+        return True
+    # 0607 T0004 §3.3: merged into LOCAL base but never pushed is unfinished work,
+    # not "nothing" — auto-discarding it here would tear the slot down unpushed.
+    if (work_base_ref or base_branch) == base_branch and _unpushed_local_merge_of(
+        base_root, base_branch, branch,
+    ) is not None:
         return True
     # ahead == 0: no committed work. Uncommitted/untracked worktree edits still
     # count (a merge/push would absorb them), so inspect the worktree too.
@@ -261,7 +275,7 @@ def _decide_pending_transition(
     git error out to the caller."""
     from modules.flow_gate.services import git_service as _gs
     project_name = _gs._project_name(project_id)
-    if _group_has_changes(cfg, state, project_name) is False:
+    if _group_has_changes(cfg, state, project_name, group_id) is False:
         return _gs._auto_discard_group(project_id, group_id)
     # Had changes, or divergence unmeasurable → preserve the original safe gate.
     _gs._set_status(group_id, "awaiting_choice")
@@ -320,7 +334,7 @@ def _resolve_pending_noop(
     from modules.flow_gate.services import git_service as _gs
     if status not in NOOP_CONVERGEABLE_STATUSES:
         return status
-    if _gs._group_has_changes(cfg, state, _gs._project_name(project_id)) is not False:
+    if _gs._group_has_changes(cfg, state, _gs._project_name(project_id), group_id) is not False:
         return status
     return _gs._auto_discard_group(project_id, group_id)
 
@@ -367,13 +381,45 @@ def group_finalize_is_noop(group_id: str) -> bool:
         # `_group_has_changes` exactly as the registered path does instead of
         # trusting the flag alone; only a proven-empty (or never-assigned) branch
         # answers quiet, and an unmeasurable divergence still keeps the warning.
-        return _gs._group_has_changes(cfg, state, _gs._project_name(project_id)) is False
+        return _gs._group_has_changes(cfg, state, _gs._project_name(project_id), group_id) is False
     except Exception:
         _log.warning("finalize no-op probe failed for %s", group_id, exc_info=True)
         return False
 
 
+def approval_git_in_flight(group_id: str) -> Optional[bool]:
+    """Whether a final approval of THIS group is still running its Git right now.
+
+    flowgate.default.0607 T0004 §3.6 (rev1): the approval orchestrator holds the
+    project Git lock as ``approval:<AC doc id>:<uuid>`` from before Git starts until
+    after the approval transaction has committed (slot cleanup runs after the
+    release), and AC doc ids start with their group id. A browser whose approve
+    request timed out reads this to tell "the server is still working" from "the
+    server finished/failed" before it lets anyone press approve again. Reads the
+    lock row only; never waits on it.
+
+    Returns ``None`` — never ``False`` — when the lock row itself could not be
+    read: a failed probe is not evidence that no approval is running, and the
+    caller must keep the approve button locked until a probe actually succeeds
+    and reports ``False``.
+    """
+    from modules.flow_gate.services import git_service as _gs
+    try:
+        lock = _gs.db_git.get_lock(_gs._project_of_group(group_id))
+    except Exception:
+        _log.warning("approval lock probe failed for %s", group_id, exc_info=True)
+        return None
+    holder = str((lock or {}).get("holder") or "")
+    return holder.startswith(f"approval:{group_id}.")
+
+
 def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
+    out = _finalize_state(group_id, preview_ac=preview_ac)
+    out["state"]["approval_in_flight"] = approval_git_in_flight(group_id)
+    return out
+
+
+def _finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
     from modules.flow_gate.services import git_service as _gs
     project_id = _gs._project_of_group(group_id)
     cfg = _gs.db_git.get_config(project_id)
@@ -422,16 +468,20 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         }}
 
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    work_base_ref = _gs.resolve_group_work_base_ref(project_id, group_id, config=cfg) or base_branch
     branch = state.get("branch")
     ahead = behind = None
     project_name = _gs._project_name(project_id)
     base_remote_behind = None
     if project_name and _gs.git_available():
         base_root = _gs.src_root(project_name, base_branch)
-        _base_remote_ahead, base_remote_behind = _gs._base_ahead_behind(base_root, base_branch)
+        _base_remote_ahead, base_remote_behind = _gs._base_ahead_behind(base_root, work_base_ref)
         if (base_root / ".git").exists():
+            source_ref = _gs._worktree_start_point(base_root, work_base_ref)
+            if source_ref.startswith("origin/"):
+                base_remote_behind = 0
             proc = _gs._run_git(
-                ["rev-list", "--left-right", "--count", f"{base_branch}...{branch}"],
+                ["rev-list", "--left-right", "--count", f"{source_ref}...{branch}"],
                 cwd=base_root,
             )
             if proc.returncode == 0:
@@ -454,7 +504,7 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         # ran, the approval's own no-work auto-discard had already unregistered
         # the slot, so the operator got "Git integration is not active" as a
         # warning toast plus an auto-opened Git panel.
-        if _gs._group_has_changes(cfg, state, project_name) is not False:
+        if _gs._group_has_changes(cfg, state, project_name, group_id) is not False:
             display_status = "awaiting_choice"
 
     # Suggested commit message (flowgate.default.0173 P0003 §2): only meaningful
@@ -490,10 +540,26 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
             merge_context = _gs.db_git.session_context(merge_session)
             review_state = merge_context.get("review_state")
             reconciliation_kind = merge_context.get("reconciliation_kind")
+    # 0594 T0012: the ledger's merge_id now also points at a COMPLETED attempt (a
+    # merged group keeps its attempt so the real target survives a restart). The
+    # response keeps its old meaning — a merge_id is only published while it names
+    # an actionable conflict session — and the target rides along separately.
+    ledger_merge_id = state.get("merge_id") if status == "conflict" else None
+    finalize_target = None
+    try:
+        if status == "conflict":
+            pinned = merge_target.fixed_target_of_group(group_id)
+            finalize_target = pinned.public() if pinned is not None else None
+        elif status == "merged":
+            done = merge_target.completed_target_of_state(state)
+            finalize_target = done.public() if done is not None else None
+    except Exception:
+        _log.warning("finalize target lookup failed for %s", group_id, exc_info=True)
     return {"ok": True, "state": {
         "group_id": group_id,
         "branch": branch,
         "base_branch": base_branch,
+        "work_base_ref": work_base_ref,
         "status": display_status,
         "default_action": cfg.get("default_finalize_action") or "wait",
         "choices": list(FINALIZE_MAIN_CHOICES if actionable else ()),
@@ -510,7 +576,7 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         "behind_count": behind,
         # Local-ref-only measurement: state polling never fetches the network.
         "base_remote_behind_count": base_remote_behind,
-        "merge_id": group_update_merge_id or state.get("merge_id"),
+        "merge_id": group_update_merge_id or ledger_merge_id,
         "merge_commit": (clean_retry or {}).get("merge_commit") or state.get("merge_commit"),
         "review_state": review_state,
         "reconciliation_kind": reconciliation_kind,
@@ -525,6 +591,9 @@ def get_finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
             display_status in approval_intent.CLEAN_TERMINAL_STATUSES
             and (clean_retry is not None or approval_intent.find_intent_session(group_id)[1] is not None)
         ),
+        # Additive (0594 T0012): the attempt's pinned target (conflict) or the
+        # completed attempt's actual target (merged); null for legacy/no attempt.
+        "finalize_target": finalize_target,
         "commit_message": commit_message,
         # True only for the display-only pre-approval preview (0197 T0004 §B);
         # the persisted status is still 'none'. Advisory for the FE.
@@ -551,12 +620,24 @@ def _finalize_context(group_id: str) -> tuple[dict, dict, str, Path, Path]:
     return cfg, state, project_id, base_root, wt_path
 
 
+def _guard_group_update_ai_idle(group_id: str) -> None:
+    """Do not absorb or merge a worktree owned by a live AI run or valid lease."""
+    from modules.flow_gate.db import group_ai_leases
+    from modules.flow_gate.services import ai_invoke_service
+
+    if ai_invoke_service.has_active_run(group_id):
+        raise GitServiceError(409, "run_already_active", "an AI run is active for this group")
+    if group_ai_leases.get_active(group_id) is not None:
+        raise GitServiceError(409, "group_lease_active", "an AI lease is active for this group")
+
+
 def update_from_base(group_id: str) -> dict:
-    """Explicit-only strict refresh: fetch, fast-forward base, then merge base into group."""
+    """Explicit-only refresh from the group's effective work base."""
     from modules.flow_gate.services import git_service as _gs
     cfg, state, project_id, base_root, wt_path = _gs._finalize_context(group_id)
     if _gs.db_git.get_open_session_by_group(group_id) is not None:
         raise GitServiceError(409, "invalid_state", "resolve or abort the current group update first")
+    _guard_group_update_ai_idle(group_id)
     _gs.guard_base_free(project_id)
     if not _gs.git_available():
         raise GitServiceError(500, "git_unavailable", "git binary not found on server")
@@ -564,79 +645,117 @@ def update_from_base(group_id: str) -> dict:
     if not _gs._acquire_lock(project_id, holder):
         raise GitServiceError(409, "git_busy", "another git operation is in progress")
     try:
-        _gs.guard_base_free(project_id)
-        if _gs._dirty(base_root, include_untracked=False):
-            raise GitServiceError(
-                409, "base_dirty", "base checkout has local modifications",
-                details={"files": _dirty_files(base_root, include_untracked=False)},
-            )
-        base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-        username = cfg.get("username")
-        secret = _gs._load_secret_for(cfg) or ""
-        proc = _gs._run_git(
-            ["fetch", "origin"], cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC,
-            username=username, secret=secret,
-        )
-        if proc.returncode != 0:
-            raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
-        if _gs._ref_exists(base_root, f"refs/remotes/origin/{base_branch}"):
-            proc = _gs._run_git(["merge", "--ff-only", f"origin/{base_branch}"], cwd=base_root)
-            if proc.returncode != 0:
-                ahead, _behind = _gs._base_ahead_behind(base_root, base_branch)
-                if ahead is not None and ahead > 0:
-                    raise GitServiceError(
-                        500, "base_diverged",
-                        "base checkout has local-only commits and cannot fast-forward",
-                    )
-                raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
+        _guard_group_update_ai_idle(group_id)
+        from modules.flow_gate.db import group_ai_leases
+        from modules.flow_gate.services import ai_invoke_service
 
-        _absorb_worker_edits(
-            wt_path, f"chore: preserve {group_id} work before base update",
-            _author_env_from_cfg(cfg),
+        # AI admission uses this same atomic group lease. Hold it across the
+        # worktree mutation, so an AI start after the idle probe cannot pass.
+        lease_run_id = f"group-update:{uuid.uuid4()}"
+        lease = group_ai_leases.acquire(
+            group_id=group_id, project_id=project_id, run_id=lease_run_id,
+            chain_id=None, action_scope="group_update", worker_identity=None,
         )
-        before = _gs._run_git(["rev-parse", "HEAD"], cwd=wt_path)
-        proc = _gs._run_git(
-            ["merge", "--no-ff", base_branch, "-m",
-             f"Merge base '{base_branch}' into '{state['branch']}'"],
-            cwd=wt_path, author_env=_author_env_from_cfg(cfg),
-        )
-        if proc.returncode != 0:
-            untracked_blockers = _untracked_merge_blockers(proc.stderr)
-            tracked_blockers = _tracked_merge_blockers(proc.stderr)
-            if untracked_blockers is not None or tracked_blockers is not None:
-                _gs._run_git(["merge", "--abort"], cwd=wt_path)
-                blockers = (untracked_blockers or []) + (tracked_blockers or [])
-                raise GitServiceError(
-                    409, "group_untracked_conflict",
-                    "group update is blocked by local worktree files",
-                    details={
-                        "group_id": group_id, "files": blockers, "scope": "group",
-                        "untracked_files": untracked_blockers or [],
-                        "tracked_files": tracked_blockers or [],
-                    },
-                )
-            # NR0025 §8: the old undefined probe name is gone; refs._unmerged_paths is the same probe.
-            conflicts = _gs._unmerged_paths(wt_path)
-            if conflicts:
-                merge_id = _gs.db_git.create_session(
-                    group_id, conflicts, kind=_gs.db_git.SESSION_KIND_GROUP_UPDATE,
-                    context={"prev_status": state.get("status") or "none",
-                             "branch": state.get("branch")},
-                )
-                return {"ok": True, "result": {
-                    "status": "conflict", "merge_id": merge_id,
-                    "conflict_files": conflicts,
-                }}
-            _gs._run_git(["merge", "--abort"], cwd=wt_path)
-            raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
-        after = _gs._run_git(["rev-parse", "HEAD"], cwd=wt_path)
-        changed = (before.stdout or "").strip() != (after.stdout or "").strip()
-        return {"ok": True, "result": {
-            "status": "updated" if changed else "no_change",
-            "branch": state.get("branch"),
-        }}
+        if lease is None or lease.get("run_id") != lease_run_id:
+            raise GitServiceError(409, "group_lease_active", "an AI lease is active for this group")
+        try:
+            activated = group_ai_leases.activate(
+                group_id, lease_run_id, None, "group_update", None,
+                group_ai_leases.ACTIVE_HEARTBEAT_TTL_SEC,
+            )
+            if activated is None:
+                raise GitServiceError(409, "group_lease_active", "group update lease was lost")
+            if ai_invoke_service.has_active_run(group_id):
+                raise GitServiceError(409, "run_already_active", "an AI run is active for this group")
+            return _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_path)
+        finally:
+            group_ai_leases.release(group_id, lease_run_id, reason="group_update_finished")
     finally:
         _gs.db_git.release_lock(project_id, holder)
+
+
+def _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_path) -> dict:
+    """Run the existing update while its Git lock and group lease are held."""
+    from modules.flow_gate.services import git_service as _gs
+    _gs.guard_base_free(project_id)
+    if _gs._dirty(base_root, include_untracked=False):
+        raise GitServiceError(
+            409, "base_dirty", "base checkout has local modifications",
+            details={"files": _dirty_files(base_root, include_untracked=False)},
+        )
+    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    work_base_ref = _gs.resolve_group_work_base_ref(project_id, group_id, config=cfg) or base_branch
+    username = cfg.get("username")
+    secret = _gs._load_secret_for(cfg) or ""
+    # flowgate.default.0361 NR0003 §5.3/§8.1: the operator-facing "update from
+    # base" action is exactly the surface that must reflect a repo_url change.
+    _gs.ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
+    proc = _gs._run_git(
+        ["fetch", "origin"], cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC,
+        username=username, secret=secret,
+    )
+    if proc.returncode != 0:
+        raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
+    if work_base_ref == base_branch and _gs._ref_exists(base_root, f"refs/remotes/origin/{base_branch}"):
+        proc = _gs._run_git(["merge", "--ff-only", f"origin/{base_branch}"], cwd=base_root)
+        if proc.returncode != 0:
+            ahead, _behind = _gs._base_ahead_behind(base_root, base_branch)
+            if ahead is not None and ahead > 0:
+                raise GitServiceError(
+                    500, "base_diverged",
+                    "base checkout has local-only commits and cannot fast-forward",
+                )
+            raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
+
+    source_ref = _gs._worktree_start_point(base_root, work_base_ref)
+    _absorb_worker_edits(
+        wt_path, f"chore: preserve {group_id} work before base update",
+        _author_env_from_cfg(cfg),
+    )
+    before = _gs._run_git(["rev-parse", "HEAD"], cwd=wt_path)
+    proc = _gs._run_git(
+        [*_gs._GIT_IDENT,
+         "merge", "--no-ff", source_ref, "-m",
+         f"Merge base '{work_base_ref}' into '{state['branch']}'"],
+        cwd=wt_path, author_env=_author_env_from_cfg(cfg),
+    )
+    if proc.returncode != 0:
+        untracked_blockers = _untracked_merge_blockers(proc.stderr)
+        tracked_blockers = _tracked_merge_blockers(proc.stderr)
+        if untracked_blockers is not None or tracked_blockers is not None:
+            _gs._run_git(["merge", "--abort"], cwd=wt_path)
+            blockers = (untracked_blockers or []) + (tracked_blockers or [])
+            raise GitServiceError(
+                409, "group_untracked_conflict",
+                "group update is blocked by local worktree files",
+                details={
+                    "group_id": group_id, "files": blockers, "scope": "group",
+                    "untracked_files": untracked_blockers or [],
+                    "tracked_files": tracked_blockers or [],
+                },
+            )
+        # NR0025 §8: the old undefined probe name is gone; refs._unmerged_paths is the same probe.
+        conflicts = _gs._unmerged_paths(wt_path)
+        if conflicts:
+            merge_id = _gs.db_git.create_session(
+                group_id, conflicts, kind=_gs.db_git.SESSION_KIND_GROUP_UPDATE,
+                context={"prev_status": state.get("status") or "none",
+                         "branch": state.get("branch")},
+            )
+            # 0608 T0005: line-ending-only conflicts need no resolver.
+            _gs.apply_eol_separation(merge_id, wt_path)
+            return {"ok": True, "result": {
+                "status": "conflict", "merge_id": merge_id,
+                "conflict_files": conflicts,
+            }}
+        _gs._run_git(["merge", "--abort"], cwd=wt_path)
+        raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
+    after = _gs._run_git(["rev-parse", "HEAD"], cwd=wt_path)
+    changed = (before.stdout or "").strip() != (after.stdout or "").strip()
+    return {"ok": True, "result": {
+        "status": "updated" if changed else "no_change",
+        "branch": state.get("branch"),
+    }}
 
 
 def group_update_untracked_recover(
@@ -756,7 +875,12 @@ def finalize(
     commit_message: Optional[str] = None,
     *,
     approval_context: Optional[ApprovalFinalizeContext] = None,
+    target_branch: Optional[str] = None,
 ) -> dict:
+    """Group finalize. ``target_branch`` (0594 T0012) names the local branch a merge
+    lands on; omitted → the project base (unchanged legacy behavior) or, while an
+    attempt is open, that attempt's pinned target. ``approval_context`` (0555) is the
+    final approval's capability: it borrows the orchestrator's project lock."""
     from modules.flow_gate.services import git_service as _gs
     cfg, state, project_id, base_root, wt_path = _gs._finalize_context(group_id)
     borrowed_lock = approval_context is not None
@@ -779,6 +903,20 @@ def finalize(
             409, "final_approval_bound",
             "this group's git finalize belongs to a final approval that is waiting "
             "for the conflict review to finish",
+        )
+    requested_target = merge_target.normalize_requested_target(target_branch)
+    # Retarget contract (T0012 §11): checked before every state guard so an open
+    # conflict/review attempt reports its pinned target instead of a bare 409.
+    pinned_target = merge_target.raise_if_retarget(group_id, requested_target)
+    if (
+        requested_target is not None
+        and action not in merge_target.MERGE_ACTIONS
+        and requested_target != merge_target.project_base_branch(cfg)
+    ):
+        raise GitServiceError(
+            422, "merge_target_requires_merge",
+            "a finalize target other than the base branch applies to merge actions only",
+            details={"target_branch": requested_target, "action": action},
         )
 
     # Confirmed commit subject (flowgate.default.0173 P0003 §3): normalize+validate
@@ -818,7 +956,10 @@ def finalize(
             return _terminal_retry_result(state, action)
         raise GitServiceError(409, "invalid_state", "already finalized")
     if status == "conflict":
-        raise GitServiceError(409, "invalid_state", "resolve or abort the merge first")
+        raise GitServiceError(
+            409, "invalid_state", "resolve or abort the merge first",
+            details=pinned_target.public() if pinned_target is not None else None,
+        )
     if status == "merging":
         raise GitServiceError(
             409, "git_busy",
@@ -842,10 +983,17 @@ def finalize(
         _gs._set_status(group_id, "waiting")
         return _finalize_result(group_id, project_id, "wait", "waiting")
 
+    # 0594 T0012 §9.2 (1st check): resolve + validate the target and its workspace
+    # ownership before waiting on the lock — the authoritative check repeats below.
+    target: Optional[merge_target.MergeTargetContext] = None
+    if action in merge_target.MERGE_ACTIONS:
+        target = merge_target.plan_finalize_target(group_id, project_id, cfg, requested_target)
+
     # 0205 L §2.2: a merge mutates the shared base checkout — refuse while another
     # group's unresolved conflict session holds it. Checked BEFORE the lock wait
     # (cheap reject) and again after (race close, below). push never touches base.
-    if action in ("merge", "merge_only"):
+    # 0594 T0012: a non-base target merges in its own managed workspace instead.
+    if target is not None and target.is_project_base:
         _gs.guard_base_free(project_id)
 
     if not _gs.git_available():
@@ -853,10 +1001,15 @@ def finalize(
             500, "git_unavailable",
             "git binary not found on server (install git in the runtime image)",
         )
+    # The lock holder carries the attempt owner id, so "is this open attempt's runner
+    # still alive?" is answerable from the lock table alone (T0012 §7). A final
+    # approval borrows its orchestrator's lock instead; the attempt then records that
+    # holder, which stays live for exactly as long as the approval runs.
+    attempt_owner = uuid.uuid4().hex
     holder = (
         approval_context.lock_holder
         if approval_context is not None
-        else f"op:{uuid.uuid4()}"
+        else f"op:{attempt_owner}"
     )
     if not borrowed_lock and not _gs._acquire_lock(project_id, holder):
         raise GitServiceError(
@@ -864,10 +1017,22 @@ def finalize(
             f"Another git operation is in progress for project '{project_id}' (try again shortly)",
         )
     try:
-        if action in ("merge", "merge_only"):
-            # 2nd gate: a conflict session may have opened while we waited on the
-            # lock (conflict no longer holds it — 0205 §2.1), so re-check now.
-            _gs.guard_base_free(project_id)
+        # flowgate.default.0361 NR0003 §5.3/§8.1: every fetch/push this attempt may
+        # issue below (unpushed-merge recovery fetch/push, the pinned-attempt merge
+        # fetch, the work-branch push) shares this one repository's `origin` — sync
+        # it once, up front, before any of them run.
+        _gs.ensure_origin_matches_config(base_root, (cfg.get("repo_url") or "").strip())
+        if action in merge_target.MERGE_ACTIONS:
+            # 0594 T0012 §4/§9.2 (2nd check — the real guard): re-resolve the target,
+            # re-validate the branch and re-read workspace ownership now that the
+            # project lock is ours; a stale UI candidate or a racing attempt stops here.
+            target = merge_target.plan_finalize_target(
+                group_id, project_id, cfg, requested_target,
+            )
+            if target.is_project_base:
+                # 2nd gate: a conflict session may have opened while we waited on the
+                # lock (conflict no longer holds it — 0205 §2.1), so re-check now.
+                _gs.guard_base_free(project_id)
         branch = state["branch"]
         base_branch = (cfg.get("base_branch") or "main").strip() or "main"
         username = cfg.get("username")
@@ -901,6 +1066,55 @@ def finalize(
                 terminal_status=status,
                 merge_commit=merge_commit,
             )
+
+        def finish_merged(
+            merge_commit: Optional[str], wants_push: bool,
+            attempt: Optional["merge_target.MergeTargetContext"] = None,
+        ) -> dict:
+            # The one terminal tail for a merge that is really in its target (and,
+            # for `merge`, really on origin): a merge this request made, one it only
+            # proved after a lost command result, or one an earlier request left
+            # unpushed (0607 T0004 §3.2/§3.3). Cleanup stays here, after the push.
+            # 0594 T0012 §6.3: a pinned attempt stays as history and the ledger
+            # points at it, so the real target survives a restart. Ledger FIRST: a
+            # crash between the two leaves an OPEN attempt that recovery reconciles
+            # from its merge inputs — never a closed attempt with the group stuck.
+            ledger_merge_id = attempt.merge_id if attempt is not None else None
+            target_branch = attempt.target_branch if attempt is not None else base_branch
+            if approval_context is not None:
+                record_clean_approval_retry("merged", merge_commit)
+                if ledger_merge_id is not None:
+                    # The retry snapshot write above leaves merge_id empty; point
+                    # the ledger at the attempt without touching that snapshot.
+                    _gs.db_git.set_status(
+                        group_id, "merged", merge_id=ledger_merge_id, merge_commit=merge_commit,
+                    )
+            else:
+                _gs._set_status(
+                    group_id, "merged", merge_id=ledger_merge_id, merge_commit=merge_commit,
+                )
+            if attempt is not None:
+                merge_target.complete_attempt(attempt, merge_commit=merge_commit, pushed=wants_push)
+            # Approval owns cleanup/notification after its atomic DB commit.
+            if approval_context is None:
+                # 0182 NR0003 §5: merged content lives in the target — remove the
+                # group's worktree, work branch and ledger registration best-effort.
+                _gs._cleanup_group_slot(project_id, group_id)
+                _gs._emit("git_finalize_done", project_id, group_id, {
+                    "project": project_id, "group_id": group_id,
+                    "action": action, "status": "merged", "merge_commit": merge_commit,
+                    "pushed": wants_push, "target_branch": target_branch,
+                    **_artifact_payload(excluded_artifacts, staged_new_file_count),
+                })
+            return {
+                "ok": True,
+                "result": {
+                    "action": action, "status": "merged", "merge_commit": merge_commit,
+                    "pushed": wants_push, "merge_id": None, "conflict_files": [],
+                    "target_branch": target_branch,
+                    **_artifact_payload(excluded_artifacts, staged_new_file_count),
+                },
+            }
 
         if not wt_path.is_dir():
             raise GitServiceError(409, "invalid_state", "group worktree directory is missing")
@@ -957,7 +1171,61 @@ def finalize(
         # down with no merge and no push (mirrors the auto-discard transition).
         # ahead is None when it cannot be counted → fall through to the normal
         # merge/push path (never discard on doubt).
-        ahead = _ahead_of_base(base_root, base_branch, branch)
+        work_base_ref = _gs.resolve_group_work_base_ref(
+            project_id, group_id, config=cfg,
+        )
+        source_ref = _gs._worktree_start_point(base_root, work_base_ref or base_branch)
+        ahead = _ahead_of_base(base_root, source_ref, branch)
+        # 0607 T0004 §3.3/§3.4 (NR0003 §3 request B): ahead == 0 also describes a
+        # branch whose merge commit is already in LOCAL base but never reached
+        # origin — a merge whose result an earlier request lost. That is not "no
+        # work": finish it (push for `merge`), and never discard/clean the slot
+        # before the push has landed.
+        unpushed_merge = (
+            _unpushed_local_merge_of(base_root, base_branch, branch)
+            if (
+                ahead == 0 and work_base_ref == base_branch
+                and action in ("merge", "merge_only")
+                # 0594 T0012: the recovery reads the base checkout, so it can only
+                # finish a merge whose target IS the base; a non-base target keeps
+                # its own attempt path.
+                and target is not None and target.is_project_base
+            )
+            else None
+        )
+        if unpushed_merge is not None:
+            _log.warning(
+                "finalize %s: branch %s is already merged into local %s by %s but "
+                "not pushed — finishing that merge instead of discarding",
+                group_id, branch, base_branch, unpushed_merge,
+            )
+            wants_push = action == "merge"
+            already_published = False
+            if wants_push:
+                proc = _gs._run_git(
+                    ["fetch", "origin"],
+                    cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
+                )
+                if proc.returncode != 0:
+                    raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
+                already_published = _is_ancestor(
+                    base_root, unpushed_merge, f"refs/remotes/origin/{base_branch}",
+                ) is True
+            if wants_push and not already_published:
+                push = _gs._run_git(
+                    ["push", "origin", base_branch],
+                    cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
+                )
+                if push.returncode != 0:
+                    # The merge predates this request: never rewind it (that would
+                    # drop the only copy of the work). Keep the slot and stay
+                    # retryable; a later finalize finds the same merge again.
+                    _gs._set_status(group_id, "waiting")
+                    raise GitServiceError(500, "push_rejected", "Git push was rejected", diagnostic=_gs._last_line(push.stderr))
+            return finish_merged(
+                _rev_parse(base_root, unpushed_merge, short=True) or unpushed_merge[:7],
+                wants_push,
+            )
         if ahead == 0:
             # Approval-coupled no-work is only labelled here.  Slot teardown is
             # delayed until the AC/root transaction commits, so a failed approval
@@ -1020,157 +1288,226 @@ def finalize(
             )
 
         # action == "merge" / "merge_only"
-        if _gs._dirty(base_root, include_untracked=False):
-            # E3 — never auto-stash the server's own checkout. Name the dirty files
-            # so the FE can tell the operator exactly what to commit or revert in
-            # the header Git panel instead of showing a bare 500 (T0010 §b).
-            # 409, not 500 (0177 L0002 §2.5): a user-resolvable precondition, in
-            # line with the invalid_state/git_busy family; code+details unchanged.
-            raise GitServiceError(
-                409, "base_dirty",
-                "base checkout has local modifications; operator intervention required",
-                details={"files": _dirty_files(base_root, include_untracked=False)},
+        # 0594 T0012 §6.1: the attempt record exists BEFORE any merge work — clean
+        # merges included — with the target pinned in it. Every exit below either
+        # completes it, turns it into the conflict session, or closes it as failed.
+        assert target is not None
+        attempt = merge_target.open_attempt(group_id, target, action, holder, attempt_owner)
+        try:
+            return _finalize_merge_attempt(
+                group_id, project_id, cfg, attempt, action, branch, base_root,
+                username=username, secret=secret, author_env=author_env,
+                excluded_artifacts=excluded_artifacts,
+                staged_new_file_count=staged_new_file_count,
+                approval_context=approval_context,
+                finish_merged=finish_merged,
             )
-        proc = _gs._run_git(
-            ["fetch", "origin"],
-            cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
+        except BaseException as exc:
+            # Only an attempt still in progress is closed as failed — one that has
+            # already become a conflict session or completed is left as it is.
+            merge_target.fail_attempt(attempt, {
+                "code": getattr(exc, "code", None) or type(exc).__name__,
+                "message": str(getattr(exc, "message", "") or exc)[:500],
+            })
+            raise
+    finally:
+        if not borrowed_lock:
+            _gs.db_git.release_lock(project_id, holder)
+
+
+def _finalize_merge_attempt(
+    group_id: str, project_id: str, cfg: dict, attempt: "merge_target.MergeTargetContext",
+    action: str, branch: str, base_root: Path, *, username, secret, author_env,
+    excluded_artifacts: list[str], staged_new_file_count: int,
+    approval_context: Optional[ApprovalFinalizeContext] = None,
+    finish_merged: Callable[..., dict],
+) -> dict:
+    """Run one pinned finalize attempt in its target root (lock held by caller).
+
+    ``merge_root`` is the shared base checkout for a base target and the managed
+    workspace for any other target; ``target_branch`` is the attempt's pinned
+    branch. The base checkout is never switched to another branch."""
+    from modules.flow_gate.services import git_service as _gs
+    target_branch = attempt.target_branch
+    if not attempt.is_project_base:
+        merge_target.prepare_workspace(attempt)
+    merge_root = attempt.root
+    if merge_root is None:
+        raise GitServiceError(409, "invalid_state", "target checkout is not available")
+    if attempt.is_project_base and _gs._dirty(base_root, include_untracked=False):
+        # E3 — never auto-stash the server's own checkout. Name the dirty files
+        # so the FE can tell the operator exactly what to commit or revert in
+        # the header Git panel instead of showing a bare 500 (T0010 §b).
+        # 409, not 500 (0177 L0002 §2.5): a user-resolvable precondition, in
+        # line with the invalid_state/git_busy family; code+details unchanged.
+        raise GitServiceError(
+            409, "base_dirty",
+            "base checkout has local modifications; operator intervention required",
+            details={"files": _dirty_files(base_root, include_untracked=False)},
         )
+    # One repository: a fetch from the base checkout refreshes the remote refs
+    # the managed workspace reads as well (the base working tree is untouched).
+    proc = _gs._run_git(
+        ["fetch", "origin"],
+        cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
+    )
+    if proc.returncode != 0:
+        raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
+    if _gs._ref_exists(merge_root, f"refs/remotes/origin/{target_branch}"):
+        proc = _gs._run_git(["merge", "--ff-only", f"origin/{target_branch}"], cwd=merge_root)
         if proc.returncode != 0:
-            raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
-        if _gs._ref_exists(base_root, f"refs/remotes/origin/{base_branch}"):
-            proc = _gs._run_git(["merge", "--ff-only", f"origin/{base_branch}"], cwd=base_root)
-            if proc.returncode != 0:
+            if attempt.is_project_base:
                 raise GitServiceError(  # E4
                     500, "base_diverged",
                     "base checkout has local-only commits and cannot fast-forward",
                 )
-        _gs._set_status(group_id, "merging")
-        # 0232 B0001: the merge commit carries a conventional Merge subject, NOT the
-        # work subject — the absorb commit above already holds finalize_subject().
-        # Reusing it here stamped two commits of identical title+diff onto origin.
-        proc = _gs._run_git(
-            [*_gs._GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "merge", "--no-ff", "-m",
-             _merge_commit_subject(branch, base_branch), branch],
-            cwd=base_root, author_env=author_env,
-        )
-        if proc.returncode == 0:
-            wants_push = action == "merge"
-            if wants_push:
-                push = _gs._run_git(
-                    ["push", "origin", base_branch],
-                    cwd=base_root, timeout=_gs.GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
-                )
-                if push.returncode != 0:
-                    # E6 — atomicity: never report merged unless the push landed.
-                    _gs._run_git(["reset", "--hard", "ORIG_HEAD"], cwd=base_root)
-                    _gs._set_status(group_id, "waiting")
-                    raise GitServiceError(500, "push_rejected", "Git push was rejected", diagnostic=_gs._last_line(push.stderr))
-            head = _gs._run_git(["rev-parse", "--short", "HEAD"], cwd=base_root)
-            merge_commit = (head.stdout or "").strip() or None
-            if approval_context is not None:
-                record_clean_approval_retry("merged", merge_commit)
-            else:
-                _gs._set_status(group_id, "merged", merge_commit=merge_commit)
-            # Approval owns cleanup/notification after its atomic DB commit.
-            if approval_context is None:
-                _gs._cleanup_group_slot(project_id, group_id)
-                _gs._emit("git_finalize_done", project_id, group_id, {
-                    "project": project_id, "group_id": group_id,
-                    "action": action, "status": "merged", "merge_commit": merge_commit,
-                    "pushed": wants_push,
-                    **_artifact_payload(excluded_artifacts, staged_new_file_count),
-                })
-            return {
-                "ok": True,
-                "result": {
-                    "action": action, "status": "merged", "merge_commit": merge_commit,
-                    "pushed": wants_push, "merge_id": None, "conflict_files": [],
-                    **_artifact_payload(excluded_artifacts, staged_new_file_count),
-                },
-            }
-
-        # Merge failed: conflicts keep MERGE_HEAD and become a session; anything
-        # else is rolled back to waiting.
-        files_proc = _gs._run_git(["diff", "--name-only", "--diff-filter=U"], cwd=base_root)
-        files = [l.strip() for l in (files_proc.stdout or "").splitlines() if l.strip()]
-        if not files:
-            # 0296 T0004 (NR0003 §5 / R5): one non-conflict failure has a specific,
-            # user-fixable cause and used to arrive as a bare 500 — an untracked
-            # file sitting in the base checkout on a path the merge wants to
-            # create. The E3 guard cannot catch it (that guard is tracked-only, by
-            # design), so this is where it must be named. git refuses BEFORE
-            # starting the merge here, so `merge --abort` below is a harmless no-op.
-            blockers = _untracked_merge_blockers(proc.stderr)
-            _gs._run_git(["merge", "--abort"], cwd=base_root)
-            _gs._set_status(group_id, "waiting")
-            if blockers is not None:
-                raise GitServiceError(
-                    409, "base_untracked_conflict",
-                    "the merge is blocked by uncommitted new files in the base "
-                    "checkout; commit or remove them, then retry",
-                    details={"files": blockers},
-                )
-            raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
-        # 0481 D0006 §3.4 / L0007 §2.1: the review gate's `resolver_baseline` and its
-        # eventual `expected_remote_head` CAS-push condition both need the exact
-        # inputs this merge attempt started from, captured now while MERGE_HEAD is
-        # still the one this conflict is about — a later fetch/merge on this base
-        # checkout must never be mistaken for the same merge.
-        review_base_head = _rev_parse(base_root, "HEAD")
-        review_merge_head = _rev_parse(base_root, "MERGE_HEAD")
-        review_expected_remote_head = _rev_parse(base_root, f"refs/remotes/origin/{base_branch}")
-        session_context = {
-            "review_state": None,
-            "auto_authority": False,
-            "resolver_baseline": {
-                "base_head": review_base_head,
-                "merge_head": review_merge_head,
-                "expected_remote_head": review_expected_remote_head,
-            },
-        }
-        # 0555 T0008 §2 / D0005 §3.5: a conflict that interrupts a FINAL APPROVAL
-        # parks that approval here — in the same INSERT that creates the session, so
-        # the "open session, no intent" orphan (a merge nobody could ever approve)
-        # cannot be produced by a request dying in between. A plain manual finalize
-        # passes no context and its session keeps exactly the shape it always had.
-        if approval_context is not None and approval_context.approval_intent_id:
-            session_context[approval_intent.INTENT_KEY] = approval_intent.build_intent(
-                approval_intent_id=approval_context.approval_intent_id,
-                group_id=group_id,
-                ac_doc_id=approval_context.doc_id,
-                requested_by=approval_context.actor_user_id,
-                git_action=action,
+            raise GitServiceError(
+                500, "target_diverged",
+                "target branch has local-only commits and cannot fast-forward",
+                details={"target_branch": target_branch},
             )
-        merge_id = _gs.db_git.create_session(
-            group_id, files, finalize_action=action, context=session_context,
+    # T0012 §6.3: pin the merge inputs BEFORE git merge so a crash between the merge
+    # commit / push and the attempt close is reconciled by recovery, not guessed.
+    # 0607 T0004 §3.2: the same exact inputs of THIS merge let a lost command result
+    # be judged against git's own facts instead of the return code (below).
+    pre_merge_head = _rev_parse(merge_root, "HEAD")
+    branch_tip = _rev_parse(merge_root, f"refs/heads/{branch}")
+    merge_target.record_merge_inputs(
+        attempt,
+        pre_head=pre_merge_head,
+        source_head=branch_tip,
+        expected_remote_head=_rev_parse(merge_root, f"refs/remotes/origin/{target_branch}"),
+    )
+    _gs._set_status(group_id, "merging")
+    # 0232 B0001: the merge commit carries a conventional Merge subject, NOT the
+    # work subject — the absorb commit above already holds finalize_subject().
+    # Reusing it here stamped two commits of identical title+diff onto origin.
+    proc = _gs._run_git(
+        [*_gs._GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "merge", "--no-ff", "-m",
+         _merge_commit_subject(branch, target_branch), branch],
+        cwd=merge_root, author_env=author_env,
+    )
+    merge_landed = proc.returncode == 0
+    files: list[str] = []
+    if not merge_landed:
+        # A non-zero result (a timeout kill is -1) is not yet a verdict: git may
+        # have written the merge commit and then been held by housekeeping
+        # (NR0003 §5). Conflicts are checked FIRST and keep their own path.
+        files_proc = _gs._run_git(["diff", "--name-only", "--diff-filter=U"], cwd=merge_root)
+        files = [l.strip() for l in (files_proc.stdout or "").splitlines() if l.strip()]
+        if not files and _merge_commit_landed(merge_root, pre_merge_head, branch_tip):
+            _log.warning(
+                "finalize %s: git merge returned %s (%s) but merge commit %s of %s "
+                "is in %s — continuing as a successful merge",
+                group_id, proc.returncode, _gs._last_line(proc.stderr),
+                _rev_parse(merge_root, "HEAD", short=True), branch, target_branch,
+            )
+            # A process killed after its commit can leave MERGE_HEAD behind;
+            # forget it without touching HEAD, index or worktree.
+            if _rev_parse(merge_root, "MERGE_HEAD"):
+                _gs._run_git(["merge", "--quit"], cwd=merge_root)
+            merge_landed = True
+    if merge_landed:
+        wants_push = action == "merge"
+        if wants_push:
+            push = _gs._run_git(
+                ["push", "origin", target_branch],
+                cwd=merge_root, timeout=_gs.GIT_NET_TIMEOUT_SEC, username=username, secret=secret,
+            )
+            if push.returncode != 0:
+                # E6 — atomicity: never report merged unless the push landed.
+                # Rewind exactly the merge this request made; the slot stays.
+                _gs._run_git(["reset", "--hard", pre_merge_head or "ORIG_HEAD"], cwd=merge_root)
+                _gs._set_status(group_id, "waiting")
+                raise GitServiceError(500, "push_rejected", "Git push was rejected", diagnostic=_gs._last_line(push.stderr))
+        head = _gs._run_git(["rev-parse", "--short", "HEAD"], cwd=merge_root)
+        # finish_merged completes the attempt (T0012 §6.3) after the ledger write.
+        return finish_merged((head.stdout or "").strip() or None, wants_push, attempt)
+
+    # Merge failed: conflicts keep MERGE_HEAD and become a session; anything
+    # else is rolled back to waiting.
+    if not files:
+        # 0296 T0004 (NR0003 §5 / R5): one non-conflict failure has a specific,
+        # user-fixable cause and used to arrive as a bare 500 — an untracked
+        # file sitting in the base checkout on a path the merge wants to
+        # create. The E3 guard cannot catch it (that guard is tracked-only, by
+        # design), so this is where it must be named. git refuses BEFORE
+        # starting the merge here, so `merge --abort` below is a harmless no-op.
+        blockers = _untracked_merge_blockers(proc.stderr)
+        _gs._run_git(["merge", "--abort"], cwd=merge_root)
+        _gs._set_status(group_id, "waiting")
+        if blockers is not None:
+            raise GitServiceError(
+                409, "base_untracked_conflict",
+                "the merge is blocked by uncommitted new files in the base "
+                "checkout; commit or remove them, then retry",
+                details={"files": blockers},
+            )
+        raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
+    # 0481 D0006 §3.4 / L0007 §2.1: the review gate's `resolver_baseline` and its
+    # eventual `expected_remote_head` CAS-push condition both need the exact
+    # inputs this merge attempt started from, captured now while MERGE_HEAD is
+    # still the one this conflict is about — a later fetch/merge on this base
+    # checkout must never be mistaken for the same merge.
+    review_base_head = _rev_parse(merge_root, "HEAD")
+    review_merge_head = _rev_parse(merge_root, "MERGE_HEAD")
+    review_expected_remote_head = _rev_parse(merge_root, f"refs/remotes/origin/{target_branch}")
+    session_context = {
+        "review_state": None,
+        "auto_authority": False,
+        "resolver_baseline": {
+            "base_head": review_base_head,
+            "merge_head": review_merge_head,
+            "expected_remote_head": review_expected_remote_head,
+        },
+    }
+    # 0555 T0008 §2 / D0005 §3.5: a conflict that interrupts a FINAL APPROVAL
+    # parks that approval here — in the same context write that turns the attempt
+    # into a conflict session, so an "open conflict session, no intent" orphan (a
+    # merge nobody could ever approve) is never produced. A plain manual finalize
+    # passes no context and its session keeps exactly the shape it always had.
+    if approval_context is not None and approval_context.approval_intent_id:
+        session_context[approval_intent.INTENT_KEY] = approval_intent.build_intent(
+            approval_intent_id=approval_context.approval_intent_id,
+            group_id=group_id,
+            ac_doc_id=approval_context.doc_id,
+            requested_by=approval_context.actor_user_id,
+            git_action=action,
         )
-        _gs._set_status(group_id, "conflict", merge_id=merge_id)
-        # 0205 L §2.1: DO NOT transfer the lock to the session. The conflict wait
-        # is expressed by the persistent 'conflict' state + open session. Manual
-        # finalize releases its own lock below; approval finalize leaves the
-        # borrowed lock for its orchestrator to release exactly once.
-        session = _gs.db_git.get_session(merge_id)
-        _gs._emit("git_merge_conflict", project_id, group_id, {
-            "project": project_id, "group_id": group_id,
-            "merge_id": merge_id, "conflict_count": len(files),
-            "conflict_since": session.get("created_at") if session else None,
-        })
-        return {
-            "ok": True,
-            "result": {
-                "action": action, "status": "conflict", "merge_commit": None,
-                "pushed": False, "merge_id": merge_id, "conflict_files": files,
-                # None for a manual finalize conflict: only an approval-coupled one
-                # parks an intent here (T0008 §15 "no intent is forced on every session").
-                "approval_intent_id": (
-                    session_context.get(approval_intent.INTENT_KEY) or {}
-                ).get("approval_intent_id"),
-                **_artifact_payload(excluded_artifacts, staged_new_file_count),
-            },
-        }
-    finally:
-        if not borrowed_lock:
-            _gs.db_git.release_lock(project_id, holder)
+    merge_id = attempt.merge_id
+    # The attempt record becomes the conflict session: same merge_id, conflict
+    # files attached, target context unchanged.
+    merge_target.mark_conflict(attempt, files, session_context)
+    # 0608 T0005 (NR0003 §2.2): a file whose sides differ only in CRLF/LF merges
+    # cleanly on normalised text — it is resolved here, before any resolver sees it,
+    # and a real conflict keeps only its real chunks. 0594: 10 files / 28 chunks
+    # became 6 / 24.
+    _gs.apply_eol_separation(merge_id, merge_root)
+    _gs._set_status(group_id, "conflict", merge_id=merge_id)
+    # 0205 L §2.1: DO NOT transfer the lock to the session. The conflict wait
+    # is expressed by the persistent 'conflict' state + open session. Manual
+    # finalize releases its own lock in finalize(); approval finalize leaves the
+    # borrowed lock for its orchestrator to release exactly once.
+    session = _gs.db_git.get_session(merge_id)
+    _gs._emit("git_merge_conflict", project_id, group_id, {
+        "project": project_id, "group_id": group_id,
+        "merge_id": merge_id, "conflict_count": len(files),
+        "conflict_since": session.get("created_at") if session else None,
+    })
+    return {
+        "ok": True,
+        "result": {
+            "action": action, "status": "conflict", "merge_commit": None,
+            "pushed": False, "merge_id": merge_id, "conflict_files": files,
+            # None for a manual finalize conflict: only an approval-coupled one
+            # parks an intent here (T0008 §15 "no intent is forced on every session").
+            "approval_intent_id": (
+                session_context.get(approval_intent.INTENT_KEY) or {}
+            ).get("approval_intent_id"),
+            "target_branch": target_branch,
+            **_artifact_payload(excluded_artifacts, staged_new_file_count),
+        },
+    }
 
 
 def _finalize_result(
@@ -1193,6 +1530,30 @@ def _finalize_result(
             **_artifact_payload(artifacts, staged_new_file_count),
         },
     }
+
+
+def _merge_commit_landed(
+    base_root: Path, pre_merge_head: Optional[str], branch_tip: Optional[str]
+) -> bool:
+    """Whether a `merge --no-ff` whose command failed really committed the merge.
+
+    flowgate.default.0607 T0004 §3.2 (NR0003 §3: 0600's merge commit existed 11ms
+    before auto-gc held the process past the 30s kill). HEAD merely moving proves
+    nothing; it must be a merge commit whose first parent is the base HEAD this
+    merge started from and whose second parent is exactly the branch tip it was
+    asked to merge. Anything else — including an unreadable repository — is a real
+    failure for the caller's existing error path.
+    """
+    if not pre_merge_head or not branch_tip:
+        return False
+    head = _rev_parse(base_root, "HEAD")
+    if not head or head == pre_merge_head:
+        return False
+    if _rev_parse(base_root, "HEAD^1") != pre_merge_head:
+        return False
+    if _rev_parse(base_root, "HEAD^2") != branch_tip:
+        return False
+    return _is_ancestor(base_root, branch_tip, "HEAD") is True
 
 
 def _untracked_merge_blockers(stderr: Optional[str]) -> Optional[list[str]]:
@@ -1287,6 +1648,10 @@ def manual_push(project_id: str, branch: Optional[str]) -> dict:
     try:
         if pushes_base:
             _gs.guard_base_free(project_id)   # 2nd gate (race close, after lock)
+        # flowgate.default.0361 NR0003 §8.1: `cwd` may be a group worktree rather
+        # than the base checkout, but its `origin` remote lives in the shared
+        # `.git` directory either way, so syncing through `cwd` is sufficient.
+        _gs.ensure_origin_matches_config(cwd, (cfg.get("repo_url") or "").strip())
         proc = _gs._run_git(
             ["push", "origin", branch],
             cwd=cwd, timeout=_gs.GIT_NET_TIMEOUT_SEC,
@@ -1327,6 +1692,16 @@ def unmerge(group_id: str, merge_commit: str) -> dict:
         raise GitServiceError(409, "invalid_state", "group is not an unmergeable merged group")
     if not _full_sha_matches(req_sha, ledger_sha):
         raise GitServiceError(409, "stale_target", "requested merge commit does not match this group")
+    # 0594 T0012 §15: unmerge rewinds the SHARED BASE checkout. A group whose
+    # completed attempt landed on another branch is refused before anything
+    # touches base (no attempt record / no target → legacy base merge, unchanged).
+    if not merge_target.merged_on_project_base(state):
+        done = merge_target.completed_target_of_state(state)
+        raise GitServiceError(
+            409, "unmerge_unsupported_target",
+            "unmerge is only available for merges into the project base branch",
+            details=done.public() if done is not None else None,
+        )
 
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
     project_name = _gs._project_name(project_id)
@@ -1395,7 +1770,7 @@ def unmerge(group_id: str, merge_commit: str) -> dict:
         _gs._set_status(group_id, "awaiting_choice")
         reset = _gs._run_git(["reset", "--hard", f"{top['full_sha']}^1"], cwd=base_root)
         if reset.returncode != 0:
-            _gs._set_status(group_id, "merged", merge_commit=ledger_sha)
+            _gs._set_status(group_id, "merged", merge_id=state.get("merge_id"), merge_commit=ledger_sha)
             raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(reset.stderr))
         base_head = _short_head(base_root)
     finally:
@@ -1435,18 +1810,51 @@ def precheck_approve_git_action(doc: Optional[dict], git_action: str) -> str:
     return group_id
 
 
+def precheck_approve_git_target(
+    group_id: str, git_action: str, git_target_branch: Optional[str],
+) -> Optional[str]:
+    """Validate the finalize target carried on an AC approval BEFORE it runs.
+
+    0594 T0012 §10: the same server-side resolver the finalize itself uses (allowed
+    local branch, not remote-only, not a registered slot, workspace not owned by
+    another attempt, no retarget of an open attempt). Raises GitServiceError so the
+    approval is refused without being applied; returns the normalized target."""
+    from modules.flow_gate.services import git_service as _gs
+    requested = merge_target.normalize_requested_target(git_target_branch)
+    if requested is None:
+        return None
+    project_id = _gs._project_of_group(group_id)
+    cfg = _gs.db_git.get_config(project_id) or {}
+    if git_action not in merge_target.MERGE_ACTIONS:
+        if requested == merge_target.project_base_branch(cfg):
+            return requested
+        raise GitServiceError(
+            422, "merge_target_requires_merge",
+            "a finalize target other than the base branch applies to merge actions only",
+            details={"target_branch": requested, "action": git_action},
+        )
+    merge_target.plan_finalize_target(group_id, project_id, cfg, requested)
+    return requested
+
+
 def run_approve_git_action(
     group_id: str,
     git_action: str,
+    git_target_branch: Optional[str] = None,
     *,
     approval_context: Optional[ApprovalFinalizeContext] = None,
 ) -> dict:
-    """Run Git without assuming approval and return a branchable verdict."""
+    """Run Git without assuming approval and return a branchable verdict.
+
+    ``git_target_branch`` (0594 T0012) is the merge target the approval carries;
+    omitted → the project base (or an open attempt's pinned target)."""
     from modules.flow_gate.services import git_service as _gs
     try:
-        outcome = _gs.finalize(
-            group_id, git_action, approval_context=approval_context
-        )
+        finalize_kwargs: dict = {"approval_context": approval_context}
+        if git_target_branch is not None:
+            # 0594 T0012: the finalize target carrier must survive this seam.
+            finalize_kwargs["target_branch"] = git_target_branch
+        outcome = _gs.finalize(group_id, git_action, **finalize_kwargs)
         result = outcome["result"]
         if result.get("status") == "conflict":
             return {

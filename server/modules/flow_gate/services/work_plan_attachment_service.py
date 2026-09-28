@@ -158,6 +158,38 @@ def resolve_pre_instruction(item: Optional[dict]) -> Optional[dict]:
     return {"text": text, "attachment": attachment}
 
 
+def read_reference_text(reference: dict) -> str:
+    """Return the text of a validated WorkPlan pre-instruction file (0611 T0011).
+
+    ``reference`` must already have passed :func:`validate_reference` (for example through
+    :func:`resolve_pre_instruction`); the file is re-read through the same registry and
+    storage jail so the server-side instruction materializer consumes the exact bytes the
+    WorkPlan approved.  A file that is not UTF-8 text cannot become a Markdown instruction.
+    """
+    source_doc_id = reference.get("doc_id")
+    doc = db_documents.get_by_id(source_doc_id) if source_doc_id else None
+    if doc is None:
+        raise PreInstructionAttachmentError("pre_instruction_attachment_registry_missing", source_doc_id)
+    try:
+        _, path = resolve_registered_attachment(doc, reference.get("filename"))
+        raw = path.read_bytes()
+    except AttachmentError as exc:
+        code = (
+            "pre_instruction_attachment_outside_storage"
+            if exc.code == "STORAGE_PATH_OUTSIDE_ROOT"
+            else "pre_instruction_attachment_file_missing"
+        )
+        raise PreInstructionAttachmentError(code, source_doc_id) from exc
+    except OSError as exc:
+        raise PreInstructionAttachmentError("pre_instruction_attachment_file_missing", source_doc_id) from exc
+    if hashlib.sha256(raw).hexdigest() != reference.get("content_sha256"):
+        raise PreInstructionAttachmentError("pre_instruction_attachment_digest_mismatch", source_doc_id)
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise PreInstructionAttachmentError("pre_instruction_attachment_not_text", source_doc_id) from exc
+
+
 def _stored_reference(doc_id: str, row: dict) -> dict:
     return {
         "doc_id": doc_id,

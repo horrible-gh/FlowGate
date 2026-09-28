@@ -270,7 +270,8 @@ def _first_pair_after(items: Iterable[dict], source_seq: int, pair_type: str) ->
 
 # L0010 §2.6 / §4.2
 def project(plan_steps: Iterable[dict], step_map: Iterable[dict], items: Iterable[dict],
-            instruction_mode: str, provider_registry: Any) -> dict:
+            instruction_mode: str, provider_registry: Any, *,
+            work_plan_backed: bool = False) -> dict:
     """Project every execution setting through the same logical-step mapping.
 
     Every execution setting follows the effective worker target.  For an auto-assembled
@@ -299,7 +300,10 @@ def project(plan_steps: Iterable[dict], step_map: Iterable[dict], items: Iterabl
         target_seq, is_folded = source_seq, False
         allow_pre_instruction = True
         code = str(step.get("type") or "").upper()
-        if mode == "auto_approved" and code in INSTRUCTION_AUTO_TYPES:
+        # 0611 T0009: WorkPlan N/T always has an authoring worker. auto_approved is the
+        # approval policy after that worker creates the canonical Markdown, not permission
+        # to fold the authoring hop into NR/TR.
+        if mode == "auto_approved" and code in INSTRUCTION_AUTO_TYPES and not work_plan_backed:
             target = _first_pair_after(items, source_seq, AUTO_REPORT_MAP.get(code, ""))
             if target:
                 target_seq, is_folded = _int(target.get("item_seq")), True
@@ -618,7 +622,7 @@ def preview(*, doc: dict, plan: dict, providers: Any,
     steps = list(plan.get("steps") or [])
     added, unplaceable = _missing_items(steps, current, locale, doc.get("doc_id"))
     current_mapping = build_step_map(steps, current, doc.get("doc_id"))
-    current_projection = project(steps, current_mapping, current, mode, providers)
+    current_projection = project(steps, current_mapping, current, mode, providers, work_plan_backed=True)
     current_target_seq = suggest_target_seq(
         steps, current_mapping, current_projection["folded"], providers,
     )
@@ -630,7 +634,7 @@ def preview(*, doc: dict, plan: dict, providers: Any,
     )
     projected_items = current + added
     mapping = build_step_map(steps, projected_items, doc.get("doc_id"))
-    projection = project(steps, mapping, projected_items, mode, providers)
+    projection = project(steps, mapping, projected_items, mode, providers, work_plan_backed=True)
     target_seq = suggest_target_seq(steps, mapping, projection["folded"], providers)
     change_blocker = _preview_apply_blocker(
         sequence_decided=True,
@@ -746,7 +750,7 @@ def apply(*, doc: dict, owner_doc: dict, plan: dict, plan_path: Path, providers:
             item["source_revision_no"] = current_revision
     projected_items = list(current) + (list(proposed) if change_workflow else [])
     mapping = build_step_map(steps, projected_items, doc.get("doc_id"))
-    projection = project(steps, mapping, projected_items, mode, providers)
+    projection = project(steps, mapping, projected_items, mode, providers, work_plan_backed=True)
     provider_registry = _registry(providers)
     added = []
     if change_workflow and proposed:

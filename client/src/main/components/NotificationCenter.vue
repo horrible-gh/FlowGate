@@ -12,7 +12,7 @@
       @click="toggle"
     >
       <AppIcon name="bell" />
-      <span v-if="store.unreadCount > 0" class="notif-badge">
+      <span v-if="store.unreadCount > 0" class="notif-badge" data-test="notif-badge">
         {{ store.unreadCount > 99 ? '99+' : store.unreadCount }}
       </span>
     </button>
@@ -32,7 +32,12 @@
         </button>
       </div>
 
-      <div class="notif-section-tabs" role="tablist" :aria-label="t('main.notif_center.sections_label')">
+      <div
+        class="notif-section-tabs"
+        role="tablist"
+        :aria-label="t('main.notif_center.sections_label')"
+        :style="{ gridTemplateColumns: `repeat(${sections.length}, 1fr)` }"
+      >
         <button
           v-for="section in sections"
           :key="section.key"
@@ -41,6 +46,7 @@
           type="button"
           role="tab"
           :aria-selected="activeSection === section.key"
+          :data-test="`notif-section-${section.key}`"
           @click="activeSection = section.key"
         >
           {{ section.label }}
@@ -212,6 +218,7 @@ import { useActivityFormat } from '../composables/useActivityFormat'
 import type { DashboardActivity } from '../stores/dashboard'; import type { AiInvokeDetail, AiInvokeNotification } from '../stores/notifications'; import { getRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import NotificationAiDetailDialog from './NotificationAiDetailDialog.vue'
+import { recordFanOut } from '@shared/diagnostics/runtimeDiagnostics'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -386,11 +393,19 @@ function onKeyDown(e: KeyboardEvent) {
 // Debounced to coalesce bursts (a single workflow step can fire several events). The server stays
 // the single source of truth — we never increment the badge client-side (NR0003 option D).
 let refetchTimer: ReturnType<typeof setTimeout> | null = null
-function onInflow() {
+let pendingInflowEpoch: number | null = null
+function onInflow(e?: Event) {
+  // rev2 finding 4: fg:notification carries the real epoch only when the SSE screen-refresh
+  // flush dispatched it; any other trigger reads as `null` rather than borrowing a stale one.
+  // A later join within the debounce window wins, matching the debounce's own "last call sets
+  // what fires" semantics.
+  const detail = (e as CustomEvent | undefined)?.detail as { refresh_epoch?: number | null } | undefined
+  pendingInflowEpoch = detail?.refresh_epoch ?? null
   if (refetchTimer !== null) clearTimeout(refetchTimer)
   refetchTimer = setTimeout(() => {
     refetchTimer = null
     if (projectStore.currentProjectId && !isOverviewRoute()) {
+      recordFanOut('notification_center_refresh', pendingInflowEpoch)
       void store.fetchFeed(projectStore.currentProjectId)
     }
   }, 300)
@@ -678,4 +693,5 @@ defineExpose({ open })
 .notif-qa-target { min-width: 0; flex: 1; }
 .notif-qa-open { flex: none; white-space: nowrap; color: var(--primary, #2563eb); font-size: .72rem; font-weight: 700; }
 .notif-qa-open:hover { text-decoration: underline; }
+
 </style>

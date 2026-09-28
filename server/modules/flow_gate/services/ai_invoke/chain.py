@@ -723,6 +723,7 @@ def _maybe_auto_resume_hop(run: dict) -> None:
         # calls the same _spawn_auto_resume this line used to call directly.
         parent_context = terminal.handoff_parent.set(run)
         try:
+            pending["materialize_instruction_before_gate"] = True
             started = review.run_review_gate(group_id, pending, run)
         finally:
             terminal.handoff_parent.reset(parent_context)
@@ -1474,8 +1475,16 @@ def resume_chain(
             "note_overrides": gate_note_overrides,
             "default_note": gate_default_note,
             "restart_max_attempts": gate_restart_max_attempts,
+            # 0600 TR0010 rev4: resume_chain calls resolve_review_gate directly (it does
+            # not go through run_review_gate), so it needs the same pre-gate materialize
+            # flag _maybe_auto_resume_hop sets — otherwise a WP-backed N/T that was never
+            # materialized before the pause is invisible to the gate here too, and the
+            # resumed advance_workflow() below re-creates it as pending_review only to hit
+            # head_in_progress on the very next hop.
+            "materialize_instruction_before_gate": True,
         }
         try:
+            review._materialize_work_plan_instruction_before_gate(gate_bundle)
             gate = review.resolve_review_gate(gate_bundle)
         except Exception:
             _restore_row()

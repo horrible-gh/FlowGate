@@ -56,12 +56,12 @@ HEAD_TYPE_GUARD_EXEMPT_TYPES = AUTO_COMPLETE_TYPES | frozenset({WORK_PLAN_TYPE})
 # settings, so they live in code — but the *order* the types are listed in is read
 # from the document_types table (L0010 §2.1 decision 2), never from this file.
 WORK_PLAN_SHEET_TYPES = ("DS", "D", "P", "L", "DB")
-WORK_PLAN_SET_TYPES = ("N", "T", "TS")
+WORK_PLAN_SET_TYPES = ("N", "T", "T2", "TS")
 
 # instruction code → result code. Mirrors workflow_decision_service.AUTO_REPORT_MAP;
 # duplicated here (not imported) so the document layer does not depend on the
 # workflow-decision service just to describe a type.
-WORK_PLAN_PAIR_MAP = {"N": "NR", "T": "TR", "TS": "TSR"}
+WORK_PLAN_PAIR_MAP = {"N": "NR", "T": "TR", "T2": "TR2", "TS": "TSR"}
 
 WORK_PLAN_TYPE_UNITS: dict[str, str] = {
     **{code: "sheet" for code in WORK_PLAN_SHEET_TYPES},

@@ -30,13 +30,15 @@ from modules.flow_gate.db import workflow_events as db_events
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import now_iso
 from modules.flow_gate.documents.constants import NON_SLOT_WORKFLOW_TYPES
+from modules.flow_gate.documents import tr2_service
+from modules.flow_gate.documents.tr2_errors import TR2_ERRORS, error_payload
 from modules.flow_gate.storage import paths as storage_paths
 from modules.flow_gate import process_service
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services import tr_commit_service
 from modules.flow_gate.services import tr_scope_service
 from modules.flow_gate.services.git_service import GitServiceError
-from modules.flow_gate.services.mutation_policy import MutationPolicyError
+from modules.flow_gate.services.mutation_policy import MutationPolicyError, human_principal
 
 from ..pipeline_service import (
     PermissionError as WFPermissionError,
@@ -144,6 +146,9 @@ class GroupCreateRequest(BaseModel):
     group_id: Optional[str] = None   # Auto-reserved when omitted
     parent_id: Optional[str] = None
     priority: Optional[str] = None
+    # Durable first-worktree source. Immutable after group creation; omitted
+    # legacy callers resolve through project_git_config.base_branch.
+    work_base_ref: Optional[str] = None
 
 
 class GroupUpdateRequest(BaseModel):
@@ -158,6 +163,8 @@ class GroupTransitionRequest(BaseModel):
 
 class DocumentTransitionRequest(BaseModel):
     comment: Optional[str] = None
+    expected_revision: Optional[int] = None
+    request_key: Optional[str] = None
 
 
 class RejectionReasonRequest(BaseModel):
@@ -167,9 +174,14 @@ class RejectionReasonRequest(BaseModel):
 class DocumentBodyRequest(BaseModel):
     doc_id: str
     comment: Optional[str] = None
+    expected_revision: Optional[int] = None
+    request_key: Optional[str] = None
     # flowgate.default.0162 §1 — final-approval git ride-along (merge/push/wait).
     # Only honored on approve of a git-active group's AC document.
     git_action: Optional[str] = None
+    # flowgate.default.0594 T0012 — the local branch the git_action's merge lands
+    # on. Omitted → the project base (legacy behavior). Validated server-side.
+    git_target_branch: Optional[str] = None
 
 
 class RejectionReasonBodyRequest(BaseModel):
@@ -202,7 +214,21 @@ def list_groups_endpoint(
     if "document.read" not in user_permissions:
         raise HTTPException(status_code=403, detail="document.read permission required.")
     groups = db_groups.list_groups(project_id=project_id, module=module, status=status)
-    return {"groups": groups, "total": len(groups)}
+    config = git_service.db_git.get_config(project_id)
+    # flowgate.default.0613 TR0014 rev2: one batch lookup for the whole project
+    # (never one per group) so the requirement dialog can tell an editable
+    # existing-group Base Branch from one that Git work has already locked.
+    locked_ids = git_service.locked_group_ids(project_id)
+    enriched = []
+    for group in groups:
+        row = dict(group)
+        row["work_base_ref"] = row.get("work_base_ref")
+        row["effective_work_base_ref"] = git_service.resolve_group_work_base_ref(
+            project_id, row["group_id"], group=row, config=config
+        )
+        row["work_base_locked"] = row["group_id"] in locked_ids
+        enriched.append(row)
+    return {"groups": enriched, "total": len(enriched)}
 
 
 @router.post("/groups", status_code=201)
@@ -225,10 +251,23 @@ def create_group_endpoint(
         module=body.module,
         parent_id=body.parent_id,
         priority=body.priority,
+        work_base_ref=body.work_base_ref,
     )
     if result.get("status") == "error":
-        raise HTTPException(status_code=400, detail=result.get("message"))
-    return {"group_id": result["group_id"], "created_at": result["created_at"]}
+        detail: Any = result.get("message")
+        if result.get("code"):
+            detail = {
+                "code": result["code"],
+                "message": result.get("message"),
+                "details": result.get("details") or {},
+            }
+        raise HTTPException(status_code=result.get("http_status", 400), detail=detail)
+    return {
+        "group_id": result["group_id"],
+        "created_at": result["created_at"],
+        "work_base_ref": result.get("work_base_ref"),
+        "effective_work_base_ref": result.get("effective_work_base_ref"),
+    }
 
 
 @router.put("/groups/{group_id}")
@@ -363,7 +402,8 @@ def document_transition_rpc(
     return document_transition_endpoint(
         body.doc_id,
         action,
-        DocumentTransitionRequest(comment=body.comment),
+        DocumentTransitionRequest(comment=body.comment, expected_revision=body.expected_revision,
+                                  request_key=body.request_key),
         current_user,
     )
 
@@ -382,6 +422,16 @@ async def document_review_transition_rpc(
     _guard_group_not_ai_running(guarded_doc, body.doc_id)
 
     git_action = body.git_action
+    # flowgate.default.0594 T0012: the merge target rides along with git_action only.
+    git_target_branch = body.git_target_branch
+    if git_target_branch is not None and git_action is None:
+        return JSONResponse(
+            status_code=422,
+            content={"ok": False, "error": {
+                "code": "invalid_request",
+                "message": "git_target_branch is only accepted together with git_action",
+            }},
+        )
     if git_action is None and action == "approve" and guarded_doc.get("type_code") == "AC":
         # 0555 A11/B8: a terminal Git result may outlive its coupled approval
         # transaction. Clean attempts live on group_git_state; conflict attempts
@@ -485,7 +535,10 @@ async def document_review_transition_rpc(
         return await document_review_transition_endpoint(
             body.doc_id,
             action,
-            DocumentTransitionRequest(comment=body.comment),
+            DocumentTransitionRequest(
+                comment=body.comment, expected_revision=body.expected_revision,
+                request_key=body.request_key,
+            ),
             current_user,
             request,
         )
@@ -516,12 +569,21 @@ async def document_review_transition_rpc(
             )
             fresh_doc = db_docs.get_by_id(body.doc_id)
             group_id = git_service.precheck_approve_git_action(fresh_doc, git_action)
+            if git_target_branch is not None and group_id:
+                # 0594 T0012 §10: an invalid/stale target refuses the approval
+                # before it is applied, exactly like an invalid git_action.
+                git_service.precheck_approve_git_target(
+                    group_id, git_action, git_target_branch
+                )
         except (GitServiceError, TransitionError, WFPermissionError, ValueError) as exc:
             status = exc.status if isinstance(exc, GitServiceError) else (
                 403 if isinstance(exc, WFPermissionError) else 409
             )
             code = exc.code if isinstance(exc, GitServiceError) else "approval_precheck_failed"
             error = {"code": code, "message": str(getattr(exc, "message", exc))}
+            if isinstance(exc, GitServiceError) and getattr(exc, "details", None):
+                # 0594 T0012: a refused target names itself (target_branch/action).
+                error["details"] = exc.details
             pending["stage"] = "precheck"
             return status, {"ok": False, "error": error, "git": {"ok": False, "error": error}, "approval": pending}
 
@@ -546,9 +608,15 @@ async def document_review_transition_rpc(
                 lock_holder=holder,
                 approval_intent_id=approval_intent_id,
             )
-            outcome = git_service.run_approve_git_action(
-                group_id, git_action, approval_context=context
-            )
+            if git_target_branch is None:
+                outcome = git_service.run_approve_git_action(
+                    group_id, git_action, approval_context=context
+                )
+            else:
+                # 0594 T0012: the approved merge lands on the carried target.
+                outcome = git_service.run_approve_git_action(
+                    group_id, git_action, git_target_branch, approval_context=context
+                )
             if not outcome.get("ok"):
                 pending["stage"] = "git_finalize"
                 error = outcome.get("error") or {"code": "git_error", "message": "Git finalize failed"}
@@ -965,12 +1033,22 @@ async def document_review_transition_endpoint(
         # Git-active AC approval is owned by the RPC orchestrator above.  The
         # path-shaped legacy endpoint has no git_action field and must not bypass
         # finalize-before-approval by approving the document directly.
+        #
+        # 0609 T0004: git-active alone used to be enough to demand git_action, which
+        # blocked approval for groups whose worktree is still registered but that
+        # provably have nothing left to merge/push (no-work / already-applied).
+        # group_finalize_is_noop() is the same real-Git-state judgment the finalize
+        # panel/gate already use (flowgate.default.0548 T0004) -- only require
+        # git_action when there is an actual pending choice.
         if action == "approve" and str((prev_doc or {}).get("type_code") or "").upper() == "AC":
             group_id = (prev_doc or {}).get("group_id") or ""
             project_id = group_id.split(".", 1)[0] if group_id else ""
             cfg = git_service.db_git.get_config(project_id) if project_id else None
             state = git_service.db_git.get_state(group_id) if group_id else None
-            if cfg and cfg.get("enabled") and state and state.get("worktree_registered"):
+            if (
+                cfg and cfg.get("enabled") and state and state.get("worktree_registered")
+                and not git_service.group_finalize_is_noop(group_id)
+            ):
                 raise HTTPException(
                     status_code=422,
                     detail="git_action is required for final approval of a git-active group",
@@ -984,7 +1062,12 @@ async def document_review_transition_endpoint(
                 user_permissions=user_permissions,
                 comment=body.comment,
                 locale=locale,
+                mutation_principal=human_principal(current_user),
+                expected_revision=body.expected_revision,
+                request_key=body.request_key,
             )
+        except (tr2_service.Tr2ValidationError, MutationPolicyError):
+            raise
         except ValueError as exc:
             detail = str(exc)
             status_code = 404 if "not found" in detail else 400
@@ -1030,7 +1113,13 @@ async def document_review_transition_endpoint(
 
         return prev_review_status, result, tr_commit
 
-    prev_review_status, result, tr_commit = await anyio.to_thread.run_sync(_transition_sync)
+    try:
+        prev_review_status, result, tr_commit = await anyio.to_thread.run_sync(_transition_sync)
+    except tr2_service.Tr2ValidationError as exc:
+        return JSONResponse(status_code=TR2_ERRORS[exc.code].http_status,
+                            content=error_payload(exc.code, details=exc.details))
+    except MutationPolicyError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.body())
 
     # SSE broadcast (M026 §8-1 Phase 5-C)
     try:

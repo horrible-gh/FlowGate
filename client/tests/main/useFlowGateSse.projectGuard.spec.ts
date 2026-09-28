@@ -175,6 +175,22 @@ describe('useFlowGateSse refresh coalescing (P1-3)', () => {
     wrapper.unmount()
   })
 
+  it('collapses ten document explorer events while preserving every notification', () => {
+    const wrapper = mountWithCurrentProject('proj_alpha')
+    MockEventSource.last.emit('open')
+    for (let revision = 1; revision <= 10; revision++) {
+      MockEventSource.last.emit('document_explorer_refresh', {
+        project: 'proj_alpha',
+        payload: { operation: 'updated', doc_id: 'proj_alpha.default.0001.0001-D', revision_no: revision, title: 'Doc' },
+      })
+    }
+    vi.advanceTimersByTime(COALESCE_MS)
+    expect(refreshAll).toHaveBeenCalledTimes(1)
+    expect(openDocsRefresh).toHaveBeenCalledTimes(1)
+    expect(showToast).toHaveBeenCalledTimes(10)
+    wrapper.unmount()
+  })
+
   it('does not let a steady event stream postpone the re-read', () => {
     // Fixed window, not a sliding debounce: a later event joins the pending window
     // instead of pushing the deadline back, so the screen cannot be starved of

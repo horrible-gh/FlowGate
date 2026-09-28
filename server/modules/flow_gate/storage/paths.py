@@ -30,6 +30,12 @@ def _project_override_root(project_id: Optional[str]) -> Optional[Path]:
     Returns None on failure. Uses lazy import to avoid circular imports with
     config/db modules.
     """
+    override = _project_override_value(project_id)
+    return Path(override) if override else None
+
+
+def _project_override_value(project_id: Optional[str]) -> Optional[str]:
+    """Stored storage_root_override, stripped; None when unset, blank, or unreadable."""
     if not project_id:
         return None
     try:
@@ -43,7 +49,7 @@ def _project_override_root(project_id: Optional[str]) -> Optional[Path]:
     if not settings:
         return None
     override = (settings.get("storage_root_override") or "").strip()
-    return Path(override) if override else None
+    return override or None
 
 
 def _system_storage_root() -> Optional[Path]:
@@ -51,6 +57,12 @@ def _system_storage_root() -> Optional[Path]:
 
     Returns None on failure. Uses lazy import to avoid circular imports.
     """
+    value = _system_storage_root_value()
+    return Path(value) if value else None
+
+
+def _system_storage_root_value() -> Optional[str]:
+    """Stored system_settings.storage_root, stripped; None when missing, blank, or unreadable."""
     try:
         from modules.flow_gate.db import system_settings as _sys  # lazy
     except Exception:
@@ -61,8 +73,47 @@ def _system_storage_root() -> Optional[Path]:
         return None
     if not value:
         return None
-    value = value.strip()
-    return Path(value) if value else None
+    return value.strip() or None
+
+
+def resolve_storage_root(project_id: Optional[str] = None) -> tuple[Path, str]:
+    """Return ``(root, source)`` by the storage root priority.
+
+    The single resolution behind both get_storage_root() and
+    describe_storage_root(). ``source`` is one of ``env``,
+    ``project_override``, ``system_setting`` or ``default``.
+    """
+    env = os.environ.get("FLOWGATE_STORAGE_DIR", "").strip()
+    if env:
+        return Path(env), "env"
+    override = _project_override_root(project_id)
+    if override:
+        return override, "project_override"
+    system_root = _system_storage_root()
+    if system_root:
+        return system_root, "system_setting"
+    return default_storage_root(), "default"
+
+
+def describe_storage_root(project_id: Optional[str] = None) -> dict:
+    """Stored vs effective storage root for settings screens (flowgate.default.0623 T0004 §3).
+
+    ``configured_value`` is the stored system_settings.storage_root and
+    ``project_override`` the stored project storage_root_override; both are
+    None (never "") when unset, so a client cannot mistake "unset" for a path.
+    ``effective_value``/``effective_source`` come from resolve_storage_root(),
+    the same resolution every storage path uses. A project override shadowed by
+    FLOWGATE_STORAGE_DIR is still reported, with ``env_override`` true.
+    """
+    root, source = resolve_storage_root(project_id)
+    return {
+        "project_id": project_id,
+        "configured_value": _system_storage_root_value(),
+        "project_override": _project_override_value(project_id),
+        "effective_value": str(root),
+        "effective_source": source,
+        "env_override": source == "env",
+    }
 
 
 def get_storage_root(
@@ -76,16 +127,7 @@ def get_storage_root(
     ③ system_settings.storage_root
     ④ default_storage_root()
     """
-    env = os.environ.get("FLOWGATE_STORAGE_DIR", "").strip()
-    if env:
-        root = Path(env)
-    else:
-        override = _project_override_root(project_id)
-        if override:
-            root = override
-        else:
-            system_root = _system_storage_root()
-            root = system_root if system_root else default_storage_root()
+    root, _source = resolve_storage_root(project_id)
     if create:
         root.mkdir(parents=True, exist_ok=True)
     return root

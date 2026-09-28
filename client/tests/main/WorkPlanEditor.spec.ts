@@ -820,6 +820,126 @@ describe('WorkPlanEditor', () => {
   })
 })
 
+describe('WorkPlanEditor r0 recovery (0599 T#3)', () => {
+  const raw = '{"wp_version":'
+
+  function useUnreadableResponse(revisions: any[]) {
+    getRequest.mockImplementation((url: string) => {
+      if (url.includes('/document-types')) return Promise.resolve({
+        data: { data: TYPES, work_plan_countable_types: TYPES_WP },
+      })
+      if (url.includes('/ai-invoke/providers')) return Promise.resolve({
+        data: { providers: structuredClone(REGISTERED_PROVIDERS), default_provider_id: 'aip_opus' },
+      })
+      if (url.includes('/work-plan')) return Promise.reject({
+        response: {
+          status: 409,
+          data: {
+            code: 'wp_unreadable',
+            message: '이 작업계획을 표로 열 수 없습니다. 원문 보기로 확인해 주세요.',
+            detail: 'Unexpected end of JSON input',
+            revision_no: 0,
+            raw,
+            revisions,
+          },
+        },
+      })
+      return Promise.reject(new Error(`unexpected url: ${url}`))
+    })
+  }
+
+  it('shows a restorable r0 and returns to the normal table after restore', async () => {
+    useUnreadableResponse([{
+      revision_no: 0,
+      created_by: 'usr_wp_001',
+      created_at: '2026-09-23T08:00:00+09:00',
+      restorable: true,
+      restore_unavailable_reason: null,
+    }])
+    postRequest.mockResolvedValue({
+      data: { ...structuredClone(READ_RESPONSE), revision_no: 1 },
+    })
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    expect(wrapper.get('.wp-unreadable-raw').text()).toBe(raw)
+    const restoreButton = wrapper.get('.wp-restore-btn')
+    expect(restoreButton.text()).toContain('이 판으로 복구')
+    await restoreButton.trigger('click')
+    await flushPromises()
+
+    expect(postRequest).toHaveBeenCalledWith(
+      '/api/v1/documents/flowgate.default.0402.0002-WP/work-plan/revisions/0/restore',
+      { base_revision_no: 0 },
+    )
+    expect(wrapper.find('.wp-unreadable').exists()).toBe(false)
+    expect(wrapper.findAll('.wp-step-row')).toHaveLength(3)
+    expect((wrapper.vm as any).revisionNo).toBe(1)
+  })
+
+  it('keeps the unreadable raw state when restore fails', async () => {
+    useUnreadableResponse([{
+      revision_no: 0,
+      created_by: 'usr_wp_001',
+      created_at: '2026-09-23T08:00:00+09:00',
+      restorable: true,
+      restore_unavailable_reason: null,
+    }])
+    postRequest.mockRejectedValue({
+      response: { status: 422, data: { message: 'The selected revision is corrupt.' } },
+    })
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    await wrapper.get('.wp-restore-btn').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.wp-unreadable-raw').text()).toBe(raw)
+    expect(wrapper.get('.wp-restore-error').text()).toContain('corrupt')
+    expect(wrapper.find('.wp-step-row').exists()).toBe(false)
+  })
+
+  it('keeps legacy no-baseline raw/download only and offers no fabricated restore', async () => {
+    useUnreadableResponse([])
+    const createObjectURL = vi.fn(() => 'blob:legacy-raw')
+    const revokeObjectURL = vi.fn()
+    const originalCreateObjectURL = URL.createObjectURL
+    const originalRevokeObjectURL = URL.revokeObjectURL
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL })
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    try {
+      const wrapper = mountEditor()
+      await flushPromises()
+
+      expect(wrapper.find('.wp-restore-btn').exists()).toBe(false)
+      expect(wrapper.get('.wp-unreadable-no-baseline').text()).toContain('정확히 복구할 저장 판이 없습니다')
+      expect(wrapper.get('.wp-unreadable-raw').text()).toBe(raw)
+      const download = wrapper.findAll('.card-actions button')
+        .find((button) => button.text().includes('다운로드'))!
+      expect(download.attributes('disabled')).toBeUndefined()
+      await download.trigger('click')
+      await flushPromises()
+
+      expect(createObjectURL).toHaveBeenCalledTimes(1)
+      expect((createObjectURL.mock.calls[0][0] as Blob).type).toBe('text/plain;charset=utf-8')
+      expect(click).toHaveBeenCalledTimes(1)
+      expect(postRequest).not.toHaveBeenCalled()
+    } finally {
+      click.mockRestore()
+      Object.defineProperty(URL, 'createObjectURL', {
+        configurable: true,
+        value: originalCreateObjectURL,
+      })
+      Object.defineProperty(URL, 'revokeObjectURL', {
+        configurable: true,
+        value: originalRevokeObjectURL,
+      })
+    }
+  })
+})
+
 describe('approval presave surface', () => {
   function markDirty(wrapper: ReturnType<typeof mountEditor>) {
     return wrapper.findAll('.wp-step-msg')[1].setValue('approval must save this first')

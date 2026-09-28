@@ -13,11 +13,17 @@ from pathlib import Path
 from typing import Any
 
 from modules.flow_gate.db import documents as db_documents
-from modules.flow_gate.services import git_service, help_catalog, process_runner, remote_tool_service, test_command_service, token_service, tool_registry
+from modules.flow_gate.services import git_service, help_catalog, process_runner, remote_tool_service, snapshot_access_service, snapshot_request_service, source_bundle_access_service, test_command_service, token_service, tool_registry
 from modules.flow_gate.utils.help_url import help_url
 
 DOCUMENT_SCOPES = frozenset({"new", "edit", "review", "test_run"})
+CONFLICT_SCOPE = "resolve_conflict"
+# 0608 T0007: a conflict resolver changes files only through the bound resolve endpoint,
+# which validates every chunk. Whatever the registry grows into, these never reach it.
+_CONFLICT_NEVER_OPS = frozenset({"write", "patch", "remove"})
 BASE_NAMES = ("read_document", "read_help", "create_question", "register_document")
+BUNDLE_NAMES = ("access_source_bundle", "run_source_bundle")
+SNAPSHOT_NAMES = ("request_source_snapshot", "access_source_snapshot", "run_source_snapshot")
 SOURCE_NAMES = ("read_source_file", "search_source", "glob_source", "stat_source", "diff_source", "log_source", "show_commit_source", "merge_preview_source", "patch_source_file", "write_source_file", "remove_source_file", "run_test")
 # Provider names are stable aliases; every source operation dispatches through the HTTP remote service.
 SOURCE_OPS = {
@@ -77,7 +83,9 @@ def normalize_read_help_input(value: Any) -> dict:
     return dict(value)
 
 SCHEMAS = {
-    "read_source_file": _obj({"path": {"type": "string", "minLength": 1}, "max_bytes": {"type": "integer", "minimum": 0}, "offset": {"type": "integer", "minimum": 0}, "length": {"type": "integer", "minimum": 0}, "encoding": {"type": "string"}, "ref": {"type": "string"}}, ["path"]),
+    # start_line/end_line (0608 T0007, NR0003 §3.5): the /remote/read line selector the
+    # HTTP tool always had -- how a conflict chunk's advertised range is read back.
+    "read_source_file": _obj({"path": {"type": "string", "minLength": 1}, "max_bytes": {"type": "integer", "minimum": 0}, "offset": {"type": "integer", "minimum": 0}, "length": {"type": "integer", "minimum": 0}, "start_line": {"type": "integer", "minimum": 1}, "end_line": {"type": "integer", "minimum": 1}, "encoding": {"type": "string"}, "ref": {"type": "string"}}, ["path"]),
     "search_source": _obj({"pattern": {"type": "string", "minLength": 1}, "path": {"type": "string"}, "glob": {"type": "string"}, "ignore_case": {"type": "boolean"}, "max_results": {"type": "integer", "minimum": 0}, "ref": {"type": "string"}}, ["pattern"]),
     "glob_source": _obj({"pattern": {"type": "string", "minLength": 1}, "path": {"type": "string"}, "ref": {"type": "string"}}, ["pattern"]),
     "stat_source": _obj({"path": {"type": "string", "minLength": 1}, "ref": {"type": "string"}}, ["path"]),
@@ -89,9 +97,32 @@ SCHEMAS = {
     "write_source_file": _obj({"path": {"type": "string", "minLength": 1}, "content": {"type": "string"}, "mode": {"type": "string", "enum": ["create", "overwrite", "append"]}, "encoding": {"type": "string"}}, ["path", "content"]),
     "remove_source_file": _obj({"path": {"type": "string", "minLength": 1}, "recursive": {"type": "boolean"}}, ["path"]),
     "run_test": _obj({"command": {"type": "string", "minLength": 1}}, ["command"]),
+    "access_source_bundle": _obj({"bundle_id": {"type": "string"}, "operation": {"type": "string", "enum": ["status", "read", "search", "glob", "stat"]}, "path": {"type": "string"}, "pattern": {"type": "string"}, "glob": {"type": "string"}, "ignore_case": {"type": "boolean"}, "max_results": {"type": "integer", "minimum": 1}, "max_bytes": {"type": "integer", "minimum": 0}, "offset": {"type": "integer", "minimum": 0}, "length": {"type": "integer", "minimum": 0}, "encoding": {"type": "string"}, "claim_current_worktree": {"type": "boolean"}}, ["operation"]),
+    "run_source_bundle": _obj({"bundle_id": {"type": "string"}, "task_kind": {"type": "string", "enum": sorted(source_bundle_access_service.TASK_KINDS)}, "command": {"type": "string", "minLength": 1}, "timeout_seconds": {"type": "integer", "minimum": 1}, "claim_current_worktree": {"type": "boolean"}}, ["task_kind", "command"]),
     "read_document": READ_DOCUMENT_SCHEMA,
     "read_help": READ_HELP_SCHEMA,
     "create_question": _obj({"questions": {"type": "array", "minItems": 1, "items": _obj({"title": {"type": "string"}, "body": {"type": "string", "minLength": 1}, "options": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 200}, "maxItems": 10}}, ["body"])}}, ["questions"]),
+    "request_source_snapshot": _obj({"reason":{"type":"string","minLength":1},"scope":{"type":"string","enum":["single_file","selected_files","directory","whole_source"]},"requested_paths":{"type":"array","items":{"type":"string","minLength":1}},"purpose":{"type":"string","minLength":1},"source_kind":{"type":"string","enum":["current_worktree"]}},["reason","scope","requested_paths","purpose"]),
+    "access_source_snapshot": _obj({
+        "snapshot_id":{"type":"string","minLength":1},
+        "operation":{"type":"string","enum":["status","read","search","glob","stat"]},
+        "path":{"type":"string","minLength":1},
+        "pattern":{"type":"string","minLength":1},
+        "glob":{"type":"string","minLength":1},
+        "ignore_case":{"type":"boolean"},
+        "max_results":{"type":"integer","minimum":1},
+        "max_bytes":{"type":"integer","minimum":0},
+        "offset":{"type":"integer","minimum":0},
+        "length":{"type":"integer","minimum":0},
+        "encoding":{"type":"string","minLength":1},
+    },["snapshot_id","operation"]),
+    "run_source_snapshot": _obj({
+        "snapshot_id":{"type":"string","minLength":1},
+        "task_kind":{"type":"string","enum":["build","test","lint","typecheck","dependency_analysis","static_analysis","temporary_experiment"]},
+        "command":{"type":"string","minLength":1},
+        "timeout_seconds":{"type":"integer","minimum":1},
+        "claim_current_worktree":{"type":"boolean"},
+    },["snapshot_id","task_kind","command"]),
 }
 
 REGISTER_SCHEMAS = {
@@ -103,7 +134,16 @@ REGISTER_SCHEMAS = {
     "test_run": _obj({}),
 }
 
-DESCRIPTIONS = {name: name.replace("_", " ") for name in (*BASE_NAMES, *SOURCE_NAMES)}
+DESCRIPTIONS = {name: name.replace("_", " ") for name in (*BASE_NAMES, *SNAPSHOT_NAMES, *BUNDLE_NAMES, *SOURCE_NAMES)}
+DESCRIPTIONS["access_source_bundle"] = "Read/status/search/glob/stat an immutable Source Bundle. Omit bundle_id to lazy ensure. Historical results do not claim current worktree freshness unless requested."
+DESCRIPTIONS["run_source_bundle"] = "Execute inside disposable AI Scratch copied from a Source Bundle. Omit bundle_id to lazy ensure. Same run and Bundle reuse Scratch. No promotion or live fallback."
+DESCRIPTIONS["request_source_snapshot"] = "Retired (410). Source Bundle is prepared automatically when source access or execution needs it."
+DESCRIPTIONS["access_source_snapshot"] = (
+    "Read a legacy created Snapshot for historical compatibility only. New work uses Source Bundle."
+)
+DESCRIPTIONS["run_source_snapshot"] = (
+    "Retired (410). Use run_source_bundle; execution occurs in disposable AI Scratch."
+)
 DESCRIPTIONS["read_help"] = (
     "Read personalized help without HTTP. Empty input returns the help index; "
     "item returns one item; item plus child returns one child. child requires item."
@@ -114,7 +154,8 @@ DESCRIPTIONS["read_help"] = (
 # these descriptions lets a provider discover that link from the tool definition alone,
 # without a separate read_help round trip.
 DESCRIPTIONS["read_source_file"] = (
-    "Read a file. Omit ref to read the current worktree (including uncommitted changes); "
+    "Read a file, or only lines start_line..end_line of it (1-based, inclusive; both together, "
+    "not with offset/length/max_bytes). Omit ref to read the current worktree (including uncommitted changes); "
     "set ref to a commit/tree/ref to read that committed tree instead. Feed merge_preview_source's "
     "head/target_sha/merge_base/merge_tree into ref to inspect each side of a merge."
 )
@@ -175,14 +216,46 @@ def definitions_for_run(run: dict) -> list[dict]:
     # the authorized root, so advertisement must not reject a valid non-Git project fallback.
     kind, _reason = tool_registry.kind_for_step(scope, step_type)
     allowed_ops = set(tool_registry.tool_names(kind, scope))
+    if kind in ("read", "read_write"):
+        names += ["access_source_bundle"]
     names += [name for name, op in SOURCE_OPS.items() if op in allowed_ops]
     if kind == "read_write":
-        names.append("run_test")
+        names += ["run_source_bundle", "run_test"]
     result = []
     for name in names:
         schema = REGISTER_SCHEMAS[scope] if name == "register_document" else SCHEMAS[name]
         result.append({"name": name, "description": DESCRIPTIONS[name], "schema": schema, "completion": name == "register_document"})
     return result
+
+
+def conflict_tool_definitions() -> list[dict]:
+    """The tools a resolve_conflict API run may call besides ``resolve_git_conflict``.
+
+    0608 T0007: the same judgment as everywhere else -- ``tool_registry.kind_for_step``
+    gives resolve_conflict the ``read`` kind, ``tool_names`` turns it into the operations
+    the conflict mention's Remote source section lists, and ``remote_tool_service`` grants
+    that same kind (read/grep scopes) to the run's token at call time and binds it to the
+    conflict session's root. Plus ``read_help``, which the API prompt points to in place of
+    the mention's help URL. Write/patch/remove are excluded even if a kind ever allowed them.
+    """
+    kind, _reason = tool_registry.kind_for_step(CONFLICT_SCOPE)
+    allowed_ops = set(tool_registry.tool_names(kind, CONFLICT_SCOPE)) - _CONFLICT_NEVER_OPS
+    names = ["read_help"] + [name for name, op in SOURCE_OPS.items() if op in allowed_ops]
+    return [
+        {"name": name, "description": DESCRIPTIONS[name], "schema": SCHEMAS[name], "completion": False}
+        for name in names
+    ]
+
+
+def open_conflict_counts(run: dict) -> tuple[int, int]:
+    """``(files, chunks)`` still carrying conflict markers in the run's merge session."""
+    # 0630 T0005: a branch merge is addressed by project (see git_service.merge_session_owner_args).
+    owner_group, owner_project = git_service.merge_session_owner_args(run["merge_id"], run["group_id"])
+    conflicts = git_service.list_conflicts(
+        owner_group, int(run["merge_id"]), **({"project_id": owner_project} if owner_project else {}),
+    )
+    counts = [int(f.get("conflict_count") or 0) for f in conflicts.get("files") or []]
+    return sum(1 for n in counts if n > 0), sum(counts)
 
 
 def validate(schema: dict, value: Any, path: str = "input") -> None:
@@ -275,7 +348,89 @@ def read_help(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
     return 200, {**envelope, **body}
 
 
+def _snapshot_token(run: dict, raw_token: str) -> dict:
+    try:
+        token = token_service.verify(raw_token)
+        snapshot_request_service.validate_request_authority(token, run)
+        return token
+    except snapshot_request_service.SnapshotRequestError as exc:
+        raise ToolError(exc.status, exc.code, exc.message) from exc
+    except Exception as exc:
+        raise ToolError(403, "snapshot_request_forbidden", "a live AI run/token is required") from exc
+
+
+def request_source_snapshot(run: dict, raw_token: str, tool_input: dict, remaining_sec: float = 0) -> tuple[int, dict]:
+    raise ToolError(410, "snapshot_feature_retired", "Legacy Snapshot requests are retired; use Source Bundle")
+    token = _snapshot_token(run, raw_token)
+    data = snapshot_request_service.request_data_for_run(run, token, tool_input)
+    try:
+        row = snapshot_request_service.create_request(data, str(token.get("issued_to") or "ai-worker"))
+    except snapshot_request_service.SnapshotRequestError as exc:
+        raise ToolError(exc.status, exc.code, exc.message) from exc
+    reused = bool(row.get("reused_pending"))
+    row = snapshot_request_service.wait_for_decision(row, remaining_sec)
+    public = {key: row.get(key) for key in (
+        "snapshot_id", "status", "scope", "requested_paths", "source_kind",
+        "project_id", "group_id", "run_id", "chain_id", "token_id", "provider_id",
+        "requested_provider_id", "actual_provider_name", "provider_source", "attempt_no",
+        "fallback_used", "requested_at", "rejection_reason", "failure_code", "failure_reason",
+    )}
+    return (201 if not reused and row.get("status")=="requested" else 200), {
+        "ok":True, "request_id":row.get("snapshot_id"), "status":row.get("status"),
+        "request":public, "materialized":row.get("status")=="created",
+        "requires_human_decision":row.get("status")=="requested",
+        "reused_pending":reused, "wait_timed_out":row.get("wait_timed_out",False),
+    }
+
+
+def access_source_snapshot(run: dict, raw_token: str, tool_input: dict) -> tuple[int, dict]:
+    _snapshot_token(run, raw_token)
+    try:
+        status, payload = snapshot_access_service.access(run, tool_input)
+        if 200 <= status < 300:
+            run["snapshot_reads"] = int(run.get("snapshot_reads") or 0) + 1
+        return status, payload
+    except snapshot_access_service.SnapshotAccessError as exc:
+        return exc.status, exc.payload(str(tool_input.get("operation") or "access"))
+
+
+def run_source_snapshot(
+    run: dict, raw_token: str, tool_input: dict, remaining_sec: float,
+) -> tuple[int, dict]:
+    raise ToolError(410, "snapshot_feature_retired", "Legacy Snapshot execution is retired; use Source Bundle")
+    _snapshot_token(run, raw_token)
+    try:
+        return snapshot_access_service.execute(
+            run, tool_input, remaining_sec=remaining_sec,
+            source_tool_calls=int(run.get("source_tool_calls") or 0),
+            snapshot_reads=int(run.get("snapshot_reads") or 0),
+        )
+    except snapshot_access_service.SnapshotAccessError as exc:
+        return exc.status, exc.payload("execute")
+
+
+def access_source_bundle(run: dict, tool_input: dict) -> tuple[int, dict]:
+    try:
+        return source_bundle_access_service.access(run, tool_input)
+    except source_bundle_access_service.BundleAccessError as exc:
+        return exc.status, exc.payload(str(tool_input.get("operation") or "status"))
+
+
+def run_source_bundle(run: dict, tool_input: dict, remaining_sec: float) -> tuple[int, dict]:
+    try:
+        return source_bundle_access_service.execute(run, tool_input, remaining_sec)
+    except source_bundle_access_service.BundleAccessError as exc:
+        return exc.status, exc.payload("execute")
+
+
 def source_call(run: dict, raw_token: str, name: str, tool_input: dict) -> tuple[int, dict]:
+    try:
+        source_bundle_access_service.guard_promotion(run, name, tool_input)
+        snapshot_access_service.guard_promotion(run, name, tool_input)
+    except snapshot_access_service.SnapshotAccessError as exc:
+        return exc.status, exc.payload(name)
+    except source_bundle_access_service.BundleAccessError as exc:
+        return exc.status, exc.payload(name)
     # remote_tool_service is the sole live-token/root authority.  In particular, it
     # preserves worktree fail-closed mutation gates while allowing approved base-root
     # fallback projects; the API adapter must not second-guess that selection.
@@ -301,7 +456,6 @@ def test_root(run: dict) -> Path:
 
 
 def run_test(run: dict, tool_input: dict, remaining_sec: float) -> tuple[int, dict]:
-    root = test_root(run)
     normalized = test_command_service.normalize_command(tool_input["command"])
     host_os = test_command_service.current_os()
     allowed = [row for row in test_command_service.list_for_view(run["project_id"])
@@ -310,21 +464,14 @@ def run_test(run: dict, tool_input: dict, remaining_sec: float) -> tuple[int, di
     if row is None:
         raise ToolError(422, "not_verified")
     command = row.get("command_raw") or row.get("command")
-    timeout = max(.01, min(300.0, remaining_sec))
-    env = {"PATH": os.environ.get("PATH", ""), "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""), "TEMP": str(root / ".flowgate-tmp"), "TMP": str(root / ".flowgate-tmp")}
-    started = time.monotonic()
-    proc = subprocess.Popen(command, cwd=root, shell=True, executable=test_command_service.current_shell(), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=False, start_new_session=(os.name != "nt"))
-    timed_out = False
-    try:
-        stdout, stderr = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        process_runner.kill_process_tree(proc)
-        stdout, stderr = proc.communicate(timeout=5)
-    def tail(raw: bytes) -> tuple[str, bool]:
-        return raw[-1048576:].decode("utf-8", errors="replace"), len(raw) > 1048576
-    out, out_cut = tail(stdout or b""); err, err_cut = tail(stderr or b"")
-    payload = {"ok": True, "op": "run_test", "command": normalized, "exit_code": proc.returncode, "duration_ms": int((time.monotonic()-started)*1000), "stdout": out, "stderr": err, "truncated": out_cut or err_cut, "timed_out": timed_out}
+    status, result = run_source_bundle(run, {"task_kind": "test", "command": command}, remaining_sec)
+    if status >= 400:
+        return status, result
+    payload = {"ok": True, "op": "run_test", "command": normalized,
+               "exit_code": result["exit_code"], "duration_ms": result["duration_ms"],
+               "stdout": result["stdout"], "stderr": result["stderr"],
+               "truncated": result["truncated"], "timed_out": result["timed_out"],
+               "bundle": result["bundle"], "scratch_reused": result["scratch_reused"]}
     encoded = json.dumps(payload, ensure_ascii=False)
     if len(encoded) > 16000:
         excess = len(encoded) - 16000
