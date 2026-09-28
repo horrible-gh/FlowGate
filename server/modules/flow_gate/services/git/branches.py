@@ -1,9 +1,11 @@
 """Project branch catalog and local-only branch lifecycle operations."""
 from __future__ import annotations
 
+import os
 import uuid
 from pathlib import Path
-from typing import Optional
+from dataclasses import dataclass
+from typing import Literal, Optional
 
 from .credentials import GitServiceError
 
@@ -93,9 +95,312 @@ def _validate_merge_branch(
         )
 
 
+@dataclass(frozen=True)
+class MergeEndpointIdentity:
+    kind: str  # "branch" | "worktree"
+    branch: str
+    group_id: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ResolvedSource:
+    kind: str
+    branch: str
+    group_id: Optional[str]
+    head_sha: str
+    root: Optional[Path] = None
+
+
+@dataclass(frozen=True)
+class ResolvedTarget:
+    kind: str
+    branch: str
+    group_id: Optional[str]
+    root: Path
+    managed_workspace: bool
+
+
+def check_git_operation_in_progress(root: Path) -> Optional[str]:
+    """Check if a merge, rebase, cherry-pick, revert, or sequencer operation is in progress.
+
+    Uses `git rev-parse --git-path` to correctly resolve worktree-specific Git paths.
+    """
+    from modules.flow_gate.services import git_service as _gs
+
+    ops = [
+        ("MERGE_HEAD", "merge"),
+        ("REBASE_HEAD", "rebase"),
+        ("rebase-merge", "rebase"),
+        ("rebase-apply", "rebase"),
+        ("CHERRY_PICK_HEAD", "cherry-pick"),
+        ("REVERT_HEAD", "revert"),
+        ("sequencer", "sequencer"),
+    ]
+    for git_rel, op_name in ops:
+        proc = _gs._run_git(["rev-parse", "--git-path", git_rel], cwd=root)
+        if proc.returncode == 0:
+            out = (proc.stdout or "").strip()
+            if out:
+                p = Path(out)
+                if not p.is_absolute():
+                    p = (root / p).resolve()
+                if p.exists():
+                    return op_name
+    return None
+
+
+def _validate_worktree_git_metadata(
+    base_root: Path, wt_path: Path, expected_branch: str
+) -> None:
+    from modules.flow_gate.services import git_service as _gs
+
+    if not (wt_path / ".git").exists():
+        raise GitServiceError(
+            409, "branch_merge_worktree_identity_mismatch", "directory is not a Git worktree"
+        )
+    proc = _gs._run_git(["rev-parse", "--is-inside-work-tree"], cwd=wt_path)
+    if proc.returncode != 0 or (proc.stdout or "").strip() != "true":
+        raise GitServiceError(
+            409, "branch_merge_worktree_identity_mismatch", "directory is not inside a Git worktree"
+        )
+    proc_base_common = _gs._run_git(["rev-parse", "--git-common-dir"], cwd=base_root)
+    proc_wt_common = _gs._run_git(["rev-parse", "--git-common-dir"], cwd=wt_path)
+    if proc_base_common.returncode != 0 or proc_wt_common.returncode != 0:
+        raise GitServiceError(
+            409, "branch_merge_worktree_identity_mismatch", "failed to resolve common Git directory"
+        )
+    base_common_raw = (proc_base_common.stdout or "").strip()
+    wt_common_raw = (proc_wt_common.stdout or "").strip()
+    base_common = Path(base_common_raw if Path(base_common_raw).is_absolute() else (base_root / base_common_raw)).resolve()
+    wt_common = Path(wt_common_raw if Path(wt_common_raw).is_absolute() else (wt_path / wt_common_raw)).resolve()
+    if os.path.normcase(str(base_common)) != os.path.normcase(str(wt_common)):
+        raise GitServiceError(
+            409,
+            "branch_merge_worktree_identity_mismatch",
+            "worktree does not share common Git directory with project base repository",
+        )
+    proc_list = _gs._run_git(["worktree", "list", "--porcelain"], cwd=base_root)
+    if proc_list.returncode != 0:
+        raise GitServiceError(
+            409, "branch_merge_worktree_identity_mismatch", "failed to list repository worktrees"
+        )
+    reg_wts = {
+        os.path.normcase(str(Path(line[len("worktree "):].strip()).resolve()))
+        for line in proc_list.stdout.splitlines()
+        if line.startswith("worktree ")
+    }
+    if os.path.normcase(str(wt_path.resolve())) not in reg_wts:
+        raise GitServiceError(
+            409,
+            "branch_merge_worktree_identity_mismatch",
+            "directory is not a registered worktree of the project base repository",
+        )
+    proc_branch = _gs._run_git(["symbolic-ref", "--short", "HEAD"], cwd=wt_path)
+    if proc_branch.returncode != 0 or (proc_branch.stdout or "").strip() != expected_branch:
+        raise GitServiceError(
+            409,
+            "branch_merge_worktree_identity_mismatch",
+            f"worktree HEAD ref does not match registered branch '{expected_branch}'",
+        )
+
+
+def _resolve_worktree_endpoint(
+    project_id: str,
+    base_root: Path,
+    endpoint: MergeEndpointIdentity,
+    role: Literal["source", "target"],
+) -> tuple[str, Path, str]:
+    from modules.flow_gate.services import git_service as _gs
+    from modules.flow_gate.db import groups as db_groups
+
+    group_id = endpoint.group_id
+    if not group_id:
+        raise GitServiceError(
+            422,
+            "branch_merge_worktree_group_required",
+            f"group_id is required for worktree merge {role}",
+        )
+    group_rec = db_groups.get_by_id(group_id)
+    if group_rec is None or group_rec.get("deleted_at") is not None:
+        raise GitServiceError(
+            404,
+            "branch_merge_worktree_group_not_found",
+            f"group '{group_id}' not found or deleted",
+        )
+    if group_rec.get("project_id") != project_id:
+        raise GitServiceError(
+            409,
+            "branch_merge_worktree_project_mismatch",
+            f"group '{group_id}' does not belong to project '{project_id}'",
+        )
+    state = _gs.db_git.get_state(group_id)
+    if state is None:
+        raise GitServiceError(
+            404,
+            "branch_merge_worktree_group_not_found",
+            f"group '{group_id}' git state not found",
+        )
+    if state.get("project_id") != project_id:
+        raise GitServiceError(
+            409,
+            "branch_merge_worktree_project_mismatch",
+            f"group '{group_id}' does not belong to project '{project_id}'",
+        )
+    if not state.get("worktree_registered"):
+        raise GitServiceError(
+            409,
+            "branch_merge_worktree_not_registered",
+            f"worktree is not registered for group '{group_id}'",
+        )
+    ledger_branch = (state.get("branch") or "").strip()
+    if not ledger_branch or ledger_branch != endpoint.branch:
+        raise GitServiceError(
+            409,
+            "branch_merge_worktree_branch_mismatch",
+            f"requested branch '{endpoint.branch}' does not match registered group branch '{ledger_branch}'",
+        )
+    project_name = _gs._project_name(project_id)
+    if not project_name:
+        raise GitServiceError(404, "not_found", f"project '{project_id}' not found")
+    wt_path = _gs.src_root(project_name, ledger_branch)
+    if wt_path is None or not wt_path.exists() or not wt_path.is_dir():
+        raise GitServiceError(
+            404,
+            "branch_merge_worktree_not_found",
+            f"worktree directory not found for group '{group_id}'",
+        )
+    _validate_worktree_git_metadata(base_root, wt_path, ledger_branch)
+    op = check_git_operation_in_progress(wt_path)
+    if op:
+        raise GitServiceError(
+            409,
+            "branch_merge_worktree_git_operation_in_progress",
+            f"Git operation '{op}' in progress on {role} worktree",
+            {"operation": op, "role": role, "group_id": group_id},
+        )
+    return group_id, wt_path, ledger_branch
+
+
+def resolve_source(
+    project_id: str,
+    base_root: Path,
+    base_branch: str,
+    endpoint: MergeEndpointIdentity,
+) -> ResolvedSource:
+    """Resolve and validate merge source endpoint."""
+    from modules.flow_gate.services import git_service as _gs
+
+    kind = endpoint.kind or "branch"
+    if kind == "branch":
+        _validate_merge_branch(project_id, base_root, endpoint.branch, "source")
+        head_sha = _gs._rev_parse(base_root, f"refs/heads/{endpoint.branch}")
+        if not head_sha:
+            raise GitServiceError(404, "branch_merge_source_not_found", "source branch was not found")
+        return ResolvedSource(
+            kind="branch",
+            branch=endpoint.branch,
+            group_id=None,
+            head_sha=head_sha,
+            root=base_root,
+        )
+
+    if kind == "worktree":
+        group_id, wt_path, ledger_branch = _resolve_worktree_endpoint(
+            project_id, base_root, endpoint, "source"
+        )
+        head_sha = _gs._rev_parse(wt_path, "HEAD")
+        if not head_sha:
+            raise GitServiceError(500, "branch_merge_failed", "could not resolve HEAD of source worktree")
+        return ResolvedSource(
+            kind="worktree",
+            branch=endpoint.branch,
+            group_id=group_id,
+            head_sha=head_sha,
+            root=wt_path.resolve(),
+        )
+
+    raise GitServiceError(422, "branch_merge_invalid_kind", f"unsupported source kind '{kind}'")
+
+
+def resolve_target(
+    project_id: str,
+    base_root: Path,
+    base_branch: str,
+    endpoint: MergeEndpointIdentity,
+    source: ResolvedSource,
+) -> ResolvedTarget:
+    """Resolve and validate merge target endpoint with preflight checks."""
+    from . import merge_target
+    from .refs import _dirty, _dirty_files
+
+    kind = endpoint.kind or "branch"
+    if source.kind == "worktree" and kind == "worktree":
+        if source.group_id == endpoint.group_id:
+            raise GitServiceError(
+                409, "branch_merge_same_worktree", "source and target worktrees must differ"
+            )
+    if source.branch == endpoint.branch:
+        if source.kind == "worktree" and kind == "worktree":
+            raise GitServiceError(
+                409, "branch_merge_same_worktree", "source and target worktrees must differ"
+            )
+        raise GitServiceError(409, "branch_merge_same_branch", "source and target must differ")
+
+    if kind == "branch":
+        _validate_merge_branch(project_id, base_root, endpoint.branch, "target")
+        wdir = merge_target.workspace_dir(project_id, endpoint.branch)
+        root = wdir / merge_target.WORKSPACE_TREE
+        return ResolvedTarget(
+            kind="branch",
+            branch=endpoint.branch,
+            group_id=None,
+            root=root,
+            managed_workspace=True,
+        )
+
+    if kind == "worktree":
+        group_id, wt_path, ledger_branch = _resolve_worktree_endpoint(
+            project_id, base_root, endpoint, "target"
+        )
+        if _dirty(wt_path, include_untracked=True):
+            dirty_files = _dirty_files(wt_path, include_untracked=True)
+            raise GitServiceError(
+                409,
+                "branch_merge_target_worktree_dirty",
+                "target worktree has uncommitted changes",
+                {"files": dirty_files, "group_id": group_id},
+            )
+        from modules.flow_gate.db import group_ai_leases
+        from modules.flow_gate.services import ai_invoke_service
+
+        if ai_invoke_service.has_active_run(group_id) or group_ai_leases.get_active(group_id) is not None:
+            raise GitServiceError(
+                409,
+                "branch_merge_target_group_ai_active",
+                f"an AI run or lease is active for target group '{group_id}'",
+                {"group_id": group_id},
+            )
+
+        return ResolvedTarget(
+            kind="worktree",
+            branch=endpoint.branch,
+            group_id=group_id,
+            root=wt_path.resolve(),
+            managed_workspace=False,
+        )
+
+    raise GitServiceError(422, "branch_merge_invalid_kind", f"unsupported target kind '{kind}'")
+
+
 def merge_branches(
     project_id: str, source_branch: str, target_branch: str, push: bool = True,
-    *, requested_by: Optional[str] = None, provider_id: Optional[str] = None,
+    *,
+    source_kind: str = "branch",
+    source_group_id: Optional[str] = None,
+    target_kind: str = "branch",
+    target_group_id: Optional[str] = None,
+    requested_by: Optional[str] = None,
+    provider_id: Optional[str] = None,
 ) -> dict:
     """Merge one ordinary local branch into another, optionally publishing it.
 
@@ -126,10 +431,21 @@ def merge_branches(
     from . import branch_merge, merge_target
 
     cfg, base_root, base_branch = _branch_context(project_id)
-    if source_branch == target_branch:
-        raise GitServiceError(409, "branch_merge_same_branch", "source and target must differ")
-    _validate_merge_branch(project_id, base_root, source_branch, "source")
-    _validate_merge_branch(project_id, base_root, target_branch, "target")
+    source_ep = MergeEndpointIdentity(
+        kind=source_kind or "branch", branch=source_branch, group_id=source_group_id
+    )
+    target_ep = MergeEndpointIdentity(
+        kind=target_kind or "branch", branch=target_branch, group_id=target_group_id
+    )
+    source_resolved = resolve_source(project_id, base_root, base_branch, source_ep)
+    target_resolved = resolve_target(project_id, base_root, base_branch, target_ep, source_resolved)
+    if target_resolved.kind == "worktree":
+        raise GitServiceError(
+            501,
+            "worktree_target_merge_pending",
+            "actual merge into worktree target will be enabled in T#2",
+            {"source": source_resolved.branch, "target": target_resolved.branch, "target_group_id": target_resolved.group_id},
+        )
 
     is_base_target = target_branch == base_branch
     apply_to_base_checkout = is_base_target and not push
@@ -151,10 +467,15 @@ def merge_branches(
     prepared = False
     keep_workspace = False
     try:
-        if source_branch == target_branch:
-            raise GitServiceError(409, "branch_merge_same_branch", "source and target must differ")
-        _validate_merge_branch(project_id, base_root, source_branch, "source")
-        _validate_merge_branch(project_id, base_root, target_branch, "target")
+        source_resolved = resolve_source(project_id, base_root, base_branch, source_ep)
+        target_resolved = resolve_target(project_id, base_root, base_branch, target_ep, source_resolved)
+        if target_resolved.kind == "worktree":
+            raise GitServiceError(
+                501,
+                "worktree_target_merge_pending",
+                "actual merge into worktree target will be enabled in T#2",
+                {"source": source_resolved.branch, "target": target_resolved.branch, "target_group_id": target_resolved.group_id},
+            )
         if apply_to_base_checkout:
             _gs.guard_base_free(project_id)   # 0205 §2.2 — 2nd gate (race close, after lock)
             if _gs._dirty(base_root, include_untracked=False):
@@ -208,7 +529,7 @@ def merge_branches(
                     "target branch cannot fast-forward to its remote counterpart",
                     diagnostic=_one_line(update.stderr),
                 )
-        source_before = _gs._rev_parse(base_root, f"refs/heads/{source_branch}")
+        source_before = source_resolved.head_sha
         target_before = _gs._rev_parse(merge_root, "HEAD")
         expected_remote_head = _gs._rev_parse(merge_root, f"refs/remotes/origin/{target_branch}")
         # T0012 §6.3: pinned BEFORE `git merge`, so recovery can tell "never merged" from
@@ -219,7 +540,7 @@ def merge_branches(
         )
         merged = _gs._run_git(
             [*_gs._GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "merge", "--no-ff",
-             "-m", f"Merge branch '{source_branch}' into {target_branch}", source_branch],
+             "-m", f"Merge branch '{source_branch}' into {target_branch}", source_before],
             cwd=merge_root,
         )
         if merged.returncode != 0:

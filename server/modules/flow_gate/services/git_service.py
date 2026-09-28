@@ -324,12 +324,18 @@ from .git.lock import (
 
 
 from .git.branches import (
+    MergeEndpointIdentity,
+    ResolvedSource,
+    ResolvedTarget,
     check_branch_delete,
+    check_git_operation_in_progress,
     create_branch,
     delete_branch,
     internal_slot_owner,
     list_branches,
     merge_branches,
+    resolve_source,
+    resolve_target,
     read_local_branch_blob,
     read_local_branch_tree,
     resolve_local_branch_ref,

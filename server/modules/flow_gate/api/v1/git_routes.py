@@ -53,7 +53,7 @@ Errors follow the source-mode envelope {"ok": false, "error": {code, message}}.
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
@@ -218,11 +218,25 @@ class BranchCreateBody(BaseModel):
     source_branch: str
 
 
+class MergeEndpointIdentity(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["branch", "worktree"] = "branch"
+    branch: str
+    group_id: Optional[str] = None
+
+
 class BranchMergeBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    source_branch: str
-    target_branch: str
+    source_branch: Optional[str] = None
+    target_branch: Optional[str] = None
+    source_kind: Literal["branch", "worktree"] = "branch"
+    source_group_id: Optional[str] = None
+    target_kind: Literal["branch", "worktree"] = "branch"
+    target_group_id: Optional[str] = None
+    source: Optional[MergeEndpointIdentity] = None
+    target: Optional[MergeEndpointIdentity] = None
     # T0006: publish the merge result to origin (default True keeps every
     # existing caller's behavior — an omitted field still pushes).
     push: bool = True
@@ -276,9 +290,40 @@ def post_git_branch_merge(
     request: Request,
     user=Depends(require_permission("project.settings.edit", "project_id")),
 ):
+    s_kind = body.source.kind if body.source else body.source_kind
+    s_branch = (body.source.branch if body.source else body.source_branch) or ""
+    s_group_id = body.source.group_id if body.source else body.source_group_id
+
+    t_kind = body.target.kind if body.target else body.target_kind
+    t_branch = (body.target.branch if body.target else body.target_branch) or ""
+    t_group_id = body.target.group_id if body.target else body.target_group_id
+
+    if not s_branch or not t_branch:
+        return _error_response(422, "branch_merge_missing_branch", "source and target branches are required")
+
     try:
-        result = git_service.merge_branches(
-            project_id, body.source_branch, body.target_branch, push=body.push,
+        import inspect
+
+        merge_fn = git_service.merge_branches
+        sig = inspect.signature(merge_fn)
+        params = sig.parameters
+        accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+        call_kwargs = {"push": body.push}
+        if accepts_kwargs or "source_kind" in params:
+            call_kwargs["source_kind"] = s_kind
+        if accepts_kwargs or "source_group_id" in params:
+            call_kwargs["source_group_id"] = s_group_id
+        if accepts_kwargs or "target_kind" in params:
+            call_kwargs["target_kind"] = t_kind
+        if accepts_kwargs or "target_group_id" in params:
+            call_kwargs["target_group_id"] = t_group_id
+        if accepts_kwargs or "requested_by" in params:
+            call_kwargs["requested_by"] = _user_id(user)
+        if accepts_kwargs or "provider_id" in params:
+            call_kwargs["provider_id"] = body.provider_id
+
+        result = merge_fn(
+            project_id, s_branch, t_branch, **call_kwargs,
         )
     except GitServiceError as exc:
         return _guard(exc)
