@@ -65,3 +65,59 @@ def resolve_in_root(root: Path, rel: str) -> Optional[Path]:
     if not _under_root(full, root_real):
         return None
     return Path(full)
+
+
+class MutationPathUnsafeError(ValueError):
+    """The requested mutation path is not a safe source-relative path."""
+
+
+class MutationPathAliasError(MutationPathUnsafeError):
+    """The requested mutation path crosses a symlink/junction/reparse alias."""
+
+
+def _same_path_identity(left: str, right: str) -> bool:
+    return os.path.normcase(os.path.normpath(left)) == os.path.normcase(os.path.normpath(right))
+
+
+def resolve_mutation_target_no_alias(
+    root: Path,
+    rel: str,
+    *,
+    allow_missing_leaf: bool,
+) -> Path:
+    """Resolve an ordinary source mutation target without following aliases.
+
+    Unlike resolve_in_root(), a symlink/junction/reparse alias is rejected even when
+    its resolved target remains inside root. This keeps the lexical source path used
+    by TR2 ownership identical to the filesystem object an ordinary mutation touches.
+    """
+    if not is_safe_relative(rel):
+        raise MutationPathUnsafeError(rel)
+
+    root_real = os.path.realpath(str(root))
+    normalized = rel.replace("\\", "/")
+    parts = [part for part in normalized.split("/") if part not in ("", ".")]
+    if not parts or any(part == ".." for part in parts):
+        raise MutationPathUnsafeError(rel)
+
+    candidate = os.path.normpath(os.path.join(root_real, *parts))
+    if not _under_root(candidate, root_real):
+        raise MutationPathUnsafeError(rel)
+
+    resolved = os.path.realpath(candidate)
+    if not _under_root(resolved, root_real):
+        raise MutationPathAliasError(rel)
+    if not _same_path_identity(candidate, resolved):
+        raise MutationPathAliasError(rel)
+
+    target = Path(candidate)
+    if not allow_missing_leaf and not target.exists():
+        raise MutationPathUnsafeError(rel)
+    if allow_missing_leaf and not target.exists():
+        parent = target.parent
+        if not parent.exists() or not parent.is_dir():
+            raise MutationPathUnsafeError(rel)
+        parent_resolved = os.path.realpath(str(parent))
+        if not _same_path_identity(str(parent), parent_resolved):
+            raise MutationPathAliasError(rel)
+    return target
