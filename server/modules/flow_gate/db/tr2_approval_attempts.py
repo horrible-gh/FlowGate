@@ -63,6 +63,12 @@ def successful_root(ledger_row_id: int) -> dict | None:
         "SELECT * FROM tr2_approval_attempts WHERE ledger_row_id = ? "
         "AND state = 'succeeded' ORDER BY id DESC LIMIT 1", [ledger_row_id])
 
+def successful_by_group(group_id: str) -> list[dict]:
+    """All durable succeeded approvals for one group, oldest first."""
+    return get_store()._fetch_all(
+        "SELECT * FROM tr2_approval_attempts WHERE group_id = ? "
+        "AND state = 'succeeded' ORDER BY id ASC", [group_id])
+
 
 def _notify(row: dict | None) -> None:
     """Best-effort SSE for a state/phase change, delivered after the enclosing commit."""

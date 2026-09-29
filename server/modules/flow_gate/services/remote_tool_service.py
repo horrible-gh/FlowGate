@@ -1995,42 +1995,93 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
     op = operation
     body = body if isinstance(body, dict) else {}
 
-    # ① Authentication — on failure the subject is unidentified, so no history is logged (L0006 §3.1).
     grant = _authenticate(raw_token)
     if grant is None:
         return 401, _fail_envelope(op, 401)
 
     locale = _locale_for_grant(grant)
-
-    # Unknown operation name: no scope mapping + cannot be stored in the op enum, so not logged → 422.
     if op not in OP_SCOPE:
         return 422, _fail_envelope(op, 422, locale)
 
     log_path, log_pattern = _log_targets(op, body)
     try:
-        # ② Permission scope
         if OP_SCOPE[op] not in db_grants.get_scopes(grant["grant_id"]):
             raise _OpError(403)
-        # ③ Path safety (existing path-like values)
         _validate_paths(op, body)
-        # ④ Request validity (required fields)
         _validate_allowed_fields(op, body)
         _validate_required(op, body)
-        # Resolve the target source root. write/remove must not silently fall
-        # back to the base checkout when the group worktree is missing (0205
-        # §2.3) — they use the mutation gate, which raises a 409 with the cause.
+
         if op in _MUTATING_OPS:
+            # Always run the existing resolver first. It owns the long-standing
+            # branch-merge claim, worktree self-heal and non-Git base fallback contracts.
             root = _resolve_root_for_mutation(grant, op)
         else:
             root = _resolve_src_root(grant, op)
         if root is None:
             raise _OpError(503)
-        # ⑤ Execute the operation
-        extra, nbytes = _execute(op, body, root, grant)
+
+        guarded_group_mutation = (
+            op in {"write", "patch", "remove"} and bool(grant.get("group_id"))
+        )
+        if guarded_group_mutation:
+            # TR2 ownership exists only for Git-managed group worktrees. A non-integrated
+            # project with a group_id intentionally keeps the pre-0641 base fallback path.
+            from modules.flow_gate.db import git_integration as db_git
+            cfg = db_git.get_config(grant["project"])
+            git_group_worktree = bool(cfg and cfg.get("enabled"))
+
+            if git_group_worktree:
+                from modules.flow_gate.services import tr2_file_policy as tr2_policy
+                recursive = op == "remove" and body.get("recursive", False) is True
+                try:
+                    with tr2_policy.general_source_mutation(
+                        grant["project"],
+                        grant["group_id"],
+                        exact_paths=[] if recursive else [body["path"]],
+                        recursive_paths=[body["path"]] if recursive else [],
+                        allow_missing_leaf=True,
+                    ) as mutation:
+                        # Re-run the legacy mutation resolver while holding the project
+                        # mutex and require it to identify the same live worktree.
+                        locked_root = _resolve_root_for_mutation(grant, op)
+                        if Path(locked_root).resolve() != mutation.root:
+                            raise _OpError(
+                                409,
+                                details={
+                                    "reason": "worktree_changed",
+                                    "group_id": grant["group_id"],
+                                },
+                            )
+                        extra, nbytes = _execute(op, body, mutation.root, grant)
+                except tr2_policy.Tr2FilePolicyError as exc:
+                    status = 409 if exc.code in {
+                        tr2_policy.TR2_MANAGED_FILE,
+                        tr2_policy.SOURCE_MUTATION_BUSY,
+                        tr2_policy.SOURCE_WORKTREE_UNAVAILABLE,
+                    } else 422
+                    raise _OpError(
+                        status,
+                        details=exc.details,
+                        message=(
+                            "TR2-managed source paths can only be changed through TR2"
+                            if exc.code == tr2_policy.TR2_MANAGED_FILE
+                            else "source mutation path is not allowed"
+                        ),
+                    ) from exc
+            else:
+                # Important compatibility branch: group_id alone never opts a non-Git
+                # project into TR2 ownership semantics.
+                extra, nbytes = _execute(op, body, root, grant)
+        else:
+            extra, nbytes = _execute(op, body, root, grant)
     except _OpError as exc:
         _log(grant, op, log_path, log_pattern, status=exc.status)
         if exc.details is not None or exc.message is not None:
-            code = ERROR_CODE_BY_STATUS[exc.status]
+            policy_code = (exc.details or {}).get("code")
+            if policy_code in {"TR2_MANAGED_FILE", "SOURCE_PATH_ALIAS_NOT_ALLOWED"}:
+                code = policy_code
+            else:
+                code = ERROR_CODE_BY_STATUS[exc.status]
             error = {
                 "code": code,
                 "message": _op_error_message(exc, locale),
@@ -2040,49 +2091,14 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
             return exc.status, _envelope(False, op, error=error)
         return exc.status, _fail_envelope(op, exc.status, locale)
     except OSError:
-        # Unexpected I/O failure → 503 unavailable (logged to history).
         _log(grant, op, log_path, log_pattern, status=503)
         return 503, _fail_envelope(op, 503, locale)
     except Exception:
-        # Trap every other unexpected exception in the envelope so it cannot leak to the
-        # router as a bare 500 — since the attempt passed authentication, ⑥ history is also
-        # recorded ('every response = P0005 envelope' contract).
         _log(grant, op, log_path, log_pattern, status=503)
         return 503, _fail_envelope(op, 503, locale)
 
-    # ⑥ Success history
     _log(grant, op, log_path, log_pattern, status=200, bytes_processed=nbytes)
-    # 0192 T0005 §2-d: a worker's source mutation (write/remove) previously emitted
-    # NO SSE, so an operator watching the file explorer saw the AI's edits only when
-    # some unrelated document event happened to fire — the "changes don't show up
-    # right away" complaint. Broadcast file_explorer_refresh on a successful mutation
-    # so the tree, change list and '>' markers refresh live. Best-effort; a delivery
-    # failure must never turn a successful op into an error.
     if op in _MUTATING_OPS:
         _emit_explorer_refresh(grant, op)
-    # ⑦ Completion ment — only on successful state-changing operations (L0006 §6.1).
     continuation = _continuation(grant, locale) if op in _MUTATING_OPS else None
     return 200, _envelope(True, op, extra=extra, continuation=continuation)
-
-
-def _emit_explorer_refresh(grant: dict, op: str) -> None:
-    """Best-effort file_explorer_refresh broadcast after a worker source mutation
-    (0192 T0005 §2-d). Scoped to the worker's project (and group when known) so
-    the operator's explorer re-fetches the tree / change list / dirty markers."""
-    try:
-        from modules.flow_gate.api.v1.events.publisher import (
-            FlowEvent,
-            broadcast_event_threadsafe,
-        )
-        from modules.flow_gate.api.v1.events.event_types import EventType
-
-        broadcast_event_threadsafe(FlowEvent(
-            event_type=EventType.FILE_EXPLORER_REFRESH,
-            payload={"operation": op, "source": "remote_worker"},
-            audience="*",
-            project=grant.get("project"),
-            group_id=grant.get("group_id"),
-            doc_id=None,
-        ))
-    except Exception:
-        pass

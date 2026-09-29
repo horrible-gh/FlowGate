@@ -2633,6 +2633,7 @@ export default {
       toast_upload_no_worktree: '업로드가 취소되었습니다 — 이 그룹의 작업 폴더를 더 이상 사용할 수 없습니다.',
       modified_badge: '수정됨',
       new_badge: '신규',
+      tr2_managed: 'TR2 관리 파일 · 수정은 TR2로만 가능합니다.',
       delete_confirm_title: '삭제',
       delete_confirm_file: '"{path}" 파일을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.',
       delete_confirm_folder: '"{path}" 폴더와 그 안의 모든 내용을 삭제하시겠습니까? 하위 항목까지 재귀적으로 삭제되며 되돌릴 수 없습니다.',

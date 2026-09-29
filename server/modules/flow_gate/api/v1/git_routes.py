@@ -549,9 +549,19 @@ def get_group_branch_tree(
     group_id: str,
     user=Depends(require_permission("project.settings.read", "project_id")),
 ):
-    """Recursive file tree of a group branch's HEAD commit (read-only, no checkout)."""
+    """Recursive group tree plus one group-scoped TR2 managed-path snapshot."""
     try:
-        return git_service.read_group_tree(project_id, group_id)
+        result = git_service.read_group_tree(project_id, group_id)
+        if result.get("ok") and isinstance(result.get("data"), dict):
+            # One authoritative group query per tree response; never one DB lookup per node.
+            # Ownership is scoped by (group_id, normalized source-relative path), so base
+            # and ordinary local-branch tree APIs deliberately carry no managed set.
+            from modules.flow_gate.services import tr2_file_policy
+            result["data"]["tr2_managed_paths"] = sorted(
+                tr2_file_policy.managed_paths(group_id),
+                key=lambda value: value.encode("utf-8"),
+            )
+        return result
     except GitServiceError as exc:
         return _guard(exc)
 

@@ -737,129 +737,136 @@ def copy_to_source(
     group_id: Optional[str],
     actor: Optional[dict],
 ) -> dict:
-    """C1~C10. The only path that writes outside the storage tree, hence the longest guard.
-
-    Copy does NOT apply the upload extension deny-list to its target (C4). The destination is
-    a source tree, where ``.ps1``/``.sh``/``.js`` are ordinary files; blocking them would make
-    "put the script I was sent into the source" impossible. The risk the deny-list addresses
-    is a receiver clicking a download, and a copy result never goes to a browser.
-    """
+    """Copy one attachment into source; group worktree writes obey TR2 ownership."""
     doc = load_document(doc_id)
-    segments = _validate_target_path(target_path)                    # C2
-    assert_mutable(doc, actor, "attachment copy")                    # C3
-    row, src_path = resolve_registered_attachment(doc, name)         # C4
-
+    segments = _validate_target_path(target_path)
+    assert_mutable(doc, actor, "attachment copy")
+    row, src_path = resolve_registered_attachment(doc, name)
     project_id = doc.get("project_id")
-    root = resolve_copy_root(project_id, group_id)                   # C5
-    dest = _seal_under_root(root, segments)                          # C6
+    rel = "/".join(segments)
 
-    created_dirs: list[Path] = []
-    parent = dest.parent
-    if parent.exists() and not parent.is_dir():                      # C7
-        raise AttachmentError(
-            409, "TARGET_EXISTS", "Copy target already exists.",
-            target_path="/".join(segments), path_base="source", group_id=group_id,
-            reason="parent_is_file",
-        )
-    if not parent.exists():
-        missing = []
-        probe = parent
-        while not probe.exists() and probe != probe.parent:
-            missing.append(probe)
-            probe = probe.parent
-        try:
-            parent.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            raise unexpected(
-                exc,
-                operation="copy:mkdir",
-                code="ATTACHMENT_COPY_FAILED",
-                message="Could not create the target folder.",
-                reason=None,
-                target_path="/".join(segments), path_base="source",
+    def perform_copy(dest: Path) -> dict:
+        created_dirs: list[Path] = []
+        parent = dest.parent
+        if parent.exists() and not parent.is_dir():
+            raise AttachmentError(
+                409, "TARGET_EXISTS", "Copy target already exists.",
+                target_path=rel, path_base="source", group_id=group_id,
+                reason="parent_is_file",
             )
-        created_dirs = missing
+        if not parent.exists():
+            missing = []
+            probe = parent
+            while not probe.exists() and probe != probe.parent:
+                missing.append(probe)
+                probe = probe.parent
+            try:
+                parent.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise unexpected(
+                    exc, operation="copy:mkdir", code="ATTACHMENT_COPY_FAILED",
+                    message="Could not create the target folder.", reason=None,
+                    target_path=rel, path_base="source",
+                )
+            created_dirs = missing
 
-    _assert_target_absent(parent, segments[-1], segments, group_id)  # C8
+        _assert_target_absent(parent, segments[-1], segments, group_id)
+        digest = hashlib.sha256()
+        try:
+            fd = os.open(str(dest), os.O_CREAT | os.O_EXCL | os.O_WRONLY | _O_BINARY)
+        except FileExistsError:
+            _cleanup_dirs(created_dirs)
+            raise AttachmentError(
+                409, "TARGET_EXISTS", "Copy target already exists.",
+                target_path=rel, path_base="source", group_id=group_id, reason="race",
+            )
+        except OSError as exc:
+            _cleanup_dirs(created_dirs)
+            raise unexpected(
+                exc, operation="copy:create", code="ATTACHMENT_COPY_FAILED",
+                message="Could not create the copy target.", reason=None,
+                target_path=rel, path_base="source",
+            )
 
-    # C9 — existence check and creation must be one atomic act. C8 stays because it is what
-    # tells apart `parent_is_file` and a case-only clash; O_EXCL closes the TOCTOU gap it
-    # cannot. A temp file plus rename is wrong here: rename OVERWRITES, and refusing is the
-    # contract.
-    digest = hashlib.sha256()
-    try:
-        fd = os.open(str(dest), os.O_CREAT | os.O_EXCL | os.O_WRONLY | _O_BINARY)
-    except FileExistsError:
-        _cleanup_dirs(created_dirs)
-        raise AttachmentError(
-            409, "TARGET_EXISTS", "Copy target already exists.",
-            target_path="/".join(segments), path_base="source", group_id=group_id,
-            reason="race",
-        )
-    except OSError as exc:
-        _cleanup_dirs(created_dirs)
-        raise unexpected(
-            exc,
-            operation="copy:create",
-            code="ATTACHMENT_COPY_FAILED",
-            message="Could not create the copy target.",
-            reason=None,
-            target_path="/".join(segments), path_base="source",
-        )
+        copied = 0
+        try:
+            with open(src_path, "rb") as src:
+                while True:
+                    chunk = src.read(ATTACH_COPY_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                    copied += len(chunk)
+                    os.write(fd, chunk)
+            os.fsync(fd)
+        except OSError as exc:
+            os.close(fd)
+            _unlink_quiet(dest)
+            _cleanup_dirs(created_dirs)
+            raise unexpected(
+                exc, operation="copy:write", code="ATTACHMENT_COPY_FAILED",
+                message="Could not copy the attachment.", reason=None,
+                target_path=rel, path_base="source",
+            )
+        else:
+            os.close(fd)
 
-    copied = 0
-    try:
-        with open(src_path, "rb") as src:
-            while True:
-                chunk = src.read(ATTACH_COPY_CHUNK_BYTES)
-                if not chunk:
-                    break
-                digest.update(chunk)
-                copied += len(chunk)
-                os.write(fd, chunk)
-        os.fsync(fd)
-    except OSError as exc:
-        os.close(fd)
-        _unlink_quiet(dest)
-        _cleanup_dirs(created_dirs)
-        raise unexpected(
-            exc,
-            operation="copy:write",
-            code="ATTACHMENT_COPY_FAILED",
-            message="Could not copy the attachment.",
-            reason=None,
-            target_path="/".join(segments), path_base="source",
-        )
-    else:
-        os.close(fd)
+        expected = row.get("content_sha256")
+        if expected and digest.hexdigest() != expected:
+            _unlink_quiet(dest)
+            _cleanup_dirs(created_dirs)
+            raise unexpected(
+                None, operation="copy:verify", code="ATTACHMENT_COPY_FAILED",
+                message="The attachment changed while it was copied.",
+                reason="source_changed", target_path=rel, path_base="source",
+            )
+        return {
+            "doc_id": doc_id,
+            "filename": row.get("filename"),
+            "source": {"path": row.get("file_path"), "path_base": "storage"},
+            "destination": {
+                "project_id": project_id,
+                "group_id": group_id,
+                "target_path": rel,
+                "path_base": "source",
+            },
+            "size": copied,
+            "content_sha256": digest.hexdigest(),
+            "copied_at": _now_rfc3339(),
+        }
 
-    expected = row.get("content_sha256")
-    if expected and digest.hexdigest() != expected:
-        _unlink_quiet(dest)
-        _cleanup_dirs(created_dirs)
-        raise unexpected(
-            None,
-            operation="copy:verify",
-            code="ATTACHMENT_COPY_FAILED",
-            message="The attachment changed while it was copied.",
-            reason="source_changed",
-            target_path="/".join(segments), path_base="source",
-        )
+    if group_id:
+        from modules.flow_gate.services import tr2_file_policy as tr2_policy
+        try:
+            with tr2_policy.general_source_mutation(
+                project_id,
+                group_id,
+                exact_paths=[rel],
+                allow_missing_leaf=True,
+            ) as mutation:
+                return perform_copy(mutation.exact_targets[0][1])
+        except tr2_policy.Tr2FilePolicyError as exc:
+            status = 409 if exc.code in {
+                tr2_policy.TR2_MANAGED_FILE,
+                tr2_policy.SOURCE_MUTATION_BUSY,
+                tr2_policy.SOURCE_WORKTREE_UNAVAILABLE,
+            } else 400
+            raise AttachmentError(
+                status,
+                exc.code,
+                "TR2-managed source paths can only be changed through TR2."
+                if exc.code == tr2_policy.TR2_MANAGED_FILE
+                else "Source mutation path is not allowed.",
+                target_path=rel,
+                path_base="source",
+                group_id=group_id,
+                reason=exc.code,
+            )
 
-    return {
-        "doc_id": doc_id,
-        "filename": row.get("filename"),
-        "source": {"path": row.get("file_path"), "path_base": "storage"},
-        "destination": {
-            "project_id": project_id,
-            "group_id": group_id,
-            "target_path": "/".join(segments),
-            "path_base": "source",
-        },
-        "size": copied,
-        "content_sha256": digest.hexdigest(),
-        "copied_at": _now_rfc3339(),
-    }
+    root = resolve_copy_root(project_id, None)
+    dest = _seal_under_root(root, segments)
+    return perform_copy(dest)
+
 
 
 def _assert_target_absent(

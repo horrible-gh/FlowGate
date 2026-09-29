@@ -1799,12 +1799,26 @@ function isDocumentTab(tab: Tab): boolean {
   return !!tab.typeCode
 }
 
+function isTr2ManagedFileTab(tab: Tab | null): boolean {
+  return !!tab
+    && isFileTab(tab)
+    && !!tab.projectId
+    && !!tab.gitGroupId
+    && !!getTabSourcePath(tab)
+    && explorerStore.isTr2ManagedPath(
+      tab.projectId,
+      tab.gitGroupId,
+      getTabSourcePath(tab),
+    )
+}
+
 function canDirectEditSource(tab: Tab): boolean {
   return (
     isFileTab(tab)
     && !!tab.projectId
     && !!getTabSourcePath(tab)
     && tab.readonly !== true
+    && !isTr2ManagedFileTab(tab)
     && (tab.type === 'md' || tab.type === 'text')
   )
 }
@@ -1844,6 +1858,25 @@ watch(
     if (editTab.value && ids.has(editTab.value.id)) closeEditModal()
     for (const tab of [...tabs.value]) {
       if (ids.has(tab.id)) tabsStore.closeTab(tab.id)
+    }
+  },
+  { immediate: true },
+)
+
+// A source tab may already be open when TR2 approval turns its path into durable
+// managed ownership. Keep the viewing tab, but remove any ordinary edit surface
+// from the CURRENT store state instead of trusting creation-time readonly metadata.
+watch(
+  () => tabs.value
+    .filter((tab) => isTr2ManagedFileTab(tab))
+    .map((tab) => tab.id)
+    .join('|'),
+  (managedTabIds) => {
+    if (!managedTabIds) return
+    const ids = new Set(managedTabIds.split('|'))
+    if (editTab.value && ids.has(editTab.value.id)) closeEditModal()
+    if (editDropdownTabId.value && ids.has(editDropdownTabId.value)) {
+      editDropdownTabId.value = null
     }
   },
   { immediate: true },

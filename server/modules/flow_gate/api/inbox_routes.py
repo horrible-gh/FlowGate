@@ -461,32 +461,46 @@ def restore_deleted_group_file(
 ):
     """Restore one deleted tracked file from the group's current HEAD."""
     from modules.flow_gate.services import git_service
+    from modules.flow_gate.services import tr2_file_policy as tr2_policy
 
     normalized = body.path.replace("\\", "/")
-    full_path, root, _resolved_group_id = _editable_source_path(
-        project_id, normalized, group_id
-    )
-    if not _group_path_is_deleted(project_id, group_id, normalized):
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "FILE_NOT_DELETED",
-                "message": "File is not deleted in this group",
-            },
-        )
+    try:
+        with tr2_policy.general_source_mutation(
+            project_id,
+            group_id,
+            exact_paths=[normalized],
+            allow_missing_leaf=True,
+        ) as mutation:
+            full_path = mutation.exact_targets[0][1]
+            root = mutation.root
+            if not _group_path_is_deleted(project_id, group_id, normalized):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "FILE_NOT_DELETED",
+                        "message": "File is not deleted in this group",
+                    },
+                )
 
-    proc = git_service._run_git(
-        ["checkout", "HEAD", "--", normalized],
-        cwd=root,
-    )
-    if proc.returncode != 0 or not full_path.is_file():
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "code": "RESTORE_FAILED",
-                "message": "Failed to restore the deleted file",
-            },
-        )
+            proc = git_service._run_git(
+                ["checkout", "HEAD", "--", normalized],
+                cwd=root,
+            )
+            if proc.returncode != 0 or not full_path.is_file():
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "code": "RESTORE_FAILED",
+                        "message": "Failed to restore the deleted file",
+                    },
+                )
+    except tr2_policy.Tr2FilePolicyError as exc:
+        status = 409 if exc.code in {
+            tr2_policy.TR2_MANAGED_FILE,
+            tr2_policy.SOURCE_MUTATION_BUSY,
+            tr2_policy.SOURCE_WORKTREE_UNAVAILABLE,
+        } else 400
+        raise HTTPException(status_code=status, detail=exc.details)
 
     _emit_source_edit_refresh(project_id, group_id, normalized)
     return {

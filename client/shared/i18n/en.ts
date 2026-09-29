@@ -2635,6 +2635,7 @@ export default {
       toast_upload_no_worktree: "Upload cancelled — this group's work folder is no longer available.",
       modified_badge: 'Modified',
       new_badge: 'New',
+      tr2_managed: 'TR2-managed file · changes must be made through TR2.',
       delete_confirm_title: 'Delete',
       delete_confirm_file: 'Delete the file "{path}"? This action cannot be undone.',
       delete_confirm_folder: 'Delete the folder "{path}" and all of its contents? This recursive deletion cannot be undone.',
