@@ -100,10 +100,16 @@ class MergeTargetContext:
     lock_holder: Optional[str] = None
     started_at: Optional[str] = None
     legacy: bool = False
+    target_kind: str = "branch"
+    target_group_id: Optional[str] = None
+    managed_workspace: bool = True
 
     def public(self) -> dict:
         return {
             "target_branch": self.target_branch,
+            "target_kind": self.target_kind,
+            "target_group_id": self.target_group_id,
+            "managed_workspace": self.managed_workspace,
             "is_project_base": self.is_project_base,
             "merge_id": self.merge_id,
             "started_at": self.started_at,
@@ -210,6 +216,50 @@ def _base_context(project_id: str, base_branch: str, **extra) -> MergeTargetCont
     )
 
 
+def _resolve_worktree_target_root(
+    project_id: str, group_id: Optional[str], expected_branch: str
+) -> Optional[Path]:
+    """Resolve and validate the actual group worktree root for a worktree target.
+
+    Fail closed (returns None) on missing group, deleted group, project mismatch,
+    missing git state, unverified registration, ledger branch mismatch, missing directory,
+    or git metadata mismatch. Never fall back to base or managed workspace.
+    """
+    if not group_id or not expected_branch:
+        return None
+    from modules.flow_gate.services import git_service as _gs
+    from modules.flow_gate.db import groups as db_groups
+
+    try:
+        group_rec = db_groups.get_by_id(group_id)
+        if group_rec is None or group_rec.get("deleted_at") is not None:
+            return None
+        if group_rec.get("project_id") != project_id:
+            return None
+        state = _gs.db_git.get_state(group_id)
+        if state is None or state.get("project_id") != project_id:
+            return None
+        if not state.get("worktree_registered"):
+            return None
+        if (state.get("branch") or "").strip() != expected_branch:
+            return None
+        project_name = _gs._project_name(project_id)
+        if not project_name:
+            return None
+        wt_path = _gs.src_root(project_name, expected_branch)
+        if wt_path is None or not wt_path.exists() or not wt_path.is_dir():
+            return None
+        base_root = _gs._base_root_of(project_id)
+        if base_root is None or not base_root.exists():
+            return None
+        from .branches import _validate_worktree_git_metadata
+        _validate_worktree_git_metadata(base_root, wt_path, expected_branch)
+        return wt_path.resolve()
+    except Exception:
+        _log.warning("failed to resolve worktree target root for group %s", group_id, exc_info=True)
+        return None
+
+
 def resolve_session_target(session: dict) -> MergeTargetContext:
     """THE target of one merge session (the single source of truth after start).
 
@@ -224,11 +274,17 @@ def resolve_session_target(session: dict) -> MergeTargetContext:
     if rec is None:
         return _base_context(project_id, base_branch, merge_id=merge_id, legacy=True)
     branch = rec["branch"]
+    target_kind = rec.get("target_kind") or "branch"
+    target_group_id = rec.get("target_group_id")
+    managed_workspace = bool(rec.get("managed_workspace", target_kind == "branch" and not rec.get("is_project_base")))
     common = {
         "merge_id": merge_id,
         "owner": rec.get("owner"),
         "lock_holder": rec.get("lock_holder"),
         "started_at": rec.get("started_at"),
+        "target_kind": target_kind,
+        "target_group_id": target_group_id,
+        "managed_workspace": managed_workspace,
     }
     if rec.get("is_project_base"):
         if branch == base_branch:
@@ -240,6 +296,13 @@ def resolve_session_target(session: dict) -> MergeTargetContext:
         return MergeTargetContext(
             project_id=project_id, base_branch=branch, target_branch=branch,
             is_project_base=True, root=root, **common,
+        )
+    if target_kind == "worktree":
+        root = _resolve_worktree_target_root(project_id, target_group_id, branch)
+        return MergeTargetContext(
+            project_id=project_id, base_branch=rec.get("base_branch") or base_branch,
+            target_branch=branch, is_project_base=False, root=root,
+            workspace_dir=None, workspace_key=None, **common,
         )
     wdir = workspace_dir(project_id, branch)
     return MergeTargetContext(
@@ -381,7 +444,7 @@ def inspect_workspace(project_id: str, branch: str) -> tuple[str, dict]:
     claims = []
     for session in open_merge_attempts(project_id):
         rec = target_record(session)
-        if rec and not rec.get("is_project_base") and rec.get("branch") == branch:
+        if rec and not rec.get("is_project_base") and rec.get("managed_workspace", True) and rec.get("branch") == branch:
             claims.append((session, rec))
     marker = read_owner_marker(wdir)
     if claims:
@@ -597,7 +660,8 @@ def close_session_attempt(session: dict, state: str, *, error: Optional[dict] = 
         )
         return False
     close_attempt(merge_id, state, error=error)
-    release_workspace(target)
+    if target.managed_workspace:
+        release_workspace(target)
     return True
 
 
@@ -670,7 +734,8 @@ def fail_attempt(ctx: MergeTargetContext, error: dict) -> None:
         close_attempt(ctx.merge_id, ATTEMPT_FAILED, error=error)
         _return_merging_to_waiting(session.get("group_id"))
     finally:
-        release_workspace(ctx)
+        if ctx.managed_workspace:
+            release_workspace(ctx)
 
 
 def prepare_workspace(ctx: MergeTargetContext, *, detached: bool = False) -> None:
@@ -680,7 +745,7 @@ def prepare_workspace(ctx: MergeTargetContext, *, detached: bool = False) -> Non
     tree; a stale leftover of a closed attempt (verified by plan_finalize_target)
     is reclaimed first."""
     from modules.flow_gate.services import git_service as _gs
-    if ctx.is_project_base:
+    if ctx.is_project_base or ctx.target_kind == "worktree" or not ctx.managed_workspace:
         return
     assert ctx.workspace_dir is not None and ctx.root is not None
     base_root = _gs._base_root_of(ctx.project_id)
@@ -727,7 +792,12 @@ def _remove_workspace(wdir: Path, base_root: Path) -> bool:
 def release_workspace(ctx: MergeTargetContext) -> bool:
     """Remove the managed workspace ONLY when its owner marker names this attempt."""
     from modules.flow_gate.services import git_service as _gs
-    if ctx.is_project_base or ctx.workspace_dir is None:
+    if (
+        ctx.is_project_base
+        or ctx.workspace_dir is None
+        or ctx.target_kind == "worktree"
+        or not ctx.managed_workspace
+    ):
         return False
     marker = read_owner_marker(ctx.workspace_dir)
     if (
@@ -762,6 +832,12 @@ def workspace_ownership(ctx: MergeTargetContext) -> str:
                without a marker): fail closed — touch neither git nor the row
     """
     from modules.flow_gate.services import git_service as _gs
+    if ctx.target_kind == "worktree" or not ctx.managed_workspace:
+        if ctx.root is None:
+            return OWN_MISMATCH
+        if not ctx.root.exists():
+            return OWN_ABSENT
+        return OWN_OWNED
     if ctx.is_project_base or ctx.workspace_dir is None:
         return OWN_OWNED
     marker = read_owner_marker(ctx.workspace_dir)
@@ -852,7 +928,8 @@ def recover_interrupted_attempt(session: dict, reason: str) -> Optional[str]:
     # attempt's reclaim. release_workspace() refuses it by marker anyway.
     close_attempt(ctx.merge_id, ATTEMPT_INTERRUPTED, error={"code": reason})
     _return_merging_to_waiting(session.get("group_id"))
-    release_workspace(ctx)
+    if ctx.managed_workspace:
+        release_workspace(ctx)
     return ATTEMPT_INTERRUPTED
 
 

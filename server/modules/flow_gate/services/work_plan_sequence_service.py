@@ -19,7 +19,11 @@ from typing import Any, Iterable, Optional
 
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.document_type_labels import get_type_name
-from modules.flow_gate.documents.constants import STEP_NOTE_MAX_CHARS
+from modules.flow_gate.documents.constants import (
+    INSTRUCTION_AUTO_TYPES,
+    STEP_NOTE_MAX_CHARS,
+    WORK_PLAN_STEP_TYPES,
+)
 from modules.flow_gate.services.work_plan_apply_service import build_workflow_tag
 from modules.flow_gate.services.workflow_decision_service import (
     AUTO_REPORT_MAP,
@@ -40,7 +44,7 @@ UNDO_DEPTH = 1
 PLACEABLE_MIN = 1
 
 # ── L0011 §1.2 — fixed sets ──────────────────────────────────────────────────
-PLACEABLE_TYPES = frozenset({"DS", "D", "P", "L", "DB", "N", "T", "TS", "NR", "TR", "TSR"})
+PLACEABLE_TYPES = WORK_PLAN_STEP_TYPES
 # AUTO_ROW_MAP is not a second copy of the instruction→report pairing: L0011 §1.2 requires one
 # side to be the original and the other to read it, because a drift between the two would make
 # the rows we pour differ from the rows the save path writes.
@@ -522,7 +526,7 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
         # Rebuilding auto rows also scrubs snapshots left by older pours.  Legacy callers
         # without WorkPlan provenance keep their historical paired-row projection.
         worker_pre_instruction = (
-            row["type"] in {"T", "N"} and bool(want) and not row.get("source_doc_id")
+            row["type"] in INSTRUCTION_AUTO_TYPES and bool(want) and not row.get("source_doc_id")
         )
         old = by_parent.get(row["uid"])
         old_matches = old is not None and old.get("type") == want
@@ -557,7 +561,7 @@ def attach_auto_rows(rows: list[dict], locale: str = "ko", next_uid: int = 0) ->
         # to write was being written on the decision/edit path.
         server_assembled = want in SERVER_ASSEMBLED_REPORT_TYPES
         stale_work_plan_default_pair_note = (
-            row["type"] in {"T", "N"}
+            row["type"] in INSTRUCTION_AUTO_TYPES
             and bool(row.get("source_doc_id"))
             and row.get("pair_note_source") == "defaults"
         )

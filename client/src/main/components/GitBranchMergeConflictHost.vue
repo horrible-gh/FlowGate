@@ -7,8 +7,8 @@
   <GitConflictResolverDialog
     v-if="mode === 'resolve'"
     :files="conflictFiles"
-    :branch="attempt?.source_branch || null"
-    :base-branch="attempt?.target_branch || null"
+    :branch="sourceLabel"
+    :base-branch="targetLabel"
     :busy="busy"
     :load-status="loadStatus"
     :error-message="errorMessage"
@@ -33,8 +33,8 @@
     group-id=""
     :merge-id="mergeId"
     :merge-api-base="apiBase"
-    :branch="attempt?.source_branch || null"
-    :base-branch="attempt?.target_branch || null"
+    :branch="sourceLabel"
+    :base-branch="targetLabel"
     :providers="aiProviderStore.providers"
     :selected-provider="aiProviderStore.selectedProviderId"
     :provider-loading="aiProviderStore.loading"
@@ -65,6 +65,10 @@ interface BranchMergeAttempt {
   state: string
   source_branch: string
   target_branch: string
+  source_kind?: string
+  source_group_id?: string | null
+  target_kind?: string
+  target_group_id?: string | null
   push: boolean
   file_count: number
   resolved_count: number
@@ -94,6 +98,24 @@ let pollTimer: ReturnType<typeof setTimeout> | null = null
 let disposed = false
 
 const apiBase = computed(() => `/api/v1/projects/${props.projectId}/git/merge/${props.mergeId}`)
+
+const sourceLabel = computed(() => {
+  const att = attempt.value
+  if (!att) return null
+  if (att.source_kind === 'worktree' && att.source_group_id) {
+    return `${att.source_branch} (${t('main.git_branch_manager.kind.internal_slot')}: ${att.source_group_id})`
+  }
+  return att.source_branch || null
+})
+
+const targetLabel = computed(() => {
+  const att = attempt.value
+  if (!att) return null
+  if (att.target_kind === 'worktree' && att.target_group_id) {
+    return `${att.target_branch} (${t('main.git_branch_manager.kind.internal_slot')}: ${att.target_group_id})`
+  }
+  return att.target_branch || null
+})
 
 // The one sentence the resolver dialog shows about the AI half — the server's attempt
 // state decides it; the run's messages are the run's own detail view, not this line.

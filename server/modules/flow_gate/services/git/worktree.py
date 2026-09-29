@@ -102,6 +102,19 @@ def ensure_worktree(
             _gs._fail_worktree(project_id, group_id, branch, "git_unavailable")  # E1
             return "failed"
 
+        try:
+            claim = _gs.get_branch_merge_group_claim(group_id)
+        except Exception:
+            _record_attempt(project_id, "failed", "branch_merge_claim_query_failed", trigger, "none")
+            _gs._fail_worktree(project_id, group_id, branch, "branch_merge_claim_query_failed")
+            return "failed"
+        if claim is not None:
+            # Normal ownership protection, not a broken worktree.  Keep the public
+            # ensure_worktree return contract for callers, but do not poison the
+            # durable provision-failure ledger or emit git_worktree_failed.
+            _record_attempt(project_id, "blocked", "branch_merge_claim_active", trigger, "none")
+            return "failed"
+
         holder = f"op:{uuid.uuid4()}"
         if not _gs._acquire_lock(project_id, holder):
             _record_attempt(project_id, "failed", "git_busy", trigger, "none")
@@ -127,6 +140,16 @@ def _ensure_worktree_locked(
     trigger: str = "remote_access", start_point: Optional[str] = None,
 ) -> str:
     from modules.flow_gate.services import git_service as _gs
+    try:
+        claim = _gs.get_branch_merge_group_claim(group_id)
+    except Exception:
+        _gs._fail_worktree(project_id, group_id, branch, "branch_merge_claim_query_failed")
+        return "failed"
+    if claim is not None:
+        # The slot is healthy but owned by a branch merge.  Fail closed without
+        # rewriting group_git_state.provision_error or emitting a failure SSE.
+        return "failed"
+
     project_base_branch = (cfg.get("base_branch") or "main").strip() or "main"
     base_root = _gs.src_root(project_name, project_base_branch)
     work_base_ref = (
@@ -589,6 +612,11 @@ def _cleanup_group_slot(
             return False
         state = _gs.db_git.get_state(group_id)
         if state is None or not state.get("worktree_registered"):
+            return False
+        try:
+            if _gs.get_branch_merge_group_claim(group_id) is not None:
+                return False
+        except Exception:
             return False
         status = (state.get("status") or "none")
         # 0192 T0005 §3: a DISPOSED group's slot is a cleanup target regardless of

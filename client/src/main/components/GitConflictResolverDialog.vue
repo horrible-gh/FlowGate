@@ -188,12 +188,13 @@
                   </article>
                 </template>
               </div>
-              <textarea
+              <LineNumberedTextarea
                 v-else
                 v-model="selectedConflictFile.directText"
                 class="git-conflict-direct-editor"
-                spellcheck="false"
-              ></textarea>
+                :wrap-off="true"
+                :spellcheck="false"
+              />
             </section>
           </div>
         </template>
@@ -307,6 +308,7 @@
 <script setup lang="ts">
 import AppIcon from '@shared/AppIcon.vue'
 import AiProviderSelect from './AiProviderSelect.vue'
+import LineNumberedTextarea from './common/LineNumberedTextarea.vue'
 import DialogFooter from './dialogs/DialogFooter.vue'
 import DialogHeader from './dialogs/DialogHeader.vue'
 import DialogShell from './dialogs/DialogShell.vue'
@@ -935,7 +937,6 @@ watch(
 }
 .git-common-block,
 .git-conflict-side pre,
-.git-conflict-direct-editor,
 .git-chunk-resolved pre {
   font: var(--conflict-code-size, 0.86rem)/1.5 var(--mono, ui-monospace, monospace);
   white-space: pre-wrap;
@@ -1008,13 +1009,16 @@ watch(
   flex: 1 1 auto;
   min-height: 0;
   width: 100%;
-  border: none;
-  border-radius: 0;
-  padding: 12px;
-  resize: none;
-  outline: none;
-  color: var(--text, #0f172a);
-  background: #fff;
+  --line-editor-font-family: var(--mono, ui-monospace, monospace);
+  --line-editor-font-size: var(--conflict-code-size, 0.86rem);
+  --line-editor-line-height: 1.5;
+  --line-editor-tab-size: 2;
+  --line-editor-padding-y: 12px;
+  --line-editor-padding-x: 12px;
+  --line-editor-bg: #fff;
+  --line-editor-color: var(--text, #0f172a);
+  --line-editor-gutter-bg: #f8fafc;
+  --line-editor-gutter-color: #64748b;
 }
 /* 0481 D0006 §6.2 v13 화면 1 `.git-conflict-footer-context`: 가드 문장 · 세로 구분선 ·
    AI 호출 옵션이 한 덩어리로 왼쪽에 서고, 남는 폭은 가드 문장이 먹는다. */

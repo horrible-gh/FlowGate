@@ -57,21 +57,23 @@
           <div v-if="saveError" class="document-editor__save-error" role="alert">
             {{ saveError }}
           </div>
-          <textarea
+          <LineNumberedTextarea
             v-if="headerVisible"
-            :value="fullContent"
+            :model-value="fullContent"
             class="document-editor__textarea"
-            spellcheck="false"
-            data-dialog-autofocus
-            @input="onFullContentInput"
+            :wrap-off="true"
+            :spellcheck="false"
+            dialog-autofocus
+            @update:model-value="onFullContentInput"
           />
-          <textarea
+          <LineNumberedTextarea
             v-else
-            :value="body"
+            :model-value="body"
             class="document-editor__textarea"
-            spellcheck="false"
-            data-dialog-autofocus
-            @input="onBodyInput"
+            :wrap-off="true"
+            :spellcheck="false"
+            dialog-autofocus
+            @update:model-value="onBodyInput"
           />
         </template>
       </div>
@@ -89,6 +91,7 @@ import { useI18n } from 'vue-i18n'
 
 import AppIcon from '@shared/AppIcon.vue'
 
+import LineNumberedTextarea from './common/LineNumberedTextarea.vue'
 import DialogFooter from './dialogs/DialogFooter.vue'
 import DialogHeader from './dialogs/DialogHeader.vue'
 import DialogShell from './dialogs/DialogShell.vue'
@@ -121,12 +124,12 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-function onBodyInput(event: Event) {
-  emit('update:body', (event.target as HTMLTextAreaElement).value)
+function onBodyInput(value: string) {
+  emit('update:body', value)
 }
 
-function onFullContentInput(event: Event) {
-  emit('update:fullContent', (event.target as HTMLTextAreaElement).value)
+function onFullContentInput(value: string) {
+  emit('update:fullContent', value)
 }
 
 /**
@@ -201,20 +204,21 @@ defineExpose({ isDirty, requestClose })
 
 .document-editor__textarea {
   width: 100%;
-  /* Fill the editor track instead of pinning height to a viewport unit. A vh pin is
-     decoupled from the body track; when the two mismatch both scroll. min-height: 0 +
-     stretch makes the textarea exactly fill the body and be the only scroller. */
+  /* Fill the editor track instead of pinning height to a viewport unit. The shared
+     component root stays shrinkable and clips; its inner textarea remains the sole
+     scroll owner, preserving the prior single-scrollbar contract. */
   flex: 1 1 auto;
   min-height: 0;
-  resize: none;
-  border: 0;
-  outline: none;
-  padding: 18px 20px;
-  background: #0f172a;
-  color: #e2e8f0;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: .8125rem;
-  line-height: 1.7;
+  --line-editor-bg: #0f172a;
+  --line-editor-color: #e2e8f0;
+  --line-editor-gutter-bg: #111c32;
+  --line-editor-gutter-color: #64748b;
+  --line-editor-gutter-border: #334155;
+  --line-editor-font-family: 'JetBrains Mono', monospace;
+  --line-editor-font-size: .8125rem;
+  --line-editor-line-height: 1.7;
+  --line-editor-padding-y: 18px;
+  --line-editor-padding-x: 20px;
 }
 
 .document-editor__state {

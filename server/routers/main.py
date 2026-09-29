@@ -9,6 +9,7 @@ from modules.flow_gate.auth.auth_api import router as _auth_router
 from modules.flow_gate.documents.routers.documents import router as _documents_router
 from modules.flow_gate.documents.routers.conversation_turns import router as _conversation_turns_router
 from modules.flow_gate.documents.routers.work_plan import router as _work_plan_router
+from modules.flow_gate.documents.routers.tr2 import router as _tr2_router
 from modules.flow_gate.settings.routers.system import router as _settings_system_router
 from modules.flow_gate.settings.routers.users import router as _settings_users_router
 from modules.flow_gate.settings.routers.project_settings import router as _settings_project_router
@@ -48,6 +49,7 @@ from modules.flow_gate.api.v1.ui_settings_routes import router as _ui_settings_r
 from modules.flow_gate.api.v1.snapshot_routes import router as _snapshot_router
 from modules.flow_gate.api.v1.source_bundle_routes import router as _source_bundle_router, overview_router as _source_bundle_overview_router
 from modules.flow_gate.api.v1.agent_routes import router as _agent_router
+from modules.flow_gate.api.v1.agent_job_routes import router as _agent_job_router
 from modules.flow_gate.api.request_scope_middleware import RequestScopeMiddleware
 from modules.flow_gate.services.git_service import GitServiceError
 from modules.flow_gate.services.git.credentials import git_error_envelope
@@ -167,6 +169,7 @@ app.include_router(_conversation_turns_router, prefix=f"{CONTEXT}/api/v1", tags=
 # Work plan (WP) routes live under the same /documents prefix but in their own module:
 # documents.py is already 112KB and the plan paths share nothing with it but the prefix.
 app.include_router(_work_plan_router, prefix=f"{CONTEXT}/api/v1", tags=["Documents"])
+app.include_router(_tr2_router, prefix=f"{CONTEXT}/api/v1", tags=["Documents"])
 app.include_router(_settings_system_router, prefix=f"{CONTEXT}/api/v1", tags=["SystemSettings"])
 app.include_router(_settings_users_router, prefix=f"{CONTEXT}/api/v1", tags=["UserAdmin"])
 app.include_router(_settings_project_router, prefix=f"{CONTEXT}/api/v1", tags=["ProjectSettings"])
@@ -207,6 +210,7 @@ app.include_router(_snapshot_router, prefix=f"{CONTEXT}", tags=["Snapshots"])
 app.include_router(_source_bundle_router, prefix=f"{CONTEXT}", tags=["SourceBundles"])
 app.include_router(_source_bundle_overview_router, prefix=f"{CONTEXT}", tags=["SourceBundles"])
 app.include_router(_agent_router, prefix=f"{CONTEXT}/api/v1", tags=["Agents"])
+app.include_router(_agent_job_router, prefix=f"{CONTEXT}/api/v1", tags=["AgentJobs"])
 app.include_router(_files_router.router, prefix="/api", tags=["Files"])
 # Every mutation route must carry an inventory classification. Group routes also name
 # the standard resolver used by GroupMutationPolicyMiddleware.

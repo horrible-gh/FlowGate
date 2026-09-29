@@ -634,6 +634,7 @@ def _guard_group_update_ai_idle(group_id: str) -> None:
 def update_from_base(group_id: str) -> dict:
     """Explicit-only refresh from the group's effective work base."""
     from modules.flow_gate.services import git_service as _gs
+    _gs.guard_group_branch_merge_free(group_id)
     cfg, state, project_id, base_root, wt_path = _gs._finalize_context(group_id)
     if _gs.db_git.get_open_session_by_group(group_id) is not None:
         raise GitServiceError(409, "invalid_state", "resolve or abort the current group update first")
@@ -645,6 +646,7 @@ def update_from_base(group_id: str) -> dict:
     if not _gs._acquire_lock(project_id, holder):
         raise GitServiceError(409, "git_busy", "another git operation is in progress")
     try:
+        _gs.guard_group_branch_merge_free(group_id)
         _guard_group_update_ai_idle(group_id)
         from modules.flow_gate.db import group_ai_leases
         from modules.flow_gate.services import ai_invoke_service
@@ -882,6 +884,7 @@ def finalize(
     attempt is open, that attempt's pinned target. ``approval_context`` (0555) is the
     final approval's capability: it borrows the orchestrator's project lock."""
     from modules.flow_gate.services import git_service as _gs
+    _gs.guard_group_branch_merge_free(group_id)
     cfg, state, project_id, base_root, wt_path = _gs._finalize_context(group_id)
     borrowed_lock = approval_context is not None
     if approval_context is not None:
@@ -1017,6 +1020,7 @@ def finalize(
             f"Another git operation is in progress for project '{project_id}' (try again shortly)",
         )
     try:
+        _gs.guard_group_branch_merge_free(group_id)
         # flowgate.default.0361 NR0003 §5.3/§8.1: every fetch/push this attempt may
         # issue below (unpushed-merge recovery fetch/push, the pinned-attempt merge
         # fetch, the work-branch push) shares this one repository's `origin` — sync

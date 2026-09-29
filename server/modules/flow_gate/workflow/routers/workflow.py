@@ -30,13 +30,15 @@ from modules.flow_gate.db import workflow_events as db_events
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import now_iso
 from modules.flow_gate.documents.constants import NON_SLOT_WORKFLOW_TYPES
+from modules.flow_gate.documents import tr2_service
+from modules.flow_gate.documents.tr2_errors import TR2_ERRORS, error_payload
 from modules.flow_gate.storage import paths as storage_paths
 from modules.flow_gate import process_service
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services import tr_commit_service
 from modules.flow_gate.services import tr_scope_service
 from modules.flow_gate.services.git_service import GitServiceError
-from modules.flow_gate.services.mutation_policy import MutationPolicyError
+from modules.flow_gate.services.mutation_policy import MutationPolicyError, human_principal
 
 from ..pipeline_service import (
     PermissionError as WFPermissionError,
@@ -161,6 +163,8 @@ class GroupTransitionRequest(BaseModel):
 
 class DocumentTransitionRequest(BaseModel):
     comment: Optional[str] = None
+    expected_revision: Optional[int] = None
+    request_key: Optional[str] = None
 
 
 class RejectionReasonRequest(BaseModel):
@@ -170,6 +174,8 @@ class RejectionReasonRequest(BaseModel):
 class DocumentBodyRequest(BaseModel):
     doc_id: str
     comment: Optional[str] = None
+    expected_revision: Optional[int] = None
+    request_key: Optional[str] = None
     # flowgate.default.0162 §1 — final-approval git ride-along (merge/push/wait).
     # Only honored on approve of a git-active group's AC document.
     git_action: Optional[str] = None
@@ -396,7 +402,8 @@ def document_transition_rpc(
     return document_transition_endpoint(
         body.doc_id,
         action,
-        DocumentTransitionRequest(comment=body.comment),
+        DocumentTransitionRequest(comment=body.comment, expected_revision=body.expected_revision,
+                                  request_key=body.request_key),
         current_user,
     )
 
@@ -528,7 +535,10 @@ async def document_review_transition_rpc(
         return await document_review_transition_endpoint(
             body.doc_id,
             action,
-            DocumentTransitionRequest(comment=body.comment),
+            DocumentTransitionRequest(
+                comment=body.comment, expected_revision=body.expected_revision,
+                request_key=body.request_key,
+            ),
             current_user,
             request,
         )
@@ -1052,7 +1062,12 @@ async def document_review_transition_endpoint(
                 user_permissions=user_permissions,
                 comment=body.comment,
                 locale=locale,
+                mutation_principal=human_principal(current_user),
+                expected_revision=body.expected_revision,
+                request_key=body.request_key,
             )
+        except (tr2_service.Tr2ValidationError, MutationPolicyError):
+            raise
         except ValueError as exc:
             detail = str(exc)
             status_code = 404 if "not found" in detail else 400
@@ -1098,7 +1113,13 @@ async def document_review_transition_endpoint(
 
         return prev_review_status, result, tr_commit
 
-    prev_review_status, result, tr_commit = await anyio.to_thread.run_sync(_transition_sync)
+    try:
+        prev_review_status, result, tr_commit = await anyio.to_thread.run_sync(_transition_sync)
+    except tr2_service.Tr2ValidationError as exc:
+        return JSONResponse(status_code=TR2_ERRORS[exc.code].http_status,
+                            content=error_payload(exc.code, details=exc.details))
+    except MutationPolicyError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.body())
 
     # SSE broadcast (M026 §8-1 Phase 5-C)
     try:

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import re
 
+from modules.flow_gate.documents.type_code import parse_doc_code as _parse_doc_code, doc_code_seq_text
+
 
 # ── Format ────────────────────────────────────────────────────────────────────
 
@@ -46,10 +48,7 @@ def parse_doc_code(code: str) -> tuple[str, int]:
 
     Example: '0001-R' -> ('R', 1), '0012-DS' -> ('DS', 12)
     """
-    m = re.match(r'^(\d+)-([A-Za-z]+)$', code)
-    if not m:
-        raise ValueError(f"Invalid document code format: {code!r}")
-    return m.group(2), int(m.group(1))
+    return _parse_doc_code(code)
 
 
 # ── Reformat ──────────────────────────────────────────────────────────────────
@@ -83,9 +82,9 @@ def reformat_code(code: str, new_width: int, kind: str) -> str:
 
 def extract_numeric_suffix(code: str) -> str:
     """Extract the numeric part from a code. '0001' -> '0001', '0001-R' -> '0001'"""
-    m = re.match(r'^(\d+)-[A-Za-z]+$', code)
-    if m:
-        return m.group(1)
+    numeric = doc_code_seq_text(code)
+    if numeric is not None:
+        return numeric
     m = re.search(r'\d+$', code)
     return m.group(0) if m else code
 

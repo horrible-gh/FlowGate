@@ -155,27 +155,11 @@ def _check_project_auth(request: Request, project_id: str):
 
 @router.post("/projects/{project_id}/files/upload", response_class=JSONResponse)
 async def upload_files(request: Request, project_id: str):
-    """Uploads files via multipart/form-data — restores directory structure.
-
-    Form fields:
-      - target_path: target upload directory (relative path, empty string = root)
-      - files[]: list of files to upload. Filename may include a webkitRelativePath-style prefix.
-
-    Returns:
-      { "uploaded": [{ "path": str, "size": int }],
-        "skipped":  [{ "path": str, "reason": str }] }
-
-    skip reason codes:
-      - "PATH_TRAVERSAL" : path traversal or invalid path
-    """
-    # Authenticate and verify project permissions
+    """Upload files, applying one atomic TR2 ownership preflight for group worktrees."""
     auth_result = _check_project_auth(request, project_id)
     if isinstance(auth_result, JSONResponse):
         return auth_result
 
-    # Parse form data
-    # Starlette's multipart parser loads the entire body into memory.
-    # Pre-reject requests over 500 MB using the Content-Length header.
     content_length = request.headers.get("content-length")
     if content_length is not None:
         try:
@@ -190,84 +174,102 @@ async def upload_files(request: Request, project_id: str):
     form = await request.form()
     target_path = str(form.get("target_path") or "").strip()
     file_fields = form.getlist("files[]")
-
-    # files[] absent or empty → 400
     if not file_fields:
         return JSONResponse(
             status_code=400,
             content={"error": {"code": "INVALID_PARAM", "message": "files[] field is empty"}},
         )
-
-    # Validate target_path
     if not _is_valid_relative_path(target_path):
         return JSONResponse(
             status_code=400,
             content={"error": {"code": "INVALID_PARAM", "message": "target_path is invalid"}},
         )
 
-    # Resolve project src_root (0115: an optional group_id form field targets the
-    # group's git worktree; absent → unchanged project-branch upload behavior).
-    # 0327 T0004: the group branch of _get_src_root hits the git ledger and stats the
-    # worktree, so the resolution runs off the event loop (0279 T0005 rule) — this is
-    # an async handler and that work would freeze every other in-flight request.
     group_id = str(form.get("group_id") or "").strip() or None
-    src_root_path = await anyio.to_thread.run_sync(_get_src_root, project_id, group_id)
-    root_str = str(src_root_path)
-
     uploaded = []
     skipped = []
     total_bytes = 0
+    pending: list[tuple[str, bytes, int]] = []
 
     for upload in file_fields:
-        # Ignore scalar values that are not UploadFile
         if not hasattr(upload, "filename"):
             continue
-
         raw_filename = upload.filename or ""
-        # Normalize path separators (Windows \ → POSIX /)
         relative_filename = raw_filename.replace("\\", "/").lstrip("/")
-
-        # Validate path segment safety in filename
         if not relative_filename or not _is_safe_filename_path(relative_filename):
             skipped.append({"path": raw_filename, "reason": "PATH_TRAVERSAL"})
             continue
 
-        # Final relative path = target_path + relative_filename
-        if target_path:
-            combined_rel = target_path.replace("\\", "/").rstrip("/") + "/" + relative_filename
-        else:
-            combined_rel = relative_filename
-
-        # Normalize with os.path.realpath and check for root escape
-        full_path_str = os.path.realpath(os.path.join(root_str, combined_rel))
-        if not _under_root(full_path_str, root_str):
-            skipped.append({"path": combined_rel, "reason": "PATH_TRAVERSAL"})
-            continue
-
-        # Read file data
+        combined_rel = (
+            target_path.replace("\\", "/").rstrip("/") + "/" + relative_filename
+            if target_path else relative_filename
+        )
         data = await upload.read()
         file_size = len(data)
-
-        # Single file size limit — P007 §decision rule 1: return 413 if exceeded
         if file_size > _MAX_FILE_BYTES:
             return JSONResponse(
                 status_code=413,
                 content={"error": {"code": "PAYLOAD_TOO_LARGE", "message": "Single file exceeds 100 MB"}},
             )
-
-        # Cumulative size limit
         total_bytes += file_size
         if total_bytes > _MAX_TOTAL_BYTES:
             return JSONResponse(
                 status_code=413,
                 content={"error": {"code": "PAYLOAD_TOO_LARGE", "message": "Total request size exceeds 500 MB"}},
             )
+        pending.append((combined_rel, data, file_size))
 
-        # Create intermediate directories (if needed) and save the file
-        # (overwrite) — off the event loop, see _save_file.
+    if group_id:
+        from modules.flow_gate.services import tr2_file_policy as tr2_policy
+
+        def save_group_batch():
+            results = []
+            with tr2_policy.general_source_mutation(
+                project_id,
+                group_id,
+                exact_paths=[rel for rel, _data, _size in pending],
+                allow_missing_leaf=True,
+            ) as mutation:
+                # Every target has passed no-alias + managed ownership checks before
+                # the first byte is written. A managed conflict therefore cannot
+                # partially overwrite another file in the same multipart request.
+                for (canonical, target), (_rel, data, file_size) in zip(
+                    mutation.exact_targets, pending
+                ):
+                    _save_file(str(target), data)
+                    results.append({"path": canonical, "size": file_size})
+            return results
+
+        try:
+            uploaded.extend(await anyio.to_thread.run_sync(save_group_batch))
+        except tr2_policy.Tr2FilePolicyError as exc:
+            status = 409 if exc.code in {
+                tr2_policy.TR2_MANAGED_FILE,
+                tr2_policy.SOURCE_MUTATION_BUSY,
+                tr2_policy.SOURCE_WORKTREE_UNAVAILABLE,
+            } else 400
+            return JSONResponse(
+                status_code=status,
+                content={"error": {
+                    "code": exc.code,
+                    "message": (
+                        "TR2-managed source paths can only be changed through TR2"
+                        if exc.code == tr2_policy.TR2_MANAGED_FILE
+                        else "Source mutation path is not allowed"
+                    ),
+                    "details": exc.details,
+                }},
+            )
+        return {"uploaded": uploaded, "skipped": skipped}
+
+    src_root_path = await anyio.to_thread.run_sync(_get_src_root, project_id, None)
+    root_str = str(src_root_path)
+    for combined_rel, data, file_size in pending:
+        full_path_str = os.path.realpath(os.path.join(root_str, combined_rel))
+        if not _under_root(full_path_str, root_str):
+            skipped.append({"path": combined_rel, "reason": "PATH_TRAVERSAL"})
+            continue
         await anyio.to_thread.run_sync(_save_file, full_path_str, data)
-
-        # Return POSIX relative path from project root in the response
         saved_rel = os.path.relpath(full_path_str, root_str).replace("\\", "/")
         uploaded.append({"path": saved_rel, "size": file_size})
 

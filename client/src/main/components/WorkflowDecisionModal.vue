@@ -151,7 +151,7 @@
                     @dragend="handleTypeDragEnd"
                   >
                     <span class="doc-tag" :class="`c-${item.type}`">{{ item.type }}</span>
-                    <span class="wdm-type-name">{{ docTypeStore.getLabel(item.type) }}</span>
+                    <span class="wdm-type-name" :class="{ 'wdm-type-name--nowrap': item.type === 'T2' }">{{ docTypeStore.getLabel(item.type) }}</span>
                     <span v-if="item.autoHintKey" class="wdm-auto-hint">{{ t(`main.workflow_decision_modal.${item.autoHintKey}`) }}</span>
                     <span class="wdm-seq-badge" :style="typeSeqCounts[item.type] > 0 ? '' : 'display:none'">×{{ typeSeqCounts[item.type] }}</span>
                     <AppIcon name="plus" class="wdm-add-ico" />
@@ -572,10 +572,11 @@ const shellRef = ref<InstanceType<typeof DialogShell> | null>(null)
 const AUTO_MAP: Record<string, string[]> = {
   N:  ['NR'],
   T:  ['TR'],
+  T2: ['TR2'],
   TS: ['TSR'],
 }
 
-const AUTO_TYPES = new Set(['NR', 'TR', 'TSR'])
+const AUTO_TYPES = new Set(['NR', 'TR', 'TR2', 'TSR'])
 
 const CATEGORIES = [
   {
@@ -604,6 +605,7 @@ const CATEGORIES = [
       { type: 'DS', autoHintKey: '' },
       { type: 'N',  autoHintKey: 'auto_hint_NR' },
       { type: 'T',  autoHintKey: 'auto_hint_TR' },
+      { type: 'T2', autoHintKey: 'auto_hint_TR2' },
       { type: 'TS', autoHintKey: 'auto_hint_TSR' },
     ],
   },
@@ -624,6 +626,7 @@ const CATEGORIES = [
 const AUTO_ONLY = [
   { type: 'NR',  hintKey: 'auto_only_hint_NR' },
   { type: 'TR',  hintKey: 'auto_only_hint_TR' },
+  { type: 'TR2', hintKey: 'auto_only_hint_TR2' },
   { type: 'TSR', hintKey: 'auto_only_hint_TSR' },
 ]
 
@@ -1737,6 +1740,7 @@ watch(
 }
 
 .wdm-type-name { flex: 1; font-size: .8rem; font-weight: 500; color: var(--text); }
+.wdm-type-name--nowrap { white-space: nowrap; }
 
 .wdm-seq-badge {
   font-size: .6rem;

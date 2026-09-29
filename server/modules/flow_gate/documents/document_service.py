@@ -22,15 +22,19 @@ UPDATE … WHERE status=<expected_status>. If a race is detected, it raises 409.
 from __future__ import annotations
 
 import os
+import uuid
 from typing import Any, Optional
 
 from fastapi import HTTPException
 
 from modules.flow_gate.db import documents as db_docs
+from modules.flow_gate.db import git_integration as db_git
+from modules.flow_gate.db import tr_history_recovery as db_recovery
 from modules.flow_gate.db import workflow_events as db_events
 from modules.flow_gate.db import workflow_sequences as db_sequences
 from modules.flow_gate.db.connection import get_store, now_iso
 from modules.flow_gate.numbering import id_formatter
+from modules.flow_gate.services import git_service, tr2_file_policy
 from modules.flow_gate.storage import paths as storage_paths
 
 # ── State-machine definitions ─────────────────────────────────────────────────
@@ -179,31 +183,18 @@ def update_document(
     return doc
 
 
-def delete_document(doc_id: str, actor_user_id: str) -> None:
-    """Delete a document and record workflow_event(doc_deleted).
-
-    Because of the workflow_events.document_id FK constraint, clear the reference
-    to NULL before deletion (preserving history while removing only the document
-    reference), then delete the document.
-    """
-    doc = db_docs.get_by_id(doc_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
-
+def _delete_document_row(doc: dict, actor_user_id: str) -> None:
+    """Atomic DB half of deletion; caller owns any required source/history mutex."""
     store = get_store()
-    # Run the whole deletion inside a transaction so it is atomic AND so the SQLite
-    # backend has `PRAGMA foreign_keys = ON` active (connection.transaction() turns it
-    # on only within the transaction context). Outside a transaction the live sqlite
-    # backend leaves FKs OFF, so declared ON DELETE SET NULL / CASCADE actions on the
-    # documents row would silently not fire, leaving orphan workflow_sequences /
-    # dangling result_doc_id references (NR0122 §5 "state C"). (B0001/0122 rec #3)
+    # The transaction also enables SQLite FK enforcement, so inactive TR2 deletion may
+    # cascade ledger rows while migration 125 preserves the succeeded attempt and
+    # SET NULLs attempt.ledger_row_id.
     with store.transaction():
-        # Release the FK: set document_id to NULL (history is preserved)
         store._execute(
             "UPDATE workflow_events SET document_id = NULL WHERE document_id = ?",
             [doc["id"]],
         )
-        db_docs.delete(doc_id)
+        db_docs.delete(doc["doc_id"])
         db_events.create({
             "event_type": "doc_deleted",
             "project_id": doc["project_id"],
@@ -212,6 +203,74 @@ def delete_document(doc_id: str, actor_user_id: str) -> None:
             "actor_user_id": actor_user_id,
             "from_state": doc["status"],
         })
+
+
+def delete_document(doc_id: str, actor_user_id: str) -> None:
+    """Delete a document, serializing existing TR2 identity with source history."""
+    initial = db_docs.get_by_id(doc_id)
+    if initial is None:
+        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+    if str(initial.get("type_code") or "").upper() != "TR2":
+        _delete_document_row(initial, actor_user_id)
+        return
+
+    project_id = initial.get("project_id")
+    group_id = initial.get("group_id")
+    if not project_id or not group_id:
+        raise HTTPException(status_code=409, detail={
+            "code": "TR2_OWNERSHIP_INVARIANT",
+            "message": "TR2 document is missing project/group ownership metadata.",
+        })
+
+    holder = f"tr2-document-delete:{group_id}:{uuid.uuid4().hex}"
+    if not git_service._acquire_lock(project_id, holder):
+        raise HTTPException(status_code=409, detail={
+            "code": "SOURCE_MUTATION_BUSY",
+            "message": "Source history is busy; retry document deletion.",
+        })
+    try:
+        # The pre-lock read is admission only. All authority is re-read under the mutex.
+        fresh = db_docs.get_by_id(doc_id)
+        if fresh is None:
+            raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+        if (str(fresh.get("type_code") or "").upper() != "TR2"
+                or fresh.get("project_id") != project_id
+                or fresh.get("group_id") != group_id):
+            raise HTTPException(status_code=409, detail={
+                "code": "TR2_OWNERSHIP_INVARIANT",
+                "message": "TR2 document identity changed while deletion was waiting.",
+            })
+
+        try:
+            unresolved = db_recovery.has_unresolved(group_id)
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail={
+                "code": "TR_HISTORY_RECOVERY_REQUIRED",
+                "message": "TR source history recovery state cannot be verified.",
+            }) from exc
+        if unresolved:
+            raise HTTPException(status_code=409, detail={
+                "code": "TR_HISTORY_RECOVERY_REQUIRED",
+                "message": "TR source history recovery must finish before deleting this document.",
+            })
+
+        try:
+            active = tr2_file_policy.has_active_source_effect(group_id, doc_id)
+        except tr2_file_policy.Tr2OwnershipInvariantError as exc:
+            raise HTTPException(status_code=409, detail={
+                "code": tr2_file_policy.TR2_OWNERSHIP_INVARIANT,
+                "message": "TR2 source ownership history is inconsistent; deletion is blocked.",
+            }) from exc
+        if active:
+            raise HTTPException(status_code=409, detail={
+                "code": "TR2_ACTIVE_SOURCE_EFFECT",
+                "message": "This TR2 still has an active source effect. Cancel it with Time Machine before deletion.",
+            })
+
+        # Decision and DELETE remain in one project-mutex window.
+        _delete_document_row(fresh, actor_user_id)
+    finally:
+        db_git.release_lock(project_id, holder)
 
 
 # ── State machine ─────────────────────────────────────────────────────────────
