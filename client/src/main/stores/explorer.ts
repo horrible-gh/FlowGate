@@ -330,6 +330,9 @@ export const useExplorerStore = defineStore('explorer', () => {
   // branch commit (so they must NOT be cached under groupBranchTreeCache's commit key).
   // Drives the new-file badge in the read-only group-branch explorer.
   const groupUntrackedFiles = ref<Record<string, string[]>>({})    // `${pid}:${gid}` -> normalized paths
+  // 0641 T2#4 — durable TR2 ownership is group/worktree scoped. It travels once with
+  // the group tree response and stays separate from changed/untracked Git state.
+  const groupTr2ManagedPaths = ref<Record<string, string[]>>({})
   const loadingFile = ref(false)
   const loadingGroup = ref(false)
   const fileError = ref<string | null>(null)
@@ -648,6 +651,9 @@ export const useExplorerStore = defineStore('explorer', () => {
     for (const key of Object.keys(groupUntrackedFiles.value)) {
       if (key.startsWith(`${pid}:`)) delete groupUntrackedFiles.value[key]
     }
+    for (const key of Object.keys(groupTr2ManagedPaths.value)) {
+      if (key.startsWith(`${pid}:`)) delete groupTr2ManagedPaths.value[key]
+    }
   }
 
   // ── Group-branch (checkout-free) explorer (0186 P0005 §2·§3) ────────────────
@@ -688,9 +694,8 @@ export const useExplorerStore = defineStore('explorer', () => {
         commit: string
         nodes: FileNode[]
         worktree_untracked?: string[]
-        // 0327 T0004 (B0001): worktree folders that hold no file yet — git reports
-        // them nowhere else, so they ride their own channel.
         worktree_untracked_dirs?: string[]
+        tr2_managed_paths?: string[]
       }
       const res = await getTreeWithRetry<{ data: GroupTreePayload }>(
         `/api/v1/projects/${encodeURIComponent(pid)}/git/groups/${encodeURIComponent(gid)}/tree`,
@@ -702,12 +707,14 @@ export const useExplorerStore = defineStore('explorer', () => {
       groupBranchCommit.value = { ...groupBranchCommit.value, [key]: data.commit }
       const nodes = data.nodes.filter((n) => n.permissions.includes('read'))
       groupBranchTreeCache.value[`${key}:${data.commit}`] = nodes
-      // 0315 TR (NR0003 recommendation 1) — untracked files ride a channel separate from the
-      // commit-keyed tree cache, since they change without advancing the commit.
       setGroupUntrackedFiles(pid, gid, [
         ...(data.worktree_untracked ?? []),
         ...(data.worktree_untracked_dirs ?? []),
       ])
+      // Ownership can change without the branch commit being the cache authority
+      // (for example a successful TR2 approval followed by an explorer refresh).
+      // Always replace this group snapshot from the live tree response.
+      setTr2ManagedPaths(pid, gid, data.tr2_managed_paths ?? [])
       return { branch: data.branch, commit: data.commit, nodes }
     } catch (e) {
       fileError.value = 'tree_load_failed'
@@ -784,6 +791,30 @@ export const useExplorerStore = defineStore('explorer', () => {
     if (!files || !files.length) return false
     const prefix = folderPath.replace(/\\/g, '/').replace(/\/+$/, '') + '/'
     return files.some((f) => f.startsWith(prefix))
+  }
+
+  function setTr2ManagedPaths(pid: string, gid: string, paths: string[]) {
+    groupTr2ManagedPaths.value = {
+      ...groupTr2ManagedPaths.value,
+      [groupKey(pid, gid)]: [...new Set(
+        paths
+          .map((path) => path.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, ''))
+          .filter(Boolean),
+      )].sort(),
+    }
+  }
+
+  function isTr2ManagedPath(pid: string, gid: string, path: string): boolean {
+    const normalized = path.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '')
+    return (groupTr2ManagedPaths.value[groupKey(pid, gid)] ?? []).includes(normalized)
+  }
+
+  function hasTr2ManagedDescendant(pid: string, gid: string, folderPath: string): boolean {
+    const normalized = folderPath.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '')
+    const prefix = normalized ? normalized + '/' : ''
+    return (groupTr2ManagedPaths.value[groupKey(pid, gid)] ?? []).some(
+      (path) => path === normalized || (!!prefix && path.startsWith(prefix)),
+    )
   }
 
   function isGroupChangedDir(pid: string, gid: string, folderPath: string): boolean {
@@ -1149,6 +1180,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     fetchBranchCatalog, fetchLocalBranchTree, fetchLocalBranchBlob, currentLocalBranchCommit,
     groupChangeStatus, isGroupDeletedPath, isGroupChangedPath, isGroupChangedDir,
     groupUntrackedFiles, setGroupUntrackedFiles, isGroupUntrackedPath, isGroupUntrackedDir,
+    groupTr2ManagedPaths, setTr2ManagedPaths, isTr2ManagedPath, hasTr2ManagedDescendant,
     expandedFileNodes, expandedGroupNodes,
     isFileNodeExpanded, setFileNodeExpanded, setFileNodesExpanded,
     isGroupNodeExpanded, setGroupNodeExpanded, setGroupNodesExpanded, expandGroupAncestors,

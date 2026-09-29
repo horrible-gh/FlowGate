@@ -183,10 +183,11 @@ def _apply_reformat(
         )
         for row in rows:
             old_id = row["doc_id"]
-            m = re.match(r'^(.*\.)(\d+)-([A-Za-z]+)$', old_id)
+            from modules.flow_gate.documents.type_code import DOC_ID_TAIL_RE
+            m = DOC_ID_TAIL_RE.search(old_id.upper())
             if not m:
                 continue
-            prefix, numeric, type_code = m.groups()
+            prefix, numeric, type_code = old_id[:m.start()+1], m['seq'], m['type']
             if len(numeric) == to_width:
                 continue
             new_numeric = str(int(numeric)).zfill(to_width)

@@ -1114,6 +1114,229 @@ def list_conflicts(group_id: Optional[str], merge_id: int, *, project_id: Option
     }
 
 
+def _apply_conflict_resolution_locked(
+    group_id: Optional[str],
+    merge_id: int,
+    staged: list[tuple[str, Path, str, str]],
+    complete: bool,
+    supersedes: list[dict],
+    evaluated_paths: set[str],
+    resolver_run_id: Optional[str],
+    *,
+    expected_project_id: str,
+) -> dict:
+    """Apply a validated conflict submission inside the owning project's Git mutex.
+
+    The pre-lock pass in resolve_conflicts performs expensive semantic validation.
+    This boundary then re-reads the authoritative session/root and verifies both the
+    registered path set and the exact pre-write file content before the first write.
+    Thus no TR2 approval or other project Git mutation can interleave between the
+    final ownership check and write/git-add/session update.
+    """
+    from modules.flow_gate.services import git_service as _gs
+    from modules.flow_gate.storage.safe_path import resolve_in_root
+
+    holder = f"resolve:{merge_id}:{uuid.uuid4().hex}"
+    if not _gs._acquire_lock(expected_project_id, holder, wait_sec=_gs.LOCK_WAIT_SEC):
+        raise GitServiceError(
+            409, "git_busy",
+            f"another git operation is in progress for '{expected_project_id}'",
+        )
+
+    automatic = False
+    snapshot: Optional[dict] = None
+    result: Optional[dict] = None
+    try:
+        # Owner identity and source root are authoritative only after the project mutex
+        # is ours. Branch-merge sessions are project-addressed; all other sessions stay
+        # group-addressed exactly as before.
+        session_kwargs = (
+            {"project_id": expected_project_id} if group_id is None else {}
+        )
+        session, cfg, project_id, root = _gs._session_context(
+            group_id, merge_id, **session_kwargs
+        )
+        if project_id != expected_project_id:
+            raise GitServiceError(
+                409, "invalid_state", "conflict session project changed"
+            )
+        is_branch_merge = _is_branch_merge_session(session)
+        _gs.db_git.touch_session(merge_id)
+
+        # Re-check the review-conversation exclusion under the same mutex that guards
+        # the following source write.
+        if resolver_run_id and (
+            _gs.db_git.session_context(session).get("pending_conversation_run_id")
+            == resolver_run_id
+        ):
+            raise GitServiceError(
+                409, "review_conversation_cannot_resolve",
+                "this run is a review conversation turn: answer in your final message, "
+                "do not submit a resolution",
+            )
+
+        session_paths = {row["path"] for row in _gs.db_git.session_files(merge_id)}
+        locked_staged: list[tuple[str, Path, str, str]] = []
+        for path, _prelock_target, content, original in staged:
+            if path not in session_paths:
+                raise GitServiceError(
+                    409, "conflict_session_changed",
+                    f"'{path}' is no longer registered in merge session {merge_id}",
+                )
+            target = resolve_in_root(root, path)
+            if target is None:
+                raise GitServiceError(422, "invalid_request", f"unsafe path: '{path}'")
+            try:
+                current = target.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                current = ""
+            if current != original:
+                raise GitServiceError(
+                    409, "conflict_source_changed",
+                    f"'{path}' changed after conflict validation; reload the session",
+                )
+            locked_staged.append((path, target, content, original))
+
+        for path, target, content, _original in locked_staged:
+            _write_resolved_file(root, path, target, content)
+            proc = _gs._run_git(["add", "--", path], cwd=root)
+            if proc.returncode != 0:
+                raise GitServiceError(
+                    500, "git_error", "Git command failed",
+                    diagnostic=_gs._last_line(proc.stderr),
+                )
+            _gs.db_git.mark_file_resolved(merge_id, path)
+
+        if locked_staged:
+            context = _gs.db_git.session_context(session)
+            previous = context.get("conflict_supersedes") or []
+            if supersedes or any(
+                row.get("path") in evaluated_paths for row in previous
+            ):
+                context["conflict_supersedes"] = [
+                    row for row in previous
+                    if row.get("path") not in evaluated_paths
+                ] + supersedes
+                _gs.db_git.set_session_context(merge_id, context)
+                session = _gs.db_git.get_session(merge_id)
+
+        if locked_staged and is_branch_merge:
+            from . import branch_merge as _branch_merge
+            _branch_merge.note_resolution_submitted(session, resolver_run_id)
+            session = _gs.db_git.get_session(merge_id)
+
+        if locked_staged and _gs.db_git.session_kind(session) in _MERGE_REVIEW_KINDS:
+            context = _gs.db_git.session_context(session)
+            touched = {p for p, *_ in locked_staged}
+            origins = [
+                o for o in (context.get("conflict_origins") or [])
+                if o.get("path") not in touched
+            ]
+            for path, _target, content, original in locked_staged:
+                origins.extend(_classify_conflict_chunks(path, original, content))
+            context["conflict_origins"] = origins
+            _gs.db_git.set_session_context(merge_id, context)
+            session = _gs.db_git.get_session(merge_id)
+
+        remaining = _gs.db_git.remaining_conflicts(merge_id)
+        if not complete or remaining:
+            result = {
+                "ok": True,
+                "result": {
+                    "status": "conflict",
+                    "merge_commit": None,
+                    "pushed": False,
+                    "remaining_conflicts": remaining,
+                },
+            }
+        elif _gs.db_git.session_kind(session) == _gs.db_git.SESSION_KIND_GROUP_UPDATE:
+            proc = _gs._run_git(
+                [*_gs._GIT_IDENT, "commit", "-m", "Merge updated base into group"],
+                cwd=root,
+                author_env=_author_env_from_cfg(cfg),
+            )
+            if proc.returncode != 0:
+                raise GitServiceError(
+                    500, "git_error", "Git command failed",
+                    diagnostic=_gs._last_line(proc.stderr),
+                )
+            head = _gs._run_git(["rev-parse", "--short", "HEAD"], cwd=root)
+            merge_commit = (head.stdout or "").strip() or None
+            _gs.db_git.close_session(merge_id, "done")
+            result = {
+                "ok": True,
+                "result": {
+                    "status": "updated",
+                    "merge_commit": merge_commit,
+                    "pushed": False,
+                    "remaining_conflicts": [],
+                },
+            }
+        elif _gs.db_git.session_kind(session) in _gs.db_git.TR_SESSION_KINDS:
+            _set_tr_review_state(merge_id, TR_CONFLICT_REVIEW_RESOLVED)
+            result = {
+                "ok": True,
+                "result": {
+                    "status": "resolved_pending_review",
+                    "merge_commit": None,
+                    "pushed": False,
+                    "remaining_conflicts": [],
+                },
+            }
+        else:
+            # Finalize merge and ordinary branch-merge conflicts freeze their complete
+            # candidate while the SAME mutex that protected resolution writes is held.
+            base_branch = merge_target.resolve_session_target(session).target_branch
+            snapshot = _gs._freeze_commit_candidate(root, base_branch)
+            context = _gs.db_git.session_context(session)
+            context.update(snapshot)
+            context["review_state"] = _gs.REVIEW_STATE_PENDING
+            context["instruction_generation"] = int(
+                context.get("instruction_generation") or 0
+            )
+            context["resolver_run_id"] = resolver_run_id
+            provider_id, provider_name = _resolver_run_provider(resolver_run_id)
+            context["resolver_provider"] = provider_name or provider_id
+            context.setdefault("conversation", [])
+            _gs.db_git.set_session_context(merge_id, context)
+            automatic = (
+                bool(context.get("auto_authority"))
+                and not context.get("conflict_supersedes")
+                and not is_branch_merge
+            )
+
+            if is_branch_merge:
+                from . import branch_merge as _branch_merge
+                _branch_merge.note_review_pending(session)
+
+            result = {
+                "ok": True,
+                "result": {
+                    "status": "resolved_pending_review",
+                    "merge_commit": None,
+                    "pushed": False,
+                    "remaining_conflicts": [],
+                    "review_fingerprint": snapshot["review_fingerprint"],
+                },
+            }
+    finally:
+        _gs.db_git.release_lock(expected_project_id, holder)
+
+    # approve_merge_review owns/acquires its own project-lock boundary. Calling it while
+    # the resolver mutex is still held would deadlock because the DB lock is not re-entrant.
+    if automatic:
+        assert snapshot is not None
+        return _gs.approve_merge_review(
+            group_id,
+            merge_id,
+            attempt_id=str(uuid.uuid4()),
+            review_fingerprint=snapshot["review_fingerprint"],
+            authority="automatic",
+        )
+    assert result is not None
+    return result
+
+
 def resolve_conflicts(
     group_id: Optional[str], merge_id: int, files: list[dict], complete: bool,
     *, resolver_run_id: Optional[str] = None, project_id: Optional[str] = None,
@@ -1147,7 +1370,7 @@ def resolve_conflicts(
     # Validate EVERYTHING before writing anything (E12 — all-or-nothing).
     # 0604 T0008: side-drop and supersede failures are collected across ALL files and
     # reported in one 422, instead of stopping at the first failing file.
-    staged: list[tuple[str, Path, str]] = []
+    staged: list[tuple[str, Path, str, str]] = []
     side_dropped: list[dict] = []
     supersede_invalid: list[dict] = []
     supersedes: list[dict] = []
@@ -1242,163 +1465,16 @@ def resolve_conflicts(
             {"files": supersede_invalid},
         )
 
-    for path, target, content, _original in staged:
-        # 0608 T0005: bytes in the file's own line ending. `write_text` here is what
-        # turned 0599's LF files CRLF (and a CRLF file CR-CR-LF) on the Windows server.
-        _write_resolved_file(root, path, target, content)
-        proc = _gs._run_git(["add", "--", path], cwd=root)
-        if proc.returncode != 0:
-            raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
-        _gs.db_git.mark_file_resolved(merge_id, path)
-
-    if staged:
-        # 0604 D0005 §3.4 — the declaration record lives next to conflict_origins in
-        # the session context (no schema). A path re-checked against its conflict
-        # markers replaces its own record (dropping it when the new submission needs no
-        # declaration). A marker-less rewrite of an already-written path was never
-        # re-checked, so it cannot erase a declaration and win back auto-approval.
-        context = _gs.db_git.session_context(session)
-        previous = context.get("conflict_supersedes") or []
-        if supersedes or any(row.get("path") in evaluated_paths for row in previous):
-            context["conflict_supersedes"] = [
-                row for row in previous if row.get("path") not in evaluated_paths
-            ] + supersedes
-            _gs.db_git.set_session_context(merge_id, context)
-            session = _gs.db_git.get_session(merge_id)
-
-    if staged and is_branch_merge:
-        # 0630 T0005 (D0004 §27): who resolved — so a manual resolution is never
-        # presented as the AI's.
-        from . import branch_merge as _branch_merge
-        _branch_merge.note_resolution_submitted(session, resolver_run_id)
-        session = _gs.db_git.get_session(merge_id)
-
-    if staged and _gs.db_git.session_kind(session) in _MERGE_REVIEW_KINDS:
-        # D0006 §3.3 / L0007 §2.4: record which side each conflict chunk resolved to
-        # (ours/theirs/both/manual) so the review screen can overlay it on the real
-        # diff. Recomputed per path on every submission that touches it — a
-        # re-instruction that changes a file's resolution replaces that path's
-        # origins rather than appending stale ones.
-        context = _gs.db_git.session_context(session)
-        origins = [o for o in (context.get("conflict_origins") or []) if o.get("path") not in {p for p, *_ in staged}]
-        for path, _target, content, original in staged:
-            origins.extend(_classify_conflict_chunks(path, original, content))
-        context["conflict_origins"] = origins
-        _gs.db_git.set_session_context(merge_id, context)
-        # `session` (fetched once, above) still carries the pre-write context JSON;
-        # every read below this point goes through `db_git.session_context(session)`,
-        # so re-fetch the row now or the conflict_origins write above would be
-        # invisible to the rest of this call.
-        session = _gs.db_git.get_session(merge_id)
-
-    remaining = _gs.db_git.remaining_conflicts(merge_id)
-    if not complete or remaining:
-        return {
-            "ok": True,
-            "result": {
-                "status": "conflict", "merge_commit": None, "pushed": False,
-                "remaining_conflicts": remaining,
-            },
-        }
-
-    if _gs.db_git.session_kind(session) == _gs.db_git.SESSION_KIND_GROUP_UPDATE:
-        proc = _gs._run_git(
-            [*_gs._GIT_IDENT, "commit", "-m", "Merge updated base into group"],
-            cwd=root, author_env=_author_env_from_cfg(cfg),
-        )
-        if proc.returncode != 0:
-            raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
-        head = _gs._run_git(["rev-parse", "--short", "HEAD"], cwd=root)
-        merge_commit = (head.stdout or "").strip() or None
-        _gs.db_git.close_session(merge_id, "done")
-        return {"ok": True, "result": {
-            "status": "updated", "merge_commit": merge_commit, "pushed": False,
-            "remaining_conflicts": [],
-        }}
-
-    if _gs.db_git.session_kind(session) in _gs.db_git.TR_SESSION_KINDS:
-        # 088 — a TR conflict STOPS here. Every file is clean of markers and staged, and the
-        # revert is one `git commit` from done, and that commit is exactly what this branch
-        # refuses to make on its own.
-        #
-        # A merge conflict can end itself because a person still presses [병합] afterwards and
-        # because "the markers are gone" is close to the whole question there — both sides were
-        # written by people and the goal is to have both. A revert's question is not symmetric:
-        # one side says "delete what this TR did" and the other is the work that landed on top
-        # of it. A resolver — a person in a hurry or an AI that is confidently wrong — can
-        # produce a marker-free file that undid half the TR, and if this branch committed it the
-        # screen would say "cancelled" over a tree that is neither the old state nor the new one.
-        # So the session stays open at `resolved`, the panel shows the diff, and
-        # `commit_tr_conflict` is the second press that ends it.
-        _set_tr_review_state(merge_id, TR_CONFLICT_REVIEW_RESOLVED)
-        return {
-            "ok": True,
-            "result": {
-                "status": "resolved_pending_review", "merge_commit": None, "pushed": False,
-                "remaining_conflicts": [],
-            },
-        }
-
-    # From here down the session is a finalize merge, so the conflict root IS the base
-    # checkout; the name change keeps the merge/push reads saying what they mean.
-    #
-    # 0481 R0001/D0006/L0007 (T0008): a resolved general merge no longer commits on
-    # "the markers are gone" alone. It freezes the FULL commit-candidate tree (every
-    # path the merge commit would carry — resolved files, auto-merged files, deletes,
-    # renames, mode changes) under the project lock, persists it as
-    # resolved_pending_review, and stops there for a human to review real diff +
-    # conflict-origin chunks and press [승인]/[반려]. The only bypass is
-    # `auto_authority`, a boolean the session already carries BEFORE this submission
-    # — stamped by a human's [AI 호출] or direct [해결 제출] press via
-    # `record_auto_authority`, never by a field on this request (§2.2 — a worker
-    # token cannot self-approve its own resolution).
-    base_root = root
-    # 0594 T0012: the pinned target branch, never a re-read of project.base_branch.
-    base_branch = merge_target.resolve_session_target(session).target_branch
-    holder = f"review:{merge_id}:{uuid.uuid4()}"
-    if not _gs._acquire_lock(project_id, holder, wait_sec=_gs.LOCK_WAIT_SEC):
-        raise GitServiceError(
-            409, "git_busy", f"another git operation is in progress for '{project_id}'"
-        )
-    try:
-        snapshot = _gs._freeze_commit_candidate(base_root, base_branch)
-        context = _gs.db_git.session_context(session)
-        context.update(snapshot)
-        context["review_state"] = _gs.REVIEW_STATE_PENDING
-        context["instruction_generation"] = int(context.get("instruction_generation") or 0)
-        context["resolver_run_id"] = resolver_run_id
-        provider_id, provider_name = _resolver_run_provider(resolver_run_id)
-        context["resolver_provider"] = provider_name or provider_id
-        context.setdefault("conversation", [])
-        _gs.db_git.set_session_context(merge_id, context)
-        # 0604 D0005 §3.4: a session carrying any `supersede` declaration always
-        # stops for a person — the replaced lines must be read before the merge.
-        # 0630 T0005 (D0004 §11): a branch merge's AI was STARTED automatically, which
-        # never grants the authority to approve — it always stops for a person.
-        automatic = (
-            bool(context.get("auto_authority")) and not context.get("conflict_supersedes")
-            and not is_branch_merge
-        )
-    finally:
-        _gs.db_git.release_lock(project_id, holder)
-
-    if is_branch_merge:
-        from . import branch_merge as _branch_merge
-        _branch_merge.note_review_pending(session)
-    if automatic:
-        return _gs.approve_merge_review(
-            group_id, merge_id,
-            attempt_id=str(uuid.uuid4()),
-            review_fingerprint=snapshot["review_fingerprint"],
-            authority="automatic",
-        )
-    return {
-        "ok": True,
-        "result": {
-            "status": "resolved_pending_review", "merge_commit": None, "pushed": False,
-            "remaining_conflicts": [], "review_fingerprint": snapshot["review_fingerprint"],
-        },
-    }
+    return _apply_conflict_resolution_locked(
+        group_id,
+        merge_id,
+        staged,
+        complete,
+        supersedes,
+        evaluated_paths,
+        resolver_run_id,
+        expected_project_id=project_id,
+    )
 
 
 def _resolver_run_provider(run_id: Optional[str]) -> tuple[Optional[str], Optional[str]]:

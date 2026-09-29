@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import re
 
+from modules.flow_gate.documents.type_code import TYPE_CODE_PATTERN
+
 SLUG_CHARS = r'[a-z0-9_\-]+'
 MODULE_CHARS = SLUG_CHARS
 
@@ -22,7 +24,7 @@ GROUP_ID = re.compile(
 )
 
 DOC_ID = re.compile(
-    rf'^{SLUG_CHARS}\.(?:none|{MODULE_CHARS})\.\d{{4}}\.\d{{4}}-[A-Z]+$'
+    rf'^{SLUG_CHARS}\.(?:none|{MODULE_CHARS})\.\d{{4}}\.\d{{4}}-{TYPE_CODE_PATTERN}$'
 )
 
 

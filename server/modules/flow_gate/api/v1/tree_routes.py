@@ -197,21 +197,38 @@ def update_src_file_content(
 ):
     """Save the content of a base or live-group src-tree file as UTF-8 text."""
     group_id = (group_id or "").strip() or None
-    full_path = _resolve_src_path(project_id, path, group_id)
+
+    if group_id:
+        from modules.flow_gate.services import tr2_file_policy as tr2_policy
+        try:
+            with tr2_policy.general_source_mutation(
+                project_id,
+                group_id,
+                exact_paths=[path],
+                allow_missing_leaf=True,
+            ) as mutation:
+                full_path = mutation.exact_targets[0][1]
+                if not full_path.is_file():
+                    raise HTTPException(status_code=404, detail="Not found")
+                full_path.write_text(body.content, encoding="utf-8")
+        except tr2_policy.Tr2FilePolicyError as exc:
+            status = 409 if exc.code in {
+                tr2_policy.TR2_MANAGED_FILE,
+                tr2_policy.SOURCE_MUTATION_BUSY,
+                tr2_policy.SOURCE_WORKTREE_UNAVAILABLE,
+            } else 400
+            raise HTTPException(status_code=status, detail=exc.details)
+        return {"path": path, "content_length": len(body.content), "group_id": group_id}
+
+    full_path = _resolve_src_path(project_id, path, None)
     if not full_path.is_file():
         raise HTTPException(status_code=404, detail="Not found")
-
     full_path.write_text(body.content, encoding="utf-8")
-
-    # Base edits retain the contamination warning contract. A group edit is isolated
-    # in its live worktree, so it deliberately does not report base_git; the client
-    # refreshes the existing group changes channel instead.
-    if group_id:
-        return {"path": path, "content_length": len(body.content), "group_id": group_id}
 
     from modules.flow_gate.services import git_service
     base_git = git_service.base_checkout_dirty_status(project_id)
     return {"path": path, "content_length": len(body.content), "base_git": base_git}
+
 
 
 
@@ -220,46 +237,62 @@ def delete_src_path(request: Request, project_id: str, body: SrcDeleteRequest):
     """Delete one file or directory from the base checkout, or from a group's worktree."""
     auth = _check_project_auth(request, project_id)
     if isinstance(auth, JSONResponse): return auth
-    # NR0003 recommendation 4: deletion requires a WRITE permission (perm_document_delete), not read.
-    # Enforce it for EVERY caller — user JWTs and worker/outbound tokens alike. verify_bearer
-    # only guarantees perm_document_read, so gating this check on _is_user_jwt let any worker
-    # token hard-delete base-checkout files with mere read access. Checking the token's
-    # issued_to against the request project can only restrict access, never widen it.
     if not has_permission(auth["issued_to"], project_id, "perm_document_delete"):
         return _err(403, "FORBIDDEN", "insufficient permission for this operation")
-    # 0327 T0004: group context is resolved, not refused. NR0003 recommendation 5's blanket 403 came
-    # from delete meaning "base checkout", which no longer holds — a group delete targets
-    # that group's own worktree. The permission gate above still runs FIRST and unchanged.
+
     group_id = (body.group_id or "").strip() or None
     try: _validate_path_param(body.path)
     except HTTPException: return _err(400, "INVALID_PATH", "path is invalid")
-    if body.path.replace("\\", "/").strip("/") in ("", "."): return _err(400, "INVALID_PATH", "project root cannot be deleted")
-    if body.type not in ("file", "folder"): return _err(400, "TYPE_MISMATCH", "type must be file or folder")
-    try: full_path = _resolve_delete_path(project_id, body.path, group_id)
-    except HTTPException as exc:
-        # Keep the group failures distinguishable instead of flattening every resolver
-        # error into INVALID_PATH: 403 here would tell the operator "no permission" for
-        # what is really a missing worktree, and mismatched semantics against the
-        # download/create/upload paths that already answer 404/409.
-        detail = exc.detail if isinstance(exc.detail, dict) else {}
-        if detail.get("code") == "GROUP_NOT_FOUND":
-            return _err(404, "GROUP_NOT_FOUND", "group not found in this project")
-        if detail.get("code") == "WORKTREE_UNAVAILABLE":
-            return _err(409, "WORKTREE_UNAVAILABLE", detail.get("message") or "group worktree is unavailable")
-        return _err(400, "INVALID_PATH", "symbolic links are not allowed")
-    if not full_path.exists(): return _err(404, "NOT_FOUND", "path does not exist")
-    actual_type = "folder" if full_path.is_dir() else "file" if full_path.is_file() else ""
-    if actual_type != body.type: return _err(409, "TYPE_MISMATCH", "path type does not match request")
-    try: shutil.rmtree(full_path) if actual_type == "folder" else full_path.unlink()
-    except OSError: return _err(500, "DELETE_FAILED", "failed to delete path")
-    # NR0003 recommendation 8: a BASE delete leaves the base checkout dirty (blocking merge finalize for
-    # every group of this project). Return the base git status so the explorer can refresh its
-    # base-dirty markers and Git finalize warning immediately, instead of the contamination
-    # staying invisible until a later finalize. A group delete never dirties base — the status
-    # is still returned (unchanged contract) and simply reports base as it already was.
+    if body.path.replace("\\", "/").strip("/") in ("", "."):
+        return _err(400, "INVALID_PATH", "project root cannot be deleted")
+    if body.type not in ("file", "folder"):
+        return _err(400, "TYPE_MISMATCH", "type must be file or folder")
+
+    if group_id:
+        from modules.flow_gate.services import tr2_file_policy as tr2_policy
+        try:
+            guard_args = (
+                {"recursive_paths": [body.path]}
+                if body.type == "folder"
+                else {"exact_paths": [body.path]}
+            )
+            with tr2_policy.general_source_mutation(
+                project_id,
+                group_id,
+                allow_missing_leaf=True,
+                **guard_args,
+            ) as mutation:
+                targets = mutation.recursive_targets if body.type == "folder" else mutation.exact_targets
+                full_path = targets[0][1]
+                if not full_path.exists():
+                    return _err(404, "NOT_FOUND", "path does not exist")
+                actual_type = "folder" if full_path.is_dir() else "file" if full_path.is_file() else ""
+                if actual_type != body.type:
+                    return _err(409, "TYPE_MISMATCH", "path type does not match request")
+                try:
+                    shutil.rmtree(full_path) if actual_type == "folder" else full_path.unlink()
+                except OSError:
+                    return _err(500, "DELETE_FAILED", "failed to delete path")
+        except tr2_policy.Tr2FilePolicyError as exc:
+            if exc.code == tr2_policy.TR2_MANAGED_FILE:
+                return _err(409, exc.code, "TR2-managed source paths can only be changed through TR2")
+            if exc.code in {tr2_policy.SOURCE_MUTATION_BUSY, tr2_policy.SOURCE_WORKTREE_UNAVAILABLE}:
+                return _err(409, exc.code, "group source mutation is temporarily unavailable")
+            return _err(400, exc.code, "source mutation path is not allowed")
+    else:
+        try:
+            full_path = _resolve_delete_path(project_id, body.path, None)
+        except HTTPException:
+            return _err(400, "INVALID_PATH", "symbolic links are not allowed")
+        if not full_path.exists(): return _err(404, "NOT_FOUND", "path does not exist")
+        actual_type = "folder" if full_path.is_dir() else "file" if full_path.is_file() else ""
+        if actual_type != body.type: return _err(409, "TYPE_MISMATCH", "path type does not match request")
+        try: shutil.rmtree(full_path) if actual_type == "folder" else full_path.unlink()
+        except OSError: return _err(500, "DELETE_FAILED", "failed to delete path")
+
     from modules.flow_gate.services import git_service
     base_git = git_service.base_checkout_dirty_status(project_id)
-    return {"deleted": body.path, "type": actual_type, "base_git": base_git}
+    return {"deleted": body.path, "type": body.type, "base_git": base_git}
 
 
 # ---------------------------------------------------------------------------

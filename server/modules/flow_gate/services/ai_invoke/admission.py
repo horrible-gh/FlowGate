@@ -867,6 +867,25 @@ def start_run(
         normalize_continuation_instruction_mode,
     )
 
+    project_scoped = _is_project_scoped_run(action_scope, merge_id)
+    if not project_scoped and group_id:
+        try:
+            claim = git_service.get_branch_merge_group_claim(group_id)
+        except Exception as exc:
+            raise _http_error(
+                500,
+                "branch_merge_claim_query_failed",
+                f"failed to query branch merge claim for group '{group_id}': {exc}",
+                group_id=group_id,
+            ) from exc
+        if claim is not None:
+            raise _http_error(
+                409,
+                "branch_merge_claim_active",
+                f"group '{group_id}' has an active branch merge claim",
+                group_id=group_id,
+                claim=claim,
+            )
     requested_continuation_instruction_mode = continuation_instruction_mode
     # 0417 D0007/P0008: stage selection precedes provider-chain selection. In particular,
     # an unaddressed rejection starts with the fixed rework provider, never the reviewer.

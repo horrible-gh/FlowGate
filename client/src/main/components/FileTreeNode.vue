@@ -40,6 +40,13 @@
         :aria-label="t('main.file_tree_node.modified_badge')"
       >></span>
       <span
+        v-if="isTr2Managed || hasTr2ManagedDescendant"
+        class="tree-tr2-marker"
+        data-test="tr2-managed-marker"
+        :title="t('main.file_tree_node.tr2_managed')"
+        :aria-label="t('main.file_tree_node.tr2_managed')"
+      >T2</span>
+      <span
         class="tree-lbl"
         :class="{
           'tree-lbl--deleted': isDeleted,
@@ -66,7 +73,7 @@
     </ul>
     <ContextMenu v-model:visible="showCtx" :x="ctxX" :y="ctxY">
       <ContextMenuItem
-        v-if="isDeleted"
+        v-if="isDeleted && !isTr2Managed"
         icon="arrow-counter-clockwise"
         :disabled="groupBusy"
         :title="groupBusy ? busyHint : undefined"
@@ -281,7 +288,22 @@ const isDeleted = computed(() =>
   && props.node.type === 'file'
   && explorerStore.isGroupDeletedPath(props.projectId, props.groupId, props.node.path),
 )
-const canDelete = computed(() => !props.readonly && !isDeleted.value)
+const isTr2Managed = computed(() =>
+  !!props.groupId
+  && props.node.type === 'file'
+  && explorerStore.isTr2ManagedPath(props.projectId, props.groupId, props.node.path),
+)
+const hasTr2ManagedDescendant = computed(() =>
+  !!props.groupId
+  && props.node.type === 'folder'
+  && explorerStore.hasTr2ManagedDescendant(props.projectId, props.groupId, props.node.path),
+)
+const canDelete = computed(() =>
+  !props.readonly
+  && !isDeleted.value
+  && !isTr2Managed.value
+  && !hasTr2ManagedDescendant.value
+)
 
 // Reuse the established base-dirty marker for either the base checkout or the
 // selected group branch's tracked changes. 0192 T0005 §1: the marker now
@@ -670,6 +692,13 @@ async function onNodeFolderSelected(e: Event) {
   font-weight: 700;
   line-height: 1;
   color: var(--git-modified, #e2c08d);
+}
+.tree-tr2-marker {
+  flex: none;
+  font-size: 0.66rem;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0.78;
 }
 .tree-lbl--deleted {
   color: var(--danger, #dc2626);

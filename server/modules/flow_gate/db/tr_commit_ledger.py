@@ -44,6 +44,24 @@ def _latest_for_doc(doc_id: str) -> Optional[dict]:
     )
 
 
+def ownership_rows(group_id: str) -> list[dict[str, Any]]:
+    """Uncapped ledger rows needed to derive current TR2 active ownership.
+
+    This is deliberately separate from list_by_group(), whose LIMIT is a UI/read-model
+    concern and must never truncate an authorization decision. Terminal-reopened rows
+    remain visible here because state='live' still means their source effect survives.
+    """
+    return get_store()._fetch_all(
+        "SELECT l.id, l.group_id, l.doc_id, l.state, l.restored_from_id, "
+        "       l.reopened_terminal_at, d.type_code AS doc_type_code "
+        "FROM tr_commit_ledger l "
+        "LEFT JOIN documents d ON d.doc_id = l.doc_id "
+        "WHERE l.group_id = ? "
+        "ORDER BY l.id ASC",
+        [group_id],
+    )
+
+
 # ── writes (DB0008 §4.1) ──────────────────────────────────────────────────────
 
 def record_commit(

@@ -150,6 +150,21 @@ def update_review_status_cas(
     )
     return get_by_id(doc_id) if affected == 1 else None
 
+def update_review_cas(doc_id: str, expected_revision: int,
+                      expected_review_status: str, updates: dict[str, Any]) -> bool:
+    """Atomically approve one unchanged document revision and review round."""
+    allowed = {"doc_review_status", "updated_at", "meta"}
+    if not updates or set(updates) - allowed:
+        raise ValueError("Invalid review CAS update")
+    fields = dict(updates)
+    fields.setdefault("updated_at", now_iso())
+    clause = ", ".join(f"{key} = ?" for key in fields)
+    return get_store()._execute_affected(
+        f"UPDATE documents SET {clause} WHERE doc_id = ? "
+        "AND revision_no = ? AND doc_review_status = ?",
+        [*fields.values(), doc_id, expected_revision, expected_review_status],
+    ) == 1
+
 
 def delete(doc_id: str) -> None:
     store = get_store()

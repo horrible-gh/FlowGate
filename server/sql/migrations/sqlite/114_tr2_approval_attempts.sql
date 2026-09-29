@@ -1,0 +1,36 @@
+CREATE TABLE IF NOT EXISTS tr2_approval_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    attempt_id TEXT NOT NULL UNIQUE,
+    request_key TEXT UNIQUE,
+    tr2_doc_id TEXT NOT NULL REFERENCES documents(doc_id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    document_revision INTEGER NOT NULL,
+    document_etag TEXT,
+    approval_round INTEGER NOT NULL,
+    actor_user_id TEXT NOT NULL,
+    spec_fingerprint TEXT NOT NULL,
+    baseline_fingerprint TEXT NOT NULL,
+    live_fingerprint TEXT,
+    state TEXT NOT NULL CHECK (state IN ('in_progress','succeeded','failed','recovery_required')),
+    phase TEXT NOT NULL,
+    result_code TEXT,
+    error_code TEXT,
+    error_detail TEXT,
+    precheck_json TEXT,
+    apply_json TEXT,
+    validation_json TEXT,
+    commit_json TEXT,
+    ledger_json TEXT,
+    backup_bundle_id TEXT,
+    pre_apply_head_sha TEXT,
+    commit_sha TEXT,
+    ledger_row_id INTEGER REFERENCES tr_commit_ledger(id),
+    started_at TEXT NOT NULL,
+    heartbeat_at TEXT NOT NULL,
+    finished_at TEXT,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tr2_attempt_doc ON tr2_approval_attempts(tr2_doc_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_tr2_attempt_group_state ON tr2_approval_attempts(group_id, state);
+CREATE INDEX IF NOT EXISTS idx_tr2_attempt_stale ON tr2_approval_attempts(state, heartbeat_at);

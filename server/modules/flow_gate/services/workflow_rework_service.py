@@ -556,6 +556,8 @@ def reopen_to_target(
             )
         if cancel_result is not None:
             result["tr_commit_cancel"] = cancel_result
+        from modules.flow_gate.documents.tr2_service import notify_group_history_changed
+        notify_group_history_changed(group_id)
         return result
     finally:
         if terminal_session is not None:

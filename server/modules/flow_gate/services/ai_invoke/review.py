@@ -1035,7 +1035,7 @@ def _materialize_work_plan_instruction_before_gate(bundle: dict) -> list[int]:
     if not spine_doc or not seq or not issued_to:
         return []
     head = db_wfseq.get_effective_head(seq["id"])
-    if not head or (head.get("type") or "").upper() not in {"N", "T"}:
+    if not head or (head.get("type") or "").upper() not in workflow_decision_service.INSTRUCTION_AUTO_TYPES:
         return []
     if not head.get("source_doc_id") or head.get("source_revision_no") is None:
         return []
