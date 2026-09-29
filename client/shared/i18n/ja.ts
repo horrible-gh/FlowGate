@@ -2630,6 +2630,7 @@ export default {
       toast_upload_no_worktree: 'アップロードを中止しました — このグループの作業フォルダはすでに利用できません。',
       modified_badge: '変更あり',
       new_badge: '新規',
+      tr2_managed: 'TR2 管理ファイル · 変更は TR2 からのみ行えます。',
       delete_confirm_title: '削除',
       delete_confirm_file: 'ファイル「{path}」を削除しますか？この操作は元に戻せません。',
       delete_confirm_folder: 'フォルダ「{path}」とその中身をすべて削除しますか？配下の項目も再帰的に削除され、元に戻せません。',

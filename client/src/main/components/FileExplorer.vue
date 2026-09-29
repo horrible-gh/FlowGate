@@ -905,6 +905,9 @@ async function openFile(node: FileNode) {
   // Group views still load through the commit-aware blob viewer. A live worktree
   // may be edited; worktree-less or currently busy groups remain read-only.
   if (selectedGroup.value) {
+    const managed = explorerStore.isTr2ManagedPath(
+      projectId, selectedGroup.value, node.path,
+    )
     tabsStore.openTab({
       id: `git:${selectedGroup.value}:${node.id}`,
       title: node.label,
@@ -914,7 +917,9 @@ async function openFile(node: FileNode) {
       projectId,
       gitGroupId: selectedGroup.value,
       gitCommit: groupCommit.value,
-      readonly: !canMutate.value,
+      // Initial UX state only. MainPanel re-evaluates the live store on every render
+      // so a tab opened before TR2 approval cannot retain a stale edit affordance.
+      readonly: !canMutate.value || managed,
     })
     return
   }
