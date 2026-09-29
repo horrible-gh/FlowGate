@@ -39,6 +39,7 @@ TR2_ERRORS: dict[str, Tr2ErrorSpec] = {
         ("tr2_nested_transaction", False, 409, "Nested transaction is forbidden"),
         ("tr2_principal_required", False, 403, "Mutation principal required"),
         ("tr2_recovery_required", False, 409, "Recovery required"),
+        ("tr_history_recovery_required", False, 409, "TR history recovery required"),
         ("tr2_history_revision_required", False, 409, "A new revision is required"),
         ("tr2_history_invariant_error", False, 500, "TR2 history invariant violated"),
         ("tr2_precheck_failed", False, 422, "Precheck failed"),

@@ -11,6 +11,7 @@ from typing import Iterable
 from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.db import tr2_approval_attempts as db_attempts
 from modules.flow_gate.db import tr_commit_ledger as db_ledger
+from modules.flow_gate.db import tr_history_recovery as db_recovery
 from modules.flow_gate.documents import tr2_service
 from modules.flow_gate.services import git_service
 from modules.flow_gate.storage.safe_path import (
@@ -24,6 +25,7 @@ SOURCE_PATH_ALIAS_NOT_ALLOWED = "SOURCE_PATH_ALIAS_NOT_ALLOWED"
 SOURCE_PATH_INVALID = "SOURCE_PATH_INVALID"
 SOURCE_WORKTREE_UNAVAILABLE = "SOURCE_WORKTREE_UNAVAILABLE"
 SOURCE_MUTATION_BUSY = "SOURCE_MUTATION_BUSY"
+TR_HISTORY_RECOVERY_REQUIRED = "TR_HISTORY_RECOVERY_REQUIRED"
 TR2_OWNERSHIP_INVARIANT = "TR2_OWNERSHIP_INVARIANT"
 
 
@@ -123,6 +125,11 @@ def _lineage_root(row: dict, rows_by_id: dict[int, dict]) -> dict:
 
 def managed_paths(group_id: str) -> set[str]:
     """Authoritative active ownership derived from live ledger lineages + durable attempts."""
+    if db_recovery.has_unresolved(group_id):
+        raise Tr2FilePolicyError(
+            TR_HISTORY_RECOVERY_REQUIRED,
+            details={"group_id": group_id, "required_action": "recover_tr_history"},
+        )
     rows = db_ledger.ownership_rows(group_id)
     rows_by_id: dict[int, dict] = {}
     for row in rows:
@@ -252,6 +259,18 @@ def general_source_mutation(
         )
     try:
         root = _group_root(project_id, group_id)
+        try:
+            recovery_required = db_recovery.has_unresolved(group_id)
+        except Exception as exc:
+            raise Tr2FilePolicyError(
+                TR_HISTORY_RECOVERY_REQUIRED,
+                details={"group_id": group_id, "reason": "recovery_state_unavailable"},
+            ) from exc
+        if recovery_required:
+            raise Tr2FilePolicyError(
+                TR_HISTORY_RECOVERY_REQUIRED,
+                details={"group_id": group_id, "required_action": "recover_tr_history"},
+            )
         exact_targets = tuple(
             _resolve(root, path, allow_missing_leaf=allow_missing_leaf)
             for path in exact_paths

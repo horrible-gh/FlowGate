@@ -725,23 +725,26 @@ def test_restart_recovers_a_stale_attempt_before_the_retry_runs(env, monkeypatch
 
 def test_time_machine_revert_and_reapply_move_source_history(env):
     from modules.flow_gate.db import tr_commit_ledger as db_ledger
-    from modules.flow_gate.services import tr_commit_service
+    from modules.flow_gate.services import tr2_file_policy, tr_commit_service
     repo = env["repo"]
     client = api()
     group, t2, tr2 = ready_tr2("0008")
     (repo / "gate.ok").write_bytes(b"ok")
     assert approve(client, tr2, 1, request_key="human:tm").status_code == 200
     assert view(client, tr2)["history"]["source_history_state"] == "aligned"
+    assert "src/app.txt" in tr2_file_policy.managed_paths(group["group_id"])
 
     tr_commit_service.cancel_tr_commits(group["group_id"], [tr2])
     row = [r for r in db_ledger.list_by_group(group["group_id"]) if r["doc_id"] == tr2][0]
     assert row["state"] == "canceled" and row["cancel_commit"], row
+    assert "src/app.txt" not in tr2_file_policy.managed_paths(group["group_id"])
     assert (repo / "src" / "app.txt").read_bytes() == b"greeting = 'hello'\ncount = 1\n"
     reverted = view(client, tr2)
     assert reverted["history"]["source_history_state"] == "restore_pending"
     assert reverted["mutation"]["allowed"] is False  # still the approved terminal revision
 
     tr_commit_service.reapply_tr_commits(group["group_id"], [tr2])
+    assert "src/app.txt" in tr2_file_policy.managed_paths(group["group_id"])
     assert (repo / "src" / "app.txt").read_bytes() == b"greeting = 'hi'\ncount = 1\n"
     assert view(client, tr2)["history"]["source_history_state"] == "aligned"
 
