@@ -23,6 +23,7 @@ from modules.flow_gate.db import projects as db_projects
 from modules.flow_gate.db import project_ai_leases as db_project_ai_leases
 from modules.flow_gate.rbac.permission_service import has_permission
 from modules.flow_gate.services import ai_invoke_service
+from modules.flow_gate.services import ai_group_service
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services import invoke_mention_service
 from modules.flow_gate.services import token_service
@@ -123,6 +124,8 @@ class AiInvokeStartRequest(BaseModel):
     continuation_review_count_overrides: Optional[dict] = None
     continuation_reviewer_overrides: Optional[dict] = None
     provider_id: Optional[str] = None
+    requested_ai_group_id: Optional[str] = None
+    continuation_reworker_provider_id: Optional[str] = None
     # provider_id alone may be an auto-restored default. This explicit signal says the person
     # actively chose it, so start_run can let it outrank an automatically stamped sequence row.
     provider_pinned: Optional[bool] = None
@@ -473,6 +476,33 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
     if not (bool(auth.get("is_admin")) or has_permission(user_id, body.project, "perm_document_read")):
         return JSONResponse(status_code=403, content={"code": "permission_denied",
                                                       "message": "perm_document_read required"})
+
+    if body.continuation_reworker_provider_id is not None:
+        if body.mode != "continuous":
+            return _validation_failed([{"loc": "continuation_reworker_provider_id", "msg": "requires continuous mode"}])
+        if body.continuation_reworker_provider_id not in ai_group_service._available(body.project):
+            return JSONResponse(status_code=422, content={"code": "reworker_unavailable",
+                                                          "message": "The selected reworker is unavailable."})
+
+    if body.requested_ai_group_id is not None:
+        if body.mode != "continuous":
+            return _validation_failed([{"loc": "requested_ai_group_id", "msg": "requires continuous mode"}])
+        try:
+            ai_group_service.validate_start(body.project, body.requested_ai_group_id)
+        except ai_group_service.AIGroupError as exc:
+            return JSONResponse(status_code=exc.status, content={"code": exc.code, "message": str(exc)})
+        available = ai_group_service._available(body.project)
+        if not body.provider_id:
+            return JSONResponse(status_code=422, content={"code": "ai_group_work_executor_required",
+                                                          "message": "A concrete provider_id is required."})
+        concrete_ids = [body.provider_id]
+        if body.continuation_reworker_provider_id:
+            concrete_ids.append(body.continuation_reworker_provider_id)
+        concrete_ids.extend((body.continuation_provider_overrides or {}).values())
+        concrete_ids.extend((body.continuation_reviewer_overrides or {}).values())
+        if any(provider_id not in available for provider_id in concrete_ids):
+            return JSONResponse(status_code=422, content={"code": "ai_group_provider_unavailable",
+                                                          "message": "A concrete provider is unavailable."})
 
     # Needs the DB, so it runs after the cheap field checks above (0242 NR0003 recommendation 3).
     if (
@@ -899,7 +929,9 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             mention_builder=_mention_builder,
             # The service computes the durable baseline and selects review vs rework before resolving the chain.
             provider_id=body.provider_id,
+            requested_ai_group_id=body.requested_ai_group_id,
             provider_pinned=body.provider_pinned,
+            continuation_reworker_provider_id=body.continuation_reworker_provider_id,
             issue_builder=issue_builder,
             merge_id=body.merge_id,
             continuation_provider_overrides=body.continuation_provider_overrides,

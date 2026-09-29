@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -29,11 +30,21 @@ from modules.flow_gate.settings import ai_settings_service
 from . import oracle
 from .runtime import (
     OUTPUT_TAIL_BYTES,
+    PROBE_CANCELLED,
+    PROBE_EXECUTION_FAILED,
+    PROBE_LAUNCH_FAILED,
+    PROBE_OK,
+    PROBE_TIMEOUT,
+    ProbeOutcome,
     STALL_POLL_INTERVAL_SEC,
     STALL_WATCHDOG_JOIN_SEC,
     _RUN_ID_RE,
     _absolute_cap_sec,
     _absolute_remaining_sec,
+    _create_scratch,
+    _delete_owned_scratch,
+    _mark_scratch_completed,
+    _next_run_id,
     _svc,
     _validate_scratch_manifest,
     logger,
@@ -357,24 +368,120 @@ def _resolve_cli_launch(provider: dict, run: dict, command: str) -> tuple[Option
     }, "valid"
 
 
+def _prepare_cli_command(kind: str, command: str, last_message_file: Path) -> str:
+    """The stored CLI command as a launch actually runs it (run and probe share this).
+
+    0295 NR0003 §5-2: injects codex's --skip-git-repo-check when the stored command lacks
+    it. The cwd resolved by _resolve_cli_launch is NOT guaranteed to be a git repo
+    (scratch fallback, or a project mirror that is not a checkout), and codex exec exits 1
+    immediately when it is not -- burning the provider as a fast_fail before it reads the
+    prompt.
+    """
+    command = ai_settings_service.normalize_cli_command(kind, command)
+    if kind == "codex":
+        command = f'{command} --output-last-message "{last_message_file}"'
+    return command
+
+
+def _cli_scratch_env(scratch: Path) -> dict[str, str]:
+    """Temp and cache locations confined to the scratch (never the OS temp directory)."""
+    return {
+        "TMP": str(scratch / "tmp"),
+        "TEMP": str(scratch / "tmp"),
+        "TMPDIR": str(scratch / "tmp"),
+        "XDG_CACHE_HOME": str(scratch / "cache"),
+        "PIP_CACHE_DIR": str(scratch / "cache" / "pip"),
+        "NPM_CONFIG_CACHE": str(scratch / "cache" / "npm"),
+    }
+
+
+def _cli_popen_kwargs(decision: dict, env: dict[str, str]) -> dict:
+    kwargs = process_runner.popen_kwargs(Path(decision["agent_cwd"]), env)
+    kwargs["cwd"] = decision["spawn_cwd"]
+    kwargs["stdin"] = subprocess.PIPE
+    return kwargs
+
+
+class _CliProcess:
+    """The one spawn / own / communicate / reap boundary of a CLI child.
+
+    A run (_cli_execute) and a run-less Evaluation probe (probe_cli_completion) both go
+    through it, so the Job Object / process-group ownership, the bounded pipe drain, the
+    process-tree kill on timeout and the final reap exist exactly once.
+    """
+
+    def __init__(self, run_id: Optional[str]) -> None:
+        self.run_id = run_id
+        self.owner = process_runner.WindowsProcessOwner(run_id)
+        self.proc = None
+
+    def start(self, command: str, kwargs: dict) -> bool:
+        """Spawn and attach. False when the process could not be started."""
+        if os.name == "nt":
+            kwargs["creationflags"] = self.owner.creationflags(kwargs.get("creationflags", 0))
+        try:
+            self.proc = subprocess.Popen(command, **kwargs)
+        except Exception:
+            return False
+        self.owner.attach(self.proc)
+        return True
+
+    def terminate(self) -> None:
+        if self.proc is not None:
+            process_runner.kill_process_tree(self.proc)
+
+    def communicate(self, data: bytes, timeout: float) -> tuple:
+        """Feed stdin and collect output: (stdout, stderr, timed_out, error).
+
+        A timeout kills the whole tree and still salvages what the child wrote; any other
+        failure (e.g. a stdin pipe broken before the child read the prompt) is returned
+        as error for the caller to classify.
+        """
+        proc = self.proc
+        try:
+            stdout, stderr = process_runner.communicate_with_cleanup(
+                proc, self.owner, input=data, timeout=timeout
+            )
+            return stdout, stderr, False, None
+        except subprocess.TimeoutExpired as exc:
+            timed_out, error = True, None
+            fallback = (getattr(exc, "output", None), getattr(exc, "stderr", None))
+        except Exception as exc:
+            timed_out, error = False, exc
+            fallback = (None, None)
+        process_runner.kill_process_tree(proc)
+        try:
+            stdout, stderr = process_runner.communicate_with_cleanup(proc, self.owner, timeout=5)
+        except Exception:
+            stdout, stderr = fallback
+        return stdout, stderr, timed_out, error
+
+    def close(self) -> None:
+        """Kill anything still owned, reap the child and release the ownership handle."""
+        proc = self.proc
+        try:
+            if proc is not None and (self.owner.active or proc.poll() is None):
+                process_runner.kill_process_tree(proc)
+            if proc is not None:
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    logger.warning("ai-invoke %s: process_reap_failed", self.run_id,
+                                   exc_info=True)
+        finally:
+            self.owner.close()
+
+
 def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[str]]:
     """stdin-injected CLI run (claude/copilot/codex; args are forbidden — cp932
     truncation). Returns (classification, failure_detail)."""
-    import subprocess
-
     cmd = (provider.get("cli_command") or "").strip()
     if not cmd:
         return "spawn_failed", "cli_command not set"
     kind = provider.get("kind") or ""
-    # 0295 NR0003 §5-2: injects codex's --skip-git-repo-check when the stored command lacks
-    # it. The cwd resolved below is NOT guaranteed to be a git repo (scratch fallback, or a
-    # project mirror that is not a checkout), and codex exec exits 1 immediately when it is
-    # not — burning the provider as a fast_fail before it ever reads the prompt.
-    cmd = ai_settings_service.normalize_cli_command(kind, cmd)
     scratch = Path(run["scratch_dir"])
     last_message_file = scratch / "last_message.txt"
-    if kind == "codex":
-        cmd = f'{cmd} --output-last-message "{last_message_file}"'
+    cmd = _prepare_cli_command(kind, cmd, last_message_file)
 
     # T0011: cwd is selected once below by _resolve_cli_launch. No caller cwd, HOME,
     # installation directory, base checkout, or OS temp fallback is permitted.
@@ -402,12 +509,7 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         # worker wrote exactly where it was told to. run-internal scratch (TMP/TEMP/
         # TMPDIR, provider output, retained diagnostics below) is untouched.
         "FLOWGATE_SCRATCH": run["token_scratch_dir"],
-        "TMP": str(scratch / "tmp"),
-        "TEMP": str(scratch / "tmp"),
-        "TMPDIR": str(scratch / "tmp"),
-        "XDG_CACHE_HOME": str(scratch / "cache"),
-        "PIP_CACHE_DIR": str(scratch / "cache" / "pip"),
-        "NPM_CONFIG_CACHE": str(scratch / "cache" / "npm"),
+        **_cli_scratch_env(scratch),
         "FLOWGATE_API_BASE": agent_api_base or operator_api_base,
         "FLOWGATE_BUNDLE_API": bundle_api_base,
     }
@@ -417,31 +519,22 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         _audit_cli_launch(blocked)
         return "spawn_failed", f"CLI launch blocked: {reason}"
     eff_cmd = decision.pop("effective_command")
-    agent_cwd = Path(decision["agent_cwd"])
-    owner = process_runner.WindowsProcessOwner(run.get("run_id"))
-    proc = None
+    cli = _CliProcess(run.get("run_id"))
     watchdog_stop = watchdog_thread = None
     try:
-        kwargs = process_runner.popen_kwargs(agent_cwd, env)
-        kwargs["cwd"] = decision["spawn_cwd"]
-        kwargs["stdin"] = subprocess.PIPE
-        if os.name == "nt":
-            kwargs["creationflags"] = owner.creationflags(kwargs.get("creationflags", 0))
+        kwargs = _cli_popen_kwargs(decision, env)
         _audit_cli_launch(decision)
 
         launched = time.monotonic()
-        try:
-            proc = subprocess.Popen(eff_cmd, **kwargs)
-        except Exception:
+        if not cli.start(eff_cmd, kwargs):
             return "spawn_failed", "unable to start CLI process"
-        owner.attach(proc)
+        proc = cli.proc
 
         run["proc"] = proc
         # Close the cancel-vs-spawn race: a cancel that landed between admission and
         # Popen saw proc=None and killed nothing — reap the child ourselves now.
         if run["cancel_event"].is_set():
             process_runner.kill_process_tree(proc)
-        timed_out = False
         # 0446 T0014 §3-1: the no-progress threshold is enforced BESIDE this wait, by the
         # watchdog thread, because `communicate()` cannot be asked "is it still working?".
         # What is left for the wait itself is the absolute ceiling — the one deadline that
@@ -450,25 +543,9 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
         # ended there, by the watchdog, long before this timeout could fire.
         watchdog_stop, watchdog_thread = _start_progress_watchdog(run, proc)
         remaining = max(1.0, _absolute_remaining_sec(run))
-        try:
-            stdout, stderr = process_runner.communicate_with_cleanup(
-                proc, owner, input=prompt.encode("utf-8"), timeout=remaining
-            )
-        except subprocess.TimeoutExpired as exc:
-            timed_out = True
-            process_runner.kill_process_tree(proc)
-            try:
-                stdout, stderr = process_runner.communicate_with_cleanup(proc, owner, timeout=5)
-            except Exception:
-                stdout = getattr(exc, "output", None)
-                stderr = getattr(exc, "stderr", None)
-        except Exception as exc:
+        stdout, stderr, timed_out, error = cli.communicate(prompt.encode("utf-8"), remaining)
+        if error is not None:
             # e.g. stdin pipe broken before the child read the prompt
-            process_runner.kill_process_tree(proc)
-            try:
-                stdout, stderr = process_runner.communicate_with_cleanup(proc, owner, timeout=5)
-            except Exception:
-                stdout, stderr = None, None
             elapsed = time.monotonic() - launched
             if (
                 elapsed < _svc().FAST_FAIL_WINDOW_SEC
@@ -477,7 +554,7 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 # startup failure — it must not send the chain to the next provider.
                 and run.get("watchdog_kill") is None
             ):
-                return "spawn_failed", str(exc)[:500]
+                return "spawn_failed", str(error)[:500]
     finally:
         # Setup failures (attach/resume, watchdog start, remaining-budget lookup)
         # have exactly the same ownership boundary as normal communication.
@@ -485,17 +562,9 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             _stop_progress_watchdog(watchdog_stop, watchdog_thread, run.get("run_id"))
         finally:
             try:
-                if proc is not None and (owner.active or proc.poll() is None):
-                    process_runner.kill_process_tree(proc)
-                if proc is not None:
-                    try:
-                        proc.wait(timeout=5)
-                    except Exception:
-                        logger.warning("ai-invoke %s: process_reap_failed", run.get("run_id"),
-                                       exc_info=True)
+                cli.close()
             finally:
-                owner.close()
-                if run.get("proc") is proc:
+                if run.get("proc") is cli.proc:
                     run["proc"] = None
 
     # 0446 T0014 §4-3: a watchdog kill ends `communicate()` NORMALLY — the child is
@@ -530,6 +599,67 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
 
     _recover_cli_last_message(run, kind, out_text, last_message_file)
     return "started_ok", None
+
+
+def probe_cli_completion(*, project_id: str, kind: str, command: Optional[str], prompt: str,
+                         timeout: float, handle) -> ProbeOutcome:
+    """One run-less prompt/response round trip for AI Evaluation, on the product CLI boundary.
+
+    Same command normalisation (_prepare_cli_command), manifest-bound run scratch
+    (_create_scratch), launch policy (_resolve_cli_launch), scratch-confined env and
+    _CliProcess ownership/timeout/reap as _cli_execute. Only the run-bound parts are left
+    out: no Source Bundle prompt, no FlowGate token or API base (blanked, never inherited),
+    no group watchdog. A handle abort kills the whole process tree.
+    """
+    command = (command or "").strip()
+    if not command or not project_id:
+        return ProbeOutcome(PROBE_LAUNCH_FAILED)
+    run_id = _next_run_id()
+    try:
+        scratch = _create_scratch(project_id, run_id)
+    except (OSError, ValueError):
+        return ProbeOutcome(PROBE_LAUNCH_FAILED)
+    try:
+        provider = {"kind": kind}
+        run = {"run_id": run_id, "project_id": project_id, "scratch_dir": str(scratch)}
+        last_message_file = scratch / "last_message.txt"
+        decision, reason = _resolve_cli_launch(
+            provider, run, _prepare_cli_command(kind, command, last_message_file))
+        if decision is None:
+            _audit_cli_launch(_blocked_cli_launch(run, provider, reason))
+            return ProbeOutcome(PROBE_LAUNCH_FAILED)
+        eff_cmd = decision.pop("effective_command")
+        env = {
+            **_cli_scratch_env(scratch),
+            "FLOWGATE_TOKEN": "", "FLOWGATE_API_BASE": "", "FLOWGATE_BUNDLE_API": "",
+            "FLOWGATE_SCRATCH": str(scratch),
+        }
+        cli = _CliProcess(run_id)
+        try:
+            kwargs = _cli_popen_kwargs(decision, env)
+            _audit_cli_launch(decision)
+            if not cli.start(eff_cmd, kwargs):
+                return ProbeOutcome(PROBE_LAUNCH_FAILED)
+            if not handle.bind(cli.terminate):
+                return ProbeOutcome(PROBE_CANCELLED)
+            stdout, _stderr, timed_out, error = cli.communicate(prompt.encode("utf-8"), timeout)
+            returncode = cli.proc.returncode
+        finally:
+            cli.close()
+        if handle.cancelled:
+            return ProbeOutcome(PROBE_CANCELLED)
+        if timed_out:
+            return ProbeOutcome(PROBE_TIMEOUT)
+        if error is not None or returncode != 0:
+            return ProbeOutcome(PROBE_EXECUTION_FAILED)
+        answer: dict = {}
+        _recover_cli_last_message(answer, kind, process_runner.safe_decode(stdout), last_message_file)
+        return ProbeOutcome(PROBE_OK, answer.get("last_message") or "")
+    finally:
+        _mark_scratch_completed(project_id, run_id, scratch, now_iso())
+        deleted, why = _delete_owned_scratch(project_id, run_id, scratch)
+        if not deleted:
+            logger.warning("ai-invoke %s: probe scratch retained (%s)", run_id, why)
 
 
 def _copilot_last_message(stdout_text: str) -> Optional[str]:

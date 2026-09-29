@@ -58,6 +58,7 @@ _PURGE_BATCH_LIMIT = 1000
 # spliced in at _STATUS_INSERT_AT) and `run_id` itself (the upsert conflict key).
 _BOUND_COLUMNS = (
     "run_id", "group_id", "project_id", "doc_ref", "mode",
+    "requested_ai_group_id",
     "outcome", "docs_reached", "docs_target", "reached_doc_ids",
     "end_reason", "stop_code", "stop_reason", "resumable", "exit_code",
     "last_message", "last_message_excerpt",
@@ -234,6 +235,7 @@ def upsert(row: dict[str, Any]) -> None:
         "run_id": row["run_id"],
         "group_id": row["group_id"],
         "project_id": row["project_id"],
+        "requested_ai_group_id": row.get("requested_ai_group_id"),
         "doc_ref": row["doc_ref"],
         "mode": row["mode"],
         "outcome": row.get("outcome"),

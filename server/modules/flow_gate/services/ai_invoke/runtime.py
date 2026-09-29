@@ -34,9 +34,10 @@ import logging
 import re
 import shutil
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 from fastapi import HTTPException
 from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
@@ -252,10 +253,15 @@ REVIEW_STOP_CODES = frozenset({
 # the way forward after a failure-origin rework or a human check is exactly "resume".
 TEST_RUN_PENDING_STOP_CODE = "test_run_pending"
 TEST_GATE_BLOCKED_STOP_CODE = "test_gate_blocked"
+# 0014 HOLD 2.2: the reworker Provider the user chose at Start was deleted, disabled or is no
+# longer effective when the rework hop must launch. The chain parks here instead of silently
+# handing the rework to another Provider; restoring the Provider and resuming continues it.
+REWORKER_UNAVAILABLE_STOP_CODE = "reworker_unavailable"
 
 RESUMABLE_STOP_CODES = frozenset({
     "no_output_exhausted", "providers_exhausted", "timeout", "user_paused",
     "question_pending", TEST_RUN_PENDING_STOP_CODE, TEST_GATE_BLOCKED_STOP_CODE,
+    REWORKER_UNAVAILABLE_STOP_CODE,
     # 0414 L0008 §1.2: of the seven review stops, only this one answers "would re-running
     # the hop have a chance?" with yes — the reviewer simply said nothing. Four of the
     # remaining five need a person: a verdict says hold, the loop is not making progress,
@@ -275,6 +281,8 @@ RESUMABLE_STOP_CODES = frozenset({
 # Disjoint by construction ⇒ a double notification is impossible.
 ENGINE_NOTIFY_STOP_CODES = frozenset({
     "no_output_exhausted", "providers_exhausted", "timeout",
+    # 0014 HOLD 2.2: an unattended chain that cannot honour the chosen reworker must reach a human.
+    REWORKER_UNAVAILABLE_STOP_CODE,
     # 0414 L0008 §1.2: every review stop is spoken by the ENGINE — the inbox never sees
     # these branches (no request arrives). Putting them here and nowhere else keeps
     # INBOX_NOTIFY_STOP_CODES disjoint, so a double notification stays impossible.
@@ -614,6 +622,67 @@ class HandoffGate:
         with self._lock:
             self._cond.wait_for(lambda: self._state != SEALED, timeout=timeout)
             return self._state
+
+
+# ── Run-less provider probe vocabulary (0014 AI Evaluation) ─────────────────
+# A probe is one bounded prompt/response round trip against a Provider with no chain run
+# behind it. `provider_api.probe_api_completion` and `provider_cli.probe_cli_completion`
+# execute it on the same transports a run uses, so timeout, cancel, secret handling and
+# process-tree cleanup live in one place; callers (AI Evaluation) own only their lifecycle.
+PROBE_OK = "ok"
+PROBE_TIMEOUT = "timeout"
+PROBE_CANCELLED = "cancelled"
+PROBE_TRANSPORT_FAILED = "transport_failed"
+PROBE_LAUNCH_FAILED = "provider_launch_failed"
+PROBE_EXECUTION_FAILED = "execution_failed"
+
+
+class ProbeCancelled(Exception):
+    """Raised inside a transport when its handle was cancelled before/while connecting."""
+
+
+@dataclass(frozen=True)
+class ProbeOutcome:
+    kind: str
+    text: str = ""
+
+
+class ProbeHandle:
+    """Cancel token for one probe. Transports bind an abort callable (close the socket,
+    kill the process tree); `cancel()` fires every bound abort once, and a bind that
+    arrives after `cancel()` aborts immediately, so a cancel can never be lost between
+    "handle created" and "transport/process exists"."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._cancelled = threading.Event()
+        self._aborts: list[Callable[[], None]] = []
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancelled.is_set()
+
+    def bind(self, abort: Callable[[], None]) -> bool:
+        with self._lock:
+            if not self._cancelled.is_set():
+                self._aborts.append(abort)
+                return True
+        self._fire(abort)
+        return False
+
+    def cancel(self) -> None:
+        with self._lock:
+            self._cancelled.set()
+            aborts, self._aborts = self._aborts, []
+        for abort in aborts:
+            self._fire(abort)
+
+    @staticmethod
+    def _fire(abort: Callable[[], None]) -> None:
+        try:
+            abort()
+        except Exception:  # noqa: BLE001 - an abort must never break the canceller
+            logger.warning("provider probe abort failed", exc_info=True)
 
 
 def _http_error(status_code: int, code: str, message: str, **payload) -> HTTPException:

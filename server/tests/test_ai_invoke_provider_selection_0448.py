@@ -727,3 +727,45 @@ def test_route_request_reaches_the_right_final_worker_provider(client, body, exp
     payload = response.json()
     assert payload["provider"]["id"] == expected_provider
     _release(payload["run_id"])
+
+
+def test_ai_group_preserves_stored_provider_until_explicit_force_all(client, env, monkeypatch):
+    from modules.flow_gate.services import ai_group_service
+    monkeypatch.setattr(ai_group_service, "validate_start", lambda *_: None)
+    monkeypatch.setattr(ai_group_service, "_available", lambda *_: {
+        pid: provider(pid) for pid in ALL_PROVIDER_IDS
+    })
+    common = dict(requested_ai_group_id="aig_snapshot", provider_id="aip_header",
+                  continuation_reworker_provider_id="aip_opus")
+    ordinary = post_start(client, **common)
+    assert ordinary.status_code == 200, ordinary.text
+    assert ordinary.json()["provider"]["id"] == "aip_nr"
+    run = svc.get_run_record(ordinary.json()["run_id"])
+    assert run["continuation_provider_pinned"] is False
+    assert run["continuation_reworker_provider_id"] == "aip_opus"
+    assert run["requested_ai_group_id"] == "aig_snapshot"
+    _release(ordinary.json()["run_id"])
+    forced = post_start(client, **common, provider_pinned=True)
+    assert forced.status_code == 200, forced.text
+    assert forced.json()["provider"]["id"] == "aip_header"
+    _release(forced.json()["run_id"])
+
+
+def test_review_rejection_spawns_the_concrete_reworker(env, monkeypatch):
+    from modules.flow_gate.services.ai_invoke import review
+    captured = {}
+    monkeypatch.setattr(review, "_provider_enabled", lambda _project, pid: pid == "aip_opus")
+    monkeypatch.setattr(svc, "start_run", lambda **kw: captured.update(kw) or {"run_id": "rework"})
+    bundle = {"doc_ref": ROOT, "locale": "ko", "issued_to": "usr_admin",
+              "api_base_url": API_BASE, "base_provider_id": "aip_header",
+              "work_executor_provider_id": "aip_nr", "reworker_provider_id": "aip_opus",
+              "requested_ai_group_id": "aig_deleted"}
+    gate = {"slot": {"doc_id": ROOT, "item_seq": 2}}
+    review._spawn_rework_hop(GROUP, bundle, gate)
+    assert captured["provider_id"] == "aip_opus"
+    assert captured["continuation_reworker_provider_id"] == "aip_opus"
+    assert captured["requested_ai_group_id"] == "aig_deleted"
+    bundle["reworker_provider_id"] = "aip_t"  # user override snapshot, not a Group lookup
+    monkeypatch.setattr(review, "_provider_enabled", lambda _project, _pid: True)
+    review._spawn_rework_hop(GROUP, bundle, gate)
+    assert captured["provider_id"] == "aip_t"

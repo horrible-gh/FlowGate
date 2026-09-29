@@ -1459,3 +1459,18 @@ class TestInboxBoundaryHook:
         assert envelope.get("continuation_done") is True
         # Natural termination wins over a boundary-less pause: the row is gone.
         assert GROUP not in fake_env["paused"].rows
+
+
+def test_group_provenance_and_reworker_survive_pause_resume(fake_env, monkeypatch):
+    _seed_paused(fake_env, base_provider_id='aip_picked')
+    row = fake_env['paused'].rows[GROUP]
+    row['requested_ai_group_id'] = 'aig_deleted_after_start'
+    row['continuation_reworker_provider_id'] = 'aip_reworker'
+    captured = {}
+    monkeypatch.setattr(svc, 'start_run',
+                        lambda **kw: captured.update(kw) or {'ok': True, 'run_id': 'resumed'})
+    result = svc.resume_chain(group_id=GROUP, user_id='usr_admin',
+                              api_base_url='http://x/api/v1')
+    assert result['run_id'] == 'resumed'
+    assert captured['requested_ai_group_id'] == 'aig_deleted_after_start'
+    assert captured['continuation_reworker_provider_id'] == 'aip_reworker'

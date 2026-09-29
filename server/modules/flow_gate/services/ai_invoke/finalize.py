@@ -47,6 +47,7 @@ from .runtime import (
     REVIEW_REJECT_FAILED_STOP_CODE,
     REVIEW_STALLED_STOP_CODE,
     REVIEW_VERDICT_HOLD_STOP_CODE,
+    REWORKER_UNAVAILABLE_STOP_CODE,
     SOURCE_DIRTY_FILES_LIMIT,
     TEST_GATE_BLOCKED_STOP_CODE,
     TEST_RUN_PENDING_STOP_CODE,
@@ -699,6 +700,12 @@ def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
     if stop_code == REVIEW_REJECT_FAILED_STOP_CODE:
         return (f"The automatic rejection failed: "
                 f"{run.get('review_reject_detail') or 'unknown error'}")
+    if stop_code == REWORKER_UNAVAILABLE_STOP_CODE:
+        return (
+            "The reworker Provider chosen at Start "
+            f"({run.get('continuation_reworker_provider_id') or 'unknown'}) was deleted, disabled or is no "
+            "longer effective. No other Provider was substituted; restore or re-enable it, then resume the chain."
+        )
     if stop_code == "group_lease_denied":
         # 0393 T0005 §2-6: the sentence a human reads on the card instead of a bare code.
         denied_op = run.get("lease_denied_operation") or "a group change"
@@ -922,6 +929,8 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
                     # This upsert overwrites every column, and it ALWAYS runs right after
                     # a pause. Omitting the selections here would erase what pause_run
                     # just stored (0365 DB0004 §5-3 invariant I3).
+                    requested_ai_group_id=run.get("requested_ai_group_id"),
+                    continuation_reworker_provider_id=run.get("continuation_reworker_provider_id"),
                     continuation_base_provider_id=run.get("continuation_base_provider_id"),
                     continuation_provider_pinned=run.get("continuation_provider_pinned"),
                     continuation_provider_overrides=run.get("continuation_provider_overrides"),
@@ -1006,6 +1015,8 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
             # The explicit pin is the narrow exception: it is execution policy, and a manual
             # resume after no-output exhaustion must keep that provider instead of reviving
             # the stored/default provider.
+            requested_ai_group_id=run.get("requested_ai_group_id"),
+            continuation_reworker_provider_id=run.get("continuation_reworker_provider_id"),
             continuation_base_provider_id=(
                 run.get("continuation_base_provider_id")
                 if run.get("continuation_provider_pinned")
@@ -1058,6 +1069,7 @@ def _persist_run_record(run: dict) -> bool:
             "run_id": run["run_id"],
             "group_id": run["group_id"],
             "project_id": run["project_id"],
+            "requested_ai_group_id": run.get("requested_ai_group_id"),
             "doc_ref": run["doc_ref"],
             "mode": run["mode"],
             "outcome": run.get("outcome"),
@@ -1338,6 +1350,7 @@ def finished_payload(run: dict) -> dict:
         # 0481 T0010 #1 — see the ai_invoke_started payload: both identities travel together
         # so a project-scoped run's card finishes where it started.
         "project_id": run.get("project_id"),
+        "requested_ai_group_id": run.get("requested_ai_group_id"),
         "action_scope": run.get("action_scope"),
         "doc_ref": run.get("doc_ref"),
         "outcome": run["outcome"],

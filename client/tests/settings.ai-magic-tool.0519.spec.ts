@@ -29,7 +29,12 @@ const { getRequest, putRequest, postRequest } = vi.hoisted(() => ({
   postRequest: vi.fn(),
 }))
 vi.mock('@shared/api', () => ({ getRequest, putRequest, postRequest }))
-vi.mock('vue-router', () => ({ onBeforeRouteLeave: vi.fn() }))
+vi.mock('vue-router', () => ({
+  onBeforeRouteLeave: vi.fn(),
+  // AiProjectSettingsView now keeps its sub-tab in the route query; the provider editor lives on the Provider tab.
+  useRoute: () => ({ query: { ai_tab: 'provider' } }),
+  useRouter: () => ({ replace: vi.fn() }),
+}))
 
 const CATALOG = {
   exec_types: ['cli', 'api'],
