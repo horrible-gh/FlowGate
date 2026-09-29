@@ -2,6 +2,8 @@ import { isAxiosError } from 'axios'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { postRequest, getRequest } from '@shared/api'
+import { resolveSafeReturnPath } from '@shared/auth'
+import { getStoredGuiGeneration } from '@shared/guiSwitch'
 
 export type AuthState =
   | 'IDLE'
@@ -79,7 +81,19 @@ const getErrorDetail = (error: unknown): string => {
 }
 
 export const authRedirect = {
-  toDashboard: () => window.location.replace('/main'),
+  // T0005 §5 / T0009 §5: priority is (1) an allow-listed `next` return path — a deep
+  // link that bounced here, whether into /app or back into /main/settings — then (2)
+  // the last `fg_ui` GUI-generation choice, then (3) the existing default of /main.
+  // A plain visit with no next param and no stored fg_ui keeps landing on /main so
+  // existing users are never redirected anywhere new by this change alone.
+  toDashboard: () => {
+    const next =
+      typeof window !== 'undefined'
+        ? resolveSafeReturnPath(new URLSearchParams(window.location.search).get('next'))
+        : null
+    const fallback = getStoredGuiGeneration() === 'app' ? '/app' : '/main'
+    window.location.replace(next ?? fallback)
+  },
 }
 
 export const useAuthStore = defineStore('auth', () => {

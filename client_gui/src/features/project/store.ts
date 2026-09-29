@@ -1,0 +1,169 @@
+// Project store (WP0005 T#1 §5). Minimal responsibilities only: projects, loading/error,
+// current project, Dialog open/close state, list fetch, current-project change, create
+// orchestration, and the public interface App/future Dialog UI consumes. Dialog-local state
+// (search text, hover, create-form input, row selection) does NOT belong here — that is
+// T#2's ProjectDialog/ProjectCreateDialog concern (D0004 §2.1/§5.2).
+//
+// Stale-response guard: every write this store performs because of an async result is
+// gated by `requestEpoch`, a counter bumped by every new `fetchProjects()` call and by
+// `closeDialog()`. A response only applies if its captured epoch still matches the current
+// one, so a slow earlier fetch that resolves after a newer fetch (or after the Dialog
+// closed) can never revert `loading`/`error`/`projects`/`currentProjectId` to a stale state,
+// and it never reopens a closed Dialog (WP0005 T#1 §5, flowgate.v02.0008.0001-R §13).
+
+import { defineStore } from 'pinia'
+import { computed, ref } from 'vue'
+import type { CreateProjectInput, Project } from './types'
+import {
+  createProject as createProjectApi,
+  fetchActiveProjects as fetchActiveProjectsApi,
+} from './api'
+import {
+  clearStoredCurrentProjectId,
+  readStoredCurrentProjectId,
+  writeStoredCurrentProjectId,
+} from './currentProjectStorage'
+
+export const useProjectStore = defineStore('project', () => {
+  const projects = ref<Project[]>([])
+  const loading = ref(false)
+  const error = ref<string | null>(null)
+  const dialogOpen = ref(false)
+  const currentProjectId = ref<string | null>(readStoredCurrentProjectId())
+
+  const requestEpoch = ref(0)
+
+  const currentProject = computed<Project | null>(() => {
+    if (!currentProjectId.value) return null
+    return projects.value.find((p) => p.id === currentProjectId.value) ?? null
+  })
+
+  function bumpEpoch(): number {
+    requestEpoch.value += 1
+    return requestEpoch.value
+  }
+
+  function applyCurrentProjectId(projectId: string | null): void {
+    currentProjectId.value = projectId
+    if (projectId) writeStoredCurrentProjectId(projectId)
+    else clearStoredCurrentProjectId()
+  }
+
+  // v0.1 fallback, reproduced at the store level (NR0003 §6.4, T#1 §4): a saved id still
+  // present in the active list wins as-is; otherwise the first active project becomes
+  // current; an empty active list clears current entirely.
+  function reconcileCurrentProject(): void {
+    const stillValid =
+      currentProjectId.value !== null &&
+      projects.value.some((p) => p.id === currentProjectId.value)
+    if (stillValid) return
+    applyCurrentProjectId(projects.value.length > 0 ? projects.value[0].id : null)
+  }
+
+  // Shared by fetchProjects() and createProject()'s post-create refresh. `epoch` is the
+  // generation the caller already owns (fetchProjects mints a fresh one; createProject
+  // reuses its own so the refresh can't outlive a close/reopen that happened after create
+  // resolved but before this refresh finishes). `reconcile` is false for the post-create
+  // refresh: creating a Project must never set currentProjectId as a side effect (D0004
+  // §3.6/§5.4), even when the active list was empty beforehand.
+  async function refreshProjects(epoch: number, reconcile: boolean): Promise<void> {
+    loading.value = true
+    error.value = null
+    try {
+      const result = await fetchActiveProjectsApi()
+      if (epoch !== requestEpoch.value) return
+      projects.value = result
+      if (reconcile) reconcileCurrentProject()
+    } catch (err) {
+      if (epoch !== requestEpoch.value) return
+      projects.value = []
+      error.value = err instanceof Error ? err.message : 'Failed to load projects.'
+    } finally {
+      if (epoch === requestEpoch.value) loading.value = false
+    }
+  }
+
+  async function fetchProjects(): Promise<void> {
+    const epoch = bumpEpoch()
+    await refreshProjects(epoch, true)
+  }
+
+  // Create orchestration only (WP0005 T#1 §5). Whether/how a caller turns the created
+  // Project into a Dialog-local "selected" candidate is T#2's ProjectCreateDialog concern
+  // (D0004 §3.6) — this store never sets currentProjectId as a side effect of creating.
+  //
+  // Shares `requestEpoch`/`loading` with fetchProjects so the two request kinds cannot
+  // corrupt each other's generation: bumping the epoch here invalidates an in-flight fetch's
+  // own cleanup (its `finally` epoch check will now fail), so this function's `finally` takes
+  // over clearing `loading` whenever it still owns the current epoch when it settles — success
+  // or failure. If a newer fetch/create/closeDialog has since taken over the epoch, this call
+  // was superseded and must not touch `loading`/`error`, nor hand the caller a create result
+  // the caller could mistake for the current session's outcome — it returns `null` instead.
+  // This applies symmetrically to a superseded call's own createProjectApi() rejection: a
+  // stale session's failure must not reach whichever Dialog session now owns the epoch, so it
+  // also resolves to `null` rather than throwing. Only a rejection observed while this call
+  // still owns the current epoch is a real failure and is thrown to the caller.
+  //
+  // The post-create list refresh reuses this same epoch (instead of letting fetchProjects
+  // mint its own) so that a close/reopen landing while the refresh is still in flight is
+  // detected here too: the refresh's own epoch check only protects `projects`/`loading`/
+  // `error` from being overwritten, it cannot tell this function whether `created` is still
+  // safe to hand back. That final safety check happens explicitly below, after the refresh
+  // settles, before `created` is ever returned to the caller.
+  async function createProject(input: CreateProjectInput): Promise<Project | null> {
+    const epoch = bumpEpoch()
+    try {
+      let created: Project
+      try {
+        created = await createProjectApi(input)
+      } catch (err) {
+        // A rejection from a superseded call (close/reopen or a newer fetch/create already
+        // took the epoch) is not this session's failure to surface — it must end in the same
+        // invalidated-result `null` outcome as a superseded success, not throw into whichever
+        // Dialog session now owns the epoch.
+        if (epoch !== requestEpoch.value) return null
+        throw err
+      }
+      if (epoch !== requestEpoch.value) return null
+      await refreshProjects(epoch, false)
+      if (epoch !== requestEpoch.value) return null
+      return created
+    } finally {
+      if (epoch === requestEpoch.value) loading.value = false
+    }
+  }
+
+  // The only place currentProjectId is ever assigned from a Dialog-driven "open" action
+  // (D0004 §3.4). Row selection alone must never call this — that distinction lives in the
+  // future ProjectDialog's Dialog-local `selected` state, not in this store.
+  function setCurrentProject(project: Project): void {
+    applyCurrentProjectId(project.id)
+  }
+
+  function openDialog(): void {
+    dialogOpen.value = true
+    void fetchProjects()
+  }
+
+  function closeDialog(): void {
+    dialogOpen.value = false
+    // Invalidate any fetch/create still in flight from this session and drop any loading/
+    // error state it left behind — a closed Dialog shows nothing.
+    bumpEpoch()
+    loading.value = false
+    error.value = null
+  }
+
+  return {
+    projects,
+    loading,
+    error,
+    dialogOpen,
+    currentProject,
+    fetchProjects,
+    createProject,
+    setCurrentProject,
+    openDialog,
+    closeDialog,
+  }
+})

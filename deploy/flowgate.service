@@ -17,6 +17,9 @@ WorkingDirectory=__ROOT__/server
 # against Restart=always. '-lc' uses a login shell so node/npm from the user's
 # profile (nvm, /usr/local/bin) are on PATH (systemd's default PATH lacks them).
 ExecStartPre=-/bin/bash -lc '__ROOT__/client/build.sh'
+# v0.2 client (T0005), served under /app by the same process — see
+# server/routers/main.py. Same non-fatal '-' / login-shell rationale as above.
+ExecStartPre=-/bin/bash -lc '__ROOT__/client_gui/build.sh'
 # Start the server through the SAME login shell as the build step. This is what
 # fixes B0001: the FlowGate process (and therefore the test-run runner, which
 # copies this process's os.environ) inherits the user's full profile PATH, so

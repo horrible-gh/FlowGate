@@ -33,6 +33,8 @@ export default {
     files: 'ファイルエクスプローラー',
     groups: 'ドキュメントエクスプローラー',
     settings: '設定',
+    switch_to_app: 'v0.2に切り替え',
+    switch_to_legacy: 'v0.1に切り替え',
   },
   doc: {
     type: {

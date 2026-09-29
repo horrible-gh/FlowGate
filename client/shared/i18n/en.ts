@@ -33,6 +33,8 @@ export default {
     files: 'File Explorer',
     groups: 'Document Explorer',
     settings: 'Settings',
+    switch_to_app: 'Switch to v0.2',
+    switch_to_legacy: 'Switch to v0.1',
   },
   doc: {
     type: {

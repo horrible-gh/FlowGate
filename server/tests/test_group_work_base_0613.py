@@ -882,6 +882,85 @@ def test_requirement_author_reads_options_but_not_the_branch_manager_catalog(mon
     assert client.get("/api/v1/projects/secret/git/work-base-options").status_code == 403
 
 
+# ── 0009-TR#1 rev3: the three diff call sites must key off the group's OWN
+# durable work base, not the project-wide base_branch (D0004/L0006 §2.2 scope) ──
+
+def test_diff_call_sites_use_the_pinned_group_work_base_not_project_base(repo, monkeypatch):
+    """rev2 changed ``_group_diff_context``, ``collect_scope_changes`` and
+    ``read_group_file_diff`` to merge-base against ``resolve_group_work_base_ref()``
+    instead of the project's ``base_branch`` -- otherwise every sibling group's file,
+    already merged into a group's own rolling integration branch, reads as this
+    group's own uncommitted work (the mass false-positive TRV-004 this fix exists
+    to stop).
+
+    rev2's only regression coverage
+    (``test_tr_scope_0299.py::test_collect_scope_changes_unions_every_source``)
+    stubbed ``get_config`` as ``{"base_branch": "main"}`` with no ``"enabled"`` key,
+    so ``resolve_group_work_base_ref`` short-circuited to ``None`` and every call
+    site fell back to ``"main"`` regardless of whether the fix was even present --
+    the pre-fix code passed that test identically. This test keeps Git enabled and
+    gives the group its own stored ``work_base_ref`` so the resolution chain is
+    actually exercised end to end, through real git history rather than a stub.
+    """
+    from modules.flow_gate.services import git_service
+
+    # team-integration: a rolling branch that already carries a sibling group's
+    # merged file ("sibling.py") on top of the shared "main" ancestor.
+    assert _git(repo, "switch", "-c", "team-integration").returncode == 0
+    (repo / "sibling.py").write_text("sibling = True\n", encoding="utf-8")
+    assert _git(repo, "add", "sibling.py").returncode == 0
+    assert _git(repo, "commit", "-m", "sibling group merged here").returncode == 0
+    integration_tip = _git(repo, "rev-parse", "team-integration").stdout.strip()
+
+    # mygroup: THIS group's own worktree, forked from team-integration (never from
+    # main), with exactly one commit of its own.
+    assert _git(repo, "switch", "-c", "mygroup").returncode == 0
+    (repo / "mine.py").write_text("mine = True\n", encoding="utf-8")
+    assert _git(repo, "add", "mine.py").returncode == 0
+    assert _git(repo, "commit", "-m", "this group's own work").returncode == 0
+    group_commit = _git(repo, "rev-parse", "mygroup").stdout.strip()
+
+    expected_merge_base = _git(repo, "merge-base", "team-integration", "mygroup").stdout.strip()
+    assert expected_merge_base == integration_tip  # sanity: forked exactly at the tip
+
+    cfg = {"enabled": 1, "base_branch": "main"}
+    monkeypatch.setattr(git_service.db_git, "get_config", lambda _pid: cfg)
+    monkeypatch.setattr(
+        git_service.db_git, "get_state",
+        lambda _gid: {"branch": "mygroup", "worktree_registered": 1, "project_id": "p"},
+    )
+    monkeypatch.setattr(git_service, "_project_name", lambda _pid: "Proj")
+    monkeypatch.setattr(git_service, "src_root", lambda _name, _branch: repo)
+    monkeypatch.setattr(db_groups, "get_by_id", lambda _gid: {"work_base_ref": "team-integration"})
+
+    # 1) _group_diff_context: the base_branch it reports and the merge_base it
+    #    computes must both key off "team-integration", never the project's "main".
+    base_branch, branch, commit, wt_path, merge_base = git_service._group_diff_context("p", "g")
+    assert base_branch == "team-integration"
+    assert commit == group_commit
+    assert merge_base == expected_merge_base
+
+    # 2) collect_scope_changes: sibling.py already lived in the work base before this
+    #    group ever forked, so it must NOT be reported as this group's own change --
+    #    only mine.py may be.
+    monkeypatch.setattr(
+        git_service, "effective_src_root_ex",
+        lambda _pid, _gid: (repo, git_service.SRC_ROOT_WORKTREE),
+    )
+    scope = git_service.collect_scope_changes("p", "g")
+    assert scope["available"] is True
+    assert "mine.py" in scope["paths"]
+    assert "sibling.py" not in scope["paths"]
+
+    # 3) read_group_file_diff: sibling.py must resolve as already-existing on the old
+    #    (merge-base) side -- with the wrong base ("main") it would read as newly
+    #    "added" by this group, which it manifestly was not.
+    diff = git_service.read_group_file_diff("p", "g", "sibling.py")
+    assert diff["data"]["merge_base"] == expected_merge_base
+    assert diff["data"]["old"]["exists"] is True
+    assert diff["data"]["status"] != "A"
+
+
 def test_seeded_author_role_contract_matches_the_options_permission(migrated_sqlite_db):
     """role_worker is the seeded requirement author: it creates documents but does not
     read project settings, which is exactly why the dialog cannot use the catalog."""

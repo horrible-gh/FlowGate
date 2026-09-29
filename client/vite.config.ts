@@ -66,6 +66,25 @@ export default defineConfig({
         target: 'http://127.0.0.1:8088',
         changeOrigin: true,
       },
+      // T0005 §5 (rejection round 2): client_gui (v0.2) has its own dev server
+      // (client_gui/vite.config.ts, port 3001) so its guard can redirect to the
+      // relative `/login` this app owns and a post-login `next=/app/...` can pass
+      // client/shared/auth.ts's same-origin check — neither works if a browser opens
+      // client_gui's dev server directly on a different port. client_gui sets
+      // `base: '/app/'`, so Vite prefixes literally everything it serves in dev
+      // (the HTML, every module import, and the HMR websocket) under `/app/` — proxying
+      // that one prefix here reproduces the same single-origin layout production gets
+      // from server/routers/main.py serving both dists off one port. `ws: true` carries
+      // the HMR socket through so client_gui's own dev server still hot-reloads.
+      // 'localhost', not '127.0.0.1': Vite's dev server (client_gui) binds its default
+      // host, which resolves to the IPv6 loopback (`::1`) on this stack — a literal
+      // 127.0.0.1 target got ECONNREFUSED even with client_gui's server up and reachable
+      // at http://localhost:3001 directly.
+      '/app': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+        ws: true,
+      },
     },
   },
 })

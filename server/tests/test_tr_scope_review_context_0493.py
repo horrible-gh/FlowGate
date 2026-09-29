@@ -127,3 +127,31 @@ def test_scope_context_section_absent_when_no_stored_verdict():
         raw_token="RAWTOKEN123",
     )
     assert "Actual changed-files manifest" not in m
+
+
+def test_scope_context_section_unconfirmed_dict_shape_not_treated_as_two_fake_paths():
+    """0009-TR#1 rev2 regression: inbox_routes._tr_scope_meta() persists ``unconfirmed``
+    as ``{"count", "items"}`` (same shape as ``file_manifest``), not a bare list. Reading
+    that dict directly as a list made an EMPTY result iterate as its own keys, printing
+    "count" and "items" as if they were reported-but-missing file paths."""
+    meta_empty = {
+        "tr_scope": {
+            "verdict": "pass", "codes": [], "unconfirmed": {"count": 0, "items": []},
+            "file_manifest": {"total": 0, "truncated": False, "items": []},
+        }
+    }
+    m = _build(meta_empty)
+    assert "  - count" not in m
+    assert "  - items" not in m
+
+    meta_nonempty = {
+        "tr_scope": {
+            "verdict": "warn", "codes": ["TRV-003"],
+            "unconfirmed": {"count": 1, "items": ["server/ghost.py"]},
+            "file_manifest": {"total": 0, "truncated": False, "items": []},
+        }
+    }
+    m2 = _build(meta_nonempty)
+    assert "  - server/ghost.py" in m2
+    assert "  - count" not in m2
+    assert "  - items" not in m2
