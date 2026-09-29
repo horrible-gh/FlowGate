@@ -33,6 +33,7 @@ from modules.flow_gate.documents import document_service, document_types, templa
 from modules.flow_gate.documents.type_code import doc_code_seq_text
 from modules.flow_gate.documents.constants import (
     AUTO_COMPLETE_TYPES,
+    INSTRUCTION_AUTO_TYPES,
     WORK_PLAN_TYPE,
     is_server_assembled_type,
 )
@@ -1471,7 +1472,7 @@ def _work_plan_instruction_descriptor(sequence_id: int, head: dict) -> Optional[
         source_revision_no = int(head.get("source_revision_no"))
     except (TypeError, ValueError):
         return None
-    if type_code not in {"N", "T"} or not source_doc_id:
+    if type_code not in INSTRUCTION_AUTO_TYPES or not source_doc_id:
         return None
     source_doc = document_service.get_document(source_doc_id)
     if source_doc is None or str(source_doc.get("type_code") or "").upper() != WORK_PLAN_TYPE:

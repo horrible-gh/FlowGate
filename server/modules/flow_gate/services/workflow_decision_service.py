@@ -17,6 +17,7 @@ from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.db.document_type_labels import get_type_name
 from modules.flow_gate.documents.constants import (
+    INSTRUCTION_AUTO_TYPES,
     SERVER_ASSEMBLED_DOC_TYPES,
     is_server_assembled_type,
 )
@@ -142,7 +143,6 @@ def resolve_row_provider(
 # differs from AUTO_REPORT_MAP, which still pairs TS→TSR for sequence STRUCTURE (TS remains a
 # decided step whose report is auto-attached) — only the auto-APPROVAL of TS is removed.
 # DS likewise excluded — it is neither here nor in AUTO_REPORT_MAP.
-INSTRUCTION_AUTO_TYPES = {"N", "T", "T2"}
 CONTINUATION_INSTRUCTION_AUTO_APPROVED = "auto_approved"
 CONTINUATION_INSTRUCTION_AI_DIRECT = "ai_direct"
 CONTINUATION_INSTRUCTION_MODES = {

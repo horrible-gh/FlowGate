@@ -245,7 +245,8 @@ def _recover_stale(locked, row: dict) -> None:
                 and reachable.returncode == 0):
             db_attempts.finish(row["attempt_id"], state="succeeded", result_code="succeeded")
             return
-        if doc and doc.get("doc_review_status") == "pending_review" and not ledger:
+        if (doc and get_doc_review_rule(doc.get("doc_review_status") or "", "approve") == "approved"
+                and not ledger):
             _rollback(locked, row, None, RuntimeError("stale Git commit"))
             return
     elif phase in {"apply", "validation", "commit", "rollback"}:
@@ -274,7 +275,7 @@ def retry_state(doc: dict) -> dict:
         return {**state, "reason": "no_attempt"}
     if db_attempts.recovery_required(doc["doc_id"]):
         return {**state, "reason": "recovery_required"}
-    if doc.get("doc_review_status") != "pending_review":
+    if get_doc_review_rule(doc.get("doc_review_status") or "", "approve") != "approved":
         return {**state, "reason": "review_status"}
     if latest["state"] == "in_progress":
         if not _stale(latest):
@@ -407,6 +408,10 @@ def approve(*, doc_id: str, actor_user_id: str, user_permissions: set[str],
                 fresh = db_docs.get_by_id(doc_id)
                 if not fresh or int(fresh.get("revision_no") or 0) != revision:
                     _raise("tr2_spec_changed", "revision_no")
+                fresh_review_status = fresh.get("doc_review_status") or ""
+                if get_doc_review_rule(fresh_review_status, "approve") != "approved":
+                    _raise("tr2_spec_changed", "review_status",
+                           current_review_status=fresh_review_status)
                 fresh_body = tr2.load_current(fresh)
                 fresh_spec = tr2.canonicalize(tr2.validate(fresh_body, doc=fresh))["edit_spec"]
                 if tr2.spec_fingerprint(fresh_spec) != fingerprint:
@@ -416,14 +421,15 @@ def approve(*, doc_id: str, actor_user_id: str, user_permissions: set[str],
                                                  commit_subject=f"feat(tr2): approve {doc_id.rsplit('.', 1)[-1]}")
                 if not ledger or not ledger.get("id"):
                     _raise("tr2_history_invariant_error", "ledger")
-                if not db_docs.update_review_cas(doc_id, revision, "pending_review",
+                if not db_docs.update_review_cas(doc_id, revision, fresh_review_status,
                                                  {"doc_review_status": "approved"}):
                     _raise("tr2_spec_changed", "review_cas")
                 next_head = tr2.effective_head_for(doc_id)
                 if next_head and next_head.get("result_doc_id") == doc_id:
                     _raise("tr2_workflow_conflict", "workflow_progression")
                 log_state_changed(project_id=doc["project_id"], actor_user_id=actor_user_id,
-                                  from_state="review:pending_review", to_state="review:approved",
+                                  from_state=f"review:{fresh_review_status}",
+                                  to_state="review:approved",
                                   group_id=doc["group_id"], document_id=doc.get("id"),
                                   action_code="review_approve")
                 db_attempts.finish(attempt_id, state="succeeded", result_code="succeeded",
