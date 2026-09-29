@@ -99,6 +99,7 @@ def get_status(run_id: str, *, pending_q_doc_ids: Optional[list[str]] = None) ->
         # here made both facts survive exactly until the first poll and then
         # vanish. Ship them from both places or neither.
         "project_id": run.get("project_id"),
+        "requested_ai_group_id": run.get("requested_ai_group_id"),
         "action_scope": run.get("action_scope"),
         "docs_target": run["docs_target"],
         "docs_reached_so_far": docs_so_far,
@@ -204,6 +205,7 @@ def _run_detail_from_row(row: dict) -> dict:
         "mode": row["mode"],
         "group_id": row["group_id"],
         "project_id": row.get("project_id"),
+        "requested_ai_group_id": row.get("requested_ai_group_id"),
         "doc_ref": row.get("doc_ref"),
         "outcome": row.get("outcome"),
         "docs_reached": row.get("docs_reached"),
@@ -311,6 +313,7 @@ def _run_list_item_stored(row: dict) -> dict:
         "run_id": row["run_id"],
         "group_id": row["group_id"],
         "project_id": row.get("project_id"),
+        "requested_ai_group_id": row.get("requested_ai_group_id"),
         "doc_ref": row.get("doc_ref"),
         "mode": row["mode"],
         "status": "finished",

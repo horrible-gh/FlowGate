@@ -1058,6 +1058,7 @@ def _persist_run_record(run: dict) -> bool:
             "run_id": run["run_id"],
             "group_id": run["group_id"],
             "project_id": run["project_id"],
+            "requested_ai_group_id": run.get("requested_ai_group_id"),
             "doc_ref": run["doc_ref"],
             "mode": run["mode"],
             "outcome": run.get("outcome"),
@@ -1338,6 +1339,7 @@ def finished_payload(run: dict) -> dict:
         # 0481 T0010 #1 — see the ai_invoke_started payload: both identities travel together
         # so a project-scoped run's card finishes where it started.
         "project_id": run.get("project_id"),
+        "requested_ai_group_id": run.get("requested_ai_group_id"),
         "action_scope": run.get("action_scope"),
         "doc_ref": run.get("doc_ref"),
         "outcome": run["outcome"],

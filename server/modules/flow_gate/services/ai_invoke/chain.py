@@ -368,6 +368,7 @@ def _handoff_bundle(pending: dict, run: Optional[dict]) -> dict:
                                          run, "continuation_review_count_overrides"),
         "reviewer_overrides": _carry(pending, "reviewer_overrides",
                                      run, "continuation_reviewer_overrides"),
+        "requested_ai_group_id": _carry(pending, "requested_ai_group_id", run, "requested_ai_group_id"),
         "chain_id": _carry(pending, "chain_id", run, "chain_id"),
         "chain_docs_target": _carry(pending, "chain_docs_target", run, "chain_docs_target"),
         "chain_docs_reached": _carry(pending, "chain_docs_reached", run, "chain_docs_reached"),
@@ -681,6 +682,7 @@ def _maybe_auto_resume_hop(run: dict) -> None:
                                      run, "continuation_reviewer_overrides"),
         # 0357 T0004: the chain identity and its lifetime counters, so the next hop keeps
         # counting the CHAIN's progress instead of restarting at 0/1 in the miniplayer.
+        "requested_ai_group_id": _carry(pending, "requested_ai_group_id", run, "requested_ai_group_id"),
         "chain_id": _carry(pending, "chain_id", run, "chain_id"),
         "chain_docs_target": _carry(pending, "chain_docs_target", run, "chain_docs_target"),
         "chain_docs_reached": _carry(pending, "chain_docs_reached", run, "chain_docs_reached"),
@@ -822,6 +824,7 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
         mention_builder=lambda _raw, _scratch: None,
         issue_builder=_issue_next,
         provider_id=base_provider_id,
+        requested_ai_group_id=pending.get("requested_ai_group_id"),
         provider_pinned=provider_pinned,
         continuation_provider_overrides=overrides,
         continuation_note_overrides=note_overrides,
