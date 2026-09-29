@@ -16,6 +16,7 @@ from modules.flow_gate.settings.routers.env_vars_commands import router as _env_
 from modules.flow_gate.settings.routers.ai_settings import router as _ai_settings_router
 from modules.flow_gate.api.v1.ai_evaluation_routes import router as _ai_evaluation_router
 from modules.flow_gate.api.v1.ai_group_routes import router as _ai_group_router
+from modules.flow_gate.api.v1.ai_overview_routes import router as _ai_overview_router
 from modules.flow_gate.rbac.routers import router as _rbac_router
 from modules.flow_gate.workflow.routers.workflow import router as _workflow_router
 from modules.flow_gate.api.token_routes import router as _token_router
@@ -173,6 +174,7 @@ app.include_router(_env_vars_commands_router, prefix=f"{CONTEXT}/api/v1", tags=[
 app.include_router(_ai_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["AiSettings"])
 app.include_router(_ai_evaluation_router, prefix=f"{CONTEXT}/api/v1", tags=["AiEvaluation"] )
 app.include_router(_ai_group_router, prefix=f"{CONTEXT}/api/v1", tags=["AiGroups"])
+app.include_router(_ai_overview_router, prefix=f"{CONTEXT}/api/v1", tags=["AiOverview"])
 app.include_router(_rbac_router, prefix=f"{CONTEXT}/rbac", tags=["RBAC"])
 app.include_router(_workflow_router, prefix=f"{CONTEXT}", tags=["Workflow"])
 app.include_router(_token_router, prefix=f"{CONTEXT}", tags=["TokenIssue"])

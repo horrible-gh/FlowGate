@@ -1,10 +1,20 @@
 <template>
-  <div>
-    <div class="card mb-4">
+  <div class="ai-project-page">
+    <section class="card mb-4" data-test="ai-overview">
+      <div class="card-hd"><span class="card-title">{{ $t('settings.project.ai_v02.overview') }}</span></div>
+      <div class="card-bd pad ai-overview-grid">
+        <div v-for="section in overviewSections" :key="section.key" class="ai-overview-item">
+          <strong>{{ $t(`settings.project.ai_v02.${section.key}`) }}</strong>
+          <span v-if="overview?.[section.key]">{{ section.text }}</span>
+          <span v-else>{{ $t('settings.project.ai_v02.section_failed') }}</span>
+        </div>
+      </div>
+    </section>
+    <div class="card mb-4" data-test="ai-provider-card">
       <div class="card-hd">
         <span class="card-title">
           <AppIcon name="robot" style="margin-right:6px; color:var(--primary);" />
-          {{ $t('settings.project.ai.title') }}
+          {{ $t('settings.project.ai_v02.providers') }}
         </span>
         <span class="badge" :class="badgeClass" style="margin-left:10px;">{{ badgeLabel }}</span>
       </div>
@@ -41,6 +51,11 @@
           <p v-else class="form-hint">{{ $t('settings.project.ai.inherit_pending') }}</p>
         </template>
         <p v-else class="form-hint">{{ $t('settings.project.ai.disabled_note') }}</p>
+        <div class="flex ai-provider-actions">
+          <span v-if="dirty" class="badge badge-yellow">{{ $t('settings.ai.unsaved_badge') }}</span>
+          <button class="btn btn-secondary" @click="load"><AppIcon name="arrow-counter-clockwise" /> {{ $t('common.reset') }}</button>
+          <button class="btn btn-primary" @click="save"><AppIcon name="floppy-disk" /> {{ $t('common.save') }}</button>
+        </div>
       </div>
     </div>
 
@@ -55,15 +70,8 @@
       </div>
     </div>
 
-    <div class="flex" style="justify-content:flex-end; align-items:center; gap:10px;">
-      <span v-if="dirty" class="badge badge-yellow" style="margin-right:2px;">{{ $t('settings.ai.unsaved_badge') }}</span>
-      <button class="btn btn-secondary" @click="load">
-        <AppIcon name="arrow-counter-clockwise" /> {{ $t('common.reset') }}
-      </button>
-      <button class="btn btn-primary" @click="save">
-        <AppIcon name="floppy-disk" /> {{ $t('common.save') }}
-      </button>
-    </div>
+    <AiEvaluationPanel :project-id="projectId" :providers="effectiveProviders" @changed="loadOverview" />
+    <AiGroupsPanel :project-id="projectId" :providers="effectiveProviders" @changed="loadOverview" />
   </div>
 </template>
 
@@ -77,6 +85,8 @@ import { onBeforeRouteLeave } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { getRequest, postRequest, putRequest } from '@shared/api';
 import AiProviderListEditor from '../../components/AiProviderListEditor.vue';
+import AiEvaluationPanel from '../../components/AiEvaluationPanel.vue';
+import AiGroupsPanel from '../../components/AiGroupsPanel.vue';
 import { formatErrors } from '../../components/aiProviderLimits';
 import AppIcon from '@shared/AppIcon.vue';
 import { useSettingsStore } from '../../stores/settings.js';
@@ -103,6 +113,25 @@ const baseline = ref(snapshot());
 const dirty = computed(() => baseline.value !== snapshot());
 
 const projectId = computed(() => settings.currentProjectId);
+const overview = ref(null);
+let overviewGeneration = 0;
+const overviewSections = computed(() => [
+  { key: 'providers', text: overview.value?.providers && `${overview.value.providers.enabled}/${overview.value.providers.total}` },
+  { key: 'evaluation', text: overview.value?.evaluation && `${overview.value.evaluation.providers_with_current_result} · ${t('settings.project.ai_v02.running')}: ${overview.value.evaluation.running} · ${t('settings.project.ai_v02.failed')}: ${overview.value.evaluation.failed} · ${t('settings.project.ai_v02.stale')}: ${overview.value.evaluation.stale}` },
+  { key: 'ai_groups', text: overview.value?.ai_groups && `${overview.value.ai_groups.total} · ${t('settings.project.ai_v02.invalid')}: ${overview.value.ai_groups.invalid}` },
+]);
+async function loadOverview() {
+  const project = projectId.value;
+  const request = ++overviewGeneration;
+  if (!project) return;
+  try {
+    const { data } = await getRequest(`/api/v1/projects/${encodeURIComponent(project)}/ai-overview`);
+    if (projectId.value === project && request === overviewGeneration) overview.value = data;
+  } catch (e) {
+    if (projectId.value === project && request === overviewGeneration) overview.value = null;
+  }
+}
+
 const effectiveProviders = computed(() => effective.value.providers || []);
 const effectiveDefaultIndex = computed(() =>
   effectiveProviders.value.findIndex((p) => p.id === effective.value.default_provider_id));
@@ -139,13 +168,17 @@ function applyResponse(data) {
   baseline.value = snapshot();
 }
 
+let providerRequestGeneration = 0;
 async function load() {
-  if (!projectId.value) return;
+  const project = projectId.value;
+  const generation = ++providerRequestGeneration;
+  if (!project) return;
   try {
-    const { data } = await getRequest(`/api/v1/projects/${projectId.value}/ai-settings`);
-    applyResponse(data);
+    const { data } = await getRequest(`/api/v1/projects/${encodeURIComponent(project)}/ai-settings`);
+    if (projectId.value === project && generation === providerRequestGeneration) applyResponse(data);
   } catch (e) {
-    showToast(t('common.toast.settings_load_failed'), 'danger');
+    if (projectId.value === project && generation === providerRequestGeneration)
+      showToast(t('common.toast.settings_load_failed'), 'danger');
   }
 }
 
@@ -182,6 +215,7 @@ async function save() {
   try {
     const { data } = await putRequest(`/api/v1/projects/${projectId.value}/ai-settings`, buildPayload());
     applyResponse(data);
+    void loadOverview();
     showToast(t('common.toast.settings_saved'), 'success');
   } catch (e) {
     if (e?.response?.status === 422) {
@@ -202,6 +236,14 @@ onBeforeRouteLeave(async () => {
   return true;
 });
 
-watch(projectId, load);
-onMounted(load);
+watch(projectId, () => { overview.value = null; void load(); void loadOverview(); });
+onMounted(() => { void load(); void loadOverview(); });
 </script>
+
+<style scoped>
+.ai-project-page { width: 100%; min-width: 0; }
+.ai-overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.ai-overview-item { display: flex; flex-direction: column; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.ai-provider-actions { justify-content: flex-end; align-items: center; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+@media (min-width: 2560px) { .ai-project-page { max-width: 1800px; margin-inline: auto; } }
+</style>

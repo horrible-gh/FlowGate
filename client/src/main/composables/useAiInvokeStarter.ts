@@ -49,6 +49,7 @@ export interface AiInvokeStartOptions {
   continuationInstructionMode?: 'auto_approved' | 'ai_direct'
   continuationAutoApproveItemSeqs?: number[]
   providerOverrides?: Record<number, string>
+  requestedAiGroupId?: string | null
   defaultMessage?: string
   messageOverrides?: Record<number, string>
   reviewCountOverrides?: Record<number, number>
@@ -112,6 +113,7 @@ export function buildAiInvokeStartBody(
   if (options.designMode) body.design_mode = options.designMode
   if (options.designFirstLabel) body.design_first_label = options.designFirstLabel
   if (options.mode === 'continuous') {
+    if (options.requestedAiGroupId) body.requested_ai_group_id = options.requestedAiGroupId
     body.continuation_target_seq = options.target?.seq ?? null
     body.continuation_review_mode = !!options.continuationReviewMode
     body.continuation_instruction_mode = options.continuationInstructionMode

@@ -197,6 +197,15 @@
                 </div>
                 <div v-else class="cwd-provider-block">
                   <div class="cwd-provider-row">
+                    <label class="cwd-provider-label">{{ t('settings.project.ai_v02.groups') }}</label>
+                    <select v-model="selectedAiGroupId" class="cwd-review-select cwd-group-select" data-test="start-ai-group" @change="onAiGroupChange">
+                      <option value="">{{ t('settings.project.ai_v02.none') }}</option>
+                      <option v-for="group in aiGroups" :key="group.ai_group_id" :value="group.ai_group_id" :disabled="groupBroken(group)">
+                        {{ group.name }}{{ groupBroken(group) ? ` — ${t('settings.project.ai_v02.unavailable')}` : '' }}
+                      </option>
+                    </select>
+                  </div>
+                  <div class="cwd-provider-row">
                     <label class="cwd-provider-label">{{ t('main.continuous_work.provider_default_label') }}</label>
                     <AiProviderSelect
                       class="cwd-provider-select"
@@ -365,7 +374,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { postRequest } from '@shared/api'
+import { getRequest, postRequest } from '@shared/api'
 import AppIcon from '@shared/AppIcon.vue'
 import AiProviderSelect from './AiProviderSelect.vue'
 import DialogFooter from './dialogs/DialogFooter.vue'
@@ -394,6 +403,7 @@ const props = defineProps<{
   // the aiProvider store). Surfaced so the continuous run's provider is confirmable here.
   providers?: { id: string; name: string }[]
   selectedProvider?: string
+  projectId?: string
   providerLoading?: boolean
   providerErrored?: boolean
   providerPinned?: boolean
@@ -428,6 +438,7 @@ const emit = defineEmits<{
     // 0317 T0010 rev4: item_seq -> provider_id, for steps the user explicitly overrode.
     // Session-scoped (rides this run's start request only, never persisted).
     providerOverrides: Record<number, string>
+    requestedAiGroupId: string | null
     // 0346 T0005: [Message] tab — a common note for every hop, and item_seq -> note for the
     // steps the user singled out. Session-scoped, same as providerOverrides above.
     defaultMessage: string
@@ -506,6 +517,33 @@ const activeTab = ref<'basic' | 'provider' | 'message' | 'review'>('basic')
 // assignments) — the override unit moved from document TYPE to individual STEP INSTANCE, so the
 // same type appearing twice in one chain (e.g. two T steps) can resolve to different providers.
 const overrides = ref<Record<number, string>>({})
+type GroupRole = { provider_id: string; is_available: boolean } | null
+type AiGroupPreset = { ai_group_id: string; name: string; work_executor: GroupRole; reviewer: GroupRole; reworker: GroupRole }
+const aiGroups = ref<AiGroupPreset[]>([])
+const selectedAiGroupId = ref('')
+let groupRequestGeneration = 0
+function groupBroken(group: AiGroupPreset): boolean {
+  return !group.work_executor?.is_available || [group.reviewer, group.reworker].some(role => role && !role.is_available)
+}
+async function loadAiGroups() {
+  const project = props.projectId
+  const generation = ++groupRequestGeneration
+  aiGroups.value = []
+  if (!project) return
+  try {
+    const { data } = await getRequest<{ items: AiGroupPreset[] }>(`/api/v1/projects/${encodeURIComponent(project)}/ai-groups`)
+    if (props.visible && props.projectId === project && generation === groupRequestGeneration) aiGroups.value = data.items || []
+  } catch { /* Provider selection remains usable when Group read fails. */ }
+}
+function onAiGroupChange() {
+  const group = aiGroups.value.find(item => item.ai_group_id === selectedAiGroupId.value)
+  if (!group || groupBroken(group)) return
+  emit('update:provider', group.work_executor!.provider_id)
+  if (group.reviewer?.provider_id) {
+    reviewerOverrides.value = Object.fromEntries(executionSteps.value.map(item => [item.item_seq, group.reviewer!.provider_id]))
+  } else reviewerOverrides.value = {}
+}
+
 // 0346 T0005: [Message] tab state — a common note plus item_seq -> note overrides, mirroring
 // `overrides` above but additive rather than replacing (D0004 §3-3: an individual note does not
 // push out the common note).
@@ -932,6 +970,7 @@ function onProceed() {
     stepCount: sel.stepCount,
     fromDecision: sel.fromDecision,
     providerOverrides,
+    requestedAiGroupId: selectedAiGroupId.value || null,
     defaultMessage: defaultMessage.value.trim(),
     messageOverrides: messageOverridesOut,
     autoApproveItemSeqs: autoApproveOut,
@@ -1069,11 +1108,14 @@ watch(
     if (val) {
       // The picker reloads itself off `active`; reset only what this dialog owns.
       installPreset(props.preset)
+      selectedAiGroupId.value = ''
+      void loadAiGroups()
       autoApproveItemSeqs.value = []
     }
   },
   { immediate: true },
 )
+watch(() => props.projectId, () => { selectedAiGroupId.value = ''; if (props.visible) void loadAiGroups() })
 watch(
   () => props.preset,
   (value) => {
@@ -1510,4 +1552,8 @@ watch(presetActive, (active) => {
 .fg-dialog-surface.continuous-work-dialog {
   width: min(860px, 92vw);
 }
+</style>
+
+<style scoped>
+.cwd-group-select { flex: 1 1 auto; max-width: 320px; min-width: 0; }
 </style>
