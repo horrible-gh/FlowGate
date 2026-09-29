@@ -142,15 +142,24 @@ def list_modules(project_id: str) -> list[dict]:
 def create(data: dict[str, Any]) -> dict:
     store = get_store()
     now = now_iso()
-    store._execute(
-        "INSERT INTO projects (project_id, project_name, description, color, is_active, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [
-            data["project_id"], data["project_name"], data.get("description"),
-            data.get("color"), data.get("is_active", 1),
-            data.get("created_at", now), data.get("updated_at", now),
-        ],
-    )
+    with store.transaction():
+        store._execute(
+            "INSERT INTO projects (project_id, project_name, description, color, is_active, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                data["project_id"], data["project_name"], data.get("description"),
+                data.get("color"), data.get("is_active", 1),
+                data.get("created_at", now), data.get("updated_at", now),
+            ],
+        )
+        try:
+            store._execute(
+                "INSERT INTO project_settings (project_id, tr_self_check_enabled, updated_at) "
+                "VALUES (?, 0, ?) ON CONFLICT(project_id) DO NOTHING",
+                [data["project_id"], now],
+            )
+        except Exception:
+            pass
     meta_cache.invalidate_project(data["project_id"])
     return get_by_id(data["project_id"])  # type: ignore[return-value]
 
@@ -169,34 +178,43 @@ def update(project_id: str, updates: dict[str, Any]) -> Optional[dict]:
 
 
 def delete(project_id: str) -> None:
-    get_store()._execute("DELETE FROM projects WHERE project_id = ?", [project_id])
+    store = get_store()
+    with store.transaction():
+        store._execute("DELETE FROM projects WHERE project_id = ?", [project_id])
     meta_cache.invalidate_project(project_id)
 
 
 def get_settings(project_id: str) -> Optional[dict]:
-    return get_store()._fetch_one(
+    row = get_store()._fetch_one(
         "SELECT * FROM project_settings WHERE project_id = ?", [project_id]
     )
+    if row is not None:
+        row["tr_self_check_enabled"] = bool(row.get("tr_self_check_enabled", 0))
+    return row
 
 
 def upsert_settings(project_id: str, data: dict[str, Any]) -> dict:
     store = get_store()
     now = now_iso()
+    raw_enabled = data.get("tr_self_check_enabled", 0)
+    int_enabled = 1 if raw_enabled in (1, True, "1", "true") else 0
     store._execute(
         "INSERT INTO project_settings "
         "(project_id, group_structure, digits_group, digits_sub_group, digits_type, "
-        "storage_root_override, branch, source_mode_override, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "storage_root_override, branch, source_mode_override, tr_self_check_enabled, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(project_id) DO UPDATE SET "
         "group_structure=excluded.group_structure, digits_group=excluded.digits_group, "
         "digits_sub_group=excluded.digits_sub_group, digits_type=excluded.digits_type, "
         "storage_root_override=excluded.storage_root_override, branch=excluded.branch, "
         "source_mode_override=excluded.source_mode_override, "
+        "tr_self_check_enabled=excluded.tr_self_check_enabled, "
         "updated_at=excluded.updated_at",
         [
             project_id, data.get("group_structure", 2), data.get("digits_group", 4),
             data.get("digits_sub_group", 3), data.get("digits_type", 4),
             data.get("storage_root_override"), data.get("branch", "main"),
-            data.get("source_mode_override"), now,
+            data.get("source_mode_override"), int_enabled, now,
         ],
     )
     return get_settings(project_id)  # type: ignore[return-value]
