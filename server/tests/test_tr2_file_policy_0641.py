@@ -34,30 +34,75 @@ def test_successful_by_group_uses_group_state_index_shape(monkeypatch):
     assert seen["params"] == ["flowgate.default.0641"]
 
 
-def test_managed_paths_uses_succeeded_attempt_commit_paths_without_ledger(monkeypatch):
+def test_ownership_rows_is_uncapped_and_keeps_terminal_live_shape(monkeypatch):
+    seen = {}
+
+    class Store:
+        def _fetch_all(self, sql, params):
+            seen["sql"] = sql
+            seen["params"] = params
+            return []
+
+    from modules.flow_gate.db import tr_commit_ledger as db_ledger
+    monkeypatch.setattr(db_ledger, "get_store", lambda: Store())
+    assert db_ledger.ownership_rows("flowgate.default.0641") == []
+    assert "LIMIT" not in seen["sql"].upper()
+    assert "reopened_terminal_at" in seen["sql"]
+    assert seen["params"] == ["flowgate.default.0641"]
+
+
+def test_managed_paths_tracks_live_reapply_lineage_only(monkeypatch):
     monkeypatch.setattr(
         policy.db_attempts,
         "successful_by_group",
         lambda _gid: [
-            {"attempt_id": "a1", "ledger_row_id": None,
+            {"attempt_id": "a1", "ledger_row_id": 1,
              "commit_json": json.dumps({"paths": ["server/./a.py", "client/b.ts"]})},
-            {"attempt_id": "a2", "ledger_row_id": 999,
-             "commit_json": {"paths": ["server/a.py", "server/c.py"]}},
+            {"attempt_id": "a2", "ledger_row_id": 3,
+             "commit_json": {"paths": ["server/c.py"]}},
+        ],
+    )
+    monkeypatch.setattr(
+        policy.db_ledger,
+        "ownership_rows",
+        lambda _gid: [
+            {"id": 1, "group_id": "flowgate.default.0641", "doc_id": "tr2a",
+             "state": "canceled", "restored_from_id": None, "reopened_terminal_at": None,
+             "doc_type_code": "TR2"},
+            {"id": 2, "group_id": "flowgate.default.0641", "doc_id": "tr2a",
+             "state": "live", "restored_from_id": 1, "reopened_terminal_at": None,
+             "doc_type_code": "TR2"},
+            {"id": 3, "group_id": "flowgate.default.0641", "doc_id": "tr2b",
+             "state": "canceled", "restored_from_id": None, "reopened_terminal_at": None,
+             "doc_type_code": "TR2"},
+            {"id": 4, "group_id": "flowgate.default.0641", "doc_id": "ordinary-tr",
+             "state": "live", "restored_from_id": None, "reopened_terminal_at": None,
+             "doc_type_code": "TR"},
         ],
     )
     assert policy.managed_paths("flowgate.default.0641") == {
-        "server/a.py", "server/c.py", "client/b.ts",
+        "server/a.py", "client/b.ts",
     }
 
 
-def test_managed_paths_fails_closed_on_malformed_succeeded_attempt(monkeypatch):
+def test_managed_paths_fails_closed_on_malformed_active_attempt(monkeypatch):
     monkeypatch.setattr(
         policy.db_attempts,
         "successful_by_group",
-        lambda _gid: [{"attempt_id": "bad", "commit_json": "{}"}],
+        lambda _gid: [{"attempt_id": "bad", "ledger_row_id": 1, "commit_json": "{}"}],
     )
-    with pytest.raises(policy.Tr2OwnershipInvariantError):
+    monkeypatch.setattr(
+        policy.db_ledger,
+        "ownership_rows",
+        lambda _gid: [
+            {"id": 1, "group_id": "flowgate.default.0641", "doc_id": "tr2",
+             "state": "live", "restored_from_id": None, "reopened_terminal_at": None,
+             "doc_type_code": "TR2"},
+        ],
+    )
+    with pytest.raises(policy.Tr2OwnershipInvariantError) as exc:
         policy.managed_paths("flowgate.default.0641")
+    assert exc.value.code == policy.TR2_OWNERSHIP_INVARIANT
 
 
 def _symlink_or_skip(link: Path, target: Path, *, target_is_directory: bool = False):
@@ -209,35 +254,91 @@ def test_durable_ownership_migrations_drop_document_fk_and_set_null_ledger(diale
     assert "ON DELETE SET NULL" in sql
 
 
-def test_lifecycle_ownership_ignores_failed_and_recovery_required(monkeypatch):
-    rows = [
-        {"attempt_id": "ok", "state": "succeeded",
-         "commit_json": {"paths": ["server/ok.py"]}},
+def _install_ownership(monkeypatch, attempts, ledger_rows):
+    monkeypatch.setattr(policy.db_attempts, "successful_by_group", lambda _gid: attempts)
+    monkeypatch.setattr(policy.db_ledger, "ownership_rows", lambda _gid: ledger_rows)
+
+
+def test_time_machine_cancel_unlocks_and_second_reapply_relocks(monkeypatch):
+    attempt = {"attempt_id": "ok", "ledger_row_id": 1,
+               "commit_json": {"paths": ["server/a.py"]}}
+    root = {"id": 1, "group_id": "g", "doc_id": "tr2", "state": "canceled",
+            "restored_from_id": None, "reopened_terminal_at": None, "doc_type_code": "TR2"}
+    first = {"id": 2, "group_id": "g", "doc_id": "tr2", "state": "canceled",
+             "restored_from_id": 1, "reopened_terminal_at": None, "doc_type_code": "TR2"}
+    second = {"id": 3, "group_id": "g", "doc_id": "tr2", "state": "live",
+              "restored_from_id": 2, "reopened_terminal_at": None, "doc_type_code": "TR2"}
+
+    _install_ownership(monkeypatch, [attempt], [root])
+    assert policy.managed_paths("g") == set()
+
+    _install_ownership(monkeypatch, [attempt], [root, first, second])
+    assert policy.managed_paths("g") == {"server/a.py"}
+
+
+def test_terminal_reopen_remains_managed(monkeypatch):
+    attempt = {"attempt_id": "ok", "ledger_row_id": 1,
+               "commit_json": {"paths": ["server/a.py"]}}
+    terminal = {"id": 1, "group_id": "g", "doc_id": "tr2", "state": "live",
+                "restored_from_id": None, "reopened_terminal_at": "2026-09-29T00:00:00Z",
+                "doc_type_code": "TR2"}
+    _install_ownership(monkeypatch, [attempt], [terminal])
+    assert policy.managed_paths("g") == {"server/a.py"}
+
+
+def test_invalid_persisted_active_ownership_path_fails_invariant(monkeypatch):
+    attempt = {"attempt_id": "bad-path", "ledger_row_id": 1,
+               "commit_json": {"paths": ["../outside.py"]}}
+    live = {"id": 1, "group_id": "g", "doc_id": "tr2", "state": "live",
+            "restored_from_id": None, "reopened_terminal_at": None,
+            "doc_type_code": "TR2"}
+    _install_ownership(monkeypatch, [attempt], [live])
+
+    with pytest.raises(policy.Tr2OwnershipInvariantError) as exc:
+        policy.managed_paths("g")
+    assert exc.value.code == policy.TR2_OWNERSHIP_INVARIANT
+    assert exc.value.details["cause_code"] == policy.SOURCE_PATH_INVALID
+    assert exc.value.details["path"] == "../outside.py"
+
+
+def test_multiple_active_owners_release_only_after_last_cancel(monkeypatch):
+    attempts = [
+        {"attempt_id": "a", "ledger_row_id": 1, "commit_json": {"paths": ["server/a.py"]}},
+        {"attempt_id": "b", "ledger_row_id": 2, "commit_json": {"paths": ["server/a.py"]}},
     ]
-    monkeypatch.setattr(policy.db_attempts, "successful_by_group", lambda _gid: rows)
-    assert policy.managed_paths("flowgate.default.0641") == {"server/ok.py"}
-    assert policy.is_managed("flowgate.default.0641", "server/ok.py")
-    assert not policy.is_managed("flowgate.default.0641", "server/failed.py")
-    assert not policy.is_managed("flowgate.default.0641", "server/recovery.py")
+    rows = [
+        {"id": 1, "group_id": "g", "doc_id": "a", "state": "canceled",
+         "restored_from_id": None, "reopened_terminal_at": None, "doc_type_code": "TR2"},
+        {"id": 2, "group_id": "g", "doc_id": "b", "state": "live",
+         "restored_from_id": None, "reopened_terminal_at": None, "doc_type_code": "TR2"},
+    ]
+    _install_ownership(monkeypatch, attempts, rows)
+    assert policy.managed_paths("g") == {"server/a.py"}
+    rows[1]["state"] = "canceled"
+    assert policy.managed_paths("g") == set()
 
 
-def test_time_machine_ledger_state_is_not_ownership_authority(monkeypatch):
-    row = {
-        "attempt_id": "ok",
-        "state": "succeeded",
-        "ledger_row_id": 1,
-        "ledger_json": {"id": 1, "state": "live"},
-        "commit_json": {"paths": ["server/a.py"]},
-    }
-    monkeypatch.setattr(
-        policy.db_attempts, "successful_by_group", lambda _gid: [dict(row)]
-    )
-    assert policy.managed_paths("flowgate.default.0641") == {"server/a.py"}
-    row["ledger_json"] = {"id": 1, "state": "canceled"}
-    assert policy.managed_paths("flowgate.default.0641") == {"server/a.py"}
-    row["ledger_row_id"] = 2
-    row["ledger_json"] = {"id": 2, "state": "live", "restored_from_id": 1}
-    assert policy.managed_paths("flowgate.default.0641") == {"server/a.py"}
+@pytest.mark.parametrize("broken", ["missing", "cycle", "missing_root_attempt"])
+def test_broken_live_tr2_lineage_fails_closed(monkeypatch, broken):
+    attempt = {"attempt_id": "ok", "ledger_row_id": 1,
+               "commit_json": {"paths": ["server/a.py"]}}
+    root = {"id": 1, "group_id": "g", "doc_id": "tr2", "state": "canceled",
+            "restored_from_id": None, "reopened_terminal_at": None, "doc_type_code": "TR2"}
+    live = {"id": 2, "group_id": "g", "doc_id": "tr2", "state": "live",
+            "restored_from_id": 1, "reopened_terminal_at": None, "doc_type_code": "TR2"}
+    attempts = [attempt]
+    rows = [root, live]
+    if broken == "missing":
+        rows = [live]
+    elif broken == "cycle":
+        root["restored_from_id"] = 2
+    else:
+        attempts = []
+
+    _install_ownership(monkeypatch, attempts, rows)
+    with pytest.raises(policy.Tr2OwnershipInvariantError) as exc:
+        policy.managed_paths("g")
+    assert exc.value.code == policy.TR2_OWNERSHIP_INVARIANT
 
 
 def test_historical_backfill_zero_contract():

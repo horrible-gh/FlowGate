@@ -10,6 +10,7 @@ from typing import Iterable
 
 from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.db import tr2_approval_attempts as db_attempts
+from modules.flow_gate.db import tr_commit_ledger as db_ledger
 from modules.flow_gate.documents import tr2_service
 from modules.flow_gate.services import git_service
 from modules.flow_gate.storage.safe_path import (
@@ -23,6 +24,7 @@ SOURCE_PATH_ALIAS_NOT_ALLOWED = "SOURCE_PATH_ALIAS_NOT_ALLOWED"
 SOURCE_PATH_INVALID = "SOURCE_PATH_INVALID"
 SOURCE_WORKTREE_UNAVAILABLE = "SOURCE_WORKTREE_UNAVAILABLE"
 SOURCE_MUTATION_BUSY = "SOURCE_MUTATION_BUSY"
+TR2_OWNERSHIP_INVARIANT = "TR2_OWNERSHIP_INVARIANT"
 
 
 class Tr2FilePolicyError(RuntimeError):
@@ -36,7 +38,11 @@ class Tr2FilePolicyError(RuntimeError):
 
 
 class Tr2OwnershipInvariantError(RuntimeError):
-    pass
+    code = TR2_OWNERSHIP_INVARIANT
+
+    def __init__(self, message: str, *, details: dict | None = None):
+        self.details = {"code": self.code, "message": message, **(details or {})}
+        super().__init__(message)
 
 
 def _canonical(path: str) -> str:
@@ -59,14 +65,107 @@ def _commit_paths(row: dict) -> list[str]:
         raise Tr2OwnershipInvariantError(
             f"missing succeeded TR2 commit paths for attempt {row.get('attempt_id')}"
         )
-    return [_canonical(path) for path in paths]
+    canonical: list[str] = []
+    for path in paths:
+        try:
+            canonical.append(_canonical(path))
+        except Tr2FilePolicyError as exc:
+            raise Tr2OwnershipInvariantError(
+                "persisted TR2 ownership path is invalid",
+                details={
+                    "attempt_id": row.get("attempt_id"),
+                    "path": path,
+                    "cause_code": exc.code,
+                },
+            ) from exc
+    return canonical
+
+
+def _lineage_root(row: dict, rows_by_id: dict[int, dict]) -> dict:
+    current = row
+    seen: set[int] = set()
+    while True:
+        try:
+            row_id = int(current["id"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise Tr2OwnershipInvariantError(
+                "ledger row has no valid id", details={"row": current}
+            ) from exc
+        if row_id in seen:
+            raise Tr2OwnershipInvariantError(
+                "restored_from_id cycle in TR2 ownership lineage",
+                details={"ledger_row_id": row_id},
+            )
+        seen.add(row_id)
+        parent_id = current.get("restored_from_id")
+        if parent_id is None:
+            return current
+        try:
+            parent_key = int(parent_id)
+        except (TypeError, ValueError) as exc:
+            raise Tr2OwnershipInvariantError(
+                "restored_from_id is invalid",
+                details={"ledger_row_id": row_id, "restored_from_id": parent_id},
+            ) from exc
+        parent = rows_by_id.get(parent_key)
+        if parent is None:
+            raise Tr2OwnershipInvariantError(
+                "restored_from_id target is missing",
+                details={"ledger_row_id": row_id, "restored_from_id": parent_key},
+            )
+        if parent.get("group_id") != current.get("group_id") or parent.get("doc_id") != current.get("doc_id"):
+            raise Tr2OwnershipInvariantError(
+                "TR2 ownership lineage crosses group/document boundary",
+                details={"ledger_row_id": row_id, "restored_from_id": parent_key},
+            )
+        current = parent
 
 
 def managed_paths(group_id: str) -> set[str]:
-    """Authoritative, uncached ownership set derived from succeeded approval attempts."""
+    """Authoritative active ownership derived from live ledger lineages + durable attempts."""
+    rows = db_ledger.ownership_rows(group_id)
+    rows_by_id: dict[int, dict] = {}
+    for row in rows:
+        try:
+            rows_by_id[int(row["id"])] = row
+        except (KeyError, TypeError, ValueError) as exc:
+            raise Tr2OwnershipInvariantError(
+                "ledger row has no valid id", details={"group_id": group_id}
+            ) from exc
+
+    roots: dict[int, dict] = {}
+    for attempt in db_attempts.successful_by_group(group_id):
+        ledger_row_id = attempt.get("ledger_row_id")
+        if ledger_row_id is None:
+            continue
+        try:
+            roots[int(ledger_row_id)] = attempt
+        except (TypeError, ValueError) as exc:
+            raise Tr2OwnershipInvariantError(
+                "succeeded TR2 attempt has invalid ledger_row_id",
+                details={"attempt_id": attempt.get("attempt_id")},
+            ) from exc
+
     result: set[str] = set()
-    for row in db_attempts.successful_by_group(group_id):
-        result.update(_commit_paths(row))
+    for row in rows:
+        if row.get("state") != "live":
+            continue
+        root = _lineage_root(row, rows_by_id)
+        try:
+            root_id = int(root["id"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise Tr2OwnershipInvariantError("TR2 ownership root has no valid id") from exc
+        attempt = roots.get(root_id)
+        if attempt is None:
+            # tr_commit_ledger also stores ordinary TR commits. Only a live TR2 row
+            # without its succeeded approval provenance is an ownership invariant break.
+            if str(row.get("doc_type_code") or "").upper() == tr2_service.TR2_TYPE_CODE:
+                raise Tr2OwnershipInvariantError(
+                    "live TR2 lineage has no succeeded approval root",
+                    details={"ledger_row_id": row.get("id"), "root_ledger_row_id": root_id},
+                )
+            continue
+        result.update(_commit_paths(attempt))
     return result
 
 
