@@ -745,6 +745,7 @@ class ProjectSettingsPatch(BaseModel):
     digits_type: int | None = None
     storage_root_override: str | None = None
     source_mode_override: str | None = None
+    tr_self_check_enabled: bool | None = None
 
 
 class GlobalSourceModeBody(BaseModel):
