@@ -1074,6 +1074,489 @@ class TestRbacRouter:
 
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Current-user System-scope permission read endpoint (GET /rbac/system/my-permissions)
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+
+class TestSystemMyPermissions:
+
+    """GET /rbac/system/my-permissions - current user's own System-scope permissions.
+
+
+
+    Additive alongside /rbac/projects/{project_id}/my-permissions; verifies
+
+    System-only resolution, admin handling, and that a user holding both a
+
+    System role and a Project role never gets the Project role's own
+
+    permissions back from this endpoint.
+
+    """
+
+
+
+    @pytest.fixture(autouse=True)
+
+    def _setup(self, db_conn):
+
+        self._db_conn = db_conn
+
+        self._store = _make_mock_store(db_conn)
+
+
+
+        # user_sys_worker: System-scope role only, no project role at all.
+
+        db_conn.execute(
+
+            "INSERT OR IGNORE INTO users (user_id, username, email, password, is_active, is_admin, created_at, updated_at) "
+
+            "VALUES ('user_sys_worker', 'sys_worker_user', 'sys_worker_user@test.com', 'hashed', 1, 0, datetime('now'), datetime('now'))"
+
+        )
+
+        db_conn.execute(
+
+            "INSERT OR IGNORE INTO user_project_roles (user_id, project_id, role_id, granted_at) "
+
+            "VALUES ('user_sys_worker', '__SYSTEM__', 'role_worker', datetime('now'))"
+
+        )
+
+
+
+        # user_mixed: System-scope role_viewer + Project-scope role_manager on proj_alpha.
+
+        # role_manager grants perm_role_assign/perm_document_create/perm_user_read etc,
+
+        # none of which role_viewer holds - a clean marker for "did project leak in".
+
+        db_conn.execute(
+
+            "INSERT OR IGNORE INTO users (user_id, username, email, password, is_active, is_admin, created_at, updated_at) "
+
+            "VALUES ('user_mixed', 'mixed_user', 'mixed_user@test.com', 'hashed', 1, 0, datetime('now'), datetime('now'))"
+
+        )
+
+        db_conn.execute(
+
+            "INSERT OR IGNORE INTO user_project_roles (user_id, project_id, role_id, granted_at) "
+
+            "VALUES ('user_mixed', '__SYSTEM__', 'role_viewer', datetime('now'))"
+
+        )
+
+        db_conn.execute(
+
+            "INSERT OR IGNORE INTO user_project_roles (user_id, project_id, role_id, granted_at) "
+
+            "VALUES ('user_mixed', 'proj_alpha', 'role_manager', datetime('now'))"
+
+        )
+
+        db_conn.commit()
+
+
+
+    def _get_client(self):
+
+        from fastapi.testclient import TestClient
+
+        app = _make_test_app(self._db_conn)
+
+        return TestClient(app)
+
+
+
+    def test_requires_auth(self):
+
+        """Unauthenticated request to /rbac/system/my-permissions is rejected."""
+
+        from modules.flow_gate.rbac.permission_service import clear_all_cache
+
+        clear_all_cache()
+
+        client = self._get_client()
+
+        resp = client.get("/rbac/system/my-permissions")
+
+        assert resp.status_code == 401
+
+
+
+    def test_normal_user_gets_system_role_permissions(self, db_conn):
+
+        """A non-admin user with only a System-scope role gets that role's permissions."""
+
+        from modules.flow_gate.rbac.permission_service import clear_all_cache
+
+        clear_all_cache()
+
+        token = _make_jwt_token("user_sys_worker")
+
+
+
+        worker_row = {
+
+            "user_id": "user_sys_worker", "username": "sys_worker_user",
+
+            "email": "sys_worker_user@test.com", "is_active": 1, "is_admin": 0,
+
+            "first_login_required": 0,
+
+        }
+
+        store = _make_mock_store(db_conn)
+
+        original_side = store._fetch_one.side_effect
+
+
+
+        def _fetch_one(sql, params=None):
+
+            if "FROM users" in sql:
+
+                return worker_row
+
+            return original_side(sql, params) if original_side else None
+
+
+
+        store._fetch_one.side_effect = _fetch_one
+
+
+
+        client = self._get_client()
+
+        with (
+
+            patch("modules.flow_gate.rbac.permission_service.get_store", return_value=store),
+
+            patch("modules.flow_gate.db.permissions.get_store", return_value=store),
+
+            patch("modules.flow_gate.db.users.get_store", return_value=store),
+
+            patch("modules.flow_gate.auth.middleware.is_blacklisted", return_value=False),
+
+        ):
+
+            resp = client.get(
+
+                "/rbac/system/my-permissions",
+
+                headers={"Authorization": f"Bearer {token}"},
+
+            )
+
+
+
+        assert resp.status_code == 200
+
+        data = resp.json()
+
+        assert data["is_admin"] is False
+
+        assert "project_id" not in data
+
+        # role_worker's grants, per the 001_flowgate_schema.sql seed data.
+
+        assert set(data["permissions"]) == {
+
+            "perm_project_read", "perm_document_create", "perm_document_read",
+
+            "perm_document_update", "perm_group_read", "perm_settings_read",
+
+            "perm_tv_run",
+
+        }
+
+
+
+    def test_project_only_user_has_no_system_permissions(self, db_conn):
+
+        """A user with only a Project-scope role gets an empty System permission set (not an error)."""
+
+        from modules.flow_gate.rbac.permission_service import clear_all_cache
+
+        clear_all_cache()
+
+        token = _make_jwt_token("user_worker")
+
+
+
+        worker_row = {
+
+            "user_id": "user_worker", "username": "worker_user",
+
+            "email": "worker_user@test.com", "is_active": 1, "is_admin": 0,
+
+            "first_login_required": 0,
+
+        }
+
+        store = _make_mock_store(db_conn)
+
+        original_side = store._fetch_one.side_effect
+
+
+
+        def _fetch_one(sql, params=None):
+
+            if "FROM users" in sql:
+
+                return worker_row
+
+            return original_side(sql, params) if original_side else None
+
+
+
+        store._fetch_one.side_effect = _fetch_one
+
+
+
+        client = self._get_client()
+
+        with (
+
+            patch("modules.flow_gate.rbac.permission_service.get_store", return_value=store),
+
+            patch("modules.flow_gate.db.permissions.get_store", return_value=store),
+
+            patch("modules.flow_gate.db.users.get_store", return_value=store),
+
+            patch("modules.flow_gate.auth.middleware.is_blacklisted", return_value=False),
+
+        ):
+
+            resp = client.get(
+
+                "/rbac/system/my-permissions",
+
+                headers={"Authorization": f"Bearer {token}"},
+
+            )
+
+
+
+        assert resp.status_code == 200
+
+        data = resp.json()
+
+        assert data["is_admin"] is False
+
+        assert data["permissions"] == []
+
+
+
+    def test_system_and_project_roles_do_not_mix(self, db_conn):
+
+        """A user with a System role AND a Project role only gets the System role's
+
+        permissions from this endpoint - the Project role's own grants must not leak in."""
+
+        from modules.flow_gate.rbac.permission_service import clear_all_cache
+
+        clear_all_cache()
+
+        token = _make_jwt_token("user_mixed")
+
+
+
+        mixed_row = {
+
+            "user_id": "user_mixed", "username": "mixed_user",
+
+            "email": "mixed_user@test.com", "is_active": 1, "is_admin": 0,
+
+            "first_login_required": 0,
+
+        }
+
+        store = _make_mock_store(db_conn)
+
+        original_side = store._fetch_one.side_effect
+
+
+
+        def _fetch_one(sql, params=None):
+
+            if "FROM users" in sql:
+
+                return mixed_row
+
+            return original_side(sql, params) if original_side else None
+
+
+
+        store._fetch_one.side_effect = _fetch_one
+
+
+
+        client = self._get_client()
+
+        with (
+
+            patch("modules.flow_gate.rbac.permission_service.get_store", return_value=store),
+
+            patch("modules.flow_gate.db.permissions.get_store", return_value=store),
+
+            patch("modules.flow_gate.db.users.get_store", return_value=store),
+
+            patch("modules.flow_gate.auth.middleware.is_blacklisted", return_value=False),
+
+        ):
+
+            system_resp = client.get(
+
+                "/rbac/system/my-permissions",
+
+                headers={"Authorization": f"Bearer {token}"},
+
+            )
+
+            project_resp = client.get(
+
+                "/rbac/projects/proj_alpha/my-permissions",
+
+                headers={"Authorization": f"Bearer {token}"},
+
+            )
+
+
+
+        assert system_resp.status_code == 200
+
+        system_perms = set(system_resp.json()["permissions"])
+
+        # role_viewer's grants only - none of role_manager's project-scope grants.
+
+        assert system_perms == {
+
+            "perm_project_read", "perm_document_read", "perm_group_read",
+
+            "perm_settings_read",
+
+        }
+
+        assert "perm_role_assign" not in system_perms
+
+        assert "perm_document_create" not in system_perms
+
+        assert "perm_user_read" not in system_perms
+
+
+
+        # The existing project-scoped endpoint keeps its own (unchanged) meaning:
+
+        # System role's grants UNION Project role's grants for that project.
+
+        assert project_resp.status_code == 200
+
+        project_perms = set(project_resp.json()["permissions"])
+
+        assert "perm_role_assign" in project_perms
+
+        assert "perm_document_create" in project_perms
+
+        assert system_perms.issubset(project_perms)
+
+
+
+    def test_admin_gets_all_permissions(self, db_conn):
+
+        """An admin user receives every permission at /rbac/system/my-permissions,
+
+        matching the existing project-scoped endpoint's admin policy."""
+
+        from modules.flow_gate.rbac.permission_service import clear_all_cache
+
+        clear_all_cache()
+
+        token = _make_jwt_token("user_admin", is_admin=True)
+
+
+
+        admin_row = {
+
+            "user_id": "user_admin", "username": "admin_user",
+
+            "email": "admin@test.com", "is_active": 1, "is_admin": 1,
+
+            "first_login_required": 0,
+
+        }
+
+        store = _make_mock_store(db_conn)
+
+        original_side = store._fetch_one.side_effect
+
+
+
+        def _fetch_one(sql, params=None):
+
+            if "FROM users" in sql:
+
+                return admin_row
+
+            return original_side(sql, params) if original_side else None
+
+
+
+        store._fetch_one.side_effect = _fetch_one
+
+
+
+        client = self._get_client()
+
+        with (
+
+            patch("modules.flow_gate.rbac.permission_service.get_store", return_value=store),
+
+            patch("modules.flow_gate.db.permissions.get_store", return_value=store),
+
+            patch("modules.flow_gate.db.users.get_store", return_value=store),
+
+            patch("modules.flow_gate.auth.middleware.is_blacklisted", return_value=False),
+
+        ):
+
+            resp = client.get(
+
+                "/rbac/system/my-permissions",
+
+                headers={"Authorization": f"Bearer {token}"},
+
+            )
+
+
+
+        assert resp.status_code == 200
+
+        data = resp.json()
+
+        assert data["is_admin"] is True
+
+        all_permission_ids = {
+            row["permission_id"]
+            for row in db_conn.execute("SELECT permission_id FROM permissions").fetchall()
+        }
+
+        assert all_permission_ids, "fixture must seed at least one permission"
+
+        assert set(data["permissions"]) == all_permission_ids
+
+        assert "project_id" not in data
+
+
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
 # T242 regression test: permission ID consistency for the token issuance endpoint (perm_document_read)
 
 # ─────────────────────────────────────────────────────────────────────────────

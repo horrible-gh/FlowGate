@@ -746,6 +746,8 @@
     <ContinuousWorkDialog
       v-model:visible="continuousDialogVisible"
       :doc-ref="continuousDocRef"
+
+      :project-id="continuousProjectId"
       :providers="aiProviderStore.providers"
       :selected-provider="aiProviderStore.selectedProviderId"
       :provider-pinned="aiProviderStore.pinned"
@@ -1419,6 +1421,8 @@ const continuousInstructionMode = ref<ContinuationInstructionMode>(DEFAULT_INSTR
 // 0317 T0010 rev4: item_seq -> provider_id overrides chosen in ContinuousWorkDialog; carried
 // through the consent gate to the start request (session-scoped, never persisted).
 const continuousProviderOverrides = ref<Record<number, string>>({})
+const continuousRequestedAiGroupId = ref<string | null>(null)
+const continuousReworkerProviderId = ref<string | null>(null)
 // 0346 T0005: [Message] tab values, carried from ContinuousWorkDialog's confirm payload
 // through to the consent gate's start request (session-scoped, never persisted).
 const continuousDefaultMessage = ref('')
@@ -4056,6 +4060,8 @@ function onContinuousDialogConfirm(payload: {
   stepCount: number
   fromDecision: boolean
   providerOverrides: Record<number, string>
+  requestedAiGroupId: string | null
+  reworkerProviderId: string | null
   defaultMessage: string
   messageOverrides: Record<number, string>
   autoApproveItemSeqs: number[]
@@ -4070,6 +4076,9 @@ function onContinuousDialogConfirm(payload: {
   continuousReviewMode.value = payload.reviewMode
   continuousInstructionMode.value = payload.instructionMode
   continuousProviderOverrides.value = payload.providerOverrides
+
+  continuousRequestedAiGroupId.value = payload.requestedAiGroupId
+  continuousReworkerProviderId.value = payload.reworkerProviderId
   continuousDefaultMessage.value = payload.defaultMessage
   continuousMessageOverrides.value = payload.messageOverrides
   continuousReviewCountOverrides.value = payload.reviewCountOverrides
@@ -4144,6 +4153,8 @@ async function onContinuousWarnConfirm() {
     continuationInstructionMode: continuousInstructionMode.value,
     continuationAutoApproveItemSeqs: continuousAutoApproveItemSeqs.value,
     providerOverrides: continuousProviderOverrides.value,
+    requestedAiGroupId: continuousRequestedAiGroupId.value,
+    reworkerProviderId: continuousReworkerProviderId.value,
     defaultMessage: continuousDefaultMessage.value,
     messageOverrides: continuousMessageOverrides.value,
     reviewCountOverrides: continuousReviewCountOverrides.value,

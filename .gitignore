@@ -45,6 +45,9 @@ secrets.*
 /client/node_modules/
 /client/dist/
 /client/.vite/
+/client_gui/node_modules/
+/client_gui/dist/
+/client_gui/.vite/
 .vite
 
 # Byte-compiled / optimized / DLL files

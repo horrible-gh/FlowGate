@@ -1,0 +1,93 @@
+export default {
+  brand: {
+    tagline: 'Turn Ideas into Working Flow',
+    home_aria: 'FlowGate ダッシュボードへ移動',
+  },
+  topbar: {
+    search_placeholder: 'プロジェクト、グループ、ファイル、設定などを検索...',
+    search_aria: '検索 (準備中)',
+    search_unavailable: '検索はまだ準備中です。',
+    notifications_aria: '通知 (準備中)',
+    switch_aria: 'GUI 切り替え',
+    user_role_admin: '管理者',
+    user_role_member: 'ユーザー',
+  },
+  nav: {
+    aria: '主要画面',
+    dashboard: { title: 'ダッシュボード', sub: 'ホームに戻る' },
+    projects: { title: 'プロジェクト', sub: 'プロジェクト管理' },
+    designer: { title: 'デザイナー', sub: 'グループ · フロー設計' },
+    git: { title: 'Git', sub: 'リポジトリ管理' },
+    ai: { title: 'AI 設定', sub: 'AI グループとポリシー' },
+    settings: { title: '環境設定', sub: 'ワークスペース設定' },
+  },
+  sidebar: {
+    help: 'ヘルプ',
+    help_unavailable: 'ヘルプはまだ準備中です。',
+    version: 'FlowGate v0.2',
+    build: 'Build {build}',
+  },
+  dashboard: {
+    greeting_line1: '良い一日を。',
+    greeting_line2: '今、新しい可能性をつなげましょう。',
+    lead: 'FlowGate はアイデアを実際の作業へつなげる場所です。',
+    quote: '“小さなアイデアも\n正しい流れに出会えば\n大きな変化を生みます。”',
+    quote_by: '— FlowGate',
+    cards_aria: '画面ショートカット',
+    unavailable: '準備中',
+    cards: {
+      projects: {
+        title: 'プロジェクト',
+        desc: '最近のプロジェクトを開くか\n既存のプロジェクトを読み込んで\n作業を続けましょう。',
+        action: 'プロジェクトを開く',
+      },
+      designer: {
+        title: 'デザイナー',
+        desc: 'グループと作業の流れを設計し\nワークフローを視覚的に作りましょう。',
+        action: 'デザイナーへ移動',
+      },
+      git: {
+        title: 'Git',
+        desc: 'リポジトリを接続し\nブランチと変更を同期しましょう。',
+        action: 'Git を管理',
+      },
+      ai: {
+        title: 'AI 設定',
+        desc: 'AI グループ、役割、プロバイダー、\nポリシーを設定・管理しましょう。',
+        action: 'AI 設定を開く',
+      },
+      settings: {
+        title: '環境設定',
+        desc: 'ワークスペースとユーザー設定を\n管理しましょう。',
+        action: '設定を開く',
+      },
+      quick: {
+        title: 'クイックスタート',
+        desc: 'よく使う作業から\nすぐに始めましょう。',
+        action: 'すぐに始める',
+      },
+    },
+    tip_label: 'クイックヒント',
+    tip_text: '検索 (Ctrl + K) はまだ準備中です。今は左のメニューか上のカードで各画面へ移動できます。',
+    tip_close: 'ヒントを閉じる',
+    side_aria: '作業サマリー',
+    panels: {
+      recent_projects: '最近のプロジェクト',
+      recent_groups: '最近のグループ',
+      attention: '要対応',
+      notices: 'システム通知',
+    },
+    panel_empty: 'まだ接続されていません。後続の作業で実データが表示されます。',
+    footer_mark: 'Build the Flow, Not Just the Document.',
+  },
+  placeholder: {
+    badge: '準備中',
+    body: 'この画面は FlowGate v0.2 ではまだ実装されていません。',
+    legacy_hint: '今この機能が必要な場合は、上部の [{label}] ボタンで v0.1 の画面を使ってください。',
+    back: 'ダッシュボードに戻る',
+  },
+  not_found: {
+    title: '画面が見つかりません',
+    body: '{path} に対応する v0.2 の画面はありません。',
+  },
+}

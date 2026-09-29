@@ -15,6 +15,9 @@ from modules.flow_gate.settings.routers.users import router as _settings_users_r
 from modules.flow_gate.settings.routers.project_settings import router as _settings_project_router
 from modules.flow_gate.settings.routers.env_vars_commands import router as _env_vars_commands_router
 from modules.flow_gate.settings.routers.ai_settings import router as _ai_settings_router
+from modules.flow_gate.api.v1.ai_evaluation_routes import router as _ai_evaluation_router
+from modules.flow_gate.api.v1.ai_group_routes import router as _ai_group_router
+from modules.flow_gate.api.v1.ai_overview_routes import router as _ai_overview_router
 from modules.flow_gate.rbac.routers import router as _rbac_router
 from modules.flow_gate.workflow.routers.workflow import router as _workflow_router
 from modules.flow_gate.api.token_routes import router as _token_router
@@ -172,6 +175,9 @@ app.include_router(_settings_users_router, prefix=f"{CONTEXT}/api/v1", tags=["Us
 app.include_router(_settings_project_router, prefix=f"{CONTEXT}/api/v1", tags=["ProjectSettings"])
 app.include_router(_env_vars_commands_router, prefix=f"{CONTEXT}/api/v1", tags=["EnvVarsCommands"])
 app.include_router(_ai_settings_router, prefix=f"{CONTEXT}/api/v1", tags=["AiSettings"])
+app.include_router(_ai_evaluation_router, prefix=f"{CONTEXT}/api/v1", tags=["AiEvaluation"] )
+app.include_router(_ai_group_router, prefix=f"{CONTEXT}/api/v1", tags=["AiGroups"])
+app.include_router(_ai_overview_router, prefix=f"{CONTEXT}/api/v1", tags=["AiOverview"])
 app.include_router(_rbac_router, prefix=f"{CONTEXT}/rbac", tags=["RBAC"])
 app.include_router(_workflow_router, prefix=f"{CONTEXT}", tags=["Workflow"])
 app.include_router(_token_router, prefix=f"{CONTEXT}", tags=["TokenIssue"])
@@ -229,19 +235,72 @@ from fastapi.staticfiles import StaticFiles
 _CLIENT_DIST = _os.path.normpath(
     _os.path.join(_os.path.dirname(__file__), "..", "..", "client", "dist")
 )
-if _os.path.isdir(_CLIENT_DIST):
+# v0.2 (T0005): a physically separate client with its own build output, mounted under
+# /app and /app/assets/*. Kept independent of every _CLIENT_DIST check below so a
+# missing/broken client_gui build can never block v0.1's own startup or static serving,
+# and vice versa.
+_CLIENT_GUI_DIST = _os.path.normpath(
+    _os.path.join(_os.path.dirname(__file__), "..", "..", "client_gui", "dist")
+)
+_client_dist_exists = _os.path.isdir(_CLIENT_DIST)
+
+
+def _dist_ready(dist_dir: str) -> bool:
+    """A dist dir counts as ready only once it has an index.html, not merely once the
+    directory exists. The Docker image's client_gui build stage (Dockerfile) creates
+    an empty client_gui/dist as a failure fallback so the runtime stage's COPY never
+    fails outright — plain isdir() would then be True and _serve_client's
+    FileResponse(index.html) would error on a file that isn't there, instead of the
+    clean 404 a genuinely-missing v0.2 build gives everywhere else.
+    """
+    return _os.path.isdir(dist_dir) and _os.path.isfile(_os.path.join(dist_dir, "index.html"))
+
+
+_client_gui_dist_exists = _dist_ready(_CLIENT_GUI_DIST)
+# Symlink-resolved once at startup so every per-request containment check below
+# compares against the real on-disk directory, not a path an on-disk symlink
+# could redirect elsewhere.
+_CLIENT_DIST_REAL = _os.path.realpath(_CLIENT_DIST)
+_CLIENT_GUI_DIST_REAL = _os.path.realpath(_CLIENT_GUI_DIST)
+
+
+def _safe_dist_file(dist_dir_real: str, relative: str):
+    """Resolve `relative` under `dist_dir_real` and return the real path, or None if
+    it escapes the dist directory.
+
+    `full_path` is the URL-decoded value Starlette's `{full_path:path}` converter
+    hands the route — a request for `/app/%2e%2e/%2e%2e/server/.env` arrives here as
+    the string "app/../../server/.env". Joining that onto `_CLIENT_GUI_DIST` without
+    resolving `..`/symlinks first would let FileResponse serve arbitrary files outside
+    dist (e.g. server/.env). Every candidate must clear this check before FileResponse.
+    """
+    candidate = _os.path.realpath(_os.path.join(dist_dir_real, relative))
+    if candidate != dist_dir_real and not candidate.startswith(dist_dir_real + _os.sep):
+        return None
+    return candidate
+
+if _client_dist_exists:
     _assets_dir = _os.path.join(_CLIENT_DIST, "assets")
     if _os.path.isdir(_assets_dir):
         app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
 
+if _client_gui_dist_exists:
+    # Deliberately its own mount, not shared with /assets above, so a v0.2 rebuild's
+    # hashed filenames can never collide with or shadow v0.1's (T0005 §3).
+    _app_assets_dir = _os.path.join(_CLIENT_GUI_DIST, "assets")
+    if _os.path.isdir(_app_assets_dir):
+        app.mount("/app/assets", StaticFiles(directory=_app_assets_dir), name="app_assets")
+
+if _client_dist_exists or _client_gui_dist_exists:
     _CTX = CONTEXT.strip("/")
 
-    # The HTML entry shells (index/main/settings.html) are NOT content-hashed, so a
-    # browser that heuristically caches them keeps loading an OLD shell that still
-    # references a pre-rebuild `main-<oldhash>.js` — the app renders entirely from
-    # cache and a fresh `run.bat` rebuild never reaches the screen (group 0126: the
+    # The HTML entry shells (index/main/settings.html, and v0.2's index.html) are NOT
+    # content-hashed, so a browser that heuristically caches them keeps loading an OLD
+    # shell that still references a pre-rebuild `main-<oldhash>.js` — the app renders
+    # entirely from cache and a fresh rebuild never reaches the screen (group 0126: the
     # accordion was built into dist but the cached shell hid it). Force the shells to
-    # revalidate every load; the hashed /assets/* stay immutably cacheable.
+    # revalidate every load; the hashed /assets/* and /app/assets/* stay immutably
+    # cacheable.
     def _html(path: str) -> FileResponse:
         return FileResponse(path, headers={"Cache-Control": "no-cache, max-age=0"})
 
@@ -253,10 +312,32 @@ if _os.path.isdir(_CLIENT_DIST):
         if full_path == "api" or full_path.startswith("api/"):
             return JSONResponse(status_code=404, content={"detail": "Not Found"})
 
+        # v0.2 SPA (T0005 §6): /app and every /app/* deep-link/refresh resolve to the
+        # client_gui shell, independent of whether v0.1's own dist exists. This branch is
+        # checked before v0.1's real-file/main/settings handling below so a v0.2 route
+        # can never fall through into v0.1's index.html (the /login shell).
+        if full_path == "app" or full_path.startswith("app/"):
+            if not _client_gui_dist_exists:
+                return JSONResponse(status_code=404, content={"detail": "Not Found"})
+            # /app/assets/* is served by the mount above; a request that still reaches
+            # here under app/assets/ is a genuine miss (e.g. a stale hashed filename),
+            # not a route to fall back to the SPA shell for.
+            if full_path == "app/assets" or full_path.startswith("app/assets/"):
+                return JSONResponse(status_code=404, content={"detail": "Not Found"})
+            app_relative = full_path[len("app/") :] if full_path != "app" else ""
+            if app_relative:
+                app_candidate = _safe_dist_file(_CLIENT_GUI_DIST_REAL, app_relative)
+                if app_candidate and _os.path.isfile(app_candidate) and not app_candidate.endswith(".html"):
+                    return FileResponse(app_candidate)
+            return _html(_os.path.join(_CLIENT_GUI_DIST, "index.html"))
+
+        if not _client_dist_exists:
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+
         # Real file on disk (favicon, etc.; /assets handled by the mount above).
         # An HTML shell requested by its real name must still revalidate.
-        candidate = _os.path.join(_CLIENT_DIST, full_path)
-        if full_path and _os.path.isfile(candidate):
+        candidate = _safe_dist_file(_CLIENT_DIST_REAL, full_path) if full_path else None
+        if candidate and _os.path.isfile(candidate):
             if candidate.endswith(".html"):
                 return _html(candidate)
             return FileResponse(candidate)

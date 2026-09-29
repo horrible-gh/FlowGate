@@ -119,6 +119,7 @@ class Settings(BaseSettings):
     # without the field declared.
     FLOWGATE_AI_ENCRYPT_KEY: str | None = None
     FLOWGATE_AI_ENCRYPT_KEY_PREV: str | None = None
+    FLOWGATE_AI_EVALUATION_HMAC_KEY: str | None = None
     FLOWGATE_AGENT_PEPPER: str | None = None
     FLOWGATE_AGENT_PEPPER_ID: str = "primary"
 
@@ -223,6 +224,7 @@ for _env_key in (
     "FLOWGATE_GIT_ENCRYPT_KEY_PREV",
     "FLOWGATE_AI_ENCRYPT_KEY",
     "FLOWGATE_AI_ENCRYPT_KEY_PREV",
+    "FLOWGATE_AI_EVALUATION_HMAC_KEY",
     "FLOWGATE_AGENT_PEPPER",
     "FLOWGATE_AGENT_PEPPER_ID",
 ):

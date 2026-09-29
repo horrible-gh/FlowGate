@@ -6,6 +6,7 @@ import axios, {
 } from 'axios'
 import i18n from './i18n'
 import { resolveApiErrorWithFallbackText } from './apiErrors'
+import { resolveSafeReturnPath } from './auth'
 import {
   beginVisibilityRecoveryTick,
   recordVisibilityRecovery,
@@ -463,6 +464,24 @@ export const localizeApiError = (error: AxiosError): AxiosError => {
   return error
 }
 
+// 0005 T#1 (NR0003 rework, last rejection): on refresh failure this used to always send
+// the browser to '/' regardless of where it was. client_gui's bootstrap (main.ts) hits
+// this exact path — a stale access token plus a missing/invalid refresh token — when
+// /auth/me 401s and the retried refresh also fails, which happened BEFORE the new
+// installAuthGuard's /login?next=/app/... logic ever got a chance to run: the unconditional
+// '/' navigation here fired first and threw away the requested /app deep link. Reusing
+// resolveSafeReturnPath (the same allow-list installAuthGuard and authRedirect.toDashboard
+// already enforce) keeps this a single source of truth: an /app/* current location comes
+// back through /login with its path preserved, while every other origin (v0.1 /main, or
+// anywhere resolveSafeReturnPath doesn't allow-list) keeps the prior unconditional '/'.
+// @internal — exported for the refresh-failure redirect regression tests.
+export const buildRefreshFailureRedirect = (): string => {
+  if (typeof window === 'undefined' || !window.location) return '/'
+  const current = `${window.location.pathname}${window.location.search}`
+  const safeNext = resolveSafeReturnPath(current)
+  return safeNext ? `/login?next=${encodeURIComponent(safeNext)}` : '/'
+}
+
 api.interceptors.response.use(
   (response: AxiosResponse) => response,
   async (error: AxiosError) => {
@@ -495,7 +514,7 @@ api.interceptors.response.use(
         tokenChannel?.postMessage({ type: 'logout' })
       }
       clearStoredAuth()
-      window.location.href = '/'
+      window.location.href = buildRefreshFailureRedirect()
       return Promise.reject(refreshError)
     }
   },

@@ -195,6 +195,17 @@ fi
 echo "==> Client: build → dist"
 bash "$ROOT/client/build.sh"
 
+echo "==> Client (v0.2, /app): build → dist"
+# Non-fatal (unlike the v0.1 build above): T0005 §8 requires a broken/failing v0.2
+# GUI to never block v0.1's own install/startup. Under `set -e` a bare failure here
+# would abort the rest of this script — systemd install/start, admin bootstrap — over
+# a client that server/routers/main.py already serves independently of client/dist
+# (client_gui/dist simply won't exist yet, and /app 404s until it's rebuilt).
+if ! bash "$ROOT/client_gui/build.sh"; then
+    echo "[!] client_gui (v0.2) build failed — continuing without /app; v0.1 is unaffected."
+    echo "    Rebuild later with: $ROOT/client_gui/build.sh"
+fi
+
 echo "==> systemd: install & start (sudo)"
 sed -e "s|__ROOT__|$ROOT|g" \
     -e "s|__USER__|$RUN_USER|g" \
@@ -297,6 +308,7 @@ Done. FlowGate staging should be running on port $FLOWGATE_PORT.
   Restart:  sudo systemctl restart flowgate
   Rebuild client after FE changes:
             ./client/build.sh        (then hard-refresh the browser; no restart needed)
+            ./client_gui/build.sh    (v0.2, served under /app)
 
 Notes:
   - DB: $DB_TYPE (schema auto-migrates on first boot from sql/migrations/).

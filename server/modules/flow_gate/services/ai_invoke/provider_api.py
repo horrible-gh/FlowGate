@@ -9,15 +9,24 @@ agent loop that calls these and decides what the answers mean.
 from __future__ import annotations
 
 import errno
+import http.client
 import json
 import socket
 import urllib.error
 import urllib.request
 from typing import Optional
+from urllib.parse import urlsplit
 
 from .runtime import (
     ANTHROPIC_VERSION,
     API_MAX_TOKENS,
+    PROBE_CANCELLED,
+    PROBE_LAUNCH_FAILED,
+    PROBE_OK,
+    PROBE_TIMEOUT,
+    PROBE_TRANSPORT_FAILED,
+    ProbeCancelled,
+    ProbeOutcome,
     _svc,
     logger,
 )
@@ -312,15 +321,123 @@ def _is_transient_startup_transport_error(exc: BaseException) -> bool:
     return False
 
 
-def _http_post_json(url: str, headers: dict, body: dict, timeout: float) -> dict:
+def _abort_connection(conn) -> None:
+    sock = getattr(conn, "sock", None)
+    if sock is not None:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        # A blocked reader holds a makefile() reference, so close() alone leaves the OS
+        # handle open (and a timed recv asleep on Windows); _real_close() drops it now.
+        try:
+            getattr(sock, "_real_close", sock.close)()
+        except OSError:
+            pass
+    try:
+        conn.close()
+    except OSError:
+        pass
+
+
+def _tracked_connection(base, handle):
+    class _TrackedConnection(base):
+        def connect(self):
+            if not handle.bind(lambda: _abort_connection(self)):
+                raise ProbeCancelled()
+            super().connect()
+            if handle.cancelled:
+                _abort_connection(self)
+                raise ProbeCancelled()
+
+    return _TrackedConnection
+
+
+class _TrackedHTTPHandler(urllib.request.HTTPHandler):
+    def __init__(self, handle):
+        super().__init__()
+        self._handle = handle
+
+    def http_open(self, req):
+        return self.do_open(_tracked_connection(http.client.HTTPConnection, self._handle), req)
+
+
+class _TrackedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, handle):
+        super().__init__()
+        self._handle = handle
+
+    def https_open(self, req):
+        return self.do_open(
+            _tracked_connection(http.client.HTTPSConnection, self._handle), req,
+            context=self._context)
+
+
+def _http_post_json(url: str, headers: dict, body: dict, timeout: float, handle=None) -> dict:
     req = urllib.request.Request(
         url,
         data=json.dumps(body).encode("utf-8"),
         headers={"Content-Type": "application/json", **headers},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    if handle is None:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    opener = urllib.request.build_opener(
+        _TrackedHTTPHandler(handle), _TrackedHTTPSHandler(handle))
+    with opener.open(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+def _is_timeout_error(exc: BaseException) -> bool:
+    seen: set[int] = set()
+    current: object = exc
+    while isinstance(current, BaseException) and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (TimeoutError, socket.timeout)):
+            return True
+        if isinstance(current, urllib.error.URLError) and isinstance(current.reason, BaseException):
+            current = current.reason
+            continue
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def probe_api_completion(
+    *, kind: str, base_url: Optional[str], model: Optional[str], credential: Optional[str],
+    prompt: str, timeout: float, handle, max_tokens: int = 100,
+) -> ProbeOutcome:
+    """One prompt/response round trip over the ai_invoke wire, abortable through `handle`."""
+    if not base_url or not model or not credential:
+        return ProbeOutcome(PROBE_LAUNCH_FAILED)
+    base = base_url.rstrip("/")
+    parsed = urlsplit(base)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return ProbeOutcome(PROBE_TRANSPORT_FAILED)
+    messages = [{"role": "user", "content": prompt}]
+    if kind == "claude":
+        url = base + "/v1/messages"
+        headers = {"x-api-key": credential, "anthropic-version": ANTHROPIC_VERSION}
+        body = {"model": model, "max_tokens": max_tokens, "messages": messages}
+    else:
+        url = base + "/chat/completions"
+        headers = {"Authorization": "Bearer " + credential}
+        body = {"model": model, "messages": messages}
+    try:
+        data = _http_post_json(url, headers, body, timeout, handle=handle)
+    except ProbeCancelled:
+        return ProbeOutcome(PROBE_CANCELLED)
+    except Exception as exc:  # noqa: BLE001 - classified below, never surfaced with secrets
+        if handle.cancelled:
+            return ProbeOutcome(PROBE_CANCELLED)
+        return ProbeOutcome(PROBE_TIMEOUT if _is_timeout_error(exc) else PROBE_TRANSPORT_FAILED)
+    if kind == "claude":
+        text = "\n".join(part.get("text", "") for part in data.get("content", [])
+                         if part.get("type") == "text")
+    else:
+        choices = data.get("choices") or []
+        text = str((choices[0].get("message") or {}).get("content") or "") if choices else ""
+    return ProbeOutcome(PROBE_OK, text)
 
 
 def _call_anthropic(

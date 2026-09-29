@@ -88,6 +88,12 @@
 
       <div class="hdr-div"></div>
 
+      <!-- GUI generation switch (T0009 §2/§9): full-page nav to v0.2, kept as a low-
+           priority secondary action beside Settings/Logout, not a primary work action. -->
+      <GuiGenerationSwitch target="app" />
+
+      <div class="hdr-div"></div>
+
       <!-- User display -->
       <div class="hdr-user">
         <div class="user-av">{{ usernameInitial }}</div>
@@ -111,6 +117,7 @@ import NotificationCenter from './NotificationCenter.vue'
 import GitActionMenu from './GitActionMenu.vue'
 import AiInvokeMiniplayer from './AiInvokeMiniplayer.vue'
 import AppIcon from '@shared/AppIcon.vue'
+import GuiGenerationSwitch from '@shared/GuiGenerationSwitch.vue'
 import { useProjectStore } from '../stores/project'
 import { useAiProviderStore } from '../stores/aiProvider'
 import { useTabsStore } from '../stores/tabs'
