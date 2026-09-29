@@ -222,6 +222,13 @@
                        셀렉터가 이번 실행에 쓸 공급자를 이미 이름으로 보여 주고 아래 단계
                        행마다 태그가 붙으므로, 이 줄은 같은 정보를 한 문장처럼 되풀이할
                        뿐이었다. 고정 배지가 붙기 전의 배치로 되돌렸다. -->
+                  <div class="cwd-provider-row">
+                    <label class="cwd-provider-label">{{ t('settings.project.ai_v02.role_reworker') }}</label>
+                    <select v-model="reworkerProviderId" class="cwd-review-select" data-test="start-reworker-provider">
+                      <option value="">{{ t('settings.project.ai_v02.none') }}</option>
+                      <option v-for="provider in providers" :key="provider.id" :value="provider.id">{{ provider.name }}</option>
+                    </select>
+                  </div>
                   <!-- 0317 T0015: each execution step is shown directly (no "단계별로 다르게
                        지정" opt-in disclosure) and its select defaults to the header default
                        provider (never a blank option) — the user only touches the steps they
@@ -439,6 +446,7 @@ const emit = defineEmits<{
     // Session-scoped (rides this run's start request only, never persisted).
     providerOverrides: Record<number, string>
     requestedAiGroupId: string | null
+    reworkerProviderId: string | null
     // 0346 T0005: [Message] tab — a common note for every hop, and item_seq -> note for the
     // steps the user singled out. Session-scoped, same as providerOverrides above.
     defaultMessage: string
@@ -521,6 +529,7 @@ type GroupRole = { provider_id: string; is_available: boolean } | null
 type AiGroupPreset = { ai_group_id: string; name: string; work_executor: GroupRole; reviewer: GroupRole; reworker: GroupRole }
 const aiGroups = ref<AiGroupPreset[]>([])
 const selectedAiGroupId = ref('')
+const reworkerProviderId = ref('')
 let groupRequestGeneration = 0
 function groupBroken(group: AiGroupPreset): boolean {
   return !group.work_executor?.is_available || [group.reviewer, group.reworker].some(role => role && !role.is_available)
@@ -539,6 +548,7 @@ function onAiGroupChange() {
   const group = aiGroups.value.find(item => item.ai_group_id === selectedAiGroupId.value)
   if (!group || groupBroken(group)) return
   emit('update:provider', group.work_executor!.provider_id)
+  reworkerProviderId.value = group.reworker?.provider_id ?? ''
   if (group.reviewer?.provider_id) {
     reviewerOverrides.value = Object.fromEntries(executionSteps.value.map(item => [item.item_seq, group.reviewer!.provider_id]))
   } else reviewerOverrides.value = {}
@@ -971,6 +981,7 @@ function onProceed() {
     fromDecision: sel.fromDecision,
     providerOverrides,
     requestedAiGroupId: selectedAiGroupId.value || null,
+    reworkerProviderId: reworkerProviderId.value || null,
     defaultMessage: defaultMessage.value.trim(),
     messageOverrides: messageOverridesOut,
     autoApproveItemSeqs: autoApproveOut,
@@ -1015,6 +1026,7 @@ function close() {
 function installPreset(value: WorkPlanFillPreset | null | undefined) {
   initializingPreset = true
   reviewMode.value = false
+  reworkerProviderId.value = ''
   restartMaxAttempts.value = RESTART_COUNT_DEFAULT
   activeTab.value = 'basic'
   presetRefreshMessage.value = ''

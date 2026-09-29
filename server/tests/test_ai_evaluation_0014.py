@@ -204,3 +204,62 @@ def test_repository_terminal_cancel_and_orphan_release(monkeypatch):
     assert repo.get("p", second["evaluation_id"])["lifecycle"] == "failed"
     assert repo.get("p", second["evaluation_id"])["active_dedupe_key"] is None
     store.db.close()
+
+
+def test_cancel_interrupts_blocking_api_transport(monkeypatch):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from modules.flow_gate.services import ai_evaluation_service as service
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingHandler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            entered.set()
+            release.wait(5)
+            try:
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"choices":[{"message":{"content":"ok"}}]}')
+            except OSError:
+                pass
+
+        def log_message(self, *_):
+            pass
+
+    server = ThreadingHTTPServer(('127.0.0.1', 0), BlockingHandler)
+    serving = threading.Thread(target=server.serve_forever, daemon=True)
+    serving.start()
+    subject = service.EvaluationExecutionSubject('p', 'a', 'project', 'A', 'api',
+        'openai', None, f'http://127.0.0.1:{server.server_port}/v1', 'model',
+        'secret', 'a' * 64, 1)
+    state = {'cancel': threading.Event(), 'proc': None, 'transport': None,
+             'subject': subject}
+    row = {'evaluation_id': 'e', 'project_id': 'p', 'provider_id': 'a',
+           'lifecycle': 'running', 'verdict': None}
+    monkeypatch.setattr(service.repo, 'get', lambda *_: row)
+    monkeypatch.setattr(service.repo, 'finish', lambda *_args, **_kw: True)
+    monkeypatch.setattr(service, '_emit', lambda *_: None)
+    errors = []
+    def run():
+        try:
+            service._api_execution(subject, state)
+        except service.EvaluationError as exc:
+            errors.append(exc.code)
+    with service._RUNS_LOCK:
+        service._RUNS['e'] = state
+    worker = threading.Thread(target=run)
+    worker.start()
+    try:
+        assert entered.wait(2)
+        service.cancel('p', 'e')
+        worker.join(2)
+        assert not worker.is_alive(), 'cancel left the API request blocked'
+        assert state['cancel'].is_set()
+        assert errors == ['transport_failed']
+    finally:
+        release.set()
+        server.shutdown()
+        server.server_close()
+        worker.join(2)
+        with service._RUNS_LOCK:
+            service._RUNS.pop('e', None)

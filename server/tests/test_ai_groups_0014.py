@@ -162,3 +162,46 @@ def test_routes_enforce_project_scoped_permissions(monkeypatch):
         assert denied.value.status_code == 403
         assert seen[-1] == ('project.settings.read' if 'GET' in route.methods
                             else 'project.settings.edit', 'p')
+
+
+def test_pause_row_preserves_group_and_reworker_snapshot(monkeypatch):
+    from modules.flow_gate.db import ai_invoke_paused_chains as paused
+    db = sqlite3.connect(':memory:')
+    columns = [
+        'group_id TEXT PRIMARY KEY', 'doc_ref TEXT', 'mode TEXT', 'paused_by TEXT',
+        'paused_at TEXT', 'continuation_target_seq INTEGER', 'docs_target INTEGER',
+        'docs_reached INTEGER', 'chain_id TEXT', 'chain_docs_target INTEGER',
+        'chain_docs_reached INTEGER', 'stop_kind TEXT', 'stop_code TEXT',
+        'stop_run_id TEXT', 'stop_last_message_excerpt TEXT',
+        'continuation_base_provider_id TEXT', 'continuation_provider_pinned INTEGER',
+        'continuation_provider_overrides TEXT',
+        'continuation_work_executor_provider_id TEXT', 'continuation_default_note TEXT',
+        'continuation_note_overrides TEXT', 'continuation_instruction_mode TEXT',
+        'continuation_auto_approve_item_seqs TEXT', 'continuation_step_timeout_sec INTEGER',
+        'continuation_restart_max_attempts INTEGER',
+        'continuation_review_count_overrides TEXT', 'continuation_reviewer_overrides TEXT',
+        'created_at TEXT', 'updated_at TEXT',
+    ]
+    db.execute('CREATE TABLE ai_invoke_paused_chains (' + ', '.join(columns) + ')')
+    db.execute("INSERT INTO ai_invoke_paused_chains(group_id) VALUES ('legacy')")
+    db.executescript((SERVER / 'sql/migrations/sqlite/125_ai_group_pause_roles.sql').read_text())
+    assert db.execute('SELECT requested_ai_group_id, continuation_reworker_provider_id '
+                      "FROM ai_invoke_paused_chains WHERE group_id='legacy'").fetchone() == (None, None)
+    class PauseStore:
+        def _execute(self, sql, params):
+            db.execute(sql, params)
+        def _fetch_one(self, sql, params):
+            row = db.execute(sql, params).fetchone()
+            return dict(zip([column[0] for column in db.execute(sql, params).description], row)) if row else None
+    monkeypatch.setattr(paused, 'get_store', lambda: PauseStore())
+    kwargs = dict(group_id='chain', doc_ref='doc', paused_by='user', paused_at='t',
+                  continuation_target_seq=2, docs_target=1, docs_reached=0)
+    paused.upsert(**kwargs, requested_ai_group_id='aig_deleted',
+                  continuation_reworker_provider_id='aip_reworker')
+    row = paused.get_by_group('chain')
+    assert row['requested_ai_group_id'] == 'aig_deleted'
+    assert row['continuation_reworker_provider_id'] == 'aip_reworker'
+    paused.upsert(**kwargs, requested_ai_group_id='aig_deleted',
+                  continuation_reworker_provider_id='aip_override')
+    assert paused.get_by_group('chain')['continuation_reworker_provider_id'] == 'aip_override'
+    db.close()

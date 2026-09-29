@@ -1,8 +1,12 @@
 """Project AI Evaluation lifecycle and isolated baseline execution."""
 from __future__ import annotations
 
+import http.client
+import json
 import re
+import socket
 import subprocess
+from urllib.parse import urlsplit
 import tempfile
 import threading
 from dataclasses import dataclass
@@ -12,7 +16,6 @@ from modules.flow_gate.api.v1.events.publisher import FlowEvent, broadcast_event
 from modules.flow_gate.db import ai_evaluation_runs as repo
 from modules.flow_gate.db import ai_providers
 from modules.flow_gate.services import process_runner
-from modules.flow_gate.services.ai_invoke import provider_api
 from modules.flow_gate.services.ai_evaluation_fingerprint import FINGERPRINT_VERSION, subject_fingerprint
 from modules.flow_gate.settings import ai_settings_service
 from modules.flow_gate.utils.api_key_crypto import ApiKeyCryptoError
@@ -125,7 +128,7 @@ def start(project_id: str, provider_id: str, created_by: str | None) -> dict:
             version=subject.version, created_by=created_by)
     except repo.AlreadyRunning as exc:
         raise EvaluationError("evaluation_already_running", 409, exc.evaluation_id) from exc
-    state = {"cancel": threading.Event(), "proc": None, "subject": subject}
+    state = {"cancel": threading.Event(), "proc": None, "transport": None, "subject": subject}
     with _RUNS_LOCK:
         _RUNS[row["evaluation_id"]] = state
     _emit("updated", row)
@@ -150,7 +153,20 @@ def _safety_available(subject: EvaluationExecutionSubject) -> bool:
             any(p["id"] == subject.provider_id for p in view["providers"]))
 
 
-def _api_execution(subject: EvaluationExecutionSubject) -> str:
+def _close_api_transport(state: dict) -> None:
+    connection = state.get("transport")
+    if connection is None:
+        return
+    sock = connection.sock
+    if sock is not None:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+    connection.close()
+
+
+def _api_execution(subject: EvaluationExecutionSubject, state: dict) -> str:
     if not subject.api_base_url or not subject.api_model or not subject.credential:
         raise EvaluationError("provider_launch_failed", 500)
     base = subject.api_base_url.rstrip("/")
@@ -163,12 +179,37 @@ def _api_execution(subject: EvaluationExecutionSubject) -> str:
         url = base + "/chat/completions"
         body = {"model": subject.api_model, "messages": [{"role": "user", "content": BASELINE}]}
         headers = {"Authorization": "Bearer " + subject.credential}
+    connection = None
     try:
-        data = provider_api._http_post_json(url, headers, body, TIMEOUT_SEC)
+        parsed = urlsplit(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError("invalid API URL")
+        connection_type = (http.client.HTTPSConnection if parsed.scheme == "https"
+                           else http.client.HTTPConnection)
+        connection = connection_type(parsed.hostname, parsed.port, timeout=TIMEOUT_SEC)
+        with _RUNS_LOCK:
+            state["transport"] = connection
+            if state["cancel"].is_set():
+                raise EvaluationError("cancelled", 409)
+        path = parsed.path or "/"
+        if parsed.query:
+            path += "?" + parsed.query
+        connection.request("POST", path, json.dumps(body).encode("utf-8"),
+                           {"Content-Type": "application/json", **headers})
+        response = connection.getresponse()
+        if response.status >= 400:
+            raise OSError(f"API returned HTTP {response.status}")
+        data = json.loads(response.read().decode("utf-8"))
     except TimeoutError as exc:
         raise EvaluationError("timeout", 500) from exc
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, http.client.HTTPException) as exc:
         raise EvaluationError("transport_failed", 500) from exc
+    finally:
+        with _RUNS_LOCK:
+            if state.get("transport") is connection:
+                state["transport"] = None
+        if connection is not None:
+            connection.close()
     if subject.kind == "claude":
         return "\n".join(part.get("text", "") for part in data.get("content", [])
                          if part.get("type") == "text")
@@ -216,7 +257,7 @@ def _worker(evaluation_id: str, state: dict) -> None:
         _emit("started", repo.get(project_id, evaluation_id))
         if not _safety_available(subject):
             raise EvaluationError("provider_became_unavailable", 500)
-        text = (_api_execution(subject) if subject.exec_type == "api" else
+        text = (_api_execution(subject, state) if subject.exec_type == "api" else
                 _cli_execution(subject, state))
         verdict = "suitable" if text.strip() else "unsuitable"
         changed = repo.finish(project_id, evaluation_id, lifecycle="completed", verdict=verdict,
@@ -277,6 +318,7 @@ def cancel(project_id: str, evaluation_id: str) -> dict:
             state["cancel"].set()
             if state["proc"] is not None:
                 process_runner.kill_process_tree(state["proc"])
+            _close_api_transport(state)
     row = repo.get(project_id, evaluation_id)
     _emit("cancelled", row)
     return {"evaluation_id": evaluation_id, "lifecycle": "cancelled", "verdict": None}

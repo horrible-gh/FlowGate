@@ -901,6 +901,7 @@ def _spawn_review_hop(group_id: str, bundle: dict, gate: dict) -> dict:
         issue_builder=_issue_review,
         provider_id=reviewer_id,
         requested_ai_group_id=bundle.get("requested_ai_group_id"),
+        continuation_reworker_provider_id=bundle.get("reworker_provider_id"),
         chain_id=bundle.get("chain_id"),
         chain_docs_target=bundle.get("chain_docs_target"),
         chain_docs_reached=bundle.get("chain_docs_reached"),
@@ -958,9 +959,9 @@ def _append_engine_review_clause(mention: str, gate: dict) -> str:
 def _spawn_rework_hop(group_id: str, bundle: dict, gate: dict) -> dict:
     """Launch the rework hop (L0008 §2.6).
 
-    The REWORKER is the step's own executor, not the reviewer — the reviewer reads, the
-    author fixes. The issuer is invoke_mention_service.issue_rework_request, the same one
-    the human [AI 수정] button uses, so the two can never drift into separate prompts.
+    A concrete reworker selection captured at Start takes this hop. Without one, the
+    step's executor remains the default. The issuer is
+    invoke_mention_service.issue_rework_request, also used by the human [AI 수정] button.
     """
     from modules.flow_gate.services import invoke_mention_service
 
@@ -971,7 +972,9 @@ def _spawn_rework_hop(group_id: str, bundle: dict, gate: dict) -> dict:
     locale = bundle.get("locale") or "ko"
     api_base_url = bundle.get("api_base_url")
     issued_to = bundle.get("issued_to")
-    executor_id = resolve_step_executor(bundle, slot["item_seq"], project_id, bundle.get("doc_ref"))
+    executor_id = bundle.get("reworker_provider_id")
+    if not executor_id or not _provider_enabled(project_id, executor_id):
+        executor_id = resolve_step_executor(bundle, slot["item_seq"], project_id, bundle.get("doc_ref"))
 
     def _issue_rework(ai_run_id: Optional[str] = None) -> dict:
         return invoke_mention_service.issue_rework_request(
@@ -1002,6 +1005,7 @@ def _spawn_rework_hop(group_id: str, bundle: dict, gate: dict) -> dict:
         issue_builder=_issue_rework,
         provider_id=executor_id,
         requested_ai_group_id=bundle.get("requested_ai_group_id"),
+        continuation_reworker_provider_id=bundle.get("reworker_provider_id"),
         chain_id=bundle.get("chain_id"),
         chain_docs_target=bundle.get("chain_docs_target"),
         chain_docs_reached=bundle.get("chain_docs_reached"),

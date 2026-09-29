@@ -132,6 +132,8 @@ def pause_run(run_id: str, user_id: str) -> dict:
             # (session-scoped by design). The pause is where that memory ends, so they go
             # into the row here — otherwise resume_chain has nothing to restore and falls
             # back to the project default chain's first entry (NR0003 §2-2).
+            requested_ai_group_id=run.get("requested_ai_group_id"),
+            continuation_reworker_provider_id=run.get("continuation_reworker_provider_id"),
             continuation_base_provider_id=run.get("continuation_base_provider_id"),
             continuation_provider_pinned=run.get("continuation_provider_pinned"),
             continuation_provider_overrides=run.get("continuation_provider_overrides"),
@@ -369,6 +371,7 @@ def _handoff_bundle(pending: dict, run: Optional[dict]) -> dict:
         "reviewer_overrides": _carry(pending, "reviewer_overrides",
                                      run, "continuation_reviewer_overrides"),
         "requested_ai_group_id": _carry(pending, "requested_ai_group_id", run, "requested_ai_group_id"),
+        "reworker_provider_id": _carry(pending, "reworker_provider_id", run, "continuation_reworker_provider_id"),
         "chain_id": _carry(pending, "chain_id", run, "chain_id"),
         "chain_docs_target": _carry(pending, "chain_docs_target", run, "chain_docs_target"),
         "chain_docs_reached": _carry(pending, "chain_docs_reached", run, "chain_docs_reached"),
@@ -420,6 +423,8 @@ def _write_handoff_row(
                 review._review_no_verdict_excerpt(run) if stop_code == REVIEW_NO_VERDICT_STOP_CODE
                 else excerpt((run or {}).get("last_message"))
             ),
+            requested_ai_group_id=bundle.get("requested_ai_group_id"),
+            continuation_reworker_provider_id=bundle.get("reworker_provider_id"),
             continuation_base_provider_id=bundle.get("base_provider_id"),
             continuation_provider_pinned=bundle.get("provider_pinned"),
             continuation_provider_overrides=bundle.get("provider_overrides"),
@@ -683,6 +688,7 @@ def _maybe_auto_resume_hop(run: dict) -> None:
         # 0357 T0004: the chain identity and its lifetime counters, so the next hop keeps
         # counting the CHAIN's progress instead of restarting at 0/1 in the miniplayer.
         "requested_ai_group_id": _carry(pending, "requested_ai_group_id", run, "requested_ai_group_id"),
+        "reworker_provider_id": _carry(pending, "reworker_provider_id", run, "continuation_reworker_provider_id"),
         "chain_id": _carry(pending, "chain_id", run, "chain_id"),
         "chain_docs_target": _carry(pending, "chain_docs_target", run, "chain_docs_target"),
         "chain_docs_reached": _carry(pending, "chain_docs_reached", run, "chain_docs_reached"),
@@ -825,6 +831,7 @@ def _spawn_auto_resume(group_id: str, pending: dict) -> None:
         issue_builder=_issue_next,
         provider_id=base_provider_id,
         requested_ai_group_id=pending.get("requested_ai_group_id"),
+        continuation_reworker_provider_id=pending.get("reworker_provider_id"),
         provider_pinned=provider_pinned,
         continuation_provider_overrides=overrides,
         continuation_note_overrides=note_overrides,
@@ -1347,6 +1354,8 @@ def resume_chain(
                     stop_last_message_excerpt=row.get("stop_last_message_excerpt"),
                     # Restoring the row means restoring it whole: a retry of this resume
                     # must still find the user's selections (0365 DB0004 §5-3 case 5).
+                    requested_ai_group_id=row.get("requested_ai_group_id"),
+                    continuation_reworker_provider_id=row.get("continuation_reworker_provider_id"),
                     continuation_base_provider_id=row.get("continuation_base_provider_id"),
                     continuation_provider_pinned=row.get("continuation_provider_pinned"),
                     continuation_provider_overrides=row.get("continuation_provider_overrides"),
@@ -1474,6 +1483,8 @@ def resume_chain(
             # no-longer-enabled provider to the next tier, so no _resumable_base_provider-
             # style pre-filter is needed here the way gate_base_provider_id needs one.
             "work_executor_provider_id": row.get("continuation_work_executor_provider_id"),
+            "requested_ai_group_id": row.get("requested_ai_group_id"),
+            "reworker_provider_id": row.get("continuation_reworker_provider_id"),
             "provider_pinned": gate_provider_pinned,
             "note_overrides": gate_note_overrides,
             "default_note": gate_default_note,
@@ -1585,6 +1596,8 @@ def resume_chain(
                 mention_builder=lambda _raw, _scratch: None,
                 issue_builder=_issue_resume,
                 provider_id=base_provider_id,
+                requested_ai_group_id=row.get("requested_ai_group_id"),
+                continuation_reworker_provider_id=row.get("continuation_reworker_provider_id"),
                 provider_pinned=provider_pinned,
                 continuation_provider_overrides=provider_overrides,
                 continuation_default_note=default_note,

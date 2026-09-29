@@ -922,6 +922,8 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
                     # This upsert overwrites every column, and it ALWAYS runs right after
                     # a pause. Omitting the selections here would erase what pause_run
                     # just stored (0365 DB0004 §5-3 invariant I3).
+                    requested_ai_group_id=run.get("requested_ai_group_id"),
+                    continuation_reworker_provider_id=run.get("continuation_reworker_provider_id"),
                     continuation_base_provider_id=run.get("continuation_base_provider_id"),
                     continuation_provider_pinned=run.get("continuation_provider_pinned"),
                     continuation_provider_overrides=run.get("continuation_provider_overrides"),
@@ -1006,6 +1008,8 @@ def _apply_stop_row(run: dict, respawn_pending: bool) -> None:
             # The explicit pin is the narrow exception: it is execution policy, and a manual
             # resume after no-output exhaustion must keep that provider instead of reviving
             # the stored/default provider.
+            requested_ai_group_id=run.get("requested_ai_group_id"),
+            continuation_reworker_provider_id=run.get("continuation_reworker_provider_id"),
             continuation_base_provider_id=(
                 run.get("continuation_base_provider_id")
                 if run.get("continuation_provider_pinned")

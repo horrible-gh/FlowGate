@@ -125,6 +125,7 @@ class AiInvokeStartRequest(BaseModel):
     continuation_reviewer_overrides: Optional[dict] = None
     provider_id: Optional[str] = None
     requested_ai_group_id: Optional[str] = None
+    continuation_reworker_provider_id: Optional[str] = None
     # provider_id alone may be an auto-restored default. This explicit signal says the person
     # actively chose it, so start_run can let it outrank an automatically stamped sequence row.
     provider_pinned: Optional[bool] = None
@@ -476,6 +477,13 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         return JSONResponse(status_code=403, content={"code": "permission_denied",
                                                       "message": "perm_document_read required"})
 
+    if body.continuation_reworker_provider_id is not None:
+        if body.mode != "continuous":
+            return _validation_failed([{"loc": "continuation_reworker_provider_id", "msg": "requires continuous mode"}])
+        if body.continuation_reworker_provider_id not in ai_group_service._available(body.project):
+            return JSONResponse(status_code=422, content={"code": "reworker_unavailable",
+                                                          "message": "The selected reworker is unavailable."})
+
     if body.requested_ai_group_id is not None:
         if body.mode != "continuous":
             return _validation_failed([{"loc": "requested_ai_group_id", "msg": "requires continuous mode"}])
@@ -488,6 +496,8 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             return JSONResponse(status_code=422, content={"code": "ai_group_work_executor_required",
                                                           "message": "A concrete provider_id is required."})
         concrete_ids = [body.provider_id]
+        if body.continuation_reworker_provider_id:
+            concrete_ids.append(body.continuation_reworker_provider_id)
         concrete_ids.extend((body.continuation_provider_overrides or {}).values())
         concrete_ids.extend((body.continuation_reviewer_overrides or {}).values())
         if any(provider_id not in available for provider_id in concrete_ids):
@@ -920,7 +930,8 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             # The service computes the durable baseline and selects review vs rework before resolving the chain.
             provider_id=body.provider_id,
             requested_ai_group_id=body.requested_ai_group_id,
-            provider_pinned=(True if body.requested_ai_group_id else body.provider_pinned),
+            provider_pinned=body.provider_pinned,
+            continuation_reworker_provider_id=body.continuation_reworker_provider_id,
             issue_builder=issue_builder,
             merge_id=body.merge_id,
             continuation_provider_overrides=body.continuation_provider_overrides,
