@@ -29,6 +29,8 @@ from typing import Any, Iterable, Optional
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.db import tr_commit_ledger as db_ledger
+from modules.flow_gate.db import tr_history_recovery as db_recovery
+from modules.flow_gate.db.connection import get_store
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services import tr_scope_service
 from modules.flow_gate.storage import paths as storage_paths
@@ -608,6 +610,7 @@ CANCEL_BLOCK_RETRYABLE = {
     "git_inactive": False,
     "dirty_worktree": True,
     "git_busy": True,
+    "history_recovery_required": False,
 }
 
 
@@ -755,6 +758,10 @@ def cancel_tr_commits(
     else:
         session = opened_session
     try:
+        if db_recovery.has_unresolved(group_id):
+            return _blocked(
+                result, group_id, "history_recovery_required", "recovery_required"
+            )
         result["attempted"] = True
         stopped = False
         for row in targets:
@@ -832,10 +839,15 @@ def _blocked(
     result["attempted"] = False
     result["blocked_reason"] = reason
     result["retryable"] = CANCEL_BLOCK_RETRYABLE.get(reason, False)
-    try:
-        db_ledger.record_block(group_id, reason, sub)
-    except Exception:
-        _log.warning("tr cancel block record failed for %s", group_id, exc_info=True)
+    # The legacy group_git_state block columns intentionally keep their historical
+    # closed vocabulary/length. An unresolved 0648 reapply is already durably recorded
+    # in tr_history_recovery, so duplicating its longer code here would violate the
+    # MySQL/MariaDB VARCHAR/CHECK contract and add a second source of truth.
+    if reason != "history_recovery_required":
+        try:
+            db_ledger.record_block(group_id, reason, sub)
+        except Exception:
+            _log.warning("tr cancel block record failed for %s", group_id, exc_info=True)
     return result
 
 
@@ -902,6 +914,10 @@ def cancel_for_reopen(
                     result, group_id, terminal["blocked_reason"], terminal["block_sub"],
                 )
             try:
+                if db_recovery.has_unresolved(group_id):
+                    return _blocked(
+                        result, group_id, "history_recovery_required", "recovery_required"
+                    )
                 return _terminal_reopen(result, targets, codes)
             finally:
                 git_service.close_cancel_session(terminal["session"])
@@ -909,6 +925,10 @@ def cancel_for_reopen(
 
     session = opened["session"]
     try:
+        if db_recovery.has_unresolved(group_id):
+            return _blocked(
+                result, group_id, "history_recovery_required", "recovery_required"
+            )
         if durable:
             durable_result = cancel_tr_commits(group_id, reopened_doc_ids,
                                                opened_session=session)
@@ -993,6 +1013,7 @@ def cancel_retry(group_id: str) -> dict[str, Any]:
 # own vocabulary; `superseded` and `no_cancel_commit` are what only a reapply can hit.
 REAPPLY_SKIP_REASONS = (
     "superseded", "no_cancel_commit", "empty_revert", "conflict", "not_attempted",
+    "compensated",
 )
 
 
@@ -1021,19 +1042,181 @@ def _reapply_line(row: dict, code: str, new_sha: Optional[str]) -> dict[str, Any
     }
 
 
-def reapply_tr_commits(group_id: str, doc_ids: Iterable[str]) -> dict[str, Any]:
-    """Put the canceled TR commits back, oldest cancel LAST (T0018 K11).
+def _session_head(session: dict) -> str:
+    proc = git_service._run_git(
+        ["rev-parse", "HEAD"], cwd=session["wt_path"],
+        timeout=git_service.GIT_READ_TIMEOUT_SEC,
+    )
+    sha = (proc.stdout or "").strip()
+    if proc.returncode != 0 or len(sha) != 40:
+        raise RuntimeError("cannot read reapply worktree HEAD")
+    return sha
 
-    The exact mirror of :func:`cancel_tr_commits`: same gate ladder (the very same
-    ``open_cancel_session``), same one-commit-per-TR rule, same stop-at-the-first-conflict
-    fallback, same retryable table. Reverting the revert is the only form that leaves the
-    rewind itself readable in the log — FlowGate is a time machine, not an eraser
-    (D0005 K5), so the history gains a third commit rather than losing the second.
 
-    Nothing here raises for the caller to translate. The forward restore has already
-    re-approved its documents and stands whatever git says (D0005 K8).
+def _tree_matches(session: dict, ref: str) -> bool:
+    if not ref:
+        return False
+    proc = git_service._run_git(
+        ["diff", "--quiet", ref, "HEAD"], cwd=session["wt_path"],
+        timeout=git_service.GIT_READ_TIMEOUT_SEC,
+    )
+    return proc.returncode == 0
+
+
+def _finalize_reapply(journal: dict, row: dict, git_sha: str) -> dict:
+    with get_store().transaction():
+        new_row = db_ledger.record_reapply(
+            group_id=row["group_id"], doc_id=row["doc_id"],
+            commit_sha=git_sha,
+            commit_subject=row.get("commit_subject") or "",
+            restored_from_id=int(row["id"]),
+        )
+        if not new_row or new_row.get("state") != "live" or new_row.get("commit_sha") != git_sha:
+            raise RuntimeError("reapply ledger finalize did not create the expected live row")
+        db_recovery.resolve(
+            journal["recovery_id"], resolution="ledger_completed",
+        )
+    return new_row
+
+
+def _compensate_reapply(session: dict, journal: dict, git_sha: str, reason: Exception | str) -> bool:
+    pre_head = str(journal.get("pre_git_head_sha") or "")
+    try:
+        if _session_head(session) != git_sha:
+            return False
+        outcome = git_service.revert_tr_commit(
+            session,
+            commit_sha=git_sha,
+            subject=f"Revert failed reapply {git_sha[:7]}",
+            body=(
+                "FlowGate automatic compensation: Git reapply succeeded but "
+                f"ledger finalize failed. recovery={journal['recovery_id']}"
+            ),
+        )
+        if outcome.get("kind") != "ok":
+            return False
+        if not _tree_matches(session, pre_head):
+            return False
+        db_recovery.resolve(
+            journal["recovery_id"], resolution="compensated",
+            error_detail=str(reason),
+        )
+        return True
+    except Exception:
+        _log.warning("tr reapply compensation failed", exc_info=True)
+        return False
+
+
+def _require_recovery(journal: dict, error: Exception | str) -> None:
+    try:
+        db_recovery.mark_recovery_required(journal["recovery_id"], str(error))
+    except Exception:
+        # Leaving prepared/git_applied unresolved is itself fail-closed. Never delete
+        # the row merely because the phase update also failed.
+        _log.warning("tr reapply recovery-required journal update failed", exc_info=True)
+
+
+def recover_tr_history(group_id: str) -> dict[str, Any]:
+    """Resolve durable interrupted reapply state under the same project Git mutex.
+
+    Conservative by design: only a proved pre-Git tree, a recorded git_applied HEAD,
+    or a tree already matching the pre-Git state is resolved. Anything ambiguous
+    stays recovery_required.
     """
+    pending = db_recovery.unresolved_by_group(group_id)
+    if not pending:
+        return {"status": "clear", "resolved": [], "remaining": []}
+
+    source_rows: dict[int, dict] = {}
+    target_shas: list[str] = []
+    for journal in pending:
+        source = db_ledger.get_by_id(int(journal["source_ledger_row_id"]))
+        if source:
+            source_rows[int(journal["source_ledger_row_id"])] = source
+            if source.get("cancel_commit"):
+                target_shas.append(source["cancel_commit"])
+
+    opened = git_service.open_cancel_session(group_id, target_shas)
+    if not opened.get("ok"):
+        return {
+            "status": "blocked",
+            "blocked_reason": opened.get("blocked_reason"),
+            "resolved": [],
+            "remaining": [row["recovery_id"] for row in pending],
+        }
+
+    session = opened["session"]
+    resolved: list[dict] = []
+    try:
+        for journal in pending:
+            rid = journal["recovery_id"]
+            source = source_rows.get(int(journal["source_ledger_row_id"]))
+            if (
+                not source
+                or source.get("group_id") != group_id
+                or source.get("doc_id") != journal.get("doc_id")
+                or source.get("state") != "canceled"
+            ):
+                _require_recovery(journal, "source ledger row missing or no longer canceled")
+                continue
+
+            head = _session_head(session)
+            pre_head = str(journal.get("pre_git_head_sha") or "")
+            git_sha = str(journal.get("git_commit_sha") or "")
+
+            if head == pre_head:
+                try:
+                    db_recovery.resolve(rid, resolution="compensated",
+                                        error_detail="recovered before durable Git effect")
+                    resolved.append({"recovery_id": rid, "resolution": "compensated"})
+                except Exception as exc:
+                    _require_recovery(journal, exc)
+                continue
+
+            if git_sha and head == git_sha:
+                try:
+                    _finalize_reapply(journal, source, git_sha)
+                    resolved.append({"recovery_id": rid, "resolution": "ledger_completed"})
+                    continue
+                except Exception as exc:
+                    if _compensate_reapply(session, journal, git_sha, exc):
+                        resolved.append({"recovery_id": rid, "resolution": "compensated"})
+                        continue
+                    _require_recovery(journal, exc)
+                    continue
+
+            # A compensation may have committed another SHA while restoring exactly
+            # the pre-reapply tree. Tree equality is enough to prove inactive source
+            # effect; history identity is not rewritten.
+            if pre_head and _tree_matches(session, pre_head):
+                try:
+                    db_recovery.resolve(rid, resolution="compensated",
+                                        error_detail="recovered from compensated tree")
+                    resolved.append({"recovery_id": rid, "resolution": "compensated"})
+                except Exception as exc:
+                    _require_recovery(journal, exc)
+                continue
+
+            _require_recovery(journal, "cannot prove ledger completion or compensation")
+    finally:
+        git_service.close_cancel_session(session)
+
+    remaining = [row["recovery_id"] for row in db_recovery.unresolved_by_group(group_id)]
+    return {"status": "clear" if not remaining else "recovery_required",
+            "resolved": resolved, "remaining": remaining}
+
+
+def reapply_tr_commits(group_id: str, doc_ids: Iterable[str]) -> dict[str, Any]:
+    """Put canceled TR commits back with a durable Git-to-ledger recovery boundary."""
     result = empty_restore_result()
+
+    # A retry is also the explicit recovery entry point for an interrupted reapply.
+    if db_recovery.has_unresolved(group_id):
+        recover_tr_history(group_id)
+        if db_recovery.has_unresolved(group_id):
+            return _blocked(
+                result, group_id, "history_recovery_required", "recovery_required"
+            )
 
     rows = db_ledger.reappliable_rows(group_id, doc_ids)
     codes = _doc_codes(rows)
@@ -1041,19 +1224,12 @@ def reapply_tr_commits(group_id: str, doc_ids: Iterable[str]) -> dict[str, Any]:
     for row in rows:
         code = codes.get(row.get("doc_id"), "")
         if int(row.get("newer_live") or 0) > 0:
-            # The person redid this step by hand after the rewind and its commit is
-            # already in the tree. Putting the old one back on top would apply the same
-            # work twice, so this row is reported, not applied.
             result["skipped"].append(_skip_line(row, code, "superseded"))
         elif not row.get("cancel_commit"):
-            # The cancel was an empty revert (`cancel_reason='empty_revert'`): the row is
-            # canceled but there is no commit to peel back off.
             result["skipped"].append(_skip_line(row, code, "no_cancel_commit"))
         else:
             targets.append(row)
 
-    # Same reason G1 sits before the gates on the cancel side: a restore that had nothing
-    # to put back must end quietly, not on a git error screen (L0007 §4.1 note 1).
     if not targets:
         result["attempted"] = True
         return result
@@ -1066,12 +1242,44 @@ def reapply_tr_commits(group_id: str, doc_ids: Iterable[str]) -> dict[str, Any]:
 
     session = opened["session"]
     try:
+        if db_recovery.has_unresolved(group_id):
+            return _blocked(
+                result, group_id, "history_recovery_required", "recovery_required"
+            )
+
         result["attempted"] = True
         stopped = False
         for row in targets:
             row_id, code = row["id"], codes.get(row.get("doc_id"), "")
             if stopped:
                 result["skipped"].append(_skip_line(row, code, "not_attempted"))
+                continue
+
+            # Rows were discovered before open_cancel_session() acquired the project
+            # mutex. A deletion that won first must make the stale restore a no-op.
+            fresh_doc = db_docs.get_by_id(row["doc_id"])
+            fresh_row = db_ledger.get_by_id(row_id)
+            if (not fresh_doc or not fresh_row
+                    or fresh_row.get("group_id") != group_id
+                    or fresh_row.get("doc_id") != row.get("doc_id")
+                    or fresh_row.get("state") != "canceled"
+                    or fresh_row.get("cancel_commit") != row.get("cancel_commit")):
+                result["skipped"].append(_skip_line(row, code, "not_attempted"))
+                result["stopped_reason"] = "stale_history_target"
+                stopped = True
+                continue
+
+            try:
+                journal = db_recovery.create_prepared(
+                    project_id=session["project_id"], group_id=group_id,
+                    doc_id=row["doc_id"], source_ledger_row_id=row_id,
+                    pre_git_head_sha=_session_head(session),
+                )
+            except Exception:
+                _log.warning("tr reapply: recovery journal prepare failed", exc_info=True)
+                result["skipped"].append(_skip_line(row, code, "not_attempted"))
+                result["stopped_reason"] = "recovery_journal_failed"
+                stopped = True
                 continue
 
             cancel_sha = row.get("cancel_commit") or ""
@@ -1086,9 +1294,6 @@ def reapply_tr_commits(group_id: str, doc_ids: Iterable[str]) -> dict[str, Any]:
             if outcome["kind"] == "blocked":
                 sub = outcome.get("sub") or "reapply_conflict"
                 if sub == "revert_conflict":
-                    # Same parking as the cancel loop, and deliberately the same function:
-                    # a reapply IS a revert, so a resolver sees one kind of session with one
-                    # label on it saying which direction it is going.
                     result["conflict_session"] = _park_conflict(
                         session, kind=db_git.SESSION_KIND_TR_REAPPLY, group_id=group_id,
                         row=row, code=code, target_sha=cancel_sha,
@@ -1096,47 +1301,58 @@ def reapply_tr_commits(group_id: str, doc_ids: Iterable[str]) -> dict[str, Any]:
                     )
                 else:
                     git_service.restore_after_failed_revert(session)
-                # The attempt log lives on the canceled row it failed to restore — the
-                # response collapses every failure into `conflict` (P0006 §5-4) and this
-                # is where the difference survives.
                 db_ledger.record_cancel_attempt(row_id, failed_reason=sub)
+                try:
+                    db_recovery.resolve(
+                        journal["recovery_id"], resolution=None, error_detail=sub
+                    )
+                except Exception as exc:
+                    _require_recovery(journal, exc)
+                    result["blocked_reason"] = "history_recovery_required"
+                    result["stopped_reason"] = "history_recovery_required"
                 result["skipped"].append(_skip_line(row, code, "conflict"))
-                result["stopped_reason"] = "conflict"
+                if result["stopped_reason"] is None:
+                    result["stopped_reason"] = "conflict"
                 stopped = True
                 continue
 
             if outcome["kind"] == "empty":
-                # This TR's content is already in the tree by some other route. An empty
-                # commit would be noise, and writing a live row would claim a commit that
-                # does not exist — the row stays canceled and says why.
+                try:
+                    db_recovery.resolve(
+                        journal["recovery_id"], resolution=None,
+                        error_detail="empty_revert",
+                    )
+                except Exception as exc:
+                    _require_recovery(journal, exc)
+                    result["blocked_reason"] = "history_recovery_required"
+                    result["stopped_reason"] = "history_recovery_required"
+                    stopped = True
                 result["skipped"].append(_skip_line(row, code, "empty_revert"))
                 continue
 
-            # Written per row, immediately (L0007 §4.3): dying one row later must not
-            # leave a reapply in git that the ledger still calls canceled, or the next
-            # restore would apply it a second time.
-            new_row = db_ledger.record_reapply(
-                group_id=group_id, doc_id=row["doc_id"],
-                commit_sha=outcome["commit"],
-                commit_subject=row.get("commit_subject") or "",
-                restored_from_id=row_id,
-            )
-            if new_row and new_row.get("state") == "live":
-                result["reapplied"].append(_reapply_line(row, code, outcome["commit"]))
-            else:
-                # `_execute` reports no row count, so the write is judged by reading the
-                # row back, the same way `mark_canceled` judges its own. git did put the
-                # source back either way; staying silent about it is the louder lie.
-                _log.warning("tr reapply: ledger row for %s was not written", row_id)
-                result["reapplied"].append(_reapply_line(row, code, outcome["commit"]))
+            git_sha = outcome["commit"]
+            try:
+                db_recovery.mark_git_applied(journal["recovery_id"], git_sha)
+                journal = db_recovery.by_recovery_id(journal["recovery_id"]) or journal
+                _finalize_reapply(journal, row, git_sha)
+            except Exception as finalize_error:
+                journal = db_recovery.by_recovery_id(journal["recovery_id"]) or journal
+                if _compensate_reapply(session, journal, git_sha, finalize_error):
+                    result["skipped"].append(_skip_line(row, code, "compensated"))
+                    result["stopped_reason"] = "recovery_compensated"
+                else:
+                    _require_recovery(journal, finalize_error)
+                    result["blocked_reason"] = "history_recovery_required"
+                    result["stopped_reason"] = "history_recovery_required"
+                stopped = True
+                continue
 
-        # Never true out of this loop, for the same reason the cancel's is not: a conflict
-        # answers the same on the next press and the worktree needs a person (L0007 §4.2).
+            result["reapplied"].append(_reapply_line(row, code, git_sha))
+
         result["retryable"] = False
         return result
     finally:
         git_service.close_cancel_session(session)
-
 
 def restore_for_return(group_id: str, restored_doc_ids: Iterable[str]) -> dict[str, Any]:
     """The forward restore's reapply — the mirror of :func:`cancel_for_reopen`.

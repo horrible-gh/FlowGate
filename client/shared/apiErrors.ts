@@ -131,6 +131,14 @@ function resolveRegisteredApiErrorMessage(input: unknown, t: Translate): string 
       : 'main.review_action_bar.ai_running_hint')
   }
 
+  if (error.code === 'TR_HISTORY_RECOVERY_REQUIRED') {
+    return t('main.tr2_body.code.TR_HISTORY_RECOVERY_REQUIRED')
+  }
+
+  if (error.code === 'TR2_ACTIVE_SOURCE_EFFECT') {
+    return t('main.tr2_body.code.TR2_ACTIVE_SOURCE_EFFECT')
+  }
+
   return null
 }
 

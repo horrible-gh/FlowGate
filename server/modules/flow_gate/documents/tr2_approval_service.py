@@ -13,6 +13,7 @@ from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.db import project_test_commands as db_commands
 from modules.flow_gate.db import tr2_approval_attempts as db_attempts
 from modules.flow_gate.db import tr_commit_ledger as db_ledger
+from modules.flow_gate.db import tr_history_recovery as db_recovery
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import after_commit, get_store, in_transaction, now_iso
 from modules.flow_gate.documents import tr2_precheck, tr2_service as tr2
@@ -330,6 +331,15 @@ def approve(*, doc_id: str, actor_user_id: str, user_permissions: set[str],
                 return _replay(replay)
     assert_group_mutation_allowed(doc["group_id"], mutation_principal, "tr2_approve")
     with tr2_precheck.source_lock(doc["project_id"], doc["group_id"], request_key=request_key) as locked:
+        # delete-vs-approval: the document may disappear while this request waits for
+        # the mutex. Re-read before creating an attempt, backup, or source mutation.
+        doc = db_docs.get_by_id(doc_id)
+        if (not doc or doc.get("type_code") != "TR2"
+                or doc.get("project_id") != locked.project_id
+                or doc.get("group_id") != locked.group_id):
+            _raise("tr2_workflow_conflict", "doc_id")
+        if db_recovery.has_unresolved(doc["group_id"]):
+            _raise("tr_history_recovery_required", "history_recovery")
         if request_key:
             replay = db_attempts.by_request_key(request_key)
             if replay and replay["state"] != "in_progress":
