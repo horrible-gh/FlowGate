@@ -5415,17 +5415,59 @@ def create_storage_file(
     project_id: str, parent_path: str, name: str, group_id: str | None = None
 ) -> dict:
     """Create an empty file inside the src tree (base checkout or group worktree)."""
-    target, err = _storage_create_target(project_id, parent_path, name, group_id)
+    group_id = (group_id or "").strip() or None
+    if not group_id:
+        target, err = _storage_create_target(project_id, parent_path, name, None)
+        if err is not None:
+            return err
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.touch()
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+        return {"status": "success"}
+
+    # Keep the established validation/error wording, then repeat the authoritative
+    # resolution while holding the project mutex before touching the filesystem.
+    _pre_target, err = _storage_create_target(project_id, parent_path, name, group_id)
     if err is not None:
         return err
+    segments = [seg for seg in (parent_path or "").replace("\\", "/").split("/") if seg]
+    rel = "/".join([*segments, name.strip()])
 
+    from modules.flow_gate.services import tr2_file_policy as tr2_policy
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.touch()
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
+        with tr2_policy.general_source_mutation(
+            project_id,
+            group_id,
+            exact_paths=[rel],
+            allow_missing_leaf=True,
+        ) as mutation:
+            target, err = _storage_create_target(project_id, parent_path, name, group_id)
+            if err is not None:
+                return err
+            guarded_target = mutation.exact_targets[0][1]
+            if target != guarded_target:
+                return {"status": "error", "code": tr2_policy.SOURCE_PATH_ALIAS_NOT_ALLOWED,
+                        "message": "Source mutation target changed during validation."}
+            try:
+                guarded_target.parent.mkdir(parents=True, exist_ok=True)
+                guarded_target.touch()
+            except Exception as e:
+                return {"status": "error", "message": str(e)}
+    except tr2_policy.Tr2FilePolicyError as exc:
+        return {
+            "status": "error",
+            "code": exc.code,
+            "message": (
+                "TR2-managed source paths can only be changed through TR2."
+                if exc.code == tr2_policy.TR2_MANAGED_FILE
+                else "Source mutation path is not allowed."
+            ),
+            "details": exc.details,
+        }
     return {"status": "success"}
+
 
 
 def get_group_tree(project_id: str, visible_group_ids: set[str] | None = None) -> dict:

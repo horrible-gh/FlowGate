@@ -113,11 +113,8 @@ def resolve_mutation_target_no_alias(
     target = Path(candidate)
     if not allow_missing_leaf and not target.exists():
         raise MutationPathUnsafeError(rel)
-    if allow_missing_leaf and not target.exists():
-        parent = target.parent
-        if not parent.exists() or not parent.is_dir():
-            raise MutationPathUnsafeError(rel)
-        parent_resolved = os.path.realpath(str(parent))
-        if not _same_path_identity(str(parent), parent_resolved):
-            raise MutationPathAliasError(rel)
+    # os.path.realpath(candidate) already resolves every existing ancestor while
+    # preserving a missing suffix. The identity comparison above therefore rejects
+    # an aliased deepest-existing ancestor without requiring the immediate parent
+    # to exist. This keeps safe creation of new nested directories/files possible.
     return target
