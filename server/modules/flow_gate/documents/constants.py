@@ -58,6 +58,12 @@ HEAD_TYPE_GUARD_EXEMPT_TYPES = AUTO_COMPLETE_TYPES | frozenset({WORK_PLAN_TYPE})
 WORK_PLAN_SHEET_TYPES = ("DS", "D", "P", "L", "DB")
 WORK_PLAN_SET_TYPES = ("N", "T", "T2", "TS")
 
+# Instruction steps the server may materialize/auto-approve from WorkPlan metadata.
+# TS is intentionally excluded: it remains an AI-authored test-scenario instruction.
+# Keep this shared with workflow_decision_service/documents/work-plan sequence code so
+# adding a new instruction family cannot leave legacy {"N", "T"} gates behind.
+INSTRUCTION_AUTO_TYPES = frozenset({"N", "T", "T2"})
+
 # instruction code → result code. Mirrors workflow_decision_service.AUTO_REPORT_MAP;
 # duplicated here (not imported) so the document layer does not depend on the
 # workflow-decision service just to describe a type.

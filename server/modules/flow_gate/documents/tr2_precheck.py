@@ -17,6 +17,7 @@ from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.documents import tr2_service as tr2
 from modules.flow_gate.documents.tr2_apply_adapter import adapter
 from modules.flow_gate.services import git_service, path_exclusion_rules
+from modules.flow_gate.workflow.transition_rules import get_doc_review_rule
 
 
 @dataclass(frozen=True)
@@ -87,7 +88,7 @@ def authoritative_precheck(doc_id: str, locked: LockedSource, *,
     if (not doc or doc.get("type_code") != tr2.TR2_TYPE_CODE
             or doc.get("project_id") != locked.project_id
             or doc.get("group_id") != locked.group_id
-            or doc.get("doc_review_status") != "pending_review"):
+            or get_doc_review_rule(doc.get("doc_review_status") or "", "approve") != "approved"):
         raise tr2.Tr2ValidationError("tr2_workflow_conflict", "doc_id")
     revision = doc.get("revision_no") or 0
     if expected_revision is not None and revision != expected_revision:
@@ -185,7 +186,7 @@ def readiness(doc: dict, body: dict) -> dict:
     spec = body["edit_spec"]
     result = {"ready": False, "code": None, "loc": None, "reason": None,
               "edits": [], "worktree_clean": None}
-    if doc.get("doc_review_status") != "pending_review":
+    if get_doc_review_rule(doc.get("doc_review_status") or "", "approve") != "approved":
         return {**result, "reason": "review_status"}
     if db_attempts.recovery_required(doc["doc_id"]):
         return {**result, "reason": "recovery_required", "code": "tr2_recovery_required"}
