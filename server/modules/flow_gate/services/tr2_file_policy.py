@@ -176,6 +176,64 @@ def managed_paths(group_id: str) -> set[str]:
     return result
 
 
+def has_active_source_effect(group_id: str, doc_id: str) -> bool:
+    """Return whether one TR2 document currently contributes a live source effect.
+
+    This is document lifecycle authority, not a content comparison. Canceled lineages
+    are inactive; live reapply descendants and terminal-reopened live rows remain
+    active. Broken lineage/provenance raises instead of authorizing deletion.
+    """
+    rows = db_ledger.ownership_rows(group_id)
+    rows_by_id: dict[int, dict] = {}
+    for row in rows:
+        try:
+            rows_by_id[int(row["id"])] = row
+        except (KeyError, TypeError, ValueError) as exc:
+            raise Tr2OwnershipInvariantError(
+                "ledger row has no valid id", details={"group_id": group_id}
+            ) from exc
+
+    roots: dict[int, dict] = {}
+    for attempt in db_attempts.successful_by_group(group_id):
+        ledger_row_id = attempt.get("ledger_row_id")
+        if ledger_row_id is None:
+            continue
+        try:
+            roots[int(ledger_row_id)] = attempt
+        except (TypeError, ValueError) as exc:
+            raise Tr2OwnershipInvariantError(
+                "succeeded TR2 attempt has invalid ledger_row_id",
+                details={"attempt_id": attempt.get("attempt_id")},
+            ) from exc
+
+    for row in rows:
+        if row.get("state") != "live" or row.get("doc_id") != doc_id:
+            continue
+        root = _lineage_root(row, rows_by_id)
+        try:
+            root_id = int(root["id"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise Tr2OwnershipInvariantError(
+                "TR2 ownership root has no valid id", details={"doc_id": doc_id}
+            ) from exc
+        attempt = roots.get(root_id)
+        if attempt is None:
+            if str(row.get("doc_type_code") or "").upper() == tr2_service.TR2_TYPE_CODE:
+                raise Tr2OwnershipInvariantError(
+                    "live TR2 lineage has no succeeded approval root",
+                    details={
+                        "ledger_row_id": row.get("id"),
+                        "root_ledger_row_id": root_id,
+                        "doc_id": doc_id,
+                    },
+                )
+            continue
+        # A stored ownership path that cannot be canonicalized is also corruption.
+        _commit_paths(attempt)
+        return True
+    return False
+
+
 def is_managed(group_id: str, path: str) -> bool:
     return _canonical(path) in managed_paths(group_id)
 

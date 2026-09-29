@@ -71,6 +71,31 @@ describe('useFlowGateSse TR2 approval phase events (0565)', () => {
     wrapper.unmount()
   })
 
+  it('invalidates ownership caches and scopes tr2_history_changed to its TR2 tab', () => {
+    localStorage.setItem('fg_current_project_id', 'proj_alpha')
+    const invalidate = vi.spyOn(useExplorerStore(), 'invalidateProject').mockImplementation(() => {})
+    vi.spyOn(useDashboardStore(), 'invalidate').mockImplementation(() => {})
+    const wrapper = mount(Harness, { global: { plugins: [i18n] } })
+
+    MockEventSource.last.emit('open')
+    MockEventSource.last.emit('group_view_refresh', {
+      project: 'proj_alpha', doc_id: TR2,
+      payload: {
+        group_id: 'proj_alpha.default.0565',
+        reason: 'tr2_history_changed',
+        doc_id: TR2,
+      },
+    })
+    vi.advanceTimersByTime(250)
+
+    expect(invalidate).toHaveBeenCalledWith('proj_alpha')
+    expect(openDocsRefresh).toHaveBeenCalledTimes(1)
+    expect((openDocsRefresh.mock.calls[0][0] as CustomEvent).detail).toEqual({
+      project: 'proj_alpha', doc_id: TR2,
+    })
+    wrapper.unmount()
+  })
+
   it('keeps other group_view_refresh reasons project-wide', () => {
     const wrapper = mountHarness()
     MockEventSource.last.emit('open')

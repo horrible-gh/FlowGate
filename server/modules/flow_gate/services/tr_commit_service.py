@@ -1255,6 +1255,20 @@ def reapply_tr_commits(group_id: str, doc_ids: Iterable[str]) -> dict[str, Any]:
                 result["skipped"].append(_skip_line(row, code, "not_attempted"))
                 continue
 
+            # Rows were discovered before open_cancel_session() acquired the project
+            # mutex. A deletion that won first must make the stale restore a no-op.
+            fresh_doc = db_docs.get_by_id(row["doc_id"])
+            fresh_row = db_ledger.get_by_id(row_id)
+            if (not fresh_doc or not fresh_row
+                    or fresh_row.get("group_id") != group_id
+                    or fresh_row.get("doc_id") != row.get("doc_id")
+                    or fresh_row.get("state") != "canceled"
+                    or fresh_row.get("cancel_commit") != row.get("cancel_commit")):
+                result["skipped"].append(_skip_line(row, code, "not_attempted"))
+                result["stopped_reason"] = "stale_history_target"
+                stopped = True
+                continue
+
             try:
                 journal = db_recovery.create_prepared(
                     project_id=session["project_id"], group_id=group_id,

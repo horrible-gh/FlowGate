@@ -132,6 +132,35 @@ describe('apiErrors 0578 common resolver', () => {
     expect(resolveApiErrorWithFallbackText(input, t, 'SCREEN FALLBACK')).toBe('반복 횟수는 1에서 30 사이여야 합니다.')
   })
 
+  it('renders TR2 document-delete detail codes through the fallback-text resolver in ko/en/ja', () => {
+    const recovery = { response: { status: 409, data: { detail: { code: 'TR_HISTORY_RECOVERY_REQUIRED' } } } }
+    const active = { response: { status: 409, data: { detail: { code: 'TR2_ACTIVE_SOURCE_EFFECT' } } } }
+
+    i18n.global.locale.value = 'ko'
+    expect(resolveApiErrorWithFallbackText(recovery, t, 'SCREEN FALLBACK')).toBe(
+      'Time Machine 소스/Git/원장 복구가 끝나지 않아 삭제 또는 일반 변경을 진행할 수 없습니다.',
+    )
+    expect(resolveApiErrorWithFallbackText(active, t, 'SCREEN FALLBACK')).toBe(
+      '현재 소스에 활성 TR2 반영 효과가 남아 있어 문서를 삭제할 수 없습니다. 먼저 Time Machine으로 해당 반영을 취소하세요.',
+    )
+
+    i18n.global.locale.value = 'en'
+    expect(resolveApiErrorWithFallbackText(recovery, t, 'SCREEN FALLBACK')).toBe(
+      'Deletion or ordinary source changes are blocked until Time Machine source/Git/ledger recovery finishes.',
+    )
+    expect(resolveApiErrorWithFallbackText(active, t, 'SCREEN FALLBACK')).toBe(
+      'This document cannot be deleted while an active TR2 source effect remains. Cancel that effect with Time Machine first.',
+    )
+
+    i18n.global.locale.value = 'ja'
+    expect(resolveApiErrorWithFallbackText(recovery, t, 'SCREEN FALLBACK')).toBe(
+      'Time Machine のソース/Git/台帳の復旧が完了するまで、削除や通常の変更は実行できません。',
+    )
+    expect(resolveApiErrorWithFallbackText(active, t, 'SCREEN FALLBACK')).toBe(
+      '有効な TR2 のソース反映が残っているため、この文書は削除できません。先に Time Machine で反映を取り消してください。',
+    )
+  })
+
   it('never mutates the original input object', () => {
     const input = { response: { data: { error: { code: 'GROUP_AI_RUN_LOCKED', run_live: false } } } }
     const before = JSON.stringify(input)

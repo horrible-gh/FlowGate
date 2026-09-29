@@ -331,6 +331,13 @@ def approve(*, doc_id: str, actor_user_id: str, user_permissions: set[str],
                 return _replay(replay)
     assert_group_mutation_allowed(doc["group_id"], mutation_principal, "tr2_approve")
     with tr2_precheck.source_lock(doc["project_id"], doc["group_id"], request_key=request_key) as locked:
+        # delete-vs-approval: the document may disappear while this request waits for
+        # the mutex. Re-read before creating an attempt, backup, or source mutation.
+        doc = db_docs.get_by_id(doc_id)
+        if (not doc or doc.get("type_code") != "TR2"
+                or doc.get("project_id") != locked.project_id
+                or doc.get("group_id") != locked.group_id):
+            _raise("tr2_workflow_conflict", "doc_id")
         if db_recovery.has_unresolved(doc["group_id"]):
             _raise("tr_history_recovery_required", "history_recovery")
         if request_key:

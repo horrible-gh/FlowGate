@@ -75,6 +75,20 @@ describe('TR2 managed already-open source tabs (0641)', () => {
     expect(wrapper.find('.edit-dropdown-wrap').exists()).toBe(false)
     expect(useTabsStore().tabs).toHaveLength(1)
     expect(useTabsStore().activeTabId).toBe(tab.id)
+
+    // Cancel unlocks the already-open source tab without a reopen.
+    useExplorerStore().setTr2ManagedPaths(PID, GID, [])
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.edit-dropdown-wrap').exists()).toBe(true)
+    expect(useTabsStore().activeTabId).toBe(tab.id)
+
+    // Forward reapply relocks that same tab from the live snapshot.
+    useExplorerStore().setTr2ManagedPaths(PID, GID, ['src/a.py'])
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.edit-dropdown-wrap').exists()).toBe(false)
+    expect(useTabsStore().activeTabId).toBe(tab.id)
   })
 
   it('does not remove edit UI for the same relative path in another group', async () => {

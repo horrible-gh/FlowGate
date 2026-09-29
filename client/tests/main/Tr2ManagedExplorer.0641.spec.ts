@@ -92,6 +92,14 @@ describe('TR2 managed source UX (0641)', () => {
           tr2_managed_paths: [],
         } },
       })
+      .mockResolvedValueOnce({
+        data: { data: {
+          branch: 'fg-0641',
+          commit: 'a'.repeat(40),
+          nodes: [FILE],
+          tr2_managed_paths: ['src/a.py'],
+        } },
+      })
 
     const store = useExplorerStore()
     await store.fetchGroupBranchTree(PID, GID)
@@ -99,10 +107,11 @@ describe('TR2 managed source UX (0641)', () => {
     expect(store.hasTr2ManagedDescendant(PID, GID, 'src')).toBe(true)
     expect(store.isTr2ManagedPath(PID, OTHER, 'src/a.py')).toBe(false)
 
-    // The commit is deliberately unchanged: ownership refresh must not depend on
-    // a branch-commit change or on the readonly value of an already-open tab.
+    // Same commit throughout: cancel removes the active snapshot, reapply restores it.
     await store.fetchGroupBranchTree(PID, GID)
     expect(store.isTr2ManagedPath(PID, GID, 'src/a.py')).toBe(false)
+    await store.fetchGroupBranchTree(PID, GID)
+    expect(store.isTr2ManagedPath(PID, GID, 'src/a.py')).toBe(true)
   })
 
   it('marks managed files and parent folders while preserving ordinary open/read', async () => {
@@ -166,6 +175,30 @@ describe('TR2 managed source UX (0641)', () => {
     await file.trigger('contextmenu')
     await flushPromises()
     expect(menuText()).not.toContain('Restore File')
+    expect(menuText()).not.toContain('Delete')
+  })
+
+  it('reactively restores and removes delete affordance across cancel/reapply', async () => {
+    const store = useExplorerStore()
+    store.setTr2ManagedPaths(PID, GID, ['src/a.py'])
+    const file = mountNode(FILE)
+
+    await file.trigger('contextmenu')
+    await flushPromises()
+    expect(menuText()).not.toContain('Delete')
+    document.body.innerHTML = ''
+
+    store.setTr2ManagedPaths(PID, GID, [])
+    await flushPromises()
+    await file.trigger('contextmenu')
+    await flushPromises()
+    expect(menuText()).toContain('Delete')
+    document.body.innerHTML = ''
+
+    store.setTr2ManagedPaths(PID, GID, ['src/a.py'])
+    await flushPromises()
+    await file.trigger('contextmenu')
+    await flushPromises()
     expect(menuText()).not.toContain('Delete')
   })
 
