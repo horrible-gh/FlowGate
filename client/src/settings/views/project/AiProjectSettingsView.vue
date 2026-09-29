@@ -1,16 +1,38 @@
 <template>
   <div class="ai-project-page">
-    <section class="card mb-4" data-test="ai-overview">
+    <div class="tab-nav" role="tablist" :aria-label="$t('settings.project.ai_v02.tabs_label')" data-test="ai-tab-nav">
+      <div
+        v-for="tab in aiTabs"
+        :key="tab.id"
+        class="tab-nav-item"
+        :class="{ active: activeAiTab === tab.id }"
+        role="tab"
+        :aria-selected="activeAiTab === tab.id"
+        :data-test="`ai-tab-${tab.id}`"
+        @click="selectAiTab(tab.id)"
+      >
+        {{ tab.label }}
+      </div>
+    </div>
+
+    <section v-if="activeAiTab === 'overview'" class="card mb-4" data-test="ai-overview">
       <div class="card-hd"><span class="card-title">{{ $t('settings.project.ai_v02.overview') }}</span></div>
       <div class="card-bd pad ai-overview-grid">
         <div v-for="section in overviewSections" :key="section.key" class="ai-overview-item">
           <strong>{{ $t(`settings.project.ai_v02.${section.key}`) }}</strong>
           <span v-if="overview?.[section.key]">{{ section.text }}</span>
           <span v-else>{{ $t('settings.project.ai_v02.section_failed') }}</span>
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm ai-overview-open"
+            :data-test="`ai-overview-open-${section.tab}`"
+            :aria-label="$t('settings.project.ai_v02.manage_section') + ': ' + $t(`settings.project.ai_v02.${section.key}`)"
+            @click="selectAiTab(section.tab)"
+          >{{ $t('settings.project.ai_v02.manage_section') }}</button>
         </div>
       </div>
     </section>
-    <div class="card mb-4" data-test="ai-provider-card">
+    <div v-if="activeAiTab === 'provider'" class="card mb-4" data-test="ai-provider-card">
       <div class="card-hd">
         <span class="card-title">
           <AppIcon name="robot" style="margin-right:6px; color:var(--primary);" />
@@ -51,7 +73,7 @@
           <p v-else class="form-hint">{{ $t('settings.project.ai.inherit_pending') }}</p>
         </template>
         <p v-else class="form-hint">{{ $t('settings.project.ai.disabled_note') }}</p>
-        <div class="flex ai-provider-actions">
+        <div v-if="activeAiTab === 'provider'" class="flex ai-provider-actions" data-test="ai-provider-actions">
           <span v-if="dirty" class="badge badge-yellow">{{ $t('settings.ai.unsaved_badge') }}</span>
           <button class="btn btn-secondary" @click="load"><AppIcon name="arrow-counter-clockwise" /> {{ $t('common.reset') }}</button>
           <button class="btn btn-primary" @click="save"><AppIcon name="floppy-disk" /> {{ $t('common.save') }}</button>
@@ -59,7 +81,7 @@
       </div>
     </div>
 
-    <div v-if="saveErrors.length" class="alert alert-danger mb-4">
+    <div v-if="activeAiTab === 'provider' && saveErrors.length" class="alert alert-danger mb-4">
       <div>
         <p style="margin:0 0 6px;">
           <AppIcon name="warning" /> {{ $t('settings.ai.saveerr_title') }}
@@ -70,8 +92,8 @@
       </div>
     </div>
 
-    <AiEvaluationPanel :project-id="projectId" :providers="effectiveProviders" @changed="loadOverview" />
-    <AiGroupsPanel :project-id="projectId" :providers="effectiveProviders" @changed="loadOverview" />
+    <AiEvaluationPanel v-if="activeAiTab === 'evaluation'" :project-id="projectId" :providers="effectiveProviders" @changed="loadOverview" />
+    <AiGroupsPanel v-if="activeAiTab === 'groups'" :project-id="projectId" :providers="effectiveProviders" @changed="loadOverview" />
   </div>
 </template>
 
@@ -81,7 +103,7 @@
 // /api/v1/projects/{id}/ai-settings (P0003). A mode-only save never destroys the stored
 // custom list (L0004 §3), so switching back to custom restores the last list.
 import { computed, onMounted, ref, watch } from 'vue';
-import { onBeforeRouteLeave } from 'vue-router';
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { getRequest, postRequest, putRequest } from '@shared/api';
 import AiProviderListEditor from '../../components/AiProviderListEditor.vue';
@@ -96,6 +118,30 @@ import { confirm } from '../../../main/composables/useDialogStack';
 const { t, te } = useI18n();
 const settings = useSettingsStore();
 const { showToast } = useToast();
+const route = useRoute();
+const router = useRouter();
+
+// Sub-tabs follow ProjectSettingsView: state in a ref, mirrored to a route query
+// (`ai_tab`, next to the outer `tab=ai`), only the active tab's content is mounted.
+const AI_TAB_IDS = ['overview', 'provider', 'evaluation', 'groups'];
+const DEFAULT_AI_TAB = 'overview';
+const aiTabs = computed(() => [
+  { id: 'overview', label: t('settings.project.ai_v02.overview') },
+  { id: 'provider', label: t('settings.project.ai_v02.providers') },
+  { id: 'evaluation', label: t('settings.project.ai_v02.evaluation') },
+  { id: 'groups', label: t('settings.project.ai_v02.ai_groups') },
+]);
+const activeAiTab = ref(AI_TAB_IDS.includes(route.query.ai_tab) ? route.query.ai_tab : DEFAULT_AI_TAB);
+function selectAiTab(tabId) {
+  activeAiTab.value = tabId;
+  const query = { ...route.query };
+  if (tabId === DEFAULT_AI_TAB) delete query.ai_tab;
+  else query.ai_tab = tabId;
+  router.replace({ path: '/settings/project', query });
+}
+watch(() => route.query.ai_tab, (tabId) => {
+  activeAiTab.value = AI_TAB_IDS.includes(tabId) ? tabId : DEFAULT_AI_TAB;
+});
 
 const mode = ref('inherit');
 const savedMode = ref('inherit');
@@ -116,9 +162,9 @@ const projectId = computed(() => settings.currentProjectId);
 const overview = ref(null);
 let overviewGeneration = 0;
 const overviewSections = computed(() => [
-  { key: 'providers', text: overview.value?.providers && `${overview.value.providers.enabled}/${overview.value.providers.total}` },
-  { key: 'evaluation', text: overview.value?.evaluation && `${overview.value.evaluation.providers_with_current_result} · ${t('settings.project.ai_v02.running')}: ${overview.value.evaluation.running} · ${t('settings.project.ai_v02.failed')}: ${overview.value.evaluation.failed} · ${t('settings.project.ai_v02.stale')}: ${overview.value.evaluation.stale}` },
-  { key: 'ai_groups', text: overview.value?.ai_groups && `${overview.value.ai_groups.total} · ${t('settings.project.ai_v02.invalid')}: ${overview.value.ai_groups.invalid}` },
+  { key: 'providers', tab: 'provider', text: overview.value?.providers && `${overview.value.providers.enabled}/${overview.value.providers.total}` },
+  { key: 'evaluation', tab: 'evaluation', text: overview.value?.evaluation && `${overview.value.evaluation.providers_with_current_result} · ${t('settings.project.ai_v02.running')}: ${overview.value.evaluation.running} · ${t('settings.project.ai_v02.failed')}: ${overview.value.evaluation.failed} · ${t('settings.project.ai_v02.stale')}: ${overview.value.evaluation.stale}` },
+  { key: 'ai_groups', tab: 'groups', text: overview.value?.ai_groups && `${overview.value.ai_groups.total} · ${t('settings.project.ai_v02.invalid')}: ${overview.value.ai_groups.invalid}` },
 ]);
 async function loadOverview() {
   const project = projectId.value;
@@ -244,6 +290,7 @@ onMounted(() => { void load(); void loadOverview(); });
 .ai-project-page { width: 100%; min-width: 0; }
 .ai-overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
 .ai-overview-item { display: flex; flex-direction: column; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.ai-overview-open { align-self: flex-start; margin-top: 4px; }
 .ai-provider-actions { justify-content: flex-end; align-items: center; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
 @media (min-width: 2560px) { .ai-project-page { max-width: 1800px; margin-inline: auto; } }
 </style>

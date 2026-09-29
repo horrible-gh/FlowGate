@@ -47,6 +47,7 @@ from .runtime import (
     REVIEW_REJECT_FAILED_STOP_CODE,
     REVIEW_STALLED_STOP_CODE,
     REVIEW_VERDICT_HOLD_STOP_CODE,
+    REWORKER_UNAVAILABLE_STOP_CODE,
     SOURCE_DIRTY_FILES_LIMIT,
     TEST_GATE_BLOCKED_STOP_CODE,
     TEST_RUN_PENDING_STOP_CODE,
@@ -699,6 +700,12 @@ def _stop_reason_text(stop_code: Optional[str], run: dict) -> Optional[str]:
     if stop_code == REVIEW_REJECT_FAILED_STOP_CODE:
         return (f"The automatic rejection failed: "
                 f"{run.get('review_reject_detail') or 'unknown error'}")
+    if stop_code == REWORKER_UNAVAILABLE_STOP_CODE:
+        return (
+            "The reworker Provider chosen at Start "
+            f"({run.get('continuation_reworker_provider_id') or 'unknown'}) was deleted, disabled or is no "
+            "longer effective. No other Provider was substituted; restore or re-enable it, then resume the chain."
+        )
     if stop_code == "group_lease_denied":
         # 0393 T0005 §2-6: the sentence a human reads on the card instead of a bare code.
         denied_op = run.get("lease_denied_operation") or "a group change"

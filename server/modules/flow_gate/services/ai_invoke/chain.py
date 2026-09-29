@@ -42,6 +42,7 @@ from .runtime import (
     REVIEW_HOP_KIND,
     REVIEW_NO_VERDICT_STOP_CODE,
     REWORK_HOP_KIND,
+    REWORKER_UNAVAILABLE_STOP_CODE,
     _actual_work_executor_provider_id,
     _auto_resume_lock,
     _http_error,
@@ -736,9 +737,12 @@ def _maybe_auto_resume_hop(run: dict) -> None:
         finally:
             terminal.handoff_parent.reset(parent_context)
     except HTTPException as exc:
-        logger.warning("ai-invoke auto-resume rejected for %s: %s",
-                       group_id, getattr(exc, "detail", exc))
-        _svc()._park_handoff(run, pending, HOP_HANDOFF_FAILED_STOP_CODE)
+        detail = getattr(exc, "detail", exc)
+        logger.warning("ai-invoke auto-resume rejected for %s: %s", group_id, detail)
+        # 0014 HOLD 2.2: a refused reworker is its own resumable stop, not a generic handoff failure.
+        unavailable = isinstance(detail, dict) and detail.get("code") == REWORKER_UNAVAILABLE_STOP_CODE
+        _svc()._park_handoff(
+            run, pending, REWORKER_UNAVAILABLE_STOP_CODE if unavailable else HOP_HANDOFF_FAILED_STOP_CODE)
         return
     except Exception:
         logger.exception("ai-invoke auto-resume failed for %s", group_id)

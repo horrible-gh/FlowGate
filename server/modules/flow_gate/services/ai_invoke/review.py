@@ -43,6 +43,7 @@ from .runtime import (
     REVIEW_STALL_ROUNDS,
     REVIEW_VERDICT_HOLD_STOP_CODE,
     REWORK_HOP_KIND,
+    REWORKER_UNAVAILABLE_STOP_CODE,
     WORK_HOP_KIND,
     _http_error,
     _known_run_prompts,
@@ -956,11 +957,28 @@ def _append_engine_review_clause(mention: str, gate: dict) -> str:
     )
 
 
+def _reworker_unavailable_reason(project_id: Optional[str], provider_id: str) -> str:
+    """Why the Start-time reworker cannot run now: deleted, disabled, or merely not effective."""
+    try:
+        from modules.flow_gate.db import ai_providers
+        stored = ai_providers.get_row(project_id, provider_id) or ai_providers.get_row(None, provider_id)
+    except Exception:  # noqa: BLE001 - diagnostics must not mask the fail-closed stop
+        return "provider_not_effective"
+    if stored is None:
+        return "provider_not_found"
+    if not stored.get("enabled"):
+        return "provider_disabled"
+    return "provider_not_effective"
+
+
 def _spawn_rework_hop(group_id: str, bundle: dict, gate: dict) -> dict:
     """Launch the rework hop (L0008 §2.6).
 
-    A concrete reworker selection captured at Start takes this hop. Without one, the
-    step's executor remains the default. The issuer is
+    A concrete reworker selection captured at Start takes this hop, and only it: if that
+    Provider was deleted, disabled or is no longer effective the hop is refused with
+    reworker_unavailable (409) rather than handed to another Provider - the user chose that
+    Provider on purpose. Only an unspecified reworker (null/empty) falls back to the step's
+    executor. The issuer is
     invoke_mention_service.issue_rework_request, also used by the human [AI 수정] button.
     """
     from modules.flow_gate.services import invoke_mention_service
@@ -973,8 +991,16 @@ def _spawn_rework_hop(group_id: str, bundle: dict, gate: dict) -> dict:
     api_base_url = bundle.get("api_base_url")
     issued_to = bundle.get("issued_to")
     executor_id = bundle.get("reworker_provider_id")
-    if not executor_id or not _provider_enabled(project_id, executor_id):
+    if not executor_id:
         executor_id = resolve_step_executor(bundle, slot["item_seq"], project_id, bundle.get("doc_ref"))
+    elif not _provider_enabled(project_id, executor_id):
+        reason = _reworker_unavailable_reason(project_id, executor_id)
+        logger.warning("ai-invoke reworker %s unavailable for %s (%s); refusing to substitute",
+                       executor_id, group_id, reason)
+        raise _http_error(
+            409, REWORKER_UNAVAILABLE_STOP_CODE,
+            "The reworker Provider chosen at Start is no longer available; no other Provider was substituted.",
+            reworker_provider_id=executor_id, reason=reason)
 
     def _issue_rework(ai_run_id: Optional[str] = None) -> dict:
         return invoke_mention_service.issue_rework_request(

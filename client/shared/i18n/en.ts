@@ -525,6 +525,10 @@ export default {
         section_failed: 'Section unavailable.',
         load_failed: 'Could not load data.',
         invalid: 'Invalid',
+        tabs_label: 'AI settings tabs',
+        groups: 'AI Groups',
+        provider: 'Provider',
+        manage_section: 'Manage',
       },
       ai: {
         tab: 'AI',

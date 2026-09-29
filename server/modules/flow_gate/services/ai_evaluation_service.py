@@ -1,21 +1,15 @@
 """Project AI Evaluation lifecycle and isolated baseline execution."""
 from __future__ import annotations
 
-import http.client
-import json
 import re
-import socket
-import subprocess
-from urllib.parse import urlsplit
-import tempfile
 import threading
 from dataclasses import dataclass
-from pathlib import Path
 
 from modules.flow_gate.api.v1.events.publisher import FlowEvent, broadcast_event_threadsafe
 from modules.flow_gate.db import ai_evaluation_runs as repo
 from modules.flow_gate.db import ai_providers
-from modules.flow_gate.services import process_runner
+from modules.flow_gate.services.ai_invoke import provider_api, provider_cli
+from modules.flow_gate.services.ai_invoke import runtime as probe
 from modules.flow_gate.services.ai_evaluation_fingerprint import FINGERPRINT_VERSION, subject_fingerprint
 from modules.flow_gate.settings import ai_settings_service
 from modules.flow_gate.utils.api_key_crypto import ApiKeyCryptoError
@@ -128,7 +122,7 @@ def start(project_id: str, provider_id: str, created_by: str | None) -> dict:
             version=subject.version, created_by=created_by)
     except repo.AlreadyRunning as exc:
         raise EvaluationError("evaluation_already_running", 409, exc.evaluation_id) from exc
-    state = {"cancel": threading.Event(), "proc": None, "transport": None, "subject": subject}
+    state = {"handle": probe.ProbeHandle(), "subject": subject}
     with _RUNS_LOCK:
         _RUNS[row["evaluation_id"]] = state
     _emit("updated", row)
@@ -153,123 +147,66 @@ def _safety_available(subject: EvaluationExecutionSubject) -> bool:
             any(p["id"] == subject.provider_id for p in view["providers"]))
 
 
-def _close_api_transport(state: dict) -> None:
-    connection = state.get("transport")
-    if connection is None:
-        return
-    sock = connection.sock
-    if sock is not None:
-        try:
-            sock.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
-    connection.close()
+def _execute(subject: EvaluationExecutionSubject, handle: probe.ProbeHandle) -> probe.ProbeOutcome:
+    """Run the baseline prompt on the shared ai_invoke transports; Evaluation opens no socket or process."""
+    if subject.exec_type == "api":
+        return provider_api.probe_api_completion(
+            kind=subject.kind, base_url=subject.api_base_url, model=subject.api_model,
+            credential=subject.credential, prompt=BASELINE, timeout=TIMEOUT_SEC, handle=handle)
+    if subject.exec_type == "cli":
+        return provider_cli.probe_cli_completion(
+            project_id=subject.project_id, kind=subject.kind, command=subject.cli_command,
+            prompt=BASELINE, timeout=TIMEOUT_SEC, handle=handle)
+    return probe.ProbeOutcome(probe.PROBE_LAUNCH_FAILED)
 
 
-def _api_execution(subject: EvaluationExecutionSubject, state: dict) -> str:
-    if not subject.api_base_url or not subject.api_model or not subject.credential:
-        raise EvaluationError("provider_launch_failed", 500)
-    base = subject.api_base_url.rstrip("/")
-    if subject.kind == "claude":
-        url = base + "/v1/messages"
-        body = {"model": subject.api_model, "max_tokens": 100,
-                "messages": [{"role": "user", "content": BASELINE}]}
-        headers = {"x-api-key": subject.credential, "anthropic-version": "2023-06-01"}
+_FAILURE_REASON = {
+    probe.PROBE_TIMEOUT: "timeout",
+    probe.PROBE_TRANSPORT_FAILED: "transport_failed",
+    probe.PROBE_LAUNCH_FAILED: "provider_launch_failed",
+    probe.PROBE_EXECUTION_FAILED: "execution_failed",
+}
+
+
+def _settle(project_id: str, evaluation_id: str, lifecycle: str, *,
+            verdict: str | None = None, reason_code: str | None = None) -> bool:
+    """The only terminal write. repo.finish is a conditional UPDATE (pending/running only), so
+    whichever of cancel / completion / failure / timeout gets here first wins and the rest are
+    no-ops that emit nothing."""
+    if not repo.finish(project_id, evaluation_id, lifecycle=lifecycle, verdict=verdict,
+                       reason_code=reason_code):
+        return False
+    _emit(lifecycle, repo.get(project_id, evaluation_id))
+    return True
+
+
+def _apply_outcome(project_id: str, evaluation_id: str, outcome: probe.ProbeOutcome) -> None:
+    if outcome.kind == probe.PROBE_CANCELLED:
+        _settle(project_id, evaluation_id, "cancelled", reason_code="cancelled_by_user")
+    elif outcome.kind == probe.PROBE_OK:
+        if outcome.text.strip():
+            _settle(project_id, evaluation_id, "completed", verdict="suitable")
+        else:
+            _settle(project_id, evaluation_id, "completed", verdict="unsuitable",
+                    reason_code="empty_response")
     else:
-        url = base + "/chat/completions"
-        body = {"model": subject.api_model, "messages": [{"role": "user", "content": BASELINE}]}
-        headers = {"Authorization": "Bearer " + subject.credential}
-    connection = None
-    try:
-        parsed = urlsplit(url)
-        if parsed.scheme not in ("http", "https") or not parsed.hostname:
-            raise ValueError("invalid API URL")
-        connection_type = (http.client.HTTPSConnection if parsed.scheme == "https"
-                           else http.client.HTTPConnection)
-        connection = connection_type(parsed.hostname, parsed.port, timeout=TIMEOUT_SEC)
-        with _RUNS_LOCK:
-            state["transport"] = connection
-            if state["cancel"].is_set():
-                raise EvaluationError("cancelled", 409)
-        path = parsed.path or "/"
-        if parsed.query:
-            path += "?" + parsed.query
-        connection.request("POST", path, json.dumps(body).encode("utf-8"),
-                           {"Content-Type": "application/json", **headers})
-        response = connection.getresponse()
-        if response.status >= 400:
-            raise OSError(f"API returned HTTP {response.status}")
-        data = json.loads(response.read().decode("utf-8"))
-    except TimeoutError as exc:
-        raise EvaluationError("timeout", 500) from exc
-    except (OSError, ValueError, http.client.HTTPException) as exc:
-        raise EvaluationError("transport_failed", 500) from exc
-    finally:
-        with _RUNS_LOCK:
-            if state.get("transport") is connection:
-                state["transport"] = None
-        if connection is not None:
-            connection.close()
-    if subject.kind == "claude":
-        return "\n".join(part.get("text", "") for part in data.get("content", [])
-                         if part.get("type") == "text")
-    choices = data.get("choices") or []
-    return str((choices[0].get("message") or {}).get("content") or "") if choices else ""
-
-
-def _cli_execution(subject: EvaluationExecutionSubject, state: dict) -> str:
-    command = (subject.cli_command or "").strip()
-    if not command:
-        raise EvaluationError("provider_launch_failed", 500)
-    with tempfile.TemporaryDirectory(prefix="flowgate_evaluation_") as root:
-        path = Path(root)
-        kwargs = process_runner.popen_kwargs(path, {
-            "FLOWGATE_TOKEN": "", "FLOWGATE_API_BASE": "", "FLOWGATE_BUNDLE_API": "",
-            "FLOWGATE_SCRATCH": root, "TMP": root, "TEMP": root, "TMPDIR": root,
-        }, include_stdio=True)
-        kwargs["stdin"] = subprocess.PIPE
-        try:
-            proc = subprocess.Popen(command, **kwargs)
-        except OSError as exc:
-            raise EvaluationError("provider_launch_failed", 500) from exc
-        state["proc"] = proc
-        if state["cancel"].is_set():
-            process_runner.kill_process_tree(proc)
-        try:
-            stdout, _stderr = proc.communicate(input=BASELINE.encode(), timeout=TIMEOUT_SEC)
-        except subprocess.TimeoutExpired as exc:
-            process_runner.kill_process_tree(proc)
-            proc.communicate()
-            raise EvaluationError("timeout", 500) from exc
-        finally:
-            state["proc"] = None
-        if proc.returncode != 0:
-            raise EvaluationError("execution_failed", 500)
-        return process_runner.safe_decode(stdout)
+        _settle(project_id, evaluation_id, "failed",
+                reason_code=_FAILURE_REASON.get(outcome.kind, "internal_error"))
 
 
 def _worker(evaluation_id: str, state: dict) -> None:
-    subject = state["subject"]
+    subject, handle = state["subject"], state["handle"]
     project_id = subject.project_id
     try:
-        if state["cancel"].is_set() or not repo.mark_running(project_id, evaluation_id):
+        if handle.cancelled or not repo.mark_running(project_id, evaluation_id):
             return
         _emit("started", repo.get(project_id, evaluation_id))
         if not _safety_available(subject):
-            raise EvaluationError("provider_became_unavailable", 500)
-        text = (_api_execution(subject, state) if subject.exec_type == "api" else
-                _cli_execution(subject, state))
-        verdict = "suitable" if text.strip() else "unsuitable"
-        changed = repo.finish(project_id, evaluation_id, lifecycle="completed", verdict=verdict,
-                              reason_code=None if verdict == "suitable" else "empty_response")
-        if changed:
-            _emit("completed", repo.get(project_id, evaluation_id))
-    except EvaluationError as exc:
-        if repo.finish(project_id, evaluation_id, lifecycle="failed", reason_code=exc.code):
-            _emit("failed", repo.get(project_id, evaluation_id))
+            _settle(project_id, evaluation_id, "failed", reason_code="provider_became_unavailable")
+            return
+        _apply_outcome(project_id, evaluation_id, _execute(subject, handle))
     except Exception:
-        if repo.finish(project_id, evaluation_id, lifecycle="failed", reason_code="internal_error"):
-            _emit("failed", repo.get(project_id, evaluation_id))
+        _settle(project_id, evaluation_id, "failed", reason_code="internal_error")
     finally:
         with _RUNS_LOCK:
             _RUNS.pop(evaluation_id, None)
@@ -310,15 +247,11 @@ def cancel(project_id: str, evaluation_id: str) -> dict:
     row = repo.get(project_id, evaluation_id)
     if row is None:
         raise EvaluationError("evaluation_not_found", 404)
-    if not repo.finish(project_id, evaluation_id, lifecycle="cancelled", reason_code="cancelled_by_user"):
+    # DB first: if completion/failure/timeout already won, this loses with 409 and interrupts nothing.
+    if not _settle(project_id, evaluation_id, "cancelled", reason_code="cancelled_by_user"):
         raise EvaluationError("evaluation_not_cancellable", 409)
     with _RUNS_LOCK:
         state = _RUNS.get(evaluation_id)
-        if state:
-            state["cancel"].set()
-            if state["proc"] is not None:
-                process_runner.kill_process_tree(state["proc"])
-            _close_api_transport(state)
-    row = repo.get(project_id, evaluation_id)
-    _emit("cancelled", row)
+    if state:
+        state["handle"].cancel()
     return {"evaluation_id": evaluation_id, "lifecycle": "cancelled", "verdict": None}

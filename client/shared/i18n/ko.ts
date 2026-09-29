@@ -525,6 +525,10 @@ export default {
         section_failed: '영역을 불러오지 못했습니다.',
         load_failed: '불러오지 못했습니다.',
         invalid: '유효하지 않음',
+        tabs_label: 'AI 설정 탭',
+        groups: 'AI 그룹',
+        provider: '프로바이더',
+        manage_section: '관리',
       },
       ai: {
         tab: 'AI',

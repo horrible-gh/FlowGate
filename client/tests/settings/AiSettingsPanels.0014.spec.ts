@@ -3,14 +3,22 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import AiEvaluationPanel from '../../src/settings/components/AiEvaluationPanel.vue'
 import AiGroupsPanel from '../../src/settings/components/AiGroupsPanel.vue'
+import { resetDialogSystem } from '@main/composables/useDialogStack'
 
 const { getRequest, postRequest, putRequest, deleteRequest } = vi.hoisted(() => ({
   getRequest: vi.fn(), postRequest: vi.fn(), putRequest: vi.fn(), deleteRequest: vi.fn(),
 }))
 vi.mock('@shared/api', () => ({ getRequest, postRequest, putRequest, deleteRequest }))
-vi.mock('@main/composables/useDialogStack', () => ({ confirm: vi.fn(async () => true) }))
+vi.mock('@main/composables/useDialogStack', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@main/composables/useDialogStack')>()),
+  confirm: vi.fn(async () => true),
+}))
 
-afterEach(() => { vi.clearAllMocks() })
+afterEach(() => {
+  vi.clearAllMocks()
+  resetDialogSystem()
+  document.body.innerHTML = ''
+})
 
 describe('AI Evaluation settings', () => {
   it('ignores a late Provider response after selection changes', async () => {
@@ -63,10 +71,15 @@ describe('AI Group settings', () => {
     expect(wrapper.text()).toContain('gone')
     expect(wrapper.text()).toContain(i18n.global.t('settings.project.ai_v02.unavailable'))
     await wrapper.find('.ai-group-actions button').trigger('click')
-    expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
-    const selects = wrapper.findAll('.ai-group-modal select')
-    await selects[0].setValue('p1')
-    await wrapper.find('.ai-group-modal .btn-primary').trigger('click')
+    await flushPromises()
+    // DialogShell teleports to the dialog host, so the open dialog is read from the document.
+    const dialog = document.body.querySelector('.fg-dialog-surface[role="dialog"]')
+    expect(dialog).not.toBeNull()
+    const select = dialog!.querySelector('select') as HTMLSelectElement
+    select.value = 'p1'
+    select.dispatchEvent(new Event('change'))
+    await flushPromises()
+    document.body.querySelector<HTMLButtonElement>('[data-dialog-action-id="save"]')!.click()
     await flushPromises()
     expect(putRequest).toHaveBeenCalledWith('/api/v1/projects/project/ai-groups/g1', expect.objectContaining({ work_executor_provider_id: 'p1' }))
     wrapper.unmount()

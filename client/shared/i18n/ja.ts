@@ -525,6 +525,10 @@ export default {
         section_failed: 'セクションを読み込めません。',
         load_failed: '読み込みに失敗しました。',
         invalid: '無効',
+        tabs_label: 'AI設定タブ',
+        groups: 'AI グループ',
+        provider: 'プロバイダー',
+        manage_section: '管理',
       },
       ai: {
         tab: 'AI',
