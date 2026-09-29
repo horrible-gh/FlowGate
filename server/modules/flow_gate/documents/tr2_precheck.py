@@ -100,6 +100,10 @@ def authoritative_precheck(doc_id: str, locked: LockedSource, *,
     canonical = tr2.canonicalize(tr2.validate(body, doc=doc))
     tr2.verify_pair(doc_id, canonical)
     spec = canonical["edit_spec"]
+    if spec["termination"] != "ready_to_apply" or not spec["edits"]:
+        raise tr2.Tr2ValidationError(
+            "tr2_edit_not_applicable", "edit_spec.edits",
+            {"status": "needs_more_work"})
     _committable(spec)
     fingerprint = tr2.spec_fingerprint(spec)
     if expected_spec_fingerprint is not None and fingerprint != expected_spec_fingerprint:
@@ -193,7 +197,8 @@ def readiness(doc: dict, body: dict) -> dict:
         return {**result, "reason": "revision_already_applied",
                 "code": "tr2_history_revision_required"}
     if spec.get("termination") != "ready_to_apply" or not spec.get("edits"):
-        return {**result, "reason": "needs_more_work"}
+        return {**result, "code": "tr2_edit_not_applicable",
+                "loc": "edit_spec.edits", "reason": "needs_more_work"}
     try:
         head = tr2.effective_head_for(doc["doc_id"])
         if not head or head.get("result_doc_id") != doc["doc_id"] or head.get("type") != "TR2":
