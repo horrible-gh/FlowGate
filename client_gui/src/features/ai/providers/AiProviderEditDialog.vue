@@ -1,0 +1,323 @@
+<template>
+  <ModalShell :open="open" size="md" @close="onClose">
+    <template #header="{ titleId }">
+      <div class="dialog-header">
+        <h2 :id="titleId" class="dialog-title">
+          {{ isEdit ? t('gui.ai.providers.edit_title') : t('gui.ai.providers.add_title') }}
+        </h2>
+      </div>
+    </template>
+
+    <div class="dialog-form">
+      <div v-if="error" class="form-error">{{ error }}</div>
+
+      <div class="form-group">
+        <label class="form-label" for="provider-name">{{ t('gui.ai.providers.field_name') }} *</label>
+        <Input
+          id="provider-name"
+          v-model="form.name"
+          :placeholder="t('gui.ai.providers.placeholder_name')"
+          :disabled="saving"
+        />
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="provider-exec-type">{{ t('gui.ai.providers.field_exec_type') }}</label>
+          <Select
+            id="provider-exec-type"
+            v-model="form.exec_type"
+            :options="execTypeOptions"
+            :disabled="saving"
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="provider-kind">{{ t('gui.ai.providers.field_kind') }}</label>
+          <Select
+            id="provider-kind"
+            v-model="form.kind"
+            :options="kindOptions"
+            :disabled="saving"
+          />
+        </div>
+      </div>
+
+      <!-- CLI settings -->
+      <template v-if="form.exec_type === 'cli'">
+        <div class="form-group">
+          <label class="form-label" for="provider-command">{{ t('gui.ai.providers.field_cli_command') }}</label>
+          <Input
+            id="provider-command"
+            v-model="form.cli_command"
+            :placeholder="t('gui.ai.providers.placeholder_cli_command')"
+            :disabled="saving"
+          />
+        </div>
+      </template>
+
+      <!-- API settings -->
+      <template v-else>
+        <div class="form-group">
+          <label class="form-label" for="provider-base-url">{{ t('gui.ai.providers.field_api_base_url') }}</label>
+          <Input
+            id="provider-base-url"
+            v-model="form.api_base_url"
+            placeholder="https://api.openai.com/v1"
+            :disabled="saving"
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="provider-model">{{ t('gui.ai.providers.field_api_model') }}</label>
+          <Input
+            id="provider-model"
+            v-model="form.api_model"
+            placeholder="gpt-4o"
+            :disabled="saving"
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="provider-api-key">
+            {{ t('gui.ai.providers.field_api_key') }}
+            <span v-if="form.api_key_set" class="key-hint">({{ t('gui.ai.providers.key_configured') }})</span>
+            <span v-else class="key-hint text-warn">({{ t('gui.ai.providers.credential_required') }})</span>
+          </label>
+          <Input
+            id="provider-api-key"
+            v-model="form.api_key"
+            type="password"
+            :placeholder="form.api_key_set ? t('gui.ai.providers.placeholder_keep_key') : t('gui.ai.providers.placeholder_api_key')"
+            :disabled="saving"
+          />
+          <small v-if="form.exec_type === 'api' && !form.api_key_set" class="field-hint text-warn">
+            {{ t('gui.ai.providers.api_key_needed_hint') }}
+          </small>
+        </div>
+      </template>
+
+      <div class="form-group toggle-row">
+        <label class="form-label">{{ t('gui.ai.providers.field_enabled') }}</label>
+        <Toggle v-model="form.enabled" :disabled="saving" />
+      </div>
+    </div>
+
+    <template #footer>
+      <div class="dialog-actions">
+        <Button variant="secondary" :disabled="saving" @click="onClose">
+          {{ t('gui.common.cancel') }}
+        </Button>
+        <Button variant="primary" :loading="saving" :disabled="!isValid" @click="onSave">
+          {{ t('gui.common.save') }}
+        </Button>
+      </div>
+    </template>
+  </ModalShell>
+</template>
+
+<script setup lang="ts">
+import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import Button from '@/components/ui/Button.vue'
+import Input from '@/components/ui/Input.vue'
+import ModalShell from '@/components/ui/ModalShell.vue'
+import Select from '@/components/ui/Select.vue'
+import Toggle from '@/components/ui/Toggle.vue'
+import type { ProviderExecType, ProviderItem } from '../types'
+
+const props = defineProps<{
+  open: boolean
+  provider: ProviderItem | null
+  saving?: boolean
+}>()
+
+const emit = defineEmits<{
+  close: []
+  save: [item: ProviderItem]
+}>()
+
+const { t } = useI18n()
+
+const error = ref('')
+
+const isEdit = computed(() => !!props.provider?.id)
+
+interface FormState {
+  id: string
+  name: string
+  exec_type: ProviderExecType
+  kind: string
+  enabled: boolean
+  cli_command: string
+  api_base_url: string
+  api_model: string
+  api_key: string
+  api_key_set: boolean
+}
+
+const form = ref<FormState>({
+  id: '',
+  name: '',
+  exec_type: 'cli',
+  kind: 'claude',
+  enabled: true,
+  cli_command: '',
+  api_base_url: '',
+  api_model: '',
+  api_key: '',
+  api_key_set: false,
+})
+
+const execTypeOptions = [
+  { value: 'cli', label: 'CLI' },
+  { value: 'api', label: 'API' },
+]
+
+const kindOptions = [
+  { value: 'claude', label: 'Claude (Anthropic)' },
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'codex', label: 'Codex' },
+  { value: 'gemini', label: 'Gemini (Google)' },
+  { value: 'custom', label: 'Custom' },
+]
+
+watch(
+  () => props.provider,
+  (p) => {
+    if (p) {
+      form.value = {
+        id: p.id,
+        name: p.name,
+        exec_type: p.exec_type,
+        kind: p.kind,
+        enabled: p.enabled,
+        cli_command: p.cli_command ?? '',
+        api_base_url: p.api_base_url ?? '',
+        api_model: p.api_model ?? '',
+        api_key: '',
+        api_key_set: !!p.api_key_set,
+      }
+    } else {
+      form.value = {
+        id: '',
+        name: '',
+        exec_type: 'cli',
+        kind: 'claude',
+        enabled: true,
+        cli_command: '',
+        api_base_url: '',
+        api_model: '',
+        api_key: '',
+        api_key_set: false,
+      }
+    }
+    error.value = ''
+  },
+  { immediate: true }
+)
+
+const isValid = computed(() => {
+  return form.value.name.trim().length > 0
+})
+
+function onClose() {
+  if (props.saving) return
+  emit('close')
+}
+
+function onSave() {
+  if (!isValid.value) return
+  emit('save', {
+    id: form.value.id || ('prv_' + Math.random().toString(36).substring(2, 9)),
+    name: form.value.name.trim(),
+    exec_type: form.value.exec_type,
+    kind: form.value.kind,
+    enabled: form.value.enabled,
+    cli_command: form.value.exec_type === 'cli' ? form.value.cli_command : null,
+    api_base_url: form.value.exec_type === 'api' ? form.value.api_base_url : null,
+    api_model: form.value.exec_type === 'api' ? form.value.api_model : null,
+    api_key: form.value.api_key || null,
+  })
+}
+</script>
+
+<style scoped>
+.dialog-header {
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--fg2-line);
+}
+
+.dialog-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--fg2-text);
+}
+
+.dialog-form {
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-label {
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--fg2-muted);
+}
+
+.key-hint {
+  font-size: 11px;
+  color: #79d799;
+  margin-left: 4px;
+}
+
+.text-warn {
+  color: var(--fg2-amber-dim, #d97706);
+  font-weight: 600;
+}
+
+.field-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.toggle-row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 6px;
+}
+
+.form-error {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+  font-size: 12px;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--fg2-line);
+}
+</style>

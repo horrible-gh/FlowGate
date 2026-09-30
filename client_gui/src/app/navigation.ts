@@ -25,4 +25,4 @@ export const APP_NAV_ITEMS: readonly AppNavItem[] = [
 ]
 
 /** Screens that exist only as a "준비 중" placeholder in this step (T0011 §8/§9). */
-export const PLACEHOLDER_NAV_KEYS: readonly AppNavKey[] = ['projects', 'designer', 'git', 'ai', 'settings']
+export const PLACEHOLDER_NAV_KEYS: readonly AppNavKey[] = ['projects', 'designer', 'git', 'settings']
