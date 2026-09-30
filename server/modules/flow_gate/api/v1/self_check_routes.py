@@ -17,6 +17,11 @@ def _error(exc: selfcheck.SelfCheckError) -> JSONResponse:
                   "details": {"self_check_run_id": exc.detail} if exc.code == "selfcheck_already_running" else {}}})
 
 
+def _forbidden() -> JSONResponse:
+    return JSONResponse(status_code=403, content={"ok": False,
+        "error": {"code": "forbidden", "message": "forbidden", "details": {}}})
+
+
 def _auth(request: Request, doc_id: str, mutate: bool):
     auth = verify_bearer(request)
     if isinstance(auth, JSONResponse):
@@ -28,10 +33,10 @@ def _auth(request: Request, doc_id: str, mutate: bool):
     if auth.get("_is_user_jwt"):
         permission = "perm_document_update" if mutate else "perm_document_read"
         if not has_permission(auth.get("issued_to"), doc["project_id"], permission):
-            return JSONResponse(status_code=403, content={"ok": False, "error": {"code": "forbidden"}})
+            return _forbidden()
     elif not (auth.get("action_scope") == "edit" and auth.get("doc_ref") == doc_id
               and auth.get("group_id") == doc["group_id"] and auth.get("project") == doc["project_id"]):
-        return JSONResponse(status_code=403, content={"ok": False, "error": {"code": "forbidden"}})
+        return _forbidden()
     return auth
 
 
