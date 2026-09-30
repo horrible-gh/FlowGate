@@ -103,7 +103,6 @@ describe('v0.2 Sidebar navigation (T0011 §7/§12)', () => {
     ['/projects', 'projects', '프로젝트'],
     ['/designer', 'designer', '디자이너'],
     ['/git', 'git', 'Git'],
-    ['/ai', 'ai', 'AI 설정'],
     ['/settings', 'settings', '환경 설정'],
   ])('direct access to %s renders an explicit "준비 중" placeholder with that section active', async (url, key, title) => {
     const { wrapper, router } = await mountAt(url)
@@ -121,6 +120,15 @@ describe('v0.2 Sidebar navigation (T0011 §7/§12)', () => {
     expect(placeholder.get('a.gui-coming-soon-back').attributes('href')).toBe('/app/')
     // A placeholder never embeds a v0.1 screen.
     expect(wrapper.find('iframe').exists()).toBe(false)
+  })
+
+  it('direct access to /ai renders the real AI Settings view with AI section active', async () => {
+    const { wrapper, router } = await mountAt('/ai')
+    mounted = wrapper
+
+    expect(router.currentRoute.value.fullPath).toBe('/ai')
+    expect(activeKeys(wrapper)).toEqual(['ai'])
+    expect(wrapper.find('.ai-settings-view').exists()).toBe(true)
   })
 
   it('keeps a deep path under a section (refresh-style) and its section highlighted', async () => {
