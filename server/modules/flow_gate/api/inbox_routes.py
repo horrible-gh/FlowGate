@@ -2669,9 +2669,9 @@ def _handle_test_run(request: Request, raw_token: str, body: dict) -> JSONRespon
         {"api_base_url": _inbox_api_base(request), "locale": effective_locale}
         if is_chain else None
     )
-    # 0549 T0008: the same chain entrance serves both TS contracts. A specification TS
-    # (test_contract_version: 2) is never executed here — its worker verified the cases
-    # and this POST carries the results; the legacy executable TS keeps the server run.
+    # The chain entrance preserves the contract boundary: contract 1 uses the legacy
+    # executable runner; contract 2 accepts results or starts spec execution when none
+    # are supplied. The structured TS body never enters the legacy parser.
     if test_run_service.ts_contract_version(doc) == 2:
         return _handle_spec_test_results(
             request, token_rec, body, doc, project=project, doc_id=str(doc_id),
@@ -2771,6 +2771,22 @@ def _handle_spec_test_results(
         TEST_GATE_BLOCKED_STOP_CODE,
         TEST_RUN_PENDING_STOP_CODE,
     )
+    if body.get("results") in (None, []) and not body.get("junit_xml"):
+        from modules.flow_gate.services import spec_execution_service
+        try:
+            result = spec_execution_service.admit(
+                doc_id, case_id=body.get("case_id"), runner_id=token_rec["issued_to"],
+                locale=locale, triggered_via="token", chain_context=chain_context,
+            )
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {"error_message": str(exc.detail)}
+            return JSONResponse(status_code=exc.status_code, content=detail)
+        token_service.consume(token_id=token_rec["token_id"], project_id=project, doc_id=doc_id)
+        if chain_context is not None:
+            _park_chain_on_test_gate(token_rec, doc_id, result["run_id"], chain_context)
+            result.update({"continuation": True, "continuation_async": True,
+                           "continuation_target_seq": token_rec.get("continuation_target_seq")})
+        return JSONResponse(status_code=202, content=result)
 
     try:
         recorded = test_run_service.record_spec_results(

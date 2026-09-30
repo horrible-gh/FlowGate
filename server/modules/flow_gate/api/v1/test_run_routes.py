@@ -202,3 +202,39 @@ def _build_api_base(request: Request) -> str:
     base = str(request.base_url).rstrip("/")
     context = settings.CONTEXT.rstrip("/")
     return f"{base}{context}/api/v1"
+
+
+@router.post("/documents/{ts_id}/test-spec/runs")
+def post_spec_run(ts_id: str, request: Request):
+    return _post_spec_execution(ts_id, None, request)
+
+
+@router.post("/documents/{ts_id}/test-spec/cases/{case_id}/run")
+def post_spec_case_run(ts_id: str, case_id: str, request: Request):
+    return _post_spec_execution(ts_id, case_id, request)
+
+
+def _post_spec_execution(ts_id: str, case_id: Optional[str], request: Request):
+    auth = verify_bearer(request)
+    if isinstance(auth, JSONResponse):
+        return auth
+    if not auth.get("_is_user_jwt"):
+        return JSONResponse(status_code=403, content={"error": "user_session_required"})
+    doc = db_docs.get_by_id(ts_id)
+    if doc is None:
+        return JSONResponse(status_code=404, content={"error": "doc_not_found", "doc_id": ts_id})
+    if not test_run_service.user_can_run_tests(
+        auth["issued_to"], doc.get("project_id") or "", bool(auth.get("is_admin"))
+    ):
+        return JSONResponse(status_code=403, content={"error": "permission_denied"})
+    from modules.flow_gate.services import spec_execution_service
+    try:
+        result = spec_execution_service.admit(
+            ts_id, case_id=case_id, runner_id=auth.get("issued_to") or "system",
+            locale=request.headers.get("x-locale") or "ko",
+        )
+    except Exception as exc:
+        if hasattr(exc, "status_code"):
+            return _err(exc)
+        raise
+    return JSONResponse(status_code=202, content=result)

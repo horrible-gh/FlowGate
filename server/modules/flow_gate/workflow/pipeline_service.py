@@ -742,9 +742,20 @@ def transition_document_review(
     if action == "reject" and not comment:
         raise ValueError("Comment required when rejecting (reason for rejection).")
 
+    spec_approval = None
     if action == "approve":
         _require_document_body_for_approval(doc, locale)
         _require_test_gate_for_approval(doc, locale)
+        if str(doc.get("type_code") or "").upper() == "TS":
+            from modules.flow_gate.services import test_basis_service, test_run_service, test_spec_service
+            content = test_run_service._read_doc_content_or_empty(doc)
+            if test_spec_service.detect_contract_version(content) == test_spec_service.CONTRACT_SPEC:
+                parsed = test_spec_service.parse_spec(content)
+                try:
+                    basis = test_basis_service.resolve(doc, parsed["cases"])
+                except ValueError as exc:
+                    raise TransitionError(str(exc)) from exc
+                spec_approval = (parsed, basis)
 
     update_fields: dict[str, Any] = {
         "doc_review_status": next_status,
@@ -793,9 +804,27 @@ def transition_document_review(
             "update_fields": update_fields,
         }
 
-    updated = db_docs.update(doc_id, update_fields)
-    if not updated:
-        raise TransitionError("Review status transition failed")
+    if spec_approval is not None:
+        from modules.flow_gate.services import test_basis_service
+        parsed, basis = spec_approval
+        update_fields["meta"] = test_basis_service.metadata_with_basis(doc, basis)
+        from modules.flow_gate.services import test_run_service as _runner
+        with _runner._admission_lock, get_store().transaction():
+            fresh = db_docs.get_by_id(doc_id)
+            if (fresh or {}).get("doc_review_status") != current_review_status or (
+                fresh or {}
+            ).get("revision_no") != doc.get("revision_no"):
+                raise TransitionError("TS changed during approval")
+            updated = db_docs.update(doc_id, update_fields)
+            if not updated:
+                raise TransitionError("Review status transition failed")
+            initialized = test_basis_service.initialize(updated, parsed, basis, locale=locale)
+            updated["test_basis"] = basis
+            updated["spec_initialization"] = initialized
+    else:
+        updated = db_docs.update(doc_id, update_fields)
+        if not updated:
+            raise TransitionError("Review status transition failed")
 
     log_state_changed(
         project_id=doc.get("project_id", ""),
