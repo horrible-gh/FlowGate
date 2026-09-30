@@ -424,6 +424,22 @@
         </div>
       </div>
 
+      <!-- 0657: review-package is TR review evidence, not a child of the stored
+           submission-time trScope verdict. Keep this action available before approval. -->
+      <div v-if="canDownloadReviewPackage" class="dip-section dip-review-package-action">
+        <div class="dip-sec-body">
+          <button
+            type="button"
+            class="dip-trs-download"
+            :disabled="reviewPackageBusy"
+            @click="downloadReviewPackage"
+          >
+            <AppIcon name="download-simple" />
+            {{ t('main.doc_info_panel.review_package_download') }}
+          </button>
+        </div>
+      </div>
+
       <!-- Section 2.5: TR work-scope verification (0299 D0004 §6).
            Folded when the result is pass with no reasons — if this card were expanded on
            a normal submission, a list with nothing worth reading would take up space on
@@ -446,16 +462,6 @@
           <p v-if="trScope.branch" class="dip-trs-assign">
             {{ t('main.doc_info_panel.tr_scope_branch') }}: <code>{{ trScope.branch }}</code>
           </p>
-          <button
-            v-if="props.groupId"
-            type="button"
-            class="dip-trs-download"
-            :disabled="reviewPackageBusy"
-            @click="downloadReviewPackage"
-          >
-            <AppIcon name="download-simple" />
-            {{ t('main.doc_info_panel.review_package_download') }}
-          </button>
           <!-- A document where verification did not run at submission time, so there is
                no comparison result. Instead of hiding the section, this states why there is
                no verdict and shows only the list reported in the body. rev3: a document
@@ -717,6 +723,15 @@ function _onWorkPlanDocChanged(e: Event) {
 }
 onMounted(() => window.addEventListener('fg:document_content_changed', _onWorkPlanDocChanged))
 onBeforeUnmount(() => window.removeEventListener('fg:document_content_changed', _onWorkPlanDocChanged))
+
+// 0657: the review package is independent of trScope and is useful before approval.
+// These are the human-review / rework states explicitly covered by the review contract.
+const REVIEW_PACKAGE_REVIEW_STATUSES = new Set(['pending_review', 'rejected', 'revised'])
+const canDownloadReviewPackage = computed(() =>
+  props.typeCode === 'TR'
+  && !!props.groupId
+  && REVIEW_PACKAGE_REVIEW_STATUSES.has(props.reviewStatus ?? ''),
+)
 
 // Mismatched items — shown prominently, before the full reported/detected lists (D0004 §6).
 const reviewPackageBusy = ref(false)

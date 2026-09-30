@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from modules.flow_gate.api.v1 import git_routes
 from modules.flow_gate.services import git_service
 from modules.flow_gate.services import review_package_service as rps
 from modules.flow_gate.services.git_service import GitServiceError
@@ -170,3 +171,50 @@ def test_git_inactive_is_a_structured_error(tmp_path, monkeypatch):
         rps.build_review_package("flowgate", "flowgate.default.0534")
     assert raised.value.code == "git_inactive"
     assert raised.value.status == 409
+
+
+def test_repeated_download_builds_from_the_current_live_worktree(tmp_path, monkeypatch):
+    root, _ = make_repo(tmp_path)
+    patch_context(monkeypatch, root, None)
+
+    (root / "base.txt").write_text("first review\n", encoding="utf-8")
+    first = rps.build_review_package(
+        "flowgate", "flowgate.default.0534", "flowgate.default.0534.0001-TR"
+    )
+    with unzip(first) as archive:
+        first_patch = archive.read("diff.patch").decode()
+        assert "+first review" in first_patch
+
+    (root / "base.txt").write_text("second review\n", encoding="utf-8")
+    second = rps.build_review_package(
+        "flowgate", "flowgate.default.0534", "flowgate.default.0534.0001-TR"
+    )
+    with unzip(second) as archive:
+        second_patch = archive.read("diff.patch").decode()
+        assert "+second review" in second_patch
+        assert "+first review" not in second_patch
+
+
+def test_review_package_route_is_no_store(monkeypatch):
+    package = rps.ReviewPackage(
+        filename="flowgate.default.0534-review-package.zip",
+        content=b"zip",
+        metadata={},
+    )
+    monkeypatch.setattr(
+        git_routes.review_package_service,
+        "build_review_package",
+        lambda project_id, group_id, target_doc_id=None: package,
+    )
+
+    response = git_routes.get_group_review_package(
+        "flowgate",
+        "flowgate.default.0534",
+        "flowgate.default.0534.0001-TR",
+        user={},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.body == b"zip"
