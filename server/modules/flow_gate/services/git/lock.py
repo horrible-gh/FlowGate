@@ -17,6 +17,9 @@ LOCK_WAIT_SEC = 5
 
 def _acquire_lock(project_id: str, holder: str, wait_sec: float = LOCK_WAIT_SEC) -> bool:
     from modules.flow_gate.services import git_service as _gs
+    from modules.flow_gate.db import tr_self_check_runs as _selfcheck_runs
+    if _selfcheck_runs.has_recovery_incomplete(project_id):
+        return False
     deadline = time.monotonic() + wait_sec
     while True:
         if _gs.db_git.try_acquire_lock(project_id, holder):

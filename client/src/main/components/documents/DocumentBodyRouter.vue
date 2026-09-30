@@ -94,6 +94,7 @@
     @bind-md-viewer="emit('bind-md-viewer', $event)"
     @bind-text-viewer="emit('bind-text-viewer', $event)"
   />
+  <TrSelfCheckPanel v-if="tab.type === 'md' && tab.typeCode === 'TR'" :tab="tab" />
 </template>
 
 <script setup lang="ts">
@@ -106,6 +107,7 @@ import GenericDocumentBody from './GenericDocumentBody.vue'
 import QuestionDocumentBody from './QuestionDocumentBody.vue'
 import TestDocumentBody from './TestDocumentBody.vue'
 import Tr2DocumentBody from './Tr2DocumentBody.vue'
+import TrSelfCheckPanel from './TrSelfCheckPanel.vue'
 
 defineProps<{
   tab: Tab

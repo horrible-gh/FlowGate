@@ -244,7 +244,7 @@ def delete_template_content(
 def get_project_settings(project_id: str) -> dict | None:
     row = _proj.get_settings(project_id)
     if row is not None:
-        row["tr_self_check_enabled"] = bool(row.get("tr_self_check_enabled", False))
+        row["tr_self_check_enabled"] = bool(row.get("tr_self_check_enabled", True))
     return row
 
 

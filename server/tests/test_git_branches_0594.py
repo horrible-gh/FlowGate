@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -233,6 +234,94 @@ def test_delete_guards_and_local_only_remote_preservation(repo, monkeypatch):
     assert result["remote_counterpart_remains"] is True
     assert _git(repo, "show-ref", "--verify", "refs/heads/merged").returncode != 0
     assert _git(repo, "show-ref", "--verify", "refs/remotes/origin/merged").returncode == 0
+
+
+def test_delete_blocks_unregistered_linked_worktree_and_prunable_until_pruned(repo):
+    _git(repo, "branch", "linked-worktree")
+    wt = repo.parent / "linked-wt"
+    added = _git(repo, "worktree", "add", str(wt), "linked-worktree")
+    assert added.returncode == 0
+
+    rows = {row["name"]: row for row in git_service.list_branches("flowgate")["branches"]}
+    assert rows["linked-worktree"]["kind"] == "local"
+    assert rows["linked-worktree"]["can_delete"] is False
+    assert rows["linked-worktree"]["delete_blocked_reason"] == "branch_checked_out_in_worktree"
+
+    with pytest.raises(GitServiceError) as caught:
+        git_service.delete_branch("flowgate", "linked-worktree")
+    assert caught.value.status == 409
+    assert caught.value.code == "branch_checked_out_in_worktree"
+
+    # Removing only the directory leaves a prunable Git registration. Git still
+    # rejects branch -d until worktree prune, so the FlowGate guard must do the same.
+    shutil.rmtree(wt)
+    porcelain = _git(repo, "worktree", "list", "--porcelain").stdout
+    assert "branch refs/heads/linked-worktree" in porcelain
+    assert "prunable" in porcelain
+    assert git_service.check_branch_delete("flowgate", "linked-worktree") == (
+        "branch_checked_out_in_worktree"
+    )
+
+    assert _git(repo, "worktree", "prune").returncode == 0
+    result = git_service.delete_branch("flowgate", "linked-worktree")
+    assert result["deleted"] is True
+
+
+def test_detached_worktree_does_not_pin_an_unrelated_branch(repo):
+    _git(repo, "branch", "free-after-detached")
+    wt = repo.parent / "detached-wt"
+    added = _git(repo, "worktree", "add", "--detach", str(wt), "main")
+    assert added.returncode == 0
+    assert git_service.check_branch_delete("flowgate", "free-after-detached") is None
+
+
+def test_delete_fails_closed_when_worktree_registry_cannot_be_read(repo, monkeypatch):
+    _git(repo, "branch", "probe-fail")
+    monkeypatch.setattr(
+        branch_service, "_registered_worktrees_for_delete", lambda base_root: None
+    )
+
+    assert git_service.check_branch_delete("flowgate", "probe-fail") == (
+        "branch_worktree_state_unknown"
+    )
+    with pytest.raises(GitServiceError) as caught:
+        git_service.delete_branch("flowgate", "probe-fail")
+    assert caught.value.status == 409
+    assert caught.value.code == "branch_worktree_state_unknown"
+
+
+def test_delete_race_rechecks_worktree_registry_after_git_refusal(repo, monkeypatch):
+    _git(repo, "branch", "race-linked")
+    original_run_git = git_service._run_git
+    worktree_snapshots = iter([
+        [],
+        [],
+        [{"path": str(repo.parent / "race-wt"), "branch": "race-linked", "prunable": False}],
+    ])
+    monkeypatch.setattr(
+        branch_service,
+        "_registered_worktrees_for_delete",
+        lambda base_root: next(worktree_snapshots),
+    )
+
+    def run_git(args, **kwargs):
+        if args == ["branch", "-d", "race-linked"]:
+            return subprocess.CompletedProcess(
+                args,
+                1,
+                stdout="",
+                stderr=(
+                    "error: cannot delete branch 'race-linked' used by worktree "
+                    f"at '{repo.parent / 'race-wt'}'\n"
+                ),
+            )
+        return original_run_git(args, **kwargs)
+
+    monkeypatch.setattr(git_service, "_run_git", run_git)
+    with pytest.raises(GitServiceError) as caught:
+        git_service.delete_branch("flowgate", "race-linked")
+    assert caught.value.status == 409
+    assert caught.value.code == "branch_checked_out_in_worktree"
 
 
 def test_delete_unmerged_reports_commit_preview(repo):

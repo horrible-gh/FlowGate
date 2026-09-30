@@ -41,11 +41,15 @@ def recover_ai_invoke_leases():
 
 
 def recover_git_sessions():
-    """0115 L0006 E8: restore/clean merge-conflict sessions and stale git locks."""
+    """Recover Self-check ownership before generic stale Git lock cleanup."""
     try:
-        from modules.flow_gate.services import git_service
+        from modules.flow_gate.services import git_service, tr_self_check_service
 
-        git_service.startup_recovery()
+        protected = tr_self_check_service.recover()
+        if protected:
+            git_service.startup_recovery(protected_project_ids=protected)
+        else:
+            git_service.startup_recovery()
     except Exception as exc:
         logger.warning(f"[startup] git session recovery failed: {exc}")
 

@@ -1498,6 +1498,8 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     if call["name"] in api_server_tools.SOURCE_OPS:
                         run["source_tool_calls"] = int(run.get("source_tool_calls") or 0) + 1
                         _status, resp = api_server_tools.source_call(run, current_token, call["name"], call["input"])
+                    elif call["name"] in api_server_tools.SELF_CHECK_NAMES:
+                        _status, resp = api_server_tools.self_check_call(run, current_token, call["name"], call["input"])
                     elif call["name"] == "run_test":
                         _status, resp = api_server_tools.run_test(run, call["input"], _svc()._remaining_sec(run))
                     elif call["name"] == "access_source_bundle":

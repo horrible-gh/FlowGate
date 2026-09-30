@@ -368,6 +368,39 @@ describe('GitBranchManager (T0016 C1-C7)', () => {
     wrapper.unmount()
   })
 
+  it('C5d. a linked-worktree branch is locked in the danger zone with its translated reason', async () => {
+    getRequest.mockReset()
+    getRequest.mockResolvedValue({
+      data: {
+        ...CATALOG,
+        branches: [
+          ...CATALOG.branches,
+          {
+            name: 'worktree-agent-a85e9534de8893634',
+            kind: 'local',
+            can_delete: false,
+            delete_blocked_reason: 'branch_checked_out_in_worktree',
+            can_be_create_source: true,
+          },
+        ],
+      },
+    })
+    const wrapper = mountManager()
+    await flushPromises()
+
+    await wrapper.get('[data-test="delete-select"]').setValue('worktree-agent-a85e9534de8893634')
+    const deleteBtn = wrapper.get('[data-test="delete-btn"]')
+    const reason = i18n.global.t('main.git_branch_manager.delete_blocked.branch_checked_out_in_worktree')
+    expect((deleteBtn.element as HTMLButtonElement).disabled).toBe(true)
+    expect(deleteBtn.attributes('title')).toBe(reason)
+    expect(wrapper.get('[data-test="delete-blocked-reason"]').text()).toBe(reason)
+    await deleteBtn.trigger('click')
+    await flushPromises()
+    expect(dialogConfirm).not.toHaveBeenCalled()
+    expect(deleteRequest).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('C6. a catalog load failure shows an error in this section without throwing', async () => {
     getRequest.mockReset()
     getRequest.mockRejectedValue({ response: { data: { error: { message: 'boom' } } } })
