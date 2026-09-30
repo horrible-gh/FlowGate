@@ -313,7 +313,16 @@ def _scratch(run: dict, row: dict) -> tuple[Path, bool]:
             lock.rmdir()
 
 
+def guard_self_check_canonical(run: dict) -> None:
+    """0652 T0002: a TR edit run verifies only through run_self_check, never a Bundle/Scratch."""
+    from modules.flow_gate.services import tr_self_check_service
+    if tr_self_check_service.is_canonical_run(run):
+        raise BundleAccessError(409, "self_check_required",
+                                "TR edit runs execute tests only through run_self_check (legacy_test_execution_disabled_for_tr)")
+
+
 def execute(run: dict, tool_input: dict, remaining_sec: float) -> tuple[int, dict]:
+    guard_self_check_canonical(run)
     task_kind = str(tool_input.get("task_kind") or "")
     if task_kind not in TASK_KINDS:
         raise BundleAccessError(422, "bundle_task_invalid", "unsupported Bundle task kind")
