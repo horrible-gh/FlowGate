@@ -222,6 +222,11 @@ def validate(body: dict, *, doc: dict) -> dict:
         normalized = normalize_command(command)
         if not normalized or len(normalized) > TR2_COMMAND_MAX_LEN:
             _invalid(loc, "empty or too long command")
+        if any(char in command for char in "\x00\r\n"):
+            from modules.flow_gate.db import project_test_commands as registry
+            row = registry.find_by_command(doc["project_id"], normalized)
+            if row is None or normalize_command(row["command"]) != normalized:
+                _invalid(loc, "candidate_control_character")
     if spec.get("verify") is not None:
         verify = _object(spec["verify"], "edit_spec.verify",
                          {"red_test_node", "test_edit_ids", "rationale"})
@@ -564,9 +569,15 @@ def read_view(doc: dict, body: dict) -> dict:
                                if row.get("error_code") in TR2_ERRORS else None)}
                 for row in tr2_approval_attempts.list_by_doc(doc["doc_id"])]
     from modules.flow_gate.documents.tr2_precheck import readiness
+    from modules.flow_gate.documents.tr2_command_admission import (
+        classify_gate_commands, public_admission,
+    )
+    gate_admission = public_admission(classify_gate_commands(
+        doc["project_id"], spec.get("gate", {}).get("commands", [])))
     return {
         "document": {**doc, "editable": editable},
         "readiness": readiness(doc, body),
+        "gate_admission": gate_admission,
         "mutation": {"allowed": editable and block is None,
                      "reason": block if block is not None else (None if editable else "not_editable")},
         "body": body,
