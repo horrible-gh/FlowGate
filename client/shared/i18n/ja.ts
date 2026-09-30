@@ -3575,6 +3575,8 @@ export default {
         branch_is_default_merge_target: '現在の統合対象に指定されているブランチは削除できません。先に対象を変更するか指定を解除してください。',
         branch_is_group_work_base: '稼働中のグループが作業基準ブランチ（Base Branch）として使用しているため削除できません。そのグループが終了すると削除できます。',
         branch_in_use: '進行中のマージがこのブランチを使用しています。',
+        branch_checked_out_in_worktree: '連携された Git ワークツリーがこのブランチを使用しているため削除できません。',
+        branch_worktree_state_unknown: 'Git ワークツリーの状態を確認できないため、安全のため削除をブロックしました。',
         branch_unmerged_commits: '基準ブランチにまだマージされていないコミットがあります。',
         remote_only: 'リモート専用ブランチは削除できません。',
       },
