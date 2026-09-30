@@ -121,9 +121,15 @@
 
       <section class="tr2-section">
         <h3>{{ t('main.tr2_body.gate.heading') }} <small>{{ gate ? t('main.tr2_body.gate.from_attempt', { round: gate.round }) : t('main.tr2_body.gate.pending') }}</small></h3>
+        <p v-if="view.gate_admission?.all_candidate" class="tr2-gate-warning" data-testid="tr2-all-candidate-warning">{{ t('main.tr2_body.gate.all_candidate') }}</p>
+        <p v-if="hasShellComplexCandidate" class="tr2-gate-warning" data-testid="tr2-shell-complex-warning">{{ t('main.tr2_body.gate.shell_complex') }}</p>
         <p v-if="!view.body.edit_spec.gate.commands.length">{{ t('main.tr2_body.gate.none') }}</p>
         <ul v-else class="tr2-gate">
-          <li v-for="(command, index) in view.body.edit_spec.gate.commands" :key="index" :class="`is-${gateStatus(index)}`"><code>{{ command }}</code> <span>{{ t(`main.tr2_body.gate.${gateStatus(index)}`) }}</span></li>
+          <li v-for="(_command, index) in view.body.edit_spec.gate.commands" :key="index" :class="`is-${gateStatus(index)}`">
+            <code>{{ admissionCommand(index) }}</code>
+            <span class="tr2-admission" :class="`is-${admissionState(index)}`" :data-testid="`tr2-admission-${index}`">{{ t(`main.tr2_body.gate.admission_${admissionState(index)}`) }}</span>
+            <span class="tr2-runtime">{{ t(`main.tr2_body.gate.${gateStatus(index)}`) }}</span>
+          </li>
         </ul>
       </section>
 
@@ -224,6 +230,9 @@ const retry = computed(() => view.value?.approval.retry ?? null)
 const mutationAllowed = computed(() => view.value?.mutation?.allowed ?? Boolean(view.value?.document.editable))
 const locked = computed(() => props.readOnly || !view.value || !mutationAllowed.value || saving.value)
 const gate = computed(() => (view.value ? gateResults(view.value) : null))
+const gateAdmission = computed(() => view.value?.gate_admission ?? null)
+const commandAdmissionFingerprint = computed(() => gateAdmission.value?.fingerprint ?? null)
+const hasShellComplexCandidate = computed(() => gateAdmission.value?.commands.some((item) => item.state === 'candidate' && item.shell_complex) === true)
 const editing = computed(() => wholeEditorOpen.value || itemEditor.value !== null)
 // Basis-vs-source only matters before approval: once applied, the source differs by design.
 const awaitingApproval = computed(() => view.value?.document.doc_review_status === 'pending_review')
@@ -314,6 +323,12 @@ function gateStatus(index: number): 'passed' | 'failed' | 'waiting' {
   const result = gate.value?.commands[index]
   if (!result) return 'waiting'
   return !result.timed_out && result.exit_code === 0 ? 'passed' : 'failed'
+}
+function admissionState(index: number): 'registered' | 'candidate' | 'suppressed' {
+  return gateAdmission.value?.commands[index]?.state ?? 'registered'
+}
+function admissionCommand(index: number): string {
+  return gateAdmission.value?.commands[index]?.command ?? view.value?.body.edit_spec.gate.commands[index] ?? ''
 }
 
 function describe(exc: any): string {
@@ -545,6 +560,8 @@ const onContentChanged = (event: Event) => { const detail = (event as CustomEven
 const onReviewChanged = (event: Event) => { const detail = (event as CustomEvent).detail; if (detail?.doc_id === props.tab.id) onServerChange({ doc_id: detail.doc_id }) }
 const onOpenDocsRefresh = (event: Event) => onServerChange({ ...((event as CustomEvent).detail ?? {}), revision_no: undefined })
 
+defineExpose({ commandAdmissionFingerprint, refresh })
+
 onMounted(() => {
   window.addEventListener('fg:document_content_changed', onContentChanged)
   window.addEventListener('fg:doc_review_status_changed', onReviewChanged)
@@ -616,8 +633,15 @@ watch(() => props.tab.id, () => {
 .tr2-diff { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .tr2-diff--new { grid-template-columns: 1fr; }
 .tr2-gate li, .tr2-attempts li { display: flex; gap: 8px; flex-wrap: wrap; padding: 4px 0; }
-.tr2-gate li.is-passed span { color: #15803d; }
-.tr2-gate li.is-failed span { color: #b91c1c; }
+.tr2-gate code { flex: 1 1 100%; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.tr2-admission { font-size: .72rem; font-weight: 700; padding: 1px 6px; border-radius: 999px; }
+.tr2-admission.is-registered { background: #e0f2fe; color: #0369a1; }
+.tr2-admission.is-candidate { background: #fef3c7; color: #92400e; }
+.tr2-admission.is-suppressed { background: #fee2e2; color: #991b1b; }
+.tr2-runtime { font-size: .76rem; }
+.tr2-gate li.is-passed .tr2-runtime { color: #15803d; }
+.tr2-gate li.is-failed .tr2-runtime { color: #b91c1c; }
+.tr2-gate-warning { margin: 6px 0; padding: 7px 9px; border-radius: 6px; background: #fffbeb; color: #92400e; font-size: .78rem; }
 .tr2-tech { font-size: .78rem; }
 .tr2 pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg, #f6f8fa); padding: 10px; border-radius: 6px; max-height: 320px; overflow: auto; }
 .tr2 textarea { box-sizing: border-box; width: 100%; font-family: monospace; }

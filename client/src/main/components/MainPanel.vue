@@ -178,6 +178,7 @@
             @bind-text-viewer="bindActiveRef(textViewerRefs, tab.id, $event)"
             @bind-conversation-view="bindActiveRef(convViewRefs, tab.id, $event)"
             @bind-work-plan-editor="bindActiveRef(workPlanEditorRefs, tab.id, $event)"
+            @bind-tr2-body="bindActiveRef(tr2BodyRefs, tab.id, $event)"
             @copy-mention="onConversationCopyMention(tab.id, $event)"
             @manual-copy-dismiss="setConvManualCopy(tab.id, null)"
             @q-status-changed="onQStatusChanged"
@@ -629,6 +630,7 @@
       :ai-review-arrived="!!exposedValue(docHeaderRefs[activeTabId]?.aiReview)"
       :has-ai-provider="activeProjectHasAiProvider"
       :doc-type="getTabTypeCode(activeTabId) ?? undefined"
+      :command-admission-fingerprint="exposedValue(tr2BodyRefs[activeTabId]?.commandAdmissionFingerprint) ?? null"
       :next-step-label="getNextStepLabel(activeTabId)"
       :next-step-code="getWorkflowViewState(activeTabId).nextStepCode ?? undefined"
       :review-request-label="getReviewRequestLabel(activeTabId)"
@@ -643,6 +645,7 @@
       :before-approve="ensureWorkPlanSavedBeforeApproval"
       :after-approve="onWorkPlanApprovedPostStep"
       @approve="onReviewApproved(activeTabId, $event)"
+      @tr2-stale="onTr2ApprovalStale(activeTabId)"
       @reject="onReviewRejected(activeTabId)"
       @revision-complete="onReviewApproved(activeTabId, $event)"
       @open-mention-dialog="onReviewOpenMentionDialog"
@@ -1176,6 +1179,7 @@ const textViewerRefs = reactive<Record<string, any>>({})
 const stepVerificationCardRefs = reactive<Record<string, any>>({})
 const convViewRefs = reactive<Record<string, any>>({})
 const workPlanEditorRefs = reactive<Record<string, any>>({})
+const tr2BodyRefs = reactive<Record<string, any>>({})
 // T0004 — generic-document Markdown upload busy state, keyed by tab id. Not owned by
 // DocHeader (NR0003 §19: DocHeader stays the download-only fetch/blob owner), so it lives
 // here alongside the orchestration that drives the upload.
@@ -2678,6 +2682,10 @@ function onOpenHeadDocClick(payload: { docId: string; title: string; typeCode: s
     type: 'md',
     typeCode: payload.typeCode ?? undefined,
   })
+}
+
+function onTr2ApprovalStale(tabId: string) {
+  void tr2BodyRefs[tabId]?.refresh?.()
 }
 
 function onReviewApproved(tabId: string, nextStatus?: string | null) {
