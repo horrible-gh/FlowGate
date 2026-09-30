@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from modules.flow_gate.db import documents as db_documents
-from modules.flow_gate.services import git_service, help_catalog, process_runner, remote_tool_service, snapshot_access_service, snapshot_request_service, source_bundle_access_service, test_command_service, token_service, tool_registry
+from modules.flow_gate.services import git_service, help_catalog, process_runner, remote_tool_service, snapshot_access_service, snapshot_request_service, source_bundle_access_service, test_command_service, token_service, tool_registry, tr_self_check_service
 from modules.flow_gate.utils.help_url import help_url
 
 DOCUMENT_SCOPES = frozenset({"new", "edit", "review", "test_run"})
@@ -24,6 +24,7 @@ _CONFLICT_NEVER_OPS = frozenset({"write", "patch", "remove"})
 BASE_NAMES = ("read_document", "read_help", "create_question", "register_document")
 BUNDLE_NAMES = ("access_source_bundle", "run_source_bundle")
 SNAPSHOT_NAMES = ("request_source_snapshot", "access_source_snapshot", "run_source_snapshot")
+SELF_CHECK_NAMES = ("run_self_check", "read_self_check", "cancel_self_check")
 SOURCE_NAMES = ("read_source_file", "search_source", "glob_source", "stat_source", "diff_source", "log_source", "show_commit_source", "merge_preview_source", "patch_source_file", "write_source_file", "remove_source_file", "run_test")
 # Provider names are stable aliases; every source operation dispatches through the HTTP remote service.
 SOURCE_OPS = {
@@ -97,6 +98,9 @@ SCHEMAS = {
     "write_source_file": _obj({"path": {"type": "string", "minLength": 1}, "content": {"type": "string"}, "mode": {"type": "string", "enum": ["create", "overwrite", "append"]}, "encoding": {"type": "string"}}, ["path", "content"]),
     "remove_source_file": _obj({"path": {"type": "string", "minLength": 1}, "recursive": {"type": "boolean"}}, ["path"]),
     "run_test": _obj({"command": {"type": "string", "minLength": 1}}, ["command"]),
+    "run_self_check": _obj({"program": {"type": "string", "minLength": 1}, "args": {"type": "array", "items": {"type": "string"}}, "cwd": {"type": "string"}, "timeout_seconds": {"type": "integer", "minimum": 1}}, ["program"]),
+    "read_self_check": _obj({"self_check_run_id": {"type": "string", "minLength": 1}}, ["self_check_run_id"]),
+    "cancel_self_check": _obj({"self_check_run_id": {"type": "string", "minLength": 1}}, ["self_check_run_id"]),
     "access_source_bundle": _obj({"bundle_id": {"type": "string"}, "operation": {"type": "string", "enum": ["status", "read", "search", "glob", "stat"]}, "path": {"type": "string"}, "pattern": {"type": "string"}, "glob": {"type": "string"}, "ignore_case": {"type": "boolean"}, "max_results": {"type": "integer", "minimum": 1}, "max_bytes": {"type": "integer", "minimum": 0}, "offset": {"type": "integer", "minimum": 0}, "length": {"type": "integer", "minimum": 0}, "encoding": {"type": "string"}, "claim_current_worktree": {"type": "boolean"}}, ["operation"]),
     "run_source_bundle": _obj({"bundle_id": {"type": "string"}, "task_kind": {"type": "string", "enum": sorted(source_bundle_access_service.TASK_KINDS)}, "command": {"type": "string", "minLength": 1}, "timeout_seconds": {"type": "integer", "minimum": 1}, "claim_current_worktree": {"type": "boolean"}}, ["task_kind", "command"]),
     "read_document": READ_DOCUMENT_SCHEMA,
@@ -134,7 +138,7 @@ REGISTER_SCHEMAS = {
     "test_run": _obj({}),
 }
 
-DESCRIPTIONS = {name: name.replace("_", " ") for name in (*BASE_NAMES, *SNAPSHOT_NAMES, *BUNDLE_NAMES, *SOURCE_NAMES)}
+DESCRIPTIONS = {name: name.replace("_", " ") for name in (*BASE_NAMES, *SNAPSHOT_NAMES, *BUNDLE_NAMES, *SOURCE_NAMES, *SELF_CHECK_NAMES)}
 DESCRIPTIONS["access_source_bundle"] = "Read/status/search/glob/stat an immutable Source Bundle. Omit bundle_id to lazy ensure. Historical results do not claim current worktree freshness unless requested."
 DESCRIPTIONS["run_source_bundle"] = "Execute inside disposable AI Scratch copied from a Source Bundle. Omit bundle_id to lazy ensure. Same run and Bundle reuse Scratch. No promotion or live fallback."
 DESCRIPTIONS["request_source_snapshot"] = "Retired (410). Source Bundle is prepared automatically when source access or execution needs it."
@@ -221,6 +225,8 @@ def definitions_for_run(run: dict) -> list[dict]:
     names += [name for name, op in SOURCE_OPS.items() if op in allowed_ops]
     if kind == "read_write":
         names += ["run_source_bundle", "run_test"]
+    if scope == "edit" and step_type == "TR" and run.get("doc_ref") and tr_self_check_service.available(run["doc_ref"]):
+        names += list(SELF_CHECK_NAMES)
     result = []
     for name in names:
         schema = REGISTER_SCHEMAS[scope] if name == "register_document" else SCHEMAS[name]
@@ -479,6 +485,31 @@ def run_test(run: dict, tool_input: dict, remaining_sec: float) -> tuple[int, di
         payload["stderr"] = payload["stderr"][excess - excess // 2:]
         payload["truncated"] = True
     return 200, payload
+
+
+def self_check_call(run: dict, raw_token: str, name: str, tool_input: dict) -> tuple[int, dict]:
+    """Bind each call to the live TR edit token and current AI run."""
+    try:
+        token = token_service.verify(raw_token)
+    except Exception as exc:
+        raise ToolError(401, "selfcheck_token_invalid") from exc
+    doc_id = run.get("doc_ref")
+    if not (run.get("action_scope") == token.get("action_scope") == "edit"
+            and doc_id == token.get("doc_ref") and run.get("group_id") == token.get("group_id")
+            and run.get("project_id") == token.get("project")
+            and str((db_documents.get_by_id(doc_id) or {}).get("type_code") or "").upper() == "TR"):
+        raise ToolError(403, "selfcheck_forbidden")
+    try:
+        if name == "run_self_check":
+            row = tr_self_check_service.start(doc_id, tool_input, token.get("issued_to"))
+            return 202, {"ok": True, **row}
+        if name == "read_self_check":
+            return 200, {"ok": True, **tr_self_check_service.read(doc_id, tool_input["self_check_run_id"])}
+        if name == "cancel_self_check":
+            return 200, {"ok": True, **tr_self_check_service.cancel(doc_id, tool_input["self_check_run_id"])}
+        raise ToolError(422, "invalid_tool_call")
+    except tr_self_check_service.SelfCheckError as exc:
+        raise ToolError(exc.status, exc.code, exc.detail) from exc
 
 
 def error_payload(name: str, exc: ToolError) -> tuple[int, dict]:

@@ -647,6 +647,13 @@ export function useFlowGateSse(refreshAll: (epoch: number | null) => void) {
       })
     }
 
+    on('self_check_run_updated', (e: Event) => {
+      try {
+        const data = JSON.parse((e as MessageEvent).data)
+        window.dispatchEvent(new CustomEvent('fg:self_check_run_updated', { detail: data.payload ?? {} }))
+      } catch { /* REST polling remains available */ }
+    })
+
     on('git_pending_changed', (e: Event) => {
       // Git finalize-pending set changed (flowgate.default.0162 §4-3). The
       // payload carries the server-recomputed absolute pending_count — the
