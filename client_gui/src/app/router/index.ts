@@ -1,0 +1,38 @@
+import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { installAuthGuard } from '@/core/router/guard'
+import { AiSettingsView } from '@/features/ai'
+import DashboardView from '../dashboard/DashboardView.vue'
+import { PLACEHOLDER_NAV_KEYS } from '../navigation'
+import ComingSoonView from '../views/ComingSoonView.vue'
+import NotFoundView from '../views/NotFoundView.vue'
+
+// T0011 §8/§12: /app is the Dashboard; /app/projects, /designer, /git, and /settings
+// exist as honest "준비 중" placeholders. Each placeholder also owns everything below it
+// (`/projects/...`), so a deep link keeps its section highlighted in the Sidebar.
+// /app/ai is implemented by AiSettingsView (T0003).
+//
+// Nothing here redirects: a `redirect` rewrites the URL bar, and the T#1 contract is that an
+// authenticated deep link (e.g. `/app/projects?tab=x`) and a browser refresh keep exactly the
+// URL that was requested. Unknown paths render NotFoundView in place for the same reason.
+const placeholderRoutes: RouteRecordRaw[] = PLACEHOLDER_NAV_KEYS.map((key) => ({
+  path: `/${key}/:rest(.*)*`,
+  name: key,
+  component: ComingSoonView,
+  meta: { navKey: key },
+}))
+
+const routes: RouteRecordRaw[] = [
+  { path: '/', name: 'dashboard', component: DashboardView, meta: { navKey: 'dashboard' } },
+  { path: '/ai/:rest(.*)*', name: 'ai', component: AiSettingsView, meta: { navKey: 'ai' } },
+  ...placeholderRoutes,
+  { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFoundView },
+]
+
+const router = createRouter({
+  history: createWebHistory('/app'),
+  routes,
+})
+
+installAuthGuard(router)
+
+export default router

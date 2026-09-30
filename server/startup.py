@@ -97,6 +97,15 @@ def start_source_bundle_cleanup():
         logger.warning(f"[startup] Source Bundle cleanup bootstrap failed: {exc}")
 
 
+def recover_ai_evaluations():
+    from modules.flow_gate.db import ai_evaluation_runs
+    try:
+        reclaimed = ai_evaluation_runs.recover_orphans()
+        if reclaimed:
+            logger.info(f"[startup] failed {reclaimed} orphaned AI evaluations")
+    except Exception as exc:
+        logger.warning(f"[startup] AI evaluation recovery failed: {exc}")
+
 def run_all():
     """Run full bootstrap sequence (called on lifespan entry)."""
     configure_console_encoding()
@@ -105,5 +114,6 @@ def run_all():
     recover_ai_invoke_leases()
     recover_git_sessions()
     encrypt_ai_provider_keys()
+    recover_ai_evaluations()
     start_snapshot_cleanup()
     start_source_bundle_cleanup()

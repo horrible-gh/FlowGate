@@ -268,6 +268,28 @@ try {
     Pop-Location
 }
 
+# ── client_gui (v0.2, T0005): build -> dist, served under /app ──────────────
+# Non-fatal (unlike the v0.1 build above): T0005 §8 requires a broken/failing v0.2
+# GUI to never block v0.1's own install/startup (run.bat generation, admin bootstrap
+# below still must run). server/routers/main.py already serves v0.1 independently of
+# client_gui/dist — a failed build here just means /app 404s until it's rebuilt.
+Write-Host '==> Client (v0.2, /app): build -> dist'
+$clientGuiDir = Join-Path $Root 'client_gui'
+[System.IO.File]::WriteAllText((Join-Path $clientGuiDir '.env.production.local'), $prodEnv, (New-Object System.Text.UTF8Encoding($false)))
+Push-Location $clientGuiDir
+try {
+    & npm install
+    if ($LASTEXITCODE -ne 0) { throw "npm install failed ($LASTEXITCODE)" }
+    & npm run build
+    if ($LASTEXITCODE -ne 0) { throw "npm run build failed ($LASTEXITCODE)" }
+} catch {
+    Write-Host "[!] client_gui (v0.2) build failed — continuing without /app; v0.1 is unaffected."
+    Write-Host "    Rebuild later with: cd `"$clientGuiDir`"; npm install; npm run build"
+    Write-Host "    ($_)"
+} finally {
+    Pop-Location
+}
+
 # ── run.bat launcher (no systemd on Windows) ─────────────────────────────────
 Write-Host '==> Launcher: run.bat'
 # Sets the storage dir env var and starts uvicorn (no --reload: this is the
@@ -288,6 +310,12 @@ set "FLOWGATE_STORAGE_DIR=$StorageDir"
 REM Build the client so server serves the latest client/dist.
 cd /d "%~dp0client"
 call npm run build || (echo Client build failed & exit /b 1)
+
+REM Build the v0.2 client so server serves the latest client_gui/dist (/app).
+REM Non-fatal: a broken v0.2 build must not stop the v0.1 server from starting on
+REM its already-built client/dist -- /app just 404s until rebuilt.
+cd /d "%~dp0client_gui"
+call npm run build || echo Client (v0.2) build failed -- continuing without /app; v0.1 is unaffected.
 
 cd /d "%~dp0server"
 "$VenvPython" -m uvicorn routers.main:app --host $BindHost --port $Port --timeout-graceful-shutdown 3
@@ -419,6 +447,7 @@ Done. Start FlowGate with:
 
 Notes:
   - Rebuild the client after FE changes:  cd client; npm run build
+  - Rebuild the v0.2 client (/app):       cd client_gui; npm run build
   - To run as a background Windows service, wrap run.bat with NSSM
     (nssm install FlowGate "$Root\run.bat") or a Task Scheduler "At startup" task.
   - For outbound/external token links, rebuild the client with an absolute base:
