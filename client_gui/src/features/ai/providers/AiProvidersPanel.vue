@@ -16,47 +16,49 @@
       </div>
     </div>
 
-    <!-- Mode Selector Card -->
+    <!-- Project AI mode: system settings / project settings / AI off for this project -->
     <div class="mode-card">
       <div class="mode-info">
         <b>{{ t('gui.ai.providers.mode_setting') }}</b>
-        <small>{{ t('gui.ai.providers.mode_hint') }}</small>
       </div>
-      <div class="mode-options">
-        <label class="mode-radio" :class="{ 'is-selected': settings.mode === 'inherit' }">
+      <div class="mode-options" role="radiogroup" :aria-label="t('gui.ai.providers.mode_setting')">
+        <label
+          v-for="option in modeOptions"
+          :key="option.value"
+          class="mode-radio"
+          :class="{ 'is-selected': settings.mode === option.value }"
+        >
           <input
             type="radio"
             name="ai-mode"
-            value="inherit"
-            :checked="settings.mode === 'inherit'"
+            :value="option.value"
+            :checked="settings.mode === option.value"
             :disabled="saving"
-            @change="changeMode('inherit')"
+            @change="changeMode(option.value)"
           />
-          <span>{{ t('gui.ai.providers.mode_inherit') }}</span>
-        </label>
-        <label class="mode-radio" :class="{ 'is-selected': settings.mode === 'custom' }">
-          <input
-            type="radio"
-            name="ai-mode"
-            value="custom"
-            :checked="settings.mode === 'custom'"
-            :disabled="saving"
-            @change="changeMode('custom')"
-          />
-          <span>{{ t('gui.ai.providers.mode_custom') }}</span>
-        </label>
-        <label class="mode-radio" :class="{ 'is-selected': settings.mode === 'disabled' }">
-          <input
-            type="radio"
-            name="ai-mode"
-            value="disabled"
-            :checked="settings.mode === 'disabled'"
-            :disabled="saving"
-            @change="changeMode('disabled')"
-          />
-          <span>{{ t('gui.ai.providers.mode_disabled') }}</span>
+          <span>{{ option.label }}</span>
         </label>
       </div>
+    </div>
+
+    <!-- What the current mode means -->
+    <div v-if="settings.mode === 'inherit'" class="mode-banner mode-banner--info">
+      <div class="mode-banner-text">
+        <b>{{ t('gui.ai.providers.inherit_banner_title') }}</b>
+        <small>{{ t('gui.ai.providers.inherit_banner_desc', { count: effectiveCount }) }}</small>
+      </div>
+      <Button variant="secondary" size="sm" :disabled="saving" @click="changeMode('custom')">
+        {{ t('gui.ai.providers.switch_to_project') }}
+      </Button>
+    </div>
+    <div v-else-if="settings.mode === 'disabled'" class="mode-banner mode-banner--off">
+      <div class="mode-banner-text">
+        <b>{{ t('gui.ai.providers.disabled_banner_title') }}</b>
+        <small>{{ t('gui.ai.providers.disabled_banner_desc') }}</small>
+      </div>
+      <Button variant="secondary" size="sm" :disabled="saving" @click="changeMode('inherit')">
+        {{ t('gui.ai.providers.enable_with_system') }}
+      </Button>
     </div>
 
     <div v-if="error" class="panel-error-alert">{{ error }}</div>
@@ -64,8 +66,8 @@
       ⚠ {{ t('gui.ai.providers.credentials_setup_notice') }}
     </div>
 
-    <!-- Provider List Panel -->
-    <section class="detail-panel">
+    <!-- AI connection list -->
+    <section class="detail-panel" :class="{ 'is-project-off': settings.mode === 'disabled' }">
       <div class="detail-toolbar">
         <label class="detail-search">
           ⌕ <input v-model="searchQuery" :placeholder="t('gui.ai.providers.search_placeholder')" />
@@ -85,7 +87,7 @@
         <div class="provider-table-head">
           <span></span>
           <span>{{ t('gui.ai.providers.col_default') }}</span>
-          <span>Provider</span>
+          <span>{{ t('gui.ai.providers.col_name') }}</span>
           <span>{{ t('gui.ai.providers.col_exec_type') }}</span>
           <span>{{ t('gui.ai.providers.col_kind') }}</span>
           <span>{{ t('gui.ai.providers.col_status') }}</span>
@@ -125,17 +127,16 @@
             <span v-else class="drag">⠿</span>
           </span>
 
-          <!-- Default provider radio -->
+          <!-- Default AI connection -->
           <button
             type="button"
             class="radio"
-            :class="{ on: settings.default_provider_id === item.id }"
+            :class="{ on: currentDefaultId === item.id }"
             :disabled="settings.mode !== 'custom' || saving"
             :title="t('gui.ai.providers.set_default')"
             @click="setDefaultProvider(item.id)"
           />
 
-          <!-- Provider info -->
           <div class="provider-main">
             <span class="avatar-round" :class="getAvatarClass(item.name, item.kind)">
               {{ getInitials(item.name) }}
@@ -151,67 +152,62 @@
                 >
                   {{ t('gui.ai.providers.credential_required') }}
                 </Badge>
+                <Badge v-if="testBadge(item.id)" :tone="testBadge(item.id)!.tone" size="sm">
+                  {{ testBadge(item.id)!.label }}
+                </Badge>
               </div>
               <small>{{ item.kind }} · {{ item.id }}</small>
             </div>
           </div>
 
-          <!-- Method badge -->
           <div>
             <span class="badge">{{ item.exec_type.toUpperCase() }}</span>
           </div>
 
-          <!-- Kind chip -->
           <div>
             <span class="role" :class="getKindToneClass(item.kind)">{{ item.kind }}</span>
           </div>
 
-          <!-- Status toggle/chip -->
-          <div>
+          <!-- Per-connection on/off (project settings only). Project-wide AI off is a mode, not this. -->
+          <div class="status-cell">
             <template v-if="settings.mode === 'custom'">
               <Toggle
                 :model-value="item.enabled"
                 :disabled="saving"
+                :aria-label="t('gui.ai.providers.toggle_aria', { name: item.name })"
                 @update:model-value="(val) => toggleEnabled(item.id, val)"
               />
+              <small class="status-caption">
+                {{ item.enabled ? t('gui.ai.providers.connection_on') : t('gui.ai.providers.connection_off') }}
+              </small>
             </template>
+            <span v-else-if="settings.mode === 'disabled'" class="status-chip off">
+              <i></i>{{ t('gui.ai.providers.project_ai_off') }}
+            </span>
             <span v-else class="status-chip" :class="{ off: !item.enabled }">
-              <i></i>{{ item.enabled ? t('gui.ai.common.active') : t('gui.ai.common.inactive') }}
+              <i></i>{{ item.enabled ? t('gui.ai.providers.connection_on') : t('gui.ai.providers.connection_off') }}
             </span>
           </div>
 
-          <!-- Actions -->
           <div class="row-actions">
             <button
-              v-if="item.exec_type === 'cli'"
+              v-if="isUsable(item.id)"
               type="button"
               class="action-btn"
-              @click="openCommandInfo(item)"
+              :disabled="testing[item.id]"
+              @click="runConnectionTest(item)"
             >
-              {{ t('gui.ai.providers.view_command') }}
+              {{ testing[item.id] ? t('gui.ai.providers.testing') : t('gui.ai.providers.test_connection') }}
             </button>
-            <button
-              v-else
-              type="button"
-              class="action-btn"
-              @click="openCommandInfo(item)"
-            >
-              {{ t('gui.ai.providers.view_connection') }}
+            <button type="button" class="action-btn" @click="openCommandInfo(item)">
+              {{ item.exec_type === 'cli' ? t('gui.ai.providers.view_command') : t('gui.ai.providers.view_connection') }}
             </button>
 
             <template v-if="settings.mode === 'custom'">
-              <button
-                type="button"
-                class="action-btn"
-                @click="openEditDialog(item)"
-              >
+              <button type="button" class="action-btn" @click="openEditDialog(item)">
                 {{ t('gui.common.edit') }}
               </button>
-              <button
-                type="button"
-                class="action-btn action-btn--danger"
-                @click="confirmDelete(item)"
-              >
+              <button type="button" class="action-btn action-btn--danger" @click="confirmDelete(item)">
                 {{ t('gui.common.delete') }}
               </button>
             </template>
@@ -220,9 +216,22 @@
       </div>
     </section>
 
+    <!-- Repeat limit: system setting ai_repeat_count_max (review / restart style choices). -->
+    <div v-if="policy" class="mode-card repeat-card">
+      <div class="mode-info">
+        <b>{{ t('gui.ai.providers.repeat_max') }}</b>
+        <small>{{ t('gui.ai.providers.repeat_max_hint') }}</small>
+      </div>
+      <div class="repeat-stepper">
+        <button type="button" class="action-btn" :disabled="savingRepeat || repeatMax <= policy.repeat_count_min" @click="repeatMax--">−</button>
+        <b>{{ repeatMax }}</b>
+        <button type="button" class="action-btn" :disabled="savingRepeat || repeatMax >= policy.repeat_count_hard_max" @click="repeatMax++">＋</button>
+        <Button variant="secondary" size="sm" :loading="savingRepeat" :disabled="repeatMax === policy.repeat_count_max" @click="saveRepeat">
+          {{ t('gui.common.save') }}
+        </Button>
+      </div>
+    </div>
 
-
-    <!-- Add/Edit Dialog -->
     <AiProviderEditDialog
       :open="dialogOpen"
       :provider="editingProvider"
@@ -231,7 +240,7 @@
       @save="onSaveProvider"
     />
 
-    <!-- Command/Connection Modal -->
+    <!-- Command / connection info -->
     <ModalShell :open="infoModalOpen" size="sm" @close="infoModalOpen = false">
       <template #header="{ titleId }">
         <div class="dialog-header">
@@ -243,18 +252,28 @@
       <div class="info-modal-content">
         <template v-if="infoProvider?.exec_type === 'cli'">
           <div class="info-field">
-            <span class="info-k">{{ t('gui.ai.providers.field_cli_command') }}:</span>
-            <pre class="info-v">{{ infoProvider?.cli_command || '(Default command)' }}</pre>
+            <div class="info-k-row">
+              <span class="info-k">{{ t('gui.ai.providers.field_cli_command') }}:</span>
+              <Button
+                variant="secondary"
+                size="sm"
+                :disabled="!infoProvider?.cli_command"
+                @click="copyCommand(infoProvider?.cli_command)"
+              >
+                {{ t('gui.ai.providers.copy_command') }}
+              </Button>
+            </div>
+            <pre class="info-v">{{ infoProvider?.cli_command || t('gui.ai.providers.default_command') }}</pre>
           </div>
         </template>
         <template v-else>
           <div class="info-field">
             <span class="info-k">{{ t('gui.ai.providers.field_api_base_url') }}:</span>
-            <span class="info-v">{{ infoProvider?.api_base_url || '(Default)' }}</span>
+            <span class="info-v">{{ infoProvider?.api_base_url || t('gui.ai.providers.default_value') }}</span>
           </div>
           <div class="info-field">
             <span class="info-k">{{ t('gui.ai.providers.field_api_model') }}:</span>
-            <span class="info-v">{{ infoProvider?.api_model || '(Default)' }}</span>
+            <span class="info-v">{{ infoProvider?.api_model || t('gui.ai.providers.default_value') }}</span>
           </div>
           <div class="info-field">
             <span class="info-k">{{ t('gui.ai.providers.field_api_key') }}:</span>
@@ -273,7 +292,6 @@
       </template>
     </ModalShell>
 
-    <!-- Delete Confirm Dialog -->
     <ConfirmDialog
       :open="!!deletingProvider"
       :title="t('gui.ai.providers.delete_confirm_title')"
@@ -282,19 +300,28 @@
       @confirm="onDeleteConfirmed"
       @cancel="deletingProvider = null"
     />
+
+    <ToastHost :toasts="toasts" :dismiss-label="t('gui.common.close')" @dismiss="dismissToast" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Badge from '@/components/ui/Badge.vue'
 import Button from '@/components/ui/Button.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import ModalShell from '@/components/ui/ModalShell.vue'
+import ToastHost, { type ToastHostItem } from '@/components/ui/ToastHost.vue'
 import Toggle from '@/components/ui/Toggle.vue'
-import { saveProjectAiSettings } from '../api'
-import type { AiSettingsMode, ProjectAiSettings, ProviderItem } from '../types'
+import {
+  fetchCurrentConnectionTest,
+  fetchExecutionPolicy,
+  saveProjectAiSettings,
+  saveRepeatCountMax,
+  startConnectionTest,
+} from '../api'
+import type { AiConnectionTest, AiExecutionPolicy, AiSettingsMode, ProjectAiSettings, ProviderItem } from '../types'
 import AiProviderEditDialog from './AiProviderEditDialog.vue'
 
 const props = defineProps<{
@@ -320,7 +347,38 @@ const deletingProvider = ref<ProviderItem | null>(null)
 const infoModalOpen = ref(false)
 const infoProvider = ref<ProviderItem | null>(null)
 
+const toasts = ref<ToastHostItem[]>([])
+const testing = ref<Record<string, boolean>>({})
+const testResults = ref<Record<string, AiConnectionTest | null>>({})
+const policy = ref<AiExecutionPolicy | null>(null)
+const repeatMax = ref(0)
+const savingRepeat = ref(false)
+let disposed = false
 
+async function loadPolicy(): Promise<void> {
+  try {
+    policy.value = await fetchExecutionPolicy(props.projectId)
+    repeatMax.value = policy.value.repeat_count_max
+  } catch {
+    policy.value = null
+  }
+}
+
+async function saveRepeat(): Promise<void> {
+  if (!policy.value) return
+  savingRepeat.value = true
+  try {
+    await saveRepeatCountMax(repeatMax.value)
+    await loadPolicy()
+    pushToast(t('gui.ai.providers.repeat_saved'), 'success')
+  } catch (err: unknown) {
+    pushToast(err instanceof Error ? err.message : t('gui.ai.providers.save_failed'), 'danger')
+  } finally {
+    savingRepeat.value = false
+  }
+}
+
+watch(() => props.projectId, () => void loadPolicy(), { immediate: true })
 
 watch(
   () => props.initialSettings,
@@ -330,12 +388,31 @@ watch(
   { deep: true }
 )
 
+onBeforeUnmount(() => {
+  disposed = true
+})
+
+const modeOptions = computed<{ value: AiSettingsMode; label: string }[]>(() => [
+  { value: 'inherit', label: t('gui.ai.providers.mode_inherit') },
+  { value: 'custom', label: t('gui.ai.providers.mode_custom') },
+  { value: 'disabled', label: t('gui.ai.providers.mode_disabled') },
+])
+
+const effectiveCount = computed(() => settings.value.effective?.providers?.length ?? 0)
+
+const currentDefaultId = computed(() =>
+  settings.value.mode === 'custom' ? settings.value.default_provider_id : settings.value.effective?.default_provider_id
+)
+
 const hasMissingCredentials = computed(() => {
   return (settings.value.providers ?? []).some((p) => p.exec_type === 'api' && !p.api_key_set)
 })
 
+// custom: the project's own list (with per-connection on/off)
+// inherit: the effective list the project is actually using (read only)
+// disabled: the preserved project list, shown dimmed -- AI is off for the whole project
 const activeProvidersList = computed<ProviderItem[]>(() => {
-  if (settings.value.mode === 'custom') {
+  if (settings.value.mode === 'custom' || settings.value.mode === 'disabled') {
     return settings.value.providers ?? []
   }
   return settings.value.effective?.providers ?? []
@@ -351,6 +428,18 @@ const filteredProviders = computed(() => {
       p.id.toLowerCase().includes(query)
   )
 })
+
+function isUsable(providerId: string): boolean {
+  return (settings.value.effective?.providers ?? []).some((p) => p.id === providerId)
+}
+
+function pushToast(message: string, tone: ToastHostItem['tone']): void {
+  toasts.value = [...toasts.value, { id: `ai-conn-${Date.now()}-${Math.random()}`, message, tone, duration: 3500 }]
+}
+
+function dismissToast(id: string | number): void {
+  toasts.value = toasts.value.filter((item) => item.id !== id)
+}
 
 async function persist(newSettings: Partial<ProjectAiSettings>) {
   if (!props.projectId || saving.value) return
@@ -369,7 +458,7 @@ async function persist(newSettings: Partial<ProjectAiSettings>) {
     settings.value = updated
     emit('changed')
   } catch (err: unknown) {
-    error.value = err instanceof Error ? err.message : 'Failed to save provider settings.'
+    error.value = err instanceof Error ? err.message : t('gui.ai.providers.save_failed')
   } finally {
     saving.value = false
   }
@@ -378,25 +467,20 @@ async function persist(newSettings: Partial<ProjectAiSettings>) {
 function changeMode(mode: AiSettingsMode) {
   if (mode === settings.value.mode) return
   let providers = settings.value.providers
+  let defaultId = settings.value.default_provider_id
   if (mode === 'custom' && (!providers || providers.length === 0)) {
-    // Clone system effective providers into project custom list.
-    // The GET response exposes only api_key_set/hint, never the secret.
-    // The backend merges keys only within existing project rows.
-    // Explicitly clear key flags on cloned API providers so the transition
-    // does not imply that a configured key was copied, and clearly surface credential setup.
+    // Switching from system settings to project settings starts from what the project is
+    // using now. The GET response exposes only api_key_set/hint, never the secret, so cloned
+    // API connections are marked as needing a project key instead of implying a copied key.
     providers = (settings.value.effective?.providers ?? []).map((p) => {
       if (p.exec_type === 'api') {
-        return {
-          ...p,
-          api_key: undefined,
-          api_key_set: false,
-          api_key_hint: null,
-        }
+        return { ...p, api_key: undefined, api_key_set: false, api_key_hint: null }
       }
       return { ...p }
     })
+    defaultId = settings.value.effective?.default_provider_id ?? providers[0]?.id ?? null
   }
-  void persist({ mode, providers })
+  void persist({ mode, providers, default_provider_id: defaultId })
 }
 
 function setDefaultProvider(providerId: string) {
@@ -441,6 +525,71 @@ function openCommandInfo(provider: ProviderItem) {
   infoModalOpen.value = true
 }
 
+async function writeClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+  // Non-secure contexts (plain http on a LAN address) have no Clipboard API.
+  const area = document.createElement('textarea')
+  area.value = text
+  area.setAttribute('readonly', '')
+  area.style.position = 'fixed'
+  area.style.opacity = '0'
+  document.body.appendChild(area)
+  area.select()
+  try {
+    if (!document.execCommand('copy')) throw new Error('copy command rejected')
+  } finally {
+    document.body.removeChild(area)
+  }
+}
+
+async function copyCommand(command: string | null | undefined) {
+  if (!command) return
+  try {
+    await writeClipboard(command)
+    pushToast(t('gui.ai.providers.copy_success'), 'success')
+  } catch {
+    pushToast(t('gui.ai.providers.copy_failed'), 'danger')
+  }
+}
+
+function testBadge(providerId: string): { tone: 'success' | 'warning' | 'danger' | 'info'; label: string } | null {
+  if (testing.value[providerId]) return { tone: 'info', label: t('gui.ai.providers.testing') }
+  const result = testResults.value[providerId]
+  if (!result) return null
+  if (result.lifecycle === 'completed') {
+    return result.result === 'responded'
+      ? { tone: 'success', label: t('gui.ai.providers.test_responded') }
+      : { tone: 'warning', label: t('gui.ai.providers.test_no_response') }
+  }
+  if (result.lifecycle === 'failed') return { tone: 'danger', label: t('gui.ai.providers.test_failed') }
+  return null
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+async function runConnectionTest(provider: ProviderItem) {
+  if (testing.value[provider.id]) return
+  testing.value = { ...testing.value, [provider.id]: true }
+  try {
+    let current: AiConnectionTest | null = await startConnectionTest(props.projectId, provider.id)
+    for (let i = 0; i < 45 && current && !['completed', 'failed', 'cancelled'].includes(current.lifecycle); i++) {
+      await sleep(2000)
+      if (disposed) return
+      current = (await fetchCurrentConnectionTest(props.projectId, provider.id)).current
+    }
+    testResults.value = { ...testResults.value, [provider.id]: current }
+    const badge = testBadge(provider.id)
+    if (badge) pushToast(`${provider.name}: ${badge.label}`, badge.tone === 'success' ? 'success' : badge.tone)
+  } catch (err: unknown) {
+    pushToast(err instanceof Error ? err.message : t('gui.ai.providers.test_failed'), 'danger')
+  } finally {
+    testing.value = { ...testing.value, [provider.id]: false }
+  }
+}
+
 function confirmDelete(provider: ProviderItem) {
   deletingProvider.value = provider
 }
@@ -469,8 +618,6 @@ function onSaveProvider(item: ProviderItem) {
   if (!defId) defId = item.id
   void persist({ providers: current, default_provider_id: defId })
 }
-
-
 
 function getInitials(name: string): string {
   if (!name) return 'AI'
@@ -533,6 +680,23 @@ function getKindToneClass(kind: string): string {
   margin-left: auto;
   display: flex;
   gap: 8px;
+}
+
+.repeat-card {
+  margin-top: 14px;
+  margin-bottom: 0;
+}
+
+.repeat-stepper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.repeat-stepper b {
+  min-width: 28px;
+  text-align: center;
+  font-size: 16px;
 }
 
 .mode-card {
@@ -634,7 +798,7 @@ function getKindToneClass(kind: string): string {
 .provider-table-head,
 .provider-detail-row {
   display: grid;
-  grid-template-columns: 44px 50px minmax(240px, 1.8fr) 72px 100px 90px 220px;
+  grid-template-columns: 44px 50px minmax(220px, 1.6fr) 72px 100px 120px minmax(280px, auto);
   gap: 10px;
   align-items: center;
 }
@@ -969,5 +1133,71 @@ function getKindToneClass(kind: string): string {
   color: #fca5a5;
   font-size: 12px;
   margin-bottom: 12px;
+}
+
+.mode-banner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  margin-bottom: 14px;
+  border-radius: 10px;
+  border: 1px solid var(--fg2-line);
+}
+
+.mode-banner--info {
+  border-color: rgba(75, 163, 255, 0.35);
+  background: rgba(28, 101, 197, 0.12);
+}
+
+.mode-banner--off {
+  border-color: rgba(148, 168, 189, 0.35);
+  background: rgba(148, 168, 189, 0.08);
+}
+
+.mode-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.mode-banner-text b {
+  display: block;
+  font-size: 13.5px;
+  color: #eaf1f8;
+}
+
+.mode-banner-text small {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  color: #b9c8d8;
+  line-height: 1.45;
+}
+
+.detail-panel.is-project-off .provider-detail-row {
+  opacity: 0.55;
+}
+
+.status-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-caption {
+  font-size: 11px;
+  color: var(--fg2-muted);
+}
+
+.info-k-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.action-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 </style>

@@ -28,7 +28,9 @@
         <Button variant="primary" @click="startOpen = true">{{ t('gui.ai.start.open') }}</Button>
       </header>
 
-      <div v-if="loading" class="view-loading">
+      <!-- Full-screen loading only before the first data arrives: a refresh after an edit
+           keeps the open tab (and its selection/dialog state) mounted. -->
+      <div v-if="loading && !overviewData && !settingsData" class="view-loading">
         <LoadingState :label="t('gui.common.loading')" />
       </div>
 
@@ -63,10 +65,6 @@
           <AiOverviewPanel
             v-else
             :overview="overviewData"
-            :providers="overviewProviders"
-            :evaluations="evaluations"
-            :groups="groups"
-            :section-errors="sectionErrors"
             @navigate="onNavigateTab"
           />
         </template>
@@ -142,12 +140,10 @@ import Tabs, { type TabItem } from '@/components/ui/Tabs.vue'
 import { useProjectStore } from '@/features/project'
 import {
   fetchAiOverview,
-  fetchEvaluationHistory,
   fetchProjectAiSettings,
   listAiGroups,
 } from './api'
 import type {
-  AiEvaluation,
   AiGroup,
   AiOverviewData,
   ProjectAiSettings,
@@ -175,12 +171,10 @@ const error = ref<string | null>(null)
 
 const overviewData = ref<AiOverviewData | null>(null)
 const settingsData = ref<ProjectAiSettings | null>(null)
-const evaluations = ref<AiEvaluation[]>([])
 const groups = ref<AiGroup[]>([])
 const sectionErrors = ref<{
   overview?: string | null
   settings?: string | null
-  evaluations?: string | null
   groups?: string | null
 }>({})
 
@@ -193,22 +187,10 @@ const tabs = computed<TabItem[]>(() => [
   { key: 'groups', label: t('gui.ai.tabs.groups') },
 ])
 
-// Effective enabled providers for evaluation runnable targets and group selectable roles
-const activeProviders = computed<ProviderItem[]>(() => {
-  const list =
-    settingsData.value?.mode === 'custom'
-      ? (settingsData.value?.effective?.providers ?? (settingsData.value?.providers ?? []).filter((p) => p.enabled))
-      : (settingsData.value?.effective?.providers ?? [])
-  return list.filter((p) => p.enabled !== false)
-})
-
-// All configured providers for overview display (preserving inactive status chips)
-const overviewProviders = computed<ProviderItem[]>(() => {
-  if (settingsData.value?.mode === 'custom') {
-    return settingsData.value.providers ?? []
-  }
-  return settingsData.value?.effective?.providers ?? []
-})
+// AI connections this project can use right now (evaluation target/judge, group members)
+const activeProviders = computed<ProviderItem[]>(() =>
+  (settingsData.value?.effective?.providers ?? []).filter((p) => p.enabled !== false)
+)
 
 function parseTab(tabParam: unknown): TabKey {
   if (tabParam === 'providers' || tabParam === 'evaluation' || tabParam === 'groups') {
@@ -236,10 +218,9 @@ async function loadData() {
   error.value = null
 
   try {
-    const [ovRes, setRes, evalRes, grpRes] = await Promise.allSettled([
+    const [ovRes, setRes, grpRes] = await Promise.allSettled([
       fetchAiOverview(pId),
       fetchProjectAiSettings(pId),
-      fetchEvaluationHistory(pId, undefined, 20),
       listAiGroups(pId),
     ])
 
@@ -261,13 +242,6 @@ async function loadData() {
       errs.settings = setRes.reason instanceof Error ? setRes.reason.message : 'Failed to load project AI settings'
     }
 
-    if (evalRes.status === 'fulfilled') {
-      evaluations.value = evalRes.value.items || []
-    } else {
-      evaluations.value = []
-      errs.evaluations = evalRes.reason instanceof Error ? evalRes.reason.message : 'Failed to load evaluation history'
-    }
-
     if (grpRes.status === 'fulfilled') {
       groups.value = grpRes.value
     } else {
@@ -281,7 +255,6 @@ async function loadData() {
     if (
       ovRes.status === 'rejected' &&
       setRes.status === 'rejected' &&
-      evalRes.status === 'rejected' &&
       grpRes.status === 'rejected'
     ) {
       error.value = 'Failed to load project AI configuration.'
@@ -311,12 +284,13 @@ watch(
   () => currentProject.value?.id,
   (newId) => {
     startOpen.value = false
+    overviewData.value = null
+    settingsData.value = null
     if (newId) {
       void loadData()
     } else {
       overviewData.value = null
       settingsData.value = null
-      evaluations.value = []
       groups.value = []
       sectionErrors.value = {}
     }

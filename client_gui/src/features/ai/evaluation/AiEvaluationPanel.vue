@@ -6,202 +6,136 @@
         <div class="page-sub">{{ t('gui.ai.evaluation.subtitle') }}</div>
       </div>
       <div class="detail-actions">
-        <Button
-          variant="primary"
-          :disabled="!selectedProviderId || busy || isRunning"
-          :loading="busy"
-          @click="start"
-        >
-          <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
-            <path d="m8 5 11 7-11 7z" />
-          </svg>
-          {{ current ? t('gui.ai.evaluation.rerun') : t('gui.ai.evaluation.start') }}
-        </Button>
-      </div>
-    </div>
-
-    <!-- Provider Selection Bar -->
-    <div class="provider-select-bar">
-      <div class="bar-left">
-        <label for="eval-provider-select" class="select-label">
-          {{ t('gui.ai.evaluation.target_provider') }}
-        </label>
-        <div class="select-wrapper">
-          <Select
-            id="eval-provider-select"
-            v-model="selectedProviderId"
-            :options="providerOptions"
-            :placeholder="t('gui.ai.evaluation.select_provider_hint')"
-          />
-        </div>
-      </div>
-
-      <div class="bar-actions">
-        <Button
-          v-if="isRunning"
-          variant="danger"
-          size="sm"
-          :disabled="busy"
-          @click="cancel"
-        >
-          {{ t('gui.ai.evaluation.cancel') }}
-        </Button>
-        <Button
-          variant="secondary"
-          size="sm"
-          :disabled="!selectedProviderId || busy"
-          @click="refresh"
-        >
-          {{ t('gui.common.refresh') }}
-        </Button>
+        <Button variant="secondary" @click="setsOpen = true">{{ t('gui.ai.evaluation.sets_manage') }}</Button>
+        <Button variant="primary" @click="openStart">＋ {{ t('gui.ai.evaluation.new_evaluation') }}</Button>
       </div>
     </div>
 
     <div v-if="error" class="panel-error-alert">{{ error }}</div>
 
     <div class="evaluation-layout">
-      <!-- Main Left Panel -->
+      <!-- Evaluation results / history -->
       <section class="detail-panel">
         <div class="detail-toolbar">
           <label class="detail-search">
-            ⌕ <input v-model="historyFilter" :placeholder="t('gui.ai.evaluation.search_placeholder')" />
+            ⌕ <input v-model="searchQuery" :placeholder="t('gui.ai.evaluation.search_placeholder')" />
           </label>
-          <span class="detail-hint">{{ t('gui.ai.evaluation.table_hint') }}</span>
-        </div>
-
-        <!-- Current / Running Highlight -->
-        <div v-if="current" class="current-eval-card" :class="{ 'is-running': isRunning }">
-          <div class="current-top">
-            <div class="current-provider">
-              <span class="avatar-round" :class="getAvatarClass(current.provider_name || current.provider_id)">
-                {{ getInitials(current.provider_name || current.provider_id) }}
-              </span>
-              <div>
-                <b>{{ current.provider_name || current.provider_id }}</b>
-                <div class="current-meta">
-                  <span>{{ formatDateTime(current.created_at) }}</span>
-                  <Badge :tone="getLifecycleTone(current.lifecycle)" size="sm">
-                    {{ current.lifecycle }}
-                  </Badge>
-                  <Badge v-if="current.is_stale" tone="warning" size="sm">
-                    {{ t('gui.ai.evaluation.stale') }}
-                  </Badge>
-                </div>
-              </div>
-            </div>
-
-            <div class="current-score-box">
-              <Badge
-                :tone="current.verdict === 'suitable' ? 'success' : (current.verdict === 'unsuitable' ? 'danger' : getLifecycleTone(current.lifecycle))"
-                size="md"
-              >
-                {{ isRunning ? t('gui.ai.evaluation.lifecycle_running') : (current.verdict ? t(`gui.ai.evaluation.verdict_${current.verdict}`) : current.lifecycle) }}
-              </Badge>
-            </div>
+          <div class="toolbar-filter">
+            <Select v-model="filterTargetId" :options="filterOptions" />
           </div>
-
-
-
-          <p v-if="current.diagnostic_summary" class="current-summary">
-            {{ current.diagnostic_summary }}
-          </p>
+          <Button variant="ghost" size="sm" :disabled="loading" @click="reload()">{{ t('gui.common.refresh') }}</Button>
         </div>
+        <div class="detail-hint-row">{{ t('gui.ai.evaluation.score_hint') }}</div>
 
-        <div v-else-if="!selectedProviderId" class="empty-state-box">
-          {{ t('gui.ai.evaluation.select_provider_prompt') }}
-        </div>
-
-        <div v-else class="empty-state-box">
-          {{ t('gui.ai.evaluation.no_current_run') }}
-        </div>
-
-        <!-- History List Header -->
-        <div class="history-section-title">
-          {{ t('gui.ai.evaluation.history_title') }}
-        </div>
-
-        <!-- History Table -->
         <div class="evaluation-table">
-          <div v-if="filteredHistory.length === 0" class="empty-row">
-            {{ t('gui.ai.evaluation.history_empty') }}
-          </div>
-
+          <div v-if="loading && !items.length" class="empty-row">{{ t('gui.common.loading') }}</div>
+          <div v-else-if="!items.length" class="empty-row">{{ t('gui.ai.evaluation.history_empty') }}</div>
+          <div v-else-if="!visibleItems.length" class="empty-row">{{ t('gui.ai.evaluation.no_match') }}</div>
           <div
-            v-for="item in filteredHistory"
+            v-for="item in visibleItems"
             :key="item.evaluation_id"
-            class="evaluation-detail-row clickable"
+            class="evaluation-detail-row"
             @click="openDetail(item)"
           >
-            <span class="avatar-round" :class="getAvatarClass(item.provider_name || item.provider_id)">
-              {{ getInitials(item.provider_name || item.provider_id) }}
+            <span class="avatar-round" :class="getAvatarClass(partyName(item.target))">{{ getInitials(partyName(item.target)) }}</span>
+            <div class="party-cell">
+              <b>{{ partyName(item.target) }}</b>
+              <small>{{ t('gui.ai.evaluation.judged_by', { judge: judgeLabel(item) }) }}</small>
+              <small class="task-line" :title="item.task.summary || ''">
+                {{ item.evaluation_set?.name || item.task.title || t('gui.ai.evaluation.task_pending') }} · {{ formatDate(item.created_at) }}
+              </small>
+            </div>
+            <strong v-if="item.final_score !== null" class="score" :class="scoreClass(item.final_score)">
+              {{ formatScore(item.final_score) }}
+            </strong>
+            <span v-else class="score-state">
+              <Badge :tone="lifecycleTone(item.lifecycle)" size="sm">{{ t(`gui.ai.evaluation.lifecycle_${item.lifecycle}`) }}</Badge>
             </span>
-            <div class="eval-info">
-              <b>{{ item.provider_name || item.provider_id }}</b>
-              <small>{{ formatDateTime(item.created_at) }}</small>
+            <div class="detail-bars">
+              <span
+                v-for="key in EVALUATION_CRITERIA"
+                :key="key"
+                :style="{ '--w': `${criterionScore(item, key) ?? 0}%` }"
+                :title="`${t(`gui.ai.evaluation.criteria.${key}`)} ${formatScore(criterionScore(item, key))}`"
+              >{{ t(`gui.ai.evaluation.criteria_short.${key}`) }}</span>
             </div>
-            <div class="eval-verdict">
-              <Badge
-                :tone="item.verdict === 'suitable' ? 'success' : (item.verdict === 'unsuitable' ? 'danger' : getLifecycleTone(item.lifecycle))"
-                size="sm"
-              >
-                {{ item.verdict ? t(`gui.ai.evaluation.verdict_${item.verdict}`) : item.lifecycle }}
-              </Badge>
-            </div>
-            <p>{{ getHistorySummary(item) }}</p>
-            <span class="chev">›</span>
+            <p class="review-line">{{ rowSummary(item) }}</p>
+            <span class="row-actions" @click.stop>
+              <button v-if="isActive(item)" type="button" class="action-btn action-btn--danger" @click="cancel(item)">
+                {{ t('gui.ai.evaluation.cancel') }}
+              </button>
+              <span class="chev" @click="openDetail(item)">›</span>
+            </span>
           </div>
-
-          <div v-if="nextCursor" class="load-more-row">
-            <Button variant="secondary" size="sm" @click="loadMore">
-              {{ t('gui.ai.evaluation.load_more') }}
-            </Button>
-          </div>
+        </div>
+        <div v-if="nextCursor" class="load-more">
+          <Button variant="ghost" size="sm" :loading="loadingMore" @click="loadMore">{{ t('gui.ai.evaluation.load_more') }}</Button>
         </div>
       </section>
 
-      <!-- Right Side Info Panel -->
+      <!-- How the evaluation works -->
       <aside class="evaluation-side">
         <div class="side-title">{{ t('gui.ai.evaluation.method_title') }}</div>
         <p>{{ t('gui.ai.evaluation.method_desc') }}</p>
-
         <div class="axis-chips">
-          <span>{{ t('gui.ai.evaluation.axis_understanding') }}</span>
-          <span>{{ t('gui.ai.evaluation.axis_decomposition') }}</span>
-          <span>{{ t('gui.ai.evaluation.axis_exploration') }}</span>
-          <span>{{ t('gui.ai.evaluation.axis_judgment') }}</span>
-          <span>{{ t('gui.ai.evaluation.axis_reasoning') }}</span>
-          <span>{{ t('gui.ai.evaluation.axis_tools') }}</span>
-          <span>{{ t('gui.ai.evaluation.axis_execution') }}</span>
-          <span>{{ t('gui.ai.evaluation.axis_verification') }}</span>
-          <span>{{ t('gui.ai.evaluation.axis_reporting') }}</span>
-          <span>{{ t('gui.ai.evaluation.axis_completeness') }}</span>
+          <span v-for="key in EVALUATION_CRITERIA" :key="key">{{ t(`gui.ai.evaluation.criteria.${key}`) }}</span>
         </div>
-
         <div class="scratch-preview">
-          <b>scratch/eval_xxxx/</b><br />
-          ├ instruction.md<br />
-          ├ sample-project/<br />
-          ├ expected-constraints.json<br />
-          └ output/
+          <b>scratch/eval_xxxx/</b>
+          <div v-for="entry in scratchLayout" :key="entry.name" class="scratch-line">
+            <span>{{ entry.branch }} {{ entry.name }}</span>
+          </div>
         </div>
-
         <div class="eval-meta">
-          <span>{{ t('gui.ai.evaluation.meta_result') }}</span>
-          <b>{{ t('gui.ai.evaluation.meta_result_val') }}</b>
-          <span>{{ t('gui.ai.evaluation.meta_evaluator') }}</span>
-          <b>FlowGate Baseline</b>
-          <span>{{ t('gui.ai.evaluation.meta_history') }}</span>
-          <b>{{ t('gui.ai.evaluation.meta_history_val') }}</b>
+          <span>{{ t('gui.ai.evaluation.meta_result') }}</span><b>{{ t('gui.ai.evaluation.meta_result_value') }}</b>
+          <span>{{ t('gui.ai.evaluation.meta_judge') }}</span><b>AI / Human</b>
+          <span>{{ t('gui.ai.evaluation.meta_history') }}</span><b>{{ t('gui.ai.evaluation.meta_history_value') }}</b>
         </div>
       </aside>
     </div>
 
-    <!-- Detail Modal -->
+    <!-- New evaluation: target AI + judge AI -->
+    <ModalShell :open="startOpen" size="sm" @close="startOpen = false">
+      <template #header="{ titleId }">
+        <div class="dialog-header">
+          <h2 :id="titleId" class="dialog-title">{{ t('gui.ai.evaluation.new_evaluation') }}</h2>
+        </div>
+      </template>
+      <div class="start-body">
+        <label>
+          <span>{{ t('gui.ai.evaluation.target_ai') }}</span>
+          <Select v-model="targetId" :options="targetOptions" :placeholder="t('gui.ai.evaluation.choose_ai')" />
+        </label>
+        <label>
+          <span>{{ t('gui.ai.evaluation.judge_ai') }}</span>
+          <Select v-model="judgeId" :options="judgeOptions" :placeholder="t('gui.ai.evaluation.choose_ai')" />
+        </label>
+        <label>
+          <span>{{ t('gui.ai.evaluation.task_source') }}</span>
+          <Select v-model="setId" :options="setOptions" />
+        </label>
+        <p v-if="providers.length < 2" class="start-note">{{ t('gui.ai.evaluation.need_two') }}</p>
+        <p v-else-if="sameSelected" class="start-error" role="alert">{{ t('gui.ai.evaluation.same_ai') }}</p>
+        <p v-if="startError" class="start-error" role="alert">{{ startError }}</p>
+      </div>
+      <template #footer>
+        <div class="dialog-actions">
+          <Button variant="secondary" @click="startOpen = false">{{ t('gui.common.cancel') }}</Button>
+          <Button variant="primary" :loading="starting" :disabled="!canStart" @click="start">
+            {{ t('gui.ai.evaluation.start') }}
+          </Button>
+        </div>
+      </template>
+    </ModalShell>
+
     <AiEvaluationDetailModal
-      :open="detailOpen"
-      :evaluation="selectedDetail"
-      @close="detailOpen = false"
+      :open="!!detailId"
+      :project-id="projectId"
+      :evaluation-id="detailId"
+      @close="detailId = null"
+      @changed="onDetailChanged"
     />
+    <AiEvaluationSetsDialog :open="setsOpen" :project-id="projectId" @close="setsOpen = false" @changed="(list) => (sets = list)" />
   </div>
 </template>
 
@@ -210,301 +144,139 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Badge from '@/components/ui/Badge.vue'
 import Button from '@/components/ui/Button.vue'
+import ModalShell from '@/components/ui/ModalShell.vue'
 import Select from '@/components/ui/Select.vue'
+import { cancelEvaluation, fetchEvaluationHistory, listEvaluationSets, startEvaluation } from '../api'
 import {
-  cancelEvaluation,
-  fetchCurrentEvaluation,
-  fetchEvaluationDetail,
-  fetchEvaluationHistory,
-  startEvaluation,
-} from '../api'
-import type {
-  AiEvaluation,
-  EvaluationLifecycle,
-  ProviderItem,
+  ACTIVE_EVALUATION_LIFECYCLES,
+  EVALUATION_CRITERIA,
+  formatScore,
+  scoreClass,
+  type AiEvaluation,
+  type AiEvaluationParty,
+  type AiEvaluationSet,
+  type EvaluationCriterion,
+  type EvaluationLifecycle,
+  type ProviderItem,
 } from '../types'
 import AiEvaluationDetailModal from './AiEvaluationDetailModal.vue'
+import AiEvaluationSetsDialog from './AiEvaluationSetsDialog.vue'
 
 const props = defineProps<{
   projectId: string
   providers: ProviderItem[]
 }>()
 
-const emit = defineEmits<{
-  changed: []
-}>()
+const emit = defineEmits<{ changed: [] }>()
+const { t, te, locale } = useI18n()
 
-const { t } = useI18n()
-
-const selectedProviderId = ref('')
-const current = ref<AiEvaluation | null>(null)
-const latestHistory = ref<AiEvaluation | null>(null)
-const history = ref<AiEvaluation[]>([])
-const nextCursor = ref<string | null>(null)
-const busy = ref(false)
+const targetId = ref('')
+const judgeId = ref('')
+const setId = ref('')
+const sets = ref<AiEvaluationSet[]>([])
+const setsOpen = ref(false)
+const startOpen = ref(false)
+const starting = ref(false)
+const startError = ref('')
 const error = ref('')
-const historyFilter = ref('')
+const loading = ref(false)
+const loadingMore = ref(false)
+const items = ref<AiEvaluation[]>([])
+const nextCursor = ref<string | null>(null)
+const filterTargetId = ref('')
+const searchQuery = ref('')
+const detailId = ref<string | null>(null)
+let epoch = 0
+let pollTimer: ReturnType<typeof setTimeout> | null = null
 
-const detailOpen = ref(false)
-const selectedDetail = ref<AiEvaluation | null>(null)
-
-let requestGeneration = 0
-let activeRunId = ''
-let pollTimer: ReturnType<typeof setInterval> | null = null
-
-const providerOptions = computed(() => {
-  return props.providers
-    .filter((p) => p.enabled !== false)
-    .map((p) => ({
-      value: p.id,
-      label: `${p.name} (${p.kind} · ${p.exec_type.toUpperCase()})`,
-    }))
+const providerOptions = computed(() => props.providers.map((p) => ({ value: p.id, label: p.name })))
+const targetOptions = computed(() => providerOptions.value)
+const judgeOptions = computed(() =>
+  providerOptions.value.map((option) => ({ ...option, disabled: option.value === targetId.value }))
+)
+const setOptions = computed(() => [
+  { value: '', label: t('gui.ai.evaluation.task_by_judge') },
+  ...sets.value.map((item) => ({ value: item.set_id, label: item.name })),
+])
+const filterOptions = computed(() => [
+  { value: '', label: t('gui.ai.evaluation.all_targets') },
+  ...providerOptions.value,
+])
+const sameSelected = computed(() => !!targetId.value && targetId.value === judgeId.value)
+const canStart = computed(() => {
+  const ids = new Set(props.providers.map((p) => p.id))
+  return ids.has(targetId.value) && ids.has(judgeId.value) && !sameSelected.value && !starting.value
 })
+// Mirrors the server layout in ai_evaluation_service (INSTRUCTION_FILE / SAMPLE_DIR / CONSTRAINTS_FILE / OUTPUT_DIR).
+const scratchLayout = [
+  { branch: '├', name: 'instruction.md' },
+  { branch: '├', name: 'sample-project/' },
+  { branch: '├', name: 'expected-constraints.json' },
+  { branch: '└', name: 'output/' },
+]
 
-const isRunning = computed(() => {
-  return current.value ? ['pending', 'running'].includes(current.value.lifecycle) : false
-})
-
-const filteredHistory = computed(() => {
-  const q = historyFilter.value.trim().toLowerCase()
-  if (!q) return history.value
-  return history.value.filter(
-    (h) =>
-      (h.provider_name || h.provider_id).toLowerCase().includes(q) ||
-      (h.diagnostic_summary || '').toLowerCase().includes(q)
+const visibleItems = computed(() => {
+  const query = searchQuery.value.trim().toLowerCase()
+  if (!query) return items.value
+  return items.value.filter((item) =>
+    [partyName(item.target), partyName(item.judge), item.task.title, item.evaluation_set?.name, item.review_summary]
+      .some((value) => (value || '').toLowerCase().includes(query))
   )
 })
 
-function isCurrent(project: string, provider: string, gen: number): boolean {
-  return props.projectId === project && selectedProviderId.value === provider && gen === requestGeneration
-}
-
-async function refresh(): Promise<void> {
-  const project = props.projectId
-  const provider = selectedProviderId.value
-  const gen = ++requestGeneration
-  if (!project || !provider) return
-
-  try {
-    const [currentRes, historyRes] = await Promise.allSettled([
-      fetchCurrentEvaluation(project, provider),
-      fetchEvaluationHistory(project, provider, 20),
-    ])
-
-    if (!isCurrent(project, provider, gen)) return
-    error.value = ''
-
-    if (currentRes.status === 'fulfilled') {
-      current.value = currentRes.value.current
-      latestHistory.value = currentRes.value.latest_history
-      if (
-        current.value &&
-        current.value.evaluation_id === activeRunId &&
-        !['pending', 'running'].includes(current.value.lifecycle)
-      ) {
-        activeRunId = ''
-        emit('changed')
-      }
-    } else {
-      error.value = currentRes.reason instanceof Error ? currentRes.reason.message : 'Failed to load current evaluation'
-    }
-
-    if (historyRes.status === 'fulfilled') {
-      history.value = historyRes.value.items || []
-      nextCursor.value = historyRes.value.next_cursor
-    } else {
-      error.value = historyRes.reason instanceof Error ? historyRes.reason.message : 'Failed to load evaluation history'
-    }
-  } catch (err: unknown) {
-    if (isCurrent(project, provider, gen)) {
-      error.value = err instanceof Error ? err.message : 'Error refreshing evaluation'
-    }
-  }
-}
-
-async function loadMore(): Promise<void> {
-  const project = props.projectId
-  const provider = selectedProviderId.value
-  const cursor = nextCursor.value
-  const gen = requestGeneration
-  if (!cursor || !project || !provider) return
-
-  try {
-    const res = await fetchEvaluationHistory(project, provider, 20, cursor)
-    if (!isCurrent(project, provider, gen)) return
-    history.value = [...history.value, ...res.items]
-    nextCursor.value = res.next_cursor
-  } catch (err: unknown) {
-    if (isCurrent(project, provider, gen)) {
-      error.value = err instanceof Error ? err.message : 'Failed to load more evaluations'
-    }
-  }
-}
-
-async function readRun(project: string, provider: string, evaluationId: string): Promise<void> {
-  try {
-    const data = await fetchEvaluationDetail(project, evaluationId)
-    if (
-      props.projectId !== project ||
-      selectedProviderId.value !== provider ||
-      activeRunId !== evaluationId
-    ) {
-      return
-    }
-    current.value = data
-    if (!['pending', 'running'].includes(data.lifecycle)) {
-      activeRunId = ''
-      await refresh()
-      emit('changed')
-    }
-  } catch (err: unknown) {
-    if (
-      props.projectId === project &&
-      selectedProviderId.value === provider &&
-      activeRunId === evaluationId
-    ) {
-      error.value = err instanceof Error ? err.message : 'Failed to poll evaluation'
-    }
-  }
-}
-
-async function start(): Promise<void> {
-  const project = props.projectId
-  const provider = selectedProviderId.value
-  if (!project || !provider) return
-  busy.value = true
-  error.value = ''
-
-  try {
-    const data = await startEvaluation(project, provider)
-    if (props.projectId !== project || selectedProviderId.value !== provider) return
-    activeRunId = data.evaluation_id
-    current.value = data
-    emit('changed')
-    await refresh()
-  } catch (err: any) {
-    const conflict = err?.response?.data?.error
-    if (
-      err?.response?.status === 409 &&
-      conflict?.code === 'evaluation_already_running' &&
-      conflict.evaluation_id &&
-      props.projectId === project &&
-      selectedProviderId.value === provider
-    ) {
-      activeRunId = conflict.evaluation_id
-      await readRun(project, provider, activeRunId)
-      await refresh()
-    } else if (props.projectId === project && selectedProviderId.value === provider) {
-      error.value = err instanceof Error ? err.message : 'Failed to start evaluation'
-    }
-  } finally {
-    busy.value = false
-  }
-}
-
-async function cancel(): Promise<void> {
-  if (!current.value) return
-  const project = props.projectId
-  const provider = selectedProviderId.value
-  const evaluationId = current.value.evaluation_id
-  busy.value = true
-
-  try {
-    await cancelEvaluation(project, evaluationId)
-    if (props.projectId === project && selectedProviderId.value === provider) {
-      activeRunId = ''
-      await refresh()
-      emit('changed')
-    }
-  } catch (err: unknown) {
-    if (props.projectId === project && selectedProviderId.value === provider) {
-      error.value = err instanceof Error ? err.message : 'Failed to cancel evaluation'
-    }
-  } finally {
-    busy.value = false
-  }
-}
-
-function openDetail(item: AiEvaluation) {
-  selectedDetail.value = item
-  detailOpen.value = true
-}
+watch(targetId, (value) => {
+  if (value && judgeId.value === value) judgeId.value = ''
+})
 
 watch(
   () => props.providers,
   (list) => {
-    const selectable = (list ?? []).filter((p) => p.enabled !== false)
-    if (selectable.length > 0) {
-      if (!selectable.some((p) => p.id === selectedProviderId.value)) {
-        selectedProviderId.value = selectable[0].id
-      }
-    } else {
-      selectedProviderId.value = ''
-    }
-  },
-  { immediate: true, deep: true }
-)
-
-watch(
-  () => [props.projectId, selectedProviderId.value],
-  () => {
-    requestGeneration++
-    activeRunId = ''
-    current.value = null
-    latestHistory.value = null
-    history.value = []
-    error.value = ''
-    if (selectedProviderId.value) {
-      void refresh()
+    const ids = new Set(list.map((p) => p.id))
+    if (!ids.has(targetId.value)) targetId.value = list[0]?.id ?? ''
+    if (!ids.has(judgeId.value) || judgeId.value === targetId.value) {
+      judgeId.value = list.find((p) => p.id !== targetId.value)?.id ?? ''
     }
   },
   { immediate: true }
 )
 
-pollTimer = setInterval(() => {
-  if (activeRunId && props.projectId && selectedProviderId.value) {
-    void readRun(props.projectId, selectedProviderId.value, activeRunId)
-  } else if (current.value && ['pending', 'running'].includes(current.value.lifecycle)) {
-    void refresh()
-  }
-}, 3000)
-
-onBeforeUnmount(() => {
-  if (pollTimer) clearInterval(pollTimer)
-  requestGeneration++
-})
-
-function getHistorySummary(item: AiEvaluation): string {
-  if (item.diagnostic_summary && item.diagnostic_summary.trim()) {
-    return item.diagnostic_summary
-  }
-  if (item.lifecycle === 'running') {
-    return t('gui.ai.evaluation.lifecycle_running')
-  }
-  if (item.lifecycle === 'failed') {
-    return t('gui.ai.evaluation.lifecycle_failed')
-  }
-  if (item.lifecycle === 'cancelled') {
-    return t('gui.ai.evaluation.lifecycle_cancelled')
-  }
-  if (item.verdict === 'unsuitable') {
-    return t('gui.ai.evaluation.verdict_unsuitable')
-  }
-  if (item.verdict === 'suitable') {
-    return t('gui.ai.evaluation.baseline_passed')
-  }
-  return t('gui.ai.evaluation.no_diagnostic')
+function isActive(item: AiEvaluation): boolean {
+  return ACTIVE_EVALUATION_LIFECYCLES.includes(item.lifecycle)
 }
 
-function getLifecycleTone(status: EvaluationLifecycle): 'neutral' | 'info' | 'success' | 'warning' | 'danger' {
-  switch (status) {
-    case 'completed': return 'success'
-    case 'running': return 'info'
-    case 'pending': return 'warning'
-    case 'failed': return 'danger'
-    case 'cancelled': return 'neutral'
-    default: return 'neutral'
+function partyName(party: AiEvaluationParty): string {
+  return party.provider_name || party.provider_id
+}
+
+// "Opus · Human" when a person reviewed the evaluation (09-ai-settings.html).
+function judgeLabel(item: AiEvaluation): string {
+  return partyName(item.judge) + (item.human_review ? ' · Human' : '')
+}
+
+function criterionScore(item: AiEvaluation, key: EvaluationCriterion): number | null {
+  return item.scores.find((score) => score.key === key)?.score ?? null
+}
+
+function rowSummary(item: AiEvaluation): string {
+  if (item.review_summary) return item.review_summary
+  if (item.lifecycle === 'failed' || item.lifecycle === 'cancelled') {
+    const key = `gui.ai.evaluation.reason.${item.reason_code}`
+    return item.reason_code && te(key) ? t(key) : t(`gui.ai.evaluation.lifecycle_${item.lifecycle}`)
   }
+  return item.task.summary || t(`gui.ai.evaluation.lifecycle_${item.lifecycle}`)
+}
+
+function lifecycleTone(lifecycle: EvaluationLifecycle): 'neutral' | 'info' | 'success' | 'warning' | 'danger' {
+  if (lifecycle === 'completed') return 'success'
+  if (lifecycle === 'failed') return 'danger'
+  if (lifecycle === 'cancelled') return 'neutral'
+  return 'info'
+}
+
+function formatDate(value?: string | null): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
 function getInitials(name: string): string {
@@ -515,10 +287,10 @@ function getInitials(name: string): string {
 }
 
 function getAvatarClass(name: string): string {
-  const n = (name || '').toLowerCase()
-  if (n.includes('sonnet') || n.includes('claude')) return 'av-cs'
+  const n = name.toLowerCase()
   if (n.includes('opus')) return 'av-co'
   if (n.includes('haiku')) return 'av-ch'
+  if (n.includes('sonnet') || n.includes('claude')) return 'av-cs'
   if (n.includes('gpt') || n.includes('openai')) return 'av-og'
   if (n.includes('gemini')) return 'av-gp'
   if (n.includes('llama')) return 'av-l3'
@@ -527,15 +299,112 @@ function getAvatarClass(name: string): string {
   return 'av-cs'
 }
 
-function formatDateTime(iso?: string | null): string {
-  if (!iso) return ''
+function schedulePoll(): void {
+  if (pollTimer) clearTimeout(pollTimer)
+  pollTimer = null
+  if (items.value.some(isActive)) pollTimer = setTimeout(() => void reload(true), 4000)
+}
+
+async function reload(silent = false): Promise<void> {
+  const current = ++epoch
+  const project = props.projectId
+  if (!silent) loading.value = true
   try {
-    const d = new Date(iso)
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  } catch {
-    return iso
+    const page = await fetchEvaluationHistory(project, filterTargetId.value || undefined, 20)
+    if (current !== epoch || project !== props.projectId) return
+    const hadActive = items.value.some(isActive)
+    items.value = page.items
+    nextCursor.value = page.next_cursor
+    error.value = ''
+    if (hadActive && !page.items.some(isActive)) emit('changed')
+  } catch (err: unknown) {
+    if (current === epoch) error.value = err instanceof Error ? err.message : t('gui.ai.evaluation.load_failed')
+  } finally {
+    if (current === epoch) {
+      loading.value = false
+      schedulePoll()
+    }
   }
 }
+
+async function loadMore(): Promise<void> {
+  if (!nextCursor.value) return
+  const current = epoch
+  loadingMore.value = true
+  try {
+    const page = await fetchEvaluationHistory(props.projectId, filterTargetId.value || undefined, 20, nextCursor.value)
+    if (current !== epoch) return
+    items.value = [...items.value, ...page.items]
+    nextCursor.value = page.next_cursor
+  } catch (err: unknown) {
+    error.value = err instanceof Error ? err.message : t('gui.ai.evaluation.load_failed')
+  } finally {
+    loadingMore.value = false
+  }
+}
+
+async function loadSets(): Promise<void> {
+  try {
+    sets.value = await listEvaluationSets(props.projectId)
+  } catch {
+    sets.value = []
+  }
+  if (!sets.value.some((item) => item.set_id === setId.value)) setId.value = ''
+}
+
+function openStart(): void {
+  startError.value = ''
+  startOpen.value = true
+  void loadSets()
+}
+
+function onDetailChanged(): void {
+  void reload(true)
+  emit('changed')
+}
+
+async function start(): Promise<void> {
+  if (!canStart.value) return
+  starting.value = true
+  startError.value = ''
+  try {
+    const created = await startEvaluation(props.projectId, {
+      targetProviderId: targetId.value,
+      judgeProviderId: judgeId.value,
+      evaluationSetId: setId.value || null,
+      locale: String(locale.value || ''),
+    })
+    startOpen.value = false
+    detailId.value = created.evaluation_id
+    await reload(true)
+    emit('changed')
+  } catch (err: unknown) {
+    startError.value = err instanceof Error ? err.message : t('gui.ai.evaluation.start_failed')
+  } finally {
+    starting.value = false
+  }
+}
+
+async function cancel(item: AiEvaluation): Promise<void> {
+  try {
+    await cancelEvaluation(props.projectId, item.evaluation_id)
+    await reload(true)
+    emit('changed')
+  } catch (err: unknown) {
+    error.value = err instanceof Error ? err.message : t('gui.ai.evaluation.cancel_failed')
+  }
+}
+
+function openDetail(item: AiEvaluation): void {
+  detailId.value = item.evaluation_id
+}
+
+watch(() => [props.projectId, filterTargetId.value] as const, () => void reload(), { immediate: true })
+
+onBeforeUnmount(() => {
+  epoch++
+  if (pollTimer) clearTimeout(pollTimer)
+})
 </script>
 
 <style scoped>
@@ -543,7 +412,6 @@ function formatDateTime(iso?: string | null): string {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  height: 100%;
 }
 
 .detail-head {
@@ -551,6 +419,12 @@ function formatDateTime(iso?: string | null): string {
   align-items: flex-start;
   gap: 20px;
   margin-bottom: 16px;
+}
+
+.detail-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
 }
 
 .page-title {
@@ -563,54 +437,13 @@ function formatDateTime(iso?: string | null): string {
 .page-sub {
   color: #b9c8d8;
   font-size: 14.5px;
-  margin: 0;
-}
-
-.detail-actions {
-  margin-left: auto;
-  display: flex;
-  gap: 8px;
-}
-
-.provider-select-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 18px;
-  margin-bottom: 14px;
-  border: 1px solid var(--fg2-line);
-  border-radius: 10px;
-  background: #0d1b2b;
-}
-
-.bar-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.select-label {
-  font-size: 13px;
-  font-weight: 700;
-  color: #c8d7e7;
-  white-space: nowrap;
-}
-
-.select-wrapper {
-  min-width: 320px;
-}
-
-.bar-actions {
-  display: flex;
-  gap: 8px;
 }
 
 .evaluation-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 310px;
-  gap: 16px;
-  flex: 1;
-  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 14px;
+  align-items: start;
 }
 
 .detail-panel {
@@ -618,33 +451,30 @@ function formatDateTime(iso?: string | null): string {
   border-radius: 12px;
   background: linear-gradient(180deg, rgba(13, 26, 40, 0.94), rgba(10, 22, 35, 0.92));
   overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
 }
 
 .detail-toolbar {
-  height: 50px;
+  height: 52px;
   padding: 0 16px;
   display: flex;
   align-items: center;
   gap: 14px;
   border-bottom: 1px solid var(--fg2-line);
-  flex: none;
 }
 
 .detail-search {
-  height: 32px;
-  min-width: 260px;
+  height: 34px;
+  min-width: 240px;
+  flex: 1;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 10px;
+  padding: 0 11px;
   border: 1px solid var(--fg2-line-strong);
   border-radius: 8px;
   background: #0c1b2c;
   color: #8399b0;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .detail-search input {
@@ -654,333 +484,46 @@ function formatDateTime(iso?: string | null): string {
   outline: 0;
   background: transparent;
   color: #dce7f3;
-  font-size: 12px;
+  font-size: 12.5px;
 }
 
-.detail-hint {
-  font-size: 11.5px;
-  color: var(--fg2-muted);
+.toolbar-filter {
+  width: 200px;
 }
 
-.current-eval-card {
-  margin: 14px 16px;
-  padding: 16px 18px;
-  border-radius: 10px;
-  border: 1px solid rgba(120, 177, 233, 0.25);
-  background: linear-gradient(145deg, rgba(18, 38, 62, 0.6), rgba(12, 26, 42, 0.8));
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.current-eval-card.is-running {
-  border-color: rgba(75, 163, 255, 0.6);
-  animation: pulse-border 2s infinite ease-in-out;
-}
-
-@keyframes pulse-border {
-  0%, 100% { border-color: rgba(75, 163, 255, 0.4); }
-  50% { border-color: rgba(75, 163, 255, 0.8); }
-}
-
-.current-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-}
-
-.current-provider {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.current-provider b {
-  font-size: 15px;
-  color: #edf3fa;
-}
-
-.current-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 4px;
-  font-size: 11.5px;
-  color: var(--fg2-muted);
-}
-
-.current-score-box {
-  text-align: right;
-}
-
-.current-score-box small {
-  font-size: 11px;
-  color: var(--fg2-muted);
-  display: block;
-}
-
-.score {
-  font-family: var(--fg2-font-mono, monospace);
-  font-weight: 800;
-  font-size: 24px;
-  color: #8be2ff;
-  line-height: 1;
-}
-
-.score--unsuitable {
-  color: #ff9d9d;
-}
-
-.current-bars {
-  display: grid;
-  gap: 5px;
-  background: rgba(10, 21, 34, 0.5);
-  padding: 10px 14px;
-  border-radius: 8px;
-  border: 1px solid rgba(154, 181, 210, 0.08);
-}
-
-.barline {
-  display: grid;
-  grid-template-columns: 28px 1fr;
-  gap: 8px;
-  align-items: center;
-  font-size: 10px;
-  color: #90a4ba;
-}
-
-.track {
-  height: 6px;
-  border-radius: 999px;
-  background: #172a42;
-  overflow: hidden;
-}
-
-.fill {
-  height: 100%;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #67b6ff, #54d1ff);
-}
-
-.fill.p2 { background: linear-gradient(90deg, #57d2c9, #5fe0b6); }
-.fill.p3 { background: linear-gradient(90deg, #7ba8ff, #8c84ff); }
-.fill.p4 { background: linear-gradient(90deg, #8f74ff, #cb7cff); }
-
-.current-summary {
-  margin: 0;
-  font-size: 12px;
-  color: #a9bed4;
-  line-height: 1.5;
-}
-
-.empty-state-box {
-  padding: 32px 16px;
-  text-align: center;
-  color: var(--fg2-muted);
-  font-size: 13px;
-}
-
-.history-section-title {
+.detail-hint-row {
   padding: 8px 16px;
-  font-size: 12px;
-  font-weight: 800;
-  color: #8da2b6;
-  background: #0a1726;
-  border-top: 1px solid var(--fg2-line);
-  border-bottom: 1px solid var(--fg2-line);
-}
-
-.evaluation-table {
-  padding: 0 14px 12px;
-  overflow-y: auto;
-  flex: 1;
+  font-size: 11.5px;
+  color: var(--fg2-muted);
+  border-bottom: 1px solid rgba(154, 181, 210, 0.08);
 }
 
 .evaluation-detail-row {
   display: grid;
-  grid-template-columns: 38px 170px 58px 240px minmax(140px, 1fr) 16px;
+  grid-template-columns: 38px minmax(150px, 1.1fr) 64px minmax(210px, 1.3fr) minmax(160px, 1.4fr) auto;
   gap: 12px;
   align-items: center;
-  min-height: 80px;
+  min-height: 64px;
+  padding: 10px 16px;
   border-bottom: 1px solid rgba(154, 181, 210, 0.08);
-  padding: 8px 4px;
-}
-
-.evaluation-detail-row:last-child {
-  border-bottom: 0;
-}
-
-.evaluation-detail-row b {
-  font-size: 13px;
-  color: #edf3fa;
-  display: block;
-}
-
-.evaluation-detail-row small {
-  font-size: 10.5px;
-  color: var(--fg2-muted);
-  display: block;
-  margin-top: 3px;
-}
-
-.evaluation-detail-row > strong {
-  font-family: var(--fg2-font-mono, monospace);
-  font-weight: 800;
-  font-size: 18px;
-  color: #7fddff;
-}
-
-.evaluation-detail-row p {
-  font-size: 11.5px;
-  color: #9fb1c4;
-  line-height: 1.5;
-  margin: 0;
-}
-
-.detail-bars {
-  display: grid;
-  gap: 4px;
-}
-
-.detail-bars span {
-  position: relative;
-  height: 12px;
-  padding-left: 32px;
-  font-size: 9px;
-  color: #8fa4ba;
-}
-
-.detail-bars span::before {
-  content: "";
-  position: absolute;
-  left: 32px;
-  right: 0;
-  top: 3px;
-  height: 6px;
-  border-radius: 99px;
-  background: #172a42;
-}
-
-.detail-bars span::after {
-  content: "";
-  position: absolute;
-  left: 32px;
-  top: 3px;
-  width: calc((100% - 32px) * var(--w) / 100);
-  height: 6px;
-  border-radius: 99px;
-  background: linear-gradient(90deg, #57cfc8, #66bfff);
-}
-
-.chev {
-  color: #88a0b8;
-  font-size: 22px;
-  line-height: 1;
-}
-
-.clickable {
+  font-size: 12.5px;
+  color: #dce7f3;
   cursor: pointer;
 }
 
-.clickable:hover {
-  background: rgba(255, 255, 255, 0.02);
-}
-
-.load-more-row {
-  display: flex;
-  justify-content: center;
-  padding: 14px 0;
-}
-
-.empty-row {
-  padding: 30px 16px;
-  text-align: center;
-  color: var(--fg2-muted);
-  font-size: 12.5px;
-}
-
-.evaluation-side {
-  border: 1px solid var(--fg2-line);
-  border-radius: 12px;
-  background: #0d1b2b;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.side-title {
-  font-size: 14.5px;
-  font-weight: 850;
-  color: #edf3fa;
-}
-
-.evaluation-side p {
-  color: #9fb1c4;
-  font-size: 12px;
-  line-height: 1.5;
-  margin: 0;
-}
-
-.axis-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.axis-chips span {
-  height: 24px;
-  padding: 0 7px;
-  border-radius: 6px;
-  background: #11263b;
-  border: 1px solid rgba(93, 145, 199, 0.18);
-  color: #b9d4ee;
-  font-size: 10px;
-  display: inline-flex;
-  align-items: center;
-}
-
-.scratch-preview {
-  margin-top: 4px;
-  padding: 10px 12px;
-  border: 1px solid var(--fg2-line);
-  border-radius: 8px;
-  background: #081522;
-  color: #8ea4ba;
-  font: 11px/1.65 var(--fg2-font-mono, monospace);
-}
-
-.scratch-preview b {
-  color: #c8d8e8;
-}
-
-.eval-meta {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 6px 10px;
-  margin-top: 8px;
-  font-size: 11px;
-}
-
-.eval-meta span {
-  color: #788fa7;
-}
-
-.eval-meta b {
-  font-weight: 700;
-  color: #c8d8e8;
+.evaluation-detail-row:hover {
+  background: rgba(28, 101, 197, 0.08);
 }
 
 .avatar-round {
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
   display: grid;
   place-items: center;
-  font-weight: 800;
-  font-size: 11px;
   color: #fff;
-  flex: none;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .av-cs, .av-co, .av-ch { background: linear-gradient(145deg, #d98466, #8d3f31); }
@@ -988,6 +531,255 @@ function formatDateTime(iso?: string | null): string {
 .av-gp { background: linear-gradient(145deg, #9b79ff, #6f49d7); }
 .av-l3 { background: linear-gradient(145deg, #58adff, #2e77c6); }
 .av-te { background: linear-gradient(145deg, #e6b089, #b97851); }
+
+.party-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.party-cell b {
+  font-size: 13.5px;
+  color: #eaf1f8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.party-cell small {
+  font-size: 11.5px;
+  color: var(--fg2-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.score {
+  font-size: 22px;
+  font-weight: 850;
+  text-align: center;
+}
+
+.score-state {
+  display: flex;
+  justify-content: center;
+}
+
+.score-high { color: #72d6b6; }
+.score-mid { color: #f2c46d; }
+.score-low { color: #ff9aab; }
+
+.detail-bars {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px 10px;
+}
+
+.detail-bars span {
+  position: relative;
+  padding-bottom: 5px;
+  font-size: 10.5px;
+  color: #9fb3c8;
+}
+
+.detail-bars span::before,
+.detail-bars span::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.detail-bars span::before {
+  right: 0;
+  background: #1a2d42;
+}
+
+.detail-bars span::after {
+  width: var(--w);
+  background: linear-gradient(90deg, #2f8cff, #4fd1c5);
+}
+
+.review-line {
+  margin: 0;
+  font-size: 12px;
+  color: #c8d7e7;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.chev {
+  color: #6f86a0;
+  font-size: 18px;
+}
+
+.action-btn {
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--fg2-line);
+  border-radius: 6px;
+  background: #102238;
+  color: #b8cadc;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.action-btn:hover {
+  background: #16304d;
+}
+
+.action-btn--danger {
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.25);
+}
+
+.empty-row {
+  padding: 36px 16px;
+  text-align: center;
+  color: var(--fg2-muted);
+  font-size: 13px;
+}
+
+.load-more {
+  display: flex;
+  justify-content: center;
+  padding: 10px;
+}
+
+.evaluation-side {
+  padding: 16px;
+  border: 1px solid var(--fg2-line);
+  border-radius: 12px;
+  background: linear-gradient(145deg, rgba(17, 31, 47, 0.92), rgba(11, 23, 36, 0.95));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.side-title {
+  font-size: 14.5px;
+  font-weight: 800;
+  color: #eaf1f8;
+}
+
+.evaluation-side p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #b9c8d8;
+}
+
+.axis-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.axis-chips span {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(112, 151, 193, 0.2);
+  background: #11263c;
+  color: #dce9f8;
+  font-size: 11.5px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.scratch-preview {
+  padding: 10px 12px;
+  border: 1px solid var(--fg2-line);
+  border-radius: 8px;
+  background: #091522;
+  font-family: var(--fg2-font-mono, monospace);
+  font-size: 11.5px;
+  color: #c8d7e7;
+}
+
+.scratch-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 3px;
+}
+
+.eval-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--fg2-line);
+  font-size: 12px;
+}
+
+.eval-meta span {
+  color: var(--fg2-muted);
+}
+
+.eval-meta b {
+  color: #eaf1f8;
+  text-align: right;
+}
+
+.dialog-header {
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--fg2-line);
+}
+
+.dialog-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.start-body {
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.start-body label {
+  display: grid;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--fg2-control-fg, #c8d7e7);
+  font-weight: 650;
+}
+
+.start-note {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--fg2-muted);
+}
+
+.start-error {
+  margin: 0;
+  font-size: 12.5px;
+  color: #ff9aab;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--fg2-line);
+}
 
 .panel-error-alert {
   padding: 10px 14px;
@@ -1000,8 +792,8 @@ function formatDateTime(iso?: string | null): string {
 }
 
 @media (max-width: 1200px) {
-  .evaluation-layout {
-    grid-template-columns: 1fr;
-  }
+  .evaluation-layout { grid-template-columns: 1fr; }
+  .evaluation-detail-row { grid-template-columns: 38px minmax(150px, 1fr) 64px minmax(200px, 1.2fr) auto; }
+  .review-line { display: none; }
 }
 </style>

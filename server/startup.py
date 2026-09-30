@@ -98,13 +98,16 @@ def start_source_bundle_cleanup():
 
 
 def recover_ai_evaluations():
-    from modules.flow_gate.db import ai_evaluation_runs
-    try:
-        reclaimed = ai_evaluation_runs.recover_orphans()
-        if reclaimed:
-            logger.info(f"[startup] failed {reclaimed} orphaned AI evaluations")
-    except Exception as exc:
-        logger.warning(f"[startup] AI evaluation recovery failed: {exc}")
+    # ai_evaluation_runs = AI connection tests, ai_evaluations = judge-scored AI Evaluations
+    # (flowgate.v02.0017). No worker of the previous process can still own either.
+    from modules.flow_gate.db import ai_evaluation_runs, ai_evaluations
+    for label, repo in (("AI connection tests", ai_evaluation_runs), ("AI evaluations", ai_evaluations)):
+        try:
+            reclaimed = repo.recover_orphans()
+            if reclaimed:
+                logger.info(f"[startup] failed {reclaimed} orphaned {label}")
+        except Exception as exc:
+            logger.warning(f"[startup] {label} recovery failed: {exc}")
 
 def run_all():
     """Run full bootstrap sequence (called on lifespan entry)."""

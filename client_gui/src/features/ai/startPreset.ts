@@ -7,18 +7,29 @@ export interface StartSelection {
   reworkerId: string
 }
 
-export function groupIsAvailable(group: AiGroup): boolean {
-  return !!group.work_executor?.is_available &&
-    (!group.reviewer || group.reviewer.is_available) &&
-    (!group.reworker || group.reworker.is_available)
+// flowgate.v02.0017: a group pre-fills Start from its runtime slot binding, which is a
+// separate layer from the team's custom roles. A group without a bound work executor can
+// still be picked (provenance only); it just leaves the concrete selections as they are.
+export function groupHasRuntimeBinding(group: AiGroup): boolean {
+  return !!group.runtime_binding?.work_executor
 }
 
-export function selectionFromGroup(group: AiGroup): StartSelection {
+export function groupIsAvailable(group: AiGroup): boolean {
+  const binding = group.runtime_binding
+  if (!binding?.work_executor) return true
+  return binding.work_executor.is_available &&
+    (!binding.reviewer || binding.reviewer.is_available) &&
+    (!binding.reworker || binding.reworker.is_available)
+}
+
+export function selectionFromGroup(group: AiGroup, current: Omit<StartSelection, 'requestedAiGroupId'>): StartSelection {
+  const binding = group.runtime_binding
+  if (!binding?.work_executor) return { requestedAiGroupId: group.ai_group_id, ...current }
   return {
     requestedAiGroupId: group.ai_group_id,
-    providerId: group.work_executor?.provider_id ?? '',
-    reviewerId: group.reviewer?.provider_id ?? '',
-    reworkerId: group.reworker?.provider_id ?? '',
+    providerId: binding.work_executor.provider_id,
+    reviewerId: binding.reviewer?.provider_id ?? '',
+    reworkerId: binding.reworker?.provider_id ?? '',
   }
 }
 

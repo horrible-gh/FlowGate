@@ -60,7 +60,7 @@ import LoadingState from '@/components/ui/LoadingState.vue'
 import ModalShell from '@/components/ui/ModalShell.vue'
 import Select from '@/components/ui/Select.vue'
 import { fetchProjectAiSettings, listAiGroups, listSequenceSteps } from './api'
-import { buildContinuousStartBody, effectiveProviders, groupIsAvailable, reviewerStepSeqs, selectionFromGroup } from './startPreset'
+import { buildContinuousStartBody, effectiveProviders, groupHasRuntimeBinding, groupIsAvailable, reviewerStepSeqs, selectionFromGroup } from './startPreset'
 import type { AiGroup, ProviderItem } from './types'
 import type { Project } from '@/features/project/types'
 
@@ -102,7 +102,13 @@ const instructionOptions = computed(() => [
 ])
 const groupOptions = computed(() => [
   { value: '', label: t('gui.ai.start.no_preset') },
-  ...groups.value.map(group => ({ value: group.ai_group_id, label: group.name + (groupIsAvailable(group) ? '' : ` — ${t('gui.ai.start.unavailable')}`), disabled: !groupIsAvailable(group) })),
+  ...groups.value.map(group => ({
+    value: group.ai_group_id,
+    label: group.name +
+      (!groupIsAvailable(group) ? ` — ${t('gui.ai.start.unavailable')}`
+        : groupHasRuntimeBinding(group) ? '' : ` — ${t('gui.ai.start.no_binding')}`),
+    disabled: !groupIsAvailable(group),
+  })),
 ])
 const providerOptions = computed(() => [
   { value: '', label: t('gui.ai.start.choose_provider') },
@@ -133,7 +139,11 @@ function applyGroup(groupId: string): void {
     groupError.value = t('gui.ai.start.unavailable')
     return
   }
-  const selection = selectionFromGroup(group)
+  const selection = selectionFromGroup(group, {
+    providerId: providerId.value,
+    reviewerId: reviewerId.value,
+    reworkerId: reworkerId.value,
+  })
   providerId.value = selection.providerId
   reviewerId.value = selection.reviewerId
   reworkerId.value = selection.reworkerId
@@ -150,8 +160,14 @@ async function load(): Promise<void> {
     ])
     if (current !== epoch || !props.open) return
     providers.value = effectiveProviders(settings.effective.providers)
-    groups.value = listed
+    // An OFF team is not offered; the default team is pre-selected.
+    groups.value = listed.filter(group => group.enabled !== false)
     providerId.value = settings.effective.default_provider_id ?? providers.value[0]?.id ?? ''
+    const preset = groups.value.find(group => group.is_default)
+    if (preset && groupIsAvailable(preset)) {
+      selectedGroupId.value = preset.ai_group_id
+      applyGroup(preset.ai_group_id)
+    }
   } catch (error) {
     if (current === epoch && props.open) loadError.value = error instanceof Error ? error.message : t('gui.ai.load_failed_title')
   } finally {

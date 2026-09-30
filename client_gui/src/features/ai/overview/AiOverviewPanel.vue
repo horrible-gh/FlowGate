@@ -65,58 +65,52 @@
 
     <!-- 3 lower panels -->
     <section class="lower">
-      <!-- Panel 1: Provider -->
+      <!-- AI connections -->
       <section class="panel">
         <div class="panel-head">
           <div class="grow">
-            <div class="panel-title">{{ t('gui.ai.overview.providers_title') }}</div>
-            <div class="panel-sub">
-              {{ providersSummaryText }}
-            </div>
+            <div class="panel-title">{{ t('gui.ai.overview.connections_title') }}</div>
+            <div class="panel-sub">{{ connectionsSummary }}</div>
           </div>
           <button class="panel-action" type="button" @click="emit('navigate', 'providers')">
-            ＋ {{ t('gui.ai.overview.action_add') }}
+            {{ t('gui.ai.overview.action_manage') }}
           </button>
         </div>
         <div class="panel-body">
-          <div v-if="hasSectionError('providers')" class="panel-error">
+          <div v-if="hasSectionError('connections')" class="panel-error">
             <p>{{ t('gui.ai.overview.section_error') }}</p>
           </div>
-          <div v-else-if="!providers.length" class="panel-empty">
-            <p>{{ t('gui.ai.overview.providers_empty') }}</p>
+          <div v-else-if="!connections.length" class="panel-empty">
+            <p>{{ t('gui.ai.overview.connections_empty') }}</p>
           </div>
           <div
-            v-for="provider in providers"
-            :key="provider.id"
+            v-for="item in connections"
+            :key="item.id"
             class="provider-row clickable"
             @click="emit('navigate', 'providers')"
           >
-            <div class="avatar-round" :class="getAvatarClass(provider.name, provider.kind)">
-              {{ getInitials(provider.name) }}
-            </div>
+            <div class="avatar-round" :class="getAvatarClass(item.name, item.kind)">{{ getInitials(item.name) }}</div>
             <div class="provider-info">
-              <div class="main-title">{{ provider.name }}</div>
+              <div class="main-title">{{ item.name }}</div>
               <div class="subrow">
-                <span class="badge">{{ provider.exec_type.toUpperCase() }}</span>
-                <span>{{ provider.kind || 'Custom' }}</span>
+                <span class="badge">{{ item.exec_type.toUpperCase() }}</span>
+                <span>{{ item.kind }}</span>
               </div>
             </div>
-            <div class="status-chip" :class="{ off: !provider.enabled }">
-              <i></i>{{ provider.enabled ? t('gui.ai.common.active') : t('gui.ai.common.inactive') }}
+            <div class="status-chip" :class="{ off: !item.usable }">
+              <i></i>{{ connectionStatus(item) }}
             </div>
             <div class="chev">›</div>
           </div>
         </div>
       </section>
 
-      <!-- Panel 2: Evaluation Results -->
+      <!-- AI Evaluation -->
       <section class="panel">
         <div class="panel-head">
           <div class="grow">
             <div class="panel-title">{{ t('gui.ai.overview.evaluation_title') }}</div>
-            <div class="panel-sub">
-              {{ evaluationSummaryText }}
-            </div>
+            <div class="panel-sub">{{ evaluationSummary }}</div>
           </div>
           <button class="panel-action" type="button" @click="emit('navigate', 'evaluation')">
             <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
@@ -138,34 +132,39 @@
             class="eval-row clickable"
             @click="emit('navigate', 'evaluation')"
           >
-            <div class="avatar-round" :class="getAvatarClass(item.provider_name || item.provider_id, '')">
-              {{ getInitials(item.provider_name || item.provider_id) }}
+            <div class="avatar-round" :class="getAvatarClass(partyName(item.target), '')">
+              {{ getInitials(partyName(item.target)) }}
             </div>
             <div class="eval-info">
-              <div class="main-title">{{ item.provider_name || item.provider_id }}</div>
-              <div class="eval-date">{{ formatEvalDate(item.created_at) }}</div>
+              <div class="main-title">{{ partyName(item.target) }}</div>
+              <div class="eval-party">{{ t('gui.ai.overview.judged_by', { judge: partyName(item.judge) + (item.human_review ? ' · Human' : '') }) }}</div>
+              <div class="eval-date">{{ formatDate(item.finished_at || item.created_at) }}</div>
             </div>
-            <div class="eval-verdict">
-              <Badge
-                :tone="item.verdict === 'suitable' ? 'success' : (item.verdict === 'unsuitable' ? 'danger' : 'neutral')"
-                size="sm"
-              >
-                {{ item.verdict ? t(`gui.ai.evaluation.verdict_${item.verdict}`) : item.lifecycle }}
-              </Badge>
+            <div v-if="item.final_score !== null" class="score" :class="scoreClass(item.final_score)">
+              {{ formatScore(item.final_score) }}
+            </div>
+            <Badge v-else :tone="lifecycleTone(item.lifecycle)" size="sm">
+              {{ t(`gui.ai.evaluation.lifecycle_${item.lifecycle}`) }}
+            </Badge>
+            <div class="bars">
+              <div v-for="(key, idx) in EVALUATION_CRITERIA" :key="key" class="barline">
+                <span>{{ t(`gui.ai.evaluation.criteria_short.${key}`) }}</span>
+                <div class="track">
+                  <div class="fill" :class="barTone(idx)" :style="{ width: `${criterionScore(item, key) ?? 0}%` }"></div>
+                </div>
+              </div>
             </div>
             <div class="chev">›</div>
           </div>
         </div>
       </section>
 
-      <!-- Panel 3: AI Groups -->
+      <!-- AI Groups (teams) -->
       <section class="panel">
         <div class="panel-head">
           <div class="grow">
             <div class="panel-title">{{ t('gui.ai.overview.groups_title') }}</div>
-            <div class="panel-sub">
-              {{ groupsSummaryText }}
-            </div>
+            <div class="panel-sub">{{ groupsSummary }}</div>
           </div>
           <button class="panel-action" type="button" @click="emit('navigate', 'groups')">
             ＋ {{ t('gui.ai.overview.action_new_group') }}
@@ -179,54 +178,52 @@
             <p>{{ t('gui.ai.overview.groups_empty') }}</p>
           </div>
           <article
-            v-for="(group, idx) in groups"
+            v-for="group in groups"
             :key="group.ai_group_id"
             class="team-card clickable"
+            :class="{ 'is-off': !group.enabled }"
             @click="emit('navigate', 'groups')"
           >
             <div class="team-top">
               <div class="team-name">
-                <span class="star">{{ getGroupIcon(idx) }}</span>
-                {{ group.name }}
+                <span v-if="group.is_default" class="star">★</span>{{ group.name }}
+                <span v-if="group.is_default" class="team-badge">{{ t('gui.ai.groups.default_team') }}</span>
+                <span v-if="!group.enabled" class="team-badge off">OFF</span>
               </div>
+              <Badge v-if="group.status !== 'ok'" :tone="group.status === 'attention' ? 'warning' : 'neutral'" size="sm">
+                {{ t(`gui.ai.overview.group_status_${group.status}`) }}
+              </Badge>
             </div>
             <div class="info-grid">
-              <div class="info-label">Supervisor</div>
+              <div class="info-label">{{ t('gui.ai.groups.supervisor') }}</div>
               <div class="info-value">
-                <span v-if="group.work_executor" class="member-dot">
-                  <span class="mini" :class="getAvatarClass(group.work_executor.provider_name || '', '')">
-                    {{ getInitials(group.work_executor.provider_name || 'SE') }}
+                <span v-if="group.supervisor" class="member-dot">
+                  <span class="mini" :class="getAvatarClass(partyName(group.supervisor), '')">
+                    {{ getInitials(partyName(group.supervisor)) }}
                   </span>
-                  {{ group.work_executor.provider_name || group.work_executor.provider_id }}
-                  <span v-if="!group.work_executor.is_available" class="warn-chip">!</span>
+                  {{ partyName(group.supervisor) }}
+                  <span v-if="!group.supervisor.is_available" class="warn-chip">!</span>
                 </span>
                 <span v-else class="text-muted">{{ t('gui.ai.common.none') }}</span>
               </div>
-
-              <div class="info-label">Members</div>
+              <div class="info-label">{{ t('gui.ai.groups.members') }}</div>
               <div class="info-value member-badges">
-                <span v-if="group.reviewer" class="member-dot">
-                  <span class="mini" :class="getAvatarClass(group.reviewer.provider_name || '', '')">
-                    {{ getInitials(group.reviewer.provider_name || 'RV') }}
-                  </span>
-                  {{ group.reviewer.provider_name || group.reviewer.provider_id }}
-                  <span v-if="!group.reviewer.is_available" class="warn-chip">!</span>
+                <span v-for="member in teamMembers(group)" :key="member.member_id" class="member-dot">
+                  <span class="mini" :class="getAvatarClass(partyName(member), '')">{{ getInitials(partyName(member)) }}</span>
+                  {{ partyName(member) }}
+                  <span v-if="!member.is_available" class="warn-chip">!</span>
                 </span>
-                <span v-if="group.reworker" class="member-dot">
-                  <span class="mini" :class="getAvatarClass(group.reworker.provider_name || '', '')">
-                    {{ getInitials(group.reworker.provider_name || 'RW') }}
-                  </span>
-                  {{ group.reworker.provider_name || group.reworker.provider_id }}
-                  <span v-if="!group.reworker.is_available" class="warn-chip">!</span>
-                </span>
-                <span v-if="!group.reviewer && !group.reworker" class="text-muted">{{ t('gui.ai.common.none') }}</span>
+                <span v-if="!teamMembers(group).length" class="text-muted">{{ t('gui.ai.common.none') }}</span>
               </div>
-
               <div class="info-label">{{ t('gui.ai.groups.roles') }}</div>
               <div class="info-value role-tags">
-                <span class="role indigo">{{ t('gui.ai.groups.role_executor') }}</span>
-                <span v-if="group.reviewer" class="role cyan">{{ t('gui.ai.groups.role_reviewer') }}</span>
-                <span v-if="group.reworker" class="role purple">{{ t('gui.ai.groups.role_reworker') }}</span>
+                <span v-for="(role, idx) in group.roles" :key="role.role_id" class="role" :class="roleTone(idx)">{{ role.name }}</span>
+                <span v-if="!group.roles.length" class="text-muted">{{ t('gui.ai.common.none') }}</span>
+              </div>
+              <div class="info-label">{{ t('gui.ai.overview.team') }}</div>
+              <div class="info-value team-counts">
+                <span>{{ t('gui.ai.overview.member_count', { count: group.member_count }) }}</span>
+                <span>{{ t('gui.ai.overview.role_count', { count: group.role_count }) }}</span>
               </div>
             </div>
             <div class="bottom-arrow">›</div>
@@ -239,27 +236,24 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import Badge from '@/components/ui/Badge.vue'
 import { useI18n } from 'vue-i18n'
-import type {
-  AiEvaluation,
-  AiGroup,
-  AiOverviewData,
-  ProviderItem,
+import Badge from '@/components/ui/Badge.vue'
+import {
+  EVALUATION_CRITERIA,
+  formatScore,
+  scoreClass,
+  type AiOverviewConnections,
+  type AiOverviewData,
+  type AiOverviewError,
+  type AiOverviewEvaluation,
+  type AiOverviewGroups,
+  type EvaluationCriterion,
+  type EvaluationLifecycle,
 } from '../types'
 
-const props = withDefaults(
-  defineProps<{
-    overview: AiOverviewData | null
-    providers: ProviderItem[]
-    evaluations: AiEvaluation[]
-    groups: AiGroup[]
-    sectionErrors?: Record<string, string | null>
-  }>(),
-  {
-    sectionErrors: () => ({}),
-  }
-)
+const props = defineProps<{
+  overview: AiOverviewData | null
+}>()
 
 const emit = defineEmits<{
   navigate: [tab: 'providers' | 'evaluation' | 'groups']
@@ -267,55 +261,81 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-function hasSectionError(section: 'providers' | 'evaluation' | 'ai_groups'): boolean {
-  if (props.overview?.errors?.some((e) => e.section === section)) {
-    return true
-  }
-  if (props.sectionErrors) {
-    if (section === 'providers') {
-      return Boolean(props.sectionErrors.providers || props.sectionErrors.settings)
-    }
-    if (section === 'evaluation') {
-      return Boolean(props.sectionErrors.evaluation || props.sectionErrors.evaluations)
-    }
-    if (section === 'ai_groups') {
-      return Boolean(props.sectionErrors.ai_groups || props.sectionErrors.groups)
-    }
-  }
-  return false
+const connections = computed(() => props.overview?.connections?.items ?? [])
+const evaluations = computed(() => props.overview?.evaluation?.recent ?? [])
+const groups = computed(() => props.overview?.ai_groups?.items ?? [])
+
+function hasSectionError(section: AiOverviewError['section']): boolean {
+  return !!props.overview?.errors?.some((e) => e.section === section)
 }
 
-const providersSummaryText = computed(() => {
-  if (props.overview?.providers) {
-    const { total, enabled, mode } = props.overview.providers
-    const modeLabel = mode === 'inherit' ? t('gui.ai.providers.mode_inherit') : mode === 'disabled' ? t('gui.ai.providers.mode_disabled') : t('gui.ai.providers.mode_custom')
-    return `${t('gui.ai.overview.providers_summary', { count: total, enabled })} (${modeLabel})`
-  }
-  return t('gui.ai.overview.providers_desc')
+function modeLabel(mode: AiOverviewConnections['mode']): string {
+  if (mode === 'inherit') return t('gui.ai.providers.mode_inherit')
+  if (mode === 'disabled') return t('gui.ai.providers.mode_disabled')
+  return t('gui.ai.providers.mode_custom')
+}
+
+const connectionsSummary = computed(() => {
+  const data = props.overview?.connections
+  if (!data) return t('gui.ai.overview.connections_desc')
+  return `${t('gui.ai.overview.connections_summary', { usable: data.usable, total: data.total })} · ${modeLabel(data.mode)}`
 })
 
-const evaluationSummaryText = computed(() => {
-  if (props.overview?.evaluation) {
-    const { providers_with_current_result, running, failed } = props.overview.evaluation
-    return `${t('gui.ai.overview.eval_summary', { evaluated: providers_with_current_result, running, failed })}`
-  }
-  return t('gui.ai.overview.evaluation_desc')
+const evaluationSummary = computed(() => {
+  const data = props.overview?.evaluation
+  if (!data) return t('gui.ai.overview.evaluation_desc')
+  return t('gui.ai.overview.eval_summary', {
+    active: data.active,
+    score: data.latest_score ?? '—',
+    date: data.latest_at ? formatDate(data.latest_at) : '—',
+  })
 })
 
-const groupsSummaryText = computed(() => {
-  if (props.overview?.ai_groups) {
-    const { total, invalid } = props.overview.ai_groups
-    return `${t('gui.ai.overview.groups_summary', { total, invalid })}`
-  }
-  return t('gui.ai.overview.groups_desc')
+const groupsSummary = computed(() => {
+  const data = props.overview?.ai_groups
+  if (!data) return t('gui.ai.overview.groups_desc')
+  return t('gui.ai.overview.groups_summary', { total: data.total, attention: data.attention })
 })
+
+// Project-wide AI off and an individual connection switched off are different states.
+function connectionStatus(item: { enabled: boolean; usable: boolean }): string {
+  if (props.overview?.connections?.mode === 'disabled') return t('gui.ai.providers.project_ai_off')
+  if (item.usable) return t('gui.ai.providers.connection_on')
+  return t('gui.ai.providers.connection_off')
+}
+
+function partyName(party: { provider_name: string | null; provider_id: string }): string {
+  return party.provider_name || party.provider_id
+}
+
+function lifecycleTone(lifecycle: EvaluationLifecycle): 'neutral' | 'info' | 'success' | 'warning' | 'danger' {
+  if (lifecycle === 'completed') return 'success'
+  if (lifecycle === 'failed') return 'danger'
+  if (lifecycle === 'cancelled') return 'neutral'
+  return 'info'
+}
+
+function criterionScore(item: AiOverviewEvaluation['recent'][number], key: EvaluationCriterion): number | null {
+  return item.scores?.find((score) => score.key === key)?.score ?? null
+}
+
+function barTone(idx: number): string {
+  return ['', 'p2', '', 'p3'][idx % 4]
+}
+
+function roleTone(idx: number): string {
+  return ['indigo', '', 'purple', 'cyan'][idx % 4]
+}
+
+// Supervisor is shown on its own line, so the member line lists the rest of the team.
+function teamMembers(group: AiOverviewGroups['items'][number]) {
+  return (group.members ?? []).filter((member) => member.member_id !== group.supervisor?.member_id)
+}
 
 function getInitials(name: string): string {
   if (!name) return 'AI'
   const parts = name.trim().split(/\s+/)
-  if (parts.length >= 2) {
-    return (parts[0][0] + parts[1][0]).toUpperCase()
-  }
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase()
   return name.slice(0, 2).toUpperCase()
 }
 
@@ -332,19 +352,10 @@ function getAvatarClass(name: string, kind?: string): string {
   return 'av-cs'
 }
 
-function getGroupIcon(index: number): string {
-  const icons = ['★', '🗂', '🩵', '⦿']
-  return icons[index % icons.length]
-}
-
-function formatEvalDate(isoStr?: string): string {
-  if (!isoStr) return ''
-  try {
-    const d = new Date(isoStr)
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  } catch {
-    return isoStr
-  }
+function formatDate(value?: string | null): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 </script>
 
@@ -715,10 +726,6 @@ function formatEvalDate(isoStr?: string): string {
   text-align: right;
 }
 
-.score--unsuitable {
-  color: #ff9d9d;
-}
-
 .bars {
   display: grid;
   gap: 3px;
@@ -780,6 +787,16 @@ function formatEvalDate(isoStr?: string): string {
   font-size: 15px;
   font-weight: 850;
   color: #edf3fa;
+}
+
+.team-card.is-off {
+  opacity: 0.6;
+}
+
+.team-badge.off {
+  background: rgba(152, 169, 187, 0.14);
+  border-color: rgba(152, 169, 187, 0.25);
+  color: #98a9bb;
 }
 
 .team-name .star {
@@ -913,5 +930,29 @@ function formatEvalDate(isoStr?: string): string {
   .lower {
     grid-template-columns: 1fr;
   }
+}
+
+.eval-party {
+  font-size: 11.5px;
+  color: var(--fg2-muted);
+  margin-top: 3px;
+}
+
+.score {
+  min-width: 42px;
+  text-align: right;
+  font-size: 17px;
+  font-weight: 850;
+}
+
+.score-high { color: #72d6b6; }
+.score-mid { color: #f2c46d; }
+.score-low { color: #ff9aab; }
+
+.team-counts {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: #c8d7e7;
 }
 </style>
