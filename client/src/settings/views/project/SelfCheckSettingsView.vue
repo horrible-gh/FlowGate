@@ -7,7 +7,7 @@
         TR Self-check
       </label>
       <p class="form-hint">TR 작업자가 현재 managed worktree에서 제한된 로컬 검증 커맨드를 실행할 수 있도록 허용</p>
-      <p class="form-hint">기본값은 꺼짐입니다. 결과는 참고용이며 공식 TS/TSR 판정에 사용되지 않습니다.</p>
+      <p class="form-hint">기본값은 켜짐입니다. 결과는 참고용이며 공식 TS/TSR 판정에 사용되지 않습니다.</p>
       <div class="flex" style="justify-content:flex-end;gap:10px">
         <button type="button" class="btn btn-secondary" :disabled="loading || saving" @click="load">Reset</button>
         <button type="button" class="btn btn-primary" :disabled="loading || saving" @click="save">Save</button>

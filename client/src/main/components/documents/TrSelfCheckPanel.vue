@@ -37,6 +37,34 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { getRequest, postRequest } from '@shared/api';
 import type { Tab } from '../../stores/tabs';
 
+interface SelfCheckRun {
+  self_check_run_id: string;
+  status: string;
+  created_at?: string | null;
+  program?: string | null;
+  cancel_requested?: boolean;
+  exit_code?: number | null;
+  timed_out?: boolean;
+  stdout_tail?: string | null;
+  stderr_tail?: string | null;
+  source_changed_during_run?: boolean;
+  worktree_state_changed?: boolean;
+  error_code?: string | null;
+}
+
+interface SelfCheckListResponse {
+  ok: boolean;
+  runs: SelfCheckRun[];
+}
+
+interface SelfCheckRunResponse extends SelfCheckRun {
+  ok: boolean;
+}
+
+interface ProjectSettingsResponse {
+  tr_self_check_enabled?: boolean;
+}
+
 const props = defineProps<{ tab: Tab }>();
 const enabled = ref(false);
 const program = ref('pytest');
@@ -45,7 +73,7 @@ const cwd = ref('.');
 const timeout = ref(300);
 const busy = ref(false);
 const error = ref('');
-const runs = ref<any[]>([]);
+const runs = ref<SelfCheckRun[]>([]);
 const selectedId = ref('');
 const selected = computed(() => runs.value.find((row) => row.self_check_run_id === selectedId.value));
 const active = computed(() => runs.value.find((row) => row.status === 'pending' || row.status === 'running'));
@@ -54,7 +82,7 @@ let timer: ReturnType<typeof setInterval> | null = null;
 
 async function refresh() {
   try {
-    const { data } = await getRequest(base.value);
+    const { data } = await getRequest<SelfCheckListResponse>(base.value);
     runs.value = data.runs || [];
     if (!selectedId.value || !runs.value.some((row) => row.self_check_run_id === selectedId.value)) selectedId.value = runs.value[0]?.self_check_run_id || '';
   } catch { /* REST is authoritative; retain last visible result */ }
@@ -63,8 +91,8 @@ async function refresh() {
 async function load() {
   if (props.tab.projectId) {
     try {
-      const { data } = await getRequest(`/api/v1/projects/${props.tab.projectId}/settings`);
-      enabled.value = Boolean((data.data || data).tr_self_check_enabled);
+      const { data } = await getRequest<ProjectSettingsResponse>(`/api/v1/projects/${props.tab.projectId}/settings`);
+      enabled.value = Boolean(data.tr_self_check_enabled);
     } catch { enabled.value = false; }
   }
   await refresh();
@@ -78,7 +106,7 @@ function parseArgs(text: string): string[] {
 async function run() {
   busy.value = true; error.value = '';
   try {
-    const { data } = await postRequest(base.value, { program: program.value.trim(), args: parseArgs(argsText.value), cwd: cwd.value, timeout_seconds: timeout.value });
+    const { data } = await postRequest<SelfCheckRunResponse>(base.value, { program: program.value.trim(), args: parseArgs(argsText.value), cwd: cwd.value, timeout_seconds: timeout.value });
     selectedId.value = data.self_check_run_id;
     await refresh();
   } catch (exc: any) { error.value = exc?.response?.data?.error?.code || 'Could not start Self-check'; }
@@ -94,7 +122,7 @@ async function cancel() {
 async function selectRun() {
   if (!selectedId.value) return;
   try {
-    const { data } = await getRequest(`${base.value}/${selectedId.value}`);
+    const { data } = await getRequest<SelfCheckRunResponse>(`${base.value}/${selectedId.value}`);
     runs.value = runs.value.map((row) => row.self_check_run_id === selectedId.value ? data : row);
   } catch { /* refresh will retry */ }
 }

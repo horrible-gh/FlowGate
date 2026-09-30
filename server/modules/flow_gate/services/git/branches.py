@@ -748,7 +748,66 @@ def create_branch(project_id: str, name: str, source_branch: str) -> dict:
         _gs.db_git.release_lock(project_id, holder)
 
 
-def _delete_guard(project_id: str, name: str) -> tuple[Optional[str], dict]:
+_WORKTREE_REGISTRY_UNSET = object()
+
+
+def _registered_worktrees_for_delete(base_root: Path) -> Optional[list[dict]]:
+    """Return Git worktree registrations relevant to branch deletion.
+
+    This intentionally differs from git_service._registered_worktrees(), whose cleanup
+    semantics exclude prunable entries. Git still pins a branch until the stale
+    registration is pruned, so delete protection must keep prunable records.
+    """
+    from modules.flow_gate.services import git_service as _gs
+
+    proc = _gs._run_git(["worktree", "list", "--porcelain"], cwd=base_root)
+    if proc.returncode != 0:
+        return None
+
+    records: list[dict] = []
+    current: dict = {}
+    for line in [*(proc.stdout or "").splitlines(), ""]:
+        if not line:
+            if current.get("path"):
+                records.append({
+                    "path": current.get("path"),
+                    "branch": current.get("branch"),
+                    "prunable": bool(current.get("prunable")),
+                })
+            current = {}
+            continue
+        if line.startswith("worktree "):
+            current["path"] = line[len("worktree "):].strip()
+        elif line.startswith("branch refs/heads/"):
+            current["branch"] = line[len("branch refs/heads/"):].strip()
+        elif line == "prunable" or line.startswith("prunable "):
+            current["prunable"] = True
+    return records
+
+
+def _worktree_delete_guard(
+    base_root: Path,
+    name: str,
+    worktrees=_WORKTREE_REGISTRY_UNSET,
+) -> tuple[Optional[str], dict]:
+    if worktrees is _WORKTREE_REGISTRY_UNSET:
+        worktrees = _registered_worktrees_for_delete(base_root)
+    if worktrees is None:
+        return "branch_worktree_state_unknown", {}
+    for row in worktrees:
+        if row.get("branch") == name:
+            return "branch_checked_out_in_worktree", {
+                "worktree_prunable": bool(row.get("prunable")),
+            }
+    return None, {}
+
+
+def _delete_guard(
+    project_id: str,
+    name: str,
+    *,
+    worktrees=_WORKTREE_REGISTRY_UNSET,
+) -> tuple[Optional[str], dict]:
     from modules.flow_gate.services import git_service as _gs
     cfg, base_root, base_branch = _branch_context(project_id)
     if not _gs._ref_exists(base_root, f"refs/heads/{name}"):
@@ -799,6 +858,12 @@ def _delete_guard(project_id: str, name: str) -> tuple[Optional[str], dict]:
                 details["blocking_owner_type"] = _gs.db_git.OWNER_BRANCH_MERGE
                 details["role"] = "target" if target == name else "source"
             return "branch_in_use", details
+
+    worktree_reason, worktree_details = _worktree_delete_guard(
+        base_root, name, worktrees
+    )
+    if worktree_reason:
+        return worktree_reason, worktree_details
     return None, {}
 
 
@@ -819,6 +884,12 @@ _DELETE_ERRORS = {
         409, "branch is the work base of an active group and cannot be deleted",
     ),
     "branch_in_use": (409, "branch is in use by an open merge"),
+    "branch_checked_out_in_worktree": (
+        409, "branch is checked out by a linked Git worktree",
+    ),
+    "branch_worktree_state_unknown": (
+        409, "Git worktree state could not be verified; branch deletion is blocked",
+    ),
 }
 
 
@@ -862,6 +933,12 @@ def delete_branch(project_id: str, name: str) -> dict:
         proc = _gs._run_git(["branch", "-d", name], cwd=base_root)
         if proc.returncode != 0:
             diagnostic = _one_line(proc.stderr)
+            # The project lock only serializes FlowGate operations. An external Git
+            # process can attach the branch to a worktree after our locked preflight,
+            # so re-probe Git's registry before flattening the refusal to a generic 500.
+            worktree_reason, worktree_details = _worktree_delete_guard(base_root, name)
+            if worktree_reason:
+                _raise_delete_guard(worktree_reason, worktree_details)
             if "not fully merged" in (proc.stderr or "").lower():
                 commits, truncated = _unmerged_commits(base_root, base_branch, name)
                 raise GitServiceError(
@@ -1020,11 +1097,15 @@ def list_branches(project_id: str) -> dict:
         if ref.startswith("origin/") and ref != "origin/HEAD"
     }
 
+    # One registry probe per catalog load. Reuse it for every local branch instead
+    # of spawning `git worktree list` once per row.
+    worktrees = _registered_worktrees_for_delete(base_root)
+
     branches = []
     for name in sorted(locals_by_name):
         owner = internal_slot_owner(project_id, name)
         kind = "base" if name == base_branch else ("internal_slot" if owner else "local")
-        reason = check_branch_delete(project_id, name)
+        reason, _ = _delete_guard(project_id, name, worktrees=worktrees)
         if reason is None:
             ahead_hint = _gs._ahead_of_base(base_root, base_branch, name)
             if ahead_hint is not None and ahead_hint > 0:
