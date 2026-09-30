@@ -445,6 +445,18 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
             )
         except ValueError as exc:
             errors.append({"loc": "continuation_reviewer_overrides", "msg": str(exc)})
+    elif body.mode == "continuous" and body.action_scope == "workflow_decide":
+        # No item_seq exists before the decision, so only the run-level default reviewer
+        # ("*") is accepted; per-step maps stay dropped as before.
+        try:
+            default_reviewer = workflow_decision_service.normalize_continuation_reviewer_overrides(
+                body.continuation_reviewer_overrides, allow_default=True,
+            )
+            if default_reviewer and set(default_reviewer) != {workflow_decision_service.REVIEWER_DEFAULT_KEY}:
+                raise ValueError("workflow_decide accepts only the default reviewer key")
+            continuation_reviewer_overrides = default_reviewer
+        except ValueError as exc:
+            errors.append({"loc": "continuation_reviewer_overrides", "msg": str(exc)})
     if errors:
         return _validation_failed(errors)
 
@@ -559,6 +571,17 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         # switching silently: the pick exists to get the output read by someone else, and a
         # quiet substitution can land on self-review. Resume is the deliberate opposite
         # (ai_invoke_service._resumable_reviewer_overrides) — there is nobody left to ask.
+        unavailable = workflow_decision_service.unavailable_reviewer_provider_ids(
+            body.project, continuation_reviewer_overrides,
+        )
+        if unavailable:
+            return JSONResponse(status_code=422, content={
+                "code": "reviewer_unavailable",
+                "message": "The selected reviewer is not enabled for this project.",
+                "reviewer_provider_ids": unavailable,
+            })
+
+    if body.mode == "continuous" and body.action_scope == "workflow_decide" and continuation_reviewer_overrides:
         unavailable = workflow_decision_service.unavailable_reviewer_provider_ids(
             body.project, continuation_reviewer_overrides,
         )

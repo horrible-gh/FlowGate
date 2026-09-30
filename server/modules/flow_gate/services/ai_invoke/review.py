@@ -272,6 +272,9 @@ def resolve_reviewer(
     """Resolve runtime reviewer, then sequence baseline, then project default."""
     if _map_contains(reviewer_overrides, item_seq):
         provider_id = _map_lookup(reviewer_overrides, item_seq)
+    elif isinstance(reviewer_overrides, dict) and reviewer_overrides.get("*"):
+        # Run-level default a workflow_decide start carried before any item_seq existed.
+        provider_id = reviewer_overrides["*"]
     else:
         _count, provider_id = _stored_review_policy_for_item_seq(doc_ref, item_seq)
     if provider_id and _provider_enabled(project_id, provider_id):
