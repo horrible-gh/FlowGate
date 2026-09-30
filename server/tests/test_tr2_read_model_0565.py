@@ -18,7 +18,7 @@ def test_read_view_four_blocks_and_unique_files(monkeypatch,tmp_path):
     spec={"edits":[{"id":"a","file":"a"},{"id":"b","file":"a"}]}
     body={"edit_spec":spec,"baseline_fingerprint":tr2.target_fingerprint(spec,tmp_path)}
     view=tr2.read_view({"project_id":"p","group_id":"g","doc_id":"d"},body)
-    assert set(view)=={"document","readiness","mutation","body","derived","approval","history"}
+    assert set(view)=={"document","readiness","mutation","body","derived","approval","history","gate_admission"}
     # Not pending review: the authoritative readiness never calls it ready (T0030 §7).
     assert view["readiness"]["ready"] is False
     assert view["mutation"]=={"allowed":True,"reason":None}

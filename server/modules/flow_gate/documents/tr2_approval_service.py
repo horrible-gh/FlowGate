@@ -10,13 +10,13 @@ from pathlib import Path
 
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import git_integration as db_git
-from modules.flow_gate.db import project_test_commands as db_commands
 from modules.flow_gate.db import tr2_approval_attempts as db_attempts
 from modules.flow_gate.db import tr_commit_ledger as db_ledger
 from modules.flow_gate.db import tr_history_recovery as db_recovery
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.db.connection import after_commit, get_store, in_transaction, now_iso
 from modules.flow_gate.documents import tr2_precheck, tr2_service as tr2
+from modules.flow_gate.documents import tr2_command_admission as admission
 from modules.flow_gate.documents.tr2_apply_adapter import adapter
 from modules.flow_gate.services import git_service, process_runner, test_command_service
 from modules.flow_gate.services.mutation_policy import assert_group_mutation_allowed
@@ -57,25 +57,8 @@ def _clean(root: Path) -> bool:
 
 
 def _check_commands(doc: dict, spec: dict) -> list[dict]:
-    """Python exact match avoids a case-insensitive SQL collation widening trust."""
-    rows = db_commands.list_active(doc["project_id"])
-    selected = []
-    for index, raw in enumerate(spec["gate"]["commands"]):
-        command = test_command_service.normalize_command(raw)
-        matches = [row for row in rows if
-                   test_command_service.normalize_command(row["command"]) == command]
-        loc = f"edit_spec.gate.commands[{index}]"
-        if not matches:
-            _raise("tr2_validation_command_unapproved", loc)
-        host = test_command_service.current_os()
-        if any(row.get("verified_os") and row["verified_os"] != host for row in matches):
-            _raise("tr2_validation_command_os_mismatch", loc)
-        if any(row.get("origin") == "auto" and not row.get("verified_os") for row in matches):
-            _raise("tr2_validation_command_unverified", loc)
-        row = matches[0]
-        selected.append({"command": command, "registry_row_id": row["id"],
-                         "origin": row.get("origin"), "verified_os": row.get("verified_os")})
-    return selected
+    return admission.require_admitted(
+        admission.classify_gate_commands(doc["project_id"], spec["gate"]["commands"]))
 
 
 def _run_validation(root: Path, commands: list[dict], attempt_id: str) -> dict:
@@ -310,7 +293,8 @@ def _replay(row: dict) -> dict:
 
 def approve(*, doc_id: str, actor_user_id: str, user_permissions: set[str],
             mutation_principal, expected_revision: int | None = None,
-            request_key: str | None = None, locale: str = "ko") -> dict:
+            request_key: str | None = None, locale: str = "ko",
+            expected_command_admission_fingerprint: str | None = None) -> dict:
     if in_transaction():
         _raise("tr2_nested_transaction")
     doc = db_docs.get_by_id(doc_id)
@@ -386,11 +370,19 @@ def approve(*, doc_id: str, actor_user_id: str, user_permissions: set[str],
             checked = tr2_precheck.authoritative_precheck(
                 doc_id, locked, expected_revision=revision,
                 expected_spec_fingerprint=fingerprint)
-            commands = _check_commands(doc, checked["spec"])
+            gate_admission = admission.classify_gate_commands(
+                doc["project_id"], checked["spec"]["gate"]["commands"])
+            if (expected_command_admission_fingerprint is not None and
+                    gate_admission["fingerprint"] != expected_command_admission_fingerprint):
+                _raise("tr2_spec_changed", "command_admission_fingerprint")
+            commands = admission.require_admitted(gate_admission)
             head = _head(locked.root)
             db_attempts.update(attempt_id, pre_apply_head_sha=head,
                                live_fingerprint=checked["evaluation"]["live_fingerprint"],
-                               precheck_json={"targets": tr2.target_set(spec), "commands": commands, "spec": checked["spec"]})
+                               precheck_json={"targets": tr2.target_set(spec), "commands": commands,
+                                              "command_admission_fingerprint": gate_admission["fingerprint"],
+                                              "gate_admission": admission.public_admission(gate_admission),
+                                              "spec": checked["spec"]})
             db_attempts.update(attempt_id, phase="snapshot")
             bundle = adapter.create_backup(spec, locked.root, _backup_root(doc), baseline=baseline)
             db_attempts.update(attempt_id, backup_bundle_id=bundle, phase="apply")
@@ -439,6 +431,8 @@ def approve(*, doc_id: str, actor_user_id: str, user_permissions: set[str],
                     from modules.flow_gate.services import workflow_rework_service
                     workflow_rework_service.clear_return_point_if_complete(doc["group_id"], doc)
                 after_commit(notify)
+                after_commit(lambda: test_command_service.reflect_tr2_validation_success(
+                    doc["project_id"], doc_id, attempt_id, sha, validation["commands"]))
             finalized = True
             return db_docs.get_by_id(doc_id)
         except Exception as exc:

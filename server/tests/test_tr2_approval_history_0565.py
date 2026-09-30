@@ -17,33 +17,28 @@ def _spec():
 
 
 @pytest.mark.parametrize(
-    ("rows", "expected"),
+    ("row", "expected"),
     [
-        ([], "tr2_validation_command_unapproved"),
-        ([{"id": 1, "command": "pytest -q", "origin": "manual",
-           "verified_os": "nt"}], "tr2_validation_command_os_mismatch"),
-        ([{"id": 1, "command": "pytest -q", "origin": "auto",
-           "verified_os": None}], "tr2_validation_command_unverified"),
+        ({"id": 1, "command": "pytest -q", "status": "suppressed", "origin": "manual",
+          "verified_os": None}, "tr2_validation_command_unapproved"),
+        ({"id": 1, "command": "pytest -q", "status": "active", "origin": "manual",
+          "verified_os": "nt"}, "tr2_validation_command_os_mismatch"),
+        ({"id": 1, "command": "pytest -q", "status": "active", "origin": "auto",
+          "verified_os": None}, "tr2_validation_command_unverified"),
     ],
 )
-def test_validation_registry_rejects_untrusted_commands(monkeypatch, rows, expected):
-    monkeypatch.setattr(approval.db_commands, "list_active", lambda _project: rows)
-    monkeypatch.setattr(approval.test_command_service, "normalize_command", lambda x: x)
+def test_validation_registry_rejects_untrusted_commands(monkeypatch, row, expected):
+    monkeypatch.setattr(approval.admission.registry, "find_by_command", lambda *_: row)
     monkeypatch.setattr(approval.test_command_service, "current_os", lambda: "posix")
     with pytest.raises(tr2_service.Tr2ValidationError, match=expected):
         approval._check_commands({"project_id": "p"}, _spec())
 
 
-def test_duplicate_registry_rows_use_most_restrictive_trust(monkeypatch):
-    rows = [
-        {"id": 1, "command": "pytest -q", "origin": "manual", "verified_os": None},
-        {"id": 2, "command": "pytest -q", "origin": "auto", "verified_os": None},
-    ]
-    monkeypatch.setattr(approval.db_commands, "list_active", lambda _project: rows)
-    monkeypatch.setattr(approval.test_command_service, "normalize_command", lambda x: x)
-    monkeypatch.setattr(approval.test_command_service, "current_os", lambda: "posix")
-    with pytest.raises(tr2_service.Tr2ValidationError, match="tr2_validation_command_unverified"):
-        approval._check_commands({"project_id": "p"}, _spec())
+def test_missing_registry_command_is_candidate(monkeypatch):
+    monkeypatch.setattr(approval.admission.registry, "find_by_command", lambda *_: None)
+    selected = approval._check_commands({"project_id": "p"}, _spec())
+    assert selected[0]["admission_state"] == "candidate"
+    assert selected[0]["registry_row_id"] is None
 
 
 def test_validation_timeout_is_recorded_before_rollback(monkeypatch, tmp_path):
