@@ -87,12 +87,47 @@ def _worktree(doc: dict) -> Path:
 def available(doc_id: str) -> bool:
     try:
         doc = _document(doc_id)
-        if not (db_projects.get_settings(doc["project_id"]) or {}).get("tr_self_check_enabled"):
+        if not db_projects.tr_self_check_enabled(doc["project_id"]):
             return False
         _worktree(doc)
         return True
     except Exception:
         return False
+
+
+def availability(doc_id: str) -> str:
+    """Structured admission for a TR edit worker; ``available`` hides the reason, this keeps it.
+
+    Returns one of: available, managed_worktree_missing, self_check_disabled,
+    self_check_unavailable, recovery_incomplete.
+    """
+    try:
+        doc = db_documents.get_by_id(doc_id)
+        if not doc or str(doc.get("type_code") or "").upper() != "TR":
+            return "self_check_unavailable"
+        if not db_projects.tr_self_check_enabled(doc["project_id"]):
+            return "self_check_disabled"
+        try:
+            _document(doc_id)
+            _worktree(doc)
+        except SelfCheckError:
+            return "managed_worktree_missing"
+        if db_runs.has_recovery_incomplete(doc["project_id"]):
+            return "recovery_incomplete"
+        return "available"
+    except Exception:
+        return "self_check_unavailable"
+
+
+def is_canonical_run(run: dict) -> bool:
+    """True for a TR edit run: Self-check is its only test/verification execution path."""
+    if not run or run.get("action_scope") != "edit" or not run.get("doc_ref"):
+        return False
+    try:
+        doc = db_documents.get_by_id(run["doc_ref"])
+    except Exception:
+        return False
+    return bool(doc) and str(doc.get("type_code") or doc.get("type") or "").upper() == "TR"
 
 
 def _git(root: Path, *args: str) -> bytes:
@@ -221,7 +256,7 @@ def _finish(run_id: str, project_id: str, holder: str, root: Path, before: dict,
 def start(doc_id: str, request: dict, requested_by: str | None = None) -> dict:
     doc = _document(doc_id)
     project_id, group_id = doc["project_id"], doc["group_id"]
-    if not (db_projects.get_settings(project_id) or {}).get("tr_self_check_enabled"):
+    if not db_projects.tr_self_check_enabled(project_id):
         raise SelfCheckError(403, "selfcheck_disabled")
     if db_runs.has_recovery_incomplete(project_id):
         raise SelfCheckError(409, "selfcheck_recovery_incomplete")

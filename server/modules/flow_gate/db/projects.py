@@ -155,7 +155,7 @@ def create(data: dict[str, Any]) -> dict:
         try:
             store._execute(
                 "INSERT INTO project_settings (project_id, tr_self_check_enabled, updated_at) "
-                "VALUES (?, 0, ?) ON CONFLICT(project_id) DO NOTHING",
+                "VALUES (?, 1, ?) ON CONFLICT(project_id) DO NOTHING",
                 [data["project_id"], now],
             )
         except Exception:
@@ -189,15 +189,24 @@ def get_settings(project_id: str) -> Optional[dict]:
         "SELECT * FROM project_settings WHERE project_id = ?", [project_id]
     )
     if row is not None:
-        row["tr_self_check_enabled"] = bool(row.get("tr_self_check_enabled", 0))
+        row["tr_self_check_enabled"] = bool(row.get("tr_self_check_enabled", 1))
     return row
+
+
+def tr_self_check_enabled(project_id: str) -> bool:
+    """Self-check admission flag; a Project without a project_settings row gets the product default (ON)."""
+    row = get_settings(project_id)
+    if row is None:
+        return True
+    return bool(row.get("tr_self_check_enabled"))
 
 
 def upsert_settings(project_id: str, data: dict[str, Any]) -> dict:
     store = get_store()
     now = now_iso()
-    raw_enabled = data.get("tr_self_check_enabled", 0)
-    int_enabled = 1 if raw_enabled in (1, True, "1", "true") else 0
+    # Missing/None means the product default (ON); only an explicit false-like value is OFF.
+    raw_enabled = data.get("tr_self_check_enabled")
+    int_enabled = 0 if raw_enabled is not None and raw_enabled not in (1, True, "1", "true") else 1
     store._execute(
         "INSERT INTO project_settings "
         "(project_id, group_structure, digits_group, digits_sub_group, digits_type, "
@@ -288,8 +297,8 @@ def upsert_project_settings(project: str, docs_root: str, project_root: str = ""
     storage_root_override = docs_root.strip() if docs_root else ""
     get_store()._execute(
         "INSERT INTO project_settings"
-        " (project_id, storage_root_override, updated_at)"
-        " VALUES (?, ?, ?)"
+        " (project_id, storage_root_override, tr_self_check_enabled, updated_at)"
+        " VALUES (?, ?, 1, ?)"
         " ON CONFLICT(project_id) DO UPDATE SET"
         "     storage_root_override = excluded.storage_root_override,"
         "     updated_at = excluded.updated_at",

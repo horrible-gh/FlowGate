@@ -241,8 +241,8 @@ def upsert_project_ai_state(
     """Persist the tri-state mode + project default. Mode-only transitions call this
     directly and never touch ai_providers rows (list preservation, L0004 §3)."""
     get_store()._execute(
-        "INSERT INTO project_settings (project_id, ai_mode, ai_default_provider_id, updated_at) "
-        "VALUES (?, ?, ?, ?) "
+        "INSERT INTO project_settings (project_id, ai_mode, ai_default_provider_id, tr_self_check_enabled, updated_at) "
+        "VALUES (?, ?, ?, 1, ?) "
         "ON CONFLICT(project_id) DO UPDATE SET "
         "ai_mode = excluded.ai_mode, "
         "ai_default_provider_id = excluded.ai_default_provider_id, "
