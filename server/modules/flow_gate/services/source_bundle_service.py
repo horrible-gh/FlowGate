@@ -81,7 +81,7 @@ def _integrity(row, deadline=None):
         return False
 
 
-def ensure(project_id: str, group_id: str):
+def _ensure_under_lock(project_id: str, group_id: str):
     """Return a path-free identity. A caller needing files uses bundle_path internally."""
     started = time.monotonic()
     deadline = started + materializer.BUILD_SECONDS
@@ -138,6 +138,20 @@ def ensure(project_id: str, group_id: str):
         reason = exc.message if isinstance(exc, materializer.SourceBundleError) else "Source Bundle build failed"
         db.failed(bundle_id, owner, code, reason)
         raise materializer.SourceBundleError(code, reason) from exc
+
+
+def ensure(project_id: str, group_id: str):
+    """Coordinate live worktree capture with Self-check and other source operations."""
+    import uuid
+    from modules.flow_gate.services import git_service
+
+    holder = f"bundle:{uuid.uuid4().hex}"
+    if not git_service._acquire_lock(project_id, holder, wait_sec=5):
+        raise materializer.SourceBundleError("source_busy", "project source is busy")
+    try:
+        return _ensure_under_lock(project_id, group_id)
+    finally:
+        git_service.db_git.release_lock(project_id, holder)
 
 
 def bundle_source_path(bundle_id: str) -> Path:

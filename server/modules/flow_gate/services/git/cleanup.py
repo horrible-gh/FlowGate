@@ -448,7 +448,7 @@ def _open_sessions_after(sessions: list[dict], touched: set[int]) -> list[dict]:
     return result
 
 
-def startup_recovery() -> None:
+def startup_recovery(protected_project_ids: set[str] | None = None) -> None:
     """Heal conflict sessions, drop every stale lock, then sweep + start the
     daemon at boot (0205 L §2.6).
 
@@ -541,8 +541,10 @@ def startup_recovery() -> None:
         # One-time lock cleanup: no lock legitimately survives a restart, so
         # every row is force-released regardless of holder string (no prefix
         # whitelist here, or a new holder prefix silently becomes another leak).
+        protected = protected_project_ids or set()
         for lock in _gs.db_git.list_locks():
-            _gs.db_git.force_release_lock(lock["project_id"])
+            if lock["project_id"] not in protected:
+                _gs.db_git.force_release_lock(lock["project_id"])
         # The original snapshot is only a candidate-id list here; reconcile_push_session
         # re-reads each row and re-checks its guard before changing it.
         _gs.reconcile_due_merge_review_sessions("server_startup", sessions=sessions)

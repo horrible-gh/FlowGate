@@ -45,7 +45,7 @@ def _is_active_key_unique_violation(exc: Exception) -> bool:
     diagnostic = getattr(exc, "diag", None)
     constraint = getattr(diagnostic, "constraint_name", None)
     if constraint:
-        return "active_key" in constraint.lower() and getattr(exc, "pgcode", None) == "23505"
+        return "active_key" in constraint.lower() and (getattr(exc, "pgcode", None) or getattr(exc, "sqlstate", None)) == "23505"
     args = getattr(exc, "args", ())
     message = str(exc).lower()
     if args and args[0] == 1062:
@@ -114,6 +114,7 @@ def create_pending(
     timeout_seconds: int,
     env_keys: list[str],
     run_id: str | None = None,
+    source_lock_holder: str | None = None,
 ) -> dict:
     """Atomically insert a pending self-check run row with active_key set."""
     store = get_store()
@@ -152,6 +153,11 @@ def create_pending(
                 env_keys_json, active_key, now, now,
             ],
         )
+            if source_lock_holder is not None:
+                store._execute(
+                    "UPDATE tr_self_check_runs SET source_lock_holder = ? WHERE self_check_run_id = ?",
+                    [source_lock_holder, rid],
+                )
     except Exception as exc:
         if _is_active_key_unique_violation(exc):
             conflict = get_active(project_id, group_id)
@@ -407,12 +413,23 @@ def finish_cancelled(
     exit_code: int | None = None,
     stdout_tail: str | None = None,
     stderr_tail: str | None = None,
+    source_head_after: str | None = None,
+    source_branch_after: str | None = None,
+    source_refs_hash_after: str | None = None,
+    source_index_hash_after: str | None = None,
+    source_status_hash_after: str | None = None,
+    index_lock_after: int | None = None,
+    source_changed_during_run: bool = False,
+    worktree_state_changed: bool = False,
     cleanup_pending: bool = False,
     cleanup_error: str | None = None,
 ) -> dict | None:
-    """Atomic terminal transition to cancelled, clearing active_key."""
+    """Atomic terminal transition to cancelled with the post-run source identity."""
     store = get_store()
     now = now_iso()
+    _validate_hash64(source_refs_hash_after, "source_refs_hash_after")
+    _validate_hash64(source_index_hash_after, "source_index_hash_after")
+    _validate_hash64(source_status_hash_after, "source_status_hash_after")
     affected = store._execute_affected(
         "UPDATE tr_self_check_runs SET"
         " status = 'cancelled',"
@@ -420,6 +437,14 @@ def finish_cancelled(
         " exit_code = ?,"
         " stdout_tail = ?,"
         " stderr_tail = ?,"
+        " source_head_after = ?,"
+        " source_branch_after = ?,"
+        " source_refs_hash_after = ?,"
+        " source_index_hash_after = ?,"
+        " source_status_hash_after = ?,"
+        " index_lock_after = ?,"
+        " source_changed_during_run = ?,"
+        " worktree_state_changed = ?,"
         " cleanup_pending = ?,"
         " cleanup_error = ?,"
         " finished_at = ?,"
@@ -427,6 +452,9 @@ def finish_cancelled(
         " WHERE self_check_run_id = ? AND status IN ('pending', 'running') AND recovery_state = 'none'",
         [
             exit_code, _truncate_tail(stdout_tail), _truncate_tail(stderr_tail),
+            source_head_after, source_branch_after, source_refs_hash_after,
+            source_index_hash_after, source_status_hash_after, index_lock_after,
+            1 if source_changed_during_run else 0, 1 if worktree_state_changed else 0,
             1 if cleanup_pending else 0, _truncate_diagnostic(cleanup_error),
             now, now, run_id,
         ],
@@ -434,7 +462,6 @@ def finish_cancelled(
     if affected == 0:
         return None
     return get_run(run_id)
-
 
 def mark_recovering(run_id: str) -> dict | None:
     """CAS none -> recovering on orphan active run."""
@@ -512,7 +539,7 @@ def finish_recovered_interrupted(
 def list_orphan_active_runs() -> list[dict]:
     """Return pending/running rows that may need startup recovery."""
     rows = get_store()._fetch_all(
-        "SELECT * FROM tr_self_check_runs WHERE status IN ('pending', 'running') AND recovery_state IN ('none', 'recovering') ORDER BY created_at ASC"
+        "SELECT * FROM tr_self_check_runs WHERE status IN ('pending', 'running') AND recovery_state IN ('none', 'recovering', 'incomplete') ORDER BY created_at ASC"
     )
     return [_normalize_row(r) for r in rows if r is not None]  # type: ignore[misc]
 
