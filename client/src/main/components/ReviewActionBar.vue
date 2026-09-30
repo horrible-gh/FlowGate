@@ -520,7 +520,11 @@ import AppIcon from '@shared/AppIcon.vue'
 import { useToast } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import GitFinalizeAxis from './GitFinalizeAxis.vue'
-import type { FinalizeAxes } from '../composables/finalizeAxis'
+import {
+  actionOfPosition,
+  positionOfAction,
+  type FinalizeAxes,
+} from '../composables/finalizeAxis'
 import { useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import { describeTr2Error } from './documents/tr2State'
 
@@ -710,7 +714,18 @@ async function fetchGitFin() {
     return
   }
   gitFin.value = state
-  gitNormalChoice.value = state.default_action || 'wait'
+  const defaultAction = state.default_action || 'wait'
+  if (state.action_axes) {
+    const { scope } = positionOfAction(state.action_axes, defaultAction)
+    gitNormalChoice.value = actionOfPosition(state.action_axes, scope, false, defaultAction)
+  } else {
+    const noPushLegacy: Record<string, string> = {
+      merge: 'merge_only',
+      commit_push: 'commit_only',
+      push: 'wait',
+    }
+    gitNormalChoice.value = noPushLegacy[defaultAction] || defaultAction
+  }
   gitArchiveSelected.value = false
   gitAuxOpen.value = !!state.aux_choices?.includes(gitNormalChoice.value)
   // T0016 §4.1 — the branch catalog / merge-target suggestion is a separate,
