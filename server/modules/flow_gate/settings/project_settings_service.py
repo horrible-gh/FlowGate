@@ -242,7 +242,10 @@ def delete_template_content(
 
 
 def get_project_settings(project_id: str) -> dict | None:
-    return _proj.get_settings(project_id)
+    row = _proj.get_settings(project_id)
+    if row is not None:
+        row["tr_self_check_enabled"] = bool(row.get("tr_self_check_enabled", False))
+    return row
 
 
 
@@ -254,11 +257,16 @@ def update_project_settings(project_id: str, data: dict) -> dict:
         "digits_type",
         "storage_root_override",
         "source_mode_override",
+        "tr_self_check_enabled",
     }
     updates = {k: v for k, v in data.items() if k in allowed}
     mode = updates.get("source_mode_override")
     if mode is not None and mode not in {"local", "remote"}:
         raise ValueError("source_mode_override must be one of: local, remote, null")
+    if "tr_self_check_enabled" in updates:
+        val = updates["tr_self_check_enabled"]
+        if not isinstance(val, bool):
+            raise ValueError("tr_self_check_enabled must be a boolean")
     current = _proj.get_settings(project_id) or {}
     merged = {**current, **updates, "project_id": project_id}
     return _proj.upsert_settings(project_id, merged)
