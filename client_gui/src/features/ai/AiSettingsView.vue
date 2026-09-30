@@ -25,6 +25,7 @@
             @change="onTabChange"
           />
         </div>
+        <Button variant="primary" @click="startOpen = true">{{ t('gui.ai.start.open') }}</Button>
       </header>
 
       <div v-if="loading" class="view-loading">
@@ -125,6 +126,7 @@
         </template>
       </main>
     </template>
+    <AiStartDialog v-if="currentProject" :open="startOpen" :project="currentProject" @close="startOpen = false" />
   </div>
 </template>
 
@@ -155,6 +157,7 @@ import AiOverviewPanel from './overview/AiOverviewPanel.vue'
 import AiProvidersPanel from './providers/AiProvidersPanel.vue'
 import AiEvaluationPanel from './evaluation/AiEvaluationPanel.vue'
 import AiGroupsPanel from './groups/AiGroupsPanel.vue'
+import AiStartDialog from './AiStartDialog.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -163,6 +166,7 @@ const projectStore = useProjectStore()
 
 type TabKey = 'overview' | 'providers' | 'evaluation' | 'groups'
 const activeTab = ref<TabKey>('overview')
+const startOpen = ref(false)
 
 const currentProject = computed(() => projectStore.currentProject)
 
@@ -306,6 +310,7 @@ watch(
 watch(
   () => currentProject.value?.id,
   (newId) => {
+    startOpen.value = false
     if (newId) {
       void loadData()
     } else {
@@ -346,6 +351,10 @@ onMounted(() => {
 .view-header {
   margin-bottom: 18px;
   flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
 }
 
 .view-loading,

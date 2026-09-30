@@ -24,6 +24,21 @@ export async function fetchAiOverview(projectId: string): Promise<AiOverviewData
   }
 }
 
+export interface SequenceStep {
+  item_seq: number
+  type?: string | null
+  status?: string | null
+}
+
+export async function listSequenceSteps(docRef: string): Promise<SequenceStep[]> {
+  try {
+    const res = await getRequest<{ items?: SequenceStep[] }>('/api/v1/workflow/sequence', { doc_id: docRef })
+    return res.data.items ?? []
+  } catch (error) {
+    throw new Error(extractApiErrorMessage(error, 'Failed to load the workflow sequence.'))
+  }
+}
+
 export async function fetchProjectAiSettings(projectId: string): Promise<ProjectAiSettings> {
   try {
     const res = await getRequest<ProjectAiSettings>(

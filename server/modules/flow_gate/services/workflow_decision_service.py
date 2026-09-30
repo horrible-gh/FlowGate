@@ -372,8 +372,14 @@ def normalize_continuation_review_count_overrides(raw) -> Optional[dict]:
     return normalized or None
 
 
+# Run-level reviewer default. A workflow_decide start has no item_seq yet, so the reviewer the
+# person picked rides under this key and resolve_reviewer applies it to every step of the
+# freshly decided sequence that has no reviewer of its own.
+REVIEWER_DEFAULT_KEY = "*"
+
+
 def normalize_continuation_reviewer_overrides(
-    raw, review_count_overrides: Optional[dict] = None
+    raw, review_count_overrides: Optional[dict] = None, *, allow_default: bool = False
 ) -> Optional[dict]:
     """P0007 정규화 규칙 1·3·4 for the per-step REVIEWER map.
 
@@ -388,10 +394,11 @@ def normalize_continuation_reviewer_overrides(
             f"invalid_reviewer_map:{raw!r} — must be an object keyed by item_seq")
     normalized: dict[str, str] = {}
     for key, value in raw.items():
-        item_seq = _review_item_seq_key(key)
+        is_default = allow_default and key == REVIEWER_DEFAULT_KEY
+        item_seq = None if is_default else _review_item_seq_key(key)
         if isinstance(value, bool) or not isinstance(value, str) or not value.strip():
             raise ValueError(f"invalid_reviewer_provider_id:{value!r}")
-        normalized[str(item_seq)] = value.strip()
+        normalized[REVIEWER_DEFAULT_KEY if is_default else str(item_seq)] = value.strip()
     return normalized or None
 
 
