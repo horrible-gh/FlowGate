@@ -231,28 +231,71 @@ describe('DocInfoPanel TR 작업범위 검증 영역', () => {
 })
 
 describe('DocInfoPanel review package download', () => {
-  it('shows the localized action in work-scope and downloads with group/document context', async () => {
-    const createObjectURL = vi.fn().mockReturnValue('blob:review')
+  it.each(['pending_review', 'rejected', 'revised'])(
+    'shows the independent action for %s even when trScope is absent',
+    async (reviewStatus) => {
+      const wrapper = mountPanel(null)
+      await wrapper.setProps({
+        groupId: 'flowgate.default.0534',
+        reviewStatus,
+      })
+      await flushPromises()
+
+      expect(wrapper.find('.dip-trs-head').exists()).toBe(false)
+      expect(wrapper.get('.dip-trs-download').text()).toContain('Download Review Package')
+    },
+  )
+
+  it('does not expose the TR review action on a non-TR document', async () => {
+    const wrapper = mountPanel(null, 'TS')
+    await wrapper.setProps({
+      groupId: 'flowgate.default.0534',
+      reviewStatus: 'pending_review',
+    })
+    await flushPromises()
+    expect(wrapper.find('.dip-trs-download').exists()).toBe(false)
+  })
+
+  it('downloads on every click with the current group/document context', async () => {
+    const createObjectURL = vi.fn()
+      .mockReturnValueOnce('blob:review-1')
+      .mockReturnValueOnce('blob:review-2')
     const revokeObjectURL = vi.fn()
     vi.stubGlobal('URL', { createObjectURL, revokeObjectURL })
     apiGet.mockResolvedValue({
       data: new Blob(['zip']),
       headers: { 'content-disposition': 'attachment; filename="flowgate.default.0534-review-package.zip"' },
     })
-    const wrapper = mountPanel({ verdict: 'pass', stage: 'observe' })
-    await wrapper.setProps({ groupId: 'flowgate.default.0534' })
+    const wrapper = mountPanel(null)
+    await wrapper.setProps({
+      groupId: 'flowgate.default.0534',
+      reviewStatus: 'pending_review',
+    })
+
+    await wrapper.get('.dip-trs-download').trigger('click')
+    await flushPromises()
     await wrapper.get('.dip-trs-download').trigger('click')
     await flushPromises()
 
-    expect(wrapper.get('.dip-trs-download').text()).toContain('Download Review Package')
-    expect(apiGet).toHaveBeenCalledWith(
+    expect(apiGet).toHaveBeenCalledTimes(2)
+    expect(apiGet).toHaveBeenNthCalledWith(
+      1,
       '/api/v1/projects/flowgate/git/groups/flowgate.default.0534/review-package',
       expect.objectContaining({
         params: { target_doc_id: 'flowgate.default.0300.0005-TR' },
         responseType: 'blob',
       }),
     )
-    expect(createObjectURL).toHaveBeenCalled()
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:review')
+    expect(apiGet).toHaveBeenNthCalledWith(
+      2,
+      '/api/v1/projects/flowgate/git/groups/flowgate.default.0534/review-package',
+      expect.objectContaining({
+        params: { target_doc_id: 'flowgate.default.0300.0005-TR' },
+        responseType: 'blob',
+      }),
+    )
+    expect(createObjectURL).toHaveBeenCalledTimes(2)
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:review-1')
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:review-2')
   })
 })

@@ -241,6 +241,50 @@ def _reflect_one(project: str, cmd: str, desc: str, now: str) -> None:
     )
 
 
+
+def reflect_tr2_validation_success(project: str, tr2_doc_id: str, attempt_id: str,
+                                   commit_sha: str, results: list[dict]) -> None:
+    """Best-effort post-commit reflection; the attempt journal owns provenance."""
+    try:
+        now = now_iso()
+        seen: set[str] = set()
+        for item in results:
+            cmd = normalize_command(item.get("command") or "")
+            if not cmd or cmd in seen or item.get("exit_code") != 0 or item.get("timed_out"):
+                continue
+            seen.add(cmd)
+            try:
+                row = db.find_by_command(project, cmd)
+                if row is not None:
+                    # A case-insensitive DB collation can return a different shell
+                    # command. Only the exact normalized identity may receive success.
+                    if normalize_command(row["command"]) != cmd:
+                        continue
+                    if row.get("status") == "active":
+                        db.update_success_if_active(project, row["id"], now, current_os())
+                    continue
+                if db.count_active(project) >= MAX_COMMANDS_PER_PROJECT:
+                    logger.warning("TR2 registry full for %s attempt %s", project, attempt_id)
+                    continue
+                try:
+                    db.insert(project, cmd, f"TR2 {_short_doc_id(tr2_doc_id)}", "tr2", now,
+                              status="active", verified_os=current_os())
+                except Exception:
+                    # Concurrent TR2 or manual/auto registration may have won the
+                    # unique slot. Re-read, preserving its origin and tombstone.
+                    row = db.find_by_command(project, cmd)
+                    if row is None:
+                        raise
+                    if normalize_command(row["command"]) != cmd:
+                        continue
+                    if row.get("status") == "active":
+                        db.update_success_if_active(project, row["id"], now, current_os())
+            except Exception:
+                logger.warning("TR2 registry reflection skipped %s attempt %s commit %s",
+                               cmd, attempt_id, commit_sha, exc_info=True)
+    except Exception:
+        logger.warning("TR2 registry reflection failed for %s", attempt_id, exc_info=True)
+
 # ── TS-mention block (L §2-5 / P §TS authoring mention) ─────────────────────
 
 def build_verified_commands_block(project: str) -> str:

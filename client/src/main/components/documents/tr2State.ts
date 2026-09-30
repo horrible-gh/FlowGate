@@ -14,9 +14,27 @@ export interface Tr2Readiness {
   worktree_clean?: boolean | null
 }
 
+export interface Tr2GateAdmissionCommand {
+  index: number
+  command: string
+  state: 'registered' | 'candidate' | 'suppressed'
+  registry_row_id: number | null
+  origin: string | null
+  verified_os: string | null
+  shell_complex: boolean
+}
+
+export interface Tr2GateAdmission {
+  fingerprint: string
+  candidate_count: number
+  all_candidate: boolean
+  commands: Tr2GateAdmissionCommand[]
+}
+
 export interface Tr2View {
   document: { doc_id?: string; revision_no: number; doc_review_status?: string; editable?: boolean }
   readiness?: Tr2Readiness
+  gate_admission?: Tr2GateAdmission
   mutation?: { allowed: boolean; reason: string | null }
   body: {
     tr2_version: number

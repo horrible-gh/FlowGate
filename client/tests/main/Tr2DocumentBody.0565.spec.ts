@@ -29,6 +29,13 @@ function makeView(over: Record<string, any> = {}): Tr2View & Record<string, any>
     document: { doc_id: docId, revision_no: 2, doc_review_status: 'pending_review', editable: true, ...(over.document ?? {}) },
     mutation: over.mutation ?? { allowed: true, reason: null },
     readiness: over.readiness ?? { ready: true, code: null, loc: null, reason: null, edits: [{ id: 'e1', status: 'applicable', applicable: true }, { id: 'c1', status: 'applicable', applicable: true }] },
+    gate_admission: over.gateAdmission ?? {
+      fingerprint: 'admission-fp', candidate_count: 0, all_candidate: false,
+      commands: [
+        { index: 0, command: 'pytest -q', state: 'registered', registry_row_id: 1, origin: 'manual', verified_os: 'posix', shell_complex: false },
+        { index: 1, command: 'npm test', state: 'registered', registry_row_id: 2, origin: 'auto', verified_os: 'posix', shell_complex: false },
+      ],
+    },
     body: {
       tr2_version: 1, source_t2_doc_id: 'flowgate.default.0565.0008-T2', baseline_fingerprint: 'sha256:base',
       edit_spec: { termination: 'ready_to_apply', edits: [EDIT, CREATE], deferred: [DEFER], gate: { commands: ['pytest -q', 'npm test'], apply: false }, ...(over.spec ?? {}) },
@@ -149,6 +156,66 @@ describe('TR2 body — detail, gate, attempts', () => {
     expect(gate[1].classes()).toContain('is-failed')
     expect(byTestId(wrapper, 'tr2-attempts').text()).toContain(en.main.tr2_body.attempts.retryable)
     expect(byTestId(wrapper, 'tr2-state-strip').text()).toContain(en.main.tr2_body.state.validation_failed)
+  })
+
+  it('shows admission separately from runtime state and keeps the full normalized command', async () => {
+    const full = 'cd client && npm test -- --reporter=verbose'
+    current = makeView({
+      spec: { gate: { commands: [full, 'blocked command'], apply: false } },
+      gateAdmission: {
+        fingerprint: 'candidate-fp', candidate_count: 1, all_candidate: false,
+        commands: [
+          { index: 0, command: full, state: 'candidate', registry_row_id: null, origin: null, verified_os: null, shell_complex: true },
+          { index: 1, command: 'blocked command', state: 'suppressed', registry_row_id: 9, origin: 'manual', verified_os: null, shell_complex: false },
+        ],
+      },
+    })
+    const wrapper = mountBody(); await flushPromises()
+    const rows = wrapper.findAll('.tr2-gate li')
+    expect(rows[0].text()).toContain(full)
+    expect(byTestId(wrapper, 'tr2-admission-0').text()).toBe(en.main.tr2_body.gate.admission_candidate)
+    expect(byTestId(wrapper, 'tr2-admission-1').text()).toBe(en.main.tr2_body.gate.admission_suppressed)
+    expect(byTestId(wrapper, 'tr2-shell-complex-warning').text()).toBe(en.main.tr2_body.gate.shell_complex)
+    expect(rows[0].text()).toContain(en.main.tr2_body.gate.waiting)
+  })
+
+  it('shows all-candidate warning without inventing a client-side deny', async () => {
+    current = makeView({
+      gateAdmission: {
+        fingerprint: 'all-fp', candidate_count: 2, all_candidate: true,
+        commands: [
+          { index: 0, command: 'pytest -q', state: 'candidate', registry_row_id: null, origin: null, verified_os: null, shell_complex: false },
+          { index: 1, command: 'npm test', state: 'candidate', registry_row_id: null, origin: null, verified_os: null, shell_complex: false },
+        ],
+      },
+    })
+    const wrapper = mountBody(); await flushPromises()
+    expect(byTestId(wrapper, 'tr2-all-candidate-warning').text()).toBe(en.main.tr2_body.gate.all_candidate)
+    expect(byTestId(wrapper, 'tr2-state-strip').text()).toContain(en.main.tr2_body.state.ready)
+  })
+
+  it('keeps suppressed admission visibly blocked by server readiness', async () => {
+    current = makeView({
+      readiness: {
+        ready: false,
+        code: 'tr2_validation_command_unapproved',
+        loc: 'edit_spec.gate.commands[0]',
+        reason: 'suppressed',
+        edits: [],
+      },
+      spec: { gate: { commands: ['blocked command'], apply: false } },
+      gateAdmission: {
+        fingerprint: 'suppressed-fp',
+        candidate_count: 0,
+        all_candidate: false,
+        commands: [
+          { index: 0, command: 'blocked command', state: 'suppressed', registry_row_id: 9, origin: 'manual', verified_os: null, shell_complex: false },
+        ],
+      },
+    })
+    const wrapper = mountBody(); await flushPromises()
+    expect(byTestId(wrapper, 'tr2-admission-0').text()).toBe(en.main.tr2_body.gate.admission_suppressed)
+    expect(byTestId(wrapper, 'tr2-state-strip').text()).toContain(en.main.tr2_body.state.not_ready)
   })
 })
 

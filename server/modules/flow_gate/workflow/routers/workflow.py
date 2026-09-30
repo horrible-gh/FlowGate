@@ -165,6 +165,7 @@ class DocumentTransitionRequest(BaseModel):
     comment: Optional[str] = None
     expected_revision: Optional[int] = None
     request_key: Optional[str] = None
+    expected_command_admission_fingerprint: Optional[str] = None
 
 
 class RejectionReasonRequest(BaseModel):
@@ -176,6 +177,7 @@ class DocumentBodyRequest(BaseModel):
     comment: Optional[str] = None
     expected_revision: Optional[int] = None
     request_key: Optional[str] = None
+    expected_command_admission_fingerprint: Optional[str] = None
     # flowgate.default.0162 §1 — final-approval git ride-along (merge/push/wait).
     # Only honored on approve of a git-active group's AC document.
     git_action: Optional[str] = None
@@ -403,7 +405,8 @@ def document_transition_rpc(
         body.doc_id,
         action,
         DocumentTransitionRequest(comment=body.comment, expected_revision=body.expected_revision,
-                                  request_key=body.request_key),
+                                  request_key=body.request_key,
+                                  expected_command_admission_fingerprint=body.expected_command_admission_fingerprint),
         current_user,
     )
 
@@ -538,6 +541,7 @@ async def document_review_transition_rpc(
             DocumentTransitionRequest(
                 comment=body.comment, expected_revision=body.expected_revision,
                 request_key=body.request_key,
+                expected_command_admission_fingerprint=body.expected_command_admission_fingerprint,
             ),
             current_user,
             request,
@@ -1065,6 +1069,7 @@ async def document_review_transition_endpoint(
                 mutation_principal=human_principal(current_user),
                 expected_revision=body.expected_revision,
                 request_key=body.request_key,
+                expected_command_admission_fingerprint=body.expected_command_admission_fingerprint,
             )
         except (tr2_service.Tr2ValidationError, MutationPolicyError):
             raise

@@ -32,7 +32,12 @@
     :project-id="tab.projectId ?? null"
     :read-only="readOnly"
   />
-  <Tr2DocumentBody v-else-if="tab.typeCode === 'TR2'" :tab="tab" :read-only="readOnly" />
+  <Tr2DocumentBody
+    v-else-if="tab.typeCode === 'TR2'"
+    :ref="(el) => emit('bind-tr2-body', el)"
+    :tab="tab"
+    :read-only="readOnly"
+  />
   <QuestionDocumentBody
     v-else-if="tab.type === 'qtui' || (tab.type === 'md' && tab.typeCode === 'Q')"
     :tab="tab"
@@ -145,6 +150,7 @@ const emit = defineEmits<{
   'manual-copy-dismiss': []
   'bind-conversation-view': [instance: unknown]
   'bind-work-plan-editor': [instance: unknown]
+  'bind-tr2-body': [instance: unknown]
   'q-status-changed': [payload: { qId: string; status: string; done: boolean }]
 }>()
 </script>

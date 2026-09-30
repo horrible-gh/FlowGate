@@ -339,8 +339,8 @@ const newName = ref('')
 const createSource = ref('')
 const mergeSource = ref('')
 const mergeTarget = ref('')
-// T0006 §3.1 — default ON keeps the pre-existing always-push behavior.
-const mergePush = ref(true)
+// 0655 — local-only merge is the safe default; the operator opts into remote push.
+const mergePush = ref(false)
 const deleteTarget = ref('')
 const mergeResult = ref<{
   source: string; target: string; pushed?: boolean; code?: string; message?: string

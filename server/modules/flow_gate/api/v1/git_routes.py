@@ -584,6 +584,7 @@ def get_group_review_package(
             headers={
                 "Content-Disposition": f"attachment; filename=\"{package.filename}\"",
                 "X-Content-Type-Options": "nosniff",
+                "Cache-Control": "no-store",
             },
         )
     except GitServiceError as exc:

@@ -520,7 +520,11 @@ import AppIcon from '@shared/AppIcon.vue'
 import { useToast } from './common/useToast'
 import { useDocTypeStore } from '../stores/docTypeStore'
 import GitFinalizeAxis from './GitFinalizeAxis.vue'
-import type { FinalizeAxes } from '../composables/finalizeAxis'
+import {
+  actionOfPosition,
+  positionOfAction,
+  type FinalizeAxes,
+} from '../composables/finalizeAxis'
 import { useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import { describeTr2Error } from './documents/tr2State'
 
@@ -547,6 +551,8 @@ const props = defineProps<{
   nextStepCode?: string
   reviewRequestLabel?: string
   docType?: string
+  /** 0642: TR2 gate admission fingerprint from the read model currently shown to the user. */
+  commandAdmissionFingerprint?: string | null
   /** D031: whether the "proceed to next step" action is available (false = show button disabled). */
   canNextAction?: boolean
   /** Latest test run status for TS -> TSR first-run action-bar mode. null means never run. */
@@ -574,6 +580,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'approve': [nextStatus?: string | null]
+  'tr2-stale': []
   'reject': []
   'open-mention-dialog': [payload: { docId: string; projectId: string; groupId: string; docRef: string }]
   'copy-rework-mention': [payload: { docId: string; projectId: string; groupId: string; docRef: string }]
@@ -707,7 +714,18 @@ async function fetchGitFin() {
     return
   }
   gitFin.value = state
-  gitNormalChoice.value = state.default_action || 'wait'
+  const defaultAction = state.default_action || 'wait'
+  if (state.action_axes) {
+    const { scope } = positionOfAction(state.action_axes, defaultAction)
+    gitNormalChoice.value = actionOfPosition(state.action_axes, scope, false, defaultAction)
+  } else {
+    const noPushLegacy: Record<string, string> = {
+      merge: 'merge_only',
+      commit_push: 'commit_only',
+      push: 'wait',
+    }
+    gitNormalChoice.value = noPushLegacy[defaultAction] || defaultAction
+  }
   gitArchiveSelected.value = false
   gitAuxOpen.value = !!state.aux_choices?.includes(gitNormalChoice.value)
   // T0016 §4.1 — the branch catalog / merge-target suggestion is a separate,
@@ -1172,6 +1190,22 @@ async function doApprove() {
     // it before approving and runs the finalize after — a git failure surfaces as
     // { git: { ok: false } } at HTTP 200 without reverting the approval.
     const body: Record<string, unknown> = { doc_id: props.docId, comment: null }
+    if (props.docType === 'TR2') {
+      let fingerprint = props.commandAdmissionFingerprint ?? null
+      if (!fingerprint) {
+        try {
+          const latest = await getRequest<any>(`/api/v1/documents/${encodeURIComponent(props.docId)}/tr2`)
+          fingerprint = latest.data?.gate_admission?.fingerprint ?? null
+        } catch {
+          fingerprint = null
+        }
+      }
+      if (!fingerprint) {
+        showToast(t('main.tr2_body.readiness.unavailable'), 'danger')
+        return
+      }
+      body.expected_command_admission_fingerprint = fingerprint
+    }
     if (showGitFinalizeBlock.value && (gitArchiveSelected.value || gitNormalChoice.value)) {
       body.git_action = gitArchiveSelected.value ? 'stash' : gitNormalChoice.value
       if (!gitArchiveSelected.value && gitActionMerges.value && gitTargetBranch.value) {
@@ -1289,6 +1323,9 @@ async function doApprove() {
     const detail = typeof code === 'string' && code.startsWith('tr2_')
       ? describeTr2Error(e, t, te).text
       : (e?.response?.data?.detail ?? e?.response?.data?.error?.message ?? e)
+    if (props.docType === 'TR2' && code === 'tr2_spec_changed') {
+      emit('tr2-stale')
+    }
     if (sentGitAction) {
       // 0607 T0004 §3.6 — see settleGitApproval. No new approve is sent from here.
       const settled = await settleGitApproval(generation)

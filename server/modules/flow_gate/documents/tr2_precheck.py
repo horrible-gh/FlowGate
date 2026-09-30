@@ -15,6 +15,7 @@ from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import git_integration as db_git
 from modules.flow_gate.db import workflow_sequences as db_wfseq
 from modules.flow_gate.documents import tr2_service as tr2
+from modules.flow_gate.documents import tr2_command_admission as admission
 from modules.flow_gate.documents.tr2_apply_adapter import adapter
 from modules.flow_gate.services import git_service, path_exclusion_rules
 from modules.flow_gate.workflow.transition_rules import get_doc_review_rule
@@ -206,8 +207,8 @@ def readiness(doc: dict, body: dict) -> dict:
             raise tr2.Tr2ValidationError("tr2_workflow_conflict", "workflow_head")
         tr2.verify_pair(doc["doc_id"], body)
         _committable(spec)
-        from modules.flow_gate.documents.tr2_approval_service import _check_commands
-        _check_commands(doc, spec)
+        admission.require_admitted(admission.classify_gate_commands(
+            doc["project_id"], spec["gate"]["commands"]))
         root = _approval_root(doc["project_id"], doc["group_id"])
         evaluation = adapter.evaluate(spec, root, baseline=body.get("baseline_fingerprint"))
         result["edits"] = evaluation["edits"]

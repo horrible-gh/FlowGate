@@ -357,7 +357,8 @@ def test_readiness_names_what_approval_would_refuse(env):
         "tr2_edit_not_applicable", "file_exists")
 
     state = put(edit_spec(gate={"commands": ["python -c \"print(1)\""], "apply": False}), 3)
-    assert state["readiness"]["code"] == "tr2_validation_command_unapproved"
+    assert state["readiness"]["ready"] is True
+    assert state["gate_admission"]["candidate_count"] == 1
 
     state = put(edit_spec(), 4)
     assert state["readiness"]["ready"] is True

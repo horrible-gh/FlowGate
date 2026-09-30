@@ -712,6 +712,7 @@ def transition_document_review(
     mutation_principal: Any = None,
     expected_revision: int | None = None,
     request_key: str | None = None,
+    expected_command_admission_fingerprint: str | None = None,
 ) -> dict:
     """Transition the document review state (doc_review_status column).
 
@@ -737,6 +738,7 @@ def transition_document_review(
             doc_id=doc_id, actor_user_id=actor_user_id,
             user_permissions=user_permissions, mutation_principal=mutation_principal,
             expected_revision=expected_revision, request_key=request_key, locale=locale,
+            expected_command_admission_fingerprint=expected_command_admission_fingerprint,
         )
 
     current_review_status = doc.get("doc_review_status") or ""

@@ -1444,6 +1444,69 @@ describe('approval presave gate', () => {
     expect(postRequest).toHaveBeenCalledTimes(1)
     expect(wrapper.emitted('approve')?.[0]).toEqual(['approved'])
   })
+
+  it('sends the visible TR2 command-admission fingerprint with approval', async () => {
+    const wrapper = mount(ReviewActionBar, {
+      props: {
+        ...reviewProps,
+        docId: 'flowgate.default.0642.0009-TR2',
+        docRef: 'flowgate.default.0642.0009-TR2',
+        docType: 'TR2',
+        commandAdmissionFingerprint: 'admission-fp-0642',
+      },
+      global: { plugins: [i18n] },
+    })
+    await (wrapper.vm as any).doApprove()
+    expect(postRequest).toHaveBeenCalledWith(
+      '/api/v1/documents/review_transitions/approve',
+      expect.objectContaining({
+        doc_id: 'flowgate.default.0642.0009-TR2',
+        expected_command_admission_fingerprint: 'admission-fp-0642',
+      }),
+    )
+  })
+
+  it('fails closed when a TR2 admission fingerprint cannot be obtained', async () => {
+    getRequest.mockRejectedValueOnce(new Error('read failed'))
+    const wrapper = mount(ReviewActionBar, {
+      props: {
+        ...reviewProps,
+        docId: 'flowgate.default.0642.0009-TR2',
+        docRef: 'flowgate.default.0642.0009-TR2',
+        docType: 'TR2',
+        commandAdmissionFingerprint: null,
+      },
+      global: { plugins: [i18n] },
+    })
+    postRequest.mockClear()
+    await (wrapper.vm as any).doApprove()
+    expect(postRequest).not.toHaveBeenCalled()
+  })
+
+  it('emits tr2-stale when admission fingerprint CAS is rejected', async () => {
+    postRequest.mockRejectedValueOnce({
+      response: {
+        status: 409,
+        data: {
+          code: 'tr2_spec_changed',
+          details: { loc: 'command_admission_fingerprint', current_revision_no: 2 },
+        },
+      },
+    })
+    getRequest.mockResolvedValue({ data: { doc_review_status: 'pending_review' } })
+    const wrapper = mount(ReviewActionBar, {
+      props: {
+        ...reviewProps,
+        docId: 'flowgate.default.0642.0009-TR2',
+        docRef: 'flowgate.default.0642.0009-TR2',
+        docType: 'TR2',
+        commandAdmissionFingerprint: 'stale-fp',
+      },
+      global: { plugins: [i18n] },
+    })
+    await (wrapper.vm as any).doApprove()
+    expect(wrapper.emitted('tr2-stale')).toHaveLength(1)
+  })
 })
 // flowgate.default.0594 T0016 §8.1 C8 — the finalize-approval dialog's merge target
 // selector must show the project's current (non-base) merge target correctly, and the

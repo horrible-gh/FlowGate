@@ -181,6 +181,7 @@
         "get_by_id": "SELECT id, project, command, description, origin, status, last_success_at, verified_os, created_at, updated_at FROM project_test_commands WHERE project = ? AND id = ?",
         "find_by_command": "SELECT id, project, command, description, origin, status, last_success_at, verified_os, created_at, updated_at FROM project_test_commands WHERE project = ? AND command = ?",
         "insert": "INSERT INTO project_test_commands (project, command, description, origin, status, last_success_at, verified_os, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        "update_row": "UPDATE project_test_commands SET command = ?, description = ?, origin = ?, status = ?, last_success_at = ?, verified_os = ?, updated_at = ? WHERE project = ? AND id = ?"
+        "update_row": "UPDATE project_test_commands SET command = ?, description = ?, origin = ?, status = ?, last_success_at = ?, verified_os = ?, updated_at = ? WHERE project = ? AND id = ?",
+        "update_success_if_active": "UPDATE project_test_commands SET last_success_at = ?, verified_os = ?, updated_at = ? WHERE project = ? AND id = ? AND status = 'active'"
     }
 }

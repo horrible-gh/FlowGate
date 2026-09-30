@@ -69,6 +69,13 @@ def insert(
         return s._fetch_one(store._sql("test_commands.get_by_id"), [project, new_id])
 
 
+def update_success_if_active(project: str, command_id: int, when: str, verified_os: str) -> None:
+    """Record a pass only while the row remains active; never alter its origin/status."""
+    store = get_store()
+    store._execute(store._sql("test_commands.update_success_if_active"),
+                   [when, verified_os, now_iso(), project, command_id])
+
+
 def update_row(project: str, command_id: int, updates: dict) -> Optional[dict]:
     """Read-modify-write the mutable column set; return the updated row, or None if absent.
 

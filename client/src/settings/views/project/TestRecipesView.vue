@@ -141,7 +141,7 @@ const projectId = computed(() => settings.currentProjectId);
 
 // origin/updated_by vocabularies (P0003): seed·auto·auto-learn·worker·manual. Unknown values
 // pass through verbatim so a new origin never renders as a broken i18n key.
-const KNOWN_ORIGINS = new Set(['seed', 'auto', 'auto-learn', 'worker', 'manual']);
+const KNOWN_ORIGINS = new Set(['seed', 'auto', 'auto-learn', 'worker', 'manual', 'tr2']);
 function originLabel(origin) {
   if (!origin) return '—';
   return KNOWN_ORIGINS.has(origin)
@@ -151,6 +151,7 @@ function originLabel(origin) {
 function originClass(origin) {
   if (origin === 'seed') return 'badge-blue';
   if (origin === 'auto' || origin === 'auto-learn') return 'badge-green';
+  if (origin === 'tr2') return 'badge-blue';
   return 'badge-gray';
 }
 function updatedByLabel(who) {
