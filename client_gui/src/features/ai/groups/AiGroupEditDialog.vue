@@ -61,7 +61,7 @@
 
 <script setup lang="ts">
 // Name + optional description. Used for a team (AI Group) and for one of its custom roles
-// (plus the criteria the role relies on). Members, roles and runtime slots are all optional.
+// (plus the criteria the role relies on). Members and roles are both optional.
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'

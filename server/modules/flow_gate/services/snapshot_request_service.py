@@ -53,7 +53,7 @@ def request_data_for_run(run,token,body):
  actual_name=evidence.get("actual_provider_name")
  if not actual_name and actual_id:
   try:
-   actual_name=(db_ai_providers.get_row(run.get("project_id"),actual_id) or {}).get("name")
+   actual_name=(db_ai_providers.get_row(run.get("project_id"),actual_id) or db_ai_providers.get_system_row(actual_id) or {}).get("name")
   except Exception:
    pass
  data.update({

@@ -9,6 +9,9 @@ connection meaning: result = responded | no_response.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 import re
 import threading
 from dataclasses import dataclass
@@ -18,9 +21,15 @@ from modules.flow_gate.db import ai_evaluation_runs as repo
 from modules.flow_gate.db import ai_providers
 from modules.flow_gate.services.ai_invoke import provider_api, provider_cli
 from modules.flow_gate.services.ai_invoke import runtime as probe
-from modules.flow_gate.services.ai_evaluation_fingerprint import FINGERPRINT_VERSION, subject_fingerprint
+from modules.flow_gate.services.ai_evaluation_fingerprint import (
+    FINGERPRINT_VERSION,
+    FingerprintKeyError,
+    subject_fingerprint,
+)
 from modules.flow_gate.settings import ai_settings_service
 from modules.flow_gate.utils.api_key_crypto import ApiKeyCryptoError
+
+logger = logging.getLogger(__name__)
 
 BASELINE = ("Reply with one short sentence confirming that you can answer this harmless test. "
             "Do not call tools, modify files, run commands, or disclose secrets.")
@@ -57,9 +66,38 @@ def _effective(project_id: str) -> dict:
     return ai_settings_service.resolve_effective(project_id)
 
 
-def resolve_subject(project_id: str, provider_id: str, *, error=ConnectionTestError) -> ConnectionSubject:
+def _keyless_fingerprint(project_id: str, provider_id: str, scope: str, provider: dict) -> str:
+    """Staleness fingerprint without the credential digest, used when the HMAC key is unusable."""
+    exec_type = provider.get("exec_type")
+    data = {
+        "fingerprint_version": FINGERPRINT_VERSION, "keyless": True,
+        "project_id": project_id, "provider_id": provider_id, "provider_scope": scope,
+        "exec_type": exec_type, "kind": provider.get("kind"),
+        "cli_command": provider.get("cli_command") if exec_type == "cli" else None,
+        "api_base_url": provider.get("api_base_url") if exec_type == "api" else None,
+        "api_model": provider.get("api_model") if exec_type == "api" else None,
+    }
+    return hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False,
+                                     separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _fingerprint(project_id: str, provider_id: str, scope: str, provider: dict,
+                 credential: str | None) -> str:
+    try:
+        return subject_fingerprint(project_id=project_id, provider_id=provider_id,
+                                   scope=scope, provider=provider, credential=credential)
+    except FingerprintKeyError as exc:
+        # A missing or rotated HMAC key must not block the connection test itself; only the
+        # credential stops taking part in the staleness check until the key is restored.
+        logger.warning("AI connection fingerprint key unavailable, using keyless fingerprint: %s", exc)
+        return _keyless_fingerprint(project_id, provider_id, scope, provider)
+
+
+def resolve_subject(project_id: str, provider_id: str, *, error=ConnectionTestError,
+                    fingerprint: bool = True) -> ConnectionSubject:
     """Freeze one effective AI connection (config + credential) for a run-less execution.
-    Shared with AI Evaluation, which resolves its target and judge the same way."""
+    Shared with AI Evaluation, which resolves its target and judge the same way but needs no
+    staleness fingerprint (fingerprint=False)."""
     view = _effective(project_id)
     scope = view["source"]
     if scope == "disabled":
@@ -85,12 +123,11 @@ def resolve_subject(project_id: str, provider_id: str, *, error=ConnectionTestEr
             raise error("provider_unavailable", 409) from exc
         if not credential:
             raise error("provider_unavailable", 409)
-    fingerprint = subject_fingerprint(project_id=project_id, provider_id=provider_id,
-        scope=scope, provider=provider, credential=credential)
+    digest = _fingerprint(project_id, provider_id, scope, provider, credential) if fingerprint else ""
     return ConnectionSubject(project_id, provider_id, scope, provider["name"],
         provider["exec_type"], provider["kind"], provider.get("cli_command"),
         provider.get("api_base_url"), provider.get("api_model"), credential,
-        fingerprint, FINGERPRINT_VERSION)
+        digest, FINGERPRINT_VERSION)
 
 
 def still_effective(subject: ConnectionSubject) -> bool:

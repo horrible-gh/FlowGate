@@ -1,6 +1,8 @@
 // AI API adapter (WP0002 / T0003, flowgate.v02.0017 T0002). Reuses `@shared/api` transport.
 
 import { deleteRequest, extractApiErrorMessage, getRequest, patchRequest, postRequest, putRequest } from '@shared/api'
+import { normalizeApiError } from '@shared/apiErrors'
+import i18n from '@shared/i18n'
 import type {
   AiConnectionTest,
   AiConnectionTestCurrent,
@@ -8,26 +10,39 @@ import type {
   AiEvaluationHistoryResponse,
   AiEvaluationSet,
   AiEvaluationSetInput,
-  AiExecutionPolicy,
   AiGroup,
   AiGroupInput,
   AiGroupRoleInput,
-  AiGroupRuntimeBindingInput,
   AiGroupStateInput,
   AiGroupUpdateInput,
   AiOverviewData,
-  AiSettingsMode,
-  ProjectAiSettings,
+  AiProbeResult,
+  ProjectAiPolicy,
+  ProjectAiPolicyPatch,
   ProviderItem,
+  SystemAiSettings,
+  UserAiSettings,
 } from './types'
 
 const project = (projectId: string) => `/api/v1/projects/${encodeURIComponent(projectId)}`
+
+// The AI routes answer {"error": {"code"}}; show the localized reason for a known code
+// (gui.ai.errors.<code>) instead of one generic "failed" line, and keep an unknown code visible.
+function aiErrorMessage(error: unknown, fallback: string): string {
+  const { code, network } = normalizeApiError(error)
+  if (!network && code) {
+    const key = `gui.ai.errors.${code}`
+    if (i18n.global.te(key)) return String(i18n.global.t(key))
+    return `${extractApiErrorMessage(error, fallback)} (${code})`
+  }
+  return extractApiErrorMessage(error, fallback)
+}
 
 async function call<T>(request: () => Promise<{ data: T }>, fallback: string): Promise<T> {
   try {
     return (await request()).data
   } catch (error) {
-    throw new Error(extractApiErrorMessage(error, fallback))
+    throw new Error(aiErrorMessage(error, fallback))
   }
 }
 
@@ -49,26 +64,53 @@ export async function listSequenceSteps(docRef: string): Promise<SequenceStep[]>
   return data.items ?? []
 }
 
-// ── AI connections (project AI settings) ─────────────────────────────────────
+// ── Project AI policy ─────────────────────────────────────────────────────────
 
-export async function fetchProjectAiSettings(projectId: string): Promise<ProjectAiSettings> {
-  return call(() => getRequest<ProjectAiSettings>(`${project(projectId)}/ai-settings`), 'Failed to load AI settings.')
+export async function fetchProjectAiPolicy(projectId: string): Promise<ProjectAiPolicy> {
+  return call(() => getRequest<ProjectAiPolicy>(`${project(projectId)}/ai-policy`), 'Failed to load the AI policy.')
 }
 
-export interface SaveAiSettingsInput {
-  mode: AiSettingsMode
-  providers?: ProviderItem[] | null
-  default_provider_id?: string | null
+export async function saveProjectAiPolicy(projectId: string, patch: ProjectAiPolicyPatch): Promise<ProjectAiPolicy> {
+  return call(() => putRequest<ProjectAiPolicy>(`${project(projectId)}/ai-policy`, patch), 'Failed to save the AI policy.')
 }
 
-export async function saveProjectAiSettings(projectId: string, input: SaveAiSettingsInput): Promise<ProjectAiSettings> {
-  return call(() => putRequest<ProjectAiSettings>(`${project(projectId)}/ai-settings`, input), 'Failed to save AI settings.')
+// ── Owned AI lists: 시스템 AI (administrator) / 내 AI (the signed-in user) ────────
+
+export async function fetchSystemAi(): Promise<SystemAiSettings> {
+  return call(() => getRequest<SystemAiSettings>('/api/v1/system/ai-settings'), 'Failed to load system AI.')
+}
+
+export async function saveSystemAi(providers: ProviderItem[], defaultProviderId: string | null): Promise<SystemAiSettings> {
+  return call(
+    () => putRequest<SystemAiSettings>('/api/v1/system/ai-settings', { providers, default_provider_id: defaultProviderId }),
+    'Failed to save system AI.',
+  )
+}
+
+export async function probeSystemAi(provider: ProviderItem): Promise<AiProbeResult> {
+  return call(
+    () => postRequest<AiProbeResult>('/api/v1/system/ai-settings/test-provider', {
+      exec_type: provider.exec_type,
+      kind: provider.kind,
+      cli_command: provider.cli_command ?? null,
+      api_base_url: provider.api_base_url ?? null,
+    }),
+    String(i18n.global.t('gui.ai.providers.test_start_failed')),
+  )
+}
+
+export async function fetchMyAi(): Promise<UserAiSettings> {
+  return call(() => getRequest<UserAiSettings>('/api/v1/me/ai-providers'), 'Failed to load my AI.')
+}
+
+export async function saveMyAi(providers: ProviderItem[]): Promise<UserAiSettings> {
+  return call(() => putRequest<UserAiSettings>('/api/v1/me/ai-providers', { providers }), 'Failed to save my AI.')
 }
 
 export async function startConnectionTest(projectId: string, providerId: string): Promise<AiConnectionTest> {
   return call(
     () => postRequest<AiConnectionTest>(`${project(projectId)}/ai-connection-tests`, { provider_id: providerId }),
-    'Failed to start the connection test.',
+    String(i18n.global.t('gui.ai.providers.test_start_failed')),
   )
 }
 
@@ -79,11 +121,7 @@ export async function fetchCurrentConnectionTest(projectId: string, providerId: 
   )
 }
 
-// Repeat-count ceiling: read per project, saved as the system setting (system.settings.manage).
-export async function fetchExecutionPolicy(projectId: string): Promise<AiExecutionPolicy> {
-  return call(() => getRequest<AiExecutionPolicy>(`${project(projectId)}/ai-execution-policy`), 'Failed to load the repeat limit.')
-}
-
+// Repeat-count ceiling: the system setting ai_repeat_count_max (system.settings.manage).
 export async function saveRepeatCountMax(value: number): Promise<void> {
   await call(
     () => patchRequest('/api/v1/system/settings', { updates: { ai_repeat_count_max: String(value) } }),
@@ -108,7 +146,7 @@ export async function startEvaluation(projectId: string, input: StartEvaluationI
       evaluation_set_id: input.evaluationSetId || null,
       locale: input.locale ?? null,
     }),
-    'Failed to start the evaluation.',
+    String(i18n.global.t('gui.ai.evaluation.start_failed')),
   )
 }
 
@@ -256,16 +294,5 @@ export async function deleteAiGroupRole(projectId: string, groupId: string, role
   return call(
     () => deleteRequest<AiGroup>(`${group(projectId, groupId)}/roles/${encodeURIComponent(roleId)}`),
     'Failed to delete the role.',
-  )
-}
-
-export async function setAiGroupRuntimeBinding(
-  projectId: string,
-  groupId: string,
-  input: AiGroupRuntimeBindingInput,
-): Promise<AiGroup> {
-  return call(
-    () => putRequest<AiGroup>(`${group(projectId, groupId)}/runtime-binding`, input),
-    'Failed to save the runtime slots.',
   )
 }

@@ -13,6 +13,14 @@ utils.api_key_crypto (AES-256-GCM, "enc:v1:" prefix) immediately before the colu
 every read decrypts here, so the service layer above keeps working in plaintext and the
 value still never reaches an HTTP response (L0004 §2.3). A row whose ciphertext does not
 decrypt is flagged api_key_unreadable instead of being read back as a plaintext key.
+
+Owner scope (flowgate.v02.0017 TR0003 rev7, migration 131): a row is owned by the system
+(owner_scope='system', managed by an administrator) or by one user (owner_scope='user',
+owner_user_id). Projects no longer own rows; they keep a usage policy
+(db/project_ai_policies.py). The "global" scope below therefore means SYSTEM rows only: a
+user's own AI never appears in list_scope(None)/get_row(None, ...)/get_secret(), so no server
+execution path can pick it up (it runs on its owner's Agent, a follow-up execution layer).
+The project_id branch stays for pre-131 callers and reads nothing after the migration.
 """
 from __future__ import annotations
 
@@ -42,14 +50,23 @@ KEEP_STORED_SECRET = _KeepStoredSecret()
 
 _COLUMNS = (
     "provider_id, project_id, name, exec_type, kind, enabled, cli_command, "
-    "api_base_url, api_model, api_key, sort_order, created_at, updated_at"
+    "api_base_url, api_model, api_key, sort_order, created_at, updated_at, "
+    "owner_scope, owner_user_id, project_access"
 )
+
+OWNER_SYSTEM = "system"
+OWNER_USER = "user"
+PROJECT_ACCESS = ("all", "listed")
 
 
 def _scope_where(project_id: Optional[str]) -> tuple[str, list]:
     if project_id is None:
-        return "project_id IS NULL", []
+        return "project_id IS NULL AND owner_scope = 'system'", []
     return "project_id = ?", [project_id]
+
+
+def _user_where(owner_user_id: str) -> tuple[str, list]:
+    return "project_id IS NULL AND owner_scope = 'user' AND owner_user_id = ?", [owner_user_id]
 
 
 def _decrypt_row(row: Optional[dict]) -> Optional[dict]:
@@ -72,18 +89,26 @@ def _decrypt_row(row: Optional[dict]) -> Optional[dict]:
     return row
 
 
-def _list_scope_stored(project_id: Optional[str]) -> list[dict]:
-    """One scope's rows exactly as stored — api_key still ciphertext."""
-    where, params = _scope_where(project_id)
+def _list_where_stored(where: str, params: list) -> list[dict]:
     return get_store()._fetch_all(
         f"SELECT {_COLUMNS} FROM ai_providers WHERE {where} ORDER BY sort_order, provider_id",
         params,
     )
 
 
+def _list_scope_stored(project_id: Optional[str]) -> list[dict]:
+    """One scope's rows exactly as stored — api_key still ciphertext."""
+    return _list_where_stored(*_scope_where(project_id))
+
+
 def list_scope(project_id: Optional[str]) -> list[dict]:
     """All rows of one scope in chain order (enabled or not — callers filter)."""
     return [_decrypt_row(r) for r in _list_scope_stored(project_id)]
+
+
+def list_user(owner_user_id: str) -> list[dict]:
+    """One user's own AI in their order. Only the owner's routes may call this."""
+    return [_decrypt_row(r) for r in _list_where_stored(*_user_where(owner_user_id))]
 
 
 def _get_row_stored(project_id: Optional[str], provider_id: str) -> Optional[dict]:
@@ -98,6 +123,12 @@ def get_row(project_id: Optional[str], provider_id: str) -> Optional[dict]:
     return _decrypt_row(_get_row_stored(project_id, provider_id))
 
 
+def get_system_row(provider_id: str) -> Optional[dict]:
+    """A system row by id, whatever scope the caller used to know it by (pre-131 runs kept
+    chain_source='project' for rows that are system rows now)."""
+    return get_row(None, provider_id)
+
+
 def get_secret(project_id: Optional[str], provider_id: str) -> Optional[str]:
     """Raw api_key for the follow-up execution module (internal use only — never
     call from an HTTP serialization path; L0004 §2.3).
@@ -106,7 +137,10 @@ def get_secret(project_id: Optional[str], provider_id: str) -> Optional[str]:
     cannot read its own key must fail loudly (ApiKeyCryptoError) rather than start as
     if no key had ever been configured.
     """
-    row = _get_row_stored(project_id, provider_id)
+    # provider_id is the table's PK: the scope argument only mattered while projects owned
+    # rows. A user's own AI is never readable here (it does not run on the server).
+    del project_id
+    row = _get_row_stored(None, provider_id)
     return _crypto.decrypt_api_key(row.get("api_key")) if row else None
 
 
@@ -138,46 +172,11 @@ def replace_scope(
     transaction (DB0005 §4).
     """
     store = get_store()
-    now = now_iso()
-    where, params = _scope_where(project_id)
-    stored_keys = {
-        r["provider_id"]: r.get("api_key") for r in _list_scope_stored(project_id)
-    }
     with store.transaction() as s:
-        keep = [r["provider_id"] for r in rows]
-        if keep:
-            placeholders = ", ".join("?" for _ in keep)
-            s._execute(
-                f"DELETE FROM ai_providers WHERE {where} AND provider_id NOT IN ({placeholders})",
-                params + keep,
-            )
-        else:
-            s._execute(f"DELETE FROM ai_providers WHERE {where}", params)
-
-        for r in rows:
-            if r["provider_id"] in existing_ids:
-                s._execute(
-                    "UPDATE ai_providers SET name = ?, exec_type = ?, kind = ?, enabled = ?, "
-                    "cli_command = ?, api_base_url = ?, api_model = ?, api_key = ?, "
-                    "sort_order = ?, updated_at = ? WHERE provider_id = ?",
-                    [
-                        r["name"], r["exec_type"], r["kind"], r["enabled"],
-                        r["cli_command"], r["api_base_url"], r["api_model"],
-                        _key_for_storage(r, stored_keys),
-                        r["sort_order"], now, r["provider_id"],
-                    ],
-                )
-            else:
-                s._execute(
-                    "INSERT INTO ai_providers (provider_id, project_id, name, exec_type, kind, "
-                    "enabled, cli_command, api_base_url, api_model, api_key, sort_order, "
-                    "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    [
-                        r["provider_id"], project_id, r["name"], r["exec_type"], r["kind"],
-                        r["enabled"], r["cli_command"], r["api_base_url"], r["api_model"],
-                        _key_for_storage(r, stored_keys), r["sort_order"], now, now,
-                    ],
-                )
+        _replace_rows(s, _scope_where(project_id), rows, existing_ids,
+                      project_id=project_id,
+                      owner_scope=OWNER_SYSTEM if project_id is None else None,
+                      owner_user_id=None)
 
         if project_id is None:
             # 0148 precedent: set_value's upsert already table-qualifies the existing-row
@@ -191,6 +190,68 @@ def replace_scope(
             )
         else:
             upsert_project_ai_state(project_id, mode, default_provider_id)
+
+
+def replace_user_scope(owner_user_id: str, rows: list[dict], existing_ids: set[str]) -> None:
+    """replace_scope() for one user's own AI list (same merge and encryption rules)."""
+    with get_store().transaction() as s:
+        _replace_rows(s, _user_where(owner_user_id), rows, existing_ids,
+                      project_id=None, owner_scope=OWNER_USER, owner_user_id=owner_user_id)
+
+
+def _replace_rows(s, scope: tuple[str, list], rows: list[dict], existing_ids: set[str], *,
+                  project_id: Optional[str], owner_scope: Optional[str],
+                  owner_user_id: Optional[str]) -> None:
+    """Delete-missing -> update/insert inside the caller's transaction. Every statement is
+    fenced by the scope's WHERE, so one owner's save can never touch another owner's row."""
+    now = now_iso()
+    where, params = scope
+    stored_keys = {r["provider_id"]: r.get("api_key") for r in _list_where_stored(where, params)}
+    keep = [r["provider_id"] for r in rows]
+    if keep:
+        placeholders = ", ".join("?" for _ in keep)
+        s._execute(
+            f"DELETE FROM ai_providers WHERE {where} AND provider_id NOT IN ({placeholders})",
+            params + keep,
+        )
+    else:
+        s._execute(f"DELETE FROM ai_providers WHERE {where}", params)
+
+    for r in rows:
+        # project_access only means something on system rows; a caller that does not
+        # carry it keeps what is stored (UPDATE) or starts shared (INSERT).
+        access = r.get("project_access") if owner_scope == OWNER_SYSTEM else None
+        if r["provider_id"] in existing_ids:
+            s._execute(
+                "UPDATE ai_providers SET name = ?, exec_type = ?, kind = ?, enabled = ?, "
+                "cli_command = ?, api_base_url = ?, api_model = ?, api_key = ?, "
+                "sort_order = ?, project_access = COALESCE(?, project_access), updated_at = ? "
+                f"WHERE provider_id = ? AND {where}",
+                [
+                    r["name"], r["exec_type"], r["kind"], r["enabled"],
+                    r["cli_command"], r["api_base_url"], r["api_model"],
+                    _key_for_storage(r, stored_keys),
+                    r["sort_order"], access, now, r["provider_id"],
+                ] + params,
+            )
+        else:
+            s._execute(
+                "INSERT INTO ai_providers (provider_id, project_id, name, exec_type, kind, "
+                "enabled, cli_command, api_base_url, api_model, api_key, sort_order, "
+                "created_at, updated_at, owner_scope, owner_user_id, project_access) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    r["provider_id"], project_id, r["name"], r["exec_type"], r["kind"],
+                    r["enabled"], r["cli_command"], r["api_base_url"], r["api_model"],
+                    _key_for_storage(r, stored_keys), r["sort_order"], now, now,
+                    owner_scope or OWNER_SYSTEM, owner_user_id, access or "all",
+                ],
+            )
+
+
+def all_provider_ids() -> set[str]:
+    """Every provider_id in the table (ids are global, whoever owns the row)."""
+    return {r["provider_id"] for r in get_store()._fetch_all("SELECT provider_id FROM ai_providers", [])}
 
 
 def encrypt_plaintext_api_keys() -> int:

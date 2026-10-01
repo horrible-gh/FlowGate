@@ -168,8 +168,8 @@ def start(project_id: str, target_id: str, judge_id: str, created_by: str | None
             raise EvaluationError("evaluation_set_not_found", 404)
         evaluation_set = {**evaluation_set, "constraints": _set_constraints(evaluation_set)}
     # Both connections are frozen before 202 and used unchanged by the worker.
-    target = connection.resolve_subject(project_id, target_id, error=EvaluationError)
-    judge = connection.resolve_subject(project_id, judge_id, error=EvaluationError)
+    target = connection.resolve_subject(project_id, target_id, error=EvaluationError, fingerprint=False)
+    judge = connection.resolve_subject(project_id, judge_id, error=EvaluationError, fingerprint=False)
     try:
         row = repo.create_pending(project_id=project_id, target_id=target_id, target_name=target.name,
                                   judge_id=judge_id, judge_name=judge.name, created_by=created_by,

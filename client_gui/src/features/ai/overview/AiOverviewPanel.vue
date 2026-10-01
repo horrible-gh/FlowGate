@@ -18,7 +18,7 @@
             <div class="step-title"><span class="num">1</span> {{ t('gui.ai.overview.step1_title') }}</div>
           </div>
           <div class="step-desc">{{ t('gui.ai.overview.step1_desc') }}</div>
-          <button class="step-action" type="button" @click="emit('navigate', 'providers')">
+          <button class="step-action" type="button" @click="emit('navigate', 'policy')">
             {{ t('gui.ai.overview.step1_action') }} <span>→</span>
           </button>
         </article>
@@ -72,7 +72,7 @@
             <div class="panel-title">{{ t('gui.ai.overview.connections_title') }}</div>
             <div class="panel-sub">{{ connectionsSummary }}</div>
           </div>
-          <button class="panel-action" type="button" @click="emit('navigate', 'providers')">
+          <button class="panel-action" type="button" @click="emit('navigate', 'policy')">
             {{ t('gui.ai.overview.action_manage') }}
           </button>
         </div>
@@ -87,7 +87,7 @@
             v-for="item in connections"
             :key="item.id"
             class="provider-row clickable"
-            @click="emit('navigate', 'providers')"
+            @click="emit('navigate', 'policy')"
           >
             <div class="avatar-round" :class="getAvatarClass(item.name, item.kind)">{{ getInitials(item.name) }}</div>
             <div class="provider-info">
@@ -112,11 +112,8 @@
             <div class="panel-title">{{ t('gui.ai.overview.evaluation_title') }}</div>
             <div class="panel-sub">{{ evaluationSummary }}</div>
           </div>
-          <button class="panel-action" type="button" @click="emit('navigate', 'evaluation')">
-            <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
-              <path d="m8 5 11 7-11 7z" />
-            </svg>
-            {{ t('gui.ai.overview.action_run_eval') }}
+          <button class="panel-action" type="button" @click="emit('registerEvaluation')">
+            ＋ {{ t('gui.ai.overview.action_register_eval') }}
           </button>
         </div>
         <div class="panel-body">
@@ -256,7 +253,8 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  navigate: [tab: 'providers' | 'evaluation' | 'groups']
+  navigate: [tab: 'policy' | 'evaluation' | 'groups']
+  registerEvaluation: []
 }>()
 
 const { t } = useI18n()
@@ -269,16 +267,16 @@ function hasSectionError(section: AiOverviewError['section']): boolean {
   return !!props.overview?.errors?.some((e) => e.section === section)
 }
 
-function modeLabel(mode: AiOverviewConnections['mode']): string {
-  if (mode === 'inherit') return t('gui.ai.providers.mode_inherit')
-  if (mode === 'disabled') return t('gui.ai.providers.mode_disabled')
-  return t('gui.ai.providers.mode_custom')
+function policyLabel(data: AiOverviewConnections): string {
+  if (!data.ai_enabled) return t('gui.ai.providers.mode_disabled')
+  const scope = data.system_ai_scope === 'selected' ? t('gui.ai.policy.scope_selected') : t('gui.ai.policy.scope_all')
+  return data.allow_user_ai ? `${scope} · ${t('gui.ai.policy.allow_user_ai')}` : scope
 }
 
 const connectionsSummary = computed(() => {
   const data = props.overview?.connections
   if (!data) return t('gui.ai.overview.connections_desc')
-  return `${t('gui.ai.overview.connections_summary', { usable: data.usable, total: data.total })} · ${modeLabel(data.mode)}`
+  return `${t('gui.ai.overview.connections_summary', { usable: data.usable, total: data.total })} · ${policyLabel(data)}`
 })
 
 const evaluationSummary = computed(() => {
@@ -299,7 +297,7 @@ const groupsSummary = computed(() => {
 
 // Project-wide AI off and an individual connection switched off are different states.
 function connectionStatus(item: { enabled: boolean; usable: boolean }): string {
-  if (props.overview?.connections?.mode === 'disabled') return t('gui.ai.providers.project_ai_off')
+  if (props.overview?.connections && !props.overview.connections.ai_enabled) return t('gui.ai.providers.project_ai_off')
   if (item.usable) return t('gui.ai.providers.connection_on')
   return t('gui.ai.providers.connection_off')
 }

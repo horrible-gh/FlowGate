@@ -2,6 +2,11 @@
 
 export type ProviderExecType = 'cli' | 'api'
 
+// system = managed by an administrator, user = one user's own AI (runs on that user's Agent).
+export type AiOwnerScope = 'system' | 'user'
+// all = every project that allows all system AI may use it, listed = only projects that list it.
+export type AiProjectAccess = 'all' | 'listed'
+
 // One AI connection (internally still a "provider"; user-facing wording is "AI 연결").
 export interface ProviderItem {
   id: string
@@ -15,22 +20,70 @@ export interface ProviderItem {
   api_key?: string | null
   api_key_set?: boolean
   api_key_hint?: string | null
+  owner_scope?: AiOwnerScope
+  project_access?: AiProjectAccess
 }
 
-// inherit = use the system settings, custom = project settings, disabled = no AI in this project.
-export type AiSettingsMode = 'inherit' | 'custom' | 'disabled'
-
-export interface ProjectAiSettings {
-  mode: AiSettingsMode
-  providers: ProviderItem[] | null
+// The AI a project can run now (policy applied; only enabled system AI).
+export interface AiEffectiveChain {
+  source: string
+  providers: ProviderItem[]
   default_provider_id: string | null
-  effective: {
-    source: string
-    providers: ProviderItem[]
-    default_provider_id: string | null
-    registered_count: number
-  }
-  catalog?: unknown
+  registered_count: number
+}
+
+// ── Project AI policy (the project owns no AI; it only allows and picks) ────────
+
+// all = every shared system AI (+ listed ones), selected = only the listed system AI.
+export type SystemAiScope = 'all' | 'selected'
+
+export interface PolicyProviderItem extends ProviderItem {
+  allowed: boolean
+}
+
+export interface ProjectAiPolicy {
+  project_id: string
+  ai_enabled: boolean
+  system_ai_scope: SystemAiScope
+  allow_user_ai: boolean
+  default_provider_id: string | null
+  listed_provider_ids: string[]
+  system_providers: PolicyProviderItem[]
+  system_default_provider_id: string | null
+  repeat_count_max: number
+  effective: AiEffectiveChain
+  updated_at: string | null
+}
+
+export interface ProjectAiPolicyPatch {
+  ai_enabled?: boolean
+  system_ai_scope?: SystemAiScope
+  allow_user_ai?: boolean
+  listed_provider_ids?: string[]
+  default_provider_id?: string | null
+}
+
+// ── Owned AI lists (system settings > 시스템 AI, personal settings > 내 AI) ──────
+
+export interface SystemAiSettings {
+  providers: ProviderItem[]
+  default_provider_id: string | null
+  execution_policy?: AiExecutionPolicy
+  updated_at: string | null
+}
+
+export interface UserAiSettings {
+  providers: ProviderItem[]
+  updated_at: string | null
+}
+
+// Launch probe of a system AI's command on the server (not stored).
+export interface AiProbeResult {
+  status: 'ok' | 'launched' | 'command_failed' | 'skipped' | string
+  reason?: string | null
+  message?: string | null
+  exit_code?: number | null
+  stderr_tail?: string
 }
 
 // ── Connection test (isolated baseline probe; not a capability evaluation) ───────
@@ -205,9 +258,6 @@ export interface AiGroupRole {
   member_ids: string[]
 }
 
-export type RuntimeSlot = 'work_executor' | 'reviewer' | 'reworker'
-export const RUNTIME_SLOTS: RuntimeSlot[] = ['work_executor', 'reviewer', 'reworker']
-
 export interface AiGroup {
   ai_group_id: string
   project_id: string
@@ -218,8 +268,6 @@ export interface AiGroup {
   members: AiGroupMember[]
   roles: AiGroupRole[]
   supervisor: (AiConnectionRef & { member_id: string; latest_evaluation?: AiLatestEvaluation | null }) | null
-  // Runtime execution slots used to pre-fill Start. Not the team's roles.
-  runtime_binding: Record<RuntimeSlot, AiConnectionRef | null>
   member_count: number
   role_count: number
   status: 'ok' | 'empty' | 'attention'
@@ -254,12 +302,12 @@ export interface AiExecutionPolicy {
   repeat_count_hard_max: number
 }
 
-export type AiGroupRuntimeBindingInput = Partial<Record<`${RuntimeSlot}_provider_id`, string | null>>
-
 // ── Overview ───────────────────────────────────────────────────────────────────
 
 export interface AiOverviewConnections {
-  mode: AiSettingsMode
+  ai_enabled: boolean
+  system_ai_scope: SystemAiScope
+  allow_user_ai: boolean
   source: string
   total: number
   usable: number

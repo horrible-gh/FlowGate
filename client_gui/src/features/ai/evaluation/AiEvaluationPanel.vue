@@ -2,7 +2,18 @@
   <div class="ai-evaluation-panel">
     <div class="detail-head">
       <div>
-        <div class="page-title">{{ t('gui.ai.evaluation.title') }}</div>
+        <div class="page-title">
+          {{ t('gui.ai.evaluation.title') }}
+          <IconButton
+            class="title-help"
+            :label="t('gui.ai.evaluation.method_title')"
+            :title="t('gui.ai.evaluation.method_title')"
+            size="sm"
+            @click="methodOpen = !methodOpen"
+          >
+            <AiIcon name="help" />
+          </IconButton>
+        </div>
         <div class="page-sub">{{ t('gui.ai.evaluation.subtitle') }}</div>
       </div>
       <div class="detail-actions">
@@ -13,9 +24,8 @@
 
     <div v-if="error" class="panel-error-alert">{{ error }}</div>
 
-    <div class="evaluation-layout">
-      <!-- Evaluation results / history -->
-      <section class="detail-panel">
+    <!-- Evaluation results / history -->
+    <section class="detail-panel">
         <div class="detail-toolbar">
           <label class="detail-search">
             ⌕ <input v-model="searchQuery" :placeholder="t('gui.ai.evaluation.search_placeholder')" />
@@ -23,9 +33,17 @@
           <div class="toolbar-filter">
             <Select v-model="filterTargetId" :options="filterOptions" />
           </div>
-          <Button variant="ghost" size="sm" :disabled="loading" @click="reload()">{{ t('gui.common.refresh') }}</Button>
+          <IconButton
+            :class="{ 'is-spinning': loading }"
+            :label="t('gui.common.refresh')"
+            :title="t('gui.common.refresh')"
+            size="sm"
+            :disabled="loading"
+            @click="reload()"
+          >
+            <AiIcon name="refresh" />
+          </IconButton>
         </div>
-        <div class="detail-hint-row">{{ t('gui.ai.evaluation.score_hint') }}</div>
 
         <div class="evaluation-table">
           <div v-if="loading && !items.length" class="empty-row">{{ t('gui.common.loading') }}</div>
@@ -71,11 +89,19 @@
         <div v-if="nextCursor" class="load-more">
           <Button variant="ghost" size="sm" :loading="loadingMore" @click="loadMore">{{ t('gui.ai.evaluation.load_more') }}</Button>
         </div>
-      </section>
+    </section>
 
-      <!-- How the evaluation works -->
-      <aside class="evaluation-side">
-        <div class="side-title">{{ t('gui.ai.evaluation.method_title') }}</div>
+    <!-- How the evaluation works: on demand, modeless so the list stays usable. -->
+    <ModelessShell
+      :open="methodOpen"
+      :title="t('gui.ai.evaluation.method_title')"
+      :initial-x="methodX"
+      :initial-y="120"
+      :initial-width="340"
+      :initial-height="400"
+      @close="methodOpen = false"
+    >
+      <div class="method-body">
         <p>{{ t('gui.ai.evaluation.method_desc') }}</p>
         <div class="axis-chips">
           <span v-for="key in EVALUATION_CRITERIA" :key="key">{{ t(`gui.ai.evaluation.criteria.${key}`) }}</span>
@@ -88,11 +114,11 @@
         </div>
         <div class="eval-meta">
           <span>{{ t('gui.ai.evaluation.meta_result') }}</span><b>{{ t('gui.ai.evaluation.meta_result_value') }}</b>
-          <span>{{ t('gui.ai.evaluation.meta_judge') }}</span><b>AI / Human</b>
+          <span>{{ t('gui.ai.evaluation.meta_judge') }}</span><b>{{ t('gui.ai.evaluation.meta_judge_value') }}</b>
           <span>{{ t('gui.ai.evaluation.meta_history') }}</span><b>{{ t('gui.ai.evaluation.meta_history_value') }}</b>
         </div>
-      </aside>
-    </div>
+      </div>
+    </ModelessShell>
 
     <!-- New evaluation: target AI + judge AI -->
     <ModalShell :open="startOpen" size="sm" @close="startOpen = false">
@@ -144,8 +170,11 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Badge from '@/components/ui/Badge.vue'
 import Button from '@/components/ui/Button.vue'
+import IconButton from '@/components/ui/IconButton.vue'
 import ModalShell from '@/components/ui/ModalShell.vue'
+import ModelessShell from '@/components/ui/ModelessShell.vue'
 import Select from '@/components/ui/Select.vue'
+import AiIcon from '../AiIcon.vue'
 import { cancelEvaluation, fetchEvaluationHistory, listEvaluationSets, startEvaluation } from '../api'
 import {
   ACTIVE_EVALUATION_LIFECYCLES,
@@ -165,9 +194,11 @@ import AiEvaluationSetsDialog from './AiEvaluationSetsDialog.vue'
 const props = defineProps<{
   projectId: string
   providers: ProviderItem[]
+  // Set by the overview's "register evaluation"; the dialog opens once and reports back.
+  openNew?: boolean
 }>()
 
-const emit = defineEmits<{ changed: [] }>()
+const emit = defineEmits<{ changed: []; newOpened: [] }>()
 const { t, te, locale } = useI18n()
 
 const targetId = ref('')
@@ -186,6 +217,8 @@ const nextCursor = ref<string | null>(null)
 const filterTargetId = ref('')
 const searchQuery = ref('')
 const detailId = ref<string | null>(null)
+const methodOpen = ref(false)
+const methodX = Math.max(24, window.innerWidth - 380)
 let epoch = 0
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -401,6 +434,16 @@ function openDetail(item: AiEvaluation): void {
 
 watch(() => [props.projectId, filterTargetId.value] as const, () => void reload(), { immediate: true })
 
+watch(
+  () => props.openNew,
+  (value) => {
+    if (!value) return
+    openStart()
+    emit('newOpened')
+  },
+  { immediate: true }
+)
+
 onBeforeUnmount(() => {
   epoch++
   if (pollTimer) clearTimeout(pollTimer)
@@ -428,6 +471,9 @@ onBeforeUnmount(() => {
 }
 
 .page-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 21px;
   font-weight: 850;
   margin: 0 0 6px;
@@ -437,13 +483,6 @@ onBeforeUnmount(() => {
 .page-sub {
   color: #b9c8d8;
   font-size: 14.5px;
-}
-
-.evaluation-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 14px;
-  align-items: start;
 }
 
 .detail-panel {
@@ -489,13 +528,6 @@ onBeforeUnmount(() => {
 
 .toolbar-filter {
   width: 200px;
-}
-
-.detail-hint-row {
-  padding: 8px 16px;
-  font-size: 11.5px;
-  color: var(--fg2-muted);
-  border-bottom: 1px solid rgba(154, 181, 210, 0.08);
 }
 
 .evaluation-detail-row {
@@ -659,27 +691,32 @@ onBeforeUnmount(() => {
   padding: 10px;
 }
 
-.evaluation-side {
-  padding: 16px;
-  border: 1px solid var(--fg2-line);
-  border-radius: 12px;
-  background: linear-gradient(145deg, rgba(17, 31, 47, 0.92), rgba(11, 23, 36, 0.95));
+.title-help {
+  color: var(--fg2-muted);
+}
+
+.is-spinning :deep(svg) {
+  animation: ai-spin 0.9s linear infinite;
+}
+
+@keyframes ai-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.method-body {
+  padding: 14px 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-.side-title {
-  font-size: 14.5px;
-  font-weight: 800;
-  color: #eaf1f8;
-}
-
-.evaluation-side p {
+.method-body p {
   margin: 0;
+  color: #b9c8d8;
   font-size: 12.5px;
   line-height: 1.55;
-  color: #b9c8d8;
 }
 
 .axis-chips {

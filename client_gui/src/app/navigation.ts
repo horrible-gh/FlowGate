@@ -24,5 +24,6 @@ export const APP_NAV_ITEMS: readonly AppNavItem[] = [
   { key: 'settings', path: '/settings', glyph: 'gear', accent: '#b7c9e4' },
 ]
 
-/** Screens that exist only as a "준비 중" placeholder in this step (T0011 §8/§9). */
-export const PLACEHOLDER_NAV_KEYS: readonly AppNavKey[] = ['projects', 'designer', 'git', 'settings']
+/** Screens that exist only as a "준비 중" placeholder in this step (T0011 §8/§9).
+ *  /settings carries 시스템 AI / 내 AI since flowgate.v02.0017 TR0003 rev7. */
+export const PLACEHOLDER_NAV_KEYS: readonly AppNavKey[] = ['projects', 'designer', 'git']

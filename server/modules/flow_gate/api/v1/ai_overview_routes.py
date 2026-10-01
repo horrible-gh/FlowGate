@@ -1,7 +1,7 @@
 """Read-only Project AI summary composed from authoritative resources
 (flowgate.v02.0017 T0002 §6).
 
-connections  usable AI connections and their state
+connections  the project AI policy (on/off, allowed system AI, own AI) and usable AI
 evaluation   recent scores, active runs, judge and last evaluation time
 ai_groups    Supervisor, members, roles, their counts and state per team
 
@@ -25,17 +25,17 @@ logger = logging.getLogger(__name__)
 
 
 def _connections(project_id: str) -> dict:
-    settings = ai_settings_service.get_project_settings(project_id, include_catalog=False)
-    effective = settings["effective"]
+    policy = ai_settings_service.get_project_policy(project_id)
+    effective = policy["effective"]
     usable = {row["id"] for row in effective["providers"]}
-    # The registered list the project is looking at: its own rows in custom mode,
-    # otherwise the effective (system) chain. Disabled rows stay visible as "off".
-    registered = (settings["providers"] or []) if settings["mode"] == "custom" else effective["providers"]
+    # The system AI this project's policy allows; a disabled one stays visible as "off".
+    allowed = [row for row in policy["system_providers"] if row["allowed"]]
     items = [{"id": row["id"], "name": row["name"], "exec_type": row["exec_type"], "kind": row["kind"],
               "enabled": bool(row.get("enabled", True)), "usable": row["id"] in usable}
-             for row in registered]
-    return {"mode": settings["mode"], "source": effective["source"],
-            "total": effective["registered_count"], "usable": len(usable),
+             for row in allowed]
+    return {"ai_enabled": policy["ai_enabled"], "system_ai_scope": policy["system_ai_scope"],
+            "allow_user_ai": policy["allow_user_ai"], "source": effective["source"],
+            "total": len(allowed), "usable": len(usable),
             "default_provider_id": effective["default_provider_id"], "items": items}
 
 

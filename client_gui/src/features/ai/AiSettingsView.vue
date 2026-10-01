@@ -25,12 +25,11 @@
             @change="onTabChange"
           />
         </div>
-        <Button variant="primary" @click="startOpen = true">{{ t('gui.ai.start.open') }}</Button>
       </header>
 
       <!-- Full-screen loading only before the first data arrives: a refresh after an edit
            keeps the open tab (and its selection/dialog state) mounted. -->
-      <div v-if="loading && !overviewData && !settingsData" class="view-loading">
+      <div v-if="loading && !overviewData && !policyData" class="view-loading">
         <LoadingState :label="t('gui.common.loading')" />
       </div>
 
@@ -66,15 +65,16 @@
             v-else
             :overview="overviewData"
             @navigate="onNavigateTab"
+            @register-evaluation="onRegisterEvaluation"
           />
         </template>
 
-        <!-- Providers Tab -->
-        <template v-else-if="activeTab === 'providers'">
-          <div v-if="sectionErrors.settings" class="view-error">
+        <!-- Usage policy Tab (the project allows and picks AI; it owns none) -->
+        <template v-else-if="activeTab === 'policy'">
+          <div v-if="sectionErrors.policy" class="view-error">
             <ErrorState
               :title="t('gui.ai.load_failed_title')"
-              :message="sectionErrors.settings"
+              :message="sectionErrors.policy"
             >
               <template #action>
                 <Button variant="secondary" @click="loadData">
@@ -83,10 +83,10 @@
               </template>
             </ErrorState>
           </div>
-          <AiProvidersPanel
-            v-else-if="settingsData"
+          <AiPolicyPanel
+            v-else-if="policyData"
             :project-id="currentProject.id"
-            :initial-settings="settingsData"
+            :initial-policy="policyData"
             @changed="loadData"
           />
         </template>
@@ -96,6 +96,8 @@
           <AiEvaluationPanel
             :project-id="currentProject.id"
             :providers="activeProviders"
+            :open-new="pendingNewEvaluation"
+            @new-opened="pendingNewEvaluation = false"
             @changed="loadData"
           />
         </template>
@@ -124,7 +126,6 @@
         </template>
       </main>
     </template>
-    <AiStartDialog v-if="currentProject" :open="startOpen" :project="currentProject" @close="startOpen = false" />
   </div>
 </template>
 
@@ -140,29 +141,29 @@ import Tabs, { type TabItem } from '@/components/ui/Tabs.vue'
 import { useProjectStore } from '@/features/project'
 import {
   fetchAiOverview,
-  fetchProjectAiSettings,
+  fetchProjectAiPolicy,
   listAiGroups,
 } from './api'
 import type {
   AiGroup,
   AiOverviewData,
-  ProjectAiSettings,
+  ProjectAiPolicy,
   ProviderItem,
 } from './types'
 import AiOverviewPanel from './overview/AiOverviewPanel.vue'
-import AiProvidersPanel from './providers/AiProvidersPanel.vue'
+import AiPolicyPanel from './policy/AiPolicyPanel.vue'
 import AiEvaluationPanel from './evaluation/AiEvaluationPanel.vue'
 import AiGroupsPanel from './groups/AiGroupsPanel.vue'
-import AiStartDialog from './AiStartDialog.vue'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const projectStore = useProjectStore()
 
-type TabKey = 'overview' | 'providers' | 'evaluation' | 'groups'
+type TabKey = 'overview' | 'policy' | 'evaluation' | 'groups'
 const activeTab = ref<TabKey>('overview')
-const startOpen = ref(false)
+// Overview's "register evaluation" opens the new-evaluation dialog once the tab is shown.
+const pendingNewEvaluation = ref(false)
 
 const currentProject = computed(() => projectStore.currentProject)
 
@@ -170,11 +171,11 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 
 const overviewData = ref<AiOverviewData | null>(null)
-const settingsData = ref<ProjectAiSettings | null>(null)
+const policyData = ref<ProjectAiPolicy | null>(null)
 const groups = ref<AiGroup[]>([])
 const sectionErrors = ref<{
   overview?: string | null
-  settings?: string | null
+  policy?: string | null
   groups?: string | null
 }>({})
 
@@ -182,20 +183,22 @@ let requestEpoch = 0
 
 const tabs = computed<TabItem[]>(() => [
   { key: 'overview', label: t('gui.ai.tabs.overview') },
-  { key: 'providers', label: t('gui.ai.tabs.providers') },
+  { key: 'policy', label: t('gui.ai.tabs.policy') },
   { key: 'evaluation', label: t('gui.ai.tabs.evaluation') },
   { key: 'groups', label: t('gui.ai.tabs.groups') },
 ])
 
-// AI connections this project can use right now (evaluation target/judge, group members)
+// AI this project can use right now (evaluation target/judge, group members)
 const activeProviders = computed<ProviderItem[]>(() =>
-  (settingsData.value?.effective?.providers ?? []).filter((p) => p.enabled !== false)
+  (policyData.value?.effective?.providers ?? []).filter((p) => p.enabled !== false)
 )
 
 function parseTab(tabParam: unknown): TabKey {
-  if (tabParam === 'providers' || tabParam === 'evaluation' || tabParam === 'groups') {
+  if (tabParam === 'policy' || tabParam === 'evaluation' || tabParam === 'groups') {
     return tabParam
   }
+  // Links from before the usage policy still open the same tab.
+  if (tabParam === 'providers') return 'policy'
   return 'overview'
 }
 
@@ -206,8 +209,13 @@ function onTabChange(newTab: string) {
   }
 }
 
-function onNavigateTab(targetTab: 'providers' | 'evaluation' | 'groups') {
+function onNavigateTab(targetTab: 'policy' | 'evaluation' | 'groups') {
   onTabChange(targetTab)
+}
+
+function onRegisterEvaluation() {
+  pendingNewEvaluation.value = true
+  onTabChange('evaluation')
 }
 
 async function loadData() {
@@ -220,7 +228,7 @@ async function loadData() {
   try {
     const [ovRes, setRes, grpRes] = await Promise.allSettled([
       fetchAiOverview(pId),
-      fetchProjectAiSettings(pId),
+      fetchProjectAiPolicy(pId),
       listAiGroups(pId),
     ])
 
@@ -236,10 +244,10 @@ async function loadData() {
     }
 
     if (setRes.status === 'fulfilled') {
-      settingsData.value = setRes.value
+      policyData.value = setRes.value
     } else {
-      settingsData.value = null
-      errs.settings = setRes.reason instanceof Error ? setRes.reason.message : 'Failed to load project AI settings'
+      policyData.value = null
+      errs.policy = setRes.reason instanceof Error ? setRes.reason.message : 'Failed to load the project AI policy'
     }
 
     if (grpRes.status === 'fulfilled') {
@@ -283,14 +291,14 @@ watch(
 watch(
   () => currentProject.value?.id,
   (newId) => {
-    startOpen.value = false
+    pendingNewEvaluation.value = false
     overviewData.value = null
-    settingsData.value = null
+    policyData.value = null
     if (newId) {
       void loadData()
     } else {
       overviewData.value = null
-      settingsData.value = null
+      policyData.value = null
       groups.value = []
       sectionErrors.value = {}
     }
@@ -299,7 +307,7 @@ watch(
 )
 
 onMounted(() => {
-  if (currentProject.value?.id && !settingsData.value) {
+  if (currentProject.value?.id && !policyData.value) {
     void loadData()
   }
 })

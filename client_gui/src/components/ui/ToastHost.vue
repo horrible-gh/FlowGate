@@ -68,7 +68,8 @@ watch(
 <style scoped>
 .ui-toast-host {
   position: fixed;
-  top: 20px;
+  /* Bottom-right keeps toasts off the app header (title, user menu). */
+  bottom: 20px;
   right: 20px;
   display: flex;
   flex-direction: column;
