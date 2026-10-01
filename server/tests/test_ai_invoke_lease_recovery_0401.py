@@ -374,6 +374,59 @@ def test_next_run_id_floors_against_finished_runs_and_open_leases(fake_runs):
     assert minted == f"aiv_{date_str}_000010"
 
 
+def test_next_run_id_floors_against_evaluation_scratch_refs(fake_runs, monkeypatch):
+    """AI evaluations take their Scratch folder from this counter but leave no run row or
+    lease behind; after a restart the first evaluation used to get a serial whose folder
+    already existed and failed at once."""
+    from modules.flow_gate.db import ai_evaluations as db_evaluations
+
+    date_str = _today()
+    fake_runs.rows[f"aiv_{date_str}_000001"] = {"run_id": f"aiv_{date_str}_000001"}
+    monkeypatch.setattr(db_evaluations, "max_serial_for_date", lambda d: 7 if d == date_str else 0)
+    assert svc._next_run_id() == f"aiv_{date_str}_000008"
+
+
+def test_next_run_id_keeps_other_floors_when_one_lookup_fails(fake_runs, monkeypatch):
+    from modules.flow_gate.db import ai_evaluations as db_evaluations
+
+    def _boom(_date_str):
+        raise RuntimeError("db down")
+
+    date_str = _today()
+    fake_runs.rows[f"aiv_{date_str}_000005"] = {"run_id": f"aiv_{date_str}_000005"}
+    monkeypatch.setattr(db_evaluations, "max_serial_for_date", _boom)
+    assert svc._next_run_id() == f"aiv_{date_str}_000006"
+
+
+def test_evaluation_scratch_skips_a_folder_that_already_exists(monkeypatch):
+    from modules.flow_gate.services import ai_evaluation_service as evaluation
+
+    ids = iter(["aiv_20261001_000001", "aiv_20261001_000002"])
+    monkeypatch.setattr(evaluation.probe, "_next_run_id", lambda: next(ids))
+
+    def _create(_project_id, run_id):
+        if run_id.endswith("000001"):
+            raise FileExistsError(run_id)
+        return Path("/scratch") / run_id
+
+    monkeypatch.setattr(evaluation.probe, "_create_scratch", _create)
+    assert evaluation._create_eval_scratch() == ("aiv_20261001_000002", Path("/scratch/aiv_20261001_000002"))
+
+
+def test_evaluation_scratch_failure_has_its_own_reason(monkeypatch):
+    from modules.flow_gate.services import ai_evaluation_service as evaluation
+
+    monkeypatch.setattr(evaluation.probe, "_next_run_id", lambda: "aiv_20261001_000001")
+
+    def _create(_project_id, run_id):
+        raise FileExistsError(run_id)
+
+    monkeypatch.setattr(evaluation.probe, "_create_scratch", _create)
+    with pytest.raises(evaluation._StageFailed) as caught:
+        evaluation._create_eval_scratch()
+    assert caught.value.reason_code == "scratch_unavailable"
+
+
 def test_next_run_id_does_not_reflor_within_the_same_process(fake_runs):
     date_str = _today()
     fake_runs.rows[f"aiv_{date_str}_000005"] = {"run_id": f"aiv_{date_str}_000005"}

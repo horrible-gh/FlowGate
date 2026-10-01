@@ -2,9 +2,7 @@
   <ModalShell :open="open" size="md" @close="onClose">
     <template #header="{ titleId }">
       <div class="dialog-header">
-        <h2 :id="titleId" class="dialog-title">
-          {{ isEdit ? t('gui.ai.groups.edit_title') : t('gui.ai.groups.add_title') }}
-        </h2>
+        <h2 :id="titleId" class="dialog-title">{{ title }}</h2>
       </div>
     </template>
 
@@ -12,63 +10,39 @@
       <div v-if="error" class="form-error">{{ error }}</div>
 
       <div class="form-group">
-        <label class="form-label" for="group-name">{{ t('gui.ai.groups.field_name') }} *</label>
+        <label class="form-label" for="ai-group-edit-name">
+          {{ kind === 'group' ? t('gui.ai.groups.field_name') : t('gui.ai.groups.field_role_name') }} *
+        </label>
         <Input
-          id="group-name"
+          id="ai-group-edit-name"
           v-model="form.name"
-          maxlength="200"
-          :placeholder="t('gui.ai.groups.placeholder_name')"
+          :maxlength="kind === 'group' ? 200 : 100"
+          :placeholder="kind === 'group' ? t('gui.ai.groups.placeholder_name') : t('gui.ai.groups.placeholder_role_name')"
           :disabled="saving"
         />
       </div>
 
       <div class="form-group">
-        <label class="form-label" for="group-desc">{{ t('gui.ai.groups.field_desc') }}</label>
-        <textarea
-          id="group-desc"
+        <label class="form-label" for="ai-group-edit-desc">{{ t('gui.ai.groups.field_desc') }}</label>
+        <Textarea
+          id="ai-group-edit-desc"
           v-model="form.description"
-          class="form-textarea"
+          :rows="3"
           maxlength="2000"
-          rows="3"
-          :placeholder="t('gui.ai.groups.placeholder_desc')"
+          :placeholder="kind === 'group' ? t('gui.ai.groups.placeholder_desc') : t('gui.ai.groups.placeholder_role_desc')"
           :disabled="saving"
         />
       </div>
 
-      <div class="form-group">
-        <label class="form-label" for="group-work-executor">
-          {{ t('gui.ai.groups.role_executor') }} (Supervisor) *
-        </label>
-        <Select
-          id="group-work-executor"
-          v-model="form.work_executor_provider_id"
-          :options="executorOptions"
-          :disabled="saving"
-        />
-      </div>
-
-      <div class="form-group">
-        <label class="form-label" for="group-reviewer">
-          {{ t('gui.ai.groups.role_reviewer') }} (Reviewer)
-        </label>
-        <Select
-          id="group-reviewer"
-          v-model="form.reviewer_provider_id"
-          :options="optionalRoleOptions(form.reviewer_provider_id)"
-          :disabled="saving"
-        />
-      </div>
-
-      <div class="form-group">
-        <label class="form-label" for="group-reworker">
-          {{ t('gui.ai.groups.role_reworker') }} (Reworker)
-        </label>
-        <Select
-          id="group-reworker"
-          v-model="form.reworker_provider_id"
-          :options="optionalRoleOptions(form.reworker_provider_id)"
-          :disabled="saving"
-        />
+      <!-- Role only: criteria the role relies on; the member fit is computed from them. -->
+      <div v-if="kind === 'role'" class="form-group">
+        <span class="form-label">{{ t('gui.ai.groups.field_criteria') }}</span>
+        <div class="criteria-chips">
+          <label v-for="key in EVALUATION_CRITERIA" :key="key" class="criteria-chip" :class="{ on: form.criteria.includes(key) }">
+            <input v-model="form.criteria" type="checkbox" :value="key" :disabled="saving" />
+            {{ t(`gui.ai.evaluation.criteria.${key}`) }}
+          </label>
+        </div>
       </div>
     </div>
 
@@ -86,125 +60,52 @@
 </template>
 
 <script setup lang="ts">
+// Name + optional description. Used for a team (AI Group) and for one of its custom roles
+// (plus the criteria the role relies on). Members and roles are both optional.
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
 import Input from '@/components/ui/Input.vue'
 import ModalShell from '@/components/ui/ModalShell.vue'
-import Select, { type SelectOption } from '@/components/ui/Select.vue'
-import type { AiGroup, AiGroupInput, ProviderItem } from '../types'
+import Textarea from '@/components/ui/Textarea.vue'
+import { EVALUATION_CRITERIA, type AiGroupRoleInput } from '../types'
 
-const props = defineProps<{
-  open: boolean
-  group: AiGroup | null
-  providers: ProviderItem[]
-  saving?: boolean
-  error?: string | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    open: boolean
+    kind?: 'group' | 'role'
+    initial?: AiGroupRoleInput | null
+    saving?: boolean
+    error?: string | null
+  }>(),
+  { kind: 'group', initial: null, saving: false, error: null },
+)
 
 const emit = defineEmits<{
   close: []
-  save: [input: AiGroupInput]
+  save: [input: AiGroupRoleInput]
 }>()
 
 const { t } = useI18n()
 
-const isEdit = computed(() => !!props.group?.ai_group_id)
-
-interface FormState {
-  name: string
-  description: string
-  work_executor_provider_id: string
-  reviewer_provider_id: string
-  reworker_provider_id: string
-}
-
-const form = ref<FormState>({
-  name: '',
-  description: '',
-  work_executor_provider_id: '',
-  reviewer_provider_id: '',
-  reworker_provider_id: '',
+const isEdit = computed(() => !!props.initial)
+const title = computed(() => {
+  if (props.kind === 'role') return isEdit.value ? t('gui.ai.groups.role_edit_title') : t('gui.ai.groups.role_add_title')
+  return isEdit.value ? t('gui.ai.groups.edit_title') : t('gui.ai.groups.add_title')
 })
 
+const form = ref<{ name: string; description: string; criteria: string[] }>({ name: '', description: '', criteria: [] })
+
 watch(
-  () => props.group,
-  (g) => {
-    if (g) {
-      form.value = {
-        name: g.name,
-        description: g.description ?? '',
-        work_executor_provider_id: g.work_executor?.provider_id ?? '',
-        reviewer_provider_id: g.reviewer?.provider_id ?? '',
-        reworker_provider_id: g.reworker?.provider_id ?? '',
-      }
-    } else {
-      form.value = {
-        name: '',
-        description: '',
-        work_executor_provider_id: selectableProviders.value[0]?.id ?? props.providers.find((p) => p.enabled !== false)?.id ?? '',
-        reviewer_provider_id: '',
-        reworker_provider_id: '',
-      }
-    }
+  () => [props.open, props.initial] as const,
+  ([open, initial]) => {
+    if (!open) return
+    form.value = { name: initial?.name ?? '', description: initial?.description ?? '', criteria: [...(initial?.criteria ?? [])] }
   },
   { immediate: true }
 )
 
-const selectableProviders = computed(() => (props.providers ?? []).filter((p) => p.enabled !== false))
-
-function getBrokenRoleLabel(currentVal: string): string {
-  const existing = props.providers.find((p) => p.id === currentVal)
-  if (existing) return `${existing.name} (${existing.kind})`
-  if (props.group?.work_executor?.provider_id === currentVal && props.group?.work_executor?.provider_name) {
-    return `${props.group.work_executor.provider_name} (${currentVal})`
-  }
-  if (props.group?.reviewer?.provider_id === currentVal && props.group?.reviewer?.provider_name) {
-    return `${props.group.reviewer.provider_name} (${currentVal})`
-  }
-  if (props.group?.reworker?.provider_id === currentVal && props.group?.reworker?.provider_name) {
-    return `${props.group.reworker.provider_name} (${currentVal})`
-  }
-  return currentVal
-}
-
-const executorOptions = computed<SelectOption[]>(() => {
-  const currentVal = form.value.work_executor_provider_id
-  const opts: SelectOption[] = selectableProviders.value.map((p) => ({
-    value: p.id,
-    label: `${p.name} (${p.kind})`,
-  }))
-  if (currentVal && !selectableProviders.value.some((p) => p.id === currentVal)) {
-    const displayLabel = getBrokenRoleLabel(currentVal)
-    opts.unshift({
-      value: currentVal,
-      label: `${displayLabel} — ${t('gui.ai.groups.unavailable_provider')}`,
-    })
-  }
-  return opts
-})
-
-function optionalRoleOptions(currentVal: string): SelectOption[] {
-  const opts: SelectOption[] = [
-    { value: '', label: t('gui.ai.common.none') },
-    ...selectableProviders.value.map((p) => ({
-      value: p.id,
-      label: `${p.name} (${p.kind})`,
-    })),
-  ]
-  if (currentVal && !selectableProviders.value.some((p) => p.id === currentVal)) {
-    const displayLabel = getBrokenRoleLabel(currentVal)
-    opts.push({
-      value: currentVal,
-      label: `${displayLabel} — ${t('gui.ai.groups.unavailable_provider')}`,
-    })
-  }
-  return opts
-}
-
-const isValid = computed(() => {
-  return form.value.name.trim().length > 0 && form.value.work_executor_provider_id.trim().length > 0
-})
+const isValid = computed(() => form.value.name.trim().length > 0)
 
 function onClose() {
   if (props.saving) return
@@ -213,13 +114,9 @@ function onClose() {
 
 function onSave() {
   if (!isValid.value) return
-  emit('save', {
-    name: form.value.name.trim(),
-    description: form.value.description.trim() || null,
-    work_executor_provider_id: form.value.work_executor_provider_id,
-    reviewer_provider_id: form.value.reviewer_provider_id || null,
-    reworker_provider_id: form.value.reworker_provider_id || null,
-  })
+  const input: AiGroupRoleInput = { name: form.value.name.trim(), description: form.value.description.trim() || null }
+  if (props.kind === 'role') input.criteria = [...form.value.criteria]
+  emit('save', input)
 }
 </script>
 
@@ -243,6 +140,33 @@ function onSave() {
   gap: 14px;
 }
 
+.criteria-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.criteria-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--fg2-line);
+  font-size: 12px;
+  color: var(--fg2-muted);
+  cursor: pointer;
+}
+
+.criteria-chip.on {
+  border-color: rgba(40, 110, 201, 0.6);
+  color: var(--fg2-text);
+}
+
+.criteria-chip input {
+  margin: 0;
+}
+
 .form-group {
   display: flex;
   flex-direction: column;
@@ -253,27 +177,6 @@ function onSave() {
   font-size: 12.5px;
   font-weight: 650;
   color: var(--fg2-muted);
-}
-
-.form-textarea {
-  width: 100%;
-  padding: 8px 12px;
-  border: 1px solid var(--fg2-line-strong);
-  border-radius: var(--fg2-control-radius);
-  background: var(--fg2-control-surface);
-  color: var(--fg2-text);
-  font-size: 13px;
-  font-family: inherit;
-  resize: vertical;
-}
-
-.form-textarea:focus-visible {
-  outline: 2px solid var(--fg2-focus);
-}
-
-.form-textarea:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .form-error {

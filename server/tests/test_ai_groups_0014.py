@@ -145,23 +145,28 @@ def test_finished_run_binds_requested_group_without_fk(monkeypatch):
     assert 'requested_ai_group_id' in captured['sql']
 
 
-def test_routes_enforce_project_scoped_permissions(monkeypatch):
+def test_routes_reads_open_writes_administrator_only(monkeypatch):
+    """CH0006 #48: a group of system AI is read by every signed-in user and edited by an
+    administrator only (system.settings.manage, no project)."""
     from fastapi import HTTPException
     from starlette.requests import Request
     from modules.flow_gate.api.v1.ai_group_routes import router
+    from modules.flow_gate.auth.middleware import get_current_user
     from modules.flow_gate.rbac import decorators
     seen = []
     monkeypatch.setattr(decorators, '_has_permission',
                         lambda user, permission, project: seen.append((permission, project)) or False)
-    request = Request({'type': 'http', 'method': 'GET', 'path': '/',
-                       'headers': [], 'query_string': b'', 'path_params': {'project_id': 'p'}})
+    request = Request({'type': 'http', 'method': 'POST', 'path': '/',
+                       'headers': [], 'query_string': b'', 'path_params': {}})
     for route in router.routes:
         checker = route.dependant.dependencies[0].call
+        if 'GET' in route.methods:
+            assert checker is get_current_user
+            continue
         with pytest.raises(HTTPException) as denied:
             checker(request, user={'user_id': 'u', 'is_admin': False})
         assert denied.value.status_code == 403
-        assert seen[-1] == ('project.settings.read' if 'GET' in route.methods
-                            else 'project.settings.edit', 'p')
+        assert seen[-1] == ('system.settings.manage', None)
 
 
 def test_pause_row_preserves_group_and_reworker_snapshot(monkeypatch):

@@ -21,26 +21,56 @@
         />
       </div>
 
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label" for="provider-exec-type">{{ t('gui.ai.providers.field_exec_type') }}</label>
-          <Select
-            id="provider-exec-type"
-            v-model="form.exec_type"
-            :options="execTypeOptions"
+      <!-- Owner: only when adding, and only when more than one list can take the new AI -->
+      <div v-if="!isEdit && ownerChoices.length > 1" class="form-group">
+        <span class="form-label">{{ t('gui.ai.owned.field_owner') }}</span>
+        <div class="segmented" role="radiogroup" :aria-label="t('gui.ai.owned.field_owner')">
+          <button
+            v-for="choice in ownerChoices"
+            :key="choice"
+            type="button"
+            role="radio"
+            :aria-checked="selectedOwner === choice"
+            :class="{ on: selectedOwner === choice }"
             :disabled="saving"
-          />
+            @click="selectedOwner = choice"
+          >
+            {{ t(`gui.ai.owned.owner_${choice}`) }}
+          </button>
         </div>
+      </div>
 
-        <div class="form-group">
-          <label class="form-label" for="provider-kind">{{ t('gui.ai.providers.field_kind') }}</label>
-          <Select
-            id="provider-kind"
-            v-model="form.kind"
-            :options="kindOptions"
-            :disabled="saving"
-          />
+      <!-- Execution mode: 2x2 (where x how). API is not supported yet and cannot be picked. -->
+      <div class="form-group">
+        <span class="form-label">{{ t('gui.ai.providers.field_exec_type') }}</span>
+        <div class="mode-grid" role="radiogroup" :aria-label="t('gui.ai.providers.field_exec_type')">
+          <template v-for="location in EXEC_LOCATIONS" :key="location">
+            <button
+              v-for="execType in EXEC_TYPES"
+              :key="`${location}_${execType}`"
+              type="button"
+              role="radio"
+              class="mode-cell"
+              :class="{ on: form.exec_location === location && form.exec_type === execType }"
+              :aria-checked="form.exec_location === location && form.exec_type === execType"
+              :disabled="saving || !canPick(execType)"
+              @click="pickMode(location, execType)"
+            >
+              <b>{{ t(`gui.ai.modes.${location}_${execType}`) }}</b>
+              <small>{{ canPick(execType) ? t(`gui.ai.modes.${location}_hint`) : t('gui.ai.modes.unsupported') }}</small>
+            </button>
+          </template>
         </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="provider-kind">{{ t('gui.ai.providers.field_kind') }}</label>
+        <Select
+          id="provider-kind"
+          v-model="form.kind"
+          :options="kindOptions"
+          :disabled="saving"
+        />
       </div>
 
       <!-- CLI settings -->
@@ -124,17 +154,24 @@ import Input from '@/components/ui/Input.vue'
 import ModalShell from '@/components/ui/ModalShell.vue'
 import Select from '@/components/ui/Select.vue'
 import Toggle from '@/components/ui/Toggle.vue'
-import type { ProviderExecType, ProviderItem } from '../types'
+import type { AiOwnerScope, ExecLocation, ProviderExecType, ProviderItem } from '../types'
+import { EXEC_LOCATIONS, EXEC_TYPES, isExecTypeSupported } from './providerDisplay'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   open: boolean
   provider: ProviderItem | null
+  // Whose list the AI belongs to; ownerChoices lists what an add may pick (admin: both).
+  owner?: AiOwnerScope
+  ownerChoices?: AiOwnerScope[]
   saving?: boolean
-}>()
+}>(), {
+  owner: 'user',
+  ownerChoices: () => ['user'],
+})
 
 const emit = defineEmits<{
   close: []
-  save: [item: ProviderItem]
+  save: [item: ProviderItem, owner: AiOwnerScope]
 }>()
 
 const { t } = useI18n()
@@ -147,6 +184,7 @@ interface FormState {
   id: string
   name: string
   exec_type: ProviderExecType
+  exec_location: ExecLocation
   kind: string
   enabled: boolean
   cli_command: string
@@ -160,6 +198,7 @@ const form = ref<FormState>({
   id: '',
   name: '',
   exec_type: 'cli',
+  exec_location: 'local',
   kind: 'claude',
   enabled: true,
   cli_command: '',
@@ -169,10 +208,18 @@ const form = ref<FormState>({
   api_key_set: false,
 })
 
-const execTypeOptions = [
-  { value: 'cli', label: 'CLI' },
-  { value: 'api', label: 'API' },
-]
+const selectedOwner = ref<AiOwnerScope>(props.owner)
+
+// An AI already saved as API keeps its cell pickable so editing it does not force a change.
+function canPick(execType: ProviderExecType): boolean {
+  return isExecTypeSupported(execType) || props.provider?.exec_type === execType
+}
+
+function pickMode(location: ExecLocation, execType: ProviderExecType) {
+  if (!canPick(execType)) return
+  form.value.exec_location = location
+  form.value.exec_type = execType
+}
 
 const kindOptions = [
   { value: 'claude', label: 'Claude (Anthropic)' },
@@ -182,14 +229,16 @@ const kindOptions = [
   { value: 'custom', label: 'Custom' },
 ]
 
+// Re-filled on every open, so a second add does not start from the first add's values.
 watch(
-  () => props.provider,
-  (p) => {
+  () => [props.provider, props.open] as const,
+  ([p]) => {
     if (p) {
       form.value = {
         id: p.id,
         name: p.name,
         exec_type: p.exec_type,
+        exec_location: p.exec_location ?? 'local',
         kind: p.kind,
         enabled: p.enabled,
         cli_command: p.cli_command ?? '',
@@ -203,6 +252,7 @@ watch(
         id: '',
         name: '',
         exec_type: 'cli',
+        exec_location: 'local',
         kind: 'claude',
         enabled: true,
         cli_command: '',
@@ -216,6 +266,11 @@ watch(
   },
   { immediate: true }
 )
+
+// Reopening the dialog (another card, or another add) starts from the owner it was opened for.
+watch(() => [props.open, props.owner] as const, () => {
+  selectedOwner.value = props.owner
+})
 
 const isValid = computed(() => {
   return form.value.name.trim().length > 0
@@ -232,13 +287,14 @@ function onSave() {
     id: form.value.id || ('prv_' + Math.random().toString(36).substring(2, 9)),
     name: form.value.name.trim(),
     exec_type: form.value.exec_type,
+    exec_location: form.value.exec_location,
     kind: form.value.kind,
     enabled: form.value.enabled,
     cli_command: form.value.exec_type === 'cli' ? form.value.cli_command : null,
     api_base_url: form.value.exec_type === 'api' ? form.value.api_base_url : null,
     api_model: form.value.exec_type === 'api' ? form.value.api_model : null,
     api_key: form.value.api_key || null,
-  })
+  }, isEdit.value ? props.owner : selectedOwner.value)
 }
 </script>
 
@@ -295,6 +351,73 @@ function onSave() {
   display: block;
   margin-top: 4px;
   font-size: 11px;
+}
+
+.mode-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.mode-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--fg2-line);
+  border-radius: 8px;
+  background: #0c1b2c;
+  color: #dce7f3;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.mode-cell b {
+  font-size: 13px;
+}
+
+.mode-cell small {
+  font-size: 11px;
+  color: var(--fg2-muted);
+}
+
+.mode-cell.on {
+  border-color: #55a9ff;
+  background: #132a44;
+}
+
+.mode-cell:disabled {
+  opacity: 0.45;
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
+.segmented {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 3px;
+  border-radius: 8px;
+  border: 1px solid var(--fg2-line);
+  background: #0a1726;
+}
+
+.segmented button {
+  height: 28px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: #9fb3c8;
+  font-size: 12.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.segmented button.on {
+  background: linear-gradient(180deg, #1c4e84, #153b65);
+  color: #edf6ff;
 }
 
 .toggle-row {

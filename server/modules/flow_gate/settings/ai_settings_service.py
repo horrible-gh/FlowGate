@@ -14,6 +14,12 @@ which must never be called from an HTTP serialization path.
 This layer works in PLAINTEXT throughout: at-rest encryption (0371 NR0007 §3) is the db
 layer's job, which encrypts on write and decrypts on read, so the keep/replace/delete
 merge and the last-4 hint keep operating on the real value.
+
+Ownership (flowgate.v02.0017 TR0003 rev7, Q 361~363): AI is owned by the system (administrator)
+or by one user. A project owns no connection rows and, since CH0006 (4), keeps no AI policy
+either: every enabled system AI is usable everywhere, so the effective chain is the same for
+every project. A user's own AI is visible and editable only through that user's routes and never
+enters the effective chain here: it runs on its owner's Agent, which the execution layer adds later.
 """
 from __future__ import annotations
 
@@ -24,6 +30,7 @@ from typing import Optional
 from modules.flow_gate.db import ai_provider_doctype_map as _doctype_db
 from modules.flow_gate.db import ai_providers as _ai_db
 from modules.flow_gate.db import projects as _projects_db
+from modules.flow_gate.db import user_ai_defaults as _user_default_db
 from modules.flow_gate.services import test_command_service as _tcs
 
 # ── Parameters (L0004 §1) ────────────────────────────────────────────────────
@@ -35,7 +42,9 @@ CLI_COMMAND_MAX = 4000
 API_BASE_URL_MAX = 500
 API_MODEL_MAX = 200
 API_KEY_MAX = 1000
-PROVIDERS_MAX = 20
+# Owned AI per scope (the system list, or one user's own list). Raised 20 -> 300 (flowgate.v02.0017
+# T0004 §2); client_gui features/ai/limits.ts mirrors it so the screen blocks the 301st entry too.
+PROVIDERS_MAX = 300
 # Per-document-type provider assignment (flowgate.default.0317 D0004 implementation). A project's
 # workflow has a handful of worker doc types (NR/TR/TSR/TS, ...); cap generously so the map
 # stays renderable without constraining any real sequence.
@@ -50,6 +59,8 @@ KINDS_CLI = ("claude", "copilot", "codex", "custom")
 KINDS_API = ("claude", "openai", "custom")
 MODES = ("inherit", "disabled", "custom")
 MODE_DEFAULT = "inherit"
+PROJECT_ACCESS = _ai_db.PROJECT_ACCESS
+EXEC_LOCATIONS = _ai_db.EXEC_LOCATIONS
 
 _ID_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
 
@@ -415,6 +426,14 @@ class AiSettingsValidationError(Exception):
         self.errors = errors
 
 
+class AiSettingsConflict(Exception):
+    """A request the ownership model no longer allows (409 with a stable code)."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
 def get_catalog() -> dict:
     """Enum lists the editor renders from, plus (0281 T0005) host-OS context and per-kind
     example CLI commands so the UI can offer an OS-appropriate starting point instead of the
@@ -496,6 +515,14 @@ def validate_settings(
             errors.append({"index": index, "field": "name", "reason": "duplicate_name"})
         else:
             names_seen.add(name.lower())
+
+        access = p.get("project_access")
+        if access is not None and access not in PROJECT_ACCESS:
+            errors.append({"index": index, "field": "project_access", "reason": "unknown_project_access"})
+
+        location = p.get("exec_location")
+        if location is not None and location not in EXEC_LOCATIONS:
+            errors.append({"index": index, "field": "exec_location", "reason": "unknown_exec_location"})
 
         exec_type = p.get("exec_type")
         if exec_type not in EXEC_TYPES:
@@ -593,6 +620,8 @@ def _to_view(row: dict) -> dict:
         "api_model": row.get("api_model"),
         "api_key_set": api_key is not None or unreadable,
         "api_key_hint": api_key[-HINT_LEN:] if api_key else None,
+        "owner_scope": row.get("owner_scope") or _ai_db.OWNER_SYSTEM,
+        "exec_location": row.get("exec_location") or "local",
     }
     if unreadable:
         view["api_key_unreadable"] = True
@@ -632,17 +661,11 @@ def _pick_default(default_id: Optional[str], chain: list[dict]) -> Optional[str]
     return chain[0]["id"]
 
 
-def _save_scope(
-    project_id: Optional[str],
-    providers: list[dict],
-    default_provider_id: Optional[str],
-    default_provider_index: Optional[int],
-    mode: Optional[str],
-    updated_by: Optional[str],
-) -> tuple[list[dict], Optional[str]]:
-    """Full-replace + key-preserving merge (L0004 §2.2). Returns (saved rows, default id)."""
-    existing = {r["provider_id"]: r for r in _ai_db.list_scope(project_id)}
-    taken = set(existing)
+def _merge_rows(existing: dict[str, dict], providers: list[dict],
+                with_access: bool) -> tuple[list[dict], dict[str, str]]:
+    """Payload -> stored rows with final ids and merged keys. Ids are global (PK), so a new id
+    is checked against every owner's rows, not only this list's."""
+    taken = set(existing) | _ai_db.all_provider_ids()
     rows: list[dict] = []
     id_map: dict[str, str] = {}
     for index, p in enumerate(providers):
@@ -666,8 +689,24 @@ def _save_scope(
             "api_base_url": _resolve_base_url(p),
             "api_key": _merge_api_key(old, p.get("api_key")),
             "sort_order": index,
+            "project_access": (p.get("project_access") or (old or {}).get("project_access") or "all")
+            if with_access else None,
+            "exec_location": p.get("exec_location") or (old or {}).get("exec_location") or "local",
         })
+    return rows, id_map
 
+
+def _save_scope(
+    project_id: Optional[str],
+    providers: list[dict],
+    default_provider_id: Optional[str],
+    default_provider_index: Optional[int],
+    mode: Optional[str],
+    updated_by: Optional[str],
+) -> tuple[list[dict], Optional[str]]:
+    """Full-replace + key-preserving merge (L0004 §2.2). Returns (saved rows, default id)."""
+    existing = {r["provider_id"]: r for r in _ai_db.list_scope(project_id)}
+    rows, id_map = _merge_rows(existing, providers, with_access=project_id is None)
     default_id = _resolve_default(default_provider_id, default_provider_index, rows, id_map)
     _ai_db.replace_scope(
         project_id, rows, set(existing), default_id, mode=mode, updated_by=updated_by,
@@ -700,6 +739,8 @@ def get_system_settings(include_catalog: bool = True) -> dict:
         "default_provider_id": _ai_db.get_system_default_provider_id(),
         "updated_at": _scope_updated_at(None),
     }
+    from modules.flow_gate.settings import ai_execution_policy_service as _exec_policy
+    result["execution_policy"] = _exec_policy.execution_policy_payload()
     if include_catalog:
         result["catalog"] = get_catalog()
     return result
@@ -719,36 +760,79 @@ def save_system_settings(
     return get_system_settings(include_catalog=False)
 
 
-# ── Project scope (tri-state, P0003 project endpoints) ───────────────────────
+def get_visible_system_ai() -> dict:
+    """The system AI every signed-in user sees read-only on the AI 관리 screen (flowgate.v02.0017
+    CH0006 (2)): one list with the user's own AI. Name, kind and execution mode only — the
+    command line, URL and key hint stay on the administrator's route."""
+    hidden = ("cli_command", "api_base_url", "api_key_hint")
+    return {
+        "ok": True,
+        "providers": [
+            {k: v for k, v in _to_view(r).items() if k not in hidden}
+            for r in _ai_db.list_scope(None)
+        ],
+        "default_provider_id": _ai_db.get_system_default_provider_id(),
+    }
 
-def _project_mode(state: Optional[dict]) -> str:
-    """Row/column absence and unknown stored values read as inherit (L0004 §4.3)."""
-    if state is None:
-        return MODE_DEFAULT
-    mode = state.get("ai_mode")
-    if mode == "disabled" or mode == "custom":
-        return mode
-    return MODE_DEFAULT
 
+# ── User scope (a user's own AI) ─────────────────────────────────────────────
 
-def get_project_settings(project_id: str, include_catalog: bool = True) -> dict:
-    _require_project(project_id)
-    state = _ai_db.get_project_ai_state(project_id)
-    mode = _project_mode(state)
-    rows = _ai_db.list_scope(project_id)
-    # In custom mode the (possibly empty) list is the state; otherwise expose the
-    # preserved list when present so the UI can restore it on a mode switch (L0004 §3).
-    if mode == "custom":
-        providers = [_to_view(r) for r in rows]
-    else:
-        providers = [_to_view(r) for r in rows] if rows else None
+def get_user_settings(owner_user_id: str, include_catalog: bool = True) -> dict:
+    """The caller's own AI. Only the owner's routes reach this (owner_user_id = caller)."""
+    rows = _ai_db.list_user(owner_user_id)
+    stamps = [r["updated_at"] for r in rows if r.get("updated_at")]
     result = {
         "ok": True,
-        "mode": mode,
-        "providers": providers,
-        "default_provider_id": state.get("ai_default_provider_id") if state else None,
-        "updated_at": _scope_updated_at(project_id) if (rows or (state and state.get("ai_mode"))) else None,
-        "effective": _effective_view(project_id),
+        "providers": [_to_view(r) for r in rows],
+        # The caller's default AI (None = follow the system default) and the system default it
+        # falls back to (flowgate.v02.0017 CH0006 (3)).
+        "default_provider_id": _user_default_db.get(owner_user_id),
+        "system_default_provider_id": _ai_db.get_system_default_provider_id(),
+        "updated_at": max(stamps) if stamps else None,
+    }
+    if include_catalog:
+        result["catalog"] = get_catalog()
+    return result
+
+
+def save_user_default(owner_user_id: str, provider_id: Optional[str]) -> dict:
+    """Pick the caller's default AI: a system AI or one of the caller's own. None (or "") goes
+    back to following the system default."""
+    provider_id = (provider_id or "").strip() or None
+    if provider_id is not None:
+        allowed = ({r["provider_id"] for r in _ai_db.list_scope(None)}
+                   | {r["provider_id"] for r in _ai_db.list_user(owner_user_id)})
+        if provider_id not in allowed:
+            raise AiSettingsValidationError([{"field": "default_provider_id", "reason": "bad_default"}])
+    _user_default_db.save(owner_user_id, provider_id)
+    return get_user_settings(owner_user_id, include_catalog=False)
+
+
+def save_user_settings(owner_user_id: str, providers: Optional[list[dict]]) -> dict:
+    """Full-replace the caller's own AI list. Rows of other owners are never matched: an id
+    that is not one of the caller's rows is treated as a new row and gets a fresh id."""
+    errors = validate_settings(providers, None, None, None)
+    if errors:
+        raise AiSettingsValidationError(errors)
+    existing = {r["provider_id"]: r for r in _ai_db.list_user(owner_user_id)}
+    rows, _id_map = _merge_rows(existing, providers or [], with_access=False)
+    _ai_db.replace_user_scope(owner_user_id, rows, set(existing))
+    return get_user_settings(owner_user_id, include_catalog=False)
+
+
+# ── Pre-rev7 project routes (v0.1 screens) ────────────────────────────────────
+
+def get_project_settings(project_id: str, include_catalog: bool = True) -> dict:
+    """Pre-rev7 read shape for existing callers (v0.1 screens). A project has no AI settings of
+    its own any more, so `mode` is always "inherit" and `providers` is the system list."""
+    _require_project(project_id)
+    result = {
+        "ok": True,
+        "mode": MODE_DEFAULT,
+        "providers": [_to_view(r) for r in _ai_db.list_scope(None)],
+        "default_provider_id": None,
+        "updated_at": _scope_updated_at(None),
+        "effective": _effective_view(),
     }
     if include_catalog:
         result["catalog"] = get_catalog()
@@ -763,21 +847,13 @@ def save_project_settings(
     default_provider_index: Optional[int],
     updated_by: Optional[str] = None,
 ) -> dict:
+    """Pre-rev7 write. Only "inherit" is accepted, and it changes nothing: a project can neither
+    own AI nor switch AI off (the project AI policy is retired, CH0006 (4))."""
     _require_project(project_id)
-    errors = validate_settings(providers, default_provider_id, default_provider_index, mode)
-    if errors:
-        raise AiSettingsValidationError(errors)
-
-    if mode == "custom":
-        _save_scope(project_id, providers or [], default_provider_id,
-                    default_provider_index, mode="custom", updated_by=updated_by)
-    else:
-        # Mode-only transition: never touch the provider rows (list preservation,
-        # L0004 §3) and keep the stored project default for a later custom return.
-        state = _ai_db.get_project_ai_state(project_id)
-        _ai_db.upsert_project_ai_state(
-            project_id, mode, state.get("ai_default_provider_id") if state else None,
-        )
+    if mode not in MODES:
+        raise AiSettingsValidationError([{"field": "mode", "reason": "unknown_mode"}])
+    if mode != MODE_DEFAULT:
+        raise AiSettingsConflict("project_ai_policy_retired")
     return get_project_settings(project_id, include_catalog=False)
 
 
@@ -797,27 +873,19 @@ def build_preset_command_for_project(
 
 # ── Effective resolution (L0004 §2.4) ────────────────────────────────────────
 
-def _effective_view(project_id: str) -> dict:
-    state = _ai_db.get_project_ai_state(project_id)
-    mode = _project_mode(state)
-
-    if mode == "disabled":
-        return {"source": "disabled", "providers": [], "default_provider_id": None,
-                "registered_count": 0}
-
-    if mode == "custom":
-        rows = _ai_db.list_scope(project_id)
-        source = "project"
-        default_id = state.get("ai_default_provider_id") if state else None
-    else:  # inherit
-        rows = _ai_db.list_scope(None)
-        source = "system"
-        default_id = _ai_db.get_system_default_provider_id()
+def _effective_view(user_id: Optional[str] = None) -> dict:
+    """Every enabled system AI, in system order. No project narrows it (CH0006 (4))."""
+    rows = _ai_db.list_scope(None)
 
     from modules.flow_gate.services.provider_capability_service import provider_capabilities
     chain = [{**_to_view(r), "capabilities": provider_capabilities(_to_view(r))} for r in rows if r["enabled"]]
+    # Default (flowgate.v02.0017 CH0006 (3)): the user's pick when the chain has it, otherwise
+    # the system default, otherwise the chain head (_pick_default).
+    default_id = _user_default_db.get(user_id) if user_id else None
+    if default_id not in {p["id"] for p in chain}:
+        default_id = _ai_db.get_system_default_provider_id()
     return {
-        "source": source,
+        "source": "system",
         "providers": chain,
         "default_provider_id": _pick_default(default_id, chain),
         # 0292 T0003: rows BEFORE the enabled filter. An empty chain has two very
@@ -829,11 +897,18 @@ def _effective_view(project_id: str) -> dict:
     }
 
 
-def resolve_effective(project_id: str) -> dict:
-    """Effective chain for the follow-up execution module. providers order = fallback
-    order; disabled rows are excluded; api_key never appears (use get_provider_secret)."""
+def resolve_global(user_id: Optional[str] = None) -> dict:
+    """Effective chain without a project (AI evaluation, AI groups). providers order = fallback
+    order; disabled rows are excluded; api_key never appears (use get_provider_secret).
+    With user_id, default_provider_id is that user's default when the chain has it."""
+    return {"ok": True, **_effective_view(user_id)}
+
+
+def resolve_effective(project_id: str, user_id: Optional[str] = None) -> dict:
+    """resolve_global() behind the project-exists check the project routes and the run path
+    rely on (LookupError for an unknown project). The chain itself is the same everywhere."""
     _require_project(project_id)
-    return {"ok": True, **_effective_view(project_id)}
+    return resolve_global(user_id)
 
 
 def get_provider_secret(project_id: Optional[str], provider_id: str) -> Optional[str]:
@@ -872,7 +947,7 @@ def validate_doctype_assignments(
     if len(assignments) > DOCTYPE_ASSIGN_MAX:
         errors.append({"field": "assignments", "reason": "too_many"})
 
-    enabled_ids = {p["id"] for p in (_effective_view(project_id).get("providers") or [])}
+    enabled_ids = {p["id"] for p in (_effective_view().get("providers") or [])}
     seen: set[str] = set()
     for index, a in enumerate(assignments):
         doc_type = _norm_doctype(a.get("doc_type"))
@@ -896,7 +971,7 @@ def validate_doctype_assignments(
 
 def _doctype_view(project_id: str) -> dict:
     """Serialized assignment map + the effective provider list the UI renders options from."""
-    effective = _effective_view(project_id)
+    effective = _effective_view()
     return {
         "ok": True,
         "project": project_id,
@@ -951,7 +1026,7 @@ def resolve_doctype_provider(project_id: str, doc_type: str) -> Optional[str]:
         provider_id = _doctype_db.get_provider_for_type(project_id, normalized)
         if not provider_id:
             return None
-        chain = _effective_view(project_id).get("providers") or []
+        chain = _effective_view().get("providers") or []
         if any(p.get("id") == provider_id for p in chain):
             return provider_id
     except Exception:  # noqa: BLE001 — degrade to default, never break the hop

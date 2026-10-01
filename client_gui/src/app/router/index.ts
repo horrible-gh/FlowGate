@@ -6,10 +6,11 @@ import { PLACEHOLDER_NAV_KEYS } from '../navigation'
 import ComingSoonView from '../views/ComingSoonView.vue'
 import NotFoundView from '../views/NotFoundView.vue'
 
-// T0011 §8/§12: /app is the Dashboard; /app/projects, /designer, /git, and /settings
+// T0011 §8/§12: /app is the Dashboard; /app/projects, /designer, /git and /settings
 // exist as honest "준비 중" placeholders. Each placeholder also owns everything below it
 // (`/projects/...`), so a deep link keeps its section highlighted in the Sidebar.
-// /app/ai is implemented by AiSettingsView (T0003).
+// /app/ai is implemented by AiSettingsView (T0003), including 시스템 AI / 내 AI
+// (flowgate.v02.0017 T0004 §1).
 //
 // Nothing here redirects: a `redirect` rewrites the URL bar, and the T#1 contract is that an
 // authenticated deep link (e.g. `/app/projects?tab=x`) and a browser refresh keep exactly the

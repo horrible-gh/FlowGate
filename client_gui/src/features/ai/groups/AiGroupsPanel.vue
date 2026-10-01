@@ -3,356 +3,562 @@
     <div class="detail-head">
       <div>
         <div class="page-title">{{ t('gui.ai.groups.title') }}</div>
-        <div class="page-sub">{{ t('gui.ai.groups.subtitle') }}</div>
       </div>
-      <div class="detail-actions">
-        <Button variant="primary" @click="openCreate">
-          ＋ {{ t('gui.ai.groups.add_group') }}
-        </Button>
+      <!-- A group of system AI is an administrator's; everyone reads and starts with it (CH0006 #48). -->
+      <div v-if="canEdit" class="detail-actions">
+        <Button variant="primary" @click="openCreate">＋ {{ t('gui.ai.groups.add_group') }}</Button>
       </div>
     </div>
 
-    <div v-if="error" class="panel-error-alert">{{ error }}</div>
+    <div v-if="error" class="panel-error-alert" role="alert">{{ error }}</div>
 
     <div class="groups-layout">
-      <!-- Left sidebar: Group index -->
+      <!-- Team index -->
       <aside class="group-index">
         <label class="detail-search">
           ⌕ <input v-model="searchQuery" :placeholder="t('gui.ai.groups.search_placeholder')" />
         </label>
-
-        <div v-if="filteredGroups.length === 0" class="empty-index">
-          {{ t('gui.ai.groups.empty_list') }}
-        </div>
-
-        <div
+        <div v-if="filteredGroups.length === 0" class="empty-index">{{ t('gui.ai.groups.empty_list') }}</div>
+        <button
           v-for="g in filteredGroups"
           :key="g.ai_group_id"
+          type="button"
           class="group-index-item"
-          :class="{ active: selectedGroup?.ai_group_id === g.ai_group_id }"
-          @click="selectedGroup = g"
+          :class="{ active: selectedId === g.ai_group_id, off: !g.enabled }"
+          @click="selectedId = g.ai_group_id"
         >
-          <div class="index-item-title">
-            <span class="star">★</span>
+          <span class="index-item-title">
+            <span v-if="g.is_default" class="star" :title="t('gui.ai.groups.default_team')">★</span>
             <b>{{ g.name }}</b>
-            <span v-if="hasBrokenRole(g)" class="warn-dot" :title="t('gui.ai.groups.has_unavailable_role')">!</span>
-          </div>
-          <small>
-            Supervisor: {{ g.work_executor?.provider_name || g.work_executor?.provider_id || t('gui.ai.common.none') }}
-          </small>
-        </div>
+            <span v-if="!g.enabled" class="off-tag">OFF</span>
+            <span v-if="g.status === 'attention'" class="warn-dot" :title="t('gui.ai.groups.attention_hint')">!</span>
+          </span>
+          <small>{{ indexLine(g) }}</small>
+        </button>
       </aside>
 
-      <!-- Right main: Group details -->
-      <section v-if="selectedGroup" class="group-detail">
+      <!-- Team detail -->
+      <section v-if="selected" class="group-detail">
         <div class="group-detail-head">
           <div class="head-info">
-            <h2>{{ selectedGroup.name }}</h2>
-            <p>{{ selectedGroup.description || t('gui.ai.groups.no_description') }}</p>
+            <h2>{{ selected.name }}</h2>
+            <p v-if="selected.description">{{ selected.description }}</p>
           </div>
           <div class="head-actions">
-            <Button variant="secondary" size="sm" @click="openEdit(selectedGroup)">
-              {{ t('gui.common.edit') }}
-            </Button>
-            <Button variant="danger" size="sm" @click="confirmDelete(selectedGroup)">
-              {{ t('gui.common.delete') }}
-            </Button>
+            <span v-if="selected.is_default" class="team-badge">★ {{ t('gui.ai.groups.default_team') }}</span>
+            <IconButton
+              v-else-if="canEdit"
+              :label="t('gui.ai.groups.make_default')"
+              :title="t('gui.ai.groups.make_default')"
+              size="sm"
+              :disabled="busy || !selected.enabled"
+              @click="setState({ is_default: true })"
+            >
+              <AiIcon name="star" />
+            </IconButton>
+            <Toggle
+              v-if="canEdit"
+              :model-value="selected.enabled"
+              :disabled="busy"
+              :aria-label="t('gui.ai.groups.enabled_aria', { name: selected.name })"
+              @update:model-value="(value) => setState({ enabled: value })"
+            />
+            <IconButton v-if="canEdit" :label="t('gui.common.edit')" :title="t('gui.common.edit')" size="sm" :disabled="busy" @click="openEdit">
+              <AiIcon name="edit" />
+            </IconButton>
+            <IconButton
+              v-if="canEdit"
+              class="danger-icon"
+              :label="t('gui.common.delete')"
+              :title="t('gui.common.delete')"
+              size="sm"
+              :disabled="busy"
+              @click="deleting = selected"
+            >
+              <AiIcon name="trash" />
+            </IconButton>
           </div>
         </div>
 
-        <!-- Supervisor section -->
-        <div class="group-section-title">
-          <span>Supervisor ({{ t('gui.ai.groups.role_executor') }})</span>
-        </div>
-        <div class="supervisor-detail">
-          <template v-if="selectedGroup.work_executor">
-            <span
-              class="avatar-round"
-              :class="getAvatarClass(selectedGroup.work_executor.provider_name || selectedGroup.work_executor.provider_id)"
-            >
-              {{ getInitials(selectedGroup.work_executor.provider_name || selectedGroup.work_executor.provider_id) }}
-            </span>
-            <div class="supervisor-info">
-              <div class="name-line">
-                <b>{{ selectedGroup.work_executor.provider_name || selectedGroup.work_executor.provider_id }}</b>
-                <Badge
-                  v-if="!selectedGroup.work_executor.is_available"
-                  tone="warning"
+        <!-- Members: roles and Supervisor are picked right on the member -->
+        <div class="block">
+          <div class="block-head">
+            <span class="block-title">{{ t('gui.ai.groups.members') }}</span>
+            <span class="block-count">{{ selected.member_count }}</span>
+            <Dropdown v-if="canEdit">
+              <template #trigger="{ toggle, triggerAttrs }">
+                <Button
+                  v-bind="triggerAttrs"
+                  class="block-action"
+                  variant="secondary"
                   size="sm"
+                  :disabled="busy || !addableProviders.length"
+                  :title="addableProviders.length ? undefined : t('gui.ai.groups.no_addable')"
+                  @click="toggle"
                 >
-                  {{ t('gui.ai.groups.unavailable_role') }}
+                  ＋ {{ t('gui.ai.groups.add_member') }}
+                </Button>
+              </template>
+              <template #default="{ close }">
+                <button
+                  v-for="p in addableProviders"
+                  :key="p.id"
+                  type="button"
+                  role="menuitem"
+                  class="menu-item"
+                  @click="close(); addMember(p.id)"
+                >
+                  <b>{{ p.name }}</b><small>{{ p.kind }}</small>
+                </button>
+              </template>
+            </Dropdown>
+          </div>
+
+          <div v-if="!selected.members.length" class="block-empty">{{ t('gui.ai.groups.no_members') }}</div>
+          <div
+            v-for="member in orderedMembers"
+            :key="member.member_id"
+            class="member-row"
+            :class="{ 'is-supervisor': isSupervisor(member) }"
+          >
+            <span class="avatar-round" :class="getAvatarClass(memberName(member))">{{ getInitials(memberName(member)) }}</span>
+            <div class="member-info">
+              <div class="name-line">
+                <b>{{ memberName(member) }}</b>
+                <span v-if="isSupervisor(member)" class="supervisor-tag">{{ t('gui.ai.groups.supervisor') }}</span>
+                <Badge v-if="member.status !== 'available'" :tone="member.status === 'broken' ? 'danger' : 'warning'" size="sm">
+                  {{ t(`gui.ai.groups.status_${member.status}`) }}
                 </Badge>
               </div>
-              <small>{{ t('gui.ai.groups.supervisor_desc') }}</small>
+              <small class="muted">{{ evaluationLabel(member.latest_evaluation) }}</small>
             </div>
-            <div class="axis-chips">
-              <span>{{ t('gui.ai.groups.coordination') }}</span>
-              <span>{{ t('gui.ai.groups.context_dispatch') }}</span>
-            </div>
-          </template>
-          <div v-else class="text-muted">
-            {{ t('gui.ai.common.none') }}
-          </div>
-        </div>
 
-        <!-- Members section -->
-        <div class="group-section-title">
-          <span>Members (Reviewer / Reworker)</span>
-        </div>
-
-        <!-- Reviewer row -->
-        <div class="member-detail-row">
-          <div class="member-left">
-            <template v-if="selectedGroup.reviewer">
-              <span
-                class="avatar-round"
-                :class="getAvatarClass(selectedGroup.reviewer.provider_name || selectedGroup.reviewer.provider_id)"
+            <div class="role-tags">
+              <button
+                v-for="role in rolesOf(member)"
+                :key="role.role_id"
+                type="button"
+                class="role indigo role-chip"
+                :title="canEdit ? t('gui.ai.groups.unassign_role', { role: role.name }) : undefined"
+                :disabled="busy || !canEdit"
+                @click="toggleMapping(member, role.role_id, false)"
               >
-                {{ getInitials(selectedGroup.reviewer.provider_name || selectedGroup.reviewer.provider_id) }}
-              </span>
-              <div>
-                <b>{{ selectedGroup.reviewer.provider_name || selectedGroup.reviewer.provider_id }}</b>
-                <small>{{ t('gui.ai.groups.role_reviewer') }}</small>
-              </div>
-            </template>
-            <div v-else class="text-muted">
-              {{ t('gui.ai.groups.no_reviewer') }}
+                {{ role.name }}<span v-if="canEdit" aria-hidden="true">×</span>
+              </button>
+              <Dropdown v-if="canEdit">
+                <template #trigger="{ toggle, open }">
+                  <button
+                    type="button"
+                    aria-haspopup="menu"
+                    :aria-expanded="open"
+                    class="role role-add"
+                    :aria-label="t('gui.ai.groups.assign_role_aria', { name: memberName(member) })"
+                    :disabled="busy"
+                    @click="toggle"
+                  >
+                    ＋ {{ t('gui.ai.groups.role_short') }}
+                  </button>
+                </template>
+                <template #default="{ close }">
+                  <label v-for="role in selected.roles" :key="role.role_id" class="menu-check" role="menuitemcheckbox" :aria-checked="member.role_ids.includes(role.role_id)">
+                    <input
+                      type="checkbox"
+                      :checked="member.role_ids.includes(role.role_id)"
+                      :disabled="busy"
+                      @change="toggleMapping(member, role.role_id, ($event.target as HTMLInputElement).checked)"
+                    />
+                    {{ role.name }}
+                  </label>
+                  <button type="button" role="menuitem" class="menu-item menu-item--new" @click="close(); openRoleCreate()">
+                    ＋ {{ t('gui.ai.groups.add_role') }}
+                  </button>
+                </template>
+              </Dropdown>
             </div>
-          </div>
-          <div class="role-tags">
-            <span class="role cyan">{{ t('gui.ai.groups.role_reviewer') }}</span>
-            <Badge
-              v-if="selectedGroup.reviewer && !selectedGroup.reviewer.is_available"
-              tone="warning"
+
+            <!-- Always rendered so the columns line up whether or not a fit exists. -->
+            <strong class="fit" :title="typeof member.fit_score === 'number' ? t('gui.ai.groups.fit_hint') : undefined">
+              {{ typeof member.fit_score === 'number' ? `${formatScore(member.fit_score)} fit` : '' }}
+            </strong>
+            <IconButton
+              v-if="canEdit"
+              class="crown"
+              :class="{ on: isSupervisor(member) }"
+              :label="isSupervisor(member) ? t('gui.ai.groups.unset_supervisor') : t('gui.ai.groups.set_supervisor')"
+              :title="isSupervisor(member) ? t('gui.ai.groups.unset_supervisor') : t('gui.ai.groups.set_supervisor')"
+              :aria-pressed="isSupervisor(member)"
               size="sm"
+              :disabled="busy"
+              @click="setSupervisor(isSupervisor(member) ? '' : member.member_id)"
             >
-              {{ t('gui.ai.groups.unavailable_role') }}
-            </Badge>
+              <AiIcon name="crown" />
+            </IconButton>
+            <IconButton
+              v-if="canEdit"
+              class="danger-icon"
+              :label="t('gui.ai.groups.remove_member')"
+              :title="t('gui.ai.groups.remove_member')"
+              size="sm"
+              :disabled="busy"
+              @click="removeMember(member.member_id)"
+            >
+              <AiIcon name="close" />
+            </IconButton>
           </div>
         </div>
 
-        <!-- Reworker row -->
-        <div class="member-detail-row">
-          <div class="member-left">
-            <template v-if="selectedGroup.reworker">
-              <span
-                class="avatar-round"
-                :class="getAvatarClass(selectedGroup.reworker.provider_name || selectedGroup.reworker.provider_id)"
-              >
-                {{ getInitials(selectedGroup.reworker.provider_name || selectedGroup.reworker.provider_id) }}
-              </span>
-              <div>
-                <b>{{ selectedGroup.reworker.provider_name || selectedGroup.reworker.provider_id }}</b>
-                <small>{{ t('gui.ai.groups.role_reworker') }}</small>
+        <!-- Roles of this team -->
+        <div class="block">
+          <div class="block-head">
+            <span class="block-title">{{ t('gui.ai.groups.roles') }}</span>
+            <span class="block-count">{{ selected.role_count }}</span>
+            <Button v-if="canEdit" class="block-action" variant="secondary" size="sm" :disabled="busy" @click="openRoleCreate">
+              ＋ {{ t('gui.ai.groups.add_role') }}
+            </Button>
+          </div>
+          <div v-if="!selected.roles.length" class="block-empty">{{ t('gui.ai.groups.no_roles') }}</div>
+          <div v-else class="role-grid">
+            <div v-for="role in selected.roles" :key="role.role_id" class="role-card">
+              <div class="role-card-main">
+                <b>{{ role.name }}</b>
+                <small>{{ roleMemberNames(role) }}</small>
+                <small class="criteria-line">{{ criteriaLabel(role) }}</small>
               </div>
-            </template>
-            <div v-else class="text-muted">
-              {{ t('gui.ai.groups.no_reworker') }}
+              <div v-if="canEdit" class="role-card-actions">
+                <IconButton :label="t('gui.common.edit')" :title="t('gui.common.edit')" size="sm" :disabled="busy" @click="openRoleEdit(role)">
+                  <AiIcon name="edit" />
+                </IconButton>
+                <IconButton
+                  class="danger-icon"
+                  :label="t('gui.common.delete')"
+                  :title="t('gui.common.delete')"
+                  size="sm"
+                  :disabled="busy"
+                  @click="deletingRole = role"
+                >
+                  <AiIcon name="trash" />
+                </IconButton>
+              </div>
             </div>
           </div>
-          <div class="role-tags">
-            <span class="role purple">{{ t('gui.ai.groups.role_reworker') }}</span>
-            <Badge
-              v-if="selectedGroup.reworker && !selectedGroup.reworker.is_available"
-              tone="warning"
-              size="sm"
-            >
-              {{ t('gui.ai.groups.unavailable_role') }}
-            </Badge>
-          </div>
-        </div>
-
-        <!-- Role mapping section -->
-        <div class="group-section-title">
-          <span>{{ t('gui.ai.groups.role_mapping') }}</span>
-        </div>
-        <div class="mapping-row">
-          <span>
-            <b>{{ t('gui.ai.groups.role_executor') }}:</b>
-            {{ selectedGroup.work_executor?.provider_name || selectedGroup.work_executor?.provider_id || t('gui.ai.common.none') }}
-          </span>
-          <span>
-            <b>{{ t('gui.ai.groups.role_reviewer') }}:</b>
-            {{ selectedGroup.reviewer?.provider_name || selectedGroup.reviewer?.provider_id || t('gui.ai.common.none') }}
-          </span>
-          <span>
-            <b>{{ t('gui.ai.groups.role_reworker') }}:</b>
-            {{ selectedGroup.reworker?.provider_name || selectedGroup.reworker?.provider_id || t('gui.ai.common.none') }}
-          </span>
         </div>
       </section>
 
-      <!-- Empty state when no group selected -->
       <section v-else class="group-detail empty-detail">
-        <p>{{ t('gui.ai.groups.select_group_prompt') }}</p>
+        <p>{{ groups.length ? t('gui.ai.groups.select_group_prompt') : t('gui.ai.groups.create_first') }}</p>
       </section>
     </div>
 
-    <!-- Create/Edit Modal -->
     <AiGroupEditDialog
-      :open="dialogOpen"
-      :group="editingGroup"
-      :providers="providers"
-      :saving="saving"
-      :error="modalError"
-      @close="dialogOpen = false"
+      :open="groupDialog.open"
+      kind="group"
+      :initial="groupDialog.initial"
+      :saving="busy"
+      :error="dialogError"
+      @close="groupDialog.open = false"
       @save="onSaveGroup"
     />
+    <AiGroupEditDialog
+      :open="roleDialog.open"
+      kind="role"
+      :initial="roleDialog.initial"
+      :saving="busy"
+      :error="dialogError"
+      @close="roleDialog.open = false"
+      @save="onSaveRole"
+    />
 
-    <!-- Delete Confirm Dialog -->
     <ConfirmDialog
-      :open="!!deletingGroup"
+      :open="!!deleting"
       :title="t('gui.ai.groups.delete_confirm_title')"
-      :message="t('gui.ai.groups.delete_confirm_msg', { name: deletingGroup?.name })"
+      :message="t('gui.ai.groups.delete_confirm_msg', { name: deleting?.name })"
       danger
-      @confirm="onDeleteConfirmed"
-      @cancel="deletingGroup = null"
+      @confirm="onDeleteGroup"
+      @cancel="deleting = null"
+    />
+    <ConfirmDialog
+      :open="!!deletingRole"
+      :title="t('gui.ai.groups.role_delete_title')"
+      :message="t('gui.ai.groups.role_delete_msg', { name: deletingRole?.name })"
+      danger
+      @confirm="onDeleteRole"
+      @cancel="deletingRole = null"
     />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Badge from '@/components/ui/Badge.vue'
 import Button from '@/components/ui/Button.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
-import { createAiGroup, deleteAiGroup, listAiGroups, updateAiGroup } from '../api'
-import type { AiGroup, AiGroupInput, ProviderItem } from '../types'
+import Dropdown from '@/components/ui/Dropdown.vue'
+import IconButton from '@/components/ui/IconButton.vue'
+import Toggle from '@/components/ui/Toggle.vue'
+import {
+  addAiGroupMember,
+  createAiGroup,
+  createAiGroupRole,
+  deleteAiGroup,
+  deleteAiGroupRole,
+  listAiGroups,
+  removeAiGroupMember,
+  setAiGroupMemberRoles,
+  setAiGroupState,
+  updateAiGroup,
+  updateAiGroupRole,
+} from '../api'
+import {
+  formatScore,
+  type AiGroup,
+  type AiGroupInput,
+  type AiGroupMember,
+  type AiGroupRole,
+  type AiGroupRoleInput,
+  type AiGroupStateInput,
+  type AiLatestEvaluation,
+  type ProviderItem,
+} from '../types'
+import { useCurrentUser } from '@/core/auth/currentUser'
+import AiIcon from '../AiIcon.vue'
 import AiGroupEditDialog from './AiGroupEditDialog.vue'
 
+// A team: members (AI connections), user-defined roles mapped onto members, an optional
+// Supervisor, a default flag and an ON/OFF switch. Every change is saved as it is made.
 const props = defineProps<{
-  projectId: string
   providers: ProviderItem[]
   initialGroups: AiGroup[]
 }>()
 
-const emit = defineEmits<{
-  changed: []
-}>()
-
+const emit = defineEmits<{ changed: [] }>()
 const { t } = useI18n()
+const { user } = useCurrentUser()
+// Every group holds system AI only (a user's own AI cannot join yet), so only an administrator edits.
+const canEdit = computed(() => !!user.value?.isAdmin)
 
 const groups = ref<AiGroup[]>([...props.initialGroups])
-const selectedGroup = ref<AiGroup | null>(groups.value[0] ?? null)
+const selectedId = ref<string | null>(groups.value[0]?.ai_group_id ?? null)
 const searchQuery = ref('')
 const error = ref('')
-const modalError = ref<string | null>(null)
-const saving = ref(false)
-
-const dialogOpen = ref(false)
-const editingGroup = ref<AiGroup | null>(null)
-const deletingGroup = ref<AiGroup | null>(null)
-
-let requestGen = 0
+const dialogError = ref<string | null>(null)
+const busy = ref(false)
+const deleting = ref<AiGroup | null>(null)
+const deletingRole = ref<AiGroupRole | null>(null)
+const groupDialog = reactive<{ open: boolean; initial: { name: string; description: string | null } | null }>({ open: false, initial: null })
+const roleDialog = reactive<{ open: boolean; roleId: string | null; initial: AiGroupRoleInput | null }>({
+  open: false,
+  roleId: null,
+  initial: null,
+})
 
 watch(
   () => props.initialGroups,
-  (val) => {
-    groups.value = [...val]
-    if (!selectedGroup.value && groups.value.length > 0) {
-      selectedGroup.value = groups.value[0]
-    } else if (selectedGroup.value) {
-      selectedGroup.value = groups.value.find((g) => g.ai_group_id === selectedGroup.value?.ai_group_id) ?? groups.value[0] ?? null
-    }
+  (value) => {
+    groups.value = [...value]
+    if (!groups.value.some((g) => g.ai_group_id === selectedId.value)) selectedId.value = groups.value[0]?.ai_group_id ?? null
   },
   { deep: true }
 )
 
+const selected = computed(() => groups.value.find((g) => g.ai_group_id === selectedId.value) ?? null)
+
 const filteredGroups = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
   if (!q) return groups.value
-  return groups.value.filter(
-    (g) =>
-      g.name.toLowerCase().includes(q) ||
-      (g.description || '').toLowerCase().includes(q)
-  )
+  return groups.value.filter((g) => g.name.toLowerCase().includes(q) || (g.description || '').toLowerCase().includes(q))
 })
 
-function hasBrokenRole(g: AiGroup): boolean {
-  return (
-    (g.work_executor !== null && !g.work_executor.is_available) ||
-    (g.reviewer !== null && !g.reviewer.is_available) ||
-    (g.reworker !== null && !g.reworker.is_available)
-  )
+// Supervisor first, then the order the members were added in.
+const orderedMembers = computed(() => {
+  const members = selected.value?.members ?? []
+  return [...members.filter(isSupervisor), ...members.filter((m) => !isSupervisor(m))]
+})
+
+const addableProviders = computed(() => {
+  const taken = new Set((selected.value?.members ?? []).map((m) => m.provider_id))
+  return props.providers.filter((p) => !taken.has(p.id))
+})
+
+function isSupervisor(member: AiGroupMember): boolean {
+  return selected.value?.supervisor?.member_id === member.member_id
 }
 
-async function load(): Promise<void> {
-  const project = props.projectId
-  const gen = ++requestGen
-  if (!project) return
+function memberName(member: { provider_name: string | null; provider_id: string }): string {
+  return member.provider_name || member.provider_id
+}
 
+function indexLine(group: AiGroup): string {
+  const counts = t('gui.ai.groups.counts', { members: group.member_count, roles: group.role_count })
+  return group.supervisor ? `${memberName(group.supervisor)} · ${counts}` : counts
+}
+
+function rolesOf(member: AiGroupMember): AiGroupRole[] {
+  return (selected.value?.roles ?? []).filter((role) => member.role_ids.includes(role.role_id))
+}
+
+function roleMemberNames(role: AiGroupRole): string {
+  const names = (selected.value?.members ?? []).filter((m) => role.member_ids.includes(m.member_id)).map(memberName)
+  return names.length ? names.join(', ') : t('gui.ai.groups.role_unassigned')
+}
+
+function criteriaLabel(role: AiGroupRole): string {
+  const keys = role.criteria?.length ? role.criteria : null
+  return keys
+    ? keys.map((key) => t(`gui.ai.evaluation.criteria_short.${key}`)).join(' · ')
+    : t('gui.ai.groups.criteria_all')
+}
+
+// Latest completed evaluation of the member's AI connection, on the 10-point scale.
+function evaluationLabel(latest?: AiLatestEvaluation | null): string {
+  return typeof latest?.total_score === 'number'
+    ? t('gui.ai.groups.evaluation_score', { score: formatScore(latest.total_score) })
+    : t('gui.ai.groups.not_evaluated')
+}
+
+function replaceGroup(updated: AiGroup): void {
+  const index = groups.value.findIndex((g) => g.ai_group_id === updated.ai_group_id)
+  if (index >= 0) groups.value.splice(index, 1, updated)
+  else groups.value = [updated, ...groups.value]
+  selectedId.value = updated.ai_group_id
+}
+
+async function run(action: () => Promise<AiGroup | void>, onError: 'panel' | 'dialog' = 'panel'): Promise<boolean> {
+  if (busy.value) return false
+  busy.value = true
+  error.value = ''
+  dialogError.value = null
   try {
-    const items = await listAiGroups(project)
-    if (gen !== requestGen || props.projectId !== project) return
-    groups.value = items
-    error.value = ''
-    if (selectedGroup.value) {
-      selectedGroup.value = items.find((g) => g.ai_group_id === selectedGroup.value?.ai_group_id) ?? items[0] ?? null
-    } else {
-      selectedGroup.value = items[0] ?? null
-    }
-  } catch (err: unknown) {
-    if (gen === requestGen) {
-      error.value = err instanceof Error ? err.message : 'Failed to load AI groups'
-    }
-  }
-}
-
-function openCreate() {
-  editingGroup.value = null
-  modalError.value = null
-  dialogOpen.value = true
-}
-
-function openEdit(group: AiGroup) {
-  editingGroup.value = group
-  modalError.value = null
-  dialogOpen.value = true
-}
-
-async function onSaveGroup(input: AiGroupInput) {
-  if (!props.projectId) return
-  saving.value = true
-  modalError.value = null
-
-  try {
-    if (editingGroup.value) {
-      const updated = await updateAiGroup(props.projectId, editingGroup.value.ai_group_id, input)
-      dialogOpen.value = false
-      selectedGroup.value = updated
-    } else {
-      const created = await createAiGroup(props.projectId, input)
-      dialogOpen.value = false
-      selectedGroup.value = created
-    }
-    await load()
+    const result = await action()
+    if (result) replaceGroup(result)
     emit('changed')
+    return true
   } catch (err: unknown) {
-    modalError.value = err instanceof Error ? err.message : 'Failed to save group'
+    const message = err instanceof Error ? err.message : t('gui.ai.groups.save_failed')
+    if (onError === 'dialog') dialogError.value = message
+    else error.value = message
+    return false
   } finally {
-    saving.value = false
+    busy.value = false
   }
 }
 
-function confirmDelete(group: AiGroup) {
-  deletingGroup.value = group
+function openCreate(): void {
+  dialogError.value = null
+  groupDialog.initial = null
+  groupDialog.open = true
 }
 
-async function onDeleteConfirmed() {
-  if (!deletingGroup.value || !props.projectId) return
-  const id = deletingGroup.value.ai_group_id
-  deletingGroup.value = null
+function openEdit(): void {
+  if (!selected.value) return
+  dialogError.value = null
+  groupDialog.initial = { name: selected.value.name, description: selected.value.description }
+  groupDialog.open = true
+}
 
+async function onSaveGroup(input: AiGroupInput): Promise<void> {
+  const current = selected.value
+  const ok = await run(
+    () => (groupDialog.initial && current
+      ? updateAiGroup(current.ai_group_id, {
+        ...input,
+        supervisor_member_id: current.supervisor?.member_id ?? null,
+      })
+      : createAiGroup(input)),
+    'dialog',
+  )
+  if (ok) groupDialog.open = false
+}
+
+async function onDeleteGroup(): Promise<void> {
+  const target = deleting.value
+  deleting.value = null
+  if (!target) return
+  await run(async () => {
+    await deleteAiGroup(target.ai_group_id)
+    groups.value = groups.value.filter((g) => g.ai_group_id !== target.ai_group_id)
+    selectedId.value = groups.value[0]?.ai_group_id ?? null
+  })
+}
+
+async function setState(input: AiGroupStateInput): Promise<void> {
+  const current = selected.value
+  if (!current) return
+  await run(() => setAiGroupState(current.ai_group_id, input))
+  // Only one default team per project: refresh the others' flags.
+  if (input.is_default || input.enabled === false) await reload()
+}
+
+async function setSupervisor(memberId: string): Promise<void> {
+  const current = selected.value
+  if (!current) return
+  await run(() => updateAiGroup(current.ai_group_id, {
+    name: current.name,
+    description: current.description,
+    supervisor_member_id: memberId || null,
+  }))
+}
+
+async function addMember(providerId: string): Promise<void> {
+  const current = selected.value
+  if (!current || !providerId) return
+  await run(() => addAiGroupMember(current.ai_group_id, providerId))
+}
+
+async function removeMember(memberId: string): Promise<void> {
+  const current = selected.value
+  if (!current) return
+  await run(() => removeAiGroupMember(current.ai_group_id, memberId))
+}
+
+async function toggleMapping(member: AiGroupMember, roleId: string, checked: boolean): Promise<void> {
+  const current = selected.value
+  if (!current) return
+  const next = checked ? [...new Set([...member.role_ids, roleId])] : member.role_ids.filter((id) => id !== roleId)
+  await run(() => setAiGroupMemberRoles(current.ai_group_id, member.member_id, next))
+}
+
+function openRoleCreate(): void {
+  dialogError.value = null
+  roleDialog.roleId = null
+  roleDialog.initial = null
+  roleDialog.open = true
+}
+
+function openRoleEdit(role: AiGroupRole): void {
+  dialogError.value = null
+  roleDialog.roleId = role.role_id
+  roleDialog.initial = { name: role.name, description: role.description, criteria: [...(role.criteria ?? [])] }
+  roleDialog.open = true
+}
+
+async function onSaveRole(input: AiGroupRoleInput): Promise<void> {
+  const current = selected.value
+  if (!current) return
+  const roleId = roleDialog.roleId
+  const ok = await run(
+    () => (roleId
+      ? updateAiGroupRole(current.ai_group_id, roleId, input)
+      : createAiGroupRole(current.ai_group_id, input)),
+    'dialog',
+  )
+  if (ok) roleDialog.open = false
+}
+
+async function onDeleteRole(): Promise<void> {
+  const role = deletingRole.value
+  const current = selected.value
+  deletingRole.value = null
+  if (!role || !current) return
+  await run(() => deleteAiGroupRole(current.ai_group_id, role.role_id))
+}
+
+async function reload(): Promise<void> {
   try {
-    await deleteAiGroup(props.projectId, id)
-    if (selectedGroup.value?.ai_group_id === id) {
-      selectedGroup.value = null
-    }
-    await load()
-    emit('changed')
+    groups.value = await listAiGroups()
+    if (!groups.value.some((g) => g.ai_group_id === selectedId.value)) selectedId.value = groups.value[0]?.ai_group_id ?? null
   } catch (err: unknown) {
-    error.value = err instanceof Error ? err.message : 'Failed to delete group'
+    error.value = err instanceof Error ? err.message : t('gui.ai.groups.load_failed')
   }
 }
 
@@ -364,15 +570,11 @@ function getInitials(name: string): string {
 }
 
 function getAvatarClass(name: string): string {
-  const n = (name || '').toLowerCase()
-  if (n.includes('sonnet') || n.includes('claude')) return 'av-cs'
-  if (n.includes('opus')) return 'av-co'
-  if (n.includes('haiku')) return 'av-ch'
-  if (n.includes('gpt') || n.includes('openai')) return 'av-og'
+  const n = name.toLowerCase()
+  if (n.includes('sonnet') || n.includes('claude') || n.includes('opus') || n.includes('haiku')) return 'av-cs'
+  if (n.includes('gpt') || n.includes('openai') || n.includes('codex')) return 'av-og'
   if (n.includes('gemini')) return 'av-gp'
   if (n.includes('llama')) return 'av-l3'
-  if (n.includes('terra')) return 'av-te'
-  if (n.includes('luna')) return 'av-lu'
   return 'av-cs'
 }
 </script>
@@ -382,7 +584,6 @@ function getAvatarClass(name: string): string {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  height: 100%;
 }
 
 .detail-head {
@@ -402,7 +603,6 @@ function getAvatarClass(name: string): string {
 .page-sub {
   color: #b9c8d8;
   font-size: 14.5px;
-  margin: 0;
 }
 
 .detail-actions {
@@ -411,36 +611,38 @@ function getAvatarClass(name: string): string {
 
 .groups-layout {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
-  gap: 16px;
-  flex: 1;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 14px;
   min-height: 0;
 }
 
-.group-index {
+.group-index,
+.group-detail {
   border: 1px solid var(--fg2-line);
   border-radius: 12px;
-  background: #0d1b2b;
+  background: linear-gradient(180deg, rgba(13, 26, 40, 0.94), rgba(10, 22, 35, 0.92));
+}
+
+.group-index {
   padding: 12px;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  align-self: start;
 }
 
 .detail-search {
   height: 34px;
-  width: 100%;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 10px;
+  padding: 0 11px;
+  margin-bottom: 6px;
   border: 1px solid var(--fg2-line-strong);
   border-radius: 8px;
   background: #0c1b2c;
   color: #8399b0;
-  font-size: 12.5px;
-  margin-bottom: 8px;
+  font-size: 13px;
 }
 
 .detail-search input {
@@ -450,203 +652,247 @@ function getAvatarClass(name: string): string {
   outline: 0;
   background: transparent;
   color: #dce7f3;
-  font-size: 12px;
+  font-size: 12.5px;
+}
+
+.empty-index {
+  padding: 18px 6px;
+  color: var(--fg2-muted);
+  font-size: 12.5px;
+  text-align: center;
 }
 
 .group-index-item {
-  padding: 10px 12px;
-  border-radius: 8px;
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
   border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #dce7f3;
+  text-align: left;
   cursor: pointer;
-  transition: 0.16s ease;
 }
 
 .group-index-item:hover {
-  background: #10243a;
+  background: #102238;
 }
 
 .group-index-item.active {
-  background: linear-gradient(90deg, #173f70, #102a48);
-  border-color: #2f6bab;
+  border-color: rgba(75, 163, 255, 0.45);
+  background: #13304f;
+}
+
+.group-index-item.off {
+  opacity: 0.6;
 }
 
 .index-item-title {
   display: flex;
   align-items: center;
   gap: 6px;
-}
-
-.index-item-title .star {
-  color: #ffcf59;
   font-size: 13px;
-}
-
-.group-index-item b {
-  font-size: 13px;
-  color: #edf3fa;
 }
 
 .group-index-item small {
-  margin-top: 3px;
+  font-size: 11px;
   color: var(--fg2-muted);
+}
+
+.star {
+  color: #f5c451;
+}
+
+.off-tag {
+  padding: 1px 7px;
+  border-radius: 999px;
   font-size: 10.5px;
-  display: block;
+  font-weight: 700;
+  background: rgba(152, 169, 187, 0.18);
+  color: #98a9bb;
 }
 
 .warn-dot {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  background: #f59e0b;
-  color: #111;
-  font-size: 9px;
-  font-weight: 900;
-  margin-left: auto;
-}
-
-.empty-index {
-  padding: 24px 12px;
-  text-align: center;
-  color: var(--fg2-muted);
-  font-size: 12px;
+  display: grid;
+  place-items: center;
+  background: rgba(245, 158, 11, 0.2);
+  color: #f2c46d;
+  font-size: 10.5px;
+  font-weight: 800;
 }
 
 .group-detail {
-  border: 1px solid var(--fg2-line);
-  border-radius: 12px;
-  background: #0d1b2b;
-  overflow-y: auto;
+  padding: 18px 20px;
   display: flex;
   flex-direction: column;
+  gap: 22px;
 }
 
 .empty-detail {
   align-items: center;
   justify-content: center;
-  padding: 48px 24px;
   color: var(--fg2-muted);
+  min-height: 200px;
 }
 
 .group-detail-head {
-  min-height: 68px;
-  padding: 12px 18px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--fg2-line);
-  flex: none;
+  gap: 16px;
+}
+
+.head-info {
+  flex: 1;
+  min-width: 0;
 }
 
 .head-info h2 {
   margin: 0;
-  font-size: 17px;
-  font-weight: 850;
-  color: #edf3fa;
+  font-size: 18px;
+  color: #eaf1f8;
 }
 
 .head-info p {
-  margin: 4px 0 0;
-  color: var(--fg2-muted);
-  font-size: 11.5px;
+  margin: 6px 0 0;
+  color: #b9c8d8;
+  font-size: 13px;
 }
 
 .head-actions {
   display: flex;
-  gap: 8px;
-}
-
-.group-section-title {
-  min-height: 38px;
-  padding: 0 16px;
-  display: flex;
   align-items: center;
-  color: #9eb4ca;
-  font-size: 11.5px;
-  font-weight: 800;
-  background: #0a1726;
-  border-top: 1px solid rgba(154, 181, 210, 0.09);
-  border-bottom: 1px solid rgba(154, 181, 210, 0.09);
-  flex: none;
-}
-
-.supervisor-detail {
-  display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: center;
-  padding: 14px 18px;
-  background: #0c1928;
-}
-
-.supervisor-info .name-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.supervisor-info b {
-  font-size: 13.5px;
-  color: #edf3fa;
-}
-
-.supervisor-info small {
-  margin-top: 3px;
-  color: var(--fg2-muted);
-  font-size: 11px;
-  display: block;
-}
-
-.axis-chips {
-  display: flex;
   gap: 6px;
 }
 
-.axis-chips span {
-  height: 24px;
-  padding: 0 8px;
-  border-radius: 6px;
-  background: #11263b;
-  border: 1px solid rgba(93, 145, 199, 0.18);
-  color: #b9d4ee;
-  font-size: 10.5px;
-  display: inline-flex;
-  align-items: center;
+.team-badge {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(40, 110, 201, 0.2);
+  color: #9cc6ff;
+  font-size: 11.5px;
+  font-weight: 700;
 }
 
-.member-detail-row {
+.block {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 18px;
-  border-top: 1px solid rgba(154, 181, 210, 0.07);
+  flex-direction: column;
+  gap: 8px;
 }
 
-.member-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.member-left b {
-  font-size: 13px;
-  color: #edf3fa;
-  display: block;
-}
-
-.member-left small {
-  font-size: 10.5px;
-  color: var(--fg2-muted);
-  display: block;
-  margin-top: 2px;
-}
-
-.role-tags {
+.block-head {
   display: flex;
   align-items: center;
   gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--fg2-line);
+}
+
+.block-title {
+  font-size: 13.5px;
+  font-weight: 800;
+  color: #eaf1f8;
+}
+
+.block-count {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  background: #11263c;
+  color: #9fb3c8;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.block-action {
+  margin-left: auto;
+}
+
+.block-empty {
+  padding: 10px 2px;
+  font-size: 12.5px;
+  color: var(--fg2-muted);
+}
+
+.member-row {
+  display: grid;
+  grid-template-columns: 32px minmax(140px, 220px) minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid rgba(154, 181, 210, 0.1);
+  border-radius: 8px;
+  background: #0d1b2b;
+}
+
+.member-row.is-supervisor {
+  border-color: rgba(245, 196, 81, 0.35);
+  background: #13202c;
+}
+
+.member-info {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.name-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.name-line b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.supervisor-tag {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(245, 196, 81, 0.16);
+  color: #f5c451;
+  font-size: 10.5px;
+  font-weight: 700;
+  flex: none;
+}
+
+.muted {
+  font-size: 11.5px;
+  color: var(--fg2-muted);
+}
+
+.avatar-round {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 11px;
+  color: #fff;
+  flex: none;
+}
+
+.av-cs { background: linear-gradient(145deg, #d98466, #8d3f31); }
+.av-og { background: linear-gradient(145deg, #67a2ff, #3667d7); }
+.av-gp { background: linear-gradient(145deg, #9b79ff, #6f49d7); }
+.av-l3 { background: linear-gradient(145deg, #58adff, #2e77c6); }
+
+.role-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
 }
 
 .role {
@@ -659,56 +905,143 @@ function getAvatarClass(name: string): string {
   font-size: 11.5px;
   display: inline-flex;
   align-items: center;
+  gap: 5px;
 }
 
-.role.cyan { background: #102b2d; border-color: rgba(73, 223, 208, 0.2); color: #95eee5; }
-.role.purple { background: #241a3d; border-color: rgba(163, 123, 255, 0.22); color: #d0bdfd; }
-
-.mapping-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 14px 18px 20px;
+.role.indigo {
+  background: #132744;
+  border-color: rgba(91, 146, 255, 0.22);
+  color: #b4d1ff;
 }
 
-.mapping-row span {
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--fg2-line);
-  border-radius: 7px;
-  background: #102238;
-  color: #a9bdd1;
-  font-size: 11.5px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.role-chip {
+  cursor: pointer;
 }
 
-.mapping-row b {
-  color: #e3eef9;
-}
-
-.avatar-round {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-weight: 800;
-  font-size: 11px;
-  color: #fff;
-  flex: none;
-}
-
-.av-cs, .av-co, .av-ch { background: linear-gradient(145deg, #d98466, #8d3f31); }
-.av-og, .av-o4, .av-lu { background: linear-gradient(145deg, #67a2ff, #3667d7); }
-.av-gp { background: linear-gradient(145deg, #9b79ff, #6f49d7); }
-.av-l3 { background: linear-gradient(145deg, #58adff, #2e77c6); }
-.av-te { background: linear-gradient(145deg, #e6b089, #b97851); }
-
-.text-muted {
-  color: var(--fg2-muted);
+.role-chip span {
+  opacity: 0;
   font-size: 12px;
+  transition: opacity 0.12s ease;
+}
+
+.role-chip:hover span,
+.role-chip:focus-visible span {
+  opacity: 0.8;
+}
+
+.role-add {
+  border-style: dashed;
+  background: transparent;
+  color: #8fa6bf;
+  cursor: pointer;
+}
+
+.role-add:hover:not(:disabled) {
+  color: #dce9f8;
+  border-color: rgba(112, 151, 193, 0.45);
+}
+
+.fit {
+  font-size: 13px;
+  color: #7ee0c3;
+  white-space: nowrap;
+}
+
+.crown {
+  color: #5f7690;
+}
+
+.crown.on {
+  color: #f5c451;
+}
+
+.danger-icon:hover:not(:disabled) {
+  color: #fca5a5;
+}
+
+.menu-item,
+.menu-check {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: #dce7f3;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-item small {
+  margin-left: auto;
+  color: var(--fg2-muted);
+  font-size: 11px;
+}
+
+.menu-item:hover,
+.menu-check:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.menu-item--new {
+  margin-top: 4px;
+  border-top: 1px solid var(--fg2-line);
+  border-radius: 0 0 6px 6px;
+  color: #9cc6ff;
+}
+
+.role-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.role-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 10px 10px 12px;
+  border: 1px solid rgba(154, 181, 210, 0.1);
+  border-radius: 8px;
+  background: #0d1b2b;
+}
+
+.role-card-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.role-card-main b {
+  font-size: 13px;
+  color: #b4d1ff;
+}
+
+.role-card-main small {
+  font-size: 11.5px;
+  color: #b9c8d8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.role-card-main .criteria-line {
+  color: var(--fg2-muted);
+}
+
+.role-card-actions {
+  display: flex;
+  opacity: 0.55;
+  transition: opacity 0.12s ease;
+}
+
+.role-card:hover .role-card-actions,
+.role-card:focus-within .role-card-actions {
+  opacity: 1;
 }
 
 .panel-error-alert {
@@ -721,9 +1054,18 @@ function getAvatarClass(name: string): string {
   margin-bottom: 12px;
 }
 
-@media (max-width: 1200px) {
-  .groups-layout {
-    grid-template-columns: 1fr;
+@media (max-width: 1100px) {
+  .member-row {
+    grid-template-columns: 32px minmax(0, 1fr) auto auto auto;
   }
+
+  .member-row .role-tags {
+    grid-column: 2 / -1;
+    grid-row: 2;
+  }
+}
+
+@media (max-width: 900px) {
+  .groups-layout { grid-template-columns: 1fr; }
 }
 </style>

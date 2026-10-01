@@ -58,8 +58,9 @@ onBeforeUnmount(() => {
   border-radius: var(--fg2-control-radius);
   border: 1px solid var(--fg2-line-strong);
   border-left-width: 3px;
-  background: var(--fg2-control-surface-strong);
-  box-shadow: var(--fg2-overlay-shadow);
+  /* Opaque: a toast floats over arbitrary content (header, tables), so nothing may show through. */
+  background: var(--fg2-panel);
+  box-shadow: 0 12px 32px rgba(2, 6, 12, 0.6);
   color: var(--fg2-text);
   font-size: 13px;
   line-height: 1.5;
@@ -87,25 +88,29 @@ onBeforeUnmount(() => {
 
 .ui-toast--info {
   border-left-color: var(--fg2-status-info-border);
-  background: var(--fg2-status-info-bg);
+  /* The tone tint sits on the opaque panel colour instead of replacing it. */
+  background: linear-gradient(var(--fg2-status-info-bg), var(--fg2-status-info-bg)), var(--fg2-panel);
   color: var(--fg2-status-info-fg);
 }
 
 .ui-toast--success {
   border-left-color: var(--fg2-status-success-border);
-  background: var(--fg2-status-success-bg);
+  /* The tone tint sits on the opaque panel colour instead of replacing it. */
+  background: linear-gradient(var(--fg2-status-success-bg), var(--fg2-status-success-bg)), var(--fg2-panel);
   color: var(--fg2-status-success-fg);
 }
 
 .ui-toast--warning {
   border-left-color: var(--fg2-status-warning-border);
-  background: var(--fg2-status-warning-bg);
+  /* The tone tint sits on the opaque panel colour instead of replacing it. */
+  background: linear-gradient(var(--fg2-status-warning-bg), var(--fg2-status-warning-bg)), var(--fg2-panel);
   color: var(--fg2-status-warning-fg);
 }
 
 .ui-toast--danger {
   border-left-color: var(--fg2-status-danger-border);
-  background: var(--fg2-status-danger-bg);
+  /* The tone tint sits on the opaque panel colour instead of replacing it. */
+  background: linear-gradient(var(--fg2-status-danger-bg), var(--fg2-status-danger-bg)), var(--fg2-panel);
   color: var(--fg2-status-danger-fg);
 }
 </style>

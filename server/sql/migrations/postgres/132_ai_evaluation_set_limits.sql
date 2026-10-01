@@ -1,0 +1,5 @@
+-- 132_ai_evaluation_set_limits.sql  (postgres — intentional no-op)
+-- flowgate.v02.0017 T0004 §5: the MySQL counterpart widens ai_evaluation_sets.constraints to
+-- MEDIUMTEXT for the larger evaluation set limits (100 constraints x 4000 characters).
+-- PostgreSQL TEXT has no length ceiling, so nothing changes here. This file keeps the
+-- three dialect directories on identical migration filenames.

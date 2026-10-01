@@ -540,7 +540,7 @@ async function loadAiGroups() {
   aiGroups.value = []
   if (!project) return
   try {
-    const { data } = await getRequest<{ items: AiGroupPreset[] }>(`/api/v1/projects/${encodeURIComponent(project)}/ai-groups`)
+    const { data } = await getRequest<{ items: AiGroupPreset[] }>(`/api/v1/ai-groups`)
     if (props.visible && props.projectId === project && generation === groupRequestGeneration) aiGroups.value = data.items || []
   } catch { /* Provider selection remains usable when Group read fails. */ }
 }

@@ -84,7 +84,7 @@ async function load(): Promise<void> {
   const project = props.projectId, request = ++generation
   if (!project) return
   try {
-    const { data } = await getRequest<{ items: Group[] }>(`/api/v1/projects/${encodeURIComponent(project)}/ai-groups`)
+    const { data } = await getRequest<{ items: Group[] }>(`/api/v1/ai-groups`)
     if (generation === request && props.projectId === project) { groups.value = data.items; error.value = '' }
   } catch (e) { if (generation === request) error.value = apiError(e) }
 }
@@ -110,7 +110,7 @@ async function save(): Promise<void> {
     work_executor_provider_id: form.value.work_executor, reviewer_provider_id: form.value.reviewer || null,
     reworker_provider_id: form.value.reworker || null }
   try {
-    const base = `/api/v1/projects/${encodeURIComponent(project)}/ai-groups`
+    const base = `/api/v1/ai-groups`
     if (id === 'new') await postRequest(base, body)
     else await putRequest(`${base}/${encodeURIComponent(id)}`, body)
     if (props.projectId === project) { if (editSession === session) closeModal(); await load(); emit('changed') }
@@ -121,7 +121,7 @@ async function remove(group: Group): Promise<void> {
   if (!await confirm({ title: t('settings.project.ai_v02.delete_confirm', { name: group.name }) })) return
   const project = props.projectId
   try {
-    await deleteRequest(`/api/v1/projects/${encodeURIComponent(project)}/ai-groups/${encodeURIComponent(group.ai_group_id)}`)
+    await deleteRequest(`/api/v1/ai-groups/${encodeURIComponent(group.ai_group_id)}`)
     if (props.projectId === project) { await load(); emit('changed') }
   } catch (e) { if (props.projectId === project) error.value = apiError(e) }
 }

@@ -1,34 +1,25 @@
 <template>
   <div class="ai-settings-view">
-    <!-- No Project Selected -->
-    <div v-if="!currentProject" class="no-project-box">
-      <EmptyState
-        :title="t('gui.ai.no_project_title')"
-        :description="t('gui.ai.no_project_desc')"
-      >
-        <template #action>
-          <Button variant="primary" @click="projectStore.openDialog()">
-            {{ t('gui.ai.select_project_action') }}
-          </Button>
-        </template>
-      </EmptyState>
-    </div>
+    <header class="view-header">
+      <div class="header-left">
+        <Tabs
+          :model-value="activeTab"
+          :tabs="tabs"
+          :aria-label="t('gui.ai.tabs_aria')"
+          @change="onTabChange"
+        />
+      </div>
+    </header>
 
-    <!-- Active Project Content -->
+    <!-- AI list: system AI and my AI in one list. -->
+    <main v-if="activeTab === 'ai'" class="view-content">
+      <AiProvidersPanel @changed="onProvidersChanged" />
+    </main>
+
     <template v-else>
-      <header class="view-header">
-        <div class="header-left">
-          <Tabs
-            v-model="activeTab"
-            :tabs="tabs"
-            :aria-label="t('gui.ai.tabs_aria')"
-            @change="onTabChange"
-          />
-        </div>
-        <Button variant="primary" @click="startOpen = true">{{ t('gui.ai.start.open') }}</Button>
-      </header>
-
-      <div v-if="loading" class="view-loading">
+      <!-- Full-screen loading only before the first data arrives: a refresh after an edit
+           keeps the open tab (and its selection/dialog state) mounted. -->
+      <div v-if="loading && !loaded" class="view-loading">
         <LoadingState :label="t('gui.common.loading')" />
       </div>
 
@@ -46,57 +37,9 @@
       </div>
 
       <main v-else class="view-content">
-        <!-- Overview Tab -->
-        <template v-if="activeTab === 'overview'">
-          <div v-if="sectionErrors.overview" class="view-error">
-            <ErrorState
-              :title="t('gui.ai.load_failed_title')"
-              :message="sectionErrors.overview"
-            >
-              <template #action>
-                <Button variant="secondary" @click="loadData">
-                  {{ t('gui.common.retry') }}
-                </Button>
-              </template>
-            </ErrorState>
-          </div>
-          <AiOverviewPanel
-            v-else
-            :overview="overviewData"
-            :providers="overviewProviders"
-            :evaluations="evaluations"
-            :groups="groups"
-            :section-errors="sectionErrors"
-            @navigate="onNavigateTab"
-          />
-        </template>
-
-        <!-- Providers Tab -->
-        <template v-else-if="activeTab === 'providers'">
-          <div v-if="sectionErrors.settings" class="view-error">
-            <ErrorState
-              :title="t('gui.ai.load_failed_title')"
-              :message="sectionErrors.settings"
-            >
-              <template #action>
-                <Button variant="secondary" @click="loadData">
-                  {{ t('gui.common.retry') }}
-                </Button>
-              </template>
-            </ErrorState>
-          </div>
-          <AiProvidersPanel
-            v-else-if="settingsData"
-            :project-id="currentProject.id"
-            :initial-settings="settingsData"
-            @changed="loadData"
-          />
-        </template>
-
         <!-- Evaluation Tab -->
-        <template v-else-if="activeTab === 'evaluation'">
+        <template v-if="activeTab === 'evaluation'">
           <AiEvaluationPanel
-            :project-id="currentProject.id"
             :providers="activeProviders"
             @changed="loadData"
           />
@@ -118,7 +61,6 @@
           </div>
           <AiGroupsPanel
             v-else
-            :project-id="currentProject.id"
             :providers="activeProviders"
             :initial-groups="groups"
             @changed="loadData"
@@ -126,166 +68,100 @@
         </template>
       </main>
     </template>
-    <AiStartDialog v-if="currentProject" :open="startOpen" :project="currentProject" @close="startOpen = false" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
-import EmptyState from '@/components/ui/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import LoadingState from '@/components/ui/LoadingState.vue'
 import Tabs, { type TabItem } from '@/components/ui/Tabs.vue'
-import { useProjectStore } from '@/features/project'
-import {
-  fetchAiOverview,
-  fetchEvaluationHistory,
-  fetchProjectAiSettings,
-  listAiGroups,
-} from './api'
-import type {
-  AiEvaluation,
-  AiGroup,
-  AiOverviewData,
-  ProjectAiSettings,
-  ProviderItem,
-} from './types'
-import AiOverviewPanel from './overview/AiOverviewPanel.vue'
+import { fetchVisibleSystemAi, listAiGroups } from './api'
+import type { AiGroup, ProviderItem } from './types'
 import AiProvidersPanel from './providers/AiProvidersPanel.vue'
 import AiEvaluationPanel from './evaluation/AiEvaluationPanel.vue'
 import AiGroupsPanel from './groups/AiGroupsPanel.vue'
-import AiStartDialog from './AiStartDialog.vue'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
-const projectStore = useProjectStore()
 
-type TabKey = 'overview' | 'providers' | 'evaluation' | 'groups'
-const activeTab = ref<TabKey>('overview')
-const startOpen = ref(false)
-
-const currentProject = computed(() => projectStore.currentProject)
+// AI 관리 (flowgate.v02.0017 CH0006): one screen that needs no project. The AI list, the
+// evaluations and the groups all belong to the system, not to a project.
+type TabKey = 'ai' | 'evaluation' | 'groups'
+const activeTab = ref<TabKey>('ai')
 
 const loading = ref(false)
+const loaded = ref(false)
 const error = ref<string | null>(null)
 
-const overviewData = ref<AiOverviewData | null>(null)
-const settingsData = ref<ProjectAiSettings | null>(null)
-const evaluations = ref<AiEvaluation[]>([])
+// The AI evaluation and groups can use: every enabled system AI (the server runs no other).
+const systemProviders = ref<ProviderItem[]>([])
 const groups = ref<AiGroup[]>([])
-const sectionErrors = ref<{
-  overview?: string | null
-  settings?: string | null
-  evaluations?: string | null
-  groups?: string | null
-}>({})
+const sectionErrors = ref<{ groups?: string | null }>({})
 
 let requestEpoch = 0
 
 const tabs = computed<TabItem[]>(() => [
-  { key: 'overview', label: t('gui.ai.tabs.overview') },
-  { key: 'providers', label: t('gui.ai.tabs.providers') },
+  { key: 'ai', label: t('gui.ai.tabs.ai') },
   { key: 'evaluation', label: t('gui.ai.tabs.evaluation') },
   { key: 'groups', label: t('gui.ai.tabs.groups') },
 ])
 
-// Effective enabled providers for evaluation runnable targets and group selectable roles
-const activeProviders = computed<ProviderItem[]>(() => {
-  const list =
-    settingsData.value?.mode === 'custom'
-      ? (settingsData.value?.effective?.providers ?? (settingsData.value?.providers ?? []).filter((p) => p.enabled))
-      : (settingsData.value?.effective?.providers ?? [])
-  return list.filter((p) => p.enabled !== false)
-})
+const activeProviders = computed<ProviderItem[]>(() =>
+  systemProviders.value.filter((p) => p.enabled !== false)
+)
 
-// All configured providers for overview display (preserving inactive status chips)
-const overviewProviders = computed<ProviderItem[]>(() => {
-  if (settingsData.value?.mode === 'custom') {
-    return settingsData.value.providers ?? []
-  }
-  return settingsData.value?.effective?.providers ?? []
-})
-
+// Links from before AI 관리 (overview / system-ai / my-ai / policy / providers) open the AI list.
 function parseTab(tabParam: unknown): TabKey {
-  if (tabParam === 'providers' || tabParam === 'evaluation' || tabParam === 'groups') {
-    return tabParam
-  }
-  return 'overview'
+  if (tabParam === 'evaluation' || tabParam === 'groups') return tabParam
+  return 'ai'
 }
 
 function onTabChange(newTab: string) {
-  activeTab.value = newTab as TabKey
+  activeTab.value = parseTab(newTab)
   if (route.query.tab !== newTab) {
     void router.replace({ query: { ...route.query, tab: newTab } })
   }
 }
 
-function onNavigateTab(targetTab: 'providers' | 'evaluation' | 'groups') {
-  onTabChange(targetTab)
+// Evaluation and groups list the usable AI, so they are reloaded after an edit in the list.
+function onProvidersChanged() {
+  if (loaded.value) void loadData()
 }
 
 async function loadData() {
-  const pId = currentProject.value?.id
-  if (!pId) return
   const epoch = ++requestEpoch
   loading.value = true
   error.value = null
 
   try {
-    const [ovRes, setRes, evalRes, grpRes] = await Promise.allSettled([
-      fetchAiOverview(pId),
-      fetchProjectAiSettings(pId),
-      fetchEvaluationHistory(pId, undefined, 20),
-      listAiGroups(pId),
+    const [systemRes, grpRes] = await Promise.allSettled([
+      fetchVisibleSystemAi(),
+      listAiGroups(),
     ])
 
-    if (epoch !== requestEpoch || currentProject.value?.id !== pId) return
+    if (epoch !== requestEpoch) return
 
-    const errs: Record<string, string | null> = {}
-
-    if (ovRes.status === 'fulfilled') {
-      overviewData.value = ovRes.value
-    } else {
-      overviewData.value = null
-      errs.overview = ovRes.reason instanceof Error ? ovRes.reason.message : 'Failed to load AI overview'
-    }
-
-    if (setRes.status === 'fulfilled') {
-      settingsData.value = setRes.value
-    } else {
-      settingsData.value = null
-      errs.settings = setRes.reason instanceof Error ? setRes.reason.message : 'Failed to load project AI settings'
-    }
-
-    if (evalRes.status === 'fulfilled') {
-      evaluations.value = evalRes.value.items || []
-    } else {
-      evaluations.value = []
-      errs.evaluations = evalRes.reason instanceof Error ? evalRes.reason.message : 'Failed to load evaluation history'
-    }
+    systemProviders.value = systemRes.status === 'fulfilled' ? systemRes.value.providers ?? [] : []
 
     if (grpRes.status === 'fulfilled') {
       groups.value = grpRes.value
+      sectionErrors.value = {}
     } else {
       groups.value = []
-      errs.groups = grpRes.reason instanceof Error ? grpRes.reason.message : 'Failed to load AI groups'
+      sectionErrors.value = {
+        groups: grpRes.reason instanceof Error ? grpRes.reason.message : 'Failed to load AI groups',
+      }
     }
 
-    sectionErrors.value = errs
-
-    // Overall fatal error if all sections failed
-    if (
-      ovRes.status === 'rejected' &&
-      setRes.status === 'rejected' &&
-      evalRes.status === 'rejected' &&
-      grpRes.status === 'rejected'
-    ) {
-      error.value = 'Failed to load project AI configuration.'
+    if (systemRes.status === 'rejected') {
+      error.value = systemRes.reason instanceof Error ? systemRes.reason.message : 'Failed to load AI settings'
     }
+    loaded.value = true
   } catch (err: unknown) {
     if (epoch === requestEpoch) {
       error.value = err instanceof Error ? err.message : 'Failed to load AI settings'
@@ -300,35 +176,19 @@ async function loadData() {
 watch(
   () => route.query.tab,
   (tabVal) => {
-    if (tabVal) {
-      activeTab.value = parseTab(tabVal)
-    }
+    activeTab.value = parseTab(tabVal)
   },
   { immediate: true }
 )
 
+// Evaluation and groups need the usable AI; the AI list loads its own data.
 watch(
-  () => currentProject.value?.id,
-  (newId) => {
-    startOpen.value = false
-    if (newId) {
-      void loadData()
-    } else {
-      overviewData.value = null
-      settingsData.value = null
-      evaluations.value = []
-      groups.value = []
-      sectionErrors.value = {}
-    }
+  activeTab,
+  (tab) => {
+    if (tab !== 'ai' && !loaded.value && !loading.value) void loadData()
   },
   { immediate: true }
 )
-
-onMounted(() => {
-  if (currentProject.value?.id && !settingsData.value) {
-    void loadData()
-  }
-})
 </script>
 
 <style scoped>
@@ -339,13 +199,6 @@ onMounted(() => {
   min-height: 0;
   padding: 18px 24px 24px;
   overflow: hidden;
-}
-
-.no-project-box {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 1;
 }
 
 .view-header {

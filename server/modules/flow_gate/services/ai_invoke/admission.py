@@ -600,9 +600,11 @@ def _continuation_docs_target(
 
 # ── Start (L0006 §2.1) ───────────────────────────────────────────────────────
 
-def list_runtime_providers(project_id: str) -> dict:
-    """Safe effective-provider view for ordinary document readers."""
-    effective = ai_settings_service.resolve_effective(project_id)
+def list_runtime_providers(project_id: str, user_id: Optional[str] = None) -> dict:
+    """Safe effective-provider view for ordinary document readers. The default is the
+    caller's own default AI when this project can run it (flowgate.v02.0017 CH0006 (3))."""
+    effective = (ai_settings_service.resolve_effective(project_id, user_id) if user_id
+                 else ai_settings_service.resolve_effective(project_id))
     return {
         "ok": True,
         "project": project_id,

@@ -602,27 +602,39 @@ def _cli_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
 
 
 def probe_cli_completion(*, project_id: str, kind: str, command: Optional[str], prompt: str,
-                         timeout: float, handle) -> ProbeOutcome:
-    """One run-less prompt/response round trip for AI Evaluation, on the product CLI boundary.
+                         timeout: float, handle, scratch: Optional[Path] = None,
+                         run_id: Optional[str] = None) -> ProbeOutcome:
+    """One run-less prompt/response round trip (AI connection test / AI Evaluation), on the
+    product CLI boundary.
 
     Same command normalisation (_prepare_cli_command), manifest-bound run scratch
     (_create_scratch), launch policy (_resolve_cli_launch), scratch-confined env and
     _CliProcess ownership/timeout/reap as _cli_execute. Only the run-bound parts are left
     out: no Source Bundle prompt, no FlowGate token or API base (blanked, never inherited),
     no group watchdog. A handle abort kills the whole process tree.
+
+    Without `scratch` the probe owns a fresh scratch and deletes it afterwards. With
+    `scratch`/`run_id` (flowgate.v02.0017: an AI Evaluation's judge and target share one
+    evaluation Scratch) the caller owns that manifest-bound scratch: the CLI runs inside it
+    and it is left in place for the caller to settle.
     """
     command = (command or "").strip()
     if not command or not project_id:
         return ProbeOutcome(PROBE_LAUNCH_FAILED)
-    run_id = _next_run_id()
-    try:
-        scratch = _create_scratch(project_id, run_id)
-    except (OSError, ValueError):
+    owned = scratch is None
+    if owned:
+        run_id = _next_run_id()
+        try:
+            scratch = _create_scratch(project_id, run_id)
+        except (OSError, ValueError):
+            return ProbeOutcome(PROBE_LAUNCH_FAILED)
+    elif not run_id:
         return ProbeOutcome(PROBE_LAUNCH_FAILED)
     try:
         provider = {"kind": kind}
         run = {"run_id": run_id, "project_id": project_id, "scratch_dir": str(scratch)}
-        last_message_file = scratch / "last_message.txt"
+        last_message_file = (scratch / "last_message.txt" if owned else
+                             scratch / "tmp" / f"last_message_{time.monotonic_ns()}.txt")
         decision, reason = _resolve_cli_launch(
             provider, run, _prepare_cli_command(kind, command, last_message_file))
         if decision is None:
@@ -656,10 +668,11 @@ def probe_cli_completion(*, project_id: str, kind: str, command: Optional[str], 
         _recover_cli_last_message(answer, kind, process_runner.safe_decode(stdout), last_message_file)
         return ProbeOutcome(PROBE_OK, answer.get("last_message") or "")
     finally:
-        _mark_scratch_completed(project_id, run_id, scratch, now_iso())
-        deleted, why = _delete_owned_scratch(project_id, run_id, scratch)
-        if not deleted:
-            logger.warning("ai-invoke %s: probe scratch retained (%s)", run_id, why)
+        if owned:
+            _mark_scratch_completed(project_id, run_id, scratch, now_iso())
+            deleted, why = _delete_owned_scratch(project_id, run_id, scratch)
+            if not deleted:
+                logger.warning("ai-invoke %s: probe scratch retained (%s)", run_id, why)
 
 
 def _copilot_last_message(stdout_text: str) -> Optional[str]:
