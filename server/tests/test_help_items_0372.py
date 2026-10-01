@@ -110,6 +110,7 @@ def test_index_for_a_design_token_lists_the_template_and_hides_the_task_items(mo
     assert _hidden(body) == {
         "authoring_guide": "no_guide_for_type",
         "test_commands": "not_ts_type",
+        "tr_self_check": "not_tr_edit",
         "changed_files_format": "not_mutating_type",
         "step_verification_format": "not_tr_type",
     }
@@ -150,7 +151,11 @@ def test_index_for_a_mutating_token_opens_write_tools_and_the_report_format(monk
     assert "changed_files_format" in _names(body)
     assert "step_verification_format" in _names(body)
     assert "authoring_guide" in _names(body)
-    assert _hidden(body) == {"design_template": "not_design_type", "test_commands": "not_ts_type"}
+    assert _hidden(body) == {
+        "design_template": "not_design_type",
+        "test_commands": "not_ts_type",
+        "tr_self_check": "not_tr_edit",
+    }
     assert body["context"]["tool_kind"] == "read_write"
     counts = {item["name"]: item["children_count"] for item in body["items"]}
     # Stays 11: flowgate.default.0482 T0011 registered `resolve_base_dirty` as a
@@ -566,7 +571,7 @@ def test_identifiers_never_translate(monkeypatch):
     client = _client(monkeypatch, _token(), step_type="TR")
     body = client.get("/api/v1/help?locale=ja").json()
     assert _names(body)[:2] == ["notices", "group_documents"]
-    assert set(_hidden(body)) == {"design_template", "test_commands"}
+    assert set(_hidden(body)) == {"design_template", "test_commands", "tr_self_check"}
 
 
 @pytest.mark.parametrize("locale", ["ko", "ja", "en"])

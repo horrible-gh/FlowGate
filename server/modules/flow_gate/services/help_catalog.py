@@ -61,6 +61,7 @@ CATALOG_ORDER: tuple[str, ...] = (
     "design_template",
     "authoring_guide",
     "test_commands",
+    "tr_self_check",
     "changed_files_format",
     "step_verification_format",
 )
@@ -79,6 +80,7 @@ ITEM_FORM: dict[str, str] = {
     "design_template": "children",
     "authoring_guide": "children",
     "test_commands": "content",
+    "tr_self_check": "content",
     "changed_files_format": "content",
     "step_verification_format": "content",
 }
@@ -121,6 +123,7 @@ TITLES: dict[str, dict[str, str]] = {
         "design_template": "설계서 템플릿",
         "authoring_guide": "작성 지침",
         "test_commands": "검증된 테스트 명령",
+        "tr_self_check": "TR Self-check 사용법",
         "changed_files_format": "변경 파일 보고 서식",
         "step_verification_format": "단계별 확인 절 서식",
     },
@@ -138,6 +141,7 @@ TITLES: dict[str, dict[str, str]] = {
         "design_template": "Design document template",
         "authoring_guide": "Authoring guide",
         "test_commands": "Verified test commands",
+        "tr_self_check": "TR Self-check guide",
         "changed_files_format": "Changed-files report format",
         "step_verification_format": "Step-verification section format",
     },
@@ -155,6 +159,7 @@ TITLES: dict[str, dict[str, str]] = {
         "design_template": "設計書テンプレート",
         "authoring_guide": "作成ガイド",
         "test_commands": "検証済みテストコマンド",
+        "tr_self_check": "TR Self-check の使い方",
         "changed_files_format": "変更ファイル報告フォーマット",
         "step_verification_format": "段階別確認節フォーマット",
     },
@@ -195,6 +200,7 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "design_template": "설계 타입별 표준 템플릿 본문.",
         "authoring_guide": "이 타입의 문서를 쓰는 방법.",
         "test_commands": "이 프로젝트에 등록된, 실행이 확인된 테스트 명령.",
+        "tr_self_check": "TR 수정 단계의 공식 검증 경로(run/read/cancel_self_check) 요청 서식·수명주기·오류 대응.",
         "changed_files_format": "제출 시 반드시 넣어야 하는 변경 파일 절의 서식.",
         "step_verification_format": "TR 제출 시 반드시 넣어야 하는 단계별 확인 절의 서식.",
     },
@@ -212,6 +218,7 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "design_template": "Standard template body per design type.",
         "authoring_guide": "How to write a document of this type.",
         "test_commands": "Test commands registered for this project and verified on this host.",
+        "tr_self_check": "The TR edit verification path (run/read/cancel_self_check): request format, lifecycle and error handling.",
         "changed_files_format": "Format of the changed-files section your submission must carry.",
         "step_verification_format": "Format of the step-verification section a TR submission must carry.",
     },
@@ -229,6 +236,7 @@ SUMMARIES: dict[str, dict[str, str]] = {
         "design_template": "設計タイプ別の標準テンプレート本文。",
         "authoring_guide": "このタイプの文書を書く方法。",
         "test_commands": "このプロジェクトに登録され、実行が確認されたテストコマンド。",
+        "tr_self_check": "TR修正段階の公式検証経路(run/read/cancel_self_check)のリクエスト形式・ライフサイクル・エラー対応。",
         "changed_files_format": "提出時に必ず入れる変更ファイル節のフォーマット。",
         "step_verification_format": "TR提出時に必ず入れる段階別確認節のフォーマット。",
     },
@@ -589,6 +597,12 @@ def decide_visibility(name: str, ctx: dict) -> Decision:
         if authoring and doc_type == "TS":
             return VISIBLE
         return Decision(False, "not_ts_type")
+
+    if name == "tr_self_check":
+        # Same judgment as api_server_tools.definitions_for_run(): a worker token on a TR edit step.
+        if ctx.get("principal_kind") == "worker" and ctx.get("action_scope") == "edit" and doc_type == "TR":
+            return VISIBLE
+        return Decision(False, "not_tr_edit")
 
     if name == "changed_files_format":
         if authoring and doc_type in MUTATING_TYPES:
@@ -1208,9 +1222,276 @@ def _content_source_snapshots(ctx: dict) -> dict:
     }
 
 
+# ── tr_self_check (0654 T0004) ───────────────────────────────────────────────
+# The request contract itself is owned by api_server_tools.SCHEMAS["run_self_check"],
+# tr_self_check_service._validate_request and tr_self_check_policy; this item only
+# describes it, and a regression test pins the field set so the two cannot drift.
+SELF_CHECK_REQUEST_FIELDS: tuple[str, ...] = ("program", "args", "cwd", "timeout_seconds")
+SELF_CHECK_TIMEOUT_DEFAULT = 300
+SELF_CHECK_TIMEOUT_MAX = 1800
+
+SELF_CHECK_EXAMPLE: dict = {
+    "program": "pytest",
+    "args": ["-q", "server/tests/test_x.py"],
+    "cwd": ".",
+    "timeout_seconds": SELF_CHECK_TIMEOUT_DEFAULT,
+}
+SELF_CHECK_INVALID_EXAMPLE: dict = {"program": "pytest -q server/tests/test_x.py"}
+
+SELF_CHECK_STATUSES = ("pending", "running", "completed", "failed", "cancelled")
+SELF_CHECK_RESULT_FIELDS = (
+    "exit_code", "timed_out", "stdout_tail", "stderr_tail",
+    "source_changed_during_run", "worktree_state_changed", "error_code",
+)
+
+#: The REST contract behind run/read/cancel. Owned by
+#: modules/flow_gate/api/v1/self_check_routes.py (router prefix /api/v1/documents);
+#: a regression test compares this table with the registered FastAPI routes.
+SELF_CHECK_HTTP_BASE = "/flowgate/api/v1"
+SELF_CHECK_HTTP_OPERATIONS: tuple[tuple[str, str, str, int], ...] = (
+    ("run", "POST", "/documents/{tr_doc_id}/self-check/runs", 202),
+    ("read", "GET", "/documents/{tr_doc_id}/self-check/runs/{run_id}", 200),
+    ("cancel", "POST", "/documents/{tr_doc_id}/self-check/runs/{run_id}/cancel", 200),
+    ("list", "GET", "/documents/{tr_doc_id}/self-check/runs", 200),
+)
+
+_LOCALE_INDEX = {"ko": 1, "en": 2, "ja": 3}
+
+#: (code, ko, en, ja) — meaning and next action, never internal detail.
+_SELF_CHECK_ERRORS: tuple[tuple[str, str, str, str], ...] = (
+    ("selfcheck_invalid_request",
+     "요청이 객체가 아니거나 program/args/cwd/timeout_seconds 이외의 필드가 있다 → 네 필드만 보낸다.",
+     "The request is not an object or carries a field other than program/args/cwd/timeout_seconds -> send only those four.",
+     "リクエストがオブジェクトでない、または program/args/cwd/timeout_seconds 以外のフィールドがある → 4つのフィールドだけ送る。"),
+    ("selfcheck_invalid_program",
+     "program 이 실행 파일 이름 하나가 아니다(경로·구분자·제어문자 포함) → program 에는 실행 파일 이름만 넣고 옵션과 대상은 args 로 분리한다.",
+     "program is not a single executable name (path, separator or control character) -> pass only the executable name in program and move options/targets to args.",
+     "program が実行ファイル名1つではない(パス・区切り・制御文字を含む) → program には実行ファイル名だけを入れ、オプションと対象は args に分ける。"),
+    ("selfcheck_invalid_args",
+     "args 가 문자열 배열이 아니거나 개수(256)·길이(8192) 제한을 넘는다 → 문자열 배열로 줄여서 다시 보낸다.",
+     "args is not an array of strings or exceeds the count (256) / length (8192) limit -> resend a shorter array of strings.",
+     "args が文字列配列でない、または個数(256)・長さ(8192)の上限を超えている → 文字列配列に直して再送する。"),
+    ("selfcheck_invalid_timeout",
+     f"timeout_seconds 가 1~{SELF_CHECK_TIMEOUT_MAX} 범위의 정수가 아니다 → 범위 안의 정수로 보낸다(생략하면 {SELF_CHECK_TIMEOUT_DEFAULT}).",
+     f"timeout_seconds is not an integer in 1..{SELF_CHECK_TIMEOUT_MAX} -> send an in-range integer (omit for {SELF_CHECK_TIMEOUT_DEFAULT}).",
+     f"timeout_seconds が 1〜{SELF_CHECK_TIMEOUT_MAX} の整数ではない → 範囲内の整数を送る(省略時は {SELF_CHECK_TIMEOUT_DEFAULT})。"),
+    ("selfcheck_shell_operator",
+     "args 안에 |, &&, ;, >, < 같은 셸 연산자가 있다 → 명령을 하나씩 나누어 각각 별도 run 으로 실행한다.",
+     "args contains a shell operator such as |, &&, ;, > or < -> split the work into separate runs, one command each.",
+     "args に |, &&, ;, >, < などのシェル演算子がある → コマンドを1つずつ分け、別々の run で実行する。"),
+    ("selfcheck_inline_execution",
+     "python -c, node -e 같은 인라인 코드 실행이다 → 테스트 파일이나 스크립트 경로를 args 로 준다.",
+     "Inline code execution such as python -c or node -e -> pass a test file or script path in args.",
+     "python -c や node -e のようなインラインコード実行 → テストファイルやスクリプトのパスを args で渡す。"),
+    ("selfcheck_program_denied",
+     "정책이 금지한 실행 파일이다(셸, git, 네트워크·삭제·시스템 도구 등) → 테스트/린트/빌드용 실행 파일로 바꾼다. 우회를 시도하지 않는다.",
+     "The executable is denied by policy (shells, git, network/delete/system tools, ...) -> use a test/lint/build executable instead; do not try to work around it.",
+     "ポリシーで禁止された実行ファイル(シェル、git、ネットワーク・削除・システムツール等) → テスト/リント/ビルド用の実行ファイルに変える。回避は試みない。"),
+    ("selfcheck_executable_not_found",
+     "program 을 찾을 수 없다(설치되지 않았거나 'pytest -q ...' 처럼 명령 전체를 program 에 넣었다) → 이름만 정확히 쓰고 나머지는 args 로 옮긴다. 설치되지 않았다면 그 사실을 보고한다.",
+     "program cannot be found (not installed, or the whole command such as 'pytest -q ...' was put in program) -> write the bare name and move the rest to args; if it is not installed, report that.",
+     "program が見つからない(未インストール、または 'pytest -q ...' のようにコマンド全体を program に入れた) → 名前だけを正しく書き残りは args に移す。未インストールならその事実を報告する。"),
+    ("selfcheck_invalid_cwd",
+     "cwd 가 관리 워크트리 안의 존재하는 상대 디렉터리가 아니다(절대경로, 드라이브, 범위 밖) → 워크트리 기준 상대 경로를 쓰거나 '.' 로 둔다.",
+     "cwd is not an existing relative directory inside the managed worktree (absolute path, drive, outside) -> use a worktree-relative path or '.'.",
+     "cwd が管理ワークツリー内に存在する相対ディレクトリではない(絶対パス、ドライブ、範囲外) → ワークツリー基準の相対パスを使うか '.' のままにする。"),
+    ("selfcheck_disabled",
+     "이 프로젝트는 Self-check 가 꺼져 있다 → 반환된 사유를 TR 에 보고하고 다른 실행 수단을 찾지 않는다.",
+     "Self-check is disabled for this project -> report the returned reason in the TR and do not look for another execution path.",
+     "このプロジェクトでは Self-check が無効 → 返された理由を TR に報告し、他の実行手段を探さない。"),
+    ("selfcheck_already_running",
+     "이 TR 에 이미 실행 중인 run 이 있다(응답에 기존 self_check_run_id) → 그 run 을 read 로 조회해 끝나기를 기다리거나 cancel 한 뒤 다시 실행한다.",
+     "A run is already active for this TR (the response carries its self_check_run_id) -> read it and wait for it to finish, or cancel it, then run again.",
+     "このTRには実行中の run がある(応答に既存の self_check_run_id) → その run を read で確認して完了を待つか cancel してから再実行する。"),
+    ("selfcheck_source_busy",
+     "다른 소스 변경 작업이 프로젝트 소스 잠금을 잡고 있다 → 그 작업이 끝난 뒤 잠시 후 다시 시도한다.",
+     "Another source operation holds the project source lock -> retry after that operation finishes.",
+     "別のソース操作がプロジェクトのソースロックを保持している → その操作の終了後にしばらくして再試行する。"),
+    ("selfcheck_recovery_incomplete",
+     "이전 run 의 프로세스 정리가 아직 끝나지 않았다 → 새 run 을 반복해서 밀어 넣지 말고 사유를 보고한 뒤 잠시 후 한 번 더 시도한다.",
+     "Cleanup of an earlier run's process tree is unfinished -> do not hammer new runs; report the reason and retry once after a short wait.",
+     "以前の run のプロセス整理が未完了 → 新しい run を連打せず、理由を報告して少し待ってから1回だけ再試行する。"),
+    ("selfcheck_worktree_unavailable",
+     "이 TR 의 관리 워크트리를 쓸 수 없다 → 반환된 사유를 보고한다. 다른 경로나 Bundle/Scratch 로 우회하지 않는다.",
+     "The managed worktree of this TR is unavailable -> report the returned reason; do not route around it with another path or a Bundle/Scratch.",
+     "このTRの管理ワークツリーを利用できない → 返された理由を報告する。別経路や Bundle/Scratch で回避しない。"),
+)
+
+_SELF_CHECK_COPY: dict[str, dict] = {
+    "ko": {
+        "role": "TR 수정(edit) 단계에서 테스트·검증을 실행하는 공식 경로는 Self-check 하나다. 도구는 run_self_check / read_self_check / cancel_self_check 이다.",
+        "no_fallback": [
+            "Source Bundle, AI Scratch, run_test 는 TR edit 의 Self-check 대체 수단이 아니다. TR edit 실행에서 access_source_bundle/run_source_bundle 은 self_check_required(409)로 거절된다.",
+            "Self-check 를 쓸 수 없으면 반환된 reason/error_code 를 TR 에 보고하고, 다른 실행 수단을 찾거나 시도하지 않는다.",
+            "Self-check 실행은 Source Bundle ensure 를 선행조건으로 하지 않는다. Bundle 오류가 나도 그것 때문에 Self-check 검증을 포기하지 않는다.",
+            "실행할 명령은 TR 에 적힌 검증 명령 → T 에 적힌 검증 명령 → 변경에서 분명한 최소 검사 순으로 정한다. 정할 수 없으면 test_command_missing 으로 멈춘다.",
+        ],
+        "field_desc": {
+            "program": "실행 파일 이름 하나. 예: pytest. 명령 문자열 전체 금지.",
+            "args": "옵션과 대상 경로의 문자열 배열. 기본 [].",
+            "cwd": "관리 워크트리 기준 상대 경로. 기본 \".\".",
+            "timeout_seconds": f"실행 제한 시간(초), 1~{SELF_CHECK_TIMEOUT_MAX} 정수. 기본 {SELF_CHECK_TIMEOUT_DEFAULT}.",
+        },
+        "http_note": "tr_doc_id 는 지금 수정 중인 TR 문서 id(토큰에 바인딩된 문서)이고 run_id 는 run 응답의 self_check_run_id 이다. 헤더는 Authorization: Bearer <작업 토큰> 을 그대로 쓴다. 성공 응답은 {ok:true, ...run 필드}, 라우트가 만드는 실패 응답은 {ok:false, error:{code, message, details}} 이며 code 는 아래 오류 표의 selfcheck_* 또는 forbidden 이다. 다른 문서의 토큰이나 edit 가 아닌 토큰은 403 이고 error.code 는 forbidden 이다(message·details 포함). 토큰 자체가 검증에 실패하면(Authorization 헤더 없음 401, 만료·무효 토큰, 권한 없음 403) 라우트가 아니라 인증 계층이 {ok:false, http_status, error_message, help_url} 을 돌려주며 error 객체가 없다. 응답에서 확인할 것: run 은 202 와 self_check_run_id·status, read/cancel 은 200 과 status(아래 statuses 중 하나).",
+        "invalid_note": "위 형식(명령 전체를 program 에 넣음)은 program/args 계약 위반이다. 'pytest' 와 ['-q', 'server/tests/test_x.py'] 로 나누어 보낸다.",
+        "lifecycle": "run_self_check → self_check_run_id 수신 → pending/running 동안 read_self_check 로 반복 조회 → completed / failed / cancelled. 필요하면 cancel_self_check.",
+        "non_zero": "exit_code 가 0 이 아닌 completed 는 전송 실패가 아니라 실제 검증 실패일 수 있다. stdout_tail/stderr_tail 을 읽고 → 범위 안에서 코드를 고치고 → 새 run_self_check 를 실행하는 것이 정상 절차다.",
+        "failed_note": "status=failed 는 실행 자체가 실패한 것이다. error_code 를 아래 오류 표로 해석한다.",
+        "changed_note": "source_changed_during_run / worktree_state_changed 가 true 이면 실행 중 소스나 워크트리 상태가 바뀐 것이므로 결과를 그대로 믿지 말고 안정된 뒤 다시 실행한다.",
+    },
+    "en": {
+        "role": "Self-check is the one official way to run tests/verification in a TR edit step. The tools are run_self_check / read_self_check / cancel_self_check.",
+        "no_fallback": [
+            "Source Bundle, AI Scratch and run_test are not Self-check fallbacks for TR edit. In a TR edit run access_source_bundle/run_source_bundle are refused with self_check_required (409).",
+            "If Self-check is unavailable, report the returned reason/error_code in the TR and do not look for or try another execution backend.",
+            "A Self-check run does not require a Source Bundle ensure first. A Bundle error is not a reason to give up Self-check verification.",
+            "Pick the command from the verification command named in the TR, else in the T, else the minimal check obvious from your change. If none can be determined, stop with test_command_missing.",
+        ],
+        "field_desc": {
+            "program": "One executable name, e.g. pytest. Never the whole command string.",
+            "args": "Array of strings: options and target paths. Default [].",
+            "cwd": "Path relative to the managed worktree. Default \".\".",
+            "timeout_seconds": f"Time limit in seconds, integer 1..{SELF_CHECK_TIMEOUT_MAX}. Default {SELF_CHECK_TIMEOUT_DEFAULT}.",
+        },
+        "http_note": "tr_doc_id is the TR document id you are editing (the document bound to the token) and run_id is the self_check_run_id from the run response. Send the same Authorization: Bearer <work token> header. Success is {ok:true, ...run fields}; route failures are {ok:false, error:{code, message, details}} where code is a selfcheck_* value from the error table below or forbidden. A token for another document or a non-edit token gets 403 with error.code forbidden (message and details included). If the token itself fails verification (missing Authorization header 401, expired or invalid token, no permission 403), the authentication layer answers instead of the route with {ok:false, http_status, error_message, help_url} and no error object. Verify in the response: run returns 202 with self_check_run_id and status; read/cancel return 200 with a status from the statuses list below.",
+        "invalid_note": "The form above (whole command in program) violates the program/args contract. Send 'pytest' and ['-q', 'server/tests/test_x.py'] separately.",
+        "lifecycle": "run_self_check -> receive self_check_run_id -> read_self_check repeatedly while pending/running -> completed / failed / cancelled. Use cancel_self_check if needed.",
+        "non_zero": "A completed run with a non-zero exit_code is not a transport failure; it may be a real verification failure. Read stdout_tail/stderr_tail, fix the code within scope, then start a new run_self_check. That is the normal procedure.",
+        "failed_note": "status=failed means the run itself failed. Interpret error_code with the error table below.",
+        "changed_note": "If source_changed_during_run / worktree_state_changed is true, the source or worktree state moved during the run; do not trust the result blindly and rerun once it is stable.",
+    },
+    "ja": {
+        "role": "TR修正(edit)段階でテスト・検証を実行する公式経路は Self-check ただ1つです。ツールは run_self_check / read_self_check / cancel_self_check です。",
+        "no_fallback": [
+            "Source Bundle、AI Scratch、run_test は TR edit の Self-check 代替手段ではありません。TR edit の実行では access_source_bundle/run_source_bundle は self_check_required(409)で拒否されます。",
+            "Self-check が使えない場合は、返された reason/error_code を TR に報告し、他の実行手段を探したり試したりしないでください。",
+            "Self-check の実行は Source Bundle の ensure を前提としません。Bundle エラーを理由に Self-check 検証を諦めないでください。",
+            "実行コマンドは、TRに記載の検証コマンド → Tに記載の検証コマンド → 変更から明らかな最小の検査、の順で決めます。決められない場合は test_command_missing で停止します。",
+        ],
+        "field_desc": {
+            "program": "実行ファイル名1つ。例: pytest。コマンド文字列全体は不可。",
+            "args": "オプションと対象パスの文字列配列。既定 []。",
+            "cwd": "管理ワークツリー基準の相対パス。既定 \".\"。",
+            "timeout_seconds": f"実行制限時間(秒)、1〜{SELF_CHECK_TIMEOUT_MAX} の整数。既定 {SELF_CHECK_TIMEOUT_DEFAULT}。",
+        },
+        "http_note": "tr_doc_id は今修正中の TR 文書 id(トークンに紐づく文書)、run_id は run 応答の self_check_run_id です。ヘッダーは Authorization: Bearer <作業トークン> をそのまま使います。成功は {ok:true, ...run フィールド}、ルートが返す失敗は {ok:false, error:{code, message, details}} で、code は下のエラー表の selfcheck_* または forbidden です。他文書のトークンや edit 以外のトークンは 403 で error.code は forbidden です(message と details を含む)。トークン自体の検証に失敗した場合(Authorization ヘッダーなし 401、期限切れ・無効トークン、権限なし 403)は、ルートではなく認証層が {ok:false, http_status, error_message, help_url} を返し、error オブジェクトはありません。応答で確認すること: run は 202 と self_check_run_id・status、read/cancel は 200 と status(下の statuses のいずれか)。",
+        "invalid_note": "上の形式(コマンド全体を program に入れる)は program/args 契約違反です。'pytest' と ['-q', 'server/tests/test_x.py'] に分けて送ってください。",
+        "lifecycle": "run_self_check → self_check_run_id を受け取る → pending/running の間 read_self_check を繰り返す → completed / failed / cancelled。必要なら cancel_self_check。",
+        "non_zero": "exit_code が 0 以外の completed は通信失敗ではなく、実際の検証失敗の可能性があります。stdout_tail/stderr_tail を読み、範囲内でコードを直し、新しい run_self_check を実行するのが正常な手順です。",
+        "failed_note": "status=failed は実行自体の失敗です。error_code を下のエラー表で解釈してください。",
+        "changed_note": "source_changed_during_run / worktree_state_changed が true なら実行中にソースやワークツリーの状態が変わっています。結果を鵜呑みにせず、安定してから再実行してください。",
+    },
+}
+
+
+def _content_tr_self_check(ctx: dict) -> dict:
+    locale = ctx["locale"]
+    copy = _SELF_CHECK_COPY.get(locale, _SELF_CHECK_COPY[FALLBACK_LOCALE])
+    idx = _LOCALE_INDEX.get(locale, 1)
+    types = {"program": "string", "args": "array<string>", "cwd": "string", "timeout_seconds": "integer"}
+    defaults = {"program": None, "args": [], "cwd": ".", "timeout_seconds": SELF_CHECK_TIMEOUT_DEFAULT}
+    return {
+        "role": copy["role"],
+        "no_fallback": list(copy["no_fallback"]),
+        "tools": {"run": "run_self_check", "read": "read_self_check", "cancel": "cancel_self_check"},
+        "http": {
+            "base_url": SELF_CHECK_HTTP_BASE,
+            "note": copy["http_note"],
+            "operations": [
+                {"name": name, "method": method, "path": path,
+                 "url": SELF_CHECK_HTTP_BASE + path, "success_status": status}
+                for name, method, path, status in SELF_CHECK_HTTP_OPERATIONS
+            ],
+            "run_request_body": "request.example",
+            "response_ok_fields": ["ok", "self_check_run_id", "status", *SELF_CHECK_RESULT_FIELDS],
+            "error_shape": {"ok": False, "error": {"code": "selfcheck_*|forbidden", "message": "<code>", "details": {}}},
+            "auth_error_shape": {"ok": False, "http_status": 401, "error_message": "<reason>", "help_url": "<url>"},
+        },
+        "request": {
+            "fields": [
+                {
+                    "name": name,
+                    "type": types[name],
+                    "required": name == "program",
+                    "default": defaults[name],
+                    "description": copy["field_desc"][name],
+                }
+                for name in SELF_CHECK_REQUEST_FIELDS
+            ],
+            "example": dict(SELF_CHECK_EXAMPLE, args=list(SELF_CHECK_EXAMPLE["args"])),
+            "invalid_example": dict(SELF_CHECK_INVALID_EXAMPLE),
+            "invalid_example_note": copy["invalid_note"],
+        },
+        "lifecycle": {
+            "flow": copy["lifecycle"],
+            "statuses": list(SELF_CHECK_STATUSES),
+            "result_fields": list(SELF_CHECK_RESULT_FIELDS),
+            "non_zero_exit": copy["non_zero"],
+            "failed": copy["failed_note"],
+            "source_changed": copy["changed_note"],
+        },
+        "errors": [{"code": row[0], "guidance": row[idx]} for row in _SELF_CHECK_ERRORS],
+    }
+
+
+# ── source_bundles recovery guidance (0654 T0004) ────────────────────────────
+#: (code, ko, en, ja) — what the code means and what to do next.
+_BUNDLE_ERRORS: tuple[tuple[str, str, str, str], ...] = (
+    ("source_changed",
+     "Bundle 을 캡처하는 동안 source/worktree 가 바뀐 것을 감지한 fail-closed 일관성 가드다. 서로 다른 시점의 source 가 섞인 Bundle 을 만들지 않으려고 일부러 실패시킨다. 대상 변화: scan, hash/read, copy, post-copy verify, worktree identity/root 재확인, 동시 Bundle build. → 복구: 1) 동시 source 변경이 끝났는지 확인 2) worktree 가 안정된 상태인지 확인 3) Bundle ensure 를 다시 시도. 실패한 Bundle 은 source of truth 로 쓰지 않고 직접 promotion 하지 않는다. 일반적인 source_changed 는 별도 수동 unlock 대상이 아니다. capture 중에도 계속 변하면 반복 재시도해도 계속 실패할 수 있으니 변경이 멈춘 뒤 재시도한다.",
+     "A fail-closed consistency guard: the source/worktree was detected changing while the Bundle was being captured. It fails on purpose so a Bundle never mixes source from different moments. Covered changes: scan, hash/read, copy, post-copy verify, worktree identity/root recheck, concurrent Bundle build. -> Recovery: 1) confirm the concurrent source mutation has finished 2) confirm the worktree is stable 3) retry Bundle ensure. Never use a failed Bundle as the source of truth and never promote it directly. An ordinary source_changed is not a case for a manual unlock. If the source keeps changing during capture, repeated retries will keep failing; retry once it has stopped.",
+     "Bundle のキャプチャ中に source/worktree が変化したことを検知した fail-closed の整合性ガード。異なる時点の source が混ざった Bundle を作らないよう意図的に失敗させる。対象: scan、hash/read、copy、post-copy verify、worktree identity/root の再確認、並行 Bundle build。→ 復旧: 1) 並行する source 変更が終わったか確認 2) worktree が安定しているか確認 3) Bundle ensure を再試行。失敗した Bundle を source of truth にせず、直接 promotion もしない。通常の source_changed は手動 unlock の対象ではない。キャプチャ中に変化し続けると再試行しても失敗し続けるので、変化が止まってから再試行する。"),
+    ("source_busy",
+     "다른 source operation 이나 Self-check 가 project source lock 을 쓰는 중이다 → 그 작업이 끝난 뒤 다시 시도한다.",
+     "Another source operation or Self-check holds the project source lock -> retry after it finishes.",
+     "他の source operation や Self-check が project source lock を使用中 → その作業の終了後に再試行する。"),
+    ("build_wait_timeout",
+     "동시에 진행 중인 Bundle build 의 완료를 제한 시간 안에 확인하지 못했다 → Bundle 상태를 확인한 뒤 다시 시도한다.",
+     "The concurrent Bundle build did not finish within the wait limit -> check the Bundle state, then retry.",
+     "並行する Bundle build の完了を制限時間内に確認できなかった → Bundle の状態を確認してから再試行する。"),
+    ("group_worktree_unavailable",
+     "정확한 managed group worktree 를 확인할 수 없다 → Group/worktree 상태를 복구한 뒤 다시 시도한다.",
+     "The exact managed group worktree cannot be confirmed -> restore the group/worktree state, then retry.",
+     "正確な managed group worktree を確認できない → Group/worktree の状態を復旧してから再試行する。"),
+    ("build_timeout",
+     "Bundle build 가 시간 상한을 넘었다 → source 크기, 환경, 설정을 확인한다.",
+     "The Bundle build exceeded its time ceiling -> check source size, environment and settings.",
+     "Bundle build が時間上限を超えた → source サイズ、環境、設定を確認する。"),
+    ("resource_limit",
+     "파일 수, 개별 파일 크기, 총 크기 제한을 넘었다 → source, 제외 정책, limit 을 확인한다.",
+     "The file-count, per-file size or total size limit was exceeded -> check the source, exclusion policy and limits.",
+     "ファイル数・個別サイズ・総サイズの上限を超えた → source、除外ポリシー、limit を確認する。"),
+    ("unsafe_path",
+     "symlink, reparse point, 특수 파일 등 안전성 위반 경로가 있다 → source 구조를 고쳐야 한다.",
+     "A path violates safety rules (symlink, reparse point, special file, ...) -> the source structure must be fixed.",
+     "symlink・reparse point・特殊ファイルなど安全性違反のパスがある → source 構造の修正が必要。"),
+    ("bundle_unavailable",
+     "요청한 Bundle 이 정상 created + integrity 상태가 아니다 → 새로 Bundle ensure 를 한다.",
+     "The requested Bundle is not in a healthy created + integrity state -> run a fresh Bundle ensure.",
+     "要求した Bundle が正常な created + integrity 状態ではない → 新たに Bundle ensure を行う。"),
+)
+
+_BUNDLE_RECOVERY_NOTE: dict[str, str] = {
+    "ko": "Bundle 오류는 기능 고장이 아니라 다음 행동이 정해진 안내 대상이다. TR edit 단계의 검증은 Bundle 이 아니라 Self-check(tr_self_check 항목)로 수행하므로 Bundle 오류 때문에 검증을 포기하지 않는다.",
+    "en": "A Bundle error is guidance with a defined next action, not a broken feature. TR edit verification runs through Self-check (the tr_self_check item), not a Bundle, so a Bundle error is no reason to skip verification.",
+    "ja": "Bundle エラーは機能の故障ではなく、次の行動が決まっている案内対象です。TR edit 段階の検証は Bundle ではなく Self-check(tr_self_check 項目)で行うため、Bundle エラーを理由に検証を諦めないでください。",
+}
+
+
+def _content_source_bundles(ctx: dict) -> dict:
+    payload = _content_source_snapshots(ctx)
+    locale = ctx["locale"]
+    idx = _LOCALE_INDEX.get(locale, 1)
+    payload["error_recovery"] = {
+        "note": _BUNDLE_RECOVERY_NOTE.get(locale, _BUNDLE_RECOVERY_NOTE[FALLBACK_LOCALE]),
+        "errors": [{"code": row[0], "guidance": row[idx]} for row in _BUNDLE_ERRORS],
+    }
+    return payload
+
+
 _CONTENT_SUPPLIERS = {
     "notices": _content_notices,
-    "source_bundles": _content_source_snapshots,
+    "source_bundles": _content_source_bundles,
     "source_snapshots": _content_source_snapshots,
     "group_documents": _content_group_documents,
     "document_access": _content_document_access,
@@ -1219,6 +1500,7 @@ _CONTENT_SUPPLIERS = {
     "question": _content_question,
     "submit": _content_submit,
     "test_commands": _content_test_commands,
+    "tr_self_check": _content_tr_self_check,
     "changed_files_format": _content_changed_files_format,
     "step_verification_format": _content_step_verification_format,
 }
