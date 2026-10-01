@@ -248,6 +248,11 @@
     :busy="busy"
     :load-status="conflictLoadStatus"
     :error-message="conflictError"
+    :allow-hold="true"
+    :allow-partial-resolve="true"
+    :saved-resolved-count="savedResolvedPaths.length"
+    :checkpoint-recovery="checkpointRecovery"
+    @hold="holdMerge"
     :providers="aiProviderStore.providers"
     :selected-provider="aiProviderStore.selectedProviderId"
     :provider-loading="aiProviderStore.loading"
@@ -371,6 +376,13 @@ const commitSuggested = ref('')
 const commitSource = ref<string | null>(null)
 const mergeCommit = ref<string | null>(null)
 const conflictFiles = ref<ConflictFileState[]>([])
+const savedResolvedPaths = ref<string[]>([])
+const checkpointRecovery = ref<{
+  previous_resolved: number
+  reused_paths: string[]
+  invalid_paths: string[]
+  remaining_conflicts: number
+} | null>(null)
 const conflictError = ref('')
 const conflictDialogOpen = ref(false)
 const reviewDialogOpen = ref(false)
@@ -500,8 +512,12 @@ async function fetchConflicts(mergeId: number) {
     const { data } = await getRequest<{
       ok: boolean
       files: Array<{ path: string; content: string; conflict_count: number }>
+      resolved_paths?: string[]
+      checkpoint_recovery?: typeof checkpointRecovery.value
     }>(`/api/v1/groups/${props.groupId}/git/merge/${mergeId}/conflicts`)
     conflictFiles.value = (data.files || []).map(initConflictFile)
+    savedResolvedPaths.value = data.resolved_paths || []
+    checkpointRecovery.value = data.checkpoint_recovery || null
     conflictLoadStatus.value = 'ready'
   } catch (e: any) {
     conflictFiles.value = []
@@ -739,7 +755,7 @@ function remainingText(remaining: unknown): string {
 
 async function submitResolve(auto: boolean) {
   const mergeId = state.value?.merge_id
-  if (!props.groupId || mergeId == null || !allConflictsResolved.value) return
+  if (!props.groupId || mergeId == null || (!allConflictsResolved.value && !conflictFiles.value.some(isFileResolved))) return
   busy.value = true
   conflictError.value = ''
   // 0481 T0010 rev2 — the refresh in `finally` calls fetchState() → fetchConflicts(),
@@ -753,8 +769,8 @@ async function submitResolve(auto: boolean) {
     const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
       `/api/v1/groups/${props.groupId}/git/merge/${mergeId}/resolve`,
       {
-        files: conflictFiles.value.map((f) => ({ path: f.path, content: currentFileContent(f) })),
-        complete: true,
+        files: conflictFiles.value.filter(isFileResolved).map((f) => ({ path: f.path, content: currentFileContent(f) })),
+        complete: allConflictsResolved.value,
         // 0481 D0006 §3.2 / L0007 §2.2 — a human's own direct [해결 제출] (no AI
         // call) also stamps auto_authority, at this same request.
         auto,
@@ -804,6 +820,22 @@ async function submitResolve(auto: boolean) {
     busy.value = false
     await fetchState()
     if (outcome) conflictError.value = outcome
+  }
+}
+
+async function holdMerge() {
+  const mergeId = state.value?.merge_id
+  if (!props.groupId || mergeId == null || !savedResolvedPaths.value.length) return
+  busy.value = true
+  try {
+    await postRequest(`/api/v1/groups/${props.groupId}/git/merge/${mergeId}/hold`, {})
+    conflictDialogOpen.value = false
+    showToast(t('main.git_finalize.held_toast'), 'success')
+  } catch (e: any) {
+    showToast(resolveGitError(e, t, 'main.git_finalize.failed'), 'danger')
+  } finally {
+    busy.value = false
+    await fetchState()
   }
 }
 

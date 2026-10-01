@@ -8,6 +8,7 @@
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc -b",
+    "typecheck:clean": "npm ci && npm run typecheck",
     "test": "vitest run",
     "test:geometry": "node tests/browser/review-action-bar-dropup.geometry.mjs",
     "test:integration": "vitest run --config vitest.integration.config.ts",

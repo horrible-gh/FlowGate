@@ -508,6 +508,125 @@ def mark_file_resolved(merge_id: int, path: str) -> None:
     )
 
 
+CHECKPOINT_STATES = ("active", "consumed", "invalidated")
+
+
+def create_resolution_checkpoint(data: dict) -> dict:
+    """Persist one held finalize resolution independently of its merge session."""
+    import uuid
+
+    checkpoint_id = str(uuid.uuid4())
+    now = now_iso()
+    store = get_store()
+    with store.transaction():
+        store._execute(
+            "UPDATE git_resolution_checkpoint SET state = 'invalidated', updated_at = ? "
+            "WHERE project_id = ? AND group_id = ? AND state = 'active'",
+            [now, data["project_id"], data["group_id"]],
+        )
+        store._execute(
+            "INSERT INTO git_resolution_checkpoint "
+            "(checkpoint_id, project_id, group_id, source_merge_id, target_branch, "
+            "source_branch, base_head, merge_head, expected_remote_head, resolved_paths, "
+            "conflict_origins, provenance, state, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)",
+            [checkpoint_id, data["project_id"], data["group_id"], data["source_merge_id"],
+             data["target_branch"], data["source_branch"], data["base_head"],
+             data["merge_head"], data.get("expected_remote_head"),
+             json.dumps(data["resolved_paths"], ensure_ascii=False),
+             json.dumps(data.get("conflict_origins") or [], ensure_ascii=False),
+             json.dumps(data["provenance"], ensure_ascii=False), now, now],
+        )
+    return get_resolution_checkpoint(checkpoint_id)
+
+
+def rollback_resolution_checkpoint(checkpoint_id: str, previous_id: str | None) -> None:
+    """Undo the committed hold ledger transition when merge --abort failed."""
+    store = get_store()
+    with store.transaction():
+        store._execute(
+            "UPDATE git_resolution_checkpoint SET state = 'invalidated', updated_at = ? "
+            "WHERE checkpoint_id = ? AND state = 'active'",
+            [now_iso(), checkpoint_id],
+        )
+        if previous_id:
+            store._execute(
+                "UPDATE git_resolution_checkpoint SET state = 'active', updated_at = ? "
+                "WHERE checkpoint_id = ? AND state = 'invalidated'",
+                [now_iso(), previous_id],
+            )
+
+
+def get_resolution_checkpoint(checkpoint_id: str) -> Optional[dict]:
+    row = get_store()._fetch_one(
+        "SELECT * FROM git_resolution_checkpoint WHERE checkpoint_id = ?", [checkpoint_id]
+    )
+    return _decode_resolution_checkpoint(row)
+
+
+def _decode_resolution_checkpoint(row: Optional[dict]) -> Optional[dict]:
+    if row is None:
+        return None
+    result = dict(row)
+    for key in ("resolved_paths", "conflict_origins", "provenance", "replay_result"):
+        try:
+            result[key] = json.loads(result[key]) if result.get(key) else ([] if key != "provenance" else {})
+        except (TypeError, ValueError):
+            result[key] = [] if key != "provenance" else {}
+    return result
+
+
+def active_resolution_checkpoint(project_id: str, group_id: str) -> Optional[dict]:
+    row = get_store()._fetch_one(
+        "SELECT * FROM git_resolution_checkpoint WHERE project_id = ? AND group_id = ? "
+        "AND state = 'active' ORDER BY created_at DESC LIMIT 1",
+        [project_id, group_id],
+    )
+    return _decode_resolution_checkpoint(row)
+
+
+def set_resolution_checkpoint_replay(checkpoint_id: str, merge_id: int, result: dict) -> None:
+    get_store()._execute(
+        "UPDATE git_resolution_checkpoint SET replay_merge_id = ?, replay_result = ?, "
+        "updated_at = ? WHERE checkpoint_id = ? AND state = 'active'",
+        [merge_id, json.dumps(result, ensure_ascii=False), now_iso(), checkpoint_id],
+    )
+
+
+def invalidate_resolution_checkpoint(checkpoint_id: str) -> None:
+    get_store()._execute(
+        "UPDATE git_resolution_checkpoint SET state = 'invalidated', updated_at = ? "
+        "WHERE checkpoint_id = ? AND state = 'active'",
+        [now_iso(), checkpoint_id],
+    )
+
+
+def invalidate_resolution_checkpoint_for_merge(merge_id: int) -> None:
+    """Discard any hold or replayed checkpoint abandoned by explicit [abort]."""
+    get_store()._execute(
+        "UPDATE git_resolution_checkpoint SET state = 'invalidated', updated_at = ? "
+        "WHERE state = 'active' AND (source_merge_id = ? OR replay_merge_id = ?)",
+        [now_iso(), merge_id, merge_id],
+    )
+
+
+def consume_resolution_checkpoint(merge_id: int) -> None:
+    get_store()._execute(
+        "UPDATE git_resolution_checkpoint SET state = 'consumed', updated_at = ? "
+        "WHERE replay_merge_id = ? AND state = 'active'",
+        [now_iso(), merge_id],
+    )
+
+
+def consume_active_resolution_checkpoint(project_id: str, group_id: str) -> None:
+    """Finish a held checkpoint when retry merges cleanly without a conflict session."""
+    get_store()._execute(
+        "UPDATE git_resolution_checkpoint SET state = 'consumed', updated_at = ? "
+        "WHERE project_id = ? AND group_id = ? AND state = 'active'",
+        [now_iso(), project_id, group_id],
+    )
+
+
 def remaining_conflicts(merge_id: int) -> list[str]:
     rows = get_store()._fetch_all(
         "SELECT path FROM git_merge_session_file "

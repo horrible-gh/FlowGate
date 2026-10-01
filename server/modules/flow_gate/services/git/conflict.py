@@ -1088,6 +1088,8 @@ def list_conflicts(group_id: Optional[str], merge_id: int, *, project_id: Option
         # 0594 T0012 (additive): the branch this merge lands on ("ours").
         "target_branch": target_branch,
         "files": files,
+        "resolved_paths": [row["path"] for row in _gs.db_git.session_files(merge_id) if row["resolved"]],
+        "checkpoint_recovery": context.get("checkpoint_recovery"),
         # 0608 T0005: session files that differed only in line endings and were already
         # merged on normalised text (apply_eol_separation) — nothing to resolve there.
         "eol_only_paths": list(context.get("eol_only_paths") or []),
@@ -1199,6 +1201,9 @@ def _apply_conflict_resolution_locked(
 
         for path, target, content, _original in locked_staged:
             _write_resolved_file(root, path, target, content)
+            if _gs.db_git.session_kind(session) == _gs.db_git.SESSION_KIND_MERGE:
+                from . import rerere_checkpoint
+                rerere_checkpoint.record_resolution(merge_id, root, path)
             proc = _gs._run_git(["add", "--", path], cwd=root)
             if proc.returncode != 0:
                 raise GitServiceError(
@@ -1493,7 +1498,7 @@ def _resolver_run_provider(run_id: Optional[str]) -> tuple[Optional[str], Option
 
 
 def abort_merge(group_id: Optional[str], merge_id: int, *, project_id: Optional[str] = None) -> dict:
-    """Manual [hold] — abort the merge, preserve the work branch, reopen re-merge
+    """Manual [abort] — discard this merge attempt and preserve the work branch
     (0205 P scenario 9). Shares its end state with the auto-recovery sweep; only
     the trigger differs. The merge:{id} release is now best-effort legacy cleanup
     (0205 §2.1 stopped holding that lock). _set_status already broadcasts
@@ -1518,7 +1523,10 @@ def abort_merge(group_id: Optional[str], merge_id: int, *, project_id: Optional[
         # index and conflict files, and this session stays open (fail-closed 409).
         merge_target.raise_if_not_workspace_owner(merge_target.resolve_session_target(session))
     if root.exists():
-        _gs._run_git(["merge", "--abort"], cwd=root)
+        proc = _gs._run_git(["merge", "--abort"], cwd=root)
+        if proc.returncode:
+            raise GitServiceError(500, "git_error", "Merge abort failed",
+                                  diagnostic=_gs._last_line(proc.stderr))
     if kind == _gs.db_git.SESSION_KIND_GROUP_UPDATE:
         _gs.db_git.close_session(merge_id, "aborted")
         return {"ok": True, "result": {
@@ -1530,6 +1538,8 @@ def abort_merge(group_id: Optional[str], merge_id: int, *, project_id: Optional[
     # pressing 최종승인 again simply starts over with a fresh intent id. Note this is
     # the ONLY discard path besides the §3.3 validity mismatch: a review rejection or
     # a re-review does NOT get here and must leave the intent alone.
+    if kind == _gs.db_git.SESSION_KIND_MERGE:
+        _gs.db_git.invalidate_resolution_checkpoint_for_merge(merge_id)
     discarded = approval_intent.discard_intent(merge_id)
     # 0594 T0012 §9.3: an attempt records `aborted` and releases only its own
     # workspace (owner marker match); a legacy row is closed exactly as before.

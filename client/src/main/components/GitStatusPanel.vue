@@ -419,6 +419,11 @@
             :busy="busy"
             :load-status="conflictLoadStatus"
             :error-message="conflictError"
+            :allow-hold="true"
+            :allow-partial-resolve="true"
+            :saved-resolved-count="savedResolvedPaths.length"
+            :checkpoint-recovery="checkpointRecovery"
+            @hold="holdInline(p)"
             :providers="aiProviderStore.providers"
             :selected-provider="aiProviderStore.selectedProviderId"
             :provider-loading="aiProviderStore.loading"
@@ -1163,6 +1168,13 @@ const chosen = ref<Record<string, string>>({})
 // Currently expanded conflict row + its fetched files (chunk view state, §6).
 const expanded = ref<string | null>(null)
 const conflictFiles = ref<ConflictFileState[]>([])
+const savedResolvedPaths = ref<string[]>([])
+const checkpointRecovery = ref<{
+  previous_resolved: number
+  reused_paths: string[]
+  invalid_paths: string[]
+  remaining_conflicts: number
+} | null>(null)
 const conflictError = ref('')
 // Load lifecycle for the shared resolver dialog (loading spinner / retry state).
 const conflictLoadStatus = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
@@ -1745,6 +1757,8 @@ async function openResolve(groupId: string) {
   expanded.value = groupId
   conflictError.value = ''
   conflictFiles.value = []
+  savedResolvedPaths.value = []
+  checkpointRecovery.value = null
   conflictLoadStatus.value = 'loading'
   // Populate the provider selector shown in the resolver footer (RC2).
   void aiProviderStore.ensureLoaded(props.projectId)
@@ -1752,8 +1766,12 @@ async function openResolve(groupId: string) {
     const { data } = await getRequest<{
       ok: boolean
       files: Array<{ path: string; content: string; conflict_count: number }>
+      resolved_paths?: string[]
+      checkpoint_recovery?: typeof checkpointRecovery.value
     }>(`/api/v1/groups/${groupId}/git/merge/${p.merge_id}/conflicts`)
     conflictFiles.value = (data.files || []).map(initConflictFile)
+    savedResolvedPaths.value = data.resolved_paths || []
+    checkpointRecovery.value = data.checkpoint_recovery || null
     conflictLoadStatus.value = 'ready'
   } catch (e: any) {
     conflictError.value = resolveGitError(e, t, 'main.git_finalize.failed')
@@ -1762,15 +1780,15 @@ async function openResolve(groupId: string) {
 }
 
 async function submitResolveInline(p: ConflictTarget | null, auto: boolean) {
-  if (!p || p.merge_id == null || busy.value || !inlineResolved.value) return
+  if (!p || p.merge_id == null || busy.value || (!inlineResolved.value && !conflictFiles.value.some(isFileResolved))) return
   busy.value = true
   conflictError.value = ''
   try {
     const { data } = await postRequest<{ ok: boolean; result?: any; error?: any }>(
       `/api/v1/groups/${p.group_id}/git/merge/${p.merge_id}/resolve`,
       {
-        files: conflictFiles.value.map((f) => ({ path: f.path, content: currentFileContent(f) })),
-        complete: true,
+        files: conflictFiles.value.filter(isFileResolved).map((f) => ({ path: f.path, content: currentFileContent(f) })),
+        complete: inlineResolved.value,
         // 0481 D0006 §3.2 / L0007 §2.2 — no-op for a TR session (record_auto_authority
         // silently ignores it there); stamps auto_authority for a general merge.
         auto,
@@ -1800,6 +1818,10 @@ async function submitResolveInline(p: ConflictTarget | null, auto: boolean) {
         showToast(t('main.git_review.resolved_pending_opened'), 'success')
       }
     } else if (data.result?.status === 'conflict') {
+      savedResolvedPaths.value = Array.from(new Set([
+        ...savedResolvedPaths.value,
+        ...conflictFiles.value.filter(isFileResolved).map((file) => file.path),
+      ]))
       // 0481 T0010 rev2 — the server took the files but says the session still has
       // unresolved ones. This used to be silence: the dialog just sat there.
       conflictError.value = t('main.git_finalize.resolve_remaining', {
@@ -2020,6 +2042,21 @@ async function copyConflictMention(p: ConflictTarget | null) {
     showToast(resolveGitError(e, t, 'main.git_finalize.failed'), 'danger')
   } finally {
     busy.value = false
+  }
+}
+
+async function holdInline(p: Pending) {
+  if (p.merge_id == null || busy.value || !savedResolvedPaths.value.length) return
+  busy.value = true
+  try {
+    await postRequest(`/api/v1/groups/${p.group_id}/git/merge/${p.merge_id}/hold`, {})
+    showToast(t('main.git_finalize.held_toast'), 'success')
+    collapseResolve()
+  } catch (e: any) {
+    showToast(resolveGitError(e, t, 'main.git_finalize.failed'), 'danger')
+  } finally {
+    busy.value = false
+    await fetchStatus()
   }
 }
 
