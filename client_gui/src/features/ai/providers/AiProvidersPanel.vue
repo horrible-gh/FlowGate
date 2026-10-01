@@ -2,14 +2,13 @@
   <div class="ai-providers-panel">
     <div class="detail-head">
       <div>
-        <div class="page-title">{{ t(`gui.ai.owned.${scope}.title`) }}</div>
-        <div class="page-sub">{{ t(`gui.ai.owned.${scope}.subtitle`) }}</div>
+        <div class="page-title">{{ t('gui.ai.owned.title') }}</div>
       </div>
       <div class="detail-actions">
         <Button
           variant="primary"
-          :disabled="loading || !!loadError || atLimit"
-          :title="atLimit ? t('gui.ai.owned.limit_reached', { max: PROVIDERS_MAX }) : undefined"
+          :disabled="loading || !!loadError || addBlocked"
+          :title="addBlocked ? t('gui.ai.owned.limit_reached', { max: PROVIDERS_MAX }) : undefined"
           @click="openAddDialog"
         >
           ＋ {{ t('gui.ai.owned.add') }}
@@ -29,144 +28,181 @@
     </div>
 
     <template v-else>
-      <div v-if="error" class="panel-error-alert" role="alert">{{ error }}</div>
-
-      <!-- AI cards; drag to reorder (order = fallback order) -->
+      <!-- One list: system AI first, then my AI. Drag reorders within the same owner (order = fallback order). -->
       <section class="detail-panel">
         <div class="detail-toolbar">
+          <div class="segmented" role="group" :aria-label="t('gui.ai.owned.filter_aria')">
+            <button
+              v-for="key in OWNER_FILTERS"
+              :key="key"
+              type="button"
+              :class="{ on: ownerFilter === key }"
+              :aria-pressed="ownerFilter === key"
+              @click="ownerFilter = key"
+            >
+              {{ t(`gui.ai.owned.filter_${key}`) }}
+            </button>
+          </div>
           <label class="detail-search">
             ⌕ <input v-model="searchQuery" :placeholder="t('gui.ai.providers.search_placeholder')" />
           </label>
-          <span class="detail-hint">{{ t('gui.ai.providers.custom_hint') }}</span>
-          <span class="detail-hint count-hint" :class="{ full: atLimit }">
-            {{ t('gui.ai.owned.count', { count: providers.length, max: PROVIDERS_MAX }) }}
+          <span class="detail-hint count-hint">
+            {{ t('gui.ai.owned.count_split', { system: systemList.length, mine: myList.length }) }}
           </span>
         </div>
 
         <div class="provider-cards">
-          <div v-if="filteredProviders.length === 0" class="empty-row">
+          <div v-if="rows.length === 0" class="empty-row">
             {{ t('gui.ai.providers.empty_list') }}
           </div>
 
           <div
-            v-for="(item, idx) in filteredProviders"
-            :key="item.id"
+            v-for="row in rows"
+            :key="row.item.id"
             class="provider-card"
             :class="{
-              'is-dragging': dragId === item.id,
-              'is-drag-over': overId === item.id && dragId !== item.id,
-              'is-off': !item.enabled,
-              'no-default': scope !== 'system',
+              'is-dragging': dragId === row.item.id,
+              'is-drag-over': overId === row.item.id && dragId !== row.item.id && dragOwner === row.owner,
+              'is-off': !row.item.enabled,
             }"
-            :draggable="canReorder"
-            @dragstart="onDragStart(item.id, $event)"
-            @dragover="onDragOver(item.id, $event)"
-            @drop.prevent="onDrop(item.id)"
+            :draggable="canReorder(row.owner)"
+            @dragstart="onDragStart(row, $event)"
+            @dragover="onDragOver(row, $event)"
+            @drop.prevent="onDrop(row)"
             @dragend="onDragEnd"
           >
             <button
-              v-if="canReorder"
+              v-if="canReorder(row.owner)"
               type="button"
               class="grip"
-              :aria-label="t('gui.ai.providers.reorder_aria', { name: item.name })"
-              @keydown.up.prevent="moveProvider(item.id, -1)"
-              @keydown.down.prevent="moveProvider(item.id, 1)"
+              :aria-label="t('gui.ai.providers.reorder_aria', { name: row.item.name })"
+              @keydown.up.prevent="moveProvider(row, -1)"
+              @keydown.down.prevent="moveProvider(row, 1)"
             >
               <AiIcon name="grip" />
             </button>
             <span v-else class="grip grip--static"><AiIcon name="grip" /></span>
-            <span class="rank">{{ idx + 1 }}</span>
+            <span class="rank">{{ row.rank }}</span>
 
-            <!-- Default AI (system list only; a user's own AI has no system-wide default) -->
+            <!-- My default AI: my pick, or the system default while I follow it. Picking the
+                 starred system default means "follow the system default". -->
             <button
-              v-if="scope === 'system'"
               type="button"
               class="radio"
-              :class="{ on: defaultId === item.id }"
+              :class="{ on: effectiveDefaultId === row.item.id, follow: myDefaultId === null }"
               :disabled="saving"
-              :title="t('gui.ai.providers.set_default')"
-              :aria-label="t('gui.ai.providers.set_default')"
-              @click="setDefaultProvider(item.id)"
+              :title="t('gui.ai.owned.my_default')"
+              :aria-label="t('gui.ai.owned.my_default')"
+              :aria-pressed="effectiveDefaultId === row.item.id"
+              @click="pickMyDefault(row)"
             />
 
-            <span class="avatar-round" :class="getAvatarClass(item.name, item.kind)">
-              {{ getInitials(item.name) }}
+            <span class="avatar-round" :class="getAvatarClass(row.item.name, row.item.kind)">
+              {{ getInitials(row.item.name) }}
             </span>
             <div class="name-box">
               <div class="name-title-row">
-                <b>{{ item.name }}</b>
-                <span class="badge">{{ item.exec_type.toUpperCase() }}</span>
-                <span class="role" :class="getKindToneClass(item.kind)">{{ item.kind }}</span>
-                <Badge v-if="item.exec_type === 'api' && !item.api_key_set" tone="warning" size="sm">
+                <b>{{ row.item.name }}</b>
+                <i
+                  v-if="row.owner === 'system' && systemDefaultId === row.item.id"
+                  class="mode-icon system-default"
+                  role="img"
+                  :aria-label="t('gui.ai.owned.system_default')"
+                  :data-tip="t('gui.ai.owned.system_default')"
+                >
+                  <AiIcon name="star" />
+                </i>
+                <i
+                  class="mode-icon owner"
+                  :class="row.owner"
+                  role="img"
+                  :aria-label="t(`gui.ai.owned.owner_${row.owner}`)"
+                  :data-tip="t(`gui.ai.owned.owner_${row.owner}`)"
+                >
+                  <AiIcon :name="row.owner === 'system' ? 'building' : 'person'" />
+                </i>
+                <i
+                  class="mode-icon"
+                  :class="[row.item.exec_location === 'remote' ? 'remote' : 'local', { unsupported: !isModeSupported(row.item) }]"
+                  role="img"
+                  :aria-label="modeLabel(row.item)"
+                  :data-tip="modeLabel(row.item)"
+                >
+                  <AiIcon :name="row.item.exec_type === 'cli' ? 'terminal' : 'cloud'" />
+                </i>
+                <span class="role" :class="getKindToneClass(row.item.kind)">{{ row.item.kind }}</span>
+                <Badge v-if="row.item.exec_type === 'api' && !row.item.api_key_set && canEdit(row.owner)" tone="warning" size="sm">
                   {{ t('gui.ai.providers.credential_required') }}
                 </Badge>
-                <Badge v-if="probeBadge(item.id)" :tone="probeBadge(item.id)!.tone" size="sm">
-                  {{ probeBadge(item.id)!.label }}
+                <Badge v-if="probeBadge(row.item.id)" :tone="probeBadge(row.item.id)!.tone" size="sm">
+                  {{ probeBadge(row.item.id)!.label }}
                 </Badge>
               </div>
-              <small>{{ item.id }}</small>
+              <small>{{ row.item.id }}</small>
             </div>
 
             <div class="status-cell">
-              <!-- Which projects may use this system AI -->
-              <IconButton
-                v-if="scope === 'system'"
-                class="access-btn"
-                :class="{ listed: item.project_access === 'listed' }"
-                :label="accessLabel(item)"
-                :title="accessLabel(item)"
-                size="sm"
-                :disabled="saving"
-                @click="toggleAccess(item.id)"
-              >
-                <AiIcon :name="item.project_access === 'listed' ? 'lock' : 'globe'" />
-              </IconButton>
               <Toggle
-                :model-value="item.enabled"
-                :disabled="saving"
-                :aria-label="t('gui.ai.providers.toggle_aria', { name: item.name })"
-                @update:model-value="(val) => toggleEnabled(item.id, val)"
+                :model-value="row.item.enabled"
+                :disabled="saving || !canEdit(row.owner)"
+                :aria-label="t('gui.ai.providers.toggle_aria', { name: row.item.name })"
+                @update:model-value="(val) => toggleEnabled(row, val)"
               />
             </div>
 
             <div class="row-actions">
-              <IconButton
-                v-if="scope === 'system' && item.exec_type === 'cli'"
-                :label="t('gui.ai.owned.probe')"
-                :title="t('gui.ai.owned.probe')"
-                size="sm"
-                :disabled="probing[item.id]"
-                @click="runProbe(item)"
-              >
-                <AiIcon name="pulse" />
-              </IconButton>
-              <IconButton
-                :label="item.exec_type === 'cli' ? t('gui.ai.providers.view_command') : t('gui.ai.providers.view_connection')"
-                :title="item.exec_type === 'cli' ? t('gui.ai.providers.view_command') : t('gui.ai.providers.view_connection')"
-                size="sm"
-                @click="openCommandInfo(item)"
-              >
-                <AiIcon :name="item.exec_type === 'cli' ? 'terminal' : 'link'" />
-              </IconButton>
-              <IconButton :label="t('gui.common.edit')" :title="t('gui.common.edit')" size="sm" @click="openEditDialog(item)">
-                <AiIcon name="edit" />
-              </IconButton>
-              <IconButton
-                class="danger-icon"
-                :label="t('gui.common.delete')"
-                :title="t('gui.common.delete')"
-                size="sm"
-                @click="confirmDelete(item)"
-              >
-                <AiIcon name="trash" />
-              </IconButton>
+              <template v-if="canEdit(row.owner)">
+                <IconButton
+                  v-if="row.owner === 'system' && systemDefaultId !== row.item.id"
+                  :label="t('gui.ai.owned.set_system_default')"
+                  :title="t('gui.ai.owned.set_system_default')"
+                  size="sm"
+                  :disabled="saving"
+                  @click="setDefaultProvider(row.item.id)"
+                >
+                  <AiIcon name="star" />
+                </IconButton>
+                <IconButton
+                  v-if="row.owner === 'system' && row.item.exec_type === 'cli' && row.item.exec_location !== 'remote'"
+                  :label="t('gui.ai.owned.probe')"
+                  :title="t('gui.ai.owned.probe')"
+                  size="sm"
+                  :disabled="probing[row.item.id]"
+                  @click="runProbe(row.item)"
+                >
+                  <AiIcon name="pulse" />
+                </IconButton>
+                <IconButton
+                  :label="row.item.exec_type === 'cli' ? t('gui.ai.providers.view_command') : t('gui.ai.providers.view_connection')"
+                  :title="row.item.exec_type === 'cli' ? t('gui.ai.providers.view_command') : t('gui.ai.providers.view_connection')"
+                  size="sm"
+                  @click="openCommandInfo(row.item)"
+                >
+                  <AiIcon :name="row.item.exec_type === 'cli' ? 'terminal' : 'link'" />
+                </IconButton>
+                <IconButton :label="t('gui.common.edit')" :title="t('gui.common.edit')" size="sm" @click="openEditDialog(row)">
+                  <AiIcon name="edit" />
+                </IconButton>
+                <IconButton
+                  class="danger-icon"
+                  :label="t('gui.common.delete')"
+                  :title="t('gui.common.delete')"
+                  size="sm"
+                  @click="confirmDelete(row)"
+                >
+                  <AiIcon name="trash" />
+                </IconButton>
+              </template>
+              <span v-else class="read-only-hint" :title="t('gui.ai.owned.admin_only')">
+                <AiIcon name="lock" />
+              </span>
             </div>
           </div>
         </div>
       </section>
 
       <!-- Repeat limit: system setting ai_repeat_count_max, saved as soon as it changes. -->
-      <div v-if="scope === 'system' && execPolicy" class="repeat-card">
+      <div v-if="isAdmin && execPolicy" class="repeat-card">
         <div class="repeat-info">
           <b>{{ t('gui.ai.providers.repeat_max') }}</b>
           <small>{{ t('gui.ai.providers.repeat_max_hint') }}</small>
@@ -198,6 +234,8 @@
     <AiProviderEditDialog
       :open="dialogOpen"
       :provider="editingProvider"
+      :owner="editingOwner"
+      :owner-choices="ownerChoices"
       :saving="saving"
       @close="dialogOpen = false"
       @save="onSaveProvider"
@@ -206,23 +244,25 @@
     <AiCommandInfoModal :provider="infoProvider" @close="infoProvider = null" @toast="pushToast" />
 
     <ConfirmDialog
-      :open="!!deletingProvider"
+      :open="!!deleting"
       :title="t('gui.ai.providers.delete_confirm_title')"
-      :message="t('gui.ai.providers.delete_confirm_msg', { name: deletingProvider?.name })"
+      :message="t('gui.ai.providers.delete_confirm_msg', { name: deleting?.item.name })"
       danger
       @confirm="onDeleteConfirmed"
-      @cancel="deletingProvider = null"
+      @cancel="deleting = null"
     />
 
-    <ToastHost :toasts="toasts" :dismiss-label="t('gui.common.close')" @dismiss="dismissToast" />
+    <ToastHost :toasts="toasts" :dismiss-label="t('gui.common.close')" placement="top" @dismiss="dismissToast" />
   </div>
 </template>
 
 <script setup lang="ts">
-// Owned AI list (flowgate.v02.0017 TR0003 rev7): 시스템 AI (administrator) or 내 AI (the
-// signed-in user's own AI), both tabs of the AI 설정 screen (T0004 §1). A project never edits
-// this list; it only allows and picks AI in its usage policy (AiPolicyPanel).
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+// AI 관리 list (flowgate.v02.0017 CH0006 (2)): system AI and my AI in ONE list, each card marked
+// with its owner and its 2x2 execution mode. System AI is edited by administrators only and read
+// by everyone; my AI is edited by its owner. Saves stay per owner (each list is a full save).
+// Only failures are announced (an error toast under the header); a change that worked shows in
+// the card itself (toggle, star, radio), so there is no success toast.
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Badge from '@/components/ui/Badge.vue'
 import Button from '@/components/ui/Button.vue'
@@ -232,35 +272,56 @@ import IconButton from '@/components/ui/IconButton.vue'
 import LoadingState from '@/components/ui/LoadingState.vue'
 import ToastHost, { type ToastHostItem } from '@/components/ui/ToastHost.vue'
 import Toggle from '@/components/ui/Toggle.vue'
-import { fetchMyAi, fetchSystemAi, probeSystemAi, saveMyAi, saveRepeatCountMax, saveSystemAi } from '../api'
-import type { AiExecutionPolicy, AiProbeResult, ProviderItem } from '../types'
+import { useCurrentUser } from '@/core/auth/currentUser'
+import {
+  fetchMyAi,
+  fetchSystemAi,
+  fetchVisibleSystemAi,
+  probeSystemAi,
+  saveMyAi,
+  saveMyAiDefault,
+  saveRepeatCountMax,
+  saveSystemAi,
+} from '../api'
+import type { AiExecutionPolicy, AiOwnerScope, AiProbeResult, ProviderItem } from '../types'
 import AiIcon from '../AiIcon.vue'
 import { PROVIDERS_MAX } from '../limits'
 import AiCommandInfoModal from './AiCommandInfoModal.vue'
 import AiProviderEditDialog from './AiProviderEditDialog.vue'
-import { getAvatarClass, getInitials, getKindToneClass } from './providerDisplay'
+import { getAvatarClass, getInitials, getKindToneClass, isModeSupported, modeKey } from './providerDisplay'
 
-const props = defineProps<{
-  scope: 'system' | 'user'
-}>()
-
-// Emitted after a successful save so screens showing the policy/effective list can reload.
+// Emitted after a successful save so screens listing usable AI can reload.
 const emit = defineEmits<{ changed: [] }>()
 
 const { t } = useI18n()
+const { user } = useCurrentUser()
+const isAdmin = computed(() => !!user.value?.isAdmin)
 
-const providers = ref<ProviderItem[]>([])
-const defaultId = ref<string | null>(null)
+interface Row {
+  owner: AiOwnerScope
+  item: ProviderItem
+  rank: number
+}
+
+const OWNER_FILTERS = ['all', 'system', 'user'] as const
+type OwnerFilter = (typeof OWNER_FILTERS)[number]
+
+const systemList = ref<ProviderItem[]>([])
+const myList = ref<ProviderItem[]>([])
+const systemDefaultId = ref<string | null>(null)
+// My default AI; null = follow the system default (flowgate.v02.0017 CH0006 (3)).
+const myDefaultId = ref<string | null>(null)
 const loading = ref(false)
 const loaded = ref(false)
 const loadError = ref('')
 const saving = ref(false)
-const error = ref('')
 const searchQuery = ref('')
+const ownerFilter = ref<OwnerFilter>('all')
 
 const dialogOpen = ref(false)
 const editingProvider = ref<ProviderItem | null>(null)
-const deletingProvider = ref<ProviderItem | null>(null)
+const editingOwner = ref<AiOwnerScope>('user')
+const deleting = ref<Row | null>(null)
 const infoProvider = ref<ProviderItem | null>(null)
 
 const toasts = ref<ToastHostItem[]>([])
@@ -269,28 +330,33 @@ const probeResults = ref<Record<string, AiProbeResult | null>>({})
 const execPolicy = ref<AiExecutionPolicy | null>(null)
 const repeatMax = ref(0)
 const dragId = ref<string | null>(null)
+const dragOwner = ref<AiOwnerScope | null>(null)
 const overId = ref<string | null>(null)
 let disposed = false
 let repeatTimer: ReturnType<typeof setTimeout> | null = null
 
-function apply(list: ProviderItem[], nextDefault: string | null): void {
-  providers.value = list
-  defaultId.value = nextDefault
+function listOf(owner: AiOwnerScope): ProviderItem[] {
+  return owner === 'system' ? systemList.value : myList.value
+}
+
+function canEdit(owner: AiOwnerScope): boolean {
+  return owner === 'user' || isAdmin.value
 }
 
 async function load(): Promise<void> {
   loading.value = true
   loadError.value = ''
   try {
-    if (props.scope === 'system') {
-      const data = await fetchSystemAi()
-      apply(data.providers ?? [], data.default_provider_id ?? null)
-      execPolicy.value = data.execution_policy ?? null
-      repeatMax.value = execPolicy.value?.repeat_count_max ?? 0
-    } else {
-      const data = await fetchMyAi()
-      apply(data.providers ?? [], null)
-    }
+    const [system, mine] = await Promise.all([
+      isAdmin.value ? fetchSystemAi() : fetchVisibleSystemAi(),
+      fetchMyAi(),
+    ])
+    systemList.value = system.providers ?? []
+    systemDefaultId.value = system.default_provider_id ?? null
+    myList.value = mine.providers ?? []
+    myDefaultId.value = mine.default_provider_id ?? null
+    execPolicy.value = isAdmin.value ? system.execution_policy ?? null : null
+    repeatMax.value = execPolicy.value?.repeat_count_max ?? 0
     loaded.value = true
   } catch (err: unknown) {
     loadError.value = err instanceof Error ? err.message : t('gui.ai.providers.save_failed')
@@ -299,11 +365,7 @@ async function load(): Promise<void> {
   }
 }
 
-watch(() => props.scope, () => {
-  loaded.value = false
-  probeResults.value = {}
-  void load()
-}, { immediate: true })
+void load()
 
 // No save button: the value is written shortly after the last −/＋ click.
 function stepRepeat(delta: number): void {
@@ -324,7 +386,6 @@ async function saveRepeat(): Promise<void> {
     await saveRepeatCountMax(value)
     if (disposed) return
     execPolicy.value = { ...current, repeat_count_max: value }
-    pushToast(t('gui.ai.providers.repeat_saved'), 'success')
   } catch (err: unknown) {
     if (disposed) return
     repeatMax.value = current.repeat_count_max
@@ -341,20 +402,32 @@ onBeforeUnmount(() => {
   disposed = true
 })
 
-const canReorder = computed(() => !searchQuery.value.trim() && !saving.value)
+function modeLabel(item: ProviderItem): string {
+  return t(`gui.ai.modes.${modeKey(item)}`)
+}
 
-const filteredProviders = computed(() => {
+const rows = computed<Row[]>(() => {
   const query = searchQuery.value.trim().toLowerCase()
-  if (!query) return providers.value
-  return providers.value.filter(
-    (p) =>
-      p.name.toLowerCase().includes(query) ||
-      p.kind.toLowerCase().includes(query) ||
-      p.id.toLowerCase().includes(query)
+  const matches = (p: ProviderItem) =>
+    !query ||
+    p.name.toLowerCase().includes(query) ||
+    p.kind.toLowerCase().includes(query) ||
+    p.id.toLowerCase().includes(query) ||
+    modeLabel(p).toLowerCase().includes(query)
+  const owners: AiOwnerScope[] = ownerFilter.value === 'all' ? ['system', 'user'] : [ownerFilter.value]
+  return owners.flatMap((owner) =>
+    listOf(owner)
+      .map((item, index) => ({ owner, item, rank: index + 1 }))
+      .filter((row) => matches(row.item))
   )
 })
 
+function canReorder(owner: AiOwnerScope): boolean {
+  return canEdit(owner) && !searchQuery.value.trim() && !saving.value
+}
+
 function pushToast(message: string, tone: ToastHostItem['tone']): void {
+  if (tone !== 'danger') return
   toasts.value = [...toasts.value, { id: `ai-owned-${Date.now()}-${Math.random()}`, message, tone, duration: 3500 }]
 }
 
@@ -362,107 +435,142 @@ function dismissToast(id: string | number): void {
   toasts.value = toasts.value.filter((item) => item.id !== id)
 }
 
-const atLimit = computed(() => providers.value.length >= PROVIDERS_MAX)
+// Owners the add dialog may pick; each list has its own PROVIDERS_MAX.
+const ownerChoices = computed<AiOwnerScope[]>(() => {
+  const owners: AiOwnerScope[] = isAdmin.value ? ['system', 'user'] : ['user']
+  return owners.filter((owner) => listOf(owner).length < PROVIDERS_MAX)
+})
+const addBlocked = computed(() => ownerChoices.value.length === 0)
 
-// Every change is a full save of the list (order = fallback order).
-async function persist(list: ProviderItem[], nextDefault: string | null = defaultId.value): Promise<void> {
+// Every change is a full save of that owner's list (order = fallback order).
+async function persist(
+  owner: AiOwnerScope,
+  list: ProviderItem[],
+  nextDefault: string | null = systemDefaultId.value,
+): Promise<void> {
   if (saving.value) return
   if (list.length > PROVIDERS_MAX) {
-    error.value = t('gui.ai.owned.limit_reached', { max: PROVIDERS_MAX })
+    pushToast(t('gui.ai.owned.limit_reached', { max: PROVIDERS_MAX }), 'danger')
     return
   }
   saving.value = true
-  error.value = ''
   try {
-    if (props.scope === 'system') {
+    if (owner === 'system') {
       const data = await saveSystemAi(list, nextDefault)
-      apply(data.providers ?? [], data.default_provider_id ?? null)
+      systemList.value = data.providers ?? []
+      systemDefaultId.value = data.default_provider_id ?? null
     } else {
       const data = await saveMyAi(list)
-      apply(data.providers ?? [], null)
+      myList.value = data.providers ?? []
+      myDefaultId.value = data.default_provider_id ?? null
     }
     emit('changed')
   } catch (err: unknown) {
-    error.value = err instanceof Error ? err.message : t('gui.ai.providers.save_failed')
+    pushToast(err instanceof Error ? err.message : t('gui.ai.providers.save_failed'), 'danger')
   } finally {
     saving.value = false
   }
 }
 
+// The AI my runs start with: my pick when it still exists, otherwise the system default.
+const effectiveDefaultId = computed<string | null>(() => {
+  const mine = myDefaultId.value
+  if (mine && [...systemList.value, ...myList.value].some((p) => p.id === mine)) return mine
+  return systemDefaultId.value
+})
+
+async function setMyDefault(providerId: string | null): Promise<void> {
+  if (saving.value || myDefaultId.value === providerId) return
+  saving.value = true
+  try {
+    const data = await saveMyAiDefault(providerId)
+    myDefaultId.value = data.default_provider_id ?? null
+    emit('changed')
+  } catch (err: unknown) {
+    pushToast(err instanceof Error ? err.message : t('gui.ai.providers.save_failed'), 'danger')
+  } finally {
+    saving.value = false
+  }
+}
+
+// The starred system default stands for "follow the system default": picking it stores no
+// pick of my own, so a later change of the system default is followed.
+function pickMyDefault(row: Row): void {
+  const follows = row.owner === 'system' && row.item.id === systemDefaultId.value
+  void setMyDefault(follows ? null : row.item.id)
+}
+
 function setDefaultProvider(providerId: string) {
-  if (props.scope !== 'system' || defaultId.value === providerId) return
-  void persist(providers.value, providerId)
+  if (!isAdmin.value || systemDefaultId.value === providerId) return
+  void persist('system', systemList.value, providerId)
 }
 
-function toggleEnabled(providerId: string, enabled: boolean) {
-  void persist(providers.value.map((p) => (p.id === providerId ? { ...p, enabled } : p)))
+function toggleEnabled(row: Row, enabled: boolean) {
+  if (!canEdit(row.owner)) return
+  void persist(row.owner, listOf(row.owner).map((p) => (p.id === row.item.id ? { ...p, enabled } : p)))
 }
 
-function accessLabel(item: ProviderItem): string {
-  return item.project_access === 'listed' ? t('gui.ai.owned.access_listed') : t('gui.ai.owned.access_all')
-}
-
-function toggleAccess(providerId: string) {
-  void persist(providers.value.map((p) =>
-    p.id === providerId ? { ...p, project_access: p.project_access === 'listed' ? 'all' : 'listed' } : p
-  ))
-}
-
-function reorder(fromId: string, toIndex: number) {
-  if (!canReorder.value) return
-  const list = [...providers.value]
+function reorder(owner: AiOwnerScope, fromId: string, toIndex: number) {
+  if (!canReorder(owner)) return
+  const list = [...listOf(owner)]
   const index = list.findIndex((p) => p.id === fromId)
   if (index < 0 || toIndex < 0 || toIndex >= list.length || toIndex === index) return
   const [moved] = list.splice(index, 1)
   list.splice(toIndex, 0, moved)
-  void persist(list)
+  void persist(owner, list)
 }
 
 // Keyboard alternative to dragging (↑/↓ on the grip).
-function moveProvider(providerId: string, delta: number) {
-  const index = providers.value.findIndex((p) => p.id === providerId)
-  if (index >= 0) reorder(providerId, index + delta)
+function moveProvider(row: Row, delta: number) {
+  const index = listOf(row.owner).findIndex((p) => p.id === row.item.id)
+  if (index >= 0) reorder(row.owner, row.item.id, index + delta)
 }
 
-function onDragStart(providerId: string, event: DragEvent) {
-  if (!canReorder.value) {
+function onDragStart(row: Row, event: DragEvent) {
+  if (!canReorder(row.owner)) {
     event.preventDefault()
     return
   }
-  dragId.value = providerId
+  dragId.value = row.item.id
+  dragOwner.value = row.owner
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('text/plain', providerId)
+    event.dataTransfer.setData('text/plain', row.item.id)
   }
 }
 
-function onDragOver(providerId: string, event: DragEvent) {
-  if (!dragId.value) return
+// A card only accepts a drop from its own owner's list.
+function onDragOver(row: Row, event: DragEvent) {
+  if (!dragId.value || dragOwner.value !== row.owner) return
   event.preventDefault()
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
-  overId.value = providerId
+  overId.value = row.item.id
 }
 
-function onDrop(providerId: string) {
+function onDrop(row: Row) {
   const from = dragId.value
+  const owner = dragOwner.value
   onDragEnd()
-  if (!from || from === providerId) return
-  reorder(from, providers.value.findIndex((p) => p.id === providerId))
+  if (!from || !owner || from === row.item.id || owner !== row.owner) return
+  reorder(owner, from, listOf(owner).findIndex((p) => p.id === row.item.id))
 }
 
 function onDragEnd() {
   dragId.value = null
+  dragOwner.value = null
   overId.value = null
 }
 
 function openAddDialog() {
-  if (atLimit.value) return
+  if (addBlocked.value) return
   editingProvider.value = null
+  editingOwner.value = ownerChoices.value[0]
   dialogOpen.value = true
 }
 
-function openEditDialog(provider: ProviderItem) {
-  editingProvider.value = { ...provider }
+function openEditDialog(row: Row) {
+  editingProvider.value = { ...row.item }
+  editingOwner.value = row.owner
   dialogOpen.value = true
 }
 
@@ -486,9 +594,11 @@ async function runProbe(provider: ProviderItem) {
     const result = await probeSystemAi(provider)
     if (disposed) return
     probeResults.value = { ...probeResults.value, [provider.id]: result }
-    const badge = probeBadge(provider.id)
-    const detail = result.status === 'command_failed' && result.stderr_tail ? ` — ${result.stderr_tail.slice(-160)}` : ''
-    if (badge) pushToast(`${provider.name}: ${badge.label}${detail}`, badge.tone === 'success' ? 'success' : badge.tone)
+    // The card badge shows the result; only a failed command is also announced.
+    if (result.status === 'command_failed') {
+      const detail = result.stderr_tail ? ` — ${result.stderr_tail.slice(-160)}` : ''
+      pushToast(`${provider.name}: ${t('gui.ai.owned.probe_failed')}${detail}`, 'danger')
+    }
   } catch (err: unknown) {
     pushToast(err instanceof Error ? err.message : t('gui.ai.owned.probe_failed'), 'danger')
   } finally {
@@ -496,29 +606,34 @@ async function runProbe(provider: ProviderItem) {
   }
 }
 
-function confirmDelete(provider: ProviderItem) {
-  deletingProvider.value = provider
+function confirmDelete(row: Row) {
+  deleting.value = row
 }
 
 function onDeleteConfirmed() {
-  const target = deletingProvider.value
-  deletingProvider.value = null
+  const target = deleting.value
+  deleting.value = null
   if (!target) return
-  const next = providers.value.filter((p) => p.id !== target.id)
-  const nextDefault = defaultId.value === target.id ? next[0]?.id ?? null : defaultId.value
-  void persist(next, nextDefault)
+  const next = listOf(target.owner).filter((p) => p.id !== target.item.id)
+  if (target.owner === 'system') {
+    const nextDefault = systemDefaultId.value === target.item.id ? next[0]?.id ?? null : systemDefaultId.value
+    void persist('system', next, nextDefault)
+  } else {
+    void persist('user', next)
+  }
 }
 
-function onSaveProvider(item: ProviderItem) {
+function onSaveProvider(item: ProviderItem, owner: AiOwnerScope) {
   dialogOpen.value = false
-  const current = [...providers.value]
+  if (!canEdit(owner)) return
+  const current = [...listOf(owner)]
   const idx = current.findIndex((p) => p.id === item.id)
   if (idx >= 0) {
     current[idx] = { ...current[idx], ...item }
   } else {
     current.push(item)
   }
-  void persist(current, defaultId.value ?? item.id)
+  void persist(owner, current, owner === 'system' ? systemDefaultId.value ?? item.id : systemDefaultId.value)
 }
 </script>
 
@@ -532,24 +647,81 @@ function onSaveProvider(item: ProviderItem) {
   min-height: 240px;
 }
 
-.provider-card.no-default {
-  grid-template-columns: 22px 18px 36px minmax(0, 1fr) auto auto;
-}
-
-.access-btn {
-  color: #78dcb0;
-}
-
-.access-btn.listed {
-  color: #f5c46b;
-}
-
 .count-hint {
   margin-left: auto;
   white-space: nowrap;
 }
 
-.count-hint.full {
-  color: #f5c46b;
+/* While I follow the system default its radio is shown, but dimmer than my own pick. */
+.radio.on.follow {
+  border-color: #3f6d9c;
+}
+
+.radio.on.follow::after {
+  background: #3f6d9c;
+}
+
+/* Owner, execution mode and system default as small round icons; the name shows on hover (as in v0.1). */
+.mode-icon {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  color: #fff;
+  cursor: default;
+}
+
+.mode-icon :deep(.ai-icon) {
+  width: 13px;
+  height: 13px;
+}
+
+.mode-icon.local { background: #7c3aed; }
+
+.mode-icon.remote { background: #0f8f86; }
+
+.mode-icon.system-default { background: #d97706; }
+
+.mode-icon.owner.system { background: #2f5fb3; }
+
+.mode-icon.owner.user { background: #13837a; }
+
+.mode-icon.unsupported {
+  background: #3a4a5c;
+  color: #94a8bd;
+}
+
+.mode-icon::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: #050d16;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+  z-index: 60;
+}
+
+.mode-icon:hover::after {
+  opacity: 1;
+}
+
+.read-only-hint {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: #6f86a0;
 }
 </style>

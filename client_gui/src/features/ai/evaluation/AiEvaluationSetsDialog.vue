@@ -137,7 +137,7 @@ interface SetErrors {
   constraints: Record<number, string>
 }
 
-const props = defineProps<{ open: boolean; projectId: string }>()
+const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: []; changed: [sets: AiEvaluationSet[]] }>()
 const { t } = useI18n()
 
@@ -231,7 +231,7 @@ function removeConstraint(index: number): void {
 async function load(): Promise<void> {
   loading.value = true
   try {
-    sets.value = await listEvaluationSets(props.projectId)
+    sets.value = await listEvaluationSets()
   } catch (err: unknown) {
     error.value = err instanceof Error ? err.message : t('gui.ai.evaluation.load_failed')
   } finally {
@@ -277,7 +277,7 @@ async function save(): Promise<void> {
   })
   saving.value = true
   try {
-    const saved = await saveEvaluationSet(props.projectId, editingId.value, {
+    const saved = await saveEvaluationSet(editingId.value, {
       name: form.name.trim(),
       instruction: form.instruction.trim(),
       constraints,
@@ -300,7 +300,7 @@ async function remove(): Promise<void> {
   saving.value = true
   resetErrors()
   try {
-    await deleteEvaluationSet(props.projectId, id)
+    await deleteEvaluationSet(id)
     await load()
     emit('changed', sets.value)
     edit(null)

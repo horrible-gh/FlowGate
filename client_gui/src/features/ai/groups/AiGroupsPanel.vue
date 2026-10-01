@@ -3,9 +3,9 @@
     <div class="detail-head">
       <div>
         <div class="page-title">{{ t('gui.ai.groups.title') }}</div>
-        <div class="page-sub">{{ t('gui.ai.groups.subtitle') }}</div>
       </div>
-      <div class="detail-actions">
+      <!-- A group of system AI is an administrator's; everyone reads and starts with it (CH0006 #48). -->
+      <div v-if="canEdit" class="detail-actions">
         <Button variant="primary" @click="openCreate">＋ {{ t('gui.ai.groups.add_group') }}</Button>
       </div>
     </div>
@@ -47,7 +47,7 @@
           <div class="head-actions">
             <span v-if="selected.is_default" class="team-badge">★ {{ t('gui.ai.groups.default_team') }}</span>
             <IconButton
-              v-else
+              v-else-if="canEdit"
               :label="t('gui.ai.groups.make_default')"
               :title="t('gui.ai.groups.make_default')"
               size="sm"
@@ -57,15 +57,17 @@
               <AiIcon name="star" />
             </IconButton>
             <Toggle
+              v-if="canEdit"
               :model-value="selected.enabled"
               :disabled="busy"
               :aria-label="t('gui.ai.groups.enabled_aria', { name: selected.name })"
               @update:model-value="(value) => setState({ enabled: value })"
             />
-            <IconButton :label="t('gui.common.edit')" :title="t('gui.common.edit')" size="sm" :disabled="busy" @click="openEdit">
+            <IconButton v-if="canEdit" :label="t('gui.common.edit')" :title="t('gui.common.edit')" size="sm" :disabled="busy" @click="openEdit">
               <AiIcon name="edit" />
             </IconButton>
             <IconButton
+              v-if="canEdit"
               class="danger-icon"
               :label="t('gui.common.delete')"
               :title="t('gui.common.delete')"
@@ -83,7 +85,7 @@
           <div class="block-head">
             <span class="block-title">{{ t('gui.ai.groups.members') }}</span>
             <span class="block-count">{{ selected.member_count }}</span>
-            <Dropdown>
+            <Dropdown v-if="canEdit">
               <template #trigger="{ toggle, triggerAttrs }">
                 <Button
                   v-bind="triggerAttrs"
@@ -137,13 +139,13 @@
                 :key="role.role_id"
                 type="button"
                 class="role indigo role-chip"
-                :title="t('gui.ai.groups.unassign_role', { role: role.name })"
-                :disabled="busy"
+                :title="canEdit ? t('gui.ai.groups.unassign_role', { role: role.name }) : undefined"
+                :disabled="busy || !canEdit"
                 @click="toggleMapping(member, role.role_id, false)"
               >
-                {{ role.name }}<span aria-hidden="true">×</span>
+                {{ role.name }}<span v-if="canEdit" aria-hidden="true">×</span>
               </button>
-              <Dropdown>
+              <Dropdown v-if="canEdit">
                 <template #trigger="{ toggle, open }">
                   <button
                     type="button"
@@ -179,6 +181,7 @@
               {{ typeof member.fit_score === 'number' ? `${formatScore(member.fit_score)} fit` : '' }}
             </strong>
             <IconButton
+              v-if="canEdit"
               class="crown"
               :class="{ on: isSupervisor(member) }"
               :label="isSupervisor(member) ? t('gui.ai.groups.unset_supervisor') : t('gui.ai.groups.set_supervisor')"
@@ -191,6 +194,7 @@
               <AiIcon name="crown" />
             </IconButton>
             <IconButton
+              v-if="canEdit"
               class="danger-icon"
               :label="t('gui.ai.groups.remove_member')"
               :title="t('gui.ai.groups.remove_member')"
@@ -208,7 +212,7 @@
           <div class="block-head">
             <span class="block-title">{{ t('gui.ai.groups.roles') }}</span>
             <span class="block-count">{{ selected.role_count }}</span>
-            <Button class="block-action" variant="secondary" size="sm" :disabled="busy" @click="openRoleCreate">
+            <Button v-if="canEdit" class="block-action" variant="secondary" size="sm" :disabled="busy" @click="openRoleCreate">
               ＋ {{ t('gui.ai.groups.add_role') }}
             </Button>
           </div>
@@ -220,7 +224,7 @@
                 <small>{{ roleMemberNames(role) }}</small>
                 <small class="criteria-line">{{ criteriaLabel(role) }}</small>
               </div>
-              <div class="role-card-actions">
+              <div v-if="canEdit" class="role-card-actions">
                 <IconButton :label="t('gui.common.edit')" :title="t('gui.common.edit')" size="sm" :disabled="busy" @click="openRoleEdit(role)">
                   <AiIcon name="edit" />
                 </IconButton>
@@ -316,19 +320,22 @@ import {
   type AiLatestEvaluation,
   type ProviderItem,
 } from '../types'
+import { useCurrentUser } from '@/core/auth/currentUser'
 import AiIcon from '../AiIcon.vue'
 import AiGroupEditDialog from './AiGroupEditDialog.vue'
 
 // A team: members (AI connections), user-defined roles mapped onto members, an optional
 // Supervisor, a default flag and an ON/OFF switch. Every change is saved as it is made.
 const props = defineProps<{
-  projectId: string
   providers: ProviderItem[]
   initialGroups: AiGroup[]
 }>()
 
 const emit = defineEmits<{ changed: [] }>()
 const { t } = useI18n()
+const { user } = useCurrentUser()
+// Every group holds system AI only (a user's own AI cannot join yet), so only an administrator edits.
+const canEdit = computed(() => !!user.value?.isAdmin)
 
 const groups = ref<AiGroup[]>([...props.initialGroups])
 const selectedId = ref<string | null>(groups.value[0]?.ai_group_id ?? null)
@@ -453,11 +460,11 @@ async function onSaveGroup(input: AiGroupInput): Promise<void> {
   const current = selected.value
   const ok = await run(
     () => (groupDialog.initial && current
-      ? updateAiGroup(props.projectId, current.ai_group_id, {
+      ? updateAiGroup(current.ai_group_id, {
         ...input,
         supervisor_member_id: current.supervisor?.member_id ?? null,
       })
-      : createAiGroup(props.projectId, input)),
+      : createAiGroup(input)),
     'dialog',
   )
   if (ok) groupDialog.open = false
@@ -468,7 +475,7 @@ async function onDeleteGroup(): Promise<void> {
   deleting.value = null
   if (!target) return
   await run(async () => {
-    await deleteAiGroup(props.projectId, target.ai_group_id)
+    await deleteAiGroup(target.ai_group_id)
     groups.value = groups.value.filter((g) => g.ai_group_id !== target.ai_group_id)
     selectedId.value = groups.value[0]?.ai_group_id ?? null
   })
@@ -477,7 +484,7 @@ async function onDeleteGroup(): Promise<void> {
 async function setState(input: AiGroupStateInput): Promise<void> {
   const current = selected.value
   if (!current) return
-  await run(() => setAiGroupState(props.projectId, current.ai_group_id, input))
+  await run(() => setAiGroupState(current.ai_group_id, input))
   // Only one default team per project: refresh the others' flags.
   if (input.is_default || input.enabled === false) await reload()
 }
@@ -485,7 +492,7 @@ async function setState(input: AiGroupStateInput): Promise<void> {
 async function setSupervisor(memberId: string): Promise<void> {
   const current = selected.value
   if (!current) return
-  await run(() => updateAiGroup(props.projectId, current.ai_group_id, {
+  await run(() => updateAiGroup(current.ai_group_id, {
     name: current.name,
     description: current.description,
     supervisor_member_id: memberId || null,
@@ -495,20 +502,20 @@ async function setSupervisor(memberId: string): Promise<void> {
 async function addMember(providerId: string): Promise<void> {
   const current = selected.value
   if (!current || !providerId) return
-  await run(() => addAiGroupMember(props.projectId, current.ai_group_id, providerId))
+  await run(() => addAiGroupMember(current.ai_group_id, providerId))
 }
 
 async function removeMember(memberId: string): Promise<void> {
   const current = selected.value
   if (!current) return
-  await run(() => removeAiGroupMember(props.projectId, current.ai_group_id, memberId))
+  await run(() => removeAiGroupMember(current.ai_group_id, memberId))
 }
 
 async function toggleMapping(member: AiGroupMember, roleId: string, checked: boolean): Promise<void> {
   const current = selected.value
   if (!current) return
   const next = checked ? [...new Set([...member.role_ids, roleId])] : member.role_ids.filter((id) => id !== roleId)
-  await run(() => setAiGroupMemberRoles(props.projectId, current.ai_group_id, member.member_id, next))
+  await run(() => setAiGroupMemberRoles(current.ai_group_id, member.member_id, next))
 }
 
 function openRoleCreate(): void {
@@ -531,8 +538,8 @@ async function onSaveRole(input: AiGroupRoleInput): Promise<void> {
   const roleId = roleDialog.roleId
   const ok = await run(
     () => (roleId
-      ? updateAiGroupRole(props.projectId, current.ai_group_id, roleId, input)
-      : createAiGroupRole(props.projectId, current.ai_group_id, input)),
+      ? updateAiGroupRole(current.ai_group_id, roleId, input)
+      : createAiGroupRole(current.ai_group_id, input)),
     'dialog',
   )
   if (ok) roleDialog.open = false
@@ -543,19 +550,17 @@ async function onDeleteRole(): Promise<void> {
   const current = selected.value
   deletingRole.value = null
   if (!role || !current) return
-  await run(() => deleteAiGroupRole(props.projectId, current.ai_group_id, role.role_id))
+  await run(() => deleteAiGroupRole(current.ai_group_id, role.role_id))
 }
 
 async function reload(): Promise<void> {
   try {
-    groups.value = await listAiGroups(props.projectId)
+    groups.value = await listAiGroups()
     if (!groups.value.some((g) => g.ai_group_id === selectedId.value)) selectedId.value = groups.value[0]?.ai_group_id ?? null
   } catch (err: unknown) {
     error.value = err instanceof Error ? err.message : t('gui.ai.groups.load_failed')
   }
 }
-
-watch(() => props.projectId, () => void reload())
 
 function getInitials(name: string): string {
   if (!name) return 'AI'

@@ -5,14 +5,14 @@ PUT  /api/v1/system/ai-settings                       — global full save
 GET  /api/v1/projects/{project_id}/ai-settings        — project settings (+ effective)
 PUT  /api/v1/projects/{project_id}/ai-settings        — project save (incl. mode switch)
 GET  /api/v1/projects/{project_id}/ai-settings/effective — effective chain only
-GET  /api/v1/projects/{project_id}/ai-policy          — project AI usage policy (rev7)
-PUT  /api/v1/projects/{project_id}/ai-policy          — patch the policy (given fields only)
+GET  /api/v1/system/ai-providers                      — system AI, read-only, any signed-in user
 GET  /api/v1/me/ai-providers                          — the caller's own AI (rev7)
 PUT  /api/v1/me/ai-providers                          — full save of the caller's own AI
+PUT  /api/v1/me/ai-default                            — the caller's default AI (null = system default)
 
-flowgate.v02.0017 TR0003 rev7: projects no longer own connection rows. The project PUT keeps
-only the AI on/off transition; a custom list save and the project command probe answer 409
-project_owned_ai_retired.
+flowgate.v02.0017 TR0003 rev7: projects no longer own connection rows; a custom list save and the
+project command probe answer 409 project_owned_ai_retired. CH0006 (4) retired the project AI
+policy as well: the project PUT accepts only "inherit" (409 project_ai_policy_retired otherwise).
 
 api_key is write-only: requests may carry it (omit/null = keep, "" = delete,
 value = replace); responses only ever carry api_key_set + api_key_hint (L0004 §2.3).
@@ -42,6 +42,7 @@ class ProviderIn(BaseModel):
     api_model: str | None = None
     api_key: str | None = None
     project_access: str | None = None
+    exec_location: str | None = None
 
 
 class SystemAiSettingsPut(BaseModel):
@@ -84,14 +85,10 @@ class UserAiSettingsPut(BaseModel):
     providers: list[ProviderIn] | None = None
 
 
-class ProjectAiPolicyPut(BaseModel):
-    """Only the fields present in the body change (a patch)."""
+class UserAiDefaultPut(BaseModel):
+    """null = follow the system default."""
 
-    ai_enabled: bool | None = None
-    system_ai_scope: str | None = None
-    allow_user_ai: bool | None = None
-    listed_provider_ids: list[str] | None = None
-    default_provider_id: str | None = None
+    provider_id: str | None = None
 
 
 class DoctypeAssignmentIn(BaseModel):
@@ -190,30 +187,10 @@ def put_project_ai_settings(
         raise _conflict(exc)
 
 
-@router.get("/projects/{project_id}/ai-policy")
-def get_project_ai_policy(
-    project_id: str,
-    user=Depends(require_permission("project.settings.read", "project_id")),
-):
-    try:
-        return _svc.get_project_policy(project_id)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-
-
-@router.put("/projects/{project_id}/ai-policy")
-def put_project_ai_policy(
-    project_id: str,
-    body: ProjectAiPolicyPut,
-    user=Depends(require_permission("project.settings.edit", "project_id")),
-):
-    changes = {name: getattr(body, name) for name in body.model_fields_set}
-    try:
-        return _svc.save_project_policy(project_id, updated_by=user.get("user_id"), **changes)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except _svc.AiSettingsValidationError as exc:
-        raise _validation_error(exc)
+@router.get("/system/ai-providers")
+def get_visible_system_ai(user=Depends(get_current_user)):
+    """System AI as a read-only list for the AI 관리 screen (no commands or keys)."""
+    return _svc.get_visible_system_ai()
 
 
 @router.get("/me/ai-providers")
@@ -226,6 +203,14 @@ def get_my_ai_providers(user=Depends(get_current_user)):
 def put_my_ai_providers(body: UserAiSettingsPut, user=Depends(get_current_user)):
     try:
         return _svc.save_user_settings(user["user_id"], _providers_payload(body))
+    except _svc.AiSettingsValidationError as exc:
+        raise _validation_error(exc)
+
+
+@router.put("/me/ai-default")
+def put_my_ai_default(body: UserAiDefaultPut, user=Depends(get_current_user)):
+    try:
+        return _svc.save_user_default(user["user_id"], body.provider_id)
     except _svc.AiSettingsValidationError as exc:
         raise _validation_error(exc)
 

@@ -1,4 +1,6 @@
 // AI API adapter (WP0002 / T0003, flowgate.v02.0017 T0002). Reuses `@shared/api` transport.
+// AI evaluation and AI groups belong to no project (flowgate.v02.0017 CH0006 (4)); only the
+// connection test still runs under a project.
 
 import { deleteRequest, extractApiErrorMessage, getRequest, patchRequest, postRequest, putRequest } from '@shared/api'
 import { normalizeApiError } from '@shared/apiErrors'
@@ -16,16 +18,15 @@ import type {
   AiGroupRoleInput,
   AiGroupStateInput,
   AiGroupUpdateInput,
-  AiOverviewData,
   AiProbeResult,
-  ProjectAiPolicy,
-  ProjectAiPolicyPatch,
   ProviderItem,
   SystemAiSettings,
   UserAiSettings,
+  VisibleSystemAi,
 } from './types'
 
 const project = (projectId: string) => `/api/v1/projects/${encodeURIComponent(projectId)}`
+const API = '/api/v1'
 
 /** One rejected field of a 422 validation failure ({field, reason, index?, max?}). */
 export interface AiFieldError {
@@ -85,10 +86,6 @@ async function call<T>(request: () => Promise<{ data: T }>, fallback: string): P
   }
 }
 
-export async function fetchAiOverview(projectId: string): Promise<AiOverviewData> {
-  return call(() => getRequest<AiOverviewData>(`${project(projectId)}/ai-overview`), 'Failed to load AI overview.')
-}
-
 export interface SequenceStep {
   item_seq: number
   type?: string | null
@@ -101,16 +98,6 @@ export async function listSequenceSteps(docRef: string): Promise<SequenceStep[]>
     'Failed to load the workflow sequence.',
   )
   return data.items ?? []
-}
-
-// ── Project AI policy ─────────────────────────────────────────────────────────
-
-export async function fetchProjectAiPolicy(projectId: string): Promise<ProjectAiPolicy> {
-  return call(() => getRequest<ProjectAiPolicy>(`${project(projectId)}/ai-policy`), 'Failed to load the AI policy.')
-}
-
-export async function saveProjectAiPolicy(projectId: string, patch: ProjectAiPolicyPatch): Promise<ProjectAiPolicy> {
-  return call(() => putRequest<ProjectAiPolicy>(`${project(projectId)}/ai-policy`, patch), 'Failed to save the AI policy.')
 }
 
 // ── Owned AI lists: 시스템 AI (administrator) / 내 AI (the signed-in user) ────────
@@ -138,12 +125,25 @@ export async function probeSystemAi(provider: ProviderItem): Promise<AiProbeResu
   )
 }
 
+// Read-only system AI for users who are not administrators (the AI 관리 list shows both owners).
+export async function fetchVisibleSystemAi(): Promise<VisibleSystemAi> {
+  return call(() => getRequest<VisibleSystemAi>('/api/v1/system/ai-providers'), 'Failed to load system AI.')
+}
+
 export async function fetchMyAi(): Promise<UserAiSettings> {
   return call(() => getRequest<UserAiSettings>('/api/v1/me/ai-providers'), 'Failed to load my AI.')
 }
 
 export async function saveMyAi(providers: ProviderItem[]): Promise<UserAiSettings> {
   return call(() => putRequest<UserAiSettings>('/api/v1/me/ai-providers', { providers }), 'Failed to save my AI.')
+}
+
+// null = follow the system default.
+export async function saveMyAiDefault(providerId: string | null): Promise<UserAiSettings> {
+  return call(
+    () => putRequest<UserAiSettings>('/api/v1/me/ai-default', { provider_id: providerId }),
+    'Failed to save my default AI.',
+  )
 }
 
 export async function startConnectionTest(projectId: string, providerId: string): Promise<AiConnectionTest> {
@@ -177,9 +177,9 @@ export interface StartEvaluationInput {
   locale?: string
 }
 
-export async function startEvaluation(projectId: string, input: StartEvaluationInput): Promise<AiEvaluation> {
+export async function startEvaluation(input: StartEvaluationInput): Promise<AiEvaluation> {
   return call(
-    () => postRequest<AiEvaluation>(`${project(projectId)}/ai-evaluations`, {
+    () => postRequest<AiEvaluation>(`${API}/ai-evaluations`, {
       target_provider_id: input.targetProviderId,
       judge_provider_id: input.judgeProviderId,
       evaluation_set_id: input.evaluationSetId || null,
@@ -190,7 +190,6 @@ export async function startEvaluation(projectId: string, input: StartEvaluationI
 }
 
 export async function fetchEvaluationHistory(
-  projectId: string,
   targetProviderId?: string,
   limit = 20,
   cursor?: string | null,
@@ -199,50 +198,48 @@ export async function fetchEvaluationHistory(
   if (targetProviderId) params.target_provider_id = targetProviderId
   if (cursor) params.cursor = cursor
   return call(
-    () => getRequest<AiEvaluationHistoryResponse>(`${project(projectId)}/ai-evaluations`, params),
+    () => getRequest<AiEvaluationHistoryResponse>(`${API}/ai-evaluations`, params),
     'Failed to load evaluation history.',
   )
 }
 
-export async function fetchEvaluationDetail(projectId: string, evaluationId: string): Promise<AiEvaluation> {
+export async function fetchEvaluationDetail(evaluationId: string): Promise<AiEvaluation> {
   return call(
-    () => getRequest<AiEvaluation>(`${project(projectId)}/ai-evaluations/${encodeURIComponent(evaluationId)}`),
+    () => getRequest<AiEvaluation>(`${API}/ai-evaluations/${encodeURIComponent(evaluationId)}`),
     'Failed to load evaluation details.',
   )
 }
 
-export async function cancelEvaluation(projectId: string, evaluationId: string): Promise<AiEvaluation> {
+export async function cancelEvaluation(evaluationId: string): Promise<AiEvaluation> {
   return call(
-    () => postRequest<AiEvaluation>(`${project(projectId)}/ai-evaluations/${encodeURIComponent(evaluationId)}/cancel`, {}),
+    () => postRequest<AiEvaluation>(`${API}/ai-evaluations/${encodeURIComponent(evaluationId)}/cancel`, {}),
     'Failed to cancel evaluation.',
   )
 }
 
 export async function saveHumanReview(
-  projectId: string,
   evaluationId: string,
   input: { score: number | null; comment: string | null },
 ): Promise<AiEvaluation> {
   return call(
-    () => putRequest<AiEvaluation>(`${project(projectId)}/ai-evaluations/${encodeURIComponent(evaluationId)}/human-review`, input),
+    () => putRequest<AiEvaluation>(`${API}/ai-evaluations/${encodeURIComponent(evaluationId)}/human-review`, input),
     'Failed to save the human review.',
   )
 }
 
-export async function listEvaluationSets(projectId: string): Promise<AiEvaluationSet[]> {
+export async function listEvaluationSets(): Promise<AiEvaluationSet[]> {
   const data = await call(
-    () => getRequest<{ items: AiEvaluationSet[] }>(`${project(projectId)}/ai-evaluation-sets`),
+    () => getRequest<{ items: AiEvaluationSet[] }>(`${API}/ai-evaluation-sets`),
     'Failed to load evaluation sets.',
   )
   return data?.items ?? []
 }
 
 export async function saveEvaluationSet(
-  projectId: string,
   setId: string | null,
   input: AiEvaluationSetInput,
 ): Promise<AiEvaluationSet> {
-  const base = `${project(projectId)}/ai-evaluation-sets`
+  const base = `${API}/ai-evaluation-sets`
   return call(
     () => (setId
       ? putRequest<AiEvaluationSet>(`${base}/${encodeURIComponent(setId)}`, input)
@@ -251,87 +248,85 @@ export async function saveEvaluationSet(
   )
 }
 
-export async function deleteEvaluationSet(projectId: string, setId: string): Promise<void> {
+export async function deleteEvaluationSet(setId: string): Promise<void> {
   await call(
-    () => deleteRequest(`${project(projectId)}/ai-evaluation-sets/${encodeURIComponent(setId)}`),
+    () => deleteRequest(`${API}/ai-evaluation-sets/${encodeURIComponent(setId)}`),
     'Failed to delete the evaluation set.',
   )
 }
 
 // ── AI Group ───────────────────────────────────────────────────────────────────
 
-const group = (projectId: string, groupId: string) => `${project(projectId)}/ai-groups/${encodeURIComponent(groupId)}`
+const group = (groupId: string) => `${API}/ai-groups/${encodeURIComponent(groupId)}`
 
-export async function listAiGroups(projectId: string): Promise<AiGroup[]> {
-  const data = await call(() => getRequest<{ items: AiGroup[] }>(`${project(projectId)}/ai-groups`), 'Failed to load AI groups.')
+export async function listAiGroups(): Promise<AiGroup[]> {
+  const data = await call(() => getRequest<{ items: AiGroup[] }>(`${API}/ai-groups`), 'Failed to load AI groups.')
   return data?.items ?? []
 }
 
-export async function getAiGroup(projectId: string, groupId: string): Promise<AiGroup> {
-  return call(() => getRequest<AiGroup>(group(projectId, groupId)), 'Failed to load AI group.')
+export async function getAiGroup(groupId: string): Promise<AiGroup> {
+  return call(() => getRequest<AiGroup>(group(groupId)), 'Failed to load AI group.')
 }
 
-export async function createAiGroup(projectId: string, input: AiGroupInput): Promise<AiGroup> {
-  return call(() => postRequest<AiGroup>(`${project(projectId)}/ai-groups`, input), 'Failed to create AI group.')
+export async function createAiGroup(input: AiGroupInput): Promise<AiGroup> {
+  return call(() => postRequest<AiGroup>(`${API}/ai-groups`, input), 'Failed to create AI group.')
 }
 
-export async function updateAiGroup(projectId: string, groupId: string, input: AiGroupUpdateInput): Promise<AiGroup> {
-  return call(() => putRequest<AiGroup>(group(projectId, groupId), input), 'Failed to update AI group.')
+export async function updateAiGroup(groupId: string, input: AiGroupUpdateInput): Promise<AiGroup> {
+  return call(() => putRequest<AiGroup>(group(groupId), input), 'Failed to update AI group.')
 }
 
-export async function setAiGroupState(projectId: string, groupId: string, input: AiGroupStateInput): Promise<AiGroup> {
-  return call(() => putRequest<AiGroup>(`${group(projectId, groupId)}/state`, input), 'Failed to update AI group.')
+export async function setAiGroupState(groupId: string, input: AiGroupStateInput): Promise<AiGroup> {
+  return call(() => putRequest<AiGroup>(`${group(groupId)}/state`, input), 'Failed to update AI group.')
 }
 
-export async function deleteAiGroup(projectId: string, groupId: string): Promise<void> {
-  await call(() => deleteRequest(group(projectId, groupId)), 'Failed to delete AI group.')
+export async function deleteAiGroup(groupId: string): Promise<void> {
+  await call(() => deleteRequest(group(groupId)), 'Failed to delete AI group.')
 }
 
-export async function addAiGroupMember(projectId: string, groupId: string, providerId: string): Promise<AiGroup> {
+export async function addAiGroupMember(groupId: string, providerId: string): Promise<AiGroup> {
   return call(
-    () => postRequest<AiGroup>(`${group(projectId, groupId)}/members`, { provider_id: providerId }),
+    () => postRequest<AiGroup>(`${group(groupId)}/members`, { provider_id: providerId }),
     'Failed to add the member.',
   )
 }
 
-export async function removeAiGroupMember(projectId: string, groupId: string, memberId: string): Promise<AiGroup> {
+export async function removeAiGroupMember(groupId: string, memberId: string): Promise<AiGroup> {
   return call(
-    () => deleteRequest<AiGroup>(`${group(projectId, groupId)}/members/${encodeURIComponent(memberId)}`),
+    () => deleteRequest<AiGroup>(`${group(groupId)}/members/${encodeURIComponent(memberId)}`),
     'Failed to remove the member.',
   )
 }
 
 export async function setAiGroupMemberRoles(
-  projectId: string,
   groupId: string,
   memberId: string,
   roleIds: string[],
 ): Promise<AiGroup> {
   return call(
-    () => putRequest<AiGroup>(`${group(projectId, groupId)}/members/${encodeURIComponent(memberId)}/roles`, { role_ids: roleIds }),
+    () => putRequest<AiGroup>(`${group(groupId)}/members/${encodeURIComponent(memberId)}/roles`, { role_ids: roleIds }),
     'Failed to update the role mapping.',
   )
 }
 
-export async function createAiGroupRole(projectId: string, groupId: string, input: AiGroupRoleInput): Promise<AiGroup> {
-  return call(() => postRequest<AiGroup>(`${group(projectId, groupId)}/roles`, input), 'Failed to add the role.')
+export async function createAiGroupRole(groupId: string, input: AiGroupRoleInput): Promise<AiGroup> {
+  return call(() => postRequest<AiGroup>(`${group(groupId)}/roles`, input), 'Failed to add the role.')
 }
 
 export async function updateAiGroupRole(
-  projectId: string,
   groupId: string,
   roleId: string,
   input: AiGroupRoleInput,
 ): Promise<AiGroup> {
   return call(
-    () => putRequest<AiGroup>(`${group(projectId, groupId)}/roles/${encodeURIComponent(roleId)}`, input),
+    () => putRequest<AiGroup>(`${group(groupId)}/roles/${encodeURIComponent(roleId)}`, input),
     'Failed to update the role.',
   )
 }
 
-export async function deleteAiGroupRole(projectId: string, groupId: string, roleId: string): Promise<AiGroup> {
+export async function deleteAiGroupRole(groupId: string, roleId: string): Promise<AiGroup> {
   return call(
-    () => deleteRequest<AiGroup>(`${group(projectId, groupId)}/roles/${encodeURIComponent(roleId)}`),
+    () => deleteRequest<AiGroup>(`${group(groupId)}/roles/${encodeURIComponent(roleId)}`),
     'Failed to delete the role.',
   )
 }

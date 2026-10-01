@@ -80,7 +80,7 @@
         </section>
 
         <!-- Human review: optional, completed evaluations only. Its score becomes the final score. -->
-        <section v-if="evaluation.lifecycle === 'completed'" class="block">
+        <section v-if="canReview && evaluation.lifecycle === 'completed'" class="block">
           <h3>{{ t('gui.ai.evaluation.human_review') }}</h3>
           <div class="human-form">
             <label>
@@ -157,8 +157,9 @@ import {
 
 const props = defineProps<{
   open: boolean
-  projectId: string
   evaluationId: string | null
+  // Administrator only (a system AI's evaluation, CH0006 #48); the result itself is read by all.
+  canReview?: boolean
 }>()
 
 const emit = defineEmits<{ close: []; changed: [] }>()
@@ -185,7 +186,7 @@ async function load(): Promise<void> {
   if (!props.open || !props.evaluationId) return
   loading.value = true
   try {
-    const data = await fetchEvaluationDetail(props.projectId, props.evaluationId)
+    const data = await fetchEvaluationDetail(props.evaluationId)
     if (current !== epoch) return
     if (evaluation.value?.evaluation_id !== data.evaluation_id || evaluation.value?.human_review?.reviewed_at !== data.human_review?.reviewed_at) {
       resetHuman(data)
@@ -202,7 +203,7 @@ async function load(): Promise<void> {
 }
 
 watch(
-  () => [props.open, props.evaluationId, props.projectId] as const,
+  () => [props.open, props.evaluationId] as const,
   ([open]) => {
     evaluation.value = null
     loadError.value = ''
@@ -243,7 +244,7 @@ async function saveHuman(clear: boolean): Promise<void> {
   savingHuman.value = true
   humanError.value = ''
   try {
-    const saved = await saveHumanReview(props.projectId, current.evaluation_id, clear
+    const saved = await saveHumanReview(current.evaluation_id, clear
       ? { score: null, comment: null }
       : { score: humanScoreValue.value, comment: humanComment.value.trim() || null })
     evaluation.value = saved

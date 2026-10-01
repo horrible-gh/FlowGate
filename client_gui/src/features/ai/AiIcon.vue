@@ -53,9 +53,18 @@
       <circle cx="12" cy="12" r="9" />
       <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
     </template>
+    <path v-else-if="name === 'cloud'" d="M7 18.5h10a4 4 0 0 0 .6-8 5.5 5.5 0 0 0-10.6 1.2A3.4 3.4 0 0 0 7 18.5z" />
     <template v-else-if="name === 'lock'">
       <rect x="5" y="11" width="14" height="9" rx="2" />
       <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+    </template>
+    <template v-else-if="name === 'building'">
+      <path d="M5 20.5V5.5l8-2.5v17.5M13 8.5l6 2v10M3 20.5h18" />
+      <path d="M8 8.5h2M8 12h2M8 15.5h2M16 13.5h.5M16 17h.5" />
+    </template>
+    <template v-else-if="name === 'person'">
+      <circle cx="12" cy="8" r="3.8" />
+      <path d="M4.5 20.5a7.5 7.5 0 0 1 15 0" />
     </template>
   </svg>
 </template>
@@ -64,7 +73,8 @@
 // Stroke icons for the AI settings screens (IconButton sizes the svg; colour follows currentColor).
 export type AiIconName =
   | 'grip' | 'copy' | 'check' | 'refresh' | 'help' | 'edit' | 'trash' | 'pulse'
-  | 'terminal' | 'link' | 'crown' | 'star' | 'plus' | 'close' | 'globe' | 'lock'
+  | 'terminal' | 'link' | 'crown' | 'star' | 'plus' | 'close' | 'globe' | 'lock' | 'cloud'
+  | 'building' | 'person'
 
 defineProps<{ name: AiIconName }>()
 </script>

@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-    <div v-if="toasts.length" class="ui-toast-host" :style="{ zIndex: hostZIndex }">
+    <div v-if="toasts.length" class="ui-toast-host" :class="`ui-toast-host--${placement}`" :style="{ zIndex: hostZIndex }">
       <Toast
         v-for="item in toasts"
         :key="item.id"
@@ -34,9 +34,17 @@ export interface ToastHostItem {
   duration?: number | null
 }
 
-const props = withDefaults(defineProps<{ toasts: ToastHostItem[]; dismissLabel?: string }>(), {
-  dismissLabel: 'Dismiss',
-})
+// bottom-right (default) keeps toasts off the app header; top sits right under the header, for
+// screens that only ever show error toasts (AI 관리, flowgate.v02.0017 CH0006).
+export type ToastHostPlacement = 'bottom-right' | 'top'
+
+const props = withDefaults(
+  defineProps<{ toasts: ToastHostItem[]; dismissLabel?: string; placement?: ToastHostPlacement }>(),
+  {
+    dismissLabel: 'Dismiss',
+    placement: 'bottom-right',
+  },
+)
 const emit = defineEmits<{ dismiss: [id: string | number] }>()
 
 // Allocated from the same shared counter ModalShell/ModelessShell use (core/overlay/
@@ -68,13 +76,20 @@ watch(
 <style scoped>
 .ui-toast-host {
   position: fixed;
-  /* Bottom-right keeps toasts off the app header (title, user menu). */
-  bottom: 20px;
   right: 20px;
   display: flex;
   flex-direction: column;
   gap: 8px;
   pointer-events: none;
+}
+
+.ui-toast-host--bottom-right {
+  /* Keeps toasts off the app header (title, user menu). */
+  bottom: 20px;
+}
+
+.ui-toast-host--top {
+  top: calc(var(--fg2-topbar-h, 84px) + 12px);
 }
 
 .ui-toast-host :deep(.ui-toast) {

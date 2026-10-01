@@ -51,12 +51,17 @@ PROBE_TIMEOUT_SEC = 12
 # stdout/stderr are truncated to a tail — matches the 500-char fallback_history detail the
 # invoke path already keeps (NR0003 §4 F5), but a little roomier for interactive diagnosis.
 OUTPUT_TAIL_CHARS = 2000
+# Fed on stdin when the form carries no prompt. Codex / Copilot exit non-zero on an empty stdin
+# ("No prompt provided"), so an empty probe reported every non-Claude CLI as broken
+# (flowgate.v02.0017 CH0006 #46).
+DEFAULT_PROBE_PROMPT = "hi"
 
 
 def probe_provider(form: dict) -> dict:
     """Run one connection test for the given editor form values.
 
-    `form` keys: exec_type, kind, cli_command, api_base_url, prompt (all optional).
+    `form` keys: exec_type, kind, cli_command, api_base_url, prompt (all optional; an empty
+    prompt falls back to DEFAULT_PROBE_PROMPT).
     Never raises — every failure mode is reported in the returned dict so the UI always has
     something to show.
     """
@@ -99,7 +104,7 @@ def probe_provider(form: dict) -> dict:
     permission_rule = _ai_settings.permission_skip_rule(kind)
     permission_skip = _ai_settings.has_permission_skip(kind, cli_command)
 
-    prompt = form.get("prompt") or ""
+    prompt = form.get("prompt") or DEFAULT_PROBE_PROMPT
 
     # A throwaway scratch dir as cwd, so a command that writes files does not touch the
     # project tree. The env mirrors the three keys the invoke path injects (with harmless

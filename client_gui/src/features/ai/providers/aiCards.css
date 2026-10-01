@@ -1,4 +1,4 @@
-/* AI list cards shared by 시스템 AI, 내 AI and the project 사용 정책 (scoped per component). */
+/* AI list cards of the AI 관리 screen (scoped per component). */
 
 .ai-providers-panel {
   display: flex;
@@ -8,6 +8,7 @@
 }
 
 .detail-head {
+  flex: none;
   display: flex;
   align-items: flex-start;
   gap: 20px;
@@ -34,6 +35,7 @@
 }
 
 .repeat-card {
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -132,6 +134,10 @@
 }
 
 .detail-panel {
+  /* Shrinks to the space left on a short window; the card list scrolls inside it. */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   border: 1px solid var(--fg2-line);
   border-radius: 12px;
   background: linear-gradient(180deg, rgba(13, 26, 40, 0.94), rgba(10, 22, 35, 0.92));
@@ -140,6 +146,7 @@
 }
 
 .detail-toolbar {
+  flex: none;
   height: 52px;
   padding: 0 16px;
   display: flex;
@@ -182,9 +189,12 @@
   flex-direction: column;
   gap: 8px;
   padding: 12px;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .provider-card {
+  flex: none;
   display: grid;
   grid-template-columns: 22px 18px 20px 36px minmax(0, 1fr) auto auto;
   gap: 12px;

@@ -16,8 +16,8 @@ decrypt is flagged api_key_unreadable instead of being read back as a plaintext 
 
 Owner scope (flowgate.v02.0017 TR0003 rev7, migration 131): a row is owned by the system
 (owner_scope='system', managed by an administrator) or by one user (owner_scope='user',
-owner_user_id). Projects no longer own rows; they keep a usage policy
-(db/project_ai_policies.py). The "global" scope below therefore means SYSTEM rows only: a
+owner_user_id). Projects no longer own rows, and since migration 135 keep no usage policy
+either (project_access is stored but no longer read). The "global" scope below means SYSTEM rows only: a
 user's own AI never appears in list_scope(None)/get_row(None, ...)/get_secret(), so no server
 execution path can pick it up (it runs on its owner's Agent, a follow-up execution layer).
 The project_id branch stays for pre-131 callers and reads nothing after the migration.
@@ -51,12 +51,14 @@ KEEP_STORED_SECRET = _KeepStoredSecret()
 _COLUMNS = (
     "provider_id, project_id, name, exec_type, kind, enabled, cli_command, "
     "api_base_url, api_model, api_key, sort_order, created_at, updated_at, "
-    "owner_scope, owner_user_id, project_access"
+    "owner_scope, owner_user_id, project_access, exec_location"
 )
 
 OWNER_SYSTEM = "system"
 OWNER_USER = "user"
 PROJECT_ACCESS = ("all", "listed")
+# Where the AI runs (migration 133): the other half of the 2x2 execution mode next to exec_type.
+EXEC_LOCATIONS = ("local", "remote")
 
 
 def _scope_where(project_id: Optional[str]) -> tuple[str, list]:
@@ -225,26 +227,28 @@ def _replace_rows(s, scope: tuple[str, list], rows: list[dict], existing_ids: se
             s._execute(
                 "UPDATE ai_providers SET name = ?, exec_type = ?, kind = ?, enabled = ?, "
                 "cli_command = ?, api_base_url = ?, api_model = ?, api_key = ?, "
-                "sort_order = ?, project_access = COALESCE(?, project_access), updated_at = ? "
+                "sort_order = ?, project_access = COALESCE(?, project_access), "
+                "exec_location = COALESCE(?, exec_location), updated_at = ? "
                 f"WHERE provider_id = ? AND {where}",
                 [
                     r["name"], r["exec_type"], r["kind"], r["enabled"],
                     r["cli_command"], r["api_base_url"], r["api_model"],
                     _key_for_storage(r, stored_keys),
-                    r["sort_order"], access, now, r["provider_id"],
+                    r["sort_order"], access, r.get("exec_location"), now, r["provider_id"],
                 ] + params,
             )
         else:
             s._execute(
                 "INSERT INTO ai_providers (provider_id, project_id, name, exec_type, kind, "
                 "enabled, cli_command, api_base_url, api_model, api_key, sort_order, "
-                "created_at, updated_at, owner_scope, owner_user_id, project_access) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "created_at, updated_at, owner_scope, owner_user_id, project_access, exec_location) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     r["provider_id"], project_id, r["name"], r["exec_type"], r["kind"],
                     r["enabled"], r["cli_command"], r["api_base_url"], r["api_model"],
                     _key_for_storage(r, stored_keys), r["sort_order"], now, now,
                     owner_scope or OWNER_SYSTEM, owner_user_id, access or "all",
+                    r.get("exec_location") or "local",
                 ],
             )
 

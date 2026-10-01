@@ -1,9 +1,9 @@
-"""Read-only Project AI summary composed from authoritative resources
-(flowgate.v02.0017 T0002 §6).
+"""Read-only AI summary composed from authoritative resources (flowgate.v02.0017 T0002 §6),
+still served under a project for the v0.1 settings screen.
 
-connections  the project AI policy (on/off, allowed system AI, own AI) and usable AI
-evaluation   recent scores, active runs, judge and last evaluation time
-ai_groups    Supervisor, members, roles, their counts and state per team
+connections  the system AI and which of them are usable (no project policy since CH0006 (4))
+evaluation   recent scores, active runs, judge and last evaluation time (not per project)
+ai_groups    Supervisor, members, roles, their counts and state per team (not per project)
 
 Also serves the repeat-count ceiling shown under AI connection management
 (system setting ai_repeat_count_max; saved through PATCH /system/settings).
@@ -25,22 +25,23 @@ logger = logging.getLogger(__name__)
 
 
 def _connections(project_id: str) -> dict:
-    policy = ai_settings_service.get_project_policy(project_id)
-    effective = policy["effective"]
+    settings = ai_settings_service.get_project_settings(project_id, include_catalog=False)
+    effective = settings["effective"]
     usable = {row["id"] for row in effective["providers"]}
-    # The system AI this project's policy allows; a disabled one stays visible as "off".
-    allowed = [row for row in policy["system_providers"] if row["allowed"]]
+    # Every system AI; a disabled one stays visible as "off".
     items = [{"id": row["id"], "name": row["name"], "exec_type": row["exec_type"], "kind": row["kind"],
               "enabled": bool(row.get("enabled", True)), "usable": row["id"] in usable}
-             for row in allowed]
-    return {"ai_enabled": policy["ai_enabled"], "system_ai_scope": policy["system_ai_scope"],
-            "allow_user_ai": policy["allow_user_ai"], "source": effective["source"],
-            "total": len(allowed), "usable": len(usable),
+             for row in settings["providers"]]
+    return {"source": effective["source"], "total": len(items), "usable": len(usable),
             "default_provider_id": effective["default_provider_id"], "items": items}
 
 
+def _evaluation(project_id: str) -> dict:
+    return ai_evaluation_service.summary()
+
+
 def _groups(project_id: str) -> dict:
-    groups = ai_group_service.list_groups(project_id)["items"]
+    groups = ai_group_service.list_groups()["items"]
     return {"total": len(groups),
             "attention": sum(group["status"] == "attention" for group in groups),
             "items": [{"ai_group_id": group["ai_group_id"], "name": group["name"],
@@ -68,8 +69,7 @@ def ai_overview(project_id: str,
         return JSONResponse({"error": {"code": "project_not_found", "message": "Project not found."}},
                             status_code=404)
     result = {"connections": None, "evaluation": None, "ai_groups": None, "errors": []}
-    sections = (("connections", _connections), ("evaluation", ai_evaluation_service.summary),
-                ("ai_groups", _groups))
+    sections = (("connections", _connections), ("evaluation", _evaluation), ("ai_groups", _groups))
     for name, build in sections:
         try:
             result[name] = build(project_id)

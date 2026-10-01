@@ -14,9 +14,9 @@
             <AiIcon name="help" />
           </IconButton>
         </div>
-        <div class="page-sub">{{ t('gui.ai.evaluation.subtitle') }}</div>
       </div>
-      <div class="detail-actions">
+      <!-- System AI is evaluated by an administrator; everyone reads the results (CH0006 #48). -->
+      <div v-if="isAdmin" class="detail-actions">
         <Button variant="secondary" @click="setsOpen = true">{{ t('gui.ai.evaluation.sets_manage') }}</Button>
         <Button variant="primary" @click="openStart">＋ {{ t('gui.ai.evaluation.new_evaluation') }}</Button>
       </div>
@@ -61,6 +61,9 @@
             <div class="party-cell">
               <b>{{ partyName(item.target) }}</b>
               <small class="task-line">{{ taskLabel(item) }}</small>
+              <small v-if="item.lifecycle === 'failed' && item.reason_code" class="task-line failure-line">
+                <template v-if="item.failure_stage">{{ t(`gui.ai.evaluation.lifecycle_${item.failure_stage}`) }} · </template>{{ reasonLabel(item.reason_code) }}
+              </small>
             </div>
             <strong v-if="item.final_score !== null" class="score" :class="scoreClass(item.final_score)">
               {{ formatScore(item.final_score) }}
@@ -70,7 +73,7 @@
             </span>
             <span class="date-cell">{{ formatDate(item.created_at) }}</span>
             <span class="row-actions" @click.stop>
-              <button v-if="isActive(item)" type="button" class="action-btn action-btn--danger" @click="cancel(item)">
+              <button v-if="isAdmin && isActive(item)" type="button" class="action-btn action-btn--danger" @click="cancel(item)">
                 {{ t('gui.ai.evaluation.cancel') }}
               </button>
               <button
@@ -153,12 +156,12 @@
 
     <AiEvaluationDetailModal
       :open="!!detailId"
-      :project-id="projectId"
       :evaluation-id="detailId"
+      :can-review="isAdmin"
       @close="detailId = null"
       @changed="onDetailChanged"
     />
-    <AiEvaluationSetsDialog :open="setsOpen" :project-id="projectId" @close="setsOpen = false" @changed="(list) => (sets = list)" />
+    <AiEvaluationSetsDialog v-if="isAdmin" :open="setsOpen" @close="setsOpen = false" @changed="(list) => (sets = list)" />
   </div>
 </template>
 
@@ -171,6 +174,7 @@ import IconButton from '@/components/ui/IconButton.vue'
 import ModalShell from '@/components/ui/ModalShell.vue'
 import ModelessShell from '@/components/ui/ModelessShell.vue'
 import Select from '@/components/ui/Select.vue'
+import { useCurrentUser } from '@/core/auth/currentUser'
 import AiIcon from '../AiIcon.vue'
 import { cancelEvaluation, fetchEvaluationHistory, listEvaluationSets, startEvaluation } from '../api'
 import {
@@ -188,14 +192,13 @@ import AiEvaluationDetailModal from './AiEvaluationDetailModal.vue'
 import AiEvaluationSetsDialog from './AiEvaluationSetsDialog.vue'
 
 const props = defineProps<{
-  projectId: string
   providers: ProviderItem[]
-  // Set by the overview's "register evaluation"; the dialog opens once and reports back.
-  openNew?: boolean
 }>()
 
-const emit = defineEmits<{ changed: []; newOpened: [] }>()
-const { t, locale } = useI18n()
+const emit = defineEmits<{ changed: [] }>()
+const { t, te, locale } = useI18n()
+const { user } = useCurrentUser()
+const isAdmin = computed(() => !!user.value?.isAdmin)
 
 const targetId = ref('')
 const judgeId = ref('')
@@ -282,6 +285,11 @@ function taskLabel(item: AiEvaluation): string {
   return item.evaluation_set?.name || item.task.title || t('gui.ai.evaluation.task_pending')
 }
 
+function reasonLabel(code: string): string {
+  const key = `gui.ai.evaluation.reason.${code}`
+  return te(key) ? t(key) : code
+}
+
 function lifecycleTone(lifecycle: EvaluationLifecycle): 'neutral' | 'info' | 'success' | 'warning' | 'danger' {
   if (lifecycle === 'completed') return 'success'
   if (lifecycle === 'failed') return 'danger'
@@ -323,11 +331,10 @@ function schedulePoll(): void {
 
 async function reload(silent = false): Promise<void> {
   const current = ++epoch
-  const project = props.projectId
   if (!silent) loading.value = true
   try {
-    const page = await fetchEvaluationHistory(project, filterTargetId.value || undefined, 20)
-    if (current !== epoch || project !== props.projectId) return
+    const page = await fetchEvaluationHistory(filterTargetId.value || undefined, 20)
+    if (current !== epoch) return
     const hadActive = items.value.some(isActive)
     items.value = page.items
     nextCursor.value = page.next_cursor
@@ -348,7 +355,7 @@ async function loadMore(): Promise<void> {
   const current = epoch
   loadingMore.value = true
   try {
-    const page = await fetchEvaluationHistory(props.projectId, filterTargetId.value || undefined, 20, nextCursor.value)
+    const page = await fetchEvaluationHistory(filterTargetId.value || undefined, 20, nextCursor.value)
     if (current !== epoch) return
     items.value = [...items.value, ...page.items]
     nextCursor.value = page.next_cursor
@@ -361,7 +368,7 @@ async function loadMore(): Promise<void> {
 
 async function loadSets(): Promise<void> {
   try {
-    sets.value = await listEvaluationSets(props.projectId)
+    sets.value = await listEvaluationSets()
   } catch {
     sets.value = []
   }
@@ -369,6 +376,7 @@ async function loadSets(): Promise<void> {
 }
 
 function openStart(): void {
+  if (!isAdmin.value) return
   startError.value = ''
   startOpen.value = true
   void loadSets()
@@ -384,7 +392,7 @@ async function start(): Promise<void> {
   starting.value = true
   startError.value = ''
   try {
-    const created = await startEvaluation(props.projectId, {
+    const created = await startEvaluation({
       targetProviderId: targetId.value,
       judgeProviderId: judgeId.value,
       evaluationSetId: setId.value || null,
@@ -403,7 +411,7 @@ async function start(): Promise<void> {
 
 async function cancel(item: AiEvaluation): Promise<void> {
   try {
-    await cancelEvaluation(props.projectId, item.evaluation_id)
+    await cancelEvaluation(item.evaluation_id)
     await reload(true)
     emit('changed')
   } catch (err: unknown) {
@@ -415,17 +423,7 @@ function openDetail(item: AiEvaluation): void {
   detailId.value = item.evaluation_id
 }
 
-watch(() => [props.projectId, filterTargetId.value] as const, () => void reload(), { immediate: true })
-
-watch(
-  () => props.openNew,
-  (value) => {
-    if (!value) return
-    openStart()
-    emit('newOpened')
-  },
-  { immediate: true }
-)
+watch(filterTargetId, () => void reload(), { immediate: true })
 
 onBeforeUnmount(() => {
   epoch++
@@ -434,6 +432,10 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.failure-line {
+  color: #fca5a5;
+}
+
 .ai-evaluation-panel {
   display: flex;
   flex-direction: column;

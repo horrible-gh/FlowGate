@@ -34,6 +34,10 @@ logger = logging.getLogger(__name__)
 BASELINE = ("Reply with one short sentence confirming that you can answer this harmless test. "
             "Do not call tools, modify files, run commands, or disclose secrets.")
 TIMEOUT_SEC = 60
+# Owner id of work that belongs to no project (AI Evaluation, CH0006 (4)). It stands in for the
+# project id on the run-less execution path: the subject's chain is the global one and the
+# manifest-bound Scratch lives under <storage>/scratch/_ai_evaluation/.
+EVALUATION_SCOPE = "_ai_evaluation"
 _RUNS: dict[str, dict] = {}
 _RUNS_LOCK = threading.RLock()
 _SECRET_PATTERN = re.compile(r"(?i)(authorization\s*[:=]\s*(?:bearer\s+)?|api[_ -]?key\s*[:=]\s*)[^\s,;]+")
@@ -63,6 +67,8 @@ class ConnectionSubject:
 
 
 def _effective(project_id: str) -> dict:
+    if project_id == EVALUATION_SCOPE:
+        return ai_settings_service.resolve_global()
     return ai_settings_service.resolve_effective(project_id)
 
 

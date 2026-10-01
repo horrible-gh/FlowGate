@@ -69,7 +69,7 @@ async function refresh(): Promise<void> {
   const provider = providerId.value
   const generation = ++requestGeneration
   if (!project || !provider) return
-  const base = `/api/v1/projects/${encodeURIComponent(project)}/ai-evaluations`
+  const base = `/api/v1/ai-evaluations`
   const query = `provider_id=${encodeURIComponent(provider)}`
   const [currentResult, historyResult] = await Promise.allSettled([
     getRequest<any>(`${base}/current?${query}`),
@@ -95,7 +95,7 @@ async function loadMore(): Promise<void> {
   const generation = requestGeneration
   if (!cursor) return
   try {
-    const { data } = await getRequest<any>(`/api/v1/projects/${encodeURIComponent(project)}/ai-evaluations?provider_id=${encodeURIComponent(provider)}&limit=20&cursor=${encodeURIComponent(cursor)}`)
+    const { data } = await getRequest<any>(`/api/v1/ai-evaluations?provider_id=${encodeURIComponent(provider)}&limit=20&cursor=${encodeURIComponent(cursor)}`)
     if (!isCurrent(project, provider, generation)) return
     history.value = [...history.value, ...(data.items || [])]
     nextCursor.value = data.next_cursor
@@ -103,7 +103,7 @@ async function loadMore(): Promise<void> {
 }
 async function readRun(project: string, provider: string, evaluationId: string): Promise<void> {
   try {
-    const { data } = await getRequest<Evaluation>(`/api/v1/projects/${encodeURIComponent(project)}/ai-evaluations/${encodeURIComponent(evaluationId)}`)
+    const { data } = await getRequest<Evaluation>(`/api/v1/ai-evaluations/${encodeURIComponent(evaluationId)}`)
     if (props.projectId !== project || providerId.value !== provider || activeRunId !== evaluationId || data.evaluation_id !== evaluationId || data.provider_id !== provider || data.project_id !== project) return
     current.value = data
     if (!['pending', 'running'].includes(data.lifecycle)) { activeRunId = ''; await refresh(); emit('changed') }
@@ -113,7 +113,7 @@ async function start(): Promise<void> {
   const project = props.projectId, provider = providerId.value
   busy.value = true; error.value = ''
   try {
-    const { data } = await postRequest<any>(`/api/v1/projects/${encodeURIComponent(project)}/ai-evaluations`, { provider_id: provider })
+    const { data } = await postRequest<any>(`/api/v1/ai-evaluations`, { provider_id: provider })
     if (props.projectId !== project || providerId.value !== provider) return
     activeRunId = data.evaluation_id
     current.value = data
@@ -133,7 +133,7 @@ async function cancel(): Promise<void> {
   const project = props.projectId, provider = providerId.value, evaluationId = current.value.evaluation_id
   busy.value = true
   try {
-    await postRequest(`/api/v1/projects/${encodeURIComponent(project)}/ai-evaluations/${encodeURIComponent(evaluationId)}/cancel`, {})
+    await postRequest(`/api/v1/ai-evaluations/${encodeURIComponent(evaluationId)}/cancel`, {})
     if (props.projectId === project && providerId.value === provider) { activeRunId = ''; await refresh(); emit('changed') }
   } catch (e) { if (props.projectId === project && providerId.value === provider) error.value = apiError(e) }
   finally { busy.value = false }

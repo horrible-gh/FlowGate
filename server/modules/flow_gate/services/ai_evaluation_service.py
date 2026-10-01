@@ -1,5 +1,6 @@
-"""Project AI Evaluation: a judge AI scores a target AI on a real Scratch task
-(flowgate.v02.0017 T0002 §3).
+"""AI Evaluation: a judge AI scores a target AI on a real Scratch task
+(flowgate.v02.0017 T0002 §3). Evaluations belong to no project (CH0006 (4)): the AI is the
+system's, so is its evaluation history, and the Scratch lives under the EVALUATION_SCOPE owner.
 
 One evaluation run:
   1. judge prepares the evaluation Scratch            (lifecycle: preparing)
@@ -51,6 +52,8 @@ from modules.flow_gate.services import ai_connection_test_service as connection
 from modules.flow_gate.services.ai_invoke import runtime as probe
 
 logger = logging.getLogger(__name__)
+
+SCOPE = connection.EVALUATION_SCOPE
 
 # Minimum categories the product keeps from the original design (R §2 / T §3.5).
 CRITERIA = (
@@ -124,7 +127,7 @@ def _public(row: dict, scores: list[dict] | None, *, full: bool) -> dict:
         human = {"score": row.get("human_score"), "comment": row.get("human_comment"),
                  "reviewer_id": row.get("human_reviewer_id"), "reviewed_at": row.get("human_reviewed_at")}
     result = {
-        "evaluation_id": row["evaluation_id"], "project_id": row["project_id"],
+        "evaluation_id": row["evaluation_id"],
         "target": {"provider_id": row["target_provider_id"], "provider_name": row.get("target_provider_name")},
         "judge": {"provider_id": row["judge_provider_id"], "provider_name": row.get("judge_provider_name")},
         "lifecycle": row["lifecycle"],
@@ -155,17 +158,16 @@ def _public(row: dict, scores: list[dict] | None, *, full: bool) -> dict:
 def _emit(kind: str, row: dict | None) -> None:
     if row is None:
         return
-    payload = {"type": "ai_evaluation." + kind, "project_id": row["project_id"],
+    payload = {"type": "ai_evaluation." + kind,
                "evaluation_id": row["evaluation_id"], "target_provider_id": row["target_provider_id"],
                "judge_provider_id": row["judge_provider_id"], "lifecycle": row["lifecycle"],
                "total_score": row.get("total_score")}
-    broadcast_event_threadsafe(FlowEvent("ai_evaluation." + kind, payload, "*",
-                                         project=row["project_id"]))
+    broadcast_event_threadsafe(FlowEvent("ai_evaluation." + kind, payload, "*"))
 
 
 # ── Start / cancel / read ───────────────────────────────────────────────────────
 
-def start(project_id: str, target_id: str, judge_id: str, created_by: str | None,
+def start(target_id: str, judge_id: str, created_by: str | None,
           locale: str | None = None, set_id: str | None = None) -> dict:
     if not isinstance(target_id, str) or not isinstance(judge_id, str) or not target_id or not judge_id:
         raise EvaluationError("invalid_request", 422)
@@ -173,15 +175,15 @@ def start(project_id: str, target_id: str, judge_id: str, created_by: str | None
         raise EvaluationError("evaluation_same_provider", 422)
     evaluation_set = None
     if set_id:
-        evaluation_set = repo.get_set(project_id, set_id)
+        evaluation_set = repo.get_set(set_id)
         if evaluation_set is None:
             raise EvaluationError("evaluation_set_not_found", 404)
         evaluation_set = {**evaluation_set, "constraints": _set_constraints(evaluation_set)}
     # Both connections are frozen before 202 and used unchanged by the worker.
-    target = connection.resolve_subject(project_id, target_id, error=EvaluationError, fingerprint=False)
-    judge = connection.resolve_subject(project_id, judge_id, error=EvaluationError, fingerprint=False)
+    target = connection.resolve_subject(SCOPE, target_id, error=EvaluationError, fingerprint=False)
+    judge = connection.resolve_subject(SCOPE, judge_id, error=EvaluationError, fingerprint=False)
     try:
-        row = repo.create_pending(project_id=project_id, target_id=target_id, target_name=target.name,
+        row = repo.create_pending(target_id=target_id, target_name=target.name,
                                   judge_id=judge_id, judge_name=judge.name, created_by=created_by,
                                   evaluation_set=evaluation_set)
     except repo.AlreadyRunning as exc:
@@ -192,45 +194,45 @@ def start(project_id: str, target_id: str, judge_id: str, created_by: str | None
         _RUNS[row["evaluation_id"]] = state
     _emit("updated", row)
     try:
-        threading.Thread(target=_worker, args=(project_id, row["evaluation_id"], state), daemon=True,
+        threading.Thread(target=_worker, args=(row["evaluation_id"], state), daemon=True,
                          name="ai-evaluation-" + row["evaluation_id"][-8:]).start()
     except Exception:
         with _RUNS_LOCK:
             _RUNS.pop(row["evaluation_id"], None)
-        repo.finish(project_id, row["evaluation_id"], lifecycle="failed", reason_code="internal_error",
+        repo.finish(row["evaluation_id"], lifecycle="failed", reason_code="internal_error",
                     failure_stage="pending")
         raise
     return _public(row, [], full=True)
 
 
-def cancel(project_id: str, evaluation_id: str) -> dict:
-    row = repo.get(project_id, evaluation_id)
+def cancel(evaluation_id: str) -> dict:
+    row = repo.get(evaluation_id)
     if row is None:
         raise EvaluationError("evaluation_not_found", 404)
     stage = row["lifecycle"]
     # DB first: if completion/failure already won, this loses with 409 and interrupts nothing.
-    if not repo.finish(project_id, evaluation_id, lifecycle="cancelled", reason_code="cancelled_by_user",
+    if not repo.finish(evaluation_id, lifecycle="cancelled", reason_code="cancelled_by_user",
                        failure_stage=stage):
         raise EvaluationError("evaluation_not_cancellable", 409)
     with _RUNS_LOCK:
         state = _RUNS.get(evaluation_id)
     if state:
         state["handle"].cancel()
-    row = repo.get(project_id, evaluation_id)
+    row = repo.get(evaluation_id)
     _emit("cancelled", row)
     return _public(row, repo.scores([evaluation_id]).get(evaluation_id), full=True)
 
 
-def detail(project_id: str, evaluation_id: str) -> dict:
-    row = repo.get(project_id, evaluation_id)
+def detail(evaluation_id: str) -> dict:
+    row = repo.get(evaluation_id)
     if row is None:
         raise EvaluationError("evaluation_not_found", 404)
     return _public(row, repo.scores([evaluation_id]).get(evaluation_id), full=True)
 
 
-def human_review(project_id: str, evaluation_id: str, score, comment, reviewer_id: str | None) -> dict:
+def human_review(evaluation_id: str, score, comment, reviewer_id: str | None) -> dict:
     """Human reviewer's score (0-100) and comment on a completed evaluation. Both empty = clear."""
-    row = repo.get(project_id, evaluation_id)
+    row = repo.get(evaluation_id)
     if row is None:
         raise EvaluationError("evaluation_not_found", 404)
     if row["lifecycle"] != "completed":
@@ -240,10 +242,10 @@ def human_review(project_id: str, evaluation_id: str, score, comment, reviewer_i
     if comment is not None and (not isinstance(comment, str) or len(comment) > 8000):
         raise EvaluationError("invalid_request", 422)
     comment = comment.strip() if comment else None
-    if not repo.set_human_review(project_id, evaluation_id, score=score, comment=comment,
+    if not repo.set_human_review(evaluation_id, score=score, comment=comment,
                                  reviewer_id=reviewer_id):
         raise EvaluationError("evaluation_not_completed", 409)
-    row = repo.get(project_id, evaluation_id)
+    row = repo.get(evaluation_id)
     _emit("updated", row)
     return _public(row, repo.scores([evaluation_id]).get(evaluation_id), full=True)
 
@@ -257,9 +259,9 @@ def _cursor(value: str | None) -> tuple[str, str] | None:
     return created_at, evaluation_id
 
 
-def history(project_id: str, target_id: str | None, limit: int, cursor: str | None) -> dict:
+def history(target_id: str | None, limit: int, cursor: str | None) -> dict:
     try:
-        rows = repo.history(project_id, target_id=target_id, limit=limit + 1, before=_cursor(cursor))
+        rows = repo.history(target_id=target_id, limit=limit + 1, before=_cursor(cursor))
     except ValueError as exc:
         raise EvaluationError("invalid_request", 422) from exc
     page, more = rows[:limit], len(rows) > limit
@@ -268,12 +270,12 @@ def history(project_id: str, target_id: str | None, limit: int, cursor: str | No
             "next_cursor": f"{page[-1]['created_at']}|{page[-1]['evaluation_id']}" if more else None}
 
 
-def summary(project_id: str, limit: int = 5) -> dict:
+def summary(limit: int = 5) -> dict:
     """Overview section: recent scores, running count and last evaluation time."""
-    recent = history(project_id, None, limit, None)["items"]
+    recent = history(None, limit, None)["items"]
     completed = [item for item in recent if item["lifecycle"] == "completed"]
     return {
-        "active": repo.active_count(project_id),
+        "active": repo.active_count(),
         "recent": [{key: item[key] for key in ("evaluation_id", "target", "judge", "lifecycle",
                                                  "total_score", "final_score", "human_review",
                                                  "evaluation_set", "scores", "review_summary",
@@ -284,12 +286,12 @@ def summary(project_id: str, limit: int = 5) -> dict:
     }
 
 
-def latest_by_target(project_id: str, provider_ids: list[str]) -> dict[str, dict]:
+def latest_by_target(provider_ids: list[str]) -> dict[str, dict]:
     """Latest completed evaluation per target AI connection (group member scores)."""
     return {row["target_provider_id"]: {"evaluation_id": row["evaluation_id"],
                                         "total_score": repo.final_score(row),
                                         "finished_at": row["finished_at"]}
-            for row in repo.latest_completed(project_id, provider_ids)}
+            for row in repo.latest_completed(provider_ids)}
 
 
 # ── Evaluation sets ──────────────────────────────────────────────────────────────
@@ -308,8 +310,8 @@ def _set_public(row: dict) -> dict:
             "updated_at": row["updated_at"]}
 
 
-def list_sets(project_id: str) -> dict:
-    return {"items": [_set_public(row) for row in repo.list_sets(project_id)]}
+def list_sets() -> dict:
+    return {"items": [_set_public(row) for row in repo.list_sets()]}
 
 
 def _text_error(field: str, value, limit: int) -> dict | None:
@@ -322,7 +324,7 @@ def _text_error(field: str, value, limit: int) -> dict | None:
     return None
 
 
-def _set_fields(project_id: str, data: dict, own_id: str | None = None) -> dict:
+def _set_fields(data: dict, own_id: str | None = None) -> dict:
     """Validate and normalize one evaluation set. Every rejected field is reported (no early stop)
     so the dialog can show which field failed and why. Blank constraints are dropped before the
     count/length rules apply, the same way the dialog drops empty rows."""
@@ -350,46 +352,46 @@ def _set_fields(project_id: str, data: dict, own_id: str | None = None) -> dict:
     name = name.strip()
     key = unicodedata.normalize("NFKC", name).casefold()
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
-    same = repo.get_set_by_name_hash(project_id, digest)
+    same = repo.get_set_by_name_hash(digest)
     if same is not None and same["set_id"] != own_id:
         raise EvaluationError("evaluation_set_name_conflict", 409)
     return {"name": name, "name_key": key, "name_key_hash": digest, "instruction": instruction.strip(),
             "constraints": json.dumps(kept, ensure_ascii=False)}
 
 
-def create_set(project_id: str, data: dict, created_by: str | None) -> dict:
-    row = _set_fields(project_id, data)
-    row.update(set_id="aies_" + uuid.uuid4().hex, project_id=project_id, created_by=created_by)
+def create_set(data: dict, created_by: str | None) -> dict:
+    row = _set_fields(data)
+    row.update(set_id="aies_" + uuid.uuid4().hex, created_by=created_by)
     repo.create_set(row)
-    return _set_public(repo.get_set(project_id, row["set_id"]))
+    return _set_public(repo.get_set(row["set_id"]))
 
 
-def update_set(project_id: str, set_id: str, data: dict) -> dict:
-    if repo.get_set(project_id, set_id) is None:
+def update_set(set_id: str, data: dict) -> dict:
+    if repo.get_set(set_id) is None:
         raise EvaluationError("evaluation_set_not_found", 404)
-    repo.update_set(project_id, set_id, _set_fields(project_id, data, set_id))
-    return _set_public(repo.get_set(project_id, set_id))
+    repo.update_set(set_id, _set_fields(data, set_id))
+    return _set_public(repo.get_set(set_id))
 
 
-def delete_set(project_id: str, set_id: str) -> dict:
-    if repo.get_set(project_id, set_id) is None:
+def delete_set(set_id: str) -> dict:
+    if repo.get_set(set_id) is None:
         raise EvaluationError("evaluation_set_not_found", 404)
-    repo.delete_set(project_id, set_id)
+    repo.delete_set(set_id)
     return {"ok": True}
 
 
 # ── Worker ───────────────────────────────────────────────────────────────────────
 
-def _fail(project_id: str, evaluation_id: str, stage: str, reason: str, diagnostic: str | None = None) -> None:
-    if repo.finish(project_id, evaluation_id, lifecycle="failed", reason_code=reason,
+def _fail(evaluation_id: str, stage: str, reason: str, diagnostic: str | None = None) -> None:
+    if repo.finish(evaluation_id, lifecycle="failed", reason_code=reason,
                    failure_stage=stage, diagnostic_summary=diagnostic):
-        _emit("failed", repo.get(project_id, evaluation_id))
+        _emit("failed", repo.get(evaluation_id))
 
 
-def _advance(project_id: str, evaluation_id: str, lifecycle: str, **fields) -> bool:
-    if not repo.advance(project_id, evaluation_id, lifecycle, **fields):
+def _advance(evaluation_id: str, lifecycle: str, **fields) -> bool:
+    if not repo.advance(evaluation_id, lifecycle, **fields):
         return False
-    _emit("updated", repo.get(project_id, evaluation_id))
+    _emit("updated", repo.get(evaluation_id))
     return True
 
 
@@ -409,21 +411,40 @@ def _call(subject, prompt: str, handle, timeout: float, scratch: Path, run_id: s
     return outcome.text
 
 
-def _worker(project_id: str, evaluation_id: str, state: dict) -> None:
+SCRATCH_ATTEMPTS = 5
+
+
+def _create_eval_scratch() -> tuple[str, Path]:
+    """Mint a run id and its Scratch folder. Another process can hold the same serial
+    (the run-id counter is per process), so a folder that already exists just moves on
+    to the next id instead of failing the evaluation.
+    No project run start sweeps the evaluation Scratch root, so each evaluation sweeps it."""
+    probe._cleanup_retained_scratches(SCOPE)
+    for _ in range(SCRATCH_ATTEMPTS):
+        run_id = probe._next_run_id()
+        try:
+            return run_id, probe._create_scratch(SCOPE, run_id)
+        except FileExistsError:
+            logger.warning("AI evaluation scratch %s already exists; trying the next id", run_id)
+        except Exception as exc:
+            raise _StageFailed("scratch_unavailable") from exc
+    raise _StageFailed("scratch_unavailable")
+
+
+def _worker(evaluation_id: str, state: dict) -> None:
     handle, target, judge = state["handle"], state["target"], state["judge"]
     stage, scratch, run_id = "pending", None, None
     try:
         if handle.cancelled:
             return
-        run_id = probe._next_run_id()
-        scratch = probe._create_scratch(project_id, run_id)
+        run_id, scratch = _create_eval_scratch()
         root = _eval_dir_name(evaluation_id)
         workspace = scratch / root
         workspace.mkdir()
 
         # 1-3. The judge prepares the Scratch task and the evaluation standard.
         stage = "preparing"
-        if not _advance(project_id, evaluation_id, "preparing", scratch_ref=run_id, started_at=now_iso()):
+        if not _advance(evaluation_id, "preparing", scratch_ref=run_id, started_at=now_iso()):
             return
         fixed = state.get("set")
         task = _parse_task(_call(judge, _prepare_prompt(state["language"], root, fixed), handle,
@@ -438,7 +459,7 @@ def _worker(project_id: str, evaluation_id: str, state: dict) -> None:
 
         # 4. The target performs the task inside the Scratch.
         stage = "running"
-        if not _advance(project_id, evaluation_id, "running", task_title=task["title"],
+        if not _advance(evaluation_id, "running", task_title=task["title"],
                         task_summary=task["summary"], task_instruction=task["instruction"]):
             return
         report = _call(target, _target_prompt(task, target.exec_type, root), handle,
@@ -450,7 +471,7 @@ def _worker(project_id: str, evaluation_id: str, state: dict) -> None:
         # 5. Collect results / work products.
         artifacts = _collect(workspace, baseline)
         stage = "reviewing"
-        if not _advance(project_id, evaluation_id, "reviewing",
+        if not _advance(evaluation_id, "reviewing",
                         target_report=repo.redact(report, 20_000), artifacts=artifacts):
             return
 
@@ -460,25 +481,25 @@ def _worker(project_id: str, evaluation_id: str, state: dict) -> None:
                                      handle, REVIEW_TIMEOUT_SEC, scratch, run_id))
         total = round(sum(item["score"] for item in review["scores"]) / len(review["scores"]))
         # 10. Persist as history.
-        if repo.complete(project_id, evaluation_id, total_score=total, review_summary=review["review"],
+        if repo.complete(evaluation_id, total_score=total, review_summary=review["review"],
                          item_scores=review["scores"]):
-            _emit("completed", repo.get(project_id, evaluation_id))
+            _emit("completed", repo.get(evaluation_id))
     except probe.ProbeCancelled:
-        if repo.finish(project_id, evaluation_id, lifecycle="cancelled", reason_code="cancelled_by_user",
+        if repo.finish(evaluation_id, lifecycle="cancelled", reason_code="cancelled_by_user",
                        failure_stage=stage):
-            _emit("cancelled", repo.get(project_id, evaluation_id))
+            _emit("cancelled", repo.get(evaluation_id))
     except _StageFailed as exc:
-        _fail(project_id, evaluation_id, stage, exc.reason_code, exc.diagnostic)
+        _fail(evaluation_id, stage, exc.reason_code, exc.diagnostic)
     except Exception:
         logger.exception("AI evaluation %s failed", evaluation_id)
-        _fail(project_id, evaluation_id, stage, "internal_error")
+        _fail(evaluation_id, stage, "internal_error")
     finally:
         with _RUNS_LOCK:
             _RUNS.pop(evaluation_id, None)
         if scratch is not None:
             # Kept as the evaluation's work-product reference; the standard retention sweep
             # removes it once the retention window has passed.
-            probe._mark_scratch_completed(project_id, run_id, scratch, now_iso())
+            probe._mark_scratch_completed(SCOPE, run_id, scratch, now_iso())
 
 
 # ── Judge / target contracts ─────────────────────────────────────────────────────

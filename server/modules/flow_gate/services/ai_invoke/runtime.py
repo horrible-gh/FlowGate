@@ -712,18 +712,18 @@ def _next_run_id() -> str:
             # same-numbered run finalizes. Floor once per date against whatever the
             # durable stores already show as today's highest serial: finished runs AND
             # leases still open on one (an open lease has no ai_invoke_runs row yet).
-            # Best-effort -- a lookup failure keeps the counter as-is rather than
+            # AI evaluations draw their Scratch folder from this counter too, so their
+            # recorded scratch_ref serials count as well.
+            # Best-effort per source -- a lookup failure skips that source rather than
             # blocking a run from starting at all.
-            try:
-                from modules.flow_gate.db import ai_invoke_runs as db_runs
+            from modules.flow_gate.db import ai_evaluations as db_evaluations
+            from modules.flow_gate.db import ai_invoke_runs as db_runs
 
-                floor = max(
-                    db_runs.max_serial_for_date(date_str),
-                    db_group_ai_leases.max_serial_for_date(date_str),
-                )
-                svc._run_counter = max(svc._run_counter, floor)
-            except Exception:
-                logger.warning("run_id floor lookup failed for %s", date_str, exc_info=True)
+            for source in (db_runs, db_group_ai_leases, db_evaluations):
+                try:
+                    svc._run_counter = max(svc._run_counter, source.max_serial_for_date(date_str))
+                except Exception:
+                    logger.warning("run_id floor lookup failed for %s", date_str, exc_info=True)
             svc._run_counter_floor_date = date_str
         svc._run_counter += 1
         return f"aiv_{date_str}_{svc._run_counter:06d}"

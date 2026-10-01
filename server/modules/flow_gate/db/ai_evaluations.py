@@ -6,6 +6,8 @@ lifecycle   pending -> preparing -> running -> reviewing -> completed
 Result (score, per-criterion scores, review) is separate from the lifecycle.
 Migration 130: an optional human review on a completed evaluation (its score, when present, is
 the final score) and reusable evaluation sets (ai_evaluation_sets).
+Migration 135 (flowgate.v02.0017 CH0006 (4)): evaluations and sets belong to no project; there is
+one list for the whole system.
 """
 from __future__ import annotations
 
@@ -29,8 +31,8 @@ class AlreadyRunning(Exception):
         super().__init__(evaluation_id)
 
 
-def _dedupe(project_id: str, target_id: str, judge_id: str) -> str:
-    return hashlib.sha256(f"{project_id}\0{target_id}\0{judge_id}".encode()).hexdigest()
+def _dedupe(target_id: str, judge_id: str) -> str:
+    return hashlib.sha256(f"{target_id}\0{judge_id}".encode()).hexdigest()
 
 
 def redact(text: Optional[str], limit: int) -> Optional[str]:
@@ -39,10 +41,9 @@ def redact(text: Optional[str], limit: int) -> Optional[str]:
     return _SECRET_PATTERN.sub(lambda m: m.group(1) + "[redacted]", text)[:limit]
 
 
-def get(project_id: str, evaluation_id: str) -> Optional[dict]:
+def get(evaluation_id: str) -> Optional[dict]:
     return get_store()._fetch_one(
-        "SELECT * FROM ai_evaluations WHERE project_id = ? AND evaluation_id = ?",
-        [project_id, evaluation_id])
+        "SELECT * FROM ai_evaluations WHERE evaluation_id = ?", [evaluation_id])
 
 
 def scores(evaluation_ids: list[str]) -> dict[str, list[dict]]:
@@ -65,10 +66,10 @@ def final_score(row: dict) -> Optional[int]:
     return human if human is not None else row.get("total_score")
 
 
-def create_pending(*, project_id: str, target_id: str, target_name: Optional[str],
+def create_pending(*, target_id: str, target_name: Optional[str],
                    judge_id: str, judge_name: Optional[str], created_by: Optional[str],
                    evaluation_set: Optional[dict] = None) -> dict:
-    key = _dedupe(project_id, target_id, judge_id)
+    key = _dedupe(target_id, judge_id)
     store = get_store()
     evaluation_id = "aie_" + uuid.uuid4().hex
     now = now_iso()
@@ -79,11 +80,11 @@ def create_pending(*, project_id: str, target_id: str, target_name: Optional[str
             if active:
                 raise AlreadyRunning(active["evaluation_id"])
             store._execute("""INSERT INTO ai_evaluations
-                (evaluation_id, project_id, target_provider_id, target_provider_name,
+                (evaluation_id, target_provider_id, target_provider_name,
                  judge_provider_id, judge_provider_name, lifecycle, active_dedupe_key,
                  evaluation_set_id, evaluation_set_name, created_by, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)""",
-                [evaluation_id, project_id, target_id, target_name, judge_id, judge_name, key,
+                VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)""",
+                [evaluation_id, target_id, target_name, judge_id, judge_name, key,
                  (evaluation_set or {}).get("set_id"), (evaluation_set or {}).get("name"),
                  created_by, now, now])
     except AlreadyRunning:
@@ -95,10 +96,10 @@ def create_pending(*, project_id: str, target_id: str, target_name: Optional[str
         if active:
             raise AlreadyRunning(active["evaluation_id"])
         raise
-    return get(project_id, evaluation_id)
+    return get(evaluation_id)
 
 
-def advance(project_id: str, evaluation_id: str, lifecycle: str, **fields) -> bool:
+def advance(evaluation_id: str, lifecycle: str, **fields) -> bool:
     """Move an active evaluation to the next active stage, writing stage output fields.
     Conditional on still being active, so a cancel that already won is never overwritten."""
     if lifecycle not in ACTIVE:
@@ -115,8 +116,26 @@ def advance(project_id: str, evaluation_id: str, lifecycle: str, **fields) -> bo
     marks = ", ".join("?" for _ in ACTIVE)
     return get_store()._execute_affected(
         f"UPDATE ai_evaluations SET {', '.join(sets)} "
-        f"WHERE project_id = ? AND evaluation_id = ? AND lifecycle IN ({marks})",
-        params + [project_id, evaluation_id, *ACTIVE]) == 1
+        f"WHERE evaluation_id = ? AND lifecycle IN ({marks})",
+        params + [evaluation_id, *ACTIVE]) == 1
+
+
+def max_serial_for_date(date_str: str) -> int:
+    """Highest NNNNNN serial an evaluation already used today as its Scratch run id.
+
+    Evaluations mint their Scratch folder from the same run-id counter as AI runs but
+    never write ai_invoke_runs or a lease, so without this the counter floor misses them
+    and the first evaluation after a restart reuses a folder that already exists.
+    """
+    rows = get_store()._fetch_all(
+        "SELECT scratch_ref FROM ai_evaluations WHERE scratch_ref LIKE ?", [f"aiv_{date_str}_%"])
+    highest = 0
+    for row in rows:
+        try:
+            highest = max(highest, int(str(row["scratch_ref"]).rsplit("_", 1)[-1]))
+        except (TypeError, ValueError):
+            continue
+    return highest
 
 
 def write_criteria(evaluation_id: str, criteria: list[dict]) -> None:
@@ -130,7 +149,7 @@ def write_criteria(evaluation_id: str, criteria: list[dict]) -> None:
                 [evaluation_id, item["key"], position, redact(item.get("description"), 2000)])
 
 
-def complete(project_id: str, evaluation_id: str, *, total_score: int, review_summary: str,
+def complete(evaluation_id: str, *, total_score: int, review_summary: str,
              item_scores: list[dict]) -> bool:
     """Write every per-criterion score, the total and the review, and settle completed --
     all in one transaction, and only if the evaluation is still reviewing."""
@@ -140,8 +159,8 @@ def complete(project_id: str, evaluation_id: str, *, total_score: int, review_su
         won = store._execute_affected(
             """UPDATE ai_evaluations SET lifecycle = 'completed', total_score = ?, review_summary = ?,
                    active_dedupe_key = NULL, finished_at = ?, updated_at = ?
-               WHERE project_id = ? AND evaluation_id = ? AND lifecycle = 'reviewing'""",
-            [total_score, redact(review_summary, 8000), now, now, project_id, evaluation_id]) == 1
+               WHERE evaluation_id = ? AND lifecycle = 'reviewing'""",
+            [total_score, redact(review_summary, 8000), now, now, evaluation_id]) == 1
         if not won:
             return False
         for item in item_scores:
@@ -152,7 +171,7 @@ def complete(project_id: str, evaluation_id: str, *, total_score: int, review_su
     return True
 
 
-def finish(project_id: str, evaluation_id: str, *, lifecycle: str, reason_code: str,
+def finish(evaluation_id: str, *, lifecycle: str, reason_code: str,
            failure_stage: Optional[str] = None, diagnostic_summary: Optional[str] = None) -> bool:
     if lifecycle not in ("failed", "cancelled"):
         raise ValueError("finish() settles failed/cancelled only")
@@ -161,12 +180,12 @@ def finish(project_id: str, evaluation_id: str, *, lifecycle: str, reason_code: 
     return get_store()._execute_affected(
         f"""UPDATE ai_evaluations SET lifecycle = ?, reason_code = ?, failure_stage = ?,
                diagnostic_summary = ?, active_dedupe_key = NULL, finished_at = ?, updated_at = ?
-           WHERE project_id = ? AND evaluation_id = ? AND lifecycle IN ({marks})""",
+           WHERE evaluation_id = ? AND lifecycle IN ({marks})""",
         [lifecycle, reason_code, failure_stage, redact(diagnostic_summary, 2000), now, now,
-         project_id, evaluation_id, *ACTIVE]) == 1
+         evaluation_id, *ACTIVE]) == 1
 
 
-def set_human_review(project_id: str, evaluation_id: str, *, score: Optional[int],
+def set_human_review(evaluation_id: str, *, score: Optional[int],
                      comment: Optional[str], reviewer_id: Optional[str]) -> bool:
     """Record (or clear, with score and comment both None) the human review. Completed only."""
     cleared = score is None and not comment
@@ -174,16 +193,16 @@ def set_human_review(project_id: str, evaluation_id: str, *, score: Optional[int
     return get_store()._execute_affected(
         """UPDATE ai_evaluations SET human_score = ?, human_comment = ?, human_reviewer_id = ?,
                human_reviewed_at = ?, updated_at = ?
-           WHERE project_id = ? AND evaluation_id = ? AND lifecycle = 'completed'""",
+           WHERE evaluation_id = ? AND lifecycle = 'completed'""",
         [score, None if cleared else redact(comment, 8000), None if cleared else reviewer_id,
-         None if cleared else now, now, project_id, evaluation_id]) == 1
+         None if cleared else now, now, evaluation_id]) == 1
 
 
-def history(project_id: str, *, target_id: Optional[str] = None, limit: int = 20,
+def history(*, target_id: Optional[str] = None, limit: int = 20,
             before: Optional[tuple[str, str]] = None) -> list[dict]:
     if not 1 <= limit <= 101:
         raise ValueError("limit must be 1..101")
-    where, params = ["project_id = ?"], [project_id]
+    where, params = [], []
     if target_id is not None:
         where.append("target_provider_id = ?")
         params.append(target_id)
@@ -192,11 +211,11 @@ def history(project_id: str, *, target_id: Optional[str] = None, limit: int = 20
         params.extend([before[0], before[0], before[1]])
     params.append(limit)
     return get_store()._fetch_all(
-        "SELECT * FROM ai_evaluations WHERE " + " AND ".join(where) +
+        "SELECT * FROM ai_evaluations" + (" WHERE " + " AND ".join(where) if where else "") +
         " ORDER BY created_at DESC, evaluation_id DESC LIMIT ?", params)
 
 
-def latest_completed(project_id: str, target_ids: list[str]) -> list[dict]:
+def latest_completed(target_ids: list[str]) -> list[dict]:
     """Newest completed evaluation per target connection (one row per target id)."""
     ids = sorted({tid for tid in target_ids if tid})
     if not ids:
@@ -204,19 +223,18 @@ def latest_completed(project_id: str, target_ids: list[str]) -> list[dict]:
     marks = ", ".join("?" for _ in ids)
     rows = get_store()._fetch_all(
         "SELECT evaluation_id, target_provider_id, total_score, human_score, finished_at FROM ai_evaluations "
-        f"WHERE project_id = ? AND lifecycle = 'completed' AND target_provider_id IN ({marks}) "
-        "ORDER BY finished_at DESC, evaluation_id DESC", [project_id, *ids])
+        f"WHERE lifecycle = 'completed' AND target_provider_id IN ({marks}) "
+        "ORDER BY finished_at DESC, evaluation_id DESC", ids)
     latest: dict[str, dict] = {}
     for row in rows:
         latest.setdefault(row["target_provider_id"], row)
     return list(latest.values())
 
 
-def active_count(project_id: str) -> int:
+def active_count() -> int:
     marks = ", ".join("?" for _ in ACTIVE)
     row = get_store()._fetch_one(
-        f"SELECT COUNT(*) AS n FROM ai_evaluations WHERE project_id = ? AND lifecycle IN ({marks})",
-        [project_id, *ACTIVE])
+        f"SELECT COUNT(*) AS n FROM ai_evaluations WHERE lifecycle IN ({marks})", list(ACTIVE))
     return int(row["n"]) if row else 0
 
 
@@ -233,45 +251,41 @@ def recover_orphans() -> int:
 
 # ── Evaluation sets (reusable tasks) ─────────────────────────────────────────────
 
-_SET_COLUMNS = ("set_id, project_id, name, name_key, name_key_hash, instruction, constraints, "
+_SET_COLUMNS = ("set_id, name, name_key, name_key_hash, instruction, constraints, "
                 "created_by, created_at, updated_at")
 
 
-def list_sets(project_id: str) -> list[dict]:
+def list_sets() -> list[dict]:
     return get_store()._fetch_all(
-        f"SELECT {_SET_COLUMNS} FROM ai_evaluation_sets WHERE project_id = ? "
-        "ORDER BY name_key, set_id", [project_id])
+        f"SELECT {_SET_COLUMNS} FROM ai_evaluation_sets ORDER BY name_key, set_id", [])
 
 
-def get_set(project_id: str, set_id: str) -> Optional[dict]:
+def get_set(set_id: str) -> Optional[dict]:
     return get_store()._fetch_one(
-        f"SELECT {_SET_COLUMNS} FROM ai_evaluation_sets WHERE project_id = ? AND set_id = ?",
-        [project_id, set_id])
+        f"SELECT {_SET_COLUMNS} FROM ai_evaluation_sets WHERE set_id = ?", [set_id])
 
 
-def get_set_by_name_hash(project_id: str, name_key_hash: str) -> Optional[dict]:
+def get_set_by_name_hash(name_key_hash: str) -> Optional[dict]:
     return get_store()._fetch_one(
-        f"SELECT {_SET_COLUMNS} FROM ai_evaluation_sets WHERE project_id = ? AND name_key_hash = ?",
-        [project_id, name_key_hash])
+        f"SELECT {_SET_COLUMNS} FROM ai_evaluation_sets WHERE name_key_hash = ?", [name_key_hash])
 
 
 def create_set(row: dict) -> None:
     now = now_iso()
     get_store()._execute(
-        f"INSERT INTO ai_evaluation_sets ({_SET_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [row["set_id"], row["project_id"], row["name"], row["name_key"], row["name_key_hash"],
+        f"INSERT INTO ai_evaluation_sets ({_SET_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [row["set_id"], row["name"], row["name_key"], row["name_key_hash"],
          row["instruction"], row["constraints"], row.get("created_by"), now, now])
 
 
-def update_set(project_id: str, set_id: str, row: dict) -> None:
+def update_set(set_id: str, row: dict) -> None:
     get_store()._execute(
         "UPDATE ai_evaluation_sets SET name = ?, name_key = ?, name_key_hash = ?, instruction = ?, "
-        "constraints = ?, updated_at = ? WHERE project_id = ? AND set_id = ?",
+        "constraints = ?, updated_at = ? WHERE set_id = ?",
         [row["name"], row["name_key"], row["name_key_hash"], row["instruction"], row["constraints"],
-         now_iso(), project_id, set_id])
+         now_iso(), set_id])
 
 
-def delete_set(project_id: str, set_id: str) -> None:
+def delete_set(set_id: str) -> None:
     # Evaluations keep evaluation_set_id/name as a snapshot of what they ran.
-    get_store()._execute("DELETE FROM ai_evaluation_sets WHERE project_id = ? AND set_id = ?",
-                         [project_id, set_id])
+    get_store()._execute("DELETE FROM ai_evaluation_sets WHERE set_id = ?", [set_id])

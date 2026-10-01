@@ -1,11 +1,11 @@
 // AI Settings types (v0.2 flowgate.v02.0015 T0003, product semantics flowgate.v02.0017 T0002)
 
 export type ProviderExecType = 'cli' | 'api'
+// Where the AI runs: FlowGate itself (local) or a receiving Agent on another machine (remote).
+export type ExecLocation = 'local' | 'remote'
 
 // system = managed by an administrator, user = one user's own AI (runs on that user's Agent).
 export type AiOwnerScope = 'system' | 'user'
-// all = every project that allows all system AI may use it, listed = only projects that list it.
-export type AiProjectAccess = 'all' | 'listed'
 
 // One AI connection (internally still a "provider"; user-facing wording is "AI 연결").
 export interface ProviderItem {
@@ -21,46 +21,7 @@ export interface ProviderItem {
   api_key_set?: boolean
   api_key_hint?: string | null
   owner_scope?: AiOwnerScope
-  project_access?: AiProjectAccess
-}
-
-// The AI a project can run now (policy applied; only enabled system AI).
-export interface AiEffectiveChain {
-  source: string
-  providers: ProviderItem[]
-  default_provider_id: string | null
-  registered_count: number
-}
-
-// ── Project AI policy (the project owns no AI; it only allows and picks) ────────
-
-// all = every shared system AI (+ listed ones), selected = only the listed system AI.
-export type SystemAiScope = 'all' | 'selected'
-
-export interface PolicyProviderItem extends ProviderItem {
-  allowed: boolean
-}
-
-export interface ProjectAiPolicy {
-  project_id: string
-  ai_enabled: boolean
-  system_ai_scope: SystemAiScope
-  allow_user_ai: boolean
-  default_provider_id: string | null
-  listed_provider_ids: string[]
-  system_providers: PolicyProviderItem[]
-  system_default_provider_id: string | null
-  repeat_count_max: number
-  effective: AiEffectiveChain
-  updated_at: string | null
-}
-
-export interface ProjectAiPolicyPatch {
-  ai_enabled?: boolean
-  system_ai_scope?: SystemAiScope
-  allow_user_ai?: boolean
-  listed_provider_ids?: string[]
-  default_provider_id?: string | null
+  exec_location?: ExecLocation
 }
 
 // ── Owned AI lists (system settings > 시스템 AI, personal settings > 내 AI) ──────
@@ -72,8 +33,18 @@ export interface SystemAiSettings {
   updated_at: string | null
 }
 
+// System AI as every signed-in user sees it (read-only; no command, URL or key hint).
+export interface VisibleSystemAi {
+  providers: ProviderItem[]
+  default_provider_id: string | null
+  execution_policy?: undefined
+}
+
 export interface UserAiSettings {
   providers: ProviderItem[]
+  // My default AI (a system AI or my own); null = follow the system default.
+  default_provider_id?: string | null
+  system_default_provider_id?: string | null
   updated_at: string | null
 }
 
@@ -165,7 +136,6 @@ export interface AiHumanReview {
 
 export interface AiEvaluation {
   evaluation_id: string
-  project_id: string
   target: AiEvaluationParty
   judge: AiEvaluationParty
   lifecycle: EvaluationLifecycle
@@ -260,7 +230,6 @@ export interface AiGroupRole {
 
 export interface AiGroup {
   ai_group_id: string
-  project_id: string
   name: string
   description: string | null
   enabled: boolean
@@ -300,59 +269,4 @@ export interface AiExecutionPolicy {
   repeat_count_max: number
   repeat_count_min: number
   repeat_count_hard_max: number
-}
-
-// ── Overview ───────────────────────────────────────────────────────────────────
-
-export interface AiOverviewConnections {
-  ai_enabled: boolean
-  system_ai_scope: SystemAiScope
-  allow_user_ai: boolean
-  source: string
-  total: number
-  usable: number
-  default_provider_id: string | null
-  items: { id: string; name: string; exec_type: ProviderExecType; kind: string; enabled: boolean; usable: boolean }[]
-}
-
-export interface AiOverviewEvaluation {
-  active: number
-  latest_score: number | null
-  latest_at: string | null
-  recent: Pick<
-    AiEvaluation,
-    | 'evaluation_id'
-    | 'target'
-    | 'judge'
-    | 'lifecycle'
-    | 'total_score'
-    | 'final_score'
-    | 'human_review'
-    | 'evaluation_set'
-    | 'scores'
-    | 'review_summary'
-    | 'created_at'
-    | 'finished_at'
-  >[]
-}
-
-export interface AiOverviewGroups {
-  total: number
-  attention: number
-  items: (Pick<AiGroup, 'ai_group_id' | 'name' | 'member_count' | 'role_count' | 'supervisor' | 'status' | 'enabled' | 'is_default'> & {
-    members: (AiConnectionRef & { member_id: string })[]
-    roles: { role_id: string; name: string }[]
-  })[]
-}
-
-export interface AiOverviewError {
-  section: 'connections' | 'evaluation' | 'ai_groups'
-  code: string
-}
-
-export interface AiOverviewData {
-  connections: AiOverviewConnections | null
-  evaluation: AiOverviewEvaluation | null
-  ai_groups: AiOverviewGroups | null
-  errors: AiOverviewError[]
 }

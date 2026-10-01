@@ -1,8 +1,17 @@
-"""Project scoped AI Evaluation API (flowgate.v02.0017 T0002 §3).
+"""AI Evaluation API (flowgate.v02.0017 T0002 §3).
 
 An evaluation names a target AI and a judge AI. The judge prepares a real task in Scratch,
 the target performs it, and the judge scores it per criterion with a review. An evaluation set
 fixes the task; a human review may be added to a completed evaluation.
+
+Evaluations and sets belong to no project (CH0006 (4)): one list for every signed-in user on the
+AI 관리 screen, the same way the system AI they evaluate is shared.
+
+Who may act follows the owner of the evaluated AI (CH0006 #48): a system AI's evaluation is run,
+cancelled and human-reviewed by an administrator (system.settings.manage) and read by everyone;
+evaluation sets are administrator-managed for the same reason. A user's own AI never runs on the
+server (db/ai_providers.py), so it cannot be evaluated yet: starting one answers 409
+evaluation_user_ai_unsupported instead of a misleading provider_not_found.
 """
 from __future__ import annotations
 
@@ -12,9 +21,11 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
+from modules.flow_gate.auth.middleware import get_current_user
+from modules.flow_gate.db import ai_providers
+from modules.flow_gate.rbac import decorators as _rbac
 from modules.flow_gate.rbac.decorators import require_permission
 from modules.flow_gate.services import ai_evaluation_service as service
-from modules.flow_gate.settings import ai_settings_service
 
 router = APIRouter(tags=["AiEvaluation"])
 logger = logging.getLogger(__name__)
@@ -61,19 +72,18 @@ def _internal_error() -> JSONResponse:
     return _error(service.EvaluationError("internal_error", 500))
 
 
-def _project(project_id: str):
-    try:
-        ai_settings_service.resolve_effective(project_id)
-    except LookupError:
-        return JSONResponse({"error": {"code": "project_not_found", "message": "Project not found."}}, status_code=404)
-    return None
+_MANAGE = "system.settings.manage"
 
 
-def _run(project_id: str, fn, *args, status_code: int = 200):
-    missing = _project(project_id)
-    if missing is not None:
-        return missing
+def _require_manage(user: dict) -> None:
+    if not _rbac._has_permission(user, _MANAGE, None):
+        raise service.EvaluationError("forbidden", 403)
+
+
+def _run(fn, *args, status_code: int = 200, check=None):
     try:
+        if check is not None:
+            check()
         result = fn(*args)
         return JSONResponse(result, status_code=status_code) if status_code != 200 else result
     except service.EvaluationError as exc:
@@ -82,59 +92,54 @@ def _run(project_id: str, fn, *args, status_code: int = 200):
         return _internal_error()
 
 
-@router.post("/projects/{project_id}/ai-evaluations")
-def start_evaluation(project_id: str, body: EvaluationStart,
-                     user=Depends(require_permission("project.settings.edit", "project_id"))):
-    return _run(project_id, service.start, project_id, body.target_provider_id, body.judge_provider_id,
-                user.get("user_id"), body.locale, body.evaluation_set_id, status_code=202)
+@router.post("/ai-evaluations")
+def start_evaluation(body: EvaluationStart, user=Depends(get_current_user)):
+    def check():
+        if ai_providers.get_system_row(body.target_provider_id) is None and any(
+                r["provider_id"] == body.target_provider_id for r in ai_providers.list_user(user["user_id"])):
+            raise service.EvaluationError("evaluation_user_ai_unsupported", 409)
+        _require_manage(user)
+    return _run(service.start, body.target_provider_id, body.judge_provider_id,
+                user.get("user_id"), body.locale, body.evaluation_set_id, status_code=202, check=check)
 
 
-@router.get("/projects/{project_id}/ai-evaluation-sets")
-def list_evaluation_sets(project_id: str,
-                         user=Depends(require_permission("project.settings.read", "project_id"))):
-    return _run(project_id, service.list_sets, project_id)
+@router.get("/ai-evaluation-sets")
+def list_evaluation_sets(user=Depends(get_current_user)):
+    return _run(service.list_sets)
 
 
-@router.post("/projects/{project_id}/ai-evaluation-sets")
-def create_evaluation_set(project_id: str, body: EvaluationSetInput,
-                          user=Depends(require_permission("project.settings.edit", "project_id"))):
-    return _run(project_id, service.create_set, project_id, body.model_dump(), user.get("user_id"),
-                status_code=201)
+@router.post("/ai-evaluation-sets")
+def create_evaluation_set(body: EvaluationSetInput, user=Depends(require_permission(_MANAGE))):
+    return _run(service.create_set, body.model_dump(), user.get("user_id"), status_code=201)
 
 
-@router.put("/projects/{project_id}/ai-evaluation-sets/{set_id}")
-def update_evaluation_set(project_id: str, set_id: str, body: EvaluationSetInput,
-                          user=Depends(require_permission("project.settings.edit", "project_id"))):
-    return _run(project_id, service.update_set, project_id, set_id, body.model_dump())
+@router.put("/ai-evaluation-sets/{set_id}")
+def update_evaluation_set(set_id: str, body: EvaluationSetInput, user=Depends(require_permission(_MANAGE))):
+    return _run(service.update_set, set_id, body.model_dump())
 
 
-@router.delete("/projects/{project_id}/ai-evaluation-sets/{set_id}")
-def delete_evaluation_set(project_id: str, set_id: str,
-                          user=Depends(require_permission("project.settings.edit", "project_id"))):
-    return _run(project_id, service.delete_set, project_id, set_id)
+@router.delete("/ai-evaluation-sets/{set_id}")
+def delete_evaluation_set(set_id: str, user=Depends(require_permission(_MANAGE))):
+    return _run(service.delete_set, set_id)
 
 
-@router.get("/projects/{project_id}/ai-evaluations")
-def evaluation_history(project_id: str, target_provider_id: str | None = None,
+@router.get("/ai-evaluations")
+def evaluation_history(target_provider_id: str | None = None,
                        limit: int = Query(default=20, ge=1, le=100), cursor: str | None = None,
-                       user=Depends(require_permission("project.settings.read", "project_id"))):
-    return _run(project_id, service.history, project_id, target_provider_id, limit, cursor)
+                       user=Depends(get_current_user)):
+    return _run(service.history, target_provider_id, limit, cursor)
 
 
-@router.get("/projects/{project_id}/ai-evaluations/{evaluation_id}")
-def evaluation_detail(project_id: str, evaluation_id: str,
-                      user=Depends(require_permission("project.settings.read", "project_id"))):
-    return _run(project_id, service.detail, project_id, evaluation_id)
+@router.get("/ai-evaluations/{evaluation_id}")
+def evaluation_detail(evaluation_id: str, user=Depends(get_current_user)):
+    return _run(service.detail, evaluation_id)
 
 
-@router.post("/projects/{project_id}/ai-evaluations/{evaluation_id}/cancel")
-def cancel_evaluation(project_id: str, evaluation_id: str,
-                      user=Depends(require_permission("project.settings.edit", "project_id"))):
-    return _run(project_id, service.cancel, project_id, evaluation_id)
+@router.post("/ai-evaluations/{evaluation_id}/cancel")
+def cancel_evaluation(evaluation_id: str, user=Depends(require_permission(_MANAGE))):
+    return _run(service.cancel, evaluation_id)
 
 
-@router.put("/projects/{project_id}/ai-evaluations/{evaluation_id}/human-review")
-def human_review(project_id: str, evaluation_id: str, body: HumanReview,
-                 user=Depends(require_permission("project.settings.edit", "project_id"))):
-    return _run(project_id, service.human_review, project_id, evaluation_id, body.score, body.comment,
-                user.get("user_id"))
+@router.put("/ai-evaluations/{evaluation_id}/human-review")
+def human_review(evaluation_id: str, body: HumanReview, user=Depends(require_permission(_MANAGE))):
+    return _run(service.human_review, evaluation_id, body.score, body.comment, user.get("user_id"))

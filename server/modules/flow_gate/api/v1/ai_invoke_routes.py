@@ -492,7 +492,7 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
     if body.continuation_reworker_provider_id is not None:
         if body.mode != "continuous":
             return _validation_failed([{"loc": "continuation_reworker_provider_id", "msg": "requires continuous mode"}])
-        if body.continuation_reworker_provider_id not in ai_group_service._available(body.project):
+        if body.continuation_reworker_provider_id not in ai_group_service._available():
             return JSONResponse(status_code=422, content={"code": "reworker_unavailable",
                                                           "message": "The selected reworker is unavailable."})
 
@@ -500,10 +500,10 @@ def start_ai_invoke(body: AiInvokeStartRequest, request: Request):
         if body.mode != "continuous":
             return _validation_failed([{"loc": "requested_ai_group_id", "msg": "requires continuous mode"}])
         try:
-            ai_group_service.validate_start(body.project, body.requested_ai_group_id)
+            ai_group_service.validate_start(body.requested_ai_group_id)
         except ai_group_service.AIGroupError as exc:
             return JSONResponse(status_code=exc.status, content={"code": exc.code, "message": str(exc)})
-        available = ai_group_service._available(body.project)
+        available = ai_group_service._available()
         if not body.provider_id:
             return JSONResponse(status_code=422, content={"code": "ai_group_work_executor_required",
                                                           "message": "A concrete provider_id is required."})
@@ -1033,7 +1033,7 @@ def get_ai_invoke_providers(project: str, request: Request):
     if not (bool(auth.get("is_admin")) or has_permission(user_id, project, "perm_document_read")):
         return JSONResponse(status_code=403, content={"code": "permission_denied",
                                                       "message": "perm_document_read required"})
-    effective = ai_invoke_service.list_runtime_providers(project)
+    effective = ai_invoke_service.list_runtime_providers(project, user_id)
     return JSONResponse(status_code=200, content=effective)
 
 

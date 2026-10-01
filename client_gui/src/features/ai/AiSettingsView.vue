@@ -11,33 +11,15 @@
       </div>
     </header>
 
-    <!-- 시스템 AI (administrators) / 내 AI (everyone): owned lists, no project needed. -->
-    <main v-if="activeTab === 'system-ai' || activeTab === 'my-ai'" class="view-content">
-      <AiProvidersPanel
-        :key="activeTab"
-        :scope="activeTab === 'system-ai' ? 'system' : 'user'"
-        @changed="onProvidersChanged"
-      />
+    <!-- AI list: system AI and my AI in one list. -->
+    <main v-if="activeTab === 'ai'" class="view-content">
+      <AiProvidersPanel @changed="onProvidersChanged" />
     </main>
-
-    <!-- Project tabs need a project -->
-    <div v-else-if="!currentProject" class="no-project-box">
-      <EmptyState
-        :title="t('gui.ai.no_project_title')"
-        :description="t('gui.ai.no_project_desc')"
-      >
-        <template #action>
-          <Button variant="primary" @click="projectStore.openDialog()">
-            {{ t('gui.ai.select_project_action') }}
-          </Button>
-        </template>
-      </EmptyState>
-    </div>
 
     <template v-else>
       <!-- Full-screen loading only before the first data arrives: a refresh after an edit
            keeps the open tab (and its selection/dialog state) mounted. -->
-      <div v-if="loading && !overviewData && !policyData" class="view-loading">
+      <div v-if="loading && !loaded" class="view-loading">
         <LoadingState :label="t('gui.common.loading')" />
       </div>
 
@@ -55,57 +37,10 @@
       </div>
 
       <main v-else class="view-content">
-        <!-- Overview Tab -->
-        <template v-if="activeTab === 'overview'">
-          <div v-if="sectionErrors.overview" class="view-error">
-            <ErrorState
-              :title="t('gui.ai.load_failed_title')"
-              :message="sectionErrors.overview"
-            >
-              <template #action>
-                <Button variant="secondary" @click="loadData">
-                  {{ t('gui.common.retry') }}
-                </Button>
-              </template>
-            </ErrorState>
-          </div>
-          <AiOverviewPanel
-            v-else
-            :overview="overviewData"
-            @navigate="onNavigateTab"
-            @register-evaluation="onRegisterEvaluation"
-          />
-        </template>
-
-        <!-- Usage policy Tab (the project allows and picks AI; it owns none) -->
-        <template v-else-if="activeTab === 'policy'">
-          <div v-if="sectionErrors.policy" class="view-error">
-            <ErrorState
-              :title="t('gui.ai.load_failed_title')"
-              :message="sectionErrors.policy"
-            >
-              <template #action>
-                <Button variant="secondary" @click="loadData">
-                  {{ t('gui.common.retry') }}
-                </Button>
-              </template>
-            </ErrorState>
-          </div>
-          <AiPolicyPanel
-            v-else-if="policyData"
-            :project-id="currentProject.id"
-            :initial-policy="policyData"
-            @changed="loadData"
-          />
-        </template>
-
         <!-- Evaluation Tab -->
-        <template v-else-if="activeTab === 'evaluation'">
+        <template v-if="activeTab === 'evaluation'">
           <AiEvaluationPanel
-            :project-id="currentProject.id"
             :providers="activeProviders"
-            :open-new="pendingNewEvaluation"
-            @new-opened="pendingNewEvaluation = false"
             @changed="loadData"
           />
         </template>
@@ -126,7 +61,6 @@
           </div>
           <AiGroupsPanel
             v-else
-            :project-id="currentProject.id"
             :providers="activeProviders"
             :initial-groups="groups"
             @changed="loadData"
@@ -138,29 +72,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Button from '@/components/ui/Button.vue'
-import EmptyState from '@/components/ui/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import LoadingState from '@/components/ui/LoadingState.vue'
 import Tabs, { type TabItem } from '@/components/ui/Tabs.vue'
-import { useCurrentUser } from '@/core/auth/currentUser'
-import { useProjectStore } from '@/features/project'
-import {
-  fetchAiOverview,
-  fetchProjectAiPolicy,
-  listAiGroups,
-} from './api'
-import type {
-  AiGroup,
-  AiOverviewData,
-  ProjectAiPolicy,
-  ProviderItem,
-} from './types'
-import AiOverviewPanel from './overview/AiOverviewPanel.vue'
-import AiPolicyPanel from './policy/AiPolicyPanel.vue'
+import { fetchVisibleSystemAi, listAiGroups } from './api'
+import type { AiGroup, ProviderItem } from './types'
 import AiProvidersPanel from './providers/AiProvidersPanel.vue'
 import AiEvaluationPanel from './evaluation/AiEvaluationPanel.vue'
 import AiGroupsPanel from './groups/AiGroupsPanel.vue'
@@ -168,131 +88,80 @@ import AiGroupsPanel from './groups/AiGroupsPanel.vue'
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
-const projectStore = useProjectStore()
-const { user } = useCurrentUser()
-const isAdmin = computed(() => !!user.value?.isAdmin)
 
-// AI is managed here as a whole (flowgate.v02.0017 T0004 §1): the owned AI lists (시스템 AI for
-// administrators, 내 AI for everyone) next to the project's usage policy, evaluation and groups.
-type TabKey = 'overview' | 'system-ai' | 'my-ai' | 'policy' | 'evaluation' | 'groups'
-const requestedTab = ref<TabKey>('overview')
-// A non-administrator asking for 시스템 AI gets 내 AI.
-const activeTab = computed<TabKey>(() =>
-  requestedTab.value === 'system-ai' && !isAdmin.value ? 'my-ai' : requestedTab.value
-)
-// Overview's "register evaluation" opens the new-evaluation dialog once the tab is shown.
-const pendingNewEvaluation = ref(false)
-
-const currentProject = computed(() => projectStore.currentProject)
+// AI 관리 (flowgate.v02.0017 CH0006): one screen that needs no project. The AI list, the
+// evaluations and the groups all belong to the system, not to a project.
+type TabKey = 'ai' | 'evaluation' | 'groups'
+const activeTab = ref<TabKey>('ai')
 
 const loading = ref(false)
+const loaded = ref(false)
 const error = ref<string | null>(null)
 
-const overviewData = ref<AiOverviewData | null>(null)
-const policyData = ref<ProjectAiPolicy | null>(null)
+// The AI evaluation and groups can use: every enabled system AI (the server runs no other).
+const systemProviders = ref<ProviderItem[]>([])
 const groups = ref<AiGroup[]>([])
-const sectionErrors = ref<{
-  overview?: string | null
-  policy?: string | null
-  groups?: string | null
-}>({})
+const sectionErrors = ref<{ groups?: string | null }>({})
 
 let requestEpoch = 0
 
 const tabs = computed<TabItem[]>(() => [
-  { key: 'overview', label: t('gui.ai.tabs.overview') },
-  ...(isAdmin.value ? [{ key: 'system-ai', label: t('gui.ai.tabs.system_ai') }] : []),
-  { key: 'my-ai', label: t('gui.ai.tabs.my_ai') },
-  { key: 'policy', label: t('gui.ai.tabs.policy') },
+  { key: 'ai', label: t('gui.ai.tabs.ai') },
   { key: 'evaluation', label: t('gui.ai.tabs.evaluation') },
   { key: 'groups', label: t('gui.ai.tabs.groups') },
 ])
 
-// AI this project can use right now (evaluation target/judge, group members)
 const activeProviders = computed<ProviderItem[]>(() =>
-  (policyData.value?.effective?.providers ?? []).filter((p) => p.enabled !== false)
+  systemProviders.value.filter((p) => p.enabled !== false)
 )
 
+// Links from before AI 관리 (overview / system-ai / my-ai / policy / providers) open the AI list.
 function parseTab(tabParam: unknown): TabKey {
-  if (tabParam === 'system-ai' || tabParam === 'my-ai' || tabParam === 'policy' ||
-      tabParam === 'evaluation' || tabParam === 'groups') {
-    return tabParam
-  }
-  // Links from before the usage policy still open the same tab.
-  if (tabParam === 'providers') return 'policy'
-  return 'overview'
+  if (tabParam === 'evaluation' || tabParam === 'groups') return tabParam
+  return 'ai'
 }
 
 function onTabChange(newTab: string) {
-  requestedTab.value = newTab as TabKey
+  activeTab.value = parseTab(newTab)
   if (route.query.tab !== newTab) {
     void router.replace({ query: { ...route.query, tab: newTab } })
   }
 }
 
-function onNavigateTab(targetTab: 'policy' | 'evaluation' | 'groups') {
-  onTabChange(targetTab)
-}
-
-// The policy/overview read the owned lists, so they are reloaded after an edit there.
+// Evaluation and groups list the usable AI, so they are reloaded after an edit in the list.
 function onProvidersChanged() {
-  if (currentProject.value?.id) void loadData()
-}
-
-function onRegisterEvaluation() {
-  pendingNewEvaluation.value = true
-  onTabChange('evaluation')
+  if (loaded.value) void loadData()
 }
 
 async function loadData() {
-  const pId = currentProject.value?.id
-  if (!pId) return
   const epoch = ++requestEpoch
   loading.value = true
   error.value = null
 
   try {
-    const [ovRes, setRes, grpRes] = await Promise.allSettled([
-      fetchAiOverview(pId),
-      fetchProjectAiPolicy(pId),
-      listAiGroups(pId),
+    const [systemRes, grpRes] = await Promise.allSettled([
+      fetchVisibleSystemAi(),
+      listAiGroups(),
     ])
 
-    if (epoch !== requestEpoch || currentProject.value?.id !== pId) return
+    if (epoch !== requestEpoch) return
 
-    const errs: Record<string, string | null> = {}
-
-    if (ovRes.status === 'fulfilled') {
-      overviewData.value = ovRes.value
-    } else {
-      overviewData.value = null
-      errs.overview = ovRes.reason instanceof Error ? ovRes.reason.message : 'Failed to load AI overview'
-    }
-
-    if (setRes.status === 'fulfilled') {
-      policyData.value = setRes.value
-    } else {
-      policyData.value = null
-      errs.policy = setRes.reason instanceof Error ? setRes.reason.message : 'Failed to load the project AI policy'
-    }
+    systemProviders.value = systemRes.status === 'fulfilled' ? systemRes.value.providers ?? [] : []
 
     if (grpRes.status === 'fulfilled') {
       groups.value = grpRes.value
+      sectionErrors.value = {}
     } else {
       groups.value = []
-      errs.groups = grpRes.reason instanceof Error ? grpRes.reason.message : 'Failed to load AI groups'
+      sectionErrors.value = {
+        groups: grpRes.reason instanceof Error ? grpRes.reason.message : 'Failed to load AI groups',
+      }
     }
 
-    sectionErrors.value = errs
-
-    // Overall fatal error if all sections failed
-    if (
-      ovRes.status === 'rejected' &&
-      setRes.status === 'rejected' &&
-      grpRes.status === 'rejected'
-    ) {
-      error.value = 'Failed to load project AI configuration.'
+    if (systemRes.status === 'rejected') {
+      error.value = systemRes.reason instanceof Error ? systemRes.reason.message : 'Failed to load AI settings'
     }
+    loaded.value = true
   } catch (err: unknown) {
     if (epoch === requestEpoch) {
       error.value = err instanceof Error ? err.message : 'Failed to load AI settings'
@@ -307,36 +176,19 @@ async function loadData() {
 watch(
   () => route.query.tab,
   (tabVal) => {
-    if (tabVal) {
-      requestedTab.value = parseTab(tabVal)
-    }
+    activeTab.value = parseTab(tabVal)
   },
   { immediate: true }
 )
 
+// Evaluation and groups need the usable AI; the AI list loads its own data.
 watch(
-  () => currentProject.value?.id,
-  (newId) => {
-    pendingNewEvaluation.value = false
-    overviewData.value = null
-    policyData.value = null
-    if (newId) {
-      void loadData()
-    } else {
-      overviewData.value = null
-      policyData.value = null
-      groups.value = []
-      sectionErrors.value = {}
-    }
+  activeTab,
+  (tab) => {
+    if (tab !== 'ai' && !loaded.value && !loading.value) void loadData()
   },
   { immediate: true }
 )
-
-onMounted(() => {
-  if (currentProject.value?.id && !policyData.value) {
-    void loadData()
-  }
-})
 </script>
 
 <style scoped>
@@ -347,13 +199,6 @@ onMounted(() => {
   min-height: 0;
   padding: 18px 24px 24px;
   overflow: hidden;
-}
-
-.no-project-box {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 1;
 }
 
 .view-header {
