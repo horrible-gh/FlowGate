@@ -49,6 +49,8 @@
           <div v-if="loading && !items.length" class="empty-row">{{ t('gui.common.loading') }}</div>
           <div v-else-if="!items.length" class="empty-row">{{ t('gui.ai.evaluation.history_empty') }}</div>
           <div v-else-if="!visibleItems.length" class="empty-row">{{ t('gui.ai.evaluation.no_match') }}</div>
+          <!-- One line per evaluation: what was evaluated, on which task, result/state, when.
+               Judge, per-criterion scores and the review stay in the detail view. -->
           <div
             v-for="item in visibleItems"
             :key="item.evaluation_id"
@@ -58,10 +60,7 @@
             <span class="avatar-round" :class="getAvatarClass(partyName(item.target))">{{ getInitials(partyName(item.target)) }}</span>
             <div class="party-cell">
               <b>{{ partyName(item.target) }}</b>
-              <small>{{ t('gui.ai.evaluation.judged_by', { judge: judgeLabel(item) }) }}</small>
-              <small class="task-line" :title="item.task.summary || ''">
-                {{ item.evaluation_set?.name || item.task.title || t('gui.ai.evaluation.task_pending') }} · {{ formatDate(item.created_at) }}
-              </small>
+              <small class="task-line">{{ taskLabel(item) }}</small>
             </div>
             <strong v-if="item.final_score !== null" class="score" :class="scoreClass(item.final_score)">
               {{ formatScore(item.final_score) }}
@@ -69,20 +68,18 @@
             <span v-else class="score-state">
               <Badge :tone="lifecycleTone(item.lifecycle)" size="sm">{{ t(`gui.ai.evaluation.lifecycle_${item.lifecycle}`) }}</Badge>
             </span>
-            <div class="detail-bars">
-              <span
-                v-for="key in EVALUATION_CRITERIA"
-                :key="key"
-                :style="{ '--w': `${criterionScore(item, key) ?? 0}%` }"
-                :title="`${t(`gui.ai.evaluation.criteria.${key}`)} ${formatScore(criterionScore(item, key))}`"
-              >{{ t(`gui.ai.evaluation.criteria_short.${key}`) }}</span>
-            </div>
-            <p class="review-line">{{ rowSummary(item) }}</p>
+            <span class="date-cell">{{ formatDate(item.created_at) }}</span>
             <span class="row-actions" @click.stop>
               <button v-if="isActive(item)" type="button" class="action-btn action-btn--danger" @click="cancel(item)">
                 {{ t('gui.ai.evaluation.cancel') }}
               </button>
-              <span class="chev" @click="openDetail(item)">›</span>
+              <button
+                type="button"
+                class="chev"
+                :aria-label="t('gui.ai.evaluation.detail')"
+                :title="t('gui.ai.evaluation.detail')"
+                @click="openDetail(item)"
+              >›</button>
             </span>
           </div>
         </div>
@@ -184,7 +181,6 @@ import {
   type AiEvaluation,
   type AiEvaluationParty,
   type AiEvaluationSet,
-  type EvaluationCriterion,
   type EvaluationLifecycle,
   type ProviderItem,
 } from '../types'
@@ -199,7 +195,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ changed: []; newOpened: [] }>()
-const { t, te, locale } = useI18n()
+const { t, locale } = useI18n()
 
 const targetId = ref('')
 const judgeId = ref('')
@@ -252,7 +248,7 @@ const visibleItems = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
   if (!query) return items.value
   return items.value.filter((item) =>
-    [partyName(item.target), partyName(item.judge), item.task.title, item.evaluation_set?.name, item.review_summary]
+    [partyName(item.target), item.task.title, item.evaluation_set?.name]
       .some((value) => (value || '').toLowerCase().includes(query))
   )
 })
@@ -281,22 +277,9 @@ function partyName(party: AiEvaluationParty): string {
   return party.provider_name || party.provider_id
 }
 
-// "Opus · Human" when a person reviewed the evaluation (09-ai-settings.html).
-function judgeLabel(item: AiEvaluation): string {
-  return partyName(item.judge) + (item.human_review ? ' · Human' : '')
-}
-
-function criterionScore(item: AiEvaluation, key: EvaluationCriterion): number | null {
-  return item.scores.find((score) => score.key === key)?.score ?? null
-}
-
-function rowSummary(item: AiEvaluation): string {
-  if (item.review_summary) return item.review_summary
-  if (item.lifecycle === 'failed' || item.lifecycle === 'cancelled') {
-    const key = `gui.ai.evaluation.reason.${item.reason_code}`
-    return item.reason_code && te(key) ? t(key) : t(`gui.ai.evaluation.lifecycle_${item.lifecycle}`)
-  }
-  return item.task.summary || t(`gui.ai.evaluation.lifecycle_${item.lifecycle}`)
+// Evaluation set name, else the judge's task title, else "not prepared yet".
+function taskLabel(item: AiEvaluation): string {
+  return item.evaluation_set?.name || item.task.title || t('gui.ai.evaluation.task_pending')
 }
 
 function lifecycleTone(lifecycle: EvaluationLifecycle): 'neutral' | 'info' | 'success' | 'warning' | 'danger' {
@@ -532,10 +515,10 @@ onBeforeUnmount(() => {
 
 .evaluation-detail-row {
   display: grid;
-  grid-template-columns: 38px minmax(150px, 1.1fr) 64px minmax(210px, 1.3fr) minmax(160px, 1.4fr) auto;
+  grid-template-columns: 38px minmax(0, 1fr) 84px 160px auto;
   gap: 12px;
   align-items: center;
-  min-height: 64px;
+  min-height: 56px;
   padding: 10px 16px;
   border-bottom: 1px solid rgba(154, 181, 210, 0.08);
   font-size: 12.5px;
@@ -602,47 +585,10 @@ onBeforeUnmount(() => {
 .score-mid { color: #f2c46d; }
 .score-low { color: #ff9aab; }
 
-.detail-bars {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 5px 10px;
-}
-
-.detail-bars span {
-  position: relative;
-  padding-bottom: 5px;
-  font-size: 10.5px;
-  color: #9fb3c8;
-}
-
-.detail-bars span::before,
-.detail-bars span::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  height: 3px;
-  border-radius: 2px;
-}
-
-.detail-bars span::before {
-  right: 0;
-  background: #1a2d42;
-}
-
-.detail-bars span::after {
-  width: var(--w);
-  background: linear-gradient(90deg, #2f8cff, #4fd1c5);
-}
-
-.review-line {
-  margin: 0;
+.date-cell {
   font-size: 12px;
-  color: #c8d7e7;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  color: var(--fg2-muted);
+  white-space: nowrap;
 }
 
 .row-actions {
@@ -653,8 +599,12 @@ onBeforeUnmount(() => {
 }
 
 .chev {
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
   color: #6f86a0;
   font-size: 18px;
+  cursor: pointer;
 }
 
 .action-btn {
@@ -830,7 +780,6 @@ onBeforeUnmount(() => {
 
 @media (max-width: 1200px) {
   .evaluation-layout { grid-template-columns: 1fr; }
-  .evaluation-detail-row { grid-template-columns: 38px minmax(150px, 1fr) 64px minmax(200px, 1.2fr) auto; }
-  .review-line { display: none; }
+  .evaluation-detail-row { grid-template-columns: 38px minmax(0, 1fr) 72px 132px auto; }
 }
 </style>

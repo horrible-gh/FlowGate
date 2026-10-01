@@ -6,7 +6,12 @@
         <div class="page-sub">{{ t(`gui.ai.owned.${scope}.subtitle`) }}</div>
       </div>
       <div class="detail-actions">
-        <Button variant="primary" :disabled="loading || !!loadError" @click="openAddDialog">
+        <Button
+          variant="primary"
+          :disabled="loading || !!loadError || atLimit"
+          :title="atLimit ? t('gui.ai.owned.limit_reached', { max: PROVIDERS_MAX }) : undefined"
+          @click="openAddDialog"
+        >
           ＋ {{ t('gui.ai.owned.add') }}
         </Button>
       </div>
@@ -33,6 +38,9 @@
             ⌕ <input v-model="searchQuery" :placeholder="t('gui.ai.providers.search_placeholder')" />
           </label>
           <span class="detail-hint">{{ t('gui.ai.providers.custom_hint') }}</span>
+          <span class="detail-hint count-hint" :class="{ full: atLimit }">
+            {{ t('gui.ai.owned.count', { count: providers.length, max: PROVIDERS_MAX }) }}
+          </span>
         </div>
 
         <div class="provider-cards">
@@ -211,9 +219,9 @@
 </template>
 
 <script setup lang="ts">
-// Owned AI list (flowgate.v02.0017 TR0003 rev7): 시스템 AI (administrator, system settings)
-// or 내 AI (the signed-in user's own AI, personal settings). A project never edits this list;
-// it only allows and picks AI in its usage policy (AiPolicyPanel).
+// Owned AI list (flowgate.v02.0017 TR0003 rev7): 시스템 AI (administrator) or 내 AI (the
+// signed-in user's own AI), both tabs of the AI 설정 screen (T0004 §1). A project never edits
+// this list; it only allows and picks AI in its usage policy (AiPolicyPanel).
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Badge from '@/components/ui/Badge.vue'
@@ -227,6 +235,7 @@ import Toggle from '@/components/ui/Toggle.vue'
 import { fetchMyAi, fetchSystemAi, probeSystemAi, saveMyAi, saveRepeatCountMax, saveSystemAi } from '../api'
 import type { AiExecutionPolicy, AiProbeResult, ProviderItem } from '../types'
 import AiIcon from '../AiIcon.vue'
+import { PROVIDERS_MAX } from '../limits'
 import AiCommandInfoModal from './AiCommandInfoModal.vue'
 import AiProviderEditDialog from './AiProviderEditDialog.vue'
 import { getAvatarClass, getInitials, getKindToneClass } from './providerDisplay'
@@ -234,6 +243,9 @@ import { getAvatarClass, getInitials, getKindToneClass } from './providerDisplay
 const props = defineProps<{
   scope: 'system' | 'user'
 }>()
+
+// Emitted after a successful save so screens showing the policy/effective list can reload.
+const emit = defineEmits<{ changed: [] }>()
 
 const { t } = useI18n()
 
@@ -350,9 +362,15 @@ function dismissToast(id: string | number): void {
   toasts.value = toasts.value.filter((item) => item.id !== id)
 }
 
+const atLimit = computed(() => providers.value.length >= PROVIDERS_MAX)
+
 // Every change is a full save of the list (order = fallback order).
 async function persist(list: ProviderItem[], nextDefault: string | null = defaultId.value): Promise<void> {
   if (saving.value) return
+  if (list.length > PROVIDERS_MAX) {
+    error.value = t('gui.ai.owned.limit_reached', { max: PROVIDERS_MAX })
+    return
+  }
   saving.value = true
   error.value = ''
   try {
@@ -363,6 +381,7 @@ async function persist(list: ProviderItem[], nextDefault: string | null = defaul
       const data = await saveMyAi(list)
       apply(data.providers ?? [], null)
     }
+    emit('changed')
   } catch (err: unknown) {
     error.value = err instanceof Error ? err.message : t('gui.ai.providers.save_failed')
   } finally {
@@ -437,6 +456,7 @@ function onDragEnd() {
 }
 
 function openAddDialog() {
+  if (atLimit.value) return
   editingProvider.value = null
   dialogOpen.value = true
 }
@@ -521,6 +541,15 @@ function onSaveProvider(item: ProviderItem) {
 }
 
 .access-btn.listed {
+  color: #f5c46b;
+}
+
+.count-hint {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.count-hint.full {
   color: #f5c46b;
 }
 </style>

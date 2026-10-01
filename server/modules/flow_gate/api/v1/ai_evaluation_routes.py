@@ -41,15 +41,18 @@ class HumanReview(BaseModel):
 class EvaluationSetInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    # Limits are checked by the service so every rejected field is reported with its reason.
     name: str
     instruction: str
-    constraints: list[str] = []
+    constraints: list[str] | None = None
 
 
 def _error(exc: service.EvaluationError) -> JSONResponse:
     detail = {"code": exc.code, "message": exc.code.replace("_", " ").capitalize() + "."}
     if exc.evaluation_id:
         detail["evaluation_id"] = exc.evaluation_id
+    if exc.errors:
+        detail["errors"] = exc.errors
     return JSONResponse({"error": detail}, status_code=exc.status)
 
 

@@ -5,14 +5,6 @@
         <div class="page-title">{{ t('gui.ai.policy.title') }}</div>
         <div class="page-sub">{{ t('gui.ai.policy.subtitle') }}</div>
       </div>
-      <div class="detail-actions">
-        <Button v-if="isAdmin" variant="secondary" @click="openSettings('system-ai')">
-          {{ t('gui.ai.policy.manage_system') }}
-        </Button>
-        <Button variant="secondary" @click="openSettings('my-ai')">
-          {{ t('gui.ai.policy.manage_mine') }}
-        </Button>
-      </div>
     </div>
 
     <!-- AI on/off, which system AI is allowed, and whether members may use their own AI. -->
@@ -181,15 +173,12 @@
 // on/off, allows system AI (all shared ones, or only the ones it picks, in its order), allows
 // members' own AI, and picks its default. Every change is saved immediately.
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Badge from '@/components/ui/Badge.vue'
-import Button from '@/components/ui/Button.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import ToastHost, { type ToastHostItem } from '@/components/ui/ToastHost.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import Tooltip from '@/components/ui/Tooltip.vue'
-import { useCurrentUser } from '@/core/auth/currentUser'
 import { fetchCurrentConnectionTest, saveProjectAiPolicy, startConnectionTest } from '../api'
 import type { AiConnectionTest, PolicyProviderItem, ProjectAiPolicy, ProjectAiPolicyPatch, SystemAiScope } from '../types'
 import AiIcon from '../AiIcon.vue'
@@ -206,9 +195,6 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const router = useRouter()
-const { user } = useCurrentUser()
-const isAdmin = computed(() => !!user.value?.isAdmin)
 
 const policy = ref<ProjectAiPolicy>({ ...props.initialPolicy })
 const saving = ref(false)
@@ -350,10 +336,6 @@ function onDrop(providerId: string) {
 function onDragEnd() {
   dragId.value = null
   overId.value = null
-}
-
-function openSettings(tab: 'system-ai' | 'my-ai') {
-  void router.push({ path: '/settings', query: { tab } })
 }
 
 function testBadge(providerId: string): { tone: 'success' | 'warning' | 'danger' | 'info'; label: string } | null {

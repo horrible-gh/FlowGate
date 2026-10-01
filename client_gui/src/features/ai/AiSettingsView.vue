@@ -1,7 +1,27 @@
 <template>
   <div class="ai-settings-view">
-    <!-- No Project Selected -->
-    <div v-if="!currentProject" class="no-project-box">
+    <header class="view-header">
+      <div class="header-left">
+        <Tabs
+          :model-value="activeTab"
+          :tabs="tabs"
+          :aria-label="t('gui.ai.tabs_aria')"
+          @change="onTabChange"
+        />
+      </div>
+    </header>
+
+    <!-- 시스템 AI (administrators) / 내 AI (everyone): owned lists, no project needed. -->
+    <main v-if="activeTab === 'system-ai' || activeTab === 'my-ai'" class="view-content">
+      <AiProvidersPanel
+        :key="activeTab"
+        :scope="activeTab === 'system-ai' ? 'system' : 'user'"
+        @changed="onProvidersChanged"
+      />
+    </main>
+
+    <!-- Project tabs need a project -->
+    <div v-else-if="!currentProject" class="no-project-box">
       <EmptyState
         :title="t('gui.ai.no_project_title')"
         :description="t('gui.ai.no_project_desc')"
@@ -14,19 +34,7 @@
       </EmptyState>
     </div>
 
-    <!-- Active Project Content -->
     <template v-else>
-      <header class="view-header">
-        <div class="header-left">
-          <Tabs
-            v-model="activeTab"
-            :tabs="tabs"
-            :aria-label="t('gui.ai.tabs_aria')"
-            @change="onTabChange"
-          />
-        </div>
-      </header>
-
       <!-- Full-screen loading only before the first data arrives: a refresh after an edit
            keeps the open tab (and its selection/dialog state) mounted. -->
       <div v-if="loading && !overviewData && !policyData" class="view-loading">
@@ -138,6 +146,7 @@ import EmptyState from '@/components/ui/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import LoadingState from '@/components/ui/LoadingState.vue'
 import Tabs, { type TabItem } from '@/components/ui/Tabs.vue'
+import { useCurrentUser } from '@/core/auth/currentUser'
 import { useProjectStore } from '@/features/project'
 import {
   fetchAiOverview,
@@ -152,6 +161,7 @@ import type {
 } from './types'
 import AiOverviewPanel from './overview/AiOverviewPanel.vue'
 import AiPolicyPanel from './policy/AiPolicyPanel.vue'
+import AiProvidersPanel from './providers/AiProvidersPanel.vue'
 import AiEvaluationPanel from './evaluation/AiEvaluationPanel.vue'
 import AiGroupsPanel from './groups/AiGroupsPanel.vue'
 
@@ -159,9 +169,17 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const projectStore = useProjectStore()
+const { user } = useCurrentUser()
+const isAdmin = computed(() => !!user.value?.isAdmin)
 
-type TabKey = 'overview' | 'policy' | 'evaluation' | 'groups'
-const activeTab = ref<TabKey>('overview')
+// AI is managed here as a whole (flowgate.v02.0017 T0004 §1): the owned AI lists (시스템 AI for
+// administrators, 내 AI for everyone) next to the project's usage policy, evaluation and groups.
+type TabKey = 'overview' | 'system-ai' | 'my-ai' | 'policy' | 'evaluation' | 'groups'
+const requestedTab = ref<TabKey>('overview')
+// A non-administrator asking for 시스템 AI gets 내 AI.
+const activeTab = computed<TabKey>(() =>
+  requestedTab.value === 'system-ai' && !isAdmin.value ? 'my-ai' : requestedTab.value
+)
 // Overview's "register evaluation" opens the new-evaluation dialog once the tab is shown.
 const pendingNewEvaluation = ref(false)
 
@@ -183,6 +201,8 @@ let requestEpoch = 0
 
 const tabs = computed<TabItem[]>(() => [
   { key: 'overview', label: t('gui.ai.tabs.overview') },
+  ...(isAdmin.value ? [{ key: 'system-ai', label: t('gui.ai.tabs.system_ai') }] : []),
+  { key: 'my-ai', label: t('gui.ai.tabs.my_ai') },
   { key: 'policy', label: t('gui.ai.tabs.policy') },
   { key: 'evaluation', label: t('gui.ai.tabs.evaluation') },
   { key: 'groups', label: t('gui.ai.tabs.groups') },
@@ -194,7 +214,8 @@ const activeProviders = computed<ProviderItem[]>(() =>
 )
 
 function parseTab(tabParam: unknown): TabKey {
-  if (tabParam === 'policy' || tabParam === 'evaluation' || tabParam === 'groups') {
+  if (tabParam === 'system-ai' || tabParam === 'my-ai' || tabParam === 'policy' ||
+      tabParam === 'evaluation' || tabParam === 'groups') {
     return tabParam
   }
   // Links from before the usage policy still open the same tab.
@@ -203,7 +224,7 @@ function parseTab(tabParam: unknown): TabKey {
 }
 
 function onTabChange(newTab: string) {
-  activeTab.value = newTab as TabKey
+  requestedTab.value = newTab as TabKey
   if (route.query.tab !== newTab) {
     void router.replace({ query: { ...route.query, tab: newTab } })
   }
@@ -211,6 +232,11 @@ function onTabChange(newTab: string) {
 
 function onNavigateTab(targetTab: 'policy' | 'evaluation' | 'groups') {
   onTabChange(targetTab)
+}
+
+// The policy/overview read the owned lists, so they are reloaded after an edit there.
+function onProvidersChanged() {
+  if (currentProject.value?.id) void loadData()
 }
 
 function onRegisterEvaluation() {
@@ -282,7 +308,7 @@ watch(
   () => route.query.tab,
   (tabVal) => {
     if (tabVal) {
-      activeTab.value = parseTab(tabVal)
+      requestedTab.value = parseTab(tabVal)
     }
   },
   { immediate: true }

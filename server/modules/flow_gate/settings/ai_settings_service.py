@@ -42,7 +42,9 @@ CLI_COMMAND_MAX = 4000
 API_BASE_URL_MAX = 500
 API_MODEL_MAX = 200
 API_KEY_MAX = 1000
-PROVIDERS_MAX = 20
+# Owned AI per scope (the system list, or one user's own list). Raised 20 -> 300 (flowgate.v02.0017
+# T0004 §2); client_gui features/ai/limits.ts mirrors it so the screen blocks the 301st entry too.
+PROVIDERS_MAX = 300
 # Per-document-type provider assignment (flowgate.default.0317 D0004 implementation). A project's
 # workflow has a handful of worker doc types (NR/TR/TSR/TS, ...); cap generously so the map
 # stays renderable without constraining any real sequence.

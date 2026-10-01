@@ -3,6 +3,7 @@
 import { deleteRequest, extractApiErrorMessage, getRequest, patchRequest, postRequest, putRequest } from '@shared/api'
 import { normalizeApiError } from '@shared/apiErrors'
 import i18n from '@shared/i18n'
+import { PROVIDERS_MAX } from './limits'
 import type {
   AiConnectionTest,
   AiConnectionTestCurrent,
@@ -26,11 +27,47 @@ import type {
 
 const project = (projectId: string) => `/api/v1/projects/${encodeURIComponent(projectId)}`
 
+/** One rejected field of a 422 validation failure ({field, reason, index?, max?}). */
+export interface AiFieldError {
+  field: string
+  reason: string
+  index?: number
+  max?: number
+}
+
+/** A failed AI request: the localized message plus the server code and per-field reasons, so a
+ *  form can point at the field that was rejected. */
+export class AiRequestError extends Error {
+  constructor(message: string, readonly code: string | null, readonly fieldErrors: AiFieldError[]) {
+    super(message)
+    this.name = 'AiRequestError'
+  }
+}
+
+function fieldErrorsOf(source: Readonly<Record<string, unknown>>): AiFieldError[] {
+  const raw = source.errors
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return []
+    const { field, reason, index, max } = entry as Record<string, unknown>
+    if (typeof field !== 'string' || typeof reason !== 'string') return []
+    return [{
+      field,
+      reason,
+      ...(typeof index === 'number' ? { index } : {}),
+      ...(typeof max === 'number' ? { max } : {}),
+    }]
+  })
+}
+
 // The AI routes answer {"error": {"code"}}; show the localized reason for a known code
 // (gui.ai.errors.<code>) instead of one generic "failed" line, and keep an unknown code visible.
-function aiErrorMessage(error: unknown, fallback: string): string {
+function aiErrorMessage(error: unknown, fallback: string, fieldErrors: AiFieldError[]): string {
   const { code, network } = normalizeApiError(error)
   if (!network && code) {
+    if (code === 'validation_failed' && fieldErrors.some((e) => e.field === 'providers' && e.reason === 'too_many')) {
+      return String(i18n.global.t('gui.ai.owned.limit_reached', { max: PROVIDERS_MAX }))
+    }
     const key = `gui.ai.errors.${code}`
     if (i18n.global.te(key)) return String(i18n.global.t(key))
     return `${extractApiErrorMessage(error, fallback)} (${code})`
@@ -42,7 +79,9 @@ async function call<T>(request: () => Promise<{ data: T }>, fallback: string): P
   try {
     return (await request()).data
   } catch (error) {
-    throw new Error(aiErrorMessage(error, fallback))
+    const { code, source } = normalizeApiError(error)
+    const fieldErrors = fieldErrorsOf(source)
+    throw new AiRequestError(aiErrorMessage(error, fallback, fieldErrors), code, fieldErrors)
   }
 }
 

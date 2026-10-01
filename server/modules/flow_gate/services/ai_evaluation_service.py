@@ -71,6 +71,7 @@ INSTRUCTION_FILE = "instruction.md"
 SAMPLE_DIR = "sample-project"
 CONSTRAINTS_FILE = "expected-constraints.json"
 OUTPUT_DIR = "output"
+# Judge-invented tasks only; an evaluation set brings its own (fixed) constraints.
 MAX_CONSTRAINTS = 20
 MAX_TASK_FILES = 20
 MAX_TASK_FILE_CHARS = 64_000
@@ -78,6 +79,12 @@ MAX_ARTIFACT_FILES = 60
 MAX_ARTIFACT_READ_BYTES = 256 * 1024
 ARTIFACT_EXCERPT_CHARS = 4_000
 REVIEW_ARTIFACT_BUDGET_CHARS = 60_000
+# Evaluation set input (flowgate.v02.0017 T0004 §5). client_gui features/ai/limits.ts mirrors
+# these values so the dialog can reject the same input before it is sent.
+SET_NAME_MAX = 200
+SET_INSTRUCTION_MAX = 4000
+SET_CONSTRAINT_MAX = 4000
+SET_CONSTRAINTS_MAX = 100
 _PATH_PART = re.compile(r"[A-Za-z0-9_\-][A-Za-z0-9_.\-]{0,99}\Z")
 _SKIPPED_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv"}
 _LANGUAGES = {"ko": "Korean", "en": "English", "ja": "Japanese"}
@@ -87,8 +94,11 @@ _RUNS_LOCK = threading.RLock()
 
 
 class EvaluationError(Exception):
-    def __init__(self, code: str, status: int, evaluation_id: str | None = None):
+    def __init__(self, code: str, status: int, evaluation_id: str | None = None,
+                 errors: list[dict] | None = None):
         self.code, self.status, self.evaluation_id = code, status, evaluation_id
+        # Per-field reasons ({field, reason, index?, max?}) for a 422 validation failure.
+        self.errors = errors
         super().__init__(code)
 
 
@@ -302,15 +312,41 @@ def list_sets(project_id: str) -> dict:
     return {"items": [_set_public(row) for row in repo.list_sets(project_id)]}
 
 
+def _text_error(field: str, value, limit: int) -> dict | None:
+    if not isinstance(value, str):
+        return {"field": field, "reason": "invalid_type"}
+    if not value.strip():
+        return {"field": field, "reason": "required"}
+    if len(value.strip()) > limit:
+        return {"field": field, "reason": "too_long", "max": limit}
+    return None
+
+
 def _set_fields(project_id: str, data: dict, own_id: str | None = None) -> dict:
-    name, instruction, constraints = data.get("name"), data.get("instruction"), data.get("constraints") or []
-    if not isinstance(name, str) or not name.strip() or len(name.strip()) > 200:
-        raise EvaluationError("evaluation_set_invalid", 422)
-    if not isinstance(instruction, str) or not instruction.strip() or len(instruction) > 12_000:
-        raise EvaluationError("evaluation_set_invalid", 422)
-    if (not isinstance(constraints, list) or len(constraints) > MAX_CONSTRAINTS or
-            not all(isinstance(item, str) and len(item) <= 500 for item in constraints)):
-        raise EvaluationError("evaluation_set_invalid", 422)
+    """Validate and normalize one evaluation set. Every rejected field is reported (no early stop)
+    so the dialog can show which field failed and why. Blank constraints are dropped before the
+    count/length rules apply, the same way the dialog drops empty rows."""
+    name, instruction, constraints = data.get("name"), data.get("instruction"), data.get("constraints")
+    errors = [error for error in (_text_error("name", name, SET_NAME_MAX),
+                                  _text_error("instruction", instruction, SET_INSTRUCTION_MAX)) if error]
+    kept: list[str] = []
+    if constraints is None:
+        constraints = []
+    if not isinstance(constraints, list):
+        errors.append({"field": "constraints", "reason": "invalid_type"})
+    else:
+        for index, item in enumerate(constraints):
+            if not isinstance(item, str):
+                errors.append({"field": "constraints", "index": index, "reason": "invalid_type"})
+            elif len(item.strip()) > SET_CONSTRAINT_MAX:
+                errors.append({"field": "constraints", "index": index, "reason": "too_long",
+                               "max": SET_CONSTRAINT_MAX})
+            elif item.strip():
+                kept.append(item.strip())
+        if len(kept) > SET_CONSTRAINTS_MAX:
+            errors.append({"field": "constraints", "reason": "too_many", "max": SET_CONSTRAINTS_MAX})
+    if errors:
+        raise EvaluationError("evaluation_set_invalid", 422, errors=errors)
     name = name.strip()
     key = unicodedata.normalize("NFKC", name).casefold()
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
@@ -318,7 +354,7 @@ def _set_fields(project_id: str, data: dict, own_id: str | None = None) -> dict:
     if same is not None and same["set_id"] != own_id:
         raise EvaluationError("evaluation_set_name_conflict", 409)
     return {"name": name, "name_key": key, "name_key_hash": digest, "instruction": instruction.strip(),
-            "constraints": json.dumps([c.strip() for c in constraints if c.strip()], ensure_ascii=False)}
+            "constraints": json.dumps(kept, ensure_ascii=False)}
 
 
 def create_set(project_id: str, data: dict, created_by: str | None) -> dict:
@@ -391,10 +427,10 @@ def _worker(project_id: str, evaluation_id: str, state: dict) -> None:
             return
         fixed = state.get("set")
         task = _parse_task(_call(judge, _prepare_prompt(state["language"], root, fixed), handle,
-                                 PREPARE_TIMEOUT_SEC, scratch, run_id))
+                                 PREPARE_TIMEOUT_SEC, scratch, run_id), fixed=bool(fixed))
         if fixed:
             # An evaluation set fixes the task; the judge only adds files and the standard.
-            task["instruction"] = fixed["instruction"][:12_000]
+            task["instruction"] = fixed["instruction"]
             task["constraints"] = list(fixed["constraints"])
         baseline = _materialize(workspace, task)
         repo.write_criteria(evaluation_id, [{"key": key, "description": task["criteria"][key]}
@@ -462,7 +498,7 @@ def _prepare_prompt(language: str, root: str, fixed: dict | None = None) -> str:
         design = f"""The task is FIXED by an evaluation set. Do not change it.
 Instruction (copy it unchanged into "instruction"):
 {fixed['instruction']}
-Constraints (copy them into "constraints"; add none if the list is non-empty):
+Constraints (fixed; the server writes them itself, so reply with "constraints": []):
 {given}
 Provide the starting files the instruction needs, a title, a summary and the standard below."""
     else:
@@ -611,7 +647,7 @@ def _safe_path(raw) -> str:
     return path.as_posix()
 
 
-def _parse_task(text: str) -> dict:
+def _parse_task(text: str, fixed: bool = False) -> dict:
     data = _json_object(text, "instruction")
     criteria = data.get("criteria")
     if not isinstance(criteria, dict):
@@ -629,7 +665,8 @@ def _parse_task(text: str) -> dict:
             raise _StageFailed("judge_output_invalid", "A task file was duplicated, missing content or too large.")
         seen.add(path)
         clean_files.append({"path": path, "content": content})
-    constraints = data.get("constraints") or []
+    # A set's constraints replace the judge's list, so whatever the judge echoed is not checked.
+    constraints = [] if fixed else (data.get("constraints") or [])
     if not isinstance(constraints, list) or len(constraints) > MAX_CONSTRAINTS:
         raise _StageFailed("judge_output_invalid", "The constraint list was invalid or too long.")
     return {
