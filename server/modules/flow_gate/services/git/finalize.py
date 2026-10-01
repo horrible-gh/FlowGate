@@ -1081,6 +1081,10 @@ def finalize(
             # from its merge inputs — never a closed attempt with the group stuck.
             ledger_merge_id = attempt.merge_id if attempt is not None else None
             target_branch = attempt.target_branch if attempt is not None else base_branch
+            # A retry can merge cleanly after its held base advances, so no new
+            # conflict session exists to consume the old checkpoint by merge_id.
+            # The target is proven merged (and pushed when requested) at this point.
+            _gs.db_git.consume_active_resolution_checkpoint(project_id, group_id)
             if approval_context is not None:
                 record_clean_approval_retry("merged", merge_commit)
                 if ledger_merge_id is not None:
@@ -1383,7 +1387,8 @@ def _finalize_merge_attempt(
     # work subject — the absorb commit above already holds finalize_subject().
     # Reusing it here stamped two commits of identical title+diff onto origin.
     proc = _gs._run_git(
-        [*_gs._GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "merge", "--no-ff", "-m",
+        [*_gs._GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "-c", "rerere.enabled=false",
+         "-c", "rerere.autoupdate=false", "merge", "--no-ff", "-m",
          _merge_commit_subject(branch, target_branch), branch],
         cwd=merge_root, author_env=author_env,
     )
@@ -1483,7 +1488,9 @@ def _finalize_merge_attempt(
     # and a real conflict keeps only its real chunks. 0594: 10 files / 28 chunks
     # became 6 / 24.
     _gs.apply_eol_separation(merge_id, merge_root)
+    from . import rerere_checkpoint
     _gs._set_status(group_id, "conflict", merge_id=merge_id)
+    recovery = rerere_checkpoint.start_session(group_id, merge_id, merge_root)
     # 0205 L §2.1: DO NOT transfer the lock to the session. The conflict wait
     # is expressed by the persistent 'conflict' state + open session. Manual
     # finalize releases its own lock in finalize(); approval finalize leaves the
@@ -1499,6 +1506,7 @@ def _finalize_merge_attempt(
         "result": {
             "action": action, "status": "conflict", "merge_commit": None,
             "pushed": False, "merge_id": merge_id, "conflict_files": files,
+            "checkpoint_recovery": recovery,
             # None for a manual finalize conflict: only an approval-coupled one
             # parks an intent here (T0008 §15 "no intent is forced on every session").
             "approval_intent_id": (

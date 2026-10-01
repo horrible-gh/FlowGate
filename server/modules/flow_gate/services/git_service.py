@@ -1647,6 +1647,8 @@ CANCEL_LOCK_WAIT_SEC = LOCK_WAIT_SEC
 # keeps its conflict as a session row, the Git status panel opens an inline editor on that
 # row, and an AI can be handed a token bound to that merge_id and asked to resolve it. All
 
+from .git.rerere_checkpoint import hold as hold_merge
+
 from .git.conflict import (
     TR_CONFLICT_REVIEW_OPEN,
     _chunk_added_lines,
@@ -2869,6 +2871,7 @@ def _complete_merge_review(
         group_id, merge_id, project_id, merge_commit_short, pushed,
         emit=False, cleanup_slot=False,
     )
+    db_git.consume_resolution_checkpoint(merge_id)
     approval = (
         approval_intent.commit_deferred_approval(group_id, merge_id, intent)
         if intent is not None else None
@@ -3277,8 +3280,8 @@ def reject_merge_review(
         # at restoration_verification_failed on a server that has none — the merge
         # never ran, so no marker could come back (0555 T0008 §7).
         redo = _run_git(
-            [*_GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "merge",
-             "--no-commit", "--no-ff", branch],
+            [*_GIT_IDENT, "-c", "merge.conflictStyle=zdiff3", "-c", "rerere.enabled=false",
+             "-c", "rerere.autoupdate=false", "merge", "--no-commit", "--no-ff", branch],
             cwd=base_root, timeout=GIT_LOCAL_TIMEOUT_SEC,
         )
         remaining = _unmerged_paths(base_root)

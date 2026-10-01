@@ -55,6 +55,17 @@
            around the body. That is the wrapper's only job: it adds no state and no condition,
            and its CSS is the flex column the surface body used to be. -->
       <div class="git-conflict-body" @keydown="onResolverKeydown">
+        <p v-if="allowHold && !savedResolvedCount" class="git-conflict-checkpoint-result">
+          {{ t('main.git_finalize.hold_no_resolution') }}
+        </p>
+        <p v-if="checkpointRecovery" class="git-conflict-checkpoint-result">
+          {{ t('main.git_finalize.checkpoint_recovery', {
+            previous: checkpointRecovery.previous_resolved,
+            reused: checkpointRecovery.reused_paths.length,
+            invalid: checkpointRecovery.invalid_paths.length,
+            remaining: checkpointRecovery.remaining_conflicts,
+          }) }}
+        </p>
         <div v-if="loadStatus === 'loading'" class="git-conflict-loading">
           <AppIcon name="spinner" spin />
           {{ t('main.git_finalize.loading_conflicts') }}
@@ -293,6 +304,9 @@
           <template #action-ai-invoke>
             <AppIcon name="robot" /> {{ t('main.git_finalize.invoke_conflict_ai') }}
           </template>
+          <template #action-hold>
+            <AppIcon name="pause" /> {{ t('main.git_finalize.hold') }}
+          </template>
           <template #action-abort>
             <AppIcon name="prohibit" /> {{ t('main.git_finalize.abort') }}
           </template>
@@ -375,10 +389,20 @@ const props = defineProps<{
   // Opt-outs for the same reason `hideAiActions` is one: an omitted prop stays `false`.
   hideAutoAuthority?: boolean
   hideCopyMention?: boolean
+  allowHold?: boolean
+  allowPartialResolve?: boolean
+  savedResolvedCount?: number
+  checkpointRecovery?: {
+    previous_resolved: number
+    reused_paths: string[]
+    invalid_paths: string[]
+    remaining_conflicts: number
+  } | null
 }>()
 const emit = defineEmits<{
   close: []
   abort: []
+  hold: []
   submit: [auto: boolean]
   retry: []
   'ai-invoke': [message: string, auto: boolean]
@@ -512,6 +536,19 @@ const footerActions = computed<DialogAction[]>(() => {
       onSelect: () => emit('ai-invoke', conflictMessage.value.trim(), autoResolve.value),
     })
   }
+  if (props.allowHold) {
+    actions.push({
+      id: 'hold',
+      label: t('main.git_finalize.hold'),
+      role: 'aux',
+      disabled: props.busy || !props.savedResolvedCount,
+      onSelect: () => {
+        if (window.confirm(t('main.git_finalize.hold_confirm', { n: props.savedResolvedCount || 0 }))) {
+          emit('hold')
+        }
+      },
+    })
+  }
   actions.push({
     id: 'abort',
     label: t('main.git_finalize.abort'),
@@ -523,7 +560,7 @@ const footerActions = computed<DialogAction[]>(() => {
     id: 'submit',
     label: t('main.git_finalize.resolve_submit'),
     role: 'primary',
-    disabled: props.busy || !allConflictsResolved.value,
+    disabled: props.busy || (!allConflictsResolved.value && !(props.allowPartialResolve && props.files.some(isFileResolved))),
     onSelect: () => emit('submit', autoResolve.value),
   })
   return actions

@@ -24,6 +24,7 @@ GET            /api/v1/groups/{group_id}/git/merge/{merge_id}/conflicts
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/tr-commit
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/resolve
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/resolve-token
+POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/hold
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/abort
 GET            /api/v1/groups/{group_id}/git/merge/{merge_id}/review          (0481 D0006/L0007)
 GET            /api/v1/groups/{group_id}/git/merge/{merge_id}/review-diff     (0481 D0006/L0007)
@@ -847,6 +848,17 @@ def post_merge_resolve_token(
         ):
             token_service.consume(auth["token_id"], auth["project"])
         return result
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/groups/{group_id}/git/merge/{merge_id}/hold")
+def post_merge_hold(group_id: str, merge_id: int, user=Depends(get_current_user)):
+    denied = _check_group_permission(user, group_id, "project.settings.edit")
+    if denied:
+        return denied
+    try:
+        return git_service.hold_merge(group_id, merge_id)
     except GitServiceError as exc:
         return _guard(exc)
 

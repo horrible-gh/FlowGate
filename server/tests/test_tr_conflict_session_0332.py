@@ -551,7 +551,7 @@ def test_the_sweep_closes_a_session_whose_revert_is_no_longer_in_flight(
 
 # ── 5. AI 에게 어느 질문인지 말해 준다 ────────────────────────────────────────
 
-def test_the_ai_mention_tells_a_revert_apart_from_a_merge():
+def test_the_ai_mention_tells_a_revert_apart_from_a_merge(monkeypatch):
     """같은 충돌 표식이라도 물음이 다르다.
 
     병합은 "두 갈래를 합쳐라"라서 양쪽을 다 남기면 대체로 맞는다. 되돌리기에 그 습관을
@@ -560,6 +560,8 @@ def test_the_ai_mention_tells_a_revert_apart_from_a_merge():
     """
     # 지연 임포트: 이 모듈은 앱 설정(ALLOWED_ORIGIN/CONTEXT)을 끌고 오므로 수집
     # 시점에 올리면 스위트 전체가 collection error 로 죽는다.
+    # Self-check Windows worker may have no USERNAME; PyMySQL imports getpass.
+    monkeypatch.setenv("USERNAME", "FlowGateTest")
     from modules.flow_gate.api import token_routes
 
     merge = token_routes._conflict_task_section("merge", {})
