@@ -329,6 +329,11 @@ def approve(*, doc_id: str, actor_user_id: str, user_permissions: set[str],
             replay = db_attempts.by_request_key(request_key)
             if replay and replay["state"] != "in_progress":
                 return _replay(replay)
+        # 0660 T0004 §3 (RC3): a reopen whose commit cancel was blocked leaves this TR2's
+        # previous approval commit live. Approving on top of it would commit again over the
+        # already-applied source; only a successful cancel retry clears the state.
+        if tr2.revert_pending(doc):
+            _raise("tr2_revert_pending", "tr_commit", reason="commit_cancel_blocked")
         if db_attempts.recovery_required(doc_id):
             _raise("tr2_recovery_required", "prior_attempt")
         active = db_attempts.in_progress(doc_id)

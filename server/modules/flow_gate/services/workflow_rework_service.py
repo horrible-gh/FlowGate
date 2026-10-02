@@ -325,6 +325,9 @@ def _reopen_in_transaction(
     )
 
     reopened: list[str] = []
+    # 0660 T0004 §4 (S2): every document this rewind removes, so a client can close its tab
+    # whichever entry point (strip cell or AC tab) started the rewind.
+    deleted: list[str] = []
     for candidate in group_docs:
         type_code = candidate.get("type_code")
         if type_code == "AC":
@@ -332,6 +335,7 @@ def _reopen_in_transaction(
                 _archive_ac(candidate, reason=reason, run_id=run_id)
             else:
                 db_docs.delete(candidate["doc_id"])
+                deleted.append(candidate["doc_id"])
             continue
         if (
             type_code in WORKFLOW_ROOT_TYPES
@@ -390,7 +394,8 @@ def _reopen_in_transaction(
     except Exception as exc:  # pragma: no cover - audit remains best-effort for manual compatibility
         logger.warning("[workflow reopen] event logging failed: %s", exc, exc_info=True)
 
-    return {"ok": True, "reopened": reopened, "return_point": return_point_payload(group_id)}
+    return {"ok": True, "reopened": reopened, "deleted": deleted,
+            "return_point": return_point_payload(group_id)}
 
 
 # 0332 D0005 §4 — the rewind's audit trail also carries what happened to the source
@@ -490,6 +495,47 @@ def _rearm_git(
     return cancel_result
 
 
+REVERT_PENDING_CODE = "workflow_revert_pending"
+
+
+def assert_no_revert_pending(group_id: str) -> None:
+    """Refuse a group workflow mutation while a Time Machine commit cancel is pending.
+
+    0660 T0004 §3 (RC3, approach B): after a blocked cancel the reopened TR2's approval
+    commit is still live. Guarding only that TR2 is not enough — a second rewind to an
+    earlier step moves the return point (so the cancel retry no longer walks that TR2),
+    and the new, earlier head could then be approved and the workflow advanced with the
+    commit still in the source. Until ``/return-point/cancel-commits`` succeeds, every
+    group workflow mutation (rewind, forward restore, reapply, next step, final approval)
+    is refused with this identified 409; the cancel retry itself is the one path left open.
+    """
+    from modules.flow_gate.documents import tr2_service
+
+    pending = tr2_service.group_revert_pending(group_id)
+    if pending:
+        raise git_service.GitServiceError(
+            409, REVERT_PENDING_CODE,
+            "a Time Machine commit cancel is still pending for this group; retry the cancel first",
+            details={"doc_ids": pending},
+        )
+
+
+def _revert_pending_docs(doc_ids: list[str]) -> list[str]:
+    from modules.flow_gate.documents import tr2_service
+
+    pending: list[str] = []
+    for reopened_id in doc_ids:
+        try:
+            reopened_doc = db_docs.get_by_id(reopened_id)
+            if (reopened_doc and reopened_doc.get("type_code") == "TR2"
+                    and tr2_service.revert_pending(reopened_doc)):
+                pending.append(reopened_id)
+        except Exception as exc:  # pragma: no cover - reporting only; the guard is authoritative
+            logger.warning("[workflow reopen] revert-pending probe failed for %s: %s",
+                           reopened_id, exc, exc_info=True)
+    return pending
+
+
 def reopen_to_target(
     doc_id: str,
     target_seq: int,
@@ -520,6 +566,7 @@ def reopen_to_target(
         user_id=_actor_user_id(actor), group_id=group_id, run_id=run_id
     )
     assert_group_mutation_allowed(group_id, principal, "workflow reopen")
+    assert_no_revert_pending(group_id)
     # NR0003 R2 (flowgate.default.0477): conflict/merging hold a live git session — refuse
     # the reopen itself (409) BEFORE the rewind transaction below, instead of letting the
     # workflow layer roll back while _rearm_git silently leaves the session untouched.
@@ -556,6 +603,12 @@ def reopen_to_target(
             )
         if cancel_result is not None:
             result["tr_commit_cancel"] = cancel_result
+        # 0660 T0004 §3 (RC3, approach B): the rewind stands even when git blocked the
+        # commit cancel (D0005 K8), but a reopened TR2 whose approval commit is still live
+        # is NOT reopened for editing yet — tr2_service.revert_pending keeps it immutable
+        # and unapprovable until a cancel retry succeeds. Name those documents so the
+        # client can say so instead of presenting an editable proposal.
+        result["revert_pending"] = _revert_pending_docs(result.get("reopened") or [])
         from modules.flow_gate.documents.tr2_service import notify_group_history_changed
         notify_group_history_changed(group_id)
         return result

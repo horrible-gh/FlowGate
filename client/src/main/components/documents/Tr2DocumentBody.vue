@@ -63,6 +63,9 @@
       </div>
 
       <p v-if="lockKey" class="tr2-note" data-testid="tr2-lock">{{ t(lockKey) }}</p>
+      <div v-if="revertPending" class="tr2-retry" data-testid="tr2-revert-retry-block">
+        <button type="button" class="btn btn-primary btn-sm" data-testid="tr2-revert-retry" :disabled="cancelRetrying" @click="retryCommitCancel">{{ cancelRetrying ? t('main.tr2_body.revert_retry.running') : t('main.tr2_body.revert_retry.action') }}</button>
+      </div>
       <p v-if="staleWhileEditing" class="tr2-error">{{ t('main.tr2_body.errors.stale_while_editing') }}</p>
 
       <div class="tr2-split">
@@ -185,6 +188,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { deleteRequest, getRequest, postRequest, putRequest } from '@shared/api'
+import { resolveGitError } from '@shared/gitErrors'
 import type { Tab } from '../../stores/tabs'
 import Tr2ItemEditor from './Tr2ItemEditor.vue'
 import Tr2RevisionPanel from './Tr2RevisionPanel.vue'
@@ -269,6 +273,42 @@ const lockKey = computed(() => {
   const reason = view.value.mutation?.reason ?? (view.value.document.editable ? null : 'not_editable')
   return reason && te(`main.tr2_body.lock.${reason}`) ? `main.tr2_body.lock.${reason}` : null
 })
+// 0660 T0004 §3 (RC3): while a Time Machine commit cancel is pending the whole group is
+// held (no rewind, no next step, no approval) and the cancel retry is the one way out. The
+// rewind dialog's [다시 시도] is gone once that dialog is closed or the page reloads, so the
+// proposal itself offers the same retry (`/return-point/cancel-commits`), from any tab,
+// session or browser, decided by the server state it reads.
+const cancelRetrying = ref(false)
+const revertPending = computed(() => !props.readOnly && view.value?.mutation?.reason === 'revert_pending')
+function cancelBlockedReason(reason: unknown): string {
+  const key = `main.time_machine.reason_${typeof reason === 'string' && reason ? reason : 'not_attempted'}`
+  return t(te(key) ? key : 'main.time_machine.reason_not_attempted')
+}
+async function retryCommitCancel() {
+  if (cancelRetrying.value) return
+  cancelRetrying.value = true
+  notice.value = ''
+  let outcome: { notice: string } | { error: string }
+  try {
+    const response = await postRequest<Row>(
+      `/api/v1/documents/workflow/${encodeURIComponent(props.tab.id)}/return-point/cancel-commits`, {})
+    const result = (response.data?.tr_commit_cancel ?? {}) as Row
+    const canceled = Array.isArray(result.canceled)
+      && result.canceled.some((row: Row) => row?.doc_id === props.tab.id)
+    outcome = canceled
+      ? { notice: t('main.tr2_body.revert_retry.done') }
+      : { error: t('main.tr2_body.revert_retry.blocked', { reason: cancelBlockedReason(result.blocked_reason) }) }
+  } catch (exc) {
+    outcome = { error: resolveGitError(exc, t) }
+  } finally {
+    cancelRetrying.value = false
+  }
+  // Re-read first: refresh() clears `error` on a successful read, and the outcome of the
+  // retry is what the reviewer must still see afterwards.
+  await refresh()
+  if ('notice' in outcome) { notice.value = outcome.notice; error.value = '' } else { error.value = outcome.error }
+  window.dispatchEvent(new CustomEvent('fg:open_docs_refresh', { detail: { project: props.tab.projectId ?? null, doc_id: props.tab.id, source: 'tr2_body' } }))
+}
 const retryBlockedKey = computed(() => {
   const reason = retry.value?.reason
   if (!reason || !['recovery_required', 'not_retryable', 'revision_changed'].includes(reason)) return null

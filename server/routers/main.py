@@ -51,6 +51,7 @@ from modules.flow_gate.api.v1.agent_job_routes import router as _agent_job_route
 from modules.flow_gate.api.request_scope_middleware import RequestScopeMiddleware
 from modules.flow_gate.services.git_service import GitServiceError
 from modules.flow_gate.services.git.credentials import git_error_envelope
+from modules.flow_gate.workflow.pipeline_service import WorkflowSlotConflictError
 from modules.flow_gate.services.mutation_policy import (
     GroupMutationPolicyMiddleware,
     MutationPolicyError,
@@ -146,6 +147,17 @@ async def git_service_exception_handler(request: Request, exc: GitServiceError):
 @app.exception_handler(MutationPolicyError)
 async def mutation_policy_exception_handler(request: Request, exc: MutationPolicyError):
     return mutation_error_response(exc)
+
+
+# 0660 T0004 §2 (RC2): a refused workflow slot write (the slot already holds another
+# document, or the document already sits in another slot) is a workflow conflict, not a
+# server fault. Uncaught it surfaced as a bare 500 the create dialog could only render as
+# "an error occurred". The exception already carries the identified {"error": {...}}
+# envelope (document/slot ids only, no paths), so answer it as the 409 it is — once,
+# here, for every route that registers a workflow result.
+@app.exception_handler(WorkflowSlotConflictError)
+async def workflow_slot_conflict_exception_handler(request: Request, exc: WorkflowSlotConflictError):
+    return JSONResponse(status_code=409, content=exc.body())
 
 
 app.add_middleware(SlowAPIMiddleware)

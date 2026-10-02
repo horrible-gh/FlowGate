@@ -37,6 +37,9 @@ def _install_doc(monkeypatch, doc: dict):
     mock_docs.update.side_effect = update
     monkeypatch.setattr(ps, "db_docs", mock_docs)
     monkeypatch.setattr(ps, "log_state_changed", MagicMock())
+    # The workflow-head guard (0660 T0004 §5) fails closed without a sequence store, which
+    # these DB-less unit tests do not have; it is covered by test_tr2_lifecycle_0660.py.
+    monkeypatch.setattr(ps, "_require_workflow_head_for_approval", lambda doc, locale="ko": None)
     return current, mock_docs
 
 
@@ -179,6 +182,9 @@ def test_fileless_ac_approval_finalizes_root_and_realizes_git(monkeypatch):
     docs.update.side_effect = update
     monkeypatch.setattr(ps, "db_docs", docs)
     monkeypatch.setattr(workflow, "db_docs", docs)
+    # The workflow-head guard (0660 T0004 §5) fails closed without a sequence store, which
+    # these DB-less unit tests do not have; it is covered by test_tr2_lifecycle_0660.py.
+    monkeypatch.setattr(ps, "_require_workflow_head_for_approval", lambda doc, locale="ko": None)
     monkeypatch.setattr(ps.db_wfseq, "get_sequence_by_doc_id", lambda _root_id: {"id": 10})
     monkeypatch.setattr(ps.db_wfseq, "get_effective_head", lambda _sequence_id: None)
     monkeypatch.setattr(ps, "log_state_changed", MagicMock())

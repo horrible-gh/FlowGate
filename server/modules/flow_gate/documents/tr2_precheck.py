@@ -189,6 +189,9 @@ def readiness(doc: dict, body: dict) -> dict:
               "edits": [], "worktree_clean": None}
     if get_doc_review_rule(doc.get("doc_review_status") or "", "approve") != "approved":
         return {**result, "reason": "review_status"}
+    if tr2.revert_pending(doc):
+        # 0660 T0004 §3 (RC3): the reopen's commit cancel has not happened yet.
+        return {**result, "reason": "revert_pending", "code": "tr2_revert_pending"}
     if db_attempts.recovery_required(doc["doc_id"]):
         return {**result, "reason": "recovery_required", "code": "tr2_recovery_required"}
     if db_attempts.in_progress(doc["doc_id"]):

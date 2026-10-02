@@ -635,10 +635,18 @@ async function fetchDocOnce(id: string, opts?: { silent?: boolean }): Promise<bo
   let res
   try {
     res = await getRequest<DocDetail>(`/api/v1/documents/detail?doc_id=${encodeURIComponent(id)}`)
-  } catch {
+  } catch (e: any) {
     // A newer request or confirmed transition superseded this request. Its owner is
     // responsible for the current state, so do not retry this obsolete generation.
     if (fetchGeneration !== docFetchGeneration) return true
+    // 0660 T0004 §4 (S2): the document itself is gone (e.g. an AC a Time Machine rewind
+    // deleted). Keeping the tab would replay "Document not found" after every reload and
+    // re-login, because the tab list lives in localStorage — drop it instead.
+    if (e?.response?.status === 404 && props.tab.id === id) {
+      tabsStore.closeTab(id)
+      showToast(t('main.doc_header.toast_missing_doc_tab_closed', { docId: id }), 'warning')
+      return false
+    }
     // Request failed. In silent mode keep whatever state we already hold (e.g. the
     // optimistic post-decision state) rather than blanking the header — a transient
     // detail-GET failure must not make a decided doc look undecided again.

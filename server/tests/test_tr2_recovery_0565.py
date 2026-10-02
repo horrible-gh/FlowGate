@@ -371,14 +371,20 @@ def test_readiness_names_what_approval_would_refuse(env):
 def test_readiness_after_a_reopen_requires_a_new_revision(env):
     """A Time Machine reopen puts an applied revision back in review; approval would refuse
     it (tr2_history_revision_required), so the read model must not call it ready."""
-    from modules.flow_gate.db import documents as db_docs
+    from modules.flow_gate.services import workflow_rework_service
+    from modules.flow_gate.services.mutation_policy import human_principal
     group = make_group("0110")
     client = full_api()
     (env["repo"] / "gate.ok").write_bytes(b"ok")
     t2 = auto_approved_t2(group)
     doc_id = submit_tr2(group, t2)
     assert approve(client, doc_id, 1, request_key="reopen:0110").status_code == 200
-    db_docs.update(doc_id, {"doc_review_status": "pending_review"})  # what a reopen leaves
+    # 0660 T0004 §3: a real reopen (status AND commit cancel). Flipping only the status
+    # is the RC3 state, which test_tr2_lifecycle_0660 covers as revert_pending.
+    user = {"user_id": USER, "is_admin": 1, "username": "tr2reviewer"}
+    workflow_rework_service.reopen_to_target(
+        doc_id=doc_id, target_seq=doc_row(doc_id)["seq"], actor=user,
+        mutation_context=human_principal(user))
     state = view(client, doc_id)["readiness"]
     assert (state["ready"], state["code"]) == (False, "tr2_history_revision_required")
     again = approve(client, doc_id, 1, request_key="reopen:0110:again")

@@ -39,6 +39,8 @@ const ERROR_KEYS: Readonly<Record<string, string>> = Object.freeze({
   forbidden: 'forbidden',
   invalid_state: 'invalid_state',
   invalid_request: 'invalid_request',
+  // 0660 T0004 §3 (RC3): a group whose Time Machine commit cancel is still pending.
+  workflow_revert_pending: 'workflow_revert_pending',
 })
 
 export function resolveGitError(

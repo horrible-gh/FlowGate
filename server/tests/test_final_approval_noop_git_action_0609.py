@@ -67,6 +67,9 @@ def _install(monkeypatch, ac, root, *, cfg, state, is_noop):
     monkeypatch.setattr(workflow, "db_docs", docs)
     monkeypatch.setattr(ps.db_wfseq, "get_sequence_by_doc_id", lambda _root_id: {"id": 10})
     monkeypatch.setattr(ps.db_wfseq, "get_effective_head", lambda _sequence_id: None)
+    # The workflow-head guard (0660 T0004 §5) fails closed without a sequence store, which
+    # this DB-less fixture does not have; it is covered by test_tr2_lifecycle_0660.py.
+    monkeypatch.setattr(ps, "_require_workflow_head_for_approval", lambda doc, locale="ko": None)
     monkeypatch.setattr(ps, "log_state_changed", MagicMock())
     monkeypatch.setattr(workflow.process_service, "is_group_disposed", lambda _group_id: False)
     monkeypatch.setattr(workflow.git_service, "realize_wf_done_transition", MagicMock())
