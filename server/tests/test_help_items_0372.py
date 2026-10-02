@@ -94,6 +94,35 @@ def _hidden(body):
     return {entry["name"]: entry["reason"] for entry in body["hidden"]}
 
 
+def test_tr_review_hides_bundle_snapshot_help_and_notice(monkeypatch):
+    client = _client(monkeypatch, _token("review"), step_type="TR")
+    body = client.get("/api/v1/help").json()
+    names = _names(body)
+    hidden = _hidden(body)
+    assert "source_tools" in names
+    assert "source_bundles" not in names
+    assert "source_snapshots" not in names
+    assert hidden["source_bundles"] == "tr_review_live_source_only"
+    assert hidden["source_snapshots"] == "tr_review_live_source_only"
+
+    notices = client.get("/api/v1/help/items/notices").json()["content"]["lines"]
+    assert help_catalog.NOTICE_LINES["ko"]["source_snapshot_policy"] not in notices
+    assert client.get("/api/v1/help/items/source_bundles").status_code == 403
+    assert client.get("/api/v1/help/items/source_snapshots").status_code == 403
+
+
+def test_non_tr_review_keeps_bundle_snapshot_help_and_notice(monkeypatch):
+    client = _client(monkeypatch, _token("review"), step_type="D")
+    body = client.get("/api/v1/help").json()
+    names = _names(body)
+    assert "source_bundles" in names
+    assert "source_snapshots" in names
+    assert client.get("/api/v1/help/items/source_bundles").status_code == 200
+    assert client.get("/api/v1/help/items/source_snapshots").status_code == 200
+    notices = client.get("/api/v1/help/items/notices").json()["content"]["lines"]
+    assert help_catalog.NOTICE_LINES["ko"]["source_snapshot_policy"] in notices
+
+
 # ── index ────────────────────────────────────────────────────────────────────
 
 def test_index_for_a_design_token_lists_the_template_and_hides_the_task_items(monkeypatch):

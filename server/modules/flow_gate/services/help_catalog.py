@@ -573,6 +573,11 @@ def decide_visibility(name: str, ctx: dict) -> Decision:
     if name in ALWAYS_VISIBLE:
         return VISIBLE
 
+    if (name in {"source_bundles", "source_snapshots"}
+            and ctx.get("action_scope") == "review"
+            and str(ctx.get("doc_type") or "").upper() == "TR"):
+        return Decision(False, "tr_review_live_source_only")
+
     if name in {"source_tools", "source_bundles", "source_snapshots"}:
         if ctx.get("source_mode") != "remote":
             return Decision(False, "source_mode_local")
@@ -753,7 +758,8 @@ def _content_notices(ctx: dict) -> dict:
     # A key requested by two conditions still prints once.
     ordered = list(dict.fromkeys(keys))
     lines = [_copy(NOTICE_LINES, ctx["locale"], key) for key in ordered]
-    if ctx.get("source_mode") == "remote" and ctx.get("tool_kind") != "none":
+    tr_review = ctx.get("action_scope") == "review" and str(ctx.get("doc_type") or "").upper() == "TR"
+    if ctx.get("source_mode") == "remote" and ctx.get("tool_kind") != "none" and not tr_review:
         lines.append(_copy(NOTICE_LINES, ctx["locale"], "source_snapshot_policy"))
     return {"lines": lines}
 

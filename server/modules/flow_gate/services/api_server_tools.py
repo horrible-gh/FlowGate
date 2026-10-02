@@ -99,7 +99,10 @@ SCHEMAS = {
     "remove_source_file": _obj({"path": {"type": "string", "minLength": 1}, "recursive": {"type": "boolean"}}, ["path"]),
     "run_test": _obj({"command": {"type": "string", "minLength": 1}}, ["command"]),
     "run_self_check": _obj({"program": {"type": "string", "minLength": 1}, "args": {"type": "array", "items": {"type": "string"}}, "cwd": {"type": "string"}, "timeout_seconds": {"type": "integer", "minimum": 1}}, ["program"]),
-    "read_self_check": _obj({"self_check_run_id": {"type": "string", "minLength": 1}}, ["self_check_run_id"]),
+    "read_self_check": _obj({
+        "self_check_run_id": {"type": "string", "minLength": 1},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+    }),
     "cancel_self_check": _obj({"self_check_run_id": {"type": "string", "minLength": 1}}, ["self_check_run_id"]),
     "access_source_bundle": _obj({"bundle_id": {"type": "string"}, "operation": {"type": "string", "enum": ["status", "read", "search", "glob", "stat"]}, "path": {"type": "string"}, "pattern": {"type": "string"}, "glob": {"type": "string"}, "ignore_case": {"type": "boolean"}, "max_results": {"type": "integer", "minimum": 1}, "max_bytes": {"type": "integer", "minimum": 0}, "offset": {"type": "integer", "minimum": 0}, "length": {"type": "integer", "minimum": 0}, "encoding": {"type": "string"}, "claim_current_worktree": {"type": "boolean"}}, ["operation"]),
     "run_source_bundle": _obj({"bundle_id": {"type": "string"}, "task_kind": {"type": "string", "enum": sorted(source_bundle_access_service.TASK_KINDS)}, "command": {"type": "string", "minLength": 1}, "timeout_seconds": {"type": "integer", "minimum": 1}, "claim_current_worktree": {"type": "boolean"}}, ["task_kind", "command"]),
@@ -148,8 +151,11 @@ DESCRIPTIONS["run_self_check"] = (
     "Never search for another execution backend. If unavailable, report the returned reason and do not fall back."
 )
 DESCRIPTIONS["read_self_check"] = (
-    "Read a run_self_check result by self_check_run_id; repeat while pending/running until completed/failed/cancelled. "
-    "On a non-zero exit read the output, fix the code within scope, then run_self_check again."
+    "Read Self-check evidence for the bound TR. Omit self_check_run_id to list recent runs, or pass one to read "
+    "that run in detail. If the selected run is pending/running, repeat read_self_check until it reaches "
+    "completed/failed/cancelled. For a TR edit worker, on a non-zero exit read the output, fix the code within "
+    "scope, then run_self_check again. TR review workers are read-only and may only inspect the recorded evidence; "
+    "only TR edit workers may run or cancel Self-check."
 )
 DESCRIPTIONS["cancel_self_check"] = "Cancel a running run_self_check by self_check_run_id."
 DESCRIPTIONS["request_source_snapshot"] = "Retired (410). Source Bundle is prepared automatically when source access or execution needs it."
@@ -233,14 +239,17 @@ def definitions_for_run(run: dict) -> list[dict]:
     allowed_ops = set(tool_registry.tool_names(kind, scope))
     if kind in ("read", "read_write"):
         names += ["access_source_bundle"]
-    canonical = scope == "edit" and step_type == "TR" and bool(run.get("doc_ref"))
-    if canonical:
-        # 0652 T0002: Self-check is the only test/verification path of a TR edit worker; no Bundle
-        # ensure/Scratch/run_test alternative is advertised, whatever the Self-check availability.
+    tr_edit = scope == "edit" and step_type == "TR" and bool(run.get("doc_ref"))
+    tr_review = scope == "review" and step_type == "TR" and bool(run.get("doc_ref"))
+    if tr_edit or tr_review:
+        # 0652/0656: TR edit uses Self-check as its execution path; TR review validates the live
+        # worktree plus read-only Self-check evidence. Neither context depends on Source Bundle.
         names = [n for n in names if n != "access_source_bundle"]
     names += [name for name, op in SOURCE_OPS.items() if op in allowed_ops]
-    if canonical:
+    if tr_edit:
         names += list(SELF_CHECK_NAMES)
+    elif tr_review:
+        names += ["read_self_check"]
     elif kind == "read_write":
         names += ["run_source_bundle", "run_test"]
     result = []
@@ -523,23 +532,32 @@ SELF_CHECK_WORKER_REASONS = {
 
 
 def self_check_call(run: dict, raw_token: str, name: str, tool_input: dict) -> tuple[int, dict]:
-    """Bind each call to the live TR edit token and current AI run."""
+    """Bind Self-check calls to the current TR; review scope is evidence-read-only."""
     try:
         token = token_service.verify(raw_token)
     except Exception as exc:
         raise ToolError(401, "selfcheck_token_invalid") from exc
     doc_id = run.get("doc_ref")
-    if not (run.get("action_scope") == token.get("action_scope") == "edit"
+    scope = run.get("action_scope")
+    if not (scope == token.get("action_scope") and scope in {"edit", "review"}
             and doc_id == token.get("doc_ref") and run.get("group_id") == token.get("group_id")
             and run.get("project_id") == token.get("project")
             and str((db_documents.get_by_id(doc_id) or {}).get("type_code") or "").upper() == "TR"):
+        raise ToolError(403, "selfcheck_forbidden")
+    if scope != "edit" and name in {"run_self_check", "cancel_self_check"}:
         raise ToolError(403, "selfcheck_forbidden")
     try:
         if name == "run_self_check":
             row = tr_self_check_service.start(doc_id, tool_input, token.get("issued_to"))
             return 202, {"ok": True, **row}
         if name == "read_self_check":
-            return 200, {"ok": True, **tr_self_check_service.read(doc_id, tool_input["self_check_run_id"])}
+            run_id = tool_input.get("self_check_run_id")
+            if run_id:
+                return 200, {"ok": True, **tr_self_check_service.read(doc_id, run_id)}
+            limit = tool_input.get("limit", 20)
+            if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+                raise ToolError(422, "schema_validation_failed", "input.limit must be between 1 and 100")
+            return 200, {"ok": True, "runs": tr_self_check_service.list_runs(doc_id, limit)}
         if name == "cancel_self_check":
             return 200, {"ok": True, **tr_self_check_service.cancel(doc_id, tool_input["self_check_run_id"])}
         raise ToolError(422, "invalid_tool_call")
