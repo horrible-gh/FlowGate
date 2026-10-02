@@ -200,8 +200,8 @@ def _start_paragraph(folded: int) -> list[str]:
     return [
         "The after_seq above is the start of this invocation's conversation context window.",
         "It is not a persisted model-memory cursor and may intentionally include turns seen by an",
-        "earlier invocation. `head` carries the document intro and the opening of the conversation",
-        "as background; read it first, then the turns. If `next_after_seq` is not null, call again",
+        "earlier invocation. `head` carries document metadata and intro only; conversation messages",
+        "are in `turns`. Read the selected turns first. If `next_after_seq` is not null, call again",
         "with that value until it is null. Reading does not consume this token.",
     ]
 
