@@ -649,6 +649,9 @@ def _json_object(text: str, required: str) -> dict:
             continue
         if isinstance(value, dict) and required in value:
             return value
+    # Shape only, never the reply itself: enough to tell empty / prose / cut-off apart.
+    logger.warning("AI evaluation judge reply has no JSON object with %r: %d chars, starts %r, ends %r",
+                   required, len(stripped), stripped[:1], stripped[-1:])
     raise _StageFailed("judge_output_invalid", "The judge reply did not contain the expected JSON object.")
 
 
