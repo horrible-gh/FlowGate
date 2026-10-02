@@ -190,6 +190,8 @@ class TestFoldedMention:
         text = self._build(monkeypatch, head_seq=30)
         assert "The after_seq above is the start of this invocation's conversation context window" in text
         assert "Read the conversation context selected for this invocation:" in text
+        assert "`head` carries document metadata and intro only" in text
+        assert "opening of the conversation" not in text
         for stale in (
             "Read what you have not read yet",
             "YOUR last read position",
