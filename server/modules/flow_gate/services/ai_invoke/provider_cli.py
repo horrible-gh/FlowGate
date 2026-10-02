@@ -664,9 +664,11 @@ def probe_cli_completion(*, project_id: str, kind: str, command: Optional[str], 
             return ProbeOutcome(PROBE_TIMEOUT)
         if error is not None or returncode != 0:
             return ProbeOutcome(PROBE_EXECUTION_FAILED)
-        answer: dict = {}
-        _recover_cli_last_message(answer, kind, process_runner.safe_decode(stdout), last_message_file)
-        return ProbeOutcome(PROBE_OK, answer.get("last_message") or "")
+        # The whole answer, not the run's front-truncated last_message: a caller parses it
+        # (an AI Evaluation judge replies with one JSON object), and cutting the front of a
+        # reply past LAST_MESSAGE_MAX_BYTES drops its opening brace.
+        return ProbeOutcome(PROBE_OK, _cli_last_message(
+            kind, process_runner.safe_decode(stdout), last_message_file) or "")
     finally:
         if owned:
             _mark_scratch_completed(project_id, run_id, scratch, now_iso())
@@ -710,9 +712,17 @@ def _copilot_last_message(stdout_text: str) -> Optional[str]:
 
 
 def _recover_cli_last_message(run: dict, kind: str, stdout_text: str, last_message_file: Path) -> None:
+    """A run keeps the tail of its last message (front truncated to LAST_MESSAGE_MAX_BYTES)."""
+    message = _cli_last_message(kind, stdout_text, last_message_file)
+    run["last_message"] = oracle._truncate_front(message)
+    run["last_message_received"] = bool(message)
+
+
+def _cli_last_message(kind: str, stdout_text: str, last_message_file: Path) -> Optional[str]:
     """Per-kind last-message recovery (hive providers.py rule table, rules only):
     claude = full stdout trimmed / codex = --output-last-message file /
-    copilot = last `assistant.message` event / custom = last non-blank block of the tail."""
+    copilot = last `assistant.message` event / custom = last non-blank block of the tail.
+    Untruncated; storing it is the caller's concern."""
     message: Optional[str] = None
     if kind == "claude":
         message = stdout_text.strip() or None
@@ -728,5 +738,4 @@ def _recover_cli_last_message(run: dict, kind: str, stdout_text: str, last_messa
         tail = stdout_text[-OUTPUT_TAIL_BYTES:]
         blocks = [b.strip() for b in re.split(r"\n\s*\n", tail) if b.strip()]
         message = blocks[-1] if blocks else None
-    run["last_message"] = oracle._truncate_front(message)
-    run["last_message_received"] = bool(message)
+    return message

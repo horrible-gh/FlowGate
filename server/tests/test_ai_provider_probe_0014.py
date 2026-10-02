@@ -273,6 +273,28 @@ def test_cli_child_runs_in_a_managed_scratch_that_is_deleted_afterwards(tmp_path
     assert _leftover(scratch_root) == []
 
 
+def test_cli_answer_longer_than_a_run_last_message_is_returned_whole(tmp_path):
+    # A judge's JSON reply past LAST_MESSAGE_MAX_BYTES lost its front (and its opening brace)
+    # to the run's tail truncation, failing the evaluation as judge_output_invalid.
+    answer = json.dumps({"instruction": "x", "files": [{"path": "a.txt", "content": "가" * probe.LAST_MESSAGE_MAX_BYTES}]},
+                        ensure_ascii=False)
+    reply = tmp_path / "reply.json"
+    reply.write_bytes(answer.encode("utf-8"))
+    outcome = _cli(_script(tmp_path, (
+        "import sys\n"
+        "sys.stdin.read()\n"
+        f"sys.stdout.buffer.write(open(r'{reply}', 'rb').read())\n")), kind="claude")
+    assert outcome.kind == probe.PROBE_OK, outcome
+    assert outcome.text == answer
+
+
+def test_run_last_message_is_still_front_truncated():
+    run: dict = {}
+    provider_cli._recover_cli_last_message(run, "claude", "a" * 10 + "b" * probe.LAST_MESSAGE_MAX_BYTES,
+                                           Path("__missing__"))
+    assert run["last_message"] == "b" * probe.LAST_MESSAGE_MAX_BYTES
+
+
 def test_cli_codex_goes_through_the_shared_command_normalisation(tmp_path):
     outcome = _cli(_script(tmp_path, (
         "import pathlib, sys\n"
