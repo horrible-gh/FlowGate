@@ -807,7 +807,7 @@ def _content_document_access(ctx: dict) -> dict:
     base = ctx["base_url"]
     doc_id = ctx.get("doc_id") or "{doc_id}"
     project_filter = f"&project={ctx['project']}" if ctx.get("project") else ""
-    return {
+    payload = {
         "body": {
             "method": "GET",
             "url": f"{base}/document/{{doc_id}}",
@@ -840,6 +840,27 @@ def _content_document_access(ctx: dict) -> dict:
         },
         "note": _copy(_ITEM_NOTES, ctx["locale"], "document_access"),
     }
+    if ctx.get("action_scope") == "chat":
+        payload["conversation_history"] = {
+            "forward": {
+                "method": "GET",
+                "url": f"{base}/conversation/{doc_id}/turns?after_seq=<seq>&include_head=1",
+                "continue_with": "next_after_seq",
+            },
+            "backward": {
+                "method": "GET",
+                "url": f"{base}/conversation/{doc_id}/turns?before_seq=<seq>",
+                "continue_with": "prev_before_seq",
+            },
+            "boundary": (
+                "after_seq and before_seq are mutually exclusive. If an invocation starts at "
+                "after_seq=<start>, older context begins with before_seq=<start+1> because the "
+                "backward query returns seq < before_seq."
+            ),
+            "token": "Backward conversation reads do not consume the token.",
+            "cursor": "Backward conversation reads do not advance the forward participant last_read cursor.",
+        }
+    return payload
 
 def _attachment_permission_table() -> dict:
     """Which operations each kind may call, derived from the one judge.

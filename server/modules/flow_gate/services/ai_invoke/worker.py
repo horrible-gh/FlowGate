@@ -24,11 +24,13 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import HTTPException
+from modules.flow_gate.db import conversation_turns
 from modules.flow_gate.db import documents as db_docs
 from modules.flow_gate.db import group_ai_leases as db_group_ai_leases
 from modules.flow_gate.db import questions as db_questions
 from modules.flow_gate.db import tokens as db_tokens
 from modules.flow_gate.services import api_server_tools
+from modules.flow_gate.services import chat_settings_service
 from modules.flow_gate.services import q_service
 from modules.flow_gate.services import register_binding
 from modules.flow_gate.services import token_service
@@ -1136,6 +1138,47 @@ _API_TRACE_MAX_TURNS = 20
 
 _API_TRACE_MAX_TOOLS = 12
 
+_CHAT_HISTORY_TOOL_NAME = "read_chat_history"
+_CHAT_HISTORY_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "before_seq": {"type": "integer", "minimum": 1},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+    },
+    "required": ["before_seq"],
+    "additionalProperties": False,
+}
+
+
+def _chat_tool_definitions() -> list[dict]:
+    """API-chat tools: optional discovery/history reads followed by one reply."""
+    return [
+        {
+            "name": _CHAT_HISTORY_TOOL_NAME,
+            "description": (
+                "Read older turns from this bound conversation. Use the before_seq value "
+                "advertised in older_history; if prev_before_seq is not null, call again "
+                "with that value. This backward read does not consume the token or advance "
+                "the forward participant cursor."
+            ),
+            "schema": _CHAT_HISTORY_TOOL_SCHEMA,
+        },
+        {
+            "name": "read_help",
+            "description": (
+                "Read personalized FlowGate Help in-process. Use item=document_access for "
+                "conversation forward/backward paging rules."
+            ),
+            "schema": api_server_tools.READ_HELP_SCHEMA,
+        },
+        {
+            "name": _CHAT_TOOL_NAME,
+            "description": _CHAT_TOOL_DESC,
+            "schema": _CHAT_TOOL_SCHEMA,
+            "completion": True,
+        },
+    ]
+
 
 def _api_trace_turn(run: dict, turn: int, *, model_status: int, response_text: bool = False) -> dict:
     """Append a bounded, input-free API turn record and return its mutable entry."""
@@ -1253,12 +1296,16 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             run["last_tool_error"] = _registration_error_summary(chat_context or {})[:500]
             return "api_error", "conversation_context_unavailable"
         run["last_tool_error"] = None
-        run["_chat_based_on_seq"] = int(chat_context.get("head_seq") or 0)
+        run["_chat_based_on_seq"] = int(
+            chat_context.get("delivered_head_seq") or chat_context.get("head_seq") or 0
+        )
         conversation.append({
             "role": "user",
             "content": (
-                "The server fetched the conversation for you. Use this as the conversation "
-                "you are replying to; do not claim that you still need to fetch it:\n"
+                "The server fetched this invocation's configured conversation context window. "
+                "Reply from it directly. If `older_history` is present and earlier context is "
+                "needed, call `read_chat_history` with its `before_seq`; `read_help` with "
+                "item=document_access explains the paging contract.\n"
                 + json.dumps(chat_context, ensure_ascii=False)
             ),
         })
@@ -1288,7 +1335,8 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
             tool_specs = conflict_specs
             tool_name, tool_desc, tool_schema = tool_specs, "", {}
         elif is_chat:
-            tool_name, tool_desc, tool_schema = _CHAT_TOOL_NAME, _CHAT_TOOL_DESC, _CHAT_TOOL_SCHEMA
+            tool_specs = _chat_tool_definitions()
+            tool_name, tool_desc, tool_schema = tool_specs, "", {}
         elif is_sequence_edit:
             tool_name, tool_desc, tool_schema = (
                 _SEQUENCE_EDIT_TOOL_NAME, _SEQUENCE_EDIT_TOOL_DESC, _SEQUENCE_EDIT_TOOL_SCHEMA
@@ -1521,11 +1569,12 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                     elif call["name"] == "read_document":
                         _status, resp = _svc()._api_read_document(run, current_token, call["input"])
                     elif call["name"] == "read_help":
-
                         _status, resp = api_server_tools.read_help(run, current_token, call["input"])
-
+                    elif call["name"] == _CHAT_HISTORY_TOOL_NAME:
+                        _status, resp = _conversation_history_read(
+                            run, current_token, call["input"]
+                        )
                     else:
-
                         _status, resp = _api_create_question(run, current_token, call["input"])
                 except api_server_tools.ToolError as exc:
                     _status, resp = api_server_tools.error_payload(call["name"], exc)
@@ -1551,7 +1600,10 @@ def _api_execute(provider: dict, prompt: str, run: dict) -> tuple[str, Optional[
                 # entirely (DB0005 2 scope note).
                 if (
                     call["name"] not in api_server_tools.SOURCE_OPS
-                    and call["name"] not in ("run_test", "read_help", *api_server_tools.SNAPSHOT_NAMES, *api_server_tools.BUNDLE_NAMES)
+                    and call["name"] not in (
+                        "run_test", "read_help", _CHAT_HISTORY_TOOL_NAME,
+                        *api_server_tools.SNAPSHOT_NAMES, *api_server_tools.BUNDLE_NAMES,
+                    )
                 ):
                     run["last_tool_name"] = "api_bound_request"
                     run["last_tool_status"] = _status
@@ -2010,24 +2062,108 @@ class _BearerOnlyRequest:
 
 
 def _conversation_context(run: dict, raw_token: str) -> tuple[int, dict]:
-    """Fetch the unread conversation that an API model cannot retrieve itself.
+    """Fetch the configured invocation-local conversation window for an API model.
 
-    0505 T0018: in-process call, not self-HTTP. GET /conversation/{doc_id}/turns never
-    reaches GroupMutationPolicyMiddleware -- mutation_policy.classify_mutation_route's
-    first check is `methods & MUTATION_METHODS` (POST/PUT/PATCH/DELETE only), so a GET
-    route is classified "read_only" before any group-lease check runs (mutation_policy.py
-    290-304, 347). The only binding this call ever had was
-    conversation_routes._authenticate (token action_scope/doc_ref/project/group match),
-    unchanged and reused as-is through the route's own plain-Python _list_authenticated --
-    no new binding logic, no self-HTTP round trip. Still returns (status, body) like the
-    five self-HTTP call sites below (_api_bound_request/_workflow_decide/_resolve_conflict/
-    _conversation_turn_register/_inbox_register).
+    The route's real token binding remains authoritative. ``recent N`` starts at
+    max(0, head-N) and reads at most N turns, following next_after_seq when the byte cap
+    splits that window. ``all`` starts at zero and follows next_after_seq until the
+    forward page chain ends. Provider participant last_read is never a context boundary.
     """
+    from modules.flow_gate.api.v1 import conversation_routes
+
+    # Preserve the existing exact chat-token binding before reading settings/head state.
+    _token, failure = conversation_routes._authenticate(run["doc_ref"], raw_token)
+    if failure is not None:
+        return failure.status_code, json.loads(failure.body)
+
+    settings = chat_settings_service.resolve_chat_settings_safe(run.get("issued_to"))
+    mode = settings["context_mode"]
+    turns = int(settings["context_turns"])
+    try:
+        head_seq = (
+            conversation_turns.current_head_seq(run["doc_ref"])
+            if mode == "recent"
+            else 0
+        )
+        after_seq, folded = chat_settings_service.resolve_context_window(
+            head_seq=head_seq, mode=mode, turns=turns
+        )
+        cursor = after_seq
+        remaining = turns if mode == "recent" else None
+        include_head = True
+        merged = None
+
+        while True:
+            response = conversation_routes._list_authenticated(
+                run["doc_ref"], raw_token,
+                after_seq=cursor, before_seq=None,
+                limit=remaining if remaining is not None else None,
+                include_head=include_head,
+            )
+            status = response.status_code
+            body = json.loads(response.body)
+            if not (200 <= status < 300) or not isinstance(body, dict):
+                return status, body
+
+            page_turns = body.get("turns") if isinstance(body.get("turns"), list) else []
+            if merged is None:
+                merged = dict(body)
+                merged["turns"] = list(page_turns)
+            else:
+                merged["turns"].extend(page_turns)
+                merged["head_seq"] = body.get("head_seq", merged.get("head_seq"))
+                merged["next_after_seq"] = body.get("next_after_seq")
+                merged["has_more"] = body.get("has_more")
+                merged["truncated_by"] = body.get("truncated_by")
+
+            if remaining is not None:
+                remaining = max(0, remaining - len(page_turns))
+
+            next_cursor = body.get("next_after_seq")
+            if next_cursor is None or (remaining is not None and remaining == 0):
+                break
+            if not isinstance(next_cursor, int) or next_cursor <= cursor:
+                return 502, {"ok": False, "error": "conversation_paging_stalled"}
+            cursor = next_cursor
+            include_head = False
+
+        if merged is None:
+            return 502, {"ok": False, "error": "conversation_context_empty_response"}
+
+        delivered = [
+            int(turn["seq"]) for turn in merged["turns"]
+            if isinstance(turn, dict) and isinstance(turn.get("seq"), int)
+        ]
+        merged["delivered_head_seq"] = max(delivered, default=after_seq)
+        merged["context_window"] = {
+            "mode": mode,
+            "context_turns": turns,
+            "after_seq": after_seq,
+            "folded": folded,
+        }
+        if folded > 0:
+            merged["older_history"] = {
+                "before_seq": after_seq + 1,
+                "tool": _CHAT_HISTORY_TOOL_NAME,
+                "help_item": "document_access",
+            }
+        return 200, merged
+    except Exception as exc:
+        return 0, {"error": str(exc)}
+
+
+def _conversation_history_read(
+    run: dict, raw_token: str, tool_input: dict
+) -> tuple[int, dict]:
+    """Read one backward page for an API chat model through the real token-bound route."""
     from modules.flow_gate.api.v1 import conversation_routes
     try:
         response = conversation_routes._list_authenticated(
-            run["doc_ref"], raw_token, after_seq=0, before_seq=None, limit=None,
-            include_head=True,
+            run["doc_ref"], raw_token,
+            after_seq=None,
+            before_seq=int(tool_input["before_seq"]),
+            limit=tool_input.get("limit"),
+            include_head=False,
         )
     except Exception as exc:
         return 0, {"error": str(exc)}

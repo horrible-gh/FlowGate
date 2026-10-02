@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import sys
 import threading
@@ -14,7 +15,9 @@ os.environ.setdefault("TESTING", "1")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32c")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from modules.flow_gate.api.v1 import conversation_routes  # noqa: E402
 from modules.flow_gate.services import ai_invoke_service as svc  # noqa: E402
+from modules.flow_gate.services.ai_invoke import worker as ai_worker  # noqa: E402
 
 
 def _run(kind="openai"):
@@ -22,6 +25,7 @@ def _run(kind="openai"):
         "project_id": "flowgate", "run_id": "aiv_test", "docs_target": 0,
         "raw_token": "raw-token", "token_id": "tok_0489", "doc_ref": "flowgate.default.0489.0001-B",
         "action_scope": "chat", "mode": "single", "cancel_event": threading.Event(),
+        "issued_to": "usr_admin",
         "provider": {"name": "Deepinfra Test"}, "api_base_url": "http://127.0.0.1:8089/flowgate/api/v1", "timed_out": False,
     }
 
@@ -42,7 +46,9 @@ def test_api_chat_uses_reply_tool_and_conversation_registration(monkeypatch, kin
         seen["conversation"] = args[3]
         seen["tool_name"] = args[-4]
         seen["force_tool"] = args[-1]
-        return "Korean reply", {"id": "call_1", "input": {"body": "Korean reply"}}, {"role": "assistant"}
+        return "Korean reply", {
+            "id": "call_1", "name": "send_chat_reply", "input": {"body": "Korean reply"}
+        }, {"role": "assistant"}
 
     monkeypatch.setattr(svc, "_call_anthropic" if kind == "claude" else "_call_openai", fake_call)
     monkeypatch.setattr(svc, "_conversation_turn_register", lambda run, token, payload: (
@@ -51,7 +57,10 @@ def test_api_chat_uses_reply_tool_and_conversation_registration(monkeypatch, kin
     monkeypatch.setattr(svc, "_inbox_register", lambda *_: pytest.fail("chat must not call /inbox"))
 
     assert svc._api_execute({"id": "provider", "kind": kind, "api_base_url": "https://api.example", "api_model": "test"}, "prompt", _run()) == ("started_ok", None)
-    assert seen["tool_name"] == "send_chat_reply"
+    assert [spec["name"] for spec in seen["tool_name"]] == [
+        "read_chat_history", "read_help", "send_chat_reply",
+    ]
+    assert next(spec for spec in seen["tool_name"] if spec["name"] == "send_chat_reply")["completion"] is True
     assert seen["force_tool"] is True
     assert seen["turn"][0]["_chat_based_on_seq"] == 1
     assert seen["conversation"][0]["role"] == "system"
@@ -204,3 +213,131 @@ def test_failed_last_message_append_remains_diagnostic(monkeypatch):
     assert run["last_tool_status"] == 409
     assert run["register_errors"][-1]["status"] == 409
     assert "stale head" in run["register_errors"][-1]["reason"]
+
+
+class _PageResponse:
+    def __init__(self, payload, status_code=200):
+        self.status_code = status_code
+        self.body = json.dumps(payload).encode("utf-8")
+
+
+def test_api_context_recent_uses_same_window_and_follows_byte_split_pages(monkeypatch):
+    settings = {"context_mode": "recent", "context_turns": 10}
+    monkeypatch.setattr(conversation_routes, "_authenticate", lambda *_a: ({}, None))
+    monkeypatch.setattr(
+        ai_worker.chat_settings_service, "resolve_chat_settings_safe", lambda _u: settings
+    )
+    monkeypatch.setattr(ai_worker.conversation_turns, "current_head_seq", lambda _doc: 23)
+    calls = []
+
+    def page(_doc, _raw, after_seq, before_seq, limit, include_head):
+        calls.append((after_seq, before_seq, limit, include_head))
+        if after_seq == 13:
+            seqs, next_after = range(14, 19), 18
+        else:
+            assert after_seq == 18
+            seqs, next_after = range(19, 24), None
+        return _PageResponse({
+            "ok": True,
+            "head_seq": 23,
+            "next_after_seq": next_after,
+            "has_more": next_after is not None,
+            "truncated_by": "bytes" if next_after is not None else None,
+            "turns": [{"seq": seq, "role": "user", "body": str(seq)} for seq in seqs],
+            "head": {"opening_turns": []} if include_head else None,
+        })
+
+    monkeypatch.setattr(conversation_routes, "_list_authenticated", page)
+    status, payload = svc._conversation_context(_run(), "raw-token")
+    assert status == 200
+    assert [turn["seq"] for turn in payload["turns"]] == list(range(14, 24))
+    assert calls == [(13, None, 10, True), (18, None, 5, False)]
+    assert payload["context_window"] == {
+        "mode": "recent", "context_turns": 10, "after_seq": 13, "folded": 13,
+    }
+    assert payload["older_history"]["before_seq"] == 14
+    assert payload["delivered_head_seq"] == 23
+
+
+def test_api_context_all_follows_default_50_turn_pages_until_end(monkeypatch):
+    settings = {"context_mode": "all", "context_turns": 20}
+    monkeypatch.setattr(conversation_routes, "_authenticate", lambda *_a: ({}, None))
+    monkeypatch.setattr(
+        ai_worker.chat_settings_service, "resolve_chat_settings_safe", lambda _u: settings
+    )
+    monkeypatch.setattr(
+        ai_worker.conversation_turns, "current_head_seq",
+        lambda _doc: (_ for _ in ()).throw(AssertionError("all must not query head for window math")),
+    )
+    calls = []
+
+    def page(_doc, _raw, after_seq, before_seq, limit, include_head):
+        calls.append((after_seq, before_seq, limit, include_head))
+        if after_seq == 0:
+            seqs, next_after = range(1, 51), 50
+        else:
+            assert after_seq == 50
+            seqs, next_after = range(51, 61), None
+        return _PageResponse({
+            "ok": True,
+            "head_seq": 60,
+            "next_after_seq": next_after,
+            "has_more": next_after is not None,
+            "truncated_by": "limit" if next_after is not None else None,
+            "turns": [{"seq": seq, "role": "user", "body": str(seq)} for seq in seqs],
+            "head": {"opening_turns": []} if include_head else None,
+        })
+
+    monkeypatch.setattr(conversation_routes, "_list_authenticated", page)
+    status, payload = svc._conversation_context(_run(), "raw-token")
+    assert status == 200
+    assert [turn["seq"] for turn in payload["turns"]] == list(range(1, 61))
+    assert calls == [(0, None, None, True), (50, None, None, False)]
+    assert payload["context_window"]["after_seq"] == 0
+    assert payload["context_window"]["folded"] == 0
+    assert "older_history" not in payload
+
+
+def test_api_chat_can_read_older_history_then_submit_reply(monkeypatch):
+    monkeypatch.setattr(svc.ai_settings_service, "get_provider_secret", lambda *_: "key")
+    monkeypatch.setattr(svc, "_remaining_sec", lambda _run: 60)
+    monkeypatch.setattr(svc, "_conversation_context", lambda *_: (200, {
+        "head_seq": 23,
+        "delivered_head_seq": 23,
+        "turns": [{"seq": 14, "role": "user", "body": "recent"}],
+        "older_history": {"before_seq": 14, "tool": "read_chat_history"},
+    }))
+    history_calls = []
+    monkeypatch.setattr(
+        ai_worker, "_conversation_history_read",
+        lambda run, token, payload: (
+            history_calls.append((token, payload))
+            or (200, {
+                "ok": True,
+                "turns": [{"seq": 13, "role": "user", "body": "older"}],
+                "prev_before_seq": None,
+            })
+        ),
+    )
+
+    model_calls = {"count": 0, "conversations": []}
+    def fake_call(*args):
+        model_calls["count"] += 1
+        model_calls["conversations"].append(list(args[3]))
+        if model_calls["count"] == 1:
+            return None, {
+                "id": "history-1", "name": "read_chat_history",
+                "input": {"before_seq": 14},
+            }, {"role": "assistant"}
+        return "reply", {
+            "id": "reply-1", "name": "send_chat_reply", "input": {"body": "reply"},
+        }, {"role": "assistant"}
+
+    monkeypatch.setattr(svc, "_call_openai", fake_call)
+    monkeypatch.setattr(svc, "_conversation_turn_register", lambda *_: (201, {"ok": True}))
+    assert svc._api_execute(
+        {"id": "provider", "kind": "openai", "api_base_url": "https://api.example", "api_model": "test"},
+        "prompt", _run(),
+    ) == ("started_ok", None)
+    assert history_calls == [("raw-token", {"before_seq": 14})]
+    assert any("older" in str(message) for message in model_calls["conversations"][1])

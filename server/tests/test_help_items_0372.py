@@ -390,6 +390,23 @@ def test_document_access_advertises_the_bounded_reads(monkeypatch):
     assert "section_id=<section_id>" in partial["section"]["url"]
     assert "include_matches=true" in partial["content_search"]["url"]
     assert "/documents/" in content["note"]
+    assert "conversation_history" not in content
+
+
+def test_chat_document_access_exposes_backward_conversation_history(monkeypatch):
+    doc_id = "flowgate.default.0372.0002-CH"
+    client = _client(monkeypatch, _token("chat", doc_ref=doc_id), step_type="CH")
+    history = client.get(
+        "/api/v1/help/items/document_access"
+    ).json()["content"]["conversation_history"]
+    assert history["forward"]["continue_with"] == "next_after_seq"
+    assert history["backward"]["continue_with"] == "prev_before_seq"
+    assert "before_seq=<seq>" in history["backward"]["url"]
+    assert doc_id in history["backward"]["url"]
+    assert "before_seq=<start+1>" in history["boundary"]
+    assert "do not consume" in history["token"]
+    assert "do not advance" in history["cursor"]
+    assert "last_read" in history["cursor"]
 
 
 def test_document_attachments_advertises_the_copy_request_body(monkeypatch):

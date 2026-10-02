@@ -10,8 +10,9 @@ Three things live here and nowhere else:
 * **Reading and saving.**  ``resolve_chat_settings`` is deliberately the only reader,
   shared by the settings endpoint and the two mention paths (L0010 §2-1).  Two readers
   with two different repairs would show the user one value and apply another.
-* **The window.**  ``resolve_context_window`` turns (last read, head, mode, N) into the
-  ``after_seq`` a mention advertises and the number of turns that got folded away.
+* **The window.**  ``resolve_context_window`` turns (head, mode, N) into the
+  invocation-local ``after_seq`` and the number of older turns folded before that window.
+  A persisted provider read cursor is delivery/audit state, not cross-invocation model memory.
 
 Note the asymmetry between the two directions, which is intended (P0009 scenario 8):
 an unknown value *arriving* in a PATCH is rejected with 422, but an unknown value
@@ -430,26 +431,14 @@ def recover_stale_claim(user_id: str) -> str:
 
 
 def resolve_context_window(
-    *, last_read: int, head_seq: int, mode: str, turns: int
+    *, head_seq: int, mode: str, turns: int
 ) -> tuple[int, int]:
-    """Return (start, folded) for one mention (L0010 §2-3).
+    """Return the invocation-local ``(after_seq, folded)`` context window.
 
-    ``start`` is where the mention tells the worker to read from; ``folded`` is how many
-    turns it has *not* read and is being asked to skip.  They differ whenever the worker
-    had already read part of the conversation.
-
-    ``max(last_read, ...)`` is what keeps a range from dragging a caught-up worker
-    backwards: narrowing the window is meant to shorten the backlog, not to move
-    somebody's read position (P0009 scenario 15).
+    A provider participant cursor records delivery history, not memory carried by a new
+    model invocation, so it does not participate in this calculation.
     """
     if mode == "all":
-        # ``head_seq`` is deliberately not queried on this branch (L0010 §2-3), so it
-        # cannot be used to clamp here -- and must not be, because [all] has to produce
-        # the very mention this feature never touched (P0009 scenario 13).
-        return max(last_read, 0), 0
-    start = max(last_read, head_seq - turns)
-    # Covers the short conversation (head_seq - turns is negative) and the abnormal
-    # cursor that sits past the end of the conversation (L0010 §5).
-    start = min(max(start, 0), head_seq)
-    folded = max(0, start - last_read)
-    return start, folded
+        return 0, 0
+    start = max(0, head_seq - turns)
+    return start, start
