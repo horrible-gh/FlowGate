@@ -403,6 +403,15 @@ def write_body_atomically(path, body: dict) -> None:
     _write_bytes_atomically(path, dumps(body).encode("utf-8"))
 
 
+# 0660 T0004 §1: every way the source root can be missing, by who can fix it. Git on: the
+# group worktree is not usable YET (still provisioning, or provisioning lost a lock race) -
+# a retry or a synchronous ensure can fix it. Git off: src/<project_name>/<branch> is not
+# there and nothing in FlowGate creates it - only an operator can, so it is not retryable.
+SOURCE_ROOT_ERROR_CODES = frozenset({
+    "tr2_git_unavailable", "tr2_source_root_missing", "tr2_worktree_provision_failed",
+})
+
+
 def resolve_source_root(project_id: str, group_id: str) -> Path:
     from modules.flow_gate.services import git_service
     from modules.flow_gate.db import projects as db_projects
@@ -410,16 +419,75 @@ def resolve_source_root(project_id: str, group_id: str) -> Path:
     if root is not None:
         return Path(root)
     if reason != git_service.SRC_ROOT_INTEGRATION_OFF:
-        raise Tr2ValidationError("tr2_git_unavailable", "source_root", {"reason": reason})
+        # The internal SRC_ROOT_* name says which git-state check failed; operators read it
+        # in the log. The response carries only the public enum (0660 T0004 §1.3).
+        log.info("TR2 source root unavailable for %s: %s", group_id, reason)
+        raise Tr2ValidationError("tr2_git_unavailable", "source_root",
+                                 {"reason": "worktree_provisioning"})
     project = db_projects.get_by_id(project_id)
     name = (project or {}).get("project_name")
     if not name:
-        raise Tr2ValidationError("tr2_git_unavailable", "source_root")
+        raise Tr2ValidationError("tr2_source_root_missing", "source_root",
+                                 {"reason": "project_name_missing"})
     settings = db_projects.get_settings(project_id) or {}
     root = storage_paths.src_root(name, settings.get("branch") or "main").resolve()
     if not root.is_dir():
-        raise Tr2ValidationError("tr2_git_unavailable", "source_root")
+        raise Tr2ValidationError("tr2_source_root_missing", "source_root",
+                                 {"reason": "project_source_missing"})
     return root
+
+
+def ensure_source_root(project_id: str, group_id: str, module: str | None = None) -> Path:
+    """The source root a new TR2 needs, provisioning the group worktree if it is not ready.
+
+    0660 T0004 §1.1 (RC1-a): the worktree a decide starts asynchronously may not exist yet,
+    or its provisioning may have lost the project git lock (``provision_error=git_busy``)
+    and never been retried. Creation used to trust that async result and fail. It now runs
+    the same idempotent ``ensure_worktree`` the remote-write and AI-invoke gates use, once,
+    synchronously, and only then decides. Called BEFORE anything is reserved or written,
+    so a refusal leaves no document, slot, file or revision behind.
+
+    Git off (RC1-b) is never provisioned here: FlowGate does not create a project's source
+    directory, so a missing one is reported as ``tr2_source_root_missing`` (not retryable).
+    """
+    from modules.flow_gate.services import git_service
+    try:
+        return resolve_source_root(project_id, group_id)
+    except Tr2ValidationError as exc:
+        if exc.code != "tr2_git_unavailable":
+            raise
+    outcome = git_service.ensure_worktree(
+        project_id, module or git_service._module_of(group_id), group_id,
+        trigger="tr2_create",
+    )
+    if outcome == "ok":
+        try:
+            return resolve_source_root(project_id, group_id)
+        except Tr2ValidationError:
+            pass
+    try:
+        state = git_service.db_git.get_state(group_id) or {}
+    except Exception:  # noqa: BLE001 - the state only refines the reason
+        state = {}
+    provision_error = str(state.get("provision_error") or "")
+    try:
+        merge_claim = git_service.get_branch_merge_group_claim(group_id)
+    except Exception:  # noqa: BLE001 - the claim only refines the reason
+        merge_claim = None
+    if merge_claim is not None:
+        raise Tr2ValidationError("tr2_git_unavailable", "source_root",
+                                 {"reason": "branch_merge_active"})
+    if provision_error == "git_busy":
+        raise Tr2ValidationError("tr2_git_unavailable", "source_root", {"reason": "git_busy"})
+    if outcome == "ok" or not provision_error:
+        raise Tr2ValidationError("tr2_git_unavailable", "source_root",
+                                 {"reason": "worktree_provisioning"})
+    # The provisioning error can be Git stderr with host paths: the log keeps it, the
+    # response carries only the public reason.
+    log.warning("TR2 create: worktree provisioning failed for %s: %s", group_id,
+                 provision_error[:500])
+    raise Tr2ValidationError("tr2_worktree_provision_failed", "source_root",
+                             {"reason": "worktree_provision_failed"})
 
 
 def verify_pair(tr2_doc_id: str, body: dict) -> None:
@@ -548,7 +616,7 @@ def read_view(doc: dict, body: dict) -> dict:
     try:
         source_root = resolve_source_root(doc["project_id"], doc["group_id"])
     except Tr2ValidationError as exc:
-        if exc.code != "tr2_git_unavailable":
+        if exc.code not in SOURCE_ROOT_ERROR_CODES:
             raise
         source_root = None
     if source_root is not None and not Path(source_root).is_dir():
@@ -632,6 +700,36 @@ def _lock(doc_id: str) -> threading.Lock:
         return _locks.setdefault(doc_id, threading.Lock())
 
 
+def revert_pending(doc: dict) -> bool:
+    """True while a reopened TR2's own approval commit is still live in the worktree.
+
+    0660 T0004 §3 (RC3) invariant: "TR2 reopen complete" <=> "its approval commit is no
+    longer live". A Time Machine reopen commits the document rewind first and cancels the
+    commit afterwards (D0005 K8: git never fails a rewind), so a cancel blocked by lock
+    contention leaves an editable TR2 on top of the source it already changed. A revision
+    saved in that window takes its baseline from the approved source and can never apply
+    again. This is the explicit intermediate state: not approved, yet a live, cancelable
+    ledger row for this document. Only a successful cancel retry
+    (``/return-point/cancel-commits``) clears it.
+    """
+    if doc.get("doc_review_status") == "approved" or not doc.get("group_id"):
+        return False
+    from modules.flow_gate.db import tr_commit_ledger
+    return bool(tr_commit_ledger.live_rows(doc["group_id"], [doc["doc_id"]]))
+
+
+def group_revert_pending(group_id: str) -> list[str]:
+    """The group's TR2 documents in the ``revert_pending`` state (see :func:`revert_pending`).
+
+    0660 T0004 §3 (RC3): the pending state belongs to the whole group, not only to the
+    TR2. While it is non-empty the workflow may not rewind further, advance, approve or
+    create the next step; the cancel retry (``/return-point/cancel-commits``) is the one
+    group workflow operation left open, and its success empties this list.
+    """
+    from modules.flow_gate.db import tr_commit_ledger
+    return tr_commit_ledger.revert_pending_doc_ids(group_id)
+
+
 def mutation_block(doc: dict) -> str | None:
     """Why the proposal is immutable right now, or None. Approval history owns these states."""
     from modules.flow_gate.db import tr2_approval_attempts
@@ -641,6 +739,8 @@ def mutation_block(doc: dict) -> str | None:
         return "applying"
     if tr2_approval_attempts.recovery_required(doc["doc_id"]):
         return "recovery_required"
+    if revert_pending(doc):
+        return "revert_pending"
     return None
 
 
@@ -648,6 +748,9 @@ def _assert_mutable(doc: dict) -> None:
     reason = mutation_block(doc)
     if reason == "applying":
         raise Tr2ValidationError("tr2_in_progress", "document", {"reason": reason})
+    if reason == "revert_pending":
+        raise Tr2ValidationError("tr2_revert_pending", "document",
+                                 {"reason": "commit_cancel_blocked"})
     if reason is not None:
         raise Tr2ValidationError("tr2_spec_immutable", "document", {"reason": reason})
 

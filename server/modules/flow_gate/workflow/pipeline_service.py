@@ -545,8 +545,119 @@ _FILELESS_APPROVAL_STRUCTURE_MESSAGES = {
     "en": "This final approval is not the current workflow head, so it cannot be approved.",
     "ja": "この最終承認は現在のワークフローヘッドではないため承認できません。",
 }
+_NOT_WORKFLOW_HEAD_APPROVAL_MESSAGES = {
+    "ko": "이 문서는 현재 워크플로 단계(헤드)가 아니어서 승인할 수 없습니다. 앞선 단계 문서를 먼저 승인하십시오.",
+    "en": "This document is not the current workflow step (head), so it cannot be approved. Approve the earlier step first.",
+    "ja": "この文書は現在のワークフロー段階(ヘッド)ではないため承認できません。先の段階の文書を先に承認してください。",
+}
+_WORKFLOW_HEAD_UNAVAILABLE_MESSAGES = {
+    "ko": "현재 워크플로 단계(헤드)를 확인할 수 없어 승인하지 않았습니다. 잠시 후 다시 시도하십시오.",
+    "en": "The current workflow step (head) could not be read, so nothing was approved. Try again shortly.",
+    "ja": "現在のワークフロー段階(ヘッド)を確認できないため承認しませんでした。しばらくしてから再試行してください。",
+}
+_WORKFLOW_REVERT_PENDING_MESSAGES = {
+    "ko": "Time Machine 되돌리기의 승인 커밋 취소가 끝나지 않아 이 그룹의 워크플로를 진행할 수 없습니다. 반영안(TR2) 화면의 [커밋 취소 다시 시도]로 커밋 취소를 먼저 마치십시오.",
+    "en": "A Time Machine rewind has not finished canceling an approved commit, so this group's workflow cannot advance. Finish the commit cancel with [Retry commit cancel] on the proposal (TR2) first.",
+    "ja": "Time Machine の巻き戻しで承認コミットの取り消しが終わっていないため、このグループのワークフローは進められません。反映案(TR2)画面の[コミット取消を再試行]でコミット取り消しを先に完了してください。",
+}
 _APPROVED_REVIEW_STATUSES = {"approved", "wf_done"}
 _WORKFLOW_ROOT_TYPES = {"R", "B"}
+
+
+class WorkflowHeadMismatchError(TransitionError):
+    """Approval of a workflow step that is not the sequence's effective head (0660 T0004 §5).
+
+    A ``TransitionError`` so every approve surface already answers it with 409.
+    """
+
+    code = "workflow_not_head"
+
+
+class WorkflowHeadUnavailableError(TransitionError):
+    """The authoritative head of a slot document's sequence could not be read.
+
+    0660 T0004 §5 (S3): the head guard fails closed. Without a readable head there is no
+    way to tell an in-order approval from an out-of-order one, so nothing is approved.
+    """
+
+    code = "workflow_head_unavailable"
+
+
+class WorkflowRevertPendingError(TransitionError):
+    """A group whose Time Machine commit cancel is still pending cannot advance (RC3)."""
+
+    code = "workflow_revert_pending"
+
+
+def _require_no_revert_pending_for_approval(doc: dict, locale: str = "ko") -> None:
+    """Refuse every approval in a group while a reopened TR2's commit is still live.
+
+    0660 T0004 §3 (RC3, approach B): a blocked cancel leaves the group in an explicit
+    pending state in which only the cancel retry may run. The pending TR2 itself is
+    refused by its own rule (``tr2_revert_pending``); this closes the rest of the group,
+    so no other step can be approved on top of a source that still carries the commit.
+    Called for the workflow approvals only (slot results and the AC final approval), from
+    :func:`_require_workflow_head_for_approval`; an unreadable ledger fails closed.
+    """
+    group_id = doc.get("group_id")
+    if not group_id:
+        return
+    from modules.flow_gate.documents import tr2_service
+    lang = locale if locale in _WORKFLOW_REVERT_PENDING_MESSAGES else "ko"
+    try:
+        pending = tr2_service.group_revert_pending(group_id)
+    except Exception as exc:  # noqa: BLE001 — an unreadable ledger is not "nothing pending"
+        _log.warning("[approval] revert-pending lookup failed for %s: %s", group_id, exc)
+        raise WorkflowHeadUnavailableError(
+            _WORKFLOW_HEAD_UNAVAILABLE_MESSAGES.get(lang) or _WORKFLOW_HEAD_UNAVAILABLE_MESSAGES["ko"]
+        ) from exc
+    if not pending or pending == [doc.get("doc_id")]:
+        return
+    raise WorkflowRevertPendingError(_WORKFLOW_REVERT_PENDING_MESSAGES[lang])
+
+
+def _require_workflow_head_for_approval(doc: dict, locale: str = "ko") -> None:
+    """Refuse to approve a slot result that sits after the authoritative workflow head.
+
+    0660 T0004 §5 (S3): a Time Machine reopen re-pends every step from the target onward.
+    The effective head is then the EARLIEST of them, yet nothing stopped a later N/NR/T
+    from being approved first — out of order, ahead of the step the rewind returned to.
+    Only documents that occupy a workflow slot are checked; non-slot documents (root,
+    Q, AC, auto-complete M) keep their own rules — except that the AC final approval, like
+    every slot result, is refused while the group's commit cancel is pending (RC3).
+    """
+    doc_id = doc.get("doc_id")
+    if not doc_id or str(doc.get("type_code") or "").upper() in AUTO_COMPLETE_TYPES:
+        return
+    # An approved step is no longer anybody's head; approving it again is either an
+    # idempotent replay (TR2 request_key) or refused by the review rules themselves.
+    if doc.get("doc_review_status") in _APPROVED_REVIEW_STATUSES:
+        return
+    lang = locale if locale in _NOT_WORKFLOW_HEAD_APPROVAL_MESSAGES else "ko"
+    # Fail closed: an unreadable sequence, or a slot whose sequence names no head, is
+    # refused with its own code instead of being waved through as "probably the head".
+    try:
+        item = db_wfseq.get_item_by_result_doc_id(doc_id)
+        if item is None:
+            if str(doc.get("type_code") or "").upper() == "AC":
+                _require_no_revert_pending_for_approval(doc, locale)
+            return
+        if item.get("sequence_id") is None:
+            raise LookupError(f"workflow slot {item.get('id')} has no sequence")
+        head = db_wfseq.get_effective_head(item["sequence_id"])
+    except TransitionError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — an unreadable sequence is not a head verdict
+        _log.warning("[approval] workflow head lookup failed for %s: %s", doc_id, exc)
+        raise WorkflowHeadUnavailableError(_WORKFLOW_HEAD_UNAVAILABLE_MESSAGES[lang]) from exc
+    _require_no_revert_pending_for_approval(doc, locale)
+    if head is None:
+        _log.warning("[approval] workflow sequence %s has no effective head for %s",
+                     item.get("sequence_id"), doc_id)
+        raise WorkflowHeadUnavailableError(_WORKFLOW_HEAD_UNAVAILABLE_MESSAGES[lang])
+    if head.get("id") == item.get("id"):
+        return
+    raise WorkflowHeadMismatchError(_NOT_WORKFLOW_HEAD_APPROVAL_MESSAGES[lang])
 
 
 def _empty_body_approval_message(locale: str = "ko") -> str:
@@ -729,6 +840,12 @@ def transition_document_review(
     doc = db_docs.get_by_id(doc_id)
     if not doc:
         raise ValueError(f"Document not found: {doc_id}")
+
+    # 0660 T0004 §5 (S3): approval follows the authoritative workflow head, whoever asks
+    # (the button is only a hint). Checked before the TR2 branch so a reopened, later TR2
+    # cannot be approved out of order either.
+    if action == "approve":
+        _require_workflow_head_for_approval(doc, locale)
 
     # TR2 alone needs a source-changing approval. All other actions and document
     # types keep the established review transition and TR commit semantics.

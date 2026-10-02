@@ -1772,6 +1772,9 @@ export default {
           tr2_history_invariant_error: '반영 이력이 서로 맞지 않습니다.',
           tr2_nested_transaction: '서버 내부 상태 때문에 승인할 수 없습니다.',
           tr2_principal_required: '승인한 사람을 확인할 수 없습니다.',
+          tr2_revert_pending: 'Time Machine이 이전 승인 커밋을 아직 되돌리지 못했습니다. 커밋 취소를 다시 시도한 뒤 승인하세요.',
+          tr2_source_root_missing: '프로젝트 소스 폴더가 없습니다. 소스를 배치하거나 Git 연동을 켜야 합니다.',
+          tr2_worktree_provision_failed: '그룹 작업 폴더(worktree)를 준비하지 못했습니다.',
         },
         unknown: '승인 전 검증에서 막히는 항목이 있습니다({code}).',
         unavailable: '서버가 승인 가능 여부를 아직 확인하지 못했습니다.',
@@ -1800,11 +1803,18 @@ export default {
         failed: '실패',
         recovery_required: '복구 필요',
       },
+      revert_retry: {
+        action: '커밋 취소 다시 시도',
+        running: '커밋 취소를 다시 시도하는 중…',
+        done: '승인 커밋을 취소했습니다. 이제 새 revision을 저장한 뒤 승인할 수 있습니다.',
+        blocked: '커밋을 아직 취소하지 못했습니다 — {reason} 잠시 후 다시 시도하세요.',
+      },
       lock: {
         read_only: '읽기 전용: AI 실행이 이 그룹을 편집하고 있습니다.',
         approved: '읽기 전용: 승인된 revision은 바꿀 수 없습니다.',
         applying: '읽기 전용: 승인 시도가 진행 중입니다.',
         recovery_required: '읽기 전용: 복구가 끝나기 전에는 바꿀 수 없습니다.',
+        revert_pending: '읽기 전용: Time Machine이 이 반영안의 승인 커밋을 아직 되돌리지 못했습니다. 아래 [커밋 취소 다시 시도]로 커밋 취소를 마친 뒤 편집하세요.',
         not_editable: '읽기 전용: 이 문서는 더 이상 편집할 수 없습니다.',
       },
       diag: {
@@ -1910,6 +1920,7 @@ export default {
           approved: '승인 완료',
           recovery_required: '복구 필요',
           applying: '반영 중',
+          revert_pending: '승인 커밋 취소 대기',
           unknown: '변경 불가 상태',
         },
         in_progress: '현재 상태에서 수정할 수 없습니다: 승인 시도가 진행 중입니다.',
@@ -1971,6 +1982,7 @@ export default {
       saved: 'revision {revision}으로 저장했습니다.',
     },
     doc_header: {
+      toast_missing_doc_tab_closed: '문서 {docId}이(가) 삭제되어 탭을 닫았습니다.',
       collapse: '문서 정보 접기',
       expand: '문서 정보 펼치기',
       read_only_ai: '읽기전용 · AI 실행 중',
@@ -2892,6 +2904,17 @@ export default {
       error_next_step_unavailable: '다음 단계 정보를 확인할 수 없습니다.',
       toast_created: '빈 문서가 생성되었습니다.',
       error_create_failed: '빈 문서 생성 중 오류가 발생했습니다.',
+      error_create_failed_code: '빈 문서를 만들 수 없습니다({code}).',
+      error_tr2_worktree_retry: '그룹 작업 폴더(worktree)를 아직 준비하지 못했습니다 — {reason}. 잠시 후 [생성]을 다시 누르면 됩니다.',
+      error_tr2_source_missing: '프로젝트 소스 폴더가 없어 반영안을 만들 수 없습니다. 다시 시도해도 해결되지 않습니다. 프로젝트 소스를 src/<프로젝트 이름>/<브랜치>에 배치하거나 Git 연동을 켠 뒤 생성하세요.',
+      error_tr2_project_name_missing: '프로젝트 이름이 설정되지 않아 소스 폴더를 찾을 수 없습니다. 다시 시도해도 해결되지 않습니다. 프로젝트 설정에서 이름을 지정하거나 Git 연동을 켠 뒤 생성하세요.',
+      error_tr2_provision_failed: '그룹 작업 폴더(worktree)를 준비하지 못했습니다. 다시 시도해도 해결되지 않으며, 운영자가 Git 연동 상태를 확인해야 합니다.',
+      error_slot_conflict: '이 워크플로 단계에는 이미 다른 문서가 연결되어 있습니다. 화면을 새로 고친 뒤 현재 단계를 확인하세요.',
+      reason: {
+        git_busy: '다른 Git 작업이 진행 중입니다',
+        branch_merge_active: '브랜치 병합이 진행 중입니다',
+        worktree_provisioning: '작업 폴더를 준비하는 중입니다',
+      },
     },
     command_selector_modal: {
       title: '명령어 선택',
@@ -3201,6 +3224,7 @@ export default {
       forbidden: '이 Git 작업을 수행할 권한이 없습니다.',
       invalid_state: '현재 상태에서는 이 Git 작업을 수행할 수 없습니다.',
       invalid_request: 'Git 요청이 올바르지 않습니다.',
+      workflow_revert_pending: 'Time Machine 되돌리기의 승인 커밋 취소가 아직 끝나지 않았습니다. 반영안(TR2) 화면의 [커밋 취소 다시 시도]로 커밋 취소를 먼저 마치세요. 그 전에는 이 그룹을 다시 되돌리거나 다음 단계로 진행할 수 없습니다.',
     },
     // flowgate.default.0578 T0010 §2.2/작업6 — extractApiErrorMessage와 비-Git 오류
     // sink가 공유하는 등록 code 문구. GROUP_AI_RUN_LOCKED는 새 키를 만들지 않고

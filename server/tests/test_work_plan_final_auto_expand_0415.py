@@ -169,6 +169,9 @@ def test_approval_hook_returns_success_when_final_expansion_fails(monkeypatch):
     monkeypatch.setattr(pipeline.db_docs, "get_by_id", lambda _doc_id: dict(stored))
     monkeypatch.setattr(pipeline.db_docs, "update", update)
     monkeypatch.setattr(pipeline, "_require_document_body_for_approval", lambda *_args: None)
+    # The workflow-head guard (0660 T0004 §5) fails closed without a sequence store; it is
+    # covered by test_tr2_lifecycle_0660.py.
+    monkeypatch.setattr(pipeline, "_require_workflow_head_for_approval", lambda *_args: None)
     monkeypatch.setattr(pipeline, "log_state_changed", lambda **_kwargs: None)
     # Make the canonical-body reload succeed so the test reaches expand_final_work_plan.
     monkeypatch.setattr(

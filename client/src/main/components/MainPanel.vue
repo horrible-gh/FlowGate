@@ -942,6 +942,7 @@ import { useExplorerStore } from '../stores/explorer'
 import { useAiProviderStore } from '../stores/aiProvider'
 import { groupIdFromDocId, isScreenOwnedRun, useAiInvokeRunsStore } from '../stores/aiInvokeRuns'
 import { recordFanOut } from '@shared/diagnostics/runtimeDiagnostics'
+import { normalizeGitError, resolveGitError } from '@shared/gitErrors'
 import {
   useDashboardStore,
   type DashboardWorkflow,
@@ -2479,8 +2480,7 @@ async function onOpenFinalApproval(tabId: string) {
     // unmounts; its re-read would land after that and be discarded.
     openFinalApprovalTab(acId)
   } catch (e: any) {
-    const detail = e?.response?.data?.detail ?? String(e)
-    showToast(detail, 'danger')
+    showToast(workflowActionErrorText(e), 'danger')
   }
 }
 
@@ -2855,6 +2855,16 @@ function cancelNeedsResultScreen(cancel: any): boolean {
     || (Array.isArray(cancel.skipped) && cancel.skipped.length > 0)
 }
 
+// 0660 T0004 §4 (S2): the rewind names every document it deleted. Close those tabs
+// whichever entry point started it — a strip cell rewinds from the root R, so the AC tab
+// is not the dialog's own document and the check below never saw it.
+function closeDeletedDocTabs(deleted: unknown) {
+  if (!Array.isArray(deleted)) return
+  for (const docId of deleted) {
+    if (typeof docId === 'string' && docId) tabsStore.closeTab(docId)
+  }
+}
+
 // The close-out the rewind always ends with: drop the stale AC tab, re-read the open
 // documents and land the user on the step they rewound to.
 function finishTimeMachine(acDocId: string, step: TimeMachineStep) {
@@ -2888,6 +2898,7 @@ async function onTimeMachineConfirm(payload: TimeMachineStep) {
     // 0332 — the rewind is committed no matter what the source cancel did, so the
     // commit markers and the Git status panel are stale from here on either way.
     refreshAfterCancel()
+    closeDeletedDocTabs(res.data?.deleted)
     const cancel = res.data?.tr_commit_cancel ?? null
     if (cancelNeedsResultScreen(cancel)) {
       // Stay open and become the result screen. The step the user rewound to opens when
@@ -2901,9 +2912,18 @@ async function onTimeMachineConfirm(payload: TimeMachineStep) {
     finishTimeMachine(acDocId, payload)
     showToast(reopenToast(cancel), 'success')
   } catch (e: any) {
-    const detail = e?.response?.data?.detail ?? String(e)
-    showToast(detail, 'danger')
+    showToast(workflowActionErrorText(e), 'danger')
   }
+}
+
+// 0660 T0004 §3 (RC3): the workflow routes answer a refused group mutation with the
+// identified `{ok:false, error:{code}}` envelope (e.g. `workflow_revert_pending` while a
+// Time Machine commit cancel is pending). It has no `detail`, so the old toast printed
+// "AxiosError: Request failed with status code 409". Coded errors read the shared Git
+// error copy; anything else keeps the server's detail as before.
+function workflowActionErrorText(e: any): string {
+  if (normalizeGitError(e).code) return resolveGitError(e, t)
+  return e?.response?.data?.detail ?? String(e)
 }
 
 // The success toast carries the cancel count — "되감았다"만으로는 소스가 어떻게 됐는지
@@ -3120,8 +3140,7 @@ async function doWorkflowStepReturn() {
       })
     }
   } catch (e: any) {
-    const detail = e?.response?.data?.detail ?? String(e)
-    showToast(detail, 'danger')
+    showToast(workflowActionErrorText(e), 'danger')
   } finally {
     returnPointRestoring.value = false
   }

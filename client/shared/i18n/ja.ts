@@ -1770,6 +1770,9 @@ export default {
           tr2_history_invariant_error: '反映履歴が一致しません。',
           tr2_nested_transaction: 'サーバー内部の状態により承認できません。',
           tr2_principal_required: '承認者を確認できません。',
+          tr2_revert_pending: 'Time Machineが以前の承認コミットをまだ取り消していません。コミット取消を再試行してから承認してください。',
+          tr2_source_root_missing: 'プロジェクトのソースフォルダがありません。ソースを配置するかGit連携を有効にしてください。',
+          tr2_worktree_provision_failed: 'グループ作業フォルダ(worktree)を準備できませんでした。',
         },
         unknown: '承認前の検証で止まる項目があります({code})。',
         unavailable: 'サーバーがまだ承認可否を確認していません。',
@@ -1798,11 +1801,18 @@ export default {
         failed: '失敗',
         recovery_required: '復旧が必要',
       },
+      revert_retry: {
+        action: 'コミット取消を再試行',
+        running: 'コミット取消を再試行しています…',
+        done: '承認コミットを取り消しました。新しい revision を保存してから承認できます。',
+        blocked: 'コミットをまだ取り消せていません — {reason} しばらくしてから再試行してください。',
+      },
       lock: {
         read_only: '読み取り専用: AI実行がこのグループを編集しています。',
         approved: '読み取り専用: 承認済みのリビジョンは変更できません。',
         applying: '読み取り専用: 承認試行が進行中です。',
         recovery_required: '読み取り専用: 復旧が終わるまで変更できません。',
+        revert_pending: '読み取り専用: Time Machineがこの反映案の承認コミットをまだ取り消していません。下の[コミット取消を再試行]でコミット取消を完了してから編集してください。',
         not_editable: '読み取り専用: この文書はもう編集できません。',
       },
       diag: {
@@ -1908,6 +1918,7 @@ export default {
           approved: '承認済み',
           recovery_required: '復旧が必要',
           applying: '反映中',
+          revert_pending: '承認コミットの取消待ち',
           unknown: '変更不可の状態',
         },
         in_progress: '現在は変更できません: 承認試行が進行中です。',
@@ -1969,6 +1980,7 @@ export default {
       saved: 'リビジョン {revision} として保存しました。',
     },
     doc_header: {
+      toast_missing_doc_tab_closed: '文書 {docId} は削除されたため、タブを閉じました。',
       collapse: '文書情報を折りたたむ',
       expand: '文書情報を展開',
       read_only_ai: '読み取り専用 · AI 実行中',
@@ -2889,6 +2901,17 @@ export default {
       error_next_step_unavailable: '次のステップ情報を確認できません。',
       toast_created: '空文書が作成されました。',
       error_create_failed: '空文書の作成中にエラーが発生しました。',
+      error_create_failed_code: '空文書を作成できません({code})。',
+      error_tr2_worktree_retry: 'グループ作業フォルダ(worktree)の準備がまだ完了していません — {reason}。しばらくしてから[作成]をもう一度押してください。',
+      error_tr2_source_missing: 'プロジェクトのソースフォルダがないため反映案を作成できません。再試行しても解決しません。プロジェクトのソースを src/<プロジェクト名>/<ブランチ> に配置するか、Git連携を有効にしてから作成してください。',
+      error_tr2_project_name_missing: 'プロジェクト名が設定されていないため、ソースフォルダを特定できません。再試行しても解決しません。プロジェクト名を設定するか、Git連携を有効にしてから作成してください。',
+      error_tr2_provision_failed: 'グループ作業フォルダ(worktree)を準備できませんでした。再試行しても解決しないため、運用者がGit連携の状態を確認する必要があります。',
+      error_slot_conflict: 'このワークフロー段階には既に別の文書が連結されています。画面を再読み込みして現在の段階を確認してください。',
+      reason: {
+        git_busy: '別のGit作業が進行中です',
+        branch_merge_active: 'ブランチのマージが進行中です',
+        worktree_provisioning: '作業フォルダを準備しています',
+      },
     },
     command_selector_modal: {
       title: 'コマンド選択',
@@ -3198,6 +3221,7 @@ export default {
       forbidden: 'この Git 操作を実行する権限がありません。',
       invalid_state: '現在の状態ではこの Git 操作を実行できません。',
       invalid_request: 'Git リクエストが正しくありません。',
+      workflow_revert_pending: 'Time Machine の巻き戻しで承認コミットの取り消しがまだ終わっていません。反映案(TR2)画面の[コミット取消を再試行]でコミット取り消しを先に完了してください。それまではこのグループを再び巻き戻したり次の段階へ進めたりできません。',
     },
     api_errors: {
       validation_failed: {

@@ -1772,6 +1772,9 @@ export default {
           tr2_history_invariant_error: 'The apply history is inconsistent.',
           tr2_nested_transaction: 'The server cannot approve from its current internal state.',
           tr2_principal_required: 'The approving user could not be identified.',
+          tr2_revert_pending: 'The Time Machine has not reverted the previous approval commit yet. Retry the commit cancel, then approve.',
+          tr2_source_root_missing: 'The project source directory is missing. Place the source or enable Git integration.',
+          tr2_worktree_provision_failed: 'The group worktree could not be provisioned.',
         },
         unknown: 'Something would be refused by the pre-approval check ({code}).',
         unavailable: 'The server has not confirmed whether this can be approved.',
@@ -1800,11 +1803,18 @@ export default {
         failed: 'failed',
         recovery_required: 'recovery required',
       },
+      revert_retry: {
+        action: 'Retry commit cancel',
+        running: 'Retrying the commit cancel…',
+        done: 'The approval commit was canceled. Save a new revision, then approve.',
+        blocked: 'The commit is not canceled yet — {reason} Try again shortly.',
+      },
       lock: {
         read_only: 'Read only: an AI run is editing this group.',
         approved: 'Read only: the approved revision is immutable.',
         applying: 'Read only: an approval attempt is running.',
         recovery_required: 'Read only: recovery is required before anything can change.',
+        revert_pending: 'Read only: the Time Machine has not reverted this proposal\'s approval commit yet. Finish the commit cancel with [Retry commit cancel] below, then edit.',
         not_editable: 'Read only: this document can no longer be edited.',
       },
       diag: {
@@ -1910,6 +1920,7 @@ export default {
           approved: 'approved',
           recovery_required: 'recovery required',
           applying: 'applying',
+          revert_pending: 'approval commit cancel pending',
           unknown: 'locked',
         },
         in_progress: 'It cannot be changed now: an approval attempt is running.',
@@ -1971,6 +1982,7 @@ export default {
       saved: 'Saved revision {revision}.',
     },
     doc_header: {
+      toast_missing_doc_tab_closed: 'Document {docId} no longer exists, so its tab was closed.',
       collapse: 'Collapse document info',
       expand: 'Expand document info',
       read_only_ai: 'Read-only · AI running',
@@ -2894,6 +2906,17 @@ export default {
       error_next_step_unavailable: 'Could not confirm next step information.',
       toast_created: 'Empty document created.',
       error_create_failed: 'An error occurred while creating the empty document.',
+      error_create_failed_code: 'The empty document could not be created ({code}).',
+      error_tr2_worktree_retry: 'The group worktree is not ready yet — {reason}. Press [Create] again in a moment.',
+      error_tr2_source_missing: 'The project source directory does not exist, so a proposal cannot be created. Retrying will not help: place the project source at src/<project name>/<branch> or enable Git integration, then create it.',
+      error_tr2_project_name_missing: 'The project has no name, so its source directory cannot be found. Retrying will not help: set the project name or enable Git integration, then create it.',
+      error_tr2_provision_failed: 'The group worktree could not be provisioned. Retrying will not help; an operator needs to check the Git integration.',
+      error_slot_conflict: 'Another document is already linked to this workflow step. Refresh the screen and check the current step.',
+      reason: {
+        git_busy: 'another Git operation is running',
+        branch_merge_active: 'a branch merge is in progress',
+        worktree_provisioning: 'the worktree is being prepared',
+      },
     },
     command_selector_modal: {
       title: 'Select Command',
@@ -3205,6 +3228,7 @@ export default {
       forbidden: 'You do not have permission to perform this Git operation.',
       invalid_state: 'This Git operation is not available in the current state.',
       invalid_request: 'The Git request is invalid.',
+      workflow_revert_pending: 'A Time Machine rewind has not finished canceling an approved commit. Finish the commit cancel with [Retry commit cancel] on the proposal (TR2) first; until then this group cannot be rewound again or advanced.',
     },
     api_errors: {
       validation_failed: {

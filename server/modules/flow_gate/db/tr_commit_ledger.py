@@ -153,6 +153,27 @@ def live_rows(group_id: str, doc_ids: Iterable[str]) -> list[dict[str, Any]]:
     )
 
 
+def revert_pending_doc_ids(group_id: str) -> list[str]:
+    """0660 T0004 §3 (RC3) — TR2 documents of this group that are reopened (not approved)
+    while their own approval commit is still live and cancelable, in doc_id order.
+
+    One query for the whole group: the workflow boundaries (reopen, approve, next-empty)
+    ask "is anything in this group still waiting for its commit cancel?". Terminal rows
+    are excluded for the same reason :func:`live_rows` excludes them.
+    """
+    rows = get_store()._fetch_all(
+        "SELECT DISTINCT l.doc_id "
+        "FROM tr_commit_ledger l "
+        "JOIN documents d ON d.doc_id = l.doc_id "
+        "WHERE l.group_id = ? AND l.state = 'live' AND l.reopened_terminal_at IS NULL "
+        "AND d.type_code = 'TR2' "
+        "AND COALESCE(d.doc_review_status, '') <> 'approved' "
+        "ORDER BY l.doc_id",
+        [group_id],
+    )
+    return [r["doc_id"] for r in rows]
+
+
 def latest_reopened_subject(group_id: str, doc_id: str) -> Optional[str]:
     """Return the durable subject of the most recent prior approval round this
     document's Time Machine reopen left behind, whichever of the two shapes it took.

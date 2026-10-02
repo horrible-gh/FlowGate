@@ -97,6 +97,15 @@ def _reject_if_group_ai_running(doc: dict) -> None:
         doc.get("group_id"), human_principal(), "document mutation"
     )
 
+
+def _reject_if_revert_pending(doc: dict) -> None:
+    """409 ``workflow_revert_pending`` while the group's Time Machine commit cancel is
+    pending (0660 T0004 §3, RC3). Only ``/return-point/cancel-commits`` stays open."""
+    from modules.flow_gate.services.workflow_rework_service import assert_no_revert_pending
+
+    if doc.get("group_id"):
+        assert_no_revert_pending(doc["group_id"])
+
 def _get_project_branch(project_id: str) -> str:
     """Dynamically look up project_settings.branch. Falls back to 'main' on failure."""
     try:
@@ -1137,6 +1146,7 @@ def create_next_empty_document(
     if prev_doc.get("group_id") != body.group_id:
         raise HTTPException(status_code=422, detail="group_id does not match the previous document.")
     _reject_if_group_ai_running(prev_doc)
+    _reject_if_revert_pending(prev_doc)
 
     # prev_doc may be the sequence root OR a produced child (the just-approved doc the
     # FE navigated to). Resolve the owning sequence either way (0048 TR0009 — creating
@@ -1161,6 +1171,17 @@ def create_next_empty_document(
             status_code=409,
             detail="Workflow step has already been created.",
         )
+
+    # 0660 T0004 §1 (RC1): a TR2 cannot exist without its source root. Make sure of it
+    # here — provisioning a not-yet-ready group worktree synchronously — BEFORE the
+    # number is reserved and anything is written, so a refusal leaves nothing behind and
+    # tells the client whether a retry can help (retryable + public reason).
+    if type_code == "TR2":
+        from modules.flow_gate.documents import tr2_service as _tr2_pre
+        try:
+            _tr2_pre.ensure_source_root(body.project_id, body.group_id)
+        except _tr2_pre.Tr2ValidationError as exc:
+            return _tr2_error_response(exc)
 
     try:
         doc_code = numbering_service.reserve_document(
@@ -1324,14 +1345,53 @@ def create_next_empty_document(
         except OSError:
             pass
         if isinstance(exc, _tr2.Tr2ValidationError):
-            from modules.flow_gate.documents.tr2_errors import TR2_ERRORS as _TR2_ERRORS, error_payload
-            return JSONResponse(status_code=_TR2_ERRORS[exc.code].http_status,
-                                content=error_payload(exc.code, details=exc.details))
+            return _tr2_error_response(exc)
+        from modules.flow_gate.workflow.pipeline_service import WorkflowSlotConflictError
+        if isinstance(exc, WorkflowSlotConflictError):
+            # 0660 T0004 §2 (RC2): an identified workflow conflict, never a bare 500.
+            return JSONResponse(status_code=409, content=exc.body())
         raise
 
     # T528: child creation → automatically transition parent (R/M) open → closed
     _try_close_parent_on_child_created(body.prev_doc_id, current_user["user_id"])
     return {"data": doc, "doc_id": doc_id, "stored_path": str(doc_file_path)}
+
+
+def _tr2_error_response(exc) -> JSONResponse:
+    from modules.flow_gate.documents.tr2_errors import TR2_ERRORS as _TR2_ERRORS, error_payload
+    return JSONResponse(status_code=_TR2_ERRORS[exc.code].http_status,
+                        content=error_payload(exc.code, details=exc.details))
+
+
+@router.get("/next-empty/preflight")
+@require_permission("perm_document_create")
+def preflight_next_empty_document(
+    prev_doc_id: str = Query(...),
+    type_code: str = Query(...),
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Would ``POST /next-empty`` for this type be refused for a reason a retry cannot fix?
+
+    0660 T0004 §1.2: a git-off project with no ``src/<project_name>/<branch>`` can never
+    get a TR2, however often the user presses [생성]. The create dialog asks here when it
+    opens, so the operator guidance shows up front instead of after a failed attempt.
+    Read-only: a git-on group whose worktree is not ready yet answers ``ok`` because the
+    create path provisions it itself (§1.1); nothing is ensured or reserved here.
+    """
+    if (type_code or "").strip().upper() != "TR2":
+        return {"ok": True}
+    prev_doc = document_service.get_document(prev_doc_id)
+    if prev_doc is None:
+        raise HTTPException(status_code=404, detail=f"Previous document not found: {prev_doc_id}")
+    from modules.flow_gate.documents import tr2_service as _tr2_pre
+    from modules.flow_gate.documents.tr2_errors import error_payload
+    try:
+        _tr2_pre.resolve_source_root(prev_doc.get("project_id"), prev_doc.get("group_id"))
+    except _tr2_pre.Tr2ValidationError as exc:
+        if exc.code == "tr2_git_unavailable":
+            return {"ok": True, "provisioning": True}
+        return {"ok": False, "error": error_payload(exc.code, details=exc.details)}
+    return {"ok": True}
 
 
 class NextApprovedError(Exception):
@@ -2095,6 +2155,7 @@ def open_final_approval(
         raise HTTPException(status_code=404, detail=f"Document not found: {body.doc_id}")
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
+    _reject_if_revert_pending(doc)
     project_id = doc.get("project_id")
     group_id = doc.get("group_id")
     module = doc.get("module") or "none"
@@ -2278,6 +2339,7 @@ def retry_reapply_tr_commits(
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
+    _reject_if_revert_pending(doc)
     project_id = doc.get("project_id")
     group_id = doc.get("group_id")
     if not project_id or not group_id:
@@ -2358,6 +2420,7 @@ def restore_workflow(
         raise HTTPException(status_code=400, detail="Document has no project/group")
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
+    _reject_if_revert_pending(doc)
 
     with get_store().transaction():
         rp = _db_rp.get_by_group(group_id)
@@ -3318,6 +3381,7 @@ def update_document_workflow(
         raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
     _reject_if_group_disposed(doc)
     _reject_if_group_ai_running(doc)
+    _reject_if_revert_pending(doc)
     if doc.get("type_code") not in WORKFLOW_ROOT_TYPES:
         raise HTTPException(status_code=400, detail="Only R/B workflow roots can have workflows configured.")
 
