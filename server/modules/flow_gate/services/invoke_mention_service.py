@@ -195,29 +195,14 @@ def _chat_lookup_sections(
 
 
 def _start_paragraph(folded: int) -> list[str]:
-    """The paragraph that explains what ``after_seq`` is (L0010 §2-4-1).
-
-    Unfolded, this is the existing wording, unchanged to the byte: it is what nearly
-    every call produces, and rewriting it would shake every check that pins it.
-
-    Folded, the original sentence is simply false — ``after_seq`` is no longer where
-    that worker stopped reading. Left alone, the worker concludes it has already read
-    the very turns it is about to be told were folded away, which is the whole reason
-    for saying anything at all.
-    """
-    if folded == 0:
-        return [
-            "The after_seq above is YOUR last read position — the server tracks it, do not compute",
-            "it yourself. `head` carries the document intro and the opening of the conversation as",
-            "background; read it first, then the turns. If `next_after_seq` is not null, call again",
-            "with that value until it is null. Reading does not consume this token.",
-        ]
+    """Explain the invocation-local meaning of ``after_seq``."""
+    del folded
     return [
-        "The after_seq above is where the server wants you to start — your own last read position,",
-        "moved forward to the recent-conversation range this user chose. The server tracks it, do",
-        "not compute it yourself. `head` carries the document intro and the opening of the",
-        "conversation as background; read it first, then the turns. If `next_after_seq` is not null,",
-        "call again with that value until it is null. Reading does not consume this token.",
+        "The after_seq above is the start of this invocation's conversation context window.",
+        "It is not a persisted model-memory cursor and may intentionally include turns seen by an",
+        "earlier invocation. `head` carries the document intro and the opening of the conversation",
+        "as background; read it first, then the turns. If `next_after_seq` is not null, call again",
+        "with that value until it is null. Reading does not consume this token.",
     ]
 
 
@@ -278,24 +263,14 @@ def build_conversation_mention(
 ) -> str:
     """Build the single-turn chat mention used by copy and in-app invoke paths.
 
-    A pinned provider resumes from the cursor the server tracks for that provider.
-    An unpinned copy/fallback mention starts at zero because the eventual participant
-    is not known when the mention is issued. ``provider`` is display text only;
-    identity comes exclusively from the token-bound ``provider_id``.
+    Each invocation derives its context window from the saved mode/count and current
+    conversation head. A persisted provider participant cursor is delivery history, not
+    model memory, and does not choose that window. ``provider`` is display text only;
+    identity remains token-bound.
 
-    0362 T0012: ``user_id`` is whoever pressed the button, and the range they saved can
-    move the starting point forward from that cursor. Both call sites already hold the
-    value and neither sends it over the wire — the screen does not get to say how much
-    conversation an AI is handed, or a path that never went through the screen would
-    have no value there at all, or a made-up one (P0009 scenario 14). Left None, the
-    settings come out as their defaults, which is also what an unreachable store gives.
+    ``user_id`` selects the saved chat settings. Left None, defaults are used.
     """
-    del module  # Kept in the public signature for the two established call sites.
-    last_read = (
-        conversation_turns.get_last_read_seq(doc_id, f"provider:{provider_id}")
-        if provider_id
-        else 0
-    )
+    del module, provider_id  # Public signature is retained; neither chooses the window.
     settings = chat_settings_service.resolve_chat_settings_safe(user_id)
     context_mode = settings["context_mode"]
     # [all] adds no query. With the whole conversation on offer the head cannot change
@@ -305,7 +280,6 @@ def build_conversation_mention(
         conversation_turns.current_head_seq(doc_id) if context_mode == "recent" else 0
     )
     after_seq, folded = chat_settings_service.resolve_context_window(
-        last_read=last_read,
         head_seq=head_seq,
         mode=context_mode,
         turns=settings["context_turns"],
@@ -332,7 +306,7 @@ def build_conversation_mention(
         "",
         f"Conversation document: {doc_id}",
         "",
-        "Read what you have not read yet:",
+        "Read the conversation context selected for this invocation:",
         f"GET {api_base}/conversation/{doc_id}/turns?after_seq={after_seq}&include_head=1",
         f"Authorization: Bearer {raw_token}",
         "",

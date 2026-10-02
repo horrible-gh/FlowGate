@@ -119,48 +119,28 @@ def memory_store(monkeypatch):
 # ── 1. the window ─────────────────────────────────────────────────────────────
 
 class TestContextWindow:
-    def test_copy_path_on_a_long_conversation_folds_the_earlier_turns(self):
-        # P0009 시나리오 11: head 30, nothing read, range 20.
+    def test_recent_long_conversation_uses_a_sliding_window(self):
         assert css.resolve_context_window(
-            last_read=0, head_seq=30, mode="recent", turns=20
+            head_seq=30, mode="recent", turns=20
         ) == (10, 10)
 
     def test_short_conversation_folds_nothing(self):
-        # 시나리오 12: the subtraction goes negative and the clamp catches it. A worker
-        # told "0 turns are folded" would be reading filler on almost every call.
         assert css.resolve_context_window(
-            last_read=0, head_seq=8, mode="recent", turns=20
+            head_seq=8, mode="recent", turns=20
         ) == (0, 0)
 
-    def test_partly_read_provider_folds_only_what_it_has_not_read(self):
-        # 시나리오 14: after_seq 10, but 1..4 were read long ago, so 6 turns fold.
+    def test_all_always_starts_from_zero(self):
         assert css.resolve_context_window(
-            last_read=4, head_seq=30, mode="recent", turns=20
-        ) == (10, 6)
-
-    def test_a_caught_up_provider_is_never_dragged_backwards(self):
-        # 시나리오 15: re-reading 17 turns would look like the conversation jumped back.
-        assert css.resolve_context_window(
-            last_read=27, head_seq=30, mode="recent", turns=20
-        ) == (27, 0)
-
-    def test_all_starts_where_the_reader_stopped_and_ignores_the_head(self):
-        # 시나리오 13. head_seq arrives as 0 precisely because [전체] does not ask for it.
-        assert css.resolve_context_window(
-            last_read=12, head_seq=0, mode="all", turns=20
-        ) == (12, 0)
+            head_seq=0, mode="all", turns=20
+        ) == (0, 0)
 
     def test_empty_conversation(self):
         assert css.resolve_context_window(
-            last_read=0, head_seq=0, mode="recent", turns=20
+            head_seq=0, mode="recent", turns=20
         ) == (0, 0)
 
-    def test_cursor_past_the_end_of_the_conversation_is_pulled_back_to_the_head(self):
-        # Turns cannot be deleted, so this only happens if storage was edited by hand.
-        # There is nothing new to hand over, and nothing is reported as folded.
-        assert css.resolve_context_window(
-            last_read=40, head_seq=30, mode="recent", turns=20
-        ) == (30, 0)
+    def test_window_contract_has_no_provider_cursor_parameter(self):
+        assert "last_read" not in inspect.signature(css.resolve_context_window).parameters
 
 
 # ── 2. the mention ────────────────────────────────────────────────────────────
@@ -206,51 +186,62 @@ class TestFoldedMention:
             "Paging back does not consume this token either."
         ) in text
 
-    def test_start_paragraph_stops_claiming_the_position_is_the_readers_own(self, monkeypatch):
+    def test_start_paragraph_describes_this_invocation_window(self, monkeypatch):
         text = self._build(monkeypatch, head_seq=30)
-        assert "The after_seq above is where the server wants you to start" in text
-        assert "moved forward to the recent-conversation range this user chose" in text
-        # The original sentence is false once the start point has moved, and leaving it
-        # in would tell the worker it had already read the folded turns.
-        assert "The after_seq above is YOUR last read position" not in text
+        assert "The after_seq above is the start of this invocation's conversation context window" in text
+        assert "Read the conversation context selected for this invocation:" in text
+        for stale in (
+            "Read what you have not read yet",
+            "YOUR last read position",
+            "your own last read position",
+            "moved forward to the recent-conversation range",
+        ):
+            assert stale not in text
 
     def test_notice_sits_between_the_start_paragraph_and_the_reply_instructions(self, monkeypatch):
         text = self._build(monkeypatch, head_seq=30)
         assert (
-            text.index("where the server wants you to start")
+            text.index("start of this invocation's conversation context window")
             < text.index("folded, not deleted")
             < text.index("To reply, append ONE turn")
         )
 
-    def test_before_seq_is_one_past_the_start_so_the_boundary_turn_is_included(self, monkeypatch):
-        # 시나리오 14, the invoke path. The cursor only exists when a provider is pinned:
-        # the copy path has nobody to have read anything yet, so it is always 0.
+    def test_provider_cursor_does_not_shrink_the_new_invocation_window(self, monkeypatch):
         text = self._build(
-            monkeypatch, head_seq=30, last_read=4, provider_id="prov_claude_opus_5"
+            monkeypatch,
+            head_seq=23,
+            last_read=21,
+            settings={"context_mode": "recent", "context_turns": 10},
+            provider_id="prov_claude_opus_5",
         )
-        assert f"?after_seq=10&include_head=1" in text
-        # Backward paging is seq < before_seq: before_seq=10 would silently drop turn 10.
-        assert f"turns?before_seq=11" in text
-        assert "The 6 turns before that point are folded" in text
+        assert "?after_seq=13&include_head=1" in text
+        assert "turns?before_seq=14" in text
+        assert "The 13 turns before that point are folded" in text
 
     def test_a_single_folded_turn_reads_as_one_turn(self, monkeypatch):
         text = self._build(monkeypatch, head_seq=21)
         assert "The 1 turn before that point is folded, not deleted. Read it when you need the" in text
         assert "turns are folded" not in text
 
-    def test_short_conversation_keeps_the_original_paragraph_and_adds_nothing(self, monkeypatch):
+    def test_short_conversation_uses_the_same_invocation_wording_and_adds_no_fold_notice(self, monkeypatch):
         text = self._build(monkeypatch, head_seq=8)
-        assert "The after_seq above is YOUR last read position" in text
+        assert "The after_seq above is the start of this invocation's conversation context window" in text
+        assert "last read position" not in text
         assert "folded" not in text
         assert "?after_seq=0&include_head=1" in text
 
-    def test_all_produces_the_pre_feature_mention_without_asking_for_the_head(self, monkeypatch):
+    def test_all_starts_at_zero_without_asking_for_the_head_or_provider_cursor(self, monkeypatch):
         seen: list[str] = []
         monkeypatch.setattr(ims, "_chat_lookup_sections", lambda **_kwargs: [])
         monkeypatch.setattr(
             ims.conversation_turns,
             "current_head_seq",
             lambda doc_id: seen.append(doc_id) or 30,
+        )
+        monkeypatch.setattr(
+            ims.conversation_turns,
+            "get_last_read_seq",
+            lambda *_a: (_ for _ in ()).throw(AssertionError("provider cursor must not be read")),
         )
         chosen = css.defaults()
         chosen["context_mode"] = "all"
@@ -261,13 +252,11 @@ class TestFoldedMention:
             doc_id=self.DOC, project="flowgate", module="default",
             group_name="flowgate.default.0362", raw_token="RAW",
             token_id="tok_20260731_092155", api_base_url="http://h:1/api/v1",
-            user_id="usr_admin",
+            user_id="usr_admin", provider_id="prov_claude_opus_5",
         )
-        # Costing exactly what it cost before is what makes "put it back on [전체] and
-        # compare" a usable way to find out whether this feature is the problem.
         assert seen == []
         assert "?after_seq=0&include_head=1" in text
-        assert "The after_seq above is YOUR last read position" in text
+        assert "last read position" not in text
         assert "folded" not in text
 
     def test_an_unreachable_settings_store_still_produces_a_mention(self, monkeypatch):

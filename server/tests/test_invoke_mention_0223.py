@@ -114,19 +114,22 @@ class TestConversationMention:
         assert "?after_seq=0&include_head=1" in text
         assert called == []
 
-    def test_pinned_provider_cursor_is_baked_into_after_seq(self, monkeypatch):
-        calls = []
+    def test_pinned_provider_uses_invocation_window_without_reading_cursor(self, monkeypatch):
         monkeypatch.setattr(
             ims.conversation_turns,
             "get_last_read_seq",
-            lambda doc_id, participant_key: calls.append((doc_id, participant_key)) or 13,
+            lambda *_a: (_ for _ in ()).throw(AssertionError("provider cursor must not be read")),
         )
-        # A provider caught up with a 13-turn conversation: the default range cannot
-        # move it, so the cursor is still what the mention advertises.
-        monkeypatch.setattr(ims.conversation_turns, "current_head_seq", lambda doc_id: 13)
+        monkeypatch.setattr(ims.conversation_turns, "current_head_seq", lambda _doc_id: 23)
+        settings = ims.chat_settings_service.defaults()
+        settings.update({"context_mode": "recent", "context_turns": 10})
+        monkeypatch.setattr(
+            ims.chat_settings_service, "resolve_chat_settings_safe", lambda _user_id: settings
+        )
         text = self._build(provider="Claude Opus", provider_id="cx_claude_opus")
         assert "?after_seq=13&include_head=1" in text
-        assert calls == [("p.default.0001.0008-CH", "provider:cx_claude_opus")]
+        assert "turns?before_seq=14" in text
+        assert "last read position" not in text
 
     def test_no_provider_asks_the_worker_to_fill_or_omit_display_name(self):
         text = self._build()

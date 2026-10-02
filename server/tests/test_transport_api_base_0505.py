@@ -60,6 +60,7 @@ from modules.flow_gate.api.v1 import git_routes  # noqa: E402
 from modules.flow_gate.api.v1 import workflow_decision_routes as workflow_routes  # noqa: E402
 from modules.flow_gate.db import tokens as db_tokens_module  # noqa: E402
 from modules.flow_gate.services import ai_invoke_service as svc  # noqa: E402
+from modules.flow_gate.services.ai_invoke import worker as ai_worker  # noqa: E402
 from modules.flow_gate.services import api_server_tools as tools  # noqa: E402
 from modules.flow_gate.services import auth_outbound  # noqa: E402
 from modules.flow_gate.services import register_binding as binding  # noqa: E402
@@ -598,13 +599,26 @@ class TestProdTypeGenuineTopologyProof:
         )
         monkeypatch.setattr(
             conversation_routes.conversation_query_service, "list_turns",
-            lambda **kw: {"turns": [], "head_seq": 0},
+            lambda **kw: {
+                "ok": True, "turns": [], "head_seq": 0, "next_after_seq": None,
+                "has_more": False, "truncated_by": None,
+            },
         )
+        monkeypatch.setattr(
+            ai_worker.chat_settings_service, "resolve_chat_settings_safe",
+            lambda _u: {"context_mode": "recent", "context_turns": 20},
+        )
+        monkeypatch.setattr(ai_worker.conversation_turns, "current_head_seq", lambda _doc: 0)
         self._no_self_http(monkeypatch, "_conversation_context")
         run = _run(PROD_OPERATOR)
+        run["issued_to"] = "usr-1"
         status, payload = svc._conversation_context(run, raw)
         assert status == 200
-        assert payload == {"turns": [], "head_seq": 0}
+        assert payload["turns"] == []
+        assert payload["head_seq"] == 0
+        assert payload["context_window"] == {
+            "mode": "recent", "context_turns": 20, "after_seq": 0, "folded": 0,
+        }
 
     def test_conversation_context_rejects_a_token_bound_to_a_different_doc(self, monkeypatch, token_store):
         """The binding this call has always enforced -- action_scope/doc_ref/project/
