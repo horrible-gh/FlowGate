@@ -39,6 +39,20 @@ def test_registry_selects_scope_schema_and_tier(monkeypatch, tmp_path, scope, ex
     assert all("oneOf" in d["schema"] or d["schema"]["additionalProperties"] is False for d in definitions)
 
 
+def test_tr_review_uses_live_reads_and_selfcheck_evidence_without_bundle(monkeypatch, tmp_path):
+    monkeypatch.setattr(tools.db_documents, "get_by_id", lambda _id: {"type_code": "TR"})
+    monkeypatch.setattr(tools.tool_registry, "kind_for_step", lambda *_: ("read", None))
+    monkeypatch.setattr(tools.tool_registry, "tool_names", lambda *_: list(tools.tool_registry.READ_TOOLS))
+    run = _run(tmp_path); run["action_scope"] = "review"
+    names = [item["name"] for item in tools.definitions_for_run(run)]
+    assert "read_self_check" in names
+    assert "access_source_bundle" not in names
+    assert "run_source_bundle" not in names
+    assert "run_test" not in names
+    assert "run_self_check" not in names and "cancel_self_check" not in names
+    assert set(READ_SOURCE_NAMES) <= set(names)
+
+
 # 0492 TR0026: advertisement now comes from the one common judgment, so T -- whose write
 # scope 0427 T0004 recalled -- is advertised read-only, and TSR/TS join TR as read_write.
 @pytest.mark.parametrize("step_type", ["N", "NR", "CH", "P", "T"])

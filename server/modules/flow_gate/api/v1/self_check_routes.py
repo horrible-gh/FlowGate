@@ -29,9 +29,12 @@ def _auth(request: Request, doc_id: str, mutate: bool):
         permission = "perm_document_update" if mutate else "perm_document_read"
         if not has_permission(auth.get("issued_to"), doc["project_id"], permission):
             return JSONResponse(status_code=403, content={"ok": False, "error": {"code": "forbidden"}})
-    elif not (auth.get("action_scope") == "edit" and auth.get("doc_ref") == doc_id
-              and auth.get("group_id") == doc["group_id"] and auth.get("project") == doc["project_id"]):
-        return JSONResponse(status_code=403, content={"ok": False, "error": {"code": "forbidden"}})
+    else:
+        scope = auth.get("action_scope")
+        scope_allowed = scope == "edit" if mutate else scope in {"edit", "review"}
+        if not (scope_allowed and auth.get("doc_ref") == doc_id
+                and auth.get("group_id") == doc["group_id"] and auth.get("project") == doc["project_id"]):
+            return JSONResponse(status_code=403, content={"ok": False, "error": {"code": "forbidden"}})
     return auth
 
 
