@@ -25,8 +25,18 @@ flowgate.v02.0024 T0005에서 추가된 좌측 File Explorer 부품(DesignerFile
 Toolbar/ScopeHeader/Filter/Tree/FolderRow/FileRow, 좌측 Dock 탐색기들이 같이 쓰는 얇은 행
 primitive `shared/ExplorerRowFrame`·`TreeCaret`)입니다. designer는 자체 API/store를 두지 않고
 `features/project`의 공개 경계(store와 타입)만 사용합니다. `designer/index.ts`가 공개
-경계이며 `ProjectExplorer`와 `DesignerFileExplorer`를 내보냅니다. Designer 화면 조립(좌측 Dock,
-중앙 Canvas 등)은 후속 작업 대상입니다.
+경계이며 `ProjectExplorer`, `DesignerFileExplorer`, `DesignerShell`을 내보냅니다.
+
+flowgate.v02.0025에서 `designer/shell/`에 Designer 화면 골격(Designer Shell)을 추가했습니다.
+`DesignerShell`이 `/app/designer` route 화면이며 `Top + Body(Left + Center + Right)`,
+Center 안에 `Workspace + Bottom`을 둡니다(DesignerTop/DesignerBody/DesignerLeftDock/
+ExplorerHeader/ExplorerModeTabs/DesignerCenterColumn/DesignerWorkspace/DesignerBottomDock/
+DesignerRightDock, Placeholder 내용 부품 ShellPlaceholder, Layout 상태 정의 designerLayout.ts).
+좌측 Dock은 0023 Project Explorer와 0024 File Explorer를 그대로 재사용해 [프로젝트]/[파일]
+탭과 접기/펼치기로 조립하고, Top/Workspace/Bottom/Right는 최종 컨테이너 안에 Placeholder만
+둡니다. Layout 상태와 활성 Flow는 DesignerShell 인스턴스가 소유하며(Pinia/저장 없음), Shell은
+API를 직접 호출하지 않습니다. Canvas, Flow Tabs, Inspector, Palette, Git, Resize 등은 후속 작업
+대상입니다.
 
 Git / AI Settings / Environment Settings 등 나머지 기능 이식은 별도 그룹의 후속 작업
 대상입니다.

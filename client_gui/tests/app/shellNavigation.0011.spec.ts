@@ -101,7 +101,7 @@ describe('v0.2 Sidebar navigation (T0011 §7/§12)', () => {
 
   it.each([
     ['/projects', 'projects', '프로젝트'],
-    ['/designer', 'designer', '디자이너'],
+    // /designer is the Designer Shell since flowgate.v02.0025 (tests/app/designerEntry.0025.spec.ts).
     ['/git', 'git', 'Git'],
     ['/settings', 'settings', '환경 설정'],
   ])('direct access to %s renders an explicit "준비 중" placeholder with that section active', async (url, key, title) => {
