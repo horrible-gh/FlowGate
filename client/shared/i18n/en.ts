@@ -2732,6 +2732,22 @@ export default {
     group_explorer: {
       tooltip_14: 'Filter',
     },
+    // flowgate.v02.0023 — Designer Project Explorer (Project > Group > Flow).
+    project_explorer: {
+      title: 'Project',
+      search_placeholder: 'Search projects, groups, flows...',
+      search_clear: 'Clear search',
+      refresh: 'Refresh',
+      loading: 'Loading...',
+      load_failed: 'Failed to load the project tree.',
+      refresh_failed: 'Could not refresh the tree. Showing the last loaded version below.',
+      retry: 'Retry',
+      no_project: 'Please select a project.',
+      no_groups: 'No groups.',
+      no_flows: 'No flows.',
+      no_results: 'No matching projects, groups or flows.',
+      active_flow: 'Open',
+    },
     group_tree_node: {
       text_27: 'Open with MD Viewer',
       new_sub_group: 'New Sub-group',
