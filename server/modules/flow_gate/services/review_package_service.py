@@ -142,8 +142,9 @@ Module: {metadata['module']}
 Group: {metadata['group']}
 Document: {metadata.get('target_doc_id') or 'None'}
 Base Branch: {metadata['base_branch']}
+Work Base: {metadata.get('work_base_ref') or 'None'}
 Group Branch: {metadata['group_branch']}
-Base SHA: {metadata['base_sha']}
+Base SHA (scope floor): {metadata['base_sha']}
 HEAD SHA: {metadata['head_sha']}
 Initial Source Sync SHA: {metadata.get('initial_source_sync_sha') or 'None'}
 Generated At: {metadata['generated_at']}
@@ -188,17 +189,21 @@ def build_review_package(project_id: str, group_id: str, target_doc_id: Optional
 
     actual = git_service.collect_scope_changes(project_id, group_id)
     if not actual.get("available"):
+        work_base_error = actual.get("work_base_error")
+        if work_base_error:
+            # 0665 T0004: an unverified/diverged floor is reported as itself.
+            raise GitServiceError(409, work_base_error["code"],
+                                  "the group's work-base commit is not usable",
+                                  details=work_base_error.get("details"))
         raise GitServiceError(500, "merge_base_failed", "current worktree delta could not be resolved")
 
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
     branch = (state.get("branch") or "").strip()
-    base_proc = git_service._run_git(
-        ["merge-base", f"refs/heads/{base_branch}", "HEAD"], cwd=root,
-        timeout=git_service.GIT_READ_TIMEOUT_SEC,
-    )
-    base_sha = (base_proc.stdout or "").strip()
-    if base_proc.returncode != 0 or not base_sha:
-        raise GitServiceError(500, "merge_base_failed", "merge-base could not be resolved")
+    # flowgate.default.0665 T0004 (W4): the patch base is the SAME recorded floor
+    # collect_scope_changes measured, so the manifest and diff.patch never disagree.
+    base_sha = actual.get("scope_base_sha") or ""
+    if not base_sha:
+        raise GitServiceError(500, "merge_base_failed", "scope floor could not be resolved")
     head_proc = git_service._run_git(
         ["rev-parse", "HEAD"], cwd=root, timeout=git_service.GIT_READ_TIMEOUT_SEC,
     )
@@ -255,6 +260,9 @@ def build_review_package(project_id: str, group_id: str, target_doc_id: Optional
         "project": project_id, "module": module, "group": group,
         "target_doc_id": target_doc_id, "doc_number": scope.pop("doc_number"),
         "base_branch": base_branch, "group_branch": branch,
+        "work_base_ref": actual.get("work_base_ref"),
+        "work_base_sha": state.get("work_base_sha"),
+        "work_base_sync_sha": state.get("work_base_sync_sha"),
         "base_sha": base_sha, "head_sha": head_sha,
         "initial_source_sync_sha": state.get("initial_source_sync_sha"),
         "initial_source_sync_at": state.get("initial_source_sync_at"),

@@ -19,6 +19,10 @@ POST           /api/v1/projects/{project_id}/git/base-remove  (0350 T0004)
 GET            /api/v1/projects/{project_id}/git/diff         (0326 NR0005 §4)
 GET            /api/v1/projects/{project_id}/git/groups/{group_id}/diff (0326 NR0005 §4)
 GET/POST       /api/v1/groups/{group_id}/git/finalize
+GET            /api/v1/groups/{group_id}/git/finalize-target  (0665 T0004 — target preview)
+GET            /api/v1/groups/{group_id}/git/work-base        (0665 T0004 — recorded floor + audit)
+POST           /api/v1/groups/{group_id}/git/work-base/confirm (0665 T0004 — administrator only)
+GET/POST       /api/v1/projects/{project_id}/git/work-base-backfill (0665 T0004 — administrator only; GET = dry-run)
 POST           /api/v1/groups/{group_id}/git/unmerge
 GET            /api/v1/groups/{group_id}/git/merge/{merge_id}/conflicts
 POST           /api/v1/groups/{group_id}/git/merge/{merge_id}/tr-commit
@@ -751,6 +755,95 @@ def post_group_finalize(
             group_id,
             body.action if body else None,
             body.commit_message if body else None,
+        )
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.get("/groups/{group_id}/git/finalize-target")
+def get_group_finalize_target(
+    group_id: str, target: str | None = None, user=Depends(get_current_user)
+):
+    """flowgate.default.0665 T0004: what merging into ``target`` (default: the group's
+    work base) means -- unmerge support and the work-base commits that would flow
+    into a different target.  Read-only; the approval UI asks before a risky target."""
+    denied = _check_group_permission(user, group_id, "project.settings.read")
+    if denied:
+        return denied
+    try:
+        return {"ok": True, "preview": git_merge_target.preview_target(group_id, target)}
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.get("/groups/{group_id}/git/work-base")
+def get_group_work_base(group_id: str, user=Depends(get_current_user)):
+    """The group's recorded work-base floor, its classification and audit trail."""
+    denied = _check_group_permission(user, group_id, "project.settings.read")
+    if denied:
+        return denied
+    try:
+        project_id = (group_id or "").split(".", 1)[0]
+        state = git_service.db_git.get_state(group_id)
+        return {
+            "ok": True,
+            "group_id": group_id,
+            "work_base_ref": git_service.resolve_group_work_base_ref(project_id, group_id),
+            **git_service.describe_group_work_base(state),
+            "evidence": git_service.db_git.work_base_evidence(state),
+            "log": git_service.db_git.list_work_base_log(group_id),
+        }
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+class WorkBaseConfirmBody(BaseModel):
+    work_base_sha: str
+    # A candidate merge's second parent, or omitted/"none" for floor = fork.
+    work_base_sync_sha: str | None = None
+    basis: str | None = None
+
+
+@router.post("/groups/{group_id}/git/work-base/confirm")
+def post_group_work_base_confirm(
+    group_id: str, body: WorkBaseConfirmBody, user=Depends(get_current_user)
+):
+    """Administrator confirmation of an unverified work-base floor (0665 T0004)."""
+    if not user.get("is_admin"):
+        return _error_response(403, "forbidden", "administrator only")
+    try:
+        project_id = (group_id or "").split(".", 1)[0]
+        return git_service.confirm_group_work_base(
+            project_id, group_id,
+            work_base_sha=body.work_base_sha,
+            work_base_sync_sha=body.work_base_sync_sha,
+            actor=user.get("user_id"),
+            basis=(body.basis or "").strip()[:500] or None,
+        )
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.get("/projects/{project_id}/git/work-base-backfill")
+def get_work_base_backfill(project_id: str, user=Depends(get_current_user)):
+    """Dry-run: how every existing group of the project would be classified."""
+    if not user.get("is_admin"):
+        return _error_response(403, "forbidden", "administrator only")
+    try:
+        return git_service.backfill_group_work_base(project_id, apply=False)
+    except GitServiceError as exc:
+        return _guard(exc)
+
+
+@router.post("/projects/{project_id}/git/work-base-backfill")
+def post_work_base_backfill(project_id: str, user=Depends(get_current_user)):
+    """Apply the classification (verified groups get their floor; the rest stay
+    explicitly ``unverified`` until an administrator confirms them)."""
+    if not user.get("is_admin"):
+        return _error_response(403, "forbidden", "administrator only")
+    try:
+        return git_service.backfill_group_work_base(
+            project_id, apply=True, actor=user.get("user_id"),
         )
     except GitServiceError as exc:
         return _guard(exc)

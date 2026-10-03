@@ -103,6 +103,13 @@ class MergeTargetContext:
     target_kind: str = "branch"
     target_group_id: Optional[str] = None
     managed_workspace: bool = True
+    # 0665 T0004: the target came from the group's work base (no explicit request).
+    defaulted_to_work_base: bool = False
+
+    @property
+    def unmerge_supported(self) -> bool:
+        """``finalize.unmerge`` rewinds the shared base checkout only (0594 §15)."""
+        return self.is_project_base
 
     def public(self) -> dict:
         return {
@@ -111,6 +118,7 @@ class MergeTargetContext:
             "target_group_id": self.target_group_id,
             "managed_workspace": self.managed_workspace,
             "is_project_base": self.is_project_base,
+            "unmerge_supported": self.unmerge_supported,
             "merge_id": self.merge_id,
             "started_at": self.started_at,
             "legacy": self.legacy,
@@ -556,17 +564,97 @@ def plan_finalize_target(
     if fixed is not None:
         return fixed
     base_branch = project_base_branch(cfg)
-    branch = requested or base_branch
+    # flowgate.default.0665 T0004 (W7): an omitted target is the GROUP's work base,
+    # never the project base -- merging a branch forked from ``v0.2`` into ``main``
+    # would carry the whole ``main..v0.2`` history along.  The project's remembered
+    # default target is a UI suggestion only and does not participate here.
+    defaulted = requested is None
+    branch = requested or default_target_of_group(project_id, group_id, cfg)
     if branch == base_branch:
-        return _base_context(project_id, base_branch)
-    validate_target_branch(project_id, _gs._base_root_of(project_id), branch)
+        return replace(_base_context(project_id, base_branch), defaulted_to_work_base=defaulted)
+    try:
+        validate_target_branch(project_id, _gs._base_root_of(project_id), branch)
+    except GitServiceError as exc:
+        if not defaulted:
+            raise
+        # A work base that cannot be a target is refused, not silently replaced
+        # by the project base.
+        raise GitServiceError(
+            exc.status, "merge_target_work_base_invalid",
+            "the group's work base cannot be used as the merge target; choose a target explicitly",
+            details={**(exc.details or {}), "work_base_ref": branch, "cause": exc.code},
+        ) from exc
     raise_if_workspace_unavailable(project_id, branch)
     wdir = workspace_dir(project_id, branch)
     return MergeTargetContext(
         project_id=project_id, base_branch=base_branch, target_branch=branch,
         is_project_base=False, root=wdir / WORKSPACE_TREE, workspace_dir=wdir,
-        workspace_key=workspace_key(branch),
+        workspace_key=workspace_key(branch), defaulted_to_work_base=defaulted,
     )
+
+
+def default_target_of_group(project_id: str, group_id: str, cfg: Optional[dict]) -> str:
+    """The merge target an omitted request means: the group's work base (0665 T0004)."""
+    from modules.flow_gate.services import git_service as _gs
+    return (
+        _gs.resolve_group_work_base_ref(project_id, group_id, config=cfg)
+        or project_base_branch(cfg)
+    )
+
+
+def preview_target(group_id: str, requested: Optional[str] = None) -> dict:
+    """What merging this group into ``requested`` (or its default) would mean.
+
+    Read-only.  ``incoming_work_base_commits`` counts work-base commits the target
+    does not contain yet -- history that would flow into the target alongside the
+    group's own change when the target is not the group's work base.
+    """
+    from modules.flow_gate.services import git_service as _gs
+    project_id = _gs._project_of_group(group_id)
+    cfg = _gs.db_git.get_config(project_id) or {}
+    base_branch = project_base_branch(cfg)
+    work_base_ref = default_target_of_group(project_id, group_id, cfg)
+    target = normalize_requested_target(requested) or work_base_ref
+    is_work_base = target == work_base_ref
+    preview = {
+        "target_branch": target,
+        "work_base_ref": work_base_ref,
+        "project_base_branch": base_branch,
+        "is_work_base": is_work_base,
+        "is_project_base": target == base_branch,
+        "unmerge_supported": target == base_branch,
+        "incoming_work_base_commits": None,
+        "warnings": [],
+    }
+    if not is_work_base:
+        preview["warnings"].append("target_differs_from_work_base")
+    if target != base_branch:
+        preview["warnings"].append("unmerge_unsupported_for_non_base_target")
+    base_root = _gs._base_root_of(project_id)
+    if is_work_base or base_root is None or not (base_root / ".git").exists():
+        return preview
+    state = _gs.db_git.get_state(group_id) or {}
+    upper = None
+    try:
+        branch = (state.get("branch") or "").strip()
+        if branch and _gs._ref_exists(base_root, f"refs/heads/{branch}"):
+            upper = _gs.resolve_scope_floor(
+                project_id, group_id, base_root, state=state, config=cfg,
+                head=f"refs/heads/{branch}",
+            )["floor_sha"]
+    except GitServiceError:
+        upper = None
+    if upper is None:
+        upper = _gs._worktree_start_point(base_root, work_base_ref)
+    if not _gs._ref_exists(base_root, f"refs/heads/{target}"):
+        return preview
+    proc = _gs._run_git(["rev-list", "--count", f"refs/heads/{target}..{upper}"], cwd=base_root)
+    if proc.returncode == 0:
+        try:
+            preview["incoming_work_base_commits"] = int((proc.stdout or "0").strip())
+        except ValueError:
+            pass
+    return preview
 
 
 # ── Attempt lifecycle ────────────────────────────────────────────────────────
@@ -594,6 +682,9 @@ def open_attempt(
         "remote_expectation": remote_expectation,
         "finalize_action": action,
         "push": action == "merge",
+        # 0665 T0004: recorded for unattended runs that had no confirmation step.
+        "unmerge_supported": target.unmerge_supported,
+        "defaulted_to_work_base": target.defaulted_to_work_base,
     }
     merge_id = _gs.db_git.create_session(
         group_id, [], finalize_action=action,
@@ -696,7 +787,11 @@ def _remember_default_target(ctx: MergeTargetContext) -> None:
     finalize actually merged into becomes the project's suggested default target
     for the NEXT group's finalize dialog, instead of resetting to base_branch
     every time this dialog opens. The base branch itself is never remembered
-    here — it is already the fallback default when nothing is suggested."""
+    here — it is already the fallback default when nothing is suggested.
+
+    0665 T0004: this project-level memory ranks BELOW the group's own work base
+    (server default and UI order: pinned target → work base → remembered → base),
+    so it can no longer send a main-based group into ``v0.2``."""
     if ctx.is_project_base:
         return
     from modules.flow_gate.services import git_service as _gs

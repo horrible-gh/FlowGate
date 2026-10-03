@@ -777,6 +777,20 @@ def finalize_workflow_endpoint(
         return {"document": root_doc}  # idempotent
 
     scope = tr_scope_service.evaluate_group_unreported(project_id, group_id)
+    if scope.get("blocking"):
+        work_base_error = scope.get("work_base_error") or {}
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": work_base_error.get("code") or scope.get("reason"),
+                "message": (
+                    "Final approval is blocked because this group's work-base commit "
+                    "is not verified, so its real change set cannot be measured. An "
+                    "administrator must confirm the work-base commit first."
+                ),
+                "details": work_base_error.get("details") or {},
+            },
+        )
     unresolved = scope.get("unreported") or []
     if unresolved:
         limit = tr_scope_service.FINALIZE_UNREPORTED_LIST_MAX

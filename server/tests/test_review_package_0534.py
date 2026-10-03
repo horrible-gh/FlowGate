@@ -34,13 +34,18 @@ def make_repo(tmp_path: Path) -> tuple[Path, str]:
 
 
 def patch_context(monkeypatch, root: Path, marker: str | None, *, registered=True):
+    from modules.flow_gate.services.git import scope_base
     state = {
         "project_id": "flowgate", "branch": "flowgate_default_0534",
         "worktree_registered": 1 if registered else 0,
         "initial_source_sync_sha": marker, "initial_source_sync_at": "2026-01-01T00:00:00Z" if marker else None,
+        # 0665 T0004: the package base is the group's recorded floor (its fork from main).
+        "work_base_sha": git(root, "rev-parse", "main"), "work_base_state": "verified",
     }
     monkeypatch.setattr(rps.db_git, "get_state", lambda group_id: state)
     monkeypatch.setattr(rps.db_git, "get_config", lambda project_id: {"enabled": 1, "base_branch": "main"})
+    monkeypatch.setattr(git_service, "resolve_group_work_base_ref", lambda *a, **k: "main")
+    monkeypatch.setattr(scope_base.db_tr_ledger, "group_commit_evidence", lambda group_id: [])
     monkeypatch.setattr(git_service, "effective_src_root_ex", lambda project_id, group_id: (root, "worktree"))
     monkeypatch.setattr(rps.tr_scope_service, "resolve_stage", lambda project_id: "warn")
     monkeypatch.setattr(rps.tr_scope_service, "group_declared_paths", lambda group_id, exclude_doc_id=None: [])

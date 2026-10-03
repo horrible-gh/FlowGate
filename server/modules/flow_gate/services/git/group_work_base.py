@@ -94,6 +94,24 @@ def validate_group_work_base_ref(project_id: str, value: str) -> str:
     return ref
 
 
+def default_work_base_ref_for_new_group(project_id: str) -> Optional[str]:
+    """The work base a NEW group pins when none was requested (0665 T0004, NR0003 §7.3).
+
+    A Git-active project stores its base branch name AT CREATION TIME, so a later
+    project base change can no longer move an existing group's work base.  Non-Git
+    (or unreadable-config) projects keep NULL: they have no Git work base at all.
+    """
+    from modules.flow_gate.services import git_service as _gs
+
+    try:
+        cfg = _gs.db_git.get_config(project_id)
+    except Exception:
+        return None
+    if cfg is None or not cfg.get("enabled"):
+        return None
+    return (cfg.get("base_branch") or "main").strip() or "main"
+
+
 def list_group_work_base_options(project_id: str) -> dict:
     """Return only what a requirement author needs to pick a group work base.
 
@@ -235,6 +253,11 @@ def resolve_group_work_base_ref(
     Resolution is deliberately small and stable: stored group value first,
     otherwise the project's ``base_branch``.  Non-Git projects return ``None``.
     No finalize target, read-only ref, or recovery ``start_point`` participates.
+
+    The project-base fallback now only serves legacy NULL rows: new Git groups
+    store their base at creation (:func:`default_work_base_ref_for_new_group`),
+    the work-base backfill pins existing rows, and a project base change is
+    refused while a locked NULL row remains (0665 T0004).
     """
     from modules.flow_gate.services import git_service as _gs
 

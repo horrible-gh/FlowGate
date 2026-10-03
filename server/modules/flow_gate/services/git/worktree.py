@@ -182,6 +182,8 @@ def _ensure_worktree_locked(
         if start_point and not _commits_present(wt_path, [start_point]):
             _gs._fail_worktree(project_id, group_id, branch, "terminal_commit_absent")
             return "failed"
+        if start_point:
+            _record_reopen_floor(project_id, group_id, base_root, branch, work_base_ref, start_point)
         _gs.db_git.clear_provision_failure(group_id)   # a stale marker must not linger (L §2.4)
         _gs._emit_worktree_ready(
             project_id, group_id, branch, work_base_ref, wt_path,
@@ -212,6 +214,7 @@ def _ensure_worktree_locked(
         _gs._fail_worktree(project_id, group_id, branch, proc.stderr.strip())
         return "failed"
 
+    fork_ref = fork_sha = None
     # Terminal reopen supplies C1 explicitly.  Never silently fall back to base HEAD:
     # pushed-but-unmerged content normally is not in the configured base yet.
     if start_point:
@@ -261,9 +264,16 @@ def _ensure_worktree_locked(
             cwd=base_root,
         )
     else:
+        # flowgate.default.0665 T0004: resolve the start point to ONE commit and fork
+        # from that exact SHA, so the recorded floor is the real fork even if the
+        # work-base ref moves between the two git calls.
+        fork_ref = _worktree_start_point(base_root, work_base_ref)
+        fork_sha = _gs._rev_parse(base_root, f"{fork_ref}^{{commit}}")
+        if not fork_sha:
+            _gs._fail_worktree(project_id, group_id, branch, "work_base_unresolvable")
+            return "failed"
         proc = _gs._run_git(
-            ["worktree", "add", "-b", branch, str(wt_path),
-             _worktree_start_point(base_root, work_base_ref)],
+            ["worktree", "add", "-b", branch, str(wt_path), fork_sha],
             cwd=base_root,
         )
     if proc.returncode != 0:
@@ -271,6 +281,14 @@ def _ensure_worktree_locked(
         return "failed"
 
     _gs.db_git.register_worktree(group_id, project_id, branch)
+    if start_point:
+        _record_reopen_floor(project_id, group_id, base_root, branch, work_base_ref, start_point)
+    elif fork_sha:
+        _record_floor_safe(
+            project_id, group_id, base_root,
+            start_ref=fork_sha, work_base_ref=work_base_ref, kind="fork",
+            source_ref=fork_ref,
+        )
     _gs.db_git.clear_provision_failure(group_id)   # success clears the failure marker (L §2.4)
     _gs._emit_worktree_ready(
         project_id, group_id, branch, work_base_ref, wt_path,
@@ -305,6 +323,52 @@ def _worktree_start_point(base_root: Path, base_branch: str) -> str:
         return remote
     contains = _gs._run_git(["merge-base", "--is-ancestor", remote, base_branch], cwd=base_root)
     return base_branch if contains.returncode == 0 else remote
+
+
+def _record_floor_safe(
+    project_id: str, group_id: str, repo: Path, *, start_ref: str, work_base_ref: str,
+    kind: str, source_ref: Optional[str] = None, terminal_commit: Optional[str] = None,
+    head: Optional[str] = None,
+) -> None:
+    """Record the group's fork commit (0665 T0004).  A failure never breaks
+    provisioning: the group simply has no usable floor, which every scope read
+    reports as ``group_work_base_unverified`` instead of guessing one."""
+    from . import scope_base
+    try:
+        scope_base.record_fork(
+            project_id, group_id, repo, start_ref=start_ref, work_base_ref=work_base_ref,
+            kind=kind, terminal_commit=terminal_commit, head=head, source_ref=source_ref,
+        )
+    except Exception:
+        _log.warning("work base fork record failed for %s", group_id, exc_info=True)
+
+
+def _record_reopen_floor(
+    project_id: str, group_id: str, base_root: Path, branch: str, work_base_ref: str,
+    terminal_commit: str,
+) -> None:
+    """A terminal reopen starts a new scope: the floor is where the reopened branch
+    meets the work base now (C1 included when it was merged there)."""
+    from modules.flow_gate.services import git_service as _gs
+    source = _worktree_start_point(base_root, work_base_ref)
+    proc = _gs._run_git(["merge-base", f"refs/heads/{branch}", source], cwd=base_root)
+    floor = (proc.stdout or "").strip() if proc.returncode == 0 else ""
+    if not floor:
+        _log.warning("terminal reopen floor unresolvable for %s", group_id)
+        try:
+            _gs.db_git.set_work_base_record(
+                group_id, work_base_sha=None, work_base_sync_sha=None, state="unverified",
+                evidence={"origin": "reopen_fork", "reason": "work_base_missing",
+                          "terminal_commit": terminal_commit},
+            )
+        except Exception:
+            _log.warning("work base reopen record failed for %s", group_id, exc_info=True)
+        return
+    _record_floor_safe(
+        project_id, group_id, base_root, start_ref=floor, work_base_ref=work_base_ref,
+        kind="reopen_fork", source_ref=source, terminal_commit=terminal_commit,
+        head=f"refs/heads/{branch}",
+    )
 
 
 def _emit_worktree_ready(
@@ -486,13 +550,24 @@ def ensure_initial_group_source_sync(project_id: str, module: str, group_id: str
                 or (cfg.get("base_branch") or "main").strip()
                 or "main"
             )
-            fork_proc = _gs._run_git(
-                ["merge-base", "HEAD", work_base_ref], cwd=wt_path,
-                timeout=GIT_LOCAL_TIMEOUT_SEC,
-            )
-            if fork_proc.returncode != 0 or not fork_proc.stdout.strip():
-                return {"performed": False, "reason": "reset_failed", "sha": None}
-            base_sha = fork_proc.stdout.strip()
+            # flowgate.default.0665 T0004: the recorded fork commit, never the
+            # current tip of the work-base NAME (a local tip behind origin would
+            # rewind the fork).  Only a group forked before the record existed
+            # falls back to the name-based merge-base; the reset then MAKES that
+            # commit the fork point and it is recorded below.
+            base_sha = None
+            if state.get("work_base_sha") and state.get("work_base_state") in ("verified", "confirmed"):
+                base_sha = _gs._rev_parse(wt_path, f"{state['work_base_sha']}^{{commit}}")
+                if not base_sha:
+                    return {"performed": False, "reason": "reset_failed", "sha": None}
+            if base_sha is None:
+                fork_proc = _gs._run_git(
+                    ["merge-base", "HEAD", work_base_ref], cwd=wt_path,
+                    timeout=GIT_LOCAL_TIMEOUT_SEC,
+                )
+                if fork_proc.returncode != 0 or not fork_proc.stdout.strip():
+                    return {"performed": False, "reason": "reset_failed", "sha": None}
+                base_sha = fork_proc.stdout.strip()
 
             reset_proc = _gs._run_git(
                 ["reset", "--hard", base_sha], cwd=wt_path, timeout=GIT_LOCAL_TIMEOUT_SEC,
@@ -519,6 +594,15 @@ def ensure_initial_group_source_sync(project_id: str, module: str, group_id: str
                     "initial source sync marker persist failed for %s", group_id, exc_info=True,
                 )
                 return {"performed": False, "reason": "marker_persist_failed", "sha": None}
+
+            try:
+                from . import scope_base
+                scope_base.record_reset(
+                    project_id, group_id, wt_path, sha=base_sha, work_base_ref=work_base_ref,
+                )
+            except Exception:
+                _log.warning("work base record after initial sync failed for %s", group_id,
+                             exc_info=True)
 
             _gs._emit("git_initial_source_sync", project_id, group_id, {
                 "project": project_id, "group_id": group_id, "branch": branch, "sha": base_sha,

@@ -792,6 +792,7 @@ export default {
       git_behind_tip: 'Behind base by {n} commit(s)',
       git_behind_unmeasured: 'Run update to measure against the remote base.',
       git_update: 'Update',
+      work_base_unverified: 'Work-base commit unverified — change scope and final approval are blocked until an administrator confirms it',
       git_updating: 'Updating…',
       git_updated: 'Group updated from the latest base.',
       git_no_change: 'Already up to date.',
@@ -3315,6 +3316,12 @@ export default {
       // branch management lives in git_branch_manager instead).
       merge_target_label: 'Merge target branch',
       retarget_notice: 'Working base {base} → New merge target {target}',
+      // flowgate.default.0665 T0004 — target differs from the group's work base / unmerge limit
+      incoming_work_base_commits: '{n} commit(s) of {base} that {target} does not have yet will be merged along with this group.',
+      unmerge_unsupported_notice: '{target} is not the project base branch, so this merge (merge_only) cannot be undone with unmerge later. To cancel it you would revert the merge on the target branch or reopen with Time Machine.',
+      target_ack: 'I have read the above and want to merge into this target.',
+      target_ack_required: 'Check the merge target warning before approving.',
+      work_base_line: 'Work base: {base} ({sha})',
       commit_message_label: 'Commit message',
       commit_message_hint: 'Used as the subject of the commit that absorbs the remaining changes. Edit as needed.',
       commit_message_restore: 'Restore suggestion',

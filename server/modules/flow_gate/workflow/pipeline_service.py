@@ -165,11 +165,14 @@ def create_group(
     if not check_permission(user_permissions, ("project.group.manage",)):
         raise PermissionError("Permission 'project.group.manage' is required.")
 
+    from modules.flow_gate.services import git_service
     if work_base_ref is not None:
-        from modules.flow_gate.services import git_service
         work_base_ref = git_service.validate_group_work_base_ref(
             project_id, work_base_ref
         )
+    else:
+        # 0665 T0004: pin the creation-time project base (Git projects only).
+        work_base_ref = git_service.default_work_base_ref_for_new_group(project_id)
 
     now = now_iso()
     return db_groups.create(

@@ -1679,4 +1679,103 @@ describe('ReviewActionBar — finalize target selector (T0016 C8)', () => {
     expect(Array.from(element.options).map((option) => option.value)).toEqual(['main'])
     expect(select.text()).toContain('main')
   })
+
+  // flowgate.default.0665 T0004 — the group's work base is the default merge target;
+  // a different target or an un-unmergeable merge_only needs an explicit check.
+  function mockWorkBaseGroup(preview: (target: string) => Record<string, unknown>) {
+    getRequest.mockImplementation((url: string) => {
+      if (url.includes('/git/finalize-target')) {
+        const target = decodeURIComponent(url.split('target=')[1] || '')
+        return Promise.resolve({ data: { ok: true, preview: { target_branch: target, ...preview(target) } } })
+      }
+      if (url.includes('/git/finalize')) {
+        return Promise.resolve({
+          data: {
+            ok: true,
+            state: {
+              branch: 'flowgate_default_0170',
+              base_branch: 'main',
+              work_base_ref: 'v0.2',
+              default_target: 'v0.2',
+              work_base_sha: '1111111111aaaa',
+              work_base_sync_sha: null,
+              finalize_target: null,
+              status: 'awaiting_choice',
+              default_action: 'merge_only',
+              choices: ['merge', 'merge_only', 'push', 'wait'],
+            },
+          },
+        })
+      }
+      if (url.includes('/git/branches')) {
+        return Promise.resolve({
+          data: {
+            ok: true,
+            base_branch: 'main',
+            default_merge_target: 'flowgate-v0.2',
+            branches: [
+              { name: 'main', kind: 'base' },
+              { name: 'v0.2', kind: 'local' },
+              { name: 'flowgate-v0.2', kind: 'local' },
+            ],
+          },
+        })
+      }
+      return Promise.resolve({ data: { ok: true, state: { branch: null, status: 'none', default_action: null, choices: [] } } })
+    })
+  }
+
+  it('defaults to the group work base ahead of the remembered project target and flags merge_only unmerge (0665)', async () => {
+    mockWorkBaseGroup((target) => ({
+      work_base_ref: 'v0.2', unmerge_supported: target === 'main', incoming_work_base_commits: target === 'main' ? 3 : null,
+    }))
+    const wrapper = mount(ReviewActionBar, { props: acProps, global: { plugins: [i18n] } })
+    await flushPromises()
+    expect((wrapper.vm as any).gitTargetBranch).toBe('v0.2')
+    await wrapper.find('button.btn-success.btn-sm').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="finalize-retarget-notice"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="finalize-unmerge-unsupported"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="finalize-target-ack"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="finalize-work-base"]').text()).toContain('1111111111')
+
+    // Without the acknowledgement the approval does not run.
+    postRequest.mockClear()
+    await (wrapper.vm as any).doApprove()
+    await flushPromises()
+    expect(postRequest.mock.calls.some(([url]) => String(url).includes('/approve'))).toBe(false)
+
+    ;(wrapper.vm as any).gitTargetAck = true
+    await (wrapper.vm as any).doApprove()
+    await flushPromises()
+    const approveCall = postRequest.mock.calls.find(([url]) => String(url).includes('/documents/review_transitions/approve'))
+    expect(approveCall?.[1]).toMatchObject({ git_action: 'merge_only', git_target_branch: 'v0.2' })
+    wrapper.unmount()
+  })
+
+  it('warns with the incoming work-base commit count when another target is chosen (0665)', async () => {
+    mockWorkBaseGroup((target) => ({
+      work_base_ref: 'v0.2', unmerge_supported: target === 'main', incoming_work_base_commits: target === 'main' ? 3 : null,
+    }))
+    const wrapper = mount(ReviewActionBar, { props: acProps, global: { plugins: [i18n] } })
+    await flushPromises()
+    await wrapper.find('button.btn-success.btn-sm').trigger('click')
+    await flushPromises()
+    await wrapper.find('select#ab-git-target').setValue('main')
+    await flushPromises()
+
+    const incoming = wrapper.find('[data-test="finalize-incoming-commits"]')
+    expect(incoming.exists()).toBe(true)
+    expect(incoming.text()).toBe(
+      i18n.global.t('main.git_finalize.incoming_work_base_commits', { n: 3, base: 'v0.2', target: 'main' }),
+    )
+    expect(wrapper.find('[data-test="finalize-retarget-notice"]').text()).toBe(
+      i18n.global.t('main.git_finalize.retarget_notice', { base: 'v0.2', target: 'main' }),
+    )
+    // main IS the project base: unmerge stays available, but the target still needs the check.
+    expect(wrapper.find('[data-test="finalize-unmerge-unsupported"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="finalize-target-ack"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
 })
