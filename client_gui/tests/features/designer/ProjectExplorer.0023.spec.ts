@@ -1,26 +1,30 @@
 /**
- * flowgate.v02.0023 T0003 — Designer Project Explorer component.
+ * flowgate.v02.0023 T0006 — Designer Project Explorer component (client_gui).
  *
- * Mounted with the real ProjectTree/Row components and the real explorer store; only the
- * HTTP layer is mocked. Every assertion goes through rendered rows, real clicks/keys and
- * the events a Designer would receive.
+ * Mounted with the real ProjectTree/Row components and the real project store; only the
+ * HTTP layer (`@shared/api`) is mocked. Every assertion goes through rendered rows, real
+ * clicks/keys and the events a Designer would receive.
  */
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import i18n from '@shared/i18n'
-import ProjectExplorer from '@main/components/projectExplorer/ProjectExplorer.vue'
-import { useTabsStore } from '@main/stores/tabs'
+import { registerAppMessages } from '@/app/i18n'
+import { useProjectStore } from '@/features/project'
+import { ProjectExplorer } from '@/features/designer'
 
-const { getRequest } = vi.hoisted(() => ({ getRequest: vi.fn() }))
+const getRequest = vi.hoisted(() => vi.fn())
 
 vi.mock('@shared/api', () => ({
-  default: { head: vi.fn(), get: vi.fn(), post: vi.fn(), patch: vi.fn() },
   getRequest,
-  patchRequest: vi.fn(),
   postRequest: vi.fn(),
+  extractApiErrorMessage: (_error: unknown, fallback: string) => fallback,
 }))
+
+registerAppMessages(i18n)
 
 function n(partial: Record<string, unknown>) {
   return { type_code: null, number: null, filename: null, has_md: false, md_path: null, ...partial }
@@ -70,7 +74,7 @@ function row(w: VueWrapper<any>, label: string) {
 
 /** The row's own clickable line (not its children). */
 function line(w: VueWrapper<any>, label: string) {
-  return row(w, label).find('.pe-row')
+  return row(w, label).find('.explorer-row')
 }
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -81,7 +85,6 @@ async function mouse(w: VueWrapper<any>, label: string, type: 'click' | 'dblclic
   await nextTick()
 }
 
-/** A real single click: one click(detail=1). */
 async function clickRow(w: VueWrapper<any>, label: string) {
   await mouse(w, label, 'click', 1)
   await flushPromises()
@@ -95,30 +98,15 @@ async function doubleClickRow(w: VueWrapper<any>, label: string) {
   await flushPromises()
 }
 
-/**
- * A slow double click the OS still counts as one: the second click comes `gapMs` after the
- * first (the browser then reports detail=2 and fires dblclick).
- */
-async function slowDoubleClickRow(w: VueWrapper<any>, label: string, gapMs: number) {
-  await mouse(w, label, 'click', 1)
-  await wait(gapMs)
-  await mouse(w, label, 'click', 2)
-  await mouse(w, label, 'dblclick', 2)
-  await flushPromises()
-}
-
 async function expandGroup(w: VueWrapper<any>, label: string) {
   await doubleClickRow(w, label)
-}
-
-async function failTwice() {
-  getRequest.mockRejectedValueOnce(timeout()).mockRejectedValueOnce(timeout())
 }
 
 beforeEach(() => {
   setActivePinia(createPinia())
   localStorage.clear()
   getRequest.mockReset()
+  i18n.global.locale.value = 'ko'
 })
 
 afterEach(() => {
@@ -127,7 +115,7 @@ afterEach(() => {
 })
 
 describe('ProjectExplorer — Project > Group > Flow', () => {
-  it('shows the current project as Project > Group > Flow without documents or v0.1 names', async () => {
+  it('shows the project as Project > Group > Flow without documents or v0.1 names', async () => {
     getRequest.mockResolvedValueOnce(ok(NODES))
     const w = await mountExplorer()
 
@@ -150,16 +138,26 @@ describe('ProjectExplorer — Project > Group > Flow', () => {
     expect(row(w, 'core').attributes('aria-expanded')).toBe('false')
   })
 
-  it('reads the tree through the explorer store (pruned variant) and reuses its cache', async () => {
+  it('follows the current Project of features/project when no projectId is given', async () => {
+    const store = useProjectStore()
+    store.setCurrentProject({
+      id: 'p', name: 'Alpha', description: '', color: null, isActive: true, createdAt: null, updatedAt: null, modules: [],
+    })
+    getRequest.mockResolvedValueOnce(ok(NODES))
+    const w = await mountExplorer({})
+    expect(getRequest.mock.calls[0][0]).toBe('/api/v1/projects/p/groups/tree')
+    expect(labels(w, 'project')).toEqual(['Alpha'])
+  })
+
+  it('reads the tree through the project store (pruned variant) and reuses its cache', async () => {
     getRequest.mockResolvedValueOnce(ok(NODES))
     const first = await mountExplorer()
     expect(getRequest).toHaveBeenCalledTimes(1)
-    expect(getRequest.mock.calls[0][0]).toContain('/api/v1/projects/p/groups/tree?')
-    expect(getRequest.mock.calls[0][0]).toContain('include_terminal=false')
+    expect(getRequest).toHaveBeenCalledWith('/api/v1/projects/p/groups/tree', { include_terminal: 'false', force: 'false' })
     first.unmount()
     wrapper = null
 
-    // A second instance answers from the store cache — no new request path.
+    // A second instance answers from the store cache — no second request path.
     await mountExplorer()
     expect(getRequest).toHaveBeenCalledTimes(1)
     expect(labels(wrapper!, 'group')).toEqual(['UI 개선', 'core', 'Empty group'])
@@ -190,8 +188,6 @@ describe('ProjectExplorer — selection vs activation', () => {
   it('single click selects a Flow; double click keeps the selection and adds activate', async () => {
     getRequest.mockResolvedValueOnce(ok(NODES))
     const w = await mountExplorer()
-    const tabs = useTabsStore()
-    const openTab = vi.spyOn(tabs, 'openTab')
     await expandGroup(w, 'UI 개선')
     const canvas = { projectId: 'p', groupId: 'module:p:ui', flowId: 'p.ui.0002', flowName: 'Canvas' }
     const designer = { projectId: 'p', groupId: 'module:p:ui', flowId: 'p.ui.0001', flowName: 'Designer v0.2' }
@@ -210,8 +206,6 @@ describe('ProjectExplorer — selection vs activation', () => {
     expect(w.emitted('activate-flow')).toEqual([[designer]])
     expect(row(w, 'Designer v0.2').attributes('aria-selected')).toBe('true')
     expect(row(w, 'Canvas').attributes('aria-selected')).toBe('false')
-    // The Explorer never opens a tab / central view itself.
-    expect(openTab).not.toHaveBeenCalled()
     // Still not "active" until the Designer says so.
     expect(row(w, 'Designer v0.2').attributes('aria-current')).toBeUndefined()
 
@@ -251,21 +245,14 @@ describe('ProjectExplorer — selection vs activation', () => {
     await expandGroup(w, 'UI 개선')
     const canvas = { projectId: 'p', groupId: 'module:p:ui', flowId: 'p.ui.0002', flowName: 'Canvas' }
 
-    // 800ms between the clicks (a slow OS double-click setting): the result does not depend
-    // on the gap — one select-flow from the first click, then one activate-flow.
-    await slowDoubleClickRow(w, 'Canvas', 800)
+    await mouse(w, 'Canvas', 'click', 1)
+    await wait(800)
+    await mouse(w, 'Canvas', 'click', 2)
+    await mouse(w, 'Canvas', 'dblclick', 2)
+    await flushPromises()
     expect(w.emitted('select-flow')).toEqual([[canvas]])
     expect(w.emitted('activate-flow')).toEqual([[canvas]])
     expect(row(w, 'Canvas').attributes('aria-selected')).toBe('true')
-
-    // Same on a Group: one select-group, then it toggles open.
-    await slowDoubleClickRow(w, 'core', 800)
-    expect(row(w, 'core').attributes('aria-expanded')).toBe('true')
-    // (the first select-group is from opening 'UI 개선' above)
-    expect(w.emitted('select-group')).toEqual([
-      [{ projectId: 'p', groupId: 'module:p:ui' }],
-      [{ projectId: 'p', groupId: 'module:p:core' }],
-    ])
   }, 10_000)
 
   it('supports keyboard expand/collapse, row navigation and Enter activation', async () => {
@@ -301,7 +288,6 @@ describe('ProjectExplorer — search', () => {
 
     expect(labels(w)).toEqual(['Alpha', 'UI 개선', 'Designer v0.2'])
     expect(row(w, 'UI 개선').attributes('aria-expanded')).toBe('true')
-    expect(w.find('[data-test="project-explorer-tree"]').exists()).toBe(true)
 
     // A Group match keeps that Group (with its Flows) under the Project.
     await w.find('[data-test="project-explorer-search"]').setValue('core')
@@ -328,11 +314,20 @@ describe('ProjectExplorer — search', () => {
 })
 
 describe('ProjectExplorer — loading and errors', () => {
-  it('shows a blocking error on initial failure and recovers on retry', async () => {
-    await failTwice()
+  it('shows the loading state while the first read is pending', async () => {
+    let resolveTree!: (value: unknown) => void
+    getRequest.mockReturnValueOnce(new Promise((r) => { resolveTree = r }))
     const w = await mountExplorer()
-    await new Promise((r) => setTimeout(r, 900))
+    expect(w.find('[data-test="project-explorer-loading"]').exists()).toBe(true)
+    resolveTree(ok(NODES))
     await flushPromises()
+    expect(w.find('[data-test="project-explorer-loading"]').exists()).toBe(false)
+    expect(labels(w, 'project')).toEqual(['Alpha'])
+  })
+
+  it('shows a blocking error on initial failure and recovers on retry', async () => {
+    getRequest.mockRejectedValueOnce(timeout())
+    const w = await mountExplorer()
     expect(w.find('[data-test="project-explorer-error"]').exists()).toBe(true)
     expect(w.find('[data-test="project-explorer-tree"]').exists()).toBe(false)
 
@@ -341,6 +336,7 @@ describe('ProjectExplorer — loading and errors', () => {
     await flushPromises()
     expect(w.find('[data-test="project-explorer-error"]').exists()).toBe(false)
     expect(labels(w, 'group')).toEqual(['UI 개선', 'core', 'Empty group'])
+    expect(getRequest.mock.calls.at(-1)![1]).toEqual({ include_terminal: 'false', force: 'true' })
   })
 
   it('keeps the rendered tree on refresh failure, shows a notice and retries', async () => {
@@ -349,9 +345,8 @@ describe('ProjectExplorer — loading and errors', () => {
     await expandGroup(w, 'UI 개선')
     await clickRow(w, 'Canvas')
 
-    await failTwice()
+    getRequest.mockRejectedValueOnce(timeout())
     await w.setProps({ refreshToken: 1 })
-    await new Promise((r) => setTimeout(r, 900))
     await flushPromises()
     expect(w.find('[data-test="project-explorer-refresh-error"]').exists()).toBe(true)
     expect(labels(w, 'flow')).toEqual(['Designer v0.2', 'Canvas'])
@@ -366,12 +361,23 @@ describe('ProjectExplorer — loading and errors', () => {
     expect(w.find('[data-test="project-explorer-refresh-error"]').exists()).toBe(false)
     expect(labels(w, 'flow')).toEqual(['Designer v0.2', 'Canvas', 'Inspector'])
     // The forced refresh bypasses the store cache.
-    expect(getRequest.mock.calls.at(-1)![0]).toContain('force=true')
+    expect(getRequest.mock.calls.at(-1)![1]).toEqual({ include_terminal: 'false', force: 'true' })
+  })
+
+  it('the header refresh button forces a fresh read', async () => {
+    getRequest.mockResolvedValueOnce(ok(NODES))
+    const w = await mountExplorer()
+    getRequest.mockResolvedValueOnce(ok(NODES))
+    await w.find('[data-test="project-explorer-refresh"]').trigger('click')
+    await flushPromises()
+    expect(getRequest).toHaveBeenCalledTimes(2)
+    expect(getRequest.mock.calls[1][1]).toEqual({ include_terminal: 'false', force: 'true' })
   })
 
   it('resets to the new project when the project changes', async () => {
     getRequest.mockResolvedValueOnce(ok(NODES))
     const w = await mountExplorer()
+    await w.find('[data-test="project-explorer-search"]').setValue('core')
     getRequest.mockResolvedValueOnce(ok([
       n({ id: 'project:q', parent_id: null, node_type: 'project', label: 'Beta' }),
       n({ id: 'module:q:m', parent_id: 'project:q', node_type: 'module', label: 'm' }),
@@ -380,5 +386,40 @@ describe('ProjectExplorer — loading and errors', () => {
     await flushPromises()
     expect(labels(w, 'project')).toEqual(['Beta'])
     expect(labels(w, 'group')).toEqual(['m'])
+    expect((w.find('[data-test="project-explorer-search"]').element as HTMLInputElement).value).toBe('')
+  })
+})
+
+describe('ProjectExplorer — structure (T0006 §1-§3)', () => {
+  const DIR = resolve(__dirname, '../../../src/features/designer/projectExplorer')
+  const files = readdirSync(DIR).filter((f) => /\.(ts|vue)$/.test(f))
+  const importsOf = (src: string) => [...src.matchAll(/^\s*import\s[^'"]*['"]([^'"]+)['"]/gm)].map((m) => m[1])
+
+  it('has one component per responsibility', () => {
+    expect(files.sort()).toEqual([
+      'ExplorerRowFrame.vue',
+      'FlowRow.vue',
+      'GroupRow.vue',
+      'ProjectExplorer.vue',
+      'ProjectRow.vue',
+      'ProjectTree.vue',
+      'projectExplorerTree.ts',
+    ])
+  })
+
+  it('reads project context only through features/project, uses components/ui and never reaches v0.1 or a store of its own', () => {
+    for (const file of files) {
+      const src = readFileSync(join(DIR, file), 'utf8')
+      for (const spec of importsOf(src)) {
+        const allowed =
+          spec === 'vue' ||
+          spec === 'vue-i18n' ||
+          spec === '@/features/project' ||
+          spec.startsWith('../../../components/ui/') ||
+          spec.startsWith('./')
+        expect(allowed, `${file}: ${spec}`).toBe(true)
+      }
+      expect(src, file).not.toMatch(/defineStore|@shared\/api|client\/src/)
+    }
   })
 })

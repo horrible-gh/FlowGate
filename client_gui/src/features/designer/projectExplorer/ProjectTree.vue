@@ -4,7 +4,7 @@
        back up — no Project/Group/Flow business logic lives here. -->
   <ul
     ref="rootEl"
-    class="tree-ul pe-tree"
+    class="explorer-tree"
     role="tree"
     :aria-label="label"
     data-test="project-explorer-tree"
@@ -20,9 +20,9 @@
       <li
         v-if="project.groups.length === 0"
         role="none"
-        class="pe-hint"
+        class="explorer-hint explorer-hint--group"
         data-test="project-explorer-no-groups"
-      >{{ t('main.project_explorer.no_groups') }}</li>
+      >{{ t('gui.designer.project_explorer.no_groups') }}</li>
       <GroupRow
         v-for="group in project.groups"
         :key="group.id"
@@ -35,9 +35,9 @@
         <li
           v-if="group.flows.length === 0"
           role="none"
-          class="pe-hint"
+          class="explorer-hint explorer-hint--flow"
           data-test="project-explorer-no-flows"
-        >{{ t('main.project_explorer.no_flows') }}</li>
+        >{{ t('gui.designer.project_explorer.no_flows') }}</li>
         <FlowRow
           v-for="flow in group.flows"
           :key="flow.id"
@@ -55,15 +55,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import ProjectRow from './ProjectRow.vue'
-import GroupRow from './GroupRow.vue'
 import FlowRow from './FlowRow.vue'
-import type {
-  ExplorerFlow,
-  ExplorerGroup,
-  ExplorerProject,
-  ExplorerSelection,
-} from '../../utils/projectExplorerTree'
+import GroupRow from './GroupRow.vue'
+import ProjectRow from './ProjectRow.vue'
+import type { ExplorerFlow, ExplorerGroup, ExplorerProject, ExplorerSelection } from './projectExplorerTree'
 
 const props = defineProps<{
   project: ExplorerProject
@@ -93,8 +88,8 @@ function isSelected(kind: 'project' | 'group' | 'flow', id: string): boolean {
 }
 
 // Up/Down/Home/End move focus across the rows currently rendered (collapsed subtrees are
-// not in the DOM, so they are skipped automatically). Left/Right/Enter/Space are handled
-// by the focused row itself (ExplorerRowFrame).
+// not in the DOM, so they are skipped automatically). Left/Right/Enter/Space are handled by
+// the focused row itself (ExplorerRowFrame).
 function onKeydown(e: KeyboardEvent) {
   if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) return
   const rows = Array.from(rootEl.value?.querySelectorAll<HTMLElement>('[data-explorer-row]') ?? [])
@@ -111,11 +106,25 @@ function onKeydown(e: KeyboardEvent) {
 </script>
 
 <style scoped>
-.pe-hint {
+.explorer-tree {
+  margin: 0;
+  padding: 0;
+}
+
+.explorer-hint {
   list-style: none;
-  padding: 3px 6px 3px 24px;
-  font-size: 0.76rem;
-  color: rgba(255, 255, 255, 0.35);
+  padding: 4px 8px;
+  font-size: 12px;
   font-style: italic;
+  color: var(--fg2-muted-2);
+}
+
+/* Lines up with the rows of the level the hint stands in for (ExplorerRowFrame indent). */
+.explorer-hint--group {
+  padding-left: 40px;
+}
+
+.explorer-hint--flow {
+  padding-left: 54px;
 }
 </style>

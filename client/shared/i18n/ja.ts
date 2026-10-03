@@ -2727,22 +2727,6 @@ export default {
     group_explorer: {
       tooltip_14: 'フィルタ',
     },
-    // flowgate.v02.0023 — Designer Project Explorer (Project > Group > Flow).
-    project_explorer: {
-      title: 'プロジェクト',
-      search_placeholder: 'プロジェクト・グループ・フローを検索...',
-      search_clear: '検索をクリア',
-      refresh: '再読み込み',
-      loading: '読み込み中...',
-      load_failed: 'プロジェクトツリーを読み込めませんでした。',
-      refresh_failed: 'ツリーを再読み込みできませんでした。以下は最後に読み込んだ内容です。',
-      retry: '再試行',
-      no_project: 'プロジェクトを選択してください。',
-      no_groups: 'グループがありません。',
-      no_flows: 'フローがありません。',
-      no_results: '一致するプロジェクト・グループ・フローがありません。',
-      active_flow: '表示中',
-    },
     group_tree_node: {
       text_27: 'MD ビューアで開く',
       new_sub_group: '新しいサブグループ',

@@ -1,92 +1,112 @@
 <template>
   <!-- flowgate.v02.0023 — Designer Project Explorer (R0001 / D0002 §3).
        Shows the current Project as Project > Group > Flow and reports selection /
-       activation upward. It never opens tabs, touches the Canvas, or owns the left
-       dock's tab switch / collapse / resize — those belong to the Designer around it. -->
-  <section class="sdb-panel pe-panel" data-test="project-explorer">
-    <div class="sdb-ph">
-      <span class="sdb-ph-title">{{ t('main.project_explorer.title') }}</span>
-      <div class="sdb-ph-acts">
-        <button
-          class="sdb-act-btn"
-          type="button"
-          data-test="project-explorer-refresh"
-          :disabled="!projectId"
-          :aria-label="t('main.project_explorer.refresh')"
-          :title="t('main.project_explorer.refresh')"
-          @click="refresh"
-        >
-          <AppIcon name="arrows-clockwise" :spin="refreshing" />
-        </button>
-      </div>
-    </div>
+       activation upward. It never opens tabs, touches the Canvas, or owns the left dock's
+       tab switch / collapse / resize — those belong to the Designer around it. -->
+  <section class="project-explorer" :aria-label="t('gui.designer.project_explorer.title')" data-test="project-explorer">
+    <header class="project-explorer-head">
+      <span class="project-explorer-title">{{ t('gui.designer.project_explorer.title') }}</span>
+      <IconButton
+        size="sm"
+        :label="t('gui.designer.project_explorer.refresh')"
+        :title="t('gui.designer.project_explorer.refresh')"
+        :disabled="!projectId || loading || refreshing"
+        data-test="project-explorer-refresh"
+        @click="refresh"
+      >
+        <svg viewBox="0 0 16 16" aria-hidden="true" :class="{ 'is-spinning': refreshing }">
+          <path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </IconButton>
+    </header>
 
-    <div class="pe-search">
-      <AppIcon name="magnifying-glass" class="pe-search-ico" />
-      <input
+    <div class="project-explorer-search">
+      <Input
         v-model="query"
         type="search"
-        class="pe-search-input"
-        data-test="project-explorer-search"
-        :aria-label="t('main.project_explorer.search_placeholder')"
-        :placeholder="t('main.project_explorer.search_placeholder')"
+        :placeholder="t('gui.designer.project_explorer.search_placeholder')"
+        :aria-label="t('gui.designer.project_explorer.search_placeholder')"
         :disabled="!projectId"
+        data-test="project-explorer-search"
       />
-      <button
+      <IconButton
         v-if="isSearching"
-        type="button"
-        class="pe-search-clear"
+        class="project-explorer-search-clear"
+        size="sm"
+        :label="t('gui.designer.project_explorer.search_clear')"
+        :title="t('gui.designer.project_explorer.search_clear')"
         data-test="project-explorer-search-clear"
-        :aria-label="t('main.project_explorer.search_clear')"
-        :title="t('main.project_explorer.search_clear')"
         @click="query = ''"
       >
-        <AppIcon name="x" />
-      </button>
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+        </svg>
+      </IconButton>
     </div>
 
-    <div class="sdb-scroll">
-      <div v-if="!projectId" class="sdb-state" data-test="project-explorer-no-project">
-        {{ t('main.project_explorer.no_project') }}
-      </div>
-      <div v-else-if="loading" class="sdb-state" data-test="project-explorer-loading">
-        {{ t('main.project_explorer.loading') }}
-      </div>
-      <div v-else-if="error" class="sdb-state sdb-state--error" data-test="project-explorer-error">
-        <span>{{ t('main.project_explorer.load_failed') }}</span>
-        <button type="button" data-test="project-explorer-retry" @click="refresh">
-          {{ t('main.project_explorer.retry') }}
-        </button>
-      </div>
+    <div class="project-explorer-body">
+      <EmptyState
+        v-if="!projectId"
+        compact
+        :title="t('gui.designer.project_explorer.no_project')"
+        :description="t('gui.designer.project_explorer.no_project_desc')"
+        data-test="project-explorer-no-project"
+      />
+      <LoadingState
+        v-else-if="loading"
+        size="sm"
+        :label="t('gui.designer.project_explorer.loading')"
+        data-test="project-explorer-loading"
+      />
+      <ErrorState
+        v-else-if="error !== null"
+        compact
+        :title="t('gui.designer.project_explorer.load_failed')"
+        :message="error"
+        data-test="project-explorer-error"
+      >
+        <template #action>
+          <Button size="sm" data-test="project-explorer-retry" @click="refresh">
+            {{ t('gui.designer.project_explorer.retry') }}
+          </Button>
+        </template>
+      </ErrorState>
       <template v-else-if="loaded">
         <!-- Same contract as the Dashboard explorer (0449 T0004 item 1): a failed refresh
              rides ABOVE the tree it could not replace; the last good tree stays usable. -->
-        <div
-          v-if="refreshError"
-          class="sdb-state sdb-state--refresh-error"
+        <Alert
+          v-if="refreshError !== null"
+          class="project-explorer-refresh-error"
+          tone="warning"
+          :title="t('gui.designer.project_explorer.refresh_failed')"
           data-test="project-explorer-refresh-error"
         >
-          <span>{{ t('main.project_explorer.refresh_failed') }}</span>
-          <button type="button" data-test="project-explorer-refresh-retry" @click="refresh">
-            {{ t('main.project_explorer.retry') }}
-          </button>
-        </div>
+          {{ refreshError }}
+          <template #action>
+            <Button size="sm" variant="ghost" data-test="project-explorer-refresh-retry" @click="refresh">
+              {{ t('gui.designer.project_explorer.retry') }}
+            </Button>
+          </template>
+        </Alert>
         <ProjectTree
           v-if="filtered.project"
           :project="filtered.project"
           :expanded-ids="expandedIds"
           :selection="selection"
           :active-flow-id="activeFlowId ?? null"
-          :label="t('main.project_explorer.title')"
+          :label="t('gui.designer.project_explorer.title')"
           @toggle="toggle"
           @select-project="onSelectProject"
           @select-group="onSelectGroup"
           @select-flow="onSelectFlow"
           @activate-flow="onActivateFlow"
         />
-        <div v-else class="sdb-state" data-test="project-explorer-no-results">
-          {{ t('main.project_explorer.no_results') }}
-        </div>
+        <EmptyState
+          v-else
+          compact
+          :title="t('gui.designer.project_explorer.no_results')"
+          data-test="project-explorer-no-results"
+        />
       </template>
     </div>
   </section>
@@ -95,20 +115,26 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import AppIcon from '@shared/AppIcon.vue'
+import Alert from '../../../components/ui/Alert.vue'
+import Button from '../../../components/ui/Button.vue'
+import EmptyState from '../../../components/ui/EmptyState.vue'
+import ErrorState from '../../../components/ui/ErrorState.vue'
+import IconButton from '../../../components/ui/IconButton.vue'
+import Input from '../../../components/ui/Input.vue'
+import LoadingState from '../../../components/ui/LoadingState.vue'
+import { useProjectStore, type GroupTreeNode } from '@/features/project'
 import ProjectTree from './ProjectTree.vue'
-import { useExplorerStore, type GroupNode } from '../../stores/explorer'
-import { useProjectStore } from '../../stores/project'
 import {
   buildExplorerProject,
   filterExplorerProject,
+  projectNodeId,
   type ExplorerFlow,
   type ExplorerGroup,
   type ExplorerProject,
   type ExplorerSelection,
   type ProjectExplorerFlowEvent,
   type ProjectExplorerGroupEvent,
-} from '../../utils/projectExplorerTree'
+} from './projectExplorerTree'
 
 const props = withDefaults(
   defineProps<{
@@ -116,7 +142,7 @@ const props = withDefaults(
     projectId?: string | null
     /** The Flow the Designer currently has open. Owned by the Designer, not by this part. */
     activeFlowId?: string | null
-    /** Bump to force a refresh from the parent (e.g. an SSE tree change). */
+    /** Bump to force a refresh from the parent (e.g. a tree change event). */
     refreshToken?: number
     /** Show final-approved / discarded Flows too (the Dashboard's "show" variant). */
     includeTerminal?: boolean
@@ -136,44 +162,44 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const explorerStore = useExplorerStore()
 const projectStore = useProjectStore()
 
+// The Designer has no Project concept of its own (R0001 §2.1): by default this is the app's
+// current Project from features/project.
 const projectId = computed<string | null>(() =>
   props.projectId === undefined ? projectStore.currentProjectId : props.projectId,
 )
 
-// The canonical flat tree, exactly as the explorer store returns it. Everything the
-// user sees is derived from this + the query; nothing else is stored.
-const nodes = ref<GroupNode[]>([])
+// The canonical flat tree, exactly as the project store returns it. Everything the user
+// sees is derived from this + the query; nothing else is stored.
+const nodes = ref<GroupTreeNode[]>([])
 const loaded = ref(false)
 const loading = ref(false)
 const refreshing = ref(false)
-// Same split as GroupExplorer (0449 T0004 item 1): `error` blocks because nothing is on
-// screen yet; `refreshError` does not, because a tree is already rendered.
-const error = ref(false)
-const refreshError = ref(false)
+// `error` blocks because nothing is on screen yet; `refreshError` does not, because a tree
+// is already rendered and stays usable (same split as the Dashboard explorer).
+const error = ref<string | null>(null)
+const refreshError = ref<string | null>(null)
 
 const query = ref('')
 const isSearching = computed(() => query.value.trim().length > 0)
 
 const selection = ref<ExplorerSelection>(null)
 
-const projectNodeId = computed(() => (projectId.value ? `project:${projectId.value}` : null))
+const rootNodeId = computed(() => (projectId.value ? projectNodeId(projectId.value) : null))
 const projectName = computed(() =>
-  projectStore.projects.find((p) => p.project_id === projectId.value)?.project_name ?? projectId.value,
+  projectStore.projects.find((p) => p.id === projectId.value)?.name ?? projectId.value,
 )
 
 const displayProject = computed<ExplorerProject | null>(() =>
-  loaded.value ? buildExplorerProject(nodes.value, projectNodeId.value, projectName.value) : null,
+  loaded.value ? buildExplorerProject(nodes.value, rootNodeId.value, projectName.value) : null,
 )
 
 const filtered = computed(() => filterExplorerProject(displayProject.value, query.value))
 
 // ── Expansion ────────────────────────────────────────────────────────────────
-// Kept local to this instance on purpose: the Dashboard tree persists its own expansion
-// per v0.1 node id, and sharing it would make opening a Group here re-shape the Dashboard
-// explorer (R0001 §3.8). The Project root starts open; Groups start closed.
+// Local to this instance: it is view state, not project context. The Project root starts
+// open; Groups start closed.
 const expanded = ref<Record<string, boolean>>({})
 // While a query is active the matched rows' ancestors are opened automatically. A toggle
 // made during the search is remembered only for that query, so clearing it brings back
@@ -242,11 +268,15 @@ function onActivateFlow(flow: ExplorerFlow) {
 }
 
 // ── Loading ──────────────────────────────────────────────────────────────────
-// Data comes from the explorer store's fetchGroupTree — the same fetch/cache/inflight-join
-// /retry path the Dashboard explorer uses, so the Designer adds no second tree request
-// path. The first load may answer from the store cache; refresh/retry force a fresh read.
+// Data comes from the project store's fetchGroupTree (cache + inflight join), the one tree
+// request path v0.2 screens share. The first load may answer from the store cache;
+// refresh/retry/refreshToken force a fresh read.
 
 let requestSeq = 0
+
+function messageOf(err: unknown): string {
+  return err instanceof Error && err.message ? err.message : t('gui.designer.project_explorer.load_failed')
+}
 
 async function load(force: boolean) {
   const pid = projectId.value
@@ -256,19 +286,19 @@ async function load(force: boolean) {
   if (silent) refreshing.value = true
   else {
     loading.value = true
-    error.value = false
+    error.value = null
   }
   try {
-    const next = await explorerStore.fetchGroupTree(pid, force, props.includeTerminal)
+    const next = await projectStore.fetchGroupTree(pid, { force, includeTerminal: props.includeTerminal })
     if (seq !== requestSeq || pid !== projectId.value) return
     nodes.value = next
     loaded.value = true
-    error.value = false
-    refreshError.value = false
-  } catch {
+    error.value = null
+    refreshError.value = null
+  } catch (err) {
     if (seq !== requestSeq || pid !== projectId.value) return
-    if (silent) refreshError.value = true
-    else error.value = true
+    if (silent) refreshError.value = messageOf(err)
+    else error.value = messageOf(err)
   } finally {
     if (seq === requestSeq) {
       loading.value = false
@@ -291,8 +321,8 @@ watch(
       loaded.value = false
       loading.value = false
       refreshing.value = false
-      error.value = false
-      refreshError.value = false
+      error.value = null
+      refreshError.value = null
       selection.value = null
       expanded.value = {}
       searchOverrides.value = {}
@@ -314,52 +344,68 @@ defineExpose({ refresh })
 </script>
 
 <style scoped>
-.pe-search {
+.project-explorer {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  color: var(--fg2-text);
+  font-family: var(--fg2-font);
+}
+
+.project-explorer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 8px 4px 12px;
+}
+
+.project-explorer-title {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg2-muted);
+}
+
+.project-explorer-head svg.is-spinning {
+  animation: project-explorer-spin 0.8s linear infinite;
+}
+
+.project-explorer-search {
   position: relative;
   display: flex;
   align-items: center;
-  padding: 6px 8px;
+  padding: 4px 8px 8px;
 }
-.pe-search-ico {
+
+.project-explorer-search :deep(.ui-input) {
+  height: var(--fg2-control-h-sm);
+  padding-right: 32px;
+}
+
+.project-explorer-search-clear {
   position: absolute;
-  left: 16px;
-  font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.45);
-  pointer-events: none;
+  right: 10px;
+  width: 24px;
+  height: 24px;
 }
-.pe-search-input {
+
+.project-explorer-body {
   flex: 1;
-  min-width: 0;
-  padding: 5px 26px;
-  font-size: 0.8rem;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.92);
+  min-height: 0;
+  overflow: auto;
+  padding: 0 4px 8px;
 }
-.pe-search-input::placeholder {
-  color: rgba(255, 255, 255, 0.4);
+
+.project-explorer-refresh-error {
+  margin: 0 4px 6px;
 }
-.pe-search-input:focus {
-  outline: none;
-  border-color: var(--primary, #2563eb);
-  background: rgba(255, 255, 255, 0.12);
-}
-.pe-search-input:disabled {
-  opacity: 0.5;
-}
-.pe-search-clear {
-  position: absolute;
-  right: 14px;
-  display: flex;
-  align-items: center;
-  border: none;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.7);
-  cursor: pointer;
-}
-.sdb-act-btn:disabled {
-  opacity: 0.4;
-  cursor: default;
+
+@keyframes project-explorer-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

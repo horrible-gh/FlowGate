@@ -13,9 +13,12 @@
     @activate="emit('toggle', group.id)"
     @toggle="emit('toggle', group.id)"
   >
-    <span class="tree-ico pe-group-ico"><AppIcon name="stack" /></span>
-    <span class="tree-lbl" data-test="project-explorer-label">{{ group.name }}</span>
-    <span class="pe-count" aria-hidden="true">{{ group.flows.length }}</span>
+    <svg class="row-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <path d="M8 2l6 3-6 3-6-3 6-3z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
+      <path d="M2 8l6 3 6-3M2 11l6 3 6-3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
+    </svg>
+    <span class="row-label" data-test="project-explorer-label">{{ group.name }}</span>
+    <span class="row-count" aria-hidden="true">{{ group.flows.length }}</span>
     <template #children>
       <slot />
     </template>
@@ -23,9 +26,8 @@
 </template>
 
 <script setup lang="ts">
-import AppIcon from '@shared/AppIcon.vue'
 import ExplorerRowFrame from './ExplorerRowFrame.vue'
-import type { ExplorerGroup } from '../../utils/projectExplorerTree'
+import type { ExplorerGroup } from './projectExplorerTree'
 
 defineProps<{
   group: ExplorerGroup
@@ -40,12 +42,22 @@ const emit = defineEmits<{
 </script>
 
 <style scoped>
-.pe-group-ico {
-  color: #a78bfa;
+.row-icon {
+  flex: none;
+  color: var(--fg2-purple);
 }
-.pe-count {
-  flex-shrink: 0;
-  font-size: 0.68rem;
-  color: rgba(255, 255, 255, 0.35);
+
+.row-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-count {
+  flex: none;
+  font-size: 11px;
+  color: var(--fg2-muted-2);
 }
 </style>

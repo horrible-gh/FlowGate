@@ -1,19 +1,18 @@
-// flowgate.v02.0023 — v0.2 Designer Project Explorer display tree.
+// flowgate.v02.0023 — Designer Project Explorer display tree (R0001 §2.2/§2.3, D0002 §6/§9).
 //
-// The Project Explorer does not own tree data. It reads the SAME flat GroupNode[] the
-// Dashboard GroupExplorer renders (explorer store's fetchGroupTree / groupTreeCache) and
-// derives a read-only display shape from it, re-labelled with the v0.2 meaning:
+// The Project Explorer does not own tree data. It reads the canonical flat group tree the
+// project store caches (`useProjectStore().fetchGroupTree`) and derives a read-only display
+// shape from it, re-labelled with the v0.2 meaning:
 //
 //   v0.1 project  -> v0.2 Project
 //   v0.1 module   -> v0.2 Group
 //   v0.1 group    -> v0.2 Flow
 //   v0.1 document -> v0.2 Node (Canvas responsibility; never part of this tree)
 //
-// Nothing here is stored: ProjectExplorer recomputes it from the canonical node array and
-// the search query, so there is no second tree store to keep in sync.
+// Nothing here is stored: ProjectExplorer recomputes it from the node list and the search
+// query, so there is no second tree store to keep in sync.
 
-import type { GroupNode } from '../stores/explorer'
-import { buildTreeIndex } from './groupTreeIndex'
+import type { GroupTreeNode } from '@/features/project'
 
 export interface ExplorerFlow {
   /** v0.1 group id — the id a Designer uses to open the Flow. */
@@ -21,7 +20,7 @@ export interface ExplorerFlow {
   /** v0.1 module node id of the owning Group. */
   groupId: string
   name: string
-  /** v0.1 group number (e.g. "0023"), when the id carries one. */
+  /** v0.1 group number (e.g. "0023"), when the node carries one. */
   number: string | null
 }
 
@@ -42,6 +41,7 @@ export interface ExplorerProject {
 
 /** Payload ProjectExplorer emits upward for a Group selection. */
 export interface ProjectExplorerGroupEvent {
+  /** Project id (the store's current project id, not the tree node id). */
   projectId: string
   /** v0.1 module node id. */
   groupId: string
@@ -66,21 +66,27 @@ export interface FilteredExplorerTree {
   matchIds: Set<string>
 }
 
-function flowName(node: GroupNode): string {
-  return node.label || node.id
+/** The tree node id the server gives a project's root row. */
+export function projectNodeId(projectId: string): string {
+  return `project:${projectId}`
 }
 
-function groupName(node: GroupNode): string {
-  // The server puts the module's display title in `title` and its key in `label`
-  // (GroupTreeNode.vue reads it the same way).
-  return node.title || node.label || node.id
+function childrenIndex(nodes: GroupTreeNode[]): Map<string, GroupTreeNode[]> {
+  const byParent = new Map<string, GroupTreeNode[]>()
+  for (const node of nodes) {
+    if (node.parentId === null) continue
+    const list = byParent.get(node.parentId)
+    if (list) list.push(node)
+    else byParent.set(node.parentId, [node])
+  }
+  return byParent
 }
 
-/** Build the Project > Group > Flow display tree from the flat v0.1 group tree.
+/** Build the Project > Group > Flow display tree from the flat group tree.
  *
  *  - Documents (v0.2 Nodes) are dropped.
- *  - `orphan` buckets are dropped: they are a container for documents without a group row,
- *    not a Flow a Designer could open.
+ *  - `orphan` buckets are dropped: they hold documents without a group row, not a Flow a
+ *    Designer could open.
  *  - A group nested under another group is still a Flow of the nearest module, so the
  *    display stays exactly three levels deep.
  *  - Order follows the server's node order, like the Dashboard tree.
@@ -88,34 +94,40 @@ function groupName(node: GroupNode): string {
  *  `fallbackProjectName` labels the root when the payload has no project node (e.g. an
  *  empty tree for a project that exists). Returns null when there is neither. */
 export function buildExplorerProject(
-  nodes: GroupNode[],
-  projectNodeId: string | null,
+  nodes: GroupTreeNode[],
+  rootId: string | null,
   fallbackProjectName?: string | null,
 ): ExplorerProject | null {
-  const { byId, childrenByParent } = buildTreeIndex(nodes)
+  const byParent = childrenIndex(nodes)
   const projectNode =
-    (projectNodeId ? byId.get(projectNodeId) : undefined) ??
-    nodes.find((n) => n.node_type === 'project' && n.parent_id === null)
-  if (!projectNode && !projectNodeId) return null
-  const id = projectNode?.id ?? projectNodeId!
+    (rootId ? nodes.find((n) => n.id === rootId) : undefined) ??
+    nodes.find((n) => n.kind === 'project' && n.parentId === null)
+  if (!projectNode && !rootId) return null
+  const id = projectNode?.id ?? rootId!
   const project: ExplorerProject = {
     id,
     name: projectNode?.label || fallbackProjectName || id,
     groups: [],
   }
-  for (const moduleNode of childrenByParent.get(id) ?? []) {
-    if (moduleNode.node_type !== 'module') continue
-    const group: ExplorerGroup = { id: moduleNode.id, projectId: id, name: groupName(moduleNode), flows: [] }
+  for (const moduleNode of byParent.get(id) ?? []) {
+    if (moduleNode.kind !== 'module') continue
+    // The server puts a module's display title in `title` and its key in `label`.
+    const group: ExplorerGroup = {
+      id: moduleNode.id,
+      projectId: id,
+      name: moduleNode.title || moduleNode.label,
+      flows: [],
+    }
     // Depth-first over non-document descendants so nested groups stay in reading order.
-    const stack = [...(childrenByParent.get(moduleNode.id) ?? [])].reverse()
+    const stack = [...(byParent.get(moduleNode.id) ?? [])].reverse()
     const visited = new Set<string>()
     while (stack.length > 0) {
       const child = stack.pop()!
       if (visited.has(child.id)) continue
       visited.add(child.id)
-      if (child.node_type !== 'group' && child.node_type !== 'subgroup') continue
-      group.flows.push({ id: child.id, groupId: moduleNode.id, name: flowName(child), number: child.number ?? null })
-      const grandchildren = childrenByParent.get(child.id)
+      if (child.kind !== 'group' && child.kind !== 'subgroup') continue
+      group.flows.push({ id: child.id, groupId: moduleNode.id, name: child.label, number: child.number })
+      const grandchildren = byParent.get(child.id)
       if (grandchildren) stack.push(...[...grandchildren].reverse())
     }
     project.groups.push(group)

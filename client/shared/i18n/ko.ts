@@ -2730,22 +2730,6 @@ export default {
     group_explorer: {
       tooltip_14: '필터',
     },
-    // flowgate.v02.0023 — Designer Project Explorer (Project > Group > Flow).
-    project_explorer: {
-      title: '프로젝트',
-      search_placeholder: '프로젝트·그룹·플로우 검색...',
-      search_clear: '검색 지우기',
-      refresh: '새로고침',
-      loading: '불러오는 중...',
-      load_failed: '프로젝트 트리를 불러오지 못했습니다.',
-      refresh_failed: '트리를 새로 불러오지 못했습니다. 아래는 마지막으로 불러온 내용입니다.',
-      retry: '재시도',
-      no_project: '프로젝트를 선택해주세요.',
-      no_groups: '그룹이 없습니다.',
-      no_flows: '플로우가 없습니다.',
-      no_results: '일치하는 프로젝트·그룹·플로우가 없습니다.',
-      active_flow: '열림',
-    },
     group_tree_node: {
       text_27: 'MD Viewer로 열기',
       new_sub_group: '새 하위 그룹',

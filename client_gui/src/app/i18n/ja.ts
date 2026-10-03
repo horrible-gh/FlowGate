@@ -91,6 +91,25 @@ export default {
     panel_empty: 'まだ接続されていません。今後のタスクで実際のデータが反映されます。',
     footer_mark: 'Build the Flow, Not Just the Document.',
   },
+  designer: {
+    // flowgate.v02.0023 — Designer Project Explorer (Project > Group > Flow).
+    project_explorer: {
+      title: 'プロジェクト',
+      refresh: '再読み込み',
+      search_placeholder: 'プロジェクト・グループ・フローを検索',
+      search_clear: '検索をクリア',
+      no_project: 'プロジェクトが選択されていません。',
+      no_project_desc: 'プロジェクトを開くと、グループとフローがここに表示されます。',
+      loading: 'プロジェクト構造を読み込んでいます...',
+      load_failed: 'プロジェクト構造を読み込めませんでした。',
+      refresh_failed: '再読み込みに失敗しました。前の一覧を表示しています。',
+      retry: '再試行',
+      no_groups: 'グループがありません。',
+      no_flows: 'フローがありません。',
+      no_results: '一致するプロジェクト・グループ・フローがありません。',
+      active_flow: '表示中',
+    },
+  },
   placeholder: {
     badge: '準備中',
     body: 'この画面は FlowGate v0.2 ではまだ実装されていません。',

@@ -31,3 +31,30 @@ export interface CreateProjectInput {
   description?: string
   color?: string
 }
+
+// flowgate.v02.0023 — the project's group tree as `/api/v1/projects/{id}/groups/tree`
+// returns it: ONE flat node list in server order, linked by parentId. The node kinds keep
+// their v0.1 storage names on purpose (this is the transport model, shared by every v0.2
+// screen that reads the tree); what each kind MEANS on screen is the consuming feature's
+// call — the Designer Project Explorer reads `module` as a v0.2 Group and `group` as a
+// v0.2 Flow, and never shows `document` (a v0.2 Node).
+export type GroupTreeNodeKind = 'project' | 'module' | 'group' | 'subgroup' | 'orphan' | 'document'
+
+export interface GroupTreeNode {
+  id: string
+  parentId: string | null
+  kind: GroupTreeNodeKind
+  /** Server key/label (for a module, its key; for a group, its display name). */
+  label: string
+  /** Server display title, when the node has one separate from `label`. */
+  title: string | null
+  /** v0.1 group number (e.g. "0023"), when the node carries one. */
+  number: string | null
+}
+
+export interface FetchGroupTreeOptions {
+  /** Read a fresh tree instead of answering from the store cache / joining an older read. */
+  force?: boolean
+  /** Keep final-approved/discarded groups. Defaults to false (the pruned variant). */
+  includeTerminal?: boolean
+}

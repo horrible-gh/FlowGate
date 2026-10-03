@@ -4,9 +4,17 @@
 // D0004 §1.2/§4.3 assigns to features/project. Scope is exactly the three endpoints WP0005
 // T#1 §3 allows: active project list, create, and identifier suggestion. archive/restore/
 // status/source-path/Git endpoints are out of this T's scope and are not called here.
+// flowgate.v02.0023 adds the read-only project group tree (fetchProjectGroupTree) so the
+// Designer and later v0.2 screens share one tree request path instead of each growing one.
 
 import { extractApiErrorMessage, getRequest, postRequest } from '@shared/api'
-import type { CreateProjectInput, Project, ProjectModule } from './types'
+import type {
+  CreateProjectInput,
+  GroupTreeNode,
+  GroupTreeNodeKind,
+  Project,
+  ProjectModule,
+} from './types'
 
 interface RawProjectModule {
   name: string
@@ -95,5 +103,66 @@ export async function suggestProjectSlug(text: string): Promise<string | null> {
     return response.data?.suggested || null
   } catch (error) {
     throw new Error(extractApiErrorMessage(error, 'Failed to suggest a project id.'))
+  }
+}
+
+interface RawGroupTreeNode {
+  id: string
+  parent_id: string | null
+  node_type: string
+  label?: string | null
+  title?: string | null
+  number?: string | null
+}
+
+interface RawGroupTreeResponse {
+  data?: { nodes?: RawGroupTreeNode[] | null } | null
+}
+
+const GROUP_TREE_NODE_KINDS: readonly GroupTreeNodeKind[] = [
+  'project',
+  'module',
+  'group',
+  'subgroup',
+  'orphan',
+  'document',
+]
+
+function toGroupTreeNode(raw: RawGroupTreeNode): GroupTreeNode | null {
+  const kind = GROUP_TREE_NODE_KINDS.find((k) => k === raw.node_type)
+  // A node kind this client does not know is skipped rather than guessed into a level.
+  if (!kind || !raw.id) return null
+  return {
+    id: raw.id,
+    parentId: raw.parent_id ?? null,
+    kind,
+    label: raw.label || raw.id,
+    title: raw.title || null,
+    number: raw.number ?? null,
+  }
+}
+
+/**
+ * GET /api/v1/projects/{id}/groups/tree — the same flat tree the v0.1 Dashboard explorer
+ * reads (server `tree_routes.get_groups_tree`). `include_terminal=false` is the pruned
+ * variant (final-approved/discarded groups dropped); `force=true` asks the server for a read
+ * that does not join an older in-flight one. `branch` is not sent: the server ignores it.
+ */
+export async function fetchProjectGroupTree(
+  projectId: string,
+  options: { includeTerminal: boolean; force: boolean },
+): Promise<GroupTreeNode[]> {
+  try {
+    const response = await getRequest<RawGroupTreeResponse>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/groups/tree`,
+      {
+        include_terminal: options.includeTerminal ? 'true' : 'false',
+        force: options.force ? 'true' : 'false',
+      },
+    )
+    const raw = response.data?.data?.nodes ?? []
+    return raw.map(toGroupTreeNode).filter((n): n is GroupTreeNode => n !== null)
+  } catch (error) {
+    throw new Error(extractApiErrorMessage(error, 'Failed to load the project tree.'))
   }
 }

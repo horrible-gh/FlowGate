@@ -1,35 +1,39 @@
 /**
- * flowgate.v02.0023 T0003 — pure derivation of the Designer Project Explorer tree.
+ * flowgate.v02.0023 T0006 — pure derivation of the Designer Project Explorer tree.
  *
- * The v0.1 flat group tree (project / module / group / orphan / document) is re-read as
- * v0.2 Project > Group > Flow; documents (v0.2 Nodes) and orphan buckets never appear,
- * and the search filter keeps the Project/Group context around every match.
+ * The flat group tree (project / module / group / orphan / document) is re-read as v0.2
+ * Project > Group > Flow; documents (v0.2 Nodes) and orphan buckets never appear, and the
+ * search filter keeps the Project/Group context around every match.
  */
 import { describe, expect, it } from 'vitest'
-import type { GroupNode } from '@main/stores/explorer'
-import { buildExplorerProject, filterExplorerProject } from '@main/utils/projectExplorerTree'
+import type { GroupTreeNode } from '@/features/project'
+import {
+  buildExplorerProject,
+  filterExplorerProject,
+  projectNodeId,
+} from '@/features/designer/projectExplorer/projectExplorerTree'
 
-function n(partial: Partial<GroupNode> & Pick<GroupNode, 'id' | 'parent_id' | 'node_type' | 'label'>): GroupNode {
-  return { type_code: null, number: null, filename: null, has_md: false, md_path: null, ...partial }
+function n(partial: Partial<GroupTreeNode> & Pick<GroupTreeNode, 'id' | 'parentId' | 'kind' | 'label'>): GroupTreeNode {
+  return { title: null, number: null, ...partial }
 }
 
-const NODES: GroupNode[] = [
-  n({ id: 'project:p', parent_id: null, node_type: 'project', label: 'Alpha' }),
-  n({ id: 'module:p:ui', parent_id: 'project:p', node_type: 'module', label: 'ui', title: 'UI 개선' }),
-  n({ id: 'p.ui.0001', parent_id: 'module:p:ui', node_type: 'group', label: 'Designer v0.2', number: '0001' }),
-  n({ id: 'p.ui.0001.0001-R', parent_id: 'p.ui.0001', node_type: 'document', label: '[요건정의]: Explorer spec', type_code: 'R' }),
-  n({ id: 'p.ui.0001.sub', parent_id: 'p.ui.0001', node_type: 'group', label: 'Nested flow' }),
-  n({ id: 'p.ui.0002', parent_id: 'module:p:ui', node_type: 'group', label: 'Canvas', number: '0002' }),
-  n({ id: 'orphan:module:p:ui:p.ui.9999', parent_id: 'module:p:ui', node_type: 'orphan', label: 'Uncategorized: p.ui.9999' }),
-  n({ id: 'p.ui.9999.0001-M', parent_id: 'orphan:module:p:ui:p.ui.9999', node_type: 'document', label: '[메모]: stray' }),
-  n({ id: 'module:p:core', parent_id: 'project:p', node_type: 'module', label: 'core' }),
-  n({ id: 'p.core.0003', parent_id: 'module:p:core', node_type: 'group', label: 'Engine', number: '0003' }),
-  n({ id: 'module:p:empty', parent_id: 'project:p', node_type: 'module', label: 'empty', title: 'Empty group' }),
+const NODES: GroupTreeNode[] = [
+  n({ id: 'project:p', parentId: null, kind: 'project', label: 'Alpha' }),
+  n({ id: 'module:p:ui', parentId: 'project:p', kind: 'module', label: 'ui', title: 'UI 개선' }),
+  n({ id: 'p.ui.0001', parentId: 'module:p:ui', kind: 'group', label: 'Designer v0.2', number: '0001' }),
+  n({ id: 'p.ui.0001.0001-R', parentId: 'p.ui.0001', kind: 'document', label: '[요건정의]: Explorer spec' }),
+  n({ id: 'p.ui.0001.sub', parentId: 'p.ui.0001', kind: 'group', label: 'Nested flow' }),
+  n({ id: 'p.ui.0002', parentId: 'module:p:ui', kind: 'group', label: 'Canvas', number: '0002' }),
+  n({ id: 'orphan:module:p:ui:p.ui.9999', parentId: 'module:p:ui', kind: 'orphan', label: 'Uncategorized: p.ui.9999' }),
+  n({ id: 'p.ui.9999.0001-M', parentId: 'orphan:module:p:ui:p.ui.9999', kind: 'document', label: '[메모]: stray' }),
+  n({ id: 'module:p:core', parentId: 'project:p', kind: 'module', label: 'core' }),
+  n({ id: 'p.core.0003', parentId: 'module:p:core', kind: 'group', label: 'Engine', number: '0003' }),
+  n({ id: 'module:p:empty', parentId: 'project:p', kind: 'module', label: 'empty', title: 'Empty group' }),
 ]
 
 describe('buildExplorerProject', () => {
   it('maps project/module/group to Project/Group/Flow and drops documents and orphans', () => {
-    const project = buildExplorerProject(NODES, 'project:p')!
+    const project = buildExplorerProject(NODES, projectNodeId('p'))!
     expect(project).toMatchObject({ id: 'project:p', name: 'Alpha' })
     expect(project.groups.map((g) => [g.id, g.name])).toEqual([
       ['module:p:ui', 'UI 개선'],
