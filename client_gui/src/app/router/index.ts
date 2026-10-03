@@ -1,16 +1,19 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { installAuthGuard } from '@/core/router/guard'
 import { AiSettingsView } from '@/features/ai'
+import { DesignerShell } from '@/features/designer'
 import DashboardView from '../dashboard/DashboardView.vue'
 import { PLACEHOLDER_NAV_KEYS } from '../navigation'
 import ComingSoonView from '../views/ComingSoonView.vue'
 import NotFoundView from '../views/NotFoundView.vue'
 
-// T0011 §8/§12: /app is the Dashboard; /app/projects, /designer, /git and /settings
-// exist as honest "준비 중" placeholders. Each placeholder also owns everything below it
-// (`/projects/...`), so a deep link keeps its section highlighted in the Sidebar.
+// T0011 §8/§12: /app is the Dashboard; /app/projects, /git and /settings exist as honest
+// "준비 중" placeholders. Each placeholder also owns everything below it (`/projects/...`),
+// so a deep link keeps its section highlighted in the Sidebar.
 // /app/ai is implemented by AiSettingsView (T0003), including 시스템 AI / 내 AI
-// (flowgate.v02.0017 T0004 §1).
+// (flowgate.v02.0017 T0004 §1). /app/designer (and everything below it) is the Designer
+// Shell (flowgate.v02.0025); sub-paths are not interpreted yet, they keep the same Shell.
+// `meta.fullscreen` makes App.vue drop its Topbar / Sidebar for the Designer (0025 T0006 §1).
 //
 // Nothing here redirects: a `redirect` rewrites the URL bar, and the T#1 contract is that an
 // authenticated deep link (e.g. `/app/projects?tab=x`) and a browser refresh keep exactly the
@@ -25,6 +28,7 @@ const placeholderRoutes: RouteRecordRaw[] = PLACEHOLDER_NAV_KEYS.map((key) => ({
 const routes: RouteRecordRaw[] = [
   { path: '/', name: 'dashboard', component: DashboardView, meta: { navKey: 'dashboard' } },
   { path: '/ai/:rest(.*)*', name: 'ai', component: AiSettingsView, meta: { navKey: 'ai' } },
+  { path: '/designer/:rest(.*)*', name: 'designer', component: DesignerShell, meta: { navKey: 'designer', fullscreen: true } },
   ...placeholderRoutes,
   { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFoundView },
 ]

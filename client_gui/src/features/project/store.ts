@@ -10,13 +10,35 @@
 // one, so a slow earlier fetch that resolves after a newer fetch (or after the Dialog
 // closed) can never revert `loading`/`error`/`projects`/`currentProjectId` to a stale state,
 // and it never reopens a closed Dialog (WP0005 T#1 §5, flowgate.v02.0008.0001-R §13).
+//
+// flowgate.v02.0023 adds the current project's group tree (fetch/cache/inflight-join) here
+// rather than in a Designer-only store: it is project context that the Designer Project
+// Explorer and File Explorer (0024) both read. Only the canonical flat node list is cached;
+// each consumer derives its own display shape and keeps its own view state (expansion,
+// selection, search) locally.
 
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import type { CreateProjectInput, Project } from './types'
+import type {
+  CreateProjectInput,
+  FetchGroupTreeOptions,
+  FlowAiActivity,
+  FlowChangeSet,
+  FlowFileDiff,
+  FlowFileTree,
+  GroupTreeNode,
+  Project,
+  ProjectGitStatus,
+} from './types'
 import {
   createProject as createProjectApi,
   fetchActiveProjects as fetchActiveProjectsApi,
+  fetchFlowAiActivity,
+  fetchFlowChangeSet,
+  fetchFlowFileDiff,
+  fetchFlowFileTree,
+  fetchProjectGitStatus,
+  fetchProjectGroupTree as fetchProjectGroupTreeApi,
 } from './api'
 import {
   clearStoredCurrentProjectId,
@@ -140,6 +162,90 @@ export const useProjectStore = defineStore('project', () => {
     applyCurrentProjectId(project.id)
   }
 
+  // ── Group tree (flowgate.v02.0023) ───────────────────────────────────────────────
+  // Keyed per project + variant (pruned vs include_terminal): the two variants are different
+  // node lists and must never answer for each other. Kept apart from `requestEpoch`, which
+  // belongs to the Project list/Dialog session and is bumped by closeDialog().
+  const groupTrees = ref<Record<string, GroupTreeNode[]>>({})
+  const groupTreeInflight = new Map<string, { force: boolean; promise: Promise<GroupTreeNode[]> }>()
+  const groupTreeCommitted = new Map<string, number>()
+  let groupTreeOrder = 0
+
+  const groupTreeKey = (projectId: string, includeTerminal: boolean) =>
+    `${projectId}:${includeTerminal ? 'full' : 'pruned'}`
+
+  function getCachedGroupTree(projectId: string, includeTerminal = false): GroupTreeNode[] | undefined {
+    return groupTrees.value[groupTreeKey(projectId, includeTerminal)]
+  }
+
+  // Answers from the cache unless `force`. A non-forced read joins any read already in flight
+  // for the same key; a forced read only joins another forced one (an older non-forced read
+  // may predate the change the caller wants to see). A response only replaces the cached
+  // list if no later-started read already committed one, so a slow stale response can never
+  // overwrite a fresher tree; it still resolves its own nodes to its own caller. A failure
+  // leaves the cached list untouched (callers keep showing the last good tree).
+  function fetchGroupTree(projectId: string, options: FetchGroupTreeOptions = {}): Promise<GroupTreeNode[]> {
+    const force = options.force ?? false
+    const includeTerminal = options.includeTerminal ?? false
+    const key = groupTreeKey(projectId, includeTerminal)
+    const cached = groupTrees.value[key]
+    if (!force && cached) return Promise.resolve(cached)
+    const inflight = groupTreeInflight.get(key)
+    if (inflight && (!force || inflight.force)) return inflight.promise
+    const order = ++groupTreeOrder
+    // Assigned synchronously below, before the IIFE's first await suspends it, so the
+    // `finally` (which only runs after that) always sees it.
+    let promise!: Promise<GroupTreeNode[]>
+    promise = (async () => {
+      try {
+        const nodes = await fetchProjectGroupTreeApi(projectId, { includeTerminal, force })
+        if (order >= (groupTreeCommitted.get(key) ?? 0)) {
+          groupTreeCommitted.set(key, order)
+          groupTrees.value = { ...groupTrees.value, [key]: nodes }
+          // The cached (reactive) list, so this caller and later cache reads hold the same
+          // reference.
+          return groupTrees.value[key]
+        }
+        return nodes
+      } finally {
+        if (groupTreeInflight.get(key)?.promise === promise) groupTreeInflight.delete(key)
+      }
+    })()
+    groupTreeInflight.set(key, { force, promise })
+    return promise
+  }
+
+  // Flow file context (flowgate.v02.0024 T0005). The Designer File Explorer reaches the
+  // project Git status and the active Flow's tree / Base-relative changes / diff / AI
+  // activity only through these loaders, so features/designer owns no API or store of its
+  // own. They are stateless on purpose: Flow-scoped staleness (seq guard, scope switch) is
+  // the consumer's concern, the Dialog's `requestEpoch` must not gate them, and duplicate
+  // in-flight GETs are already coalesced by `@shared/api`.
+  function loadProjectGitStatus(projectId: string): Promise<ProjectGitStatus | null> {
+    return fetchProjectGitStatus(projectId)
+  }
+
+  function loadFlowFileTree(projectId: string, groupId: string): Promise<FlowFileTree> {
+    return fetchFlowFileTree(projectId, groupId)
+  }
+
+  function loadFlowChanges(projectId: string, groupId: string, options: { base?: string } = {}): Promise<FlowChangeSet> {
+    return fetchFlowChangeSet(projectId, groupId, options)
+  }
+
+  function loadFlowFileDiff(
+    projectId: string,
+    groupId: string,
+    path: string,
+    options: { base?: string; ref?: string } = {},
+  ): Promise<FlowFileDiff> {
+    return fetchFlowFileDiff(projectId, groupId, path, options)
+  }
+
+  function loadFlowAiActivity(groupId: string): Promise<FlowAiActivity> {
+    return fetchFlowAiActivity(groupId)
+  }
+
   function openDialog(): void {
     dialogOpen.value = true
     void fetchProjects()
@@ -160,10 +266,20 @@ export const useProjectStore = defineStore('project', () => {
     error,
     dialogOpen,
     currentProject,
+    // Read-only id view: `currentProject` needs the active list loaded, but a screen that
+    // only needs "which project" (e.g. the Designer) must not wait for or trigger it.
+    currentProjectId: computed(() => currentProjectId.value),
     fetchProjects,
     createProject,
     setCurrentProject,
     openDialog,
     closeDialog,
+    getCachedGroupTree,
+    fetchGroupTree,
+    loadProjectGitStatus,
+    loadFlowFileTree,
+    loadFlowChanges,
+    loadFlowFileDiff,
+    loadFlowAiActivity,
   }
 })

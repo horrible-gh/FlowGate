@@ -235,13 +235,19 @@ def project_git_status(project_id: str) -> dict:
     cfg = _gs.db_git.get_config(project_id)
     if cfg is None or not cfg.get("enabled"):
         return {"ok": True, "status": {
-            "enabled": False, "base_branch": None, "base_path_state": "empty",
+            "enabled": False, "base_branch": None, "base_branch_configured": False,
+            "base_path_state": "empty",
             "ahead_count": None, "behind_count": None,
             "slots": [], "pending": [], "pending_count": 0, "cleanable_count": 0,
             "terminal_cleanup": db_terminal_cleanup.get(project_id),
         }}
 
-    base_branch = (cfg.get("base_branch") or "main").strip() or "main"
+    # 0024 TR0006: the stored Base before the legacy "main" fallback. The fallback keeps
+    # every server-side Base consumer working, but a reader that compares against "the
+    # project Base" (Designer File Explorer 변경됨, 0024-D §12) must not mistake it for a
+    # configured value — hence base_branch_configured in the response below.
+    configured_base = (cfg.get("base_branch") or "").strip() or None
+    base_branch = configured_base or "main"
     default_action = cfg.get("default_finalize_action") or "wait"
     project_name = _gs._project_name(project_id)
     base_root = _gs.src_root(project_name, base_branch) if project_name else None
@@ -466,6 +472,7 @@ def project_git_status(project_id: str) -> dict:
     unpushed = _gs._build_unpushed(project_id, base_root, base_branch, ahead)
     return {"ok": True, "status": {
         "enabled": True, "base_branch": base_branch,
+        "base_branch_configured": configured_base is not None,
         "base_path_state": base_path_state,
         "ahead_count": ahead, "behind_count": behind,
         "base_dirty": {

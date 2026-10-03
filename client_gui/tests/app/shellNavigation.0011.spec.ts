@@ -52,15 +52,15 @@ describe('v0.2 Sidebar navigation (T0011 §7/§12)', () => {
       '프로젝트',
       '디자이너',
       'Git',
-      'AI 설정',
+      'AI 관리',
       '환경 설정',
     ])
     expect(items.map((a) => a.find('.gui-nav-sub').text())).toEqual([
       '홈으로 돌아가기',
       '프로젝트 관리',
-      '그룹 · 흐름 설계',
+      '그룹 · 플로우 설계',
       '저장소 관리',
-      'AI 그룹 및 정책',
+      'AI 목록 · 평가 · 그룹',
       '워크스페이스 설정',
     ])
     expect(items.map((a) => a.attributes('href'))).toEqual([
@@ -101,7 +101,7 @@ describe('v0.2 Sidebar navigation (T0011 §7/§12)', () => {
 
   it.each([
     ['/projects', 'projects', '프로젝트'],
-    ['/designer', 'designer', '디자이너'],
+    // /designer is the Designer Shell since flowgate.v02.0025 (tests/app/designerEntry.0025.spec.ts).
     ['/git', 'git', 'Git'],
     ['/settings', 'settings', '환경 설정'],
   ])('direct access to %s renders an explicit "준비 중" placeholder with that section active', async (url, key, title) => {

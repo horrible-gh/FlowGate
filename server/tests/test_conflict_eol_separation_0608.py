@@ -619,7 +619,7 @@ class TestRepoConfigFileIsReviewedAndCommitted:
         head = _git(["rev-parse", "HEAD"], repo).stdout.decode().strip()
         base = _git(["merge-base", "main", "HEAD"], repo).stdout.decode().strip()
         monkeypatch.setattr(git_service, "_group_diff_context",
-                            lambda project_id, group_id: ("main", "work", head, repo, base))
+                            lambda project_id, group_id, base_ref=None: ("main", "work", head, repo, base))
         monkeypatch.setattr(git_service, "_group_untracked_safe", lambda *a: [])
         changes = git_service.read_group_changes("p", "g")["data"]
         assert sorted(c["path"] for c in changes["changes"]) == manifest
