@@ -5,4 +5,18 @@
 // directly, so those stay internal to this feature.
 export { useProjectStore } from './store'
 export type { CreateProjectInput, Project, ProjectModule } from './types'
+// Flow file context read models (flowgate.v02.0024 T0005) — type-only, so the runtime
+// surface stays the store factory + ProjectDialog.
+export type {
+  FlowAiActivity,
+  FlowChangeEntry,
+  FlowChangeSet,
+  FlowDiffSide,
+  FlowFileDiff,
+  FlowFileNode,
+  FlowFileTree,
+  FlowRef,
+  ProjectGitSlot,
+  ProjectGitStatus,
+} from './types'
 export { default as ProjectDialog } from './ProjectDialog.vue'

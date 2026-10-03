@@ -14,45 +14,62 @@
   >
     <template #lead>
       <TreeCaret :expanded="row.expanded" :has-children="row.hasChildren" @toggle="$emit('toggle', row.node)" />
-      <AppIcon class="dfx-folder-ico" :name="row.expanded ? 'folder-open' : 'folder'" />
+      <svg class="dfx-folder-ico" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+        <path
+          :d="row.expanded ? 'M1.5 4.5v8h11l2-6H4l-2 6' : 'M1.5 3.5h4l1.5 1.5h7.5v7.5h-13z'"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.3"
+          stroke-linejoin="round"
+        />
+      </svg>
     </template>
     <span class="dfx-label">{{ row.node.label }}</span>
     <template v-if="row.changedCount > 0" #trail>
       <span
         class="dfx-folder-changed"
         data-test="dfx-folder-changed"
-        :title="t('main.designer_explorer.folder_changed', { n: row.changedCount })"
+        :title="t('gui.designer.file_explorer.folder_changed', { n: row.changedCount })"
       >{{ row.changedCount }}</span>
     </template>
   </ExplorerRowFrame>
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0024 T0003 — folder row (0024-D §7.1): caret, folder icon, name and a
+// flowgate.v02.0024 T0005 — folder row (0024-D §7.1): caret, folder icon, name and a
 // changed-descendant count. Expansion itself is owned by the container; this row only
 // reports the intent, so a collapsed folder still shows that something changed inside.
 import { useI18n } from 'vue-i18n'
-import AppIcon from '@shared/AppIcon.vue'
-import type { FileNode } from '../../../stores/explorer'
-import ExplorerRowFrame from './ExplorerRowFrame.vue'
-import TreeCaret from './TreeCaret.vue'
+import type { FlowFileNode } from '@/features/project'
+import ExplorerRowFrame from '../shared/ExplorerRowFrame.vue'
+import TreeCaret from '../shared/TreeCaret.vue'
 import type { ExplorerRow } from './fileExplorerModel'
 
 defineProps<{ row: ExplorerRow; selected?: boolean }>()
-defineEmits<{ toggle: [node: FileNode]; context: [node: FileNode, event: MouseEvent] }>()
+defineEmits<{ toggle: [node: FlowFileNode]; context: [node: FlowFileNode, event: MouseEvent] }>()
 const { t } = useI18n()
 </script>
 
 <style scoped>
-.dfx-folder-ico { color: #f59e0b; }
-.dfx-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dfx-folder-ico {
+  flex: none;
+  color: var(--fg2-orange);
+}
+
+.dfx-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .dfx-folder-changed {
-  min-width: 16px;
-  padding: 0 4px;
-  border-radius: 8px;
-  font-size: 0.66rem;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: var(--fg2-control-radius-pill);
+  font-size: 10.5px;
+  line-height: 16px;
   text-align: center;
-  color: var(--git-modified, #e2c08d);
-  background: rgba(226, 192, 141, 0.14);
+  color: var(--fg2-status-warning-fg);
+  background: var(--fg2-status-warning-bg);
 }
 </style>

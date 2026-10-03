@@ -725,22 +725,13 @@ export const useExplorerStore = defineStore('explorer', () => {
   }
 
   /** Full /changes payload (branch names included). `fetchGroupBranchChanges` is the
-   *  paths-only view of this same call, kept as-is for the change-badge callers.
-   *  `options.base` (flowgate.v02.0024 TR0004 rev2) asks the server to compare against
-   *  that branch instead of the group's own work base. Such a result is not what the
-   *  Dashboard badges mean, so it never touches the shared badge caches below. */
-  async function fetchGroupBranchChangeSet(
-    pid: string,
-    gid: string,
-    options: { base?: string } = {},
-  ): Promise<GroupChangesData> {
-    const query = options.base ? `?base=${encodeURIComponent(options.base)}` : ''
+   *  paths-only view of this same call, kept as-is for the change-badge callers. */
+  async function fetchGroupBranchChangeSet(pid: string, gid: string): Promise<GroupChangesData> {
     const res = await getRequest<{ data: GroupChangesData }>(
-      `/api/v1/projects/${encodeURIComponent(pid)}/git/groups/${encodeURIComponent(gid)}/changes${query}`,
+      `/api/v1/projects/${encodeURIComponent(pid)}/git/groups/${encodeURIComponent(gid)}/changes`,
     )
     const data = (res.data as any).data as GroupChangesData
     const changes = (data.changes ?? []) as GroupChangeData[]
-    if (options.base) return { ...data, changes }
     const trackedChanges = changes
       .filter((change) => change.status !== '?')
       .map((change) => ({
@@ -770,16 +761,10 @@ export const useExplorerStore = defineStore('explorer', () => {
 
   /** Unified diff of ONE changed file in a group branch (0325 R0001). Not cached:
    *  the group worktree is live, so a diff read after an edit must show the edit. */
-  async function fetchGroupBranchDiff(
-    pid: string,
-    gid: string,
-    path: string,
-    options: { base?: string } = {},
-  ): Promise<GroupFileDiffData> {
+  async function fetchGroupBranchDiff(pid: string, gid: string, path: string): Promise<GroupFileDiffData> {
     const res = await getRequest<{ data: GroupFileDiffData }>(
       `/api/v1/projects/${encodeURIComponent(pid)}/git/groups/${encodeURIComponent(gid)}/diff` +
-        `?path=${encodeURIComponent(path)}` +
-        (options.base ? `&base=${encodeURIComponent(options.base)}` : ''),
+        `?path=${encodeURIComponent(path)}`,
     )
     return (res.data as any).data as GroupFileDiffData
   }
