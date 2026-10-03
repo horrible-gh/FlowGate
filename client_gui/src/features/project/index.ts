@@ -2,7 +2,15 @@
 // store factory, the domain types, and the top-level ProjectDialog component. App mounts
 // ProjectDialog once and opens it via `useProjectStore().openDialog()` (D0004 §4.1) — it
 // never reaches ProjectList/ProjectRow/ProjectCreateDialog or the API/persistence helpers
-// directly, so those stay internal to this feature.
+// directly, so those stay internal to this feature. The group tree types are exported for
+// features that read the project tree through the store (Designer, flowgate.v02.0023).
 export { useProjectStore } from './store'
-export type { CreateProjectInput, Project, ProjectModule } from './types'
+export type {
+  CreateProjectInput,
+  FetchGroupTreeOptions,
+  GroupTreeNode,
+  GroupTreeNodeKind,
+  Project,
+  ProjectModule,
+} from './types'
 export { default as ProjectDialog } from './ProjectDialog.vue'

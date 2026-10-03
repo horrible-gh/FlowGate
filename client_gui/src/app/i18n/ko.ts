@@ -94,6 +94,25 @@ export default {
     panel_empty: '아직 연결되지 않았습니다. 후속 작업에서 실제 데이터로 채워집니다.',
     footer_mark: 'Build the Flow, Not Just the Document.',
   },
+  designer: {
+    // flowgate.v02.0023 — Designer Project Explorer (Project > Group > Flow).
+    project_explorer: {
+      title: '프로젝트',
+      refresh: '새로고침',
+      search_placeholder: '프로젝트, 그룹, 흐름 검색',
+      search_clear: '검색어 지우기',
+      no_project: '선택된 프로젝트가 없습니다.',
+      no_project_desc: '프로젝트를 열면 그룹과 흐름이 여기에 표시됩니다.',
+      loading: '프로젝트 구조를 불러오는 중...',
+      load_failed: '프로젝트 구조를 불러오지 못했습니다.',
+      refresh_failed: '새로고침에 실패했습니다. 이전 목록을 표시합니다.',
+      retry: '다시 시도',
+      no_groups: '그룹이 없습니다.',
+      no_flows: '흐름이 없습니다.',
+      no_results: '일치하는 프로젝트, 그룹, 흐름이 없습니다.',
+      active_flow: '열림',
+    },
+  },
   placeholder: {
     badge: '준비 중',
     body: '이 화면은 FlowGate v0.2에서 아직 구현되지 않았습니다.',

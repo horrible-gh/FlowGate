@@ -52,7 +52,7 @@ describe('v0.2 Sidebar navigation (T0011 §7/§12)', () => {
       '프로젝트',
       '디자이너',
       'Git',
-      'AI 설정',
+      'AI 관리',
       '환경 설정',
     ])
     expect(items.map((a) => a.find('.gui-nav-sub').text())).toEqual([
@@ -60,7 +60,7 @@ describe('v0.2 Sidebar navigation (T0011 §7/§12)', () => {
       '프로젝트 관리',
       '그룹 · 흐름 설계',
       '저장소 관리',
-      'AI 그룹 및 정책',
+      'AI 목록 · 평가 · 그룹',
       '워크스페이스 설정',
     ])
     expect(items.map((a) => a.attributes('href'))).toEqual([

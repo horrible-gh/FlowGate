@@ -1,239 +1,165 @@
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
+import { setCurrentUser } from '@/core/auth/currentUser'
 import AiEvaluationPanel from '@/features/ai/evaluation/AiEvaluationPanel.vue'
 import * as api from '@/features/ai/api'
 import type { AiEvaluation, ProviderItem } from '@/features/ai/types'
 
 registerAppMessages(i18n)
 
-const mockProviders: ProviderItem[] = [
+// AI 평가 (flowgate.v02.0017): a judge AI scores a target AI on a Scratch task. The 0015
+// per-project "current evaluation" card and suitable/unsuitable verdict were retired.
+
+const providers: ProviderItem[] = [
   { id: 'p1', name: 'Claude Sonnet 5', exec_type: 'cli', kind: 'claude', enabled: true },
   { id: 'p2', name: 'OpenAI GPT-4.1', exec_type: 'api', kind: 'openai', enabled: true },
 ]
 
-const mockCurrentEvaluation: AiEvaluation = {
-  evaluation_id: 'ev-1',
-  project_id: 'proj-1',
-  provider_id: 'p1',
-  provider_name: 'Claude Sonnet 5',
-  lifecycle: 'completed',
-  verdict: 'suitable',
-  reason_code: null,
-  diagnostic_summary: 'Clean run',
-  is_stale: false,
-  created_at: '2026-09-30T00:00:00Z',
+function evaluation(overrides: Partial<AiEvaluation>): AiEvaluation {
+  return {
+    evaluation_id: 'ev-1',
+    target: { provider_id: 'p1', provider_name: 'Claude Sonnet 5' },
+    judge: { provider_id: 'p2', provider_name: 'OpenAI GPT-4.1' },
+    lifecycle: 'completed',
+    task: { title: 'Refactor task', summary: null },
+    total_score: 86,
+    final_score: 86,
+    human_review: null,
+    evaluation_set: null,
+    review_summary: null,
+    scores: [],
+    created_at: '2026-09-30T00:00:00Z',
+    ...overrides,
+  }
 }
 
-describe('AiEvaluationPanel (0015 T0003)', () => {
+const history: AiEvaluation[] = [
+  evaluation({}),
+  evaluation({
+    evaluation_id: 'ev-failed', lifecycle: 'failed', total_score: null, final_score: null,
+    failure_stage: 'running', reason_code: 'timeout',
+  }),
+  evaluation({
+    evaluation_id: 'ev-other', target: { provider_id: 'p2', provider_name: 'OpenAI GPT-4.1' },
+    task: { title: null, summary: null }, evaluation_set: { set_id: 's1', name: 'Docs set' },
+    total_score: 52, final_score: 52,
+  }),
+]
+
+const mounted: { unmount: () => void }[] = []
+
+async function mountPanel(list: ProviderItem[] = providers) {
+  const wrapper = mount(AiEvaluationPanel, { props: { providers: list }, attachTo: document.body, global: { plugins: [i18n] } })
+  mounted.push(wrapper)
+  await flushPromises()
+  return wrapper
+}
+
+describe('AiEvaluationPanel (0015 T0003, judge-scored since 0017)', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     i18n.global.locale.value = 'ko'
-    vi.spyOn(api, 'fetchCurrentEvaluation').mockResolvedValue({
-      provider_id: 'p1',
-      current: mockCurrentEvaluation,
-      latest_history: mockCurrentEvaluation,
-    })
-    vi.spyOn(api, 'fetchEvaluationHistory').mockResolvedValue({
-      items: [mockCurrentEvaluation],
-      next_cursor: 'cursor-2',
-    })
+    setCurrentUser({ username: 'admin', email: null, isAdmin: true })
+    vi.spyOn(api, 'fetchEvaluationHistory').mockResolvedValue({ items: history, next_cursor: 'cursor-2' })
+    vi.spyOn(api, 'listEvaluationSets').mockResolvedValue([])
+    vi.spyOn(api, 'fetchEvaluationDetail').mockResolvedValue(evaluation({ evaluation_id: 'ev-new', lifecycle: 'running' }))
   })
 
   afterEach(() => {
+    mounted.splice(0).forEach((wrapper) => wrapper.unmount())
+    setCurrentUser(null)
     document.body.innerHTML = ''
   })
 
-  it('renders current evaluation card and score rubric for selected provider', async () => {
-    const wrapper = mount(AiEvaluationPanel, {
-      props: {
-        projectId: 'proj-1',
-        providers: mockProviders,
-      },
-      global: { plugins: [i18n] },
-    })
+  it('lists one row per evaluation with the score or an honest state', async () => {
+    const wrapper = await mountPanel()
 
-    await new Promise((r) => setTimeout(r, 20))
-
-    expect(wrapper.find('.current-eval-card').exists()).toBe(true)
-    expect(wrapper.find('.current-provider b').text()).toBe('Claude Sonnet 5')
-    expect(wrapper.text()).not.toContain('8.6')
-    expect(wrapper.find('.current-score-box').text()).toContain('적합')
-    expect(wrapper.find('.current-bars').exists()).toBe(false)
-    expect(wrapper.find('.detail-bars').exists()).toBe(false)
-  })
-
-  it('triggers start evaluation and updates active run', async () => {
-    const startSpy = vi.spyOn(api, 'startEvaluation').mockResolvedValue({
-      ...mockCurrentEvaluation,
-      evaluation_id: 'ev-new',
-      lifecycle: 'running',
-      verdict: null,
-    })
-
-    const wrapper = mount(AiEvaluationPanel, {
-      props: {
-        projectId: 'proj-1',
-        providers: mockProviders,
-      },
-      global: { plugins: [i18n] },
-    })
-
-    await new Promise((r) => setTimeout(r, 20))
-
-    const startBtn = wrapper.find('.detail-actions .ui-btn--primary')
-    await startBtn.trigger('click')
-
-    expect(startSpy).toHaveBeenCalledWith('proj-1', 'p1')
-  })
-
-  it('handles 409 evaluation_already_running conflict gracefully', async () => {
-    const conflictErr = {
-      response: {
-        status: 409,
-        data: {
-          error: {
-            code: 'evaluation_already_running',
-            evaluation_id: 'ev-running-conflict',
-          },
-        },
-      },
-    }
-    vi.spyOn(api, 'startEvaluation').mockRejectedValue(conflictErr)
-    const detailSpy = vi.spyOn(api, 'fetchEvaluationDetail').mockResolvedValue({
-      ...mockCurrentEvaluation,
-      evaluation_id: 'ev-running-conflict',
-      lifecycle: 'running',
-    })
-
-    const wrapper = mount(AiEvaluationPanel, {
-      props: {
-        projectId: 'proj-1',
-        providers: mockProviders,
-      },
-      global: { plugins: [i18n] },
-    })
-
-    await new Promise((r) => setTimeout(r, 20))
-
-    const startBtn = wrapper.find('.detail-actions .ui-btn--primary')
-    await startBtn.trigger('click')
-    await new Promise((r) => setTimeout(r, 20))
-
-    expect(detailSpy).toHaveBeenCalledWith('proj-1', 'ev-running-conflict')
-    expect(wrapper.find('.panel-error-alert').exists()).toBe(false)
-  })
-
-  it('supports pagination via load more button', async () => {
-    const wrapper = mount(AiEvaluationPanel, {
-      props: {
-        projectId: 'proj-1',
-        providers: mockProviders,
-      },
-      global: { plugins: [i18n] },
-    })
-
-    await new Promise((r) => setTimeout(r, 20))
-
-    const moreBtn = wrapper.find('.load-more-row button')
-    expect(moreBtn.exists()).toBe(true)
-
-    const moreHistorySpy = vi.spyOn(api, 'fetchEvaluationHistory').mockResolvedValue({
-      items: [{ ...mockCurrentEvaluation, evaluation_id: 'ev-page-2' }],
-      next_cursor: null,
-    })
-
-    await moreBtn.trigger('click')
-    expect(moreHistorySpy).toHaveBeenCalledWith('proj-1', 'p1', 20, 'cursor-2')
-  })
-
-  it('renders honest status-specific messages for history rows with missing diagnostic_summary', async () => {
-    const historyItems: AiEvaluation[] = [
-      {
-        ...mockCurrentEvaluation,
-        evaluation_id: 'ev-failed',
-        lifecycle: 'failed',
-        verdict: null,
-        diagnostic_summary: null,
-      },
-      {
-        ...mockCurrentEvaluation,
-        evaluation_id: 'ev-running',
-        lifecycle: 'running',
-        verdict: null,
-        diagnostic_summary: '',
-      },
-      {
-        ...mockCurrentEvaluation,
-        evaluation_id: 'ev-cancelled',
-        lifecycle: 'cancelled',
-        verdict: null,
-        diagnostic_summary: null,
-      },
-      {
-        ...mockCurrentEvaluation,
-        evaluation_id: 'ev-unsuitable',
-        lifecycle: 'completed',
-        verdict: 'unsuitable',
-        diagnostic_summary: null,
-      },
-    ]
-
-    vi.spyOn(api, 'fetchEvaluationHistory').mockResolvedValue({
-      items: historyItems,
-      next_cursor: null,
-    })
-
-    const wrapper = mount(AiEvaluationPanel, {
-      props: {
-        projectId: 'proj-1',
-        providers: mockProviders,
-      },
-      global: { plugins: [i18n] },
-    })
-
-    await new Promise((r) => setTimeout(r, 20))
-
+    expect(api.fetchEvaluationHistory).toHaveBeenCalledWith(undefined, 20)
     const rows = wrapper.findAll('.evaluation-detail-row')
-    expect(rows).toHaveLength(4)
+    expect(rows).toHaveLength(3)
 
-    // Row 0: failed evaluation without diagnostic summary must NOT say baseline_passed
-    expect(rows[0].text()).toContain('평가 실패')
-    expect(rows[0].text()).not.toContain('기본 기준 테스트를 통과')
+    expect(rows[0].text()).toContain('Claude Sonnet 5')
+    expect(rows[0].text()).toContain('Refactor task')
+    expect(rows[0].find('.score').text()).toBe('8.6')
 
-    // Row 1: running evaluation without diagnostic summary
-    expect(rows[1].text()).toContain('실행 중')
-    expect(rows[1].text()).not.toContain('기본 기준 테스트를 통과')
+    // A failed run shows its state and reason, never a score.
+    expect(rows[1].find('.score').exists()).toBe(false)
+    expect(rows[1].find('.score-state').text()).toBe('실패')
+    expect(rows[1].find('.failure-line').text()).toContain('시간 초과')
 
-    // Row 2: cancelled evaluation without diagnostic summary
-    expect(rows[2].text()).toContain('평가 취소됨')
-    expect(rows[2].text()).not.toContain('기본 기준 테스트를 통과')
-
-    // Row 3: unsuitable evaluation without diagnostic summary
-    expect(rows[3].text()).toContain('부적합')
-    expect(rows[3].text()).not.toContain('기본 기준 테스트를 통과')
+    // The evaluation set name stands for the task.
+    expect(rows[2].text()).toContain('Docs set')
+    expect(rows[2].find('.score').text()).toBe('5.2')
   })
 
-  it('excludes disabled providers from selectable runnable targets', () => {
-    const mixedProviders: ProviderItem[] = [
-      { id: 'p1', name: 'Active Provider', exec_type: 'cli', kind: 'claude', enabled: true },
-      { id: 'p2-disabled', name: 'Disabled Provider', exec_type: 'api', kind: 'openai', enabled: false },
-    ]
+  it('filters the history by search query', async () => {
+    const wrapper = await mountPanel()
 
-    const wrapper = mount(AiEvaluationPanel, {
-      props: {
-        projectId: 'proj-1',
-        providers: mixedProviders,
-      },
-      global: { plugins: [i18n] },
+    await wrapper.find('.detail-search input').setValue('docs')
+    const rows = wrapper.findAll('.evaluation-detail-row')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].text()).toContain('OpenAI GPT-4.1')
+  })
+
+  it('loads the next page with the cursor', async () => {
+    const wrapper = await mountPanel()
+
+    const more = wrapper.find('.load-more button')
+    expect(more.exists()).toBe(true)
+    const nextPage = vi.spyOn(api, 'fetchEvaluationHistory').mockResolvedValue({
+      items: [evaluation({ evaluation_id: 'ev-page-2' })],
+      next_cursor: null,
     })
+    await more.trigger('click')
+    await flushPromises()
 
-    const select = wrapper.find('#eval-target')
-    expect(select.exists()).toBe(true)
-    const options = select.findAll('option')
-    expect(options).toHaveLength(1)
-    expect(options[0].text()).toContain('Active Provider')
-    expect(wrapper.text()).not.toContain('Disabled Provider')
+    expect(nextPage).toHaveBeenCalledWith(undefined, 20, 'cursor-2')
+    expect(wrapper.findAll('.evaluation-detail-row')).toHaveLength(4)
+    expect(wrapper.find('.load-more').exists()).toBe(false)
+  })
+
+  it('starts an evaluation with a target and a different judge', async () => {
+    const startSpy = vi.spyOn(api, 'startEvaluation').mockResolvedValue(evaluation({ evaluation_id: 'ev-new', lifecycle: 'running' }))
+    const wrapper = await mountPanel()
+
+    await wrapper.find('.detail-actions .ui-btn--primary').trigger('click')
+    await flushPromises()
+    const startBtn = document.querySelector('.dialog-actions .ui-btn--primary') as HTMLButtonElement
+    expect(startBtn).toBeTruthy()
+    expect(startBtn.disabled).toBe(false)
+    startBtn.click()
+    await flushPromises()
+
+    expect(startSpy).toHaveBeenCalledWith({
+      targetProviderId: 'p1',
+      judgeProviderId: 'p2',
+      evaluationSetId: null,
+      locale: 'ko',
+    })
+  })
+
+  it('cannot start with fewer than two AI', async () => {
+    const wrapper = await mountPanel([providers[0]])
+
+    await wrapper.find('.detail-actions .ui-btn--primary').trigger('click')
+    await flushPromises()
+    const startBtn = document.querySelector('.dialog-actions .ui-btn--primary') as HTMLButtonElement
+    expect(startBtn.disabled).toBe(true)
+    expect(document.body.textContent).toContain('2개 이상 필요합니다')
+  })
+
+  it('shows results read-only to a non-administrator', async () => {
+    setCurrentUser({ username: 'member', email: null, isAdmin: false })
+    vi.spyOn(api, 'fetchEvaluationHistory').mockResolvedValue({
+      items: [evaluation({ evaluation_id: 'ev-running', lifecycle: 'running', total_score: null, final_score: null })],
+      next_cursor: null,
+    })
+    const wrapper = await mountPanel()
+
+    expect(wrapper.find('.detail-actions').exists()).toBe(false)
+    expect(wrapper.findAll('.evaluation-detail-row')).toHaveLength(1)
+    expect(wrapper.find('.action-btn--danger').exists()).toBe(false)
   })
 })

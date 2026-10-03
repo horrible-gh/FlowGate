@@ -1,126 +1,139 @@
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@shared/i18n'
 import { registerAppMessages } from '@/app/i18n'
+import { setCurrentUser } from '@/core/auth/currentUser'
 import AiProviderEditDialog from '@/features/ai/providers/AiProviderEditDialog.vue'
 import AiProvidersPanel from '@/features/ai/providers/AiProvidersPanel.vue'
 import * as api from '@/features/ai/api'
-import type { ProjectAiSettings, ProviderItem } from '@/features/ai/types'
+import type { ProviderItem } from '@/features/ai/types'
 
 registerAppMessages(i18n)
 
-const mockSettings: ProjectAiSettings = {
-  mode: 'custom',
-  providers: [
-    { id: 'p1', name: 'Claude Sonnet 5', exec_type: 'cli', kind: 'claude', enabled: true, cli_command: 'claude run' },
-    { id: 'p2', name: 'GPT-4o', exec_type: 'api', kind: 'openai', enabled: false, api_base_url: 'https://api.openai.com/v1', api_model: 'gpt-4o' },
-  ],
-  default_provider_id: 'p1',
-  effective: {
-    source: 'project',
-    providers: [
-      { id: 'p1', name: 'Claude Sonnet 5', exec_type: 'cli', kind: 'claude', enabled: true, cli_command: 'claude run' },
-    ],
-    default_provider_id: 'p1',
-    registered_count: 2,
-  },
+// AI 목록 (flowgate.v02.0017 CH0006 (2)): system AI and my AI in one list. The 0015 project
+// modes (inherit / custom / disabled) were retired with project-owned AI.
+
+const systemAi: ProviderItem[] = [
+  { id: 'sys-1', name: 'Claude Sonnet 5', exec_type: 'cli', kind: 'claude', enabled: true },
+  { id: 'sys-2', name: 'GPT-4o', exec_type: 'api', kind: 'openai', enabled: true, api_key_set: true },
+]
+
+const myAi: ProviderItem[] = [
+  { id: 'my-1', name: 'My Gemini', exec_type: 'api', kind: 'gemini', enabled: true, api_key_set: false },
+  { id: 'my-2', name: 'My Haiku', exec_type: 'cli', kind: 'claude', enabled: true },
+]
+
+function mockLists() {
+  vi.spyOn(api, 'fetchVisibleSystemAi').mockResolvedValue({ providers: systemAi, default_provider_id: 'sys-1' })
+  vi.spyOn(api, 'fetchMyAi').mockResolvedValue({ providers: myAi, default_provider_id: null, updated_at: null })
 }
 
-describe('AiProvidersPanel (0015 T0003)', () => {
+async function mountPanel() {
+  const wrapper = mount(AiProvidersPanel, { global: { plugins: [i18n] } })
+  await flushPromises()
+  return wrapper
+}
+
+const cardNames = (wrapper: Awaited<ReturnType<typeof mountPanel>>) =>
+  wrapper.findAll('.provider-card').map((card) => card.find('.name-title-row b').text())
+
+describe('AiProvidersPanel (0015 T0003, AI 목록 since 0017 CH0006)', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     i18n.global.locale.value = 'ko'
+    setCurrentUser({ username: 'member', email: null, isAdmin: false })
   })
 
   afterEach(() => {
+    setCurrentUser(null)
     document.body.innerHTML = ''
   })
 
-  it('renders mode options and provider table rows in custom mode', () => {
-    const wrapper = mount(AiProvidersPanel, {
-      props: {
-        projectId: 'proj-1',
-        initialSettings: mockSettings,
-      },
-      global: { plugins: [i18n] },
-    })
+  it('lists system AI first and then my AI in one list', async () => {
+    mockLists()
+    const wrapper = await mountPanel()
 
-    const rows = wrapper.findAll('.provider-detail-row')
-    expect(rows).toHaveLength(2)
-    expect(rows[0].text()).toContain('Claude Sonnet 5')
-    expect(rows[1].text()).toContain('GPT-4o')
-
-    const radios = wrapper.findAll('.radio')
-    expect(radios[0].classes()).toContain('on')
-    expect(radios[1].classes()).not.toContain('on')
+    expect(cardNames(wrapper)).toEqual(['Claude Sonnet 5', 'GPT-4o', 'My Gemini', 'My Haiku'])
+    const owners = wrapper.findAll('.provider-card .mode-icon.owner').map((icon) => icon.attributes('aria-label'))
+    expect(owners).toEqual(['시스템', '시스템', '내 AI', '내 AI'])
+    // A non-administrator reads system AI with the system (not admin-only) endpoint.
+    expect(api.fetchVisibleSystemAi).toHaveBeenCalled()
+    wrapper.unmount()
   })
 
-  it('filters providers by search query', async () => {
-    const wrapper = mount(AiProvidersPanel, {
-      props: {
-        projectId: 'proj-1',
-        initialSettings: mockSettings,
-      },
-      global: { plugins: [i18n] },
-    })
+  it('filters by owner and by search query', async () => {
+    mockLists()
+    const wrapper = await mountPanel()
 
-    const input = wrapper.find('.detail-search input')
-    await input.setValue('Sonnet')
+    const ownerButtons = wrapper.findAll('.segmented button')
+    await ownerButtons[2].trigger('click')
+    expect(cardNames(wrapper)).toEqual(['My Gemini', 'My Haiku'])
 
-    const rows = wrapper.findAll('.provider-detail-row')
-    expect(rows).toHaveLength(1)
-    expect(rows[0].text()).toContain('Claude Sonnet 5')
+    await ownerButtons[0].trigger('click')
+    await wrapper.find('.detail-search input').setValue('sonnet')
+    expect(cardNames(wrapper)).toEqual(['Claude Sonnet 5'])
+    wrapper.unmount()
   })
 
-  it('disables reordering when search filter is active and resolves by ID', async () => {
-    const saveSpy = vi.spyOn(api, 'saveProjectAiSettings').mockResolvedValue(mockSettings)
-    const wrapper = mount(AiProvidersPanel, {
-      props: {
-        projectId: 'proj-1',
-        initialSettings: mockSettings,
-      },
-      global: { plugins: [i18n] },
-    })
+  it('keeps system AI read-only for a non-administrator and saves my AI as a whole list', async () => {
+    mockLists()
+    const saveMine = vi.spyOn(api, 'saveMyAi').mockResolvedValue({ providers: myAi, default_provider_id: null, updated_at: null })
+    const saveSystem = vi.spyOn(api, 'saveSystemAi')
+    const wrapper = await mountPanel()
 
-    // No fake repeat policy card
-    expect(wrapper.find('.execution-policy').exists()).toBe(false)
-    expect(wrapper.find('.repeat-val').exists()).toBe(false)
+    const cards = wrapper.findAll('.provider-card')
+    expect(cards[0].find('.read-only-hint').exists()).toBe(true)
+    expect(cards[0].find('.ui-toggle').attributes('disabled')).toBeDefined()
+    expect(cards[2].find('.read-only-hint').exists()).toBe(false)
 
-    // Unfiltered: row 0 down button can move provider p1 down
-    const downButtons = wrapper.findAll('.icon-order-btn')
-    expect(downButtons[1].attributes('disabled')).toBeUndefined()
-    await downButtons[1].trigger('click')
-    expect(saveSpy).toHaveBeenCalledWith('proj-1', expect.objectContaining({
-      providers: [mockSettings.providers![1], mockSettings.providers![0]],
-    }))
-
-    // Filtered: order buttons are disabled
-    const searchInput = wrapper.find('.detail-search input')
-    await searchInput.setValue('GPT')
-    const filteredButtons = wrapper.findAll('.icon-order-btn')
-    for (const btn of filteredButtons) {
-      expect(btn.attributes('disabled')).toBeDefined()
-    }
+    await cards[2].find('.ui-toggle').trigger('click')
+    await flushPromises()
+    expect(saveMine).toHaveBeenCalledWith([{ ...myAi[0], enabled: false }, myAi[1]])
+    expect(saveSystem).not.toHaveBeenCalled()
+    wrapper.unmount()
   })
 
-  it('calls saveProjectAiSettings when mode is switched', async () => {
-    const saveSpy = vi.spyOn(api, 'saveProjectAiSettings').mockResolvedValue({
-      ...mockSettings,
-      mode: 'inherit',
-    })
+  it('reorders within an owner from the keyboard and disables reordering while searching', async () => {
+    mockLists()
+    const saveMine = vi.spyOn(api, 'saveMyAi').mockResolvedValue({ providers: [myAi[1], myAi[0]], default_provider_id: null, updated_at: null })
+    const wrapper = await mountPanel()
 
-    const wrapper = mount(AiProvidersPanel, {
-      props: {
-        projectId: 'proj-1',
-        initialSettings: mockSettings,
-      },
-      global: { plugins: [i18n] },
-    })
+    // Only my AI can be reordered by a non-administrator.
+    const grips = wrapper.findAll('button.grip')
+    expect(grips).toHaveLength(2)
+    await grips[0].trigger('keydown', { key: 'ArrowDown' })
+    await flushPromises()
+    expect(saveMine).toHaveBeenCalledWith([myAi[1], myAi[0]])
 
-    const inheritRadio = wrapper.find('input[value="inherit"]')
-    await inheritRadio.trigger('change')
+    await wrapper.find('.detail-search input').setValue('my')
+    expect(wrapper.findAll('button.grip')).toHaveLength(0)
+    expect(wrapper.findAll('.grip--static').length).toBeGreaterThan(0)
+    wrapper.unmount()
+  })
 
-    expect(saveSpy).toHaveBeenCalledWith('proj-1', expect.objectContaining({ mode: 'inherit' }))
+  it('surfaces a missing API key on my AI', async () => {
+    mockLists()
+    const wrapper = await mountPanel()
+
+    const cards = wrapper.findAll('.provider-card')
+    expect(cards[2].text()).toContain('API 키 설정 필요')
+    expect(cards[1].text()).not.toContain('API 키 설정 필요')
+    wrapper.unmount()
+  })
+
+  it('lets an administrator change the system default', async () => {
+    vi.spyOn(api, 'fetchSystemAi').mockResolvedValue({ providers: systemAi, default_provider_id: 'sys-1', updated_at: null })
+    vi.spyOn(api, 'fetchMyAi').mockResolvedValue({ providers: [], default_provider_id: null, updated_at: null })
+    const saveSystem = vi.spyOn(api, 'saveSystemAi').mockResolvedValue({ providers: systemAi, default_provider_id: 'sys-2', updated_at: null })
+    setCurrentUser({ username: 'admin', email: null, isAdmin: true })
+    const wrapper = await mountPanel()
+
+    const star = wrapper.findAll('.provider-card')[1].find('button[aria-label="시스템 기본으로 지정"]')
+    expect(star.exists()).toBe(true)
+    await star.trigger('click')
+    await flushPromises()
+    expect(saveSystem).toHaveBeenCalledWith(systemAi, 'sys-2')
+    wrapper.unmount()
   })
 
   it('validates provider edit dialog fields', async () => {
@@ -151,121 +164,5 @@ describe('AiProvidersPanel (0015 T0003)', () => {
       exec_type: 'cli',
     })
     wrapper.unmount()
-  })
-
-  it('renders disabled hint explicitly when mode is disabled', () => {
-    const disabledSettings: ProjectAiSettings = {
-      ...mockSettings,
-      mode: 'disabled',
-    }
-
-    const wrapper = mount(AiProvidersPanel, {
-      props: {
-        projectId: 'proj-1',
-        initialSettings: disabledSettings,
-      },
-      global: { plugins: [i18n] },
-    })
-
-    expect(wrapper.find('.detail-hint').text()).toBe('현재 프로젝트에서 AI 기능이 비활성화되어 있습니다.')
-    expect(wrapper.find('.detail-hint').text()).not.toContain('즉시 반영됩니다')
-  })
-
-  it('handles transition from inherit to custom without implying key was copied and surfaces credential setup requirement', async () => {
-    const inheritSettings: ProjectAiSettings = {
-      mode: 'inherit',
-      providers: null,
-      default_provider_id: 'sys-api',
-      effective: {
-        source: 'system',
-        providers: [
-          {
-            id: 'sys-api',
-            name: 'System OpenAI',
-            exec_type: 'api',
-            kind: 'openai',
-            enabled: true,
-            api_base_url: 'https://api.openai.com/v1',
-            api_model: 'gpt-4o',
-            api_key_set: true,
-            api_key_hint: '9999',
-          },
-        ],
-        default_provider_id: 'sys-api',
-        registered_count: 1,
-      },
-    }
-
-    const customSavedSettings: ProjectAiSettings = {
-      mode: 'custom',
-      providers: [
-        {
-          id: 'proj-api-1',
-          name: 'System OpenAI',
-          exec_type: 'api',
-          kind: 'openai',
-          enabled: true,
-          api_base_url: 'https://api.openai.com/v1',
-          api_model: 'gpt-4o',
-          api_key_set: false,
-          api_key_hint: null,
-        },
-      ],
-      default_provider_id: 'proj-api-1',
-      effective: {
-        source: 'project',
-        providers: [
-          {
-            id: 'proj-api-1',
-            name: 'System OpenAI',
-            exec_type: 'api',
-            kind: 'openai',
-            enabled: true,
-            api_base_url: 'https://api.openai.com/v1',
-            api_model: 'gpt-4o',
-            api_key_set: false,
-            api_key_hint: null,
-          },
-        ],
-        default_provider_id: 'proj-api-1',
-        registered_count: 1,
-      },
-    }
-
-    const saveSpy = vi.spyOn(api, 'saveProjectAiSettings').mockResolvedValue(customSavedSettings)
-
-    const wrapper = mount(AiProvidersPanel, {
-      props: {
-        projectId: 'proj-1',
-        initialSettings: inheritSettings,
-      },
-      global: { plugins: [i18n] },
-    })
-
-    const customRadio = wrapper.find('input[value="custom"]')
-    await customRadio.trigger('change')
-
-    // Transition payload should NOT imply key was copied
-    expect(saveSpy).toHaveBeenCalledWith('proj-1', expect.objectContaining({
-      mode: 'custom',
-      providers: [
-        expect.objectContaining({
-          id: 'sys-api',
-          name: 'System OpenAI',
-          exec_type: 'api',
-          api_key_set: false,
-          api_key_hint: null,
-        }),
-      ],
-    }))
-
-    // Wait for saved settings update
-    await wrapper.setProps({ initialSettings: customSavedSettings })
-
-    // Surface credential setup requirement
-    expect(wrapper.find('.panel-warning-alert').exists()).toBe(true)
-    expect(wrapper.find('.panel-warning-alert').text()).toContain('API 키가 설정되지 않았습니다')
-    expect(wrapper.find('.credential-badge').exists()).toBe(true)
-    expect(wrapper.find('.credential-badge').text()).toContain('API 키 설정 필요')
   })
 })

@@ -91,6 +91,25 @@ export default {
     panel_empty: 'Not connected yet. A follow-up task will fill this with real data.',
     footer_mark: 'Build the Flow, Not Just the Document.',
   },
+  designer: {
+    // flowgate.v02.0023 — Designer Project Explorer (Project > Group > Flow).
+    project_explorer: {
+      title: 'Project',
+      refresh: 'Refresh',
+      search_placeholder: 'Search projects, groups, flows',
+      search_clear: 'Clear search',
+      no_project: 'No project selected.',
+      no_project_desc: 'Open a project to see its groups and flows here.',
+      loading: 'Loading the project structure...',
+      load_failed: 'Could not load the project structure.',
+      refresh_failed: 'Refresh failed. Showing the previous list.',
+      retry: 'Retry',
+      no_groups: 'No groups.',
+      no_flows: 'No flows.',
+      no_results: 'No matching project, group or flow.',
+      active_flow: 'Open',
+    },
+  },
   placeholder: {
     badge: 'Coming soon',
     body: 'This screen is not implemented in FlowGate v0.2 yet.',
