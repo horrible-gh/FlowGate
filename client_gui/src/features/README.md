@@ -13,13 +13,20 @@ localStorage persistence, ProjectDialog/ProjectList/ProjectRow/ProjectCreateDial
 flowgate.v02.0023에서 `project/`에 프로젝트 그룹 트리(`/api/v1/projects/{id}/groups/tree`)
 조회 API(`fetchProjectGroupTree`)와 store 캐시(`fetchGroupTree`/`getCachedGroupTree`,
 읽기 전용 `currentProjectId`)를 추가했습니다. Designer 전용 store를 따로 두지 않고 Designer의
-Project Explorer와 File Explorer(0024)가 같은 프로젝트 문맥을 함께 씁니다.
+Project Explorer와 File Explorer(0024)가 같은 프로젝트 문맥을 함께 씁니다. flowgate.v02.0024
+T0005에서는 File Explorer용 읽기 전용 Flow 파일 문맥(프로젝트 Git status, Flow tree, Base 기준
+changes, 단일 파일 diff, AI activity) API와 store 로더(`loadProjectGitStatus`/`loadFlowFileTree`/
+`loadFlowChanges`/`loadFlowFileDiff`/`loadFlowAiActivity`)를 추가했습니다.
 
 `designer/`는 v0.2 Designer 부품을 둡니다. `designer/projectExplorer/`가 Project > Group >
 Flow 탐색 부품(ProjectExplorer/ProjectTree/ProjectRow/GroupRow/FlowRow, 공통 행 프레임
-ExplorerRowFrame, 표시 트리 파생 순수 로직 projectExplorerTree.ts)이며
-`designer/index.ts`가 공개 경계입니다. Designer 화면 조립(좌측 Dock, 중앙 Canvas 등)은
-후속 작업 대상입니다.
+ExplorerRowFrame, 표시 트리 파생 순수 로직 projectExplorerTree.ts)이고, `designer/fileExplorer/`가
+flowgate.v02.0024 T0005에서 추가된 좌측 File Explorer 부품(DesignerFileExplorer와
+Toolbar/ScopeHeader/Filter/Tree/FolderRow/FileRow, 좌측 Dock 탐색기들이 같이 쓰는 얇은 행
+primitive `shared/ExplorerRowFrame`·`TreeCaret`)입니다. designer는 자체 API/store를 두지 않고
+`features/project`의 공개 경계(store와 타입)만 사용합니다. `designer/index.ts`가 공개
+경계이며 `ProjectExplorer`와 `DesignerFileExplorer`를 내보냅니다. Designer 화면 조립(좌측 Dock,
+중앙 Canvas 등)은 후속 작업 대상입니다.
 
 Git / AI Settings / Environment Settings 등 나머지 기능 이식은 별도 그룹의 후속 작업
 대상입니다.

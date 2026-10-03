@@ -1,18 +1,26 @@
 // Project API adapter (WP0005 T#1 §1/§3). Reuses the existing `@shared/api` transport
 // (same helper client/src's v0.1 screens already call) instead of a new client — this file
 // only adds the request shape + snake_case-to-frontend-model normalization boundary that
-// D0004 §1.2/§4.3 assigns to features/project. Scope is exactly the three endpoints WP0005
-// T#1 §3 allows: active project list, create, and identifier suggestion. archive/restore/
-// status/source-path/Git endpoints are out of this T's scope and are not called here.
-// flowgate.v02.0023 adds the read-only project group tree (fetchProjectGroupTree) so the
-// Designer and later v0.2 screens share one tree request path instead of each growing one.
+// D0004 §1.2/§4.3 assigns to features/project. WP0005 T#1 §3 scoped it to three endpoints:
+// active project list, create, and identifier suggestion. flowgate.v02.0023 adds the
+// read-only project group tree (fetchProjectGroupTree) so the Designer and later v0.2 screens
+// share one tree request path instead of each growing one. flowgate.v02.0024 T0005 adds the
+// read-only Flow file context the Designer File Explorer needs (project Git status, Flow
+// tree, Base-relative changes, one-file diff, AI activity) below. archive/restore/
+// source-path and Git mutation endpoints are still not called here.
 
 import { extractApiErrorMessage, getRequest, postRequest } from '@shared/api'
 import type {
   CreateProjectInput,
+  FlowAiActivity,
+  FlowChangeSet,
+  FlowFileDiff,
+  FlowFileNode,
+  FlowFileTree,
   GroupTreeNode,
   GroupTreeNodeKind,
   Project,
+  ProjectGitStatus,
   ProjectModule,
 } from './types'
 
@@ -106,6 +114,7 @@ export async function suggestProjectSlug(text: string): Promise<string | null> {
   }
 }
 
+// ── Group tree (flowgate.v02.0023) ───────────────────────────────────────────────────
 interface RawGroupTreeNode {
   id: string
   parent_id: string | null
@@ -164,5 +173,214 @@ export async function fetchProjectGroupTree(
     return raw.map(toGroupTreeNode).filter((n): n is GroupTreeNode => n !== null)
   } catch (error) {
     throw new Error(extractApiErrorMessage(error, 'Failed to load the project tree.'))
+  }
+}
+
+// ── Flow file context (flowgate.v02.0024 T0005) ─────────────────────────────────────────
+// Same server contracts the v0.1 Dashboard explorer reads (git/status, group tree,
+// group changes/diff, ai-invoke/active); only the transport shapes and normalization live
+// here. In-flight GET coalescing comes from `@shared/api` getRequest itself.
+
+interface RawGitSlot {
+  group_id: string
+  branch?: string | null
+  status?: string | null
+  writable?: boolean
+}
+
+interface RawGitStatus {
+  enabled?: boolean
+  // The server fills an unset Base with its legacy main branch; base_branch_configured says
+  // whether base_branch is the stored Project Base or that fallback (0024 TR0006).
+  base_branch?: string | null
+  base_branch_configured?: boolean | null
+  slots?: RawGitSlot[] | null
+}
+
+interface RawFileNode {
+  id: string
+  parent_id: string | null
+  type: 'folder' | 'file'
+  name: string
+  label?: string | null
+  path: string
+  permissions?: string[] | null
+}
+
+interface RawFileTree {
+  branch: string
+  commit?: string | null
+  nodes?: RawFileNode[] | null
+}
+
+interface RawChangeSet {
+  group_id: string
+  branch: string
+  commit?: string | null
+  base_branch?: string | null
+  changes?: { path: string; status: string }[] | null
+}
+
+interface RawFileDiff {
+  group_id: string
+  branch: string
+  commit?: string | null
+  base_branch?: string | null
+  merge_base?: string | null
+  path: string
+  status: 'M' | 'A' | 'D'
+  old: FlowFileDiff['old']
+  new: FlowFileDiff['new']
+}
+
+const projectGitPath = (projectId: string) => `/api/v1/projects/${encodeURIComponent(projectId)}/git`
+const groupGitPath = (projectId: string, groupId: string) =>
+  `${projectGitPath(projectId)}/groups/${encodeURIComponent(groupId)}`
+
+const toSlashes = (path: string) => path.replace(/\\/g, '/')
+
+// A branch name the server reported, trimmed; blank/missing is "unknown" (null). There is
+// deliberately no default branch here — callers must treat null as unresolved.
+function branchOrNull(value: string | null | undefined): string | null {
+  const trimmed = typeof value === 'string' ? value.trim() : ''
+  return trimmed || null
+}
+
+function toGitStatus(raw: RawGitStatus): ProjectGitStatus {
+  return {
+    enabled: raw.enabled === true,
+    // Only a Base the server confirms as configured counts. Its main-branch fallback for an
+    // unset Base — or a server too old to say — is unresolved, never a comparison base.
+    baseBranch: raw.base_branch_configured === true ? branchOrNull(raw.base_branch) : null,
+    slots: (raw.slots ?? []).map((slot) => ({
+      groupId: slot.group_id,
+      branch: slot.branch ?? null,
+      status: slot.status ?? '',
+      writable: slot.writable === true,
+    })),
+  }
+}
+
+function toFileNode(raw: RawFileNode): FlowFileNode {
+  return {
+    id: raw.id,
+    parentId: raw.parent_id ?? null,
+    type: raw.type,
+    name: raw.name,
+    label: raw.label || raw.name,
+    path: toSlashes(raw.path),
+    permissions: raw.permissions ?? [],
+  }
+}
+
+/** GET /api/v1/projects/{pid}/git/status — null when the server has no status for it. */
+export async function fetchProjectGitStatus(projectId: string): Promise<ProjectGitStatus | null> {
+  try {
+    const response = await getRequest<{ status?: RawGitStatus | null }>(`${projectGitPath(projectId)}/status`)
+    const raw = response.data?.status
+    return raw ? toGitStatus(raw) : null
+  } catch (error) {
+    throw new Error(extractApiErrorMessage(error, 'Failed to load the project Git status.'))
+  }
+}
+
+/**
+ * GET /api/v1/projects/{pid}/git/groups/{gid}/tree — the Flow worktree tree, read from Git
+ * objects plus untracked entries (no checkout switch). One retry, like the v0.1 explorer's
+ * tree read, because a worktree mid-write can fail a single read. Only readable nodes are
+ * returned.
+ */
+export async function fetchFlowFileTree(projectId: string, groupId: string): Promise<FlowFileTree> {
+  const path = `${groupGitPath(projectId, groupId)}/tree`
+  try {
+    let response
+    try {
+      response = await getRequest<{ data: RawFileTree }>(path)
+    } catch {
+      response = await getRequest<{ data: RawFileTree }>(path)
+    }
+    const data = response.data.data
+    return {
+      branch: data.branch,
+      commit: data.commit ?? null,
+      nodes: (data.nodes ?? []).filter((n) => (n.permissions ?? []).includes('read')).map(toFileNode),
+    }
+  } catch (error) {
+    throw new Error(extractApiErrorMessage(error, 'Failed to load the Flow file tree.'))
+  }
+}
+
+/**
+ * GET /api/v1/projects/{pid}/git/groups/{gid}/changes — committed + worktree + untracked
+ * ('?') changes of the Flow since its merge-base. `base` asks the server to compare against
+ * that branch instead of the group's own work base (server `base` parameter, 0024 TR0004
+ * rev2); without it the server answers against the group work base. `baseBranch` in the
+ * result is what the server says it actually compared against.
+ */
+export async function fetchFlowChangeSet(
+  projectId: string,
+  groupId: string,
+  options: { base?: string } = {},
+): Promise<FlowChangeSet> {
+  try {
+    const params = options.base ? { base: options.base } : {}
+    const response = await getRequest<{ data: RawChangeSet }>(`${groupGitPath(projectId, groupId)}/changes`, params)
+    const data = response.data.data
+    return {
+      groupId: data.group_id,
+      branch: data.branch,
+      commit: data.commit ?? null,
+      baseBranch: branchOrNull(data.base_branch),
+      changes: (data.changes ?? []).map((c) => ({ path: toSlashes(c.path), status: c.status })),
+    }
+  } catch (error) {
+    throw new Error(extractApiErrorMessage(error, 'Failed to load the Flow changes.'))
+  }
+}
+
+/**
+ * GET /api/v1/projects/{pid}/git/groups/{gid}/diff — old/new content of one Flow file.
+ * Pass the same `base` the change list used so the diff and the list share one merge-base;
+ * `ref` pins the read to a tree commit.
+ */
+export async function fetchFlowFileDiff(
+  projectId: string,
+  groupId: string,
+  path: string,
+  options: { base?: string; ref?: string } = {},
+): Promise<FlowFileDiff> {
+  try {
+    const params: Record<string, string> = { path }
+    if (options.base) params.base = options.base
+    if (options.ref) params.ref = options.ref
+    const response = await getRequest<{ data: RawFileDiff }>(`${groupGitPath(projectId, groupId)}/diff`, params)
+    const data = response.data.data
+    return {
+      groupId: data.group_id,
+      branch: data.branch,
+      commit: data.commit ?? null,
+      baseBranch: branchOrNull(data.base_branch),
+      mergeBase: data.merge_base ?? null,
+      path: toSlashes(data.path),
+      status: data.status,
+      old: data.old,
+      new: data.new,
+    }
+  } catch (error) {
+    throw new Error(extractApiErrorMessage(error, 'Failed to load the file diff.'))
+  }
+}
+
+/** GET /api/v1/ai-invoke/active?group_id= — whether an AI run currently owns the group. */
+export async function fetchFlowAiActivity(groupId: string): Promise<FlowAiActivity> {
+  try {
+    const response = await getRequest<{ active?: boolean; status?: string | null }>(
+      '/api/v1/ai-invoke/active',
+      { group_id: groupId },
+    )
+    const data = response.data ?? {}
+    return { active: data.active === true && data.status !== 'finished' }
+  } catch (error) {
+    throw new Error(extractApiErrorMessage(error, 'Failed to load the Flow AI activity.'))
   }
 }

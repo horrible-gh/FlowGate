@@ -5,12 +5,24 @@
 // directly, so those stay internal to this feature. The group tree types are exported for
 // features that read the project tree through the store (Designer, flowgate.v02.0023).
 export { useProjectStore } from './store'
+// Group tree types (flowgate.v02.0023) and Flow file context read models (flowgate.v02.0024
+// T0005) — type-only, so the runtime surface stays the store factory + ProjectDialog.
 export type {
   CreateProjectInput,
   FetchGroupTreeOptions,
+  FlowAiActivity,
+  FlowChangeEntry,
+  FlowChangeSet,
+  FlowDiffSide,
+  FlowFileDiff,
+  FlowFileNode,
+  FlowFileTree,
+  FlowRef,
   GroupTreeNode,
   GroupTreeNodeKind,
   Project,
+  ProjectGitSlot,
+  ProjectGitStatus,
   ProjectModule,
 } from './types'
 export { default as ProjectDialog } from './ProjectDialog.vue'

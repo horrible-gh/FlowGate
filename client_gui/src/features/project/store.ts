@@ -19,10 +19,25 @@
 
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import type { CreateProjectInput, FetchGroupTreeOptions, GroupTreeNode, Project } from './types'
+import type {
+  CreateProjectInput,
+  FetchGroupTreeOptions,
+  FlowAiActivity,
+  FlowChangeSet,
+  FlowFileDiff,
+  FlowFileTree,
+  GroupTreeNode,
+  Project,
+  ProjectGitStatus,
+} from './types'
 import {
   createProject as createProjectApi,
   fetchActiveProjects as fetchActiveProjectsApi,
+  fetchFlowAiActivity,
+  fetchFlowChangeSet,
+  fetchFlowFileDiff,
+  fetchFlowFileTree,
+  fetchProjectGitStatus,
   fetchProjectGroupTree as fetchProjectGroupTreeApi,
 } from './api'
 import {
@@ -200,6 +215,37 @@ export const useProjectStore = defineStore('project', () => {
     return promise
   }
 
+  // Flow file context (flowgate.v02.0024 T0005). The Designer File Explorer reaches the
+  // project Git status and the active Flow's tree / Base-relative changes / diff / AI
+  // activity only through these loaders, so features/designer owns no API or store of its
+  // own. They are stateless on purpose: Flow-scoped staleness (seq guard, scope switch) is
+  // the consumer's concern, the Dialog's `requestEpoch` must not gate them, and duplicate
+  // in-flight GETs are already coalesced by `@shared/api`.
+  function loadProjectGitStatus(projectId: string): Promise<ProjectGitStatus | null> {
+    return fetchProjectGitStatus(projectId)
+  }
+
+  function loadFlowFileTree(projectId: string, groupId: string): Promise<FlowFileTree> {
+    return fetchFlowFileTree(projectId, groupId)
+  }
+
+  function loadFlowChanges(projectId: string, groupId: string, options: { base?: string } = {}): Promise<FlowChangeSet> {
+    return fetchFlowChangeSet(projectId, groupId, options)
+  }
+
+  function loadFlowFileDiff(
+    projectId: string,
+    groupId: string,
+    path: string,
+    options: { base?: string; ref?: string } = {},
+  ): Promise<FlowFileDiff> {
+    return fetchFlowFileDiff(projectId, groupId, path, options)
+  }
+
+  function loadFlowAiActivity(groupId: string): Promise<FlowAiActivity> {
+    return fetchFlowAiActivity(groupId)
+  }
+
   function openDialog(): void {
     dialogOpen.value = true
     void fetchProjects()
@@ -230,5 +276,10 @@ export const useProjectStore = defineStore('project', () => {
     closeDialog,
     getCachedGroupTree,
     fetchGroupTree,
+    loadProjectGitStatus,
+    loadFlowFileTree,
+    loadFlowChanges,
+    loadFlowFileDiff,
+    loadFlowAiActivity,
   }
 })

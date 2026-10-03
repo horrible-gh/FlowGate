@@ -595,11 +595,16 @@ def get_group_review_package(
 def get_group_branch_changes(
     project_id: str,
     group_id: str,
+    base: str | None = None,
     user=Depends(require_permission("project.settings.read", "project_id")),
 ):
-    """Tracked paths changed from the base branch through the group worktree."""
+    """Tracked paths changed from the base branch through the group worktree.
+
+    ``base`` (flowgate.v02.0024 TR0004 rev2) compares against that local branch instead
+    of the group's own work base — the Designer passes the project Base here.
+    """
     try:
-        return git_service.read_group_changes(project_id, group_id)
+        return git_service.read_group_changes(project_id, group_id, base_ref=base)
     except GitServiceError as exc:
         return _guard(exc)
 
@@ -627,15 +632,17 @@ def get_group_file_diff(
     group_id: str,
     path: str,
     ref: str | None = None,
+    base: str | None = None,
     user=Depends(require_permission("project.settings.read", "project_id")),
 ):
     """Old/new content of one group-branch file (0326 R0001 / NR0005 §4).
 
     merge-base blob vs the group worktree (checkout-free fallback: the branch
-    commit's blob). ``ref`` pins the commit like the blob endpoint does.
+    commit's blob). ``ref`` pins the commit like the blob endpoint does; ``base``
+    is the same explicit comparison branch ``/changes`` accepts.
     """
     try:
-        return git_service.read_group_file_diff(project_id, group_id, path, ref)
+        return git_service.read_group_file_diff(project_id, group_id, path, ref, base_ref=base)
     except GitServiceError as exc:
         return _guard(exc)
 
