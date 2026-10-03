@@ -22,7 +22,6 @@ describe('features/designer/shell structure (flowgate.v02.0025)', () => {
       'DesignerShell.vue',
       'DesignerTop.vue',
       'DesignerWorkspace.vue',
-      'ExplorerHeader.vue',
       'ExplorerModeTabs.vue',
       'ShellPlaceholder.vue',
       'designerLayout.ts',

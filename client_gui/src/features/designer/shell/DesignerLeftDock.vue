@@ -1,6 +1,7 @@
 <template>
   <!-- flowgate.v02.0025 — left navigation Dock (0003-D §3.3/§3.4). Assembles the real 0023
-       Project Explorer and 0024 File Explorer behind a [프로젝트] [파일] switch.
+       Project Explorer and 0024 File Explorer behind a [프로젝트] [파일] switch, which is also
+       the Dock's one header row (with the collapse button on its right).
        Mount policy: an Explorer is mounted the first time its mode is shown and is only
        hidden afterwards (mode switch or collapse), so its search / expansion / selection /
        loaded tree survive. The Dock element itself always stays; collapsing turns it into a
@@ -28,8 +29,12 @@
       <span class="designer-left-rail-mode" data-test="designer-left-rail-mode">{{ t(`gui.designer.shell.mode_${mode}`) }}</span>
     </div>
 
-    <ExplorerHeader v-show="!collapsed" @collapse="emit('collapse')" />
-    <ExplorerModeTabs v-show="!collapsed" :model-value="mode" @update:model-value="emit('update:mode', $event)" />
+    <ExplorerModeTabs
+      v-show="!collapsed"
+      :model-value="mode"
+      @update:model-value="emit('update:mode', $event)"
+      @collapse="emit('collapse')"
+    />
 
     <div v-show="!collapsed" class="designer-left-explorers" data-test="designer-left-explorers">
       <ProjectExplorer
@@ -57,7 +62,6 @@ import IconButton from '../../../components/ui/IconButton.vue'
 import DesignerFileExplorer from '../fileExplorer/DesignerFileExplorer.vue'
 import ProjectExplorer from '../projectExplorer/ProjectExplorer.vue'
 import type { ProjectExplorerFlowEvent } from '../projectExplorer/projectExplorerTree'
-import ExplorerHeader from './ExplorerHeader.vue'
 import ExplorerModeTabs from './ExplorerModeTabs.vue'
 import type { DesignerLeftMode } from './designerLayout'
 

@@ -11,6 +11,8 @@ registerAppMessages(i18n)
 // flowgate.v02.0025 (0003-D §3.1/§7.1): the existing Designer entry points — Sidebar menu,
 // Dashboard card, direct URL / refresh — now open the Designer Shell through the real
 // App.vue + real /app router, while the other placeholder screens stay "준비 중".
+// T0006 §1: the Designer is a full-screen workspace — App.vue renders no Topbar / Sidebar
+// on any /designer path, and every other screen keeps both.
 async function mountAt(url: string): Promise<{ wrapper: VueWrapper; router: Router }> {
   window.history.replaceState({}, '', `/app${url}`)
   vi.resetModules()
@@ -23,14 +25,22 @@ async function mountAt(url: string): Promise<{ wrapper: VueWrapper; router: Rout
 
 const settle = () => new Promise((r) => setTimeout(r, 0))
 
-function activeKeys(wrapper: VueWrapper): string[] {
-  return wrapper.findAll('.gui-nav-item.active').map((a) => a.attributes('data-nav-key') ?? '')
-}
+const hasTopbar = (wrapper: VueWrapper) => wrapper.find('header.gui-topbar').exists()
+const hasSidebar = (wrapper: VueWrapper) => wrapper.find('aside.gui-sidebar').exists()
 
 function expectShell(wrapper: VueWrapper) {
   expect(wrapper.find('.gui-route-content [data-test="designer-shell"]').exists()).toBe(true)
   expect(wrapper.find('.gui-coming-soon').exists()).toBe(false)
-  expect(activeKeys(wrapper)).toEqual(['designer'])
+  // Full-screen workspace: no App chrome around the Shell (T0006 §1).
+  expect(hasTopbar(wrapper)).toBe(false)
+  expect(hasSidebar(wrapper)).toBe(false)
+  expect(wrapper.get('.gui-app-shell').classes()).toContain('is-fullscreen')
+}
+
+function expectChrome(wrapper: VueWrapper) {
+  expect(hasTopbar(wrapper)).toBe(true)
+  expect(hasSidebar(wrapper)).toBe(true)
+  expect(wrapper.get('.gui-app-shell').classes()).not.toContain('is-fullscreen')
 }
 
 let mounted: VueWrapper | null = null
@@ -104,18 +114,53 @@ describe('Designer entry (flowgate.v02.0025)', () => {
 
     expect(wrapper.get('.gui-coming-soon').attributes('data-nav-key')).toBe(key)
     expect(wrapper.find('[data-test="designer-shell"]').exists()).toBe(false)
+    expectChrome(wrapper)
   })
 
   it('/ai and unknown paths are unchanged', async () => {
     const ai = await mountAt('/ai')
     mounted = ai.wrapper
     expect(ai.wrapper.find('.ai-settings-view').exists()).toBe(true)
+    expectChrome(ai.wrapper)
     ai.wrapper.unmount()
 
     const missing = await mountAt('/designerx')
     mounted = missing.wrapper
     expect(missing.router.currentRoute.value.name).toBe('not-found')
     expect(missing.wrapper.find('[data-test="designer-shell"]').exists()).toBe(false)
+    expectChrome(missing.wrapper)
+  })
+})
+
+describe('Designer full-screen workspace (flowgate.v02.0025 T0006 §1)', () => {
+  it('the Dashboard keeps its Topbar and Sidebar', async () => {
+    const { wrapper } = await mountAt('/')
+    mounted = wrapper
+    expect(wrapper.find('.dash').exists()).toBe(true)
+    expectChrome(wrapper)
+  })
+
+  it('leaving the Designer through the router brings the Topbar and Sidebar back', async () => {
+    const { wrapper, router } = await mountAt('/designer')
+    mounted = wrapper
+    expectShell(wrapper)
+
+    await router.push('/')
+    await settle()
+    expect(wrapper.find('[data-test="designer-shell"]').exists()).toBe(false)
+    expectChrome(wrapper)
+    expect(wrapper.get('[data-nav-key="dashboard"]').classes()).toContain('active')
+
+    await router.push('/designer/x')
+    await settle()
+    expectShell(wrapper)
+  })
+
+  it('only the designer route is marked full-screen', async () => {
+    vi.resetModules()
+    const router = (await import('@/app/router/index')).default
+    const fullscreen = router.getRoutes().filter((r) => r.meta.fullscreen === true).map((r) => r.name)
+    expect(fullscreen).toEqual(['designer'])
   })
 })
 

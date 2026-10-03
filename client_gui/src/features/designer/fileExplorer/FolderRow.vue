@@ -14,15 +14,7 @@
   >
     <template #lead>
       <TreeCaret :expanded="row.expanded" :has-children="row.hasChildren" @toggle="$emit('toggle', row.node)" />
-      <svg class="dfx-folder-ico" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-        <path
-          :d="row.expanded ? 'M1.5 4.5v8h11l2-6H4l-2 6' : 'M1.5 3.5h4l1.5 1.5h7.5v7.5h-13z'"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.3"
-          stroke-linejoin="round"
-        />
-      </svg>
+      <ExplorerIcon class="dfx-folder-ico" :name="row.expanded ? 'folder-open' : 'folder'" />
     </template>
     <span class="dfx-label">{{ row.node.label }}</span>
     <template v-if="row.changedCount > 0" #trail>
@@ -41,6 +33,7 @@
 // reports the intent, so a collapsed folder still shows that something changed inside.
 import { useI18n } from 'vue-i18n'
 import type { FlowFileNode } from '@/features/project'
+import ExplorerIcon from '../shared/ExplorerIcon.vue'
 import ExplorerRowFrame from '../shared/ExplorerRowFrame.vue'
 import TreeCaret from '../shared/TreeCaret.vue'
 import type { ExplorerRow } from './fileExplorerModel'
@@ -52,7 +45,6 @@ const { t } = useI18n()
 
 <style scoped>
 .dfx-folder-ico {
-  flex: none;
   color: var(--fg2-orange);
 }
 

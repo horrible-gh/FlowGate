@@ -153,7 +153,9 @@ async function expand(w: VueWrapper, path: string) {
 describe('Designer File Explorer — tree, scope and interaction', () => {
   it('shows the active Flow tree with its scope, folders first, and expands/collapses by click and keys', async () => {
     const w = await mountExplorer()
-    expect(w.get('[data-test="dfx-scope-name"]').text()).toBe('현재 Flow · 로그인 오류 수정')
+    // 0025 T0006 §6: the active Flow name is not repeated above the tree.
+    expect(w.find('[data-test="dfx-scope-name"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('로그인 오류 수정')
     expect(w.get('[data-test="dfx-scope-group"]').text()).toBe('인증')
     expect(w.get('[data-test="dfx-scope-branch"]').text()).toBe('flow-0001')
     expect(rowPaths(w)).toEqual(['docs', 'src', 'README.md'])
@@ -221,7 +223,9 @@ describe('Designer File Explorer — 변경됨 against the configured project Ba
     const changeCalls = calls('/changes')
     expect(changeCalls).toHaveLength(1)
     expect(changeCalls[0][1]).toEqual({ base })
-    expect(w.get('[data-test="dfx-base-label"]').text()).toBe(`Base ${base} 대비`)
+    // 0025 T0006 §6: a confirmed Base is not spelled out on screen, only as the tooltip.
+    expect(w.find('[data-test="dfx-base-label"]').exists()).toBe(false)
+    expect(w.get('[data-test="dfx-filter-changed"]').attributes('title')).toBe(`Base ${base} 대비`)
     expect(w.get('[data-test="dfx-changed-count"]').text()).toBe('3')
 
     await w.get('[data-test="dfx-filter-changed"]').trigger('click')
@@ -316,7 +320,7 @@ describe('Designer File Explorer — 변경됨 against the configured project Ba
     server.changes = (base) => ({ base_branch: base ?? null, changes: [] })
     const w = await mountExplorer()
     await w.get('[data-test="dfx-filter-changed"]').trigger('click')
-    expect(w.get('[data-test="dfx-empty"]').text()).toContain('Base v0.2 대비 변경된 파일이 없습니다.')
+    expect(w.get('[data-test="dfx-empty"]').text()).toBe('변경된 파일이 없습니다.')
   })
 })
 
@@ -419,7 +423,7 @@ describe('Designer File Explorer — loading / error / empty states', () => {
 
     server.tree = []
     const empty = await mountExplorer()
-    expect(empty.get('[data-test="dfx-empty"]').text()).toBe('이 Flow에 표시할 파일이 없습니다.')
+    expect(empty.get('[data-test="dfx-empty"]').text()).toBe('이 플로우에 표시할 파일이 없습니다.')
   })
 
   it('never shows the previous Flow tree for a new Flow, and ignores a late answer for the old one', async () => {
@@ -433,6 +437,5 @@ describe('Designer File Explorer — loading / error / empty states', () => {
     releaseA()
     await settle()
     expect(rowPaths(w)).toEqual(['lib'])
-    expect(w.get('[data-test="dfx-scope-name"]').text()).toBe('현재 Flow · 검색 개선')
   })
 })

@@ -63,8 +63,8 @@ watch(projectId, () => {
 </script>
 
 <style scoped>
-/* Fills what main.gui-route-content leaves (it already subtracts the Topbar) and never
-   scrolls itself; each area scrolls inside. */
+/* Fills main.gui-route-content, which is the whole viewport on the Designer route (App.vue
+   renders no Topbar / Sidebar there), and never scrolls itself; each area scrolls inside. */
 .designer-shell {
   display: flex;
   flex-direction: column;
@@ -80,7 +80,7 @@ watch(projectId, () => {
    final responsive policy is deferred. */
 @media (max-width: 1120px) {
   .designer-shell {
-    min-height: calc(100vh - var(--fg2-topbar-h));
+    min-height: 100vh;
   }
 }
 </style>

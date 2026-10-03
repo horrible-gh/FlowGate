@@ -153,8 +153,8 @@ describe('DesignerShell — container hierarchy', () => {
     expect(label('designer-top')).toBe('TOP')
     expect(get(w, 'designer-top').text()).toContain('Header / MenuBar / Toolbar')
     expect(label('designer-workspace')).toBe('CENTER / WORKSPACE')
-    expect(get(w, 'designer-workspace').text()).toContain('FlowTabs / Canvas')
-    expect(get(w, 'designer-workspace-flow').text()).toBe('활성 Flow 없음')
+    expect(get(w, 'designer-workspace').text()).toContain('플로우 탭 / Canvas')
+    expect(get(w, 'designer-workspace-flow').text()).toBe('활성 플로우 없음')
     expect(label('designer-bottom-dock')).toBe('BOTTOM')
     expect(get(w, 'designer-bottom-dock').text()).toContain('Inspector / Minimap')
     expect(label('designer-right-dock')).toBe('RIGHT')
@@ -217,9 +217,10 @@ describe('DesignerShell — active Flow', () => {
     const w = await mountShell()
     await activateCanvas(w)
 
-    expect(get(w, 'designer-workspace-flow').text()).toBe('활성 Flow: Canvas')
+    expect(get(w, 'designer-workspace-flow').text()).toBe('활성 플로우: Canvas')
     expect(w.findComponent(ProjectExplorer).props('activeFlowId')).toBe('p.ui.0002')
-    expect(explorerRow(w, 'Canvas').element.closest('[data-explorer-row]')!.querySelector('[data-test="project-explorer-active-badge"]')).not.toBeNull()
+    expect(explorerRow(w, 'Canvas').classes()).toContain('is-active')
+    expect(explorerRow(w, 'Canvas').element.closest('[data-explorer-row]')!.getAttribute('aria-current')).toBe('true')
     // The user's mode choice stays.
     expect(get(w, 'designer-left-dock').attributes('data-mode')).toBe('project')
 
@@ -234,7 +235,7 @@ describe('DesignerShell — active Flow', () => {
     await doubleClick(w, 'UI 개선')
     explorerRow(w, 'Canvas').element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
     await settle()
-    expect(get(w, 'designer-workspace-flow').text()).toBe('활성 Flow 없음')
+    expect(get(w, 'designer-workspace-flow').text()).toBe('활성 플로우 없음')
     expect(w.findComponent(ProjectExplorer).props('activeFlowId')).toBeNull()
   })
 
@@ -247,7 +248,7 @@ describe('DesignerShell — active Flow', () => {
     useProjectStore().setCurrentProject(project('q', 'Beta'))
     await settle()
 
-    expect(get(w, 'designer-workspace-flow').text()).toBe('활성 Flow 없음')
+    expect(get(w, 'designer-workspace-flow').text()).toBe('활성 플로우 없음')
     expect(w.findComponent(DesignerFileExplorer).props('flow')).toBeNull()
     expect(w.findComponent(DesignerFileExplorer).props('projectId')).toBe('q')
     expect(w.findComponent(ProjectExplorer).props('projectId')).toBe('q')
@@ -298,10 +299,108 @@ describe('DesignerShell — left collapse', () => {
     expect((get(w, 'project-explorer-search').element as HTMLInputElement).value).toBe('Canvas')
   })
 
-  it('the collapse button sits in the Explorer header with an accessible name', async () => {
+  it('the collapse button sits in the one header row, right of the mode tabs, with an accessible name', async () => {
     const w = await mountShell()
-    const button = get(w, 'designer-explorer-header').get('[data-test="designer-left-collapse"]')
+    const header = get(w, 'designer-explorer-header')
+    const button = header.get('[data-test="designer-left-collapse"]')
     expect(button.attributes('aria-label')).toBe('좌측 패널 접기')
-    expect(get(w, 'designer-explorer-header').text()).toContain('탐색기')
+    expect([...header.element.children].map((c) => c.getAttribute('data-test'))).toEqual([
+      'designer-explorer-mode-tabs',
+      'designer-left-collapse',
+    ])
+  })
+})
+
+// flowgate.v02.0025 T0006 — Designer initial screen UI refinements.
+describe('DesignerShell — UI refinements (T0006)', () => {
+  it('has a single Left Dock header row: no "탐색기" title, only [프로젝트] [파일] + collapse', async () => {
+    const w = await mountShell()
+    const dock = get(w, 'designer-left-dock')
+    const header = get(w, 'designer-explorer-header')
+    expect(header.findAll('[role="tab"]').map((tab) => tab.text())).toEqual(['프로젝트', '파일'])
+    expect(header.text()).toBe('프로젝트파일')
+    expect(dock.text()).not.toContain('탐색기')
+    // Neither Explorer repeats the tab name as a title row of its own.
+    expect(w.find('.project-explorer-title').exists()).toBe(false)
+    await selectMode(w, '파일')
+    expect(w.find('.dfx-toolbar-title').exists()).toBe(false)
+  })
+
+  it('tells Project, Group and Flow apart by glyph, and Group uses the folder glyph', async () => {
+    const w = await mountShell()
+    await doubleClick(w, 'UI 개선')
+    const icon = (label: string) =>
+      explorerRow(w, label).find('[data-icon]').attributes('data-icon')
+    expect(icon('Alpha')).toBe('project')
+    expect(icon('UI 개선')).toBe('folder-open')
+    expect(icon('Canvas')).toBe('flow')
+    await doubleClick(w, 'UI 개선')
+    expect(icon('UI 개선')).toBe('folder')
+  })
+
+  it('marks selected and active rows with separate styling and no badge or text', async () => {
+    const w = await mountShell()
+    await activateCanvas(w)
+    explorerRow(w, 'Designer v0.2').element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
+    await settle()
+
+    const canvas = explorerRow(w, 'Canvas')
+    const designer = explorerRow(w, 'Designer v0.2')
+    expect(canvas.classes()).toContain('is-active')
+    expect(canvas.classes()).not.toContain('is-selected')
+    expect(designer.classes()).toContain('is-selected')
+    expect(designer.classes()).not.toContain('is-active')
+    expect(canvas.text()).toBe('Canvas')
+    expect(canvas.find('.ui-badge').exists()).toBe(false)
+    expect(get(w, 'designer-left-dock').text()).not.toContain('열림')
+
+    // Both states can sit on the same row.
+    canvas.element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
+    await settle()
+    expect(explorerRow(w, 'Canvas').classes()).toEqual(expect.arrayContaining(['is-selected', 'is-active']))
+  })
+
+  it('shows no explanatory text in the normal state of the File Explorer', async () => {
+    const w = await mountShell()
+    await activateCanvas(w)
+    await selectMode(w, '파일')
+    const files = get(w, 'designer-file-explorer')
+    expect(files.text()).not.toMatch(/Base|대비|현재|Flow|플로우/)
+    expect(files.text()).not.toContain('Canvas')
+    expect(files.find('[data-test="dfx-base-label"]').exists()).toBe(false)
+    expect(files.find('[data-test="dfx-scope-name"]').exists()).toBe(false)
+    // The scope row carries only state the user must know (the mock has no writable slot, so
+    // read-only), never the Flow name.
+    expect(files.get('[data-test="dfx-scope"]').text()).toBe('읽기 전용')
+    expect(files.find('[data-path="src"]').exists()).toBe(true)
+  })
+
+  it('names the Flow object 플로우 everywhere in the Korean Designer UI', async () => {
+    const w = await mountShell()
+    await activateCanvas(w)
+    expect(get(w, 'designer-workspace-flow').text()).toBe('활성 플로우: Canvas')
+    const text = get(w, 'designer-shell').text()
+    expect(text).not.toMatch(/Flow|흐름|플로(?!우)/)
+  })
+})
+
+describe('Korean Flow wording (T0006 §3)', () => {
+  function strings(value: unknown): string[] {
+    if (typeof value === 'string') return [value]
+    if (value && typeof value === 'object') return Object.values(value).flatMap(strings)
+    return []
+  }
+
+  it('ko Designer / navigation strings use 플로우, never Flow / 플로 / 흐름', async () => {
+    const ko = (await import('@/app/i18n/ko.ts')).default as Record<string, any>
+    const texts = [...strings(ko.designer), ko.nav.designer.sub, ko.dashboard.cards.designer.desc]
+    for (const text of texts) expect(text).not.toMatch(/Flow|흐름|플로(?!우)/)
+    expect(ko.nav.designer.sub).toBe('그룹 · 플로우 설계')
+    expect(ko.designer.shell.active_flow).toBe('활성 플로우: {name}')
+  })
+
+  it('ja Designer strings use フロー consistently', async () => {
+    const ja = (await import('@/app/i18n/ja.ts')).default as Record<string, any>
+    for (const text of strings(ja.designer)) expect(text).not.toMatch(/Flow/)
   })
 })

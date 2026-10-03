@@ -6,13 +6,14 @@
       :refreshing="loading"
       :disabled="!resolvedProjectId || !flow"
       @refresh="reload"
-    />
+    >
+      <FileFilter v-if="resolvedProjectId && flow" v-model="filter" :changes="changes" />
+    </FileExplorerToolbar>
 
     <EmptyState v-if="!resolvedProjectId" compact :title="t('gui.designer.file_explorer.no_project')" data-test="dfx-no-project" />
     <EmptyState v-else-if="!flow" compact :title="t('gui.designer.file_explorer.no_flow')" data-test="dfx-no-flow" />
     <template v-else>
-      <FileScopeHeader :flow="flow" :group-label="groupLabel" :readonly="!canMutate" :busy="busy" />
-      <FileFilter v-model="filter" :changes="changes" />
+      <FileScopeHeader :group-label="groupLabel" :branch="flow.branch" :readonly="!canMutate" :busy="busy" />
 
       <div class="dfx-body">
         <LoadingState v-if="loading && !nodes.length" size="sm" :label="t('gui.designer.file_explorer.loading')" />
@@ -173,7 +174,7 @@ const visible = computed(() => {
 const emptyMessage = computed(() => {
   if (query.value.trim()) return t('gui.designer.file_explorer.empty_search', { query: query.value.trim() })
   if (filter.value === 'changed' && changes.value.kind === 'ready') {
-    return t('gui.designer.file_explorer.empty_changed', { branch: changes.value.baseBranch })
+    return t('gui.designer.file_explorer.empty_changed')
   }
   return t('gui.designer.file_explorer.empty_tree')
 })

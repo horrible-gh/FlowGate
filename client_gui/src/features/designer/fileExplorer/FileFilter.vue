@@ -17,6 +17,7 @@
         data-test="dfx-filter-changed"
         :class="{ 'dfx-filter-tab--on': modelValue === 'changed' }"
         :aria-selected="modelValue === 'changed'"
+        :title="baseTitle"
         @click="$emit('update:modelValue', 'changed')"
       >
         {{ t('gui.designer.file_explorer.filter_changed') }}
@@ -24,14 +25,14 @@
         <span v-else-if="baseWarn" class="dfx-filter-count dfx-filter-count--warn" data-test="dfx-changed-unknown">?</span>
       </button>
     </div>
-    <span class="dfx-filter-base" :class="{ 'dfx-filter-base--warn': baseWarn }" data-test="dfx-base-label">{{ baseText }}</span>
+    <span v-if="baseWarn" class="dfx-filter-base" data-test="dfx-base-label">{{ baseText }}</span>
   </div>
 </template>
 
 <script setup lang="ts">
-// flowgate.v02.0024 T0005 — 전체 / 변경됨 filter (0024-D §5). Also states which Base the
-// "변경됨" count was computed against, or that it could not be established — a count is
-// only ever shown next to a confirmed Base.
+// flowgate.v02.0024 T0005 — 전체 / 변경됨 filter (0024-D §5). A count is only ever shown for a
+// confirmed Base. 0025 T0006 §6: in the normal case the Base is only the 변경됨 tooltip; a
+// visible warning label appears only when the Base is unresolved or the comparison failed.
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ChangeState, ExplorerFilter } from './fileExplorerModel'
@@ -44,23 +45,25 @@ const changedCount = computed(() =>
   props.changes.kind === 'ready' ? Object.keys(props.changes.statuses).length : 0,
 )
 const baseWarn = computed(() => props.changes.kind === 'unresolved' || props.changes.kind === 'error')
-const baseText = computed(() => {
-  switch (props.changes.kind) {
-    case 'ready': return t('gui.designer.file_explorer.base_label', { branch: props.changes.baseBranch })
-    case 'unresolved': return t('gui.designer.file_explorer.base_unresolved')
-    case 'error': return t('gui.designer.file_explorer.changes_failed_short')
-    case 'loading': return t('gui.designer.file_explorer.changes_loading')
-    default: return ''
-  }
-})
+const baseTitle = computed(() =>
+  props.changes.kind === 'ready'
+    ? t('gui.designer.file_explorer.base_label', { branch: props.changes.baseBranch })
+    : undefined,
+)
+const baseText = computed(() =>
+  props.changes.kind === 'unresolved'
+    ? t('gui.designer.file_explorer.base_unresolved')
+    : t('gui.designer.file_explorer.changes_failed_short'),
+)
 </script>
 
 <style scoped>
 .dfx-filter {
   display: flex;
+  flex: 1 1 auto;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  min-width: 0;
 }
 
 .dfx-filter-tabs {
@@ -109,10 +112,6 @@ const baseText = computed(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
-  color: var(--fg2-muted);
-}
-
-.dfx-filter-base--warn {
   color: var(--fg2-status-warning-fg);
 }
 </style>

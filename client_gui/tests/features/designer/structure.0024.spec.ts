@@ -62,6 +62,7 @@ describe('features/designer structure (0024 T0005)', () => {
       'features/designer/fileExplorer/fileExplorerModel.ts',
       'features/designer/fileExplorer/useFlowFileExplorer.ts',
       'features/designer/index.ts',
+      'features/designer/shared/ExplorerIcon.vue',
       'features/designer/shared/ExplorerRowFrame.vue',
       'features/designer/shared/TreeCaret.vue',
     ].sort())

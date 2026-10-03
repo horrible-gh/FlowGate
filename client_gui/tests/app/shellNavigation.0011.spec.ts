@@ -58,7 +58,7 @@ describe('v0.2 Sidebar navigation (T0011 §7/§12)', () => {
     expect(items.map((a) => a.find('.gui-nav-sub').text())).toEqual([
       '홈으로 돌아가기',
       '프로젝트 관리',
-      '그룹 · 흐름 설계',
+      '그룹 · 플로우 설계',
       '저장소 관리',
       'AI 목록 · 평가 · 그룹',
       '워크스페이스 설정',
