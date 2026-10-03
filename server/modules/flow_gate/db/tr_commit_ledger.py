@@ -415,6 +415,22 @@ def commit_rows_by_group(group_id: str) -> list[dict[str, Any]]:
     )
 
 
+def group_commit_evidence(group_id: str) -> list[dict[str, Any]]:
+    """Every commit this group's ledger ever recorded, for work-base floor checks.
+
+    flowgate.default.0665 T0004 (NR0003 §6 rule 6): unlike :func:`commit_rows_by_group`
+    this keeps terminal-reopened rows and needs no document join — a recorded group
+    commit is evidence of group work whatever happened to its document afterwards.
+    Ordered by ``id`` (ledger order = commit order, L0007).
+    """
+    return get_store()._fetch_all(
+        "SELECT id, commit_sha, cancel_commit, created_at FROM tr_commit_ledger "
+        "WHERE group_id = ? AND state IN ('live', 'canceled') AND commit_sha IS NOT NULL "
+        "ORDER BY id ASC",
+        [group_id],
+    )
+
+
 # ── cancel-side writes (DB0008 §4.3~§4.5, L0007 §4.3 "행마다 즉시") ─────────────
 
 def is_canceled(row_id: int) -> bool:

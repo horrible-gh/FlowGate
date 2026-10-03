@@ -1255,6 +1255,7 @@ def _apply_conflict_resolution_locked(
                 },
             }
         elif _gs.db_git.session_kind(session) == _gs.db_git.SESSION_KIND_GROUP_UPDATE:
+            update_context = _gs.db_git.session_context(session)
             proc = _gs._run_git(
                 [*_gs._GIT_IDENT, "commit", "-m", "Merge updated base into group"],
                 cwd=root,
@@ -1267,6 +1268,9 @@ def _apply_conflict_resolution_locked(
                 )
             head = _gs._run_git(["rev-parse", "--short", "HEAD"], cwd=root)
             merge_commit = (head.stdout or "").strip() or None
+            recorded = _record_group_update_resolution(
+                group_id, merge_id, root, update_context, cfg,
+            )
             _gs.db_git.close_session(merge_id, "done")
             result = {
                 "ok": True,
@@ -1275,6 +1279,8 @@ def _apply_conflict_resolution_locked(
                     "merge_commit": merge_commit,
                     "pushed": False,
                     "remaining_conflicts": [],
+                    "source_ref": recorded.get("source_ref"),
+                    "source_sha": recorded.get("source_sha"),
                 },
             }
         elif _gs.db_git.session_kind(session) in _gs.db_git.TR_SESSION_KINDS:
@@ -1340,6 +1346,32 @@ def _apply_conflict_resolution_locked(
         )
     assert result is not None
     return result
+
+
+def _record_group_update_resolution(
+    group_id: Optional[str], merge_id: int, root: Path, context: dict, cfg: dict,
+) -> dict:
+    """flowgate.default.0665 T0004: the resolved update advances the scope floor to the
+    source SHA the session pinned when it opened.  A session opened before that pin
+    existed records nothing (the floor stays at the older, over-inclusive value).  A
+    failed record undoes the merge commit and closes the session as aborted, so an
+    update is never reported successful with a mismatched floor."""
+    from modules.flow_gate.services import git_service as _gs
+    from . import scope_base
+    source_sha = context.get("source_sha")
+    if not group_id or not source_sha:
+        return {}
+    project_id = _gs._project_of_group(group_id)
+    try:
+        return scope_base.record_update(
+            project_id, group_id, root, source_ref=context.get("source_ref") or source_sha,
+            source_sha=source_sha, floor_before=context.get("floor_before") or "",
+            path="conflict", merge_id=merge_id, config=cfg,
+        )
+    except Exception:
+        _gs._run_git(["reset", "--hard", "HEAD^1"], cwd=root)
+        _gs.db_git.close_session(merge_id, "aborted")
+        raise
 
 
 def resolve_conflicts(

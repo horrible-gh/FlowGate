@@ -475,8 +475,25 @@
           >
             <option v-for="branch in gitTargetCandidates" :key="branch" :value="branch">{{ branch }}</option>
           </select>
-          <p v-if="gitActionMerges && gitFin.base_branch && gitTargetBranch !== gitFin.base_branch" class="ab-git-retarget" role="status" data-test="finalize-retarget-notice">
-            {{ t('main.git_finalize.retarget_notice', { base: gitFin.base_branch, target: gitTargetBranch }) }}
+          <p v-if="gitActionMerges && gitWorkBase && gitTargetBranch !== gitWorkBase" class="ab-git-retarget" role="status" data-test="finalize-retarget-notice">
+            {{ t('main.git_finalize.retarget_notice', { base: gitWorkBase, target: gitTargetBranch }) }}
+          </p>
+          <!-- 0665 T0004: work-base commits that would flow into a target other
+               than the group's work base, and the merge_only unmerge limit. -->
+          <p v-if="gitActionMerges && gitWorkBase && gitTargetBranch !== gitWorkBase && gitTargetPreview?.incoming_work_base_commits"
+             class="ab-git-retarget" role="alert" data-test="finalize-incoming-commits">
+            {{ t('main.git_finalize.incoming_work_base_commits', { n: gitTargetPreview.incoming_work_base_commits, base: gitWorkBase, target: gitTargetBranch }) }}
+          </p>
+          <p v-if="gitNormalChoice === 'merge_only' && gitTargetUnmergeUnsupported"
+             class="ab-git-retarget" role="alert" data-test="finalize-unmerge-unsupported">
+            {{ t('main.git_finalize.unmerge_unsupported_notice', { target: gitTargetBranch }) }}
+          </p>
+          <label v-if="gitTargetNeedsAck" class="ab-git-target-ack" data-test="finalize-target-ack">
+            <input v-model="gitTargetAck" type="checkbox" />
+            <span>{{ t('main.git_finalize.target_ack') }}</span>
+          </label>
+          <p v-if="gitFin.work_base_sha" class="ab-git-work-base" data-test="finalize-work-base">
+            {{ t('main.git_finalize.work_base_line', { base: gitWorkBase, sha: shortSha(gitFin.work_base_sync_sha || gitFin.work_base_sha) }) }}
           </p>
         </div>
 
@@ -657,6 +674,12 @@ async function onReleaseLeaseClick(): Promise<void> {
 interface GitFinState {
   branch: string | null
   base_branch?: string | null
+  // 0665 T0004: the group's work base is the default merge target.
+  work_base_ref?: string | null
+  default_target?: string | null
+  work_base_sha?: string | null
+  work_base_sync_sha?: string | null
+  work_base_state?: string | null
   finalize_target?: { target_branch?: string | null } | null
   status: string
   default_action: string | null
@@ -680,6 +703,57 @@ const gitArchiveSelected = ref(false)
 const gitTargetBranch = ref('')
 const gitTargetCandidates = ref<string[]>([])
 const gitActionMerges = computed(() => ['merge', 'merge_only'].includes(gitNormalChoice.value))
+// flowgate.default.0665 T0004: a merge target other than the group's work base, or a
+// merge_only the existing unmerge cannot undo, is shown with its consequences and
+// needs an explicit acknowledgement before the approval runs.
+interface GitTargetPreview {
+  target_branch: string
+  work_base_ref: string
+  unmerge_supported: boolean
+  incoming_work_base_commits: number | null
+}
+const gitTargetPreview = ref<GitTargetPreview | null>(null)
+const gitTargetAck = ref(false)
+const gitWorkBase = computed(
+  () => gitFin.value?.default_target || gitFin.value?.work_base_ref || gitFin.value?.base_branch || '',
+)
+const gitTargetUnmergeUnsupported = computed(() => {
+  if (!gitTargetBranch.value) return false
+  if (gitTargetPreview.value && gitTargetPreview.value.target_branch === gitTargetBranch.value) {
+    return !gitTargetPreview.value.unmerge_supported
+  }
+  return !!gitFin.value?.base_branch && gitTargetBranch.value !== gitFin.value.base_branch
+})
+const gitTargetNeedsAck = computed(
+  () =>
+    showGitFinalizeBlock.value &&
+    !gitArchiveSelected.value &&
+    gitActionMerges.value &&
+    !!gitTargetBranch.value &&
+    ((!!gitWorkBase.value && gitTargetBranch.value !== gitWorkBase.value) ||
+      (gitNormalChoice.value === 'merge_only' && gitTargetUnmergeUnsupported.value)),
+)
+function shortSha(sha: string | null | undefined): string {
+  return (sha || '').slice(0, 10)
+}
+async function fetchGitTargetPreview(target: string) {
+  if (!props.groupId || !target) {
+    gitTargetPreview.value = null
+    return
+  }
+  try {
+    const { data } = await getRequest<{ ok: boolean; preview: GitTargetPreview }>(
+      `/api/v1/groups/${props.groupId}/git/finalize-target?target=${encodeURIComponent(target)}`,
+    )
+    if (gitTargetBranch.value === target) gitTargetPreview.value = data.preview
+  } catch {
+    gitTargetPreview.value = null
+  }
+}
+watch([gitTargetBranch, gitNormalChoice], ([target], [prevTarget]) => {
+  gitTargetAck.value = false
+  if (target !== prevTarget) void fetchGitTargetPreview(target as string)
+})
 const isAcDoc = computed(() => (props.docType ?? '').toUpperCase() === 'AC')
 // Show the choice only for an AC doc whose group slot is still actionable —
 // awaiting_choice / waiting with real choices offered. Terminal (merged/pushed),
@@ -732,7 +806,8 @@ async function fetchGitFin() {
   // best-effort enrichment of the finalize UI above, not a precondition for it.
   // A 403/404/500 here must fall back to the pinned/base target instead of
   // wiping out the finalize block this dialog already has.
-  const fallbackTarget = state.finalize_target?.target_branch || state.base_branch || ''
+  const fallbackTarget = state.finalize_target?.target_branch
+    || state.default_target || state.work_base_ref || state.base_branch || ''
   // Keep the fallback as a real option as well as the model value. A native
   // select does not display a value that has no matching option, so leaving
   // candidates empty made the catalog-failure fallback look blank.
@@ -744,9 +819,11 @@ async function fetchGitFin() {
       .filter((branch: any) => (branch.kind === 'local' || branch.kind === 'base') && branch.name !== state.branch)
       .map((branch: any) => branch.name)
     // T0016 §2.2: an already-pinned open attempt always wins (never silently
-    // retargeted); otherwise prefer the project's persisted integration branch
-    // over resetting to base every time this dialog opens.
+    // retargeted). 0665 T0004: then the GROUP's work base -- the server's own
+    // default -- and only then the project's remembered integration branch.
     const defaultTarget = state.finalize_target?.target_branch
+      || state.default_target
+      || state.work_base_ref
       || catalog.data.default_merge_target
       || state.base_branch
       || catalog.data.base_branch
@@ -1180,6 +1257,12 @@ function onApproveClick() {
 
 async function doApprove() {
   if (!canApprove.value) return
+  if (gitTargetNeedsAck.value && !gitTargetAck.value) {
+    // 0665 T0004: never run a risky merge target without the explicit check.
+    showToast(t('main.git_finalize.target_ack_required'), 'warning')
+    showApproveConfirm.value = true
+    return
+  }
   approving.value = true
   const generation = ++approveGeneration
   let sentGitAction = false
@@ -1842,6 +1925,18 @@ onBeforeUnmount(() => {
 }
 .ab-git-target select {
   width: 100%;
+}
+.ab-git-target-ack {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: .72rem;
+}
+.ab-git-work-base {
+  margin: 0;
+  font-size: .7rem;
+  color: var(--text-muted, #6b7280);
+  font-family: var(--font-mono, monospace);
 }
 .ab-git-retarget {
   margin: 0;

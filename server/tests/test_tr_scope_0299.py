@@ -390,6 +390,20 @@ def _git(repo: Path, *args: str) -> str:
     return proc.stdout
 
 
+def _pin_recorded_floor(monkeypatch, repo: Path, floor_ref: str = "main") -> None:
+    """0665 T0004: collect_scope_changes measures from the group's RECORDED floor."""
+    from modules.flow_gate.services import git_service
+    from modules.flow_gate.services.git import scope_base
+
+    floor = _git(repo, "rev-parse", floor_ref).strip()
+    monkeypatch.setattr(git_service.db_git, "get_state", lambda gid: {
+        "branch": "work", "work_base_sha": floor, "work_base_state": "verified",
+    })
+    monkeypatch.setattr(git_service.db_git, "get_config", lambda pid: {"enabled": 1, "base_branch": "main"})
+    monkeypatch.setattr(git_service, "resolve_group_work_base_ref", lambda *a, **k: "main")
+    monkeypatch.setattr(scope_base.db_tr_ledger, "group_commit_evidence", lambda gid: [])
+
+
 @pytest.fixture()
 def work_repo(tmp_path: Path) -> Path:
     if shutil.which("git") is None:
@@ -427,8 +441,7 @@ def test_collect_scope_changes_unions_every_source(work_repo, monkeypatch):
         git_service, "effective_src_root_ex",
         lambda project_id, group_id: (work_repo, git_service.SRC_ROOT_WORKTREE),
     )
-    monkeypatch.setattr(git_service.db_git, "get_state", lambda gid: {"branch": "work"})
-    monkeypatch.setattr(git_service.db_git, "get_config", lambda pid: {"base_branch": "main"})
+    _pin_recorded_floor(monkeypatch, work_repo)
 
     result = git_service.collect_scope_changes("p", "g")
     assert result["available"] is True
@@ -884,8 +897,7 @@ def test_collect_scope_changes_entries_carry_status_and_rename_old_path(work_rep
         git_service, "effective_src_root_ex",
         lambda project_id, group_id: (work_repo, git_service.SRC_ROOT_WORKTREE),
     )
-    monkeypatch.setattr(git_service.db_git, "get_state", lambda gid: {"branch": "work"})
-    monkeypatch.setattr(git_service.db_git, "get_config", lambda pid: {"base_branch": "main"})
+    _pin_recorded_floor(monkeypatch, work_repo)
 
     result = git_service.collect_scope_changes("p", "g")
     by_path = {entry["path"]: entry for entry in result["entries"]}

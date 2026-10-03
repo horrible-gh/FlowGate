@@ -521,11 +521,19 @@ from .git.base_slot import (
 
 from .git.group_work_base import (
     apply_group_work_base_ref,
+    default_work_base_ref_for_new_group,
     group_work_base_locked,
     list_group_work_base_options,
     locked_group_ids,
     resolve_group_work_base_ref,
     validate_group_work_base_ref,
+)
+from .git.scope_base import (
+    backfill_project as backfill_group_work_base,
+    classify_group as classify_group_work_base,
+    confirm_work_base as confirm_group_work_base,
+    describe as describe_group_work_base,
+    resolve_scope_floor,
 )
 
 
@@ -1153,11 +1161,16 @@ def read_group_tree(project_id: str, group_id: str) -> dict:
 
 
 def _group_diff_context(project_id: str, group_id: str) -> tuple[str, str, str, Path, str]:
-    """(base_branch, branch, commit, worktree_path, merge_base) for group-vs-base diffs.
+    """(base_branch, branch, commit, worktree_path, scope_floor) for group diffs.
 
     Shared by the changes list and the per-file diff reader (0325 TR0007 rev1) so both
-    compare against the SAME merge-base — otherwise the summary and the diff a reviewer
+    compare against the SAME floor — otherwise the summary and the diff a reviewer
     opens from it could disagree about what this group changed.
+
+    flowgate.default.0665 T0004 (W2): the floor is the group's RECORDED work-base
+    commit (:func:`resolve_scope_floor`), not ``merge-base(<project base>, HEAD)`` --
+    a group forked from another branch otherwise lists that branch's whole history
+    as its own change.  An unverified/diverged floor is a 409, never a guess.
     """
     base_root, branch, commit = resolve_group_ref(project_id, group_id)
     cfg = db_git.get_config(project_id) or {}
@@ -1170,21 +1183,15 @@ def _group_diff_context(project_id: str, group_id: str) -> tuple[str, str, str, 
         raise GitServiceError(409, "invalid_state", "group worktree is not available")
 
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-    merge_proc = _run_git(
-        ["merge-base", f"refs/heads/{base_branch}", commit],
-        cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC,
-    )
-    merge_base = (merge_proc.stdout or "").strip()
-    if merge_proc.returncode != 0 or not merge_base:
-        raise GitServiceError(
-            500, "git_error", _one_line_subject(merge_proc.stderr) or "merge-base failed"
-        )
-    return base_branch, branch, commit, wt_path, merge_base
+    floor = resolve_scope_floor(project_id, group_id, base_root, state=state, config=cfg, head=commit)
+    return base_branch, branch, commit, wt_path, floor["floor_sha"]
 
 
 def read_group_changes(project_id: str, group_id: str) -> dict:
-    """Tracked paths changed from the group's base commit through its worktree."""
+    """Tracked paths changed from the group's recorded floor through its worktree."""
     base_branch, branch, commit, wt_path, merge_base = _group_diff_context(project_id, group_id)
+    work_base_ref = resolve_group_work_base_ref(project_id, group_id) or base_branch
+    work_base = describe_group_work_base(db_git.get_state(group_id))
 
     diff_proc = _run_git(
         ["diff", "--name-status", "--no-renames", "-z", merge_base, "--"],
@@ -1241,6 +1248,12 @@ def read_group_changes(project_id: str, group_id: str) -> dict:
         # 0325 TR0007 rev1: the changes viewer titles itself "<branch> ↔ <base>", and
         # the base branch is a project setting the client had no other way to read.
         "base_branch": base_branch, "changes": changes,
+        # 0665 T0004: what the list was actually measured against — the group's work
+        # base name and the exact recorded floor commit.
+        "work_base_ref": work_base_ref, "scope_base_sha": merge_base,
+        "work_base_sha": work_base.get("work_base_sha"),
+        "work_base_sync_sha": work_base.get("work_base_sync_sha"),
+        "work_base_state": work_base.get("work_base_state"),
         # 0382 proposal 3: the list may be collapsed but the count is always visible — nothing is pretended away.
         "tool_artifacts": sorted(set(tool_artifacts)),
     }}
@@ -1280,6 +1293,7 @@ def collect_scope_changes(project_id: str, group_id: str) -> dict:
     result: dict = {
         "available": False, "reason": SRC_ROOT_ERROR,
         "worktree": None, "branch": None, "paths": [], "entries": [],
+        "work_base_ref": None, "scope_base_sha": None, "work_base_error": None,
     }
     wt_path, reason = effective_src_root_ex(project_id, group_id)
     result["reason"] = reason
@@ -1290,15 +1304,23 @@ def collect_scope_changes(project_id: str, group_id: str) -> dict:
         state = db_git.get_state(group_id) or {}
         result["branch"] = (state.get("branch") or "").strip() or None
         cfg = db_git.get_config(project_id) or {}
-        base_branch = (cfg.get("base_branch") or "main").strip() or "main"
 
         entries_by_path: dict[str, dict] = {}
-        merge_proc = _run_git(
-            ["merge-base", f"refs/heads/{base_branch}", "HEAD"],
-            cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
-        )
-        merge_base = (merge_proc.stdout or "").strip()
-        if merge_proc.returncode == 0 and merge_base:
+        # flowgate.default.0665 T0004 (W1): the floor is the group's RECORDED
+        # work-base commit (fork SHA, or the last update's absorbed source SHA).
+        # The project base_branch says nothing about where THIS group started, and
+        # a work-base branch NAME's current tip says nothing about what an update
+        # absorbed.  An unverified/diverged floor is reported, never substituted.
+        try:
+            floor = resolve_scope_floor(project_id, group_id, wt_path, state=state, config=cfg)
+        except GitServiceError as exc:
+            result["reason"] = exc.code
+            result["work_base_error"] = {"code": exc.code, "details": exc.details}
+            return result
+        merge_base = floor["floor_sha"]
+        result["work_base_ref"] = floor["work_base_ref"]
+        result["scope_base_sha"] = merge_base
+        if merge_base:
             diff_proc = _run_git(
                 ["diff", "--name-status", "-M", "-z", merge_base, "--"],
                 cwd=wt_path, timeout=GIT_READ_TIMEOUT_SEC,
@@ -1589,9 +1611,9 @@ def read_base_file_diff(project_id: str, path: str) -> dict:
 def read_group_file_diff(
     project_id: str, group_id: str, path: str, ref: Optional[str] = None
 ) -> dict:
-    """old (merge-base blob) / new (group worktree, else branch commit) content.
+    """old (scope-floor blob) / new (group worktree, else branch commit) content.
 
-    The old side is the merge base with the configured base branch — the same
+    The old side is the group's recorded scope floor (0665 T0004) — the same
     reference ``read_group_changes`` diffs against, so the tree's changed markers and
     this view can never disagree. The new side prefers the live worktree file (which
     is what ``read_group_changes`` measures, so uncommitted work shows up) and falls
@@ -1613,15 +1635,8 @@ def read_group_file_diff(
 
     cfg = db_git.get_config(project_id) or {}
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-    merge_proc = _run_git(
-        ["merge-base", f"refs/heads/{base_branch}", commit],
-        cwd=base_root, timeout=GIT_READ_TIMEOUT_SEC,
-    )
-    merge_base = (merge_proc.stdout or "").strip()
-    if merge_proc.returncode != 0 or not merge_base:
-        raise GitServiceError(
-            500, "git_error", _one_line_subject(merge_proc.stderr) or "merge-base failed"
-        )
+    floor = resolve_scope_floor(project_id, group_id, base_root, config=cfg, head=commit)
+    merge_base = floor["floor_sha"]
 
     old = _diff_side_from_commit(base_root, merge_base, normalized)
     wt_path = _group_worktree_path(project_id, group_id, branch)
@@ -1630,6 +1645,7 @@ def read_group_file_diff(
         new = _diff_side_from_commit(base_root, commit, normalized)
     return {"ok": True, "data": {
         "group_id": group_id, "branch": branch, "base_branch": base_branch,
+        "work_base_ref": floor["work_base_ref"], "scope_base_sha": merge_base,
         "commit": commit, "merge_base": merge_base, "path": path,
         "status": _diff_status(old, new, path), "old": old, "new": new,
     }}

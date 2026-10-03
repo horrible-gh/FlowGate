@@ -708,6 +708,12 @@ def create_workflow_root(
     if errors:
         return {"status": "error", "errors": errors}
 
+    if stored_work_base_ref is None and not group_id:
+        # 0665 T0004: a new Git group pins the project base AS OF NOW instead of
+        # following whatever the project base becomes later.
+        from .services import git_service
+        stored_work_base_ref = git_service.default_work_base_ref_for_new_group(project)
+
     # Group handling logic
     final_group_id = None
 
@@ -2263,6 +2269,11 @@ def create_group(
                 "message": exc.message,
                 "details": exc.details,
             }
+
+    if stored_work_base_ref is None:
+        # 0665 T0004: pin the creation-time project base (Git projects only).
+        from .services import git_service
+        stored_work_base_ref = git_service.default_work_base_ref_for_new_group(project_id)
 
     group_code = numbering_service.reserve_group(project_id, module)
     group_id = f"{project_id}.{module}.{group_code}"

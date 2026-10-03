@@ -792,6 +792,7 @@ export default {
       git_behind_tip: '基準ブランチより {n} コミット遅れ',
       git_behind_unmeasured: 'リモート基準を測定するには更新を実行してください。',
       git_update: '更新',
+      work_base_unverified: '作業基準 commit 未確認 — 管理者が確認するまで変更範囲と最終承認はブロックされます',
       git_updating: '更新中…',
       git_updated: 'グループを最新の base から更新しました。',
       git_no_change: 'すでに最新です。',
@@ -3308,6 +3309,12 @@ export default {
       // git_branch_manager 側)。
       merge_target_label: 'マージ先ブランチ',
       retarget_notice: '基準ブランチ {base} → 新しいマージ先 {target}',
+      // flowgate.default.0665 T0004 — グループの work base と異なる対象 / unmerge 制限
+      incoming_work_base_commits: '{target} にまだない {base} のコミット {n} 件がこのグループの変更と一緒に入ります。',
+      unmerge_unsupported_notice: '{target} はプロジェクトの基本ブランチではないため、このマージ(merge_only)は後で unmerge で取り消せません。取り消すには対象ブランチで revert するか Time Machine で再オープンします。',
+      target_ack: '上記を確認し、この対象へマージします。',
+      target_ack_required: 'マージ先の警告を確認(チェック)してから承認してください。',
+      work_base_line: '作業基準: {base} ({sha})',
       commit_message_label: 'コミットメッセージ',
       commit_message_hint: '残りの変更を取り込むコミットの件名として使われます。必要に応じて編集してください。',
       commit_message_restore: '提案を復元',

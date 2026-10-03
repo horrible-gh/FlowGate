@@ -560,6 +560,11 @@ def _finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         "branch": branch,
         "base_branch": base_branch,
         "work_base_ref": work_base_ref,
+        # 0665 T0004: an omitted finalize target means the work base.  The UI shows
+        # the recorded floor and warns before a non-base merge_only it cannot unmerge.
+        "default_target": work_base_ref,
+        "default_target_unmerge_supported": work_base_ref == base_branch,
+        **_work_base_view(group_id, state),
         "status": display_status,
         "default_action": cfg.get("default_finalize_action") or "wait",
         "choices": list(FINALIZE_MAIN_CHOICES if actionable else ()),
@@ -599,6 +604,18 @@ def _finalize_state(group_id: str, *, preview_ac: bool = False) -> dict:
         # the persisted status is still 'none'. Advisory for the FE.
         "preview": preview_ac,
     }}
+
+
+def _work_base_view(group_id: str, state: dict) -> dict:
+    from modules.flow_gate.services import git_service as _gs
+    try:
+        view = _gs.describe_group_work_base(state)
+    except Exception:
+        _log.warning("work base view failed for %s", group_id, exc_info=True)
+        return {}
+    return {key: view.get(key) for key in (
+        "work_base_sha", "work_base_sync_sha", "work_base_state", "work_base_reason",
+    )}
 
 
 def _finalize_context(group_id: str) -> tuple[dict, dict, str, Path, Path]:
@@ -710,6 +727,16 @@ def _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_pat
             raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
 
     source_ref = _gs._worktree_start_point(base_root, work_base_ref)
+    # flowgate.default.0665 T0004: an unverified floor is confirmed by an
+    # administrator first, and the source must still contain the current floor
+    # (a reset/rewritten work base would move the floor backwards).  The merge
+    # then uses the exact SHA that gets recorded, not the moving ref name.
+    from . import scope_base
+    pinned = scope_base.guard_update_source(
+        project_id, group_id, wt_path, source_ref=source_ref, config=cfg,
+    )
+    source_sha = pinned["source_sha"]
+    floor_before = pinned["floor_sha"]
     _absorb_worker_edits(
         wt_path, f"chore: preserve {group_id} work before base update",
         _author_env_from_cfg(cfg),
@@ -717,7 +744,7 @@ def _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_pat
     before = _gs._run_git(["rev-parse", "HEAD"], cwd=wt_path)
     proc = _gs._run_git(
         [*_gs._GIT_IDENT,
-         "merge", "--no-ff", source_ref, "-m",
+         "merge", "--no-ff", source_sha, "-m",
          f"Merge base '{work_base_ref}' into '{state['branch']}'"],
         cwd=wt_path, author_env=_author_env_from_cfg(cfg),
     )
@@ -742,21 +769,39 @@ def _update_from_base_locked(group_id, cfg, state, project_id, base_root, wt_pat
             merge_id = _gs.db_git.create_session(
                 group_id, conflicts, kind=_gs.db_git.SESSION_KIND_GROUP_UPDATE,
                 context={"prev_status": state.get("status") or "none",
-                         "branch": state.get("branch")},
+                         "branch": state.get("branch"),
+                         # 0665 T0004: recorded only when the resolution commits.
+                         "source_ref": source_ref, "source_sha": source_sha,
+                         "floor_before": floor_before},
             )
             # 0608 T0005: line-ending-only conflicts need no resolver.
             _gs.apply_eol_separation(merge_id, wt_path)
             return {"ok": True, "result": {
                 "status": "conflict", "merge_id": merge_id,
                 "conflict_files": conflicts,
+                "source_ref": source_ref, "source_sha": source_sha,
             }}
         _gs._run_git(["merge", "--abort"], cwd=wt_path)
         raise GitServiceError(500, "git_error", "Git command failed", diagnostic=_gs._last_line(proc.stderr))
     after = _gs._run_git(["rev-parse", "HEAD"], cwd=wt_path)
-    changed = (before.stdout or "").strip() != (after.stdout or "").strip()
+    before_sha = (before.stdout or "").strip()
+    changed = before_sha != (after.stdout or "").strip()
+    try:
+        recorded = scope_base.record_update(
+            project_id, group_id, wt_path, source_ref=source_ref, source_sha=source_sha,
+            floor_before=floor_before, path="clean" if changed else "no_change", config=cfg,
+        )
+    except Exception:
+        # An update is never reported successful with a floor that does not match
+        # it: undo this merge (the preserve commit above stays) and fail.
+        if changed and before_sha:
+            _gs._run_git(["reset", "--hard", before_sha], cwd=wt_path)
+        raise
     return {"ok": True, "result": {
         "status": "updated" if changed else "no_change",
         "branch": state.get("branch"),
+        "source_ref": source_ref, "source_sha": source_sha,
+        "result_head": recorded["result_head"],
     }}
 
 
@@ -765,7 +810,7 @@ def group_update_untracked_recover(
 ) -> dict:
     """Recover only paths that currently block base->group update in the group worktree."""
     from modules.flow_gate.services import git_service as _gs
-    cfg, _state, project_id, _base_root, wt_path = _gs._finalize_context(group_id)
+    cfg, _state, project_id, base_root, wt_path = _gs._finalize_context(group_id)
     cleaned: list[str] = []
     for raw in files or []:
         path = str(raw or "").strip().replace("\\", "/")
@@ -785,8 +830,15 @@ def group_update_untracked_recover(
     try:
         if _gs.db_git.get_open_session_by_group(group_id) is not None:
             raise GitServiceError(409, "invalid_state", "resolve or abort the current group update first")
+        # flowgate.default.0665 T0004 (W6): classify blockers against the SAME source
+        # the real update merges -- the group's work base start point -- not the
+        # project base.
         base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-        probe = _gs._run_git(["merge", "--no-commit", "--no-ff", base_branch], cwd=wt_path)
+        work_base_ref = (
+            _gs.resolve_group_work_base_ref(project_id, group_id, config=cfg) or base_branch
+        )
+        probe_ref = _gs._worktree_start_point(base_root, work_base_ref)
+        probe = _gs._run_git(["merge", "--no-commit", "--no-ff", probe_ref], cwd=wt_path)
         untracked_blockers = _untracked_merge_blockers(probe.stderr) or []
         tracked_blockers = _tracked_merge_blockers(probe.stderr) or []
         blockers = tracked_blockers if action == "revert" else untracked_blockers
@@ -1120,6 +1172,8 @@ def finalize(
                     "action": action, "status": "merged", "merge_commit": merge_commit,
                     "pushed": wants_push, "merge_id": None, "conflict_files": [],
                     "target_branch": target_branch,
+                    # 0665 T0004: an unattended non-base merge cannot be unmerged.
+                    "unmerge_supported": attempt.unmerge_supported if attempt is not None else True,
                     **_artifact_payload(excluded_artifacts, staged_new_file_count),
                 },
             }
@@ -1517,6 +1571,7 @@ def _finalize_merge_attempt(
                 session_context.get(approval_intent.INTENT_KEY) or {}
             ).get("approval_intent_id"),
             "target_branch": target_branch,
+            "unmerge_supported": attempt.unmerge_supported,
             **_artifact_payload(excluded_artifacts, staged_new_file_count),
         },
     }
@@ -1709,10 +1764,17 @@ def unmerge(group_id: str, merge_commit: str) -> dict:
     # touches base (no attempt record / no target → legacy base merge, unchanged).
     if not merge_target.merged_on_project_base(state):
         done = merge_target.completed_target_of_state(state)
+        details = done.public() if done is not None else {}
+        # 0665 T0004: no rewind exists for a non-base target; name the ones that do.
+        details["recovery_options"] = [
+            "revert_merge_on_target", "timemachine_reopen", "manual_git",
+        ]
         raise GitServiceError(
             409, "unmerge_unsupported_target",
-            "unmerge is only available for merges into the project base branch",
-            details=done.public() if done is not None else None,
+            "unmerge is only available for merges into the project base branch; "
+            "revert the merge commit on the target branch, reopen with Time Machine, "
+            "or recover it manually",
+            details=details,
         )
 
     base_branch = (cfg.get("base_branch") or "main").strip() or "main"

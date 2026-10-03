@@ -915,6 +915,32 @@ def _exec_resolve_base_dirty(body: dict, grant: dict) -> tuple[dict, Optional[in
         db_git.release_lock(project_id, holder)
 
 
+def _default_target_ref(grant: dict, root: Path) -> str:
+    """flowgate.default.0665 T0004 (NR0003 §5.5/§7.6): an omitted ``target_ref``
+    compares against the token group's work base -- the same start point
+    update-from-base and new worktrees use -- not a hard-coded ``origin/main``.
+    A project-level token keeps the project base meaning.  ``origin/main`` remains
+    only as the last resort for a non-Git context."""
+    from modules.flow_gate.services import git_service
+    try:
+        project_id = grant.get("project")
+        group_id = grant.get("group_id")
+        ref = None
+        if project_id and group_id:
+            ref = git_service.resolve_group_work_base_ref(project_id, group_id)
+        if not ref and project_id:
+            cfg = git_service.db_git.get_config(project_id)
+            if cfg and cfg.get("enabled"):
+                ref = (cfg.get("base_branch") or "main").strip() or "main"
+        if ref:
+            candidate = git_service._worktree_start_point(root, ref)
+            if _safe_target_ref(candidate):
+                return candidate
+    except Exception:
+        logging.getLogger(__name__).warning("default target_ref resolution failed", exc_info=True)
+    return "origin/main"
+
+
 def _merge_base(root: Path, target_ref: str) -> str:
     from modules.flow_gate.services import git_service
 
@@ -2019,6 +2045,8 @@ def handle(operation: str, raw_token: Optional[str], body: Optional[dict]) -> tu
             root = _resolve_src_root(grant, op)
         if root is None:
             raise _OpError(503)
+        if op in {"diff", "log", "merge_preview"} and "target_ref" not in body:
+            body = {**body, "target_ref": _default_target_ref(grant, root)}
 
         guarded_group_mutation = (
             op in {"write", "patch", "remove"} and bool(grant.get("group_id"))

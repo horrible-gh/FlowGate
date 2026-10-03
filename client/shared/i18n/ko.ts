@@ -792,6 +792,7 @@ export default {
       git_behind_tip: '기준 브랜치보다 {n}커밋 뒤처짐',
       git_behind_unmeasured: '원격 기준 최신 상태를 측정하려면 최신화를 실행하세요.',
       git_update: '최신화',
+      work_base_unverified: '작업 기준 commit 미확인 — 관리자 확인 전까지 변경 범위·최종 승인이 차단됩니다',
       git_updating: '최신화 중…',
       git_updated: '그룹을 최신 base로 갱신했습니다.',
       git_no_change: '이미 최신 상태입니다.',
@@ -3314,6 +3315,12 @@ export default {
       // 관리는 git_branch_manager 쪽 몫).
       merge_target_label: '머지 대상 브랜치',
       retarget_notice: '기준 브랜치 {base} → 새 머지 대상 {target}',
+      // flowgate.default.0665 T0004 — 그룹 work base와 다른 대상, unmerge 제한 경고
+      incoming_work_base_commits: '{target}에 없는 {base} 커밋 {n}개가 이 그룹 변경과 함께 들어갑니다.',
+      unmerge_unsupported_notice: '{target}은(는) 프로젝트 기본 브랜치가 아니어서 이 병합(merge_only)은 나중에 되돌리기(unmerge)로 취소할 수 없습니다. 취소가 필요하면 대상 브랜치에서 revert하거나 Time Machine 재개방을 써야 합니다.',
+      target_ack: '위 내용을 확인했고 이 대상으로 진행합니다.',
+      target_ack_required: '머지 대상 경고를 확인(체크)해야 승인할 수 있습니다.',
+      work_base_line: '작업 기준: {base} ({sha})',
       commit_message_label: '커밋 메시지',
       commit_message_hint: '남은 변경을 흡수하는 커밋의 제목으로 쓰입니다. 필요하면 수정하세요.',
       commit_message_restore: '제안 문구 복원',

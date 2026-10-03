@@ -896,20 +896,33 @@ def _archive_group_git(
                     message="could not release the temporary stash entry",
                 )
 
+            # ``base_branch`` stays the project base: restore/purge use it to locate
+            # the shared base checkout.  The metadata base is the group's recorded
+            # scope floor (0665 T0004, W5) -- measuring against the project base
+            # counted a non-base work branch's whole history as this group's commits.
             base_branch = (cfg.get("base_branch") or "main").strip() or "main"
-            base_proc = git_service._run_git(
-                ["merge-base", base_branch, branch], cwd=base_root
-            )
-            base_sha = (
-                (base_proc.stdout or "").strip() if base_proc.returncode == 0 else None
-            )
-            commits_proc = git_service._run_git(
-                ["rev-list", "--count", f"{base_branch}..{branch}"], cwd=base_root
-            )
+            work_base_ref = None
+            work_base_error = None
+            base_sha = None
+            commit_count = None
             try:
-                commit_count = int((commits_proc.stdout or "0").strip())
-            except ValueError:
-                commit_count = 0
+                floor = git_service.resolve_scope_floor(
+                    project_id, group_id, base_root, state=state, config=cfg,
+                    head=f"refs/heads/{branch}",
+                )
+                base_sha = floor["floor_sha"]
+                work_base_ref = floor["work_base_ref"]
+            except git_service.GitServiceError as exc:
+                work_base_ref = git_service.resolve_group_work_base_ref(project_id, group_id)
+                work_base_error = exc.code
+            if base_sha:
+                commits_proc = git_service._run_git(
+                    ["rev-list", "--count", f"{base_sha}..refs/heads/{branch}"], cwd=base_root
+                )
+                try:
+                    commit_count = int((commits_proc.stdout or "0").strip())
+                except ValueError:
+                    commit_count = None
 
             record = {
                 "status": "archiving",
@@ -918,6 +931,8 @@ def _archive_group_git(
                 "branch": branch,
                 "git_status": state.get("status") or "awaiting_choice",
                 "base_branch": base_branch,
+                "work_base_ref": work_base_ref,
+                "work_base_error": work_base_error,
                 "reason": re.sub(r"\s+", " ", reason or "").strip()[:500] or None,
                 "actor_user_id": actor_user_id,
                 "archived_at": now_iso(),
