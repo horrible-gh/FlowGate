@@ -2087,6 +2087,7 @@ export default {
         expected: '期待結果',
         check_points: '確認観点',
         automation_ref: '自動化参照',
+        test_assets: '試験資産',
         actual: '実際の結果',
         evidence: 'Evidence',
         defect_ref: '欠陥 / 参照',

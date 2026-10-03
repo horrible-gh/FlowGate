@@ -2089,6 +2089,7 @@ export default {
         expected: '기대 결과',
         check_points: '확인 관점',
         automation_ref: '자동화 참조',
+        test_assets: '시험 자산',
         actual: '실제 결과',
         evidence: 'Evidence',
         defect_ref: '결함 / 참조',

@@ -309,8 +309,13 @@ class _Env:
 
 @pytest.fixture
 def env(monkeypatch, tmp_path, migrated_sqlite_db):
+    monkeypatch.setenv("USERNAME", "flowgate-test")
+    monkeypatch.setenv("ALLOWED_ORIGIN", "http://127.0.0.1")
+    monkeypatch.setenv("CONTEXT", "test")
+    monkeypatch.setenv("DB_TYPE", "sqlite")
     from modules.flow_gate.db import ai_invoke_paused_chains as db_paused
     from modules.flow_gate.db import test_runs as db_test_runs
+    from modules.flow_gate.db import events as db_events
     from modules.flow_gate.db import tokens as db_tokens
     from modules.flow_gate.db import workflow_sequences as db_wfseq
     from modules.flow_gate.services import ai_invoke_service, failure_origin_review_service
@@ -320,6 +325,7 @@ def env(monkeypatch, tmp_path, migrated_sqlite_db):
 
     store = _Store(migrated_sqlite_db("spec_0549.db"))
     monkeypatch.setattr(db_test_runs, "get_store", lambda: store)
+    monkeypatch.setattr(db_events, "insert_event", lambda *args, **kwargs: 1)
     e = _Env()
     e.docs[TS_ID] = {
         "doc_id": TS_ID, "project_id": "flowgate", "branch": "main", "module": "default",
@@ -481,7 +487,7 @@ def test_junit_and_payload_share_one_submission(env):
     assert {u["source_name"] for u in meta["unmapped"]} == {
         "tests.test_badge::test_TC_9_badge", "tests.test_misc::test_unrelated",
     }
-    assert run["overall"] == "PASS"
+    assert run["overall"] == "BLOCKED"  # unmapped JUnit rows cannot open the gate
 
 
 @pytest.mark.parametrize(
@@ -599,6 +605,29 @@ def test_ts_approval_requires_a_valid_specification(env):
         pipeline_service._require_test_gate_for_approval(ts)
     env.contents[TS_ID] = LEGACY_TS  # legacy TS: no new rule
     pipeline_service._require_test_gate_for_approval(ts)
+
+
+def test_tr_approval_does_not_require_test_pass_or_snapshot(monkeypatch):
+    from modules.flow_gate.workflow import pipeline_service as pipeline
+    from modules.flow_gate.services import test_run_service as runner
+    from modules.flow_gate.services import workflow_rework_service
+
+    doc = {"doc_id": "flowgate.default.0632.0012-TR", "type_code": "TR",
+           "group_id": GROUP, "project_id": "flowgate", "id": 52,
+           "doc_review_status": "pending_review", "revision_no": 1, "meta": "{}"}
+    monkeypatch.setattr(pipeline.db_docs, "get_by_id", lambda _id: doc)
+    monkeypatch.setattr(pipeline.db_docs, "update", lambda _id, values: {**doc, **values})
+    monkeypatch.setattr(pipeline, "_require_document_body_for_approval", lambda *a: None)
+    monkeypatch.setattr(pipeline, "log_state_changed", lambda **kw: None)
+    monkeypatch.setattr(workflow_rework_service, "clear_return_point_if_complete", lambda *a: None)
+    monkeypatch.setattr(runner, "tsr_gate_state", lambda *a: pytest.fail("TR read TSR gate"))
+
+    result = pipeline.transition_document_review(
+        doc_id=doc["doc_id"], action="approve", actor_user_id="u",
+        user_permissions={"document.approve"},
+    )
+    assert result["doc_review_status"] == "approved"
+    assert "test_basis" not in result and "spec_initialization" not in result
 
 
 def _chain(env, *, target_seq, tsr_seq=11, next_incomplete=None, row=True, row_target="same"):
@@ -980,3 +1009,240 @@ def test_work_plan_keeps_ts_tsr_two_document_set_without_tsc():
     flat = json.dumps({k: sorted(v) if isinstance(v, (set, frozenset)) else v
                        for k, v in vars(constants).items() if k.isupper()}, default=str)
     assert "TSC" not in flat
+
+# ── 0632 T#1: basis and contract-2 execution ──────────────────────────────────
+
+def _basis_for_test(tag="a"):
+    return {"basis_id": tag * 64, "basis_version": 1, "ts_document_id": TS_ID,
+            "ts_revision_no": 2,
+            "source": {"kind": "compat_worktree", "git_revision": tag * 40, "tree": tag * 40},
+            "test_assets": {"manifest_hash": tag * 64, "asset_count": 1},
+            "execution_profile": {"runner_generation": 1}, "manifest": []}
+
+
+def test_0632_locator_is_a_restricted_pytest_locator():
+    from modules.flow_gate.services import test_basis_service as basis
+    assert basis.locator({"execution_mode": "automated",
+                          "automation_ref": "tests/test_x.py::test_tc_1"})["capability"] == "case_selectable"
+    assert basis.locator({"execution_mode": "automated",
+                          "automation_ref": "tests/test_x.py"})["capability"] == "suite_only"
+    for raw in ("", "python -m pytest tests/test_x.py", "tests/test_x.py;rm -rf /",
+                "tests/../test_x.py", "tests/test_x.py$(id)"):
+        assert basis.locator({"execution_mode": "automated", "automation_ref": raw})[
+            "capability"] == "unbound"
+    assert basis.locator({"execution_mode": "manual", "automation_ref": "tests/test_x.py"})[
+        "capability"] == "manual"
+
+
+def test_0632_approval_initialization_and_exact_basis_carry(env, monkeypatch):
+    from modules.flow_gate.services import test_basis_service as basis
+    current = _basis_for_test()
+    env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], current)
+    monkeypatch.setattr(basis, "resolve", lambda doc, cases: current)
+    initialized = basis.initialize(env.docs[TS_ID], spec.parse_spec(SPEC), current)
+    initial = env.db_test_runs.get_run(initialized["run_id"])
+    assert initial["overall"] == "NOT_RUN"
+    assert {c["case_status"] for c in env.db_test_runs.list_cases(initial["run_id"])} == {"NOT_RUN"}
+    assert initialized["tsr_doc_id"] == TSR_ID
+    _submit(env, [{"case_id": "TC-001", "status": "PASS"}])
+    second, _ = _submit(env, [{"case_id": "TC-002", "status": "PASS"}])
+    assert second["run"]["overall"] == "PASS"
+    assert env.docs[TSR_ID]["revision_no"] >= 2
+    next_basis = _basis_for_test("b")
+    env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], next_basis)
+    monkeypatch.setattr(basis, "resolve", lambda doc, cases: next_basis)
+    third, _ = _submit(env, [{"case_id": "TC-002", "status": "PASS"}])
+    rows = {c["case_no"]: c for c in env.db_test_runs.list_cases(third["run"]["run_id"])}
+    assert rows["TC-001"]["case_status"] == "NOT_RUN"
+    assert third["run"]["overall"] == "NOT_RUN"
+    assert any(r["overall"] == "PASS" for r in env.db_test_runs.list_by_doc(TS_ID))
+
+
+def test_0632_case_and_full_admission_preserve_modes_and_concurrency(env, monkeypatch):
+    from modules.flow_gate.services import test_basis_service as basis
+    from modules.flow_gate.services import spec_execution_service as execution
+    env.contents[TS_ID] = SPEC.replace(
+        "- check_points: 권한 검사 / 응답 코드\n",
+        "- check_points: 권한 검사 / 응답 코드\n- automation_ref: tests/test_x.py::test_tc_1\n",
+    )
+    current = _basis_for_test()
+    env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], current)
+    monkeypatch.setattr(basis, "resolve", lambda doc, cases: current)
+    monkeypatch.setattr(env.svc, "_emit_started", lambda *a, **k: None)
+    with pytest.raises(HTTPException) as exc:
+        execution.admit(TS_ID, case_id="TC-002", runner_id="u", locale="ko")
+    assert exc.value.detail["error"] == "case_not_selectable"
+    run = execution.admit(TS_ID, case_id="TC-001", runner_id="u", locale="ko")
+    assert run["selected_case_ids"] == ["TC-001"]
+    assert env.db_test_runs.get_run(run["run_id"])["contract_version"] == 2
+    with pytest.raises(HTTPException) as exc:
+        execution.admit(TS_ID, case_id=None, runner_id="u", locale="ko")
+    assert exc.value.detail["error"] == "run_in_progress"
+    env.db_test_runs.finish_run(run_id=run["run_id"], status="cancelled")
+    full = execution.admit(TS_ID, case_id=None, runner_id="u", locale="ko")
+    assert full["selected_case_ids"] == ["TC-001"]
+
+
+def test_0632_suite_only_and_unbound_admission(env, monkeypatch):
+    from modules.flow_gate.services import test_basis_service as basis
+    from modules.flow_gate.services import spec_execution_service as execution
+    current = _basis_for_test()
+    env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], current)
+    monkeypatch.setattr(basis, "resolve", lambda doc, cases: current)
+    monkeypatch.setattr(env.svc, "_emit_started", lambda *a, **k: None)
+    env.contents[TS_ID] = SPEC.replace(
+        "- check_points: 권한 검사 / 응답 코드\n",
+        "- check_points: 권한 검사 / 응답 코드\n- automation_ref: tests/test_x.py\n",
+    )
+    with pytest.raises(HTTPException) as exc:
+        execution.admit(TS_ID, case_id="TC-001", runner_id="u", locale="ko")
+    assert exc.value.detail["capability"] == "suite_only"
+    assert execution.admit(TS_ID, case_id=None, runner_id="u", locale="ko")[
+        "selected_case_ids"] == ["TC-001"]
+
+
+def test_0632_existing_worker_executes_a_selected_case(env, monkeypatch, tmp_path):
+    from modules.flow_gate.services import test_basis_service as basis
+    from modules.flow_gate.services import spec_execution_service as execution
+    current = _basis_for_test()
+    env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], current)
+    env.contents[TS_ID] = SPEC.replace(
+        "- check_points: 권한 검사 / 응답 코드\n",
+        "- check_points: 권한 검사 / 응답 코드\n- automation_ref: tests/test_x.py::test_tc_1\n",
+    )
+    monkeypatch.setattr(basis, "resolve", lambda doc, cases: current)
+    monkeypatch.setattr(env.svc, "_emit_started", lambda *a, **k: None)
+    monkeypatch.setattr(execution.ExecutionRootResolver, "prepare",
+                        lambda doc, run, basis: (tmp_path, tmp_path / "scratch"))
+    monkeypatch.setattr(execution.ExistingRunnerAdapter, "run_pytest",
+                        lambda nodeid, root, scratch, active: (
+                            "pass", "<testsuite><testcase name='test_tc_1'/></testsuite>", 0, ""))
+    admitted = execution.admit(TS_ID, case_id="TC-001", runner_id="u", locale="ko")
+    env.svc.execute_run(env.db_test_runs.get_run(admitted["run_id"]))
+    assert env.db_test_runs.get_run(admitted["run_id"])["status"] == "passed"
+    result = env.db_test_runs.latest_spec_result(TS_ID, 2, current["basis_id"])
+    assert result["overall"] == "NOT_RUN"  # manual required TC-002 stays NOT_RUN
+    rows = {row["case_no"]: row for row in env.db_test_runs.list_cases(result["run_id"])}
+    assert rows["TC-001"]["case_status"] == "PASS"
+    assert rows["TC-002"]["case_status"] == "NOT_RUN"
+
+
+def test_0632_basis_change_during_worker_keeps_result_history_only(env, monkeypatch, tmp_path):
+    from modules.flow_gate.services import test_basis_service as basis
+    from modules.flow_gate.services import spec_execution_service as execution
+    first, second = _basis_for_test(), _basis_for_test("b")
+    env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], first)
+    env.contents[TS_ID] = SPEC.replace(
+        "- check_points: 권한 검사 / 응답 코드\n",
+        "- check_points: 권한 검사 / 응답 코드\n- automation_ref: tests/test_x.py::test_tc_1\n",
+    )
+    monkeypatch.setattr(basis, "resolve", lambda doc, cases: basis.current(doc))
+    monkeypatch.setattr(env.svc, "_emit_started", lambda *a, **k: None)
+    monkeypatch.setattr(execution.ExecutionRootResolver, "prepare",
+                        lambda doc, run, basis: (tmp_path, tmp_path / "scratch"))
+    def change_basis(nodeid, root, scratch, active):
+        env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], second)
+        return "pass", "<testsuite><testcase name='test_tc_1'/></testsuite>", 0, ""
+    monkeypatch.setattr(execution.ExistingRunnerAdapter, "run_pytest", change_basis)
+    admitted = execution.admit(TS_ID, case_id="TC-001", runner_id="u", locale="ko")
+    env.svc.execute_run(env.db_test_runs.get_run(admitted["run_id"]))
+    assert env.db_test_runs.get_run(admitted["run_id"])["error"] == "basis_superseded"
+    assert env.db_test_runs.latest_spec_result(TS_ID, 2, second["basis_id"]) is None
+    history = env.db_test_runs.list_by_doc(TS_ID)
+    assert any(json.loads(row.get("result_meta") or "{}").get("stale") for row in history)
+    assert TSR_ID not in env.docs
+
+
+def test_0632_approval_rolls_back_if_skeleton_fails(monkeypatch):
+    from modules.flow_gate.workflow import pipeline_service as pipeline
+    from modules.flow_gate.services import test_basis_service as basis
+    from modules.flow_gate.services import test_run_service as runner
+    from modules.flow_gate.services import workflow_rework_service
+    from modules.flow_gate.db import events as db_events
+    monkeypatch.setattr(db_events, "insert_event", lambda *a, **kw: None)
+    doc = {"doc_id": TS_ID, "type_code": "TS", "group_id": GROUP,
+           "project_id": "flowgate", "doc_review_status": "pending_review",
+           "revision_no": 2, "id": 42, "meta": "{}"}
+    monkeypatch.setattr(pipeline.db_docs, "get_by_id", lambda _id: doc)
+    def update(_id, values):
+        doc.update(values)
+        return doc
+    monkeypatch.setattr(pipeline.db_docs, "update", update)
+    monkeypatch.setattr(pipeline, "_require_document_body_for_approval", lambda *a: None)
+    monkeypatch.setattr(pipeline, "_require_test_gate_for_approval", lambda *a: None)
+    monkeypatch.setattr(pipeline, "log_state_changed", lambda **kw: None)
+    monkeypatch.setattr(workflow_rework_service, "clear_return_point_if_complete", lambda *a: None)
+    monkeypatch.setattr(runner, "_read_doc_content_or_empty", lambda _doc: SPEC)
+    monkeypatch.setattr(basis, "resolve", lambda _doc, _cases: _basis_for_test())
+    @contextmanager
+    def transaction():
+        before = doc.copy()
+        try:
+            yield
+        except Exception:
+            doc.clear()
+            doc.update(before)
+            raise
+    monkeypatch.setattr(pipeline, "get_store", lambda: type("Store", (), {"transaction": staticmethod(transaction)})())
+    monkeypatch.setattr(basis, "initialize", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("skeleton failed")))
+    with pytest.raises(RuntimeError, match="skeleton failed"):
+        pipeline.transition_document_review(
+            doc_id=TS_ID, action="approve", actor_user_id="u",
+            user_permissions={"document.approve"},
+        )
+    assert doc["doc_review_status"] == "pending_review" and doc["meta"] == "{}"
+    monkeypatch.setattr(basis, "initialize", lambda *a, **kw: {"run_id": "r", "tsr_doc_id": TSR_ID})
+    result = pipeline.transition_document_review(
+        doc_id=TS_ID, action="approve", actor_user_id="u",
+        user_permissions={"document.approve"},
+    )
+    assert result["doc_review_status"] == "approved"
+    assert json.loads(doc["meta"])["test_basis"]["basis_id"] == _basis_for_test()["basis_id"]
+    assert result["spec_initialization"]["tsr_doc_id"] == TSR_ID
+
+
+def test_0632_source_identity_change_invalidates_current_gate(env, monkeypatch):
+    from modules.flow_gate.services import test_basis_service as basis
+    first, changed = _basis_for_test(), _basis_for_test("b")
+    env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], first)
+    monkeypatch.setattr(basis, "resolve", lambda doc, cases: first)
+    _submit(env, [{"case_id": "TC-001", "status": "PASS"},
+                  {"case_id": "TC-002", "status": "PASS"}])
+    assert env.svc.tsr_gate_state(env.docs[TSR_ID])["passed"] is True
+    monkeypatch.setattr(basis, "resolve", lambda doc, cases: changed)
+    gate = env.svc.tsr_gate_state(env.docs[TSR_ID])
+    assert gate["passed"] is False and gate["overall"] == "NOT_RUN" and gate["stale"]
+    with pytest.raises(HTTPException) as exc:
+        env.svc.record_spec_results(doc_id=TS_ID, runner_id="u", triggered_via="ui",
+                                    results=[{"case_id": "TC-001", "status": "PASS"}])
+    assert exc.value.detail["error"] == "basis_stale"
+    assert any(row["overall"] == "PASS" for row in env.db_test_runs.list_by_doc(TS_ID))
+
+
+def test_0632_chain_token_starts_spec_execution_without_results(env, monkeypatch):
+    from unittest.mock import MagicMock
+    from inbox_client import post_inbox
+    from modules.flow_gate.api import inbox_routes
+    from modules.flow_gate.services import ai_invoke_service
+    from modules.flow_gate.services import test_basis_service as basis
+    current = _basis_for_test()
+    env.docs[TS_ID]["meta"] = basis.metadata_with_basis(env.docs[TS_ID], current)
+    env.contents[TS_ID] = SPEC.replace(
+        "- check_points: 권한 검사 / 응답 코드\n",
+        "- check_points: 권한 검사 / 응답 코드\n- automation_ref: tests/test_x.py::test_tc_1\n",
+    )
+    monkeypatch.setattr(basis, "resolve", lambda doc, cases: current)
+    monkeypatch.setattr(env.svc, "_emit_started", lambda *a, **k: None)
+    monkeypatch.setattr(inbox_routes.token_service, "verify", lambda _raw: _token(14))
+    monkeypatch.setattr(env.svc, "token_can_run_tests", lambda *_a, **_k: True)
+    consume = MagicMock()
+    monkeypatch.setattr(inbox_routes.token_service, "consume", consume)
+    marks = []
+    monkeypatch.setattr(ai_invoke_service, "mark_chain_stop",
+                        lambda group, code, detail=None, **kw: marks.append((group, code)) or True)
+    resp = post_inbox({"action": "test_run", "project": "flowgate", "doc_id": TS_ID})
+    assert resp.status_code == 202, resp.json()
+    assert resp.json()["selected_case_ids"] == ["TC-001"]
+    assert resp.json()["continuation_async"] is True
+    consume.assert_called_once()
+    assert marks[-1] == (GROUP, "test_run_pending")

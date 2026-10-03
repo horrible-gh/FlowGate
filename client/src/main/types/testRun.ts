@@ -57,6 +57,8 @@ export interface TestRun {
   unmapped?: TestUnmappedResult[]
   conflicts?: TestMappingConflict[]
   source_identity?: Record<string, string>
+  basis_id?: string | null
+  run_kind?: string | null
 }
 
 // ── Specification TS / TSR test report (flowgate.default.0549 T0008) ──────────────
@@ -98,6 +100,7 @@ export interface TestSpecCase {
   expected: string
   check_points: string
   automation_ref?: string
+  test_assets?: string
 }
 
 export interface TestSpecError {
@@ -168,6 +171,24 @@ export interface TestDocumentView {
   can_start_spec?: boolean
   tsr_doc_id?: string | null
   tsr_review_status?: string | null
+  test_basis?: {
+    basis_id: string
+    source: Record<string, string | null>
+    test_assets: { manifest_hash: string; asset_count: number }
+    manifest: { path: string; content_hash: string; role: string }[]
+  } | null
+  basis_valid?: boolean
+  case_capabilities?: Record<string, string>
+  effective_result?: {
+    summary: TestResultSummary & { overall: TestVerdict }
+    cases: Array<{ case_id: string; title?: string; expected?: string; actual?: string; required?: boolean; execution_mode?: string; status: TestVerdict; result_origin?: string; evidence?: TestEvidence[] }>
+  } | null
+  stale_previous_result?: TestResultRecord | null
+  active_run?: TestResultRecord | null
+  run_history?: TestResultRecord[]
+  progress?: { automated_total: number; automated_completed: number }
+  source_identity?: Record<string, string | null> | null
+  test_asset_identity?: { manifest_hash: string; asset_count: number } | null
   // TSR (contract 2)
   target_ts?: string | null
   report?: TestResultRecord | null

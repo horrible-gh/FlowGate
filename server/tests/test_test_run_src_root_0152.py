@@ -9,6 +9,13 @@ monkeypatching src_root itself, so an id/name mixup cannot hide again.
 from __future__ import annotations
 
 from fastapi import HTTPException
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _no_pending_failure_origin(monkeypatch):
+    from modules.flow_gate.services import test_run_service
+    monkeypatch.setattr(test_run_service.db_test_runs, "get_pending_failure_origin", lambda _id: None)
 
 
 def _install_project_row(monkeypatch, *, settings):

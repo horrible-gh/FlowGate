@@ -64,6 +64,8 @@ def insert_run(
     cases: list[dict],
     teardown: list[dict] | None = None,
     locale: str | None = None,
+    contract_version: int | None = None,
+    result_meta: str | None = None,
 ) -> dict:
     store = get_store()
     run_id = next_run_id()
@@ -79,6 +81,11 @@ def insert_run(
             "VALUES (?, ?, ?, 'running', ?, ?, ?, 0, 0, NULL, NULL, ?, NULL, NULL, ?, ?)",
             [run_id, doc_id, revision_no, triggered_via, runner_id, len(cases), now, locale, now],
         )
+        if contract_version is not None:
+            store._execute(
+                "UPDATE test_runs SET contract_version = ?, result_meta = ? WHERE run_id = ?",
+                [contract_version, result_meta, run_id],
+            )
         for item in [*setup, *cases, *teardown]:
             store._execute(
                 "INSERT INTO test_run_cases "
@@ -430,3 +437,19 @@ def mark_orphaned_running() -> int:
     for row in cancelling_rows:
         cas_cancelling_to_cancelled(row["run_id"], error="cancelled_by_restart")
     return len(rows) + len(cancelling_rows)
+
+def latest_spec_result(doc_id: str, revision_no: int, basis_id: str) -> Optional[dict]:
+    import json
+    rows = get_store()._fetch_all(
+        "SELECT * FROM test_runs WHERE doc_id = ? AND contract_version = 2 "
+        "AND revision_no = ? AND overall IS NOT NULL "
+        "ORDER BY created_at DESC, run_id DESC", [doc_id, revision_no],
+    )
+    for row in rows:
+        try:
+            meta = json.loads(row.get("result_meta") or "{}")
+        except (TypeError, ValueError):
+            continue
+        if meta.get("basis_id") == basis_id and not meta.get("stale"):
+            return row
+    return None

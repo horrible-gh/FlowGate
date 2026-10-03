@@ -54,7 +54,7 @@ MAX_SERVICES = 5
 TSR_CASE_EXCERPT_CHARS = 1000
 MAX_CODE_REWORK_CYCLES = 3
 
-_admission_lock = threading.Lock()
+_admission_lock = threading.RLock()
 
 
 class _ActiveRun:
@@ -541,10 +541,10 @@ def _reject_non_legacy_contract(doc_id: str, content: str) -> None:
             doc_id=doc_id,
             contract_version=contract,
             detail=(
-                "This TS is a test specification (test_contract_version: 2). FlowGate does "
-                "not execute it: run its cases with repository tests, CI, manual or external "
-                "checks and submit the results (POST /documents/test-results, or inbox "
-                "action test_run with results/junit_xml)."
+                "This TS is a test specification (test_contract_version: 2). Use the "
+                "test-spec Case/full execution endpoints, or submit manual/external results "
+                "through POST /documents/test-results. The legacy executable endpoint "
+                "accepts contract 1 only."
             ),
         )
     raise _http_error(
@@ -951,6 +951,10 @@ def shape_run(run: dict, *, include_cases: bool = False) -> dict:
         out["conflicts"] = meta.get("conflicts") or []
         out["source_identity"] = meta.get("source_identity") or {}
         out["result_sources"] = meta.get("result_sources") or []
+        out["basis_id"] = meta.get("basis_id")
+        out["test_basis"] = meta.get("test_basis")
+        out["run_kind"] = meta.get("run_kind")
+        out["execution_root"] = meta.get("execution_root")
     if include_cases:
         items = [_shape_case_item(case) for case in db_test_runs.list_cases(run["run_id"])]
         out["setup"] = [item for item in items if item["kind"] in {"setup", "service", "wait"}]
@@ -1089,6 +1093,9 @@ def record_spec_results(
     locale: str = "ko",
     chain_context: Optional[dict] = None,
     submitted_overall=None,
+    execution_run_id: Optional[str] = None,
+    execution_basis: Optional[dict] = None,
+    execution_cases: Optional[list[dict]] = None,
 ) -> dict:
     """Validate and store one result submission for an approved specification TS.
 
@@ -1102,6 +1109,21 @@ def record_spec_results(
     """
     doc, parsed = load_spec_ts(doc_id)
     _require_ts_admissible(doc, doc_id)
+    from modules.flow_gate.services import test_basis_service
+    stored_basis = test_basis_service.current(doc)
+    basis = execution_basis or stored_basis
+    if stored_basis and execution_basis is None:
+        try:
+            live_basis = test_basis_service.resolve(doc, parsed["cases"])
+        except ValueError as exc:
+            raise _http_error(409, "basis_unavailable", doc_id=doc_id, detail=str(exc)) from exc
+        if live_basis["basis_id"] != stored_basis["basis_id"]:
+            raise _http_error(409, "basis_stale", doc_id=doc_id,
+                              basis_id=stored_basis["basis_id"], live_basis_id=live_basis["basis_id"])
+    if execution_cases is not None:
+        parsed = {**parsed, "cases": execution_cases}
+    if basis:
+        source_identity = basis["source"]  # server authority outranks a caller's claim
     # An approved test report is the record the workflow moved on with. New results would
     # silently rewrite it under its approval, so they are refused; re-testing goes through
     # the ordinary reopen (time machine) of the TSR/TS first.
@@ -1140,15 +1162,30 @@ def record_spec_results(
 
     revision_no = doc.get("revision_no") or 0
     with _admission_lock:
+        if execution_basis:
+            fresh_doc = db_docs.get_by_id(doc_id)
+            fresh_basis = test_basis_service.current(fresh_doc or {})
+            if not fresh_basis or fresh_basis["basis_id"] != execution_basis["basis_id"]:
+                raise _http_error(409, "basis_stale", doc_id=doc_id)
+            try:
+                live = test_basis_service.resolve(fresh_doc, test_spec_service.parse_spec(
+                    _read_doc_content_or_empty(fresh_doc))["cases"])
+            except (ValueError, TypeError) as exc:
+                raise _http_error(409, "basis_unavailable", doc_id=doc_id) from exc
+            if live["basis_id"] != execution_basis["basis_id"]:
+                raise _http_error(409, "basis_stale", doc_id=doc_id)
         pending = db_test_runs.get_pending_failure_origin(doc_id)
         if pending is not None:
             raise _http_error(
                 409, "failure_origin_pending", doc_id=doc_id, run_id=pending["run_id"]
             )
         running = db_test_runs.get_running_by_doc(doc_id)
-        if running is not None:
+        if running is not None and running["run_id"] != execution_run_id:
             raise _http_error(409, "run_in_progress", doc_id=doc_id, run_id=running["run_id"])
-        previous_run = None if replace else db_test_runs.latest_spec_run(doc_id, revision_no)
+        previous_run = None if replace else (
+            db_test_runs.latest_spec_result(doc_id, revision_no, basis["basis_id"])
+            if basis else db_test_runs.latest_spec_run(doc_id, revision_no)
+        )
         previous: dict = {}
         if previous_run is not None:
             for stored in db_test_runs.list_cases(previous_run["run_id"]):
@@ -1166,6 +1203,8 @@ def record_spec_results(
             previous_run_id=(previous_run or {}).get("run_id"),
         )
         summary = test_spec_service.compute_overall(mapped["cases"])
+        if mapped["unmapped"] and summary["overall"] == "PASS":
+            summary = {**summary, "overall": "BLOCKED", "gate_passed": False}
         overall = summary["overall"]
         meta = {
             "counts": summary["counts"],
@@ -1180,6 +1219,8 @@ def record_spec_results(
             "submission_channel": triggered_via,
             "replace": bool(replace),
             "previous_run_id": (previous_run or {}).get("run_id"),
+            "basis_id": (basis or {}).get("basis_id"),
+            "test_basis": basis,
         }
         if submitted_overall not in (None, ""):
             meta["ignored_submitted_overall"] = str(submitted_overall)[:32]
@@ -1215,15 +1256,38 @@ def finalize_spec_results(doc: dict, run: dict, *, locale: str = "ko") -> dict:
     tsr_doc_id: Optional[str] = None
     report_error: Optional[str] = None
     if not process_service.is_group_disposed(doc.get("group_id")):
-        try:
-            tsr_doc_id = assemble_tsr(
-                doc, run, db_test_runs.list_cases(run_id), locale=locale, run_chain=False
-            )
-            db_test_runs.set_run_tsr_doc(run_id, tsr_doc_id)
-        except Exception as exc:  # noqa: BLE001 — recorded as a distinct terminal error
-            logger.warning("TSR assembly failed for %s: %s", run_id, exc, exc_info=True)
-            report_error = "report_assembly_failed"
-            db_test_runs.mark_spec_report_failed(run_id)
+        with _admission_lock:
+            from modules.flow_gate.services import test_basis_service
+            meta = test_spec_service.load_result_meta(run.get("result_meta"))
+            run_basis_id = meta.get("basis_id")
+            fresh_doc = db_docs.get_by_id(doc["doc_id"])
+            current_basis = test_basis_service.current(fresh_doc or {})
+            basis_valid = True
+            if run_basis_id:
+                basis_valid = bool(current_basis and current_basis["basis_id"] == run_basis_id)
+                if basis_valid:
+                    try:
+                        live = test_basis_service.resolve(
+                            fresh_doc, test_spec_service.parse_spec(
+                                _read_doc_content_or_empty(fresh_doc))["cases"]
+                        )
+                        basis_valid = live["basis_id"] == run_basis_id
+                    except (ValueError, TypeError):
+                        basis_valid = False
+            if not basis_valid:
+                meta["stale"] = True
+                db_test_runs.set_run_result_meta(run_id, json.dumps(meta, ensure_ascii=False))
+                return {"tsr_doc_id": None, "overall": "NOT_RUN", "gate_passed": False,
+                        "stale": True, "failure_origin": None, "continuation": None}
+            try:
+                tsr_doc_id = assemble_tsr(
+                    doc, run, db_test_runs.list_cases(run_id), locale=locale, run_chain=False
+                )
+                db_test_runs.set_run_tsr_doc(run_id, tsr_doc_id)
+            except Exception as exc:  # noqa: BLE001 — recorded as a distinct terminal error
+                logger.warning("TSR assembly failed for %s: %s", run_id, exc, exc_info=True)
+                report_error = "report_assembly_failed"
+                db_test_runs.mark_spec_report_failed(run_id)
     finished = db_test_runs.get_run(run_id) or run
     _emit_finished(doc, finished, tsr_doc_id)
     overall = finished.get("overall")
@@ -1320,14 +1384,46 @@ def tsr_gate_state(tsr_doc: Optional[dict]) -> dict:
     ts_id = (tsr_doc or {}).get("target_id") or (tsr_doc or {}).get("triggered_by")
     if not ts_id:
         return {"applies": False, "passed": True}
-    latest = db_test_runs.latest_by_doc(ts_id)
-    if latest is None or latest.get("contract_version") != test_spec_service.CONTRACT_SPEC:
+    latest_any = db_test_runs.latest_by_doc(ts_id)
+    if latest_any is None or latest_any.get("contract_version") != test_spec_service.CONTRACT_SPEC:
         return {"applies": False, "passed": True}
+    active_execution = db_test_runs.get_running_by_doc(ts_id)
+    if active_execution and active_execution.get("contract_version") == test_spec_service.CONTRACT_SPEC:
+        return {"applies": True, "passed": False, "overall": "NOT_RUN",
+                "run_id": active_execution["run_id"], "execution_active": True}
+    from modules.flow_gate.services import test_basis_service
+    ts_doc = db_docs.get_by_id(ts_id)
+    basis = test_basis_service.current(ts_doc or {})
+    latest = (db_test_runs.latest_spec_result(ts_id, ts_doc.get("revision_no") or 0, basis["basis_id"])
+              if basis and ts_doc else latest_any)
+    if latest is None:
+        return {"applies": True, "passed": False, "overall": "NOT_RUN",
+                "run_id": None, "basis_id": basis["basis_id"], "stale": True}
+    attempt_meta = test_spec_service.load_result_meta(latest_any.get("result_meta"))
+    if (basis and attempt_meta.get("run_kind") == "spec_execution"
+            and attempt_meta.get("basis_id") == basis["basis_id"]
+            and latest_any.get("status") == "failed"
+            and latest_any.get("run_id") != latest.get("run_id")
+            and str(latest_any.get("created_at") or "") >= str(latest.get("created_at") or "")):
+        return {"applies": True, "passed": False, "overall": "BLOCKED",
+                "run_id": latest_any["run_id"], "basis_id": basis["basis_id"],
+                "execution_error": latest_any.get("error")}
+    basis_valid = True
+    if basis:
+        try:
+            live = test_basis_service.resolve(
+                ts_doc, test_spec_service.parse_spec(_read_doc_content_or_empty(ts_doc))["cases"]
+            )
+            basis_valid = basis_valid and live["basis_id"] == basis["basis_id"]
+        except (ValueError, TypeError):
+            basis_valid = False
     return {
         "applies": True,
-        "passed": latest.get("overall") == "PASS" and latest.get("status") == "passed",
-        "overall": latest.get("overall"),
+        "passed": basis_valid and latest.get("overall") == "PASS" and latest.get("status") == "passed",
+        "overall": latest.get("overall") if basis_valid else "NOT_RUN",
         "run_id": latest.get("run_id"),
+        "basis_id": (basis or {}).get("basis_id"),
+        "stale": not basis_valid,
     }
 
 
@@ -1531,6 +1627,61 @@ def describe_test_document(doc: dict) -> dict:
                 active_tsr = None
             out["tsr_doc_id"] = (active_tsr or {}).get("doc_id")
             out["tsr_review_status"] = (active_tsr or {}).get("doc_review_status")
+            history = db_test_runs.list_by_doc(doc["doc_id"])
+            out["run_history"] = [shape_run(item) for item in history
+                                  if item.get("contract_version") == test_spec_service.CONTRACT_SPEC][:30]
+            running = db_test_runs.get_running_by_doc(doc["doc_id"])
+            out["active_run"] = (shape_run(running) if running and
+                                 running.get("contract_version") == test_spec_service.CONTRACT_SPEC
+                                 else None)
+            from modules.flow_gate.services import test_basis_service
+            basis = test_basis_service.current(doc)
+            if basis:
+                out["test_basis"] = basis
+                out["case_capabilities"] = {
+                    case["case_id"]: test_basis_service.locator(case)["capability"]
+                    for case in parsed["cases"]
+                }
+                effective_run = db_test_runs.latest_spec_result(
+                    doc["doc_id"], doc.get("revision_no") or 0, basis["basis_id"]
+                )
+                try:
+                    live = test_basis_service.resolve(doc, parsed["cases"])
+                    basis_valid = live["basis_id"] == basis["basis_id"]
+                except (ValueError, TypeError):
+                    basis_valid = False
+                if not basis_valid:
+                    effective_run = None
+                out["basis_valid"] = basis_valid
+                out["effective_run_id"] = (effective_run or {}).get("run_id")
+                previous = next((
+                    item for item in history
+                    if item.get("contract_version") == test_spec_service.CONTRACT_SPEC
+                    and test_spec_service.load_result_meta(item.get("result_meta")).get("basis_id")
+                    not in (None, basis["basis_id"])
+                    and test_spec_service.load_result_meta(item.get("result_meta")).get("run_kind")
+                    != "spec_execution"
+                ), None)
+                out["stale_previous_result"] = (
+                    shape_run(previous, include_cases=True) if previous else
+                    shape_run(latest, include_cases=True) if latest and not basis_valid else None
+                )
+                effective_rows = (
+                    [test_spec_service.stored_case_to_row(row)
+                     for row in db_test_runs.list_cases(effective_run["run_id"])]
+                    if effective_run else test_spec_service.map_results(parsed["cases"], [])["cases"]
+                )
+                out["effective_result"] = {
+                    "summary": test_spec_service.compute_overall(effective_rows),
+                    "cases": effective_rows,
+                }
+                automated = [case for case in parsed["cases"]
+                             if case.get("execution_mode") == "automated"]
+                completed = sum(1 for row in effective_rows if row.get("case_id") in
+                                {case["case_id"] for case in automated}
+                                and row.get("result_origin") != "missing")
+                out["progress"] = {"automated_total": len(automated),
+                                   "automated_completed": completed}
         return out
     if type_code == "TSR":
         run = db_test_runs.latest_by_tsr_doc(doc["doc_id"])
@@ -1541,6 +1692,14 @@ def describe_test_document(doc: dict) -> dict:
             out["report"] = shape_run(run, include_cases=True)
             out["gate"] = tsr_gate_state(doc)
             out["doc_review_status"] = doc.get("doc_review_status")
+            target = db_docs.get_by_id(doc.get("target_id")) if doc.get("target_id") else None
+            if target:
+                ts_view = describe_test_document(target)
+                for key in ("test_basis", "basis_valid", "effective_result",
+                            "stale_previous_result", "run_history", "active_run", "progress"):
+                    out[key] = ts_view.get(key)
+                out["source_identity"] = (ts_view.get("test_basis") or {}).get("source")
+                out["test_asset_identity"] = (ts_view.get("test_basis") or {}).get("test_assets")
         return out
     return {"kind": type_code, "doc_id": doc.get("doc_id"), "contract_version": None}
 
@@ -1554,7 +1713,11 @@ def execute_run(run: dict) -> None:
     # future re-run would 409 — the exact "re-run impossible" symptom this group fixes. Guarantee
     # the row is terminalized, then re-raise so the worker loop still logs the failure as before.
     try:
-        _execute_run_inner(run)
+        if run.get("contract_version") == test_spec_service.CONTRACT_SPEC:
+            from modules.flow_gate.services import spec_execution_service
+            spec_execution_service.execute(run)
+        else:
+            _execute_run_inner(run)
     except Exception:
         try:
             current = db_test_runs.get_run(run["run_id"])
@@ -2582,6 +2745,13 @@ def assemble_tsr(
             title=title,
             locale=locale,
         )
+        if meta.get("test_basis"):
+            basis = meta["test_basis"]
+            content += ("\n## Test Basis\n\n"
+                        + "- basis_id: `" + str(basis.get("basis_id")) + "`\n"
+                        + "- source: `" + json.dumps(basis.get("source"), ensure_ascii=False, sort_keys=True) + "`\n"
+                        + "- test_assets.manifest_hash: `"
+                        + str((basis.get("test_assets") or {}).get("manifest_hash")) + "`\n")
     else:
         content = _tsr_content(doc, run, cases, title, locale)
 
@@ -2651,6 +2821,8 @@ def _revise_active_tsr(
     doc: dict, active: dict, content: str, title: str, *, run_chain: bool = True
 ) -> str:
     """Rewrite the active TSR in place for a fresh run, keeping its doc_id and slot."""
+    if active.get("doc_review_status") == "approved":
+        raise _http_error(409, "tsr_already_approved", tsr_doc_id=active.get("doc_id"))
     tsr_doc_id = str(active["doc_id"])
     project_id = doc["project_id"]
     group_id = doc["group_id"]
@@ -3136,6 +3308,14 @@ def _emit_auto_reopen_refresh(doc: dict, run: dict, result: dict) -> None:
 
 
 def _emit_started(doc: dict, run: dict) -> None:
+    if run.get("contract_version") == test_spec_service.CONTRACT_SPEC:
+        from modules.flow_gate.db import events as db_events
+        meta = test_spec_service.load_result_meta(run.get("result_meta"))
+        db_events.insert_event(doc["doc_id"], "test_spec_execution_started",
+                               note=json.dumps({"run_id": run["run_id"],
+                                                "basis_id": meta.get("basis_id"),
+                                                "case_ids": meta.get("selected_case_ids"),
+                                                "actor": run.get("runner_id")}, ensure_ascii=False))
     items = db_test_runs.list_cases(run["run_id"])
     _broadcast(
         "test_run_started",
@@ -3198,6 +3378,20 @@ def _emit_case_finished(doc: dict, run: dict, case: dict, idx: int, total: int) 
 
 
 def _emit_finished(doc: dict, run: dict, tsr_doc_id: Optional[str]) -> None:
+    if run.get("contract_version") == test_spec_service.CONTRACT_SPEC:
+        from modules.flow_gate.db import events as db_events
+        meta = test_spec_service.load_result_meta(run.get("result_meta"))
+        kind = meta.get("run_kind")
+        event = ("test_spec_execution_cancelled" if run.get("status") == "cancelled" else
+                 "test_spec_execution_completed" if kind == "spec_execution" else
+                 "test_spec_result_recorded")
+        db_events.insert_event(doc["doc_id"], event,
+                               note=json.dumps({"run_id": run["run_id"],
+                                                "basis_id": meta.get("basis_id"),
+                                                "tsr_doc_id": tsr_doc_id,
+                                                "overall": run.get("overall"),
+                                                "status": run.get("status"),
+                                                "actor": run.get("runner_id")}, ensure_ascii=False))
     _broadcast(
         "test_run_finished",
         doc,

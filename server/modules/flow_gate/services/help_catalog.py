@@ -758,6 +758,12 @@ def _content_notices(ctx: dict) -> dict:
     # A key requested by two conditions still prints once.
     ordered = list(dict.fromkeys(keys))
     lines = [_copy(NOTICE_LINES, ctx["locale"], key) for key in ordered]
+    if ctx.get("doc_type") == "TR":
+        lines.append({
+            "ko": "TR에서는 test code/fixture/mock을 작성하고 접근 가능한 환경에서 self-check할 수 있습니다. 공식 시험 PASS와 gate는 TS/TSR 단계가 담당하며 공식 시험을 위해 승인형 Snapshot을 요청하지 않습니다.",
+            "en": "TR may create test code, fixtures, and mocks and run available self-checks. Formal PASS and the test gate belong to TS/TSR; do not request an approval-based Snapshot for formal testing.",
+            "ja": "TRではテストコード・fixture・mockを作成し、利用可能な環境でself-checkできます。正式なPASSとgateはTS/TSRが担当し、正式試験のために承認型Snapshotを要求しません。",
+        }.get(ctx["locale"], ""))
     tr_review = ctx.get("action_scope") == "review" and str(ctx.get("doc_type") or "").upper() == "TR"
     if ctx.get("source_mode") == "remote" and ctx.get("tool_kind") != "none" and not tr_review:
         lines.append(_copy(NOTICE_LINES, ctx["locale"], "source_snapshot_policy"))
@@ -1697,7 +1703,13 @@ def _authoring_guide_body(type_code: str, locale: str) -> str:
     if type_code in {"N", "T"}:
         return mention_service._nt_authoring_section(type_code, locale)
     if type_code == "TR":
-        return _TR_AUTHORING_GUIDE.get(locale, _TR_AUTHORING_GUIDE[FALLBACK_LOCALE])
+        # TR owns implementation and test assets; the formal gate belongs to TS/TSR.
+        return (_TR_AUTHORING_GUIDE.get(locale, _TR_AUTHORING_GUIDE[FALLBACK_LOCALE])
+                + "\n" + {
+                    "ko": "시험 코드·fixture·mock은 작성하고 가능한 self-check 결과를 보고합니다. TR 완료에 공식 시험 PASS나 승인형 Snapshot은 필요하지 않습니다. 공식 gate는 TS/TSR에서 확인합니다.",
+                    "en": "Create test code, fixtures and mocks and report available self-checks. TR completion requires no formal PASS or approval-based Snapshot; TS/TSR owns the formal gate.",
+                    "ja": "テストコード・fixture・mockを作成し、実施可能なself-checkを報告します。TR完了に正式PASSや承認型Snapshotは不要で、正式gateはTS/TSRで確認します。",
+                }.get(locale, ""))
     raise ValueError(f"Unknown authoring guide type: {type_code}")
 
 
